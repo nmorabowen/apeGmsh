@@ -11,10 +11,10 @@ import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
-import { contourLines } from "../../src/panels/legend.ts";
+import { contourLines, rampCss } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
-import { CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
-import { contourFieldsOf, contourView, noticesOf } from "../../src/state/selectors.ts";
+import { CMAPS, CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
 
@@ -42,13 +42,38 @@ test("an unnamed component (a name ending in `_`) renders as [k], never as a gue
 
 // -- colormaps ------------------------------------------------------------------
 
-test("jet is matplotlib's segment data at its breakpoints; the no-data colour is far from every ramp", () => {
+test("jet is matplotlib's segment data at its breakpoints; diverging wavefield maps centre on white; the no-data colour is far from every ramp", () => {
+  assert.deepEqual(CMAP_NAMES, [
+    "jet", "turbo", "viridis", "plasma", "inferno", "magma",
+    "coolwarm", "RdBu_r", "RdBu", "bwr", "seismic", "BrBG", "Spectral",
+  ]);
+  assert.deepEqual(Object.keys(CMAPS), [...CMAP_NAMES]);
   assert.deepEqual(sampleCmap("jet", 0), [0, 0, 0.5]);
   assert.deepEqual(sampleCmap("jet", 1), [0.5, 0, 0]);
   const mid = sampleCmap("jet", 0.5);
   // red (0.35 -> 0.66: 0 -> 1), green (0.375 -> 0.64: 1), blue (0.34 -> 0.65: 1 -> 0)
   assert.ok(Math.abs(mid[0] - 0.15 / 0.31) < 1e-12 && mid[1] === 1 && Math.abs(mid[2] - 0.15 / 0.31) < 1e-12, `jet(0.5) = ${mid}`);
+  // Symmetric blue-white-red wavefield maps: negative is blue (b > r), zero is neutral white, positive is red (r > b).
+  for (const wf of ["RdBu_r", "bwr", "seismic"] as const) {
+    const lo = sampleCmap(wf, 0), zero = sampleCmap(wf, 0.5), hi = sampleCmap(wf, 1);
+    assert.ok(lo[2] > lo[0] && hi[0] > hi[2], `${wf} endpoints: ${lo} -> ${hi}`);
+    assert.ok(zero[0] > 0.95 && zero[1] > 0.95 && zero[2] > 0.95, `${wf}(0.5) = ${zero}`);
+  }
+  for (const [t0, t1] of [[0, 1], [0.25, 0.75], [0.5, 0.5], [1, 0]] as const) {
+    const a = sampleCmap("RdBu", t0), b = sampleCmap("RdBu_r", t1);
+    assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-12, `RdBu(${t0}) vs RdBu_r(${t1})`);
+  }
   for (const cmap of CMAP_NAMES) {
+    const stops = CMAPS[cmap];
+    assert.equal(stops[0]![0], 0, `${cmap} starts at 0`);
+    assert.equal(stops.at(-1)![0], 1, `${cmap} ends at 1`);
+    for (let i = 0; i < stops.length; i++) {
+      const [t, r, g, b] = stops[i]!;
+      if (i > 0) assert.ok(t > stops[i - 1]![0], `${cmap} stop ${i} strictly increases`);
+      assert.ok(r >= 0 && r <= 1 && g >= 0 && g <= 1 && b >= 0 && b <= 1, `${cmap} stop ${i} in [0,1]`);
+    }
+    const grad = rampCss(cmap);
+    assert.match(grad, /^linear-gradient\(to right, rgb\(\d+,\d+,\d+\) 0\.0%(?:, rgb\(\d+,\d+,\d+\) \d+\.\d%)+, rgb\(\d+,\d+,\d+\) 100\.0%\)$/);
     for (let i = 0; i <= 200; i++) {
       const c = sampleCmap(cmap, i / 200);
       const d = Math.hypot(c[0] - NO_DATA_RGB[0], c[1] - NO_DATA_RGB[1], c[2] - NO_DATA_RGB[2]);
@@ -301,5 +326,99 @@ test("partial write: a component whose value columns disagree with _ids is refus
   assert.deepEqual(contourFieldsOf(h.store.get())!.refused, stage.refusedNodal);
   assert.ok(noticesOf(h.store.get()).some((t) => t.startsWith("Nodal component displacement_y not read: ")));
   host.close();
+  h.effects.dispose();
+});
+
+test("baseUnits: setContourUnits converts forces and moments to tf_m_s and labels display units", () => {
+  const rf = resolveFieldUnits("reaction_force", "nodal", "kN_m_s", "tf_m_s", "static");
+  assert.equal(rf.unit, "tf");
+  assert.ok(Math.abs(rf.factor - 1000 / 9806.65) < 1e-15);
+  const wa = resolveFieldUnits("wood_armer_neg", "element", "kN_m_s", "tf_m_s", "static");
+  assert.equal(wa.unit, "tf·m/m");
+  assert.ok(Math.abs(wa.factor - 1000 / 9806.65) < 1e-15);
+  const rm = resolveFieldUnits("rib_moment_pos", "element", "kN_m_s", "tf_m_s", "static");
+  assert.equal(rm.unit, "tf·m");
+  assert.ok(Math.abs(rm.factor - 1000 / 9806.65) < 1e-15);
+  const dispMm = resolveFieldUnits("displacement", "nodal", "kN_m_s", "N_mm_s", "static");
+  assert.equal(dispMm.unit, "mm");
+  assert.equal(dispMm.factor, 1000);
+  const modeDisp = resolveFieldUnits("displacement", "nodal", "kN_m_s", "N_mm_s", "mode");
+  assert.equal(modeDisp.unit, null);
+  assert.equal(modeDisp.factor, 1);
+});
+
+test("declared vs undeclared units: declared files auto-select native units; undeclared files require source units", async () => {
+  const h = await opened();
+  // Undeclared file starts at as_stored with sourceUnits === null.
+  assert.equal(h.store.get().contour.declaredUnits, null);
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "as_stored");
+
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  await until(() => h.store.get().contour.scan?.status === "done", "the initial history scan");
+
+  // Selecting a target unit system on an undeclared file without sourceUnits prompts for source units.
+  h.store.dispatch({ type: "setContourUnits", target: "N_mm_s" });
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
+  const vUndeclared = contourView(h.store.get());
+  assert.equal(vUndeclared.state, "ready");
+  if (vUndeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vUndeclared);
+    assert.equal(lines.title, "displacement · magnitude");
+    assert.equal(lines.units, "Units: not declared in file — select the source unit system (from …) to convert.");
+  }
+
+  // Once the user specifies sourceUnits, conversion is applied immediately.
+  h.store.dispatch({ type: "setContourUnits", source: "kN_m_s" });
+  assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+  if (vUndeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vUndeclared);
+    assert.equal(lines.title, "displacement · magnitude [mm]");
+    assert.equal(lines.units, "Units: N-mm-tonne-s (converted from kN-m-tonne-s).");
+  }
+
+  // When a results file carries declared units (`units: "kN_m_s"`), native units are auto-selected and sourceUnits is locked.
+  const infoWithUnits = { ...h.store.get().results!, units: "kN_m_s" as const };
+  h.store.dispatch({ type: "resultsLoaded", info: infoWithUnits, sizeBytes: 0, readMs: 0, warnings: [] });
+  assert.equal(h.store.get().contour.declaredUnits, "kN_m_s");
+  assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+  assert.equal(h.store.get().contour.targetUnits, "kN_m_s");
+
+  await until(() => h.store.get().contour.scan?.status === "done", "the history scan after resultsLoaded");
+  const vDeclared = contourView(h.store.get());
+  assert.equal(vDeclared.state, "ready");
+  if (vDeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vDeclared);
+    assert.equal(lines.title, "displacement · magnitude [m]");
+    assert.equal(lines.units, "Units: kN-m-tonne-s (declared in file).");
+  }
+
+  // Converting a declared file needs only targetUnits; sourceUnits stays locked to declaredUnits.
+  h.store.dispatch({ type: "setContourUnits", target: "N_mm_s", source: "kip_in_s" });
+  assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+  assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
+  if (vDeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vDeclared);
+    assert.equal(lines.title, "displacement · magnitude [mm]");
+    assert.equal(lines.units, "Units: N-mm-tonne-s (converted from declared kN-m-tonne-s).");
+  }
+
+  // Transitioning back to an undeclared results file resets declaredUnits/sourceUnits to null and targetUnits to as_stored.
+  const infoUndeclared = { ...h.store.get().results!, units: null };
+  h.store.dispatch({ type: "resultsLoaded", info: infoUndeclared, sizeBytes: 0, readMs: 0, warnings: [] });
+  assert.equal(h.store.get().contour.declaredUnits, null);
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "as_stored");
+
+  // Re-load declared units, then open a different results path via fileOpened -> resets contour units to model's units (null).
+  h.store.dispatch({ type: "resultsLoaded", info: infoWithUnits, sizeBytes: 0, readMs: 0, warnings: [] });
+  assert.equal(h.store.get().contour.declaredUnits, "kN_m_s");
+  h.store.dispatch({ type: "fileOpened", artifact: "results", path: "/another/file.ladruno" });
+  assert.equal(h.store.get().contour.declaredUnits, null);
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "as_stored");
+
   h.effects.dispose();
 });

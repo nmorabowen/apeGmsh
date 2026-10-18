@@ -182,7 +182,11 @@ owns the sub-composites
 `results.elements.{gauss, fibers, layers, line_stations, springs}`
 (each a `.get(...)` returning `GaussSlab` / `FiberSlab` / `LayerSlab` /
 `LineStationSlab` / `SpringSlab`; `gauss`/`fibers`/`layers` also take
-`gp_indices=` / `layer_indices=`).
+`gp_indices=` / `layer_indices=`). For exact piecewise-quadratic shear
+$V(x)$ and piecewise-cubic moment $M(x)$ beam span diagrams under uniform,
+partial-span, or trapezoidal loads (including `LadrunoMembrane` tributary
+sub-segment loads), use `from apeGmsh.results import reconstruct_beam_span_diagrams, reconstruct_beam_element_diagram`
+(inserts analytical breakpoints $a_L, b_L$ and interior zero-shear extrema $V(x)=0$).
 
 **Modes / eigen:**
 

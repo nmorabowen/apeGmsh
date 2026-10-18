@@ -212,6 +212,7 @@ Attributes only.
 | `geometry_schema_version` | string | per-zone version of `/geometry`; present only in a `<stem>.geometry.h5` sibling |
 | `provenance_schema_version` | string | per-zone version of `/provenance`; present only when the file carries `/provenance` |
 | `model_name` | string | user-provided model name |
+| `units` | string | canonical consistent unit system ID (`"N_m_s"`, `"kN_m_s"`, `"tf_m_s"`, `"kgf_m_s"`, `"N_mm_s"`, `"kip_in_s"`, `"dyne_cm_s"`). **Optional**: written when the session or `FEMData` declares `units=`; absent when undeclared, and read without a version gate (ADR 0023 INV-2) |
 | `tag_span_max` | int | `max(max_node,max_elem) - min(min_node,min_elem) + 1`; sizes compose tag-offset reservations (ADR 0038) |
 
 > The `/meta/lineage/` sub-group (ADR 0021) is stamped whenever the

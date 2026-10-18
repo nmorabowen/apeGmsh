@@ -8,7 +8,7 @@
 
 import type { Event, State } from "../../state/store.ts";
 import type { WindowContent } from "../../state/types.ts";
-import { el } from "../../ui/dom.ts";
+import { el, isSelectAdd } from "../../ui/dom.ts";
 
 export type WindowView = (s: State, act: (e: Event) => void) => HTMLElement;
 
@@ -32,7 +32,7 @@ export function placeholderList(content: WindowContent, act: (e: Event) => void)
     const decl = r.select;
     if (decl) {
       row.title = `select ${decl}`;
-      row.addEventListener("click", () => act({ type: "select", pick: { decl, at: null, nodes: null } }));
+      row.addEventListener("click", (e) => act({ type: isSelectAdd(e) ? "selectAdd" : "select", pick: { decl, at: null, nodes: null } }));
     }
     body.append(row);
   }

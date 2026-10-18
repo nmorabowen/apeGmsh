@@ -9,6 +9,7 @@ import { view as analysis } from "./analysis.ts";
 import { view as materials } from "./materials.ts";
 import { view as patterns } from "./patterns.ts";
 import { view as recorders } from "./recorders.ts";
+import { view as search } from "./search.ts";
 import { view as stages } from "./stages.ts";
 import type { WindowView } from "./view.ts";
 
@@ -23,4 +24,5 @@ export const WINDOWS: { readonly [K in WindowKind]: WindowEntry } = {
   patterns: { title: "Patterns & series", view: patterns },
   recorders: { title: "Recorders", view: recorders },
   materials: { title: "Materials & sections", view: materials },
+  search: { title: "Search", view: search },
 };

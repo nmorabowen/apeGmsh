@@ -78,7 +78,7 @@ export function mountPhase(store: Store): () => void {
     box.style.cssText = "display: flex; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);";
     const pick = el("select", "results-stage");
     pick.title = "results stage";
-    pick.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line); border-radius: 5px;";
+    pick.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--bg-1); border: 1px solid var(--line); border-radius: 5px;";
     for (const st of t.stages) {
       const o = el("option", undefined, st.label);
       o.value = String(st.index);

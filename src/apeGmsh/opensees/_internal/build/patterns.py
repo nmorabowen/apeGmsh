@@ -2,21 +2,37 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from collections.abc import Mapping, Sequence
 from typing import Any, Callable, Iterable
 
 import numpy as np
 
-from ..types import Primitive
-from ...pattern.pattern import Plain, _LoadRecord, _SPRecord
-from ..tag_resolution import resolve_tag
+from ..types import Element, Primitive
+from ...pattern.pattern import (
+    Plain,
+    _BridgeValueError,
+    _EleLoadRecord,
+    _LoadRecord,
+    _SPRecord,
+    _beam_uniform_args,
+    _self_weight_args,
+)
+from ..tag_resolution import MISSING_FEM_ELEMENT_ID, resolve_tag
 from .errors import BridgeError
-from .pg_expand import expand_pg_to_nodes
+from .pg_expand import ElementPlanRows, expand_pg_to_elements, expand_pg_to_nodes
+from .recorders import _expand_label_to_elements
 from .ndf import _load_dof_layout, fit_dof_vector
+from .transforms import (
+    _element_transf,
+    compute_vecxz_for_element,
+    is_orientation_transform,
+)
 
 
 if TYPE_CHECKING:
     from ...emitter.base import Emitter
     from apeGmsh.mesh.FEMData import FEMData
+    from .ownership import FemToOpsTagMap, SortedIntToInt
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +48,8 @@ def emit_pattern_spec(
     ndm: int = 3,
     *,
     effective_ndf: "dict[int, int] | None" = None,
+    element_plan: "Sequence[tuple[Element, ElementPlanRows]] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Drive a pattern's emit, expanding any ``pg=`` records to per-node calls.
 
@@ -43,7 +61,9 @@ def emit_pattern_spec(
     Any :meth:`Plain.from_model` cases are expanded last (ADR 0051):
     the geometry-resolved nodal loads / prescribed displacements tagged
     with the case are pulled from ``fem`` and emitted as ``load`` / ``sp``
-    lines inside this pattern (``ndf`` maps the DOF-agnostic records).
+    lines inside this pattern (``ndf`` maps the DOF-agnostic records),
+    followed by ``eleLoad`` commands from ``spec.ele_loads`` and
+    element-form ``from_model`` records.
 
     For non-Plain patterns (``UniformExcitation``, etc.) we delegate to
     the spec's own ``_emit`` since they have no PG-bearing records.
@@ -67,6 +87,14 @@ def emit_pattern_spec(
         _emit_from_model_case(case, emitter, fem, ndf_of, ndm)
     for mt_rec in spec.moment_tensors:
         _emit_moment_tensor_record(mt_rec, emitter, fem, ndf_of, ndm)
+    for ele_args in resolve_ele_load_commands(
+        spec,
+        fem,
+        ndm,
+        element_plan=element_plan,
+        fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+    ):
+        emitter.eleLoad(*ele_args)
     emitter.pattern_close()
 
 
@@ -452,3 +480,449 @@ def _emit_sp_record(
         return
     for node_tag in expand_pg_to_nodes(fem, rec.target):
         emitter.sp(node_tag, rec.dof, rec.value)
+
+
+# ---------------------------------------------------------------------------
+# Element-load resolution (Plain.ele_loads + Plain.from_model element loads)
+# ---------------------------------------------------------------------------
+
+
+def _clean_zero(val: float) -> float:
+    return 0.0 if abs(val) < 1e-15 else float(val)
+
+
+def _resolve_beam_vecxz(
+    el_spec: Element | None,
+    p_i: np.ndarray,
+    p_j: np.ndarray,
+    fem: "FEMData",
+    eid: int,
+) -> np.ndarray:
+    """Resolve the 3D beam ``vecxz`` vector from ``el_spec.transf``."""
+    if el_spec is None:
+        raise BridgeError(
+            f"from_model: beamUniform on 3D element {eid} requires a "
+            "registered beam-column element with a geomTransf."
+        )
+    transf = _element_transf(el_spec)
+    if transf is None:
+        raise BridgeError(
+            f"from_model: beamUniform on 3D element {eid} requires a "
+            f"beam-column element with a geomTransf, got {type(el_spec).__name__}."
+        )
+    if is_orientation_transform(transf):
+        orient = transf.orientation  # type: ignore[attr-defined]
+        if hasattr(orient, "bind_fem"):
+            orient.bind_fem(fem)
+        return np.asarray(
+            compute_vecxz_for_element(transf, p_i, p_j),  # type: ignore[arg-type]
+            dtype=float,
+        )
+    vecxz = getattr(transf, "vecxz", None)
+    if vecxz is None:
+        raise BridgeError(
+            f"from_model: 3D beam element {eid} transform {transf!r} has "
+            "neither vecxz nor orientation."
+        )
+    return np.asarray(vecxz, dtype=float)
+
+
+def _translate_fem_eids_for_ele_load(
+    fem_eids: Iterable[int],
+    *,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None",
+    element_owner: "SortedIntToInt | Mapping[int, int] | None",
+    partition_rank: int | None,
+    where: str,
+) -> list[int]:
+    out: list[int] = []
+    for raw_eid in fem_eids:
+        eid = int(raw_eid)
+        if fem_eid_to_ops_tag is not None:
+            otag = fem_eid_to_ops_tag.get(eid)
+            if otag is None:
+                raise BridgeError(
+                    f"{where} resolves to FEM element id {eid}, but no "
+                    "OpenSees Element primitive was emitted for that element."
+                )
+        else:
+            otag = eid
+        if partition_rank is not None and element_owner is not None:
+            if element_owner.get(eid) != partition_rank:
+                continue
+        out.append(int(otag))
+    return out
+
+
+def resolve_ele_load_commands(
+    spec: Plain,
+    fem: "FEMData",
+    ndm: int = 3,
+    *,
+    element_plan: "Sequence[tuple[Element, ElementPlanRows]] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    element_owner: "SortedIntToInt | Mapping[int, int] | None" = None,
+    partition_rank: int | None = None,
+) -> list[tuple[int | float | str, ...]]:
+    """Expand ``spec.ele_loads`` and element-form ``spec.from_model_cases``
+    into ``emitter.eleLoad(*args)`` argument tuples.
+    """
+    cmds: list[tuple[int | float | str, ...]] = []
+
+    # 1. Explicit Plain.ele_loads (beam_uniform / surface_load / self_weight).
+    for erec in spec.ele_loads:
+        ops_tags: list[int] = []
+        if erec.target_kind == "pg":
+            pg_name = str(erec.target)
+            macro_tags: list[int] = []
+            if element_plan is not None:
+                for el_spec, sub in element_plan:
+                    if getattr(el_spec, "pg", None) == pg_name:
+                        for i in range(len(sub)):
+                            if int(sub.eids[i]) == MISSING_FEM_ELEMENT_ID:
+                                macro_tags.append(int(sub._tag(i)))
+            fem_eids_list = [eid for eid, _conn in expand_pg_to_elements(fem, pg_name)]
+            if macro_tags and (
+                fem_eid_to_ops_tag is None
+                or not any(int(e) in fem_eid_to_ops_tag for e in fem_eids_list)
+            ):
+                ops_tags = macro_tags
+            else:
+                ops_tags = _translate_fem_eids_for_ele_load(
+                    fem_eids_list,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    element_owner=element_owner,
+                    partition_rank=partition_rank,
+                    where=f"Plain.{erec.load_type}(pg={pg_name!r})",
+                )
+                ops_tags.extend(macro_tags)
+        elif erec.target_kind == "label":
+            label_name = str(erec.target)
+            fem_eids_t = _expand_label_to_elements(fem, label_name)
+            ops_tags = _translate_fem_eids_for_ele_load(
+                fem_eids_t,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                element_owner=element_owner,
+                partition_rank=partition_rank,
+                where=f"Plain.{erec.load_type}(label={label_name!r})",
+            )
+        else:
+            assert isinstance(erec.target, tuple)
+            for item in erec.target:
+                if isinstance(item, Element):
+                    if element_plan is None:
+                        raise BridgeError(
+                            f"Plain.{erec.load_type}(ele=...): Element handle "
+                            "requires bridge element_plan."
+                        )
+                    matched = False
+                    for el_spec, sub in element_plan:
+                        if id(el_spec) == id(item):
+                            matched = True
+                            for i in range(len(sub)):
+                                eid_i = int(sub.eids[i])
+                                otag_i = int(sub._tag(i))
+                                if (
+                                    partition_rank is not None
+                                    and element_owner is not None
+                                    and eid_i != MISSING_FEM_ELEMENT_ID
+                                    and element_owner.get(eid_i) != partition_rank
+                                ):
+                                    continue
+                                ops_tags.append(otag_i)
+                            break
+                    if not matched:
+                        raise BridgeError(
+                            f"Plain.{erec.load_type}(ele=...): Element spec "
+                            f"{item!r} was not registered on the bridge."
+                        )
+                else:
+                    item_int = int(item)
+                    macro_hit = False
+                    if (
+                        element_plan is not None
+                        and fem_eid_to_ops_tag is not None
+                        and item_int not in fem_eid_to_ops_tag
+                    ):
+                        for _el_spec, sub in element_plan:
+                            for i in range(len(sub)):
+                                if (
+                                    int(sub.eids[i]) == MISSING_FEM_ELEMENT_ID
+                                    and int(sub._tag(i)) == item_int
+                                ):
+                                    ops_tags.append(item_int)
+                                    macro_hit = True
+                                    break
+                            if macro_hit:
+                                break
+                    if not macro_hit:
+                        ops_tags.extend(
+                            _translate_fem_eids_for_ele_load(
+                                (item_int,),
+                                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                                element_owner=element_owner,
+                                partition_rank=partition_rank,
+                                where=f"Plain.{erec.load_type}(ele={item!r})",
+                            )
+                        )
+
+        if not ops_tags:
+            continue
+        if erec.load_type == "beamUniform":
+            cmds.append(
+                (
+                    "-ele",
+                    *ops_tags,
+                    "-type",
+                    "-beamUniform",
+                    *_beam_uniform_args(erec, ndm),
+                )
+            )
+        elif erec.load_type == "surfaceLoad":
+            cmds.append(("-ele", *ops_tags, "-type", "-surfaceLoad"))
+        elif erec.load_type == "selfWeight":
+            cmds.append(
+                (
+                    "-ele",
+                    *ops_tags,
+                    "-type",
+                    "-selfWeight",
+                    *_self_weight_args(erec, ndm),
+                )
+            )
+
+    # 2. Element-form records from Plain.from_model(case).
+    if not spec.from_model_cases:
+        return cmds
+    elements_obj = getattr(fem, "elements", None)
+    elem_load_set = (
+        getattr(elements_obj, "loads", None) if elements_obj is not None else None
+    )
+    if elem_load_set is None:
+        return cmds
+
+    case_records = [
+        rec
+        for case in spec.from_model_cases
+        for rec in elem_load_set.by_pattern(case)
+    ]
+    if not case_records:
+        return cmds
+
+    target_eids = {int(r.element_id) for r in case_records}
+    plan_info: dict[int, tuple[Element | None, tuple[int, ...], int]] = {}
+    if element_plan is not None:
+        for el_spec, sub in element_plan:
+            for i in range(len(sub)):
+                eid_i = int(sub.eids[i])
+                if eid_i in target_eids:
+                    _e, conn_i, tag_i = sub[i]
+                    plan_info[eid_i] = (el_spec, conn_i, tag_i)
+    elif elements_obj is not None:
+        if getattr(elements_obj, "physical", None) is not None:
+            for pg_name in elements_obj.physical.names():
+                for eid_i, conn_row in expand_pg_to_elements(fem, pg_name):
+                    ei = int(eid_i)
+                    if ei in target_eids and ei not in plan_info:
+                        otag_i = (
+                            int(fem_eid_to_ops_tag.get(ei) or ei)
+                            if fem_eid_to_ops_tag is not None
+                            else ei
+                        )
+                        plan_info[ei] = (
+                            None,
+                            tuple(int(n) for n in conn_row),
+                            otag_i,
+                        )
+        groups_map = getattr(elements_obj, "groups", None)
+        if isinstance(groups_map, Mapping):
+            for grp in groups_map.values():
+                g_ids = getattr(grp, "ids", ())
+                g_conn = getattr(grp, "connectivity", ())
+                for eid_i, conn_row in zip(g_ids, g_conn):
+                    ei = int(eid_i)
+                    if ei in target_eids and ei not in plan_info:
+                        otag_i = (
+                            int(fem_eid_to_ops_tag.get(ei) or ei)
+                            if fem_eid_to_ops_tag is not None
+                            else ei
+                        )
+                        plan_info[ei] = (
+                            None,
+                            tuple(int(n) for n in conn_row),
+                            otag_i,
+                        )
+
+    needed_nodes = {
+        int(n) for _spec, conn, _tag in plan_info.values() for n in conn[:2]
+    }
+    coord_of: dict[int, np.ndarray] = {}
+    if needed_nodes and getattr(fem, "nodes", None) is not None:
+        ids = np.asarray(fem.nodes.ids)
+        coords = np.asarray(fem.nodes.coords, dtype=float)
+        coord_of = {
+            int(t): coords[i]
+            for i, t in enumerate(ids)
+            if int(t) in needed_nodes
+        }
+
+    for rec in case_records:
+        eid = int(rec.element_id)
+        if element_plan is not None or fem_eid_to_ops_tag is not None:
+            if eid not in plan_info:
+                otag_check = (
+                    fem_eid_to_ops_tag.get(eid)
+                    if fem_eid_to_ops_tag is not None
+                    else None
+                )
+                if otag_check is None:
+                    raise BridgeError(
+                        f"from_model({rec.pattern!r}): ElementLoadRecord "
+                        f"(load_type={rec.load_type!r}) targets FEM element "
+                        f"id {eid}, but no OpenSees Element primitive was "
+                        "emitted for that element."
+                    )
+        if partition_rank is not None and element_owner is not None:
+            if element_owner.get(eid) != partition_rank:
+                continue
+
+        elem_spec, conn, otag = plan_info.get(
+            eid,
+            (
+                None,
+                (),
+                int(fem_eid_to_ops_tag.get(eid) or eid)
+                if fem_eid_to_ops_tag is not None
+                else eid,
+            ),
+        )
+        if rec.load_type in ("beamUniform", "line_load"):
+            if elem_spec is not None and _element_transf(elem_spec) is None:
+                raise BridgeError(
+                    f"from_model({rec.pattern!r}): {rec.load_type} on element {eid} "
+                    f"requires a beam-column element with a geomTransf, got "
+                    f"{type(elem_spec).__name__} (not a beam-column element)."
+                )
+            wx1 = float(rec.params.get("wx", 0.0))
+            wy1 = float(rec.params.get("wy", 0.0))
+            wz1 = float(rec.params.get("wz", 0.0))
+            wx2 = float(rec.params.get("wx_end", wx1))
+            wy2 = float(rec.params.get("wy_end", wy1))
+            wz2 = float(rec.params.get("wz_end", wz1))
+            a_l = float(rec.params.get("aL", 0.0))
+            b_l = float(rec.params.get("bL", 1.0))
+            if len(conn) < 2:
+                raise BridgeError(
+                    f"from_model({rec.pattern!r}): beamUniform on element {eid} "
+                    f"requires 2 endpoint nodes, got connectivity {conn!r}."
+                )
+            p_i = coord_of[int(conn[0])]
+            p_j = coord_of[int(conn[1])]
+            edge = p_j - p_i
+            length = float(np.linalg.norm(edge))
+            if length <= 0.0:
+                raise BridgeError(
+                    f"from_model({rec.pattern!r}): beamUniform on element {eid} "
+                    "has zero length."
+                )
+            e_x = edge / length
+            if ndm == 2:
+                if wz1 != 0.0 or wz2 != 0.0:
+                    raise _BridgeValueError(
+                        f"from_model({rec.pattern!r}): beamUniform on element {eid} "
+                        f"has non-zero out-of-plane wz=({wz1}, {wz2}) in a 2D "
+                        "model (ndm=2)."
+                    )
+                e_y = np.array([-e_x[1], e_x[0], 0.0], dtype=float)
+                q1 = np.array([wx1, wy1, 0.0], dtype=float)
+                q2 = np.array([wx2, wy2, 0.0], dtype=float)
+                wx_loc_a = _clean_zero(float(np.dot(q1, e_x)))
+                wy_loc_a = _clean_zero(float(np.dot(q1, e_y)))
+                wx_loc_b = _clean_zero(float(np.dot(q2, e_x)))
+                wy_loc_b = _clean_zero(float(np.dot(q2, e_y)))
+                erec_proj = _EleLoadRecord(
+                    load_type="beamUniform",
+                    target_kind="ele",
+                    target=(otag,),
+                    wy=(wy_loc_a, wy_loc_b),
+                    wz=None,
+                    wx=(wx_loc_a, wx_loc_b),
+                    aL=a_l,
+                    bL=b_l,
+                )
+            else:
+                v_xz = _resolve_beam_vecxz(elem_spec, p_i, p_j, fem, eid)
+                cross_y = np.cross(v_xz, e_x)
+                norm_y = float(np.linalg.norm(cross_y))
+                if norm_y <= 1e-12:
+                    raise BridgeError(
+                        f"from_model({rec.pattern!r}): beamUniform on element {eid} "
+                        "has geomTransf vecxz parallel to element chord."
+                    )
+                e_y = cross_y / norm_y
+                e_z = np.cross(e_x, e_y)
+                q1 = np.array([wx1, wy1, wz1], dtype=float)
+                q2 = np.array([wx2, wy2, wz2], dtype=float)
+                wx_loc_a = _clean_zero(float(np.dot(q1, e_x)))
+                wy_loc_a = _clean_zero(float(np.dot(q1, e_y)))
+                wz_loc_a = _clean_zero(float(np.dot(q1, e_z)))
+                wx_loc_b = _clean_zero(float(np.dot(q2, e_x)))
+                wy_loc_b = _clean_zero(float(np.dot(q2, e_y)))
+                wz_loc_b = _clean_zero(float(np.dot(q2, e_z)))
+                erec_proj = _EleLoadRecord(
+                    load_type="beamUniform",
+                    target_kind="ele",
+                    target=(otag,),
+                    wy=(wy_loc_a, wy_loc_b),
+                    wz=(wz_loc_a, wz_loc_b),
+                    wx=(wx_loc_a, wx_loc_b),
+                    aL=a_l,
+                    bL=b_l,
+                )
+            cmds.append(
+                (
+                    "-ele",
+                    otag,
+                    "-type",
+                    "-beamUniform",
+                    *_beam_uniform_args(erec_proj, ndm),
+                )
+            )
+        elif rec.load_type in ("surfacePressure", "surfaceLoad"):
+            cmds.append(("-ele", otag, "-type", "-surfaceLoad"))
+        elif rec.load_type in ("bodyForce", "selfWeight"):
+            if "g" in rec.params:
+                g_vec = rec.params["g"]
+                wx_sw, wy_sw, wz_sw = (
+                    float(g_vec[0]),
+                    float(g_vec[1]),
+                    float(g_vec[2]),
+                )
+            elif "bf" in rec.params:
+                bf_vec = rec.params["bf"]
+                wx_sw, wy_sw, wz_sw = (
+                    float(bf_vec[0]),
+                    float(bf_vec[1]),
+                    float(bf_vec[2]),
+                )
+            else:
+                wx_sw = float(rec.params.get("wx", 0.0))
+                wy_sw = float(rec.params.get("wy", 0.0))
+                wz_sw = float(rec.params.get("wz", 0.0))
+            if ndm == 2:
+                if wz_sw != 0.0:
+                    raise _BridgeValueError(
+                        f"from_model({rec.pattern!r}): bodyForce on element {eid} "
+                        f"has non-zero wz={wz_sw} in a 2D model (ndm=2)."
+                    )
+                cmds.append(("-ele", otag, "-type", "-selfWeight", wx_sw, wy_sw))
+            else:
+                cmds.append(
+                    ("-ele", otag, "-type", "-selfWeight", wx_sw, wy_sw, wz_sw)
+                )
+        else:
+            raise BridgeError(
+                f"from_model({rec.pattern!r}): unsupported ElementLoadRecord "
+                f"load_type={rec.load_type!r} on element {eid}."
+            )
+    return cmds

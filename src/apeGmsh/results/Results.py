@@ -307,6 +307,12 @@ class Results:
         # on ``.mpco`` paths.
         self._model_path = model_path
         self._stages_cache: Optional[list[StageInfo]] = None
+        self._units_override: Optional[str] = None
+        self._source_units_override: Optional[str] = None
+        self._base_fem: "Optional[FEMData]" = fem
+        from ._units import resolve_results_units
+
+        resolve_results_units(self)
 
         # Composites
         self.nodes = NodeResultsComposite(self)
@@ -827,7 +833,8 @@ class Results:
         cache_dir = resolve_cache_root(cache_root) / "from_fem"
         cache_dir.mkdir(parents=True, exist_ok=True)
         snap = str(getattr(fem, "snapshot_id", "") or "model")
-        cached = cache_dir / f"{snap}.model.h5"
+        units_tag = f".{fem.units}" if getattr(fem, "units", None) else ""
+        cached = cache_dir / f"{snap}{units_tag}.model.h5"
         if not cached.exists():
             fem.to_h5(str(cached))
 
@@ -883,6 +890,74 @@ class Results:
         OpenSeesModel and its embedded FEMData can be reached.
         """
         return self._model
+
+    # ------------------------------------------------------------------
+    # Units & unit-system translation
+    # ------------------------------------------------------------------
+
+    @property
+    def units(self) -> "Optional[str]":
+        """The active consistent unit system ID (e.g. ``"kN_m_s"``), or
+        ``None`` when no unit system was declared."""
+        from ._units import resolve_results_units
+        return resolve_results_units(self)
+
+    @property
+    def source_units(self) -> "Optional[str]":
+        """The native (as-recorded) unit system ID of the underlying file
+        or model, or ``None`` when undeclared and no ``source=`` was given."""
+        from ._units import resolve_results_source_units
+        return resolve_results_source_units(self)
+
+    def unit_factor(
+        self,
+        component: str,
+        *,
+        level: "str | Any" = "nodes",
+        target: "Any" = None,
+        source: "Any" = None,
+    ) -> float:
+        """Return the multiplicative conversion factor for ``component`` at
+        ``level`` (``1.0`` when ``target=None``, or converting to ``target``).
+
+        Raises :class:`ValueError` when ``target`` is supplied on an
+        undeclared ``Results`` without an explicit ``source=``.
+        """
+        from ._units import compute_results_unit_factor
+        return compute_results_unit_factor(
+            self, component, level=level, target=target, source=source,
+        )
+
+    def unit_symbol(
+        self,
+        component: str,
+        *,
+        level: "str | Any" = "nodes",
+    ) -> str:
+        """Return the display unit symbol for ``component`` in :attr:`units`
+        (e.g. ``"kN"``, ``"MPa"``), or ``""`` when :attr:`units` is ``None``
+        or the component is dimensionless."""
+        from ._units import compute_results_unit_symbol
+        return compute_results_unit_symbol(self, component, level=level)
+
+    def to_units(
+        self,
+        target: "Any",
+        *,
+        source: "Any" = None,
+    ) -> "Results":
+        """Return a new :class:`Results` view whose slabs and bound
+        :attr:`fem` coordinates are scaled to ``target`` consistent units.
+
+        * When :attr:`units` is declared on the model or results file,
+          ``source`` is inferred automatically and may be omitted
+          (passing a conflicting ``source`` raises :class:`ValueError`).
+        * When :attr:`units` is ``None`` (undeclared), ``source`` is
+          **required** — omitting it raises :class:`ValueError` asking the
+          caller to specify the source unit system explicitly.
+        """
+        from ._units import build_scaled_results
+        return build_scaled_results(self, target, source=source)
 
     def energy(
         self,
@@ -1116,9 +1191,10 @@ class Results:
         from ..opensees.emitter.h5_reader import PROGRAM_DECL_COMPLETE
         from .readers._native import NativeReader
 
-        if not isinstance(self._reader, NativeReader):
+        reader = getattr(self._reader, "base_reader", self._reader)
+        if not isinstance(reader, NativeReader):
             return None
-        h5 = self._reader._h5
+        h5 = reader._h5
         try:
             if "opensees" not in h5:
                 return None
@@ -1141,8 +1217,23 @@ class Results:
         with a results file from the same run is the user's
         responsibility.
         """
+        from ._units import resolve_results_units
+
         bound = _resolve_fem(self._reader, fem)
-        return self._derive(fem=bound)
+        derived = self._derive(fem=bound)
+        if (
+            self._units_override is not None
+            and bound is not None
+            and getattr(bound, "units", None) is not None
+            and bound.units not in (self.units, self.source_units)
+        ):
+            raise ValueError(
+                f"Conflicting unit declarations on Results.bind: "
+                f"Results has units={self.units!r}, but fem declares "
+                f"units={bound.units!r}."
+            )
+        resolve_results_units(derived)
+        return derived
 
     def _element_reads_fem_keyed(self) -> bool:
         """True when element-level reads return a fem_eid-keyed index.
@@ -2204,6 +2295,13 @@ class Results:
         )
         new._model_path = self._model_path
         new._stages_cache = self._stages_cache
+        new._units_override = getattr(self, "_units_override", None)
+        new._source_units_override = getattr(self, "_source_units_override", None)
+        new._base_fem = (
+            getattr(self, "_base_fem", self._fem)
+            if isinstance(fem, _Sentinel)
+            else fem
+        )
         new.nodes = NodeResultsComposite(new)
         new.elements = ElementResultsComposite(new)
         new.inspect = ResultsInspect(new)

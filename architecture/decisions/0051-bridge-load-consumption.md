@@ -270,6 +270,15 @@ BRIDGE-1 follow-up named in §7 and open question 3 now ship.
 Open question 3 is thereby answered in its no-argument form only; a
 by-case or by-target `from_model` for fixes remains undesigned.
 
+## Amendment (2026-10-17) — Element-form load consumption (`eleLoad`) and `Plain` direct element loads
+
+1. **`Plain.from_model(case)` consumes `fem.elements.loads.by_pattern(case)`** in addition to nodal loads and prescribed SPs, and `validate_from_model_cases` includes `fem.elements.loads.patterns()` when checking whether a case is non-empty.
+   - `beamUniform` records targeting beam elements (`elasticBeamColumn`, `ForceBeamColumn`, `DispBeamColumn`, `TimoshenkoBeamColumn`, `ElasticTimoshenkoBeam`) project their global load vector `(wx, wy, wz)` (and `(wx_end, wy_end, wz_end)` for partial/trapezoidal loads) onto the element's local axes `(x_local, y_local, z_local)` derived from its node coordinates and `geomTransf` `vecxz` (`x_local = (xj - xi) / L`; in 2D `y_local = (-x_local[1], x_local[0])`; in 3D `y_local = unit(v_xz x x_local)`, `z_local = x_local x y_local`), then emit `eleLoad -ele <tag> -type -beamUniform ...`. Non-beam targets raise `BridgeError`.
+   - `surfacePressure` records emit `eleLoad -ele <tag> -type -surfaceLoad` (Ladruno fork extension).
+   - `bodyForce` records on elements emit `eleLoad -ele <tag> -type -selfWeight <wx> <wy> [wz]`.
+2. **Direct element-load helpers on `ops.pattern.Plain`**: `p.beam_uniform(...)`, `p.surface_load(...)`, and `p.self_weight(...)` accept `pg=`, `label=`, or `ele=` targeting and record `_EleLoadRecord` entries expanded across flat, staged, and partitioned emit paths, plus `model.h5` round-trip.
+3. **Stock OpenSees refusal gate**: `LiveOpsEmitter.eleLoad` gates partial/trapezoidal `-beamUniform` (`> 2` trailing floats in 2D, `> 3` in 3D) and `-surfaceLoad` via `_stock_build_gate`, since stock `OpenSeesPy` omits the partial-span `OPS_Beam2dPartialUniformLoad` / `OPS_Beam3dPartialUniformLoad` branches in `OpenSeesCommands.cpp` and `SurfaceLoad` is a Ladruno extension.
+
 ## Related
 
 - [ADR 0050](0050-dimension-indexed-loads-and-displacements.md) — the

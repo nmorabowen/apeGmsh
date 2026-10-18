@@ -14,8 +14,9 @@
 
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
+import { selectedElementsOf } from "../state/selectors.ts";
 import type { State } from "../state/types.ts";
-import { DARK, toHexNumber } from "../theme/tokens.ts";
+import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 
 /** The layer the highlight objects also live on; the mask pass renders it alone. */
 export const HALO_LAYER = 1;
@@ -137,7 +138,7 @@ export function hitElement(
       return { element: lineElement[drawn.lineMap[h.faceIndex!]!]!, point: h.point };
     }
   }
-  if (faces) {
+  if (faces && faces.visible) {
     const hit = raycaster.intersectObject(faces, false)[0];
     if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) return { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point };
   }
@@ -185,10 +186,12 @@ export function selectionBounds(
  */
 export function focusOf(s: State, blobs: BlobStore): Focus | null {
   const info = s.mesh;
-  if (!info || s.selection.decls.length === 0) return null;
+  const sel = selectedElementsOf(s);
+  if (!info || sel.length === 0) return null;
+  const selSet = new Set<string>(sel);
   const selected = new Set<number>();
   info.elements.forEach((p, i) => {
-    if (s.selection.decls.includes(p)) selected.add(i);
+    if (selSet.has(p)) selected.add(i);
   });
   if (selected.size === 0) return null;
   const lines: number[] = [], tris: number[] = [];
@@ -273,6 +276,11 @@ export class SelectionHalo {
       }),
     );
     this.pass.add(this.quad);
+  }
+
+  /** Update the halo ring colour for the active theme. */
+  setTheme(mode: ThemeMode): void {
+    (this.quad.material.uniforms["colour"]!.value as THREE.Color).setHex(toHexNumber(themeTokens(mode).halo));
   }
 
   /** The canvas size in CSS pixels and the device pixel ratio; the mask follows on its next use. */

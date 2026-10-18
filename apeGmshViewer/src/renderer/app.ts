@@ -9,9 +9,11 @@ import { mountEmpty } from "../panels/empty.ts";
 import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
+import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
+import { mountSpotlight } from "../panels/spotlight.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { offsetRange } from "../state/clip.ts";
@@ -20,9 +22,11 @@ import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVer
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
+import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
+import { mountViewCube } from "./viewcube.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -37,9 +41,55 @@ effects.setFrameTarget(viewport);
 viewport.setStepSource(() => effects.currentStep());
 // V4d: the deformed shape moves the drawn vertices by the displacement the effects computed for the step shown.
 viewport.setDisplacementSource(() => effects.currentDisplacement());
-const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
+// 3-D line diagrams: ribbon + profile + risers from the step the effects fetched.
+viewport.setLineDiagramSource(() => effects.currentLineDiagram());
+const panels = [
+  mountHeader(store),
+  mountBanner(store),
+  mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
+  mountLegend(store, (fn) => viewport.onViewChange(fn)),
+  mountInspector(store),
+  mountEmpty(store),
+  mountPhase(store),
+  mountSources(store),
+  mountWindows(store),
+  mountSpotlight(store),
+];
 // V4e1: the section planes panel; its slider box and the view direction come from the viewport.
 panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal(), sliding: (on) => viewport.setSliding(on) }));
+panels.push(
+  mountViewCube({
+    visible: () => {
+      const s = store.get();
+      return s.mesh !== null || s.geometry !== null;
+    },
+    heading: () => viewport.nav.heading,
+    projection: () => viewport.projection,
+    setProjection: (mode) => viewport.setProjection(mode),
+    theme: () => viewport.theme,
+    setTheme: (mode) => {
+      applyTheme(document, mode);
+      viewport.setTheme(mode);
+    },
+    snapTo: (h) => viewport.nav.snapTo(h),
+    orbit: (dYaw, dTilt) => viewport.nav.orbit(viewport.nav.target, dYaw, dTilt),
+    home: () => viewport.home(),
+    subscribe: (fn) => viewport.onViewChange(fn),
+  }),
+);
+const chrome = mountCollapsibleChrome({
+  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram"],
+  visible: () => {
+    const s = store.get();
+    return s.mesh !== null || s.provenance.length > 0;
+  },
+  onRailToggle: (collapsed) => viewport.setRailCollapsed(collapsed),
+});
+const unsubChrome = store.subscribe(() => chrome.syncVisibility());
+panels.push(() => {
+  unsubChrome();
+  chrome.dispose();
+});
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
@@ -239,6 +289,92 @@ async function captureResults(path: string, settle: (ms?: number) => Promise<unk
     if (stages[0]!.time.length > 1) store.dispatch({ type: "setResultStep", step: stages[0]!.time.length - 1 });
     await still(`results-0-${safe(stages[0]!.name)}.1280`);
   }
+}
+
+/**
+ * 3-D line diagram stills on a `.ladruno` stage with `lineStations`:
+ * (1) `line-diagram-1-mz-sign`: Mz with ghosted slabs (`opacity 0.35`) and two-tone sign colouring,
+ * (2) `line-diagram-2-mz-deformed-selected`: Mz on deformed shape (`scale 10`, reference ghost) with two contiguous beams selected (`select` + `selectAdd`) and surfaces `off` (`opacity 0`),
+ * (3) `line-diagram-3-with-contour`: simultaneous Contour (`DISPLACEMENT` on quad4 floor slabs) + Line diagram (`Mz` on 1-D frame) + Deformed shape (`scale 10`).
+ */
+async function captureLineDiagrams(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  const stageIdx = stages.findIndex((st) => (st.lineStations?.length ?? 0) > 0);
+  if (stageIdx < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const st = stages[stageIdx]!;
+  const last = Math.max(0, st.time.length - 1);
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setDeformScale", scale: 1 });
+  store.dispatch({ type: "setReferenceGhost", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setOpacity", value: 0.35 });
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: stageIdx, step: last } });
+  const comp = st.lineStations!.includes("Mz") ? "Mz" : st.lineStations![0]!;
+  store.dispatch({ type: "setLineDiagramComponent", component: comp });
+  store.dispatch({ type: "setLineDiagramRange", range: "step" });
+  store.dispatch({ type: "setLineDiagramCmap", cmap: "sign" });
+  store.dispatch({ type: "setLineDiagram", on: true });
+  await until(() => store.get().resultStep?.status === "ready" && store.get().lineDiagram.stepRange !== null, 15000);
+  await settle(150);
+  viewport.renderNow();
+  await painted();
+  await painted();
+  await bridge.captureStill("line-diagram-1-mz-sign");
+
+  // Second still: deformed shape + surfaces off + two beams selected (`select` + `selectAdd`)
+  store.dispatch({ type: "setOpacity", value: 0 });
+  if (deformOf(store.get()).ok) {
+    store.dispatch({ type: "setDeform", on: true });
+    store.dispatch({ type: "setDeformScale", scale: 10 });
+    store.dispatch({ type: "setReferenceGhost", on: true });
+  }
+  const beams = (store.get().mesh?.elements ?? []).filter((d) => store.get().decls[d]?.element?.cell?.alias.startsWith("line"));
+  if (beams.length >= 2) {
+    store.dispatch({ type: "select", pick: { decl: beams[0]!, at: null, nodes: null } });
+    store.dispatch({ type: "selectAdd", pick: { decl: beams[1]!, at: null, nodes: null } });
+  }
+  await settle(150);
+  viewport.renderNow();
+  await painted();
+  await painted();
+  await bridge.captureStill("line-diagram-2-mz-deformed-selected");
+
+  // Third still: simultaneous Contour (DISPLACEMENT on quad4 floor slabs) + Line diagram (Mz on 1-D frame) + Deformed shape (scale 10)
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setOpacity", value: 0.75 });
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  store.dispatch({ type: "setContourRange", range: "history" });
+  const nf = contourFieldsOf(store.get())?.fields[0];
+  if (nf && nf.components[0]) {
+    store.dispatch({ type: "setContourField", source: "nodal", field: nf.name, component: nf.components[0].key });
+  }
+  await until(
+    () =>
+      contourShown() &&
+      store.get().contour.scan?.status === "done" &&
+      deformShown() &&
+      store.get().lineDiagram.stepRange !== null,
+    30000,
+  );
+  await settle(150);
+  viewport.renderNow();
+  await painted();
+  await painted();
+  await bridge.captureStill("line-diagram-3-with-contour");
+
+  // Restore state for subsequent capture steps
+  store.dispatch({ type: "setLineDiagram", on: false });
+  store.dispatch({ type: "setLineDiagramRange", range: "history" });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setDeformScale", scale: 1 });
+  store.dispatch({ type: "setReferenceGhost", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setOpacity", value: 1 });
+  store.dispatch({ type: "clearSelection" });
 }
 
 /** Poll the store (every 20 ms, at most `ms`) until `ok` holds; false on timeout. */
@@ -1103,6 +1239,8 @@ async function main() {
     await captureContours(settle, width, height);
     // V4d (D7): the deformed-shape stills, at the capture window's own width, then 1280 px.
     await captureDeform(settle, width, height);
+    // V4f (D7): the 3-D line-diagram stills (including simultaneous contour + line diagram).
+    await captureLineDiagrams(settle, width, height);
     // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
     await captureElements(settle, width, height);
     // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).

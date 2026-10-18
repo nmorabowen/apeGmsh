@@ -61,7 +61,11 @@ export class SetWatcher {
     this.opts = opts;
     this.cands = candidates(opened);
     this.dir = dirname(opened);
-    this.paths = new Map(Object.values(this.cands).map((p) => [key(basename(p)), p]));
+    const watched = Object.values(this.cands);
+    if (this.cands.results.toLowerCase().endsWith(".results.h5")) {
+      watched.push(`${this.cands.results.slice(0, -".results.h5".length)}.ladruno`);
+    }
+    this.paths = new Map(watched.map((p) => [key(basename(p)), p]));
     for (const p of this.paths.values()) this.reported.set(p, signature(p));
     this.set = this.current();
   }

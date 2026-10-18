@@ -64,6 +64,7 @@ from ._mpco_translation import (
     PARTITION_REDUCTION_NONE,
     PARTITION_REDUCTIONS,
     canonical_node_component,
+    locate_node_component,
     partition_reduction_from_name,
 )
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -550,6 +551,25 @@ class LadrunoReader:
 
     # -- model / fem ---------------------------------------------------
 
+    @property
+    def units(self) -> "Optional[str]":
+        """Canonical unit system ID from ``INFO/PROVENANCE@units``, or ``None``."""
+        info = self._h5["INFO"] if "INFO" in self._h5 else None
+        if info is None or "PROVENANCE" not in info:
+            return None
+        prov = info["PROVENANCE"]
+        if "units" not in prov.attrs:
+            return None
+        raw = _decode(prov.attrs["units"]).strip()
+        if not raw:
+            return None
+        from ...units import resolve_unit_system
+
+        try:
+            return resolve_unit_system(raw)
+        except (TypeError, ValueError):
+            return None
+
     def fem(self) -> "Optional[FEMData]":
         if not isinstance(self._fem_cache, _Sentinel):
             return self._fem_cache  # type: ignore[return-value]
@@ -575,7 +595,9 @@ class LadrunoReader:
             self._fem_cache = None
             return None
         from ...mesh.FEMData import FEMData
-        self._fem_cache = FEMData.from_ladruno_model(model_grp)
+        built_fem = FEMData.from_ladruno_model(model_grp)
+        built_fem.units = self.units
+        self._fem_cache = built_fem
         return self._fem_cache  # type: ignore[return-value]
 
     def opensees_model(self) -> "Optional[OpenSeesModel]":
@@ -718,15 +740,17 @@ class LadrunoReader:
     def _locate_node_component(
         self, on_nodes: "h5py.Group", component: str,
     ) -> "Optional[tuple[str, int]]":
-        for res_name in on_nodes:
-            res = on_nodes[res_name]
-            if "COMPONENTS" not in res.attrs:
-                continue
-            labels = _decode(res.attrs["COMPONENTS"]).split(",")
-            for col, label in enumerate(labels):
-                if canonical_node_component(res_name, label.strip()) == component:
-                    return res_name, col
-        return None
+        # The group comes from the translation's precedence, never from
+        # HDF5 iteration order.
+        return locate_node_component(
+            (
+                (res_name, _decode(on_nodes[res_name].attrs["COMPONENTS"])
+                 .split(","))
+                for res_name in on_nodes
+                if "COMPONENTS" in on_nodes[res_name].attrs
+            ),
+            component,
+        )
 
     def node_partition_reduction(
         self, stage_id: str, component: str,

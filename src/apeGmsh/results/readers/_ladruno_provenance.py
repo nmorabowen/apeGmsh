@@ -54,6 +54,7 @@ PROVENANCE_ATTRS: tuple[str, ...] = (
     "model_hash", "fem_hash", "stage_names", "element_index_space",
     "unsupported", "writer",
 )
+_OWNED_ATTRS: tuple[str, ...] = (*PROVENANCE_ATTRS, "units")
 
 _PROVENANCE = "INFO/PROVENANCE"
 _STAGE_PREFIX = "MODEL_STAGE["
@@ -151,7 +152,7 @@ def stamp_provenance(
     parts = _discover_parts(Path(path))
     _refuse_if_open_here(parts)
     model_hash, fem_hash = _lineage_hashes(Path(model_h5))
-    program_names, program_kinds, kind_error, pairing = _program_facts(
+    program_names, program_kinds, kind_error, pairing, model_units = _program_facts(
         Path(model_h5),
     )
     if names_override is not None:
@@ -167,6 +168,8 @@ def stamp_provenance(
             "unsupported": _json(lossy),
             "writer": writer_text,
         }
+        if model_units is not None:
+            wanted["units"] = str(model_units)
         names = _stage_names_for(
             part, facts.kinds, program_names, program_kinds, kind_error,
         )
@@ -350,7 +353,7 @@ def _as_text(raw: Any, where: str) -> str:
 
 def _program_facts(
     model_h5: Path,
-) -> "tuple[list[str], list[str], Optional[str], dict[int, int]]":
+) -> "tuple[list[str], list[str], Optional[str], dict[int, int], Optional[str]]":
     """The program's stage names and kinds, and its ops-tag → fem_eid map.
 
     ``kind_error`` is the reason the kinds are unknown (a stage with no
@@ -369,7 +372,7 @@ def _program_facts(
     except ValueError as e:
         kind_error = str(e)
     pairing = {int(rec.tag): int(rec.fem_eid) for rec in model.elements()}
-    return names, kinds, kind_error, pairing
+    return names, kinds, kind_error, pairing, model.units
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +434,7 @@ def _read_part(path: Path) -> _PartFacts:
         owned: dict[str, str] = {}
         malformed: list[str] = []
         all_vlen = True
-        for name in PROVENANCE_ATTRS:
+        for name in _OWNED_ATTRS:
             if name not in prov.attrs:
                 continue
             dtype = prov.attrs.get_id(name).dtype
@@ -707,7 +710,7 @@ def _write(prov: "h5py.Group", wanted: "dict[str, str]") -> None:
     import h5py
 
     vlen = h5py.string_dtype("utf-8")
-    for name in PROVENANCE_ATTRS:
+    for name in _OWNED_ATTRS:
         if name in wanted:
             prov.attrs.create(name, data=wanted[name], dtype=vlen)
         elif name in prov.attrs:

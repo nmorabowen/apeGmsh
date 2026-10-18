@@ -546,6 +546,12 @@
       "skill": "references/fem-broker.md",
       "symbol": "FEMData.with_mass"
     },
+    "FEMData.with_units": {
+      "doc": "Return a shallow copy with ``units`` set to the canonical unit system ID.",
+      "signature": "with_units(units: \"'Any'\") -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.with_units"
+    },
     "Job": {
       "doc": "Handle to one submitted job. Construct via ``Cluster.submit`` or ``Job.load``.",
       "signature": "Job(cluster: 'Cluster', name: 'str', slurm_id: 'int', remote_dir: 'str', local_dir: 'Path', deck: 'str') -> None",
@@ -785,6 +791,24 @@
       "signature": "stage(name_or_id: 'str') -> \"'Results'\"",
       "skill": "references/results.md",
       "symbol": "Results.stage"
+    },
+    "Results.to_units": {
+      "doc": "Return a new :class:`Results` view whose slabs and bound",
+      "signature": "to_units(target: \"'Any'\", *, source: \"'Any'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "symbol": "Results.to_units"
+    },
+    "Results.unit_factor": {
+      "doc": "Return the multiplicative conversion factor for ``component`` at",
+      "signature": "unit_factor(component: 'str', *, level: \"'str | Any'\" = 'nodes', target: \"'Any'\" = None, source: \"'Any'\" = None) -> 'float'",
+      "skill": "references/results.md",
+      "symbol": "Results.unit_factor"
+    },
+    "Results.unit_symbol": {
+      "doc": "Return the display unit symbol for ``component`` in :attr:`units`",
+      "signature": "unit_symbol(component: 'str', *, level: \"'str | Any'\" = 'nodes') -> 'str'",
+      "skill": "references/results.md",
+      "symbol": "Results.unit_symbol"
     },
     "Results.viewer": {
       "doc": "Open the post-solve results window on a ``ResultsSession``.",
@@ -1088,7 +1112,7 @@
     },
     "g.from_h5": {
       "doc": "Construct a session in chain phase directly from a saved FEMData.",
-      "signature": "from_h5(path: \"'str | Path'\", *, model_name: 'str | None' = None, verbose: 'bool' = False) -> \"'apeGmsh'\"",
+      "signature": "from_h5(path: \"'str | Path'\", *, model_name: 'str | None' = None, units: 'Any' = None, verbose: 'bool' = False) -> \"'apeGmsh'\"",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.from_h5"
     },
@@ -1208,7 +1232,7 @@
     },
     "g.loads.line": {
       "doc": "Distributed load (force per unit length) along the curve(s)",
-      "signature": "line(target=None, *, pg=None, label=None, tag=None, magnitude=None, direction=(0.0, 0.0, -1.0), q_xyz=None, normal=False, away_from=None, reduction='tributary', target_form='nodal', basis='lagrange', name=None) -> 'LineLoadDef'",
+      "signature": "line(target=None, *, pg=None, label=None, tag=None, magnitude=None, direction=(0.0, 0.0, -1.0), q_xyz=None, normal=False, away_from=None, span=(0.0, 1.0), reduction='tributary', target_form='nodal', basis='lagrange', name=None) -> 'LineLoadDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.loads.line"
     },
@@ -3072,6 +3096,12 @@
       "skill": "references/section-properties.md",
       "symbol": "g.sections.tee_solid"
     },
+    "g.set_units": {
+      "doc": "Declare or update the session's consistent unit system.",
+      "signature": "set_units(units: 'Any') -> 'None'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.set_units"
+    },
     "g.view.add_element_scalar": {
       "doc": "Add a scalar field with one value per element.",
       "signature": "add_element_scalar(name: 'str', elem_tags: 'list[int] | ndarray', values: 'list[float] | ndarray', *, step: 'int' = 0, time: 'float' = 0.0) -> 'Tag'",
@@ -3479,6 +3509,12 @@
       "signature": "LadrunoLST(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', plane_type: 'str' = 'PlaneStrain', geom: 'str' = 'linear', pressure: 'float | None' = None, rho: 'float | None' = None, body_force: 'tuple[float, float] | None' = None) -> 'LadrunoLST'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoLST"
+    },
+    "ops.element.LadrunoMembrane": {
+      "doc": "``element LadrunoMembrane`` — polygon floor/wall diaphragm and load distributor.",
+      "signature": "LadrunoMembrane(*, pg: 'str | None' = None, nodes: 'Sequence[int | str | Node] | None' = None, frames: 'Sequence[int | str | Element] | int | str | Element | None' = None, support_nodes: 'Sequence[int | str | Node | NodeSet] | int | str | Node | NodeSet | None' = None, holes: 'Sequence[Sequence[int | str | Node] | str] | str | None' = None, method: 'str' = 'tributary', span_axis: 'Sequence[float] | None' = None, ortho_ratio: 'float | None' = None, pressure: 'float | None' = None, section: 'ElasticMembranePlateSection | str | None' = None, mat: 'NDMaterial | str | None' = None, E: 'float | None' = None, nu: 'float | None' = None, thickness: 'float | None' = None, thick: 'float | None' = None, stiff: 'tuple[float, float, float] | Sequence[float] | None' = None, rho: 'float | None' = None, lumped: 'bool' = False, mesh_size: 'float | None' = None, damp: 'Damping | None' = None) -> 'LadrunoMembrane'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.element.LadrunoMembrane"
     },
     "ops.element.LadrunoQuad": {
       "doc": "",

@@ -329,6 +329,28 @@ class NativeReader:
     # FEM access
     # ------------------------------------------------------------------
 
+    @property
+    def units(self) -> "Optional[str]":
+        """The declared consistent unit system ID from ``/model/meta/@units``,
+        or ``None`` when absent."""
+        if _native.MODEL_GROUP[1:] not in self._h5:
+            return None
+        model_grp = self._h5[_native.MODEL_GROUP[1:]]
+        if "meta" not in model_grp or "units" not in model_grp["meta"].attrs:
+            return None
+        from ...units import resolve_unit_system
+
+        raw = model_grp["meta"].attrs["units"]
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        raw_str = str(raw).strip()
+        if not raw_str:
+            return None
+        try:
+            return resolve_unit_system(raw_str)
+        except (TypeError, ValueError):
+            return None
+
     def fem(self) -> "Optional[FEMData]":
         if _native.MODEL_GROUP[1:] not in self._h5:
             return None

@@ -234,6 +234,7 @@ filterwarnings = [
     "ignore::apeGmsh.opensees.apesees.OpenSeesAutoEmitWarning",
     "ignore::apeGmsh.core._parts_fragmentation.UnregisteredPartEntityWarning",
     "ignore::apeGmsh.results._bind.ModelFemMismatchWarning",
+    "ignore::apeGmsh.units.UnitNotDeclaredWarning",
 ]
 
 [tool.pyright]

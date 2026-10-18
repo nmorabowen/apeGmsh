@@ -82,7 +82,7 @@ from types import MappingProxyType
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Literal, NamedTuple, NoReturn, Sequence, cast
 
-from .base import DroppedAxisGuard, command_row
+from .base import DroppedAxisGuard, command_row, plain_scalar
 from .caps import SolveStamp, TargetCaps
 from .verbs import VERBS, Verb
 from .._internal.tag_resolution import (
@@ -1453,11 +1453,17 @@ def encode_decl_params(
         raise H5DeclParamsError(
             f"decl_params: {type(prim).__name__} is not a dataclass "
             "primitive; every registered primitive is one (P12).")
-    return {
+    out = {
         f.name: _encode_field(
             getattr(prim, f.name), key_of, f"{type(prim).__name__}.{f.name}")
         for f in dataclasses.fields(prim)
+        if not (f.name == "_ele_loads_" and not getattr(prim, "_ele_loads_", ()))
     }
+    ele_loads = getattr(prim, "_ele_loads_", ())
+    if ele_loads and "_ele_loads_" not in out:
+        out["_ele_loads_"] = _encode_field(
+            ele_loads, key_of, f"{type(prim).__name__}._ele_loads_")
+    return out
 
 
 def _encode_field(
@@ -3123,9 +3129,17 @@ class H5Emitter:
         pat.loads.append(rec)
 
     def eleLoad(self, *args: int | float | str) -> None:
-        self._active_pattern("eleLoad").ele_loads.append(
-            _EleLoadRecord(args=tuple(args))
+        pat = self._active_pattern("eleLoad")
+        args_tuple: tuple[int | float | str, ...] = tuple(
+            cast("int | float | str", plain_scalar(a)) for a in args
         )
+        scope = (
+            self._stage_current.name
+            if self._stage_current is not None else None
+        )
+        if self._partition_dup(("eleLoad", scope, pat.tag, args_tuple)):
+            return
+        pat.ele_loads.append(_EleLoadRecord(args=args_tuple))
 
     def sp(self, tag: int, dof: int, value: float) -> None:
         rec = _SPRecord(target=int(tag), dof=int(dof), value=float(value))

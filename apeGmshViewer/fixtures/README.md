@@ -333,3 +333,42 @@ measurements. It needs pyvista, not gmsh.
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --slice-oracle
 ```
+
+## `ladruno_*.ladruno` (ADR 0122 slice 4a, #2126)
+
+Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
+`make_ladruno_fixtures.py` (its docstring has each model and its closed form):
+
+- `ladruno_truss2d.ladruno` is a byte copy of the repository's
+  `tests/fixtures/ladruno/truss2d.ladruno` (fork build `605affeb`,
+  FORMAT_VERSION 1). It is unstamped, so `INFO/PROVENANCE` is the empty group
+  the recorder creates. Two trusses under a load ramp give
+  `Ux(node j, t) = 10 (j - 1) t / 1000`. Its element `basicForce` is what the
+  reader lists as unread.
+- `ladruno_truss2d.stamped.ladruno` is the same file with the six lowercase
+  attributes of the fork schema §7b.1 written by hand with h5py. Each one is a
+  scalar, variable-length UTF-8 string.
+- `ladruno_truss2d.badstamp.ladruno` is the same file stamped in the wrong
+  encodings: a fixed-length `model_hash`, an ASCII `fem_hash`, a `stage_names`
+  that is not a JSON array, an integer `unsupported`, and a `writer` that is
+  variable-length UTF-8 but a shape-(1,) array rather than a scalar.
+- `ladruno_modes.ladruno` comes from a fork run: a two-DOF truss chain
+  recorded with `modesOfVibration` and `modesOfVibrationRotational` after
+  `eigen`. Its eigenvalues are `1000 (3 -/+ sqrt 5) / 2`, and its stage is
+  `KIND=eigen`. It was made on fork build `79e062367`, the build the opensees
+  venv imports. That build predates the repository's `FORK_PIN`
+  (`c744d6e70`) and writes no `INFO/FORMAT_MINOR_VERSION`, so the file is
+  FORMAT_MINOR_VERSION 0. Regenerating it on a pin build would give minor 1,
+  and the closed forms would not change.
+
+The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
+for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
+`COMPONENTS` of the wrong count, step axes that disagree, and an inconsistent
+modal record.
+
+```powershell
+# the three h5py files (h5py and numpy only)
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py
+# and the modes file, which needs a Ladruno fork build behind openseespy
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --modes
+```

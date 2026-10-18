@@ -31,6 +31,8 @@
 // several is refused ("unsupported"), not merged (the doc's union rule is a
 // follow-up for the real reader).
 
+import { LINE_STATION_COMPONENTS, type LineStationComponent, type UnitSystemId } from "../state/types.ts";
+import { parseDeclaredUnits } from "../state/units.ts";
 import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./read.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
@@ -52,6 +54,7 @@ const ELEMENT_INDEX_SPACE_FEM = "fem";
 const STAGE_KINDS = new Set(["static", "transient", "mode"]);
 const ELEMENT_CATEGORIES = new Set(["gauss_points", "line_stations", "nodal_forces", "fibers", "layers"]);
 const GAUSS_INDEX = new Set(["_element_index", "_natural_coords", "_local_axes_quaternion"]);
+const LINE_STATION_INDEX = new Set(["_element_index", "_station_natural_coord", "_local_axes_quaternion"]);
 const H5T_FLOAT = 1;
 const H5T_STRING = 3;
 /** HDF5 `H5T_CSET_UTF8`; h5wasm reports it as `metadata.cset` (`H5T_CSET_ASCII` is 0). */
@@ -133,6 +136,61 @@ export interface GaussGroupInfo {
   naturalCoords: number[][] | null;
 }
 
+export interface LineStationGroupInfo {
+  id: string;
+  path: string;
+  classTag: number;
+  intRule: number;
+  nElements: number;
+  nStations: number;
+  components: string[];
+  refused: { component: string; reason: string }[];
+  localAxes: boolean;
+  /** `_station_natural_coord` (S,) in [-1, +1]. */
+  stationNaturalCoord: Float64Array;
+}
+
+export type LocalAxesSource = "step_local_axes" | "model_local_axes";
+
+/** One stage's multi-step (or single-step) line-station slab. */
+export interface LadrunoLineStationSlab {
+  component: LineStationComponent;
+  /** Row-major (nSteps, nStationsTotal) station values. */
+  values: Float64Array;
+  nSteps: number;
+  nStationsTotal: number;
+  /** (nStationsTotal,) element id per station column. */
+  elementIndex: Float64Array;
+  /** (nStationsTotal,) natural coordinate xi in [-1, +1] per station column. */
+  stationNaturalCoord: Float64Array;
+  /** (nSteps,) time values. */
+  time: Float64Array;
+  /** (nStationsTotal * 4,) scalar-first quaternion (w, x, y, z) per station, or null when no frames recorded; NaN rows for unrecorded elements. */
+  localAxesQuaternion: Float64Array | null;
+  /** (nStationsTotal * 3,) reference z_rec vector per station from step/model local axes, or null when no frames recorded; NaN rows for unrecorded elements. */
+  localAxesZRec: Float64Array | null;
+  /** (nStationsTotal,) provenance of each station's local axes (`"step_local_axes"` or `"model_local_axes"`), or null when no frames recorded. */
+  localAxesSources?: readonly (LocalAxesSource | null)[] | null;
+}
+
+/** One step's line-station data. */
+export interface LadrunoLineStationStep {
+  component: LineStationComponent;
+  /** (nStationsTotal,) station values at `step`. */
+  values: Float64Array;
+  /** (nStationsTotal,) element id per station. */
+  elementIndex: Float64Array;
+  /** (nStationsTotal,) natural coordinate xi in [-1, +1] per station. */
+  stationNaturalCoord: Float64Array;
+  time: number;
+  /** (nStationsTotal * 4,) scalar-first quaternion (w, x, y, z) per station, or null when no frames recorded. */
+  localAxesQuaternion: Float64Array | null;
+  /** (nStationsTotal * 3,) reference z_rec vector per station, or null when no frames recorded. */
+  localAxesZRec: Float64Array | null;
+  /** (nStationsTotal,) provenance of each station's local axes (`"step_local_axes"` or `"model_local_axes"`), or null when no frames recorded. */
+  localAxesSources?: readonly (LocalAxesSource | null)[] | null;
+}
+
 export interface StageInfo {
   id: string;
   name: string;
@@ -142,6 +200,7 @@ export interface StageInfo {
   partition: string;
   nodes: NodalInfo | null;
   gauss: GaussGroupInfo[];
+  lineStations?: LineStationGroupInfo[];
   /** Element categories present in the file that this spike does not read. */
   unread: string[];
 }
@@ -190,6 +249,8 @@ export interface ResultsIndex {
    * steps it lists are what was written so far (V4b seam "partial writes").
    */
   partial: string | null;
+  /** Consistent unit system declared in `/model/meta/@units` or `@units`, or null when undeclared. */
+  units: UnitSystemId | null;
 }
 
 /** The `/meta/lineage` hashes, each a 32-character hex string or null when the writer did not stamp it. */
@@ -236,6 +297,7 @@ export class ResultsFile {
     const stagesGroup = this.group(f, "stages");
     const ids = sortStageIds(stagesGroup.keys());
     const lineage = this.readLineage(f);
+    const units = parseDeclaredUnits(modelMeta?.attrs["units"]?.value ?? f.attrs["units"]?.value);
     this.index = {
       path,
       version,
@@ -248,6 +310,7 @@ export class ResultsFile {
       warnings,
       lineage,
       partial: partialOf(version, lineage),
+      units,
     };
   }
 
@@ -372,6 +435,172 @@ export class ResultsFile {
     return { mapping: "unverified", sourceType: st, reason: v.reason, rawIndex: rows };
   }
 
+  /**
+   * Canonical 1-D beam line-station components (`N, Vy, Vz, T, My, Mz, ...`)
+   * recorded in `stageId` under `elements/line_stations/<group>` (verified files only).
+   */
+  availableLineStations(stageId: string): LineStationComponent[] {
+    if (!this.elementSpace.verified) return [];
+    const s = this.stage(stageId);
+    const found = new Set<LineStationComponent>();
+    for (const g of s.lineStations ?? []) {
+      for (const comp of g.components) {
+        const canon = normalizeLineStationComponent(comp);
+        if (canon) found.add(canon);
+      }
+    }
+    return LINE_STATION_COMPONENTS.filter((c) => found.has(c));
+  }
+
+  /**
+   * Read one canonical (or raw) line-station component across all `line_stations`
+   * groups in `stageId`, either for all steps or for a single `options.step`.
+   */
+  readLineStations(
+    stageId: string,
+    component: string,
+    options?: { step?: number },
+  ): LadrunoLineStationSlab {
+    const canon = normalizeLineStationComponent(component);
+    if (!canon) {
+      throw new ResultsError("argument", `unknown line-station component ${JSON.stringify(component)}`);
+    }
+    if (!this.elementSpace.verified) {
+      throw new ResultsError("unsupported", `line-station results of ${this.index.path} are refused: ${this.elementSpace.reason}`);
+    }
+    const s = this.stage(stageId);
+    const step = options?.step;
+    if (step !== undefined) checkStep(s, step);
+    const nStepsRead = step !== undefined ? 1 : s.nSteps;
+    const timeOut = step !== undefined ? Float64Array.of(s.time[step]!) : Float64Array.from(s.time);
+
+    const groupChunks: {
+      g: LineStationGroupInfo;
+      eids: Float64Array;
+      raw: Float64Array;
+      quats: Float64Array | null;
+    }[] = [];
+    let nStationsTotal = 0;
+    let anyLocalAxes = false;
+
+    for (const g of s.lineStations ?? []) {
+      const dsName = g.components.find((c) => normalizeLineStationComponent(c) === canon);
+      if (!dsName) continue;
+      const grp = this.group(this.f, g.path);
+      const eids = intsAsNumbers(this.dataset(grp, "_element_index"));
+      const ds = this.component(g.path, g.components, dsName);
+      const raw =
+        step !== undefined
+          ? toFloat64(ds.slice([[step, step + 1], [], []]), ds.path)
+          : toFloat64(ds.value, ds.path);
+      let quats: Float64Array | null = null;
+      if (g.localAxes && grp.keys().includes("_local_axes_quaternion")) {
+        const qDs = this.dataset(grp, "_local_axes_quaternion");
+        if (qDs.metadata.type === H5T_FLOAT && qDs.shape?.length === 2 && qDs.shape[0] === g.nElements && qDs.shape[1] === 4) {
+          quats = toFloat64(qDs.value, qDs.path);
+          anyLocalAxes = true;
+        }
+      }
+      groupChunks.push({ g, eids, raw, quats });
+      nStationsTotal += g.nElements * g.nStations;
+    }
+
+    if (nStationsTotal === 0) {
+      return {
+        component: canon,
+        values: new Float64Array(0),
+        nSteps: nStepsRead,
+        nStationsTotal: 0,
+        elementIndex: new Float64Array(0),
+        stationNaturalCoord: new Float64Array(0),
+        time: timeOut,
+        localAxesQuaternion: null,
+        localAxesZRec: null,
+        localAxesSources: null,
+      };
+    }
+
+    const elementIndex = new Float64Array(nStationsTotal);
+    const stationNaturalCoord = new Float64Array(nStationsTotal);
+    const values = new Float64Array(nStepsRead * nStationsTotal);
+    const localAxesQuaternion = anyLocalAxes ? new Float64Array(nStationsTotal * 4) : null;
+    const localAxesZRec = anyLocalAxes ? new Float64Array(nStationsTotal * 3) : null;
+    const localAxesSources: (LocalAxesSource | null)[] | null = anyLocalAxes ? new Array(nStationsTotal).fill(null) : null;
+
+    let colOffset = 0;
+    for (const { g, eids, raw, quats } of groupChunks) {
+      const E = g.nElements;
+      const S = g.nStations;
+      const groupCols = E * S;
+      for (let e = 0; e < E; e++) {
+        const eid = eids[e]!;
+        let qw = Number.NaN, qx = Number.NaN, qy = Number.NaN, qz = Number.NaN;
+        let zx = Number.NaN, zy = Number.NaN, zz = Number.NaN;
+        let hasQuat = false;
+        if (quats) {
+          qw = quats[e * 4]!;
+          qx = quats[e * 4 + 1]!;
+          qy = quats[e * 4 + 2]!;
+          qz = quats[e * 4 + 3]!;
+          const zRec = quaternionToZRec(qw, qx, qy, qz);
+          if (Number.isFinite(zRec[0])) {
+            [zx, zy, zz] = zRec;
+            hasQuat = true;
+          }
+        }
+        for (let st = 0; st < S; st++) {
+          const col = colOffset + e * S + st;
+          elementIndex[col] = eid;
+          stationNaturalCoord[col] = g.stationNaturalCoord[st]!;
+          if (localAxesQuaternion && localAxesZRec && localAxesSources) {
+            localAxesQuaternion[col * 4] = hasQuat ? qw : Number.NaN;
+            localAxesQuaternion[col * 4 + 1] = hasQuat ? qx : Number.NaN;
+            localAxesQuaternion[col * 4 + 2] = hasQuat ? qy : Number.NaN;
+            localAxesQuaternion[col * 4 + 3] = hasQuat ? qz : Number.NaN;
+            localAxesZRec[col * 3] = zx;
+            localAxesZRec[col * 3 + 1] = zy;
+            localAxesZRec[col * 3 + 2] = zz;
+            localAxesSources[col] = hasQuat ? "model_local_axes" : null;
+          }
+        }
+      }
+      for (let t = 0; t < nStepsRead; t++) {
+        const srcStart = t * groupCols;
+        const dstStart = t * nStationsTotal + colOffset;
+        values.set(raw.subarray(srcStart, srcStart + groupCols), dstStart);
+      }
+      colOffset += groupCols;
+    }
+
+    return {
+      component: canon,
+      values,
+      nSteps: nStepsRead,
+      nStationsTotal,
+      elementIndex,
+      stationNaturalCoord,
+      time: timeOut,
+      localAxesQuaternion,
+      localAxesZRec,
+      localAxesSources,
+    };
+  }
+
+  /** Read one step of a canonical (or raw) line-station component in `stageId`. */
+  readLineStationStep(stageId: string, component: string, step: number): LadrunoLineStationStep {
+    const slab = this.readLineStations(stageId, component, { step });
+    return {
+      component: slab.component,
+      values: slab.values,
+      elementIndex: slab.elementIndex,
+      stationNaturalCoord: slab.stationNaturalCoord,
+      time: slab.time[0] ?? 0,
+      localAxesQuaternion: slab.localAxesQuaternion,
+      localAxesZRec: slab.localAxesZRec,
+      localAxesSources: slab.localAxesSources ?? null,
+    };
+  }
+
   // -- index ---------------------------------------------------------------
 
   private readStage(g: RGroup, id: string): StageInfo {
@@ -396,6 +625,7 @@ export class ResultsFile {
     const pg = this.group(this.group(g, "partitions"), partition);
     let nodes: NodalInfo | null = null;
     const gauss: GaussGroupInfo[] = [];
+    const lineStations: LineStationGroupInfo[] = [];
     const unread: string[] = [];
     for (const child of pg.keys()) {
       if (child === "nodes") nodes = this.readNodes(this.group(pg, "nodes"), T);
@@ -406,11 +636,24 @@ export class ResultsFile {
           if (!ELEMENT_CATEGORIES.has(cat)) throw new ResultsError("layout", `${eg.path}/${cat}: not an element category this reader knows`);
           const cg = this.group(eg, cat);
           if (cat === "gauss_points") for (const gid of cg.keys()) gauss.push(this.readGauss(this.group(cg, gid), gid, T));
-          else if (cg.keys().length > 0) unread.push(`${cat} (${cg.keys().length} groups)`);
+          else if (cat === "line_stations" && this.elementSpace.verified) {
+            for (const gid of cg.keys()) lineStations.push(this.readLineStationGroup(this.group(cg, gid), gid, T));
+          } else if (cg.keys().length > 0) unread.push(`${cat} (${cg.keys().length} groups)`);
         }
       } else throw new ResultsError("layout", `${pg.path}/${child}: not a partition child this reader knows`);
     }
-    return { id, name, kind: kind as StageInfo["kind"], time, nSteps: T, partition, nodes, gauss, unread };
+    return {
+      id,
+      name,
+      kind: kind as StageInfo["kind"],
+      time,
+      nSteps: T,
+      partition,
+      nodes,
+      gauss,
+      ...(lineStations.length > 0 ? { lineStations } : {}),
+      unread,
+    };
   }
 
   private readNodes(g: RGroup, T: number): NodalInfo {
@@ -480,6 +723,55 @@ export class ResultsFile {
       naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * D, (r + 1) * D)));
     }
     return { id, path: g.path, classTag: intAttr(g, "class_tag"), intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components, refused, localAxes, naturalCoords };
+  }
+
+  private readLineStationGroup(g: RGroup, id: string, T: number): LineStationGroupInfo {
+    const eidx = this.dataset(g, "_element_index");
+    const snc = this.dataset(g, "_station_natural_coord");
+    const E = eidx.shape?.length === 1 ? eidx.shape[0]! : -1;
+    const S = snc.shape?.length === 1 ? snc.shape[0]! : -1;
+    if (E < 0) throw new ResultsError("layout", `${eidx.path} is not 1-D`);
+    if (S < 0) throw new ResultsError("layout", `${snc.path} is not 1-D`);
+    expectFloat(snc);
+    const stationNaturalCoord = toFloat64(snc.value, snc.path);
+    const components: string[] = [];
+    const refused: { component: string; reason: string }[] = [];
+    let localAxes = false;
+    for (const k of g.keys()) {
+      if (k.startsWith("_")) {
+        if (!LINE_STATION_INDEX.has(k)) throw new ResultsError("layout", `${g.path}/${k}: not a line_stations index dataset this reader knows`);
+        if (k === "_local_axes_quaternion") localAxes = true;
+        continue;
+      }
+      const ds = this.dataset(g, k);
+      if (S === 0 || E === 0) {
+        refused.push({ component: k, reason: `${g.path} indexes ${E} elements x ${S} stations: nothing to read` });
+        continue;
+      }
+      const shape = ds.shape ?? [];
+      if (shape.length === 3 && shape[0] === T && (shape[1] !== E || shape[2] !== S)) {
+        refused.push({
+          component: k,
+          reason: `${ds.path} has shape (${shape.join(", ")}) and the group indexes ${E} elements x ${S} stations (a partial write)`,
+        });
+        continue;
+      }
+      expectShape(ds, [T, E, S]);
+      expectFloat(ds);
+      components.push(k);
+    }
+    return {
+      id,
+      path: g.path,
+      classTag: intAttr(g, "class_tag"),
+      intRule: intAttr(g, "int_rule"),
+      nElements: E,
+      nStations: S,
+      components,
+      refused,
+      localAxes,
+      stationNaturalCoord,
+    };
   }
 
   // -- helpers ---------------------------------------------------------------
@@ -712,4 +1004,56 @@ function intAttr(g: RGroup, key: string): number {
   if (typeof v === "bigint") return Number(v);
   if (typeof v === "number" && Number.isInteger(v)) return v;
   throw new ResultsError("layout", `${g.path} has no integer @${key}`);
+}
+
+const CANONICAL_COMPONENT_ALIASES: Readonly<Record<string, LineStationComponent>> = {
+  N: "N",
+  axial_force: "N",
+  Vy: "Vy",
+  shear_y: "Vy",
+  Vz: "Vz",
+  shear_z: "Vz",
+  T: "T",
+  torsion: "T",
+  My: "My",
+  bending_moment_y: "My",
+  Mz: "Mz",
+  bending_moment_z: "Mz",
+  eps: "eps",
+  axial_strain: "eps",
+  gammaY: "gammaY",
+  shear_strain_y: "gammaY",
+  gammaZ: "gammaZ",
+  shear_strain_z: "gammaZ",
+  theta: "theta",
+  torsional_strain: "theta",
+  kappaY: "kappaY",
+  curvature_y: "kappaY",
+  kappaZ: "kappaZ",
+  curvature_z: "kappaZ",
+};
+
+/** Normalize a short (`"Mz"`) or canonical (`"bending_moment_z"`) line-station component name. */
+export function normalizeLineStationComponent(raw: string): LineStationComponent | null {
+  return CANONICAL_COMPONENT_ALIASES[raw.trim()] ?? null;
+}
+
+/**
+ * Convert a scalar-first unit quaternion `(w, x, y, z)` (global -> local,
+ * schema §5, where rows `(0, 1, 2)` of the 3x3 matrix are `(x_local, y_local, z_local)`)
+ * into row 2 (`z_local` in global coords), matching Python `LocalAxes.matrices`
+ * (`src/apeGmsh/results/_slabs.py`) and `axes_from_quaternion` (`_beam_geometry.py`).
+ */
+export function quaternionToZRec(w: number, x: number, y: number, z: number): [number, number, number] {
+  const norm = Math.hypot(w, x, y, z);
+  if (!Number.isFinite(norm) || norm < 1e-15) return [Number.NaN, Number.NaN, Number.NaN];
+  const wn = w / norm;
+  const xn = x / norm;
+  const yn = y / norm;
+  const zn = z / norm;
+  return [
+    2 * (xn * zn - yn * wn),
+    2 * (yn * zn + xn * wn),
+    1 - 2 * (xn * xn + yn * yn),
+  ];
 }

@@ -16,9 +16,29 @@
 // in Node.
 
 import { statSync } from "node:fs";
+import {
+  LadrunoFile,
+  openLadruno,
+  type LadrunoLineStationStep,
+  type LineStationComponent,
+} from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
+import type { UnitSystemId } from "../state/types.ts";
+
+export type AnyResultsFile = ResultsFile | LadrunoFile;
+
+function openAnyResults(h5: ResultsH5, path: string): AnyResultsFile {
+  return path.toLowerCase().endsWith(".ladruno") ? openLadruno(h5, path) : openResults(h5, path);
+}
+
+function resultsHashOf(rf: AnyResultsFile): string | null {
+  if (rf instanceof LadrunoFile) {
+    return rf.index.lineage ? `${rf.index.lineage.modelHash}:${rf.index.lineage.femHash}` : null;
+  }
+  return rf.index.lineage?.resultsHash ?? null;
+}
 
 /** One stage as the renderer's store keeps it (state/types.ts `ResultsStage`). */
 export interface ResultsStageMeta {
@@ -36,6 +56,10 @@ export interface ResultsStageMeta {
    */
   gauss: GaussGroupMeta[];
   unread: string[];
+  /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
+  elementIndexSpace?: string | null;
+  /** 1-D beam line-station components recorded in this stage (.ladruno) */
+  lineStations?: LineStationComponent[];
 }
 
 export interface GaussGroupMeta {
@@ -66,6 +90,10 @@ export interface ResultsMeta {
   programDecl: string | null;
   /** V4c2a: the element-id verdict; element contours draw only for a verified file */
   elementIndex: ElementIndexVerdict;
+  /** Consistent unit system declared in `/model/meta/@units`, `@units`, or `INFO/PROVENANCE@units`, or null when undeclared */
+  units: UnitSystemId | null;
+  /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
+  elementIndexSpace?: string | null;
 }
 
 export type ResultsOpenAnswer =
@@ -94,11 +122,21 @@ export interface StepRequest {
   seq: number;
   /** V4c2a: one element (Gauss) component to read too, from every group that has it; verified files only */
   element?: string;
+  /** .ladruno: one 1-D beam line-station component to read for this step */
+  lineDiagram?: LineStationComponent;
 }
 
 export type StepAnswer =
   /** `gauss`: the requested element component by group id, (E * G,) element-major; {} with no `element` */
-  | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss: Record<string, Float64Array> }
+  | {
+      ok: true;
+      seq: number;
+      stage: string;
+      step: number;
+      nodal: Record<string, Float64Array>;
+      gauss: Record<string, Float64Array>;
+      lineDiagram?: LadrunoLineStationStep | null;
+    }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
 
@@ -117,9 +155,10 @@ export interface ScanRequest {
    * V4c2a: `element` scans one Gauss component (`components` has one name):
    * the per-element value (a one-point group's value, else the mean of the
    * element's Gauss points; state/contour.ts `gaussCellValues`) over every
-   * group that has it. Verified files only. Absent: a nodal scan.
+   * group that has it. Verified files only. `line` scans one `.ladruno`
+   * line-station component across all steps. Absent: a nodal scan.
    */
-  source?: "element";
+  source?: "element" | "line";
   /**
    * V4c2b: with `source: "element"`, a node-located topology's plan
    * (state/extrapolation.ts): every step is carried through it and the range
@@ -150,8 +189,46 @@ const signature = (path: string): string => {
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export function metaOf(rf: ResultsFile): ResultsMeta {
+export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta {
+  if (rf instanceof LadrunoFile) {
+    const prov = rf.index.provenance;
+    const pattr = (k: "fem_hash" | "model_hash" | "element_index_space") =>
+      prov.state === "present" && prov.attrs[k]?.state === "present" ? prov.attrs[k].value : null;
+    const femHash = pattr("fem_hash");
+    const modelHash = pattr("model_hash");
+    const lineage = modelHash !== null || femHash !== null ? { femHash, modelHash, resultsHash: null } : null;
+    const elementIndexSpace = pattr("element_index_space");
+    return {
+      path: rf.index.path,
+      version: "1.0.0",
+      sourceType: "ladruno",
+      lineage,
+      partial: null,
+      unavailableZones: [],
+      openseesVersion: null,
+      programDecl: null,
+      elementIndex:
+        elementIndexSpace === "fem"
+          ? { verified: true }
+          : { verified: false, reason: 'INFO/PROVENANCE@element_index_space is not "fem"' },
+      units: rf.index.units,
+      elementIndexSpace,
+      stages: rf.index.stages.map((s, idx) => ({
+        id: s.id,
+        name: prov.state === "present" && prov.stageNames?.[idx] ? prov.stageNames[idx]! : s.name,
+        kind: s.kind,
+        time: Array.from(s.time),
+        nodal: s.nodes ? [...s.nodes.components] : [],
+        refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
+        gauss: [],
+        unread: [...s.unread],
+        elementIndexSpace,
+        lineStations: rf.availableLineStations(s.id, warningsOut),
+      })),
+    };
+  }
   const i = rf.index;
+  const verified = rf.elementIndexVerdict().verified;
   return {
     path: i.path,
     version: i.version,
@@ -178,8 +255,12 @@ export function metaOf(rf: ResultsFile): ResultsMeta {
         naturalCoords: g.naturalCoords ? g.naturalCoords.map((r) => [...r]) : null,
       })),
       unread: [...s.unread],
+      elementIndexSpace: i.elementIndexSpace,
+      lineStations: verified ? rf.availableLineStations(s.id) : [],
     })),
     elementIndex: { ...rf.elementIndexVerdict() },
+    units: i.units,
+    elementIndexSpace: i.elementIndexSpace,
   };
 }
 
@@ -188,7 +269,7 @@ export class ResultsHost {
   private readonly ready: Promise<unknown>;
   private readonly idleMs: number;
   /** the open handle, or null while idle */
-  private file: ResultsFile | null = null;
+  private file: AnyResultsFile | null = null;
   /** the file indexed by the last `open`, and its identity then; null before any open */
   private indexed: { path: string; signature: string; resultsHash: string | null } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -217,15 +298,15 @@ export class ResultsHost {
       await this.ready;
       const t = performance.now();
       const sig = signature(path);
-      const rf = openResults(this.h5, path);
+      const rf = openAnyResults(this.h5, path);
       this.file = rf;
-      this.indexed = { path, signature: sig, resultsHash: rf.index.lineage?.resultsHash ?? null };
+      this.indexed = { path, signature: sig, resultsHash: resultsHashOf(rf) };
       this.armIdle();
       const nodeIds: Record<string, Float64Array> = {};
       for (const st of rf.index.stages) if (st.nodes) nodeIds[st.id] = st.nodes.ids;
       // V4c2a (#1711/#1752 gate): element rows leave main only for a verified file.
       const elementIds: Record<string, Record<string, Float64Array>> = {};
-      if (rf.elementIndexVerdict().verified) {
+      if (!(rf instanceof LadrunoFile) && rf.elementIndexVerdict().verified) {
         for (const st of rf.index.stages) {
           const byGroup: Record<string, Float64Array> = {};
           for (const g of st.gauss) {
@@ -236,7 +317,9 @@ export class ResultsHost {
           elementIds[st.id] = byGroup;
         }
       }
-      return { ok: true, meta: metaOf(rf), nodeIds, elementIds, warnings: [...rf.index.warnings], sizeBytes: Number(sig.split(":")[0]), readMs: performance.now() - t };
+      const warnings = [...rf.index.warnings];
+      const meta = metaOf(rf, warnings);
+      return { ok: true, meta, nodeIds, elementIds, warnings, sizeBytes: Number(sig.split(":")[0]), readMs: performance.now() - t };
     } catch (err) {
       this.close();
       return { ok: false, error: message(err) };
@@ -244,7 +327,7 @@ export class ResultsHost {
   }
 
   /** The handle for a read of the indexed file, re-opened when idle; null when the file is no longer the one indexed. */
-  private handle(path: string): ResultsFile | null {
+  private handle(path: string): AnyResultsFile | null {
     const ix = this.indexed;
     if (!ix || ix.path !== path) throw new Error(`results:readStep: ${path} is not the open results file`);
     // Size and mtime first, on every read: an in-place rewrite under an open handle shows here.
@@ -253,8 +336,8 @@ export class ResultsHost {
       return null;
     }
     if (this.file) return this.file;
-    const rf = openResults(this.h5, path);
-    if ((rf.index.lineage?.resultsHash ?? null) !== ix.resultsHash) {
+    const rf = openAnyResults(this.h5, path);
+    if (resultsHashOf(rf) !== ix.resultsHash) {
       rf.close();
       return null;
     }
@@ -292,13 +375,35 @@ export class ResultsHost {
       comps.forEach((c, i) => (nodal[c] = values[i]!));
       const gauss: Record<string, Float64Array> = {};
       if (req.element !== undefined) {
+        if (rf instanceof LadrunoFile) {
+          throw new Error(`element gauss results are not served from .ladruno file ${req.path}`);
+        }
+        const st = s as StageInfo;
         const v = rf.elementIndexVerdict();
         // Fail closed: an unverified file's element values are never served (the renderer refuses them first).
         if (!v.verified) throw new Error(`element results of ${req.path} are refused: ${v.reason}`);
-        for (const g of s.gauss) if (g.components.includes(req.element)) gauss[g.id] = rf.readGaussStep(s.id, g.id, req.element, req.step);
+        for (const g of st.gauss) if (g.components.includes(req.element)) gauss[g.id] = rf.readGaussStep(s.id, g.id, req.element, req.step);
         if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
       }
-      return { ok: true, seq: req.seq, stage: s.id, step: req.step, nodal, gauss };
+      let lineDiagram: LadrunoLineStationStep | null | undefined;
+      if (req.lineDiagram !== undefined) {
+        if (rf instanceof LadrunoFile) {
+          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+        } else {
+          const v = rf.elementIndexVerdict();
+          if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
+          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+        }
+      }
+      return {
+        ok: true,
+        seq: req.seq,
+        stage: s.id,
+        step: req.step,
+        nodal,
+        gauss,
+        ...(lineDiagram !== undefined ? { lineDiagram } : {}),
+      };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
     }
@@ -331,7 +436,11 @@ export class ResultsHost {
       let rf = this.handle(req.path);
       if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk since it was indexed` };
       const st = rf.stage(req.stage);
-      if (req.source === "element") return await this.scanElement(req, rf, st, progress, opts, t);
+      if (req.source === "line") return await this.scanLine(req, rf, st, progress, opts, t);
+      if (req.source === "element") {
+        if (rf instanceof LadrunoFile) throw new Error(`element gauss scan is not supported on .ladruno file ${req.path}`);
+        return await this.scanElement(req, rf, st as StageInfo, progress, opts, t);
+      }
       const n = st.nodes?.ids.length ?? 0;
       if (!st.nodes) throw new Error(`stage ${st.id} has no nodal results`);
       if (req.components.length === 0) throw new Error("a scan needs at least one component");
@@ -386,6 +495,60 @@ export class ResultsHost {
   }
 
   /**
+   * The line-station history range (.ladruno or verified results.h5): one 1-D beam
+   * line-station component across all steps of `st.id`. Runs inside `scan`.
+   */
+  private async scanLine(
+    req: ScanRequest,
+    first: AnyResultsFile,
+    st: StageInfo,
+    progress: (p: ScanProgress) => void,
+    opts: { chunkSteps?: number; paceMs?: number; progressMs?: number },
+    t: number,
+  ): Promise<ScanAnswer> {
+    const id = req.scanId;
+    if (!(first instanceof LadrunoFile)) {
+      const v = first.elementIndexVerdict();
+      if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
+    }
+    if (req.components.length !== 1 || req.magnitude) throw new Error("a line-station scan reads one component, never a magnitude");
+    const comp = req.components[0]!;
+    const T = st.nSteps;
+    if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+    this.armIdle();
+    const slab = first.readLineStations(st.id, comp);
+    const nRows = slab.elementIndex.length;
+    const chunk = opts.chunkSteps ?? Math.max(1, Math.floor(4e6 / (8 * Math.max(1, nRows))));
+    let lo = Infinity;
+    let hi = -Infinity;
+    let lastProgress = -Infinity;
+    for (let k0 = 0; k0 < T; k0 += chunk) {
+      if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
+      this.armIdle();
+      const k1 = Math.min(T, k0 + chunk);
+      const start = k0 * nRows;
+      const end = k1 * nRows;
+      for (let i = start; i < end; i++) {
+        const v = slab.values[i]!;
+        if (!Number.isFinite(v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      const now = performance.now();
+      if (k1 < T && now - lastProgress >= (opts.progressMs ?? 100)) {
+        lastProgress = now;
+        progress({ scanId: id, done: k1, total: T });
+      }
+      await new Promise((r) => (opts.paceMs ? setTimeout(r, opts.paceMs) : setImmediate(r)));
+    }
+    if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+    const finite = lo <= hi;
+    return { ok: true, scanId: id, min: finite ? lo : null, max: finite ? hi : null, steps: T, ms: performance.now() - t };
+  }
+
+  /**
    * The element history range (V4c2a): one Gauss component of every group
    * that has it, reduced per element (gaussCellValues: NaN when any of the
    * element's points is not finite), in chunks of steps. Runs inside `scan`.
@@ -420,7 +583,7 @@ export class ResultsHost {
     for (let k0 = 0; k0 < T; k0 += chunk) {
       if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
       const rf = this.handle(req.path);
-      if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
+      if (!rf || rf instanceof LadrunoFile) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
       this.armIdle();
       const k1 = Math.min(T, k0 + chunk);
       if (plan) {

@@ -10,7 +10,7 @@ Each method is fully kw-only with explicit types — no ``**kwargs``
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import Sequence, TYPE_CHECKING, cast
 
 from ...element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from ...element.beam_column import (
@@ -25,6 +25,7 @@ from ..._element_capabilities import REMOVED_ELEMENT_CLASSES
 from ...element.shell import (
     ASDShellQ4,
     ASDShellT3,
+    LadrunoMembrane,
     ShellDKGQ,
     ShellMITC4,
 )
@@ -53,6 +54,7 @@ from ...element.zero_length import (
     ZeroLengthMatDir,
     ZeroLengthSection,
 )
+from ...node import Node, NodeSet
 from ...section.plate import (
     ElasticMembranePlateSection,
     LadrunoShellModifier,
@@ -64,6 +66,7 @@ from ...transform import Corotational, Linear, PDelta
 from ..types import (
     BeamIntegration,
     Damping,
+    Element,
     GeomTransf,
     NDMaterial,
     Section,
@@ -537,6 +540,73 @@ class _ElementNS(_BridgeNamespace):
                 drilling_nl=drilling_nl,
                 drilling_dof=drilling_dof,
                 local_cs=local_cs,
+                damp=damp,
+            )
+        )
+
+    def LadrunoMembrane(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: Sequence[int | str | Node] | None = None,
+        frames: Sequence[int | str | Element] | int | str | Element | None = None,
+        support_nodes: Sequence[int | str | Node | NodeSet] | int | str | Node | NodeSet | None = None,
+        holes: Sequence[Sequence[int | str | Node] | str] | str | None = None,
+        method: str = "tributary",
+        span_axis: Sequence[float] | None = None,
+        ortho_ratio: float | None = None,
+        pressure: float | None = None,
+        section: ElasticMembranePlateSection | str | None = None,
+        mat: NDMaterial | str | None = None,
+        E: float | None = None,
+        nu: float | None = None,
+        thickness: float | None = None,
+        thick: float | None = None,
+        stiff: tuple[float, float, float] | Sequence[float] | None = None,
+        rho: float | None = None,
+        lumped: bool = False,
+        mesh_size: float | None = None,
+        damp: Damping | None = None,
+    ) -> LadrunoMembrane:
+        """``element LadrunoMembrane`` — polygon floor/wall diaphragm and load distributor.
+
+        Ladruno fork (``ELE_TAG = 33022``). Pass ``pg=`` (extracts the ordered
+        outer boundary loop and any interior hole loops from the 2D surface
+        cells in the physical group) or ``nodes=`` (explicit ordered boundary
+        node sequence). Fork-only: emits on any build, refused at ``ops.run()``
+        on stock ``openseespy``.
+        """
+        sec_r = (
+            cast(Section, self._bridge._resolve(section, base=Section))
+            if section is not None
+            else None
+        )
+        mat_r = (
+            self._bridge._resolve(mat, base=NDMaterial)
+            if mat is not None
+            else None
+        )
+        return self._bridge._register(
+            LadrunoMembrane(
+                pg=pg,
+                nodes=tuple(nodes) if nodes is not None else None,
+                frames=frames,  # type: ignore[arg-type]
+                support_nodes=support_nodes,  # type: ignore[arg-type]
+                holes=holes,  # type: ignore[arg-type]
+                method=method,
+                span_axis=tuple(span_axis) if span_axis is not None else None,
+                ortho_ratio=ortho_ratio,
+                pressure=pressure,
+                section=sec_r,
+                mat=mat_r,
+                E=E,
+                nu=nu,
+                thickness=thickness,
+                thick=thick,
+                stiff=tuple(stiff) if stiff is not None else None,  # type: ignore[arg-type]
+                rho=rho,
+                lumped=lumped,
+                mesh_size=mesh_size,
                 damp=damp,
             )
         )

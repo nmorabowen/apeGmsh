@@ -14,7 +14,7 @@ import type { Definitions, OpsFamily, Param, SequenceZone } from "../model/types
 // panel allow-list: state/store, state/selectors, state/types, ui/).
 export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 // The model-definition data, as the reader read it (plain data: no typed array).
-export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, SequenceZone, StageDef, Table } from "../model/types.ts";
+export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, OpsFamily, SequenceZone, StageDef, Table } from "../model/types.ts";
 
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
@@ -86,6 +86,8 @@ export interface Decl {
   problems: readonly string[];
   /** display-ready read facts of an object: type, tag, params, attrs, tables (elements derive theirs) */
   fields: readonly Field[];
+  /** for a 3-D geomTransf object: full `(emittedTag, vecxz)` rows from `per_element_vecxz` and `per_element_emitted_tag` (untruncated) */
+  vecxz?: readonly { readonly tag: number; readonly vecxz: readonly [number, number, number] }[];
   element?: ElementFacts;
   group?: { dim: number; tag: number; count: number; ids: BlobRef };
   /** where the user's code made this declaration (/provenance, joined by decl path); absent when the file has no record for it */
@@ -267,6 +269,10 @@ export interface ResultsStage {
   gauss: GaussGroup[];
   /** element categories the reader does not read */
   unread: string[];
+  /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
+  elementIndexSpace?: string | null;
+  /** 1-D beam line-station components recorded in this stage (.ladruno) */
+  lineStations?: LineStationComponent[];
 }
 
 /** One `gauss_points` group of a results stage (V4c2a): metadata, and its element ids as a blob ref. */
@@ -317,6 +323,10 @@ export interface ResultsInfo {
    * unverified: selectors `elementVerdictOf`, never as verified.
    */
   elementIndex?: ElementIndexVerdict;
+  /** Consistent unit system declared in `/model/meta/@units` or `@units`, or null when undeclared. */
+  units?: UnitSystemId | null;
+  /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
+  elementIndexSpace?: string | null;
 }
 
 /**
@@ -342,7 +352,22 @@ export interface ResultStepStatus {
 export type ContourRange = "history" | "step" | "fixed";
 
 /** The contour colormaps (state/contour.ts `CMAPS`); jet is the default. */
-export type ContourCmap = "jet" | "viridis" | "coolwarm";
+export const CMAP_NAMES = [
+  "jet",
+  "turbo",
+  "viridis",
+  "plasma",
+  "inferno",
+  "magma",
+  "coolwarm",
+  "RdBu_r",
+  "RdBu",
+  "bwr",
+  "seismic",
+  "BrBG",
+  "Spectral",
+] as const;
+export type ContourCmap = (typeof CMAP_NAMES)[number];
 
 /** The history-range scan of the contour's field (main reads every step; the effects report it). */
 export interface ContourScan {
@@ -394,6 +419,12 @@ export type ElementJoinVerdict =
   | { key: string; ok: true; rows: number; extrapolation: ExtrapolationVerdict }
   | { key: string; ok: false; code: "unknown-id" | "duplicate-id"; reason: string };
 
+/** The seven consistent unit systems of `baseUnits.systems` (state/units.ts). */
+export type UnitSystemId = "kN_m_s" | "tf_m_s" | "kgf_m_s" | "N_mm_s" | "N_m_s" | "kip_in_s" | "dyne_cm_s";
+
+/** What unit system the contour legend displays values in: `as_stored` (raw file values, default) or a `baseUnits` system. */
+export type UnitDisplay = "as_stored" | UnitSystemId;
+
 /** The contour colouring (V4c1, #1756): what is picked, and the ranges the effects measured. */
 export interface ContourState {
   /** V4c2a: a nodal field (V4c1) or an element field; `field` and `component` name one of that source */
@@ -409,6 +440,12 @@ export interface ContourState {
   /** the user's min and max (`range: fixed`) */
   fixed: { min: number; max: number } | null;
   cmap: ContourCmap;
+  /** the consistent unit system declared in the model or results file (`/meta/@units` or `INFO/PROVENANCE@units`), or null when undeclared */
+  declaredUnits: UnitSystemId | null;
+  /** the file's native `baseUnits` system (`declaredUnits` when declared; null when undeclared until the user selects `from <system>`) */
+  sourceUnits: UnitSystemId | null;
+  /** the target `baseUnits` display system (`as_stored` keeps raw numbers; defaults to `declaredUnits` when declared) */
+  targetUnits: UnitDisplay;
   /** the finite min and max of the step shown, over every recorded node; `key` names the step and component it is for */
   stepRange: { key: string; min: number | null; max: number | null } | null;
   scan: ContourScan | null;
@@ -476,6 +513,32 @@ export interface ClipState {
   notice: string | null;
 }
 
+export const LINE_STATION_COMPONENTS = [
+  "N", "Vy", "Vz", "T", "My", "Mz",
+  "eps", "gammaY", "gammaZ", "theta", "kappaY", "kappaZ",
+] as const;
+export type LineStationComponent = (typeof LINE_STATION_COMPONENTS)[number];
+
+export type LineDiagramCmap = "sign" | ContourCmap;
+export type LineDiagramPlane = "local" | "screen";
+
+export interface LineDiagramState {
+  on: boolean;
+  component: LineStationComponent | null;
+  /** User scale multiplier (default 1, > 0). */
+  scale: number;
+  plane: LineDiagramPlane;
+  cmap: LineDiagramCmap;
+  fill: boolean;
+  /** null means use component default (`true` for My/Mz, `false` otherwise); boolean overrides. */
+  flipSign: boolean | null;
+  range: ContourRange;
+  fixed: { min: number; max: number } | null;
+  stepRange: { key: string; min: number | null; max: number | null } | null;
+  scan: ContourScan | null;
+  notice: string | null;
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
@@ -493,10 +556,72 @@ export interface BlockInfo {
   connectivity: BlobRef;
 }
 
-export type WindowKind = "stages" | "analysis" | "patterns" | "recorders" | "materials";
+export type WindowKind = "stages" | "analysis" | "patterns" | "recorders" | "materials" | "search";
 
 /** Every window kind, in menu order (the registry in panels/windows/ has one view per kind). */
-export const WINDOW_KINDS: readonly WindowKind[] = ["stages", "analysis", "patterns", "recorders", "materials"];
+export const WINDOW_KINDS: readonly WindowKind[] = ["stages", "analysis", "patterns", "recorders", "materials", "search"];
+
+/** Fields the pure search engine (`state/search.ts`) filters declarations by. */
+export type SearchField =
+  | "any"
+  | "kind"
+  | "type"
+  | "name"
+  | "group"
+  | "role"
+  | "uses"
+  | "id"
+  | "param"
+  | "stage"
+  | "visibility";
+
+/** Comparison operators supported by a `SearchClause`. */
+export type SearchOp = ":" | "contains" | "=" | "!=" | ">" | ">=" | "<" | "<=";
+
+/** One structured filter clause in the Search window or Spotlight filter bar. */
+export interface SearchClause {
+  readonly id: string;
+  readonly join: "and" | "or";
+  readonly negate: boolean;
+  readonly field: SearchField;
+  readonly op: SearchOp;
+  readonly key?: string;
+  readonly value: string;
+}
+
+/** The Search window's state: structured filter chips and free-text query. */
+export interface SearchState {
+  readonly text: string;
+  readonly clauses: readonly SearchClause[];
+  readonly seq: number;
+}
+
+/** Which drill-down mode Spotlight (`Ctrl+K`) is currently in. */
+export type SpotlightMode =
+  | "root"
+  | "help"
+  | "opacity"
+  | "colourBy"
+  | "phase"
+  | "step"
+  | "contourField"
+  | "contourGauss"
+  | "contourRange"
+  | "contourCmap"
+  | "contourUnits"
+  | "deformScale"
+  | "windows"
+  | "planes"
+  | "selectionActions";
+
+/** Spotlight (`Ctrl+K`) state: open status, drill-down mode, query string, and interactive filter chips. */
+export interface SpotlightState {
+  readonly open: boolean;
+  readonly mode: SpotlightMode;
+  readonly query: string;
+  readonly clauses: readonly SearchClause[];
+  readonly seq: number;
+}
 
 /**
  * One row of a model-definition window: what the reader read, where (`h5`),
@@ -585,10 +710,18 @@ export interface State {
   contour: ContourState;
   /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */
   ndm: SpatialNdm;
+  /** the loaded model's declared consistent unit system (`/meta/@units`), or null when undeclared */
+  units: UnitSystemId | null;
   /** V4d: the deformed shape */
   deform: DeformState;
   /** V4e1: the section planes */
   clip: ClipState;
+  /** 1-D beam line diagram state */
+  lineDiagram: LineDiagramState;
+  /** Spotlight (`Ctrl+K`) command and search palette */
+  spotlight: SpotlightState;
+  /** Search window query builder and text filter */
+  search: SearchState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -609,6 +742,8 @@ export interface ModelLoad {
   stageElements: StageElements;
   /** V4d: the model's spatial dimension; absent means not read (nothing is taken to be 2-D) */
   ndm?: SpatialNdm;
+  /** the model's declared consistent unit system (`/meta/@units`), or null when undeclared */
+  units?: UnitSystemId | null;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */
@@ -637,10 +772,11 @@ export type Event =
   | { type: "zoneRefused"; artifact: ArtifactKind; zone: string; version: string; accepted: string; newer: boolean; reason: string }
   | { type: "select"; pick: Pick }
   | { type: "selectAdd"; pick: Pick }
+  | { type: "selectDecls"; decls: readonly DeclPath[]; add?: boolean }
   | { type: "clearSelection" }
   | { type: "hover"; at: Pick | DeclPath | null }
-  | { type: "setHidden"; decls: DeclPath[]; hidden: boolean }
-  | { type: "isolate"; decls: DeclPath[] }
+  | { type: "setHidden"; decls: readonly DeclPath[]; hidden: boolean }
+  | { type: "isolate"; decls: readonly DeclPath[] }
   | { type: "showAll" }
   | { type: "setEdges"; on: boolean }
   | { type: "setOpacity"; value: number }
@@ -674,6 +810,8 @@ export type Event =
   /** V4c1: the colour range mode; `fixed` takes the user's min and max */
   | { type: "setContourRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "setContourCmap"; cmap: ContourCmap }
+  /** baseUnits: set the file's assumed native unit system and/or the display unit system */
+  | { type: "setContourUnits"; source?: UnitSystemId; target?: UnitDisplay }
   /** V4c1 (effects): the finite range of the step shown, for the key it was measured on */
   | { type: "contourStepRange"; key: string; min: number | null; max: number | null }
   /** V4c1 (effects): the history scan started, progressed, finished or failed */
@@ -709,6 +847,29 @@ export type Event =
   /** V4e2: one plane's gizmo eye */
   | { type: "setClipGizmo"; id: string; visible: boolean }
   /** V4e3: the footer's "Contour on cut face" toggle (a cap on every cutting plane through a solid) */
-  | { type: "setCutFace"; on: boolean };
+  | { type: "setCutFace"; on: boolean }
+  | { type: "setLineDiagram"; on: boolean }
+  | { type: "setLineDiagramComponent"; component: LineStationComponent }
+  | { type: "setLineDiagramScale"; scale: number }
+  | { type: "setLineDiagramPlane"; plane: LineDiagramPlane }
+  | { type: "setLineDiagramCmap"; cmap: LineDiagramCmap }
+  | { type: "setLineDiagramFill"; fill: boolean }
+  | { type: "setLineDiagramFlipSign"; flipSign: boolean | null }
+  | { type: "setLineDiagramRange"; range: ContourRange; fixed?: { min: number; max: number } }
+  | { type: "lineDiagramStepRange"; key: string; min: number | null; max: number | null; notice?: string | null }
+  | { type: "lineDiagramScan"; scan: ContourScan }
+  /** Spotlight (`Ctrl+K`): open, close, navigate drill-down modes, edit query or filter chips */
+  | { type: "openSpotlight"; mode?: SpotlightMode; query?: string }
+  | { type: "closeSpotlight" }
+  | { type: "setSpotlightMode"; mode: SpotlightMode; query?: string }
+  | { type: "setSpotlightQuery"; query: string }
+  | { type: "addSpotlightClause"; clause: Omit<SearchClause, "id"> }
+  | { type: "removeSpotlightClause"; id: string }
+  | { type: "clearSpotlightClauses" }
+  /** Search window: edit free-text query or structured filter clauses */
+  | { type: "setSearchText"; text: string }
+  | { type: "addSearchClause"; clause: Omit<SearchClause, "id"> }
+  | { type: "removeSearchClause"; id: string }
+  | { type: "clearSearch" };
 
 export type EventType = Event["type"];

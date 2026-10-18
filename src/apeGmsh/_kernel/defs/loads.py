@@ -93,11 +93,29 @@ class LineLoadDef(LoadDef):
     handles both.
     """
     kind: str = field(init=False, default="line")
-    magnitude: object = 0.0                 # float | Callable[[xyz], float]
+    magnitude: object = 0.0                 # float | tuple[float, float] | Callable[[xyz], float]
     direction: object = (0.0, 0.0, -1.0)   # tuple or "x"/"y"/"z"
-    q_xyz: tuple[float, float, float] | None = None
+    q_xyz: (
+        tuple[float, float, float]
+        | tuple[tuple[float, float, float], tuple[float, float, float]]
+        | None
+    ) = None
     normal: bool = False
     away_from: tuple[float, float, float] | None = None
+    span: tuple[float, float] = (0.0, 1.0)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.span, (tuple, list)) or len(self.span) != 2:
+            raise ValueError(
+                f"LineLoadDef.span must be a 2-tuple (aL, bL), got {self.span!r}."
+            )
+        a_l, b_l = float(self.span[0]), float(self.span[1])
+        if not (0.0 <= a_l < b_l <= 1.0):
+            raise ValueError(
+                f"LineLoadDef.span=(aL, bL) requires 0.0 <= aL < bL <= 1.0, "
+                f"got ({a_l}, {b_l})."
+            )
+        self.span = (a_l, b_l)
 
 
 @dataclass

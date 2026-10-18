@@ -4,16 +4,20 @@
 //
 //   input                      action
 //   left click                 select the element under the cursor
+//   shift/ctrl + left click    toggle the element under the cursor in the selection
 //   left drag                  nothing (never orbits)
 //   right drag                 orbit (turntable, Z stays vertical, about the point under the cursor)
 //   shift + right drag         pan
 //   middle drag                pan
 //   wheel                      zoom toward the point under the cursor
 //   F                          frame the selection, else fit the whole model
+//   E                          toggle mesh outline edges
+//   Escape                     clear the selection
 
 export type Button = "left" | "middle" | "right";
 export type ClickAction = "select";
 export type DragAction = "orbit" | "pan";
+export type KeyAction = "fit" | "clearSelection" | "toggleEdges";
 
 export interface PointerBinding {
   readonly button: Button;
@@ -36,12 +40,16 @@ export const POINTER_BINDINGS: readonly PointerBinding[] = [
 
 export const WHEEL_ACTION = "zoom-to-cursor" as const;
 
-export const KEY_BINDINGS: readonly { readonly key: string; readonly action: "fit" }[] = [
+export const KEY_BINDINGS: readonly { readonly key: string; readonly action: KeyAction }[] = [
   { key: "f", action: "fit" },
+  { key: "escape", action: "clearSelection" },
+  { key: "e", action: "toggleEdges" },
 ];
 
 /** A press that moves farther than this (px) is a drag, not a click. */
 export const CLICK_SLOP_PX = 4;
+
+export { isSelectAdd } from "../ui/dom.ts";
 
 /**
  * The bound button for a DOM `MouseEvent.button`, or null for a button the
@@ -67,6 +75,6 @@ export function bindingFor(button: Button, shift: boolean): PointerBinding {
 }
 
 /** The key action for a KeyboardEvent.key with no Ctrl/Alt/Meta held, or null. */
-export function keyAction(key: string): "fit" | null {
+export function keyAction(key: string): KeyAction | null {
   return KEY_BINDINGS.find((k) => k.key === key.toLowerCase())?.action ?? null;
 }

@@ -6,10 +6,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
-import { bindingFor, buttonOf, keyAction, POINTER_BINDINGS, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
+import { bindingFor, buttonOf, isSelectAdd, keyAction, POINTER_BINDINGS, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
 import {
-  clampZoom, headingOf, Navigator, nearestHit, orbitAbout, orientationOf, panBy, pivotFor, zoomToward,
-  ZOOM_MAX, ZOOM_MIN, type Heading, type ListenTarget, type NavHost,
+  clampZoom, headingOf, Navigator, nearestHit, orbitAbout, orientationOf, panBy, pivotFor, snapAbout,
+  syncOrthoFrustum, zoomToward, ZOOM_MAX, ZOOM_MIN, type Heading, type ListenTarget, type NavHost, type ViewCamera,
 } from "../src/renderer/navigation.ts";
 
 const W = 800, H = 600;
@@ -23,8 +23,21 @@ function camera(at: THREE.Vector3, h: Heading): THREE.PerspectiveCamera {
   return c;
 }
 
+function orthoCamera(at: THREE.Vector3, h: Heading, orthoDistance: number): THREE.OrthographicCamera {
+  const c = new THREE.OrthographicCamera();
+  c.up.set(0, 0, 1);
+  c.position.copy(at);
+  c.quaternion.copy(orientationOf(h));
+  syncOrthoFrustum(c, orthoDistance, W, H, 0, W, H, 35);
+  c.near = -1000;
+  c.far = 1000;
+  c.updateProjectionMatrix();
+  c.updateMatrixWorld();
+  return c;
+}
+
 /** Pixel (x right, y down) of a world point. */
-function pixel(c: THREE.PerspectiveCamera, p: THREE.Vector3): [number, number] {
+function pixel(c: ViewCamera, p: THREE.Vector3): [number, number] {
   c.updateMatrixWorld();
   const n = p.clone().project(c);
   return [((n.x + 1) / 2) * W, ((1 - n.y) / 2) * H];
@@ -58,7 +71,7 @@ test("CAD convention: left selects and never orbits, right orbits, middle and sh
   assert.equal(WHEEL_ACTION, "zoom-to-cursor");
 });
 
-test("DOM buttons map to the table; back/forward are unbound; F fits", () => {
+test("DOM buttons map to the table; back/forward are unbound; F fits, Escape clears selection, E toggles edges", () => {
   assert.equal(buttonOf(0), "left");
   assert.equal(buttonOf(1), "middle");
   assert.equal(buttonOf(2), "right");
@@ -66,7 +79,14 @@ test("DOM buttons map to the table; back/forward are unbound; F fits", () => {
   assert.equal(buttonOf(4), null);
   assert.equal(keyAction("f"), "fit");
   assert.equal(keyAction("F"), "fit");
+  assert.equal(keyAction("Escape"), "clearSelection");
+  assert.equal(keyAction("e"), "toggleEdges");
+  assert.equal(keyAction("E"), "toggleEdges");
   assert.equal(keyAction("g"), null);
+  assert.equal(isSelectAdd({}), false);
+  assert.equal(isSelectAdd({ shiftKey: true }), true);
+  assert.equal(isSelectAdd({ ctrlKey: true }), true);
+  assert.equal(isSelectAdd({ metaKey: true }), true);
 });
 
 // ---- pivot ------------------------------------------------------------------
@@ -265,4 +285,99 @@ test("dispose removes every listener it added, on the canvas and on the key targ
   assert.equal(element.removed.length + keys.removed.length, 8);
   element.fire("pointerdown", press(1, 0, 0, 0));
   assert.ok(!nav.dragging, "a disposed navigator ignores events");
+});
+
+// ---- snapAbout & orthographic camera ----------------------------------------
+
+test("snapAbout: keeps the pivot pixel fixed and reaches the exact target heading", () => {
+  const h0 = headingOf(new THREE.Vector3(-1.0, 1.3, -0.9));
+  const c = camera(new THREE.Vector3(10, -13, 9), h0);
+  const pivot = new THREE.Vector3(0.4, -0.3, 0.2);
+  const before = pixel(c, pivot);
+  const targetHeading: Heading = { yaw: Math.PI / 2, tilt: Math.PI / 2 };
+  const h1 = snapAbout(c, h0, targetHeading, pivot);
+  assert.deepEqual(h1, targetHeading);
+  const after = pixel(c, pivot);
+  close(after[0], before[0], 1e-6, "pivot x px");
+  close(after[1], before[1], 1e-6, "pivot y px");
+});
+
+test("orthographic: matches perspective scale at the target depth, pans pixel-for-pixel, and zooms toward cursor", () => {
+  const h0 = headingOf(new THREE.Vector3(-1.0, 1.3, -0.9));
+  const target = new THREE.Vector3(0.5, -0.2, 0.3);
+  const d0 = 15;
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(orientationOf(h0));
+  const pos = target.clone().addScaledVector(forward, -d0);
+
+  const persp = camera(pos, h0);
+  const ortho = orthoCamera(pos, h0, d0);
+
+  // A displacement in the target plane projects to the exact same pixel offset in perspective and orthographic.
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(persp.quaternion);
+  const probe = target.clone().addScaledVector(right, 1.25);
+  const pPersp = pixel(persp, probe);
+  const pOrtho = pixel(ortho, probe);
+  close(pOrtho[0], pPersp[0], 1e-6, "scale parity x px");
+  close(pOrtho[1], pPersp[1], 1e-6, "scale parity y px");
+
+  // Orthographic pan moves any point pixel-for-pixel.
+  const beforePan = pixel(ortho, probe);
+  panBy(ortho, d0, -42, 19, H);
+  const afterPan = pixel(ortho, probe);
+  close(afterPan[0] - beforePan[0], -42, 1e-6, "ortho pan dx");
+  close(afterPan[1] - beforePan[1], 19, 1e-6, "ortho pan dy");
+
+  // Orthographic zoom-to-cursor keeps the point under the cursor at the exact same pixel.
+  const zoomPoint = new THREE.Vector3(-1.1, 0.8, -0.4);
+  const beforeZoom = pixel(ortho, zoomPoint);
+  const keep = 1 / 1.15;
+  zoomToward(ortho, zoomPoint, keep);
+  syncOrthoFrustum(ortho, d0 * keep, W, H, 0, W, H, 35);
+  const afterZoom = pixel(ortho, zoomPoint);
+  close(afterZoom[0], beforeZoom[0], 1e-6, "ortho zoom x px");
+  close(afterZoom[1], beforeZoom[1], 1e-6, "ortho zoom y px");
+});
+
+test("modifier clicks pass add=true for Shift, Ctrl and Meta; Escape clears selection and E toggles edges", () => {
+  const element = new FakeTarget(), keys = new FakeTarget();
+  const clicks: [number, number, boolean][] = [];
+  let cleared = 0, toggledEdges = 0, fitted = 0;
+  const nav = new Navigator({
+    camera: camera(new THREE.Vector3(0, -10, 0), { yaw: 0, tilt: Math.PI / 2 }),
+    element,
+    keys,
+    bounds: () => ({ center: new THREE.Vector3(), radius: 1 }),
+    hitAt: () => null,
+    rayAt: () => new THREE.Ray(),
+    select: (x, y, add = false) => clicks.push([x, y, add]),
+    fit: () => fitted++,
+    clearSelection: () => cleared++,
+    toggleEdges: () => toggledEdges++,
+    changed: () => {},
+  });
+  element.fire("pointerdown", { ...press(1, 0, 10, 20), shiftKey: false, ctrlKey: false, metaKey: false });
+  element.fire("pointerup", { ...press(1, 0, 10, 20), shiftKey: false, ctrlKey: false, metaKey: false });
+  element.fire("pointerdown", { ...press(2, 0, 30, 40), shiftKey: true });
+  element.fire("pointerup", { ...press(2, 0, 30, 40), shiftKey: true });
+  element.fire("pointerdown", { ...press(3, 0, 50, 60), ctrlKey: true });
+  element.fire("pointerup", { ...press(3, 0, 50, 60), ctrlKey: true });
+  element.fire("pointerdown", { ...press(4, 0, 70, 80), metaKey: true });
+  element.fire("pointerup", { ...press(4, 0, 70, 80), metaKey: true });
+  assert.deepEqual(clicks, [
+    [10, 20, false],
+    [30, 40, true],
+    [50, 60, true],
+    [70, 80, true],
+  ]);
+  keys.fire("keydown", { key: "Escape", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "e", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "E", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "f", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  // Inside an input or with Ctrl/Meta held, key shortcuts do not fire.
+  keys.fire("keydown", { key: "e", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: { tagName: "INPUT" } });
+  keys.fire("keydown", { key: "Escape", ctrlKey: true, altKey: false, metaKey: false, repeat: false, target: null });
+  assert.equal(cleared, 1);
+  assert.equal(toggledEdges, 2);
+  assert.equal(fitted, 1);
+  nav.dispose();
 });

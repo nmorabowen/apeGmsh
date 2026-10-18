@@ -151,6 +151,7 @@ const EVERY: Record<EventType, Event> = {
   setContourField: { type: "setContourField", field: "displacement", component: "displacement_x" },
   setContourRange: { type: "setContourRange", range: "fixed", fixed: { min: 0, max: 1 } },
   setContourCmap: { type: "setContourCmap", cmap: "viridis" },
+  setContourUnits: { type: "setContourUnits", source: "kN_m_s", target: "tf_m_s" },
   contourStepRange: { type: "contourStepRange", key: "x", min: 0, max: 1 },
   contourScan: { type: "contourScan", scan: { key: "x", status: "running", done: 1, total: 2, min: null, max: null, error: null } },
   setDeform: { type: "setDeform", on: true },
@@ -170,6 +171,28 @@ const EVERY: Record<EventType, Event> = {
   deformMeasured: { type: "deformMeasured", key: "x", drawn: 3, missing: 1 },
   setContourGauss: { type: "setContourGauss", mode: "node" },
   contourElementJoin: { type: "contourElementJoin", verdict: { key: "x", ok: true, rows: 1, extrapolation: { corners: null, matrix: null } } },
+  setLineDiagram: { type: "setLineDiagram", on: true },
+  setLineDiagramComponent: { type: "setLineDiagramComponent", component: "Mz" },
+  setLineDiagramScale: { type: "setLineDiagramScale", scale: 2 },
+  setLineDiagramPlane: { type: "setLineDiagramPlane", plane: "screen" },
+  setLineDiagramCmap: { type: "setLineDiagramCmap", cmap: "sign" },
+  setLineDiagramFill: { type: "setLineDiagramFill", fill: false },
+  setLineDiagramFlipSign: { type: "setLineDiagramFlipSign", flipSign: false },
+  setLineDiagramRange: { type: "setLineDiagramRange", range: "fixed", fixed: { min: -10, max: 10 } },
+  lineDiagramStepRange: { type: "lineDiagramStepRange", key: "x", min: -5, max: 5 },
+  lineDiagramScan: { type: "lineDiagramScan", scan: { key: "x", status: "done", done: 3, total: 3, min: -12, max: 12, error: null } },
+  selectDecls: { type: "selectDecls", decls: [archPath], add: false },
+  openSpotlight: { type: "openSpotlight", mode: "root" },
+  closeSpotlight: { type: "closeSpotlight" },
+  setSpotlightMode: { type: "setSpotlightMode", mode: "opacity" },
+  setSpotlightQuery: { type: "setSpotlightQuery", query: "Arch" },
+  addSpotlightClause: { type: "addSpotlightClause", clause: { join: "and", negate: false, field: "group", op: ":", value: "Arch" } },
+  removeSpotlightClause: { type: "removeSpotlightClause", id: "sp-1" },
+  clearSpotlightClauses: { type: "clearSpotlightClauses" },
+  setSearchText: { type: "setSearchText", text: "type:forceBeamColumn" },
+  addSearchClause: { type: "addSearchClause", clause: { join: "and", negate: false, field: "group", op: ":", value: "Arch" } },
+  removeSearchClause: { type: "removeSearchClause", id: "q-1" },
+  clearSearch: { type: "clearSearch" },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -187,8 +210,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    51,
-    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), and setCutFace (V4e3)",
+    74,
+    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, and the 12 Spotlight/Search/selectDecls events",
   );
 });
 
@@ -281,13 +304,22 @@ test("an event the union does not know raises at run time", () => {
   assert.throws(() => reduce(loaded, { type: "nope" } as unknown as Event), /unknown event/);
 });
 
-test("select, selectAdd, clearSelection, pins; an undeclared path is refused", () => {
+test("select, selectAdd (add and toggle-remove), clearSelection, pins; an undeclared path is refused", () => {
   let s = reduce(loaded, EVERY.select);
   assert.deepEqual(s.selection.decls, [archPath]);
   s = reduce(s, EVERY.selectAdd);
-  assert.equal(s.selection.decls.length, 2);
-  assert.equal(reduce(s, EVERY.selectAdd), s, "a repeat add is a no-op");
+  const secondPath = loaded.mesh!.elements[0]!;
+  assert.deepEqual(s.selection.decls, [archPath, secondPath]);
+  assert.equal(s.selection.picks.length, 2);
+  // Toggling the first element removes it from both decls and picks, keeping the second.
+  const toggled = reduce(s, { type: "selectAdd", pick: pick(archPath) });
+  assert.deepEqual(toggled.selection.decls, [secondPath]);
+  assert.deepEqual(toggled.selection.picks.map((p) => p.decl), [secondPath]);
+  // Toggling the remaining element leaves an empty selection.
+  const emptied = reduce(toggled, EVERY.selectAdd);
+  assert.deepEqual(emptied.selection, { decls: [], picks: [] });
   assert.throws(() => reduce(s, { type: "select", pick: pick("mesh/element/999999") }), /not a declaration/);
+  assert.throws(() => reduce(s, { type: "selectAdd", pick: pick("mesh/element/999999") }), /not a declaration/);
   s = reduce(s, EVERY.inspectorPin);
   assert.deepEqual(s.inspector.pinned, [archPath]);
   assert.equal(inspected(s).length, 2, "the pinned chain and the other selected one");
@@ -315,6 +347,21 @@ test("visibility: hide, isolate, showAll, edges, opacity clamped, NaN refused", 
   assert.equal(byRole.visibility.colourBy, "role");
   assert.equal(reduce(byRole, EVERY.setColourBy), byRole, "the same mode again is a no-op");
   assert.throws(() => reduce(loaded, { type: "setColourBy", by: "size" as never }), RangeError);
+
+  // A new model with both 3-D solids and 1-D lines starts at ghost opacity (0.35) so embedded rebar is visible;
+  // a model without that mix resets to opaque (1); a same-path re-read preserves the user's chosen opacity.
+  const mixedLoad: ModelLoad = {
+    ...load,
+    info: { ...load.info, path: "reinforced.h5" },
+    mesh: { ...load.mesh, counts: { ...load.mesh.counts, solidCells: 4, lineCells: 8 } },
+  };
+  const sMixed = reduce(loaded, { type: "fileLoaded", artifact: "model", load: mixedLoad });
+  assert.equal(sMixed.visibility.opacity, 0.35, "new solid+line model defaults to ghost (0.35)");
+  const sUserSolid = reduce(sMixed, { type: "setOpacity", value: 1 });
+  const sReread = reduce(sUserSolid, { type: "setLoaded", model: mixedLoad, geometry: null });
+  assert.equal(sReread.visibility.opacity, 1, "same-path re-read preserves the user's opacity");
+  const sBackToLineOnly = reduce(sMixed, { type: "fileLoaded", artifact: "model", load });
+  assert.equal(sBackToLineOnly.visibility.opacity, 1, "switching to a non-solid+line model resets opacity to 1");
 });
 
 test("phase: the mesh is on the axis after a load; a key off the axis is refused", () => {
@@ -667,3 +714,20 @@ test("the legend carries a generated colour per group and the two synthetic rows
   assert.equal(groups.length, loaded.mesh!.elements.length);
   for (const g of groups) assert.ok(g >= 0 && g < legend.length);
 });
+
+test("loadModel reads model.meta.units and reduce auto-selects contour units when declared", () => {
+  const mDeclared: ModelFile = { ...synthetic(complete(), [meta("forceBeamColumn", [1, 1])]), meta: { units: "kN_m_s" } };
+  const sDeclared = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(mDeclared, new BlobStore()) });
+  assert.equal(sDeclared.units, "kN_m_s");
+  assert.equal(sDeclared.contour.declaredUnits, "kN_m_s");
+  assert.equal(sDeclared.contour.sourceUnits, "kN_m_s");
+  assert.equal(sDeclared.contour.targetUnits, "kN_m_s");
+
+  const mUndeclared: ModelFile = { ...synthetic(complete(), [meta("forceBeamColumn", [1, 1])]), meta: {} };
+  const sUndeclared = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(mUndeclared, new BlobStore()) });
+  assert.equal(sUndeclared.units, null);
+  assert.equal(sUndeclared.contour.declaredUnits, null);
+  assert.equal(sUndeclared.contour.sourceUnits, null);
+  assert.equal(sUndeclared.contour.targetUnits, "as_stored");
+});
+

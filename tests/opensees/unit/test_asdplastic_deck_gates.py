@@ -131,8 +131,8 @@ class TestCapabilityFlag:
 
         unvalued = set(_ELEM_REGISTRY) - valued
         assert unvalued == {
-            # Section-based shells — not direct NDMaterial hosts.
-            "ASDShellQ4", "ShellDKGQ", "ShellMITC4",
+            # Section-based shells / membrane macro-element — outside PR #838 roster.
+            "ASDShellQ4", "LadrunoMembrane", "ShellDKGQ", "ShellMITC4",
             # Uniaxial trusses / beams.
             "ElasticTimoshenkoBeam", "corotTruss", "elasticBeamColumn",
             "truss",

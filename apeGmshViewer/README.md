@@ -96,7 +96,9 @@ Then:
   in the background, and until it is done the range is the step's own, with
   "range: this step (history scan n%)" in the legend. **this step** and
   **fixed** (your min and max) are the other modes, and the legend always
-  says which is in use. The colormap is **jet**, or viridis or coolwarm. A
+  says which is in use. The colormap defaults to **jet** (or turbo, viridis,
+  plasma, inferno, magma, coolwarm, RdBu_r, RdBu, bwr, seismic, BrBG or
+  Spectral). A
   node the field does not record (not in its `_ids`, or NaN) is **no data**,
   in the grey the legend names: every face or line that touches it is drawn
   in it, never as zero and never blended from its neighbours. The file

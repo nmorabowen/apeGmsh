@@ -12,9 +12,15 @@
 // the pivot, which keeps the pivot on the same pixel.
 
 import * as THREE from "three";
-import { bindingFor, buttonOf, CLICK_SLOP_PX, keyAction, type DragAction } from "./bindings.ts";
+import { bindingFor, buttonOf, CLICK_SLOP_PX, isSelectAdd, keyAction, type DragAction } from "./bindings.ts";
 
 export const Z_UP: Readonly<THREE.Vector3> = new THREE.Vector3(0, 0, 1);
+export const DEFAULT_FOV_DEG = 35;
+export const ISO_FORWARD: Readonly<THREE.Vector3> = new THREE.Vector3(-1.0, 1.3, -0.9);
+
+export const PROJECTION_MODES = ["perspective", "orthographic"] as const;
+export type ProjectionMode = (typeof PROJECTION_MODES)[number];
+export type ViewCamera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
 
 /** Camera orientation with no roll: yaw about world Z, tilt in [0, pi] from looking straight down. */
 export interface Heading {
@@ -45,20 +51,29 @@ export function applyHeading(camera: THREE.Camera, h: Heading): void {
 }
 
 /**
- * Turntable orbit about `pivot`: yaw about the world Z axis through it, tilt
- * about the camera's (horizontal) right axis through it, tilt clamped to
- * [0, pi]. Position and orientation turn together, so the pivot keeps its
- * pixel. The camera must already be at `heading`. Returns the new heading.
+ * Turn `camera` about `pivot` from heading `from` to `to` (tilt clamped to
+ * [0, pi]). Position and orientation turn together, so `pivot` keeps its
+ * distance and screen pixel. Returns the clamped heading.
  */
-export function orbitAbout(camera: THREE.Camera, heading: Heading, pivot: THREE.Vector3, dYaw: number, dTilt: number): Heading {
-  const next = { yaw: heading.yaw + dYaw, tilt: THREE.MathUtils.clamp(heading.tilt + dTilt, 0, Math.PI) };
-  const before = orientationOf(heading);
+export function snapAbout(camera: THREE.Camera, from: Heading, to: Heading, pivot: THREE.Vector3): Heading {
+  const next = { yaw: to.yaw, tilt: THREE.MathUtils.clamp(to.tilt, 0, Math.PI) };
+  const before = orientationOf(from);
   const after = orientationOf(next);
   const turn = after.clone().multiply(before.invert());
   camera.position.sub(pivot).applyQuaternion(turn).add(pivot);
   camera.quaternion.copy(after);
   camera.updateMatrixWorld();
   return next;
+}
+
+/**
+ * Turntable orbit about `pivot`: yaw about the world Z axis through it, tilt
+ * about the camera's (horizontal) right axis through it, tilt clamped to
+ * [0, pi]. Position and orientation turn together, so the pivot keeps its
+ * pixel. The camera must already be at `heading`. Returns the new heading.
+ */
+export function orbitAbout(camera: THREE.Camera, heading: Heading, pivot: THREE.Vector3, dYaw: number, dTilt: number): Heading {
+  return snapAbout(camera, heading, { yaw: heading.yaw + dYaw, tilt: heading.tilt + dTilt }, pivot);
 }
 
 /** Distance from the camera to `point` along the view direction. */
@@ -68,12 +83,38 @@ export function depthOf(camera: THREE.Camera, point: THREE.Vector3): number {
 }
 
 /**
+ * Set an orthographic camera's frustum from the reference distance `orthoDistance`
+ * and vertical field `fovDeg`, with the same view offset as the perspective camera.
+ */
+export function syncOrthoFrustum(
+  ortho: THREE.OrthographicCamera,
+  orthoDistance: number,
+  fullWidth: number,
+  fullHeight: number,
+  offsetX = 0,
+  viewWidth = fullWidth,
+  viewHeight = fullHeight,
+  fovDeg = DEFAULT_FOV_DEG,
+): void {
+  const halfH = Math.max(orthoDistance, 1e-6) * Math.tan(THREE.MathUtils.degToRad(fovDeg / 2));
+  const halfW = halfH * (Math.max(1, fullWidth) / Math.max(1, fullHeight));
+  ortho.left = -halfW;
+  ortho.right = halfW;
+  ortho.top = halfH;
+  ortho.bottom = -halfH;
+  ortho.setViewOffset(fullWidth, fullHeight, offsetX, 0, viewWidth, viewHeight);
+  ortho.updateProjectionMatrix();
+}
+
+/**
  * Grab-pan: move the camera in its view plane so a point at `depth` follows
  * the cursor by (dxPx, dyPx) screen pixels (y down). `viewHeightPx` is the
  * canvas height the vertical field of view spans.
  */
-export function panBy(camera: THREE.PerspectiveCamera, depth: number, dxPx: number, dyPx: number, viewHeightPx: number): void {
-  const perPx = (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / (camera.zoom * viewHeightPx);
+export function panBy(camera: ViewCamera, depth: number, dxPx: number, dyPx: number, viewHeightPx: number): void {
+  const perPx = (camera as THREE.OrthographicCamera).isOrthographicCamera
+    ? ((camera as THREE.OrthographicCamera).top - (camera as THREE.OrthographicCamera).bottom) / (camera.zoom * viewHeightPx)
+    : (2 * depth * Math.tan(THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov / 2))) / (camera.zoom * viewHeightPx);
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
   const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
   camera.position.addScaledVector(right, -dxPx * perPx).addScaledVector(up, dyPx * perPx);
@@ -121,10 +162,15 @@ export function pivotFor(hit: THREE.Vector3 | null, bboxCenter: THREE.Vector3): 
 }
 
 /** Near and far planes that enclose the bounding sphere from where the camera stands. */
-export function clipPlanes(camera: THREE.PerspectiveCamera, center: THREE.Vector3, radius: number): void {
+export function clipPlanes(camera: ViewCamera, center: THREE.Vector3, radius: number): void {
   const d = camera.position.distanceTo(center);
-  camera.near = Math.max(d - 1.1 * radius, 1e-4 * radius);
-  camera.far = d + 1.1 * radius;
+  if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+    camera.near = d - 2.5 * radius;
+    camera.far = d + 2.5 * radius;
+  } else {
+    camera.near = Math.max(d - 1.1 * radius, 1e-4 * radius);
+    camera.far = d + 1.1 * radius;
+  }
   camera.updateProjectionMatrix();
 }
 
@@ -136,7 +182,7 @@ export interface ListenTarget {
 
 /** What the navigator needs from the viewport. */
 export interface NavHost {
-  readonly camera: THREE.PerspectiveCamera;
+  readonly camera: ViewCamera;
   /** the canvas: pointer and wheel events, pointer capture, its height for drag rates */
   readonly element: ListenTarget & {
     readonly clientHeight: number;
@@ -152,9 +198,11 @@ export interface NavHost {
   hitAt(clientX: number, clientY: number): THREE.Vector3 | null;
   /** The world ray through a client-space point. */
   rayAt(clientX: number, clientY: number): THREE.Ray;
-  select(clientX: number, clientY: number): void;
+  select(clientX: number, clientY: number, add?: boolean): void;
   /** Frame the whole model, keeping the heading. */
   fit(): void;
+  clearSelection?(): void;
+  toggleEdges?(): void;
   changed(): void;
 }
 
@@ -165,6 +213,7 @@ interface Drag {
   id: number;
   action: DragAction | null;
   click: boolean;
+  add: boolean;
   x0: number;
   y0: number;
   x: number;
@@ -175,8 +224,10 @@ interface Drag {
 
 export class Navigator {
   heading: Heading = { yaw: 0, tilt: 0 };
-  /** The centre the last fit framed; scripted orbits turn about it. */
+  /** The centre the last fit framed; scripted orbits and ViewCube snaps turn about it. */
   readonly target = new THREE.Vector3();
+  /** Reference distance that sets the orthographic frustum height (`halfH = orthoDistance * tan(fov/2)`). */
+  orthoDistance = 10;
   private readonly host: NavHost;
   private drag: Drag | null = null;
   private readonly off: (() => void)[] = [];
@@ -218,6 +269,12 @@ export class Navigator {
     applyHeading(this.host.camera, this.heading);
   }
 
+  /** Snap the camera to heading `to` about `pivot` (defaults to `this.target`), keeping the distance. */
+  snapTo(to: Heading, pivot: THREE.Vector3 = this.target): void {
+    this.heading = snapAbout(this.host.camera, this.heading, to, pivot);
+    this.updated();
+  }
+
   /** Orbit about a pivot (also the scripted orbit of `npm run measure`). */
   orbit(pivot: THREE.Vector3, dYaw: number, dTilt: number): void {
     this.heading = orbitAbout(this.host.camera, this.heading, pivot, dYaw, dTilt);
@@ -245,6 +302,7 @@ export class Navigator {
       id: e.pointerId,
       action: binding.drag,
       click: binding.click === "select",
+      add: isSelectAdd(e),
       x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
       pivot: anchor,
       depth: Math.max(depthOf(this.host.camera, anchor), 1e-3 * b.radius),
@@ -266,7 +324,9 @@ export class Navigator {
       // A drag across the canvas height turns a full circle (OrbitControls' rate).
       this.orbit(d.pivot, (-2 * Math.PI * dx) / h, (-2 * Math.PI * dy) / h);
     } else {
+      const before = this.host.camera.position.clone();
       panBy(this.host.camera, d.depth, dx, dy, h);
+      this.target.add(this.host.camera.position).sub(before);
       this.updated();
     }
   }
@@ -276,7 +336,9 @@ export class Navigator {
     if (!d || e.pointerId !== d.id) return;
     this.drag = null;
     if (this.host.element.hasPointerCapture(e.pointerId)) this.host.element.releasePointerCapture(e.pointerId);
-    if (d.click && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) <= CLICK_SLOP_PX) this.host.select(e.clientX, e.clientY);
+    if (d.click && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) <= CLICK_SLOP_PX) {
+      this.host.select(e.clientX, e.clientY, d.add || isSelectAdd(e));
+    }
   }
 
   private onWheel(e: WheelEvent): void {
@@ -294,9 +356,12 @@ export class Navigator {
       const along = depth > 1e-3 * b.radius ? depth / ray.direction.dot(forward) : b.radius;
       point = ray.at(along, new THREE.Vector3());
     }
-    const limited = clampZoom(this.host.camera.position.distanceTo(point), keep, b.radius);
+    const isOrtho = (this.host.camera as THREE.OrthographicCamera).isOrthographicCamera === true;
+    const refDist = isOrtho ? this.orthoDistance : this.host.camera.position.distanceTo(point);
+    const limited = clampZoom(refDist, keep, b.radius);
     if (limited === 1) return;
     zoomToward(this.host.camera, point, limited);
+    this.orthoDistance *= limited;
     this.updated();
   }
 
@@ -304,6 +369,9 @@ export class Navigator {
     if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-    if (keyAction(e.key) === "fit" && this.host.bounds()) this.host.fit();
+    const action = keyAction(e.key);
+    if (action === "fit" && this.host.bounds()) this.host.fit();
+    else if (action === "clearSelection") this.host.clearSelection?.();
+    else if (action === "toggleEdges") this.host.toggleEdges?.();
   }
 }

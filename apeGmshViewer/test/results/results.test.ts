@@ -21,6 +21,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openResults, ResultsError, sortStageIds, type ResultsH5 } from "../../src/reader/results.ts";
+import { ResultsHost } from "../../src/main/results.ts";
 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;
@@ -564,3 +565,176 @@ test("a negative or fractional step is refused", () => {
 test("stage ids sort by their integer suffix, then lexically", () => {
   assert.deepEqual(sortStageIds(["stage_10", "b", "stage_2", "a", "stage_0"]), ["stage_0", "stage_2", "stage_10", "a", "b"]);
 });
+
+// -- elements/line_stations on native results.h5 --------------------------------
+
+function addLineStationGroup(
+  f: h5wasm.File,
+  gid: string,
+  eids: bigint[],
+  xis: number[],
+  comps: Record<string, { data: Float64Array; shape: number[] }>,
+  extra: string[] = [],
+): void {
+  const elements = f.get(`stages/${STAGE}/partitions/partition_0/elements`) as h5wasm.Group;
+  const ls = Object.keys(elements.keys()).includes("line_stations")
+    ? (elements.get("line_stations") as h5wasm.Group)
+    : elements.create_group("line_stations");
+  const g = ls.create_group(gid);
+  g.create_attribute("class_tag", 5);
+  g.create_attribute("int_rule", 0);
+  g.create_dataset({ name: "_element_index", data: new BigInt64Array(eids) });
+  g.create_dataset({ name: "_station_natural_coord", data: new Float64Array(xis) });
+  for (const [name, { data, shape }] of Object.entries(comps)) {
+    g.create_dataset({ name, data, shape });
+  }
+  for (const name of extra) g.create_dataset({ name, data: new Float64Array([0]) });
+}
+
+test("verified results.h5 indexes elements/line_stations, reads station slabs/steps, and serves ResultsHost line diagrams", async () => {
+  // T = 5 steps, 2 beams (eid 10, 20), 2 stations (-1, +1)
+  const mz = new Float64Array(T * 2 * 2);
+  const n = new Float64Array(T * 2 * 2);
+  for (let k = 0; k < T; k++) {
+    for (let e = 0; e < 2; e++) {
+      for (let s = 0; s < 2; s++) {
+        const idx = k * 4 + e * 2 + s;
+        mz[idx] = (e + 1) * 100 + (s === 0 ? -10 : 10) + k;
+        n[idx] = -(e + 1) * 50 - k;
+      }
+    }
+  }
+  const p = edited((f) => {
+    addLineStationGroup(f, "frame_ElasticBeam3d", [10n, 20n], [-1, 1], {
+      Mz: { data: mz, shape: [T, 2, 2] },
+      axial_force: { data: n, shape: [T, 2, 2] }, // canonical alias axial_force -> N
+    });
+  }, STAMPED);
+
+  const r = openResults(H5, p);
+  try {
+    const st = r.stage(STAGE);
+    assert.deepEqual(st.unread, []);
+    assert.equal(st.lineStations?.length, 1);
+    assert.deepEqual(st.lineStations?.[0]!.components, ["Mz", "axial_force"]);
+    assert.deepEqual(r.availableLineStations(STAGE), ["N", "Mz"]);
+
+    const slab = r.readLineStations(STAGE, "Mz");
+    assert.deepEqual(Array.from(slab.elementIndex), [10, 10, 20, 20]);
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 1, -1, 1]);
+    assert.equal(slab.nSteps, T);
+    assert.equal(slab.nStationsTotal, 4);
+    assert.equal(slab.values[2 * 4 + 0], 100 - 10 + 2);
+    assert.equal(slab.values[2 * 4 + 3], 200 + 10 + 2);
+
+    const step2 = r.readLineStationStep(STAGE, "N", 2);
+    assert.deepEqual(Array.from(step2.elementIndex), [10, 10, 20, 20]);
+    assert.deepEqual(Array.from(step2.values), [-52, -52, -102, -102]);
+  } finally {
+    r.close();
+  }
+
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const openAns = await host.open(p);
+    assert.ok(openAns.ok);
+    assert.equal(openAns.meta.elementIndexSpace, "fem");
+    assert.equal(openAns.meta.stages[0]!.elementIndexSpace, "fem");
+    assert.deepEqual(openAns.meta.stages[0]!.lineStations, ["N", "Mz"]);
+    assert.deepEqual(openAns.meta.stages[0]!.unread, []);
+
+    const stepRes = host.readStep({
+      path: p,
+      stage: STAGE,
+      step: 2,
+      seq: 1,
+      lineDiagram: "Mz",
+    });
+    assert.ok(stepRes.ok);
+    assert.ok(stepRes.lineDiagram);
+    assert.equal(stepRes.lineDiagram.component, "Mz");
+    assert.deepEqual(Array.from(stepRes.lineDiagram.elementIndex), [10, 10, 20, 20]);
+    assert.deepEqual(Array.from(stepRes.lineDiagram.values), [92, 112, 192, 212]);
+
+    const scanAns = await host.scan(
+      { path: p, stage: STAGE, scanId: 1, source: "line", components: ["Mz"], magnitude: false },
+      () => {},
+    );
+    assert.ok(scanAns.ok);
+    assert.equal(scanAns.min, 90);
+    assert.equal(scanAns.max, 214);
+  } finally {
+    host.close();
+  }
+});
+
+test("unverified results.h5 keeps line_stations in unread and refuses line-station reads fail-closed", async () => {
+  const p = edited((f) => {
+    addLineStationGroup(f, "frame_ElasticBeam3d", [10n], [-1, 1], {
+      Mz: { data: new Float64Array(T * 1 * 2), shape: [T, 1, 2] },
+    });
+  }, FIXTURE);
+
+  const r = openResults(H5, p);
+  try {
+    const st = r.stage(STAGE);
+    assert.deepEqual(st.unread, ["line_stations (1 groups)"]);
+    assert.deepEqual(st.lineStations ?? [], []);
+    assert.deepEqual(r.availableLineStations(STAGE), []);
+    assert.throws(
+      () => r.readLineStations(STAGE, "Mz"),
+      (e: unknown) => e instanceof ResultsError && e.kind === "unsupported" && /line-station results of .* are refused/.test(e.message),
+    );
+  } finally {
+    r.close();
+  }
+
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const openAns = await host.open(p);
+    assert.ok(openAns.ok);
+    assert.deepEqual(openAns.meta.stages[0]!.lineStations, []);
+    assert.deepEqual(openAns.meta.stages[0]!.unread, ["line_stations (1 groups)"]);
+    const scanAns = await host.scan(
+      { path: p, stage: STAGE, scanId: 1, source: "line", components: ["Mz"], magnitude: false },
+      () => {},
+    );
+    assert.equal(scanAns.ok, false);
+    if (!scanAns.ok) assert.match(scanAns.error, /refused/);
+  } finally {
+    host.close();
+  }
+});
+
+test("line_stations partial write and unknown _ dataset are refused as gauss groups are", () => {
+  const partial = edited((f) => {
+    addLineStationGroup(f, "frame_ElasticBeam3d", [10n, 20n], [-1, 1], {
+      Mz: { data: new Float64Array(T * 2 * 2), shape: [T, 2, 2] },
+      Vy: { data: new Float64Array(T * 1 * 2), shape: [T, 1, 2] },
+    });
+  }, STAMPED);
+  const r = openResults(H5, partial);
+  try {
+    const g = r.stage(STAGE).lineStations?.[0];
+    assert.ok(g);
+    assert.deepEqual(g.components, ["Mz"]);
+    assert.equal(g.refused.length, 1);
+    assert.equal(g.refused[0]!.component, "Vy");
+    assert.match(g.refused[0]!.reason, /has shape \(5, 1, 2\) and the group indexes 2 elements x 2 stations \(a partial write\)/);
+  } finally {
+    r.close();
+  }
+
+  const badIndex = edited((f) => {
+    addLineStationGroup(
+      f,
+      "frame_ElasticBeam3d",
+      [10n],
+      [-1, 1],
+      { Mz: { data: new Float64Array(T * 1 * 2), shape: [T, 1, 2] } },
+      ["_weights"],
+    );
+  }, STAMPED);
+  refuses(badIndex, "layout", /frame_ElasticBeam3d\/_weights: not a line_stations index dataset/);
+});
+

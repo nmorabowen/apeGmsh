@@ -31,7 +31,7 @@ import { cutsOf, type Cut } from "../state/clip.ts";
 import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
 import { vertexDisplacements } from "../state/deform.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners } from "../state/extrapolation.ts";
-import { activationNow, contourView, deformView, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
+import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
@@ -140,6 +140,7 @@ function colourGroupOf(d: Decl, decls: Readonly<Record<DeclPath, Decl>>): DeclPa
 /** Which cells are drawn (1) given the hidden legend rows and the stage's activation; null when every cell is. */
 export function shownCells(s: State, t: SolidTable): Uint8Array | null {
   const hidden = new Set(s.visibility.hidden);
+  const hiddenElems = hidden.size ? hiddenElementsOf(s) : null;
   const a = activationNow(s)?.activation;
   const inactive = a?.state === "filtered" ? a.inactiveTags : null;
   if (!hidden.size && !inactive?.size) return null;
@@ -147,7 +148,10 @@ export function shownCells(s: State, t: SolidTable): Uint8Array | null {
   t.decl.forEach((p, c) => {
     const d = s.decls[p]!;
     const g = hidden.size ? colourGroupOf(d, s.decls) : null;
-    const off = (g !== null && hidden.has(g)) || (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
+    const off =
+      (hiddenElems !== null && hiddenElems.has(p)) ||
+      (g !== null && hidden.has(g)) ||
+      (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
     out[c] = off ? 0 : 1;
   });
   return out;
@@ -191,7 +195,7 @@ function shownSubset(s: State, t: SolidTable): ReturnType<typeof subsetOf> {
 /** What the caps show: a slice key (what is cut, where, and which values) and a colour key (how values become colours); null when no cap is wanted. */
 export function capKeys(s: State): { cuts: string; slice: string; colour: string } | null {
   const cuts = cutsOf(s.clip);
-  if (!s.mesh || !s.clip.cutFace || !cuts.length || s.phase.at?.kind === "geometry") return null;
+  if (!s.mesh || !s.clip.cutFace || !cuts.length || s.phase.at?.kind === "geometry" || s.visibility.opacity <= 0) return null;
   const cutKey = JSON.stringify(cuts);
   const a = activationNow(s)?.activation;
   const shown = `hidden ${s.visibility.hidden.join(",")}|act ${a?.state === "filtered" ? `${a.row}:${a.name}` : "all"}`;
@@ -349,7 +353,7 @@ export class CapLayer {
   settledFor(s: State): boolean {
     const k = capKeys(s);
     if (!k) return this.caps.length === 0 && !this.root.visible;
-    return this.keys?.slice === k.slice && this.keys.colour === k.colour;
+    return this.keys?.slice === k.slice && this.keys.colour === k.colour && this.material.opacity === s.visibility.opacity;
   }
 
   /** The caps as drawn (tests, capture). */
@@ -377,8 +381,9 @@ export class CapLayer {
       this.root.visible = false;
       return true;
     }
+    const opacityChanged = this.applyOpacity(s.visibility.opacity);
     if (this.keys?.slice === keys.slice) {
-      let changed = !this.root.visible && this.caps.length > 0;
+      let changed = (!this.root.visible && this.caps.length > 0) || (this.caps.length > 0 && opacityChanged);
       this.root.visible = this.caps.length > 0;
       if (this.keys.colour !== keys.colour) {
         const view = contourView(s);
@@ -392,7 +397,7 @@ export class CapLayer {
     if ("wait" in inputs) {
       // The step is on its way: keep the caps while they are still on the same planes, else hide them.
       const show = this.keys?.cuts === keys.cuts && this.caps.length > 0;
-      const changed = show !== this.root.visible;
+      const changed = show !== this.root.visible || (show && opacityChanged);
       this.root.visible = show;
       return changed;
     }
@@ -428,6 +433,20 @@ export class CapLayer {
       this.root.add(mesh);
     });
     this.root.visible = this.caps.length > 0;
+    return true;
+  }
+
+  /** Match the caps' opacity and depth-writing to the 2-D/3-D surface preset (`solid` 1, `ghost` 0.2). */
+  private applyOpacity(opacity: number): boolean {
+    const transparent = opacity < 1;
+    const depthWrite = opacity >= 1;
+    if (this.material.opacity === opacity && this.material.transparent === transparent && this.material.depthWrite === depthWrite) {
+      return false;
+    }
+    this.material.transparent = transparent;
+    this.material.opacity = opacity;
+    this.material.depthWrite = depthWrite;
+    this.material.needsUpdate = true;
     return true;
   }
 

@@ -15,6 +15,8 @@ Checks the machine-checkable rules of ``references/model-scripts.md``:
     V4  named numbers: inline float literals in call arguments, a data constant
         with no trailing comment, several assignments on one line
     V5  units by a named divisor: ``* 1000``, ``/ 1e3`` and the like
+    U1  consistent unit declaration (opt-in via ``--rules U1``): ``apeGmsh(...)``
+        called without ``units=``
     T1  one action per statement: arithmetic inside an f-string, nested
         comprehensions, overlong lines
     T2  one OpenSees handle: raw openseespy imported as ``ops_raw`` only, each
@@ -338,6 +340,24 @@ def rule_v5(src: Source) -> list[Finding]:
     return out
 
 
+def rule_u1(src: Source) -> list[Finding]:
+    out: list[Finding] = []
+    for node in ast.walk(src.tree):
+        if isinstance(node, ast.Call):
+            callee = (
+                node.func.id if isinstance(node.func, ast.Name)
+                else node.func.attr if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if callee == "apeGmsh" and not any(kw.arg == "units" for kw in node.keywords):
+                out.append(Finding(
+                    node.lineno,
+                    "U1",
+                    "apeGmsh() called without units=; declare a consistent unit system (e.g. units='kN_m_s')",
+                ))
+    return out
+
+
 def _is_named_unit_division(node: ast.AST) -> bool:
     """``x / UNIT`` where UNIT is an upper-case name: the one allowed f-string arithmetic."""
     return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
@@ -572,8 +592,8 @@ def rule_r1(src: Source) -> list[Finding]:
 
 RULES = {
     "S1": rule_s1, "S2": rule_s2, "S3": rule_s3, "V1": rule_v1, "V3": rule_v3,
-    "V4": rule_v4, "V5": rule_v5, "T1": rule_t1, "T2": rule_t2, "T4": rule_t4,
-    "R1": rule_r1,
+    "V4": rule_v4, "V5": rule_v5, "U1": rule_u1, "T1": rule_t1, "T2": rule_t2,
+    "T4": rule_t4, "R1": rule_r1,
 }
 
 

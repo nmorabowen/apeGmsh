@@ -17,18 +17,31 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
-import { contourView, geometryPairing, gizmoPlanes } from "../state/selectors.ts";
-import { contourColours, contourShownKey, elementColours, noDataColours, type StepValues } from "./contour.ts";
+import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
+import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
+import { contourColours, contourShownKey, elementColours, noDataColours, toLinear, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
-import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
+import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
+import { LineDiagramLayer } from "./lineDiagram.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
-import { DARK, toHexNumber } from "../theme/tokens.ts";
-import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
+import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
+import {
+  DEFAULT_FOV_DEG,
+  depthOf,
+  headingOf,
+  ISO_FORWARD,
+  Navigator,
+  nearestHit,
+  syncOrthoFrustum,
+  type Heading,
+  type ProjectionMode,
+  type ViewCamera,
+} from "./navigation.ts";
 import { fitDistance, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
@@ -58,8 +71,14 @@ interface MeshIndex {
 
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
-  readonly camera: THREE.PerspectiveCamera;
+  readonly perspCamera: THREE.PerspectiveCamera;
+  readonly orthoCamera: THREE.OrthographicCamera;
   readonly nav: Navigator;
+  private activeProjection: ProjectionMode = "perspective";
+  private activeTheme: ThemeMode = "dark";
+  private readonly hemiLight: THREE.HemisphereLight;
+  private readonly keyLight: THREE.DirectionalLight;
+  private readonly viewListeners = new Set<() => void>();
   private readonly scene = new THREE.Scene();
   private readonly raycaster = new THREE.Raycaster();
   private readonly host: HTMLElement;
@@ -91,6 +110,9 @@ export class Viewport {
   contourApplied: string | null = null;
   /** V4d: the displacement the effects computed for the step shown (effects.currentDisplacement). */
   private dispSource: () => DisplacementData | null = () => null;
+  /** 3-D line diagram step data from effects (effects.currentLineDiagram). */
+  private lineDiagramSource: () => { key: string; step: LadrunoLineStationStep } | null = () => null;
+  readonly lineDiagram: LineDiagramLayer;
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -105,9 +127,25 @@ export class Viewport {
   readonly caps = new CapLayer();
   /** V4e3: a panel offset slider is held: the caps wait for its release, as for a gizmo drag. */
   private sliding = false;
+  private railCollapsed = false;
   /** V4d: what the drawn positions show now: `base`, or the displacement key and scale; null with no mesh. */
   get deformApplied(): string | null {
     return this.full?.key ?? null;
+  }
+
+  /** The active camera (perspective by default, or orthographic). */
+  get camera(): ViewCamera {
+    return this.activeProjection === "orthographic" ? this.orthoCamera : this.perspCamera;
+  }
+
+  /** Current camera projection mode. */
+  get projection(): ProjectionMode {
+    return this.activeProjection;
+  }
+
+  /** Current viewport theme mode ("dark" or "light"). */
+  get theme(): ThemeMode {
+    return this.activeTheme;
   }
 
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
@@ -121,15 +159,19 @@ export class Viewport {
     this.renderer.localClippingEnabled = true;
     host.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
+    this.perspCamera = new THREE.PerspectiveCamera(DEFAULT_FOV_DEG, 1, 0.01, 1000);
+    this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
     // Z up, always: the navigator's heading has no roll, so Z stays vertical on screen.
-    this.camera.up.set(0, 0, 1);
-    this.scene.add(this.camera);
-    this.scene.add(new THREE.HemisphereLight(toHexNumber(DARK.skyLight), toHexNumber(DARK.groundLight), 1.6));
-    const key = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
-    key.position.set(0.5, 0.8, 1);
-    this.camera.add(key);
-    this.scene.add(this.content, this.highlight, this.geometryLayer);
+    this.perspCamera.up.set(0, 0, 1);
+    this.orthoCamera.up.set(0, 0, 1);
+    this.scene.add(this.perspCamera, this.orthoCamera);
+    this.hemiLight = new THREE.HemisphereLight(toHexNumber(DARK.skyLight), toHexNumber(DARK.groundLight), 1.6);
+    this.scene.add(this.hemiLight);
+    this.keyLight = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
+    this.keyLight.position.set(0.5, 0.8, 1);
+    this.perspCamera.add(this.keyLight);
+    this.lineDiagram = new LineDiagramLayer(this.camera);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -149,6 +191,76 @@ export class Viewport {
     this.onState(store.get(), null);
   }
 
+  /** Subscribe to camera heading, projection, theme, or model visibility changes (for the ViewCube). */
+  onViewChange(fn: () => void): () => void {
+    this.viewListeners.add(fn);
+    return () => this.viewListeners.delete(fn);
+  }
+
+  private notifyView(): void {
+    for (const fn of this.viewListeners) fn();
+  }
+
+  /** Switch between perspective and orthographic projection, preserving target scale and pose. */
+  setProjection(mode: ProjectionMode): void {
+    if (mode === this.activeProjection) return;
+    const m = this.store.get().mesh ?? this.geometryInfo;
+    const r = m?.radius ?? 1;
+    if (mode === "orthographic") {
+      this.nav.orthoDistance = Math.max(depthOf(this.perspCamera, this.nav.target), 1e-3 * r);
+      this.orthoCamera.position.copy(this.perspCamera.position);
+      this.orthoCamera.quaternion.copy(this.perspCamera.quaternion);
+      this.orthoCamera.updateMatrixWorld();
+    } else {
+      this.perspCamera.position.copy(this.orthoCamera.position);
+      this.perspCamera.quaternion.copy(this.orthoCamera.quaternion);
+      const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.perspCamera.quaternion);
+      const curDepth = depthOf(this.perspCamera, this.nav.target);
+      this.perspCamera.position.addScaledVector(back, this.nav.orthoDistance - curDepth);
+      this.perspCamera.updateMatrixWorld();
+    }
+    this.activeProjection = mode;
+    this.camera.add(this.keyLight);
+    this.lineDiagram.setCamera(this.camera);
+    this.syncCameraFrustum();
+    this.nav.updated();
+  }
+
+  /** Switch between dark and light (report-ready white paper) viewport themes. */
+  setTheme(mode: ThemeMode): void {
+    if (mode === this.activeTheme) return;
+    this.activeTheme = mode;
+    const t = themeTokens(mode);
+    this.renderer.setClearColor(toHexNumber(t.bg0), 0);
+    this.hemiLight.color.setHex(toHexNumber(t.skyLight));
+    this.hemiLight.groundColor.setHex(toHexNumber(t.groundLight));
+    this.hemiLight.intensity = mode === "light" ? 1.05 : 1.6;
+    this.keyLight.color.setHex(toHexNumber(t.keyLight));
+    this.keyLight.intensity = mode === "light" ? 0.95 : 1.4;
+    this.halo.setTheme(mode);
+    this.lineDiagram.setTheme(mode);
+    const s = this.store.get();
+    if (this.geometryInfo) {
+      this.setGeometry(this.geometryInfo);
+      const onGeometry = s.phase.at?.kind === "geometry";
+      this.geometryLayer.visible = geometryPairing(s).draw && (onGeometry || !s.mesh);
+    }
+    if (s.mesh) {
+      this.rebuild(s, s.mesh);
+      if (s.selection.decls.length) this.setHighlight(s, false);
+      this.syncLineDiagram(s);
+    }
+    this.notifyView();
+    this.requestRender();
+  }
+
+  /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model. */
+  home(): void {
+    const s = this.store.get();
+    if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
+    else if (s.mesh) this.frame(s.mesh, null, null);
+  }
+
   /**
    * V4e2: the canvas's pointer listeners, the gizmo's first: listeners on one
    * target run in the order they were added, so a press the gizmo claims
@@ -158,6 +270,7 @@ export class Viewport {
    */
   private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
     const element = this.renderer.domElement;
+    const self = this;
     const gizmo = new GizmoInteractor({
       // V4e3: a release ends the drag in the gizmo's own handler, and moves no plane; the caps are sliced right after it.
       element: releaseAware(element, () => this.settleCaps()),
@@ -175,10 +288,12 @@ export class Viewport {
         const top = typeof document === "undefined" ? element : document.elementFromPoint(x, y);
         return top !== null && top !== element;
       },
-      select: (x, y) => this.selectAt(x, y),
+      select: (x, y, add) => this.selectAt(x, y, add),
     });
     const nav = new Navigator({
-      camera: this.camera,
+      get camera(): ViewCamera {
+        return self.camera;
+      },
       element: this.renderer.domElement,
       keys: window,
       bounds: () => {
@@ -190,7 +305,7 @@ export class Viewport {
         this.aim(x, y);
         return this.raycaster.ray.clone();
       },
-      select: (x, y) => this.selectAt(x, y),
+      select: (x, y, add) => this.selectAt(x, y, add),
       fit: () => {
         const s = this.store.get();
         // On the geometry phase (or with no mesh), F fits the geometry; else the frame effect
@@ -198,14 +313,30 @@ export class Viewport {
         if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, nav.heading);
         else this.store.dispatch({ type: "frameSelection" });
       },
-      changed: () => this.requestRender(),
+      clearSelection: () => this.store.dispatch({ type: "clearSelection" }),
+      toggleEdges: () => {
+        const s = this.store.get();
+        if (s.mesh && (s.mesh.counts.faceCells > 0 || s.mesh.counts.solidCells > 0) && s.visibility.opacity > 0) {
+          this.store.dispatch({ type: "setEdges", on: !s.visibility.edges });
+        }
+      },
+      changed: () => {
+        this.syncCameraFrustum();
+        this.notifyView();
+        this.lineDiagram.onCameraChange();
+        this.requestRender();
+      },
     });
     return { gizmo, nav };
   }
 
-  /** A click at a client point: select what it picks, or clear the selection. */
-  private selectAt(x: number, y: number): void {
+  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks; on a plain miss, clear the selection. */
+  private selectAt(x: number, y: number, add = false): void {
     const pick = this.pickAt(x, y);
+    if (add) {
+      if (pick) this.store.dispatch({ type: "selectAdd", pick });
+      return;
+    }
     this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
   }
 
@@ -217,6 +348,7 @@ export class Viewport {
     this.gizmoInput.dispose();
     this.gizmos.dispose();
     this.caps.dispose();
+    this.lineDiagram.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -230,7 +362,10 @@ export class Viewport {
   private onState(s: State, prev: State | null): void {
     // V4e1: the planes move in place; every material already shares them.
     if (!prev || s.clip !== prev.clip) {
-      if (this.clip.sync(s.clip)) this.requestRender();
+      if (this.clip.sync(s.clip)) {
+        this.lineDiagram.setClippingPlanes(this.clip.planes);
+        this.requestRender();
+      }
     }
     this.syncGizmos(s, prev);
     this.settleCaps(s);
@@ -239,6 +374,7 @@ export class Viewport {
       this.setMesh(s.mesh);
       this.applyVisibility(s);
       this.setHighlight(s);
+      this.syncLineDiagram(s);
       return;
     }
     if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
@@ -246,6 +382,28 @@ export class Viewport {
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
+    this.syncLineDiagram(s);
+  }
+
+  /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
+  setLineDiagramSource(source: () => { key: string; step: LadrunoLineStationStep } | null): void {
+    this.lineDiagramSource = source;
+    this.syncLineDiagram(this.store.get());
+  }
+
+  private syncLineDiagram(s: State = this.store.get()): void {
+    if (
+      this.lineDiagram.sync(
+        s,
+        this.blobs,
+        this.lineDiagramSource(),
+        this.full ?? this.dispSource(),
+        false,
+        this.drawn?.lineMap,
+      )
+    ) {
+      this.requestRender();
+    }
   }
 
   /**
@@ -280,7 +438,9 @@ export class Viewport {
   /** V4d: where the deformed shape's displacement comes from (app.ts wires the effects). */
   setDisplacementSource(source: () => DisplacementData | null): void {
     this.dispSource = source;
-    this.redeform(this.store.get());
+    const s = this.store.get();
+    this.redeform(s);
+    this.syncLineDiagram(s);
   }
 
   /** The ghost shows behind a deformed mesh, when the user asked for it. */
@@ -303,9 +463,10 @@ export class Viewport {
       this.full = next;
       writePositions(this.faces, this.lines, next, this.drawn, this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null);
       this.setMarkers(info);
-      if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next);
+      if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
+      if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
-      if (s.selection.decls.length) this.setHighlight(s, false);
+      if (selectedElementsOf(s).length) this.setHighlight(s, false);
       changed = true;
     }
     const ghost = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
@@ -319,7 +480,7 @@ export class Viewport {
   /** The markers of drawn nodes with no displacement at the step shown (none when undeformed). */
   private setMarkers(info: MeshInfo): void {
     this.clear(this.markers);
-    if (this.full && this.drawn) for (const o of missingMarkerObjects(this.full, info, this.blobs, this.drawn)) this.markers.add(o);
+    if (this.full && this.drawn) for (const o of missingMarkerObjects(this.full, info, this.blobs, this.drawn, this.activeTheme)) this.markers.add(o);
   }
 
   /** V4c1: where the contour's step data comes from (app.ts wires the effects). */
@@ -388,7 +549,10 @@ export class Viewport {
     this.ghost.visible = !onGeometry && this.ghostWanted(s);
     // A geometry opened alone is framed when it first shows.
     if (show && !wasShown && !s.mesh && this.geometryInfo) this.frameGeometry(this.geometryInfo);
-    if (!prev || s.geometry !== prev.geometry || s.phase !== prev.phase || s.artifacts !== prev.artifacts) this.requestRender();
+    if (!prev || s.geometry !== prev.geometry || s.phase !== prev.phase || s.artifacts !== prev.artifacts) {
+      this.notifyView();
+      this.requestRender();
+    }
   }
 
   private setGeometry(g: GeometryInfo | null): void {
@@ -396,11 +560,12 @@ export class Viewport {
     this.geometryLayer.visible = false;
     this.geometryInfo = g;
     if (!g) return;
+    const t = themeTokens(this.activeTheme);
     const curves = this.blobs.f32(g.curvePositions);
     if (curves.length) {
       const cg = new THREE.BufferGeometry();
       cg.setAttribute("position", new THREE.BufferAttribute(curves, 3));
-      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: toHexNumber(DARK.geometryCurve) })));
+      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve) })));
     }
     const tris = this.blobs.f32(g.surfacePositions);
     if (tris.length) {
@@ -408,7 +573,7 @@ export class Viewport {
       sg.setAttribute("position", new THREE.BufferAttribute(tris, 3));
       sg.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
-        color: toHexNumber(DARK.geometrySurface), side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
+        color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
       });
       this.geometryLayer.add(new THREE.Mesh(sg, m));
@@ -417,24 +582,39 @@ export class Viewport {
     if (pts.length) {
       const pg = new THREE.BufferGeometry();
       pg.setAttribute("position", new THREE.BufferAttribute(pts, 3));
-      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: toHexNumber(DARK.geometryPoint), size: 5, sizeAttenuation: false })));
+      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: toHexNumber(t.geometryPoint), size: 5, sizeAttenuation: false })));
     }
+  }
+
+  /** Collapse or expand the right rail, updating the camera frustum offset immediately. */
+  setRailCollapsed(collapsed: boolean): void {
+    if (this.railCollapsed === collapsed) return;
+    this.railCollapsed = collapsed;
+    this.syncCameraFrustum();
+    this.requestRender();
   }
 
   /** Width kept clear for the right rail (inspector, sources): the model is framed left of it. */
   private panelWidth(): number {
+    if (this.railCollapsed) return 0;
     const w = this.host.clientWidth || 1;
     return w > 1000 ? INSPECTOR_PX : 0;
+  }
+
+  private syncCameraFrustum(): void {
+    const w = this.host.clientWidth || 1, h = this.host.clientHeight || 1;
+    // A virtual frame P px wider, viewed from x = P: its centre lands at (w - P) / 2.
+    const p = this.panelWidth();
+    this.perspCamera.aspect = (w + p) / h;
+    this.perspCamera.setViewOffset(w + p, h, p, 0, w, h);
+    this.perspCamera.updateProjectionMatrix();
+    if (this.nav) syncOrthoFrustum(this.orthoCamera, this.nav.orthoDistance, w + p, h, p, w, h, this.perspCamera.fov);
   }
 
   private resize(): void {
     const w = this.host.clientWidth || 1, h = this.host.clientHeight || 1;
     this.renderer.setSize(w, h);
-    // A virtual frame P px wider, viewed from x = P: its centre lands at (w - P) / 2.
-    const p = this.panelWidth();
-    this.camera.aspect = (w + p) / h;
-    this.camera.setViewOffset(w + p, h, p, 0, w, h);
-    this.camera.updateProjectionMatrix();
+    this.syncCameraFrustum();
     for (const m of this.lineMaterials) m.resolution.set(w, h);
     this.halo.resize(w, h, this.renderer.getPixelRatio());
     this.requestRender();
@@ -447,7 +627,7 @@ export class Viewport {
     const m = new LineMaterial({
       linewidth: width,
       vertexColors: col !== null,
-      color: colour ?? toHexNumber(DARK.keyLight),
+      color: colour ?? toHexNumber(themeTokens(this.activeTheme).keyLight),
       worldUnits: false,
     });
     m.resolution.set(this.host.clientWidth || 1, this.host.clientHeight || 1);
@@ -485,21 +665,26 @@ export class Viewport {
    * (state/roles.ts, per element, mapped to the primitives here).
    */
   private colourSource(s: State, info: MeshInfo): { legend: readonly LegendEntry[]; line: Int32Array; tri: Int32Array; edge: number } {
+    const t = themeTokens(this.activeTheme);
     if (s.visibility.colourBy === "group") {
-      return { legend: info.legend, line: this.blobs.i32(info.lineGroup), tri: this.blobs.i32(info.triGroup), edge: toHexNumber(DARK.edge) };
+      return { legend: info.legend, line: this.blobs.i32(info.lineGroup), tri: this.blobs.i32(info.triGroup), edge: toHexNumber(t.edge) };
     }
     const r = roleColouring(s);
     if (!r) throw new Error("viewport: colour by role with no mesh");
     const perPrim = (element: Int32Array) => Int32Array.from(element, (e) => r.byElement[e]!);
-    return { legend: r.legend, line: perPrim(this.blobs.i32(info.lineElement)), tri: perPrim(this.blobs.i32(info.triElement)), edge: toHexNumber(DARK.edgeRole) };
+    return { legend: r.legend, line: perPrim(this.blobs.i32(info.lineElement)), tri: perPrim(this.blobs.i32(info.triElement)), edge: toHexNumber(t.edgeRole) };
   }
 
   /** Vertex colours of the drawn primitives from a legend and a per-primitive row index. */
   private colours(legend: readonly LegendEntry[], group: Int32Array, map: Int32Array, perPrim: number): Float32Array {
     const out = new Float32Array(map.length * perPrim * 3);
+    // LineMaterial (perPrim === 2) is unlit and runs linearToSRGB on output; linearising in light mode keeps 1-D beams true to their legend chip.
+    const linearise = perPrim === 2 && this.activeTheme === "light";
     for (let d = 0; d < map.length; d++) {
-      const c = legend[group[map[d]!]!]?.color;
-      if (!c) throw new Error(`viewport: primitive ${map[d]} has no legend row`);
+      const entry = legend[group[map[d]!]!];
+      if (!entry) throw new Error(`viewport: primitive ${map[d]} has no legend row`);
+      const srgb = legendEntryColour(entry, this.activeTheme);
+      const c = linearise ? [toLinear(srgb[0]), toLinear(srgb[1]), toLinear(srgb[2])] : srgb;
       for (let v = 0; v < perPrim; v++) out.set(c, (d * perPrim + v) * 3);
     }
     return out;
@@ -533,6 +718,7 @@ export class Viewport {
     this.full = null;
     this.clear(this.ghost);
     this.clear(this.markers);
+    this.notifyView();
     if (!info) return this.requestRender();
     this.indexOf(info);
     this.rebuild(this.store.get(), info);
@@ -549,12 +735,13 @@ export class Viewport {
     this.edgeMap = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
+    const t = themeTokens(this.activeTheme);
     // V4c1: a contour colours per vertex from the step on screen; until its
     // data is here, every drawn primitive is no data (never a group colour).
     const contour = s.visibility.colourBy === "contour";
     const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
     this.contourApplied = cc?.key ?? null;
-    const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(DARK.edge) } : this.colourSource(s, info);
+    const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(t.edge) } : this.colourSource(s, info);
     // V4d: the positions drawn are the deformed ones when the deformed shape
     // shows (copied out: writePositions later moves them in place, so they
     // never alias a mesh blob), and the ghost is the undeformed mesh.
@@ -590,7 +777,8 @@ export class Viewport {
       if (edge.length) {
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.BufferAttribute(edge, 3));
-        const em = new THREE.LineBasicMaterial({ color: source.edge, transparent: true, opacity: 0.45 });
+        const edgeOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
+        const em = new THREE.LineBasicMaterial({ color: source.edge, transparent: true, opacity: edgeOpacity });
         this.edges = new THREE.LineSegments(eg, em);
         this.content.add(this.edges);
       }
@@ -602,11 +790,11 @@ export class Viewport {
     }
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);
-    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap)) this.ghost.add(o);
+    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap, this.activeTheme)) this.ghost.add(o);
     this.ghost.visible = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
     this.setMarkers(info);
     this.applyVisibility(s, false);
-    this.applyDim(s.selection.decls.length > 0);
+    this.applyDim(selectedElementsOf(s).length > 0);
     this.requestRender();
   }
 
@@ -623,12 +811,12 @@ export class Viewport {
         return;
       }
     }
-    if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full);
+    if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
+    if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, this.full, s.visibility.opacity);
     if (this.faces) {
+      const opacity = s.visibility.opacity;
+      this.faces.visible = opacity > 0;
       const m = this.faces.material as THREE.MeshStandardMaterial;
-      // Line elements inside solids (embedded rebar) would be hidden: see through the solids.
-      const auto = info.counts.solidCells > 0 && info.linePositions.shape[0]! > 0 ? 0.35 : 1;
-      const opacity = Math.min(auto, s.visibility.opacity);
       m.transparent = opacity < 1;
       m.opacity = opacity;
       m.depthWrite = opacity >= 1;
@@ -642,7 +830,8 @@ export class Viewport {
     const k = on ? DIM : 1;
     if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
-    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : 0.45;
+    const restOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
+    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
     this.caps.setDim(k);
   }
 
@@ -674,11 +863,12 @@ export class Viewport {
       }
       const planar = z1 - z0 <= 1e-6 * r;
       // Plan: looking down -Z with +Y up the screen. Isometric: from (1, -1.3, 0.9).
-      heading = planar ? { yaw: 0, tilt: 0 } : headingOf(new THREE.Vector3(-1.0, 1.3, -0.9));
+      heading = planar ? { yaw: 0, tilt: 0 } : headingOf(ISO_FORWARD.clone());
     }
     this.nav.setHeading(heading);
     // Fit the bounding sphere in the free area, vertically and horizontally.
-    const dist = fitDistance(r, this.camera.fov, (this.host.clientWidth || 1) - this.panelWidth(), this.host.clientHeight || 1);
+    const dist = fitDistance(r, this.perspCamera.fov, (this.host.clientWidth || 1) - this.panelWidth(), this.host.clientHeight || 1);
+    this.nav.orthoDistance = dist;
     const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
     this.camera.position.copy(c).addScaledVector(back, dist);
     this.nav.target.copy(c);
@@ -698,8 +888,8 @@ export class Viewport {
   /** The nearest drawn mesh point under a client-space point, or null on a miss. */
   pointAt(clientX: number, clientY: number): THREE.Vector3 | null {
     const targets: THREE.Object3D[] = [];
-    if (this.lines) targets.push(this.lines);
-    if (this.faces) targets.push(this.faces);
+    if (this.lines && this.lines.visible) targets.push(this.lines);
+    if (this.faces && this.faces.visible) targets.push(this.faces);
     if (!targets.length) return null;
     this.aim(clientX, clientY);
     return nearestHit(this.raycaster, targets);
@@ -712,7 +902,7 @@ export class Viewport {
     if (!info) return;
     // V4d: frame what is drawn: the selection where it is drawn, or the whole (deformed) model (renderer/deform.ts `frameFocus`).
     const idx = this.indexOf(info);
-    const selected = s.selection.decls.flatMap((d) => {
+    const selected = selectedElementsOf(s).flatMap((d) => {
       const e = idx.byPath.get(d);
       const p = e === undefined ? undefined : idx.prims.get(e);
       return p ? [p] : [];
@@ -724,7 +914,7 @@ export class Viewport {
     this.clear(this.highlight);
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m);
     const info = s.mesh;
-    const selected = s.selection.decls;
+    const selected = selectedElementsOf(s);
     this.applyDim(selected.length > 0);
     if (!info || selected.length === 0) {
       this.halo.release();

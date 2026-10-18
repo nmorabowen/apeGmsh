@@ -223,6 +223,9 @@ export const DARK = {
   accent: OFFICE.accent,
   accentInk: "#1B1E24",
   accentWash: "rgba(230, 159, 0, 0.16)",
+  /** office warn (Okabe-Ito orange) and ok (sky blue) tokens */
+  warn: OFFICE.warn,
+  ok: OFFICE.ok,
   /** interpreted-value tag: the office warn colour */
   interp: OFFICE.warn,
   interpWash: "rgba(70, 40, 20, 0.92)",
@@ -254,37 +257,149 @@ export const DARK = {
   halo: "#FFFFFF",
 } as const;
 
+export const THEME_MODES = ["dark", "light"] as const;
+export type ThemeMode = (typeof THEME_MODES)[number];
+export type ThemeTokens = { readonly [K in keyof typeof DARK]: string };
+
+/**
+ * Base hues for the light (white paper) palette (Option 3 — Cool Architectural
+ * Ink + Burgundy & Plum): replaces the two yellow/ochre slots (1 and 4) of
+ * `OFFICE_MAIN` with deep burgundy (`#A32938`) and architectural plum (`#8A3B70`)
+ * so no group renders as yellow or olive-mustard on white paper.
+ */
+export const LIGHT_BASE: readonly Hex[] = [
+  "#0B5394",
+  "#A32938",
+  "#37474F",
+  "#0077B6",
+  "#8A3B70",
+  "#4A3E8E",
+  "#5C6470",
+  "#005F73",
+];
+
+/**
+ * OKLCH lightness of each light-adapted group colour on white paper
+ * (`LIGHT.bg0` #E8ECF2 and `LIGHT.bg1` #FFFFFF): every level clears WCAG 3:1
+ * on both background endpoints; legend neighbours step by at least 0.10; and
+ * each ring-2 entry is at least 0.10 from its ring-1 hue.
+ */
+export const LIGHT_L1: readonly number[] = [0.38, 0.52, 0.3, 0.48, 0.58, 0.28, 0.4, 0.56];
+export const LIGHT_L2: readonly number[] = [0.2, 0.32, 0.46, 0.34, 0.44, 0.62, 0.52, 0.24];
+
+/** The light-theme `main_colors` adapted to the white paper background: deep ink tones. */
+export const LIGHT_MAIN: readonly Hex[] = LIGHT_BASE.map((hex, i) => relight(hex, LIGHT_L1[i]!));
+/** The second ring (slots 8 to 15) on light background. */
+export const LIGHT_MAIN_RING2: readonly Hex[] = LIGHT_BASE.map((hex, i) => relight(hex, LIGHT_L2[i]!));
+
+/** The role colours adapted to the light (white paper) background. */
+export const LIGHT_ROLE: Readonly<Record<Role, Hex>> = {
+  column: relight(OFFICE.column, 0.4),
+  wall: relight(OFFICE.wall, 0.28),
+  beam: relight(OFFICE.beam, 0.58),
+  concrete: relight(OFFICE.concrete, 0.46),
+  void: "#14171F",
+};
+
+/**
+ * The light (white paper) theme for engineering report screenshots: a subtle
+ * radial gradient from pure white (`bg1`) at the centre to soft cool paper
+ * (`bg0`) at the edges, translucent white floating cards with crisp charcoal/black
+ * UI chrome (`#181B20`), deep-ink group and role palettes (`LIGHT_MAIN`, `LIGHT_ROLE`),
+ * and dark-ink OpenSees-only / geometry lines.
+ */
+export const LIGHT = {
+  /** viewport and page background (the gradient runs bg1 to bg0) */
+  bg0: "#E8ECF2",
+  bg1: "#FFFFFF",
+  /** the main window's background */
+  window: "#F4F6F9",
+  panel: "rgba(255, 255, 255, 0.92)",
+  line: "rgba(24, 27, 32, 0.18)",
+  faint: "rgba(24, 27, 32, 0.05)",
+  hover: "rgba(24, 27, 32, 0.09)",
+  dashed: "rgba(24, 27, 32, 0.25)",
+  dropBorder: "rgba(24, 27, 32, 0.36)",
+  /** text tokens clear WCAG 4.5:1 on bg0 (#E8ECF2) and on bg1 (#FFFFFF) */
+  text: "#111318",
+  muted: "#454D59",
+  source: "#454D59",
+  /** active chrome and role badges on white paper: crisp charcoal/black ink */
+  accent: "#181B20",
+  accentInk: "#FFFFFF",
+  accentWash: "rgba(24, 27, 32, 0.10)",
+  /** office warn (Okabe-Ito orange) and ok (sky blue) tokens */
+  warn: OFFICE.warn,
+  ok: OFFICE.ok,
+  /** interpreted-value tag on light surfaces */
+  interp: "#9A5000",
+  interpWash: "rgba(255, 247, 237, 0.95)",
+  interpText: "#7C2D12",
+  error: "#B91C1C",
+  errorWash: "rgba(185, 28, 28, 0.08)",
+  errorLine: "rgba(185, 28, 28, 0.35)",
+  /** elements in no physical group, and OpenSees-only elements (dark ink on white paper) */
+  noGroup: "#454D59",
+  opsOnly: "#111318",
+  /** colour-by-role: elements whose file carries no structural role */
+  unassigned: relight(OFFICE.concrete, 0.46),
+  /** the outline edges of drawn faces, in colour-by-group and in colour-by-role */
+  edge: "#111318",
+  edgeRole: "#213038",
+  /** the geometry layer (V2f): curves, faint surfaces, points */
+  geometryCurve: "#213038",
+  geometrySurface: "#607D8B",
+  geometryPoint: "#111318",
+  /** the three.js lights */
+  skyLight: "#FFFFFF",
+  groundLight: "#6E7885",
+  keyLight: "#FFFFFF",
+  /** selection core (office orange) and dark ink halo against white paper */
+  selection: OFFICE.accent,
+  halo: "#111318",
+} as const satisfies ThemeTokens;
+
+/** Return the token table for `mode` (`DARK` by default). */
+export function themeTokens(mode: ThemeMode = "dark"): ThemeTokens {
+  return mode === "light" ? LIGHT : DARK;
+}
+
 /** The CSS custom properties the stylesheet reads; `applyTheme` sets them on the document. */
-export function cssVariables(): Record<string, string> {
+export function cssVariables(mode: ThemeMode = "dark"): Record<string, string> {
+  const t = themeTokens(mode);
   return {
-    "--bg-0": DARK.bg0,
-    "--bg-1": DARK.bg1,
-    "--panel": DARK.panel,
-    "--line": DARK.line,
-    "--faint": DARK.faint,
-    "--hover": DARK.hover,
-    "--dashed": DARK.dashed,
-    "--drop-border": DARK.dropBorder,
-    "--text": DARK.text,
-    "--muted": DARK.muted,
-    "--source": DARK.source,
-    "--accent": DARK.accent,
-    "--accent-ink": DARK.accentInk,
-    "--accent-wash": DARK.accentWash,
-    "--interp": DARK.interp,
-    "--interp-wash": DARK.interpWash,
-    "--interp-text": DARK.interpText,
-    "--error": DARK.error,
-    "--error-wash": DARK.errorWash,
-    "--error-line": DARK.errorLine,
+    "--bg-0": t.bg0,
+    "--bg-1": t.bg1,
+    "--panel": t.panel,
+    "--line": t.line,
+    "--faint": t.faint,
+    "--hover": t.hover,
+    "--dashed": t.dashed,
+    "--drop-border": t.dropBorder,
+    "--text": t.text,
+    "--muted": t.muted,
+    "--source": t.source,
+    "--accent": t.accent,
+    "--accent-ink": t.accentInk,
+    "--accent-wash": t.accentWash,
+    "--warn": t.warn,
+    "--ok": t.ok,
+    "--interp": t.interp,
+    "--interp-wash": t.interpWash,
+    "--interp-text": t.interpText,
+    "--error": t.error,
+    "--error-wash": t.errorWash,
+    "--error-line": t.errorLine,
     "--font": `"${FONT_FAMILY}", "Arial Narrow", "Segoe UI", system-ui, sans-serif`,
     "--mono": '"Cascadia Mono", "Consolas", ui-monospace, monospace',
   };
 }
 
-/** Set the theme on a document: the custom properties and the bundled font faces. */
-export function applyTheme(doc: Document): void {
-  for (const [k, v] of Object.entries(cssVariables())) doc.documentElement.style.setProperty(k, v);
+/** Set the theme on a document: the custom properties, the root colour scheme, and the bundled font faces. */
+export function applyTheme(doc: Document, mode: ThemeMode = "dark"): void {
+  doc.documentElement.style.colorScheme = mode;
+  doc.documentElement.dataset["theme"] = mode;
+  for (const [k, v] of Object.entries(cssVariables(mode))) doc.documentElement.style.setProperty(k, v);
   if (doc.getElementById("theme-fonts")) return;
   const style = doc.createElement("style");
   style.id = "theme-fonts";

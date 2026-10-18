@@ -75,6 +75,7 @@ from ._internal.build.ownership import (
     SortedIntSet,
     SortedIntToInt,
     is_partitioned,
+    macro_element_rank,
     node_index_lookup,
     node_pair_rank,
     primary_owner_map,
@@ -132,8 +133,10 @@ from ._internal.build.transforms import emit_transform_specs
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
     expand_pg_to_nodes,
+    expand_spec_to_elements,
     ElementPlanRows,
     resolve_element_node_pair,
+    resolve_ladruno_membrane_context,
 )
 from ._internal.build.topo import topological_order
 from ._internal.build.validators.mesh import validate_absorbing_quad_geometry
@@ -169,8 +172,10 @@ from ._internal.tag_resolution import (
     MISSING_FEM_ELEMENT_ID,
     set_current_fem_element_id,
     set_element_nodes,
+    set_membrane_context,
     set_stage_owned_node_tags,
 )
+from .element.shell import LadrunoMembrane
 from ._internal.compose import _compose_model_h5, _path_stem
 from .._internal.provenance import ProvenanceStore
 from ._internal.ns import (
@@ -2248,35 +2253,47 @@ class BuiltModel:
             # under a mixed-ndf envelope — see open_builder_ndf_bracket.
             bracketed = bool(sub) and open_builder_ndf_bracket(
                 emitter, spec, ndm=self.ndm, envelope_ndf=self.ndf)
-            for eid, node_tags, ele_tag in sub:
-                set_element_nodes(emitter, node_tags)
-                set_current_fem_element_id(emitter, eid)
-                if (
-                    transf_spec is not None
-                    and overrides is not None
-                    and (id(transf_spec), eid) in overrides
-                ):
-                    override_tag = overrides[(id(transf_spec), eid)]
-                    base = base_resolver
-                    override = transf_spec
+            is_membrane = isinstance(spec, LadrunoMembrane)
+            if is_membrane:
+                set_membrane_context(
+                    emitter,
+                    resolve_ladruno_membrane_context(
+                        self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
+                    ),
+                )
+            try:
+                for eid, node_tags, ele_tag in sub:
+                    set_element_nodes(emitter, node_tags)
+                    set_current_fem_element_id(emitter, eid)
+                    if (
+                        transf_spec is not None
+                        and overrides is not None
+                        and (id(transf_spec), eid) in overrides
+                    ):
+                        override_tag = overrides[(id(transf_spec), eid)]
+                        base = base_resolver
+                        override = transf_spec
 
-                    def _resolver_with_override(
-                        p: Primitive,
-                        _base: object = base,
-                        _override_spec: Primitive = override,
-                        _override_tag: int = override_tag,
-                    ) -> int:
-                        if p is _override_spec:
-                            return _override_tag
-                        return int(_base(p))  # type: ignore[operator]
+                        def _resolver_with_override(
+                            p: Primitive,
+                            _base: object = base,
+                            _override_spec: Primitive = override,
+                            _override_tag: int = override_tag,
+                        ) -> int:
+                            if p is _override_spec:
+                                return _override_tag
+                            return int(_base(p))  # type: ignore[operator]
 
-                    set_tag_resolver(emitter, _resolver_with_override)
-                    try:
+                        set_tag_resolver(emitter, _resolver_with_override)
+                        try:
+                            spec._emit(emitter, ele_tag)
+                        finally:
+                            set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
+                    else:
                         spec._emit(emitter, ele_tag)
-                    finally:
-                        set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
-                else:
-                    spec._emit(emitter, ele_tag)
+            finally:
+                if is_membrane:
+                    set_membrane_context(emitter, None)
             if bracketed:
                 close_builder_ndf_bracket(
                     emitter, ndm=self.ndm, envelope_ndf=self.ndf)
@@ -2456,6 +2473,8 @@ class BuiltModel:
                 emit_pattern_spec(
                     p, emitter, tag, self.fem, self.ndf, self.ndm,
                     effective_ndf=inferred_ndf,
+                    element_plan=element_plan,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
@@ -2625,35 +2644,47 @@ class BuiltModel:
                 # open_builder_ndf_bracket.
                 bracketed = bool(sub) and open_builder_ndf_bracket(
                     emitter, spec, ndm=self.ndm, envelope_ndf=self.ndf)
-                for eid, node_tags, ele_tag in sub:
-                    set_element_nodes(emitter, node_tags)
-                    set_current_fem_element_id(emitter, eid)
-                    if (
-                        transf_spec is not None
-                        and overrides is not None
-                        and (id(transf_spec), eid) in overrides
-                    ):
-                        override_tag = overrides[(id(transf_spec), eid)]
-                        base = base_resolver
-                        override = transf_spec
+                is_membrane = isinstance(spec, LadrunoMembrane)
+                if is_membrane:
+                    set_membrane_context(
+                        emitter,
+                        resolve_ladruno_membrane_context(
+                            self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
+                        ),
+                    )
+                try:
+                    for eid, node_tags, ele_tag in sub:
+                        set_element_nodes(emitter, node_tags)
+                        set_current_fem_element_id(emitter, eid)
+                        if (
+                            transf_spec is not None
+                            and overrides is not None
+                            and (id(transf_spec), eid) in overrides
+                        ):
+                            override_tag = overrides[(id(transf_spec), eid)]
+                            base = base_resolver
+                            override = transf_spec
 
-                        def _resolver_with_override(
-                            p: Primitive,
-                            _base: object = base,
-                            _override_spec: Primitive = override,
-                            _override_tag: int = override_tag,
-                        ) -> int:
-                            if p is _override_spec:
-                                return _override_tag
-                            return int(_base(p))  # type: ignore[operator]
+                            def _resolver_with_override(
+                                p: Primitive,
+                                _base: object = base,
+                                _override_spec: Primitive = override,
+                                _override_tag: int = override_tag,
+                            ) -> int:
+                                if p is _override_spec:
+                                    return _override_tag
+                                return int(_base(p))  # type: ignore[operator]
 
-                        set_tag_resolver(emitter, _resolver_with_override)
-                        try:
+                            set_tag_resolver(emitter, _resolver_with_override)
+                            try:
+                                spec._emit(emitter, ele_tag)
+                            finally:
+                                set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
+                        else:
                             spec._emit(emitter, ele_tag)
-                        finally:
-                            set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
-                    else:
-                        spec._emit(emitter, ele_tag)
+                finally:
+                    if is_membrane:
+                        set_membrane_context(emitter, None)
                 if bracketed:
                     close_builder_ndf_bracket(
                         emitter, ndm=self.ndm, envelope_ndf=self.ndf)
@@ -2897,6 +2928,8 @@ class BuiltModel:
                 emit_pattern_spec(
                     pat, emitter, pat_tag, self.fem, self.ndf, self.ndm,
                     effective_ndf=inferred_ndf,
+                    element_plan=element_plan,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
             # 8. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
@@ -3201,6 +3234,30 @@ class BuiltModel:
         # node-pair spec carries MISSING_FEM_ELEMENT_ID).
         node_pair_owner: "dict[int, dict[int, int]]" = {}
         for spec in elements:
+            if isinstance(spec, LadrunoMembrane):
+                if staged and id(spec) in element_owner_stage:
+                    raise BridgeError(
+                        "apeSees: a stage-claimed LadrunoMembrane is not "
+                        "supported under partitioned (MPI) emit; declare it "
+                        "before the stages, or emit serial."
+                    )
+                fan = expand_spec_to_elements(self.fem, spec)
+                if not len(fan):
+                    continue
+                _fr, supp_tags, hole_loops = resolve_ladruno_membrane_context(
+                    self.fem, spec, include_frames=False,
+                )
+                all_nodes = [
+                    *(int(n) for n in fan.conn[0]),
+                    *supp_tags,
+                    *(int(n) for h in hole_loops for n in h),
+                ]
+                node_pair_owner[id(spec)] = {
+                    MISSING_FEM_ELEMENT_ID: macro_element_rank(
+                        spec, all_nodes, node_owners,
+                    ),
+                }
+                continue
             if getattr(spec, "pg", None) is not None:
                 continue
             if staged and id(spec) in element_owner_stage:
@@ -3739,6 +3796,8 @@ class BuiltModel:
                             element_owner=pair_owner,
                             ndm=self.ndm,
                             envelope_ndf=self.ndf,
+                            element_plan=element_plan,
+                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                         )
                         continue
                     emit_element_spec_partitioned(
@@ -3753,6 +3812,8 @@ class BuiltModel:
                         element_owner=element_owner,
                         ndm=self.ndm,
                         envelope_ndf=self.ndf,
+                        element_plan=element_plan,
+                        fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     )
 
                 # 7. Fixes / masses (per-rank ownership, pre-bucketed).
@@ -3906,6 +3967,10 @@ class BuiltModel:
                     claimed_pattern_ids=frozenset(
                         self._claimed_pattern_ids()
                     ),
+                    element_plan=element_plan,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    element_owner=element_owner,
+                    partition_rank=rank,
                 )
             finally:
                 emitter.partition_close()
@@ -4726,6 +4791,10 @@ class BuiltModel:
                         stage.pattern_specs, rank_owned,
                         primary_nodes=rank_primary,
                         inferred_ndf=inferred_ndf,
+                        element_plan=element_plan,
+                        fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                        element_owner=element_owner,
+                        partition_rank=rank,
                     ):
                         continue
                     emitter.partition_open(rank)
@@ -4735,6 +4804,10 @@ class BuiltModel:
                                 emitter, pat, rank_owned,
                                 primary_nodes=rank_primary,
                                 inferred_ndf=inferred_ndf,
+                                element_plan=element_plan,
+                                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                                element_owner=element_owner,
+                                partition_rank=rank,
                             )
                     finally:
                         emitter.partition_close()
@@ -7528,6 +7601,10 @@ class BuiltModel:
         primary_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
         claimed_pattern_ids: "frozenset[int]" = frozenset(),
+        element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+        element_owner: "SortedIntToInt | Mapping[int, int] | None" = None,
+        partition_rank: int | None = None,
     ) -> None:
         """Per-rank pattern fan-out (ADR 0027).
 
@@ -7557,6 +7634,10 @@ class BuiltModel:
                 emitter, p, owned_nodes,
                 primary_nodes=primary_nodes,
                 inferred_ndf=inferred_ndf,
+                element_plan=element_plan,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                element_owner=element_owner,
+                partition_rank=partition_rank,
             )
 
     def _emit_one_pattern_partitioned(
@@ -7567,21 +7648,26 @@ class BuiltModel:
         *,
         primary_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
+        element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+        element_owner: "SortedIntToInt | Mapping[int, int] | None" = None,
+        partition_rank: int | None = None,
     ) -> bool:
-        """Emit one pattern's rank-owned ``load`` / ``sp`` lines.
+        """Emit one pattern's rank-owned ``load`` / ``sp`` / ``eleLoad`` lines.
 
         ``load`` lines filter on ``primary_nodes`` (additive under MP
         assembly — one rank per node); ``sp`` lines filter on
         ``owned_nodes`` (idempotent constraints — every owning rank).
 
         Returns ``True`` if a ``pattern_open`` block was emitted (the
-        rank owns at least one load / sp / from_model line, or the
+        rank owns at least one load / sp / from_model / eleLoad line, or the
         pattern is non-Plain and emits on every rank), ``False`` if the
         pattern had no content for this rank (so the caller can skip an
         empty ``partition_open`` bracket — an empty ``if getPID()==K:``
         body is a Python ``SyntaxError`` on the Py emitter).
         """
         from .pattern.pattern import Plain
+        from ._internal.build.patterns import resolve_ele_load_commands
         from ._internal.tag_resolution import resolve_tag
 
         tag = self.tag_for[id(p)]
@@ -7621,8 +7707,18 @@ class BuiltModel:
             load_nodes=primary_nodes,
             inferred_ndf=eff,
         )
+        ele_load_cmds = resolve_ele_load_commands(
+            p,
+            self.fem,
+            self.ndm,
+            element_plan=element_plan,
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            element_owner=element_owner,
+            partition_rank=partition_rank,
+        )
         if (not owned_loads and not owned_sps
-                and not fm_loads and not fm_sps and not mt_loads):
+                and not fm_loads and not fm_sps
+                and not mt_loads and not ele_load_cmds):
             return False
         emitter.pattern_open("Plain", tag, ts_tag)
         for load_rec in owned_loads:
@@ -7639,6 +7735,8 @@ class BuiltModel:
             emitter.sp(node_id, dof, value)
         for node_id, comps in mt_loads:
             emitter.load(node_id, *comps)
+        for ele_args in ele_load_cmds:
+            emitter.eleLoad(*ele_args)
         emitter.pattern_close()
         return True
 
@@ -7649,6 +7747,10 @@ class BuiltModel:
         *,
         primary_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
+        element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+        element_owner: "SortedIntToInt | Mapping[int, int] | None" = None,
+        partition_rank: int | None = None,
     ) -> bool:
         """Pure pre-check: would any ``specs`` pattern emit a line for
         this rank?  Used to skip opening an empty ``partition_open``
@@ -7661,6 +7763,7 @@ class BuiltModel:
         empty bracket (a Python ``SyntaxError`` on the Py emitter).
         """
         from .pattern.pattern import Plain
+        from ._internal.build.patterns import resolve_ele_load_commands
 
         for p in specs:
             if not isinstance(p, Plain):
@@ -7687,6 +7790,16 @@ class BuiltModel:
                 p.moment_tensors,
                 load_nodes=primary_nodes,
                 inferred_ndf=inferred_ndf,
+            ):
+                return True
+            if resolve_ele_load_commands(
+                p,
+                self.fem,
+                self.ndm,
+                element_plan=element_plan,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                element_owner=element_owner,
+                partition_rank=partition_rank,
             ):
                 return True
         return False
@@ -8494,6 +8607,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         self,
         fem: "FEMData",
         *,
+        units: "Any" = None,
         default_orientation: Orientation | None | _UnsetType = _UNSET,
         opensees: "OpenSeesTarget | None" = None,
         element_tags: ElementTagMode = "sequential",
@@ -8504,6 +8618,28 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 f"apeSees: element_tags must be one of {ELEMENT_TAG_MODES}, "
                 f"not {element_tags!r}."
             )
+        from apeGmsh.units import UnitSystemId, resolve_unit_system
+
+        resolved_units = resolve_unit_system(units)
+        fem_units: UnitSystemId | None = getattr(fem, "units", None)
+        if (
+            resolved_units is not None
+            and fem_units is not None
+            and resolved_units != fem_units
+        ):
+            raise ValueError(
+                f"apeSees: declared units {resolved_units!r} conflict with "
+                f"fem.units {fem_units!r}."
+            )
+        self._units: UnitSystemId | None = (
+            resolved_units if resolved_units is not None else fem_units
+        )
+        if (
+            resolved_units is not None
+            and fem_units is None
+            and hasattr(fem, "with_units")
+        ):
+            fem = fem.with_units(resolved_units)
         self._fem: "FEMData" = fem
         # ADR 0111 D2 — how element tags are numbered at emit (BuiltModel).
         self._element_tags: ElementTagMode = element_tags
@@ -8693,6 +8829,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
     @property
     def fem(self) -> "FEMData":
         return self._fem
+
+    @property
+    def units(self) -> "str | None":
+        """Canonical consistent unit system ID (e.g. ``'kN_m_s'``), or ``None``."""
+        return self._units
 
     # -- OpenSees runtime target / capabilities --------------------------
     @property
@@ -11345,7 +11486,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         if is_partitioned(fem):
             fem = route_element_less_nodes(fem, [
                 resolve_element_node_pair(fem, p) for p in self._primitives
-                if isinstance(p, Element) and getattr(p, "pg", None) is None
+                if isinstance(p, Element)
+                and getattr(p, "pg", None) is None
+                and not isinstance(p, LadrunoMembrane)
             ])
         return BuiltModel(
             primitives=tuple(self._primitives),

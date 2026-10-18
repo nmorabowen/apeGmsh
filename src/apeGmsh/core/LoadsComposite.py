@@ -213,6 +213,7 @@ class LoadsComposite(_DeclarationsMixin):
     def line(self, target=None, *, pg=None, label=None, tag=None,
              magnitude=None, direction=(0., 0., -1.),
              q_xyz=None, normal=False, away_from=None,
+             span=(0.0, 1.0),
              reduction="tributary", target_form="nodal",
              basis="lagrange", name=None) -> LineLoadDef:
         """Distributed load (force per unit length) along the curve(s)
@@ -264,8 +265,9 @@ class LoadsComposite(_DeclarationsMixin):
             Curve(s) to load.
         pg, label, tag :
             Explicit-source overrides. See class docstring.
-        magnitude : float or callable, optional
-            Scalar force per unit length. Required if ``q_xyz`` is
+        magnitude : float, 2-tuple of float, or callable, optional
+            Scalar force per unit length (or ``(q_start, q_end)`` for
+            a trapezoidal element-form load). Required if ``q_xyz`` is
             ``None``. Required when ``normal=True``.
 
             May also be a **callable** ``q(xyz) -> float`` that
@@ -295,7 +297,7 @@ class LoadsComposite(_DeclarationsMixin):
         direction : tuple or {"x", "y", "z"}, default ``(0, 0, -1)``
             Unit direction for ``magnitude``. Ignored when
             ``q_xyz`` or ``normal=True`` is given.
-        q_xyz : (qx, qy, qz), optional
+        q_xyz : (qx, qy, qz) or ((qx1, qy1, qz1), (qx2, qy2, qz2)), optional
             Explicit force-per-length vector — overrides
             ``magnitude`` × ``direction``.
         normal : bool, default False
@@ -305,6 +307,10 @@ class LoadsComposite(_DeclarationsMixin):
         away_from : (x, y, z), optional
             Reference point for ``normal=True`` direction
             disambiguation.
+        span : (aL, bL), default ``(0.0, 1.0)``
+            Normalized start and end positions along each beam element
+            (``0.0 <= aL < bL <= 1.0``). Only supported when
+            ``target_form="element"``.
         reduction : ``"tributary"`` or ``"consistent"``, default
             ``"tributary"``
             How distributed loads are reduced to nodal records.
@@ -376,12 +382,57 @@ class LoadsComposite(_DeclarationsMixin):
                 "exclusive — q_xyz is a fixed vector. Use the callable "
                 "magnitude with normal=True or direction=."
             )
+        if not isinstance(span, (tuple, list)) or len(span) != 2:
+            raise ValueError(f"line(span=...) expects a 2-tuple (aL, bL), got {span!r}.")
+        a_l, b_l = float(span[0]), float(span[1])
+        if not (0.0 <= a_l < b_l <= 1.0):
+            raise ValueError(
+                f"line(span=(aL, bL)) requires 0.0 <= aL < bL <= 1.0, got ({a_l}, {b_l})."
+            )
+        span_norm = (a_l, b_l)
+        is_trap_mag = isinstance(magnitude, (tuple, list))
+        if is_trap_mag and len(magnitude) != 2:
+            raise ValueError(
+                f"line(magnitude=...) tuple form must have length 2 (q_start, q_end), got {magnitude!r}."
+            )
+        is_trap_q = False
+        if q_xyz is not None:
+            if not isinstance(q_xyz, (tuple, list)):
+                raise ValueError(
+                    f"line(q_xyz=...) expects a 3-tuple or a 2-tuple of 3-tuples, got {q_xyz!r}."
+                )
+            if (
+                len(q_xyz) == 2
+                and isinstance(q_xyz[0], (tuple, list))
+                and isinstance(q_xyz[1], (tuple, list))
+            ):
+                if len(q_xyz[0]) != 3 or len(q_xyz[1]) != 3:
+                    raise ValueError(
+                        "line(q_xyz=...) trapezoidal 2-tuple requires two 3-tuples "
+                        f"((qx1, qy1, qz1), (qx2, qy2, qz2)), got {q_xyz!r}."
+                    )
+                is_trap_q = True
+            elif len(q_xyz) != 3 or any(isinstance(v, (tuple, list)) for v in q_xyz):
+                raise ValueError(
+                    f"line(q_xyz=...) expects a 3-tuple or a 2-tuple of 3-tuples, got {q_xyz!r}."
+                )
+        if target_form == "nodal":
+            if span_norm != (0.0, 1.0):
+                raise ValueError(
+                    "line(span=...) with non-default span requires target_form='element'."
+                )
+            if is_trap_mag or is_trap_q:
+                raise ValueError(
+                    "line() with trapezoidal 2-tuple magnitude or q_xyz requires target_form='element'."
+                )
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineLoadDef(
             target=t, target_source=src,
             pattern=self._active_case, name=name,
-            magnitude=magnitude or 0.0, direction=direction, q_xyz=q_xyz,
+            magnitude=0.0 if magnitude is None else magnitude,
+            direction=direction, q_xyz=q_xyz,
             normal=normal, away_from=away_from,
+            span=span_norm,
             reduction=reduction, target_form=target_form, basis=basis,
         ))
 

@@ -8,23 +8,31 @@
 
 import {
   CMAP_NAMES,
-  CMAPS,
   contourFieldsOf,
   contourView,
   deformOf,
   deformView,
+  fmtValue,
   GHOST_OPACITY,
   isHidden,
+  legendEntryColour,
   legendOf,
   NO_DATA_RGB,
+  rampCss,
   RANGE_MODES,
+  resolveFieldUnits,
   roleLegendOf,
   scaleLabel,
+  UNIT_DISPLAY_OPTIONS,
+  UNIT_SYSTEM_IDS,
+  UNIT_SYSTEMS,
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry } from "../state/types.ts";
+import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry, UnitDisplay, UnitSystemId } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
+
+export { fmtValue, rampCss } from "../state/selectors.ts";
 
 const MODES: readonly { by: ColourBy; label: string }[] = [
   { by: "group", label: "by group" },
@@ -33,16 +41,6 @@ const MODES: readonly { by: ColourBy; label: string }[] = [
 ];
 
 const css = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round(c * 255)).join(",")})`;
-
-/** A CSS gradient through a colormap's stops (the same table the mesh colours from). */
-export const rampCss = (cmap: ContourCmap): string => `linear-gradient(to right, ${CMAPS[cmap].map(([t, r, g, b]) => `${css([r, g, b])} ${(100 * t).toFixed(1)}%`).join(", ")})`;
-
-/** A legend number: four significant digits, exponent form outside 1e-3..1e4. */
-export function fmtValue(v: number): string {
-  if (v === 0) return "0";
-  const a = Math.abs(v);
-  return a >= 1e-3 && a < 1e4 ? String(Number(v.toPrecision(4))) : v.toExponential(3);
-}
 
 /**
  * What the contour legend states, as plain lines (tested in Node; the DOM
@@ -53,14 +51,18 @@ export function fmtValue(v: number): string {
 export function contourLines(
   s: State,
   v: Extract<ContourView, { state: "ready" | "element" }>,
-): { title: string; min: string; max: string; range: string; state: string | null; topology: string | null; axes: string | null } {
+): { title: string; min: string; max: string; range: string; units: string; state: string | null; topology: string | null; axes: string | null } {
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
+  const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
+  const u = resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
+  const unitSuffix = u.unit ? ` [${u.unit}]` : "";
   return {
-    title: `${v.field} · ${v.component.label}`,
-    min: c.min === null ? "no finite value" : fmtValue(c.min),
-    max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max),
+    title: `${v.field} · ${v.component.label}${unitSuffix}`,
+    min: c.min === null ? "no finite value" : fmtValue(c.min * u.factor),
+    max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max * u.factor),
     range: c.label,
+    units: u.note,
     state: !v.stepMeasured ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading` : null,
     topology: v.state === "element" ? v.topologyLabel : null,
     axes: v.state === "element" && v.component.local ? "Axes: local (the component's name says so)." : null,
@@ -79,18 +81,38 @@ const GAUSS_MODES: readonly { mode: GaussMode; label: string; title: string }[] 
   { mode: "node_discrete", label: "at nodes, per element", title: "gauss_node_discrete: the Gauss points extrapolated to each element's corners, no averaging (jumps between elements show)" },
 ];
 
-export function mountLegend(store: Store): () => void {
+/** The 2-D/3-D surface opacity presets in the legend: opaque (1), dimmed (0.35), or hidden (0, neither drawn nor picked). */
+export const SURFACE_OPACITY_PRESETS: readonly { readonly label: "solid" | "ghost" | "off"; readonly opacity: number; readonly title: string }[] = [
+  { label: "solid", opacity: 1, title: "opaque 2-D/3-D mesh surfaces (opacity 1)" },
+  { label: "ghost", opacity: 0.35, title: "dimmed 2-D/3-D mesh surfaces (opacity 0.35)" },
+  { label: "off", opacity: 0, title: "hide 2-D/3-D mesh surfaces so 1-D elements can be seen and picked directly (opacity 0)" },
+];
+
+export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => () => void): () => void {
   const legend = byId("legend");
   let unlisten: (() => void)[] = [];
   let lastContour = "";
   let lastDeform = "";
+  let lastTheme = "";
   const render = (s: State, prev: State | null) => {
+    const theme = document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
     const contour = s.visibility.colourBy === "contour";
-    if (prev && s.mesh === prev.mesh && s.visibility.hidden === prev.visibility.hidden && s.visibility.colourBy === prev.visibility.colourBy) {
+    if (
+      prev &&
+      theme === lastTheme &&
+      s.mesh === prev.mesh &&
+      s.visibility.hidden === prev.visibility.hidden &&
+      s.visibility.colourBy === prev.visibility.colourBy &&
+      s.visibility.edges === prev.visibility.edges &&
+      s.visibility.opacity === prev.visibility.opacity
+    ) {
       // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
       // state in every mode; it is rebuilt only when what it says changed.
-      if (deformSignature(s) === lastDeform && (!contour || contourSignature(s) === lastContour)) return;
+      if (deformSignature(s) === lastDeform && (!contour || contourSignature(s) === lastContour)) {
+        return;
+      }
     }
+    lastTheme = theme;
     lastDeform = deformSignature(s);
     for (const u of unlisten) u();
     unlisten = [];
@@ -110,6 +132,23 @@ export function mountLegend(store: Store): () => void {
       modes.append(b);
     }
     legend.append(modes);
+    if (s.mesh && (s.mesh.counts.faceCells > 0 || s.mesh.counts.solidCells > 0)) {
+      const surfacesOn = s.visibility.opacity > 0;
+      const meshRow = el("div", "legend-mode legend-mesh");
+      const edgesBtn = el("button", "mesh-edges" + (s.visibility.edges && surfacesOn ? " on" : ""), "edges");
+      edgesBtn.disabled = !surfacesOn;
+      edgesBtn.title = surfacesOn ? "toggle mesh outline edges (E)" : "mesh outline edges are hidden while 2-D/3-D surfaces are off";
+      unlisten.push(listen(edgesBtn, "click", () => store.dispatch({ type: "setEdges", on: !store.get().visibility.edges })));
+      meshRow.append(edgesBtn);
+      for (const p of SURFACE_OPACITY_PRESETS) {
+        const active = Math.abs(s.visibility.opacity - p.opacity) < 1e-6;
+        const b = el("button", `mesh-opacity-${p.label}` + (active ? " on" : ""), p.label);
+        b.title = p.title;
+        unlisten.push(listen(b, "click", () => store.dispatch({ type: "setOpacity", value: p.opacity })));
+        meshRow.append(b);
+      }
+      legend.append(meshRow);
+    }
     if (contour) {
       lastContour = contourSignature(s);
       renderContour(s);
@@ -128,7 +167,8 @@ export function mountLegend(store: Store): () => void {
       const hidden = !byRole && isHidden(s, e.decl);
       const row = el("div", "legend-row" + (hidden ? " hidden-group" : "") + (!byRole && e.decl ? " clickable" : ""));
       const chip = el("span", "chip" + (e.cue ? ` ${e.cue}` : ""));
-      chip.style.backgroundColor = `rgb(${e.color.map((c) => Math.round(c * 255)).join(",")})`;
+      const rgb = legendEntryColour(e, theme);
+      chip.style.backgroundColor = css(rgb);
       row.append(chip, el("span", undefined, e.name), el("span", "legend-count", e.elements.toLocaleString()));
       if (!byRole && e.decl) {
         const decl = e.decl;
@@ -285,7 +325,43 @@ export function mountLegend(store: Store): () => void {
     legend.append(ends);
     legend.append(el("div", "contour-range", lines.range));
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
-    legend.append(el("div", "legend-note", "Units: not stored in the results file."));
+    legend.append(el("div", "legend-note", lines.units));
+    const unitRow = el("div", "contour-units");
+    const dst = el("select", "contour-units-target");
+    dst.title = "display unit system (baseUnits)";
+    for (const opt of UNIT_DISPLAY_OPTIONS) {
+      const label = opt.value !== "as_stored" && opt.value === s.contour.declaredUnits ? `${opt.label} (native)` : opt.label;
+      const o = el("option", undefined, label);
+      o.value = opt.value;
+      o.selected = opt.value === s.contour.targetUnits;
+      dst.append(o);
+    }
+    unlisten.push(listen(dst, "change", () => store.dispatch({ type: "setContourUnits", target: dst.value as UnitDisplay })));
+    unitRow.append(dst);
+    if (s.contour.targetUnits !== "as_stored" && s.contour.declaredUnits === null) {
+      const src = el("select", "contour-units-source");
+      src.title = "file native unit system (from)";
+      if (s.contour.sourceUnits === null) {
+        const p = el("option", undefined, "from … (pick source units)");
+        p.value = "";
+        p.disabled = true;
+        p.selected = true;
+        src.append(p);
+      }
+      for (const id of UNIT_SYSTEM_IDS) {
+        const o = el("option", undefined, `from ${UNIT_SYSTEMS[id].label}`);
+        o.value = id;
+        o.selected = id === s.contour.sourceUnits;
+        src.append(o);
+      }
+      unlisten.push(
+        listen(src, "change", () => {
+          if (src.value) store.dispatch({ type: "setContourUnits", source: src.value as UnitSystemId });
+        }),
+      );
+      unitRow.append(src);
+    }
+    legend.append(unitRow);
     legend.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");
@@ -336,8 +412,13 @@ export function mountLegend(store: Store): () => void {
 
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
+  const unsubTheme = subscribeTheme?.(() => {
+    const theme = document.documentElement.dataset["theme"] === "light" ? "light" : "dark";
+    if (theme !== lastTheme) render(store.get(), null);
+  });
   return () => {
     unsubscribe();
+    unsubTheme?.();
     for (const u of unlisten) u();
   };
 }
@@ -404,5 +485,9 @@ function contourSignature(s: State): string {
     s.contour.component,
     s.contour.range,
     s.contour.fixed,
+    s.contour.declaredUnits,
+    s.contour.sourceUnits,
+    s.contour.targetUnits,
   ]);
 }
+

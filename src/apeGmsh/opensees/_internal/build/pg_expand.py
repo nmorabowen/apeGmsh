@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import weakref
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Sequence
 
 import numpy as np
 
@@ -447,6 +447,448 @@ def resolve_element_node_pair(
     return i_tag, j_tag
 
 
+def _polygon_area_3d(fem: "FEMData", cycle: Sequence[int]) -> float:
+    """Enclosed 3D polygon area via Newell's method (fallback to vertex count on stubs)."""
+    nodes_obj = getattr(fem, "nodes", None)
+    ids = getattr(nodes_obj, "ids", None) if nodes_obj is not None else None
+    coords = getattr(nodes_obj, "coords", None) if nodes_obj is not None else None
+    if ids is None or coords is None:
+        return float(len(cycle))
+    try:
+        id_arr = np.asarray(ids, dtype=np.int64)
+        coord_arr = np.asarray(coords, dtype=np.float64)
+        id_to_idx = {int(nid): i for i, nid in enumerate(id_arr.tolist())}
+        pts = [coord_arr[id_to_idx[int(n)]] for n in cycle]
+    except Exception:
+        return float(len(cycle))
+    nx = ny = nz = 0.0
+    m = len(pts)
+    for i in range(m):
+        p0 = pts[i]
+        p1 = pts[(i + 1) % m]
+        x0, y0, z0 = float(p0[0]), float(p0[1]), float(p0[2]) if len(p0) > 2 else 0.0
+        x1, y1, z1 = float(p1[0]), float(p1[1]), float(p1[2]) if len(p1) > 2 else 0.0
+        nx += (y0 - y1) * (z0 + z1)
+        ny += (z0 - z1) * (x0 + x1)
+        nz += (x0 - x1) * (y0 + y1)
+    return 0.5 * float(np.hypot(np.hypot(nx, ny), nz))
+
+
+def _cycles_are_interior_holes(
+    fem: "FEMData",
+    outer: Sequence[int],
+    holes: Sequence[Sequence[int]],
+) -> bool:
+    """Return True if all ``holes`` loops lie inside ``outer`` in ``outer``'s plane."""
+    nodes_obj = getattr(fem, "nodes", None)
+    ids = getattr(nodes_obj, "ids", None) if nodes_obj is not None else None
+    coords = getattr(nodes_obj, "coords", None) if nodes_obj is not None else None
+    if ids is None or coords is None:
+        return True
+    try:
+        id_arr = np.asarray(ids, dtype=np.int64)
+        coord_arr = np.asarray(coords, dtype=np.float64)
+        id_to_idx = {int(nid): i for i, nid in enumerate(id_arr.tolist())}
+        outer_pts = [coord_arr[id_to_idx[int(n)]] for n in outer]
+        hole_pts_list = [[coord_arr[id_to_idx[int(n)]] for n in h] for h in holes]
+    except Exception:
+        return True
+
+    # Newell normal of outer loop
+    nx = ny = nz = 0.0
+    m = len(outer_pts)
+    for i in range(m):
+        p0 = outer_pts[i]
+        p1 = outer_pts[(i + 1) % m]
+        x0, y0, z0 = float(p0[0]), float(p0[1]), float(p0[2]) if len(p0) > 2 else 0.0
+        x1, y1, z1 = float(p1[0]), float(p1[1]), float(p1[2]) if len(p1) > 2 else 0.0
+        nx += (y0 - y1) * (z0 + z1)
+        ny += (z0 - z1) * (x0 + x1)
+        nz += (x0 - x1) * (y0 + y1)
+    norm_n = float(np.hypot(np.hypot(nx, ny), nz))
+    if norm_n <= 1e-14:
+        return False
+    n_vec = np.array([nx / norm_n, ny / norm_n, nz / norm_n], dtype=np.float64)
+    # Orthonormal basis (e1, e2) in plane
+    ref = np.array([1.0, 0.0, 0.0]) if abs(n_vec[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    e1 = np.cross(n_vec, ref)
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n_vec, e1)
+
+    def _proj(pt: np.ndarray) -> tuple[float, float]:
+        p3 = np.array(
+            [float(pt[0]), float(pt[1]), float(pt[2]) if len(pt) > 2 else 0.0],
+            dtype=np.float64,
+        )
+        return float(np.dot(p3, e1)), float(np.dot(p3, e2))
+
+    poly2d = [_proj(p) for p in outer_pts]
+
+    def _point_in_poly(u: float, v: float) -> bool:
+        inside = False
+        k = len(poly2d)
+        for i in range(k):
+            u0, v0 = poly2d[i]
+            u1, v1 = poly2d[(i + 1) % k]
+            if (v0 > v) != (v1 > v):
+                u_int = u0 + (v - v0) * (u1 - u0) / (v1 - v0)
+                if u < u_int:
+                    inside = not inside
+        return inside
+
+    for h_pts in hole_pts_list:
+        for hp in h_pts:
+            hu, hv = _proj(hp)
+            if not _point_in_poly(hu, hv):
+                return False
+    return True
+
+
+def extract_pg_polygon_loops(
+    fem: "FEMData",
+    pg: str,
+    fanout: "PGElementFanout | None" = None,
+) -> "tuple[tuple[int, ...], tuple[tuple[int, ...], ...]]":
+    """Extract ordered ``(outer_loop, hole_loops)`` boundary node cycles from ``pg``.
+
+    Works on 2D surface PGs (triangles/quads: boundary edges are those belonging
+    to exactly one 2D cell, chained into closed cycles; the largest-area cycle is
+    the outer boundary and any remaining cycles are interior holes) and 1D line
+    loop PGs.
+    """
+    if fanout is None:
+        fanout = expand_pg_to_elements(fem, pg)
+    if len(fanout) == 0:
+        raise BridgeError(
+            f"LadrunoMembrane(pg={pg!r}) selected 0 elements."
+        )
+
+    edge_count: dict[tuple[int, int], int] = {}
+    first_dir: dict[tuple[int, int], tuple[int, int]] = {}
+    order_keys: list[tuple[int, int]] = []
+
+    for _eid, row in fanout:
+        m = len(row)
+        corners: tuple[int, ...]
+        if m in (3, 6):
+            corners = (int(row[0]), int(row[1]), int(row[2]))
+        elif m in (4, 8, 9):
+            corners = (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+        elif m == 2:
+            u, v = int(row[0]), int(row[1])
+            key = (u, v) if u < v else (v, u)
+            if key not in edge_count:
+                edge_count[key] = 0
+                first_dir[key] = (u, v)
+                order_keys.append(key)
+            edge_count[key] += 1
+            continue
+        elif m >= 3:
+            corners = tuple(int(n) for n in row)
+        else:
+            continue
+        k = len(corners)
+        for i in range(k):
+            u = corners[i]
+            v = corners[(i + 1) % k]
+            key = (u, v) if u < v else (v, u)
+            if key not in edge_count:
+                edge_count[key] = 0
+                first_dir[key] = (u, v)
+                order_keys.append(key)
+            edge_count[key] += 1
+
+    boundary_edges = [first_dir[k] for k in order_keys if edge_count[k] == 1]
+    if not boundary_edges:
+        raise BridgeError(
+            f"LadrunoMembrane(pg={pg!r}): could not extract a closed boundary "
+            f"polygon loop from physical group {pg!r} (0 boundary edges)."
+        )
+
+    next_map: dict[int, list[int]] = {}
+    adj: dict[int, list[int]] = {}
+    vertices_in_order: list[int] = []
+    seen_v: set[int] = set()
+    for u, v in boundary_edges:
+        next_map.setdefault(u, []).append(v)
+        adj.setdefault(u, []).append(v)
+        adj.setdefault(v, []).append(u)
+        if u not in seen_v:
+            seen_v.add(u)
+            vertices_in_order.append(u)
+        if v not in seen_v:
+            seen_v.add(v)
+            vertices_in_order.append(v)
+
+    for v_id in vertices_in_order:
+        deg = len(adj.get(v_id, ()))
+        if deg != 2:
+            raise BridgeError(
+                f"LadrunoMembrane(pg={pg!r}): boundary vertex {v_id} has "
+                f"boundary degree {deg} (expected 2 for a simple closed "
+                f"manifold polygon boundary)."
+            )
+
+    visited: set[int] = set()
+    cycles: list[tuple[int, ...]] = []
+    for start in vertices_in_order:
+        if start in visited:
+            continue
+        # Try directed walk first (preserves cell winding)
+        cycle: list[int] = []
+        cur = start
+        directed_ok = True
+        while cur not in visited:
+            visited.add(cur)
+            cycle.append(cur)
+            outs = [nb for nb in next_map.get(cur, ()) if nb not in visited or nb == start]
+            if not outs:
+                directed_ok = False
+                break
+            nxt = outs[0]
+            if nxt == start:
+                break
+            cur = nxt
+        if not directed_ok or len(cycle) < 3:
+            # Fallback to undirected cycle walk
+            for v in cycle:
+                visited.discard(v)
+            cycle = []
+            cur = start
+            prev = -1
+            while cur not in visited:
+                visited.add(cur)
+                cycle.append(cur)
+                nbs = adj.get(cur, [])
+                nxt_candidates = [nb for nb in nbs if nb != prev and (nb not in visited or nb == start)]
+                if not nxt_candidates:
+                    break
+                prev, cur = cur, nxt_candidates[0]
+                if cur == start:
+                    break
+        if len(cycle) < 3:
+            raise BridgeError(
+                f"LadrunoMembrane(pg={pg!r}): boundary edges did not form a closed "
+                f"loop of >= 3 nodes."
+            )
+        cycles.append(tuple(cycle))
+
+    if not cycles:
+        raise BridgeError(
+            f"LadrunoMembrane(pg={pg!r}): boundary edges did not form a closed "
+            f"loop of >= 3 nodes."
+        )
+    if len(cycles) == 1:
+        return cycles[0], ()
+
+    scored = [(i, _polygon_area_3d(fem, c), c) for i, c in enumerate(cycles)]
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    outer = scored[0][2]
+    holes = tuple(item[2] for item in scored[1:])
+    if not _cycles_are_interior_holes(fem, outer, holes):
+        raise BridgeError(
+            f"LadrunoMembrane(pg={pg!r}): physical group contains multiple "
+            f"disconnected polygon boundary loops; each disconnected panel "
+            f"must be its own LadrunoMembrane."
+        )
+    return outer, holes
+
+
+def _resolve_membrane_node_ref(
+    fem: "FEMData", ref: object, where: str,
+) -> int:
+    if isinstance(ref, bool):
+        raise BridgeError(
+            f"LadrunoMembrane {where} must be a Node handle, node-label str, "
+            f"or int tag; got bool {ref!r}."
+        )
+    if isinstance(ref, int):
+        return int(ref)
+    if isinstance(ref, str):
+        try:
+            ids = _expand_label_to_nodes(fem, ref)
+        except BridgeError:
+            ids = expand_pg_to_nodes(fem, ref)
+        if len(ids) != 1:
+            raise BridgeError(
+                f"LadrunoMembrane {where} label/PG {ref!r} resolves to {len(ids)} "
+                f"nodes {tuple(ids)} — expected a single node."
+            )
+        return int(ids[0])
+    tag = getattr(ref, "tag", None)
+    if tag is None:
+        raise BridgeError(
+            f"LadrunoMembrane {where} is a Node handle with no resolved tag."
+        )
+    return int(tag)
+
+
+def resolve_ladruno_membrane_nodes(
+    fem: "FEMData", spec: Element,
+) -> tuple[int, ...]:
+    """Resolve ``LadrunoMembrane(nodes=...)`` to an ordered tuple of node tags."""
+    nodes = getattr(spec, "nodes", None)
+    if nodes is None or len(nodes) < 3:
+        raise BridgeError(
+            f"LadrunoMembrane: nodes= requires at least 3 boundary nodes, got {nodes!r}."
+        )
+    resolved = tuple(
+        _resolve_membrane_node_ref(fem, ref, f"nodes[{i}]")
+        for i, ref in enumerate(nodes)
+    )
+    if len(set(resolved)) < 3:
+        raise BridgeError(
+            f"LadrunoMembrane: nodes= must resolve to at least 3 distinct node tags, "
+            f"got {resolved}."
+        )
+    return resolved
+
+
+def resolve_ladruno_membrane_context(
+    fem: "FEMData",
+    spec: Element,
+    element_plan: "Iterable[tuple[Element, ElementPlanRows]]" = (),
+    fem_eid_to_ops_tag: "Any" = None,
+    *,
+    include_frames: bool = True,
+) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]]":
+    """Resolve ``(frames, support_nodes, holes)`` for a :class:`LadrunoMembrane`."""
+    from ...node import Node, NodeSet
+
+    # 1. Frames
+    frames_out: list[int] = []
+    seen_frames: set[int] = set()
+
+    def _add_frame(t: int) -> None:
+        ti = int(t)
+        if ti not in seen_frames:
+            seen_frames.add(ti)
+            frames_out.append(ti)
+
+    raw_frames = getattr(spec, "frames", None) if include_frames else None
+    if raw_frames is not None:
+        plan_by_spec_id = {id(s): sub for s, sub in element_plan}
+        for item in raw_frames:
+            if isinstance(item, Element):
+                sub = plan_by_spec_id.get(id(item))
+                if sub is None or len(sub) == 0:
+                    raise BridgeError(
+                        f"LadrunoMembrane: frames= Element spec {item!r} has no "
+                        f"emitted elements in this model."
+                    )
+                for _eid, _conn, ele_tag in sub:
+                    _add_frame(ele_tag)
+            elif isinstance(item, str):
+                eids_list: list[int] = []
+                try:
+                    fan = expand_pg_to_elements(fem, item)
+                    eids_list = [int(e) for e in fan.eids.tolist()]
+                except BridgeError:
+                    labels = getattr(getattr(fem, "elements", None), "labels", None)
+                    if labels is not None:
+                        try:
+                            eids_list = [int(e) for e in labels.element_ids(item)]
+                        except (KeyError, ValueError) as exc:
+                            raise BridgeError(
+                                f"LadrunoMembrane: frames= group/label {item!r} not "
+                                f"found in FEM snapshot."
+                            ) from exc
+                    else:
+                        raise
+                if not eids_list:
+                    raise BridgeError(
+                        f"LadrunoMembrane: frames= group/label {item!r} matched 0 elements."
+                    )
+                for feid in eids_list:
+                    mapped = (
+                        fem_eid_to_ops_tag.get(int(feid))
+                        if fem_eid_to_ops_tag is not None
+                        else None
+                    )
+                    if mapped is None:
+                        raise BridgeError(
+                            f"LadrunoMembrane: frames= group {item!r} contains FEM "
+                            f"element {feid}, which has no emitted OpenSees element."
+                        )
+                    _add_frame(int(mapped))
+            elif isinstance(item, int) and not isinstance(item, bool):
+                mapped = (
+                    fem_eid_to_ops_tag.get(int(item))
+                    if fem_eid_to_ops_tag is not None
+                    else None
+                )
+                _add_frame(int(mapped) if mapped is not None else int(item))
+
+    # 2. Support nodes
+    supp_out: list[int] = []
+    seen_supp: set[int] = set()
+
+    def _add_supp(n: int) -> None:
+        ni = int(n)
+        if ni not in seen_supp:
+            seen_supp.add(ni)
+            supp_out.append(ni)
+
+    raw_supp = getattr(spec, "support_nodes", None)
+    if raw_supp is not None:
+        for item in raw_supp:
+            if isinstance(item, int) and not isinstance(item, bool):
+                _add_supp(int(item))
+            elif isinstance(item, Node):
+                _add_supp(_resolve_membrane_node_ref(fem, item, "support_nodes"))
+            elif isinstance(item, NodeSet):
+                for t in item.tags:
+                    _add_supp(int(t))
+            elif isinstance(item, str):
+                try:
+                    nids = expand_pg_to_nodes(fem, item)
+                except BridgeError:
+                    nids = _expand_label_to_nodes(fem, item)
+                if not nids:
+                    raise BridgeError(
+                        f"LadrunoMembrane: support_nodes= {item!r} matched 0 nodes."
+                    )
+                for nid in nids:
+                    _add_supp(int(nid))
+
+    # 3. Holes (auto-detected from pg mesh + explicit holes=)
+    holes_out: list[tuple[int, ...]] = []
+    pg = getattr(spec, "pg", None)
+    if pg is not None:
+        _outer, pg_holes = extract_pg_polygon_loops(fem, pg)
+        holes_out.extend(pg_holes)
+
+    raw_holes = getattr(spec, "holes", None)
+    if raw_holes is not None:
+        for h_idx, h in enumerate(raw_holes):
+            if isinstance(h, str):
+                try:
+                    h_outer, h_sub = extract_pg_polygon_loops(fem, h)
+                    holes_out.append(h_outer)
+                    holes_out.extend(h_sub)
+                except BridgeError:
+                    nids = expand_pg_to_nodes(fem, h)
+                    if len(nids) < 3:
+                        raise BridgeError(
+                            f"LadrunoMembrane: hole PG {h!r} requires at least 3 nodes, "
+                            f"got {len(nids)}."
+                        )
+                    holes_out.append(tuple(int(n) for n in nids))
+            else:
+                loop = tuple(
+                    _resolve_membrane_node_ref(fem, n, f"holes[{h_idx}][{i}]")
+                    for i, n in enumerate(h)
+                )
+                if len(set(loop)) < 3:
+                    raise BridgeError(
+                        f"LadrunoMembrane: holes[{h_idx}] requires at least 3 "
+                        f"distinct nodes, got {loop}."
+                    )
+                holes_out.append(loop)
+
+    return tuple(frames_out), tuple(supp_out), tuple(holes_out)
+
+
 def expand_spec_to_elements(
     fem: "FEMData", spec: Element,
 ) -> "PGElementFanout":
@@ -471,7 +913,24 @@ def expand_spec_to_elements(
     exclusively to the node-pair path (never to
     ``expand_pg_to_elements``, which would select the whole mesh).
     """
+    from ...element.shell import LadrunoMembrane
+
     pg = getattr(spec, "pg", None)
+    if isinstance(spec, LadrunoMembrane):
+        if pg is not None:
+            raw_fanout = expand_pg_to_elements(fem, pg)
+            if len(raw_fanout) == 0:
+                return raw_fanout
+            outer_loop, _holes = extract_pg_polygon_loops(fem, pg, raw_fanout)
+            return PGElementFanout(
+                np.asarray([MISSING_FEM_ELEMENT_ID], dtype=np.int64),
+                np.asarray([outer_loop], dtype=np.int64),
+            )
+        nodes = resolve_ladruno_membrane_nodes(fem, spec)
+        return PGElementFanout(
+            np.asarray([MISSING_FEM_ELEMENT_ID], dtype=np.int64),
+            np.asarray([nodes], dtype=np.int64),
+        )
     if pg is not None:
         return expand_pg_to_elements(fem, pg)
     i_tag, j_tag = resolve_element_node_pair(fem, spec)

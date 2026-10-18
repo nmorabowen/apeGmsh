@@ -15,6 +15,12 @@ html, body {
   font: 14px/1.4 var(--font);
 }
 
+select, option, optgroup {
+  color: var(--text);
+  background-color: var(--bg-1);
+}
+option:disabled { color: var(--muted); }
+
 #viewport { position: fixed; inset: 0; }
 #viewport canvas { display: block; }
 
@@ -35,17 +41,27 @@ html, body {
 }
 #banner div + div { margin-top: 3px; }
 
+#line-diagram {
+  position: fixed; left: 16px; top: 102px; max-height: calc(55vh - 118px); overflow: auto;
+  padding: 10px 12px; border-radius: 10px; min-width: 280px; max-width: 292px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#banner:not([hidden]) ~ #line-diagram {
+  top: 168px; max-height: calc(55vh - 184px);
+}
+#line-diagram[hidden] { display: none; }
+
 #legend {
   position: fixed; left: 16px; bottom: 16px; max-height: 45vh; overflow: auto;
   padding: 10px 12px; border-radius: 10px; min-width: 200px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#legend h3, #inspector h3 {
+#legend h3, #line-diagram h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
 .legend-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
-.chip { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.chip { width: 12px; height: 12px; border-radius: 3px; flex: none; border: 1px solid var(--line); }
 .chip.stripe { background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--bg-0) 3px 5px); }
 .chip.stripe2 { background-image: repeating-linear-gradient(45deg, transparent 0 2px, var(--bg-0) 2px 3px); }
 .legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -61,11 +77,13 @@ html, body {
 /* V4c1: the contour legend (field picker, ramp, range mode, colormap). The
    ramp's and the no-data chip's colours are data (state/contour.ts), set inline. */
 .contour-pick { display: flex; gap: 6px; margin: 0 0 8px; }
-.contour-pick select, .contour-cmap, .contour-fixed input {
-  font: 600 12px var(--font); color: var(--text); background: var(--hover);
+.contour-units { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
+.contour-pick select, .contour-units select, .contour-cmap, .contour-fixed input {
+  font: 600 12px var(--font); color: var(--text);
   border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
 }
-.contour-pick select { flex: 1; min-width: 0; }
+.contour-fixed input { background: var(--hover); }
+.contour-pick select, .contour-units select { flex: 1; min-width: 0; width: 100%; }
 .contour-title { font-weight: 600; margin: 2px 0 4px; }
 .contour-ramp { height: 12px; width: 240px; border-radius: 3px; border: 1px solid var(--line); }
 .contour-ends { display: flex; justify-content: space-between; width: 240px; font: 12px var(--mono); color: var(--text); margin: 2px 0 4px; }
@@ -91,11 +109,17 @@ html, body {
 .deform-marker { width: 8px; height: 8px; flex: none; outline: 2.5px solid var(--text); margin: 0 3px; }
 .deform-missing { font-size: 13px; }
 
+.line-diagram { max-width: 268px; }
+.line-diagram-pick { flex-direction: column; }
+.line-diagram-pick .line-diagram-field { flex: 0 0 auto; }
+.line-diagram-title { font-weight: 600; margin: 2px 0 4px; }
+.line-diagram-planes, .line-diagram-cmaps { flex-wrap: wrap; }
+
 /* The right rail (V2g, design brief on #1426): the inspector on top, the
    sources below, never overlapping. The rail itself takes no clicks. */
 #rail {
-  position: fixed; top: 14px; right: 14px; bottom: 14px; width: 470px;
-  display: flex; flex-direction: column; justify-content: flex-end; gap: 10px;
+  position: fixed; top: 14px; right: 20px; bottom: 14px; width: 470px;
+  display: flex; flex-direction: column; justify-content: flex-start; gap: 10px;
   pointer-events: none;
 }
 #rail > * { pointer-events: auto; }
@@ -154,7 +178,7 @@ code { font-family: var(--mono); }
 .sibling { color: var(--muted); }
 .legend-row.clickable { cursor: pointer; }
 .legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
-#legend h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+#legend h3, #line-diagram h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
@@ -263,7 +287,7 @@ code { font-family: var(--mono); }
 /* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
    above the inspector; it scrolls past 45 % of the rail. */
 #planes {
-  flex: 0 0 auto; min-height: 0; max-height: 45%; margin-bottom: auto;
+  flex: 0 0 auto; min-height: 0; max-height: 45%;
   overflow: auto; padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
@@ -297,3 +321,228 @@ code { font-family: var(--mono); }
 .planes-notice { color: var(--error); font-size: 13px; margin: 0 0 6px; }
 .planes-foot { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .planes-capnote { margin: 6px 0 0; }
+
+/* ViewCube, camera projection (Perspective / Orthographic), and background theme (Dark / Light) */
+#viewcube {
+  position: fixed; top: 14px; right: 502px; width: 164px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 8px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+  user-select: none;
+}
+#viewcube[hidden] { display: none; }
+@media (max-width: 1000px) {
+  #viewcube { right: 24px; }
+}
+.vc-bar { display: flex; width: 100%; justify-content: space-between; gap: 4px; }
+.vc-btn {
+  flex: 1; padding: 1px 0; border-radius: 5px; cursor: pointer;
+  font: 600 13px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.vc-btn:hover { border-color: var(--accent); color: var(--accent); }
+.vc-svg { width: 116px; height: 116px; display: block; cursor: grab; touch-action: none; }
+.vc-svg:active { cursor: grabbing; }
+.vc-ring { fill: none; stroke: var(--line); stroke-width: 2.5; pointer-events: none; }
+.vc-compass {
+  fill: var(--muted); font: 700 13px var(--font);
+  pointer-events: none; user-select: none;
+}
+.vc-face-bg { fill: var(--bg-1); pointer-events: none; }
+.vc-patch {
+  fill: var(--faint); stroke: none; stroke-width: 0.9;
+  cursor: pointer; transition: fill 60ms ease;
+}
+#viewcube:hover .vc-patch { stroke: var(--line); }
+.vc-patch.hovered, #viewcube:hover .vc-patch.hovered { fill: var(--accent); stroke: var(--accent); }
+.vc-face-outline {
+  fill: none; stroke: var(--drop-border); stroke-width: 1.8;
+  pointer-events: none;
+}
+.vc-label {
+  fill: var(--text); font: 700 17px var(--font); letter-spacing: 0.04em;
+  pointer-events: none; user-select: none;
+}
+.vc-selects { display: flex; width: 100%; gap: 4px; }
+.vc-projection, .vc-theme {
+  min-width: 0; font: 600 11.5px var(--font); color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px; padding: 3px 4px; cursor: pointer;
+}
+.vc-projection { flex: 1 1 auto; }
+.vc-theme { flex: 0 0 auto; }
+
+/* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, and #line-diagram */
+#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child {
+  cursor: pointer; user-select: none;
+}
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before {
+  content: "\25be"; font-size: 11px; color: var(--muted);
+}
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before {
+  color: var(--accent);
+}
+#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before, #line-diagram[data-collapsed="true"] > h3:first-child::before {
+  content: "\25b8";
+}
+#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"], #line-diagram[data-collapsed="true"] {
+  flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
+}
+#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child, #line-diagram[data-collapsed="true"] > h3:first-child {
+  margin-bottom: 0;
+}
+#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child), #line-diagram[data-collapsed="true"] > :not(:first-child) {
+  display: none;
+}
+#inspector[data-collapsed="true"] + #sources { max-height: 100%; }
+
+/* Right-rail side drawer toggle (#rail-toggle): always anchored on the right edge */
+#rail-toggle {
+  position: fixed; top: 50%; right: 0; transform: translateY(-50%);
+  width: 16px; height: 52px; padding: 0; border-radius: 6px 0 0 6px;
+  cursor: pointer; font: 700 15px var(--font); color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line); border-right: none;
+}
+#rail-toggle:hover { color: var(--accent); border-color: var(--accent); }
+#rail-toggle[hidden] { display: none; }
+body[data-rail-collapsed="true"] #rail { display: none; }
+body[data-rail-collapsed="true"] #viewcube { right: 24px; }
+body[data-rail-collapsed="true"] #windows { right: 24px; }
+
+/* Spotlight (Ctrl+K / Cmd+K) and Search window */
+.spotlight-pill {
+  padding: 2px 9px; border-radius: 6px; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.spotlight-pill:hover { border-color: var(--accent); color: var(--accent); }
+
+.inspector-actions { margin: 8px 0 0; flex-wrap: wrap; }
+
+.search-window { display: flex; flex-direction: column; gap: 6px; }
+.search-bar { display: flex; align-items: center; gap: 6px; }
+.search-input {
+  flex: 1; min-width: 0; padding: 5px 8px; border-radius: 6px;
+  font: 13px var(--mono); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line); outline: none;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-chips, .spotlight-chips {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+}
+.search-chip, .spotlight-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 5px;
+  font: 12px var(--mono); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.search-chip-join {
+  padding: 0 3px; border: none; background: transparent; cursor: pointer;
+  font: 700 10px var(--mono); color: var(--accent);
+}
+.search-chip-text, .spotlight-chip-label { color: var(--text); }
+.search-chip-rm, .spotlight-chip-rm {
+  padding: 0 2px; border: none; background: transparent; cursor: pointer;
+  font: 700 12px var(--mono); color: var(--muted);
+}
+.search-chip-rm:hover, .spotlight-chip-rm:hover { color: var(--text); }
+.search-builder {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+.search-select {
+  padding: 3px 5px; border-radius: 5px;
+  font: 600 11px var(--font); color: var(--text);
+  border: 1px solid var(--line);
+}
+.search-val-input {
+  flex: 1; min-width: 90px; padding: 3px 6px; border-radius: 5px;
+  font: 12px var(--mono); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line); outline: none;
+}
+.search-val-input:focus { border-color: var(--accent); }
+.search-summary, .search-summary-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  margin: 2px 0;
+}
+.search-count { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.search-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+
+#spotlight {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 11vh; background: var(--faint);
+}
+#spotlight[hidden] { display: none; }
+.spotlight-card {
+  width: min(640px, 92vw); max-height: 76vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
+}
+.spotlight-top {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.spotlight-mode-badge {
+  padding: 2px 8px; border-radius: 5px; cursor: pointer;
+  font: 600 11px var(--font); color: var(--accent);
+  background: var(--accent-wash); border: 1px solid var(--accent);
+}
+.spotlight-input {
+  flex: 1; min-width: 180px; padding: 4px 6px; border: none; outline: none;
+  font: 15px var(--font); color: var(--text); background: transparent;
+}
+.spotlight-help, .spotlight-close {
+  padding: 2px 7px; border-radius: 5px; cursor: pointer;
+  font: 600 11px var(--mono); color: var(--muted);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.spotlight-help:hover, .spotlight-close:hover { color: var(--text); border-color: var(--accent); }
+.spotlight-summary {
+  padding: 6px 12px; font-size: 12px; color: var(--muted);
+  border-bottom: 1px solid var(--line); background: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.spotlight-list {
+  flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 8px;
+}
+.spotlight-section {
+  padding: 6px 6px 3px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.spotlight-row {
+  padding: 6px 8px; border-radius: 7px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.spotlight-row.active, .spotlight-row:hover {
+  background: var(--hover);
+}
+.spotlight-row.active {
+  outline: 1px solid var(--accent);
+}
+.spotlight-row-main {
+  display: flex; align-items: center; gap: 8px;
+}
+.spotlight-row-title { font-weight: 600; color: var(--text); }
+.spotlight-row-meta {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.spotlight-row-badge {
+  padding: 1px 6px; border-radius: 4px;
+  font: 600 11px var(--mono); color: var(--accent); background: var(--accent-wash);
+}
+.spotlight-row-keys {
+  padding: 1px 6px; border-radius: 4px;
+  font: 600 10px var(--mono); color: var(--muted); background: var(--faint); border: 1px solid var(--line);
+}
+.spotlight-row-sub {
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.spotlight-empty {
+  padding: 16px 10px; text-align: center; color: var(--muted); font-size: 13px;
+}
+.spotlight-footer {
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  padding: 6px 12px; border-top: 1px solid var(--line);
+  font: 11px var(--mono); color: var(--muted); background: var(--faint);
+}
