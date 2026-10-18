@@ -41,6 +41,8 @@ __all__ = ["InertMembranePressureError", "refuse_inert_membrane_pressure"]
 #: The ``Plain`` element-load types (``surface_load``, ``self_weight``,
 #: ``beam_uniform``) that reach ``LadrunoMembrane::addLoad``. They are every
 #: type ``Plain`` records today; an unknown one fails closed below.
+#: ``-beamUniform`` loads the membrane from its own ``w`` values and does not
+#: read ``-pressure``; it counts because the element is then loaded (#2151).
 _ACTIVATING: frozenset[str] = frozenset({"surfaceLoad", "selfWeight", "beamUniform"})
 
 
@@ -49,14 +51,14 @@ class InertMembranePressureError(BridgeError):
 
 
 def _plain_patterns(bm: "BuiltModel") -> Iterator[Plain]:
-    """Every ``Plain`` of the model, top-level and stage-scoped, once each."""
-    seen: set[int] = set()
-    stage_patterns = (
-        p for stage in bm.stage_records for p in stage.pattern_specs
-    )
-    for prim in (*bm.primitives, *stage_patterns):
-        if isinstance(prim, Plain) and id(prim) not in seen:
-            seen.add(id(prim))
+    """Every ``Plain`` of the model, top-level and stage-scoped.
+
+    A stage's ``s.pattern(...)`` registers its ``Plain`` on the bridge like
+    a top-level one, so it is in ``bm.primitives`` too; the stage only
+    claims it for its own block (ADR 0051 BL-3, ``_claimed_pattern_ids``).
+    """
+    for prim in bm.primitives:
+        if isinstance(prim, Plain):
             yield prim
 
 

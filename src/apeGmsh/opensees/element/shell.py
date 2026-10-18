@@ -426,6 +426,25 @@ class LadrunoMembrane(Element):
     ``[-spanAxis $dx $dy [$dz]] [-orthoRatio $eta] [-pressure $q]``
     ``[-thick $t -mat $matTag | -stiff $E $nu $t] [-rho $rho] [-lumped]``
     ``[-meshSize $hMax] [-damp $dampTag]``
+
+    ``pressure=`` does not load the slab by itself. The fork reads it only
+    inside ``LadrunoMembrane::addLoad``, as the reference value that a
+    pattern's ``surface_load`` scales (and ``self_weight`` too, when the
+    membrane has no ``rho`` x thickness). Activate it from a ``Plain``
+    pattern, top level or a stage's ``s.pattern(...)``, by ``ele=`` or
+    ``pg=``::
+
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.surface_load(ele=slab)
+
+    ``ops.build()`` refuses a nonzero ``pressure=`` that no ``Plain``
+    pattern targets with ``surface_load``, ``self_weight`` or
+    ``beam_uniform``: without one, every support reaction reads 0.0 (#2151).
+    ``label=`` does not reach a membrane, which has no mesh cell.
+
+    ``rho=`` with a thickness is both the self-weight density that
+    ``self_weight`` scales and the mass of the element's mass matrix, so a
+    modal or ``UniformExcitation`` run reads it with no ``Plain`` pattern.
     """
 
     ELE_TAG: ClassVar[int] = 33022
