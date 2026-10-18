@@ -20,14 +20,11 @@ header when one class's elements write different META, and each header
 bucket is checked against its own ``NUM_COLUMNS`` and META by
 :func:`validate_bucket_meta` before it is read.
 
-A custom-rule bucket (``209-SixNodeTri[1000:2:0]``) is read at any
-``custom_rule_idx`` when RESPONSE_CATALOG has a row for its class at
-``IntRule.Custom``. MPCO numbers custom rules from 1 across the whole
-file, so the index names no layout of its own; the catalog row is the
-class's fixed Gauss rule, and :func:`validate_bucket_meta` checks the
-bucket's GP count and widths against it before the read. A custom-rule
-bucket whose class has no such row is named in an
-``MPCOBucketSkippedWarning``, since its Gauss points are unknown.
+A bucket with a nonzero custom-rule index (``209-SixNodeTri[1000:2:0]``)
+is left unread and named in one ``MPCOBucketSkippedWarning``. MPCO opens
+a new custom-rule index for each distinct set of Gauss-point positions
+(``GP_X``), so the catalog's fixed coordinates cannot be trusted for it,
+and this reader does not yet check ``GP_X``.
 
 An element class absent from the catalog on a standard rule contributes
 nothing to the slab; the user can extend the catalog and re-read the
@@ -165,16 +162,16 @@ def discover_gauss_buckets(
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError:
                 continue
+            if elem_key.custom_rule_idx != 0:
+                warn_unread_custom_rule_bucket(
+                    token_grp[bracket_key], elem_key,
+                    what=f"gauss discovery of {canonical_component!r}",
+                )
+                continue
             found = catalog_layout(
                 elem_key, catalog_token, where=f"{name}/{bracket_key}",
             )
             if found is None:
-                if elem_key.custom_rule_idx != 0:
-                    warn_unread_custom_rule_bucket(
-                        token_grp[bracket_key], elem_key,
-                        catalog_token=catalog_token,
-                        what=f"gauss discovery of {canonical_component!r}",
-                    )
                 continue
             layout = _maybe_extend_plane_layout(found, token_grp[bracket_key])
             out.append(_Bucket(
@@ -196,15 +193,15 @@ def warn_unread_custom_rule_bucket(
     bucket_grp: "h5py.Group",
     elem_key: MPCOElementKey,
     *,
-    catalog_token: str,
     what: str,
 ) -> None:
-    """Name a custom-rule bucket the reader cannot place, by path and class.
+    """Name a bucket with a nonzero custom-rule index, by path and class.
 
-    The bucket's integration rule is custom (``custom_rule_idx`` >= 1),
-    and RESPONSE_CATALOG has no ``(class, rule, catalog_token)`` row to
-    give its Gauss points, so its elements return no values. One
-    ``MPCOBucketSkippedWarning`` per bucket; the other buckets still read.
+    MPCO opens a new custom-rule index for each distinct set of
+    Gauss-point positions (``GP_X``), so RESPONSE_CATALOG's fixed
+    coordinates cannot be trusted for it, and the bucket is left unread.
+    One ``MPCOBucketSkippedWarning`` per bucket; the other buckets still
+    read.
     """
     from ._mpco import MPCOBucketSkippedWarning
     warnings.warn(
@@ -212,9 +209,9 @@ def warn_unread_custom_rule_bucket(
         f"bucket(s) unread, so their elements return no values: "
         f"{bucket_grp.name}: class {elem_key.class_name!r} carries custom "
         f"integration rule {elem_key.custom_rule_idx} (bracket rule "
-        f"{elem_key.int_rule}), and RESPONSE_CATALOG has no "
-        f"{catalog_token!r} row for it at that rule, so its Gauss points "
-        f"are unknown.",
+        f"{elem_key.int_rule}). MPCO numbers a custom rule per set of "
+        f"Gauss-point positions (GP_X), which this reader does not "
+        f"verify, so the catalog's Gauss points cannot be assumed.",
         MPCOBucketSkippedWarning, stacklevel=4,
     )
 

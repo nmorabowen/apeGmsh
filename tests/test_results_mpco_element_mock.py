@@ -496,11 +496,9 @@ class TestBucketFiltering:
             slab = s.elements.gauss.get(component="stress_xx")
             assert slab.values.shape == (1, 0)
 
-    def test_uncatalogued_custom_rule_bucket_is_named(
-        self, tmp_path: Path,
-    ) -> None:
-        """A custom-rule bucket with no catalog row at its rule is unread,
-        and named in an ``MPCOBucketSkippedWarning`` (#2115)."""
+    def test_custom_rule_bucket_is_named(self, tmp_path: Path) -> None:
+        """A bucket with a nonzero custom-rule index is unread, and named
+        in an ``MPCOBucketSkippedWarning`` (#2115)."""
         layout = lookup("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress")
         path = tmp_path / "custom_rule.mpco"
         f, stage_name = _create_mpco_skeleton(
@@ -509,7 +507,6 @@ class TestBucketFiltering:
         )
         key = f"{layout.class_tag}-FourNodeTetrahedron[1000:3:0]"
         try:
-            # (FourNodeTetrahedron, Custom, stress) is not catalogued.
             on_elements = f[stage_name]["RESULTS"].require_group("ON_ELEMENTS")
             stress = on_elements.create_group("stresses")
             stress.create_group(key)

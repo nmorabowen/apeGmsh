@@ -1,19 +1,21 @@
-"""MPCO Gauss and material-state discovery reads custom-rule buckets (#2115).
+"""MPCO Gauss and material-state discovery names custom-rule buckets (#2115).
 
-MPCO numbers custom integration rules from 1 across the whole file
-(``209-SixNodeTri[1000:2:0]``), so ``custom_rule_idx`` names no layout of
-its own. ``discover_gauss_buckets`` and ``discover_material_state_buckets``
-used to ``continue`` on any ``custom_rule_idx != 0``: the catalog's
-``IntRule.Custom`` rows (SixNodeTri, BezierTri6, BezierTet10) were never
-reached and every such bucket vanished in silence.
+``discover_gauss_buckets`` and ``discover_material_state_buckets`` used to
+``continue`` on any ``custom_rule_idx != 0``, so such a bucket vanished
+from listings and reads without a word.
 
-Now a custom-rule bucket is read when RESPONSE_CATALOG has a row for its
-class at the bucket's rule, with META checked against that row, and is
-named in one ``MPCOBucketSkippedWarning`` per bucket when it has none.
+MPCO opens a new custom-rule index for each distinct set of Gauss-point
+positions (``GP_X``), so the catalog's fixed coordinates cannot be trusted
+for any of them: two indices on one class mean that at least one of them
+is not the catalog's rule. Until a reader verifies ``GP_X`` against a real
+recorder file, every bucket with a nonzero custom-rule index is left
+unread and named in one ``MPCOBucketSkippedWarning`` (path, class, custom
+index, file), whatever its bracket rule, and the other buckets still read.
 
-Oracles: the values are the ones the test writes, decoded by a closed
-form per (component, step, element, GP); the Gauss points are the
-catalog's Triangle_GL_2 coordinates for SixNodeTri.
+The three pinned reproducers are the #2159 review's: ``[1000:1:0]`` beside
+``[1000:2:0]``, ``[0:1:0]`` (the rule-0 class fallback) and ``[101:5:0]``
+(a standard rule's catalog row), each of which an earlier draft read with
+the catalog's Gauss points and no warning.
 """
 from __future__ import annotations
 
@@ -40,17 +42,24 @@ from tests.test_results_mpco_element_mock import (
     _create_mpco_skeleton,
 )
 
-_TRI_KEY = f"{ELE_TAG_SixNodeTri}-SixNodeTri[{IntRule.Custom}:2:0]"
-_TET_CUSTOM_KEY = (
-    f"{ELE_TAG_FourNodeTetrahedron}-FourNodeTetrahedron[{IntRule.Custom}:3:0]"
-)
-_TET_CUSTOM_KEY_2 = (
-    f"{ELE_TAG_FourNodeTetrahedron}-FourNodeTetrahedron[{IntRule.Custom}:4:0]"
-)
-_TET_STD_KEY = (
-    f"{ELE_TAG_FourNodeTetrahedron}-FourNodeTetrahedron[{IntRule.Tet_GL_1}:0:0]"
-)
-_TRI_LAYOUT = lookup("SixNodeTri", IntRule.Custom, "stress")
+_TRI_LAYOUT = lookup("SixNodeTri", IntRule.Triangle_GL_2, "stress")
+
+
+def _tri(rule: int, cust: int) -> str:
+    return f"{ELE_TAG_SixNodeTri}-SixNodeTri[{rule}:{cust}:0]"
+
+
+def _tet(rule: int, cust: int) -> str:
+    return f"{ELE_TAG_FourNodeTetrahedron}-FourNodeTetrahedron[{rule}:{cust}:0]"
+
+
+#: The #2159 review's reproducers: each tuple is one file's SixNodeTri
+#: buckets. Every bucket here must be named, and none may read.
+_REPRODUCERS = {
+    "two-custom-indices": (_tri(IntRule.Custom, 1), _tri(IntRule.Custom, 2)),
+    "rule-0-nonzero-index": (_tri(IntRule.NoIntegrationRule, 1),),
+    "standard-rule-nonzero-index": (_tri(IntRule.Triangle_GL_2, 5),),
+}
 
 
 def _open(path: Path) -> Results:
@@ -64,14 +73,6 @@ def _skips(record: "list[warnings.WarningMessage]") -> list[str]:
     ]
 
 
-def _encoded(T: int, E: int, G: int, k: int) -> np.ndarray:
-    """``(T, E, G)`` values unique per (component k, step, element, GP)."""
-    t, e, g = np.meshgrid(
-        np.arange(T), np.arange(E), np.arange(G), indexing="ij",
-    )
-    return k * 1000.0 + t * 100.0 + e * 10.0 + g
-
-
 def _skeleton(path: Path) -> "tuple[h5py.File, str]":
     return _create_mpco_skeleton(
         path, node_ids=np.arange(1, 7, dtype=np.int32),
@@ -79,25 +80,18 @@ def _skeleton(path: Path) -> "tuple[h5py.File, str]":
     )
 
 
-def _add_tri_stress(stage: "h5py.Group", *, n_gauss_points: int = 3) -> None:
-    """Two SixNodeTri elements on a custom rule, ``n_gauss_points`` blocks."""
-    T, E = 2, 2
+def _add_tri_stress(stage: "h5py.Group", key: str, eid: int) -> None:
+    """One well-formed 3-GP SixNodeTri stress bucket under ``key``."""
     per_comp = {
-        name: _encoded(T, E, n_gauss_points, k)
+        name: np.full((2, 1, 3), float(eid + k))
         for k, name in enumerate(_TRI_LAYOUT.component_layout)
     }
-    layout = _TRI_LAYOUT
-    if n_gauss_points != layout.n_gauss_points:
-        flat = np.stack(
-            [per_comp[n] for n in layout.component_layout], axis=-1,
-        ).reshape(T, E, -1)
-    else:
-        flat = flatten(per_comp, layout)
     _add_stress_bucket(
-        stage, bracket_key=_TRI_KEY, class_tag=ELE_TAG_SixNodeTri,
-        int_rule=IntRule.Custom,
-        element_ids=np.array([7, 8], dtype=np.int32), flat_data=flat,
-        n_gauss_points=n_gauss_points, n_components=3,
+        stage, bracket_key=key, class_tag=ELE_TAG_SixNodeTri,
+        int_rule=IntRule.Triangle_GL_2,
+        element_ids=np.array([eid], dtype=np.int32),
+        flat_data=flatten(per_comp, _TRI_LAYOUT), n_gauss_points=3,
+        n_components=3,
         component_labels=("sigma_xx", "sigma_yy", "sigma_xy"),
     )
 
@@ -113,18 +107,13 @@ def _add_tet_stress(stage: "h5py.Group", key: str, eid: int) -> None:
 
 
 def _add_damage(
-    stage: "h5py.Group", key: str, *, eids: np.ndarray, n_gp: int,
-    num_columns: "int | None" = None,
+    stage: "h5py.Group", key: str, *, eid: int, n_gp: int,
 ) -> None:
-    """A ``d+,d-`` material.damage bucket with ``n_gp`` META blocks."""
-    T, E = 2, eids.size
+    """A well-formed ``d+,d-`` material.damage bucket with ``n_gp`` GPs."""
     bg = stage["RESULTS"].require_group("ON_ELEMENTS").require_group(
         "material.damage",
     ).create_group(key)
-    bg.attrs["NUM_COLUMNS"] = np.array(
-        [num_columns if num_columns is not None else n_gp * 2],
-        dtype=np.int32,
-    )
+    bg.attrs["NUM_COLUMNS"] = np.array([n_gp * 2], dtype=np.int32)
     meta = bg.create_group("META")
     meta.create_dataset("MULTIPLICITY", data=np.ones((n_gp, 1), np.int32))
     meta.create_dataset(
@@ -134,16 +123,27 @@ def _add_damage(
     meta.create_dataset("COMPONENTS", data=np.array([
         ";".join("0.1.4.d+,d-" for _ in range(n_gp)).encode("ascii"),
     ]))
-    bg.create_dataset("ID", data=eids.reshape(-1, 1).astype(np.int32))
-    # GP-slowest, component-fastest: col(gp, k) = gp * 2 + k.
-    flat = np.stack(
-        [_encoded(T, E, n_gp, 0), _encoded(T, E, n_gp, 1)], axis=-1,
-    ).reshape(T, E, n_gp * 2)
+    bg.create_dataset("ID", data=np.array([[eid]], dtype=np.int32))
     data = bg.create_group("DATA")
-    for t in range(T):
-        ds = data.create_dataset(f"STEP_{t}", data=flat[t])
+    for t in range(2):
+        ds = data.create_dataset(
+            f"STEP_{t}", data=np.full((1, n_gp * 2), float(eid)),
+        )
         ds.attrs["STEP"] = t
         ds.attrs["TIME"] = (t + 1) * 0.5
+
+
+def _assert_named(msgs: list[str], keys: "tuple[str, ...]", *,
+                  group: str, cls: str, file: str, what: str) -> None:
+    """One warning per key, each naming path, class, index and file."""
+    assert len(msgs) == len(keys), msgs
+    for key in keys:
+        (msg,) = [m for m in msgs if f"{group}/{key}:" in m]
+        cust = key.split(":")[-2]
+        assert f"class {cls!r}" in msg
+        assert f"custom integration rule {cust}" in msg
+        assert f" in {file} " in msg
+        assert what in msg
 
 
 # =====================================================================
@@ -151,64 +151,40 @@ def _add_damage(
 # =====================================================================
 
 class TestGaussCustomRule:
-    def test_catalogued_custom_rule_bucket_reads(self, tmp_path: Path) -> None:
-        """SixNodeTri ``[1000:2:0]`` reads through the catalog's Custom row."""
+    @pytest.mark.parametrize("case", sorted(_REPRODUCERS))
+    def test_reproducer_is_named_and_unread(
+        self, tmp_path: Path, case: str,
+    ) -> None:
+        keys = _REPRODUCERS[case]
         path = tmp_path / "tri.mpco"
         f, stage = _skeleton(path)
         try:
-            _add_tri_stress(f[stage])
+            for i, key in enumerate(keys):
+                _add_tri_stress(f[stage], key, 7 + i)
         finally:
             f.close()
         r = _open(path)
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", MPCOBucketSkippedWarning)
-                comps = r._reader.available_components(
-                    r._reader.stages()[0].id, ResultLevel.GAUSS,
-                )
-                slab = r.elements.gauss.get(component="stress_xy")
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                slab = r.elements.gauss.get(component="stress_xx")
         finally:
             r._reader.close()
-        assert "stress_xy" in comps
-        # 2 elements x 3 GPs, element-major / GP-fastest.
-        assert slab.values.shape == (2, 6)
-        k = _TRI_LAYOUT.component_layout.index("stress_xy")
-        np.testing.assert_array_equal(
-            slab.values, _encoded(2, 2, 3, k).reshape(2, 6),
-        )
-        np.testing.assert_array_equal(
-            slab.natural_coords,
-            np.tile(_TRI_LAYOUT.natural_coords, (2, 1)),
+        assert slab.values.shape == (2, 0)
+        _assert_named(
+            _skips(rec), keys, group="stresses", cls="SixNodeTri",
+            file="tri.mpco", what="gauss discovery of 'stress_xx'",
         )
 
-    def test_custom_rule_bucket_with_wrong_gp_count_refuses(
+    def test_standard_bucket_beside_custom_ones_still_reads(
         self, tmp_path: Path,
     ) -> None:
-        """META guards the layout: 4 GP blocks against a 3-GP row raise."""
-        path = tmp_path / "tri4.mpco"
-        f, stage = _skeleton(path)
-        try:
-            _add_tri_stress(f[stage], n_gauss_points=4)
-        finally:
-            f.close()
-        r = _open(path)
-        try:
-            with pytest.raises(ValueError, match=r"4 blocks but catalog expects 3"):
-                r.elements.gauss.get(component="stress_xx")
-        finally:
-            r._reader.close()
-
-    def test_uncatalogued_custom_rule_buckets_warn_one_each(
-        self, tmp_path: Path,
-    ) -> None:
-        """No (FourNodeTetrahedron, Custom) row: each bucket is named once,
-        and the standard-rule bucket beside them still reads."""
         path = tmp_path / "tets.mpco"
+        keys = (_tet(IntRule.Custom, 3), _tet(IntRule.Custom, 4))
         f, stage = _skeleton(path)
         try:
-            _add_tet_stress(f[stage], _TET_STD_KEY, 1)
-            _add_tet_stress(f[stage], _TET_CUSTOM_KEY, 2)
-            _add_tet_stress(f[stage], _TET_CUSTOM_KEY_2, 3)
+            _add_tet_stress(f[stage], _tet(IntRule.Tet_GL_1, 0), 1)
+            for i, key in enumerate(keys):
+                _add_tet_stress(f[stage], key, 2 + i)
         finally:
             f.close()
         r = _open(path)
@@ -218,21 +194,17 @@ class TestGaussCustomRule:
         finally:
             r._reader.close()
         np.testing.assert_array_equal(slab.values, np.full((2, 1), 1.0))
-        msgs = _skips(rec)
-        assert len(msgs) == 2
-        for key, msg in zip((_TET_CUSTOM_KEY, _TET_CUSTOM_KEY_2), sorted(msgs)):
-            assert f"stresses/{key}" in msg
-            assert "'FourNodeTetrahedron'" in msg
-            assert " in tets.mpco " in msg
-            assert "'stress_xx'" in msg
+        _assert_named(
+            _skips(rec), keys, group="stresses", cls="FourNodeTetrahedron",
+            file="tets.mpco", what="gauss discovery of 'stress_xx'",
+        )
 
-    def test_listing_names_an_uncatalogued_custom_rule_bucket(
-        self, tmp_path: Path,
-    ) -> None:
-        path = tmp_path / "tet.mpco"
+    def test_listing_names_a_custom_rule_bucket(self, tmp_path: Path) -> None:
+        key = _tri(IntRule.Custom, 1)
+        path = tmp_path / "tri.mpco"
         f, stage = _skeleton(path)
         try:
-            _add_tet_stress(f[stage], _TET_CUSTOM_KEY, 2)
+            _add_tri_stress(f[stage], key, 7)
         finally:
             f.close()
         r = _open(path)
@@ -244,61 +216,24 @@ class TestGaussCustomRule:
         finally:
             r._reader.close()
         assert "stress_xx" not in comps
-        assert any(f"stresses/{_TET_CUSTOM_KEY}" in m for m in _skips(rec))
+        assert any(f"stresses/{key}:" in m for m in _skips(rec))
 
 
 # =====================================================================
 # Material state: discover_material_state_buckets
 # =====================================================================
 
-_TRI_DAMAGE_KEY = f"{ELE_TAG_SixNodeTri}-SixNodeTri[{IntRule.Custom}:1:0]"
-_TET_DAMAGE_KEY = (
-    f"{ELE_TAG_FourNodeTetrahedron}-FourNodeTetrahedron[{IntRule.Custom}:1:0]"
-)
-
-
 class TestMaterialStateCustomRule:
-    def test_catalogued_custom_rule_bucket_reads(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("case", sorted(_REPRODUCERS))
+    def test_reproducer_is_named_and_unread(
+        self, tmp_path: Path, case: str,
+    ) -> None:
+        keys = _REPRODUCERS[case]
         path = tmp_path / "tri_damage.mpco"
         f, stage = _skeleton(path)
         try:
-            _add_damage(
-                f[stage], _TRI_DAMAGE_KEY,
-                eids=np.array([7, 8], dtype=np.int64), n_gp=3,
-            )
-        finally:
-            f.close()
-        r = _open(path)
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", MPCOBucketSkippedWarning)
-                comps = r._reader.available_components(
-                    r._reader.stages()[0].id, ResultLevel.GAUSS,
-                )
-                slab = r.elements.gauss.get(component="damage_compression")
-        finally:
-            r._reader.close()
-        assert {"damage_tension", "damage_compression"} <= set(comps)
-        assert slab.values.shape == (2, 6)
-        np.testing.assert_array_equal(
-            slab.values, _encoded(2, 2, 3, 1).reshape(2, 6),
-        )
-        np.testing.assert_array_equal(
-            slab.natural_coords,
-            np.tile(_TRI_LAYOUT.natural_coords, (2, 1)),
-        )
-
-    def test_custom_rule_bucket_with_wrong_gp_count_is_named(
-        self, tmp_path: Path,
-    ) -> None:
-        """META guards the layout: 4 GPs of d+,d- against the 3-GP row."""
-        path = tmp_path / "tri_damage4.mpco"
-        f, stage = _skeleton(path)
-        try:
-            _add_damage(
-                f[stage], _TRI_DAMAGE_KEY,
-                eids=np.array([7], dtype=np.int64), n_gp=4,
-            )
+            for i, key in enumerate(keys):
+                _add_damage(f[stage], key, eid=7 + i, n_gp=3)
         finally:
             f.close()
         r = _open(path)
@@ -307,21 +242,22 @@ class TestMaterialStateCustomRule:
                 slab = r.elements.gauss.get(component="damage_tension")
         finally:
             r._reader.close()
-        assert slab.values.shape[1] == 0
-        (msg,) = _skips(rec)
-        assert f"material.damage/{_TRI_DAMAGE_KEY}" in msg
-        assert "NUM_COLUMNS=8" in msg
+        assert slab.values.shape == (2, 0)
+        _assert_named(
+            _skips(rec), keys, group="material.damage", cls="SixNodeTri",
+            file="tri_damage.mpco",
+            what="gauss material-state discovery of 'damage_tension'",
+        )
 
-    def test_uncatalogued_custom_rule_bucket_is_named(
+    def test_standard_bucket_beside_a_custom_one_still_reads(
         self, tmp_path: Path,
     ) -> None:
+        key = _tet(IntRule.Custom, 1)
         path = tmp_path / "tet_damage.mpco"
         f, stage = _skeleton(path)
         try:
-            _add_damage(
-                f[stage], _TET_DAMAGE_KEY,
-                eids=np.array([2], dtype=np.int64), n_gp=1,
-            )
+            _add_damage(f[stage], _tet(IntRule.Tet_GL_1, 0), eid=1, n_gp=1)
+            _add_damage(f[stage], key, eid=2, n_gp=1)
         finally:
             f.close()
         r = _open(path)
@@ -330,9 +266,9 @@ class TestMaterialStateCustomRule:
                 slab = r.elements.gauss.get(component="damage_tension")
         finally:
             r._reader.close()
-        assert slab.values.shape[1] == 0
-        (msg,) = _skips(rec)
-        assert f"material.damage/{_TET_DAMAGE_KEY}" in msg
-        assert "'FourNodeTetrahedron'" in msg
-        assert "custom integration rule 1" in msg
-        assert " in tet_damage.mpco " in msg
+        np.testing.assert_array_equal(slab.values, np.full((2, 1), 1.0))
+        _assert_named(
+            _skips(rec), (key,), group="material.damage",
+            cls="FourNodeTetrahedron", file="tet_damage.mpco",
+            what="gauss material-state discovery of 'damage_tension'",
+        )
