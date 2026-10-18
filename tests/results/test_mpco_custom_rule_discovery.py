@@ -33,8 +33,13 @@ from apeGmsh.opensees._response_catalog import (
     flatten,
     lookup,
 )
+from apeGmsh.opensees._response_catalog import mpco_gauss_group_aliases
 from apeGmsh.results import Results
 from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._mpco_element_io import discover_gauss_buckets
+from apeGmsh.results.readers._mpco_material_io import (
+    discover_material_state_buckets,
+)
 from apeGmsh.results.readers._protocol import ResultLevel
 from tests.conftest import _stub_model_h5_path
 from tests.test_results_mpco_element_mock import (
@@ -372,27 +377,6 @@ class TestGaussUncatalogued:
         assert "stress_xx" not in comps
         assert any(f"stresses/{_TET_GL2}:" in m for m in _skips(rec))
 
-    def test_a_key_under_two_alias_groups_is_named_once(
-        self, tmp_path: Path,
-    ) -> None:
-        """``stresses`` and ``material.stress`` are aliases of one token:
-        the same unread bucket key under both is one bucket, one warning."""
-        path = tmp_path / "tets.mpco"
-        f, stage = _skeleton(path)
-        try:
-            on_el = f[stage]["RESULTS"].require_group("ON_ELEMENTS")
-            for group in ("stresses", "material.stress"):
-                on_el.require_group(group).create_group(_TET_GL2)
-        finally:
-            f.close()
-        r = _open(path)
-        try:
-            with pytest.warns(MPCOBucketSkippedWarning) as rec:
-                r.elements.gauss.get(component="stress_xx")
-        finally:
-            r._reader.close()
-        assert len(_skips(rec)) == 1, _skips(rec)
-
     def test_catalogued_buckets_stay_quiet(self, tmp_path: Path) -> None:
         path = tmp_path / "ok.mpco"
         f, stage = _skeleton(path)
@@ -460,3 +444,59 @@ class TestMaterialStateUncatalogued:
             r._reader.close()
         np.testing.assert_array_equal(slab.values, np.full((2, 1), 1.0))
         assert "damage_tension" in comps
+
+
+# =====================================================================
+# One warning per bucket key across alias groups (#2160)
+# =====================================================================
+#
+# A token's alias groups (``stresses`` / ``material.stress``, and the four
+# ``equivalentPlasticStrain`` spellings) name one bucket set: a key that
+# is unread under one alias is the same bucket under another. Each of the
+# four skip sites (level x reason) records the key, so the bucket is
+# named once. Discovery is called directly, so each case pins one site.
+
+_ALIAS_CASES = {
+    "gauss-custom-rule": (
+        discover_gauss_buckets, "stress_xx", "stresses",
+        _tri(IntRule.Custom, 1), "custom integration rule 1",
+    ),
+    "gauss-uncatalogued": (
+        discover_gauss_buckets, "stress_xx", "stresses",
+        _TET_GL2, "no RESPONSE_CATALOG row",
+    ),
+    "material-custom-rule": (
+        discover_material_state_buckets, "equivalent_plastic_strain",
+        "equivalentPlasticStrain",
+        _tri(IntRule.Custom, 1), "custom integration rule 1",
+    ),
+    "material-uncatalogued": (
+        discover_material_state_buckets, "equivalent_plastic_strain",
+        "equivalentPlasticStrain",
+        _TET_GL2, "no RESPONSE_CATALOG row",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_ALIAS_CASES))
+def test_a_key_under_every_alias_group_is_named_once(
+    tmp_path: Path, case: str,
+) -> None:
+    discover, canonical, primary, key, reason = _ALIAS_CASES[case]
+    aliases = mpco_gauss_group_aliases(primary)
+    assert len(aliases) >= 2, aliases
+    path = tmp_path / "aliases.mpco"
+    with h5py.File(str(path), "w") as f:
+        on_el = f.create_group("ON_ELEMENTS")
+        for group in aliases:
+            on_el.create_group(group).create_group(key)
+    with h5py.File(str(path), "r") as f:
+        with pytest.warns(MPCOBucketSkippedWarning) as rec:
+            _, buckets = discover(
+                f["ON_ELEMENTS"], canonical_component=canonical,
+            )
+    assert buckets == []
+    msgs = _skips(rec)
+    assert len(msgs) == 1, msgs
+    assert f"/ON_ELEMENTS/{aliases[0]}/{key}:" in msgs[0]
+    assert reason in msgs[0]
