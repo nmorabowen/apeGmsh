@@ -21,12 +21,29 @@ shrink.  Raising one is a maintainer gate, never a fix for a red test.
 from __future__ import annotations
 
 import ast
-import re
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "apeGmsh"
+_ROOT = Path(__file__).resolve().parents[1]
+SRC = _ROOT / "src" / "apeGmsh"
+
+
+def _quirks():
+    """scripts/check_quirks.py, which owns the token definition (rule ``fork-token-string``)."""
+    spec = importlib.util.spec_from_file_location(
+        "_check_quirks_for_ratchet", _ROOT / "scripts" / "check_quirks.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolve their module by name
+    spec.loader.exec_module(module)
+    return module
+
+
+_Q = _quirks()
 
 # package glob -> pinned count (measured 2026-10-04 at origin/main 38b482bb).
 BASELINE: dict[str, int] = {
@@ -37,24 +54,11 @@ BASELINE: dict[str, int] = {
 }
 
 # The fork seam: readers for the fork's own output format.
-EXEMPT_GLOBS = ("results/readers/_ladruno*.py",)
+EXEMPT_GLOBS = _Q.FORK_SEAM_GLOBS
 
-_TOKEN = re.compile("ladruno", re.IGNORECASE)
-_DOC_OWNERS = (
-    ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef,
-)
-
-
-def _doc_constants(tree: ast.AST) -> set[int]:
-    ids: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, _DOC_OWNERS) and node.body:
-            first = node.body[0]
-            if (isinstance(first, ast.Expr)
-                    and isinstance(first.value, ast.Constant)
-                    and isinstance(first.value.value, str)):
-                ids.add(id(first.value))
-    return ids
+# One definition of a fork token, shared with the ``fork-token-string`` lint rule.
+_TOKEN = _Q.FORK_TOKEN
+_doc_constants = _Q.doc_constant_ids
 
 
 def count_fork_tokens(source: str) -> int:
