@@ -653,7 +653,7 @@ class OpenSeesModel:
             state past the write-side guard (ADR 0055 gate-2).
         """
         from ._internal.schema_version import OPENSEES, reader_version
-        from .emitter.h5 import _partition_blocks_to_ro, _stage_block_to_ro
+        from .emitter._h5_blocks import _partition_blocks_to_ro, _stage_block_to_ro
 
         if emitter._stage_current is not None:
             raise RuntimeError(
@@ -2080,7 +2080,7 @@ def _merge_region_rows(
     no safe union and raise ``ValueError`` naming the tag: replaying both
     would redefine the region silently.
     """
-    from .emitter.h5 import _merge_node_region_args
+    from .emitter._h5_blocks import _merge_node_region_args
 
     out: "list[RegionRecord]" = []
     by_tag: "dict[int, int]" = {}

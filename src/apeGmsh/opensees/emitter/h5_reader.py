@@ -2350,7 +2350,7 @@ class H5Model:
         """Decode a ``params`` / ``args`` attr pair back into the original
         positional ``*args`` tuple.
 
-        Mirrors the inverse of :func:`apeGmsh.opensees.emitter.h5._write_param_array`:
+        Mirrors the inverse of :func:`apeGmsh.opensees.emitter._h5_write._write_param_array`:
         slot ``i`` is the string from ``{key}_str[i]`` when non-empty,
         otherwise the float from ``{key}[i]``.
         """
