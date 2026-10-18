@@ -38,10 +38,10 @@ from apeGmsh.opensees.element.solid import (
     BezierTri6,
     FourNodeQuad,
     LadrunoLST,
-    LadrunoUP,
     SixNodeTri,
     stdBrick,
 )
+from apeGmsh.opensees.element.solid_up import LadrunoUP
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.nd import (

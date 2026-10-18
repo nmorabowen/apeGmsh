@@ -72,7 +72,7 @@ def validate_ladruno_up_solver(
       ``Mumps``/``UmfPack`` fallback — while a serial flat analysis deck
       raises the no-system footgun.
     """
-    from ....element.solid import LadrunoUP
+    from ....element.solid_up import LadrunoUP
 
     up_pg = next(
         (str(getattr(spec, "pg", "?"))
