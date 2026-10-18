@@ -357,7 +357,7 @@ LINE_STATION_SOURCE_TOKENS = frozenset({
 #: and the bearings, walls and links of ``NON_BEAM_LINE_CLASSES``. A
 #: never-source bucket of one of these is silent: a bearing's or a wall's
 #: element forces are no beam's stations. Every other class warns, a beam
-#: the catalog does not know (``ModElasticBeam3d``) above all (#2119).
+#: the catalog does not know (``ModElasticBeam3d``) above all.
 LINE_STATION_NON_BEAM_CLASSES: frozenset[str] = frozenset(
     NON_BEAM_LINE_CLASSES
     | {cname for cname, _rule, _tok in RESPONSE_CATALOG}

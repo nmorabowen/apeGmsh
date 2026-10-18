@@ -1515,7 +1515,7 @@ def read_line_station_slab(
     (:data:`LINE_STATION_NON_BEAM_CLASSES`: bearings, walls, shells,
     springs, links, continua) pass silently, since their element forces are
     no beam's stations; a beam the catalog does not know, and a key whose
-    class does not parse, are named (#2119). A bucket
+    class does not parse, are named. A bucket
     under a source token whose ``COLUMN_MAP`` does not parse is dropped
     with the same warning, naming it and the parse error.
     """

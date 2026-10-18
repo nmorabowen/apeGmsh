@@ -1740,7 +1740,7 @@ ZEROLENGTH_CATALOG: dict[tuple[str, str], ZeroLengthLayout] = {
 
 
 # =====================================================================
-# NON_BEAM_LINE_CLASSES — line elements that are no beam (#2119)
+# NON_BEAM_LINE_CLASSES — line elements that are no beam
 # =====================================================================
 #
 # Two-node (or few-node) element classes whose element forces name beam
