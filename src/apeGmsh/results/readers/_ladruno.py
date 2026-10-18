@@ -715,8 +715,12 @@ class LadrunoReader:
             if not indexed:
                 return sorted(listed)
             # An indexed column is a translation only up to ndm. The read
-            # refuses these names, so the listing leaves them out.
-            nodal = listed.intersection(PER_ELEMENT_NODAL_FORCES)
+            # refuses the global-frame names, so the listing leaves them
+            # out; the localForce decode does not consult ndm.
+            nodal = {
+                c for c in listed.intersection(PER_ELEMENT_NODAL_FORCES)
+                if _eio.nodal_force_token(c) == _eio.NODAL_FORCE_TOKEN
+            }
             warnings.warn(
                 f"{self._path.name}: the spatial dimension is unknown "
                 f"({_DIM_UNKNOWN}), so the element components leave out "
@@ -727,7 +731,7 @@ class LadrunoReader:
                 UserWarning,
                 stacklevel=2,
             )
-            return sorted(listed.difference(PER_ELEMENT_NODAL_FORCES))
+            return sorted(listed.difference(nodal))
         if level is ResultLevel.FIBERS:
             return sorted(_eio.fiber_available(on_elements))
         if level is ResultLevel.LAYERS:
@@ -1078,14 +1082,17 @@ class LadrunoReader:
         )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         # A ``nodal_resisting_*`` name decodes ``globalForce`` per node by
-        # the spatial dimension, and refuses by name when the file is
-        # unable to answer. A token read does not use the dimension.
+        # the spatial dimension (a ``_local_`` one decodes ``localForce``
+        # by the catalog's class layout), and refuses by name when the
+        # file is unable to answer. A token read does not use the
+        # dimension.
         ndm: Optional[int] = None
         if component in PER_ELEMENT_NODAL_FORCES:
             ndm = self._spatial_dim()
             if ndm is None:
                 indexed = _eio.indexed_nodal_force_buckets(on_e)
-                if indexed:
+                if indexed and (_eio.nodal_force_token(component)
+                                == _eio.NODAL_FORCE_TOKEN):
                     raise SpatialDimUnknown(
                         f"{self._path.name}: element component "
                         f"{component!r} decodes the globalForce bucket(s) "
@@ -1094,9 +1101,11 @@ class LadrunoReader:
                         f"dimension. The file gives none ({_DIM_UNKNOWN}). "
                         f"Read the globalForce token for the raw columns."
                     )
-                # No bucket is indexed, so the decode answers the same at
-                # any ndm: axis-named columns name their quantity, and a
-                # mixed or unparseable bucket is refused either way.
+                # No globalForce bucket is indexed (or the name reads
+                # localForce), so the decode answers the same at any ndm:
+                # axis-named columns name their quantity, a mixed or
+                # unparseable bucket is refused either way, and the
+                # localForce layout comes from the class.
                 ndm = 3
         result = _eio.read_element_slab(
             on_e, component,
