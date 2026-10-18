@@ -1925,3 +1925,46 @@ def test_every_workflow_run_is_judged_the_stale_one_refuses():
     gh.responses[_behind_call(BASE_1698)] = json.dumps(list(BEHIND_1698))
     with pytest.raises(land_pr.LandError, match=rf"check 11: .*run {stale_run} .*68 commit"):
         _run(1218, gh, git)
+
+
+# --- #2145 (lesson #1985): --check-card prints the parsed Owned set and the skipped amendments ------
+CARD_CHECK = "### Owned files\n- `scripts/a.py`\n\n### Done when\nok\n"
+POSITIVE_AMENDMENT = {"body": "**Card amendment** also owns `scripts/b.py`."}
+NEGATED_AMENDMENT = {"body": "**Card amendment** Do not touch `scripts/c.py`."}
+
+
+def _card_gh(body, comments):
+    return Replay({"issue view 2000 --json body,comments": json.dumps({"body": body, "comments": comments})})
+
+
+def test_check_card_prints_owned_set_and_negated_amendment_with_its_word(monkeypatch, capsys):
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [POSITIVE_AMENDMENT, NEGATED_AMENDMENT]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    out = capsys.readouterr().out
+    assert "  scripts/a.py" in out and "  scripts/b.py" in out
+    assert "  scripts/c.py" not in out
+    assert "skipped (negation 'not'): **Card amendment** Do not touch `scripts/c.py`." in out
+
+
+def test_check_card_never_calls_pr_endpoints_or_merges(monkeypatch):
+    gh = _card_gh(CARD_CHECK, [])
+    monkeypatch.setattr(land_pr, "run_gh", gh)
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    assert gh.calls == ["issue view 2000 --json body,comments"]
+
+
+def test_check_card_without_an_owned_section_exits_1(monkeypatch, capsys):
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh("### Goal\nnothing owned here\n", []))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 1
+    assert "no '### Owned files' section" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("extra", [["--dry-run"], ["--verify-only"], ["--owned-only"], ["1218"]])
+def test_check_card_combined_with_a_mode_flag_is_a_usage_error(extra, capsys):
+    with pytest.raises(SystemExit) as exc:
+        land_pr.main(["--check-card", "2000", *extra])
+    assert exc.value.code == 2
+    assert "--check-card" in capsys.readouterr().err

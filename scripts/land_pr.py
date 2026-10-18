@@ -3,6 +3,7 @@
     python scripts/land_pr.py <number>            # check, squash-merge, prove it landed
     python scripts/land_pr.py <number> --dry-run  # run the checks and stop before the merge
     python scripts/land_pr.py <number> --verify-only  # only the post-merge proof, for a merged PR
+    python scripts/land_pr.py --check-card <issue>  # print a slice card's parsed Owned set and skipped amendment lines
     python scripts/land_pr.py <number> --owned-only   # only check 9 (Owned files), on any PR
 
 The checks run in order and the first failure refuses, naming the check and
@@ -443,17 +444,23 @@ def _quoted_negation(token: str) -> bool:
     return True
 
 
-def _negates(line: str) -> bool:
+def _negation_word(line: str) -> str | None:
     """Whether a card line's prose negates. Each backticked span is emptied to "``"
     first: a path (`src/not_found.py`) or a quoted code string (#1857's "the two
     `cannot join:` templates") is data, not a negation, while "No `b.py`" still negates.
     A span that is only a negation phrase (`do not`, `never`) stays, so it negates
     (review of #1883, G1). Only single backticks in pairs are masked: a ``double`` run
     or an odd count pairs the ticks wrongly and would hide prose (#1250), so such a
-    line is read whole."""
+    line is read whole. Returns the negation word found, or None."""
     if line.count("`") % 2 == 0 and "``" not in line:
         line = _TICKED.sub(lambda m: m.group(0) if _quoted_negation(m.group(1)) else "``", line)
-    return _NEGATION.search(line) is not None
+    match = _NEGATION.search(line)
+    return match.group(0) if match else None
+
+
+def _negates(line: str) -> bool:
+    """Whether a card line's prose negates (see `_negation_word`)."""
+    return _negation_word(line) is not None
 
 
 def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
@@ -488,7 +495,9 @@ def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
     return paths if found else None
 
 
-def _amendment_paths(text: str, card: int, real: Real | None = None) -> list[str]:
+def _amendment_paths(
+    text: str, card: int, real: Real | None = None, skipped: list[tuple[str, str]] | None = None
+) -> list[str]:
     """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
     the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
     the widest one in force wins, and a narrower negation inside it never shortens it.
@@ -500,9 +509,13 @@ def _amendment_paths(text: str, card: int, real: Real | None = None) -> list[str
       end (a blank line).
     - ITEM: a negated bullet that names a path excludes itself, its sub-items and its
       unmarked continuation lines, up to a sibling or shallower bullet or a blank line,
-      so one "do not" bullet does not drop the siblings of a prose amendment."""
+      so one "do not" bullet does not drop the siblings of a prose amendment.
+
+    `skipped`, when given, collects (line, negation word) for each skipped line that has
+    a backtick (the lines check 9 prints); the word is the governing line's (`--check-card`)."""
     paths: list[str] = []
     mode, depth, after_blank = _FREE, -1, False
+    word = ""
     for line in text.splitlines():
         indent = len(line) - len(line.lstrip())
         if _HEADING.match(line) or _BOLD_LABEL.match(line):
@@ -514,7 +527,8 @@ def _amendment_paths(text: str, card: int, real: Real | None = None) -> list[str
         elif mode == _ITEM and _BULLET.match(line) and indent <= depth:
             mode = _FREE  # a sibling or shallower bullet ends the negated item
         after_blank = not line.strip()
-        if _negates(line):
+        found_word = _negation_word(line)
+        if found_word is not None:
             bullet = _BULLET.match(line) is not None
             # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
             # excluding the list after it; admitting a file name never narrows an exclusion.
@@ -523,9 +537,11 @@ def _amendment_paths(text: str, card: int, real: Real | None = None) -> list[str
             else:
                 new = _ITEM if bullet else _PARA
             if new > mode:
-                mode, depth = new, indent
+                mode, depth, word = new, indent, found_word
         if mode != _FREE:
             if "`" in line:
+                if skipped is not None:
+                    skipped.append((line.strip(), word))
                 print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
             continue
         paths += _line_paths(line, real)
@@ -626,6 +642,36 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
             f"'**Card amendment' comment naming them, or the maintainer applies {SCOPE_OK!r}."
         )
     print(f"check 9: #{number}'s {len(rows)} changed file(s) are inside slice card #{card}'s Owned list.")
+
+
+def check_card(card: int, gh: Runner, git: Runner) -> int:
+    """`--check-card <issue>` (lesson #1985): print the Owned set check 9 would read for a
+    slice card, and each amendment line it skips with the negation word that caused it.
+    Uses `_card_paths` and `_amendment_paths`, so it cannot drift from check 9. Reads only
+    the issue (no PR endpoints, no merge). Exit 0 when the card names a path, else 1."""
+    issue = json.loads(gh(["issue", "view", str(card), "--json", "body,comments"]))
+    real = _real_files(git)
+    owned = _card_paths(_text(issue.get("body")), real)
+    if owned is None:
+        print(f"check-card: slice card #{card} has no '### Owned files' section (nor an 'Owned:' list).")
+        return 1
+    allowed = list(owned)
+    skipped: list[tuple[str, str]] = []
+    for comment in issue.get("comments") or []:
+        text = _text(comment.get("body"))
+        if _AMENDMENT.match(text):
+            allowed += _amendment_paths(text, card, real, skipped)
+    print(f"check-card: slice card #{card}'s Owned set ({len(allowed)} path(s)):")
+    for path in allowed:
+        print(f"  {path}")
+    if skipped:
+        print(f"check-card: {len(skipped)} amendment line(s) skipped by a negation:")
+        for line, word in skipped:
+            print(f"  skipped (negation {word!r}): {line}")
+    if not allowed:
+        print(f"check-card: #{card} names no backticked path, so check 9 would refuse it.")
+        return 1
+    return 0
 
 
 #: A failed or garbled read: refuse, never treat it as green (fail closed).
@@ -982,7 +1028,7 @@ def main(argv: list[str] | None = None) -> int:
     if not _is_mains_copy():
         return _run_mains_copy(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    parser.add_argument("number", type=int, help="the PR number")
+    parser.add_argument("number", type=int, nargs="?", help="the PR number")
     parser.add_argument("--dry-run", action="store_true", help="run the checks, then stop before the merge")
     parser.add_argument(
         "--verify-only", action="store_true",
@@ -992,7 +1038,22 @@ def main(argv: list[str] | None = None) -> int:
         "--owned-only", action="store_true",
         help="run only check 9 (the PR's files against its slice card's Owned list), on any PR",
     )
+    parser.add_argument(
+        "--check-card", type=int, metavar="ISSUE",
+        help="print the Owned set check 9 parses from a slice issue and the amendment lines it skips; "
+        "takes no PR number and no other mode flag",
+    )
     args = parser.parse_args(argv)
+    if args.check_card is not None:
+        if args.number is not None or args.verify_only or args.dry_run or args.owned_only:
+            parser.error("--check-card takes an issue number alone, with no PR number and no other mode flag")
+        try:
+            return check_card(args.check_card, run_gh, run_git)
+        except LandError as exc:
+            print(f"land_pr: {exc}", file=sys.stderr)
+            return 1
+    if args.number is None:
+        parser.error("the PR number is required (or use --check-card ISSUE)")
     if args.verify_only + args.dry_run + args.owned_only > 1:
         parser.error("--verify-only, --dry-run and --owned-only are mutually exclusive")  # exit 2
     try:

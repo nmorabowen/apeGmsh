@@ -1840,19 +1840,19 @@ def test_main_without_base_defaults_to_main_and_flags_provenance(tmp_path: Path,
 def test_main_no_base_skips_the_diff_rules_with_a_notice(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
     assert quirks.main(["--root", str(root), "--no-base"]) == 0
-    assert "note: comment-provenance not run" in capsys.readouterr().out
+    assert "note: comment-provenance, fork-token-string not run" in capsys.readouterr().out
 
 
 def test_main_with_no_main_branch_prints_the_notice_and_does_not_crash(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
     _git(root, "branch", "-m", "main", "trunk")
     assert quirks.main(["--root", str(root)]) == 0
-    assert "note: comment-provenance not run: no --base" in capsys.readouterr().out
+    assert "note: comment-provenance, fork-token-string not run: no --base" in capsys.readouterr().out
 
 
 def test_main_outside_a_repo_prints_the_notice(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert quirks.main(["--root", str(tmp_path)]) == 0
-    assert "note: comment-provenance not run" in capsys.readouterr().out
+    assert "note: comment-provenance, fork-token-string not run" in capsys.readouterr().out
 
 
 def test_main_prefers_origin_main_over_local_main(tmp_path: Path) -> None:
@@ -1866,3 +1866,117 @@ def test_main_explicit_base_is_unchanged(tmp_path: Path, capsys: pytest.CaptureF
     root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
     assert quirks.main(["--root", str(root), "--base", "main"]) == 1
     assert "note:" not in capsys.readouterr().out
+
+
+# --- fork-token-string: fork tokens in added strings under results/ (lesson #2030) ------
+
+RESULTS_MODULE = "src/apeGmsh/results/readers/_mpco_element_io.py"
+
+
+def _fork_tokens(root: Path, base: str = "main") -> list[str]:
+    return [f"{f.path}:{f.line}" for f in quirks.scan(root, base) if f.rule == "fork-token-string"]
+
+
+# The refusal text PR #1999 round 2 added (commit 321ddb4d6), reconstructed as a fixture.
+PR1999_AFTER = '''\
+def refuse(exc, layout):
+    raise ValueError(
+        f"{exc} The bracket carries integration rule 0, so this "
+        f"{layout.n_gauss_points}-GP layout is the only rule. The "
+        f"elements were integrated with another rule (a different "
+        f"formulation, such as LadrunoBrick20 formulation='uri' "
+        f"with 8 GPs). Record them with the .ladruno recorder "
+        f"(ops.recorder.Ladruno), which stores each element's own "
+        f"Gauss points."
+    ) from exc
+'''
+
+# The axialForce refusal PR #2023 had at 3f3873fa (spec/_emit.py:1106), reconstructed.
+PR2023_AFTER = '''\
+def emit(kind):
+    if kind == "axialForce":
+        raise NotImplementedError(
+            f"axialForce is not recorded by MPCO; use "
+            f"a .ladruno recorder, or ops.domain_capture(...)."
+        )
+'''
+
+
+def test_fork_token_string_fires_on_the_pr1999_round_2_refusal(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "def refuse(exc, layout):\n    raise exc\n", PR1999_AFTER, RESULTS_MODULE)
+    assert _fork_tokens(root) == [f"{RESULTS_MODULE}:6"]
+
+
+def test_fork_token_string_fires_on_the_pr2023_axial_force_refusal(tmp_path: Path) -> None:
+    rel = "src/apeGmsh/results/spec/_emit.py"
+    root = _repo_with(tmp_path, "def emit(kind):\n    pass\n", PR2023_AFTER, rel)
+    assert _fork_tokens(root) == [f"{rel}:5"]
+
+
+def test_fork_token_string_passes_the_fork_neutral_remedy_text(tmp_path: Path) -> None:
+    neutral = (
+        PR1999_AFTER.replace("LadrunoBrick20", "a solid")
+        .replace(".ladruno recorder", "per-element recorder")
+        .replace("(ops.recorder.Ladruno)", "(see the guide)")
+    )
+    root = _repo_with(tmp_path, "def refuse(exc, layout):\n    raise exc\n", neutral, RESULTS_MODULE)
+    assert _fork_tokens(root) == []
+
+
+def test_fork_token_string_reads_only_added_lines(tmp_path: Path) -> None:
+    before = 'MSG = "kept from before: ladruno"\n'
+    root = _repo_with(tmp_path, before, before + "x = 1\n", RESULTS_MODULE)
+    assert _fork_tokens(root) == []
+
+
+def test_fork_token_string_ignores_docstrings_comments_and_identifiers(tmp_path: Path) -> None:
+    after = (
+        '"""Module prose names Ladruno."""\n'
+        "def read(ladruno_flag):\n"
+        '    """Names the Ladruno fork."""\n'
+        "    # Ladruno in a comment\n"
+        "    return ladruno_flag.LadrunoBrick\n"
+    )
+    root = _repo_with(tmp_path, "x = 1\n", after, RESULTS_MODULE)
+    assert _fork_tokens(root) == []
+
+
+def test_fork_token_string_is_scoped_to_results_and_exempts_the_seam(tmp_path: Path) -> None:
+    for rel in ("src/apeGmsh/core/_m.py", "src/apeGmsh/results/readers/_ladruno_reader.py"):
+        sub = tmp_path / Path(rel).name
+        sub.mkdir()
+        root = _repo_with(sub, "x = 1\n", 'x = "ladruno"\n', rel)
+        assert _fork_tokens(root) == [], rel
+
+
+def test_fork_token_string_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    after = (
+        "# apegmsh-lint: fork-token-string-ok this is the recorder's wire name\n"
+        'A = "ladruno"\n'
+        'B = "ladruno"\n'
+        'C = "ladruno"  # apegmsh-lint: fork-token-string-ok the file extension\n'
+    )
+    root = _repo_with(tmp_path, "x = 1\n", after, RESULTS_MODULE)
+    assert _fork_tokens(root) == [f"{RESULTS_MODULE}:3"]
+
+
+def test_fork_token_string_waiver_needs_a_reason(tmp_path: Path) -> None:
+    after = 'A = "ladruno"  # apegmsh-lint: fork-token-string-ok\n'
+    root = _repo_with(tmp_path, "x = 1\n", after, RESULTS_MODULE)
+    assert {f.rule for f in quirks.scan(root, "main")} == {"fork-token-string", "waiver"}
+
+
+def test_fork_token_string_is_silent_without_a_base(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", 'x = "ladruno"\n', RESULTS_MODULE)
+    assert [f for f in quirks.scan(root) if f.rule == "fork-token-string"] == []
+
+
+def test_fork_token_string_shares_the_ratchets_token_definition() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "ratchet_under_test", Path(__file__).with_name("test_fork_token_ratchet.py")
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module._TOKEN.pattern == quirks.FORK_TOKEN.pattern
+    assert module.EXEMPT_GLOBS == quirks.FORK_SEAM_GLOBS
