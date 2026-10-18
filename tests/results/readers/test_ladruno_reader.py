@@ -1864,6 +1864,15 @@ def _open_reader(fmt: str, path: Path):
     return LadrunoReader(path) if fmt == "ladruno" else MPCOReader(path)
 
 
+def _layout_only():
+    """DOF roles that refuse no rotation, so these tests pin the ndf
+    layout mask alone; the roles' own mask is
+    ``tests/results/test_rotation_roles_masks.py`` (#2029)."""
+    from apeGmsh.opensees._readback import rotation_roles_from_tokens
+
+    return rotation_roles_from_tokens(())
+
+
 def _stage(reader, mode: bool) -> str:
     return [s.id for s in reader.stages() if (s.kind == "mode") == mode][0]
 
@@ -1884,7 +1893,7 @@ def test_rotation_beyond_ndf_is_nan_3d(tmp_path: Path, fmt: str) -> None:
     ndf = {1: 3, 2: 6, 3: 4, 4: 5}
     path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2, 3, 4], 3, [TET, SHELL])
     with _open_reader(fmt, path) as r:
-        r.attach_nodes_ndf(ndf, 3)
+        r.attach_nodes_ndf(ndf, 3, roles=_layout_only)
         stage = _stage(r, False)
         for c, comp in enumerate(ROT_3D):
             got = _last(r, stage, comp)
@@ -1911,7 +1920,7 @@ def test_rotation_beyond_ndf_is_nan_2d(
     path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 2, [QUAD4, BEAM2D],
                        mode=mode)
     with _open_reader(fmt, path) as r:
-        r.attach_nodes_ndf({1: 2, 2: 3}, 2)
+        r.attach_nodes_ndf({1: 2, 2: 3}, 2, roles=_layout_only)
         got = _last(r, _stage(r, mode), "rotation_z")
         assert np.isnan(got[1])
         assert got[2] == _nodal_value(0 if mode else 1, 2, 3)
@@ -1924,7 +1933,7 @@ def test_model_missing_a_file_node_is_not_used(tmp_path: Path, fmt: str) -> None
     the read warns as a model-less one does, naming the missing node."""
     path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
     with _open_reader(fmt, path) as r:
-        r.attach_nodes_ndf({1: 3}, 3)
+        r.attach_nodes_ndf({1: 3}, 3, roles=_layout_only)
         with pytest.warns(AbsentDofWarning, match=r"misses nodes \[2\]"):
             got = _last(r, _stage(r, False), "rotation_x")
         assert got == {1: _nodal_value(1, 1, 3), 2: _nodal_value(1, 2, 3)}
@@ -1943,7 +1952,7 @@ def test_result_node_outside_the_model_raises(tmp_path: Path, fmt: str) -> None:
         nodes.create_dataset("ID", data=np.array([[1]], dtype=np.int32))
         nodes.create_dataset("COORDINATES", data=np.zeros((1, 3)))
     with _open_reader(fmt, path) as r:
-        r.attach_nodes_ndf({1: 3}, 3)
+        r.attach_nodes_ndf({1: 3}, 3, roles=_layout_only)
         with pytest.raises(ValueError, match=r"nodes \[2\]"):
             r.read_nodes(_stage(r, False), "rotation_x")
 
@@ -2002,7 +2011,7 @@ def test_archive_older_than_nodes_ndf_says_so(tmp_path: Path, fmt: str) -> None:
     a missing ``model_h5=``, which the caller did pass."""
     path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
     with _open_reader(fmt, path) as r:
-        r.attach_nodes_ndf(None, 3)
+        r.attach_nodes_ndf(None, 3, roles=_layout_only)
         with pytest.warns(AbsentDofWarning) as w:
             r.read_nodes(_stage(r, False), "rotation_x")
     msg = str(w[0].message)
@@ -2019,7 +2028,7 @@ def test_envelope_rotation_beyond_ndf_is_nan(tmp_path: Path) -> None:
     path = _mixed_file(tmp_path / "m.ladruno", "ladruno", [1, 2, 3], 3,
                        [TET, SHELL], envelope=True)
     with LadrunoReader(path) as r:
-        r.attach_nodes_ndf({1: 3, 2: 6, 3: 4}, 3)
+        r.attach_nodes_ndf({1: 3, 2: 6, 3: 4}, 3, roles=_layout_only)
         stage = _stage(r, False)
         for c, comp in enumerate(ROT_3D):
             env = r.read_node_envelope(stage, comp)
