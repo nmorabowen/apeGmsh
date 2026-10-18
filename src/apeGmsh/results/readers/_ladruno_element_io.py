@@ -49,7 +49,7 @@ from ._mpco_layer_io import (
     LayerBucketUnreadWarning,
     ShellFrameUnavailableWarning,
 )
-from ._mpco_local_force_io import LINE_STATION_BEAM_CLASSES
+from ._mpco_local_force_io import is_non_beam_class
 
 if TYPE_CHECKING:
     import h5py
@@ -1193,7 +1193,8 @@ class LineStationBucketSkippedWarning(UserWarning):
 
     Two cases. A bucket under a station-source token whose ``COLUMN_MAP``
     does not parse is dropped; the warning names the bucket and the parse
-    error. A beam-class bucket (:data:`LINE_STATION_BEAM_CLASSES`) under a
+    error. A bucket of any class but a non-beam
+    (:data:`LINE_STATION_NON_BEAM_CLASSES`) under a
     token that is never a station source (:data:`_LINE_STATION_TOKEN_RANK`,
     ``globalForce`` above all) names the component for elements no ranked
     source covers; those elements get no stations, and the warning names
@@ -1506,12 +1507,15 @@ def read_line_station_slab(
     token (``localForces``, ``basicForces``) reads as its singular.
 
     Any other element-level token is never a source: ``globalForce`` end
-    forces are global, not station values. When a beam-class bucket
-    (:data:`LINE_STATION_BEAM_CLASSES`) under such a token names
-    ``component`` for elements no ranked source covers, those elements get
-    no stations and one :class:`LineStationBucketSkippedWarning` names the
-    tokens, buckets and elements. Other classes (bearings, walls, shells)
-    pass silently: their element forces are no beam's stations. A bucket
+    forces are global, not station values. When a bucket under such a
+    token names ``component`` for elements no ranked source covers, those
+    elements get no stations and one
+    :class:`LineStationBucketSkippedWarning` names the tokens, buckets and
+    elements. Only the non-beam classes
+    (:data:`LINE_STATION_NON_BEAM_CLASSES`: bearings, walls, shells,
+    springs, links, continua) pass silently, since their element forces are
+    no beam's stations; a beam the catalog does not know, and a key whose
+    class does not parse, are named. A bucket
     under a source token whose ``COLUMN_MAP`` does not parse is dropped
     with the same warning, naming it and the parse error.
     """
@@ -1543,7 +1547,7 @@ def read_line_station_slab(
                     t_idx=t_idx, element_ids=element_ids,
                 )
             else:
-                if (_class_name(key) in LINE_STATION_BEAM_CLASSES
+                if (not is_non_beam_class(_class_name(key))
                         and _names_component(blocks, component)):
                     hit = _select_rows(bucket, element_ids)
                     if hit is not None:
