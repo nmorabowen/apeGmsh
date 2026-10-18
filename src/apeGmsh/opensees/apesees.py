@@ -11518,7 +11518,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             _decl_owners={
                 oid: owner for oid, (owner, _decl) in self._decls.items()},
         )
-        # #2151: a membrane pressure= no pattern activates loads nothing.
+        # A membrane pressure= that no pattern activates loads nothing.
         refuse_inert_membrane_pressure(built)
         return built
 

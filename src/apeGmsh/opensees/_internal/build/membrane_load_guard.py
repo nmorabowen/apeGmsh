@@ -42,7 +42,7 @@ __all__ = ["InertMembranePressureError", "refuse_inert_membrane_pressure"]
 #: ``beam_uniform``) that reach ``LadrunoMembrane::addLoad``. They are every
 #: type ``Plain`` records today; an unknown one fails closed below.
 #: ``-beamUniform`` loads the membrane from its own ``w`` values and does not
-#: read ``-pressure``; it counts because the element is then loaded (#2151).
+#: read ``-pressure``; it counts because the element is then loaded.
 _ACTIVATING: frozenset[str] = frozenset({"surfaceLoad", "selfWeight", "beamUniform"})
 
 
