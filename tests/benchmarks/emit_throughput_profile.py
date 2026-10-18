@@ -336,18 +336,23 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
          1, 0, 0),
         ("CACHE", bd_pg, "conn_obj = np.empty((len(rows),), dtype=object)",
          1, 0, 2),
-        # R7 — class_chunks dict + the chunks.append(node_tags) loop
-        # (build/ ~420-424).  The node_tags tuples allocate inside the
-        # expand_spec_to_elements generator, but the caller frame at the
-        # for-loop line is in this span, so nframe>=2 catches them.
-        ("R7", bd_ndf, "class_chunks: dict[str, list[tuple[int, ...]]] = {}",
-         1, 0, 4),
+        # R7 — RETIRED (#2144).  It was the ``class_chunks`` dict of boxed
+        # per-element connectivity tuples in infer_node_ndf.  #1925 (S3-d,
+        # ADR 0100 lever 1) replaced it with int64 ``[N, k]`` blocks that
+        # are views of the fan-out connectivity, so the allocation R7
+        # measured no longer exists and there is no anchor to find.  R7
+        # keeps its column and its place in NUMERATOR_TERMS and reads 0 by
+        # construction; the new transients in infer_node_ndf (unique-id
+        # passes, the floors array) show up as unattributed growth, not
+        # under a recycled R7 name.
         # R6 — the inferred per-node-ndf dict.  Three faces: the emit-side
         # call site (~1251), the co-resident effective_ndf merge (~1263),
         # and the return-dict comprehension inside build.infer_node_ndf
         # (~504-507).
         ("R6", ap, "inferred_ndf = infer_node_ndf(", 1, 0, 0),
-        ("R6", ap, "effective_ndf = {**inferred_ndf", 1, 0, 0),
+        # Since #1940 (S3-e) the merge only allocates when the ops.ndf
+        # overlay is non-empty; the anchor is the same merge expression.
+        ("R6", ap, "{**inferred_ndf, **_overlay} if _overlay", 1, 0, 0),
         ("R6", bd_ndf, "for t, f in zip(all_ids.tolist(), floors.tolist())",
          1, 2, 1),
         # R8 — the {ops_tag: fem_eid} reverse tag map.  Pre-P3 this was

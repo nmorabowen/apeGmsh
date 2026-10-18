@@ -44,7 +44,7 @@ def _build_slab_ops(*, pressure: float = -10.0) -> tuple[apeSees, tuple[int, ...
     fem = FEMStub(nodes=nodes, elements=_ElementsStub(elem_pgs={}))
     ops = apeSees(cast("object", fem))
     ops.model(ndm=3, ndf=6)
-    ops.element.LadrunoMembrane(
+    slab = ops.element.LadrunoMembrane(
         nodes=(1, 2, 3, 4),
         support_nodes="Corners",
         method="tributary",
@@ -52,6 +52,12 @@ def _build_slab_ops(*, pressure: float = -10.0) -> tuple[apeSees, tuple[int, ...
         stiff=(30e6, 0.2, 0.2),
     )
     ops.fix(pg="Corners", dofs=(1, 1, 1, 1, 1, 1))
+    # The fork's ``-pressure`` is a reference value: ``LadrunoMembrane::addLoad``
+    # applies it only under an active pattern's ``eleLoad -type -surfaceLoad``
+    # (fork guide, LadrunoMembrane_guide.md section 4). Without this pattern the
+    # deck carries no load and every corner reaction is exactly 0 (#2143).
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.surface_load(ele=slab)
     ops.constraints.Plain()
     ops.numberer.Plain()
     ops.system.BandGeneral()

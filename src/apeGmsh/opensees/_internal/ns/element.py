@@ -39,12 +39,12 @@ from ...element.solid import (
     LadrunoCST,
     LadrunoLST,
     LadrunoQuad,
-    LadrunoUP,
     SixNodeTri,
     TenNodeTetrahedron,
     Tri31,
     stdBrick,
 )
+from ...element.solid_up import LadrunoUP
 from ...element.truss import CorotTruss, InertiaTruss, Truss
 from ...element.two_node_link import TwoNodeLink
 from ...element.zero_length import (

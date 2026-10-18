@@ -27,7 +27,7 @@ from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.types import Element
 from apeGmsh.opensees._readback import rotation_roles
 from apeGmsh.opensees.element.beam_column import elasticBeamColumn
-from apeGmsh.opensees.element.solid import LadrunoUP
+from apeGmsh.opensees.element.solid_up import LadrunoUP
 from apeGmsh.opensees.element.zero_length import (
     CoupledZeroLength,
     ZeroLength,

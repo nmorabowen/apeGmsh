@@ -501,7 +501,7 @@ argument order after the tag, never by name:
 
 Slot `i` is read from whichever of `params[i]` / `params_str[i]` is not
 the sentinel. Writer: `_write_param_array` in
-`opensees/emitter/h5.py`. The meaning of each slot is the OpenSees
+`opensees/emitter/_h5_write.py`. The meaning of each slot is the OpenSees
 manual's argument order for `type`; the file carries no parameter
 names. Storing parameters by name is a pending requirement of chain K
 (K0-8, ratified on #1283); until it ships, a reader must carry its own

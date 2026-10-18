@@ -297,18 +297,21 @@ class MPCOReader:
         return np.unique(np.concatenate(parts))
 
     def attach_nodes_ndf(
-        self, nodes_ndf: "dict[int, int] | None", ndm: int,
+        self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
+        roles: "_mnodal.RolesSource",
     ) -> None:
-        """Store the model's per-node ndf: rotation reads then give NaN at
-        a node whose DOF layout has no such rotation (#1971). ``None`` is
-        an archive older than nodes_ndf.
+        """Store the model's per-node ndf and DOF roles: rotation reads
+        then give NaN at a node whose DOF layout has no such rotation
+        (#1971), or whose elements say that slot is no rotation (a u-p
+        pore pressure, #2029). ``None`` is an archive older than
+        nodes_ndf.
 
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """
         self._ensure_stages()
         self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
             [self._h5[name] for name in self._stage_to_mpco.values()],
-        ))
+        ), roles=roles)
 
     def _element_read_translation(
         self, element_ids: "Optional[ndarray]",
@@ -1537,9 +1540,14 @@ class MPCOReader:
 def attach_model_nodes_ndf(
     reader: object, model_h5: "str | Path", ndm: int,
 ) -> None:
-    """Attach ``model_h5``'s per-node ndf to a one-file reader (#1971);
+    """Attach ``model_h5``'s per-node ndf and DOF roles to a one-file
+    reader, or to every part of a partitioned one (#1971, #2028, #2029);
     see :func:`_mpco_nodal_io.attach_nodes_ndf`."""
-    _mnodal.attach_nodes_ndf(reader, MPCOReader, model_h5, ndm)
+    from ._mpco_multi import MPCOMultiPartitionReader
+
+    _mnodal.attach_nodes_ndf(
+        reader, (MPCOReader, MPCOMultiPartitionReader), model_h5, ndm,
+    )
 
 
 class _Sentinel:
