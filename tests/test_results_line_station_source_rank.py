@@ -529,7 +529,7 @@ def test_plural_tokens_read_as_their_singular(tmp_path: Path, fmt: str) -> None:
 
 @pytest.mark.parametrize("key", [
     "149-ElastomericBearingPlasticity3d[1:0:0]",
-    "212-MVLEM_3D[1:0:0]",
+    "212-MVLEM3d[1:0:0]",
 ])
 @pytest.mark.parametrize("fmt", FORMATS)
 def test_global_force_of_a_non_beam_class_is_silent(

@@ -49,8 +49,10 @@ import numpy as np
 from numpy import ndarray
 
 from ...opensees._response_catalog import (
-    CUSTOM_RULE_CATALOG,
-    NODAL_FORCE_CATALOG,
+    LAYER_CATALOG,
+    NON_BEAM_LINE_CLASSES,
+    RESPONSE_CATALOG,
+    ZEROLENGTH_CATALOG,
     local_force_station_signs,
 )
 
@@ -349,13 +351,18 @@ LINE_STATION_SOURCE_TOKENS = frozenset({
     "localForce", "localForces", "basicForce", "basicForces",
 })
 
-#: The beam classes the response catalog knows: the elastic and frame
-#: beams of ``NODAL_FORCE_CATALOG`` and the line-station classes of
-#: ``CUSTOM_RULE_CATALOG``. A never-source bucket warns only for these:
-#: a bearing's or a wall's element forces are no beam's stations.
-LINE_STATION_BEAM_CLASSES: frozenset[str] = frozenset(
-    {cname for cname, _tok in NODAL_FORCE_CATALOG}
-    | {cname for cname, _kind in CUSTOM_RULE_CATALOG}
+#: The classes that are no beam, from the response catalog's family
+#: tables: the continuum, shell and truss classes of ``RESPONSE_CATALOG``,
+#: the shells of ``LAYER_CATALOG``, the springs of ``ZEROLENGTH_CATALOG``,
+#: and the bearings, walls and links of ``NON_BEAM_LINE_CLASSES``. A
+#: never-source bucket of one of these is silent: a bearing's or a wall's
+#: element forces are no beam's stations. Every other class warns, a beam
+#: the catalog does not know (``ModElasticBeam3d``) above all (#2119).
+LINE_STATION_NON_BEAM_CLASSES: frozenset[str] = frozenset(
+    NON_BEAM_LINE_CLASSES
+    | {cname for cname, _rule, _tok in RESPONSE_CATALOG}
+    | {cname for cname, _tok in LAYER_CATALOG}
+    | {cname for cname, _tok in ZEROLENGTH_CATALOG}
 )
 
 
@@ -363,6 +370,17 @@ def bracket_class(bracket_key: str) -> str | None:
     """``5-ElasticBeam3d[1:0:0]`` -> ``ElasticBeam3d``; ``None`` unparsed."""
     m = _BRACKET_CLASS_RE.match(bracket_key)
     return None if m is None else m.group("cls")
+
+
+def is_non_beam_class(class_name: str | None) -> bool:
+    """True when ``class_name`` is in :data:`LINE_STATION_NON_BEAM_CLASSES`.
+
+    ``None`` or ``""`` (a bucket key whose class does not parse) is not
+    known to be a non-beam, so it answers False: its never-source bucket
+    is named, not passed over.
+    """
+    return bool(class_name) and class_name in LINE_STATION_NON_BEAM_CLASSES
+
 
 #: ``basicForce``'s two-station components: the basic-system end moments
 #: ``Mz_1,Mz_2`` / ``My_1,My_2`` of a 3-D ``N,Mz_1,Mz_2,My_1,My_2,T``
@@ -447,13 +465,14 @@ def discover_basic_force_buckets(
 def unranked_station_buckets(
     on_elements_grp: "h5py.Group", canonical_component: str,
 ) -> list[tuple[str, "h5py.Group"]]:
-    """``(token/bracket_key, bucket)`` of every beam-class bucket
-    (:data:`LINE_STATION_BEAM_CLASSES`) that names ``canonical_component``
-    as a beam station force under a token outside
-    :data:`LINE_STATION_SOURCE_TOKENS` (``globalForce``, MPCO's ``force``).
+    """``(token/bracket_key, bucket)`` of every bucket that names
+    ``canonical_component`` as a beam station force under a token outside
+    :data:`LINE_STATION_SOURCE_TOKENS` (``globalForce``, MPCO's ``force``),
+    unless its class is a non-beam (:func:`is_non_beam_class`).
 
     These are never read as line stations; the reader names them when they
-    would have been an element's only source.
+    would have been an element's only source. A class the catalog does not
+    know, or a key whose class does not parse, is named too (fail closed).
     """
     out: list[tuple[str, "h5py.Group"]] = []
     for token in on_elements_grp:
@@ -462,7 +481,7 @@ def unranked_station_buckets(
         token_grp = on_elements_grp[token]
         for bracket_key in token_grp:
             bucket_grp = token_grp[bracket_key]
-            if (bracket_class(bracket_key) not in LINE_STATION_BEAM_CLASSES
+            if (is_non_beam_class(bracket_class(bracket_key))
                     or "META" not in bucket_grp
                     or "COMPONENTS" not in bucket_grp["META"]
                     or "ID" not in bucket_grp):
@@ -620,8 +639,9 @@ __all__ = [
     "discover_basic_force_buckets",
     "unranked_station_buckets",
     "LINE_STATION_SOURCE_TOKENS",
-    "LINE_STATION_BEAM_CLASSES",
+    "LINE_STATION_NON_BEAM_CLASSES",
     "bracket_class",
+    "is_non_beam_class",
     "available_components_in_local_force",
     "read_local_force_bucket_slab",
 ]

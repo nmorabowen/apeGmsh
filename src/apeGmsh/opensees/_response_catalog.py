@@ -1740,6 +1740,40 @@ ZEROLENGTH_CATALOG: dict[tuple[str, str], ZeroLengthLayout] = {
 
 
 # =====================================================================
+# NON_BEAM_LINE_CLASSES — line elements that are no beam (#2119)
+# =====================================================================
+#
+# Two-node (or few-node) element classes whose element forces name beam
+# components (``Mz_1``, ``My_2``, ...) under ``globalForce`` but are no
+# beam's line stations. The line-station readers deny these, with the
+# class names of RESPONSE_CATALOG, LAYER_CATALOG and ZEROLENGTH_CATALOG,
+# and name every other class that records only ``globalForce``. Names are
+# the fork's ``Element::getClassType()`` strings (what MPCO and
+# ``.ladruno`` write into a bucket key), not Tcl element names.
+
+NON_BEAM_LINE_CLASSES: frozenset[str] = frozenset({
+    # Bearings (SRC/element/elastomericBearing, frictionBearing, HUelements)
+    "ElastomericBearingBoucWen2d", "ElastomericBearingBoucWen3d",
+    "ElastomericBearingBoucWenMod3d",
+    "ElastomericBearingPlasticity2d", "ElastomericBearingPlasticity3d",
+    "ElastomericBearingUFRP2d", "ElastomericX", "LeadRubberX", "HDR",
+    "KikuchiBearing", "YamamotoBiaxialHDR",
+    "FlatSliderSimple2d", "FlatSliderSimple3d",
+    "SingleFPSimple2d", "SingleFPSimple3d",
+    "TripleFrictionPendulum", "TripleFrictionPendulumX", "TPB1D",
+    "FPBearingPTV", "RJWatsonEQS2d", "RJWatsonEQS3d",
+    # Walls (SRC/element/mvlem)
+    "MVLEM2d", "MVLEM3d", "SFI_MVLEM2d", "SFI_MVLEM3d",
+    "E_SFI_MVLEM2d", "E_SFI_MVLEM3d",
+    # Links and springs (SRC/element/twoNodeLink, zeroLength, HUelements)
+    "TwoNodeLink", "TwoNodeLinkSection", "CoupledZeroLength",
+    "ZeroLengthRocking", "ZeroLengthVG_HG", "ZeroLengthContactNTS2D",
+    "LinearElasticSpring", "Inerter",
+    "MultipleShearSpring", "MultipleNormalSpring",
+})
+
+
+# =====================================================================
 # Public API
 # =====================================================================
 
