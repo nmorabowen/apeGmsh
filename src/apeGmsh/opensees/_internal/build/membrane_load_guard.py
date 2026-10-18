@@ -14,11 +14,14 @@ that silent zero into an error at ``ops.build()``.
 element's mass matrix (``LadrunoMembrane::getMass``), so a modal or
 ``UniformExcitation`` run reads it with no ``Plain`` pattern at all.
 
-A target counts the way the emit resolves it
+A target counts where the emit would resolve it to the membrane
 (``patterns.resolve_ele_load_commands``):
 
 * ``ele=`` an Element handle hits the membrane it is;
-* ``ele=`` an int hits the membrane whose planned OpenSees tag it is;
+* ``ele=`` an int is not matched: a membrane's OpenSees tag is planned
+  at emit, and the tag law keeps planning off the build side, so an int
+  that is the membrane's tag is refused like a miss (fail closed; the
+  message says to pass the handle);
 * ``pg=`` hits a membrane declared with that same ``pg=``;
 * ``label=`` resolves to mesh cells only, and a membrane is a macro
   element with no mesh cell, so it never hits one.
@@ -62,19 +65,6 @@ def _plain_patterns(bm: "BuiltModel") -> Iterator[Plain]:
             yield prim
 
 
-def _planned_membrane_tags(bm: "BuiltModel") -> dict[int, int]:
-    """``id(membrane) -> OpenSees tag`` from the model's element tag plan."""
-    from ..tag_plan import emit_mode, plan_tags
-
-    plan = plan_tags(bm, emit_mode(bm, split=False, supports_partitions=False))
-    out: dict[int, int] = {}
-    for spec, rows in plan.elements.specs:
-        if isinstance(spec, LadrunoMembrane):
-            for _eid, _conn, tag in rows:
-                out[id(spec)] = int(tag)
-    return out
-
-
 def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
     """Raise when a pressured ``LadrunoMembrane`` has no activating pattern.
 
@@ -101,7 +91,7 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
 
     hit: set[int] = set()
     pgs: set[str] = set()
-    ints: set[int] = set()
+    int_targets = False
     for pattern in _plain_patterns(bm):
         for rec in pattern.ele_loads:
             if rec.load_type not in _ACTIVATING:
@@ -118,7 +108,7 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
                     if isinstance(item, LadrunoMembrane):
                         hit.add(id(item))
                     elif isinstance(item, int):
-                        ints.add(item)
+                        int_targets = True
             elif rec.target_kind != "label":
                 raise BridgeError(
                     f"LadrunoMembrane pressure guard: Plain element-load "
@@ -127,9 +117,6 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
 
     hit.update(id(p) for p in pressured if p.pg is not None and p.pg in pgs)
     unhit = [p for p in pressured if id(p) not in hit]
-    if unhit and ints:
-        tags = _planned_membrane_tags(bm)
-        unhit = [p for p in unhit if tags[id(p)] not in ints]
     if not unhit:
         return
 
@@ -142,6 +129,11 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
         f" {len(unhit) - 1} more pressured membrane(s) have no activating "
         "pattern either." if len(unhit) > 1 else ""
     )
+    if int_targets:
+        more += (
+            " An integer ele= tag is not matched to a membrane here: a "
+            "membrane's tag is planned at emit, so pass its handle instead."
+        )
     raise InertMembranePressureError(
         f"LadrunoMembrane({where}) sets pressure={membrane.pressure!r}, but no "
         "Plain pattern activates it, so it applies no load: the fork reads "

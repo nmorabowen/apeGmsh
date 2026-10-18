@@ -431,8 +431,8 @@ class LadrunoMembrane(Element):
     inside ``LadrunoMembrane::addLoad``, as the reference value that a
     pattern's ``surface_load`` scales (and ``self_weight`` too, when the
     membrane has no ``rho`` x thickness). Activate it from a ``Plain``
-    pattern, top level or a stage's ``s.pattern(...)``, by ``ele=`` or
-    ``pg=``::
+    pattern, top level or a stage's ``s.pattern(...)``, by its handle
+    (``ele=slab``) or ``pg=``::
 
         with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
             p.surface_load(ele=slab)

@@ -133,6 +133,18 @@ class TestRefuses:
         with pytest.raises(InertMembranePressureError, match="label= does not"):
             ops.build()
 
+    def test_an_int_ele_tag_fails_closed_and_names_the_handle(self) -> None:
+        """A membrane's tag is planned at emit, and the tag law keeps planning
+        off the build side, so an int ``ele=`` is never matched to one, even
+        the membrane's own planned tag (205 here; the emit would load it)."""
+        ops, _slab = _slab_on_beams(pressure=-5.0)
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.surface_load(ele=_SLAB_TAG)
+        with pytest.raises(
+            InertMembranePressureError, match="integer ele= tag is not matched",
+        ):
+            ops.build()
+
     def test_every_unhit_membrane_is_counted(self) -> None:
         ops, slab = _slab_on_beams(pressure=-5.0)
         ops.element.LadrunoMembrane(nodes=(1, 3, 9, 7), pressure=-2.0)
@@ -179,12 +191,6 @@ class TestBuilds:
         ops, _slab = _slab_on_beams(pressure=-5.0)
         with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
             p.surface_load(pg="Slab")
-        assert _ele_load_tags(ops) == [("-ele", _SLAB_TAG, "-type", "-surfaceLoad")]
-
-    def test_int_ele_target_counts_by_planned_tag(self) -> None:
-        ops, _slab = _slab_on_beams(pressure=-5.0)
-        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-            p.surface_load(ele=_SLAB_TAG)
         assert _ele_load_tags(ops) == [("-ele", _SLAB_TAG, "-type", "-surfaceLoad")]
 
     def test_a_stage_pattern_counts(self) -> None:
