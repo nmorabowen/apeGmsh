@@ -26,9 +26,9 @@ a new custom-rule index for each distinct set of Gauss-point positions
 (``GP_X``), so the catalog's fixed coordinates cannot be trusted for it,
 and this reader does not yet check ``GP_X``.
 
-An element class absent from the catalog on a standard rule contributes
-nothing to the slab; the user can extend the catalog and re-read the
-same file.
+A bucket whose class has no catalog row for the token is left unread
+too, and named the same way (#2160): the catalog is what places its
+Gauss points, so without a row its values cannot be returned.
 """
 from __future__ import annotations
 
@@ -162,16 +162,22 @@ def discover_gauss_buckets(
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError:
                 continue
+            what = f"gauss discovery of {canonical_component!r}"
             if elem_key.custom_rule_idx != 0:
                 warn_unread_custom_rule_bucket(
-                    token_grp[bracket_key], elem_key,
-                    what=f"gauss discovery of {canonical_component!r}",
+                    token_grp[bracket_key], elem_key, what=what,
                 )
+                seen_keys.add(bracket_key)
                 continue
             found = catalog_layout(
                 elem_key, catalog_token, where=f"{name}/{bracket_key}",
             )
             if found is None:
+                warn_uncatalogued_bucket(
+                    token_grp[bracket_key], elem_key, catalog_token,
+                    what=what,
+                )
+                seen_keys.add(bracket_key)
                 continue
             layout = _maybe_extend_plane_layout(found, token_grp[bracket_key])
             out.append(_Bucket(
@@ -203,16 +209,59 @@ def warn_unread_custom_rule_bucket(
     One ``MPCOBucketSkippedWarning`` per bucket; the other buckets still
     read.
     """
+    warn_unread_bucket(
+        bucket_grp,
+        what=what,
+        reason=(
+            f"class {elem_key.class_name!r} carries custom integration "
+            f"rule {elem_key.custom_rule_idx} (bracket rule "
+            f"{elem_key.int_rule}). MPCO numbers a custom rule per set of "
+            f"Gauss-point positions (GP_X), which this reader does not "
+            f"verify, so the catalog's Gauss points cannot be assumed"
+        ),
+    )
+
+
+def warn_uncatalogued_bucket(
+    bucket_grp: "h5py.Group",
+    elem_key: MPCOElementKey,
+    catalog_token: str,
+    *,
+    what: str,
+) -> None:
+    """Name a standard-rule bucket whose class has no catalog row.
+
+    RESPONSE_CATALOG is what gives a bucket its Gauss points and column
+    layout, so a ``(class, rule, token)`` it lacks is left unread. One
+    ``MPCOBucketSkippedWarning`` per bucket; the other buckets still
+    read, and a catalog row for the class makes the same file read.
+    """
+    warn_unread_bucket(
+        bucket_grp,
+        what=what,
+        reason=(
+            f"class {elem_key.class_name!r} at integration rule "
+            f"{elem_key.int_rule} has no RESPONSE_CATALOG row for token "
+            f"{catalog_token!r}, which is what places its Gauss points"
+        ),
+    )
+
+
+def warn_unread_bucket(
+    bucket_grp: "h5py.Group", *, what: str, reason: str,
+) -> None:
+    """One ``MPCOBucketSkippedWarning`` naming one bucket (path, reason, file).
+
+    Called through one reason-specific wrapper from a discovery function:
+    ``stacklevel`` points past this helper, the wrapper and the discovery
+    function, at the reader method's caller.
+    """
     from ._mpco import MPCOBucketSkippedWarning
     warnings.warn(
         f"MPCO {what} in {Path(bucket_grp.file.filename).name} left 1 "
         f"bucket(s) unread, so their elements return no values: "
-        f"{bucket_grp.name}: class {elem_key.class_name!r} carries custom "
-        f"integration rule {elem_key.custom_rule_idx} (bracket rule "
-        f"{elem_key.int_rule}). MPCO numbers a custom rule per set of "
-        f"Gauss-point positions (GP_X), which this reader does not "
-        f"verify, so the catalog's Gauss points cannot be assumed.",
-        MPCOBucketSkippedWarning, stacklevel=4,
+        f"{bucket_grp.name}: {reason}.",
+        MPCOBucketSkippedWarning, stacklevel=5,
     )
 
 

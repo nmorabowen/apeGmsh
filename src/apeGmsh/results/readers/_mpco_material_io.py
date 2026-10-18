@@ -62,6 +62,7 @@ from ...opensees._response_catalog import (
 from ._mpco_element_io import (
     _attr_scalar,
     catalog_layout,
+    warn_uncatalogued_bucket,
     warn_unread_custom_rule_bucket,
 )
 
@@ -334,11 +335,11 @@ def discover_material_state_buckets(
     read site can fetch the right dataset path.
 
     A bucket is included only if its (class, int_rule) is in the
-    stress catalog (gives us the GP coordinates). A bucket with a
-    nonzero ``custom_rule_idx`` is left unread and named in an
-    ``MPCOBucketSkippedWarning``: MPCO opens a custom-rule index per set
-    of Gauss-point positions, which the catalog cannot vouch for. Every
-    header index
+    stress catalog (gives us the GP coordinates); one that is not is
+    left unread and named in an ``MPCOBucketSkippedWarning`` (#2160). A
+    bucket with a nonzero ``custom_rule_idx`` is left unread and named
+    the same way: MPCO opens a custom-rule index per set of Gauss-point
+    positions, which the catalog cannot vouch for. Every header index
     is included (``:0``, ``:1``, ...): MPCO opens a new header when a
     class's elements carry materials with different META (ASDConcrete3D
     ``d+,d-`` beside LadrunoConcrete3D ``C1,C2`` on one brick class), and
@@ -365,19 +366,23 @@ def discover_material_state_buckets(
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError:
                 continue
+            what = (
+                f"gauss material-state discovery of {canonical_component!r}"
+            )
             if elem_key.custom_rule_idx != 0:
                 warn_unread_custom_rule_bucket(
-                    token_grp[bracket_key], elem_key,
-                    what=(
-                        f"gauss material-state discovery of "
-                        f"{canonical_component!r}"
-                    ),
+                    token_grp[bracket_key], elem_key, what=what,
                 )
+                seen_keys.add(bracket_key)
                 continue
             gp_layout = _stress_gp_layout_for(
                 elem_key, where=f"{name}/{bracket_key}",
             )
             if gp_layout is None:
+                warn_uncatalogued_bucket(
+                    token_grp[bracket_key], elem_key, "stress", what=what,
+                )
+                seen_keys.add(bracket_key)
                 continue
             out.append(_MaterialBucket(
                 bracket_key=bracket_key,

@@ -59,7 +59,7 @@ from ...opensees._response_catalog import (
     is_zerolength_catalogued,
     parse_mpco_element_key,
 )
-from ._mpco_element_io import _attr_scalar
+from ._mpco_element_io import _attr_scalar, warn_unread_bucket
 
 if TYPE_CHECKING:
     import h5py
@@ -176,10 +176,16 @@ def discover_spring_buckets(
             elem_key = parse_mpco_element_key(bracket_key)
         except ValueError:
             continue
-        if elem_key.custom_rule_idx != 0:
-            continue
         # header_idx may differ (different spring counts) — we accept all.
+        # The group also holds non-spring classes (a beam's basicForce),
+        # which are not this reader's to name.
         if not is_zerolength_catalogued(elem_key.class_name, catalog_token):
+            continue
+        if elem_key.custom_rule_idx != 0:
+            _warn_unread_custom_rule_spring(
+                token_grp[bracket_key], elem_key,
+                what=f"spring discovery of {canonical_component!r}",
+            )
             continue
         from ...opensees._response_catalog import lookup_zerolength  # noqa: PLC0415
         layout = lookup_zerolength(elem_key.class_name, catalog_token)
@@ -191,6 +197,31 @@ def discover_spring_buckets(
             catalog_token=catalog_token,
         ))
     return (mpco_group_name, out)
+
+
+def _warn_unread_custom_rule_spring(
+    bucket_grp: "h5py.Group",
+    elem_key: MPCOElementKey,
+    *,
+    what: str,
+) -> None:
+    """Name a ZeroLength bucket with a nonzero custom-rule index (#2160).
+
+    Every ZeroLength-family bucket this reader knows is on rule 1 with
+    custom index 0; a nonzero index is outside that layout, so the bucket
+    is left unread. One ``MPCOBucketSkippedWarning`` per bucket, the
+    contract the Gauss level set (#2159).
+    """
+    warn_unread_bucket(
+        bucket_grp,
+        what=what,
+        reason=(
+            f"class {elem_key.class_name!r} carries custom integration "
+            f"rule {elem_key.custom_rule_idx} (bracket rule "
+            f"{elem_key.int_rule}), which the ZeroLength spring layout "
+            f"does not cover"
+        ),
+    )
 
 
 # =====================================================================
