@@ -536,6 +536,16 @@ export function elementTransformVecxzFromState(
       if (v) return [v[0], v[1], v[2]];
     }
   }
+  if (!transfPath && transfTags.length > 0) {
+    for (const d of Object.values(decls)) {
+      if (d.kind !== "geomTransf") continue;
+      const pairs = declTransformVecxz(d);
+      for (const tag of transfTags) {
+        const hit = pairs.find((p) => p.tag === tag);
+        if (hit) return hit.vecxz;
+      }
+    }
+  }
   return null;
 }
 
