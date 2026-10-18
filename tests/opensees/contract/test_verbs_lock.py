@@ -90,10 +90,27 @@ def _load_verbs() -> ModuleType:
     return module
 
 
+#: ``H5Emitter`` inherits its methods from these four mixins (ADR 0114 S5-b),
+#: so its source is the class in ``h5.py`` plus their bodies.
+_H5_MIXINS = (
+    ("_h5_verbs_model", "_H5ModelVerbsMixin"),
+    ("_h5_stages", "_H5StagesMixin"),
+    ("_h5_write_model", "_H5WriteModelMixin"),
+    ("_h5_decls", "_H5DeclsMixin"),
+)
+
+
 def _class_node(stem: str, cls: str) -> ast.ClassDef:
     tree = ast.parse((_EMITTER_DIR / f"{stem}.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == cls:
+            if (stem, cls) == ("h5", "H5Emitter"):
+                body = list(node.body)
+                for mixin_stem, mixin in _H5_MIXINS:
+                    body.extend(_class_node(mixin_stem, mixin).body)
+                return ast.ClassDef(
+                    name=node.name, bases=[], keywords=[], body=body,
+                    decorator_list=[])
             return node
     raise AssertionError(f"{stem}.py defines no class {cls}")
 
@@ -332,7 +349,13 @@ def _is_trivial(stmt: ast.stmt) -> bool:
 
 
 def _h5_tree() -> ast.Module:
-    return ast.parse((_EMITTER_DIR / "h5.py").read_text(encoding="utf-8"))
+    """``h5.py`` plus the four mixin modules, so an alias bound in a mixin is
+    seen by :func:`_refusal_names` too."""
+    body: list[ast.stmt] = []
+    for stem in ("h5", *(m for m, _ in _H5_MIXINS)):
+        tree = ast.parse((_EMITTER_DIR / f"{stem}.py").read_text(encoding="utf-8"))
+        body.extend(tree.body)
+    return ast.Module(body=body, type_ignores=[])
 
 
 def _h5_methods() -> dict[str, _FuncDef]:

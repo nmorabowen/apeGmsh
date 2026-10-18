@@ -170,7 +170,7 @@ before that lands:
   `Stage` discriminator on the slab.
 
 Lives in `apesees.py::h5` (the bridge-side guard, #313) and
-`emitter/h5.py::H5Emitter.addToParameter` / `step_hook_ramp` / `stage_open`
+`emitter/_h5_stages.py::_H5StagesMixin.addToParameter` / `step_hook_ramp` / `stage_open`
 / `stage_close` / `domain_change` (the schema-side no-ops).
 
 ### ✅ `remove sp` / `remove element` / mass overwrite / time-state mutators (Phase SSI-2.E, SHIPPED 2026-05)
