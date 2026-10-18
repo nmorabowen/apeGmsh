@@ -47,10 +47,26 @@ _AXIS_NAME = {
 }
 _FORCES = ("nodal_resisting_force_x", "nodal_resisting_force_y",
            "nodal_resisting_force_z")
+# The local-frame twins, read from ``localForce`` (#2124), in the
+# catalog's per-node order, with the base each name spells.
+_QL = {
+    "nodal_resisting_force_local_x": 7, "nodal_resisting_force_local_y": 8,
+    "nodal_resisting_force_local_z": 9, "nodal_resisting_moment_local_x": 10,
+    "nodal_resisting_moment_local_y": 11, "nodal_resisting_moment_local_z": 12,
+}
+_LOCAL_BASE = {
+    "nodal_resisting_force_local_x": "N", "nodal_resisting_force_local_y": "Vy",
+    "nodal_resisting_force_local_z": "Vz",
+    "nodal_resisting_moment_local_x": "T",
+    "nodal_resisting_moment_local_y": "My",
+    "nodal_resisting_moment_local_z": "Mz",
+}
+_LOCAL_2D = ("nodal_resisting_force_local_x", "nodal_resisting_force_local_y",
+             "nodal_resisting_moment_local_z")
 
 
 def _truth(e: int, n: int, q: str, t: int) -> float:
-    return 1000.0 * e + 100.0 * n + _Q[q] + 0.125 * (t + 1)
+    return 1000.0 * e + 100.0 * n + {**_Q, **_QL}[q] + 0.125 * (t + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -102,17 +118,30 @@ def _write_bucket(on_elements: "h5py.Group", token: str, key: str,
     grp.create_dataset("TIME", data=0.25 * np.arange(1, n_steps + 1))
 
 
-def _file_with(tmp_path: Path, source: str, buckets, name: str = "") -> Path:
-    """Copy a committed fixture and add ``globalForce`` buckets to it."""
+def _file_with(tmp_path: Path, source: str, buckets, name: str = "",
+               local=()) -> Path:
+    """Copy a committed fixture and add ``globalForce`` buckets (and
+    ``localForce`` ones, ``local=``) to it."""
     dst = tmp_path / (name or source)
     shutil.copyfile(FIXTURES / source, dst)
     with h5py.File(dst, "r+") as f:
         on_e = f[f"{STAGE_GRP}/RESULTS/ON_ELEMENTS"]
         n_steps = int(next(iter(next(iter(on_e.values())).values()))
                       ["DATA"].shape[0])
-        for key, layout, ids in buckets:
-            _write_bucket(on_e, "globalForce", key, layout, ids, n_steps)
+        for token, group in (("globalForce", buckets), ("localForce", local)):
+            for key, layout, ids in group:
+                _write_bucket(on_e, token, key, layout, ids, n_steps)
     return dst
+
+
+def _local_named(n_nodes: int, comps: tuple[str, ...], *,
+                 base=None, sep: str = "_"):
+    """``localForce`` spelling ``N_1, Vy_1, …, N_2, …`` (node-major);
+    ``base`` overrides the base a name spells, ``sep=""`` drops the
+    underscore (``N1``)."""
+    base = {**_LOCAL_BASE, **(base or {})}
+    return [(f"{base[c]}{sep}{n}", n, c)
+            for n in range(1, n_nodes + 1) for c in comps]
 
 
 def _expected(ids, comp: str, n_nodes: int, n_steps: int) -> np.ndarray:
@@ -296,7 +325,9 @@ def test_available_components_list_the_canonical_names(tmp_path: Path) -> None:
     path = _file_with(tmp_path, "beam3d.ladruno", [_BEAM_3D])
     with LadrunoReader(path) as r:
         comps = r.available_components(r.stages()[0].id, ResultLevel.ELEMENTS)
-    assert set(comps) == {"localForce", "globalForce", *_Q}
+    # The fixture's real ElasticBeam3d ``localForce`` bucket answers the
+    # local-frame names too (#2124).
+    assert set(comps) == {"localForce", "globalForce", *_Q, *_QL}
 
 
 def test_raw_global_force_token_reads_unchanged(tmp_path: Path) -> None:
@@ -341,7 +372,10 @@ def test_component_the_buckets_lack_refuses_naming_what_they_hold(
                            match=r"decode to \['nodal_resisting_force_x', "
                                  r"'nodal_resisting_force_y'\]"):
             _read(r, "nodal_resisting_moment_z")
-        with pytest.raises(NodalForceNotRecorded, match="local-frame"):
+        # A local-frame name reads localForce, which this file lacks.
+        with pytest.raises(NodalForceNotRecorded,
+                           match="'localForce', which this file does not "
+                                 "record"):
             _read(r, "nodal_resisting_force_local_x")
 
 
@@ -453,3 +487,263 @@ def test_matches_the_mpco_reader_on_a_real_elastic_beam(tmp_path: Path) -> None:
     # The frame is planar (x-z): its in-plane components carry the check.
     assert nonzero >= {"nodal_resisting_force_x", "nodal_resisting_force_z",
                        "nodal_resisting_moment_y"}, nonzero
+
+
+# ---------------------------------------------------------------------------
+# Local-frame names from ``localForce`` (#2124)
+# ---------------------------------------------------------------------------
+#
+# The same constructive oracle: each synthetic ``localForce`` bucket holds
+# ``_truth(e, n, q, t)`` in the column the class's NODAL_FORCE_CATALOG
+# layout gives ``q`` at node ``n``, spelled as the fork spells it. The
+# real-file cases read a fork-written ``.ladruno`` against its own raw
+# columns and a fork-written MPCO bucket against the MPCO reader.
+
+_V_M = {"nodal_resisting_force_local_y": "V",
+        "nodal_resisting_moment_local_z": "M"}
+_LBEAM_2D = ("5-ElasticBeam2d[1:0:0]", _local_named(2, _LOCAL_2D, base=_V_M),
+             [7, 8])
+# DispBeamColumn2d drops the underscore: N1, V1, M1, N2, ...
+_LDISP_2D = ("62-DispBeamColumn2d[1000:1:0]",
+             _local_named(2, _LOCAL_2D, base=_V_M, sep=""), [3])
+_LBEAM_3D = ("5-ElasticBeam3d[1:0:0]", _local_named(2, tuple(_QL)), [1])
+# A class NODAL_FORCE_CATALOG has no localForce layout for.
+_LLINK_2D = ("86-TwoNodeLink2d[1:0:0]", _local_named(2, _LOCAL_2D), [50])
+_NAMES_2D = ["N_1", "V_1", "M_1", "N_2", "V_2", "M_2"]
+_NAMES_3D = [name for name, _, _ in _LBEAM_3D[1]]
+
+
+def test_decode_local_reads_each_catalogued_spelling() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        decode_local_nodal_force_columns,
+    )
+
+    cols = decode_local_nodal_force_columns(_NAMES_3D, "ElasticBeam3d")
+    assert {c: v.tolist() for c, v in cols.items()} == {
+        c: [k, k + 6] for k, c in enumerate(_QL)}
+    want_2d = {"nodal_resisting_force_local_x": [0, 3],
+               "nodal_resisting_force_local_y": [1, 4],
+               "nodal_resisting_moment_local_z": [2, 5]}
+    for names, cls in (
+        (_NAMES_2D, "ElasticBeam2d"),
+        (["N1", "V1", "M1", "N2", "V2", "M2"], "DispBeamColumn2d"),
+        (["N_1", "Vy_1", "Mz_1", "N_2", "Vy_2", "Mz_2"], "ForceBeamColumn2d"),
+    ):
+        cols = decode_local_nodal_force_columns(names, cls)
+        assert {c: v.tolist() for c, v in cols.items()} == want_2d, cls
+
+
+@pytest.mark.parametrize("names, cls, match", [
+    # No catalog layout: refused by class, whatever the names say.
+    (_NAMES_2D, "TwoNodeLink2d", "'TwoNodeLink2d' has no 'local_force'"),
+    (_NAMES_3D, "ComponentElement3d", "'ComponentElement3d' has no"),
+    # 2-D names on a 3-D class: the shear and moment axes are unknown.
+    (_NAMES_2D, "ElasticBeam3d", "do not spell"),
+    ([n.replace("Vy", "V").replace("Mz", "M") for n in _NAMES_3D],
+     "ElasticBeam3d", "do not spell"),
+    # A 2-D class whose names disagree with the catalog's order or ends.
+    (["V_1", "N_1", "M_1", "V_2", "N_2", "M_2"], "ElasticBeam2d",
+     "do not spell"),
+    (["N_1", "V_1", "M_1", "N_1", "V_1", "M_1"], "ElasticBeam2d",
+     "do not spell"),
+    (["N_1", "V_1", "M_1"], "ElasticBeam2d", "do not spell"),
+    (["C1", "C2", "C3", "C4", "C5", "C6"], "ElasticBeam2d", "do not spell"),
+])
+def test_decode_local_refuses_what_the_catalog_does_not_describe(
+        names, cls, match) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        decode_local_nodal_force_columns,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        decode_local_nodal_force_columns(names, cls)
+
+
+def test_local_2d_classes_read_per_node_and_name_the_one_left_out(
+        tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        NodalForceColumnsUndecodedWarning,
+    )
+
+    path = _file_with(tmp_path, "truss2d.ladruno", [],
+                      local=[_LBEAM_2D, _LDISP_2D, _LLINK_2D])
+    with LadrunoReader(path) as r:
+        listed = r.available_components(r.stages()[0].id,
+                                        ResultLevel.ELEMENTS)
+        assert set(_LOCAL_2D) <= set(listed)
+        assert "nodal_resisting_force_local_z" not in listed
+        for comp in _LOCAL_2D:
+            with pytest.warns(NodalForceColumnsUndecodedWarning,
+                              match=r"86-TwoNodeLink2d.*NODAL_FORCE_CATALOG"):
+                slab = _read(r, comp)
+            ids = slab.element_ids.tolist()
+            assert sorted(ids) == [3, 7, 8], comp
+            np.testing.assert_array_equal(
+                slab.values, _expected(ids, comp, 2, 4), err_msg=comp)
+        # The id filter and the time slice act as on a raw read.
+        with pytest.warns(NodalForceColumnsUndecodedWarning):
+            slab = r.read_elements(
+                r.stages()[0].id, "nodal_resisting_moment_local_z",
+                element_ids=np.array([8, 3]), time_slice=-1)
+        ids = slab.element_ids.tolist()
+        assert sorted(ids) == [3, 8]
+        np.testing.assert_array_equal(
+            slab.values,
+            _expected(ids, "nodal_resisting_moment_local_z", 2, 4)[-1:])
+
+
+def test_local_read_of_only_uncatalogued_classes_refuses(
+        tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        NodalForceColumnsUndecodedWarning,
+        NodalForceNotRecorded,
+    )
+
+    path = _file_with(tmp_path, "truss2d.ladruno", [], local=[_LLINK_2D])
+    with LadrunoReader(path) as r:
+        assert not [c for c in r.available_components(
+            r.stages()[0].id, ResultLevel.ELEMENTS) if "_local_" in c]
+        with pytest.warns(NodalForceColumnsUndecodedWarning,
+                          match="'TwoNodeLink2d' has no 'local_force'"), \
+                pytest.raises(NodalForceNotRecorded,
+                              match=r"86-TwoNodeLink2d\[1:0:0\]"):
+            _read(r, "nodal_resisting_force_local_x")
+        # The raw token read stays as it was.
+        assert _read(r, "localForce").values.shape == (4, 1, 6)
+
+
+def test_local_2d_names_on_a_3d_catalogued_class_are_refused(
+        tmp_path: Path) -> None:
+    """The ComponentElement3d trap on a class the catalog does list: 2-D
+    names on a 3-D layout are left out, never read as the 3-D columns."""
+    from apeGmsh.results.readers._ladruno_element_io import (
+        NodalForceColumnsUndecodedWarning,
+        NodalForceNotRecorded,
+    )
+
+    trap = ("5-ElasticBeam3d[1:0:0]", _local_named(2, _LOCAL_2D, base=_V_M),
+            [1])
+    path = _file_with(tmp_path, "truss2d.ladruno", [], local=[trap],
+                      name="trap3d.ladruno")
+    with h5py.File(path, "r+") as f:
+        f["INFO"].attrs["SPATIAL_DIM"] = np.array([3], dtype=np.int32)
+    with LadrunoReader(path) as r:
+        with pytest.warns(NodalForceColumnsUndecodedWarning,
+                          match="do not spell"), \
+                pytest.raises(NodalForceNotRecorded):
+            _read(r, "nodal_resisting_force_local_x")
+
+
+def test_local_3d_beam_reads_every_component(tmp_path: Path) -> None:
+    path = _file_with(tmp_path, "truss2d.ladruno", [], local=[_LBEAM_3D],
+                      name="lbeam3d.ladruno")
+    with h5py.File(path, "r+") as f:
+        f["INFO"].attrs["SPATIAL_DIM"] = np.array([3], dtype=np.int32)
+    with LadrunoReader(path) as r:
+        for comp in _QL:
+            slab = _read(r, comp)
+            assert slab.values.shape == (4, 1, 2), comp
+            np.testing.assert_array_equal(
+                slab.values, _expected([1], comp, 2, 4), err_msg=comp)
+
+
+def test_local_names_do_not_depend_on_the_spatial_dimension(
+        tmp_path: Path) -> None:
+    """An indexed globalForce bucket makes the global names refuse when
+    the dimension is unknown; the localForce layout comes from the class,
+    so the local names still read and are still listed."""
+    from apeGmsh.results.readers._ladruno import SpatialDimUnknown
+
+    path = _file_with(tmp_path, "truss2d.ladruno", [_TRUSS_2D],
+                      local=[_LBEAM_2D])
+    with h5py.File(path, "r+") as f:
+        del f["INFO"].attrs["SPATIAL_DIM"]
+        del f[f"{STAGE_GRP}/MODEL"]
+    with LadrunoReader(path) as r:
+        with pytest.warns(UserWarning, match="spatial dimension is unknown"):
+            listed = r.available_components(r.stages()[0].id,
+                                            ResultLevel.ELEMENTS)
+        assert set(_LOCAL_2D) <= set(listed)
+        assert "nodal_resisting_force_x" not in listed
+        with pytest.raises(SpatialDimUnknown):
+            _read(r, "nodal_resisting_force_x")
+        for comp in _LOCAL_2D:
+            slab = _read(r, comp)
+            np.testing.assert_array_equal(
+                slab.values, _expected([7, 8], comp, 2, 4), err_msg=comp)
+
+
+def test_local_partitions_answer_like_the_serial_file(tmp_path: Path) -> None:
+    key, layout, _ = _LBEAM_2D
+    paths = [
+        _file_with(tmp_path, f"truss2d.part-{i}.ladruno", [],
+                   local=[(key, layout, ids)])
+        for i, ids in enumerate(([7], [8]))
+    ]
+    with LadrunoMultiPartitionReader(paths) as m:
+        for comp in _LOCAL_2D:
+            got = _read(m, comp)
+            order = np.argsort(got.element_ids)
+            assert got.element_ids[order].tolist() == [7, 8]
+            np.testing.assert_array_equal(
+                got.values[:, order], _expected([7, 8], comp, 2, 4))
+
+
+def test_real_ladruno_local_force_reads_its_own_columns() -> None:
+    """``beam3d.ladruno`` is fork-written: its ElasticBeam3d ``localForce``
+    bucket reads back columns ``k`` and ``k + 6`` for local component ``k``."""
+    with LadrunoReader(FIXTURES / "beam3d.ladruno") as r:
+        raw = _read(r, "localForce").values
+        assert raw.shape == (1, 1, 12) and np.abs(raw).max() > 0.0
+        for k, comp in enumerate(_QL):
+            slab = _read(r, comp)
+            np.testing.assert_array_equal(slab.values, raw[:, :, [k, k + 6]],
+                                          err_msg=comp)
+
+
+def test_local_matches_the_mpco_reader_on_a_real_elastic_beam(
+        tmp_path: Path) -> None:
+    from apeGmsh.results.readers._mpco import MPCOReader
+
+    src = Path(__file__).resolve().parent / "fixtures" / "results"
+    mpco = tmp_path / "frame.mpco"
+    shutil.copyfile(src / "elasticFrame.mpco", mpco)
+    key = "5-ElasticBeam3d[1:0:0]"
+    with h5py.File(mpco, "r") as f:
+        bucket = f[f"{STAGE_GRP}/RESULTS/ON_ELEMENTS/localForce/{key}"]
+        names = bucket["META/COMPONENTS"][...].ravel()[0]
+        names = (names.decode() if isinstance(names, bytes) else str(names))
+        names = names.split(".", 1)[1].split(",")
+        steps = sorted(bucket["DATA"], key=lambda s: int(s.split("_")[1]))
+        data = np.stack([bucket["DATA"][s][...] for s in steps])
+        ids = bucket["ID"][...].ravel().astype(int).tolist()
+    assert names == _NAMES_3D, names
+
+    n_steps = 4
+    lad = _file_with(tmp_path, "truss2d.ladruno", [], name="lframe.ladruno")
+    with h5py.File(lad, "r+") as f:
+        f["INFO"].attrs["SPATIAL_DIM"] = np.array([3], dtype=np.int32)
+        on_e = f[f"{STAGE_GRP}/RESULTS/ON_ELEMENTS"]
+        _write_bucket(on_e, "localForce", key,
+                      [(n, 0, None) for n in names], ids, n_steps)
+        on_e[f"localForce/{key}/DATA"][...] = data[:n_steps]
+        del on_e["basicForce"]
+
+    nonzero = set()
+    with MPCOReader(mpco) as m, LadrunoReader(lad) as r:
+        m_stage = m.stages()[0].id
+        assert set(_QL) <= set(m.available_components(
+            m_stage, ResultLevel.ELEMENTS))
+        assert set(_QL) <= set(r.available_components(
+            r.stages()[0].id, ResultLevel.ELEMENTS))
+        for comp in _QL:
+            want = m.read_elements(m_stage, comp)
+            got = _read(r, comp)
+            assert want.values.shape == (data.shape[0], len(ids), 2), comp
+            assert got.element_ids.tolist() == want.element_ids.tolist()
+            np.testing.assert_array_equal(got.values, want.values[:n_steps],
+                                          err_msg=comp)
+            if np.abs(want.values[:n_steps]).max() > 0.0:
+                nonzero.add(comp)
+    # The planar frame loads its local axial, one shear and one moment.
+    assert len(nonzero) >= 3, nonzero

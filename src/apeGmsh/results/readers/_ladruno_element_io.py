@@ -24,7 +24,10 @@ apeGmsh's neutral vocabulary here:
   → ``axial_force`` / ``shear_y`` / … (line stations);
 * nodal ``globalForce`` columns (``Px_1``…, ``P<dof>_<node>``,
   ``P<node>_<dof>``) → ``nodal_resisting_{force,moment}_{x,y,z}``
-  (elements; see :func:`decode_nodal_force_columns`).
+  (elements; see :func:`decode_nodal_force_columns`);
+* nodal ``localForce`` columns of a ``NODAL_FORCE_CATALOG`` class
+  (``N_1``, ``Vy_1``…) → ``nodal_resisting_{force,moment}_local_{x,y,z}``
+  (elements; see :func:`decode_local_nodal_force_columns`).
 """
 from __future__ import annotations
 
@@ -41,7 +44,9 @@ from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
     is_layer_catalogued,
+    is_nodal_force_catalogued,
     local_force_station_signs,
+    lookup_nodal_force,
 )
 from .._shell_geometry import shell_quaternion
 from ._ladruno_hyperslab import read_hyperslab
@@ -1927,7 +1932,8 @@ def _station_xi(n_stations: int) -> ndarray:
 # output vector ``(T, E, NUM_COLUMNS)`` in the file's ``COMP_NAMES`` column
 # order. The raw token reads stay exactly that. One neutral view sits on
 # top of them: ``nodal_resisting_{force,moment}_{x,y,z}`` decoded
-# from the ``globalForce`` token (see "Canonical nodal resisting forces"
+# from the ``globalForce`` token, and their ``_local_`` twins decoded from
+# the ``localForce`` token (see "Canonical nodal resisting forces"
 # below). The other neutral views live on the *other* levels —
 # ``line_stations`` (``axial_force``…) and ``gauss`` (``stress_xx``…).
 #
@@ -1943,8 +1949,9 @@ def element_available(
     on_elements: "h5py.Group", *, ndm: int,
 ) -> set[str]:
     """ON_ELEMENTS token keys that are element-level (all blocks LEVELS==0),
-    plus the canonical nodal resisting forces the ``globalForce`` buckets
-    decode to (``ndm`` is the file's spatial dimension).
+    plus the canonical nodal resisting forces the ``globalForce`` and
+    ``localForce`` buckets decode to (``ndm`` is the file's spatial
+    dimension; only the ``globalForce`` decode consults it).
 
     Token-driven: the token *is* the component. Gauss-level tokens
     (stress/strain, LEVELS==4) are excluded — they belong to read_gauss.
@@ -2007,9 +2014,10 @@ def read_element_slab(
     elements left out.
 
     A ``nodal_resisting_*`` canonical name is the one exception to the
-    token rule: it reads the ``globalForce`` token as ``(T, E, n_nodes)``,
-    the MPCO reader's layout (see :func:`read_nodal_force_slab`). It needs
-    ``ndm``, the file's spatial dimension.
+    token rule: it reads the ``globalForce`` token (a ``_local_`` name, the
+    ``localForce`` token) as ``(T, E, n_nodes)``, the MPCO reader's layout
+    (see :func:`read_nodal_force_slab`). It needs ``ndm``, the file's
+    spatial dimension.
     """
     if token in PER_ELEMENT_NODAL_FORCES:
         if ndm is None:
@@ -2075,7 +2083,8 @@ def read_element_slab(
 
 
 # =====================================================================
-# Canonical nodal resisting forces (decoded from ``globalForce``)
+# Canonical nodal resisting forces (decoded from ``globalForce`` and
+# ``localForce``)
 # =====================================================================
 #
 # A ``nodal_resisting_{force,moment}_{x,y,z}`` request reads the
@@ -2099,13 +2108,46 @@ def read_element_slab(
 # carry no hint which, so those columns stay undecoded, and a moment
 # request that meets them warns.
 #
+# A ``nodal_resisting_{force,moment}_local_{x,y,z}`` request reads the
+# ``localForce`` token, as MPCO does. Its column names (``N_1``, ``Vy_1``,
+# ``Mz_2``, the 2-D ``V_1``/``M_1``, or the same without the underscore)
+# name an end and a local component, but a 2-D name on a 3-D class is the
+# ComponentElement3d trap, so the names alone do not fix the layout. The
+# layout comes from ``NODAL_FORCE_CATALOG``, keyed by the class in the
+# bucket key, the source MPCO reads, and the bucket's width and every
+# column name must then spell it exactly. A class the catalog does not
+# list, or a bucket that disagrees with it, is left out and named
+# (:class:`NodalForceColumnsUndecodedWarning`).
+#
 # The slab is ``(T, E, n_nodes)`` in element-local node order, the layout
 # :class:`MPCOReader` returns for the same names, so the two formats agree.
 
 NODAL_FORCE_TOKEN = "globalForce"
+LOCAL_NODAL_FORCE_TOKEN = "localForce"
 _NODAL_GLOBAL = frozenset(
     c for c in PER_ELEMENT_NODAL_FORCES if "_local_" not in c
 )
+_NODAL_LOCAL = frozenset(
+    c for c in PER_ELEMENT_NODAL_FORCES if "_local_" in c
+)
+#: The ``NODAL_FORCE_CATALOG`` token of the ``localForce`` response.
+_LOCAL_CATALOG_TOKEN = "local_force"
+#: ``localForce`` column base → the local canonical it names.
+_LOCAL_BASE_TO_CANONICAL: dict[str, str] = {
+    "N": "nodal_resisting_force_local_x",
+    "Vy": "nodal_resisting_force_local_y",
+    "Vz": "nodal_resisting_force_local_z",
+    "T": "nodal_resisting_moment_local_x",
+    "My": "nodal_resisting_moment_local_y",
+    "Mz": "nodal_resisting_moment_local_z",
+}
+#: The 2-D spelling (``N_1,V_1,M_1``) as well, read only for a layout of
+#: three components per node: a 2-D beam has one shear and one moment.
+_LOCAL_BASE_TO_CANONICAL_2D: dict[str, str] = {
+    **_LOCAL_BASE_TO_CANONICAL,
+    "V": "nodal_resisting_force_local_y",
+    "M": "nodal_resisting_moment_local_z",
+}
 _AXIS_NAME_RE = re.compile(r"^([PM])([xyz])_(\d+)$")
 _INDEXED_NAME_RE = re.compile(r"^P(\d+)_(\d+)$")
 _AXES = ("x", "y", "z")
@@ -2114,11 +2156,13 @@ _AXES = ("x", "y", "z")
 class NodalForceNotRecorded(MissingElementResults):
     """A canonical nodal resisting force the file is unable to answer.
 
-    Raised by :func:`read_nodal_force_slab` when no ``globalForce`` bucket
-    decodes to the requested name: the file does not record ``globalForce``,
+    Raised by :func:`read_nodal_force_slab` when no bucket of the source
+    token (``globalForce``, or ``localForce`` for a ``_local_`` name)
+    decodes to the requested name: the file does not record the token, or
     its buckets carry no such component (``nodal_resisting_moment_z`` on a
-    truss), or the name is a local-frame one. The message names the tokens
-    the file records and the canonical names it does answer.
+    truss, any name on a ``localForce`` class absent from
+    ``NODAL_FORCE_CATALOG``). The message names the tokens the file
+    records and the canonical names it does answer.
 
     A subclass of :class:`MissingElementResults`, so a partitioned read
     tolerates a part file whose rank owns none of the elements and raises
@@ -2127,12 +2171,15 @@ class NodalForceNotRecorded(MissingElementResults):
 
 
 class NodalForceColumnsUndecodedWarning(UserWarning):
-    """``globalForce`` buckets were left out of a canonical nodal-force read.
+    """``globalForce`` / ``localForce`` buckets were left out of a
+    canonical nodal-force read.
 
     Raised by :func:`read_nodal_force_slab` for each bucket whose
     ``COMP_NAMES`` could not be decoded (an unknown spelling, an ambiguous
-    order) or whose undecoded columns may hold the requested moment. The
-    elements of those buckets are absent from the result.
+    order), whose undecoded columns may hold the requested moment, or, for
+    ``localForce``, whose class has no ``NODAL_FORCE_CATALOG`` layout or
+    whose columns disagree with it. The elements of those buckets are
+    absent from the result.
     """
 
 
@@ -2270,20 +2317,122 @@ def indexed_nodal_force_buckets(on_elements: "h5py.Group") -> list[str]:
     return out
 
 
+def decode_local_nodal_force_columns(
+    names: "tuple[str, ...] | list[str]", class_name: str,
+) -> "dict[str, ndarray]":
+    """Name each ``localForce`` column of ``class_name`` as a canonical
+    local nodal resisting force.
+
+    The layout is ``NODAL_FORCE_CATALOG[(class_name, "local_force")]``,
+    the one MPCO reads; ``names`` must spell it column by column (``N_1``
+    or ``N1`` for ``nodal_resisting_force_local_x`` at node 1, and so on).
+    Returns each canonical name's column index at each element node (node
+    1 first). Raises :class:`ValueError` with the reason when the class
+    has no layout there, or when the names do not spell it.
+    """
+    names = [n.strip() for n in names]
+    if not is_nodal_force_catalogued(class_name, _LOCAL_CATALOG_TOKEN):
+        raise ValueError(
+            f"its element class {class_name!r} has no "
+            f"{_LOCAL_CATALOG_TOKEN!r} layout in NODAL_FORCE_CATALOG, so "
+            f"which column holds which end force is unknown"
+        )
+    layout = lookup_nodal_force(class_name, _LOCAL_CATALOG_TOKEN)
+    k_per_node = layout.n_components_per_node
+    expected = [
+        (canonical, node)
+        for node in range(1, layout.n_nodes_per_element + 1)
+        for canonical in layout.component_layout
+    ]
+    bases = (_LOCAL_BASE_TO_CANONICAL_2D if k_per_node == 3
+             else _LOCAL_BASE_TO_CANONICAL)
+    spelled: list[tuple[Optional[str], int]] = []
+    for name in names:
+        m = _LOCAL_FORCE_TOKEN_RE.match(name)
+        spelled.append(
+            (bases.get(m.group("base")), int(m.group("station")))
+            if m is not None else (None, 0)
+        )
+    if spelled != expected:
+        raise ValueError(
+            f"its columns {names[:12]} do not spell the "
+            f"{layout.n_nodes_per_element}-node {_LOCAL_CATALOG_TOKEN!r} "
+            f"layout NODAL_FORCE_CATALOG gives {class_name!r} "
+            f"({list(layout.component_layout)} at each node)"
+        )
+    nodes = np.arange(layout.n_nodes_per_element, dtype=np.int64)
+    return {
+        canonical: nodes * k_per_node + k
+        for k, canonical in enumerate(layout.component_layout)
+    }
+
+
+def _decode_local_nodal_bucket(
+    bucket: "h5py.Group", key: str,
+) -> "tuple[dict[str, ndarray], tuple[str, ...]]":
+    """:func:`decode_local_nodal_force_columns` over one ``localForce``
+    bucket keyed ``<tag>-<Class>[…]``; :class:`ValueError` when it is not
+    an element-level bucket exactly as wide as its names."""
+    for child in ("COLUMN_MAP", "DATA", "ID"):
+        if child not in bucket:
+            raise ValueError(f"the bucket has no {child}")
+    blocks = parse_blocks(bucket)
+    if any(b.level != 0 or b.multiplicity != 1 for b in blocks):
+        raise ValueError("the bucket holds sub-element (Gauss) blocks")
+    names = [n for b in blocks for n in b.comp_names]
+    width = int(bucket["DATA"].shape[-1])
+    if len(names) != width:
+        raise ValueError(
+            f"its DATA is {width} columns wide but it names {len(names)}"
+        )
+    cls = _class_name(key)
+    if not cls:
+        raise ValueError(
+            "its key does not parse as '<tag>-<Class>[...]', so its class "
+            "is unknown"
+        )
+    return decode_local_nodal_force_columns(names, cls), ()
+
+
+def nodal_force_token(canonical: str) -> str:
+    """The ``ON_ELEMENTS`` token a canonical nodal resisting force reads."""
+    if canonical in _NODAL_GLOBAL:
+        return NODAL_FORCE_TOKEN
+    if canonical in _NODAL_LOCAL:
+        return LOCAL_NODAL_FORCE_TOKEN
+    raise ValueError(
+        f"{canonical!r} is no canonical nodal resisting force; the names "
+        f"are {list(PER_ELEMENT_NODAL_FORCES)}"
+    )
+
+
+def _decode_nodal_token_bucket(
+    token: str, bucket: "h5py.Group", key: str, *, ndm: int,
+) -> "tuple[dict[str, ndarray], tuple[str, ...]]":
+    """Decode one bucket of ``token`` (``globalForce`` or ``localForce``)."""
+    if token == LOCAL_NODAL_FORCE_TOKEN:
+        return _decode_local_nodal_bucket(bucket, key)
+    return _decode_nodal_bucket(bucket, ndm=ndm)
+
+
 def _nodal_force_available(
     on_elements: "h5py.Group", *, ndm: int,
 ) -> set[str]:
-    """Canonical nodal resisting forces some ``globalForce`` bucket decodes."""
+    """Canonical nodal resisting forces some ``globalForce`` or
+    ``localForce`` bucket decodes."""
     out: set[str] = set()
-    if NODAL_FORCE_TOKEN not in on_elements:
-        return out
-    token_grp = on_elements[NODAL_FORCE_TOKEN]
-    for key in token_grp:
-        try:
-            columns, _ = _decode_nodal_bucket(token_grp[key], ndm=ndm)
-        except (KeyError, ValueError):
+    for token in (NODAL_FORCE_TOKEN, LOCAL_NODAL_FORCE_TOKEN):
+        if token not in on_elements:
             continue
-        out.update(columns)
+        token_grp = on_elements[token]
+        for key in token_grp:
+            try:
+                columns, _ = _decode_nodal_token_bucket(
+                    token, token_grp[key], str(key), ndm=ndm,
+                )
+            except (KeyError, ValueError):
+                continue
+            out.update(columns)
     return out
 
 
@@ -2299,28 +2448,24 @@ def read_nodal_force_slab(
 
     ``canonical`` is a ``nodal_resisting_{force,moment}_{x,y,z}`` name,
     decoded from the ``globalForce`` buckets by
-    :func:`decode_nodal_force_columns`. ``None`` when the id filter keeps
-    no row. Raises :class:`NodalForceNotRecorded` when no bucket decodes
-    to ``canonical``; warns :class:`NodalForceColumnsUndecodedWarning` for
+    :func:`decode_nodal_force_columns`, or a ``_local_`` one, decoded from
+    the ``localForce`` buckets by :func:`decode_local_nodal_force_columns`.
+    ``None`` when the id filter keeps no row. Raises
+    :class:`NodalForceNotRecorded` when no bucket decodes to
+    ``canonical``; warns :class:`NodalForceColumnsUndecodedWarning` for
     each bucket left out, and :class:`ElementWidthMismatchWarning` when
     buckets of a different node count are dropped (the first count wins).
     """
     recorded = sorted(str(k) for k in on_elements)
-    if canonical not in _NODAL_GLOBAL:
-        raise NodalForceNotRecorded(
-            f"Element component {canonical!r} is a local-frame nodal "
-            f"resisting force; this reader decodes only the global-frame "
-            f"names, from {NODAL_FORCE_TOKEN!r}. The file records the "
-            f"element responses {recorded}: read one of them by its token."
-        )
-    if NODAL_FORCE_TOKEN not in on_elements:
+    token = nodal_force_token(canonical)
+    if token not in on_elements:
         raise NodalForceNotRecorded(
             f"Element component {canonical!r} is decoded from the element "
-            f"response {NODAL_FORCE_TOKEN!r}, which this file does not "
-            f"record. It records {recorded}: record {NODAL_FORCE_TOKEN!r}, "
+            f"response {token!r}, which this file does not "
+            f"record. It records {recorded}: record {token!r}, "
             f"or read one of the recorded responses by its token."
         )
-    token_grp = on_elements[NODAL_FORCE_TOKEN]
+    token_grp = on_elements[token]
     answered = False
     offered: set[str] = set()
     skipped: list[tuple[str, str]] = []
@@ -2333,7 +2478,9 @@ def read_nodal_force_slab(
     for key in token_grp:
         bucket = token_grp[key]
         try:
-            columns, undecoded = _decode_nodal_bucket(bucket, ndm=ndm)
+            columns, undecoded = _decode_nodal_token_bucket(
+                token, bucket, str(key), ndm=ndm,
+            )
         except (KeyError, ValueError) as exc:
             skipped.append((key, str(exc)))
             continue
@@ -2365,18 +2512,20 @@ def read_nodal_force_slab(
         detail = "; ".join(f"{k!r}: {why}" for k, why in skipped)
         warnings.warn(
             f"Element component {canonical!r} left out {len(skipped)} "
-            f"{NODAL_FORCE_TOKEN!r} bucket(s) whose columns could not be "
+            f"{token!r} bucket(s) whose columns could not be "
             f"named ({detail}). Their elements are absent from the result; "
-            f"read {NODAL_FORCE_TOKEN!r} by its token for their raw columns.",
+            f"read {token!r} by its token for their raw columns.",
             NodalForceColumnsUndecodedWarning,
             stacklevel=3,
         )
     if not answered:
         raise NodalForceNotRecorded(
-            f"Element component {canonical!r}: no {NODAL_FORCE_TOKEN!r} "
+            f"Element component {canonical!r}: no {token!r} "
             f"bucket in this file decodes to it. Its buckets decode to "
-            f"{sorted(offered)}; the file records the element responses "
-            f"{recorded}."
+            f"{sorted(offered)}"
+            + (f", and it left out {[k for k, _ in skipped]} (warned "
+               f"above with the reason)" if skipped else "")
+            + f"; the file records the element responses {recorded}."
         )
     if dropped:
         lost = np.concatenate([ids for _, _, ids in dropped])
