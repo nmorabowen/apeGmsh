@@ -21,8 +21,9 @@ Census definition (the KPI session's, stable, do not change):
 * A site is **lazy** when it sits inside a function body (``def``,
   ``async def``, ``lambda``) at any depth, and **eager** otherwise (module
   level, including class bodies and ``try``/``if`` blocks there).
-* The body of an ``if TYPE_CHECKING:`` (or ``typing.TYPE_CHECKING``) is
-  excluded at any depth; its ``else`` branch runs and is counted.
+* The type-checker-only branch is excluded at any depth: the body of an
+  ``if TYPE_CHECKING:`` (or ``typing.TYPE_CHECKING``), and the ``else`` of an
+  ``if not TYPE_CHECKING:``.  The other branch runs and is counted.
 
 Measured with this census: 377 lazy / 174 eager at ``07f757e0`` and
 482 / 186 at ``6c792de6`` (#1202, comment 6173426133).
@@ -54,9 +55,9 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 SNAPSHOT = Path(__file__).resolve().with_name("lazy_import_snapshot.txt")
 
-#: lazy / total cross-package import sites at the C4 landing commit (main 27a95f769).
-BASELINE_LAZY = 519
-BASELINE_TOTAL = 710
+#: lazy / total cross-package import sites at the C4 landing commit (main b6d271f12).
+BASELINE_LAZY = 520
+BASELINE_TOTAL = 711
 
 ROOT = "apeGmsh"
 
@@ -102,6 +103,16 @@ def _is_type_checking(test: ast.expr) -> bool:
     return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
 
 
+def _runtime_branch(node: ast.If) -> list[ast.stmt] | None:
+    """The branch that runs when ``node`` tests TYPE_CHECKING, else None."""
+    if _is_type_checking(node.test):
+        return node.orelse
+    if (isinstance(node.test, ast.UnaryOp) and isinstance(node.test.op, ast.Not)
+            and _is_type_checking(node.test.operand)):
+        return node.body
+    return None
+
+
 def _targets(node: ast.Import | ast.ImportFrom, importer: str,
              is_pkg: bool) -> Iterator[str]:
     """Absolute apeGmsh modules one import statement brings in, one per site."""
@@ -130,8 +141,9 @@ def sites_in(rel: str, source: str) -> Iterator[Site]:
             yield from walk_one(child, scope, lazy)
 
     def walk_one(child: ast.AST, scope: tuple[str, ...], lazy: bool) -> Iterator[Site]:
-        if isinstance(child, ast.If) and _is_type_checking(child.test):
-            for sub in child.orelse:
+        runtime = _runtime_branch(child) if isinstance(child, ast.If) else None
+        if runtime is not None:
+            for sub in runtime:
                 yield from walk_one(sub, scope, lazy)
             return
         if isinstance(child, (ast.Import, ast.ImportFrom)):
@@ -233,6 +245,10 @@ if TYPE_CHECKING:
     from apeGmsh.core import Part
 else:
     from apeGmsh.fem import FEMData
+if not TYPE_CHECKING:
+    from apeGmsh.solvers import runtime_only
+else:
+    from apeGmsh.studio import checker_only
 
 class Panel:
     from apeGmsh._kernel import keys
@@ -241,6 +257,10 @@ class Panel:
         from apeGmsh.viewers import qt
         if TYPE_CHECKING:
             from apeGmsh.sections import Section
+        if not TYPE_CHECKING:
+            pass
+        else:
+            from apeGmsh.sections import Other
         def inner():
             import apeGmsh.results
             from .sibling import thing
@@ -259,6 +279,7 @@ def test_census_definition() -> None:
         ("<module>", "apeGmsh.viz", False),            # per name; mesh is same-package
         ("<module>", "apeGmsh.results", False),        # relative, resolved
         ("<module>", "apeGmsh.fem", False),            # TYPE_CHECKING else branch runs
+        ("<module>", "apeGmsh.solvers", False),        # `if not TYPE_CHECKING:` body runs
         ("<module>", "apeGmsh._kernel", False),        # class body is module level
         ("Panel.show", "apeGmsh.viewers", True),
         ("Panel.show.inner", "apeGmsh.results", True),

@@ -374,6 +374,7 @@ apeGmsh/results/readers/_mpco_nodal_io.py | RotationMask.absent | apeGmsh.opense
 apeGmsh/results/readers/_mpco_nodal_io.py | RotationMask.absent | apeGmsh.opensees._recorder_translate
 apeGmsh/results/readers/_mpco_nodal_io.py | _continuum_classes | apeGmsh.opensees._element_capabilities
 apeGmsh/results/readers/_mpco_nodal_io.py | _continuum_classes | apeGmsh.opensees._response_catalog
+apeGmsh/results/readers/_mpco_nodal_io.py | attach_nodes_ndf | apeGmsh.opensees._recorder_translate
 apeGmsh/results/readers/_mpco_nodal_io.py | load_nodes_ndf | apeGmsh.opensees.emitter
 apeGmsh/results/readers/_mpco_spring_io.py | discover_spring_buckets | apeGmsh.opensees._response_catalog
 apeGmsh/results/readers/_native.py | NativeReader._check_embedded_zone | apeGmsh.opensees._internal.schema_version
