@@ -214,7 +214,7 @@ EXCEPTIONS: dict[str, str] = {
         "shipped 9510d1c8 (fork plane quad) without an ALL_SOLID_ELEMENTS entry",
     "apeGmsh.opensees.element.solid:LadrunoCST":
         "shipped 6c881ad9 (fork plane triangle) without an ALL_SOLID_ELEMENTS entry",
-    "apeGmsh.opensees.element.solid:LadrunoUP":
+    "apeGmsh.opensees.element.solid_up:LadrunoUP":
         "shipped in #793 (ADR 0074 u-p element) without an ALL_SOLID_ELEMENTS entry",
     "apeGmsh.opensees.element.solid:LadrunoBrick20":
         "shipped in #857 (fork second-order solids) without an ALL_SOLID_ELEMENTS entry",

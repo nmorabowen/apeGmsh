@@ -265,7 +265,7 @@ def test_columnar_mixed_arity_class_matches_reference_core():
 
 
 def _up2d(pg: str = "Soil"):
-    from apeGmsh.opensees.element.solid import LadrunoUP
+    from apeGmsh.opensees.element.solid_up import LadrunoUP
     from apeGmsh.opensees.material.nd import ElasticIsotropic
 
     return LadrunoUP(

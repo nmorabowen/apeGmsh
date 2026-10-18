@@ -74,7 +74,7 @@ def validate_ladruno_up_specs(
         LADRUNO_UP_MIDEDGE_SLOTS,
         LADRUNO_UP_TH_ETYPES,
     )
-    from ....element.solid import LadrunoUP
+    from ....element.solid_up import LadrunoUP
 
     legal_etypes = LADRUNO_UP_ETYPES_BY_NDM.get(int(ndm))
 
@@ -322,7 +322,7 @@ def validate_ladruno_up_pressure_dof(
         element_class_ndf_ok,
         element_required_floor,
     )
-    from ....element.solid import LadrunoUP
+    from ....element.solid_up import LadrunoUP
 
     up_specs = [s for s in elements if isinstance(s, LadrunoUP)]
     if not up_specs:
@@ -468,7 +468,7 @@ def validate_up_pressure_datum(
     the DOF only inside its own stage; and a pressure DOF grounded indirectly
     through ``equal_dof`` to a fixed one is not traced.
     """
-    from ....element.solid import LadrunoUP
+    from ....element.solid_up import LadrunoUP
 
     if not enforce:
         return

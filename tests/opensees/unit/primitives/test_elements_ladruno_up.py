@@ -35,7 +35,7 @@ from apeGmsh.opensees._internal.tag_resolution import (
     set_tag_resolver,
 )
 from apeGmsh.opensees._internal.types import Primitive
-from apeGmsh.opensees.element.solid import LadrunoUP
+from apeGmsh.opensees.element.solid_up import LadrunoUP
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.nd import ElasticIsotropic
 

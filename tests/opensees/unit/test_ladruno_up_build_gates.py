@@ -35,7 +35,7 @@ from apeGmsh.opensees._internal.build.validators.up import (
 from apeGmsh.opensees._internal.build.validators.solver import (
     validate_ladruno_up_solver,
 )
-from apeGmsh.opensees.element.solid import LadrunoUP
+from apeGmsh.opensees.element.solid_up import LadrunoUP
 from apeGmsh.opensees.material.nd import ElasticIsotropic
 from apeGmsh.opensees.pattern.pattern import _SPRecord
 
