@@ -32,9 +32,6 @@ from apeGmsh.opensees._response_catalog import (
     RESPONSE_CATALOG,
     ZEROLENGTH_CATALOG,
 )
-from apeGmsh.results.readers._mpco_local_force_io import (
-    LINE_STATION_NON_BEAM_CLASSES,
-)
 from tests.test_results_line_station_source_rank import (
     FORMATS,
     SKIP_WARNING,
@@ -109,7 +106,6 @@ def _assert_names(fmt: str, path: Path, key: str, comp: str) -> None:
 def test_uncatalogued_beam_global_force_only_is_named(
     tmp_path: Path, fmt: str, key: str, comp: str,
 ) -> None:
-    assert _class(key) not in LINE_STATION_NON_BEAM_CLASSES
     _assert_names(fmt, tmp_path / f"beam.{fmt}", key, comp)
 
 
@@ -155,8 +151,17 @@ def test_non_beam_global_force_is_silent(
 
 
 # ---------------------------------------------------------------------
-# The deny-list is derived from the catalog's family tables
+# The deny-list is derived from the catalog's family tables. Imported in
+# each test, so the behaviour tests above also run against a reader
+# without it (the revert check).
 # ---------------------------------------------------------------------
+
+def _deny_list() -> frozenset[str]:
+    from apeGmsh.results.readers._mpco_local_force_io import (
+        LINE_STATION_NON_BEAM_CLASSES,
+    )
+    return LINE_STATION_NON_BEAM_CLASSES
+
 
 def test_deny_list_is_the_union_of_the_family_tables() -> None:
     derived = (
@@ -165,7 +170,7 @@ def test_deny_list_is_the_union_of_the_family_tables() -> None:
         | {c for c, _tok in LAYER_CATALOG}
         | {c for c, _tok in ZEROLENGTH_CATALOG}
     )
-    assert LINE_STATION_NON_BEAM_CLASSES == derived
+    assert _deny_list() == derived
 
 
 def test_deny_list_holds_no_catalogued_beam() -> None:
@@ -174,4 +179,10 @@ def test_deny_list_holds_no_catalogued_beam() -> None:
         | {c for c, _kind in CUSTOM_RULE_CATALOG}
         | {c for c, _tok in FIBER_CATALOG}
     )
-    assert not (LINE_STATION_NON_BEAM_CLASSES & beams)
+    assert not (_deny_list() & beams)
+
+
+def test_the_cases_above_sit_on_the_right_side_of_the_list() -> None:
+    deny = _deny_list()
+    assert not {_class(k) for k in UNCATALOGUED_BEAMS + NAMED_NON_BEAMS} & deny
+    assert {_class(k) for k in NON_BEAMS} <= deny
