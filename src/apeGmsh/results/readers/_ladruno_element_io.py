@@ -834,15 +834,15 @@ def resolve_generic_gauss_blocks(
     return _name_shell_resultants(blocks, token=token, bucket_key=bucket_key)
 
 
-# Shell stress resultants (#1990). The plate sections a shell integrates
-# tag their per-GP response ``p11,p22,p12,m11,m22,m12,q1,q2`` (membrane
-# forces, bending moments, transverse shears), and the shells forward it
-# under ``stresses`` as one block per GP. No label map knew those tokens,
-# so every shell read back an empty Gauss slab, with no warning. The order
-# is the element's source order, which is the catalog's 8-component shell
-# layout (``SHELL_STRESS_RESULTANTS``). It is matched as a WHOLE tuple and
-# never label by label: ``p11`` alone names nothing anywhere else here, and
-# a partial or reordered set is a different response, refused by name.
+# Shell stress resultants. The plate sections a shell integrates tag their
+# per-GP response ``p11,p22,p12,m11,m22,m12,q1,q2`` (membrane forces,
+# bending moments, transverse shears), and the shells forward it under
+# ``stresses`` as one block per GP. No label map names those tokens, so
+# without this a shell reads back an empty Gauss slab. The order is the
+# element's source order, which is the catalog's 8-component shell layout
+# (``SHELL_STRESS_RESULTANTS``). It is matched as a WHOLE tuple and never
+# label by label: ``p11`` alone names nothing anywhere else here, and a
+# partial or reordered set is a different response, refused by name.
 _SHELL_RESULTANT_LABELS: tuple[str, ...] = (
     "p11", "p22", "p12", "m11", "m22", "m12", "q1", "q2",
 )
@@ -906,15 +906,15 @@ def _name_shell_resultants(
     ]
 
 
-# Named-column buckets with no GP_PARAM (#1998, #1990). SixNodeTri and
-# EightNodeQuad tag their ``sigma11..`` names, so the file names its own
-# columns and the catalog fit above never runs. They answer no
-# ``integrationPoints`` either, and the fork writes them under rule 0, so
-# the file has no GP_PARAM and every GP read back with natural coordinates
-# of shape ``(n, 0)``, with no warning. The triangle shells (ASDShellT3,
-# ShellDKGT, ShellNLDKGT) write their rule (102, 103) but no GP_PARAM
-# either. The catalog places such points when exactly one placement fits:
-# under rule 0 any catalogued rule of the class, otherwise the bucket's own.
+# Named-column buckets with no GP_PARAM. SixNodeTri and EightNodeQuad tag
+# their ``sigma11..`` names, so the file names its own columns and the
+# catalog fit above does not apply. They answer no ``integrationPoints``
+# either, and the fork writes them under rule 0, so the file has no
+# GP_PARAM and the points would have natural coordinates of shape
+# ``(n, 0)``. The triangle shells (ASDShellT3, ShellDKGT, ShellNLDKGT)
+# write their rule (102, 103) but no GP_PARAM either. The catalog places
+# such points when exactly one placement fits: under rule 0 any catalogued
+# rule of the class, otherwise the bucket's own.
 
 
 class GaussCoordsUnavailableWarning(UserWarning):
@@ -1225,8 +1225,8 @@ def read_gauss_slab(
             if gp_param is None and fit is not None:
                 gp_param = fit.natural_coords
             elif gp_param is None:
-                # A named bucket under rule 0 (#1998), or a shell's
-                # resultants under its own rule (#1990).
+                # A named bucket under rule 0, or a shell's resultants
+                # under its own rule.
                 rule = _bucket_rule(key)
                 if rule is not None and (rule == 0 or shell_named):
                     gp_param = _catalog_placement(
