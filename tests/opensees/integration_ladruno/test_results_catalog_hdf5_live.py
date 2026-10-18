@@ -156,6 +156,53 @@ def test_catalog_gp_coords_read_back_from_hdf5(
                         lambda c: r.elements.gauss.get(component=c), where=route)
 
 
+#: The cases #1990 (shells) and #1998 (rule-0 named buckets) fixed.
+PARITY_CASES = [k for k in FORK_CASES
+                if CASES[k].comps == SHELL or CASES[k].cpp_class in
+                ("SixNodeTri", "EightNodeQuad")]
+
+
+@pytest.mark.parametrize("key", PARITY_CASES)
+def test_ladruno_matches_mpco_on_the_same_solve(
+    key: str, tmp_path: Path, stub_model_h5: Path,
+) -> None:
+    """``.ladruno`` and MPCO, recording the same step, read back the same.
+
+    Values at ``rtol=1e-10``, GP for GP, and the same natural coordinates.
+    """
+    from apeGmsh.results import Results
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    case = CASES[key]
+    ops = get_live_ops()
+    built = case.build(ops)
+    assert ops.eleType(built.eid) == case.cpp_class
+    solve(ops)
+    mpco, lad = tmp_path / "run.mpco", tmp_path / "run.ladruno"
+    ops.recorder("mpco", str(mpco), "-N", "displacement", "-E", case.token)
+    ops.recorder("ladruno", str(lad), "-N", "displacement", "-E", case.token)
+    assert ops.analyze(1) == 0
+    ops.remove("recorders")
+    r_lad = Results.from_ladruno(str(lad), model_h5=stub_model_h5)
+    with pytest.warns(ModelFemMismatchWarning):
+        r_mpco = Results.from_mpco(str(mpco), model_h5=stub_model_h5)
+    slabs = [(r_lad.elements.gauss.get(component=c),
+              r_mpco.elements.gauss.get(component=c)) for c in case.comps]
+    scale = max(np.abs(np.asarray(m.values)).max() for _, m in slabs)
+    assert scale > 0.0, f"{key}: MPCO reads all zeros"
+    for comp, (a, b) in zip(case.comps, slabs):
+        assert np.asarray(a.values).shape == (1, case.n_gp), (key, comp)
+        np.testing.assert_array_equal(a.element_index, b.element_index)
+        np.testing.assert_allclose(
+            a.values, b.values, rtol=1e-10, atol=1e-10 * scale,
+            err_msg=f"{key} {comp}: .ladruno vs MPCO",
+        )
+        np.testing.assert_allclose(
+            a.natural_coords, b.natural_coords, rtol=1e-10, atol=1e-14,
+            err_msg=f"{key} {comp}: GP coords, .ladruno vs MPCO",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Material state through the spec's MPCO emit
 # ---------------------------------------------------------------------------

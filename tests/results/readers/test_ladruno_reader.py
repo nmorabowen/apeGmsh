@@ -1144,6 +1144,239 @@ def test_named_element_block_disagreeing_with_the_catalog_is_left_alone(
 
 
 # ---------------------------------------------------------------------------
+# #1990 / #1998 — named per-GP buckets: shell resultants, rule-0 placement
+# ---------------------------------------------------------------------------
+#
+# The buckets are synthesised in the shape fork build 79e062367 writes
+# (dumped from its live runs): one block per GP, LEVELS 2 for the shells'
+# ``p11..q2`` and 4 for SixNodeTri / EightNodeQuad's ``sigma11..``. The quad
+# shells write their rule (201) and a GP_PARAM; the triangle shells write
+# their rule (102, 103) and no GP_PARAM; SixNodeTri and EightNodeQuad write
+# rule 0 and no GP_PARAM. The live counterpart, with the MPCO parity check,
+# is tests/opensees/integration_ladruno/test_results_catalog_hdf5_live.py.
+#
+# The expected names and coordinates are spelled out from the element
+# sources, not read from RESPONSE_CATALOG, which is what the reader uses.
+
+#: The shell element's source order (ASDShellQ4.cpp, ShellMITC4.cpp, ...).
+SHELL_LABELS = ("p11", "p22", "p12", "m11", "m22", "m12", "q1", "q2")
+SHELL_CANON = (
+    "membrane_force_xx", "membrane_force_yy", "membrane_force_xy",
+    "bending_moment_xx", "bending_moment_yy", "bending_moment_xy",
+    "transverse_shear_xz", "transverse_shear_yz",
+)
+_G2 = 1.0 / np.sqrt(3.0)
+#: The GP_PARAM the fork writes for the quad shells.
+QUAD_GL_2 = np.array([[-_G2, -_G2], [_G2, -_G2], [_G2, _G2], [-_G2, _G2]])
+#: ASDShellT3.cpp mid-edge (XI, ETA).
+TRI_GL_2B = np.array([[0.5, 0.5], [0.0, 0.5], [0.5, 0.0]])
+#: ShellDKGT.cpp sg/tg: the centroid, then the three 1/5-3/5 points.
+TRI_GL_2C = np.array([[1 / 3, 1 / 3], [0.2, 0.6], [0.6, 0.2], [0.2, 0.2]])
+#: SixNodeTri.cpp's 3-point interior rule.
+TRI_GL_2 = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
+_G3 = np.sqrt(0.6)
+#: EightNodeQuad.cpp: corners, edge midpoints, centroid.
+QUAD8_GL_3 = np.array([
+    [-_G3, -_G3], [_G3, -_G3], [_G3, _G3], [-_G3, _G3],
+    [0.0, -_G3], [_G3, 0.0], [0.0, _G3], [-_G3, 0.0], [0.0, 0.0],
+])
+PLANE_LABELS = ("sigma11", "sigma22", "sigma12")
+PLANE_CANON = ("stress_xx", "stress_yy", "stress_xy")
+
+
+def _named_gp_file(
+    tmp_path: Path, key: str, labels: "tuple[str, ...]", n_gp: int, *,
+    level: int, token: str = "stresses",
+    gp_param: "np.ndarray | None" = None,
+) -> "tuple[Path, np.ndarray]":
+    """The quad fixture with its Gauss buckets replaced by one named bucket.
+
+    ``n_gp`` blocks of ``labels``, one per GP (``GAUSS_ID`` 0..n-1), for
+    element 7. ``gp_param`` adds a MODEL/ELEMENTS GP_PARAM for the class.
+    Returns ``(path, DATA)``.
+    """
+    import shutil
+
+    import h5py
+
+    width = n_gp * len(labels)
+    dst = tmp_path / "named.ladruno"
+    shutil.copy(QUAD, dst)
+    data = np.arange(2 * width, dtype=np.float64).reshape(2, 1, width) + 0.5
+    with h5py.File(dst, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        src = on_e["stress"][next(iter(on_e["stress"]))]
+        step, time = src["STEP"][...], src["TIME"][...]
+        del on_e["stress"], on_e["strain"]
+        grp = on_e.create_group(f"{token}/{key}")
+        grp.create_dataset("DATA", data=data)
+        grp.create_dataset("ID", data=np.array([[7]], dtype=np.int64))
+        grp.create_dataset("STEP", data=step)
+        grp.create_dataset("TIME", data=time)
+        cm = grp.create_group("COLUMN_MAP")
+        col = np.ones((n_gp, 1), dtype=np.int64)
+        cm.create_dataset("LEVELS", data=level * col)
+        cm.create_dataset(
+            "GAUSS_ID", data=np.arange(n_gp, dtype=np.int64).reshape(-1, 1),
+        )
+        cm.create_dataset("NUM_COMP", data=len(labels) * col)
+        cm.create_dataset("MULTIPLICITY", data=col)
+        cm.attrs["COMP_NAMES"] = "\n".join([",".join(labels)] * n_gp)
+        if gp_param is not None:
+            prefix, _, rest = key.partition("[")
+            quad = f[stage]["MODEL"]["ELEMENTS"].create_group(
+                f"{prefix}[{rest.split(':')[0]}:0]/QUADRATURE",
+            )
+            quad.create_dataset("GP_PARAM", data=gp_param)
+    return dst, data
+
+
+def _assert_reads(
+    path: Path, data: np.ndarray, canon: "tuple[str, ...]", n_gp: int,
+    coords: np.ndarray,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussCoordsUnavailableWarning,
+    )
+
+    import warnings as _w
+
+    with _w.catch_warnings():
+        _w.simplefilter("error", GaussCoordsUnavailableWarning)
+        with LadrunoReader(path) as r:
+            assert set(canon) <= set(
+                r.available_components("stage_0", ResultLevel.GAUSS),
+            )
+            for k, comp in enumerate(canon):
+                slab = r.read_gauss("stage_0", comp)
+                assert slab.element_index.tolist() == [7] * n_gp
+                # GP-major: GP g, component k is DATA column g*ncomp + k.
+                np.testing.assert_array_equal(
+                    slab.values,
+                    data[:, 0, [g * len(canon) + k for g in range(n_gp)]],
+                )
+                np.testing.assert_allclose(
+                    slab.natural_coords, coords, rtol=0, atol=1e-15,
+                )
+
+
+@pytest.mark.parametrize("key,n_gp,gp_param,coords", [
+    ("203-ASDShellQ4[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("53-ShellMITC4[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("156-ShellDKGQ[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("157-ShellNLDKGQ[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("204-ASDShellT3[102:0:0]", 3, None, TRI_GL_2B),
+    ("167-ShellDKGT[103:0:0]", 4, None, TRI_GL_2C),
+    ("168-ShellNLDKGT[103:0:0]", 4, None, TRI_GL_2C),
+], ids=["ASDShellQ4", "ShellMITC4", "ShellDKGQ", "ShellNLDKGQ", "ASDShellT3",
+        "ShellDKGT", "ShellNLDKGT"])
+def test_shell_resultants_read_in_source_order(
+    tmp_path: Path, key: str, n_gp: int,
+    gp_param: "np.ndarray | None", coords: np.ndarray,
+) -> None:
+    # They read as an empty slab, with no warning (#1990).
+    path, data = _named_gp_file(
+        tmp_path, key, SHELL_LABELS, n_gp, level=2, gp_param=gp_param,
+    )
+    _assert_reads(path, data, SHELL_CANON, n_gp, coords)
+
+
+@pytest.mark.parametrize("key,n_gp,coords", [
+    ("209-SixNodeTri[0:0:0]", 3, TRI_GL_2),
+    ("208-EightNodeQuad[0:0:0]", 9, QUAD8_GL_3),
+], ids=["SixNodeTri", "EightNodeQuad"])
+def test_rule_zero_named_bucket_places_its_gauss_points(
+    tmp_path: Path, key: str, n_gp: int, coords: np.ndarray,
+) -> None:
+    # Values read already; the GPs came back with coords (n, 0) (#1998).
+    path, data = _named_gp_file(tmp_path, key, PLANE_LABELS, n_gp, level=4)
+    _assert_reads(path, data, PLANE_CANON, n_gp, coords)
+
+
+def test_rule_zero_file_gp_param_wins(tmp_path: Path) -> None:
+    own = np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.1]])
+    path, data = _named_gp_file(
+        tmp_path, "209-SixNodeTri[0:0:0]", PLANE_LABELS, 3, level=4,
+        gp_param=own,
+    )
+    _assert_reads(path, data, PLANE_CANON, 3, own)
+
+
+def test_reordered_shell_resultants_refuse(tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+    )
+
+    swapped = ("p22", "p11") + SHELL_LABELS[2:]
+    path, _ = _named_gp_file(
+        tmp_path, "203-ASDShellQ4[201:0:0]", swapped, 4, level=2,
+        gp_param=QUAD_GL_2,
+    )
+    with LadrunoReader(path) as r:
+        with pytest.raises(GaussLayoutMismatch, match="not the full source"):
+            r.available_components("stage_0", ResultLevel.GAUSS)
+        with pytest.raises(GaussLayoutMismatch, match="not the full source"):
+            r.read_gauss("stage_0", "membrane_force_xx")
+
+
+def test_shell_resultants_the_catalog_contradicts_refuse(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+    )
+
+    # ASDShellQ4 is catalogued with 4 GPs of shell resultants, not 3.
+    path, _ = _named_gp_file(
+        tmp_path, "203-ASDShellQ4[201:0:0]", SHELL_LABELS, 3, level=2,
+    )
+    with LadrunoReader(path) as r:
+        with pytest.raises(GaussLayoutMismatch, match="catalog contradicts"):
+            r.read_gauss("stage_0", "bending_moment_xx")
+
+
+def test_rule_zero_uncatalogued_class_warns_by_name(tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussCoordsUnavailableWarning,
+    )
+
+    key = "99999-NotACatalogedClass[0:0:0]"
+    path, data = _named_gp_file(tmp_path, key, PLANE_LABELS, 3, level=4)
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussCoordsUnavailableWarning, match=key.replace(
+                "[", r"\[").replace("]", r"\]")):
+            slab = r.read_gauss("stage_0", "stress_yy")
+    np.testing.assert_array_equal(slab.values, data[:, 0, [1, 4, 7]])
+    assert slab.natural_coords.shape == (3, 0)
+
+
+def test_rule_zero_ambiguous_placement_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataclasses
+
+    from apeGmsh.opensees._response_catalog import IntRule
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+    )
+
+    # A second SixNodeTri rule with the same points in another order: rule 0
+    # names no rule, so the reader cannot tell which one the file used.
+    base = RESPONSE_CATALOG[("SixNodeTri", IntRule.Triangle_GL_2, "stress")]
+    monkeypatch.setitem(
+        RESPONSE_CATALOG, ("SixNodeTri", IntRule.Triangle_GL_1, "stress"),
+        dataclasses.replace(base, natural_coords=TRI_GL_2[::-1].copy()),
+    )
+    path, _ = _named_gp_file(
+        tmp_path, "209-SixNodeTri[0:0:0]", PLANE_LABELS, 3, level=4,
+    )
+    with LadrunoReader(path) as r:
+        with pytest.raises(GaussLayoutMismatch, match="place them differently"):
+            r.read_gauss("stage_0", "stress_xx")
+
+
+# ---------------------------------------------------------------------------
 # Overlapping tokens — one (element, GP) slot covered twice
 # ---------------------------------------------------------------------------
 #
