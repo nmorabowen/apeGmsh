@@ -399,7 +399,9 @@ jobs:
     # — the job stays "in progress" and its logs are unreadable until
     # it ends, so the hang is invisible exactly when you need to see
     # it. The qt lane already learned this and caps each file at 300 s.
-    timeout-minutes: 25
+    # 40, not 25: suite wall time on main ran 950-1467 s over 7 runs and
+    # run 39168105807 was cancelled at teardown after passing (#2166).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
