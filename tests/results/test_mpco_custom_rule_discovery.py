@@ -272,3 +272,191 @@ class TestMaterialStateCustomRule:
             cls="FourNodeTetrahedron", file="tet_damage.mpco",
             what="gauss material-state discovery of 'damage_tension'",
         )
+
+
+# =====================================================================
+# Uncatalogued standard-rule buckets (#2160)
+# =====================================================================
+#
+# A bucket on a standard rule whose (class, rule, token) has no
+# RESPONSE_CATALOG row used to ``continue`` with no word, the same silent
+# drop #2115 closed for custom rules. The catalog is what places a
+# bucket's Gauss points, so the bucket stays unread, and is now named in
+# one ``MPCOBucketSkippedWarning`` (path, class, rule, token, file).
+
+#: FourNodeTetrahedron is catalogued at Tet_GL_1 only, so Tet_GL_2 is a
+#: catalogued class on an uncatalogued rule.
+_TET_GL2 = _tet(IntRule.Tet_GL_2, 0)
+
+
+def _assert_uncatalogued(msgs: list[str], key: str, *, group: str,
+                         cls: str, rule: int, file: str, what: str) -> None:
+    """Exactly one warning, naming path, class, rule, token and file."""
+    assert len(msgs) == 1, msgs
+    (msg,) = msgs
+    assert f"{group}/{key}:" in msg
+    assert f"class {cls!r} at integration rule {rule}" in msg
+    assert "no RESPONSE_CATALOG row for token 'stress'" in msg
+    assert f" in {file} " in msg
+    assert what in msg
+
+
+class TestGaussUncatalogued:
+    def test_uncatalogued_rule_is_named_beside_a_read(
+        self, tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "tets.mpco"
+        f, stage = _skeleton(path)
+        try:
+            _add_tet_stress(f[stage], _tet(IntRule.Tet_GL_1, 0), 1)
+            _add_tet_stress(f[stage], _TET_GL2, 2)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                slab = r.elements.gauss.get(component="stress_xx")
+        finally:
+            r._reader.close()
+        np.testing.assert_array_equal(slab.values, np.full((2, 1), 1.0))
+        _assert_uncatalogued(
+            _skips(rec), _TET_GL2, group="stresses",
+            cls="FourNodeTetrahedron", rule=IntRule.Tet_GL_2,
+            file="tets.mpco", what="gauss discovery of 'stress_xx'",
+        )
+
+    @pytest.mark.parametrize(
+        "rule", [IntRule.Tet_GL_1, IntRule.NoIntegrationRule],
+        ids=["standard-rule", "rule-0-fallback"],
+    )
+    def test_unknown_class_is_named(self, tmp_path: Path, rule: int) -> None:
+        key = f"999-NotCatalogued[{rule}:0:0]"
+        path = tmp_path / "unknown.mpco"
+        f, stage = _skeleton(path)
+        try:
+            f[stage]["RESULTS"].require_group("ON_ELEMENTS").require_group(
+                "stresses",
+            ).create_group(key)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                slab = r.elements.gauss.get(component="stress_xx")
+        finally:
+            r._reader.close()
+        assert slab.values.shape == (2, 0)
+        _assert_uncatalogued(
+            _skips(rec), key, group="stresses", cls="NotCatalogued",
+            rule=rule, file="unknown.mpco",
+            what="gauss discovery of 'stress_xx'",
+        )
+
+    def test_listing_names_an_uncatalogued_bucket(
+        self, tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "tets.mpco"
+        f, stage = _skeleton(path)
+        try:
+            _add_tet_stress(f[stage], _TET_GL2, 2)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                comps = r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.GAUSS,
+                )
+        finally:
+            r._reader.close()
+        assert "stress_xx" not in comps
+        assert any(f"stresses/{_TET_GL2}:" in m for m in _skips(rec))
+
+    def test_a_key_under_two_alias_groups_is_named_once(
+        self, tmp_path: Path,
+    ) -> None:
+        """``stresses`` and ``material.stress`` are aliases of one token:
+        the same unread bucket key under both is one bucket, one warning."""
+        path = tmp_path / "tets.mpco"
+        f, stage = _skeleton(path)
+        try:
+            on_el = f[stage]["RESULTS"].require_group("ON_ELEMENTS")
+            for group in ("stresses", "material.stress"):
+                on_el.require_group(group).create_group(_TET_GL2)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                r.elements.gauss.get(component="stress_xx")
+        finally:
+            r._reader.close()
+        assert len(_skips(rec)) == 1, _skips(rec)
+
+    def test_catalogued_buckets_stay_quiet(self, tmp_path: Path) -> None:
+        path = tmp_path / "ok.mpco"
+        f, stage = _skeleton(path)
+        try:
+            _add_tet_stress(f[stage], _tet(IntRule.Tet_GL_1, 0), 1)
+            # A second header index of the same class and rule.
+            _add_tet_stress(f[stage], _tet(IntRule.Tet_GL_1, 0)[:-2] + "1]", 2)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", MPCOBucketSkippedWarning)
+                slab = r.elements.gauss.get(component="stress_xx")
+                comps = r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.GAUSS,
+                )
+        finally:
+            r._reader.close()
+        np.testing.assert_array_equal(slab.values, [[1.0, 2.0]] * 2)
+        assert "stress_xx" in comps
+
+
+class TestMaterialStateUncatalogued:
+    def test_uncatalogued_rule_is_named_beside_a_read(
+        self, tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "tet_damage.mpco"
+        f, stage = _skeleton(path)
+        try:
+            _add_damage(f[stage], _tet(IntRule.Tet_GL_1, 0), eid=1, n_gp=1)
+            _add_damage(f[stage], _TET_GL2, eid=2, n_gp=4)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                slab = r.elements.gauss.get(component="damage_tension")
+        finally:
+            r._reader.close()
+        np.testing.assert_array_equal(slab.values, np.full((2, 1), 1.0))
+        _assert_uncatalogued(
+            _skips(rec), _TET_GL2, group="material.damage",
+            cls="FourNodeTetrahedron", rule=IntRule.Tet_GL_2,
+            file="tet_damage.mpco",
+            what="gauss material-state discovery of 'damage_tension'",
+        )
+
+    def test_catalogued_buckets_stay_quiet(self, tmp_path: Path) -> None:
+        path = tmp_path / "ok_damage.mpco"
+        f, stage = _skeleton(path)
+        try:
+            _add_damage(f[stage], _tet(IntRule.Tet_GL_1, 0), eid=1, n_gp=1)
+        finally:
+            f.close()
+        r = _open(path)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", MPCOBucketSkippedWarning)
+                slab = r.elements.gauss.get(component="damage_tension")
+                comps = r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.GAUSS,
+                )
+        finally:
+            r._reader.close()
+        np.testing.assert_array_equal(slab.values, np.full((2, 1), 1.0))
+        assert "damage_tension" in comps
