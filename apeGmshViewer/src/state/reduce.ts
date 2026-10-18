@@ -489,9 +489,15 @@ export function reduce(s: State, e: Event): State {
       const curComp = s.lineDiagram.component;
       const validOnAny =
         curComp !== null && e.info.stages.some((st) => st.lineStations?.includes(curComp));
+      const preferSlabMy =
+        (firstLineStage?.gauss.length ?? 0) > 0 &&
+        Boolean(firstLineStage?.lineStations?.includes("My")) &&
+        Boolean(firstLineStage?.lineStations?.includes("Mz"));
       const nextLineComp = validOnAny
         ? curComp
-        : defaultLineDiagramComponent(firstLineStage?.lineStations);
+        : preferSlabMy
+          ? "My"
+          : defaultLineDiagramComponent(firstLineStage?.lineStations);
       // V4c1: a re-read invalidates the measured ranges (the same path, other
       // data); a pick the re-read stage no longer has is cleared, with a notice.
       const next = withPhase({

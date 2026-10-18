@@ -281,7 +281,7 @@ export class LineDiagramLayer {
       stepData: step.step,
       join,
       ndm: s.ndm.ndm,
-      charLength: 2 * s.mesh.radius,
+      charLength: 0.8 * s.mesh.radius,
       scale: s.lineDiagram.scale,
       flipSign: s.lineDiagram.flipSign,
       cmap: s.lineDiagram.cmap,

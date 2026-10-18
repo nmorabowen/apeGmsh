@@ -228,6 +228,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     };
   }
   const i = rf.index;
+  const verified = rf.elementIndexVerdict().verified;
   return {
     path: i.path,
     version: i.version,
@@ -254,11 +255,12 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         naturalCoords: g.naturalCoords ? g.naturalCoords.map((r) => [...r]) : null,
       })),
       unread: [...s.unread],
-      elementIndexSpace: null,
-      lineStations: [],
+      elementIndexSpace: i.elementIndexSpace,
+      lineStations: verified ? rf.availableLineStations(s.id) : [],
     })),
     elementIndex: { ...rf.elementIndexVerdict() },
     units: i.units,
+    elementIndexSpace: i.elementIndexSpace,
   };
 }
 
@@ -383,12 +385,16 @@ export class ResultsHost {
         for (const g of st.gauss) if (g.components.includes(req.element)) gauss[g.id] = rf.readGaussStep(s.id, g.id, req.element, req.step);
         if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
       }
-      const lineDiagram =
-        req.lineDiagram !== undefined
-          ? rf instanceof LadrunoFile
-            ? rf.readLineStationStep(s.id, req.lineDiagram, req.step)
-            : null
-          : undefined;
+      let lineDiagram: LadrunoLineStationStep | null | undefined;
+      if (req.lineDiagram !== undefined) {
+        if (rf instanceof LadrunoFile) {
+          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+        } else {
+          const v = rf.elementIndexVerdict();
+          if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
+          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+        }
+      }
       return {
         ok: true,
         seq: req.seq,
@@ -489,8 +495,8 @@ export class ResultsHost {
   }
 
   /**
-   * The line-station history range (.ladruno): one 1-D beam line-station
-   * component across all steps of `st.id`. Runs inside `scan`.
+   * The line-station history range (.ladruno or verified results.h5): one 1-D beam
+   * line-station component across all steps of `st.id`. Runs inside `scan`.
    */
   private async scanLine(
     req: ScanRequest,
@@ -501,7 +507,10 @@ export class ResultsHost {
     t: number,
   ): Promise<ScanAnswer> {
     const id = req.scanId;
-    if (!(first instanceof LadrunoFile)) throw new Error(`line-station scan requires a .ladruno file; got ${req.path}`);
+    if (!(first instanceof LadrunoFile)) {
+      const v = first.elementIndexVerdict();
+      if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
+    }
     if (req.components.length !== 1 || req.magnitude) throw new Error("a line-station scan reads one component, never a magnitude");
     const comp = req.components[0]!;
     const T = st.nSteps;

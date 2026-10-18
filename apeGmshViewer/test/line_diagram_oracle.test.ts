@@ -818,4 +818,31 @@ test("F8: buildBeamChains prefers colinear continuation (dot > 0.95) at degree >
   assert.deepEqual(multiSpanChains[1]!.spans.map((sp) => sp.elementId), [1]);
 });
 
-
+test("buildLineDiagram3D extrudes My on the 3-D tension side when flipSign=true (+zLocal for hogging My>0, -zLocal for sagging My<0)", () => {
+  const scene = makeTwoBeamScene();
+  // Beam 10 along +X with vecxz = [0, 0, 1] -> zLocal = [0, 0, +1].
+  // Under downward gravity (-Z): support hogging has My > 0 (+100 at xi=-1, tension on +Z top fiber),
+  // midspan sagging has My < 0 (-50 at xi=+1, tension on -Z bottom fiber).
+  const geomMy = buildLineDiagram3D({
+    ...scene,
+    stepData: {
+      component: "My",
+      elementIndex: new Float64Array([10, 10]),
+      stationNaturalCoord: new Float64Array([-1, 1]),
+      values: new Float64Array([100, -50]),
+      time: 1.0,
+      localAxesQuaternion: null,
+      localAxesZRec: null,
+    },
+    ndm: 3,
+    scale: 1,
+    clim: [-50, 100],
+  });
+  assert.equal(geomMy.beams.length, 1);
+  // autoScale = 0.15 * 2 / 100 = 0.003:
+  // At xi=-1 (x=0, My=+100 hogging): top point is at z = +0.3 (UP, top tension side)
+  // At xi=+1 (x=2, My=-50 sagging): top point is at z = -0.15 (DOWN, bottom tension side)
+  assert.ok(closeVec(Array.from(geomMy.profilePositions.slice(0, 6)), [0, 0, 0.3, 2, 0, -0.15], 1e-6));
+  const needle = projectHoverNeedle(geomMy.beams[0]!, [2, 0, 0], geomMy.effectiveScale, true);
+  assert.ok(closeVec(needle.pTop, [2, 0, -0.15], 1e-6));
+});
