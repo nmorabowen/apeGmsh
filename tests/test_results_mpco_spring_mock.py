@@ -14,6 +14,7 @@ shape ``(n_elements, N)`` per step.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import h5py
@@ -27,6 +28,7 @@ from apeGmsh.results.readers._mpco_spring_io import (
     resolve_n_springs,
     spring_canonicals_in_bucket,
 )
+from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.results import Results
 
@@ -486,3 +488,99 @@ class TestResultsAPI:
         r._reader.close()
         assert slab.values.shape == (n_steps, 0)
         assert slab.element_index.size == 0
+
+
+# =====================================================================
+# Custom-rule spring buckets are named, not dropped (#2160)
+# =====================================================================
+
+def _add_bucket(
+    path: Path, token: str, bracket: str, *,
+    element_ids: list[int], values: np.ndarray,
+) -> None:
+    """Add one spring-shaped bucket (``values`` is ``(T, E, N)``)."""
+    with h5py.File(str(path), "a") as f:
+        on_elem = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+        bkt = on_elem.require_group(token).create_group(bracket)
+        _make_meta(bkt, values.shape[2])
+        bkt.create_dataset(
+            "ID", data=np.array(element_ids, dtype=np.int32).reshape(-1, 1),
+        )
+        data_grp = bkt.create_group("DATA")
+        for i in range(values.shape[0]):
+            data_grp.create_dataset(f"STEP_{i}", data=values[i])
+
+
+def _skips(record: "list[warnings.WarningMessage]") -> list[str]:
+    return [
+        str(w.message) for w in record
+        if issubclass(w.category, MPCOBucketSkippedWarning)
+    ]
+
+
+class TestCustomRuleSpring:
+    """``discover_spring_buckets`` used to ``continue`` on a nonzero
+    custom-rule index with no word. A ZeroLength-family bucket on one is
+    now named in one ``MPCOBucketSkippedWarning`` (path, class, custom
+    index, file), the #2159 contract; the standard bucket still reads."""
+
+    _CUSTOM = "19-ZeroLength[1:2:0]"
+
+    def _file(self, tmp_path: Path) -> Path:
+        path = _make_spring_mpco(
+            tmp_path / "springs.mpco", element_ids=[1, 2], n_springs=1,
+            force_values=np.full((2, 2, 1), 3.0),
+        )
+        _add_bucket(path, "basicForce", self._CUSTOM,
+                    element_ids=[3], values=np.full((2, 1, 1), 9.0))
+        return path
+
+    def test_custom_rule_bucket_is_named_and_unread(self, tmp_path) -> None:
+        r = Results.from_mpco(str(self._file(tmp_path)),
+                              model_h5=_stub_model_h5_path())
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                slab = r.elements.springs.get(component="spring_force")
+        finally:
+            r._reader.close()
+        np.testing.assert_array_equal(slab.values, np.full((2, 2), 3.0))
+        np.testing.assert_array_equal(slab.element_index, [1, 2])
+        (msg,) = _skips(rec)
+        assert f"basicForce/{self._CUSTOM}:" in msg
+        assert "class 'ZeroLength' carries custom integration rule 2" in msg
+        assert " in springs.mpco " in msg
+        assert "spring discovery of 'spring_force'" in msg
+
+    def test_listing_names_the_custom_rule_bucket(self, tmp_path) -> None:
+        r = Results.from_mpco(str(self._file(tmp_path)),
+                              model_h5=_stub_model_h5_path())
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                comps = r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.SPRINGS,
+                )
+        finally:
+            r._reader.close()
+        assert comps == ["spring_force"]
+        assert [m for m in _skips(rec) if f"basicForce/{self._CUSTOM}:" in m]
+
+    def test_a_beam_custom_rule_bucket_is_not_a_spring(self, tmp_path) -> None:
+        """``basicForce`` also holds beams, whose custom-rule buckets the
+        line-station level owns: the spring level stays quiet on them."""
+        path = _make_spring_mpco(
+            tmp_path / "frame.mpco", element_ids=[1, 2], n_springs=1,
+            force_values=np.full((2, 2, 1), 3.0),
+        )
+        _add_bucket(path, "basicForce", "74-ForceBeamColumn3d[1000:1:0]",
+                    element_ids=[5], values=np.zeros((2, 1, 6)))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", MPCOBucketSkippedWarning)
+                slab = r.elements.springs.get(component="spring_force")
+                r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.SPRINGS,
+                )
+        finally:
+            r._reader.close()
+        np.testing.assert_array_equal(slab.element_index, [1, 2])
