@@ -79,15 +79,20 @@ _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
     """The bridge's and the replay's openseespy decks of ``model``, and the
-    capabilities its archive's solve stamp says a backend needs."""
+    capabilities its archive's solve stamp says a backend needs. Each deck
+    sits in its own directory, its working directory when it runs: the two
+    decks write the same output files (a profiler report refuses a run id
+    its file already holds)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops = model.build()
-        bridge = tmp / "bridge.py"
+        bridge = tmp / "bridge" / "bridge.py"
+        bridge.parent.mkdir()
         ops.py(str(bridge), progress=False)
         archive = tmp / "model.h5"
         ops.h5(str(archive))
-        replay = tmp / "replay.py"
+        replay = tmp / "replay" / "replay.py"
+        replay.parent.mkdir()
         model_h5 = OpenSeesModel.from_h5(str(archive))
         model_h5.build("py", out=str(replay))
     stamp = model_h5.solve_stamp

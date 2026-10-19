@@ -23,7 +23,7 @@ from __future__ import annotations
 import dataclasses
 import warnings
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 import h5py
 import pytest
@@ -116,6 +116,17 @@ class TestElementSlots:
         want = _lines(bridge, "element quad ")
         assert want and all(" 2 PlaneStrain 1" in ln for ln in want)
         assert _lines(replay, "element quad ") == want
+
+    def test_a_row_without_its_fem_element_raises(
+            self, tmp_path: Path) -> None:
+        """The dry run needs the row's node count; a fanned-out row whose
+        FEM element the neutral zone lacks fails closed, naming both."""
+        path = _archive(_quad(1.0), tmp_path)
+        with h5_reader.open(str(path)) as m:
+            with pytest.raises(h5_reader.MalformedH5Error,
+                               match=r"element \d+ is fanned out from FEM "
+                                     "element 1"):
+                OpenSeesModel._load_elements(m, SimpleNamespace(elements=()))
 
     def test_beam_moduli_stay_float(self, tmp_path: Path) -> None:
         """``elasticBeamColumn`` ``E=200e9`` / ``G=80e9``: floats; the
