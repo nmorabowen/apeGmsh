@@ -27,11 +27,14 @@ Nothing crosses the wall: this file imports nothing from the app, and the
 node side imports nothing from ``src/apeGmsh``. It needs node >= 22.18
 (the app's ``engines``; it runs the TypeScript by type stripping, as
 ``npm test`` does) and the app's ``npm ci`` (h5wasm); without either it
-skips with the reason, shown under ``-rs``.
+skips with the reason, shown under ``-rs``. The CI job that runs it
+(``app-tests``) sets ``APEGMSH_APP_ORACLE_REQUIRED=1``, which turns that
+skip into a failure, so the lane cannot pass on a skip.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -72,7 +75,17 @@ def _node_or_skip_reason() -> "tuple[str | None, str | None]":
 
 
 NODE, SKIP_REASON = _node_or_skip_reason()
-pytestmark = pytest.mark.skipif(NODE is None, reason=SKIP_REASON or "")
+#: Set only by the CI job that runs the oracle (tests.yml `app-tests`): there a
+#: missing node or h5wasm is a broken lane, so the skip becomes a failure.
+REQUIRED = os.environ.get("APEGMSH_APP_ORACLE_REQUIRED") == "1"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _node_present() -> None:
+    if NODE is None:
+        if REQUIRED:
+            pytest.fail(f"APEGMSH_APP_ORACLE_REQUIRED=1 and the oracle cannot run: {SKIP_REASON}")
+        pytest.skip(SKIP_REASON or "")
 
 
 def _truss_fem() -> FEMData:

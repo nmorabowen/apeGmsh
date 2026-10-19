@@ -189,7 +189,8 @@ jobs:
   # releases, which would move the measured count under our feet; bump
   # the pins and re-measure the baseline together, in one PR.
   # apeGmshViewer (ADR 0112): the app's own checks, run when the PR or push
-  # touches apeGmshViewer/ (or this workflow). Not a required check yet: it
+  # touches apeGmshViewer/ (or this workflow, or the pairing oracle's two
+  # Python files). Not a required check yet: it
   # joins the land_pr.py list once the maintainer promotes it.
   app-tests:
     runs-on: ubuntu-latest
@@ -220,7 +221,10 @@ jobs:
             *)
               echo "${{ github.event_name }}: running the app checks"; exit 0 ;;
           esac
-          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml)
+          # The pairing oracle (#2129) runs here too: it fires on its test and
+          # on stamp_provenance, the Python half of what it checks.
+          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml \
+            tests/test_app_ladruno_pairing_oracle.py src/apeGmsh/results/readers/_ladruno_provenance.py)
           if [ -z "$changed" ]; then
             echo "app=false" >> "$GITHUB_OUTPUT"
             echo "apeGmshViewer/ unchanged in $range; nothing to check"
@@ -254,6 +258,39 @@ jobs:
         if: steps.changes.outputs.app == 'true'
         working-directory: apeGmshViewer
         run: npm run lint
+
+      # The .ladruno pairing oracle (ADR 0122 D10 row 4, #2129): Python stamps
+      # files with stamp_provenance, then node runs the app's pairResults on
+      # them. It needs node and the npm ci above, so it runs here and not in
+      # `suite` (where it skips). APEGMSH_APP_ORACLE_REQUIRED turns its
+      # node/h5wasm-absent skip into a failure: this lane cannot pass on a skip.
+      - uses: actions/setup-python@v5
+        if: steps.changes.outputs.app == 'true'
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # gmsh's shared libraries; the set lock-tests installs.
+      - name: Install apt deps for gmsh
+        if: steps.changes.outputs.app == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libxkbcommon0 libdbus-1-3 \
+            libfontconfig1 libxcb-cursor0 libglu1-mesa
+
+      # No extras: the oracle needs the core package (gmsh, h5py, numpy) and pytest.
+      - name: Install package (no openseespy)
+        if: steps.changes.outputs.app == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest
+
+      - name: pairing oracle (pytest, node)
+        if: steps.changes.outputs.app == 'true'
+        env:
+          APEGMSH_APP_ORACLE_REQUIRED: "1"
+        run: pytest tests/test_app_ladruno_pairing_oracle.py -q -rs -p no:cacheprovider
 
   static-gates:
     runs-on: ubuntu-latest
