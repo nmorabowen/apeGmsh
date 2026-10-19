@@ -9,8 +9,14 @@
 // A set has one results slot (#2127; the T ruling of 2026-10-16): when both
 // results files sit beside the model, the file the user opened wins if it is
 // one of them; otherwise the `.ladruno` does. The other one is never read;
-// `unopenedSibling` names it so the banner can say so. A
-// `<stem>.part-<N>.ladruno` is refused by name: part sets are ADR 0122 slice 8.
+// `unopenedSibling` names it so the banner can say so.
+//
+// A partitioned run (ADR 0122 slice 8, #2188) leaves `<stem>.part-<N>.ladruno`
+// beside the model. Opening any part opens the set under the stem; the results
+// slot keeps the opened part's path, and main reads the whole part set from it
+// (reader/ladrunoParts.ts, which refuses an incomplete set by name). Opened from
+// the model, the slot is `<stem>.ladruno`, else `<stem>.part-0.ladruno`, else
+// `<stem>.results.h5`.
 //
 // The suffix is matched case-insensitively. The opened file keeps its own
 // spelling in the set; the siblings are probed under the conventional
@@ -51,17 +57,15 @@ export function samePath(a: string | null, b: string | null, fold: boolean = FOL
   return fold ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-/** A partitioned run's part file (fork schema "File identity"); the same rule as reader/ladruno.ts. */
+/** A partitioned run's part file (fork schema "File identity"); the same rule as reader/ladrunoParts.ts. */
 const PART_FILE = /\.part-(\d+)\.ladruno$/i;
 
-/** The path's kind and stem; throws on a file the app does not open. */
+/** The path's kind and stem; throws on a file the app does not open. A part file is the results of its stem. */
 export function classify(path: string): { kind: Kind; stem: string } {
   const low = path.toLowerCase();
   const part = PART_FILE.exec(path);
-  if (part) {
-    throw new Error(
-      `${path} is part ${part[1]} of a partitioned .ladruno run; apeGmshViewer opens one <stem>.ladruno, and part-<N> sets arrive with ADR 0122 slice 8`,
-    );
+  if (part && part.index > 0 && !/[\\/]$/.test(path.slice(0, part.index))) {
+    return { kind: "results", stem: path.slice(0, part.index) };
   }
   for (const [suffix, kind] of SUFFIXES) {
     if (low.endsWith(suffix) && low.length > suffix.length) {
@@ -88,38 +92,39 @@ export function candidates(opened: string): Candidates {
   return c;
 }
 
-/** The other results file of a results path's stem: `.ladruno` beside `.results.h5`, and the reverse. */
-function otherResults(results: string): string {
-  const low = results.toLowerCase();
-  if (low.endsWith(".ladruno")) return `${results.slice(0, -".ladruno".length)}.results.h5`;
-  if (low.endsWith(".results.h5")) return `${results.slice(0, -".results.h5".length)}.ladruno`;
-  throw new Error(`not a results file: ${results}`);
+/** The stem's results files other than `results`, in slot order: `.ladruno`, the part set (part 0), `.results.h5`. */
+function otherResults(results: string): string[] {
+  // A part file stands for its whole set: the set's other parts are not "other results".
+  const own = PART_FILE.test(results) ? 1 : /\.ladruno$/i.test(results) ? 0 : /\.results\.h5$/i.test(results) ? 2 : -1;
+  if (own < 0) throw new Error(`not a results file: ${results}`);
+  const { stem } = classify(results);
+  return [`${stem}.ladruno`, `${stem}.part-0.ladruno`, `${stem}.results.h5`].filter((_, i) => i !== own);
 }
 
 /**
  * The set as the disk holds it now: each candidate that exists, and one
  * results file. An opened results file wins while it exists; otherwise the
- * `.ladruno` (ADR 0122 D1), else the `.results.h5`.
+ * `.ladruno` (ADR 0122 D1), else part 0 of a part set, else the `.results.h5`.
  */
 export function stemSet(c: Candidates, exists: (p: string) => boolean): OpenSet {
   const kind = openedKind.get(c);
   if (kind === undefined) throw new Error("stemSet needs the Candidates that candidates() made");
   const has = (p: string) => (exists(p) ? p : null);
-  const other = otherResults(c.results);
-  // Opened from the model or geometry, `c.results` is `<stem>.results.h5`, so `other` is the `.ladruno`.
-  const results = kind === "results" ? (has(c.results) ?? has(other)) : (has(other) ?? has(c.results));
+  // Opened from the model or geometry, `c.results` is `<stem>.results.h5`, so the others are the `.ladruno` and part 0.
+  const first = (ps: string[]) => ps.map(has).find((p) => p !== null) ?? null;
+  const others = otherResults(c.results);
+  const results = kind === "results" ? first([c.results, ...others]) : first([...others, c.results]);
   return { model: has(c.model), geometry: has(c.geometry), results };
 }
 
 /**
- * The stem's other results file when it exists beside `results`: the set
- * reads one results file, so this one is not opened (the banner names it).
+ * The stem's first other results file when it exists beside `results`: the set
+ * reads one results file (or one part set), so this one is not opened (the banner names it).
  */
 export function unopenedSibling(results: string, exists: (p: string) => boolean): string | null {
   // A file read as results under another name (a fixture, `--mode=measure-results`) has no stem pair.
   if (!/\.(ladruno|results\.h5)$/i.test(results)) return null;
-  const other = otherResults(results);
-  return exists(other) ? other : null;
+  return otherResults(results).find((p) => exists(p)) ?? null;
 }
 
 /** The set that opening `path` opens. The opened file must exist. */

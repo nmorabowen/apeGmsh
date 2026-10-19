@@ -13,8 +13,8 @@
 //   of the same name, src/apeGmsh/results/schema/_versions.py, pinned by
 //   tests/test_app_ladruno_gate_drift.py); outside it a LadrunoError, never a guess;
 // - one file only: a `<stem>.part-<N>.ladruno` is refused "unsupported" by its
-//   name, and a file whose INFO says it is one part of several is refused too
-//   (part-N sets are slice 8);
+//   name, and a file whose INFO says it is one part of several is refused too;
+//   a part set is read by reader/ladrunoParts.ts (#2188), which opens each part `part`;
 // - components are spelled as the file spells them, `<RESULT>/<label>` with the
 //   label from the result's COMPONENTS attribute. ADR 0122 D7: no token table,
 //   so nothing here maps `DISPLACEMENT/Ux` to an apeGmsh name;
@@ -164,6 +164,8 @@ export interface LadrunoIndex {
   lineageReason: string | null;
   /** Consistent unit system stamped on `INFO/PROVENANCE@units`, or null when absent/malformed */
   units: UnitSystemId | null;
+  /** INFO@PARTITION_ID and NUM_PARTITIONS of a file opened as one part (`openLadruno` `part`), else null */
+  partition: { id: number; count: number } | null;
   warnings: string[];
 }
 
@@ -246,11 +248,15 @@ interface Column {
   modal: boolean;
 }
 
-/** Open a `.ladruno` and index it; reads go through the returned object. */
-export function openLadruno(h5: ResultsH5, path: string): LadrunoFile {
+/**
+ * Open a `.ladruno` and index it; reads go through the returned object. `part`
+ * opens one file of a partitioned set, for reader/ladrunoParts.ts only: the set
+ * is what the app reads, never one part alone (#2188).
+ */
+export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean } = {}): LadrunoFile {
   const base = path.split(/[\\/]/).pop() ?? path;
   const part = PART_FILE.exec(base);
-  if (part) {
+  if (part && !opts.part) {
     throw new LadrunoError(
       "unsupported",
       `${path} is part ${part.groups!.idx} of the partitioned set ${part.groups!.stem}.part-<N>.ladruno; this reader reads one file, not a part set`,
@@ -260,7 +266,7 @@ export function openLadruno(h5: ResultsH5, path: string): LadrunoFile {
   // h5wasm does not throw when HDF5 cannot open a file: it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new LadrunoError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {
-    return new LadrunoFile(h5, f, path);
+    return new LadrunoFile(h5, f, path, opts.part === true);
   } catch (err) {
     f.close();
     throw err;
@@ -275,7 +281,7 @@ export class LadrunoFile {
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   private readonly gauss: LadrunoGauss;
 
-  constructor(h5: ResultsH5, f: LFile, path: string) {
+  constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
     this.h5 = h5;
     this.f = f;
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
@@ -284,8 +290,13 @@ export class LadrunoFile {
     const formatMinorVersion = optionalInt(info, "FORMAT_MINOR_VERSION") ?? 0;
     const formatVersion = optionalInt(info, "FORMAT_VERSION")!;
     const partitions = optionalInt(info, "NUM_PARTITIONS");
-    if (optionalInt(info, "PARTITIONED") === 1 || (partitions !== null && partitions > 1)) {
+    const partitionId = optionalInt(info, "PARTITION_ID");
+    const partitioned = optionalInt(info, "PARTITIONED") === 1 || (partitions !== null && partitions > 1);
+    if (partitioned && !part) {
       throw new LadrunoError("unsupported", `${path}: INFO says this file is one part of a partitioned run (PARTITIONED, NUM_PARTITIONS = ${partitions}); this reader reads one file`);
+    }
+    if (part && (!partitioned || partitions === null || partitionId === null)) {
+      throw new LadrunoError("layout", `${path}: named as a part file, but INFO@PARTITIONED, NUM_PARTITIONS and PARTITION_ID do not say it is one part of a partitioned run (schema §2)`);
     }
     const dim = optionalInt(info, "SPATIAL_DIM");
     for (const k of f.keys()) {
@@ -318,8 +329,22 @@ export class LadrunoFile {
       lineage,
       lineageReason: reason,
       units: provenance.state === "present" ? provenance.units : null,
+      partition: part ? { id: partitionId!, count: partitions! } : null,
       warnings,
     };
+  }
+
+  /**
+   * The `PARTITION_REDUCTION` text of the ON_NODES group that holds `component`
+   * (schema §7.1), trimmed, or null when the group has none. Not checked here:
+   * reader/ladrunoParts.ts refuses an absent or unknown value by name.
+   */
+  nodalReduction(stageId: string, component: string): string | null {
+    const col = this.column(this.stage(stageId), component);
+    const at = col.path.indexOf("/ON_NODES/");
+    const group = this.f.get(col.path.slice(0, col.path.indexOf("/", at + "/ON_NODES/".length)));
+    const attr = (group as unknown as LGroup | null)?.attrs["PARTITION_REDUCTION"];
+    return attr === undefined ? null : String(oneValue(attr.value)).replace(/[\0\s]+$/, "");
   }
 
   close(): void {

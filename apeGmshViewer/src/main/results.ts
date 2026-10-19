@@ -24,14 +24,21 @@
 // unpaired, schema §7b.1); `element_index_space` stands in for the native
 // root stamp, and `stage_names` names the MODEL_STAGE groups when it counts
 // as many.
+//
+// A partitioned run (`<stem>.part-<N>.ladruno`, #2188) is opened as one file by
+// reader/ladrunoParts.ts, from any of its parts. Its identity on re-open is every
+// part's INFO/PROVENANCE, and the size-and-mtime check covers every part file of
+// the stem (and which exist), so one part re-stamped, added or removed while the
+// set is open answers `changed` and the set is re-indexed.
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import {
   LadrunoFile,
   openLadruno,
   type LadrunoLineStationStep,
   type LineStationComponent,
 } from "../reader/ladruno.ts";
+import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings } from "../reader/ladrunoParts.ts";
 import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
@@ -39,14 +46,21 @@ import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts
 import type { ModeFacts, UnitSystemId } from "../state/types.ts";
 import type { ProgramDecls } from "../model/types.ts";
 
-export type AnyResultsFile = ResultsFile | LadrunoFile;
+/** A `.ladruno` as main reads it: one file, or a part set read as one (#2188). */
+export type AnyLadruno = LadrunoFile | LadrunoPartSet;
+export type AnyResultsFile = ResultsFile | AnyLadruno;
+
+const isLadruno = (rf: AnyResultsFile): rf is AnyLadruno => rf instanceof LadrunoFile || rf instanceof LadrunoPartSet;
+const listDir = (dir: string): string[] => readdirSync(dir);
 
 function openAnyResults(h5: ResultsH5, path: string): AnyResultsFile {
+  if (partOf(path)) return openLadrunoSet(h5, path, listDir);
   return path.toLowerCase().endsWith(".ladruno") ? openLadruno(h5, path) : openResults(h5, path);
 }
 
-/** What a re-open compares: a native file's results_hash; a `.ladruno`'s whole INFO/PROVENANCE as read. */
+/** What a re-open compares: a native file's results_hash; a `.ladruno`'s whole INFO/PROVENANCE as read (every part's, for a set). */
 function identityOf(rf: AnyResultsFile): string | null {
+  if (rf instanceof LadrunoPartSet) return rf.identity();
   if (rf instanceof LadrunoFile) return `provenance:${JSON.stringify(rf.index.provenance)}`;
   return rf.index.lineage?.resultsHash ?? null;
 }
@@ -199,10 +213,19 @@ export interface ScanProgress {
 /** How long the handle stays open after the last read (the D5 revisit trigger's 30 steps/s is 33 ms a step). */
 export const IDLE_CLOSE_MS = 500;
 
-const signature = (path: string): string => {
-  const st = statSync(path);
-  return `${st.size}:${st.mtimeMs}`;
-};
+/** The files a read of `path` depends on: the path, or every part file of its stem. */
+const filesOf = (path: string): string[] => (partOf(path) ? partSiblings(path, listDir).map((p) => p.path) : [path]);
+
+/** Size and mtime of every file of `path` (and, for a part set, which parts exist). */
+const signature = (path: string): string =>
+  filesOf(path)
+    .map((p) => {
+      const st = statSync(p);
+      return `${p}=${st.size}:${st.mtimeMs}`;
+    })
+    .join("|");
+
+const sizeOf = (path: string): number => filesOf(path).reduce((a, p) => a + statSync(p).size, 0);
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
@@ -214,7 +237,7 @@ const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
  * Otherwise every stage keeps the file's name, and a malformed or miscounted
  * stage_names warns. An absent one is silent (the pairing says unstamped).
  */
-function ladrunoStageNames(rf: LadrunoFile, warningsOut?: string[]): string[] {
+function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): string[] {
   const ix = rf.index;
   const own = ix.stages.map((s) => s.name);
   const prov = ix.provenance;
@@ -256,7 +279,7 @@ function gaussMeta(g: StageInfo["gauss"][number]): GaussGroupMeta {
 }
 
 export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta {
-  if (rf instanceof LadrunoFile) {
+  if (isLadruno(rf)) {
     const ix = rf.index;
     const prov = ix.provenance;
     // Lineage only when both hashes are stamped (reader/ladruno.ts `lineageOf`); else unpairable, with the reader's reason.
@@ -391,7 +414,7 @@ export class ResultsHost {
         );
       }
       const meta = metaOf(rf, warnings);
-      return { ok: true, meta, nodeIds, elementIds, warnings, sizeBytes: Number(sig.split(":")[0]), readMs: performance.now() - t };
+      return { ok: true, meta, nodeIds, elementIds, warnings, sizeBytes: sizeOf(path), readMs: performance.now() - t };
     } catch (err) {
       this.close();
       return { ok: false, error: message(err) };
@@ -456,7 +479,7 @@ export class ResultsHost {
       }
       let lineDiagram: LadrunoLineStationStep | null | undefined;
       if (req.lineDiagram !== undefined) {
-        if (rf instanceof LadrunoFile) {
+        if (isLadruno(rf)) {
           lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
         } else {
           const v = rf.elementIndexVerdict();
@@ -573,7 +596,7 @@ export class ResultsHost {
     t: number,
   ): Promise<ScanAnswer> {
     const id = req.scanId;
-    if (!(first instanceof LadrunoFile)) {
+    if (!isLadruno(first)) {
       const v = first.elementIndexVerdict();
       if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
     }
