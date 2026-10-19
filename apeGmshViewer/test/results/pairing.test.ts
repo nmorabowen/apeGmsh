@@ -9,6 +9,7 @@ import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { pairResults } from "../../src/state/results.ts";
 import { noticesOf, resultsPairing } from "../../src/state/selectors.ts";
@@ -252,4 +253,88 @@ test("V4h (review reproducer, through the readers): a model stamped 2.31 with no
   assert.equal(bannerReason(await pairedState(markedModel("absent", "2.31.0"), otherResults(null))), "the results were written from another model (results eeeeeeee…, model f359ba2f…)");
   // An unknown marker names no era.
   assert.equal(bannerReason(await pairedState(markedModel("partial"), otherResults("complete"))), "the results were written from another model (results eeeeeeee…, model f359ba2f…)");
+});
+
+// -- V4L-b1 (#2127): a .ladruno pairs by its INFO/PROVENANCE stamp (ADR 0122 D3) --
+//
+// ladruno_frame3d.h5 and ladruno_frame3d.ladruno (#2140) carry one stamp:
+// model_hash 0123…, fem_hash fedc… on both sides, written by make_ladruno_fixtures.py.
+// ladruno_truss2d.ladruno is the fork's output unstamped (an empty PROVENANCE group).
+
+const FIX = (name: string) => fileURLToPath(new URL(`../../fixtures/${name}`, import.meta.url));
+const L_MODEL = FIX("ladruno_frame3d.h5");
+const L_STAMPED = FIX("ladruno_frame3d.ladruno");
+const L_UNSTAMPED = FIX("ladruno_truss2d.ladruno");
+const ladrunoNotice = (s: State): string => noticesOf(s).filter((n) => n.startsWith("Results not drawn")).join("\n");
+
+test("V4L-b1: a .ladruno with no stamp is unpairable and the reason names stamp_provenance; a native file keeps its message", () => {
+  const l: ResultsInfo = { ...res(null), path: "run.ladruno", sourceType: "ladruno", lineageReason: "INFO/PROVENANCE has no @model_hash; INFO/PROVENANCE has no @fem_hash: the file is not stamped for pairing (schema §7b.1)" };
+  const p = pairResults(mod(lin(H("a"), H("b"))), l);
+  assert.equal(p.state, "unpairable");
+  assert.match((p as { reason: string }).reason, /has no @model_hash.*Stamp it with stamp_provenance\(path, model_h5\) against the model\.h5 the run was emitted from \(ADR 0122 D3\)/);
+  // The same file stamped pairs by model_hash, as a native file does.
+  assert.deepEqual(pairResults(mod(lin(H("a"), H("b"))), { ...l, lineage: lin(H("a"), H("b"), null) }), { state: "paired", by: "model_hash" });
+  // Native, unchanged: no /meta/lineage names the native reason.
+  assert.match((pairResults(mod(lin(H("a"), H("b"))), res(null)) as { reason: string }).reason, /^the results file has no \/meta\/lineage \(results 1\.1\.0\)/);
+});
+
+test("V4L-b1: a stamped .ladruno beside its model pairs by model_hash through the real readers; its stages go on the axis", async () => {
+  const s = await pairedState(L_MODEL, L_STAMPED);
+  assert.deepEqual(resultsPairing(s), { state: "paired", by: "model_hash" });
+  assert.deepEqual(s.results!.lineage, { modelHash: "0123456789abcdef0123456789abcdef", femHash: "fedcba9876543210fedcba9876543210", resultsHash: null });
+  // PROVENANCE stage_names ["gravity","lateral"] name the two MODEL_STAGE groups.
+  assert.deepEqual(s.results!.stages.map((st) => st.name), ["gravity", "lateral"]);
+  assert.ok(s.phase.axis.some((k) => k.kind === "results"));
+  assert.equal(ladrunoNotice(s), "");
+  // Nodal components reach the store verbatim, as the reader names them.
+  assert.ok(s.results!.stages[0]!.nodal.length > 0);
+  assert.ok(s.results!.stages[0]!.nodal.every((c) => /^[A-Z_()]+\/\S+$/.test(c)), s.results!.stages[0]!.nodal.join(", "));
+});
+
+test("V4L-b1: an unstamped .ladruno beside a model is not drawn; the banner says why and names the remedy", async () => {
+  const s = await pairedState(L_MODEL, L_UNSTAMPED);
+  assert.equal(resultsPairing(s).state, "unpairable");
+  assert.equal(s.phase.axis.some((k) => k.kind === "results"), false);
+  assert.match(ladrunoNotice(s), /^Results not drawn: INFO\/PROVENANCE has no @model_hash; INFO\/PROVENANCE has no @fem_hash: the file is not stamped for pairing \(schema §7b\.1\)\. Stamp it with stamp_provenance\(path, model_h5\)/);
+});
+
+test("V4L-b1: a stamp written in part (model_hash deleted) is unpairable, never paired by fem_hash alone", async () => {
+  const half = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).delete_attribute("model_hash"));
+  const s = await pairedState(L_MODEL, half);
+  assert.deepEqual(s.results!.lineage, null);
+  assert.equal(resultsPairing(s).state, "unpairable");
+  assert.match(ladrunoNotice(s), /INFO\/PROVENANCE has no @model_hash: the file is not stamped for pairing .*stamp_provenance/);
+});
+
+test("V4L-b1: a .ladruno stamped from another model is a mismatch, not drawn", async () => {
+  const other = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => setAttr(f, "INFO/PROVENANCE", "model_hash", H("e")));
+  const s = await pairedState(L_MODEL, other);
+  assert.equal(resultsPairing(s).state, "mismatch");
+  assert.equal(s.phase.axis.some((k) => k.kind === "results"), false);
+  assert.equal(ladrunoNotice(s), "Results not drawn: ladruno_frame3d.ladruno does not belong to this model (model_hash differs: the results were written from another model (results eeeeeeee…, model 01234567…)).");
+  // Against the staged model (another model altogether): the same refusal.
+  assert.equal(resultsPairing(await pairedState(MODEL, L_STAMPED)).state, "mismatch");
+});
+
+test("V4L-b1: stage_names that do not count the MODEL_STAGE groups leave the file's names, and warn", async () => {
+  const miscount = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => setAttr(f, "INFO/PROVENANCE", "stage_names", '["only"]'));
+  const unnamed = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).delete_attribute("stage_names"));
+  const own = (await stagedResults(unnamed)).info.stages.map((st) => st.name);
+  assert.equal(own.length, 2);
+  assert.notDeepEqual(own, ["gravity", "lateral"], "the file's own names are not the stamped ones");
+  const r = await stagedResults(miscount);
+  assert.deepEqual(r.info.stages.map((st) => st.name), own);
+  assert.ok(r.warnings.some((w) => /INFO\/PROVENANCE@stage_names names 1 stage\(s\), the file has 2 MODEL_STAGE group\(s\); the file's own stage names are shown/.test(w)), r.warnings.join("\n"));
+});
+
+test("V4L-b1: element_index_space \"fem\" verifies the element rows; absent is unverified with the reason", async () => {
+  const stamped = await stagedResults(FIX("ladruno_truss2d.stamped.ladruno"));
+  assert.deepEqual(stamped.info.elementIndex, { verified: true });
+  const frame = await stagedResults(L_STAMPED);
+  assert.equal(frame.info.elementIndex?.verified, false);
+  assert.match((frame.info.elementIndex as { reason: string }).reason, /INFO\/PROVENANCE has no @element_index_space = "fem"/);
+  const ops = editedCopy(FIX("ladruno_truss2d.stamped.ladruno"), "t.ladruno", (f) => setAttr(f, "INFO/PROVENANCE", "element_index_space", "ops_tag"));
+  const bad = await stagedResults(ops);
+  assert.equal(bad.info.elementIndex?.verified, false);
+  assert.match((bad.info.elementIndex as { reason: string }).reason, /@element_index_space = "ops_tag"; §7b\.1 allows "fem" or no attribute; its element rows are not known/);
 });
