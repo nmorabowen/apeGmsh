@@ -272,7 +272,7 @@ class NativeWriter:
         BridgeOnlyArchiveError
             The source is a bridge-only archive: ``/meta`` and
             ``/opensees/`` but no neutral zone (no ``nodes`` group).
-            Raised before anything is copied (#1881).
+            Raised before anything is copied.
         """
         import h5py
 
@@ -302,7 +302,7 @@ class NativeWriter:
                 )
             # A bridge-only source (/meta + /opensees, no neutral zone,
             # e.g. one written from a FEMStub) has no node coordinates
-            # to resolve the forwarded ndm from (#1881).  Refuse it
+            # to resolve the forwarded ndm from.  Refuse it
             # before anything is copied, so the destination never holds
             # a half-composed /opensees/ zone.
             if "meta" in src and "nodes" not in src:
