@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
-import { openLadruno } from "../../src/reader/ladruno.ts";
+import { LadrunoError, openLadruno } from "../../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { contourLines, rampCss } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
@@ -558,8 +558,9 @@ test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y a
 /**
  * Every committed `.ladruno` (the viewer's fixtures and the repo's
  * tests/fixtures/ladruno) as the contour fields it offers, per stage: `|`
- * between stages, `-` for a stage with no ON_NODES, `refused` for a file the
- * reader refuses. Recorded on main at c394ebce8, before #2214.
+ * between stages, `-` for a stage with no ON_NODES, `refused: part <k> of
+ * <stem>` for a part file, which the reader refuses (any other open error
+ * fails the test). Recorded on main at c394ebce8, before #2214.
  */
 const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "ladruno_frame3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
@@ -577,8 +578,8 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "node_envelope.ladruno": "-",
   "quad2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
-  "truss2d.part-0.ladruno": "refused",
-  "truss2d.part-1.ladruno": "refused",
+  "truss2d.part-0.ladruno": "refused: part 0 of truss2d",
+  "truss2d.part-1.ladruno": "refused: part 1 of truss2d",
 };
 
 test("#2214: every committed .ladruno contours as before (magnitude and axis grouping unchanged)", async () => {
@@ -590,8 +591,11 @@ test("#2214: every committed .ladruno contours as before (magnitude and axis gro
       let r: ReturnType<typeof openLadruno>;
       try {
         r = openLadruno(H5, fileURLToPath(new URL(name, dir)));
-      } catch {
-        got[name] = "refused";
+      } catch (e) {
+        // Only the reader's part-file refusal is an expected outcome; any other error fails the test.
+        const part = e instanceof LadrunoError && e.kind === "unsupported" ? /is part (\d+) of the partitioned set (.+)\.part-<N>\.ladruno; this reader reads one file, not a part set$/.exec(e.message) : null;
+        if (!part) throw e;
+        got[name] = `refused: part ${part[1]} of ${part[2]!.split(/[\\/]/).pop()}`;
         continue;
       }
       try {
