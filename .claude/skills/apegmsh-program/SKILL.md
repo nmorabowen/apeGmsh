@@ -49,9 +49,9 @@ never implement.
 3. **Check the link's gates** in the chain issue and PROGRAM.md §5. If a gate
    is red, post a handoff saying `blocked: <gate>` and stop.
 4. **Survey in-flight work.** Run
-   `gh pr list --label program --state open --json number,title,labels,headRefName`
-   and `gh issue list --label in-flight`. Note locks, freezes, and the current
-   WIP count.
+   `python scripts/open_program_pr.py --count` (the WIP count, with the
+   ruling's exclusion) and `gh issue list --label in-flight`. Note locks and
+   freezes.
 
 ## 2. Plan
 

@@ -97,9 +97,12 @@ def test_eight_open_one_gated_approved_green_opens(body):
     assert _open(gh, body) == 0
 
 
-def test_review_decision_approved_also_excludes():
-    counted, excluded = pp.wip_count([_pr(1, gate=True, green=True, decision="APPROVED")])
-    assert not counted and len(excluded) == 1
+def test_stale_approval_does_not_exclude():
+    pr = _pr(1, gate=True, green=True, approved=True)
+    pr["headRefOid"] = "d" * 40  # new push after the approval
+    pr["reviewDecision"] = "APPROVED"
+    counted, excluded = pp.wip_count([pr])
+    assert len(counted) == 1 and not excluded
 
 
 @pytest.mark.parametrize("kw", [
@@ -137,16 +140,31 @@ def test_count_prints_each_pr_with_reason_and_exits_zero(capsys):
     assert "counted  #1" in out and "excluded #2" in out
 
 
-def test_replay_of_2200_moment(body, capsys):
-    """2026-10-19: two human-gate PRs (#2186, #2197) were green and approved.
+def test_replay_of_2200_moment(body):
+    """Real open set at 2026-10-19T03:16:02Z: 9 open; #2197 and #2186 human-gate, green, approved."""
+    gated = [_pr(2197, gate=True, green=True, approved=True),
+             _pr(2186, gate=True, green=True, approved=True)]
+    others = [_pr(n) for n in (2199, 2198, 2190, 2184, 2180, 2179, 2174)]
+    prs = gated + others
+    assert len(prs) == 9  # the old rule: every open program PR
+    counted, excluded = pp.wip_count(prs)
+    assert (len(counted), len(excluded)) == (7, 2)
+    assert _open(FakeGh(prs), body) == 0
 
-    With nine other open program PRs the old prose rule read 11; the ruling's
-    rule reads 9 (still over the cap) because only the two gated PRs drop out.
-    """
-    gated = [_pr(2186, gate=True, green=True, approved=True),
-             _pr(2197, gate=True, green=True, approved=True)]
-    others = [_pr(n) for n in (2190, 2198, 2199, 2201, 2202, 2203, 2204, 2205, 2206)]
-    counted, excluded = pp.wip_count(gated + others)
-    assert (len(counted), len(excluded)) == (9, 2)
-    assert _open(FakeGh(gated + others), body) == 1
-    assert "WIP is full" in capsys.readouterr().err
+
+def test_bom_crlf_body_is_accepted(tmp_path):
+    f = tmp_path / "b.md"
+    f.write_bytes("\ufeffSlice: #2211\r\nAuthor-model: x\r\n".encode("utf-8"))
+    gh = FakeGh([])
+    assert _open(gh, f) == 0 and len(gh.created) == 1
+
+
+def test_cp1252_console_with_arrow_title(monkeypatch):
+    import io
+    import sys
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", out)
+    pr = _pr(1)
+    pr["title"] = "A \u2192 B"
+    assert op.main(["--count"], gh=FakeGh([pr])) == 0
+    out.flush()

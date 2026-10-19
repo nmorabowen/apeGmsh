@@ -64,6 +64,9 @@ def main(argv: list[str] | None = None, gh: Runner = _probe.run_gh) -> int:
     ap.add_argument("--count", action="store_true",
                     help="print the WIP count and exit 0 (opens nothing)")
     args = ap.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # a cp1252 console must not crash on a title
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     try:
         counted, excluded = read_count(gh, args.repo)
     except (RuntimeError, ValueError, KeyError) as exc:
@@ -76,7 +79,7 @@ def main(argv: list[str] | None = None, gh: Runner = _probe.run_gh) -> int:
     if not args.title or args.body_file is None:
         ap.error("--title and --body-file are required unless --count")
     body = args.body_file.read_text(encoding="utf-8")
-    if not SLICE_REF.search(body):
+    if not SLICE_REF.search(_probe._land_pr._text(body)):
         print("refused: the body has no `Slice: #<n>` line", file=sys.stderr)
         return 1
     if len(counted) >= WIP_CAP:

@@ -55,7 +55,7 @@ DEFAULT_REPO = "nmorabowen/apeGmsh"
 ISSUE_TITLE = "[Program probe] stalled program PRs and lock conflicts"
 PR_FIELDS = (
     "number,title,createdAt,updatedAt,isDraft,headRefOid,body,comments,"
-    "statusCheckRollup,closingIssuesReferences,labels,reviewDecision"
+    "statusCheckRollup,closingIssuesReferences,labels"
 )
 HISTORY_FIELDS = "number,title,createdAt,closedAt,mergedAt,labels"
 WIP_CAP = 8
@@ -173,8 +173,9 @@ def _labels(pr: dict) -> set[str]:
 def wip_count(prs: list[dict]) -> tuple[list[tuple[dict, str]], list[tuple[dict, str]]]:
     """Split open ``program`` PRs into (counted, excluded), each with a reason.
 
-    Excluded: labelled ``human-gate`` and green and approved (``approval_at_head``
-    or GitHub's ``reviewDecision == APPROVED``). Every other PR counts, drafts too.
+    Excluded: labelled ``human-gate`` and green and approved (``approval_at_head``,
+    a Review-verdict approve on the head sha; GitHub's reviewDecision is not
+    tied to the head and main does not dismiss stale reviews). Every other PR counts, drafts too.
     """
     counted: list[tuple[dict, str]] = []
     excluded: list[tuple[dict, str]] = []
@@ -183,7 +184,7 @@ def wip_count(prs: list[dict]) -> tuple[list[tuple[dict, str]], list[tuple[dict,
             counted.append((pr, "counts"))
         elif last_green(pr) is None:
             counted.append((pr, "human-gate but not green: counts"))
-        elif approval_at_head(pr) is None and pr.get("reviewDecision") != "APPROVED":
+        elif approval_at_head(pr) is None:
             counted.append((pr, "human-gate, green but not approved: counts"))
         else:
             excluded.append((pr, "human-gate, approved and green: waits on the maintainer"))
