@@ -603,6 +603,15 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     file on origin/main (#1939)."""
     labels = {lab["name"] for lab in pr["labels"]}
     if PROGRAM not in labels:
+        if SLICE_REF.search(_text(pr["body"])):
+            # Fail-open before #2012: #2002 and #2170 carried `Slice:` but no label, so they
+            # skipped this check and the program-wide WIP count. `scope-ok` does not apply.
+            raise LandError(
+                f"check 9: #{number}'s body has a 'Slice: #<n>' line but it is not labelled "
+                f"{PROGRAM!r}, so it escapes the program-wide WIP count "
+                f"(`gh pr list --label {PROGRAM}`) and the Owned-files check. Run "
+                f"`gh pr edit {number} --add-label {PROGRAM}`; {SCOPE_OK!r} does not override this."
+            )
         print(f"check 9: #{number} is not labelled {PROGRAM!r}; the Owned-files check does not apply.")
         return
     if SCOPE_OK in labels:
