@@ -1359,6 +1359,7 @@ class OpenSeesModel:
                 )
                 if slot_types.active and (has_inline or fem_eid > 0):
                     if has_inline:
+                        assert inline_conn is not None
                         n_nodes = len(inline_conn[i])
                     elif fem_eid in arity:
                         n_nodes = arity[fem_eid]
