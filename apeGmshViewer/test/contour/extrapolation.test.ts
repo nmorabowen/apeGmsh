@@ -401,7 +401,7 @@ test("the join of a verified field carries its extrapolation verdict (the effect
 // records at a Gauss point IS that point's x_i: carried to the corners it must give each
 // corner its own coordinate (the closed form). fixtures/legacy_simplex.oracle.json is
 // Python's extrapolate_gauss_slab_to_nodes on the slab NativeReader reads (with #2273's
-// mapping), written by fixtures/make_legacy_simplex_oracle.py.
+// mapping), written and re-checked by tests/test_app_legacy_simplex_drift.py.
 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;

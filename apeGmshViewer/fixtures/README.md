@@ -450,7 +450,10 @@ coordinate. `legacy_simplex.oracle.json` is Python's
 `extrapolate_gauss_slab_to_nodes` on the slab `NativeReader` reads (with
 #2273's mapping), on a one-element gmsh-coded stand-in with nodes `1..nc` at
 the corners. `test/contour/extrapolation.test.ts` checks the app against both.
+`tests/test_app_legacy_simplex_drift.py` recomputes the oracle and fails on a
+difference; run as a script, it rewrites the file:
 
 ```powershell
-& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_legacy_simplex_oracle.py
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/test_app_legacy_simplex_drift.py
 ```
