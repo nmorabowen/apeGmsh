@@ -28,7 +28,11 @@ from ..spec._emit import (
     fiber_record_class,
     per_material_gauss_layout,
 )
-from ._out_station_slicing import STATION_RANGE_TOL, require_equal_station_counts
+from ._out_station_slicing import (
+    STATION_RANGE_TOL,
+    model_station_counts,
+    require_equal_station_counts,
+)
 
 if TYPE_CHECKING:
     from ..spec._emit import LogicalRecorder
@@ -180,9 +184,14 @@ def read_fiber_record(
     require_record_class(rec, model)
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
+    # The model alone refuses mixed counts, before the file: their columns
+    # need not even divide by the element count.
+    n_model = int(model_station_counts(rec, model, fem_snapshot_id)[0])
+    require_equal_station_counts(rec, model, fem_snapshot_id, n_model, gpx_lr.file_path)
     _t, gpx, n_ip = _read_rows(gpx_lr, ids.size, 1)
-    require_equal_station_counts(rec, model, fem_snapshot_id, n_ip, gpx_lr.file_path)
-    xi = np.stack([normalise_integration_points(gpx[0, i], float(length))
+    if n_ip != n_model:     # the shared refusal of a file that is not the model's
+        require_equal_station_counts(rec, model, fem_snapshot_id, n_ip, gpx_lr.file_path)
+    xi =np.stack([normalise_integration_points(gpx[0, i], float(length))
                    for i, length in enumerate(lengths_of(ids))])
     out = np.flatnonzero(~(np.abs(xi) <= 1.0 + STATION_RANGE_TOL).all(axis=1))
     if out.size:

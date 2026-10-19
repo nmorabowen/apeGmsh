@@ -453,10 +453,13 @@ def test_fibre_decode_refuses_a_repeated_station(
     assert f"FEM element {int(beam['ids'][1])} has" in str(exc.value)
 
 
+@pytest.mark.parametrize("x_end", [1.5, 1.0001])
 def test_fibre_decode_refuses_a_station_outside_the_range(
-    beam: dict[str, Any], tmp_path: Path,
+    beam: dict[str, Any], tmp_path: Path, x_end: float,
 ) -> None:
-    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, 1.5])
+    """``x_end = 1.0001`` on a unit element is ``xi = 1 + 2e-4``: past the
+    shared slack (1e-4), so it pins the slack's top (#2256)."""
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, x_end])
     spec = _spec(beam["fem"], _fibres(beam["ids"]))
     with pytest.raises(ValueError, match="outside the element's natural range") as exc:
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
@@ -586,6 +589,23 @@ def test_hinge_rule_mixed_with_another_count_refuses(tmp_path: Path) -> None:
                        rf"4 points: FEM elements \[{m['ids'][0]}\]; "
                        rf"6 points: FEM elements \[{m['ids'][1]}\]"):
         _transcode(m, spec, tmp_path, tmp_path / "r.h5")
+
+
+def test_mixed_counts_whose_columns_do_not_divide_name_the_counts(
+    tmp_path: Path,
+) -> None:
+    """Lobatto 3 beside Lobatto 4: 7 stations do not divide by 2 elements.
+    The model refuses the mix before the file is read, so the message names
+    the counts, not the column layout (#2256)."""
+    m = _two_beams(tmp_path, "out_fib_3_4", ndm=3, elements=(
+        ("B1", "forceBeamColumn", _lobatto(3)), ("B2", "forceBeamColumn", _lobatto(4))))
+    _uniform_files(m, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.3, 0.7, 1.0])
+    spec = _spec(m["fem"], _fibres(m["ids"]))
+    with pytest.raises(ValueError, match=r"different integration-point counts .*"
+                       rf"3 points: FEM elements \[{m['ids'][0]}\]; "
+                       rf"4 points: FEM elements \[{m['ids'][1]}\]") as exc:
+        _transcode(m, spec, tmp_path, tmp_path / "r.h5")
+    assert "section layout" not in str(exc.value)
 
 
 def test_a_precision_6_file_reads_its_end_stations(tmp_path: Path) -> None:
