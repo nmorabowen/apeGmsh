@@ -8686,7 +8686,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # ``run=True``) that ``ops.results(path)`` reads; ``None`` until one
         # starts, unfinished until its subprocess exits cleanly.
         self._deck_run: DeckRun | None = None
-        # #2210: the ``analyze`` call ``(steps, dt)`` of the last deck
+        # The ``analyze`` call ``(steps, dt)`` of the last deck
         # ``py``/``tcl`` emitted (``None``: no deck yet, or a deck with no
         # ``analyze_steps``) and of the deck ``_deck_run`` ran. ``_write_h5``
         # archives it, so an unstaged deck's step count is a fact of the
@@ -11083,7 +11083,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             model_name=model_name or _path_stem(path), cuts=tuple(cuts),
             sweeps=tuple(sweeps))
         self._write_h5(path, self.build(), **kwargs)
-        # #2210: a deck emitted after this archive re-writes it, so its
+        # A deck emitted after this archive re-writes it, so its
         # ``analyze`` record follows the deck whichever runs first.
         self._h5_archives[_norm_path(path)] = _DeckArchive(
             path=str(path), kwargs=kwargs, call=self._deck_analyze,
@@ -11119,7 +11119,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         name = model_name or _path_stem(path)
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
-        # #2210: the deck's ``analyze`` call, where the deck emits it (after
+        # The deck's ``analyze`` call, where the deck emits it (after
         # every primitive): the one of the deck run ``ops.results`` reads
         # when ``bm`` is that run's frozen model, else the last deck's.
         run = self._deck_run
