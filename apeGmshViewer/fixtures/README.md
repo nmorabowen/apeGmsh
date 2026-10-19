@@ -427,3 +427,30 @@ $env:PATH = "$mpi\bin;$mpi\opt\mpi\libfabric\bin;$env:LADRUNO_MP_BIN;" + $env:PA
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_parts_oracle.py
 ```
+
+## `legacy_simplex_*.results.h5` and `legacy_simplex.oracle.json` (#2274)
+
+Two native results files written **before** #2228 moved the simplex Gauss
+tables to gmsh reference coordinates, so their `_natural_coords` hold the
+older node-0-first rows:
+
+- `legacy_simplex_capture_tet.results.h5` is `capture_tet.h5` of
+  `tests/fixtures/native_legacy_simplex/` (PR #2273), byte for byte:
+  `DomainCapture` of a live solve (FourNodeTetrahedron, TenNodeTetrahedron,
+  BezierTet10).
+- `legacy_simplex_transcoded_tri.results.h5` is `transcoded_tri.h5` of the
+  same directory: the recorder transcoder on the engine's `.out` strains
+  (SixNodeTri, LadrunoLST).
+
+Both were written by apeGmsh's own writers at 31ba6a63c, never rebuilt from
+tables; that directory's `generate.py` says how. Every element is loaded with
+`u_i = x_i^2 / 2`, so the strain it records at a Gauss point is that point's
+world position, and carried to the corners it must give each corner its own
+coordinate. `legacy_simplex.oracle.json` is Python's
+`extrapolate_gauss_slab_to_nodes` on the slab `NativeReader` reads (with
+#2273's mapping), on a one-element gmsh-coded stand-in with nodes `1..nc` at
+the corners. `test/contour/extrapolation.test.ts` checks the app against both.
+
+```powershell
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_legacy_simplex_oracle.py
+```
