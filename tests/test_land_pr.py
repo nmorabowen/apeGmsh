@@ -2011,3 +2011,25 @@ def test_check_card_combined_with_a_mode_flag_is_a_usage_error(extra, capsys):
         land_pr.main(["--check-card", "2000", *extra])
     assert exc.value.code == 2
     assert "--check-card" in capsys.readouterr().err
+
+
+# --- #2057: a cp1252 console must not crash the gate on non-ASCII card text ---------------------
+def test_check_card_survives_a_cp1252_stdout_with_a_sigma_2057(monkeypatch):
+    import io
+
+    sigma = {"body": "**Card amendment** Do not touch `scripts/c.py`, sigma σ."}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [sigma]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    raw = io.BytesIO()
+    wrapper = io.TextIOWrapper(raw, encoding="cp1252", newline="")
+    monkeypatch.setattr(sys, "stdout", wrapper)
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    wrapper.flush()
+    assert b"sigma ?" in raw.getvalue()
+
+
+@pytest.mark.parametrize(
+    "current,want", [(None, ":replace"), ("utf-8", "utf-8:replace"), ("cp1252:strict", "cp1252:replace")]
+)
+def test_the_child_gets_a_replace_error_handler_2057(current, want):
+    assert land_pr._safe_io_encoding(current) == want
