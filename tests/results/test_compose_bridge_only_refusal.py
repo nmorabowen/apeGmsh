@@ -66,6 +66,42 @@ def test_a_bridge_only_archive_without_fem_still_composes(
         assert sorted(d["opensees"].keys()) == sorted(s["opensees"].keys())
 
 
+def _compose_with_fem(tmp_path: Path, src: Path) -> Path:
+    _model, fem = build_simple_frame_h5(tmp_path)
+    dst = tmp_path / "results.h5"
+    writer = NativeWriter(dst)
+    writer.open(fem=fem, model_h5_src=src)
+    writer.close()
+    return dst
+
+
+def test_a_bridge_only_archive_without_an_ndm_stamp_still_composes(
+    tmp_path: Path,
+) -> None:
+    # No ndm to forward, so nothing reads nodes/coords even with fem=.
+    src = _bridge_only_archive(tmp_path)
+    with h5py.File(src, "r+") as f:
+        del f["meta"].attrs["ndm"]
+    dst = _compose_with_fem(tmp_path, src)
+    with h5py.File(src, "r") as s, h5py.File(dst, "r") as d:
+        assert sorted(d["opensees"].keys()) == sorted(s["opensees"].keys())
+        assert "model" in d
+
+
+def test_a_bridge_only_archive_without_meta_still_composes(
+    tmp_path: Path,
+) -> None:
+    # No /meta at all: neither the ndm forward nor the lineage forward
+    # runs, so the zone copies with fem= as it always has.
+    src = _bridge_only_archive(tmp_path)
+    with h5py.File(src, "r+") as f:
+        del f["meta"]
+    dst = _compose_with_fem(tmp_path, src)
+    with h5py.File(src, "r") as s, h5py.File(dst, "r") as d:
+        assert sorted(d["opensees"].keys()) == sorted(s["opensees"].keys())
+        assert "model" in d
+
+
 def test_composing_from_a_source_with_nodes_is_unchanged(
     tmp_path: Path,
 ) -> None:
