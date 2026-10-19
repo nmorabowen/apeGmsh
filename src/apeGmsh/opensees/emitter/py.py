@@ -310,8 +310,11 @@ def deck_run_body(
     ``analysis`` token (nothing to describe).
 
     The lines close every recorder first (``remove recorders``), so each
-    ``.mpco`` is final, and the record names its size and modification
-    time as the deck's runtime reports them (a list, one per part in rank
+    ``.mpco`` is final. That closes every recorder the deck opened at its
+    end, the text ``.out`` recorders included, as process exit would,
+    so nothing after the record writes to them. The record names each
+    file's size and modification time as the deck's runtime reports them
+    (a list, one per part in rank
     order, for a partitioned deck; no record when a file is missing). The
     engine's backend and build come from ``ladrunoBuild`` (the G10 rule: a
     40-hex answer is the fork, anything else is stock with an ``unknown``

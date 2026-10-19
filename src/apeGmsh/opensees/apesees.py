@@ -10112,8 +10112,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         :meth:`initial_stress` calls registered step hooks (Phase
         SSI-1).  Without ``analyze_steps``, the emitted deck declares
         the model but does not drive an analysis.  With it, the deck's last
-        action, once the loop returns, writes ``<mpco file>.run.json``
-        beside each MPCO recorder's output (#2210; ``read_deck_mpco``).
+        action, once the loop returns, closes every recorder (``.out``
+        included) and writes ``<mpco file>.run.json`` beside each MPCO
+        recorder's output (#2210; ``read_deck_mpco``); the automatic
+        ``model.h5`` is then written before the deck file.
 
         ``per_rank=True`` (ADR 0061) writes a driver deck at ``path``
         plus one ``ranks/rank<K>_<seq>.tcl`` fragment per

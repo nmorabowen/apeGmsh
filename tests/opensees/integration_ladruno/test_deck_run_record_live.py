@@ -226,6 +226,36 @@ def _assert_refuses_once(tmp_path: Path, mpco: Path, model: Path,
 
 
 @pytest.mark.ladruno_fork
+def test_fork_overwrite_in_a_tcl_records_second_refuses(tmp_path) -> None:
+    """The review's p_tclsec.py: a Tcl deck records a whole-second mtime;
+    a raw in-process MPCO recorder then rewrites the same file at the same
+    size, usually within that second. The fence refuses it."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    mpco, model = _run_deck(tmp_path, "tcl", fork_module=False)
+    opspy: Any = get_ops()
+    truss_bridge(None).run()
+    try:
+        opspy.recorder("mpco", str(mpco), "-N", "displacement")
+        for _ in range(2):
+            assert opspy.analyze(1) == 0
+        opspy.loadConst("-time", 0.0)
+        opspy.wipeAnalysis()
+        opspy.constraints("Plain")
+        opspy.numberer("RCM")
+        opspy.system("BandGeneral")
+        opspy.test("NormDispIncr", 1e-12, 10)
+        opspy.algorithm("Linear")
+        opspy.integrator("Newmark", 0.5, 0.25)
+        opspy.analysis("Transient")
+        for _ in range(2):
+            assert opspy.analyze(1, 0.01) == 0
+    finally:
+        opspy.wipe()
+    _assert_refuses_once(tmp_path, mpco, model, check="6 (the files)")
+
+
+@pytest.mark.ladruno_fork
 def test_fork_stale_record_beside_an_in_process_run_refuses(tmp_path) -> None:
     _assert_refuses_once(
         tmp_path, *_stale_record_then_in_process(tmp_path, fork_module=True),

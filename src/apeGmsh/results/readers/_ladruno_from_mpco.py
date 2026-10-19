@@ -585,19 +585,26 @@ def _deck_run(
         raise refuse("5 (the steps)", f"the loop completed "
                      f"{rec['steps_completed']} of {rec['analyze_steps']} "
                      "steps")
-    _check_files(rec, sources, refuse)
+    _check_files(rec, sources, refuse, path)
     return _ANALYSIS_KIND[token], int(rec["steps_completed"])
 
 
 def _check_files(
     rec: "dict[str, Any]", sources: "list[Path]",
-    refuse: "Callable[[str, str], StageKindRefused]",
+    refuse: "Callable[[str, str], StageKindRefused]", record: Path,
 ) -> None:
     """Check 6: every ``.mpco`` on disk is the file the deck closed, by the
     size and modification time its runtime recorded after closing it (one
     value for a single file, a list in part order for a set). An integer
     mtime (Tcl's ``file mtime``) is compared with the whole seconds on
-    disk, a float (Python's ``os.stat``) exactly."""
+    disk, a float (Python's ``os.stat``) exactly.
+
+    Two fences, in integer nanoseconds, catch a writer the size and a
+    whole-second mtime cannot (a same-size overwrite within the second):
+    the record, written after the close, is never older than any ``.mpco``;
+    and on a whole-second clock (both times exact seconds) a ``.mpco`` in
+    the record's own second cannot be ordered against it, so it refuses."""
+    rec_ns = record.stat().st_mtime_ns
     sizes, mtimes = rec["recorder_size"], rec["recorder_mtime"]
     many = len(sources) > 1
     if (isinstance(sizes, list) != many or isinstance(mtimes, list) != many
@@ -611,12 +618,25 @@ def _check_files(
             raise refuse("6 (the files)", f"{src.name}: size {size!r} and "
                          f"mtime {mtime!r} are not numbers")
         st = src.stat()
-        disk = int(st.st_mtime) if _is_int(mtime) else st.st_mtime
+        ns = st.st_mtime_ns
+        disk = ns // 10**9 if _is_int(mtime) else st.st_mtime
         if st.st_size != size or disk != mtime:
             raise refuse("6 (the files)", f"{src.name} is {st.st_size} bytes "
                          f"modified at {disk!r}, but the deck closed it at "
                          f"{size} bytes modified at {mtime!r} (another run "
                          "wrote it since)")
+        if ns > rec_ns:
+            raise refuse("6 (the files)", f"{src.name} was modified at "
+                         f"{ns} ns, after the record ({rec_ns} ns), which "
+                         "the deck writes only after closing it (another "
+                         "run wrote it since)")
+        if (ns % 10**9 == 0 and rec_ns % 10**9 == 0
+                and ns // 10**9 == rec_ns // 10**9):
+            raise refuse("6 (the files)", f"{src.name} and the record carry "
+                         "whole-second times in the same second "
+                         f"({ns // 10**9}): on this filesystem's clock a "
+                         "later writer of the file cannot be told from the "
+                         "deck's own close")
 
 
 def _is_int(value: Any) -> bool:

@@ -713,7 +713,63 @@ def test_a_file_changed_only_in_mtime_or_only_in_size_refuses(
     _record(src, model, recorder_size=src.stat().st_size + 1)
     _refuses(src, tmp_path / "deck.ladruno", r"check 6 \(the files\).*bytes",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns))
     _record(src, model)  # as the deck closed it: converts
+    _implicit(src, tmp_path / "deck.ladruno", model)
+
+
+_S = 1_790_000_000  # a whole second, in the past
+_NS = 10**9
+
+
+def _tcl_pair(fx: Any, tmp_path: Path, mpco_ns: int,
+              record_ns: int) -> "tuple[Path, Path, Path]":
+    """A Tcl deck's pair: the ``.mpco`` closed at ``mpco_ns`` and its
+    record (whole-second ``recorder_mtime``) written at ``record_ns``."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    os.utime(src, ns=(mpco_ns, mpco_ns))
+    rec = _record(src, model, recorder_mtime=mpco_ns // _NS)
+    os.utime(rec, ns=(record_ns, record_ns))
+    return src, rec, model
+
+
+def test_a_same_size_overwrite_in_the_records_second_refuses(fx, tmp_path) -> None:
+    """The review's p_tclsec.py, made exact: a Tcl deck closes its .mpco
+    and records (whole-second mtime), then an in-process run rewrites the
+    file at the same size within the same second. Size and second agree;
+    the fence (the record is never older than its file) refuses."""
+    src, rec, model = _tcl_pair(fx, tmp_path, _S * _NS + 100_000_000,
+                                _S * _NS + 500_000_000)
+    src.write_bytes(src.read_bytes())  # the later writer, same size
+    os.utime(src, ns=(_S * _NS + 700_000_000,) * 2)
+    _refuses(src, tmp_path / "deck.ladruno",
+             r"check 6 \(the files\).*after the record",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    assert "check 6 (the files)" in _read_once(src, model)
+    assert not (tmp_path / "deck.ladruno").exists()
+
+
+def test_a_whole_second_clock_in_the_records_second_refuses(fx, tmp_path) -> None:
+    """On a whole-second filesystem the record and its file in one second
+    cannot be ordered, so the pair refuses; across a second boundary the
+    record is provably later, and it converts."""
+    src, rec, model = _tcl_pair(fx, tmp_path, _S * _NS, _S * _NS)
+    _refuses(src, tmp_path / "deck.ladruno",
+             r"check 6 \(the files\).*whole-second times in the same second",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    assert "whole-second" in _read_once(src, model)
+    os.utime(rec, ns=((_S + 1) * _NS,) * 2)
+    _implicit(src, tmp_path / "deck.ladruno", model)
+
+
+def test_a_whole_second_mtime_truncates_the_nanoseconds(fx, tmp_path) -> None:
+    """Tcl's ``file mtime`` truncates; so does ``st_mtime_ns // 10**9``.
+    ``int(st_mtime)`` does not, once the float rounds a time 1 ns short of
+    the next second up to it, and refused a genuine pair."""
+    mpco_ns = _S * _NS + _NS - 1
+    assert int(mpco_ns / _NS) == _S + 1  # what the float would have said
+    src, rec, model = _tcl_pair(fx, tmp_path, mpco_ns, (_S + 1) * _NS + 1)
     _implicit(src, tmp_path / "deck.ladruno", model)
 
 
