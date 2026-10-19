@@ -12,7 +12,11 @@ stitched read and the closed form, and neither part's copy alone does.
 
 A partial set is never drawn. The set is refused, naming the parts, when a part
 is missing, when a part is past `NUM_PARTITIONS`, when the parts disagree on
-`NUM_PARTITIONS`, or when a part's step axis is shorter (a rank still writing).
+`NUM_PARTITIONS` or on `RUN_ID` (under Python's rule: compared only when every
+part has one and no `RUN_ID_SCOPE` is absent or `process`), when their `TIME`
+axes differ, or when a part's step axis is shorter (a rank still writing).
+Opened from the model, a set that lost part 0 is still found by its other
+parts, so it is refused by name rather than shown empty.
 A nodal result is refused by name, while the rest of the set reads, when it has
 no `PARTITION_REDUCTION`, when the value is outside the §7.1 table, when it is
 `UNSUPPORTED`, or when the parts disagree. It is never assumed `NONE`. The set

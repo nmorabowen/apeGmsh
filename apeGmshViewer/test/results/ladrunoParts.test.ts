@@ -17,12 +17,13 @@
 // a part re-stamped while the set is open.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
+import { pairSet } from "../../src/main/pairing.ts";
 import { ResultsHost } from "../../src/main/results.ts";
 import { LadrunoError } from "../../src/reader/ladruno.ts";
 import { openLadrunoSet, partOf, partSiblings, PART_SET_ELEMENTS_UNREAD, type LadrunoPartSet } from "../../src/reader/ladrunoParts.ts";
@@ -187,6 +188,42 @@ test("partial write: a part still being written (a shorter step axis) refuses th
   rmSync(dir, { recursive: true });
 });
 
+test("parts whose TIME values differ (same length) are refused as not one run", () => {
+  const shift = (f: h5wasm.File) => {
+    for (const r of ["DISPLACEMENT", "REACTION_FORCE"]) (f.get(`${ON_NODES}/${r}/TIME`) as h5wasm.Dataset).write_slice([[1, 2]], new Float64Array([0.75]));
+  };
+  const { dir, part } = scratchSet(PART, { 1: shift });
+  refuses(part(0), /stage stage_0: the TIME axes of run\.part-0\.ladruno and run\.part-1\.ladruno differ; the parts are not one run/);
+  rmSync(dir, { recursive: true });
+});
+
+// Review of 78d3f3ae, finding 2: Python `_validate_part_set` compares INFO@RUN_ID (fork WP-165).
+const runId = (id: string | null, scope: string | null) => (f: h5wasm.File) => {
+  const info = f.get("INFO") as unknown as AttrNode;
+  setAttr(info, "RUN_ID", id);
+  setAttr(info, "RUN_ID_SCOPE", scope);
+};
+
+test("RUN_ID: parts of run A and run B are refused, naming each part's RUN_ID", () => {
+  const { dir, part } = scratchSet(PART, { 0: runId("run-A", "broadcast"), 1: runId("run-B", "broadcast") });
+  refuses(part(1), /the parts come from different runs \(INFO@RUN_ID differs: run\.part-0\.ladruno = run-A, run\.part-1\.ladruno = run-B\)/);
+  rmSync(dir, { recursive: true });
+});
+
+test("RUN_ID is not compared when a part has none, when a part's RUN_ID_SCOPE is absent, or when one is \"process\" (Python's rule)", () => {
+  const cases: Record<number, (f: h5wasm.File) => void>[] = [
+    { 0: runId("run-A", "broadcast"), 1: runId(null, "broadcast") },
+    { 0: runId("run-A", "broadcast"), 1: runId("run-B", null) },
+    { 0: runId("run-A", "process"), 1: runId("run-B", "broadcast") },
+    { 0: runId("run-A", "launcher"), 1: runId("run-A", "user") },
+  ];
+  for (const edit of cases) {
+    const { dir, part } = scratchSet(PART, edit);
+    withSet(part(0), (s) => assert.deepEqual(Array.from(s.index.stages[0]!.nodes!.ids), [1, 2, 3]));
+    rmSync(dir, { recursive: true });
+  }
+});
+
 // -- PARTITION_REDUCTION ----------------------------------------------------------
 
 test("mutation: REACTION_FORCE@PARTITION_REDUCTION = MAX is refused by name; the displacement still reads", () => {
@@ -290,6 +327,19 @@ test("ResultsHost opens a part as the set, serves stitched steps, and refuses a 
   const reopened = await host.open(part(0));
   assert.ok(!reopened.ok);
   if (!reopened.ok) assert.match(reopened.error, /part\(s\) 1 missing/);
+  host.close();
+  rmSync(dir, { recursive: true });
+});
+
+test("opened from the model, a set that lost part 0 is refused naming index 0, never shown empty", async () => {
+  const { dir, part } = scratchSet([null, PART[1]!]);
+  copyFileSync(fixture("ladruno_parts2d.h5"), join(dir, "run.h5"));
+  const slot = pairSet(join(dir, "run.h5"), existsSync).results;
+  assert.equal(slot, part(1));
+  const host = new ResultsHost(H5, h5wasm.ready, { idleMs: 20 });
+  const opened = await host.open(slot!);
+  assert.ok(!opened.ok);
+  if (!opened.ok) assert.match(opened.error, /holds part\(s\) 1: part\(s\) 0 missing/);
   host.close();
   rmSync(dir, { recursive: true });
 });

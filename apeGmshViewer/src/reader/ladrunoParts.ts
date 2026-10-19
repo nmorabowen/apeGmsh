@@ -11,7 +11,8 @@
 // Rules this file keeps:
 // - the whole set or nothing: a missing part, a part past NUM_PARTITIONS, parts
 //   whose NUM_PARTITIONS disagree, or a PARTITION_ID that is not the file's own
-//   index refuses the set, naming the indices; a partial set is never read;
+//   index refuses the set, naming the indices; a partial set is never read; parts
+//   whose INFO@RUN_ID differ are refused under Python's rule (`_validate_part_set`);
 // - every part has the same stages, kinds and TIME axis; a part with a shorter
 //   step axis (one still being written) refuses the set, and the common prefix is
 //   never read;
@@ -249,6 +250,17 @@ export class LadrunoPartSet {
         "layout",
         `${stem}.part-<N>.ladruno: INFO@NUM_PARTITIONS = ${n}, and the directory holds part(s) ${indexList(indices)}: ${what}. A partial set is not read; re-run, or remove the stale part files`,
       );
+    }
+    // Python `_validate_part_set`: RUN_ID is compared only when every part has one and no
+    // part's RUN_ID_SCOPE is absent or "process" (schema §2: a process-unique id is not a run identity).
+    const runs = this.parts.map((p) => p.index.partition!);
+    if (runs.every((r) => r.runId !== null) && !runs.some((r) => r.runIdScope === null || r.runIdScope === "process")) {
+      if (new Set(runs.map((r) => r.runId)).size > 1) {
+        throw new LadrunoError(
+          "layout",
+          `${stem}.part-<N>.ladruno: the parts come from different runs (INFO@RUN_ID differs: ${listing(this.names.map((nm, j) => [nm, runs[j]!.runId]))}). Stale part files from an earlier run are mixed in; remove them and re-run`,
+        );
+      }
     }
   }
 

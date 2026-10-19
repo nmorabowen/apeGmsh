@@ -164,8 +164,8 @@ export interface LadrunoIndex {
   lineageReason: string | null;
   /** Consistent unit system stamped on `INFO/PROVENANCE@units`, or null when absent/malformed */
   units: UnitSystemId | null;
-  /** INFO@PARTITION_ID and NUM_PARTITIONS of a file opened as one part (`openLadruno` `part`), else null */
-  partition: { id: number; count: number } | null;
+  /** INFO@PARTITION_ID, NUM_PARTITIONS, RUN_ID and RUN_ID_SCOPE (null when absent) of a file opened as one part, else null */
+  partition: { id: number; count: number; runId: string | null; runIdScope: string | null } | null;
   warnings: string[];
 }
 
@@ -329,7 +329,7 @@ export class LadrunoFile {
       lineage,
       lineageReason: reason,
       units: provenance.state === "present" ? provenance.units : null,
-      partition: part ? { id: partitionId!, count: partitions! } : null,
+      partition: part ? { id: partitionId!, count: partitions!, runId: optionalText(info, "RUN_ID"), runIdScope: optionalText(info, "RUN_ID_SCOPE") } : null,
       warnings,
     };
   }
@@ -1653,6 +1653,9 @@ function optionalInt(g: LGroup, key: string): number | null {
   if (v === null) throw new LadrunoError("layout", `${g.path}@${key} is not an integer`);
   return v;
 }
+
+/** A text attribute, trimmed of NULs and spaces as Python's `partition_manifest` does, or null when absent. */
+const optionalText = (g: LGroup, key: string): string | null => (g.attrs[key] === undefined ? null : String(oneValue(g.attrs[key]!.value)).replace(/^[\0 ]+|[\0 ]+$/g, ""));
 
 function checkStep(s: StageInfo, step: number): void {
   if (!Number.isInteger(step) || step < 0 || step >= s.nSteps) {

@@ -141,6 +141,20 @@ test("opening the model finds the part set by part 0; the .ladruno outranks it, 
   assert.equal(pairSet(p("m.ladruno"), disk("m.ladruno", "m.part-0.ladruno")).results, p("m.ladruno"));
 });
 
+// Review of 78d3f3ae, finding 1: with part 0 gone, the model found no results and said nothing.
+test("opening the model of a set that lost part 0 puts its lowest part in the slot, so the set reader names index 0", () => {
+  const names = ["run.h5", "run.part-2.ladruno", "run.part-1.ladruno", "other.part-0.ladruno"];
+  const list = (d: string) => (d === dir ? names : []);
+  assert.equal(pairSet(p("run.h5"), disk(...names), list).results, p("run.part-1.ladruno"));
+  // Another stem's part 0 is not this stem's set; with no part of `run`, nothing is found.
+  assert.equal(pairSet(p("run.h5"), disk("run.h5", "other.part-0.ladruno"), () => ["run.h5", "other.part-0.ladruno"]).results, null);
+  // The listing is a hint: a listed name the disk does not hold is not put in the slot.
+  assert.equal(pairSet(p("run.h5"), disk("run.h5"), () => ["run.h5", "run.part-1.ladruno"]).results, null);
+  // Part 0, when present, is the slot whatever else is listed.
+  assert.equal(pairSet(p("run.h5"), disk("run.h5", "run.part-0.ladruno", "run.part-1.ladruno"), list).results, p("run.part-0.ladruno"));
+  assert.equal(unopenedSibling(p("run.ladruno"), disk("run.ladruno", "run.part-1.ladruno"), list), p("run.part-1.ladruno"));
+});
+
 test("unopenedSibling: a part names the stem's .ladruno or .results.h5, never another part of its own set", () => {
   assert.equal(unopenedSibling(p("m.part-1.ladruno"), disk("m.part-0.ladruno", "m.part-1.ladruno")), null);
   assert.equal(unopenedSibling(p("m.part-1.ladruno"), disk("m.part-1.ladruno", "m.results.h5")), p("m.results.h5"));
