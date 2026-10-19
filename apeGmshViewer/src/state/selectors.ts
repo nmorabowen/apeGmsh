@@ -788,7 +788,8 @@ export function resultsPairing(s: State): ResultsPairing {
   const zone = ops?.status === "ready";
   // No decls group in a ready opensees zone reads as "absent" (h5-schema.md): the joins are not recorded.
   const programDecl = zone ? (s.definitions?.decls ? (s.definitions.decls.programDecl ?? "absent") : "absent") : null;
-  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: zone ? ops.version : null, programDecl } : null, s.results);
+  const program = zone ? (s.definitions?.program ?? null) : null;
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: zone ? ops.version : null, programDecl, program } : null, s.results);
 }
 
 /**
