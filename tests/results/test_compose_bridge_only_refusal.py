@@ -50,6 +50,22 @@ def test_composing_from_a_bridge_only_archive_raises_the_named_refusal(
         assert "opensees" not in f
 
 
+def test_a_bridge_only_archive_without_fem_still_composes(
+    tmp_path: Path,
+) -> None:
+    # No /model/meta to forward ndm onto, so nothing reads nodes/coords:
+    # the refusal is exactly as narrow as the KeyError it replaces.
+    src = _bridge_only_archive(tmp_path)
+    dst = tmp_path / "results.h5"
+    writer = NativeWriter(dst)
+    writer.open(model_h5_src=src)
+    writer.close()
+    with h5py.File(src, "r") as s, h5py.File(dst, "r") as d:
+        assert "model" not in d
+        assert "opensees" in d
+        assert sorted(d["opensees"].keys()) == sorted(s["opensees"].keys())
+
+
 def test_composing_from_a_source_with_nodes_is_unchanged(
     tmp_path: Path,
 ) -> None:

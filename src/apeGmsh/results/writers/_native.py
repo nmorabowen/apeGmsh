@@ -144,7 +144,8 @@ class NativeWriter:
         RuntimeError
             ``model_h5_src`` does not carry a ``/opensees/`` group.
         BridgeOnlyArchiveError
-            ``model_h5_src`` is a bridge-only archive (no neutral zone).
+            ``fem`` is given and ``model_h5_src`` is a bridge-only
+            archive (no neutral zone to resolve the forwarded ``ndm``).
         ValueError
             ``opensees_backend`` is not ``"fork"`` / ``"stock"``, or a
             build is given for a stock backend.
@@ -270,9 +271,10 @@ class NativeWriter:
             ``/opensees/`` is missing from the source, or the writer
             already holds a ``/opensees/`` group.
         BridgeOnlyArchiveError
-            The source is a bridge-only archive: ``/meta`` and
-            ``/opensees/`` but no neutral zone (no ``nodes`` group).
-            Raised before anything is copied.
+            The source is a bridge-only archive (``/meta`` with an
+            ``ndm`` stamp and ``/opensees/``, but no ``nodes`` group)
+            and this file holds a ``/model/meta`` the ``ndm`` would be
+            forwarded onto. Raised before anything is copied.
         """
         import h5py
 
@@ -302,10 +304,18 @@ class NativeWriter:
                 )
             # A bridge-only source (/meta + /opensees, no neutral zone,
             # e.g. one written from a FEMStub) has no node coordinates
-            # to resolve the forwarded ndm from.  Refuse it
-            # before anything is copied, so the destination never holds
-            # a half-composed /opensees/ zone.
-            if "meta" in src and "nodes" not in src:
+            # to resolve the forwarded ndm from.  Refuse exactly when the
+            # ndm forward below would read them (a /model/meta to forward
+            # onto and an ndm stamp in the source), and before anything
+            # is copied, so the destination never holds a half-composed
+            # /opensees/ zone.  Without /model/meta nothing reads the
+            # coordinates and the zone copies as it always has.
+            if (
+                "nodes" not in src
+                and "meta" in src
+                and "ndm" in src["meta"].attrs
+                and "/model/meta" in h5
+            ):
                 present = ", ".join("/" + name for name in sorted(src.keys()))
                 raise BridgeOnlyArchiveError(
                     f"NativeWriter.write_opensees_from: source "

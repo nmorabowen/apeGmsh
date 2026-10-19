@@ -8,4 +8,5 @@ no neutral zone (for example an archive written from a `FEMStub`), has no
 `/opensees` copy had already landed in the destination. It now raises
 `BridgeOnlyArchiveError` (the class `OpenSeesModel.from_h5` raises for the
 same archive since #1859), names the zones present, and refuses before
-anything is copied. A source with a neutral zone composes as before.
+anything is copied. A source with a neutral zone composes as before, and so
+does a bridge-only source opened without `fem=` (nothing reads its nodes).
