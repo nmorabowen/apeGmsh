@@ -52,10 +52,6 @@ from apeGmsh.results._gauss_extrapolation import (
 )
 from apeGmsh.results._gauss_world_coords import compute_global_coords
 from apeGmsh.results.readers._ladruno import LadrunoReader
-from apeGmsh.results.readers._ladruno_element_io import (
-    gmsh_to_gp_param,
-    gp_param_to_gmsh,
-)
 from apeGmsh.results.readers._mpco import MPCOReader
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "simplex_gp"
@@ -625,6 +621,11 @@ def test_converter_writes_what_the_fork_writes(
 
 
 def test_bary_conversion_round_trips() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        gmsh_to_gp_param,
+        gp_param_to_gmsh,
+    )
+
     rows = np.array([[0.6, 0.1, 0.2], [0.05, 0.15, 0.3]])
     for topo, fam, gp in (("tet", "lagrange", rows),
                           ("tet", "bernstein", rows),
@@ -648,6 +649,8 @@ def test_bary_conversion_round_trips() -> None:
      "no known barycentric frame"),
 ])
 def test_bary_conversion_refuses_an_unknown_frame(kw: Any, match: str) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import gp_param_to_gmsh
+
     with pytest.raises(ValueError, match=match):
         gp_param_to_gmsh(np.array([[0.2, 0.3]]), where="t", **kw)
 
