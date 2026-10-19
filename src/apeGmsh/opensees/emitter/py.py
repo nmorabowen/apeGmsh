@@ -80,8 +80,8 @@ def deck_run_lineage(
     archive the bridge composes (an explicit ``ops.h5(path)``, the
     automatic ``model.h5`` the deck emit writes first, an earlier deck's
     record) memoises its lineage by the digest of the declarations it
-    holds (:func:`~apeGmsh.opensees._internal.artifact_write.lineage_key`,
-    #2263), and the record reuses it: no archive is composed. Otherwise the
+    holds (:func:`~apeGmsh.opensees._internal.artifact_write.lineage_key`),
+    and the record reuses it: no archive is composed. Otherwise the
     bridge composes the archive (``apeSees._write_h5`` over the deck's own
     build) in memory, once per declaration set. No file is written and
     ``model_hash`` is unchanged. With ``compose=False`` (a partitioned

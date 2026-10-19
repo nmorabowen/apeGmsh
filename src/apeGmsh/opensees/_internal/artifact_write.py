@@ -42,7 +42,7 @@ already gave the one P2 warning at ``end()``.  A stub snapshot (not a
 neutral zone) belongs to no run and is skipped silently.  An explicit
 ``ops.h5(path)`` never comes here (P7).
 
-**The lineage memo** (#2263).  Every archive :meth:`apeSees.h5` writes,
+**The lineage memo.**  Every archive :meth:`apeSees.h5` writes,
 the automatic one and an explicit ``ops.h5(path)`` alike, leaves its
 ``(model_hash, fem_hash)`` in :data:`_LINEAGE_BY_DIGEST` under
 :func:`lineage_key`, the P5 digest of the declarations it was composed
