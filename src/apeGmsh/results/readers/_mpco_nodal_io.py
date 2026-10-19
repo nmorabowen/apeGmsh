@@ -50,6 +50,11 @@ A bucket the reader is unable to decode is listed by
 - an element class absent from :data:`NODAL_FORCE_CATALOG`;
 - a ``header_idx > 0`` bucket whose META does not spell the catalog
   layout, or carries no column names to check it by.
+
+MPCO writes each element to exactly one bucket. A read whose buckets
+hold one element id twice, across header indices, custom rules or
+classes, raises :class:`NodalForceDuplicateElementError` instead of
+returning that element twice (#2173).
 """
 from __future__ import annotations
 
@@ -144,7 +149,86 @@ class _SkippedNodalBucket:
     reason: str
 
 
+class NodalForceDuplicateElementError(ValueError):
+    """One element id sits in two nodal-force buckets of the same MPCO
+    token. MPCO writes each element to exactly one bucket, so the file is
+    corrupt, and stitching the buckets would return that element twice."""
+
+
 def scan_nodal_force_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_NodalBucket], list[_SkippedNodalBucket]]:
+    """Walk ``ON_ELEMENTS/<globalForce|localForce>/`` for a read.
+
+    The buckets and skips of :func:`_walk_nodal_force_buckets`, after
+    :func:`_refuse_duplicate_element_ids` has checked that no element id
+    sits in two of the buckets the read stitches. Raises
+    :class:`NodalForceDuplicateElementError` when one does.
+    """
+    token, buckets, skipped = _walk_nodal_force_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    if token is not None and len(buckets) > 1:
+        _refuse_duplicate_element_ids(
+            on_elements_grp[token],
+            [b for b in buckets
+             if canonical_component in b.layout.component_layout],
+        )
+    return (token, buckets, skipped)
+
+
+def _refuse_duplicate_element_ids(
+    token_grp: "h5py.Group",
+    buckets: list[_NodalBucket],
+) -> None:
+    """Raise :class:`NodalForceDuplicateElementError` when an element id
+    sits in more than one of ``buckets``.
+
+    The buckets may differ by header index (``[1:0:0]``, ``[1:0:1]``), by
+    custom rule (``[1000:1:0]``, ``[1000:2:0]``) or by class. The error
+    names the smallest such id, the HDF5 paths of the first two buckets
+    that hold it, and the file. A repeat inside one bucket is not this
+    check's business.
+    """
+    if len(buckets) < 2:
+        return
+    ids_parts: list[ndarray] = []
+    owner_parts: list[ndarray] = []
+    for i, b in enumerate(buckets):
+        ids = np.unique(
+            np.asarray(token_grp[b.bracket_key]["ID"][...])
+            .ravel().astype(np.int64)
+        )
+        ids_parts.append(ids)
+        owner_parts.append(np.full(ids.size, i, dtype=np.int64))
+    all_ids = np.concatenate(ids_parts)
+    owners = np.concatenate(owner_parts)
+    order = np.argsort(all_ids, kind="stable")
+    sorted_ids = all_ids[order]
+    repeat = np.flatnonzero(sorted_ids[1:] == sorted_ids[:-1])
+    if repeat.size == 0:
+        return
+    j = int(repeat[0])
+    eid = int(sorted_ids[j])
+    first = buckets[int(owners[order[j]])].bracket_key
+    second = buckets[int(owners[order[j + 1]])].bracket_key
+    n_ids = np.unique(sorted_ids[repeat]).size
+    more = (
+        f" {n_ids - 1} more element id(s) repeat across these buckets."
+        if n_ids > 1 else ""
+    )
+    raise NodalForceDuplicateElementError(
+        f"{token_grp.file.filename}: element {eid} appears in two MPCO "
+        f"buckets of {token_grp.name}: {token_grp[first].name} and "
+        f"{token_grp[second].name}. MPCO writes each element to exactly "
+        f"one bucket, so the file is corrupt; the read refuses rather "
+        f"than return element {eid} twice.{more}"
+    )
+
+
+def _walk_nodal_force_buckets(
     on_elements_grp: "h5py.Group",
     *,
     canonical_component: str,
@@ -217,12 +301,14 @@ def discover_nodal_force_buckets(
     *,
     canonical_component: str,
 ) -> tuple[str | None, list[_NodalBucket]]:
-    """The readable buckets of :func:`scan_nodal_force_buckets`.
+    """The readable buckets of :func:`_walk_nodal_force_buckets`.
 
-    For listings (``available_components``); a read uses the scan, so it
-    can warn about the buckets it leaves unread.
+    For listings (``available_components``), which name components and
+    stitch no rows, so a duplicated element id does not stop them. A read
+    uses :func:`scan_nodal_force_buckets`, which warns about the buckets
+    it leaves unread and refuses a duplicated element id.
     """
-    token, buckets, _skipped = scan_nodal_force_buckets(
+    token, buckets, _skipped = _walk_nodal_force_buckets(
         on_elements_grp, canonical_component=canonical_component,
     )
     return (token, buckets)
