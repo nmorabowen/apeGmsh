@@ -19,4 +19,6 @@ The cell now declares the same loads and supports with node-level verbs:
 
 The problem is unchanged: same span, section, mesh, imperfection, supports,
 load magnitude and distribution. The nodal forces equal the old
-resolver's least-norm forces on the same 31 nodes per end.
+resolver's least-norm forces on the same 31 nodes per end. The analysis
+subprocess timeout goes from 120 s to 1800 s, because the 80-step run takes
+about 8 minutes.
