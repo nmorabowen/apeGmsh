@@ -562,6 +562,8 @@ class TclEmitter:
         # The deck run record, as on the py deck.
         self._mpco_files: list[str] = []
         self._analysis_token: str | None = None
+        # Set by the bridge when the deck will write a record.
+        self._run_record: bool = False
 
     # -- Output --------------------------------------------------------------
 
@@ -1047,6 +1049,11 @@ class TclEmitter:
     def recorder(self, kind: str, *args: int | float | str) -> None:
         if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
             self._mpco_files.append(str(args[0]))
+        if kind == "mpco" and args and self._run_record:
+            from .py import deck_run_unlink
+
+            for line in deck_run_unlink("tcl", str(args[0])):
+                self._lines.append(line)
         self._lines.append(_join("recorder", kind, *args))
 
     def recorder_declaration_begin(

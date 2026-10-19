@@ -10159,6 +10159,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = TclEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
+        emitter._run_record = analyze_steps is not None
         # ADR 0099 S5: ``per_rank`` is applied around / after ``bm.emit``
         # (live fragment routing under ``stream``, post-hoc span slicing
         # otherwise), so the INV-4 gate inside emit cannot see it. Stamp
@@ -10737,6 +10738,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = PyEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
+        emitter._run_record = analyze_steps is not None
         pre_prof, post_prof = self._split_profiler_records()
         bm.emit(emitter)
         for _verb, _vargs in pre_prof:

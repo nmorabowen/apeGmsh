@@ -29,6 +29,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 import shutil
 import warnings
 from pathlib import Path
@@ -481,8 +482,9 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
 
 #: The ratified spec's 12 fields, in order (the oracle the writer is held to
 #: in ``tests/test_deck_run_record.py``).
-RUN_FIELDS = ("schema", "model_hash", "fem_hash", "recorder_file", "analysis",
-              "analyze_steps", "steps_completed", "dt", "opensees_backend",
+RUN_FIELDS = ("schema", "model_hash", "fem_hash", "recorder_file",
+              "recorder_size", "recorder_mtime", "analysis", "analyze_steps",
+              "steps_completed", "dt", "opensees_backend",
               "opensees_build_sha", "writer", "completed_iso")
 _DROP = object()
 
@@ -496,16 +498,24 @@ def _file_steps(src: Path) -> int:
 
 
 def _record(src: Path, model: Path, *, base: "str | None" = None,
-            **override: Any) -> Path:
+            parts: "list[Path] | None" = None, **override: Any) -> Path:
     """The record a deck that ran ``src``'s steps writes, with ``override``
-    applied (``_DROP`` removes a field), beside ``base`` (``src``'s name)."""
+    applied (``_DROP`` removes a field), beside ``base`` (``src``'s name).
+    The files are stated as they are on disk now: ``src`` (a Python deck's
+    float mtime), or every one of ``parts`` as lists."""
     with h5py.File(model, "r") as f:
         lin = {k: str(v) for k, v in f["meta/lineage"].attrs.items()}
-    steps = _file_steps(src)
+    steps = override.get("analyze_steps") or _file_steps(src)
     base = base or src.name
+    stats = [p.stat() for p in (parts or [src])]
+    size: Any = [st.st_size for st in stats]
+    mtime: Any = [st.st_mtime for st in stats]
+    if parts is None:
+        size, mtime = size[0], mtime[0]
     rec: "dict[str, Any]" = {
-        "schema": "apegmsh.deck_run/1", "model_hash": lin["model_hash"],
+        "schema": "apegmsh.deck_run/2", "model_hash": lin["model_hash"],
         "fem_hash": lin["fem_hash"], "recorder_file": base,
+        "recorder_size": size, "recorder_mtime": mtime,
         "analysis": "Static", "analyze_steps": steps, "steps_completed": steps,
         "dt": None, "opensees_backend": "stock",
         "opensees_build_sha": "unknown", "writer": "apeGmsh deck test",
@@ -589,7 +599,8 @@ def _garbage(path: Path) -> None:
 
 #: (id, model, record override or a callable on the record's path, check).
 _BROKEN: "list[tuple[str, str, Any, str]]" = [
-    ("schema", "static", {"schema": "apegmsh.deck_run/2"}, "1"),
+    ("schema", "static", {"schema": "apegmsh.deck_run/1"}, "1"),
+    ("size-type", "static", {"recorder_size": "big"}, "1"),
     ("missing-field", "static", {"dt": _DROP}, "1"),
     ("unknown-field", "static", {"rank": 0}, "1"),
     ("bool-steps", "static", {"analyze_steps": True}, "1"),
@@ -605,6 +616,10 @@ _BROKEN: "list[tuple[str, str, Any, str]]" = [
     ("two-analyses", "two", {"analysis": "Transient"}, "4"),
     ("no-analysis", "none", {}, "4"),
     ("steps-completed", "static", {"steps_completed": 0}, "5"),
+    ("size", "static", {"recorder_size": 1}, "6"),
+    ("size-list", "static", {"recorder_size": [1]}, "6"),
+    ("mtime", "static", {"recorder_mtime": 1.5}, "6"),
+    ("mtime-whole-seconds", "static", {"recorder_mtime": 1}, "6"),
 ]
 
 
@@ -645,10 +660,73 @@ def test_the_files_step_count_must_be_the_records(fx, tmp_path) -> None:
     _refuses(src, tmp_path / "deck.ladruno",
              rf"check 5 \(the steps\).*recording \[{n - 1}\] step",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
-    _record(src, model)
-    _modes_only(src)
+    _modes_only(src)  # then recorded as the deck closed it
+    _record(src, model, analyze_steps=n - 1, steps_completed=n - 1)
     _refuses(src, tmp_path / "deck.ladruno",
              r"check 5 \(the steps\).*holds 0 MODEL_STAGE",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def _read_once(src: Path, model: Path) -> str:
+    """``read_deck_mpco``'s one warning, after a read with ``from_mpco``."""
+    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        read_deck_mpco(src, model_h5=model).close()
+    ours = [str(w.message) for w in caught if w.category is DefaultRouteWarning]
+    assert len(ours) == 1, ours
+    return ours[0]
+
+
+def test_a_stale_record_beside_a_later_writer_refuses(fx, tmp_path) -> None:
+    """F1 of the review of #2255: a deck ran and recorded; then another run
+    (in process, which writes no record and removes none) wrote the same
+    ``.mpco``. Every other check still holds; check 6 sees a file the deck
+    did not close, and the read warns once, converting nothing."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    _record(src, model)
+    before = src.stat()
+    with h5py.File(src, "r+") as f:  # the later writer
+        f["MODEL_STAGE[1]/MODEL/NODES/COORDINATES"][0, 0] += 0.0
+    os.utime(src, ns=(before.st_atime_ns, before.st_mtime_ns + 2_000_000_000))
+    _refuses(src, tmp_path / "deck.ladruno", r"check 6 \(the files\)",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    assert "check 6 (the files)" in _read_once(src, model)
+    assert not (tmp_path / "deck.ladruno").exists()
+
+
+def test_a_file_changed_only_in_mtime_or_only_in_size_refuses(
+    fx, tmp_path,
+) -> None:
+    """Each half of check 6 on its own: the file's mtime moved, its size
+    did not; and a record whose size alone disagrees."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    _record(src, model)
+    st = src.stat()
+    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert src.stat().st_size == st.st_size
+    _refuses(src, tmp_path / "deck.ladruno", r"check 6 \(the files\)",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    _record(src, model, recorder_size=src.stat().st_size + 1)
+    _refuses(src, tmp_path / "deck.ladruno", r"check 6 \(the files\).*bytes",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    _record(src, model)  # as the deck closed it: converts
+    _implicit(src, tmp_path / "deck.ladruno", model)
+
+
+def test_a_whole_second_mtime_is_compared_in_whole_seconds(fx, tmp_path) -> None:
+    """Tcl's ``file mtime`` is an integer: it is compared with the whole
+    seconds on disk, and a float with the float."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    _record(src, model, recorder_mtime=int(src.stat().st_mtime))
+    (dst,) = _implicit(src, tmp_path / "deck.ladruno", model)
+    dst.unlink()
+    _record(src, model, recorder_mtime=int(src.stat().st_mtime) + 1)
+    _refuses(src, tmp_path / "deck.ladruno", r"check 6 \(the files\)",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 
@@ -661,13 +739,14 @@ def test_a_partitioned_set_reads_the_record_beside_its_base_name(
     one = _bridge_copy(SPRINGS, model, tmp_path / "one.mpco")
     for i in (0, 1):
         shutil.copy(one, tmp_path / f"run.part-{i}.mpco")
-    _record(tmp_path / "run.part-0.mpco", model, base="run.mpco")
+    parts = [tmp_path / f"run.part-{i}.mpco" for i in (0, 1)]
+    _record(parts[0], model, base="run.mpco", parts=parts)
     out = _implicit(tmp_path / "run.part-1.mpco", tmp_path / "run.ladruno",
                     model)
     assert [p.name for p in out] == ["run.part-0.ladruno", "run.part-1.ladruno"]
     for p in out:
         p.unlink()
-    _record(tmp_path / "run.part-0.mpco", model, base="run.mpco",
+    _record(parts[0], model, base="run.mpco", parts=parts,
             recorder_file="run.part-0.mpco")
     _refuses(tmp_path / "run.part-0.mpco", tmp_path / "run.ladruno",
              r"check 2 \(recorder_file\)", exc=StageKindRefused,

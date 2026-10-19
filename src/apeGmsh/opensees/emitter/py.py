@@ -41,7 +41,7 @@ from .tcl import DECK_BANNER, provenance_stamp
 
 __all__ = [
     "DECK_RUN_SCHEMA", "DECK_RUN_SUFFIX", "PyEmitter", "deck_run_body",
-    "deck_run_fields", "deck_run_lineage",
+    "deck_run_fields", "deck_run_lineage", "deck_run_unlink",
 ]
 
 #: The deck run record (the ratified spec of the slice). A deck the
@@ -50,7 +50,7 @@ __all__ = [
 #: without error, and never otherwise. ``convert_mpco``'s implicit-stage
 #: path reads it. This module owns the format; the Tcl deck renders the
 #: same fields from :func:`deck_run_fields`.
-DECK_RUN_SCHEMA = "apegmsh.deck_run/1"
+DECK_RUN_SCHEMA = "apegmsh.deck_run/2"
 DECK_RUN_SUFFIX = ".run.json"
 
 
@@ -171,9 +171,10 @@ def deck_run_fields(
     lineage: "tuple[str, str]", recorder_file: str, analysis: str,
     steps: int, dt: "float | None",
 ) -> "dict[str, Any]":
-    """The record's 12 fields, in the spec's order. The four the deck fills
-    at run time (``steps_completed``, ``opensees_backend``,
-    ``opensees_build_sha``, ``completed_iso``) are ``None`` here."""
+    """The record's 14 fields, in the spec's order. The six the deck fills
+    at run time (``recorder_size``, ``recorder_mtime``, ``steps_completed``,
+    ``opensees_backend``, ``opensees_build_sha``, ``completed_iso``) are
+    ``None`` here."""
     from apeGmsh import __version__
 
     return {
@@ -181,6 +182,8 @@ def deck_run_fields(
         "model_hash": lineage[0],
         "fem_hash": lineage[1],
         "recorder_file": re.split(r"[\\/]", recorder_file)[-1],
+        "recorder_size": None,
+        "recorder_mtime": None,
         "analysis": analysis,
         "analyze_steps": int(steps),
         "steps_completed": None,
@@ -198,9 +201,103 @@ def _tcl_quote(text: str) -> str:
     return '"' + re.sub(r'([\\\[\]${}"])', r"\\\1", text) + '"'
 
 
-#: The fields a Tcl deck fills at run time, as ``format`` conversions.
-_TCL_RUN_TIME = {"steps_completed": "%d", "opensees_backend": '"%s"',
-                 "opensees_build_sha": '"%s"', "completed_iso": '"%s"'}
+def deck_run_unlink(dialect: 'Literal["py", "tcl"]', file: str) -> "list[str]":
+    """The lines a record-writing deck runs just before it opens its MPCO
+    recorder on ``file``: an earlier ``<file>.run.json`` is removed, so a
+    run that then fails, and any later writer of the same ``.mpco``, never
+    sits beside an old record."""
+    final = file + DECK_RUN_SUFFIX
+    if dialect == "py":
+        return ["try:", f"    __import__('os').remove({final!r})",
+                "except OSError:", "    pass"]
+    return [f"file delete -force -- {_tcl_quote(final)}"]
+
+
+#: The fields a Tcl deck fills at run time: the ``format`` conversion and
+#: the variable that holds the value.
+_TCL_RUN_TIME = {
+    "recorder_size": ("%s", "$_apesees_size"),
+    "recorder_mtime": ("%s", "$_apesees_mtime"),
+    "steps_completed": ("%d", "$_apesees_i"),
+    "opensees_backend": ('"%s"', "$_apesees_backend"),
+    "opensees_build_sha": ('"%s"', "$_apesees_sha"),
+    "completed_iso": ('"%s"', "$_apesees_iso"),
+}
+
+
+def _py_record(fields: "dict[str, Any]", file: str, done: str,
+               partitioned: bool) -> "list[str]":
+    final = file + DECK_RUN_SUFFIX
+    tmp = final + ".tmp"
+    stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
+    parts = (f"['%s.part-%d.mpco' % ({stem!r}, _k) for _k in "
+             "range(_apesees_np)]" if partitioned else f"[{file!r}]")
+    one = [] if partitioned else [
+        "    _apesees_size, _apesees_mtime = _apesees_size[0], "
+        "_apesees_mtime[0]"]
+    return [
+        f"_apesees_parts = {parts}",
+        "if all(_apesees_os.path.isfile(_p) for _p in _apesees_parts):",
+        "    _apesees_st = [_apesees_os.stat(_p) for _p in _apesees_parts]",
+        "    _apesees_size = [_s.st_size for _s in _apesees_st]",
+        "    _apesees_mtime = [_s.st_mtime for _s in _apesees_st]",
+        *one,
+        f"    _apesees_run = {fields!r}",
+        "    _apesees_run.update(recorder_size=_apesees_size, "
+        f"recorder_mtime=_apesees_mtime, steps_completed={done}, "
+        "opensees_backend='stock' if _apesees_sha == 'unknown' "
+        "else 'ladruno', opensees_build_sha=_apesees_sha, "
+        "completed_iso=_apesees_time.strftime("
+        "'%Y-%m-%dT%H:%M:%SZ', _apesees_time.gmtime()))",
+        f"    with open({tmp!r}, 'w', encoding='utf-8') as _apesees_f:",
+        "        _apesees_json.dump(_apesees_run, _apesees_f)",
+        f"    _apesees_os.replace({tmp!r}, {final!r})",
+    ]
+
+
+def _tcl_record(fields: "dict[str, Any]", file: str,
+                partitioned: bool) -> "list[str]":
+    import json
+
+    q = _tcl_quote
+    final = file + DECK_RUN_SUFFIX
+    tmp = final + ".tmp"
+    template = "{" + ", ".join(
+        f"{json.dumps(k)}: " + (_TCL_RUN_TIME[k][0] if k in _TCL_RUN_TIME
+                                else json.dumps(v).replace("%", "%%"))
+        for k, v in fields.items()) + "}"
+    args = " ".join(_TCL_RUN_TIME[k][1] for k in fields if k in _TCL_RUN_TIME)
+    write = [
+        f"    set _apesees_f [open {q(tmp)} w]",
+        "    fconfigure $_apesees_f -encoding utf-8",
+        f"    puts -nonewline $_apesees_f [format {q(template)} {args}]",
+        "    close $_apesees_f",
+        f"    file rename -force {q(tmp)} {q(final)}",
+        "}",
+    ]
+    if not partitioned:
+        return [
+            f"if {{[file isfile {q(file)}]}} {{",
+            f"    set _apesees_size [file size {q(file)}]",
+            f"    set _apesees_mtime [file mtime {q(file)}]",
+            *write,
+        ]
+    stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
+    return [
+        "set _apesees_sizes {}; set _apesees_mtimes {}; set _apesees_ok 1",
+        "for {set _apesees_k 0} {$_apesees_k < $_apesees_np} "
+        "{incr _apesees_k} {",
+        f"    set _apesees_p [format {{%s.part-%d.mpco}} {q(stem)} "
+        "$_apesees_k]",
+        "    if {![file isfile $_apesees_p]} { set _apesees_ok 0; break }",
+        "    lappend _apesees_sizes [file size $_apesees_p]",
+        "    lappend _apesees_mtimes [file mtime $_apesees_p]",
+        "}",
+        "if {$_apesees_ok} {",
+        '    set _apesees_size "\\[[join $_apesees_sizes {, }]\\]"',
+        '    set _apesees_mtime "\\[[join $_apesees_mtimes {, }]\\]"',
+        *write,
+    ]
 
 
 def deck_run_body(
@@ -210,21 +307,26 @@ def deck_run_body(
 ) -> "list[str]":
     """The deck lines that write the run record of each MPCO ``files``
     entry (``<file>.run.json``), in ``dialect``; ``[]`` with no file or no
-    ``analysis`` token (nothing to describe). The engine's backend and
-    build come from ``ladrunoBuild`` (the G10 rule: a 40-hex answer is the
-    fork, anything else is stock with an ``unknown`` build); the steps
-    completed from the loop's own counter, which the record follows."""
+    ``analysis`` token (nothing to describe).
+
+    The lines close every recorder first (``remove recorders``), so each
+    ``.mpco`` is final, and the record names its size and modification
+    time as the deck's runtime reports them (a list, one per part in rank
+    order, for a partitioned deck; no record when a file is missing). The
+    engine's backend and build come from ``ladrunoBuild`` (the G10 rule: a
+    40-hex answer is the fork, anything else is stock with an ``unknown``
+    build); the steps completed from the loop's own counter."""
     if not files or analysis is None:
         return []
     lineage = deck_run_lineage(archive, bridge)
     if lineage is None:
         return []
-    import json
-
-    body = ["# apeGmsh deck run record: the analyze loop returned."]
+    head = ["# apeGmsh deck run record: the analyze loop returned; the "
+            "recorders close first, so each .mpco is final."]
+    done = "_apesees_i + 1" if int(steps) > 0 else "0"
     if dialect == "py":
-        done = "_apesees_i + 1" if int(steps) > 0 else "0"
-        body += [
+        head.append("ops.remove('recorders')")
+        body = [
             "import json as _apesees_json, os as _apesees_os",
             "import re as _apesees_re, time as _apesees_time",
             "try:",
@@ -234,8 +336,12 @@ def deck_run_body(
             "if not _apesees_re.fullmatch('[0-9a-f]{40}', _apesees_sha):",
             "    _apesees_sha = 'unknown'",
         ]
+        if partitioned:
+            body += ["try:", "    _apesees_np = int(ops.getNP())",
+                     "except Exception:", "    _apesees_np = 1"]
     else:
-        body += [
+        head.append("remove recorders")
+        body = [
             "if {[catch {ladrunoBuild} _apesees_sha] || ![regexp "
             "{^[0-9a-f]{40}$} [string trim $_apesees_sha]]} {",
             "    set _apesees_sha unknown; set _apesees_backend stock",
@@ -265,43 +371,21 @@ def deck_run_body(
             "$_apesees_y $_apesees_m $_apesees_d [expr {$_apesees_t / 3600}] "
             "[expr {$_apesees_t / 60 % 60}] [expr {$_apesees_t % 60}]]",
         ]
+        if partitioned:
+            body.append("if {[catch {getNP} _apesees_np]} { set _apesees_np 1 }")
     for file in files:
         fields = deck_run_fields(lineage, file, analysis, steps, dt)
-        final = file + DECK_RUN_SUFFIX
-        tmp = final + ".tmp"
-        if dialect == "py":
-            body += [
-                f"_apesees_run = {fields!r}",
-                f"_apesees_run.update(steps_completed={done}, "
-                "opensees_backend='stock' if _apesees_sha == 'unknown' "
-                "else 'ladruno', opensees_build_sha=_apesees_sha, "
-                "completed_iso=_apesees_time.strftime("
-                "'%Y-%m-%dT%H:%M:%SZ', _apesees_time.gmtime()))",
-                f"with open({tmp!r}, 'w', encoding='utf-8') as _apesees_f:",
-                "    _apesees_json.dump(_apesees_run, _apesees_f)",
-                f"_apesees_os.replace({tmp!r}, {final!r})",
-            ]
-            continue
-        template = "{" + ", ".join(
-            f"{json.dumps(k)}: " + (_TCL_RUN_TIME[k] if k in _TCL_RUN_TIME
-                                    else json.dumps(v).replace("%", "%%"))
-            for k, v in fields.items()) + "}"
-        body += [
-            f"set _apesees_f [open {_tcl_quote(tmp)} w]",
-            "fconfigure $_apesees_f -encoding utf-8",
-            f"puts -nonewline $_apesees_f [format {_tcl_quote(template)} "
-            "$_apesees_i $_apesees_backend $_apesees_sha $_apesees_iso]",
-            "close $_apesees_f",
-            f"file rename -force {_tcl_quote(tmp)} {_tcl_quote(final)}",
-        ]
+        body += (_py_record(fields, file, done, partitioned) if dialect == "py"
+                 else _tcl_record(fields, file, partitioned))
     if not partitioned:
-        return body
-    # Every rank finishes its loop first; one record, from rank 0.
+        return head + body
+    # Every rank closes its recorders and finishes its loop first; one
+    # record, from rank 0.
     indented = ["    " + ln for ln in body]
     if dialect == "py":
-        return ["if hasattr(ops, 'barrier'):", "    ops.barrier()",
+        return [*head, "if hasattr(ops, 'barrier'):", "    ops.barrier()",
                 "if getPID() == 0:", *indented]
-    return ['if {[info commands barrier] ne ""} { barrier }',
+    return [*head, 'if {[info commands barrier] ne ""} { barrier }',
             "if {[getPID] == 0} {", *indented, "}"]
 
 
@@ -531,6 +615,8 @@ class PyEmitter:
         # emit order, and the last ``analysis`` token the deck emitted.
         self._mpco_files: list[str] = []
         self._analysis_token: str | None = None
+        # Set by the bridge when the deck will write a record.
+        self._run_record: bool = False
 
     # -- Output --------------------------------------------------------------
 
@@ -868,6 +954,9 @@ class PyEmitter:
     def recorder(self, kind: str, *args: int | float | str) -> None:
         if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
             self._mpco_files.append(str(args[0]))
+        if kind == "mpco" and args and self._run_record:
+            for line in deck_run_unlink("py", str(args[0])):
+                self._lines.append(line)
         self._lines.append(_ops_call("recorder", kind, *args))
 
     def recorder_declaration_begin(

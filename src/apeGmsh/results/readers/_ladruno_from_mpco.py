@@ -53,20 +53,26 @@ archived as fact: the archive cannot tell an in-process run from a deck
 (#1950, coordinator ruling (iii)), and ``model.h5`` never records a run.
 The deck does instead (#2210, route (c)): a deck ``ops.py`` / ``ops.tcl``
 emitted with ``analyze_steps`` writes ``<recorder file>.run.json`` beside
-its ``.mpco`` once its analyze loop has returned (``DECK_RUN_SCHEMA`` in
-``opensees/emitter/py.py``). ``read_deck_mpco`` passes the private
-``_implicit_stage=True``, under which an unstaged program is one implicit
-stage only when all five checks on that record hold:
+its ``.mpco`` once its analyze loop has returned and its recorders have
+closed (``DECK_RUN_SCHEMA`` in ``opensees/emitter/py.py``); the same deck
+removes any older record before it opens the recorder. ``read_deck_mpco``
+passes the private ``_implicit_stage=True``, under which an unstaged
+program is one implicit stage only when all six checks on that record
+hold:
 
 1. the record exists beside the ``.mpco`` (for a part, beside
-   ``<stem>.mpco``), holds the 12 fields and ``schema`` is
-   ``apegmsh.deck_run/1``;
+   ``<stem>.mpco``), holds the 14 fields and ``schema`` is
+   ``apegmsh.deck_run/2``;
 2. ``recorder_file`` is the ``.mpco``'s basename (``<stem>.mpco`` for a set);
 3. ``model_hash`` and ``fem_hash`` equal ``model_h5``'s ``/meta/lineage``;
 4. ``/opensees/program`` holds exactly one ``analysis`` declaration, whose
    token equals the record's ``analysis`` and has a kind;
 5. the file holds exactly one stage of step data, whose step count equals
-   ``steps_completed``, which equals ``analyze_steps``.
+   ``steps_completed``, which equals ``analyze_steps``;
+6. every ``.mpco`` on disk has the ``recorder_size`` and
+   ``recorder_mtime`` the deck recorded after closing it (one per part for
+   a set), so a later writer of the same file (an in-process run beside a
+   stale record) refuses.
 
 Any miss is a :class:`StageKindRefused` naming the check, held until the
 lineage check passes. An in-process run never writes a record. What the
@@ -103,7 +109,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 import numpy as np
 
@@ -319,7 +325,7 @@ def _plan(
     steps: Optional[int] = None
     if pending is None and implicit_stage and not names:
         try:
-            kind, steps = _deck_run(model, model_path, sources[0])
+            kind, steps = _deck_run(model, model_path, sources)
         except StageKindRefused as e:
             pending = e
         else:
@@ -481,12 +487,15 @@ def _program(
 
 #: The deck run record: ``opensees/emitter/py.py`` writes it and
 #: owns the format; ``tests/test_deck_run_record.py`` pins these to it.
-_RUN_SCHEMA = "apegmsh.deck_run/1"
+_RUN_SCHEMA = "apegmsh.deck_run/2"
 _RUN_SUFFIX = ".run.json"
-#: Its 12 fields and their JSON types (``dt`` may be ``null``).
+#: Its 14 fields and their JSON types (``dt`` may be ``null``; a
+#: partitioned deck's ``recorder_size`` / ``recorder_mtime`` are lists).
 _RUN_FIELDS: "dict[str, tuple[type, ...]]" = {
     "schema": (str,), "model_hash": (str,), "fem_hash": (str,),
-    "recorder_file": (str,), "analysis": (str,), "analyze_steps": (int,),
+    "recorder_file": (str,), "recorder_size": (int, list),
+    "recorder_mtime": (float, int, list), "analysis": (str,),
+    "analyze_steps": (int,),
     "steps_completed": (int,), "dt": (float, int, type(None)),
     "opensees_backend": (str,), "opensees_build_sha": (str,),
     "writer": (str,), "completed_iso": (str,),
@@ -500,9 +509,11 @@ def _mpco_base_name(source: Path) -> str:
     return f"{m.group('stem')}.mpco" if m else source.name
 
 
-def _deck_run(model: Any, model_h5: Path, source: Path) -> "tuple[str, int]":
+def _deck_run(
+    model: Any, model_h5: Path, sources: "list[Path]",
+) -> "tuple[str, int]":
     """The kind and step count of an unstaged program's one implicit stage,
-    from the deck's run record (checks 1 to 4 and the record's half of 5;
+    from the deck's run record (checks 1 to 4, the record's half of 5, and 6;
     :func:`_scan_part` holds the file's half), or a
     :class:`StageKindRefused` naming the check that failed."""
     import json
@@ -515,6 +526,7 @@ def _deck_run(model: Any, model_h5: Path, source: Path) -> "tuple[str, int]":
         _lineage_hashes,
     )
 
+    source = sources[0]
     base = _mpco_base_name(source)
     path = source.with_name(base + _RUN_SUFFIX)
 
@@ -573,7 +585,42 @@ def _deck_run(model: Any, model_h5: Path, source: Path) -> "tuple[str, int]":
         raise refuse("5 (the steps)", f"the loop completed "
                      f"{rec['steps_completed']} of {rec['analyze_steps']} "
                      "steps")
+    _check_files(rec, sources, refuse)
     return _ANALYSIS_KIND[token], int(rec["steps_completed"])
+
+
+def _check_files(
+    rec: "dict[str, Any]", sources: "list[Path]",
+    refuse: "Callable[[str, str], StageKindRefused]",
+) -> None:
+    """Check 6: every ``.mpco`` on disk is the file the deck closed, by the
+    size and modification time its runtime recorded after closing it (one
+    value for a single file, a list in part order for a set). An integer
+    mtime (Tcl's ``file mtime``) is compared with the whole seconds on
+    disk, a float (Python's ``os.stat``) exactly."""
+    sizes, mtimes = rec["recorder_size"], rec["recorder_mtime"]
+    many = len(sources) > 1
+    if (isinstance(sizes, list) != many or isinstance(mtimes, list) != many
+            or (many and not len(sizes) == len(mtimes) == len(sources))):
+        raise refuse("6 (the files)", f"it records recorder_size {sizes!r} "
+                     f"and recorder_mtime {mtimes!r} for {len(sources)} "
+                     "file(s)")
+    pairs = list(zip(sizes, mtimes)) if many else [(sizes, mtimes)]
+    for src, (size, mtime) in zip(sources, pairs):
+        if not (_is_int(size) and (_is_int(mtime) or isinstance(mtime, float))):
+            raise refuse("6 (the files)", f"{src.name}: size {size!r} and "
+                         f"mtime {mtime!r} are not numbers")
+        st = src.stat()
+        disk = int(st.st_mtime) if _is_int(mtime) else st.st_mtime
+        if st.st_size != size or disk != mtime:
+            raise refuse("6 (the files)", f"{src.name} is {st.st_size} bytes "
+                         f"modified at {disk!r}, but the deck closed it at "
+                         f"{size} bytes modified at {mtime!r} (another run "
+                         "wrote it since)")
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:

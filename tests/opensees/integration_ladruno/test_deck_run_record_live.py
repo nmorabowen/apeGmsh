@@ -156,19 +156,15 @@ def test_tcl_deck_writes_its_record_and_converts(tmp_path) -> None:
     assert rec["opensees_backend"] in ("ladruno", "stock")
 
 
-def _in_process_after_export(tmp_path: Path) -> "tuple[Path, Path]":
-    """F2: export the deck, archive, then gravity -> loadConst -> Transient
-    in this process into the deck's own ``.mpco``."""
+def _in_process(bridge: Any, mpco: Path, gravity: int) -> None:
+    """``gravity`` static steps, ``loadConst``, then 2 Newmark Transient
+    steps, in this process, recorded by the bridge's MPCO recorder."""
     from apeGmsh.opensees.emitter.live import get_ops
 
-    mpco, model = tmp_path / "deck.mpco", tmp_path / "model.h5"
-    bridge = truss_bridge(mpco)
-    bridge.py(str(tmp_path / "deck.py"), analyze_steps=STEPS, progress=False)
-    bridge.h5(str(model))
     opspy: Any = get_ops()
     bridge.run()
     try:
-        for _ in range(STEPS):
+        for _ in range(gravity):
             assert opspy.analyze(1) == 0
         opspy.loadConst("-time", 0.0)
         opspy.wipeAnalysis()
@@ -184,22 +180,56 @@ def _in_process_after_export(tmp_path: Path) -> "tuple[Path, Path]":
     finally:
         opspy.wipe()
     assert mpco.exists()
+
+
+def _in_process_after_export(tmp_path: Path) -> "tuple[Path, Path]":
+    """F2: export the deck, archive, then gravity -> loadConst -> Transient
+    in this process into the deck's own ``.mpco``."""
+    mpco, model = tmp_path / "deck.mpco", tmp_path / "model.h5"
+    bridge = truss_bridge(mpco)
+    bridge.py(str(tmp_path / "deck.py"), analyze_steps=STEPS, progress=False)
+    bridge.h5(str(model))
+    _in_process(bridge, mpco, STEPS)
     return mpco, model
 
 
-def _assert_refuses_once(tmp_path: Path, mpco: Path, model: Path) -> None:
-    assert list(tmp_path.glob("*.run.json*")) == []
+def _stale_record_then_in_process(
+    tmp_path: Path, *, fork_module: bool,
+) -> "tuple[Path, Path]":
+    """F1 of #2255's review (p_stale.py): the deck runs out of process and
+    records (Static, STEPS steps); its ``.mpco`` is removed; then an
+    in-process run of 2 static, ``loadConst`` and 2 Transient steps (STEPS
+    in all) writes the same ``.mpco``, beside the deck's old record."""
+    mpco, model = _run_deck(tmp_path, "py", fork_module=fork_module)
+    assert (tmp_path / "deck.mpco.run.json").exists()
+    mpco.unlink()
+    _in_process(truss_bridge(mpco), mpco, 2)
+    return mpco, model
+
+
+def _assert_refuses_once(tmp_path: Path, mpco: Path, model: Path,
+                         check: str = "1 (the record)") -> None:
+    if check.startswith("1"):
+        assert list(tmp_path.glob("*.run.json*")) == []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         res = read_deck_mpco(mpco, model_h5=model)
     try:
         ours = [w for w in caught if w.category is DefaultRouteWarning]
         assert len(ours) == 1, [str(w.message) for w in caught]
-        assert "check 1 (the record)" in str(ours[0].message)
-        np.testing.assert_allclose(tip_x(res)[STEPS - 1], TIP, rtol=1e-12)
+        assert f"check {check}" in str(ours[0].message)
+        if check.startswith("1"):
+            np.testing.assert_allclose(tip_x(res)[STEPS - 1], TIP, rtol=1e-12)
     finally:
         res.close()
     assert not (tmp_path / "deck.ladruno").exists()
+
+
+@pytest.mark.ladruno_fork
+def test_fork_stale_record_beside_an_in_process_run_refuses(tmp_path) -> None:
+    _assert_refuses_once(
+        tmp_path, *_stale_record_then_in_process(tmp_path, fork_module=True),
+        check="6 (the files)")
 
 
 @pytest.mark.ladruno_fork

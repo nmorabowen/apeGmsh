@@ -53,8 +53,9 @@ from apeGmsh.opensees.emitter.py import (
 )
 
 #: The ratified spec's fields, in order.
-RUN_FIELDS = ("schema", "model_hash", "fem_hash", "recorder_file", "analysis",
-              "analyze_steps", "steps_completed", "dt", "opensees_backend",
+RUN_FIELDS = ("schema", "model_hash", "fem_hash", "recorder_file",
+              "recorder_size", "recorder_mtime", "analysis", "analyze_steps",
+              "steps_completed", "dt", "opensees_backend",
               "opensees_build_sha", "writer", "completed_iso")
 MARK = "# apeGmsh deck run record: "
 SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -134,22 +135,50 @@ def record_block(deck: Path) -> str:
     return text[text.index(MARK):]
 
 
+#: Bytes a stand-in recorder adds to its file when it closes.
+FLUSH = 100
+
+
+def open_files(paths: "list[Path]") -> None:
+    """The ``.mpco`` files as an open recorder leaves them, before its
+    close flushes the last ``FLUSH`` bytes."""
+    for p in paths:
+        p.write_bytes(b"\x89HDF" + b"\0" * 2000)
+
+
 class FakeOps:
     """The ``ops`` a record block calls: ``ladrunoBuild`` answers ``build``
-    (absent when ``None``); ``barrier`` counts its calls."""
+    (absent when ``None``); ``barrier`` counts its calls; ``remove`` closes
+    the recorders, adding ``FLUSH`` bytes to each of ``files``; ``getNP``
+    answers ``np``."""
 
-    def __init__(self, build: "str | None") -> None:
+    def __init__(self, build: "str | None", files: "list[Path]",
+                 np: int = 1) -> None:
         self.barriers = 0
+        self.closed = 0
+        self._files, self._np = files, np
         if build is not None:
             self.ladrunoBuild = lambda: build
 
     def barrier(self) -> None:
         self.barriers += 1
 
+    def getNP(self) -> int:
+        return self._np
 
-def run_py(block: str, *, build: "str | None", done: int,
-           pid: int = 0) -> FakeOps:
-    ops = FakeOps(build)
+    def remove(self, what: str) -> None:
+        assert what == "recorders"
+        self.closed += 1
+        for p in self._files:
+            with open(p, "ab") as f:
+                f.write(b"x" * FLUSH)
+
+
+def run_py(block: str, *, build: "str | None", done: int, pid: int = 0,
+           files: "list[Path] | None" = None, np: int = 1) -> FakeOps:
+    files = files or []
+    open_files(files)
+    ops = FakeOps(build, files, np)
     exec(compile(block, "<record>", "exec"),
          {"ops": ops, "_apesees_i": done - 1, "getPID": lambda: pid})
     return ops
@@ -157,31 +186,56 @@ def run_py(block: str, *, build: "str | None", done: int,
 
 def tcl() -> Any:
     tkinter = pytest.importorskip("tkinter")
-    try:
-        return tkinter.Tcl()
-    except tkinter.TclError as e:  # no Tcl runtime beside this Python
-        pytest.skip(f"tkinter.Tcl() unavailable: {e}")
+    error: "Exception | None" = None
+    for _ in range(5):  # Windows sometimes fails one read of init.tcl
+        try:
+            return tkinter.Tcl()
+        except tkinter.TclError as e:
+            error = e
+            time.sleep(0.2)
+    pytest.skip(f"tkinter.Tcl() unavailable: {error}")
 
 
 def run_tcl(block: str, *, build: "str | None", done: int, pid: int = 0,
-            ) -> Any:
+            files: "list[Path] | None" = None, np: int = 1) -> Any:
+    files = files or []
+    open_files(files)
     interp = tcl()
     interp.eval(f"set _apesees_i {done}")
     interp.eval("set _apesees_barriers 0")
+    interp.eval("set _apesees_closed 0")
+    interp.call("set", "::_apesees_files", [str(p) for p in files])
     interp.eval(f"proc getPID {{}} {{ return {pid} }}")
+    interp.eval(f"proc getNP {{}} {{ return {np} }}")
     interp.eval("proc barrier {} { incr ::_apesees_barriers }")
+    interp.eval(
+        "proc remove {what} { incr ::_apesees_closed; "
+        "foreach p $::_apesees_files { set f [open $p a]; "
+        f"fconfigure $f -translation binary; puts -nonewline $f "
+        f"[string repeat x {FLUSH}]; close $f }} }}")
     if build is not None:
         interp.eval(f"proc ladrunoBuild {{}} {{ return {build} }}")
     interp.eval(block)
     return interp
 
 
-def read_record(mpco: Path) -> "dict[str, Any]":
+def read_record(mpco: Path, parts: "list[Path] | None" = None,
+                ) -> "dict[str, Any]":
+    """The record beside ``mpco``, holding the spec's fields and the files
+    as they are now, after their close (``parts`` for a set)."""
     path = mpco.with_name(mpco.name + DECK_RUN_SUFFIX)
     assert path.is_file()
     assert not path.with_name(path.name + ".tmp").exists()
     rec = json.loads(path.read_text(encoding="utf-8"))
     assert tuple(rec) == RUN_FIELDS
+    stats = [p.stat() for p in (parts or [mpco])]
+    sizes, mtimes = rec["recorder_size"], rec["recorder_mtime"]
+    if parts is None:
+        sizes, mtimes = [sizes], [mtimes]
+    assert sizes == [st.st_size for st in stats]
+    assert all(st.st_size == 2004 + FLUSH for st in stats)  # after the close
+    for m, st in zip(mtimes, stats):
+        assert m == (int(st.st_mtime) if isinstance(m, int) else st.st_mtime)
     return rec
 
 
@@ -214,12 +268,12 @@ def test_the_record_holds_the_spec_fields(
     block = record_block(exported[dialect])
     before = time.time()
     if dialect == "py":
-        run_py(block, build=build, done=STEPS)
+        run_py(block, build=build, done=STEPS, files=[exported["mpco"]])
     else:
-        run_tcl(block, build=build, done=STEPS)
+        run_tcl(block, build=build, done=STEPS, files=[exported["mpco"]])
     rec = read_record(exported["mpco"])
     model_hash, fem_hash = lineage(exported["model"])
-    assert rec["schema"] == DECK_RUN_SCHEMA == "apegmsh.deck_run/1"
+    assert rec["schema"] == DECK_RUN_SCHEMA == "apegmsh.deck_run/2"
     assert (rec["model_hash"], rec["fem_hash"]) == (model_hash, fem_hash)
     assert rec["recorder_file"] == "deck.mpco"
     assert rec["analysis"] == "Static"
@@ -248,11 +302,15 @@ def test_the_two_decks_write_the_same_record(tmp_path) -> None:
                                  progress=False)
         block = record_block(deck)
         if dialect == "py":
-            run_py(block, build=SHA, done=3)
+            run_py(block, build=SHA, done=3, files=[mpco])
         else:
-            run_tcl(block, build=SHA, done=3)
+            run_tcl(block, build=SHA, done=3, files=[mpco])
         records.append(read_record(mpco))
-    py, tc = ({k: v for k, v in r.items() if k != "completed_iso"}
+    # Each runtime's own mtime: Python's float, Tcl's whole seconds.
+    assert isinstance(records[0]["recorder_mtime"], float)
+    assert isinstance(records[1]["recorder_mtime"], int)
+    py, tc = ({k: v for k, v in r.items()
+               if k not in ("completed_iso", "recorder_mtime")}
               for r in records)
     assert py == tc
     assert (py["analysis"], py["dt"], py["steps_completed"]) == ("Transient", 0.01, 3)
@@ -261,9 +319,11 @@ def test_the_two_decks_write_the_same_record(tmp_path) -> None:
 def test_the_steps_completed_are_the_loops_own_count(exported) -> None:
     """``steps_completed`` is read from the loop's counter when the record is
     written, not copied from ``analyze_steps``."""
-    run_py(record_block(exported["py"]), build=None, done=STEPS - 1)
+    run_py(record_block(exported["py"]), build=None, done=STEPS - 1,
+           files=[exported["mpco"]])
     assert read_record(exported["mpco"])["steps_completed"] == STEPS - 1
-    run_tcl(record_block(exported["tcl"]), build=None, done=STEPS - 2)
+    run_tcl(record_block(exported["tcl"]), build=None, done=STEPS - 2,
+            files=[exported["mpco"]])
     assert read_record(exported["mpco"])["steps_completed"] == STEPS - 2
 
 
@@ -274,7 +334,7 @@ def test_a_tcl_path_tcl_would_substitute_is_written_verbatim(tmp_path) -> None:
     mpco = where / "deck.mpco"
     deck = tmp_path / "deck.tcl"
     truss_bridge(mpco).tcl(str(deck), analyze_steps=2, progress=False)
-    run_tcl(record_block(deck), build=None, done=2)
+    run_tcl(record_block(deck), build=None, done=2, files=[mpco])
     assert read_record(mpco)["recorder_file"] == "deck.mpco"
 
 
@@ -289,9 +349,12 @@ def test_the_record_follows_the_loop_and_ends_the_deck(exported, dialect) -> Non
     loop = ("for _apesees_i in range(4):" if dialect == "py"
             else "for {set _apesees_i 0} {$_apesees_i < 4} {incr _apesees_i} {")
     assert text.index(loop) < text.index(MARK)
-    block = record_block(exported[dialect])
+    block = record_block(exported[dialect]).rstrip().splitlines()
+    close = "ops.remove('recorders')" if dialect == "py" else "remove recorders"
+    assert block[1] == close  # the recorders close before anything is stated
     rename = "_apesees_os.replace(" if dialect == "py" else "file rename -force "
-    assert block.rstrip().splitlines()[-1].startswith(rename)
+    last = block[-1] if dialect == "py" else block[-2]
+    assert last.strip().startswith(rename)
 
 
 def test_a_torn_write_leaves_no_record(exported, monkeypatch) -> None:
@@ -303,17 +366,76 @@ def test_a_torn_write_leaves_no_record(exported, monkeypatch) -> None:
 
     monkeypatch.setattr(json, "dump", torn)
     with pytest.raises(OSError, match="disk full"):
-        run_py(record_block(exported["py"]), build=None, done=STEPS)
+        run_py(record_block(exported["py"]), build=None, done=STEPS,
+               files=[exported["mpco"]])
     final = exported["mpco"].with_name("deck.mpco" + DECK_RUN_SUFFIX)
     assert not final.exists()
     assert final.with_name(final.name + ".tmp").exists()
     # The Tcl block takes the same two steps.
     lines = record_block(exported["tcl"]).splitlines()
-    (opened,) = [ln for ln in lines if ln.startswith("set _apesees_f [open ")]
+    (opened,) = [ln for ln in lines
+                 if ln.strip().startswith("set _apesees_f [open ")]
     assert opened.endswith('.run.json.tmp" w]')
-    assert lines[-1].startswith("file rename -force ")
-    assert '.run.json.tmp" "' in lines[-1]
-    assert lines[-1].endswith('.run.json"')
+    (renamed,) = [ln for ln in lines
+                  if ln.strip().startswith("file rename -force ")]
+    assert '.run.json.tmp" "' in renamed
+    assert renamed.endswith('.run.json"')
+
+
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_a_record_writing_deck_removes_an_old_record_before_its_recorder(
+    tmp_path, dialect,
+) -> None:
+    """Ruling (a): the unlink comes before the recorder opens, and only in
+    a deck that writes a record (other decks are unchanged)."""
+    mpco = tmp_path / "deck.mpco"
+    deck, plain = tmp_path / f"deck.{dialect}", tmp_path / f"plain.{dialect}"
+    bridge = truss_bridge(mpco)
+    getattr(bridge, dialect)(str(deck), analyze_steps=STEPS, progress=False)
+    getattr(bridge, dialect)(str(plain), progress=False)
+    text = deck.read_text(encoding="utf-8")
+    unlink = ("__import__('os').remove(" if dialect == "py"
+              else "file delete -force -- ")
+    opens = "ops.recorder('mpco'" if dialect == "py" else "recorder mpco "
+    assert text.count(unlink) == 1
+    assert text.index(unlink) < text.index(opens) < text.index(MARK)
+    assert unlink not in plain.read_text(encoding="utf-8")
+
+
+class FailingOps:
+    """Every OpenSees call succeeds, except ``analyze``, which fails."""
+
+    def __getattr__(self, name: str) -> Any:
+        return (lambda *a, **k: -3) if name == "analyze" else (
+            lambda *a, **k: 0)
+
+
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_a_rerun_whose_loop_fails_leaves_no_record(tmp_path, dialect) -> None:
+    """The deck ran once and recorded; a re-run whose loop fails removes
+    that record before its recorder opens and writes none: a reader then
+    refuses on check 1."""
+    mpco = tmp_path / "deck.mpco"
+    deck = tmp_path / f"deck.{dialect}"
+    getattr(truss_bridge(mpco), dialect)(
+        str(deck), analyze_steps=STEPS, progress=False)
+    old = mpco.with_name("deck.mpco" + DECK_RUN_SUFFIX)
+    old.write_text("{}", encoding="utf-8")  # the earlier run's record
+    text = deck.read_text(encoding="utf-8")
+    if dialect == "py":
+        src = text.replace("import openseespy.opensees as ops", "")
+        with pytest.raises(SystemExit, match="analyze FAILED"):
+            exec(compile(src, str(deck), "exec"), {"ops": FailingOps()})
+    else:
+        interp = tcl()
+        interp.eval("proc unknown {args} { return 0 }")
+        interp.eval("proc analyze {args} { return -3 }")
+        import tkinter
+
+        with pytest.raises(tkinter.TclError, match="analyze FAILED"):
+            interp.eval(text)
+    assert not old.exists()
+    assert not old.with_name(old.name + ".tmp").exists()
 
 
 @pytest.mark.parametrize("dialect", ["py", "tcl"])
@@ -355,20 +477,23 @@ def test_a_partitioned_deck_writes_on_rank_0_after_a_barrier(
     tmp_path, dialect,
 ) -> None:
     mpco = tmp_path / "run.mpco"
+    parts = [tmp_path / f"run.part-{k}.mpco" for k in (0, 1)]
     bridge = truss_bridge(mpco)
     body = "\n".join(deck_run_body(
         dialect, bridge.h5, [str(mpco)], "Static", STEPS, None,
         partitioned=True)) + "\n"
     for pid in (1, 0):
         if dialect == "py":
-            barriers = run_py(body, build=None, done=STEPS, pid=pid).barriers
+            barriers = run_py(body, build=None, done=STEPS, pid=pid,
+                              files=parts, np=2).barriers
         else:
-            interp = run_tcl(body, build=None, done=STEPS, pid=pid)
+            interp = run_tcl(body, build=None, done=STEPS, pid=pid,
+                             files=parts, np=2)
             barriers = int(interp.eval("set _apesees_barriers"))
         assert barriers == 1
         written = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX).exists()
         assert written == (pid == 0)
-    assert read_record(mpco)["recorder_file"] == "run.mpco"
+    assert read_record(mpco, parts)["recorder_file"] == "run.mpco"
 
 
 def _count_archives(monkeypatch: Any) -> "list[Any]":
@@ -405,9 +530,11 @@ def test_the_record_reuses_the_automatic_archive(tmp_path, monkeypatch) -> None:
     bridge.h5(str(model))
     for deck in ("a.py", "a.tcl", "b.py"):
         if deck.endswith(".py"):
-            run_py(record_block(tmp_path / deck), build=None, done=STEPS)
+            run_py(record_block(tmp_path / deck), build=None, done=STEPS,
+                   files=[mpco])
         else:
-            run_tcl(record_block(tmp_path / deck), build=None, done=STEPS)
+            run_tcl(record_block(tmp_path / deck), build=None, done=STEPS,
+                    files=[mpco])
         rec = read_record(mpco)
         if deck == "b.py":
             assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
@@ -431,7 +558,7 @@ def test_without_the_automatic_archive_it_is_composed_in_memory(
     assert len(seen) == 1 and isinstance(seen[0], io.BytesIO)
     model = tmp_path / "model.h5"
     bridge.h5(str(model))
-    run_py(record_block(tmp_path / "d.py"), build=None, done=STEPS)
+    run_py(record_block(tmp_path / "d.py"), build=None, done=STEPS, files=[mpco])
     assert (read_record(mpco)["model_hash"],
             read_record(mpco)["fem_hash"]) == lineage(model)
 
@@ -470,9 +597,11 @@ def _partitioned_bridge(mpco: Path) -> Any:
 @pytest.mark.filterwarnings("ignore")  # the stub's partition / penalty notes
 @pytest.mark.parametrize("dialect", ["py", "tcl"])
 def test_a_partitioned_bridge_deck_guards_its_record(tmp_path, dialect) -> None:
-    """The bridge's own partitioned deck: every rank's loop, a barrier, then
-    the record from rank 0 alone."""
+    """The bridge's own partitioned deck: every rank's loop, then every
+    rank closes its recorders, a barrier, and the record from rank 0 alone,
+    naming each part's size and mtime."""
     mpco = tmp_path / "run.mpco"
+    parts = [tmp_path / f"run.part-{k}.mpco" for k in (0, 1)]
     deck = tmp_path / f"deck.{dialect}"
     getattr(_partitioned_bridge(mpco), dialect)(
         str(deck), analyze_steps=STEPS, progress=False)
@@ -480,18 +609,22 @@ def test_a_partitioned_bridge_deck_guards_its_record(tmp_path, dialect) -> None:
     assert "getPID" in text.split(MARK)[0]  # a partitioned deck
     guard = ("if hasattr(ops, 'barrier'):" if dialect == "py"
              else 'if {[info commands barrier] ne ""} { barrier }')
-    block = text[text.index(guard):]
-    assert block.index(guard) < block.index(MARK)
+    close = "ops.remove('recorders')" if dialect == "py" else "remove recorders"
+    write = "_apesees_run = " if dialect == "py" else "set _apesees_f [open "
+    block = text[text.index(MARK):]
+    assert block.index(close) < block.index(guard) < block.index(write)
     final = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX)
     for pid in (1, 0):
         if dialect == "py":
-            barriers = run_py(block, build=None, done=STEPS, pid=pid).barriers
+            barriers = run_py(block, build=None, done=STEPS, pid=pid,
+                              files=parts, np=2).barriers
         else:
-            interp = run_tcl(block, build=None, done=STEPS, pid=pid)
+            interp = run_tcl(block, build=None, done=STEPS, pid=pid,
+                             files=parts, np=2)
             barriers = int(interp.eval("set _apesees_barriers"))
         assert barriers == 1
         assert final.exists() == (pid == 0)
-    assert read_record(mpco)["recorder_file"] == "run.mpco"
+    assert read_record(mpco, parts)["recorder_file"] == "run.mpco"
 
 
 @pytest.mark.filterwarnings("ignore:model.h5 not written")  # the auto-write's
