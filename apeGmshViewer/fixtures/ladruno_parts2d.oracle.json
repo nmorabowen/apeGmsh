@@ -1,0 +1,117 @@
+{
+ "sources": [
+  "ladruno_parts2d.part-0.ladruno",
+  "ladruno_parts2d.part-1.ladruno"
+ ],
+ "reader": "apeGmsh.results.readers._ladruno_multi.LadrunoMultiPartitionReader.read_nodes",
+ "reads": [
+  {
+   "python_component": "displacement_x",
+   "group": "DISPLACEMENT",
+   "column": 0,
+   "stage": "stage_0",
+   "node_ids": [
+    1,
+    2,
+    3
+   ],
+   "time": [
+    0.5,
+    1.0
+   ],
+   "values": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ]
+   ]
+  },
+  {
+   "python_component": "displacement_y",
+   "group": "DISPLACEMENT",
+   "column": 1,
+   "stage": "stage_0",
+   "node_ids": [
+    1,
+    2,
+    3
+   ],
+   "time": [
+    0.5,
+    1.0
+   ],
+   "values": [
+    [
+     0.0,
+     -0.011286780833046252,
+     0.0
+    ],
+    [
+     0.0,
+     -0.0225735616660925,
+     0.0
+    ]
+   ]
+  },
+  {
+   "python_component": "reaction_force_x",
+   "group": "REACTION_FORCE",
+   "column": 0,
+   "stage": "stage_0",
+   "node_ids": [
+    1,
+    2,
+    3
+   ],
+   "time": [
+    0.5,
+    1.0
+   ],
+   "values": [
+    [
+     3.990479632406675,
+     -1.9714388972200254,
+     -2.0190407351866497
+    ],
+    [
+     7.98095926481335,
+     -3.9428777944400517,
+     -4.038081470373299
+    ]
+   ]
+  },
+  {
+   "python_component": "reaction_force_y",
+   "group": "REACTION_FORCE",
+   "column": 1,
+   "stage": "stage_0",
+   "node_ids": [
+    1,
+    2,
+    3
+   ],
+   "time": [
+    0.5,
+    1.0
+   ],
+   "values": [
+    [
+     3.990479632406675,
+     0.0,
+     1.0095203675933249
+    ],
+    [
+     7.98095926481335,
+     4.440892098500626e-16,
+     2.0190407351866493
+    ]
+   ]
+  }
+ ]
+}

@@ -653,9 +653,17 @@ _TOPOLOGY_BY_COORDS = {
     ("isoparametric_1d", 1): ("line", "[-1,1]"),
     ("isoparametric", 2): ("quad", "[-1,1]"),
     ("isoparametric", 3): ("hex", "[-1,1]"),
-    ("barycentric_tri", 2): ("tri", "bary"),
-    ("barycentric_tet", 3): ("tet", "bary"),
+    ("simplex_tri_node0", 2): ("tri", "bary"),
+    ("simplex_tri_gmsh", 2): ("tri", "bary"),
+    ("simplex_tet_node0", 3): ("tet", "bary"),
 }
+
+#: The fork's Bernstein (Bezier) classes: their ``.ladruno`` FAMILY is
+#: ``bernstein`` (the element answers the ``basisInfo`` probe), every other
+#: catalog class is ``lagrange``. FAMILY also picks the frame of a
+#: triangle's ``GP_PARAM``, so a BezierTri6 written as ``lagrange`` reads
+#: back with its points rotated.
+_BERNSTEIN_CLASSES = frozenset({"BezierTri6", "BezierTet10"})
 
 
 def _basis(gname: str, dset: Any, where: str) -> _Basis:
@@ -707,7 +715,15 @@ def _basis(gname: str, dset: Any, where: str) -> _Basis:
     topo = _TOPOLOGY_BY_COORDS.get((coord_system, int(shape[1])))
     if topo is None:
         return unknown
-    return _Basis(topo[0], "lagrange", topo[1], coords.copy())
+    family = (
+        "bernstein" if key.class_name in _BERNSTEIN_CLASSES else "lagrange"
+    )
+    if topo[1] == "bary":
+        # The catalog holds gmsh coordinates; GP_PARAM carries the
+        # .ladruno barycentric frame, which the reader converts back.
+        from ._ladruno_element_io import gmsh_to_gp_param
+        coords = gmsh_to_gp_param(coords, topology=topo[0], family=family)
+    return _Basis(topo[0], family, topo[1], coords.copy())
 
 
 # ---------------------------------------------------------------------------

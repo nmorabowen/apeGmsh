@@ -65,6 +65,29 @@ this file:
   build ``79e0623670`` (the opensees venv, 2026-10-19), FORMAT_MINOR_VERSION 0.
   ``ladruno_quad2d.oracle.json`` is written by ``tests/fixtures/ladruno/make_viewer_gauss_oracle.py``
   (outside the app: it imports apeGmsh, ADR 0112 D4).
+* ``ladruno_parts2d.part-0.ladruno``, ``ladruno_parts2d.part-1.ladruno`` and
+  ``ladruno_parts2d.h5`` (``--parts``, #2188): a 2-rank OpenSeesMP run and the
+  model it pairs with. Two trusses (EA = 1000) meet at node 2 (1, 1), which is
+  fixed in x and free in y and carries a load of -10 in y (applied on rank 0
+  only). Rank 0 holds node 1 (0, 0, pinned) and truss 1 (1-2); rank 1 holds
+  node 3 (3, 0, pinned) and truss 2 (2-3). Node 2 is in both parts. Two
+  LoadControl 0.5 steps with ``-N displacement reactionForce -E basicForce``.
+  The closed form at load factor t: ``Uy2 = -10 t / k`` with
+  ``k = (EA / L1) (1/2) + (EA / L2) (1/5)``, ``L1 = sqrt 2``, ``L2 = sqrt 5``;
+  node 2's reaction row is ``(500 Uy2 / sqrt 2) (1, 1) + (0, 10 t)`` in part 0
+  and ``(200 Uy2 / sqrt 5) (-2, 1)`` in part 1, and the stitched value is their
+  sum, never either one. Each part holds its own elements' share of node 2's reaction (the
+  fork writes ``REACTION_FORCE@PARTITION_REDUCTION = SUM``, ``DISPLACEMENT`` and
+  ``basicForce`` ``NONE``, schema §7.1, WP-126). The run needs a fork build
+  with WP-126 (``fb1afe58b``) and OpenSeesMP: committed from build
+  ``80dd3f13d`` (``pins/paper1-single-v3-metis-80dd3f13d``, Intel MPI 2021.15),
+  FORMAT_MINOR_VERSION 0. Set ``LADRUNO_MP_BIN`` (the directory holding
+  ``OpenSeesMP.exe``), ``LADRUNO_MPIEXEC`` and ``TCL_LIBRARY`` to run it. The
+  script stamps both parts with ``STAMP`` and writes the model.h5 by hand.
+  ``ladruno_parts2d.short.part-1.ladruno`` is part 1 cut to its first step
+  with h5py (the "partial write" seam: a part still being written).
+  ``ladruno_parts2d.oracle.json`` is Python's stitched read, written by
+  ``tests/fixtures/ladruno/make_viewer_parts_oracle.py``.
 * ``ladruno_frame3d.h5`` and ``ladruno_frame3d.ladruno``: a paired 3-D
   2-bay, 2-story frame with floor slabs, written with h5py (not a fork run).
   It follows schema §7.1.1: ``DISPLACEMENT`` = ``Ux,Uy,Uz`` and a separate
@@ -303,6 +326,112 @@ def quad2d() -> None:
         plate.attrs["dim"] = np.int64(2)
         plate.attrs["tag"] = np.int64(1)
         plate["element_ids"] = np.arange(1, 7, dtype=np.int64)
+
+
+_PARTS_TCL = r"""
+set out [lindex $argv 0]
+set pid [getPID]
+wipe
+model basic -ndm 2 -ndf 2
+uniaxialMaterial Elastic 1 1000.0
+node 2 1.0 1.0
+fix 2 1 0
+if {$pid == 0} {
+  node 1 0.0 0.0
+  fix 1 1 1
+  element truss 1 1 2 1.0 1
+}
+if {$pid == 1} {
+  node 3 3.0 0.0
+  fix 3 1 1
+  element truss 2 2 3 1.0 1
+}
+timeSeries Linear 1
+pattern Plain 1 1 {
+  if {$pid == 0} { load 2 0.0 -10.0 }
+}
+recorder ladruno $out -N displacement reactionForce -E basicForce
+constraints Transformation
+numberer ParallelPlain
+system Mumps
+test NormDispIncr 1.0e-12 10
+algorithm Newton
+integrator LoadControl 0.5
+analysis Static
+analyze 2
+wipe
+puts "RANK $pid DONE"
+"""
+
+#: The parts2d model: node 2 is the interface, in both parts.
+PARTS_NODES = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [3.0, 0.0, 0.0]], dtype=np.float64)
+PARTS_CONN = np.array([[1, 2], [2, 3]], dtype=np.int64)
+
+
+def parts() -> None:
+    """Write the 2-rank ``ladruno_parts2d`` set (an OpenSeesMP run, stamped) and its model, by hand."""
+    stem = "ladruno_parts2d"
+    for k in (0, 1):
+        (HERE / f"{stem}.part-{k}.ladruno").unlink(missing_ok=True)
+    mp_bin = Path(os.environ["LADRUNO_MP_BIN"])
+    mpiexec = os.environ["LADRUNO_MPIEXEC"]
+    tcl = HERE / f"{stem}.tcl"
+    tcl.write_text(_PARTS_TCL)
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    try:
+        run = subprocess.run(
+            [mpiexec, "-localonly", "-n", "2", "-genv", "TCL_LIBRARY", env["TCL_LIBRARY"], str(mp_bin / "OpenSeesMP.exe"), tcl.name, f"{stem}.ladruno"],
+            cwd=HERE, env=env, capture_output=True, text=True, check=True,
+        )
+    finally:
+        tcl.unlink()
+    # OpenSeesMP exits 0 on a Tcl error: only the markers prove both ranks ran (Tcl puts goes to stderr).
+    said = run.stdout + run.stderr
+    assert "RANK 0 DONE" in said and "RANK 1 DONE" in said, said
+    for k, ids in ((0, [1, 2]), (1, [2, 3])):
+        with h5py.File(HERE / f"{stem}.part-{k}.ladruno", "r+") as f:
+            info = f["INFO"].attrs
+            assert int(np.asarray(info["PARTITION_ID"]).reshape(-1)[0]) == k and int(np.asarray(info["NUM_PARTITIONS"]).reshape(-1)[0]) == 2
+            on = f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
+            got = {name: _text(on[name].attrs["PARTITION_REDUCTION"]) for name in on}
+            assert got == {"DISPLACEMENT": "NONE", "REACTION_FORCE": "SUM"}, got
+            assert on["DISPLACEMENT/ID"][()].reshape(-1).tolist() == ids
+            prov = f["INFO/PROVENANCE"]
+            for name, value in STAMP.items():
+                prov.attrs.create(name, data=value, dtype=VLEN_UTF8)
+    # Part 1 as a recorder still writing it leaves it: its first step only.
+    short = HERE / f"{stem}.short.part-1.ladruno"
+    shutil.copyfile(HERE / f"{stem}.part-1.ladruno", short)
+    with h5py.File(short, "r+") as f:
+        def cut(name: str, obj: object) -> None:
+            if isinstance(obj, h5py.Group) and {"DATA", "TIME", "STEP"} <= set(obj):
+                for k in ("DATA", "TIME", "STEP"):
+                    kept = obj[k][:1]
+                    del obj[k]
+                    obj[k] = kept
+        f["MODEL_STAGE[1]/RESULTS"].visititems(cut)
+    with h5py.File(HERE / f"{stem}.h5", "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["neutral_schema_version"] = "2.35.0"
+        meta.attrs["opensees_schema_version"] = "2.24.0"
+        meta.attrs["ndm"] = np.int64(2)
+        meta.attrs["ndf"] = np.int64(2)
+        lin = meta.create_group("lineage")
+        lin.attrs["model_hash"] = STAMP["model_hash"]
+        lin.attrs["fem_hash"] = STAMP["fem_hash"]
+        nodes = f.create_group("nodes")
+        nodes["ids"] = np.arange(1, 4, dtype=np.int64)
+        nodes["coords"] = PARTS_NODES
+        line2 = f.create_group("elements").create_group("line2")
+        line2.attrs["code"] = np.int64(1)
+        line2.attrs["dim"] = np.int64(1)
+        line2.attrs["npe"] = np.int64(2)
+        line2["ids"] = np.arange(1, 3, dtype=np.int64)
+        line2["connectivity"] = PARTS_CONN
+        bars = f.create_group("physical_groups").create_group("element_side").create_group("Bars")
+        bars.attrs["dim"] = np.int64(1)
+        bars.attrs["tag"] = np.int64(1)
+        bars["element_ids"] = np.arange(1, 3, dtype=np.int64)
 
 
 def _text(attr: object) -> str:
@@ -550,6 +679,7 @@ def main() -> None:
     ap.add_argument("--modes", action="store_true", help="also run the fork to write ladruno_modes.ladruno")
     ap.add_argument("--portal3d", action="store_true", help="also run the fork to write ladruno_portal3d.ladruno")
     ap.add_argument("--quad2d", action="store_true", help="also run the fork to write ladruno_quad2d.ladruno and its model")
+    ap.add_argument("--parts", action="store_true", help="also run OpenSeesMP (2 ranks) to write the ladruno_parts2d part set and its model")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -561,6 +691,8 @@ def main() -> None:
         portal3d()
     if args.quad2d:
         quad2d()
+    if args.parts:
+        parts()
 
 
 if __name__ == "__main__":
