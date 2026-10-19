@@ -43,7 +43,7 @@ __all__ = [
     "deck_run_fields", "deck_run_lineage",
 ]
 
-#: The deck run record (#2210; the spec ratified on the issue). A deck the
+#: The deck run record (the ratified spec of the slice). A deck the
 #: bridge emits with ``analyze_steps`` writes ``<recorder file>.run.json``
 #: beside each MPCO recorder's output once its analyze loop has returned
 #: without error, and never otherwise. ``convert_mpco``'s implicit-stage
@@ -153,7 +153,7 @@ def deck_run_body(
         return []
     import json
 
-    body = ["# apeGmsh deck run record (#2210): the analyze loop returned."]
+    body = ["# apeGmsh deck run record: the analyze loop returned."]
     if dialect == "py":
         done = "_apesees_i + 1" if int(steps) > 0 else "0"
         body += [
@@ -459,7 +459,7 @@ class PyEmitter:
         # it. Tracks the name of the currently-open stage so
         # ``stage_close`` (which takes no argument) can name it too.
         self._current_stage_name: str | None = None
-        # The deck run record (#2210): every MPCO recorder's file, in
+        # The deck run record: every MPCO recorder's file, in
         # emit order, and the last ``analysis`` token the deck emitted.
         self._mpco_files: list[str] = []
         self._analysis_token: str | None = None

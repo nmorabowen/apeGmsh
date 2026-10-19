@@ -559,7 +559,7 @@ class TclEmitter:
         # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
         # (the default, byte-identical to before).
         self._stream: _TclStreamState | None = None
-        # The deck run record (#2210), as on the py deck.
+        # The deck run record, as on the py deck.
         self._mpco_files: list[str] = []
         self._analysis_token: str | None = None
 

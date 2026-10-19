@@ -479,7 +479,7 @@ def _program(
     return model, [str(s.name) for s in stages], kinds, kind_error, ranks
 
 
-#: The deck run record (#2210): ``opensees/emitter/py.py`` writes it and
+#: The deck run record: ``opensees/emitter/py.py`` writes it and
 #: owns the format; ``tests/test_deck_run_record.py`` pins these to it.
 _RUN_SCHEMA = "apegmsh.deck_run/1"
 _RUN_SUFFIX = ".run.json"

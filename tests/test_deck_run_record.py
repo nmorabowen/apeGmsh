@@ -56,7 +56,7 @@ from apeGmsh.opensees.emitter.py import (
 RUN_FIELDS = ("schema", "model_hash", "fem_hash", "recorder_file", "analysis",
               "analyze_steps", "steps_completed", "dt", "opensees_backend",
               "opensees_build_sha", "writer", "completed_iso")
-MARK = "# apeGmsh deck run record (#2210)"
+MARK = "# apeGmsh deck run record: "
 SHA = "0123456789abcdef0123456789abcdef01234567"
 
 # A two-node truss under a static ramp; tip displacement P L / (E A).
