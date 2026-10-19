@@ -97,6 +97,7 @@ jobs:
             tests/test_nav.py \
             tests/test_fork_token_ratchet.py \
             tests/test_loc_ratchet.py \
+            tests/test_lazy_import_ratchet.py \
             tests/opensees/contract/test_verbs_lock.py \
             tests/test_freeze_lock.py \
             tests/test_retirement_ledger.py
