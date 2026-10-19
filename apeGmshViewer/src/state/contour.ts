@@ -588,8 +588,14 @@ export interface ElementField {
   refused: string | null;
 }
 
-/** `<field>_<suffix>` with a vocabulary suffix, `<field>_` (an unnamed component), or a scalar of its own. */
+/**
+ * `<field>_<suffix>` with a vocabulary suffix, `<field>_` (an unnamed component), or a scalar of its own.
+ * #2187: a `.ladruno` Gauss component `<RESULT>/<label>` is the component `<label>` of the field `<RESULT>`,
+ * as `nodalFields` groups a nodal one. A native dataset name never holds a `/`, so its fields do not change.
+ */
 function splitName(n: string): { field: string; suffix: string | null } {
+  const slash = /^([^/]+)\/(.+)$/.exec(n);
+  if (slash) return { field: slash[1]!, suffix: slash[2]! };
   const m = /^(.+)_([^_]*)$/.exec(n);
   if (m && ELEMENT_SUFFIXES.has(m[2]!)) return { field: m[1]!, suffix: m[2]! };
   if (m && m[2] === "") return { field: m[1]!, suffix: "" };

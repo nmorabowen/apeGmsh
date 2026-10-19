@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
     from apeGmsh._kernel.records._compose import ComposeRecord
     from .._internal.build.records import InitialStressRecord
+    from .._internal.replay_types import SlotTypes
 
 
 __all__ = [
@@ -730,6 +731,8 @@ class H5Model:
             if _neutral_root and _neutral_root in self._f
             else self._f
         )
+        # K R1b-S2: built on first use by :meth:`slot_types`.
+        self._slot_types: "SlotTypes | None" = None
 
     # -- Lifecycle -------------------------------------------------------
 
@@ -1045,7 +1048,7 @@ class H5Model:
         for family in materials:
             fam_group = materials[family]
             for name in fam_group:
-                out.append(self._material_record(fam_group[name]))
+                out.append(self._material_record(fam_group[name], family))
         return out
 
     def materials_by_family(
@@ -1067,7 +1070,8 @@ class H5Model:
         materials = ops["materials"]
         for family in materials:
             fam_group = materials[family]
-            recs = [self._material_record(fam_group[name]) for name in fam_group]
+            recs = [self._material_record(fam_group[name], family)
+                    for name in fam_group]
             if recs:
                 out[family] = recs
         return out
@@ -1144,7 +1148,7 @@ class H5Model:
         for name in ops["beam_integration"]:
             g = ops["beam_integration"][name]
             attrs = _attrs_as_dict(g)
-            params = self._read_param_array(g, "params")
+            params = self._read_param_array(g, "params", kind="beamIntegration")
             out.append(BeamIntegrationRecord(
                 type_token=str(attrs.get("type", "")),
                 tag=int(attrs.get("tag", 0)),
@@ -1163,7 +1167,7 @@ class H5Model:
         for name in ops["time_series"]:
             g = ops["time_series"][name]
             attrs = _attrs_as_dict(g)
-            params = self._read_param_array(g, "params")
+            params = self._read_param_array(g, "params", kind="timeSeries")
             out.append(TimeSeriesRecord(
                 type_token=str(attrs.get("type", "")),
                 tag=int(attrs.get("tag", 0)),
@@ -1182,7 +1186,7 @@ class H5Model:
         for name in ops["dampings"]:
             g = ops["dampings"][name]
             attrs = _attrs_as_dict(g)
-            params = self._read_param_array(g, "params")
+            params = self._read_param_array(g, "params", kind="damping")
             out.append(DampingObjectRecord(
                 type_token=str(attrs.get("type", "")),
                 tag=int(attrs.get("tag", 0)),
@@ -1407,7 +1411,10 @@ class H5Model:
                         )
                     regions.append(RegionRecord(
                         tag=int(rattrs["tag"]),
-                        args=tuple(self._read_param_array(rg, "params")),
+                        args=_rayleigh_tail_as_floats(
+                            self._read_param_array(rg, "params"),
+                            where=f"/opensees/stages/{gname}/regions/{rname}",
+                        ),
                     ))
                     region_seq.append(int(rattrs["emit_index"]))
 
@@ -2164,9 +2171,14 @@ class H5Model:
 
     # -- Private decoders for the typed accessors -----------------------
 
-    def _material_record(self, g: Any) -> MaterialRecord:
+    def _material_record(self, g: Any, family: str) -> MaterialRecord:
+        if family not in _MATERIAL_KINDS:
+            raise MalformedH5Error(
+                f"/opensees/materials/{family}: unknown material family; "
+                f"the writer writes {sorted(_MATERIAL_KINDS)}.")
         attrs = _attrs_as_dict(g)
-        params = self._read_param_array(g, "params")
+        params = self._read_param_array(
+            g, "params", kind=_MATERIAL_KINDS[family])
         return MaterialRecord(
             type_token=str(attrs.get("type", "")),
             tag=int(attrs.get("tag", 0)),
@@ -2177,7 +2189,7 @@ class H5Model:
         self, g: Any,
     ) -> SectionSimpleRecord | SectionComplexRecord:
         attrs = _attrs_as_dict(g)
-        params = self._read_param_array(g, "params")
+        params = self._read_param_array(g, "params", kind="section")
         has_complex_body = (
             "patches" in g or "fibers" in g or "layers" in g
         )
@@ -2345,14 +2357,19 @@ class H5Model:
         )
 
     def _read_param_array(
-        self, g: Any, key: str,
+        self, g: Any, key: str, *, kind: str | None = None,
     ) -> tuple[int | float | str, ...]:
         """Decode a ``params`` / ``args`` attr pair back into the original
         positional ``*args`` tuple.
 
         Mirrors the inverse of :func:`apeGmsh.opensees.emitter._h5_write._write_param_array`:
         slot ``i`` is the string from ``{key}_str[i]`` when non-empty,
-        otherwise the float from ``{key}[i]``.
+        otherwise the float from ``{key}[i]``, an integral one as an int.
+        ``kind`` names a tagged store (``uniaxialMaterial``, ``section``
+        ...): its row's slots then take the int/float type the archived
+        declaration emits there (:class:`~apeGmsh.opensees._internal.
+        replay_types.SlotTypes`, K R1b-S2), keyed on the group's ``type``
+        and ``tag``.
         """
         import numpy as np
 
@@ -2382,7 +2399,22 @@ class H5Model:
                     out.append(int(num))
                 else:
                     out.append(float(num))
-        return tuple(out)
+        if kind is None or not self.slot_types().active:
+            return tuple(out)
+        return self.slot_types().recover(
+            kind, int(_decode_bytes(g.attrs["tag"])),
+            str(_decode_bytes(g.attrs["type"])), out)
+
+    def slot_types(self) -> "SlotTypes":
+        """The archive's :class:`~apeGmsh.opensees._internal.replay_types.
+        SlotTypes`, built once from :meth:`declarations` (K R1b-S2)."""
+        cached = self._slot_types
+        if cached is None:
+            from .._internal.replay_types import SlotTypes
+
+            cached = SlotTypes(self.declarations())
+            self._slot_types = cached
+        return cached
 
     def _material_tag_from_ref(self, ref: str) -> int:
         """Reverse ``/opensees/materials/{family}/{type}_{tag}`` → ``tag``.
@@ -3209,6 +3241,13 @@ def _attrs_as_dict(group: Any) -> dict[str, Any]:
     for key, value in group.attrs.items():
         out[key] = _decode_bytes(value)
     return out
+
+
+#: ``/opensees/materials/{family}`` -> the ``decls`` tag kind of its rows.
+_MATERIAL_KINDS: dict[str, str] = {
+    "uniaxial": "uniaxialMaterial",
+    "nd": "nDMaterial",
+}
 
 
 def _rayleigh_tail_as_floats(
