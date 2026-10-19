@@ -1,7 +1,7 @@
 // dependency-cruiser rules for the app's module graph (ADR 0112 D6; the
 // panel-import rule of scripts/check_app_wall.py, over the same graph).
 //
-//   npm run lint          (depcruise --config .dependency-cruiser.cjs src)
+//   npm run lint          (depcruise --config .dependency-cruiser.cjs src scripts)
 //
 // A panel (src/panels/<a>) reads the store and the selectors and dispatches
 // events. Its imports are an allow-list: src/state/store, src/state/selectors,
@@ -28,6 +28,13 @@ module.exports = {
       comment: "D6: ui/ imports ui/ and the state types only, so it cannot re-export what a panel may not reach",
       from: { path: "^src/ui/" },
       to: { pathNot: ["^src/ui/", "^src/state/types\\.ts$"] },
+    },
+    {
+      name: "no-apegmsh-import",
+      severity: "error",
+      comment: "ADR 0112 D4: nothing in the app tree (src, scripts) imports the Python package src/apeGmsh",
+      from: { path: "^(src|scripts)/" },
+      to: { path: "(^|/)src/apeGmsh(/|$)" },
     },
     {
       name: "no-circular",
