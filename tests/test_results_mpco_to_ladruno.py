@@ -148,16 +148,9 @@ def _springs_model(path: Path) -> Path:
     return path
 
 
-def _unstaged_springs_model(
-    path: Path, kinds: "list[str]", *, analyze_steps: "int | None" = None,
-    h5_first: bool = False,
-) -> Path:
-    """The springs model with no ``ops.stage`` block and one ``analysis``
-    call per entry of ``kinds`` (the implicit-stage rule, #1950).
-
-    ``analyze_steps`` also emits the bridge's deck (``ops.py``) with that
-    ``analyze`` call, after the archive (``h5_first``, so the deck re-writes
-    it) or before it (#2210)."""
+def _unstaged_springs_bridge(kinds: "list[str]") -> Any:
+    """The springs model on a bridge with no ``ops.stage`` block and one
+    ``analysis`` call per entry of ``kinds`` (the implicit-stage rule)."""
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 
@@ -179,6 +172,19 @@ def _unstaged_springs_model(
         else:
             ops.integrator.Newmark(gamma=0.5, beta=0.25)
             ops.analysis.Transient()
+    return ops
+
+
+def _unstaged_springs_model(
+    path: Path, kinds: "list[str]", *, analyze_steps: "int | None" = None,
+    h5_first: bool = False,
+) -> Path:
+    """The archive of :func:`_unstaged_springs_bridge` (#1950).
+
+    ``analyze_steps`` also emits the bridge's deck (``ops.py``) with that
+    ``analyze`` call, after the archive (``h5_first``, so the deck re-writes
+    it) or before it (#2210)."""
+    ops = _unstaged_springs_bridge(kinds)
     deck = dict(path=str(path.with_suffix(".py")), analyze_steps=analyze_steps,
                 analyze_dt=0.1 if "transient" in kinds else None,
                 progress=False)
@@ -615,6 +621,74 @@ def test_a_step_count_mismatch_refuses(fx, tmp_path) -> None:
              rf"records \[{SPRINGS_STEPS}\] step\(s\), but the deck's analyze "
              rf"call runs {SPRINGS_STEPS + 1}",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def _analyze_records(model: Path) -> "tuple[int, Any]":
+    """``/opensees/program``'s ``analyze`` calls and the archived call."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    m = OpenSeesModel.from_h5(model)
+    return sum(r.count for r in m.program() if r.method == "analyze"), \
+        m.analyze_call()
+
+
+def _ours(caught: list) -> list[str]:
+    return [str(w.message) for w in caught if w.category is UserWarning]
+
+
+def test_the_archive_follows_the_last_deck_with_one_analyze_record(
+    tmp_path,
+) -> None:
+    """``ops.h5`` before the decks: each deck re-writes the archive in place
+    to its own ``analyze`` call, one record and never two; replacing an
+    earlier deck's call warns by name, and no temporary file is left."""
+    ops = _unstaged_springs_bridge(["static"])
+    model = tmp_path / "m.h5"
+    ops.h5(str(model))
+    assert _analyze_records(model) == (0, None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ops.py(str(tmp_path / "a.py"), analyze_steps=5, progress=False)
+    assert _analyze_records(model) == (1, (5, None))
+    ops.h5(str(tmp_path / "after.h5"))       # after the deck: archived directly
+    assert _analyze_records(tmp_path / "after.h5") == (1, (5, None))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ops.tcl(str(tmp_path / "b.tcl"), analyze_steps=7, analyze_dt=0.5,
+                progress=False)
+    msgs = _ours(caught)
+    assert len(msgs) == 2 and all(
+        "earlier deck's analyze (5, None)" in m for m in msgs)
+    for p in (model, tmp_path / "after.h5"):     # each named once
+        assert sum(repr(str(p)) in m for m in msgs) == 1
+    assert _analyze_records(model) == (1, (7, 0.5))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ops.tcl(str(tmp_path / "c.tcl"), progress=False)   # a model-only deck
+    assert len(_ours(caught)) == 2
+    assert _analyze_records(model) == (0, None)
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
+def test_an_archive_changed_after_h5_is_not_rewritten(tmp_path) -> None:
+    """An archive some other write replaced is never touched by a deck: it
+    warns by name, keeps its bytes, and is forgotten."""
+    ops = _unstaged_springs_bridge(["static"])
+    model = tmp_path / "m.h5"
+    ops.h5(str(model))
+    _unstaged_springs_bridge(["static", "static"]).h5(str(tmp_path / "x.h5"))
+    shutil.copy(tmp_path / "x.h5", model)
+    before = _sha(model)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ops.py(str(tmp_path / "a.py"), analyze_steps=5, progress=False)
+    msgs = _ours(caught)
+    assert len(msgs) == 1 and "changed after ops.h5 wrote it" in msgs[0]
+    assert _sha(model) == before
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ops.py(str(tmp_path / "b.py"), analyze_steps=6, progress=False)
+    assert _sha(model) == before
 
 
 def test_a_bare_convert_refuses_an_unstaged_program_as_before(fx, tmp_path) -> None:
