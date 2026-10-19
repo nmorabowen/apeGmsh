@@ -3,6 +3,7 @@
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py          # the h5py ones
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --modes  # + the fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --portal3d  # + the 3-D fork run
+    python apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d    # + the Gauss-point fork run
 
 run from the repository root. The first form needs h5py and numpy only; the
 second also needs a Ladruno fork build of OpenSees behind ``openseespy`` (the
@@ -50,6 +51,19 @@ this file:
   ``DISPLACEMENT`` = ``Ux,Uy,Uz`` and ``ROTATION`` = ``Rx,Ry,Rz`` are separate
   groups (the run asserts it), and so are the two modal groups. Fork build
   ``79e062367`` (the opensees venv, 2026-10-19), FORMAT_MINOR_VERSION 0.
+* ``ladruno_quad2d.ladruno`` and ``ladruno_quad2d.h5`` (``--quad2d``, #2187): a
+  fork run and the model it pairs with. A 3 x 2 grid of unit ``quad`` elements
+  (FourNodeQuad, PlaneStress, ElasticIsotropic E = 1000, nu = 0.25, thickness
+  1), nodes 1..12 row by row from (0, 0), the left edge fixed, -1 in y at the
+  two right corners, two LoadControl 0.5 steps, with ``-N displacement -E stress
+  strain``. The fork writes ``stress`` and ``strain`` as 2 x 2 Gauss buckets
+  (``COLUMN_MAP`` rows GAUSS_ID 0..3, ``COMP_NAMES`` ``sigma11,sigma22,sigma12``)
+  and ``QUADRATURE/GP_PARAM`` (+-1/sqrt 3, PARAM_DOMAIN ``[-1,1]``). The script
+  then stamps ``INFO/PROVENANCE`` with ``STAMP`` (``element_index_space`` =
+  ``"fem"``: the element tags are the model's ids) and writes the model.h5 by
+  hand, with the same nodes, elements and lineage hashes, so the two pair. Fork
+  build ``79e0623670`` (the opensees venv, 2026-10-19), FORMAT_MINOR_VERSION 0.
+  ``ladruno_quad2d.oracle.json`` is written by ``make_ladruno_gauss_oracle.py``.
 * ``ladruno_frame3d.h5`` and ``ladruno_frame3d.ladruno``: a paired 3-D
   2-bay, 2-story frame with floor slabs, written with h5py (not a fork run).
   It follows schema §7.1.1: ``DISPLACEMENT`` = ``Ux,Uy,Uz`` and a separate
@@ -202,6 +216,92 @@ def portal3d() -> None:
         want = {"DISPLACEMENT": "Ux,Uy,Uz", "ROTATION": "Rx,Ry,Rz", "MODES_OF_VIBRATION(U)": "Ux,Uy,Uz", "MODES_OF_VIBRATION(R)": "Rx,Ry,Rz"}
         got = {k: _text(on[k].attrs["COMPONENTS"]) for k in on}
         assert got == want, got
+
+
+_QUAD2D_RUN = r"""
+import sys
+import openseespy.opensees as ops
+
+path = sys.argv[1]
+ops.wipe()
+ops.model("basic", "-ndm", 2, "-ndf", 2)
+nx, ny = 3, 2
+tag = 0
+for j in range(ny + 1):
+    for i in range(nx + 1):
+        tag += 1
+        ops.node(tag, float(i), float(j))
+for j in range(ny + 1):
+    ops.fix(1 + j * (nx + 1), 1, 1)
+ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
+e = 0
+for j in range(ny):
+    for i in range(nx):
+        e += 1
+        n1 = 1 + i + j * (nx + 1)
+        ops.element("quad", e, n1, n1 + 1, n1 + 1 + nx + 1, n1 + nx + 1, 1.0, "PlaneStress", 1)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.load((nx + 1) * (ny + 1), 0.0, -1.0)
+ops.load(nx + 1, 0.0, -1.0)
+ops.recorder("ladruno", path, "-N", "displacement", "-E", "stress", "strain")
+ops.system("BandGen")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 0.5)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(2)
+ops.wipe()
+"""
+
+#: The quad2d model, as _QUAD2D_RUN builds it: nodes row by row, elements counter-clockwise from their lower-left node.
+QUAD2D_NODES = np.array([[float(i), float(j), 0.0] for j in range(3) for i in range(4)], dtype=np.float64)
+QUAD2D_CONN = np.array([[n, n + 1, n + 5, n + 4] for n in (1, 2, 3, 5, 6, 7)], dtype=np.int64)
+
+
+def quad2d() -> None:
+    """Write ``ladruno_quad2d.ladruno`` (a fork run, stamped) and ``ladruno_quad2d.h5`` (its model, by hand)."""
+    out = HERE / "ladruno_quad2d.ladruno"
+    if out.exists():
+        out.unlink()
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    subprocess.run([sys.executable, "-c", _QUAD2D_RUN, str(out)], check=True, env=env)
+    with h5py.File(out, "r+") as f:
+        st = f["MODEL_STAGE[1]"]
+        elems = st["MODEL/ELEMENTS"]
+        assert list(elems) == ["31-FourNodeQuad[201:0]"], list(elems)
+        conn = elems["31-FourNodeQuad[201:0]/CONNECTIVITY"][()]
+        assert (conn[:, 0] == np.arange(1, 7)).all() and (conn[:, 1:] == QUAD2D_CONN).all(), conn
+        assert np.allclose(st["MODEL/NODES/COORDINATES"][()], QUAD2D_NODES[:, :2])
+        for result in ("stress", "strain"):
+            cm = st[f"RESULTS/ON_ELEMENTS/{result}/31-FourNodeQuad[201:0:0]/COLUMN_MAP"]
+            assert cm["GAUSS_ID"][()].reshape(-1).tolist() == [0, 1, 2, 3]
+        prov = f["INFO/PROVENANCE"]
+        for name, value in STAMP.items():
+            prov.attrs.create(name, data=value, dtype=VLEN_UTF8)
+    with h5py.File(HERE / "ladruno_quad2d.h5", "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["neutral_schema_version"] = "2.35.0"
+        meta.attrs["opensees_schema_version"] = "2.24.0"
+        meta.attrs["ndm"] = np.int64(2)
+        meta.attrs["ndf"] = np.int64(2)
+        lin = meta.create_group("lineage")
+        lin.attrs["model_hash"] = STAMP["model_hash"]
+        lin.attrs["fem_hash"] = STAMP["fem_hash"]
+        nodes = f.create_group("nodes")
+        nodes["ids"] = np.arange(1, 13, dtype=np.int64)
+        nodes["coords"] = QUAD2D_NODES
+        quad4 = f.create_group("elements").create_group("quad4")
+        quad4.attrs["code"] = np.int64(3)
+        quad4.attrs["dim"] = np.int64(2)
+        quad4.attrs["npe"] = np.int64(4)
+        quad4["ids"] = np.arange(1, 7, dtype=np.int64)
+        quad4["connectivity"] = QUAD2D_CONN
+        plate = f.create_group("physical_groups").create_group("element_side").create_group("Plate")
+        plate.attrs["dim"] = np.int64(2)
+        plate.attrs["tag"] = np.int64(1)
+        plate["element_ids"] = np.arange(1, 7, dtype=np.int64)
 
 
 def _text(attr: object) -> str:
@@ -448,6 +548,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--modes", action="store_true", help="also run the fork to write ladruno_modes.ladruno")
     ap.add_argument("--portal3d", action="store_true", help="also run the fork to write ladruno_portal3d.ladruno")
+    ap.add_argument("--quad2d", action="store_true", help="also run the fork to write ladruno_quad2d.ladruno and its model")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -457,6 +558,8 @@ def main() -> None:
         modes()
     if args.portal3d:
         portal3d()
+    if args.quad2d:
+        quad2d()
 
 
 if __name__ == "__main__":
