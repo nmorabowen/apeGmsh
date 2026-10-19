@@ -789,6 +789,7 @@ class OpenSeesModel:
         target: Literal["tcl", "py", "live", "h5"] | str,
         *,
         out: "str | Path | None" = None,
+        flat: bool = False,
     ) -> "str | None":
         """Re-emit the rehydrated graph to a build target.
 
@@ -804,6 +805,22 @@ class OpenSeesModel:
         - ``"h5"`` — write a new ``model.h5`` to ``out=`` (which is
           required for the ``h5`` target).  Returns ``None``.
 
+        ``flat=True`` (``"tcl"`` and ``"py"`` only) mirrors
+        ``apeSees.tcl(flat=True)``.  It drops exactly the analysis-chain
+        ``numberer`` and ``system`` lines that the archive recorded with a
+        ``numberer_runtime_fallback`` / ``system_runtime_fallback`` attr:
+        the ADR 0027 INV-5 auto-chain a partitioned emit writes (``if
+        {[catch {numberer ParallelPlain} _err]} { numberer RCM }`` and the
+        ``Mumps`` / ``UmfPack`` pair), in the global chain and in every
+        stage's.  The bridge's single-domain emit never auto-emits them.
+        Nothing else changes: a ``numberer`` or ``system`` the user
+        declared (no fallback attr) is replayed, and so is every other
+        line.  An archive with no fallback attr replays the same deck
+        either way.  ``flat=False`` (the default) replays the recorded
+        auto-chain as written.  ``flat=True`` is refused for ``"live"``
+        and ``"h5"``: the live domain runs the recorded runtime
+        conditional as is, and an ``h5`` rewrite must keep the attrs.
+
         .. note::
 
             **Tag identity may diverge from a fresh
@@ -817,11 +834,21 @@ class OpenSeesModel:
         Raises
         ------
         ValueError
-            ``target`` is unrecognised, or the archive declares no ndm
-            (a broker-only ``fem.to_h5`` file, ``/meta/ndm = 0``).
+            ``target`` is unrecognised, the archive declares no ndm
+            (a broker-only ``fem.to_h5`` file, ``/meta/ndm = 0``), or
+            ``flat=True`` is passed for a target other than ``"tcl"``
+            or ``"py"``.
         TypeError
             ``out=`` missing for the ``"h5"`` target.
         """
+        if flat and target not in ("tcl", "py"):
+            raise ValueError(
+                f"OpenSeesModel.build({target!r}, flat=True): flat applies "
+                "to the 'tcl' and 'py' decks only. It drops the recorded "
+                "ADR 0027 INV-5 numberer/system auto-chain; the 'live' "
+                "domain runs that runtime conditional as recorded, and an "
+                "'h5' rewrite must keep its attrs."
+            )
         self._require_declared_ndm()
         if target in ("tcl", "py", "live"):
             # ADR 0114 D6: fail closed on the stored refusals before any
@@ -830,9 +857,9 @@ class OpenSeesModel:
             # carry the solve those gates exist to stop.
             self._refuse_stored_solve_refusals(target)
         if target == "tcl":
-            return self._build_text("tcl", out)
+            return self._build_text("tcl", out, flat=flat)
         if target == "py":
-            return self._build_text("py", out)
+            return self._build_text("py", out, flat=flat)
         if target == "live":
             self._build_live()
             return None
@@ -1473,9 +1500,11 @@ class OpenSeesModel:
                 nd, "nDMaterial", self._program, self._declarations),
         )
 
-    def _populate_emitter(self, emitter: Any) -> None:
+    def _populate_emitter(self, emitter: Any, *, flat: bool = False) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
+
+        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only).
 
         This is the body of the tcl / py / live :meth:`build` targets.
         Delegates to
@@ -1575,10 +1604,12 @@ class OpenSeesModel:
         if self._stages:
             _replay_staged_into(
                 emitter, stages=self._stages, commands=self._commands,
-                program=self._program, **replay_kwargs,
+                program=self._program, flat=flat, **replay_kwargs,
             )
         else:
-            _replay_into(emitter, commands=self._commands, **replay_kwargs)
+            _replay_into(
+                emitter, commands=self._commands, flat=flat, **replay_kwargs,
+            )
 
     def _rehydrate_element_connectivity(
         self, records: tuple[ElementRecord, ...],
@@ -1964,6 +1995,7 @@ class OpenSeesModel:
 
     def _build_text(
         self, kind: Literal["tcl", "py"], out: "str | Path | None",
+        *, flat: bool = False,
     ) -> str:
         """Render the deck for the ``tcl`` or ``py`` target.
 
@@ -1984,7 +2016,7 @@ class OpenSeesModel:
             from .emitter.py import PyEmitter
 
             emitter = PyEmitter(backend=backend)
-        self._populate_emitter(emitter)
+        self._populate_emitter(emitter, flat=flat)
         text = "\n".join(emitter.lines()) + "\n"
         if out is not None:
             Path(out).write_text(text, encoding="utf-8")
