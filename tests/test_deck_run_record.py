@@ -365,7 +365,7 @@ def test_the_record_follows_the_loop_and_ends_the_deck(exported, dialect) -> Non
     close = "ops.remove('recorders')" if dialect == "py" else "remove recorders"
     assert block[1] == close  # the recorders close before anything is stated
     rename = "_apesees_os.replace(" if dialect == "py" else "file rename -force "
-    assert any(rename in ln for ln in block[-8:])  # the rename ends the deck
+    assert any(rename in ln for ln in block[-14:])  # the rename ends the deck
 
 
 def test_a_torn_write_leaves_no_record(exported, monkeypatch, capsys) -> None:
@@ -389,16 +389,18 @@ def test_a_torn_write_leaves_no_record(exported, monkeypatch, capsys) -> None:
     assert opened.endswith('.run.json.tmp" w]')
     (renamed,) = [ln for ln in lines if "file rename -force " in ln]
     assert '.run.json.tmp" "' in renamed
-    assert renamed.endswith('.run.json"} _apesees_rerr]} { break }')
+    assert renamed.endswith('.run.json"} _apesees_rerr]} {')
 
 
 #: Runs a py deck in a fresh interpreter with every OpenSees call a no-op
 #: that succeeds and every rename refused, then prints the run's marker.
 _REFUSING_RUNNER = """
-import os, sys, types
+import os, sys, time, types
 def refuse(*a, **k):
     raise PermissionError("held by another process")
 os.replace = refuse
+waits = []
+time.sleep = waits.append  # the backoff's waits, not slept
 ops = types.ModuleType("openseespy.opensees")
 ops.__getattr__ = lambda name: (lambda *a, **k: 0)
 pkg = types.ModuleType("openseespy")
@@ -407,6 +409,7 @@ sys.modules["openseespy"], sys.modules["openseespy.opensees"] = pkg, ops
 deck = sys.argv[1]
 exec(compile(open(deck, encoding="utf-8").read(), deck, "exec"),
      {"__name__": "__main__"})
+print("WAITS=" + ",".join(repr(w) for w in waits))
 print("DECK-DONE")
 """
 
@@ -433,19 +436,29 @@ def test_a_refused_rename_never_fails_a_finished_run(tmp_path, dialect) -> None:
                               cwd=tmp_path, capture_output=True, text=True)
         assert proc.returncode == 0, proc.stderr[-2000:]
         out = proc.stdout
+        (line,) = [ln for ln in out.splitlines() if ln.startswith("WAITS=")]
+        waits = [1000 * float(w) for w in line[len("WAITS="):].split(",")]
     else:
         interp = tcl()
         interp.eval("proc unknown {args} { return 0 }")
         interp.eval("rename file _apesees_real_file; set ::_apesees_tries 0")
+        interp.eval("set ::_apesees_waits {}; "
+                    "proc after {ms} { lappend ::_apesees_waits $ms }")
         interp.eval("proc file {cmd args} { if {$cmd eq {rename}} "
                     "{ incr ::_apesees_tries; error {permission denied} }; "
                     "uplevel 1 [list _apesees_real_file $cmd {*}$args] }")
         interp.eval(deck.read_text(encoding="utf-8") + "\nputs DECK-DONE\n")
-        assert int(interp.eval("set ::_apesees_tries")) == 10
+        waits = [float(w) for w in
+                 interp.splitlist(interp.eval("set ::_apesees_waits"))]
+        assert int(interp.eval("set ::_apesees_tries")) == len(waits) + 1
         out = "\n".join(interp.splitlist(interp.eval("set ::_apesees_out")))
     assert "the deck run record was not written" in out
     assert out.rstrip().endswith("DECK-DONE")
     assert not mpco.with_name("deck.mpco" + DECK_RUN_SUFFIX).exists()
+    # Backoff: 50 ms doubling, capped at 1 s, until 30 s of waits are spent.
+    assert waits[:6] == [50, 100, 200, 400, 800, 1000]
+    assert max(waits) == 1000 and waits == sorted(waits)
+    assert 30000 <= sum(waits) < 31000
 
 
 @pytest.mark.parametrize("dialect", ["py", "tcl"])
@@ -689,10 +702,11 @@ def _emit_partitioned(tmp_path: Path, dialect: str, monkeypatch: Any,
         getattr(bridge, dialect)(str(deck), analyze_steps=STEPS,
                                  progress=False)
     assert seen == []  # nor through the bridge
-    ours = [str(w.message) for w in caught
-            if issubclass(w.category, RuntimeWarning)
+    ours = [w for w in caught if issubclass(w.category, RuntimeWarning)
             and "run record" in str(w.message)]
-    return deck, ours
+    # It points at the user's export call, here this file.
+    assert all(Path(w.filename).name == "test_deck_run_record.py" for w in ours)
+    return deck, [str(w.message) for w in ours]
 
 
 @pytest.mark.parametrize("dialect", ["py", "tcl"])
@@ -706,6 +720,7 @@ def test_a_partitioned_bridge_deck_skips_its_record_without_composing(
     assert len(ours) == 1, ours
     assert "partitioned" in ours[0] and "no lineage" in ours[0]
     assert "Results.from_mpco" in ours[0]
+    assert str(deck) in ours[0]  # names the deck
     text = deck.read_text(encoding="utf-8")
     assert "getPID" in text  # a partitioned deck
     assert MARK not in text

@@ -115,7 +115,7 @@ def _automatic_archive_lineage(
 
 def deck_run_lineage(
     archive: "Callable[[Any], None]", bridge: Any = None, *,
-    compose: bool = True,
+    compose: bool = True, deck: str = "",
 ) -> "tuple[str, str] | None":
     """``(model_hash, fem_hash)`` of the archive ``archive(path)`` writes.
 
@@ -130,12 +130,14 @@ def deck_run_lineage(
     export) nothing is composed: with no reused lineage it warns once and
     gets no record. So does a model whose archive cannot be composed; the
     deck still emits, and ``read_deck_mpco`` of its ``.mpco`` refuses to
-    convert (check 1).
+    convert (check 1). The warning names ``deck`` and points at the
+    user's export call.
     """
     import warnings
 
     import h5py
 
+    from .._internal._stacklevel import _stacklevel_outside_package
     from .h5 import H5FeatureDeferredWarning
 
     key = _declarations(bridge)
@@ -165,9 +167,10 @@ def deck_run_lineage(
         why = f"its model archive cannot be composed ({exc!r})"
     if why:
         warnings.warn(
-            f"The deck writes no run record: {why}. read_deck_mpco of its "
-            ".mpco will read it with Results.from_mpco.",
-            RuntimeWarning, stacklevel=4,
+            f"The deck {deck or '(unnamed)'} writes no run record: {why}. "
+            "read_deck_mpco of its .mpco will read it with "
+            "Results.from_mpco.",
+            RuntimeWarning, stacklevel=_stacklevel_outside_package(),
         )
         return None
     assert model_hash is not None
@@ -235,8 +238,10 @@ _TCL_RUN_TIME = {
 }
 
 
-#: Tries of the record's final rename before the deck gives up on it.
-_RENAME_TRIES = 10
+#: The record's final rename is retried while another process (Defender,
+#: the indexer) holds the fresh file: waits from 50 ms, doubling, capped at
+#: 1 s each, within a 30 s budget of waits; then the deck gives up on it.
+_RENAME_FIRST_MS, _RENAME_CAP_MS, _RENAME_BUDGET_MS = 50, 1000, 30000
 _NOT_WRITTEN = "apeGmsh: the deck run record was not written"
 
 
@@ -270,14 +275,18 @@ def _py_record(fields: "dict[str, Any]", file: str, done: str,
         "'%Y-%m-%dT%H:%M:%SZ', _apesees_time.gmtime()))",
         f"        with open({tmp!r}, 'w', encoding='utf-8') as _apesees_f:",
         "            _apesees_json.dump(_apesees_run, _apesees_f)",
-        f"        for _apesees_k in range({_RENAME_TRIES}):",
+        f"        _apesees_wait, _apesees_left = {_RENAME_FIRST_MS}, "
+        f"{_RENAME_BUDGET_MS}",
+        "        while True:",
         "            try:",
         f"                _apesees_os.replace({tmp!r}, {final!r})",
         "                break",
         "            except OSError:",
-        f"                if _apesees_k == {_RENAME_TRIES - 1}:",
+        "                if _apesees_left <= 0:",
         "                    raise",
-        "                _apesees_time.sleep(0.2)",
+        "                _apesees_time.sleep(_apesees_wait / 1000.0)",
+        "                _apesees_left -= _apesees_wait",
+        f"                _apesees_wait = min({_RENAME_CAP_MS}, 2 * _apesees_wait)",
         "except OSError as _apesees_e:",
         f"    print('{_NOT_WRITTEN}: %s' % _apesees_e, flush=True)",
     ]
@@ -302,12 +311,15 @@ def _tcl_record(fields: "dict[str, Any]", file: str,
         "        fconfigure $_apesees_f -encoding utf-8",
         f"        puts -nonewline $_apesees_f [format {q(template)} {args}]",
         "        close $_apesees_f",
-        "        for {set _apesees_k 0} {1} {incr _apesees_k} {",
-        f"            if {{![catch {{file rename -force {q(tmp)} {q(final)}}} "
-        "_apesees_rerr]} { break }",
-        f"            if {{$_apesees_k >= {_RENAME_TRIES - 1}}} "
-        "{ error $_apesees_rerr }",
-        "            after 200",
+        f"        set _apesees_wait {_RENAME_FIRST_MS}; "
+        f"set _apesees_left {_RENAME_BUDGET_MS}",
+        f"        while {{[catch {{file rename -force {q(tmp)} {q(final)}}} "
+        "_apesees_rerr]} {",
+        "            if {$_apesees_left <= 0} { error $_apesees_rerr }",
+        "            after $_apesees_wait",
+        "            incr _apesees_left [expr {-$_apesees_wait}]",
+        "            set _apesees_wait [expr {2 * $_apesees_wait > "
+        f"{_RENAME_CAP_MS} ? {_RENAME_CAP_MS} : 2 * $_apesees_wait}}]",
         "        }",
         "    }",
     ]
@@ -345,6 +357,7 @@ def deck_run_body(
     dialect: 'Literal["py", "tcl"]', archive: "Callable[[Any], None]",
     files: "Sequence[str]", analysis: "str | None", steps: int,
     dt: "float | None", *, partitioned: bool, bridge: Any = None,
+    deck: str = "",
 ) -> "list[str]":
     """The deck lines that write the run record of each MPCO ``files``
     entry (``<file>.run.json``), in ``dialect``; ``[]`` with no file or no
@@ -362,7 +375,8 @@ def deck_run_body(
     build); the steps completed from the loop's own counter."""
     if not files or analysis is None:
         return []
-    lineage = deck_run_lineage(archive, bridge, compose=not partitioned)
+    lineage = deck_run_lineage(archive, bridge, compose=not partitioned,
+                               deck=deck)
     if lineage is None:
         return []
     head = ["# apeGmsh deck run record: the analyze loop returned; the "
@@ -1054,7 +1068,7 @@ class PyEmitter:
 
     def _deck_run_record(
         self, archive: "Callable[[Any], None]", steps: int,
-        dt: "float | None", bridge: Any = None,
+        dt: "float | None", bridge: Any = None, deck: str = "",
     ) -> None:
         """Make the deck write its run record (#2210) as its last action.
 
@@ -1072,6 +1086,7 @@ class PyEmitter:
         for line in deck_run_body(
             "py", archive, self._mpco_files, self._analysis_token, steps,
             dt, partitioned=self._partition_shim_emitted, bridge=bridge,
+            deck=deck,
         ):
             self._lines.append(line)
 

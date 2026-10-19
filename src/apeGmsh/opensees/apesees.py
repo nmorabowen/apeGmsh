@@ -10192,7 +10192,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 emitter.profiler(_verb, *_vargs)
             if analyze_steps is not None:  # the run record, last; it reuses
                 self._artifacts.after_emit(self)  # this model.h5's lineage
-                emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self)
+                emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self, path)
             if stream and per_rank and (
                 emitter.stream_fragment_count() == 0
             ):
@@ -10751,7 +10751,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             emitter.profiler(_verb, *_vargs)
         if analyze_steps is not None:  # the run record, last; it reuses
             self._artifacts.after_emit(self)  # this model.h5's lineage
-            emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self)
+            emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self, path)
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)
         self._artifacts.after_emit(self)
