@@ -17,14 +17,10 @@ Scope
 - ``line_stations`` records (Phase 11b) — beam section forces; an
   elastic beam's two stations are synthesised from ``localForce``.
 - ``elements`` records (Phase 11b) — per-element-node forces.
-- ``fibers`` / ``layers`` — **MPCO-only in Phase 11c.** The ``.out``
-  format is impractical for fiber-section results (a 5-IP × 100-fiber
-  section explodes to 500 columns per element per timestep) and
-  shell layered-section probing through ``.out`` requires a
-  per-fiber recorder per element. Use MPCO recording instead and
-  read via ``Results.from_mpco(...)``. If a spec includes fiber or
-  layer records, they are skipped here with a ``UserWarning`` and
-  surfaced in ``self.unsupported`` for inspection.
+- ``fibers`` records — ``section fiberData2`` beside an
+  ``integrationPoints`` pair, read as the MPCO fibre slab; a
+  ``damage`` gauss record is read from its per-Gauss-point files.
+- ``layers`` — refused by name (``spec._emit.layers_out_refusal``).
 - ``modal`` — emission deferred, so the transcoder skips too.
 
 Stages: one stage by default; ``stages=`` (a ``LiveRecorders`` run's
@@ -33,7 +29,6 @@ the files prefixed ``<name>__``.
 """
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -62,9 +57,11 @@ from ...opensees._response_catalog import (
 )
 from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
+from ..readers._out_fiber_io import read_fiber_record, read_per_material_gauss, write_fiber_records
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
     element_tag_map,
+    layers_out_refusal,
     line_stations_from_local_force,
     refuse_non_elastic_local_force,
 )
@@ -81,7 +78,7 @@ if TYPE_CHECKING:
 
 
 # Spec categories whose records become element rows in the file.
-_ELEMENT_ROW_CATEGORIES = frozenset({"gauss", "line_stations", "elements"})
+_ELEMENT_ROW_CATEGORIES = frozenset({"gauss", "line_stations", "elements", "fibers"})
 
 
 class RecorderTranscoder:
@@ -148,14 +145,6 @@ class RecorderTranscoder:
         # Parse all stages before the writer opens: a bad file leaves no target.
         parsed = [(name, kind, self._parse_stage())
                   for name, kind, self._stage_id in self._plan]
-        mpco_only_skipped = [t for t in self.unsupported
-                             if t.partition(":")[0] in ("fibers", "layers")]
-        if mpco_only_skipped:
-            warnings.warn(
-                f"RecorderTranscoder cannot transcode fiber/layer records from ``.out`` "
-                f"files ({', '.join(mpco_only_skipped)}). These are MPCO-only in Phase "
-                f"11c — record an MPCO file and read via ``Results.from_mpco(...)``. The "
-                f"records are listed in ``self.unsupported``.", UserWarning, stacklevel=2)
 
         stages = [(name, kind, self._stage_time(p), *p.values()) for name, kind, p in parsed]
         proven_fem_index = self._element_index_is_fem()
@@ -167,12 +156,13 @@ class RecorderTranscoder:
                        source_path=str(self._output_dir), model_h5_src=self._model_h5_src)
                 if proven_fem_index:
                     w.stamp_element_index_space(ELEMENT_INDEX_SPACE_FEM)
-                for name, kind, time_vec, nodes, gauss, lines, nodal in stages:
+                for name, kind, time_vec, nodes, gauss, lines, nodal, fibers in stages:
                     sid = w.begin_stage(name=name, kind=kind, time=time_vec)
                     self._write_merged_nodes(w, sid, nodes, time_vec)
                     self._write_gauss_records(w, sid, gauss)
                     self._write_line_station_records(w, sid, lines)
                     self._write_nodal_force_records(w, sid, nodal)
+                    write_fiber_records(w, sid, fibers)
                     w.end_stage()
             partial.replace(self._target_path)
         finally:
@@ -180,15 +170,21 @@ class RecorderTranscoder:
         return self._target_path
 
     def _parse_stage(self) -> "dict[str, list]":
-        """Payloads by category (nodes, gauss, line_stations, elements) of the
-        stage whose files carry prefix ``self._stage_id``. Records ``.out``
-        cannot carry go to ``self.unsupported`` (the run does not fail)."""
+        """Payloads by category (nodes, gauss, line_stations, elements, fibers)
+        of the stage whose files carry prefix ``self._stage_id``. A layers
+        record raises by name; modal goes to ``self.unsupported``."""
         parse = {"nodes": self._parse_node_record, "gauss": self._parse_gauss_record,
                  "line_stations": self._parse_line_station_record,
-                 "elements": self._parse_nodal_force_record}
+                 "elements": self._parse_nodal_force_record,
+                 "fibers": lambda rec: read_fiber_record(rec, quiet_emit_logical(
+                     rec, output_dir=str(self._output_dir), file_format=self._file_format,
+                     stage_id=self._stage_id), lambda ids: _resolve_element_lengths(self._fem, ids),
+                     self._model_h5_src, self._spec.fem_snapshot_id)}
         payloads: dict[str, list] = {category: [] for category in parse}
         self.unsupported = []
         for rec in self._spec.records:
+            if rec.category == "layers":
+                raise ValueError(f"RecorderTranscoder: {layers_out_refusal(rec)}")
             if rec.category not in parse:
                 self.unsupported.append(f"{rec.category}:{rec.name}")
             elif (payload := parse[rec.category](rec)) is not None:
@@ -200,9 +196,9 @@ class RecorderTranscoder:
         """One stage's time vector: the first node or gauss record's, which
         every record must match; only when neither kind has one does a line
         or nodal-force record supply it."""
-        node_records, gauss_records, line_records, nodal_records = payloads.values()
+        node_records, gauss_records, line_records, nodal_records, fibers = payloads.values()
         early = [*node_records, *gauss_records]
-        late = [*line_records, *nodal_records]
+        late = [*line_records, *nodal_records, *fibers]
         time_vec = next((r.time for r in early if r.time.size),
                         np.array([], dtype=np.float64))
         for r in (*early, *late):
@@ -342,6 +338,9 @@ class RecorderTranscoder:
         ))
         if not logicals:
             return None
+        if logicals[0].response_tokens[0] == "material":   # _out_fiber_io
+            return _GaussRecordPayload(rec.name, np.asarray(rec.element_ids), *read_per_material_gauss(
+                rec, logicals, self._model_h5_src, self._spec.fem_snapshot_id))
         if len(logicals) > 1:
             raise ValueError(
                 f"Gauss record {rec.name!r} unexpectedly emitted "

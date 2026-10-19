@@ -257,13 +257,19 @@ def test_pip_falls_back_to_classic_recorders_with_one_warning(
     assert sorted(ops.removed) == sorted(range(1, len(ops.recorder_calls)))
 
 
-def test_pip_names_skipped_fiber_records_in_its_one_warning(files, tmp_path) -> None:
-    """The classic route's per-record fiber skip folds into the one warning."""
+def test_pip_records_fibre_records(files, tmp_path) -> None:
+    """The classic route records a fibres record (``section fiberData2``,
+    translated through the model), so its one warning names nothing as
+    unrecorded (#1982)."""
+    fem_eid = next(int(r.fem_eid) for r in
+                   OpenSeesModel.from_h5(files["model"]).elements()
+                   if int(r.fem_eid) >= 0)
     spec = ResolvedRecorderSpec(fem_snapshot_id=_SNAPSHOT, records=(
         *_spec().records,
         ResolvedRecorderRecord(category="fibers", name="fib",
                                components=("fiber_stress",), dt=None,
-                               n_steps=None, element_ids=np.array([100])),
+                               n_steps=None, element_ids=np.array([fem_eid]),
+                               element_class_name="ForceBeamColumn3d"),
     ))
     ops = FakeOps(mpco=False)
     with warnings.catch_warnings(record=True) as caught:
@@ -273,8 +279,30 @@ def test_pip_names_skipped_fiber_records_in_its_one_warning(files, tmp_path) -> 
             pass
     assert run.route == "recorders"
     assert _cats(caught) == [DefaultRouteWarning]
-    assert "Not recorded on this route: ['fib']" in str(caught[0].message)
-    assert ops.live == {}
+    assert "Not recorded" not in str(caught[0].message)
+    assert [c[-2:] for c in ops.recorder_calls if c[0] == "Element"][0] == (
+        "section", "fiberData2")
+
+
+def test_pip_refuses_a_layers_record_by_name(files, tmp_path) -> None:
+    """Layers stay unrecorded on the classic route: its one warning names
+    them, then ``LiveRecorders`` refuses the record by name."""
+    spec = ResolvedRecorderSpec(fem_snapshot_id=_SNAPSHOT, records=(
+        *_spec().records,
+        ResolvedRecorderRecord(category="layers", name="lay",
+                               components=("fiber_stress",), dt=None,
+                               n_steps=None, element_ids=np.array([100])),
+    ))
+    ops = FakeOps(mpco=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError, match="'lay'.*'layers'"):
+            with spec.emit_default(tmp_path / "run", model_h5=files["model"],
+                                   ops=ops):
+                pass
+    assert _cats(caught) == [DefaultRouteWarning]
+    assert "Not recorded on this route: ['lay']" in str(caught[0].message)
+    assert not [c for c in ops.recorder_calls if c[0] in ("Element", "Node")]
 
 
 def test_a_probe_that_returns_no_tag_is_a_failed_probe(files, tmp_path) -> None:
