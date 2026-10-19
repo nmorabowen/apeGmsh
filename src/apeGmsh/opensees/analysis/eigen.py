@@ -269,6 +269,12 @@ class EigenResult:
         node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
         coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
 
+        # The recorder's rule: translations are a node's first ndm entries,
+        # rotations its entry 3 (2-D) or 4-6 (3-D) only when its own
+        # vector reaches them, so a u-p node's pressure is no rotation.
+        rot_cols = [c for c in ((2,) if ndm == 2 else (3, 4, 5)) if c < ndf] \
+            if ndm in (2, 3) else []
+
         def field(mode: int) -> np.ndarray:
             # One nodeEigenvector call per node; a node's vector is as
             # long as ITS ndf, so a shorter one fills only what it has.
@@ -276,8 +282,11 @@ class EigenResult:
             for row, nid in enumerate(node_ids):
                 vec = np.asarray(
                     ops.nodeEigenvector(int(nid), mode), dtype=np.float64,
-                ).ravel()[:ndf]
-                out[row, :vec.size] = vec
+                ).ravel()
+                n_t = min(ndm, ndf, vec.size)
+                out[row, :n_t] = vec[:n_t]
+                if rot_cols and vec.size > rot_cols[-1]:
+                    out[row, rot_cols] = vec[rot_cols]
             return out
 
         if path is None:
