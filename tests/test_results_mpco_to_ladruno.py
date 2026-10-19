@@ -148,9 +148,16 @@ def _springs_model(path: Path) -> Path:
     return path
 
 
-def _unstaged_springs_model(path: Path, kinds: "list[str]") -> Path:
+def _unstaged_springs_model(
+    path: Path, kinds: "list[str]", *, analyze_steps: "int | None" = None,
+    h5_first: bool = False,
+) -> Path:
     """The springs model with no ``ops.stage`` block and one ``analysis``
-    call per entry of ``kinds`` (the implicit-stage rule, #1950)."""
+    call per entry of ``kinds`` (the implicit-stage rule, #1950).
+
+    ``analyze_steps`` also emits the bridge's deck (``ops.py``) with that
+    ``analyze`` call, after the archive (``h5_first``, so the deck re-writes
+    it) or before it (#2210)."""
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 
@@ -172,7 +179,14 @@ def _unstaged_springs_model(path: Path, kinds: "list[str]") -> Path:
         else:
             ops.integrator.Newmark(gamma=0.5, beta=0.25)
             ops.analysis.Transient()
+    deck = dict(path=str(path.with_suffix(".py")), analyze_steps=analyze_steps,
+                analyze_dt=0.1 if "transient" in kinds else None,
+                progress=False)
+    if analyze_steps is not None and not h5_first:
+        ops.py(**deck)
     ops.h5(str(path))
+    if analyze_steps is not None and h5_first:
+        ops.py(**deck)
     return path
 
 
@@ -220,6 +234,10 @@ def fx(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
         "springs_src": _bridge_copy(SPRINGS, springs, tmp / "zl_springs.mpco"),
         **{f"flat_{name}": _unstaged_springs_model(tmp / f"flat_{name}.h5", kinds)
            for name, kinds in _FLAT.items()},
+        **{f"deck_{name}": _unstaged_springs_model(
+            tmp / f"deck_{name}.h5", kinds, analyze_steps=steps,
+            h5_first=h5_first)
+           for name, (kinds, steps, h5_first) in _DECKS.items()},
     }
 
 
@@ -229,6 +247,19 @@ _FLAT = {
     "transient": ["transient"],
     "two": ["static", "transient"],
     "none": [],
+}
+
+#: The springs capture's one stage records this many steps.
+SPRINGS_STEPS = 5
+
+#: Unstaged springs programs whose deck (``ops.py``) carries an ``analyze``
+#: call: ``(analysis calls, analyze_steps, ops.h5 before the deck)`` (#2210).
+_DECKS = {
+    "static": (["static"], SPRINGS_STEPS, False),
+    "static_h5_first": (["static"], SPRINGS_STEPS, True),
+    "transient": (["transient"], SPRINGS_STEPS, False),
+    "two": (["static", "transient"], SPRINGS_STEPS, False),
+    "steps_off": (["static"], SPRINGS_STEPS + 1, False),
 }
 
 
@@ -471,26 +502,91 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# An unstaged program (#1950, coordinator ruling (iii))
+# An unstaged program (#1950 ruling (ii); #2210)
 # ---------------------------------------------------------------------------
+#
+# The private path converts an unstaged program only when (a) the program
+# holds one ``analysis`` and one ``analyze`` call, (b) ``analyze_steps`` is
+# archived, (c) the file holds one stage of step data and (d) that stage
+# records ``analyze_steps`` steps. Each refusal below fails exactly one.
+
+
+@pytest.mark.parametrize("name", ["static", "static_h5_first", "transient"])
+def test_the_private_path_converts_a_deck_whose_kind_is_archived(
+    fx, name, tmp_path,
+) -> None:
+    """One ``analysis`` and the deck's one ``analyze`` call, archived after
+    the deck or re-written by it, and a file of one stage of that many
+    steps: the stage takes the program's kind, and every slab reads as the
+    ``.mpco`` does."""
+    model = fx[f"deck_{name}"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    (dst,) = _convert(src, tmp_path / "out.ladruno", model, _implicit_stage=True)
+    kind = _DECKS[name][0][0]
+    with h5py.File(dst, "r") as d:
+        assert d["MODEL_STAGE[1]"].attrs["KIND"][0] == kind.encode()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ref = Results.from_mpco(str(src), model_h5=str(model))
+        res = Results.from_ladruno(str(dst), model_h5=str(model))
+    try:
+        assert [s.kind for s in res.stages] == [kind]
+        for comp in ("displacement_x", "displacement_y", "displacement_z"):
+            a = ref.stage(ref.stages[0].id).nodes.get(component=comp)
+            b = res.stage(res.stages[0].id).nodes.get(component=comp)
+            np.testing.assert_allclose(np.asarray(b.values),
+                                       np.asarray(a.values), rtol=1e-12)
+    finally:
+        ref.close()
+        res.close()
 
 
 @pytest.mark.parametrize("name", sorted(_FLAT))
-def test_the_private_path_refuses_every_unstaged_program(fx, name, tmp_path) -> None:
-    """With ``_implicit_stage=True`` (read_deck_mpco's path) no unstaged
-    program converts, whatever its analysis calls: its kind is not archived
-    as fact. The one-call cases are the ones a rule-(i) acceptance would
-    convert, so re-adding one fails them."""
+def test_a_program_with_no_analyze_call_refuses(fx, name, tmp_path) -> None:
+    """(a): no deck archived an ``analyze`` call (the in-process route, or a
+    deck that loops by hand), whatever its ``analysis`` calls."""
     model = fx[f"flat_{name}"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+    n = len(_FLAT[name])
+    _refuses(src, tmp_path / "out.ladruno",
+             rf"holds {n} analysis and 0 analyze call\(s\)",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 
-def test_the_private_path_refuses_an_unstaged_modes_only_file(fx, tmp_path) -> None:
-    """Every unstaged program refuses on the private path, a file of modes
-    alone included."""
-    model = fx["flat_static"]
+def test_two_analysis_calls_refuse(fx, tmp_path) -> None:
+    """(a) alone: two ``analysis`` declarations (gravity then transient)
+    with one deck ``analyze`` of the file's step count."""
+    model = fx["deck_two"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno",
+             r"holds 2 analysis and 1 analyze call\(s\)",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_no_analyze_steps_refuses(fx, tmp_path) -> None:
+    """(b) alone: the ``analyze`` record is there, ``analyze_steps`` is not."""
+    model = Path(shutil.copy(fx["deck_static"], tmp_path / "nosteps.h5"))
+    with h5py.File(model, "r+") as f:
+        del f["opensees/analysis"].attrs["analyze_steps"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno", "no /opensees/analysis@analyze_steps",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_two_stages_of_step_data_refuse(fx, tmp_path) -> None:
+    """(c) alone: a file of two stages (a domain change mid-run), each of
+    ``analyze_steps`` steps."""
+    model = fx["deck_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    with h5py.File(src, "r+") as f:
+        f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
+    _refuses(src, tmp_path / "out.ladruno", "converts only from exactly one",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_a_file_of_modes_alone_refuses(fx, tmp_path) -> None:
+    """(c), zero stages of step data: the one stage holds modes alone."""
+    model = fx["deck_static"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
     with h5py.File(src, "r+") as f:
         results = f["MODEL_STAGE[1]/RESULTS"]
@@ -506,7 +602,18 @@ def test_the_private_path_refuses_an_unstaged_modes_only_file(fx, tmp_path) -> N
 
     with h5py.File(src, "r") as f:
         assert _holds_only_modes(f["MODEL_STAGE[1]"])
-    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+    _refuses(src, tmp_path / "out.ladruno", r"holds 0 MODEL_STAGE group\(s\)",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_a_step_count_mismatch_refuses(fx, tmp_path) -> None:
+    """(d) alone: the deck's ``analyze`` runs one step more than the file
+    records."""
+    model = fx["deck_steps_off"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno",
+             rf"records \[{SPRINGS_STEPS}\] step\(s\), but the deck's analyze "
+             rf"call runs {SPRINGS_STEPS + 1}",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 

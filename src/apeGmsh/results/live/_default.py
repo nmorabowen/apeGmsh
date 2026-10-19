@@ -24,9 +24,12 @@ it never is. The loop inside the ``with`` block drives the module directly
 (``opspy.loadConst``, ``opspy.analysis("Transient")``), those calls never
 reach the model archive, and MPCO opens a new stage on a domain change
 only. :func:`read_deck_mpco` converts the ``.mpco`` of the bridge's own
-exported deck when the program is staged (each stage records its kind);
-an unstaged deck's kind is not archived either, so it reads the ``.mpco``
-after one warning (coordinator ruling (iii) on #1950).
+exported deck: a staged program (each stage records its kind), or an
+unstaged one whose one ``analysis`` and one ``analyze`` call the archive
+records and whose file holds one stage of exactly ``analyze_steps`` steps
+(ruling (ii) on #1950; ``ops.py`` / ``ops.tcl`` archive the deck's
+``analyze`` call since #2210). Anything else reads the ``.mpco`` after one
+warning that names why.
 
 The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
@@ -103,11 +106,14 @@ def read_deck_mpco(
     The ``.mpco`` (or any part of a partitioned set) converts to the fork's
     format beside it, which is then opened; the ``.mpco`` is always kept.
     A staged program converts: each ``ops.stage`` records its kind. An
-    unstaged program does not (its kind is not archived as fact, and the
-    archive does not record the deck's ``analyze`` call; #2210 will), so
-    it refuses through ``convert_mpco``'s private
-    ``_implicit_stage`` path, which only this function passes. A refusal
-    about stage kinds
+    unstaged program goes through ``convert_mpco``'s private
+    ``_implicit_stage`` path, which only this function passes: it converts
+    only when the archive records one ``analysis`` and one ``analyze``
+    call with ``analyze_steps`` (what ``ops.py`` / ``ops.tcl`` with
+    ``analyze_steps`` archive, whether ``ops.h5`` ran before or after) and
+    the file holds one stage of exactly that many steps. What it cannot
+    see is a deck that declares N steps of one kind and is replaced by N
+    raw steps of another. A refusal about stage kinds
     (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`)
     reads the ``.mpco`` with :meth:`Results.from_mpco` after one
     :class:`DefaultRouteWarning` that quotes it. Every other refusal (the
@@ -188,8 +194,10 @@ class LiveDefault:
         if modal:
             raise ValueError(
                 f"emit_default has no route for modal records {modal}; "
-                "capture modes with spec.emit_mpco(...) or "
-                "ops.domain_capture(...) instead."
+                "record modes with spec.emit_mpco(...) (modesOfVibration, on "
+                "a build with MPCO), or on any build solve them with "
+                "ops.eigen(n) and write the returned EigenResult with its "
+                "own writer."
             )
         if self._path.suffix not in ("", _MPCO_SUFFIX, FORK_SUFFIX):
             raise ValueError(
@@ -268,7 +276,7 @@ class LiveDefault:
                     "converted: its analysis kind is not a fact (the loop's "
                     "own analysis calls never reach the model archive). "
                     "read_deck_mpco converts the .mpco of the bridge's own "
-                    "staged deck run out of process."), stacklevel=3)
+                    "deck run out of process."), stacklevel=3)
             except BaseException:
                 self._remove(int(tag))
                 self._tag = None

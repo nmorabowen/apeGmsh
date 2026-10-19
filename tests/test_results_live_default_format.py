@@ -10,8 +10,10 @@ the file that build's recorder would have written:
   recorders it accepts are counted, and removed.
 
 ``read_deck_mpco`` (a deck's ``.mpco``) is tested on the same capture: a
-staged program converts it; an unstaged one, with one ``analysis`` call or
-two, reads it with ``from_mpco`` after one warning (ruling (iii)).
+staged program converts it, and so does an unstaged one whose archive
+records one ``analysis`` and the deck's one ``analyze`` call of the file's
+step count (ruling (ii), #2210); with no ``analyze`` call, two ``analysis``
+calls or another step count it reads with ``from_mpco`` after one warning.
 
 The oracle for the reads is the committed capture: every node value the
 route returns equals ``Results.from_mpco`` of the same file. Warning counts
@@ -50,6 +52,7 @@ from tests.test_results_mpco_to_ladruno import (
     SPRINGS,
     _bridge_copy,
     _frame_model,
+    SPRINGS_STEPS,
     _springs_model,
     _unstaged_springs_model,
 )
@@ -64,12 +67,16 @@ def files(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     model = _springs_model(tmp / "model.h5")          # one static ops.stage
     other = _unstaged_springs_model(tmp / "other.h5", ["static", "static"])
     flat = _unstaged_springs_model(tmp / "flat.h5", ["static"])
+    deck = _unstaged_springs_model(tmp / "deck.h5", ["static"],
+                                   analyze_steps=SPRINGS_STEPS)
+    off = _unstaged_springs_model(tmp / "off.h5", ["static"],
+                                  analyze_steps=SPRINGS_STEPS + 1)
     mpco = _bridge_copy(SPRINGS, model, tmp / "src.mpco")
     (fork,) = convert_mpco(mpco, tmp / "src.ladruno", model_h5=model)
     global _SNAPSHOT
     _SNAPSHOT = OpenSeesModel.from_h5(model).lineage.fem_hash
-    return {"model": model, "other": other, "flat": flat, "mpco": mpco,
-            "fork": fork}
+    return {"model": model, "other": other, "flat": flat, "deck": deck,
+            "off": off, "mpco": mpco, "fork": fork}
 
 
 #: The springs FEMData's snapshot id (``model.h5``'s ``fem_hash``): the
@@ -347,10 +354,13 @@ def test_modal_records_have_no_default_route(files, tmp_path) -> None:
         ResolvedRecorderRecord(category="modal", name="m", components=(),
                                dt=None, n_steps=None, n_modes=2),))
     ops = ForkOps(files["fork"])
-    with pytest.raises(ValueError, match="modal"):
+    with pytest.raises(ValueError, match="modal") as e:
         with spec.emit_default(tmp_path / "run", model_h5=files["model"], ops=ops):
             pass
     assert ops.recorder_calls == []
+    # The hint names the routes that exist (no DomainCapture).
+    assert "ops.eigen(n)" in str(e.value) and "emit_mpco" in str(e.value)
+    assert "domain_capture" not in str(e.value)
 
 
 def test_model_h5_is_keyword_required(files, tmp_path) -> None:
@@ -449,12 +459,37 @@ def test_a_stage_of_unknown_kind_warns_once_and_reads_the_mpco(
     assert not (tmp_path / "deck.ladruno").exists()
 
 
-@pytest.mark.parametrize("name", ["flat", "other"], ids=["one-call", "two-calls"])
+def test_an_unstaged_deck_whose_kind_is_archived_converts(files, tmp_path) -> None:
+    """Ruling (ii): one ``analysis`` call, the deck's one ``analyze`` call,
+    and a file of one stage of ``analyze_steps`` steps convert, silently;
+    the ``.mpco`` is kept."""
+    model = files["deck"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = read_deck_mpco(src, model_h5=model)
+    try:
+        assert [s.kind for s in res.stages] == ["static"]
+        _assert_nodes_equal(res, src, model)
+    finally:
+        res.close()
+    assert (tmp_path / "deck.ladruno").exists() and src.exists()
+
+
+@pytest.mark.parametrize("name, reason", [
+    ("flat", r"1 analysis and 0 analyze"),
+    ("other", r"2 analysis and 0 analyze"),
+    ("off", rf"runs {SPRINGS_STEPS + 1}"),
+], ids=["no-analyze-call", "two-analysis-calls", "step-count-mismatch"])
 def test_an_unstaged_deck_warns_once_and_reads_the_mpco(
-    files, name, tmp_path,
+    files, name, reason, tmp_path,
 ) -> None:
-    """Ruling (iii): no unstaged deck converts, one ``analysis`` call or two;
-    the one-call case is the one a rule-(i) acceptance would convert."""
+    """Ruling (ii): a missed condition reads the ``.mpco`` with
+    ``from_mpco`` after one warning that names it. ``flat`` (one
+    ``analysis``, no deck ``analyze``) is what a rule-(i) acceptance would
+    convert."""
+    import re
+
     model = files[name]
     src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
     with warnings.catch_warnings(record=True) as caught:
@@ -462,7 +497,7 @@ def test_an_unstaged_deck_warns_once_and_reads_the_mpco(
         res = read_deck_mpco(src, model_h5=model)
     try:
         assert _cats(caught) == [DefaultRouteWarning]
-        assert "not archived as fact" in str(caught[0].message)
+        assert re.search(reason, str(caught[0].message))
         assert not (tmp_path / "deck.ladruno").exists()
         _assert_nodes_equal(res, src, model)
     finally:
