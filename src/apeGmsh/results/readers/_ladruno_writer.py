@@ -175,8 +175,12 @@ def write_modes(
         raise ValueError(
             f"write_modes: rotations has {rot.size} entries; expected one "
             f"per recorded node ({rids.size}).")
-    scalars = [_mode_scalars(lam, k, stacklevel + 1)
-               for k, lam in enumerate(lams, start=1)]
+    # A plain loop, not a comprehension: before Python 3.12 (PEP 709) a
+    # comprehension is a frame of its own, which would shift the warning's
+    # stacklevel by one and point it into the library.
+    scalars: list[tuple[float, float, float]] = []
+    for k, lam in enumerate(lams, start=1):
+        scalars.append(_mode_scalars(lam, k, stacklevel + 1))
 
     staging = out.parent / f"{out.name}.partial"
     if staging.exists():  # left by an interrupted write of this path
