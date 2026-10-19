@@ -10,9 +10,15 @@
 // Browser-safe: no Node import. The caller passes its own error factory, as
 // reader/ladrunoElements.ts does, so this module imports nothing from ladruno.ts.
 
-/** Python `float()` of a str: one decimal literal, `_` only between digits, surrounding whitespace ignored. */
-const DIGITS = String.raw`\d(?:_?\d)*`;
-const PY_FLOAT = new RegExp(String.raw`^[+-]?(?:${DIGITS}(?:\.(?:${DIGITS})?)?|\.${DIGITS})(?:[eE][+-]?${DIGITS})?$`);
+/**
+ * Python `float()` of a str: one ASCII decimal literal, `_` only between digits,
+ * inside the whitespace `float()` itself skips. That set was enumerated over every
+ * code point: JS `trim()`'s set without U+FEFF, plus U+0085 (#2205 review).
+ * Non-ASCII digits, which `float()` reads, are refused on purpose.
+ */
+const PY_SPACE = String.raw`[\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*`;
+const DIGITS = String.raw`[0-9](?:_?[0-9])*`;
+const PY_FLOAT = new RegExp(String.raw`^${PY_SPACE}([+-]?(?:${DIGITS}(?:\.(?:${DIGITS})?)?|\.${DIGITS})(?:[eE][+-]?${DIGITS})?)${PY_SPACE}$`);
 
 /** The attribute's values, flattened, as `np.asarray(raw).reshape(-1)` lists them. */
 function valuesOf(v: unknown): unknown[] {
@@ -27,8 +33,8 @@ function floatOf(x: unknown): number {
   if (typeof x === "bigint") return Number(x);
   if (typeof x === "boolean") return x ? 1 : 0;
   if (typeof x === "string") {
-    const s = x.trim();
-    return PY_FLOAT.test(s) ? Number(s.replace(/_/g, "")) : NaN;
+    const literal = PY_FLOAT.exec(x)?.[1];
+    return literal === undefined ? NaN : Number(literal.replace(/_/g, ""));
   }
   return NaN;
 }

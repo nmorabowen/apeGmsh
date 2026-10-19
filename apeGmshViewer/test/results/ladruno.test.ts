@@ -940,6 +940,10 @@ test("#2205: INFO@SPATIAL_DIM outside an integral 1, 2 or 3 is refused by name, 
     [new Float64Array([2.9]), [1], "2.9"],
     ["abc", null, '"abc"'],
     [new Int32Array([3, 2]), [2], "[3, 2]"],
+    // float() skips no U+FEFF (JS trim() does) and no U+001C; Python reads "２", the viewer refuses non-ASCII digits.
+    ["\ufeff2", null, '"\ufeff2"'],
+    ["\x1c2", null, '"\\u001c2"'],
+    ["２", null, '"２"'],
   ];
   for (const [data, shape, shown] of refused) {
     const p = withDim(data, shape);
@@ -954,6 +958,9 @@ test("#2205: INFO@SPATIAL_DIM outside an integral 1, 2 or 3 is refused by name, 
     [new Float64Array([2.0]), [1], 2],
     ["2", null, 2],
     [" 2 ", null, 2],
+    // float() skips U+0085 and U+3000 (JS trim() skips no U+0085).
+    ["\x852\x85", null, 2],
+    ["\u30002", null, 2],
   ];
   for (const [data, shape, dim] of read) {
     withFile(withDim(data, shape), (r) => {
