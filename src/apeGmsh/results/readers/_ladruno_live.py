@@ -11,15 +11,19 @@ fork-token ratchet exempts (``readers/_ladruno*``):
 * the target file and the partition parts a rerun would overwrite;
 * the read: ``stamp_provenance`` (ADR 0122 D3), then
   ``Results.from_ladruno``. A stamp the file refuses is skipped with a
-  warning (§7b.1 rule 3); the caller words and raises that warning.
+  warning (§7b.1 rule 3); the caller words and raises that warning;
+* the deck route: ``convert_mpco`` of a deck's ``.mpco`` into the fork's
+  format beside it, then the same read.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from ..Results import Results
 from ..spec._emit import mpco_ops_args
+from ._ladruno_from_mpco import convert_mpco
 from ._ladruno_provenance import ProvenanceStampRefused, stamp_provenance
 
 if TYPE_CHECKING:
@@ -27,7 +31,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FORK_SUFFIX",
+    "convert_and_open",
     "existing_fork_files",
+    "fork_target_of",
     "fork_recorder_args",
     "open_fork_results",
     "stamp_fork_file",
@@ -36,6 +42,7 @@ __all__ = [
 #: The suffix of the file the fork's recorder writes.
 FORK_SUFFIX = ".ladruno"
 _TOKEN = "ladruno"
+_PART = re.compile(r"^(?P<stem>.+?)\.part-\d+$")
 
 
 def fork_recorder_args(
@@ -81,3 +88,27 @@ def stamp_fork_file(target: Path, model_h5: Path) -> Optional[str]:
 def open_fork_results(target: Path, model_h5: Path) -> Results:
     """Open the fork's file with the model archive the run was built from."""
     return Results.from_ladruno(str(target), model_h5=str(model_h5))
+
+
+def fork_target_of(mpco: Path) -> Path:
+    """The fork-format file a deck's ``.mpco`` converts to, beside it.
+
+    ``run.mpco`` gives ``run.ladruno``; a part ``run.part-<N>.mpco`` names
+    its set, ``run.ladruno``, which ``convert_mpco`` writes part for part.
+    """
+    stem = mpco.stem
+    m = _PART.match(stem)
+    return mpco.with_name(f"{m.group('stem') if m else stem}{FORK_SUFFIX}")
+
+
+def convert_and_open(mpco: Path, model_h5: Path, *, overwrite: bool) -> Results:
+    """Convert a deck's ``.mpco`` beside itself, then open the result.
+
+    :class:`~._ladruno_from_mpco.MPCOConversionRefused` propagates, before
+    anything is written; the caller decides what a refusal reads instead.
+    """
+    targets = convert_mpco(mpco, fork_target_of(mpco), model_h5=model_h5,
+                           overwrite=overwrite)
+    paths: "str | list[str | Path]" = (
+        str(targets[0]) if len(targets) == 1 else list(targets))
+    return Results.from_ladruno(paths, model_h5=str(model_h5))

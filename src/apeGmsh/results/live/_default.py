@@ -23,7 +23,10 @@ and in process it never is. The loop inside the ``with`` block drives the
 module directly (``opspy.loadConst``, ``opspy.analysis("Transient")``),
 those calls never reach the model archive, and MPCO opens a new stage on a
 domain change only. A deck the bridge emitted is the program that ran, so
-:func:`~apeGmsh.results.convert_mpco` converts its ``.mpco`` instead.
+:func:`read_deck_mpco` converts its ``.mpco`` when the archive's program
+holds exactly one ``analysis`` call (the implicit-stage rule of
+:func:`~apeGmsh.results.convert_mpco`), and otherwise reads the ``.mpco``
+after one warning that names the refusal.
 
 The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
@@ -42,10 +45,13 @@ from ...mesh.FEMData import FEMData
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
+from ..readers._ladruno_from_mpco import MPCOConversionRefused
 from ..readers._ladruno_live import (
     FORK_SUFFIX,
+    convert_and_open,
     existing_fork_files,
     fork_recorder_args,
+    fork_target_of,
     open_fork_results,
     stamp_fork_file,
 )
@@ -56,7 +62,7 @@ from ._recorders import LiveRecorders
 if TYPE_CHECKING:
     from ..spec._resolved import ResolvedRecorderSpec
 
-__all__ = ["DefaultRouteWarning", "LiveDefault"]
+__all__ = ["DefaultRouteWarning", "LiveDefault", "read_deck_mpco"]
 
 _MPCO_SUFFIX = ".mpco"
 #: The one stage the classic-recorder route opens over the whole block.
@@ -70,9 +76,48 @@ class DefaultRouteWarning(UserWarning):
 
     Raised once per run, with the reason: the build has no MPCO recorder
     (the classic-recorder fallback), the run is a stock in-process MPCO run
-    (read with ``from_mpco``, not converted), or the fork's file refused its
+    (read with ``from_mpco``, not converted), a deck's ``.mpco`` refused
+    conversion (read with ``from_mpco``), or the fork's file refused its
     provenance stamp (read unstamped).
     """
+
+
+def read_deck_mpco(
+    path: "str | Path",
+    *,
+    model_h5: "str | Path",
+    overwrite: bool = False,
+) -> Results:
+    """Read the ``.mpco`` of a deck the bridge emitted, on the default route.
+
+    The ``.mpco`` (or any part of a partitioned set) converts to the fork's
+    format beside it, which is then opened; the ``.mpco`` is always kept.
+    The conversion maps a program with no ``ops.stage`` block to one stage
+    only when ``model_h5``'s ``/opensees/program`` holds exactly one
+    ``analysis`` call. When it refuses (several calls, no call, an unknown
+    kind, stages that do not pair), the ``.mpco`` is read with
+    :meth:`Results.from_mpco` after one :class:`DefaultRouteWarning` that
+    quotes the refusal.
+
+    Pass only the output of a deck run as it was emitted: the rule trusts
+    ``model_h5`` to be the program that ran, which an in-process run is not
+    (use :meth:`ResolvedRecorderSpec.emit_default` there). A converted file
+    from an earlier run refuses unless ``overwrite=True``.
+    """
+    mpco, model = Path(path), Path(model_h5)
+    existing = existing_fork_files(fork_target_of(mpco))
+    if existing and not overwrite:
+        raise FileExistsError(
+            f"read_deck_mpco would overwrite {[str(p) for p in existing]} "
+            "from an earlier run; pass overwrite=True to replace them."
+        )
+    try:
+        return convert_and_open(mpco, model, overwrite=overwrite)
+    except MPCOConversionRefused as e:
+        warnings.warn(DefaultRouteWarning(
+            f"read_deck_mpco: {mpco} was not converted and is read with "
+            f"Results.from_mpco: {e}"), stacklevel=2)
+    return Results.from_mpco(str(mpco), model_h5=str(model))
 
 
 class LiveDefault:
@@ -277,7 +322,7 @@ class LiveDefault:
         if self._route == "recorders":
             assert self._live is not None and self._model is not None
             return Results.from_recorders(
-                self._spec, target, fem=FEMData.from_h5(self._model_h5),
+                self._spec, target, fem=FEMData.from_h5(str(self._model_h5)),
                 model=self._model, stages=self._live.stages,
             )
         raise RuntimeError(f"LiveDefault has no route {self._route!r}; "

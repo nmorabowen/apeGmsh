@@ -9,6 +9,10 @@ the file that build's recorder would have written:
 * **pip** (``recorder('mpco', ...)`` raises): nothing for MPCO; the classic
   recorders it accepts are counted, and removed.
 
+``read_deck_mpco`` (a deck's ``.mpco``) is tested on the same capture: one
+``analysis`` call converts it, two read it with ``from_mpco`` after one
+warning.
+
 The oracle for the reads is the committed capture: every node value the
 route returns equals ``Results.from_mpco`` of the same file. Warning counts
 are exact (``record=True`` with ``"always"``). The pip read itself, on real
@@ -26,7 +30,7 @@ import pytest
 
 from apeGmsh.opensees.opensees_model import OpenSeesModel
 from apeGmsh.results import Results, convert_mpco
-from apeGmsh.results.live import DefaultRouteWarning, LiveDefault
+from apeGmsh.results.live import DefaultRouteWarning, LiveDefault, read_deck_mpco
 from apeGmsh.results.readers._ladruno_live import fork_recorder_args
 from apeGmsh.results.spec._emit import mpco_ops_args
 from apeGmsh.results.spec._resolved import (
@@ -323,3 +327,42 @@ def test_results_inside_the_block_refuses(files, tmp_path) -> None:
                               ops=ForkOps(files["fork"])) as run:
         with pytest.raises(RuntimeError, match="after the with block"):
             run.results()
+
+
+# ---------------------------------------------------------------------------
+# A deck's .mpco: converted only when the kind is a fact
+# ---------------------------------------------------------------------------
+
+
+def test_a_deck_mpco_with_one_analysis_converts_and_keeps_the_mpco(
+    files, tmp_path,
+) -> None:
+    src = shutil.copy(files["mpco"], tmp_path / "deck.mpco")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = read_deck_mpco(src, model_h5=files["model"])
+    try:
+        assert [s.kind for s in res.stages] == ["static"]
+        _assert_nodes_equal(res, files["mpco"], files["model"])
+    finally:
+        res.close()
+    assert (tmp_path / "deck.ladruno").exists() and Path(src).exists()
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        read_deck_mpco(src, model_h5=files["model"])
+    read_deck_mpco(src, model_h5=files["model"], overwrite=True).close()
+
+
+def test_a_two_declaration_deck_warns_once_and_reads_the_mpco(
+    files, tmp_path,
+) -> None:
+    src = _bridge_copy(SPRINGS, files["other"], tmp_path / "deck.mpco")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = read_deck_mpco(src, model_h5=files["other"])
+    try:
+        assert _cats(caught) == [DefaultRouteWarning]
+        assert "2 analysis calls" in str(caught[0].message)
+        assert not (tmp_path / "deck.ladruno").exists()
+        _assert_nodes_equal(res, src, files["other"])
+    finally:
+        res.close()
