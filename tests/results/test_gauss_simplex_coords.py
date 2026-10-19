@@ -491,6 +491,10 @@ def test_recorder_transcoder_places_gauss_points(
                                err_msg=cls)
 
 
+#: The penalty-imposed field is exact to ~1e-15 relative; the rotated
+#: frame this guards against is off by order 1.
+CAPTURE_TOL = 1e-9
+
 _CAPTURE_MODEL = {
     # cls: (ndm, Tcl name, corners, mid-edges, trailing element args)
     "SixNodeTri": (2, "tri6n",
@@ -540,7 +544,12 @@ def test_domain_capture_places_gauss_points(tmp_path: Path, cls: str) -> None:
     for n, p in zip(node_ids, points):
         for d in range(ndm):
             ops.sp(n, d + 1, float(0.5 * p[d] ** 2))
-    ops.constraints("Transformation")
+    # Penalty, not Transformation: every DOF is prescribed, so the
+    # Transformation handler leaves a zero-equation system, the likely
+    # reason stock openseespy hard-exited the live-stock lane here (exit
+    # 255). The penalty error is about K / alpha ~ 1e-15, far inside
+    # CAPTURE_TOL.
+    ops.constraints("Penalty", 1.0e18, 1.0e18)
     ops.numberer("Plain")
     ops.system("FullGeneral")
     ops.integrator("LoadControl", 1.0)
@@ -572,7 +581,7 @@ def test_domain_capture_places_gauss_points(tmp_path: Path, cls: str) -> None:
     stem = "tri" if ndm == 2 else "tet"
     comps = tuple(f"strain_{a}" for a in _AXES[stem])
     world, recorded = _native_world(target, fem, comps, corners, stem)
-    np.testing.assert_allclose(world, recorded, rtol=0, atol=TOL,
+    np.testing.assert_allclose(world, recorded, rtol=0, atol=CAPTURE_TOL,
                                err_msg=cls)
 
 
