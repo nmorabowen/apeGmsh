@@ -37,8 +37,9 @@ if TYPE_CHECKING:
 def require_translated(
     rec: "ResolvedRecorderRecord", model_h5_src: "Path | None",
     fem_snapshot_id: str,
-) -> None:
-    """Refuse a fibre or per-material record whose ids no model pairs.
+) -> Any:
+    """Refuse a fibre or per-material record whose ids no model pairs, and
+    return that model (an ``OpenSeesModel``).
 
     Its rows are labelled with the spec's FEM ids, which the emit
     translated through the model's ``(fem_eid, tag)`` pairing; without
@@ -51,13 +52,55 @@ def require_translated(
             f"elements by OpenSees tag, translated from FEM ids through the "
             f"model's pairing. Pass the model (model_h5_src=, or "
             f"Results.from_recorders(..., model=)).")
-    tags = element_tag_map(OpenSeesModel.from_h5(model_h5_src),
-                           fem_snapshot_id=fem_snapshot_id)
+    model = OpenSeesModel.from_h5(model_h5_src)
+    tags = element_tag_map(model, fem_snapshot_id=fem_snapshot_id)
     missing = [int(e) for e in np.asarray(rec.element_ids) if int(e) not in tags]
     if missing:
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): FEM element ids "
             f"{missing[:10]} have no OpenSees element in the model.")
+    return model
+
+
+#: Fibre-section beams whose element args start ``$transfTag $integrationTag``.
+_FIBER_BEAM_TOKENS = frozenset({"forceBeamColumn", "dispBeamColumn"})
+#: ``beamIntegration`` rules whose args are ``$secTag $N``: ``N`` points.
+_FIXED_N_RULES = frozenset({"Lobatto", "Legendre", "NewtonCotes", "Radau", "Trapezoidal"})
+
+
+def model_integration_points(rec: "ResolvedRecorderRecord", model: Any) -> "int | None":
+    """The one integration-point count the model gives every element of a
+    fibres record, or ``None`` when they all share one rule whose count its
+    args do not state (a hinge rule): uniform, but unchecked.
+
+    ``.out`` carries no per-element count, so a record whose elements the
+    model gives different (or unstated, under different rules) counts is
+    refused: its columns would divide evenly into the wrong sections. An
+    element that is not a fibre-section beam the model can describe is
+    refused by its type token.
+    """
+    rows = {int(r.fem_eid): r for r in model.elements()}
+    rules = {int(b.tag): b for b in model.beam_integration()}
+    tags: set[int] = set()
+    for e in np.asarray(rec.element_ids, dtype=np.int64).tolist():
+        row = rows[e]
+        if row.type_token not in _FIBER_BEAM_TOKENS or int(row.args[1]) not in rules:
+            raise ValueError(
+                f"Record {rec.name!r} (category=fibers): FEM element {e} is "
+                f"{row.type_token!r} in the model, not one of "
+                f"{sorted(_FIBER_BEAM_TOKENS)} with a beamIntegration rule, so "
+                f"its integration-point count cannot be checked.")
+        tags.add(int(row.args[1]))
+    counts = {int(rules[t].args[1]) if rules[t].type_token in _FIXED_N_RULES else None
+              for t in tags}
+    if len(tags) > 1 and (len(counts) != 1 or None in counts):
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers): its elements use "
+            f"beamIntegration rules {sorted(tags)}, with integration-point "
+            f"counts {sorted(counts, key=str)}; .out carries no per-element "
+            f"count, so the record must hold one count. Split the record by "
+            f"integration rule.")
+    return counts.pop()
 
 
 def _read_rows(lr: "LogicalRecorder", n_elements: int, unit: int,
@@ -127,8 +170,12 @@ def read_fiber_record(
     """A ``section fiberData2`` file and its ``integrationPoints`` pair.
 
     ``lengths_of(ids)`` gives the elements' lengths, in ``ids`` order;
-    ``None`` when the record emitted nothing (no elements). The pair gives each element's sections (one count per record, as line
-    stations) and their natural stations; the fibre file gives
+    ``None`` when the record emitted nothing (no elements). The pair gives
+    each element's natural stations; the count is one per record, which
+    the model must confirm (:func:`model_integration_points`), and each
+    element's stations must increase strictly within ``[-1, 1]``, so a
+    record mixing counts is refused, never split evenly into wrong
+    sections. The fibre file gives
     ``n_sections * n_fibres * 6`` columns per element, element-major,
     section-mid, fibre-fast: the MPCO fibre-slab order. No response gives a
     section's fibre count, so every (element, section) must carry one fibre
@@ -139,12 +186,20 @@ def read_fiber_record(
     class_name = fiber_record_class(rec)
     if not logicals:
         return None
-    require_translated(rec, model_h5_src, fem_snapshot_id)
+    n_model = model_integration_points(
+        rec, require_translated(rec, model_h5_src, fem_snapshot_id))
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
     _t, gpx, n_ip = _read_rows(gpx_lr, ids.size, 1)
     xi = np.stack([normalise_integration_points(gpx[0, i], float(length))
                    for i, length in enumerate(lengths_of(ids))])
+    if (n_model is not None and n_ip != n_model) or not (
+            (np.diff(xi, axis=1) > 0.0).all() and (np.abs(xi) <= 1.0 + 1e-12).all()):
+        raise ValueError(
+            f"{gpx_lr.file_path}: {n_ip} stations per element (the model "
+            f"gives {n_model}), not strictly increasing within [-1, 1] on "
+            f"every element: the integrationPoints columns do not split "
+            f"into the record's elements.")
     time, body, n_fib = _read_rows(fib_lr, ids.size, n_ip * FIBER_OUT_WIDTH)
     rows = body.reshape(time.size, -1, FIBER_OUT_WIDTH)
     geom = rows[0, :, :4]

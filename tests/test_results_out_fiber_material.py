@@ -366,3 +366,82 @@ def test_damage_decode_refuses_another_width(
         _write(lr.file_path, np.ones((len(TIMES), 3)))    # a 3-value damage
     with pytest.raises(ValueError, match="data columns"):
         _transcode(cube, _spec(cube["fem"], rec), tmp_path, tmp_path / "r.h5")
+
+
+# =====================================================================
+# Integration-point counts: .out carries none per element
+# =====================================================================
+
+@pytest.fixture(scope="module")
+def mixed(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """Two one-element force beams on one section, Lobatto 3 and Lobatto 5:
+    8 sections in all, which divide evenly into 4 per element."""
+    tmp = tmp_path_factory.mktemp("mixed")
+    with apeGmsh(model_name="out_fib_mixed", verbose=False) as g:
+        geo = g.model.geometry
+        a, b, c = (geo.add_point(x, 0.0, 0.0) for x in (0.0, 1.0, 2.0))
+        lines = [geo.add_line(a, b), geo.add_line(b, c)]
+        g.model.sync()
+        for line, pg in zip(lines, ("B1", "B2")):
+            g.physical.add(1, [line], name=pg)
+            g.mesh.structured.set_transfinite_curve(line, 2)
+        g.mesh.generation.generate(1)
+        fem = g.mesh.queries.get_fem_data(dim=1)
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=3, ndf=6)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=2.0e5)
+    sec = ops.section.Fiber(fibers=tuple(
+        FiberPoint(material=mat, y=y, z=z, area=area)
+        for (y, z), area in zip(FIBRES, AREAS)), GJ=1.0e6)
+    tr = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+    for pg, n_ip in (("B1", 3), ("B2", 5)):
+        ops.element.forceBeamColumn(
+            pg=pg, transf=tr,
+            integration=ops.beamIntegration.Lobatto(section=sec, n_ip=n_ip))
+    model_h5 = tmp / "model.h5"
+    ops.h5(str(model_h5))
+    ids = [int(fem.elements.select(pg=pg).ids[0]) for pg in ("B1", "B2")]
+    return {"fem": fem, "model_h5": model_h5, "ids": ids,
+            "mat_tag": ops.tag_for(mat)}
+
+
+def _uniform_files(m: dict[str, Any], out: Path, gpx_row: list[float]) -> None:
+    """A fibre file of one fibre table at every section (``len(gpx_row)``
+    sections in all) and the given ``integrationPoints`` row."""
+    fib_lr, gpx_lr = emit_logical(_fibres(m["ids"]), output_dir=str(out))
+    table = [v for (y, z), a in zip(FIBRES, AREAS)
+             for v in (y, z, a, m["mat_tag"], 1.0, 2.0)]
+    _write(fib_lr.file_path, np.tile(table * len(gpx_row), (len(TIMES), 1)))
+    _write(gpx_lr.file_path, np.tile(gpx_row, (len(TIMES), 1)))
+
+
+def test_fibre_decode_refuses_mixed_integration_point_counts(
+    mixed: dict[str, Any], tmp_path: Path,
+) -> None:
+    """3 + 5 Lobatto points split evenly into 4 + 4 with equal tables; only
+    the model's counts tell the record mixes them."""
+    _uniform_files(mixed, tmp_path,
+                   [0.0, 0.5, 1.0, 0.0, 0.1727, 0.5, 0.8273, 1.0])
+    spec = _spec(mixed["fem"], _fibres(mixed["ids"]))
+    with pytest.raises(ValueError, match="integration-point counts"):
+        _transcode(mixed, spec, tmp_path, tmp_path / "r.h5")
+
+
+def test_fibre_decode_refuses_stations_out_of_order(
+    beam: dict[str, Any], tmp_path: Path,
+) -> None:
+    """The second guard: within an element, stations increase strictly."""
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
+    spec = _spec(beam["fem"], _fibres(beam["ids"]))
+    with pytest.raises(ValueError, match="strictly increasing"):
+        _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+
+
+def test_fibre_decode_refuses_a_count_the_model_contradicts(
+    beam: dict[str, Any], tmp_path: Path,
+) -> None:
+    """Both elements are Lobatto 3; a file of 2 stations each is refused."""
+    _uniform_files(beam, tmp_path, [0.0, 1.0, 0.0, 1.0])
+    spec = _spec(beam["fem"], _fibres(beam["ids"]))
+    with pytest.raises(ValueError, match="the model gives 3"):
+        _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
