@@ -62,37 +62,55 @@ def require_translated(
     return model
 
 
-#: Fibre-section beams whose element args start ``$transfTag $integrationTag``.
-_FIBER_BEAM_TOKENS = frozenset({"forceBeamColumn", "dispBeamColumn"})
+#: Element-family suffixes whose args start ``$transfTag $integrationTag``:
+#: ``forceBeamColumn``, ``dispBeamColumn`` and its fork variant (matched by
+#: suffix, so no fork name is spelled here). Other fibre classes refuse.
+_FIBER_BEAM_SUFFIXES = ("forcebeamcolumn", "dispbeamcolumn")
 #: ``beamIntegration`` rules whose args are ``$secTag $N``: ``N`` points.
 _FIXED_N_RULES = frozenset({"Lobatto", "Legendre", "NewtonCotes", "Radau", "Trapezoidal"})
+#: Hinge rules have a fixed count, measured on stock openseespy 3.7.1.2 and
+#: the fork (``integrationPoints`` and ``section fiberData2`` agree).
+_HINGE_RULE_POINTS = {"HingeRadau": 6, "HingeRadauTwo": 6,
+                      "HingeMidpoint": 4, "HingeEndpoint": 4}
+
+
+def _rule_points(rule: Any) -> "int | None":
+    """A ``beamIntegration`` record's integration-point count, or ``None``."""
+    if rule.type_token in _FIXED_N_RULES:
+        return int(rule.args[1])
+    return _HINGE_RULE_POINTS.get(rule.type_token)
 
 
 def model_integration_points(rec: "ResolvedRecorderRecord", model: Any) -> "int | None":
     """The one integration-point count the model gives every element of a
-    fibres record, or ``None`` when they all share one rule whose count its
-    args do not state (a hinge rule): uniform, but unchecked.
+    fibres record, or ``None`` when they all share one rule of a type whose
+    count this table does not know: uniform, but unchecked.
 
     ``.out`` carries no per-element count, so a record whose elements the
-    model gives different (or unstated, under different rules) counts is
-    refused: its columns would divide evenly into the wrong sections. An
-    element that is not a fibre-section beam the model can describe is
-    refused by its type token.
+    model gives different (or unknown, under different rules) counts is
+    refused: its columns would divide evenly into the wrong sections. Each
+    element's type token must be the record's class without its ``2d`` /
+    ``3d`` suffix (``ForceBeamColumn3d`` is ``forceBeamColumn``), one of the
+    families above, with a ``beamIntegration`` rule in the model; any other
+    element is refused by its token, so a record mixing classes is too.
     """
+    family = str(rec.element_class_name)[:-2].lower()
     rows = {int(r.fem_eid): r for r in model.elements()}
     rules = {int(b.tag): b for b in model.beam_integration()}
     tags: set[int] = set()
     for e in np.asarray(rec.element_ids, dtype=np.int64).tolist():
         row = rows[e]
-        if row.type_token not in _FIBER_BEAM_TOKENS or int(row.args[1]) not in rules:
+        token = row.type_token.lower()
+        if (token != family or not token.endswith(_FIBER_BEAM_SUFFIXES)
+                or int(row.args[1]) not in rules):
             raise ValueError(
                 f"Record {rec.name!r} (category=fibers): FEM element {e} is "
-                f"{row.type_token!r} in the model, not one of "
-                f"{sorted(_FIBER_BEAM_TOKENS)} with a beamIntegration rule, so "
-                f"its integration-point count cannot be checked.")
+                f"{row.type_token!r} in the model, not the record's class "
+                f"{rec.element_class_name!r} as a force or displacement beam "
+                f"with a beamIntegration rule, so its integration-point count "
+                f"cannot be checked.")
         tags.add(int(row.args[1]))
-    counts = {int(rules[t].args[1]) if rules[t].type_token in _FIXED_N_RULES else None
-              for t in tags}
+    counts = {_rule_points(rules[t]) for t in tags}
     if len(tags) > 1 and (len(counts) != 1 or None in counts):
         raise ValueError(
             f"Record {rec.name!r} (category=fibers): its elements use "

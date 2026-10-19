@@ -408,7 +408,8 @@ def mixed(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 def _uniform_files(m: dict[str, Any], out: Path, gpx_row: list[float]) -> None:
     """A fibre file of one fibre table at every section (``len(gpx_row)``
     sections in all) and the given ``integrationPoints`` row."""
-    fib_lr, gpx_lr = emit_logical(_fibres(m["ids"]), output_dir=str(out))
+    fib_lr, gpx_lr = emit_logical(
+        _fibres(m["ids"], cls=m.get("cls", "ForceBeamColumn3d")), output_dir=str(out))
     table = [v for (y, z), a in zip(FIBRES, AREAS)
              for v in (y, z, a, m["mat_tag"], 1.0, 2.0)]
     _write(fib_lr.file_path, np.tile(table * len(gpx_row), (len(TIMES), 1)))
@@ -445,3 +446,107 @@ def test_fibre_decode_refuses_a_count_the_model_contradicts(
     spec = _spec(beam["fem"], _fibres(beam["ids"]))
     with pytest.raises(ValueError, match="the model gives 3"):
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+
+
+def _two_beams(tmp: Path, name: str, *, ndm: int, elements: tuple) -> dict[str, Any]:
+    """Two unit-length one-element beams, ``B1`` and ``B2``, on one fibre
+    section. ``elements`` is ``((pg, element method, rule builder), ...)``,
+    each builder taking ``(ops, section)``."""
+    with apeGmsh(model_name=name, verbose=False) as g:
+        geo = g.model.geometry
+        a, b, c = (geo.add_point(x, 0.0, 0.0) for x in (0.0, 1.0, 2.0))
+        lines = [geo.add_line(a, b), geo.add_line(b, c)]
+        g.model.sync()
+        for line, pg in zip(lines, ("B1", "B2")):
+            g.physical.add(1, [line], name=pg)
+            g.mesh.structured.set_transfinite_curve(line, 2)
+        g.mesh.generation.generate(1)
+        fem = g.mesh.queries.get_fem_data(dim=1)
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=ndm, ndf=3 if ndm == 2 else 6)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=2.0e5)
+    sec = ops.section.Fiber(fibers=tuple(
+        FiberPoint(material=mat, y=y, z=z, area=area)
+        for (y, z), area in zip(FIBRES, AREAS)), GJ=None if ndm == 2 else 1.0e6)
+    tr = (ops.geomTransf.Linear() if ndm == 2
+          else ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)))
+    for pg, method, rule in elements:
+        getattr(ops.element, method)(pg=pg, transf=tr, integration=rule(ops, sec))
+    model_h5 = tmp / "model.h5"
+    ops.h5(str(model_h5))
+    ids = [int(fem.elements.select(pg=pg).ids[0]) for pg in ("B1", "B2")]
+    return {"fem": fem, "model_h5": model_h5, "ids": ids,
+            "mat_tag": ops.tag_for(mat)}
+
+
+def _lobatto(n: int) -> Any:
+    return lambda ops, sec: ops.beamIntegration.Lobatto(section=sec, n_ip=n)
+
+
+def _hinge(kind: str) -> Any:
+    return lambda ops, sec: getattr(ops.beamIntegration, kind)(
+        section_i=sec, lp_i=0.1, section_j=sec, lp_j=0.1, section_interior=sec)
+
+
+#: Increasing stations in [0, 1] for 4 and 6 points (unit-length elements).
+_STATIONS = {4: [0.0, 0.3, 0.7, 1.0], 6: [0.0, 0.1, 0.3, 0.7, 0.9, 1.0]}
+
+
+def _reads(m: dict[str, Any], tmp: Path, cls: str, n_ip: int) -> Any:
+    m["cls"] = cls
+    _uniform_files(m, tmp, _STATIONS[n_ip] * 2)
+    target = _transcode(m, _spec(m["fem"], _fibres(m["ids"], cls=cls)), tmp,
+                        tmp / "r.h5")
+    model = OpenSeesModel.from_h5(m["model_h5"])
+    with Results.from_native(target, fem=m["fem"], model=model) as r:
+        slab = r.elements.fibers.get(component="fiber_stress")
+        return np.asarray(slab.gp_index).copy()
+
+
+def test_fork_disp_beam_fibres_read(tmp_path: Path) -> None:
+    """``LadrunoDispBeamColumn2d`` is in the fibre catalog and its element
+    args carry the integration tag where the stock beams do: it reads."""
+    m = _two_beams(tmp_path, "out_fib_fork_disp", ndm=2, elements=(
+        ("B1", "LadrunoDispBeamColumn", _lobatto(4)),
+        ("B2", "LadrunoDispBeamColumn", _lobatto(4))))
+    gp = _reads(m, tmp_path, "LadrunoDispBeamColumn2d", 4)
+    np.testing.assert_array_equal(gp, np.tile(np.repeat(np.arange(4), 4), 2))
+
+
+@pytest.mark.parametrize("rules, n_ip", [
+    ((_hinge("HingeRadau"), _hinge("HingeRadauTwo")), 6),
+    ((_hinge("HingeMidpoint"), _lobatto(4)), 4),
+    ((_hinge("HingeEndpoint"), _hinge("HingeMidpoint")), 4),
+])
+def test_hinge_rules_of_one_count_read(rules: tuple, n_ip: int,
+                                       tmp_path: Path) -> None:
+    """Hinge rules have a fixed count (HingeRadau 6, HingeMidpoint 4, ...):
+    two rules of one count read, whatever their types."""
+    m = _two_beams(tmp_path, "out_fib_hinges", ndm=3, elements=(
+        ("B1", "forceBeamColumn", rules[0]), ("B2", "forceBeamColumn", rules[1])))
+    gp = _reads(m, tmp_path, "ForceBeamColumn3d", n_ip)
+    np.testing.assert_array_equal(
+        gp, np.tile(np.repeat(np.arange(n_ip), len(FIBRES)), 2))
+
+
+def test_hinge_rule_mixed_with_another_count_refuses(tmp_path: Path) -> None:
+    """HingeMidpoint (4) beside Lobatto 6: 10 stations split evenly 5 + 5."""
+    m = _two_beams(tmp_path, "out_fib_hinge_mix", ndm=3, elements=(
+        ("B1", "forceBeamColumn", _hinge("HingeMidpoint")),
+        ("B2", "forceBeamColumn", _lobatto(6))))
+    _uniform_files(m, tmp_path, _STATIONS[4] + _STATIONS[6])
+    spec = _spec(m["fem"], _fibres(m["ids"]))
+    with pytest.raises(ValueError, match=r"counts \[4, 6\]"):
+        _transcode(m, spec, tmp_path, tmp_path / "r.h5")
+
+
+def test_a_record_mixing_element_classes_refuses(tmp_path: Path) -> None:
+    """A force beam beside a displacement beam, named ForceBeamColumn3d:
+    the displacement beam is refused by its type token."""
+    m = _two_beams(tmp_path, "out_fib_classes", ndm=3, elements=(
+        ("B1", "forceBeamColumn", _lobatto(4)),
+        ("B2", "dispBeamColumn", _lobatto(4))))
+    _uniform_files(m, tmp_path, _STATIONS[4] * 2)
+    spec = _spec(m["fem"], _fibres(m["ids"]))
+    with pytest.raises(ValueError, match="'dispBeamColumn' in the model"):
+        _transcode(m, spec, tmp_path, tmp_path / "r.h5")
