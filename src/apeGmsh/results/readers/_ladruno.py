@@ -49,6 +49,7 @@ from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
 from . import _ladruno_element_io as _eio
 from . import _mpco_nodal_io as _mnodal
+from ._ladruno_element_io import SpatialDimUnknown
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco import (
     _PROGRAM_STAGE_KINDS,
@@ -84,18 +85,6 @@ _DIM_UNKNOWN = (
     "no INFO/SPATIAL_DIM, and no single MODEL/NODES/COORDINATES width "
     "of 1, 2 or 3"
 )
-
-
-class SpatialDimUnknown(ValueError):
-    """A read that needs the spatial dimension, on a file that gives none.
-
-    Raised when the file has no ``INFO/SPATIAL_DIM`` and its
-    ``MODEL/NODES/COORDINATES`` widths name no one dimension, by
-    ``opensees_model`` and by a ``nodal_resisting_*`` read over indexed
-    ``P<a>_<b>`` ``globalForce`` columns (#2081). It is a ``ValueError``
-    and no ``MissingElementResults``, so a partition set reports it from
-    any rank instead of dropping that rank's elements.
-    """
 
 
 def _stage_sort_key(name: str) -> "tuple[int, str]":

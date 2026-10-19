@@ -23,6 +23,9 @@ from apeGmsh.results.readers._ladruno_element_io import (
     GaussColumnDroppedWarning,
     LayerBucketUnreadWarning,
     LayerSectionUnresolved,
+    SpatialDimInvalid,
+    SpatialDimUnknown,
+    _file_spatial_dim,
     read_element_slab,
 )
 from apeGmsh.results.readers._protocol import ResultLevel, ResultsReader
@@ -2578,7 +2581,9 @@ def test_factory_without_model_warns_once(g, tmp_path: Path) -> None:
 # ``_file_spatial_dim`` replaced the reader's own ``_spatial_dim``. Before the
 # merge the two were run over every row below, from the file root (the
 # reader's input) and from a group and a dataset inside the file (the gate's
-# input), and agreed on each. The table pins that shared answer.
+# input), and agreed on each. The merge kept that answer except for an
+# INFO/SPATIAL_DIM that is no integral 1, 2 or 3: both returned it (7, 0, -1)
+# or truncated it (2.9), and the shared helper now refuses it by name.
 
 def _sd_stage(h, i: int, coords=None, *, model_dataset: bool = False,
               coords_group: bool = False) -> None:
@@ -2636,20 +2641,30 @@ _SPATIAL_DIM_TABLE = [
          "X/MODEL/NODES/COORDINATES", data=np.zeros((4, 2)))), None),
     ("absent, MODEL is a dataset",
      lambda h: _sd_stage(h, 1, model_dataset=True), None),
-    # Malformed values, pinned as both helpers answered before the merge.
-    ("malformed: empty attribute falls through to the coordinates",
-     lambda h: (_sd_info(h, np.zeros(0, int)), _sd_stage(h, 1, (4, 2))), 2),
-    ("malformed: float attribute truncates",
+    ("attribute as an integral float 2.0",
      lambda h: (_sd_info(h, 2.0), _sd_stage(h, 1, (4, 3))), 2),
-    ("malformed: multi-value attribute reads the first",
-     lambda h: (_sd_info(h, np.array([3, 2])), _sd_stage(h, 1, (4, 2))), 3),
-    ("malformed: out-of-range attribute is returned as is",
-     lambda h: (_sd_info(h, 7), _sd_stage(h, 1, (4, 2))), 7),
-    ("malformed: numeric string attribute parses",
+    ("attribute as a numeric string '2'",
      lambda h: (_sd_info(h, "2"), _sd_stage(h, 1, (4, 3))), 2),
-    ("malformed: non-numeric string attribute raises",
-     lambda h: (_sd_info(h, "abc"), _sd_stage(h, 1, (4, 2))), ValueError),
-    ("malformed: COORDINATES is a group, not a dataset",
+    ("empty attribute falls through to the coordinates",
+     lambda h: (_sd_info(h, np.zeros(0, int)), _sd_stage(h, 1, (4, 2))), 2),
+    # An attribute that is no integral 1, 2 or 3 is refused by name, never
+    # answered: the coordinates beside it do not rescue it.
+    ("invalid: 7",
+     lambda h: (_sd_info(h, 7), _sd_stage(h, 1, (4, 2))), SpatialDimInvalid),
+    ("invalid: 0",
+     lambda h: (_sd_info(h, 0), _sd_stage(h, 1, (4, 2))), SpatialDimInvalid),
+    ("invalid: -1",
+     lambda h: (_sd_info(h, -1), _sd_stage(h, 1, (4, 2))), SpatialDimInvalid),
+    ("invalid: 2.9 (no truncation)",
+     lambda h: (_sd_info(h, 2.9), _sd_stage(h, 1, (4, 2))), SpatialDimInvalid),
+    ("invalid: 'abc'",
+     lambda h: (_sd_info(h, "abc"), _sd_stage(h, 1, (4, 2))), SpatialDimInvalid),
+    ("invalid: two values [3, 2]",
+     lambda h: (_sd_info(h, np.array([3, 2])), _sd_stage(h, 1, (4, 2))),
+     SpatialDimInvalid),
+    # The inference is unchanged: a malformed file without the attribute
+    # still fails as it did before the merge.
+    ("absent, COORDINATES is a group, not a dataset",
      lambda h: _sd_stage(h, 1, coords_group=True), AttributeError),
 ]
 
@@ -2661,8 +2676,6 @@ _SPATIAL_DIM_TABLE = [
 def test_file_spatial_dim_table(tmp_path: Path, build, expected) -> None:
     """The same answer from the file root, a group and a dataset in it."""
     import h5py
-
-    from apeGmsh.results.readers._ladruno_element_io import _file_spatial_dim
 
     path = tmp_path / "dim.h5"
     with h5py.File(path, "w") as h:
@@ -2685,8 +2698,6 @@ def test_reader_ndm_is_the_shared_spatial_dim(path: Path) -> None:
     """The reader answers from the shared helper: one definition (#2098)."""
     import h5py
 
-    from apeGmsh.results.readers._ladruno_element_io import _file_spatial_dim
-
     assert not hasattr(LadrunoReader, "_spatial_dim")
     with h5py.File(path, "r") as h:
         expected = _file_spatial_dim(h)
@@ -2694,4 +2705,40 @@ def test_reader_ndm_is_the_shared_spatial_dim(path: Path) -> None:
         model = r.opensees_model()
     assert model is not None
     assert model.ndm == expected
+
+
+def test_invalid_spatial_dim_names_the_file_and_the_value(
+    tmp_path: Path,
+) -> None:
+    """The refusal is a ``SpatialDimUnknown`` naming the path and value."""
+    import h5py
+
+    path = tmp_path / "dim.h5"
+    with h5py.File(path, "w") as h:
+        _sd_info(h, 7)
+    assert issubclass(SpatialDimInvalid, SpatialDimUnknown)
+    with h5py.File(path, "r") as h:
+        with pytest.raises(SpatialDimInvalid) as info:
+            _file_spatial_dim(h)
+    assert str(path) in str(info.value)
+    assert "INFO/SPATIAL_DIM is 7" in str(info.value)
+
+
+@pytest.mark.parametrize("value", [7, 0, -1, 2.9])
+def test_reader_refuses_an_out_of_range_spatial_dim(
+    tmp_path: Path, value,
+) -> None:
+    """``opensees_model`` refuses instead of building ndm=ndf=7, 0, -1 or
+    a truncated 2 (#2098 F1)."""
+    import shutil
+
+    import h5py
+
+    path = tmp_path / TRUSS.name
+    shutil.copyfile(TRUSS, path)
+    with h5py.File(path, "a") as h:
+        h["INFO"].attrs["SPATIAL_DIM"] = value
+    with LadrunoReader(path) as r:
+        with pytest.raises(SpatialDimInvalid, match="SPATIAL_DIM"):
+            r.opensees_model()
 

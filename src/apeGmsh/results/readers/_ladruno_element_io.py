@@ -1590,15 +1590,54 @@ def _basic_force_refusal(
     )
 
 
+class SpatialDimUnknown(ValueError):
+    """A read that needs the spatial dimension, on a file that gives none.
+
+    Raised when the file has no ``INFO/SPATIAL_DIM`` and its
+    ``MODEL/NODES/COORDINATES`` widths name no one dimension, by
+    ``opensees_model`` and by a ``nodal_resisting_*`` read over indexed
+    ``P<a>_<b>`` ``globalForce`` columns (#2081). It is a ``ValueError``
+    and no ``MissingElementResults``, so a partition set reports it from
+    any rank instead of dropping that rank's elements.
+    """
+
+
+class SpatialDimInvalid(SpatialDimUnknown):
+    """``INFO/SPATIAL_DIM`` holds no integral 1, 2 or 3.
+
+    Raised by :func:`_file_spatial_dim`, naming the file and the value,
+    in place of the wrong dimension (7, 0, a truncated 2.9) a read would
+    otherwise build on (#2098).
+    """
+
+
+def _spatial_dim_attr(raw: ndarray, filename: str) -> int:
+    """``INFO/SPATIAL_DIM`` as 1, 2 or 3, or :class:`SpatialDimInvalid`."""
+    number: Optional[float] = None
+    if raw.size == 1:
+        try:
+            number = float(raw.reshape(-1)[0])
+        except (TypeError, ValueError):
+            number = None
+    if number is None or number not in (1.0, 2.0, 3.0):
+        raise SpatialDimInvalid(
+            f"{filename}: INFO/SPATIAL_DIM is {raw.tolist()!r}; the spatial "
+            f"dimension must be an integral 1, 2 or 3."
+        )
+    return int(number)
+
+
 def _file_spatial_dim(node: "h5py.Group | h5py.Dataset") -> Optional[int]:
     """The ``.ladruno`` file's spatial dimension, or ``None`` if unknown.
 
     ``node`` is the file itself or any group or dataset inside it; the
-    answer is the file's. ``INFO/SPATIAL_DIM`` when the file carries it.
-    Otherwise the width of ``MODEL/NODES/COORDINATES``, which the writer
-    sizes by the spatial dimension, when every stage that has one agrees
-    on a width of 1, 2 or 3. Otherwise ``None``: a read that depends on
-    the dimension refuses or warns, naming the file (#2081).
+    answer is the file's. ``INFO/SPATIAL_DIM`` when the file carries it;
+    a value that is not an integral 1, 2 or 3 (one value; ``2.0`` reads
+    as 2) raises :class:`SpatialDimInvalid` naming the file. Otherwise
+    the width of ``MODEL/NODES/COORDINATES``, which the writer sizes by
+    the spatial dimension, when every stage that has one agrees on a
+    width of 1, 2 or 3. Otherwise ``None``: a read that depends on the
+    dimension refuses or warns, naming the file (#2081).
 
     The one rule for both :class:`LadrunoReader` and the ``localForce``
     2-D gate (#2098).
@@ -1607,7 +1646,7 @@ def _file_spatial_dim(node: "h5py.Group | h5py.Dataset") -> Optional[int]:
     if "INFO" in f and "SPATIAL_DIM" in f["INFO"].attrs:
         raw = np.asarray(f["INFO"].attrs["SPATIAL_DIM"])
         if raw.size:
-            return int(raw.flat[0])
+            return _spatial_dim_attr(raw, f.filename)
     widths: set[int] = set()
     for name in f:
         if not name.startswith("MODEL_STAGE["):
