@@ -603,7 +603,7 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     file on origin/main (#1939)."""
     labels = {lab["name"] for lab in pr["labels"]}
     if PROGRAM not in labels:
-        if SLICE_REF.search(_text(pr["body"])):
+        if SLICE_REF.search(_text(pr["body"])) and FIXES_RED_MAIN not in labels:  # red-main fixes keep the skip (#2041)
             # Fail-open before #2012: #2002 and #2170 carried `Slice:` but no label, so they
             # skipped this check and the program-wide WIP count. `scope-ok` does not apply.
             raise LandError(

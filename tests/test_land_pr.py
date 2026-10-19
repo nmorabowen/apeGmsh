@@ -1033,6 +1033,14 @@ def test_slice_pr_without_program_label_is_refused(body, extra):
         _run(1218, gh, git, dry_run=True)
 
 
+def test_red_main_revert_with_slice_line_keeps_the_skip(capsys):
+    """#2041 shape: body `Slice: #2040`, labelled fixes-red-main, no program label."""
+    pr = {**PR_1218, "labels": [{"name": "fixes-red-main"}], "body": "Slice: #2040\n"}
+    gh, git = _scope(OWNED_1812 + FOREIGN_1812, pr=pr)
+    land_pr.check_owned(1218, pr, land_pr._changed_files(1218, gh), gh, git)
+    assert "check 9: #1218 is not labelled 'program'" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("body,card", [("Slice: #1741\nClass: semantic\n", 1741), ("Slice: #2165\nClass: semantic\n", 2165)],
                          ids=["2002-shape", "2170-shape"])
 def test_slice_pr_with_program_label_goes_on_to_the_owned_read(body, card, capsys):
