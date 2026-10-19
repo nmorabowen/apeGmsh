@@ -395,7 +395,7 @@ def test_the_in_process_emitter_has_no_record() -> None:
     emitter, which cannot write one."""
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-    assert not hasattr(LiveOpsEmitter, "deck_run_record")
+    assert not hasattr(LiveOpsEmitter, "_deck_run_record")
 
 
 def test_the_reader_reads_the_format_the_writer_writes() -> None:

@@ -1098,12 +1098,12 @@ class TclEmitter:
         self._analysis_token = str(a_type)
         self._lines.append(_join("analysis", a_type))
 
-    def deck_run_record(
+    def _deck_run_record(
         self, archive: "Callable[[str], None]", steps: int,
         dt: "float | None",
     ) -> None:
         """The Tcl deck's run record (#2210), as
-        :meth:`PyEmitter.deck_run_record` (a failed increment is a Tcl
+        :meth:`PyEmitter._deck_run_record` (a failed increment is a Tcl
         ``error`` before it)."""
         from .py import deck_run_body
 

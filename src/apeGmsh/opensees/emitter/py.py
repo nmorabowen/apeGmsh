@@ -851,7 +851,7 @@ class PyEmitter:
         self._analysis_token = str(a_type)
         self._lines.append(_ops_call("analysis", a_type))
 
-    def deck_run_record(
+    def _deck_run_record(
         self, archive: "Callable[[str], None]", steps: int,
         dt: "float | None",
     ) -> None:
