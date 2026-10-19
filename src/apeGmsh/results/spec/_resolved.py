@@ -27,6 +27,9 @@ import numpy as np
 from numpy import ndarray
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..live._default import LiveDefault
     from ..live._mpco import LiveMPCO
     from ..live._recorders import LiveRecorders
 
@@ -337,6 +340,49 @@ class ResolvedRecorderSpec:
         """
         from ..live._mpco import LiveMPCO
         return LiveMPCO(self, path, ops=ops)
+
+    def emit_default(
+        self,
+        path: "str | Path",
+        *,
+        model_h5: "str | Path",
+        ops=None,
+        overwrite: bool = False,
+    ) -> "LiveDefault":
+        """Record an in-process run on the default route for the bound build.
+
+        Returns a :class:`~apeGmsh.results.live.LiveDefault` context
+        manager; read the run with its ``results()`` after the block::
+
+            ops.h5("model.h5")
+            ops.run()
+            with spec.emit_default("run", model_h5="model.h5") as run:
+                for _ in range(n_steps):
+                    opspy.analyze(1)
+            results = run.results()
+
+        The route follows the build (``run.route``): the fork records its
+        own results file, stamps it with ``model_h5``'s pairing and opens
+        it; a stock build with the MPCO recorder records ``run.mpco`` and
+        reads it with :meth:`Results.from_mpco`; a build without MPCO
+        records classic ``.out`` files in ``run_out/`` and reads them with
+        :meth:`Results.from_recorders`. The two stock routes warn once
+        (:class:`~apeGmsh.results.live.DefaultRouteWarning`), naming why.
+
+        A stock in-process ``.mpco`` is never converted: the loop's own
+        ``analysis`` calls never reach ``model_h5``, so its stage kind is
+        not a fact. :func:`~apeGmsh.results.convert_mpco` converts the
+        ``.mpco`` of a deck the bridge emitted.
+
+        ``model_h5`` is the bridge archive the live domain was built from.
+        ``overwrite=True`` replaces the fork's file of an earlier run, which
+        otherwise refuses. Modal records refuse: no default route records
+        modes.
+        """
+        from ..live._default import LiveDefault
+        return LiveDefault(
+            self, path, model_h5=model_h5, ops=ops, overwrite=overwrite,
+        )
 
     # ---------- Tcl / Python emission (Phase 5) ----------
 
