@@ -189,8 +189,8 @@ jobs:
   # releases, which would move the measured count under our feet; bump
   # the pins and re-measure the baseline together, in one PR.
   # apeGmshViewer (ADR 0112): the app's own checks, run when the PR or push
-  # touches apeGmshViewer/ (or this workflow, or the pairing oracle's two
-  # Python files). Not a required check yet: it
+  # touches apeGmshViewer/ (or this workflow, or the pairing oracle's test,
+  # fixture and stamp_provenance). Not a required check yet: it
   # joins the land_pr.py list once the maintainer promotes it.
   app-tests:
     runs-on: ubuntu-latest
@@ -221,10 +221,11 @@ jobs:
             *)
               echo "${{ github.event_name }}: running the app checks"; exit 0 ;;
           esac
-          # The pairing oracle (#2129) runs here too: it fires on its test and
-          # on stamp_provenance, the Python half of what it checks.
+          # The pairing oracle (#2129) runs here too: it fires on its test, its
+          # input fixture and stamp_provenance, the Python half of what it checks.
           changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml \
-            tests/test_app_ladruno_pairing_oracle.py src/apeGmsh/results/readers/_ladruno_provenance.py)
+            tests/test_app_ladruno_pairing_oracle.py tests/fixtures/ladruno/truss2d.ladruno \
+            src/apeGmsh/results/readers/_ladruno_provenance.py)
           if [ -z "$changed" ]; then
             echo "app=false" >> "$GITHUB_OUTPUT"
             echo "apeGmshViewer/ unchanged in $range; nothing to check"

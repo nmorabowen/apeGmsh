@@ -854,15 +854,16 @@ on the file first:
 The run is a real one. A 1 m elastic cube (E = 30 GPa, nu = 0.2) was meshed
 with 15 x 15 x 15 transfinite `stdBrick`s (4 096 nodes, 3 375 elements),
 fixed at the base and loaded on the top face. It ran 500 LoadControl steps
-on the fork build the opensees venv imports (`79e0623670`). The bridge emitted
+on the fork build the opensees venv imports (`79e0623670`). That build is
+older than `FORK_PIN` (`ladruno-v20261017`, `100eb9ae`), so these rows do not
+show the chunk layout a pin build writes. The bridge emitted
 the model live. A `recorder ladruno -N displacement` wrote `block.ladruno`,
 and `DomainCapture` wrote `block.results.h5` from the same steps. `ops.h5`
 saved `block.h5`, and `stamp_provenance` stamped the `.ladruno`, so it pairs
 with the model by `model_hash`. The files are not committed. The machine is
 the V4e1 to V4e3 one: Windows 11 IoT Enterprise LTSC 2024, Intel Core
 i7-13700KF, NVIDIA GeForce RTX 3070, Samsung 980 PRO NVMe SSD. Three runs, one
-after the other, on 2026-10-19, at `c868d313` (this slice's head then; the
-measured `src/` is unchanged since).
+after the other, on 2026-10-19, with the code of V4L-c (#2129).
 
 | run | file | size (MB) | steps | nodes | layout | index (ms) | one step cold / warm (ms) |
 |---|---|---|---|---|---|---|---|
@@ -877,8 +878,10 @@ Runs 2 and 3 took about twice run 1's time on both files: other sessions
 held the machine. The ratios between the two files repeat across the three
 runs:
 
-- **One step costs the `.ladruno` 3.5 to 5.8 times the native read** (warm
-  1.69 to 4.03 ms against 0.34 to 0.70 ms). The reader slices each component
+- **One warm step costs the `.ladruno` 4.97 to 5.76 times the native read**
+  (1.69, 4.03 and 3.89 ms against 0.34, 0.70 and 0.70 ms). **One cold step
+  costs it 3.45 to 4.01 times** (1.85, 4.05 and 4.28 ms against 0.52, 1.01 and
+  1.24 ms). The reader slices each component
   out of the one `(T, N, 3)` `DATA` on its own (`[step, :, col]`). Each of the
   three slices therefore inflates the same 2-step chunk, about 196 KB of
   float64. A single slice of all three columns would inflate that chunk once.

@@ -16,6 +16,7 @@ job instead of skipping.
 prints the `.ladruno` read row. The row gives the index time, the time to
 read one displacement step cold and warm, and the dataset's chunks and
 filters. It gives the same for `<stem>.results.h5` of the same run when that
-file exists. `MEASUREMENTS.md` records three runs on a real fork run. One step
-costs the chunked, deflated `.ladruno` 3.5 to 5.8 times the contiguous native
-read. The file is half the size.
+file exists. `MEASUREMENTS.md` records three runs on a real fork run, from
+a fork build older than `FORK_PIN`. A warm step costs the chunked, deflated
+`.ladruno` 5.0 to 5.8 times the contiguous native read, and a cold step 3.5
+to 4.0 times. The file is half the size.
