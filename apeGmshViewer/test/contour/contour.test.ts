@@ -565,7 +565,10 @@ test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y a
 const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "ladruno_frame3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
   "ladruno_modes.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz]",
-  "ladruno_portal3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz]",
+  "ladruno_parts2d.part-0.ladruno": "refused: part 0 of ladruno_parts2d",
+  "ladruno_parts2d.part-1.ladruno": "refused: part 1 of ladruno_parts2d",
+  "ladruno_parts2d.short.part-1.ladruno": "refused: part 1 of ladruno_parts2d.short",
+  "ladruno_portal3d.ladruno":"DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz]",
   "ladruno_quad2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.badstamp.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
