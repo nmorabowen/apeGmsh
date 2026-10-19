@@ -138,6 +138,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "EigenResult.results"
     },
+    "EigenResult.to_ladruno": {
+      "doc": "Write the modes as a stamped ``.ladruno`` and return its path.",
+      "signature": "to_ladruno(path: \"'str | os.PathLike[str] | None'\" = None) -> 'Path'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.to_ladruno"
+    },
     "EigenResult.to_native": {
       "doc": "Write the modes as ``kind=\"mode\"`` stages of a native results",
       "signature": "to_native(path: \"'str | os.PathLike[str] | None'\" = None) -> 'Path'",
@@ -623,6 +629,12 @@
       "signature": "participation_factors(component: 'str') -> 'np.ndarray'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ParallelModalResult.participation_factors"
+    },
+    "ParallelModalResult.to_ladruno": {
+      "doc": "Write the harvested modes as a stamped ``.ladruno`` and return",
+      "signature": "to_ladruno(path: \"'str | Any'\", *, model_h5: \"'str | Any'\") -> 'Path'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ParallelModalResult.to_ladruno"
     },
     "ParallelModalResult.to_native": {
       "doc": "Write the harvested modes as mode-kind stages in a native",
