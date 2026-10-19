@@ -29,11 +29,12 @@ run out of process.
 - **Staged decks convert.** It converts the `.mpco` beside itself, keeps the
   `.mpco`, and opens the `.ladruno`.
 - **Unstaged decks fall back.** An unstaged program's kind is not archived as
-  fact: the archive does not record the deck's `analyze` call, and a
-  follow-up card adds it. Such a deck is read with `from_mpco` after one
-  warning.
+  fact: the archive does not record the deck's `analyze` call. #2210 adds
+  it. Such a deck is read with `from_mpco` after one warning.
 - **Other refusals raise.** These include an archive of another model and an
   incomplete partition set. Only a refusal about stage kinds
-  (`StageKindRefused`) falls back.
+  (`StageKindRefused`) falls back. The lineage check runs before any kind
+  refusal is raised, so a foreign archive raises even when its stages would
+  not pair either.
 
 A bare `convert_mpco` behaves as before.

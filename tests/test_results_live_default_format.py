@@ -383,23 +383,67 @@ def test_a_staged_deck_mpco_converts_and_keeps_the_mpco(files, tmp_path) -> None
     read_deck_mpco(src, model_h5=files["model"], overwrite=True).close()
 
 
-@pytest.mark.parametrize("case", ["another-model", "partition-gap"])
+@pytest.mark.parametrize("case", [
+    "another-model", "another-model-two-stages", "another-mesh-unstaged",
+    "partition-gap", "parts-disagree",
+])
 def test_a_refusal_that_is_not_about_kinds_raises(files, case, tmp_path) -> None:
-    """Only a stage-kind refusal falls back; the rest re-raise, unwarned."""
+    """Only a stage-kind refusal falls back; the rest re-raise, unwarned.
+
+    A foreign archive whose stages would not pair either (two stages
+    against one, or no stage at all) still refuses as a foreign archive:
+    the lineage check runs before any kind refusal is raised. A later part
+    that does not pair, after part 0 did, is a set from two runs."""
+    src: Any = shutil.copy(files["mpco"], tmp_path / "deck.mpco")
+    model, match = files["model"], "is not a run of"
     if case == "another-model":
         model = _frame_model(tmp_path / "frame.h5", [("only", "static")])
-        src, match = shutil.copy(files["mpco"], tmp_path / "deck.mpco"), "is not a run of"
-    else:
-        model = files["model"]
+    elif case == "another-model-two-stages":
+        model = _frame_model(tmp_path / "frame2.h5",
+                             [("g", "static"), ("s", "transient")])
+    elif case == "another-mesh-unstaged":
+        model = tmp_path / "truss.h5"
+        truss_bridge(truss_fem()).h5(str(model))
+    elif case == "partition-gap":
         for i in (0, 2):
             shutil.copy(files["mpco"], tmp_path / f"deck.part-{i}.mpco")
         src, match = tmp_path / "deck.part-0.mpco", "contiguous"
+    else:
+        for i in (0, 1):
+            shutil.copy(files["mpco"], tmp_path / f"deck.part-{i}.mpco")
+        import h5py
+
+        with h5py.File(tmp_path / "deck.part-1.mpco", "r+") as f:
+            f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
+        src, match = tmp_path / "deck.part-0.mpco", "not from one run"
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with pytest.raises(MPCOConversionRefused, match=match) as e:
             read_deck_mpco(src, model_h5=model)
     assert not isinstance(e.value, StageKindRefused)
     assert DefaultRouteWarning not in _cats(caught)
+
+
+def test_a_stage_of_unknown_kind_warns_once_and_reads_the_mpco(
+    files, tmp_path,
+) -> None:
+    """A staged archive whose stage names no known kind is a kind refusal:
+    it falls back with one warning, and ``from_mpco`` then refuses the
+    archive on its own terms (its stage binding names the same token)."""
+    import h5py
+
+    model = Path(shutil.copy(files["model"], tmp_path / "bogus.h5"))
+    with h5py.File(model, "r+") as f:
+        f["opensees/stages/stage_000/analysis"].attrs["analysis"] = "Bogus"
+    src = shutil.copy(files["mpco"], tmp_path / "deck.mpco")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError, match="no stage kind") as e:
+            read_deck_mpco(src, model_h5=model)
+    assert not isinstance(e.value, MPCOConversionRefused)  # from_mpco's own
+    ours = [w for w in caught if w.category is DefaultRouteWarning]
+    assert len(ours) == 1 and "Bogus" in str(ours[0].message)
+    assert not (tmp_path / "deck.ladruno").exists()
 
 
 @pytest.mark.parametrize("name", ["flat", "other"], ids=["one-call", "two-calls"])

@@ -52,8 +52,9 @@ A program with no ``ops.stage`` block pairs with no stage. Its kind is not
 archived as fact: the archive cannot tell an in-process run from a deck,
 and it does not record a deck's ``analyze`` call (#1950, coordinator
 ruling (iii)). ``read_deck_mpco`` passes the private
-``_implicit_stage=True``, which refuses every unstaged program up front
-with that reason; a follow-up card records the deck's ``analyze`` call.
+``_implicit_stage=True``, which refuses every unstaged program with that
+reason (after the lineage check); #2210 records the deck's ``analyze``
+call.
 
 ``COLUMN_MAP`` follows the fork recorder's own derivation from the same
 header MPCO's ``META`` encodes: ``LEVELS`` is the deepest path code of a
@@ -294,12 +295,15 @@ def _plan(
     targets = _targets(dst, len(sources), partitioned=_is_part_name(src))
     staging = targets[0].parent / f"{_set_stem(dst)}.partial"
     _refuse_existing(targets, staging, overwrite)
-    model, names, kinds, ranks = _program(model_path)
-    if implicit_stage and not names:
-        raise StageKindRefused(
+    model, names, kinds, pending, ranks = _program(model_path)
+    # A kind refusal is held until the archive is proved to be this run's
+    # (the partition count here, the lineage after the scan): a wrong
+    # archive always refuses as one, never as a question of kinds.
+    if pending is None and implicit_stage and not names:
+        pending = StageKindRefused(
             f"{model_path} declares no ops.stage blocks: an unstaged "
-            "program's kind is not archived as fact; follow-up card "
-            "pending. Nothing was written."
+            "program's kind is not archived as fact (#2210 records it). "
+            "Nothing was written."
         )
     if ranks and len(ranks) != len(sources):
         raise MPCOConversionRefused(
@@ -310,12 +314,13 @@ def _plan(
         )
     stage_kinds: Optional[list[str]] = None
     unsupported: set[str] = set()
-    for i, source in enumerate(sources):
+    for i, source in enumerate(sources if pending is None else ()):
         try:
             part_kinds = _scan_part(source, names, kinds, unsupported)
         except StageKindRefused as e:
             if i == 0:
-                raise
+                pending = e
+                break
             # Part 0 paired: a later part that does not is a set that
             # disagrees with itself, not a question of kinds.
             raise MPCOConversionRefused(
@@ -329,10 +334,13 @@ def _plan(
                 f"{sources[0].name} as {stage_kinds}; the parts are not "
                 "from one run."
             )
-    assert stage_kinds is not None
-    # Last, the readers' own checks: modal records, and on a set the
-    # stage signatures and time vectors of every part.
+    # Last, the readers' own checks: modal records, on a set the stage
+    # signatures and time vectors of every part, and the lineage. A held
+    # kind refusal is raised only once they pass.
     _open_with_reader(sources, model, model_path)
+    if pending is not None:
+        raise pending
+    assert stage_kinds is not None
     return _Plan(sources, targets, staging, stage_kinds, unsupported)
 
 
@@ -421,8 +429,15 @@ def _refuse_existing(
             )
 
 
-def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
-    """The model, its stage names and kinds, and its partition ranks."""
+def _program(
+    model_h5: Path,
+) -> "tuple[Any, list[str], list[str], Optional[StageKindRefused], set[int]]":
+    """The model, its stage names and kinds, and its partition ranks.
+
+    A stage whose kind is unknown is returned as a :class:`StageKindRefused`
+    (with no kinds), not raised: the caller raises it only after the
+    lineage check, so a wrong archive always refuses as one.
+    """
     from ...opensees.opensees_model import OpenSeesModel
     from .._bind import _stage_kind
 
@@ -434,12 +449,14 @@ def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
             f"({type(e).__name__}: {e})."
         ) from e
     stages = list(model.stages())
+    kind_error: Optional[StageKindRefused] = None
     try:
         kinds = [_stage_kind(s, model_path=model_h5) for s in stages]
     except ValueError as e:
-        raise StageKindRefused(str(e)) from e
+        kinds, kind_error = [], StageKindRefused(str(e))
+        kind_error.__cause__ = e
     ranks = {int(p.rank) for p in model.partitions()}
-    return model, [str(s.name) for s in stages], kinds, ranks
+    return model, [str(s.name) for s in stages], kinds, kind_error, ranks
 
 
 def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:

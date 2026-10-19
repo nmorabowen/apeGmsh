@@ -103,8 +103,8 @@ def read_deck_mpco(
     format beside it, which is then opened; the ``.mpco`` is always kept.
     A staged program converts: each ``ops.stage`` records its kind. An
     unstaged program does not (its kind is not archived as fact, and the
-    archive does not record the deck's ``analyze`` call; a follow-up card
-    will), so it refuses through ``convert_mpco``'s private
+    archive does not record the deck's ``analyze`` call; #2210 will), so
+    it refuses through ``convert_mpco``'s private
     ``_implicit_stage`` path, which only this function passes. A refusal
     about stage kinds
     (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`)

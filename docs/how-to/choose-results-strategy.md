@@ -274,9 +274,11 @@ a `.mpco` written by running the bridge's own exported deck (`ops.py` or
 `ops.tcl`) out of process, as emitted. A staged deck (`ops.stage` blocks,
 each recording its kind) converts beside itself, and the `.mpco` is kept.
 An unstaged deck does not convert yet, because the archive does not record
-its kind as fact. It is read with `from_mpco` after one warning that says
-so. Other refusals raise, such as an archive of another model or an
-incomplete partition set. An in-process run is not a deck, so read its
+its kind as fact. [#2210](https://github.com/nmorabowen/apeGmsh/issues/2210)
+records it. Until then, an unstaged deck is read with `from_mpco` after one
+warning that says so. Other refusals raise, even when the stages would not
+pair either, such as an archive of another model or an incomplete
+partition set. An in-process run is not a deck, so read its
 `.mpco` with `from_mpco`.
 
 ## The read side is identical
