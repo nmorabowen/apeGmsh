@@ -35,6 +35,7 @@ import h5py
 import numpy as np
 import pytest
 
+from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.analysis.modal import ParallelModalResult
 from apeGmsh.opensees.emitter import live
 from apeGmsh.opensees.opensees_model import OpenSeesModel
@@ -489,26 +490,27 @@ def test_parallel_stamp_warning_points_at_the_caller(
     assert "stage_names" not in _provenance(lad)
 
 
-@pytest.mark.parametrize("ndm,ndf,labels", [
-    (1, 1, b"Rx,Ry,Rz"), (2, 2, b"Rz"), (3, 3, b"Rx,Ry,Rz"),
+@pytest.mark.parametrize("ndm,labels,mask", [
+    (1, b"Rx,Ry,Rz", True), (2, b"Rz", False), (3, b"Rx,Ry,Rz", False),
 ])
 def test_the_rotational_group_is_zeros_without_rotations(
     fem3: Any, spec: ModuleType, tmp_path: Path,
-    ndm: int, ndf: int, labels: bytes,
+    ndm: int, labels: bytes, mask: bool,
 ) -> None:
     """The recorder writes MODES_OF_VIBRATION(R) for every model when both
-    tokens are requested; without rotational DOFs it holds zeros."""
+    tokens are requested; without rotations it holds zeros (1-D has no
+    rotation slot even where the mask allows one)."""
     from apeGmsh.results.readers._ladruno_writer import write_modes
 
     archive = tmp_path / "model.h5"
     _frame(fem3, ndm=3).h5(str(archive))
     ids = _ids(fem3)
     coords = np.asarray(fem3.nodes.coords, dtype=np.float64)
-    field = np.arange(ids.size * ndf, dtype=np.float64).reshape(ids.size, ndf)
+    field = 1.0 + np.arange(ids.size * 6, dtype=np.float64).reshape(ids.size, 6)
     lad = write_modes(
         tmp_path / "m.ladruno", model_h5=archive, node_ids=ids,
-        coords=coords, ndm=ndm, ndf=ndf, eigenvalues=[4.0],
-        fields=lambda k: field, rotations=np.ones(ids.size, bool),
+        coords=coords, ndm=ndm, eigenvalues=[4.0],
+        fields=lambda k: field, rotations=np.full(ids.size, mask),
         source="test",
     )
 
@@ -549,3 +551,155 @@ def test_parallel_refuses_a_node_the_archive_does_not_have(
         ParallelModalResult.from_job(job).to_ladruno(
             tmp_path / "m.ladruno", model_h5=archive)
     assert not (tmp_path / "m.ladruno").exists()
+
+
+# ---------------------------------------------------------------------------
+# Rotation slots follow the model's DOF roles (ruling on #2203)
+# ---------------------------------------------------------------------------
+
+def _up_beside_frame_2d(g: Any) -> tuple[Any, apeSees, list[int], list[int], int]:
+    """A 2-D LadrunoUP block, a 2-D frame column and one element-less node,
+    all at ndf 3: ``(fem, ops, up, frame, free)``. ndf and ndm cannot tell
+    the u-p node's (ux, uy, p) from the frame node's (ux, uy, rz)."""
+    G = g.model.geometry
+    block = G.add_rectangle(0.0, 0.0, 0.0, 1.0, 1.0)
+    col = G.add_line(G.add_point(3.0, 0.0, 0.0), G.add_point(3.0, 2.0, 0.0))
+    free = G.add_point(6.0, 6.0, 0.0)
+    g.model.sync()
+    g.physical.add(2, [block], name="Soil")
+    g.physical.add(1, [col], name="Col")
+    g.physical.add(0, [free], name="Free")
+    g.mesh.structured.set_recombine("Soil", dim=2)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(2)
+    g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data()
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=3)
+    ops.element.LadrunoUP(
+        pg="Soil",
+        material=ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0),
+        Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4),
+    )
+    ops.element.elasticBeamColumn(
+        pg="Col", transf=ops.geomTransf.Linear(), A=0.01, E=200e9, Iz=1e-4)
+    up = sorted(int(n) for n in fem.nodes.select(pg="Soil").ids)
+    frame = sorted(int(n) for n in fem.nodes.select(pg="Col").ids)
+    (free_id,) = [int(n) for n in fem.nodes.select(pg="Free").ids]
+    return fem, ops, up, frame, free_id
+
+
+class _ForkFake(_FakeOps):
+    """The fake as a fork build that lists no element tags, so the live
+    emitter trusts a fork-only element (LadrunoUP) it was asked to make."""
+
+    def getEleTags(self) -> Any:
+        raise RuntimeError("this fake records no elements")
+
+
+def _rot_rows(lad: Path) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+    with h5py.File(lad, "r") as f:
+        on = f[f"{_STAGE}/RESULTS/ON_NODES"]
+        ids = np.asarray(on[_R]["ID"][()]).ravel()
+        u = on[_U]["DATA/STEP_0/MODE_0"][()]
+        r = on[_R]["DATA/STEP_0/MODE_0"][()]
+    return ({int(n): u[i] for i, n in enumerate(ids)},
+            {int(n): r[i] for i, n in enumerate(ids)})
+
+
+def test_parallel_2d_up_deck_never_writes_a_pressure_as_rotation_z(
+    g: Any, spec: ModuleType, tmp_path: Path,
+) -> None:
+    """2-D u-p nodes (ndf 3): Rz is 0.0, silently (the roles say pore
+    pressure). The frame column keeps its real rotation_z under an
+    envelope ndf below 6. The element-less node in a model with a u-p
+    class is ambiguous: 0.0, and exactly one named warning."""
+    from apeGmsh.opensees.analysis.eigen import RotationSlotUnresolvedWarning
+
+    fem, ops, up, frame, free = _up_beside_frame_2d(g)
+    archive = tmp_path / "model.h5"
+    ops.h5(str(archive))
+    ids = _ids(fem)
+    job, shapes = _job(tmp_path, ids, [16.0], 3, 2)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lad = ParallelModalResult.from_job(job).to_ladruno(
+            tmp_path / "m.ladruno", model_h5=archive)
+    named = [w for w in caught
+             if issubclass(w.category, RotationSlotUnresolvedWarning)]
+    assert len(named) == 1
+    assert f"[{free}]" in str(named[0].message)
+    assert Path(named[0].filename) == Path(__file__)
+    assert len([w for w in caught if issubclass(w.category, UserWarning)]) == 1
+
+    assert spec.validate(str(lad)) == []
+    u, r = _rot_rows(lad)
+    row = {int(n): i for i, n in enumerate(ids)}
+    for n in up:
+        assert r[n].tolist() == [0.0]                      # p, not rz
+        assert u[n].tolist() == shapes[0, row[n], :2].tolist()
+    for n in frame:
+        assert r[n].tolist() == [shapes[0, row[n], 2]]     # the real rz
+    assert r[free].tolist() == [0.0]
+
+
+def test_eigen_2d_up_deck_never_writes_a_pressure_as_rotation_z(
+    g: Any, bind: Any, tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees.analysis.eigen import RotationSlotUnresolvedWarning
+
+    fem, ops, up, frame, free = _up_beside_frame_2d(g)
+    ids = _ids(fem)
+    vecs = _vectors(ids, 1, {int(n): 3 for n in ids})
+    bind(_ForkFake([16.0], vecs, build="0" * 40))
+
+    with pytest.warns(RotationSlotUnresolvedWarning, match=rf"\[{free}\]"):
+        lad = ops.eigen(1).to_ladruno(tmp_path / "m.ladruno")
+    _, r = _rot_rows(lad)
+    for n in up:
+        assert r[n].tolist() == [0.0]
+    for n in frame:
+        assert r[n].tolist() == [vecs[(n, 1)][2]]
+    assert r[free].tolist() == [0.0]
+
+
+def test_parallel_3d_elementless_node_in_a_up_model_gets_no_rotations(
+    g: Any, tmp_path: Path,
+) -> None:
+    """An element-less node at ndf 6 beside a 3-D u-p block (ndf 4): its
+    rotation slots could be tied to a pore pressure, so they are 0.0 with
+    the one warning, and the u-p nodes' pressure (column 4) is no Rx."""
+    from apeGmsh.opensees.analysis.eigen import RotationSlotUnresolvedWarning
+
+    G = g.model.geometry
+    box = G.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+    pt = G.add_point(5.0, 5.0, 5.0)
+    g.model.sync()
+    g.physical.add(3, [box], name="Soil")
+    g.physical.add(0, [pt], name="Free")
+    g.mesh.structured.set_transfinite_box("Soil", n=2)
+    g.mesh.generation.generate(3)
+    g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data()
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    ops.element.LadrunoUP(
+        pg="Soil",
+        material=ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0),
+        Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4, 1e-4),
+    )
+    archive = tmp_path / "model.h5"
+    ops.h5(str(archive))
+    (free,) = [int(n) for n in fem.nodes.select(pg="Free").ids]
+    ids = _ids(fem)
+    job, shapes = _job(tmp_path, ids, [16.0], 6, 3)
+
+    with pytest.warns(RotationSlotUnresolvedWarning, match=rf"\[{free}\]"):
+        lad = ParallelModalResult.from_job(job).to_ladruno(
+            tmp_path / "m.ladruno", model_h5=archive)
+    u, r = _rot_rows(lad)
+    row = {int(n): i for i, n in enumerate(ids)}
+    for n in ids.tolist():
+        assert r[n].tolist() == [0.0, 0.0, 0.0]
+        assert u[n].tolist() == shapes[0, row[n], :3].tolist()

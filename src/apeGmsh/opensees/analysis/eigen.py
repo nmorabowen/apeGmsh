@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -35,7 +36,14 @@ if TYPE_CHECKING:
     from ..node import Node
 
 
-__all__ = ["EigenResult"]
+__all__ = ["EigenResult", "RotationSlotUnresolvedWarning"]
+
+
+class RotationSlotUnresolvedWarning(UserWarning):
+    """A ``.ladruno`` export wrote a node's rotation slots as 0.0 because
+    the model's DOF roles cannot say whether they hold a rotation or a
+    pore pressure (an element-less node beside a u-p element, a node no
+    beam or shell touches). The message names the nodes and the reason."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,11 +235,15 @@ class EigenResult:
         layout the fork recorder writes for ``modesOfVibration`` +
         ``modesOfVibrationRotational`` (the table is in
         :mod:`apeGmsh.results.readers._ladruno_writer`): each eigenvalue
-        as ``LAMBDA``, ``Ux..`` from the first ``ndm`` entries of each
-        fem node's ``ops.nodeEigenvector`` and, where the model has
-        them, the rotations (entry 3 in 2-D, entries 4-6 in 3-D). A node
-        whose own vector is shorter writes 0.0 for the entries it lacks.
-        A non-positive eigenvalue writes 0 Hz / 0 s and raises one
+        as ``LAMBDA``, and each fem node's ``ops.nodeEigenvector`` laid
+        onto ``Ux..Rz`` by its own DOF layout (its vector's length is its
+        ndf). A rotation slot holds the rotation only where the model's
+        DOF roles say so: a beam or shell touches the node, or it is
+        element-less in a model without a u-p element. A u-p node's pore
+        pressure is never written as a rotation. A slot the roles cannot
+        settle is written as 0.0, with one
+        :class:`RotationSlotUnresolvedWarning` naming the nodes. A
+        non-positive eigenvalue writes 0 Hz / 0 s and raises one
         ``UserWarning`` naming the mode, as :meth:`to_native` does.
 
         ``MODEL/NODES`` is the bridge's fem. ``MODEL/ELEMENTS`` is empty
@@ -272,7 +284,7 @@ class EigenResult:
         """
         import tempfile
 
-        bridge, ndm, ndf = self._checked_solve("to_ladruno")
+        bridge, ndm, _ = self._checked_solve("to_ladruno")
         if path is None:
             out_path = Path(
                 tempfile.mkdtemp(prefix="apegmsh_modes_")
@@ -286,21 +298,14 @@ class EigenResult:
         node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
         coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
         n_modes = len(self.eigenvalues)
-        # One nodeEigenvector call per node and mode. A node's vector is
-        # as long as ITS ndf: a shorter one fills only what it has, and
-        # it has rotations only when it reaches entry 3 (2-D) or 4-6
-        # (3-D), the recorder's rule, so a u-p pressure is no rotation.
-        shapes = np.zeros((n_modes, node_ids.size, ndf), dtype=np.float64)
-        reach = np.zeros(node_ids.size, dtype=np.int64)
-        for k in range(n_modes):
-            for row, nid in enumerate(node_ids):
-                vec = np.asarray(
-                    ops.nodeEigenvector(int(nid), k + 1), dtype=np.float64,
-                ).ravel()
-                reach[row] = vec.size
-                shapes[k, row, :min(ndf, vec.size)] = vec[:ndf]
-        rotations = reach > (2 if ndm == 2 else 5) if ndm in (2, 3) \
-            else np.zeros(node_ids.size, dtype=bool)
+        # One nodeEigenvector call per node and mode; a node's vector is
+        # as long as ITS ndf, so its length is the node's own DOF count.
+        vectors = [
+            [np.asarray(ops.nodeEigenvector(int(nid), k + 1),
+                        dtype=np.float64).ravel() for nid in node_ids]
+            for k in range(n_modes)
+        ]
+        ndf_of = {int(n): int(v.size) for n, v in zip(node_ids, vectors[0])}
 
         with tempfile.TemporaryDirectory(
             prefix="apegmsh_modes_", dir=out_path.parent,
@@ -308,12 +313,16 @@ class EigenResult:
             staged = Path(tmp) / archive.name
             bridge.h5(str(staged))
             place = _archive_is_free(staged, archive)
+            layouts, rotations, unresolved = _ladruno_slots(
+                staged, node_ids, ndf_of, ndm, where="EigenResult.to_ladruno")
+            shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
+            _warn_unresolved("EigenResult.to_ladruno", unresolved, 2)
             # The modes go first, stamped against the staged copy (the
             # same lineage), so a refused or failed write leaves no
             # archive behind; the archive follows them into place.
             out = write_modes(
                 out_path, model_h5=staged, node_ids=node_ids,
-                coords=coords, ndm=ndm, ndf=ndf,
+                coords=coords, ndm=ndm,
                 eigenvalues=self.eigenvalues,
                 fields=lambda k: shapes[k - 1], rotations=rotations,
                 source="eigen", stacklevel=3,
@@ -407,6 +416,72 @@ class EigenResult:
             model=OpenSeesModel.from_h5(str(src)),
             model_path=None if model_h5 is None else src,
         )
+
+
+def _ladruno_slots(
+    model_h5: Path, node_ids: "Any", ndf_of: "Mapping[int, int]", ndm: int,
+    *, where: str,
+) -> "tuple[list[tuple[int, ...]], np.ndarray, list[tuple[int, str]]]":
+    """How each node's DOFs land on ``ux..rz`` for a ``.ladruno`` export.
+
+    Returns, per node of ``node_ids``: its DOF layout (DOF index -> spatial
+    slot, the emit's ``_node_layout(ndf, ndm)``), whether its rotation
+    slots hold rotations, and the ``(node, reason)`` of each node whose
+    layout keeps a rotation slot that the model's DOF roles
+    (:func:`~apeGmsh.opensees._recorder_translate.model_h5_rotation_roles`)
+    refuse for any reason but a u-p element touching it. The layout alone
+    cannot tell a 2-D frame node (ux, uy, rz) from a 2-D u-p node (ux, uy,
+    p); the roles do, so a pore pressure is never written as a rotation.
+    """
+    from .._internal.build.recorders import _node_layout
+    from .._readback import _UP_FAMILIES
+    from .._recorder_translate import model_h5_rotation_roles
+
+    ids = [int(n) for n in node_ids]
+    layouts = [_node_layout(int(ndf_of[n]), ndm) for n in ids]
+    roles = model_h5_rotation_roles(model_h5, ids, where=where)
+    up = {cls.__name__ for cls in _UP_FAMILIES}
+    rotations = np.zeros(len(ids), dtype=bool)
+    unresolved: list[tuple[int, str]] = []
+    for i, (n, lay) in enumerate(zip(ids, layouts)):
+        if not any(slot >= 3 for slot in lay):
+            continue                    # no rotation slot at all
+        why = roles.refusal(n)
+        if why is None:
+            rotations[i] = True
+        elif not (n in roles.blocked and roles.blocked[n] in up):
+            unresolved.append((n, why))
+    return layouts, rotations, unresolved
+
+
+def _spatial(rows: "Any", layouts: "list[tuple[int, ...]]") -> np.ndarray:
+    """``[n x 6]`` by spatial slot from per-node DOF rows (each row the
+    node's own DOFs, padded or not); a DOF past a row's end reads 0.0."""
+    out = np.zeros((len(layouts), 6), dtype=np.float64)
+    for i, (row, lay) in enumerate(zip(rows, layouts)):
+        vals = np.asarray(row, dtype=np.float64).ravel()
+        for dof, slot in enumerate(lay):
+            if dof < vals.size:
+                out[i, slot] = vals[dof]
+    return out
+
+
+def _warn_unresolved(
+    where: str, unresolved: "list[tuple[int, str]]", stacklevel: int,
+) -> None:
+    """One :class:`RotationSlotUnresolvedWarning` for every unsettled node."""
+    import warnings
+
+    if not unresolved:
+        return
+    node, why = unresolved[0]
+    warnings.warn(
+        f"{where}: the rotation slots of {len(unresolved)} node(s) "
+        f"({[n for n, _ in unresolved[:10]]}) are written as 0.0, neither "
+        f"a rotation nor a pore pressure: for node {node}, {why}.",
+        RotationSlotUnresolvedWarning,
+        stacklevel=stacklevel + 1,
+    )
 
 
 def _lineage(path: Path) -> "tuple[str, str] | None":

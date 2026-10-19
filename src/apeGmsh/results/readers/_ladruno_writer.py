@@ -29,10 +29,10 @@ against the bridge's model archive.
 ``MODEL/ELEMENTS``                  an empty group (below)
 ``MODEL/SECTION_ASSIGNMENTS``       an empty group
 ``ON_NODES/MODES_OF_VIBRATION(U)``  ``Ux[,Uy[,Uz]]`` (``ndm`` columns)
-``ON_NODES/MODES_OF_VIBRATION(R)``  ``Rz`` (``ndm=2``: entry 3) or
-                                    ``Rx,Ry,Rz`` (``ndm=3``: entries 4-6;
-                                    ``ndm=1``: zeros), 0.0 at a node whose
-                                    own vector does not reach them
+``ON_NODES/MODES_OF_VIBRATION(R)``  ``Rz`` (``ndm=2``) or ``Rx,Ry,Rz``
+                                    (``ndm=3``; ``ndm=1``: zeros), 0.0 at a
+                                    node the caller's ``rotations`` mask
+                                    clears
 ``DATA/STEP_0/MODE_<k>``            ``[n x nComp]``, ``k`` 0-based, with
                                     ``MODE``, ``LAMBDA``, ``OMEGA``,
                                     ``FREQUENCY``, ``PERIOD``
@@ -91,7 +91,6 @@ def write_modes(
     node_ids: "np.ndarray | Sequence[int]",
     coords: np.ndarray,
     ndm: int,
-    ndf: int,
     eigenvalues: "np.ndarray | Sequence[float]",
     fields: Callable[[int], np.ndarray],
     rotations: "np.ndarray | Sequence[bool]",
@@ -110,20 +109,19 @@ def write_modes(
     node_ids, coords
         ``MODEL/NODES``: the fem's node ids and their coordinates
         (``[n x >=ndm]``; the first ``ndm`` columns are written).
-    ndm, ndf
-        The model's spatial dimension and envelope DOF count. ``ndf``
-        is the column count of every ``fields(k)``.
+    ndm
+        The model's spatial dimension.
     eigenvalues
         ``λ_k``, mode 1 first.
     fields
-        ``fields(k)`` is mode ``k``'s (1-based) eigenvector field,
-        ``[len(record_ids) x ndf]``, rows in ``record_ids`` order; a DOF a
-        node does not carry is 0.0.
+        ``fields(k)`` is mode ``k``'s (1-based) eigenvector field by
+        spatial slot, ``[len(record_ids) x 6]`` (``ux, uy, uz, rx, ry,
+        rz``), rows in ``record_ids`` order; a slot a node does not carry
+        is 0.0. The caller maps each node's DOFs onto the slots.
     rotations
-        Per recorded node, whether its own eigenvector reaches the
-        rotation entries (entry 3 in 2-D, 4-6 in 3-D: the node's ndf is
-        above 2 or 5). ``False`` writes 0.0 rotations, so a u-p node's
-        pressure is never written as one.
+        Per recorded node, whether its rotation slots hold rotations.
+        ``False`` writes 0.0 there, so a u-p node's pressure is never
+        written as one.
     record_ids
         The nodes the modal groups record; ``None`` records every node.
         Each must be a node of ``node_ids``.
@@ -137,7 +135,7 @@ def write_modes(
     Raises
     ------
     ValueError
-        No modes, an ``ndm`` outside 1-3, an ``ndf`` below 1, a node tag
+        No modes, an ``ndm`` outside 1-3, a node tag
         outside int32, a recorded node that is not in ``node_ids``, or a
         field of the wrong shape, or a ``path`` refused by
         :func:`check_target`. Nothing is written.
@@ -151,8 +149,6 @@ def write_modes(
             "file was created.")
     if ndm not in (1, 2, 3):
         raise ValueError(f"write_modes: ndm must be 1, 2 or 3, got {ndm}.")
-    if ndf < 1:
-        raise ValueError(f"write_modes: ndf must be >= 1, got {ndf}.")
     nids = _int32_ids(node_ids, "node_ids")
     xyz = np.asarray(coords, dtype=np.float64)
     if xyz.ndim != 2 or xyz.shape[0] != nids.size or xyz.shape[1] < ndm:
@@ -169,10 +165,10 @@ def write_modes(
     shapes = []
     for k in range(1, len(lams) + 1):
         f = np.asarray(fields(k), dtype=np.float64)
-        if f.shape != (rids.size, ndf):
+        if f.shape != (rids.size, 6):
             raise ValueError(
                 f"write_modes: mode {k} has a field of shape {f.shape}; "
-                f"expected [{rids.size} x {ndf}].")
+                f"expected [{rids.size} x 6].")
         shapes.append(f)
     rot = np.asarray(rotations, dtype=bool).ravel()
     if rot.shape != (rids.size,):
@@ -188,7 +184,7 @@ def write_modes(
     staging.mkdir(parents=False, exist_ok=False)
     try:
         staged = staging / out.name
-        _write_file(staged, nids, xyz[:, :ndm], rids, ndm, ndf, lams,
+        _write_file(staged, nids, xyz[:, :ndm], rids, ndm, lams,
                     scalars, shapes, rot)
         # The stamp's warnings (StageNamesOmittedWarning) are raised again
         # from here, so they name the caller's line, not this module.
@@ -277,15 +273,13 @@ def _d(value: float) -> np.ndarray:
 
 
 def _groups(ndm: int) -> list[tuple[str, list[str], list[int], str]]:
-    """``(name, labels, field columns, description)`` per modal group.
+    """``(name, labels, spatial slots, description)`` per modal group.
 
-    The recorder's rule (``Ladruno_NodeResults.cpp``): translations are
-    the first ``ndm`` eigenvector entries; rotations are entry 3 in 2-D
-    and entries 4-6 in 3-D. In 1-D the rotational group has three
-    columns and no source entry, so it holds zeros. A column past
-    ``ndf`` reads 0.0.
+    The recorder's groups (``Ladruno_NodeResults.cpp``): ``ndm``
+    translations, and ``Rz`` in 2-D or ``Rx,Ry,Rz`` otherwise. In 1-D the
+    rotational group has no source slot, so it holds zeros.
     """
-    labels, cols = (["Rz"], [2]) if ndm == 2 else (
+    labels, cols = (["Rz"], [5]) if ndm == 2 else (
         ["Rx", "Ry", "Rz"], [3, 4, 5] if ndm == 3 else [])
     return [
         (_U, ["Ux", "Uy", "Uz"][:ndm], list(range(ndm)),
@@ -296,7 +290,7 @@ def _groups(ndm: int) -> list[tuple[str, list[str], list[int], str]]:
 
 def _write_file(
     out: Path, nids: np.ndarray, xyz: np.ndarray, rids: np.ndarray,
-    ndm: int, ndf: int, lams: list[float],
+    ndm: int, lams: list[float],
     scalars: list[tuple[float, float, float]], shapes: list[np.ndarray],
     rotations: np.ndarray,
 ) -> None:
@@ -348,8 +342,7 @@ def _write_file(
                 block = np.zeros((rids.size, len(labels)), dtype=np.float64)
                 rows = rotations if name == _R else np.ones(rids.size, bool)
                 for j, col in enumerate(cols):
-                    if col < ndf:
-                        block[rows, j] = field[rows, col]
+                    block[rows, j] = field[rows, col]
                 dset = step.create_dataset(f"MODE_{k}", data=block)
                 dset.attrs["MODE"] = _i(k)
                 dset.attrs["LAMBDA"] = _d(lam)
