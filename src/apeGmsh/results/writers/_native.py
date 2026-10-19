@@ -143,6 +143,9 @@ class NativeWriter:
             ``model_h5_src`` is supplied but does not exist.
         RuntimeError
             ``model_h5_src`` does not carry a ``/opensees/`` group.
+        BridgeOnlyArchiveError
+            ``fem`` is given and ``model_h5_src`` is a bridge-only
+            archive (no neutral zone to resolve the forwarded ``ndm``).
         ValueError
             ``opensees_backend`` is not ``"fork"`` / ``"stock"``, or a
             build is given for a stock backend.
@@ -267,6 +270,11 @@ class NativeWriter:
         RuntimeError
             ``/opensees/`` is missing from the source, or the writer
             already holds a ``/opensees/`` group.
+        BridgeOnlyArchiveError
+            The source is a bridge-only archive (``/meta`` with an
+            ``ndm`` stamp and ``/opensees/``, but no ``nodes`` group)
+            and this file holds a ``/model/meta`` the ``ndm`` would be
+            forwarded onto. Raised before anything is copied.
         """
         import h5py
 
@@ -283,11 +291,40 @@ class NativeWriter:
                 f"NativeWriter.write_opensees_from: source model.h5 "
                 f"not found at {src_path!s}."
             )
+        from apeGmsh.opensees.emitter.h5_reader import (
+            BridgeOnlyArchiveError,
+            read_spatial_ndm,
+        )
+
         with h5py.File(str(src_path), "r") as src:
             if "opensees" not in src:
                 raise RuntimeError(
                     f"NativeWriter.write_opensees_from: source "
                     f"{src_path!s} has no /opensees/ group."
+                )
+            # A bridge-only source (/meta + /opensees, no neutral zone,
+            # e.g. one written from a FEMStub) has no node coordinates
+            # to resolve the forwarded ndm from.  Refuse exactly when the
+            # ndm forward below would read them (a /model/meta to forward
+            # onto and an ndm stamp in the source), and before anything
+            # is copied, so the destination never holds a half-composed
+            # /opensees/ zone.  Without /model/meta nothing reads the
+            # coordinates and the zone copies as it always has.
+            if (
+                "nodes" not in src
+                and "meta" in src
+                and "ndm" in src["meta"].attrs
+                and "/model/meta" in h5
+            ):
+                present = ", ".join("/" + name for name in sorted(src.keys()))
+                raise BridgeOnlyArchiveError(
+                    f"NativeWriter.write_opensees_from: source "
+                    f"{src_path!s} carries no FEM (no neutral zone: no "
+                    f"'nodes' group under /), so it cannot be composed "
+                    f"into a results file. Zones present: {present}. It "
+                    f"is a bridge-only archive, e.g. one written from a "
+                    f"FEMStub; write it from an apeSees built on a real "
+                    f"FEMData."
                 )
             # Bridge zone copy — pairs with the rich /model/ neutral
             # zone (written by write_model) for the OpenSeesModel
@@ -313,8 +350,6 @@ class NativeWriter:
             # reader would resolve from the SOURCE (its own version
             # stamp, its transforms, its node coordinates).
             if "meta" in src and "/model/meta" in h5:
-                from apeGmsh.opensees.emitter.h5_reader import read_spatial_ndm
-
                 src_meta = src["meta"].attrs
                 dst_meta = h5["/model/meta"].attrs
                 # The embedded /model/meta is broker-only (ndm=ndf=0,
