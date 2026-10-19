@@ -41,6 +41,16 @@ already gave the one P2 warning at ``end()``.  A stub snapshot (not a
 :class:`FEMData`; the bridge-only file ``h5()`` writes for it carries no
 neutral zone) belongs to no run and is skipped silently.  An explicit
 ``ops.h5(path)`` never comes here (P7).
+
+**The lineage memo** (#2263).  Every archive :meth:`apeSees.h5` writes,
+the automatic one and an explicit ``ops.h5(path)`` alike, leaves its
+``(model_hash, fem_hash)`` in :data:`_LINEAGE_BY_DIGEST` under
+:func:`lineage_key`, the P5 digest of the declarations it was composed
+from.  A deck exported later from the same declarations stamps its run
+record with that lineage and composes no archive
+(:func:`apeGmsh.opensees.emitter.py.deck_run_lineage`): the only route to
+a record for a partitioned model, whose archive P3 never writes
+automatically and a deck export never composes.
 """
 from __future__ import annotations
 
@@ -56,7 +66,10 @@ if TYPE_CHECKING:
     # the typing scaffold declares every attribute read here.
     from ..procedures._host import _ProcedureHost
 
-__all__ = ["BridgeArtifactWarning", "BridgeArtifactWriter"]
+__all__ = [
+    "BridgeArtifactWarning", "BridgeArtifactWriter", "lineage_key",
+    "remember_lineage",
+]
 
 
 class BridgeArtifactWarning(UserWarning):
@@ -118,12 +131,60 @@ def _declaration_digest(bridge: "_ProcedureHost", name: str) -> str:
     return hashlib.blake2b(raw, digest_size=16).hexdigest()
 
 
+#: ``(model_hash, fem_hash)`` by :func:`lineage_key`, for every archive of
+#: a bridge this process composed (``ops.h5(path)``, the automatic write, a
+#: deck record's in-memory compose).  The lineage is a function of what the
+#: digest covers: neither the name the file is written under, its path,
+#: nor its cuts and sweeps enter ``model_hash``
+#: (:func:`~apeGmsh.opensees._internal.lineage.compute_model_hash`).
+_LINEAGE_BY_DIGEST: dict[str, tuple[str, str]] = {}
+
+
+def lineage_key(bridge: "_ProcedureHost") -> str | None:
+    """The digest :data:`_LINEAGE_BY_DIGEST` keys ``bridge``'s current
+    declarations by: P5's, under the snapshot's own name.  ``None`` for a
+    snapshot that is not a :class:`FEMData` (its bridge-only archive has
+    no neutral zone, so no lineage to reuse) or a declaration that cannot
+    be pickled; nothing is then memoised, and a deck composes or refuses
+    by its own rule."""
+    from ...mesh.FEMData import FEMData
+
+    fem = bridge._fem
+    if not isinstance(fem, FEMData):
+        return None
+    try:
+        return _declaration_digest(bridge, fem.model_name or "")
+    except Exception:  # noqa: BLE001 - an unpicklable declaration
+        return None
+
+
+def remember_lineage(bridge: "_ProcedureHost", archive: object) -> None:
+    """Memoise the lineage of ``archive``, a ``model.h5`` (a path or a
+    file object) just composed from ``bridge``'s current declarations.  An
+    archive with no ``model_hash`` (a stub snapshot's) is not memoised."""
+    key = lineage_key(bridge)
+    if key is None:
+        return
+    import h5py
+
+    from .lineage import read_stored_lineage
+
+    with h5py.File(archive, "r") as f:
+        fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+    if model_hash is not None:
+        _LINEAGE_BY_DIGEST[key] = (model_hash, fem_hash or "")
+
+
 class BridgeArtifactWriter:
     """One bridge's automatic-write state: the opt-out and whether it
     has warned.  What was last written lives in :data:`_LAST_WRITTEN`,
     shared by every bridge in the process."""
 
     __slots__ = ("enabled", "_warned")
+
+    #: :meth:`apeSees.h5` memoises every archive's lineage through the
+    #: bridge's writer, whatever its opt-out (P6 opts out of files only).
+    remember_lineage = staticmethod(remember_lineage)
 
     def __init__(self, *, enabled: bool = True) -> None:
         self.enabled = bool(enabled)
