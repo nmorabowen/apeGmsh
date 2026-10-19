@@ -24,7 +24,7 @@
 
 ### Owned files
 <!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`.
-     `land_pr.py` check 9 enforces it (lesson #1788): a PR labelled `program` must say `Slice: #<n>`, and every file it changes, both names of a rename included, must be named in backticks here, under Append-only or under Allowed. The rules:
+     `land_pr.py` check 9 enforces it (lesson #1788): a PR labelled `program` must say `Slice: #<n>`, and every file it changes, both names of a rename included, must be named in backticks here (a PR whose body says `Slice: #<n>` without the `program` label is refused, #2012), under Append-only or under Allowed. The rules:
      - `path::symbol` counts as `path`.
      - A trailing `/` means a directory. A `*` or `**` glob needs a literal top directory (`tests/x/**`, not `**/*.py`).
      - A bare name listed right after a path is its sibling: "`a/b/x.py`, `y.py`" owns `a/b/y.py`.
