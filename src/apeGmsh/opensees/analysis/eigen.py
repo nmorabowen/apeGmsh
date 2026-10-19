@@ -40,10 +40,11 @@ __all__ = ["EigenResult", "RotationSlotUnresolvedWarning"]
 
 
 class RotationSlotUnresolvedWarning(UserWarning):
-    """A ``.ladruno`` export wrote a node's rotation slots as 0.0 because
-    the model's DOF roles cannot say whether they hold a rotation or a
-    pore pressure (an element-less node beside a u-p element, a node no
-    beam or shell touches). The message names the nodes and the reason."""
+    """A modes export (``.ladruno`` or native) wrote a node's rotation
+    slots as 0.0 because the model's DOF roles cannot say whether they
+    hold a rotation or a pore pressure (an element-less node beside a u-p
+    element, a node no beam or shell touches). The message names the
+    nodes and the reason."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +140,12 @@ class EigenResult:
         values: Any = self._live.ops.nodeEigenvector(tag, int(mode))
         return np.asarray(values, dtype=np.float64)
 
-    def to_native(self, path: "str | os.PathLike[str] | None" = None) -> Path:
+    def to_native(
+        self,
+        path: "str | os.PathLike[str] | None" = None,
+        *,
+        model_h5: "str | os.PathLike[str] | None" = None,
+    ) -> Path:
         """Write the modes as ``kind="mode"`` stages of a native results
         file and return its path.
 
@@ -150,11 +156,21 @@ class EigenResult:
         writes 0 for both and raises one ``UserWarning`` naming the mode.
 
         Each fem node's vector is read once per mode with
-        ``ops.nodeEigenvector``: ``displacement_*`` holds its first
-        ``min(3, ndm)`` entries and, when the bridge's envelope ``ndf``
-        is at least 6, ``rotation_*`` holds entries 4-6. A node whose own
-        vector is shorter (a solid node in a solid-and-frame model)
-        writes 0.0 for the entries it lacks.
+        ``ops.nodeEigenvector`` and laid onto ``ux..rz`` by its own DOF
+        layout (its vector's length is its ndf, the emit's
+        ``_node_layout``): ``displacement_*`` holds the first ``min(3,
+        ndm)`` slots. A rotation slot holds the rotation only where the
+        model's DOF roles
+        (:func:`~apeGmsh.opensees._recorder_translate.model_h5_rotation_roles`)
+        say so: a 2-D frame writes its ``rotation_z``, a u-p node's pore
+        pressure is never written as a rotation, and an element-less node
+        in a model with a u-p element gets none. A node whose slot holds
+        no rotation writes 0.0 there (a solid node in a solid-and-frame
+        model); a slot the roles cannot settle also writes 0.0, with one
+        :class:`RotationSlotUnresolvedWarning`. ``rotation_*`` is written
+        (``rotation_z`` in 2-D) when at least one node holds a rotation.
+        :meth:`to_ladruno` and :meth:`ParallelModalResult.to_native`
+        follow the same rule.
 
         The file embeds ``/model`` (the bridge's ``fem``) and
         ``/opensees`` (``bridge.h5``), so it opens alone::
@@ -173,12 +189,20 @@ class EigenResult:
         path
             The file to write. ``None`` writes ``modes.h5`` in a fresh
             directory under ``tempfile.gettempdir()``.
+        model_h5
+            The model archive whose elements give the DOF roles. ``None``
+            (the usual call) takes them from the bridge's own archive,
+            the ``/opensees`` the file embeds, so the roles are always
+            known here; a path must hold every fem node, with its ndf, at
+            the solve's ``ndm``. The embedded ``/opensees`` stays the
+            bridge's either way.
 
         Raises
         ------
         ValueError
             The solve returned no modes (an ``eigen_feast`` band with no
-            eigenvalue in it). Nothing is written.
+            eigenvalue in it), or ``model_h5`` has another ``ndm``, lacks
+            a fem node or its ndf. Nothing is written.
         RuntimeError
             The result was not returned by ``apeSees.eigen`` /
             ``eigen_feast``, or the live domain was rebuilt since the
@@ -193,7 +217,7 @@ class EigenResult:
             Mutating the bridge between ``eigen`` and ``to_native``
             without a re-emit is unsupported.
         """
-        return self._write_native(path)
+        return self._write_native(path, model_h5)
 
     def _checked_solve(self, method: str) -> "tuple[apeSees, int, int]":
         """``(bridge, ndm, ndf)`` of the solve, or raise what
@@ -337,35 +361,36 @@ class EigenResult:
                     raise
         return out
 
-    def _write_native(self, path: "str | os.PathLike[str] | None") -> Path:
+    def _write_native(
+        self,
+        path: "str | os.PathLike[str] | None",
+        model_h5: "str | os.PathLike[str] | None" = None,
+    ) -> Path:
         """:meth:`to_native`'s body, called straight from each public
         method so a mode warning's ``stacklevel=4`` names their caller."""
         import tempfile
 
         from ...results.writers._native import NativeWriter
         from ..emitter.live import _backend_of
-        from .modal import _write_mode_stages
+        from .modal import _deck_archive, _native_fields, _write_mode_stages
 
-        bridge, ndm, ndf = self._checked_solve("to_native")
+        where = "EigenResult.to_native"
+        bridge, ndm, _ = self._checked_solve("to_native")
         ops = self._live.ops
         backend = _backend_of(ops)
-        n_trans = min(3, ndm)
-        rotations = ndf >= 6
         node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
-
-        def field(mode: int) -> np.ndarray:
-            # One nodeEigenvector call per node, sliced per node: a
-            # node's vector is as long as ITS ndf, so a solid node in a
-            # frame model (3 < envelope 6) fills only what it has.
-            out = np.zeros((node_ids.size, 6), dtype=np.float64)
-            for row, nid in enumerate(node_ids):
-                vec = ops.nodeEigenvector(int(nid), mode)
-                for axis in range(min(n_trans, len(vec))):
-                    out[row, axis] = vec[axis]
-                if rotations and len(vec) >= 6:
-                    for axis in range(3):
-                        out[row, 3 + axis] = vec[3 + axis]
-            return out
+        if model_h5 is not None:
+            _deck_archive(model_h5, [int(n) for n in node_ids], ndm,
+                          where=where)
+        # One nodeEigenvector call per node and mode; a node's vector is
+        # as long as ITS ndf, so its length is the node's own DOF count
+        # (a solid node in a frame model has 3 < envelope 6).
+        vectors = [
+            [np.asarray(ops.nodeEigenvector(int(nid), k + 1),
+                        dtype=np.float64).ravel() for nid in node_ids]
+            for k in range(len(self.eigenvalues))
+        ]
+        ndf_of = {int(n): int(v.size) for n, v in zip(node_ids, vectors[0])}
 
         if path is None:
             out_path = Path(
@@ -379,6 +404,12 @@ class EigenResult:
             # carries the same model_name ("<stem>.model").
             sidecar = Path(tmp) / out_path.with_suffix(".model.h5").name
             bridge.h5(str(sidecar))
+            roles_h5 = sidecar if model_h5 is None else Path(os.fspath(model_h5))
+            layouts, rotations, unresolved = _ladruno_slots(
+                roles_h5, node_ids, ndf_of, ndm, where=where)
+            spatial, rotation_slots = _native_fields(
+                vectors, layouts, rotations, ndm)
+            _warn_unresolved(where, unresolved, 3)
             writer = NativeWriter(out_path)
             writer.open(
                 fem=bridge.fem,
@@ -390,8 +421,9 @@ class EigenResult:
             )
             try:
                 _write_mode_stages(
-                    writer, self.eigenvalues, node_ids, field,
-                    n_trans=n_trans, rotations=rotations, stacklevel=4,
+                    writer, self.eigenvalues, node_ids,
+                    lambda k: spatial[k - 1], n_trans=min(3, ndm),
+                    rotation_slots=rotation_slots, stacklevel=4,
                 )
             finally:
                 writer.close()

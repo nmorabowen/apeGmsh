@@ -10,15 +10,55 @@ the bind-contract round trip).
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from apeGmsh.opensees.analysis.modal import ParallelModalResult
+from apeGmsh.opensees.analysis.modal import (
+    ParallelModalResult,
+    RotationRolesUnavailableWarning,
+)
 
 from tests.conftest import _open_model_from_h5
 from tests.test_results_domain_capture import _MockFem
+
+
+class _Cells(list):  # type: ignore[type-arg]
+    """An empty element list (what ``compute_snapshot_id`` iterates) that
+    also answers ``.types`` with gmsh types of the given ``dim``s."""
+
+    def __init__(self, dims: "tuple[int, ...]") -> None:
+        super().__init__()
+        self.types = [SimpleNamespace(dim=d) for d in dims]
+
+
+class _NdfFem(_MockFem):
+    """``_MockFem`` that carries a per-node ndf (``fem.nodes.ndf_for``):
+    one value for every node, or a ``{node: ndf}`` table; a node outside
+    the table raises ``LookupError``, as ``NodeComposite.ndf_for`` does
+    for an undeclared ndf. ``solid`` says whether its gmsh element types
+    include a 3-D cell; it has no ``model_name``, so no conventional
+    archive path (#2203)."""
+
+    def __init__(
+        self, node_ids: list[int], ndf: "int | dict[int, int]",
+        *, solid: bool = True,
+    ) -> None:
+        super().__init__(node_ids)
+        self.model_name = None
+        self.elements = _Cells((1, 3) if solid else (1,))
+        table = (dict(ndf) if isinstance(ndf, dict)
+                 else {int(n): int(ndf) for n in node_ids})
+
+        def ndf_for(nid: int) -> int:
+            if int(nid) not in table:
+                raise LookupError(f"node {nid}: ndf not present")
+            return table[int(nid)]
+
+        self.nodes.ndf_for = ndf_for
 
 
 def _write_job(
@@ -43,7 +83,8 @@ def _write_job(
 def test_to_native_round_trips_through_results_modes(tmp_path: Path) -> None:
     """ndf=6 harvest → mode-kind stages with displacement_* + rotation_*
     readable via ``Results.from_native(...).modes`` (the capture_modes
-    surface)."""
+    surface). Every node's own ndf is 6 in 3-D (``fem`` says so), so
+    DOFs 4-6 are rotations without ``model_h5`` (#2203)."""
     job = _write_job(
         tmp_path,
         eigenvalues="100.0 400.0",
@@ -57,9 +98,11 @@ def test_to_native_round_trips_through_results_modes(tmp_path: Path) -> None:
         ],
     )
     res = ParallelModalResult.from_job(str(job))
-    fem = _MockFem([1, 2])
+    fem = _NdfFem([1, 2], 6)
     out = tmp_path / "modes.h5"
-    res.to_native(out, fem)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RotationRolesUnavailableWarning)
+        res.to_native(out, fem)
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -91,9 +134,11 @@ def test_to_native_round_trips_through_results_modes(tmp_path: Path) -> None:
 def test_to_native_2d_deck_maps_in_plane_components_only(
     tmp_path: Path,
 ) -> None:
-    """A 2-D deck (sidecar ndm=2, ndf=3) writes displacement_x/y only —
-    the capture_modes convention (rotations only at ndf>=6; no
-    displacement_z for ndm=2)."""
+    """A 2-D deck (sidecar ndm=2, ndf=3) without ``model_h5`` writes
+    displacement_x/y only: a node of ndf 3 in 2-D may be a frame's
+    (ux, uy, rz) or a u-p node's (ux, uy, p), so its third column is no
+    rotation_z, and one named warning says to pass ``model_h5`` (#2203).
+    No displacement_z for ndm=2."""
     job = _write_job(
         tmp_path,
         eigenvalues="50.0",
@@ -103,9 +148,10 @@ def test_to_native_2d_deck_maps_in_plane_components_only(
         rows=["0.1 0.2 0.3  1.1 1.2 1.3\n"],
     )
     res = ParallelModalResult.from_job(str(job))
-    fem = _MockFem([1, 2])
+    fem = _NdfFem([1, 2], 3)
     out = tmp_path / "modes.h5"
-    res.to_native(out, fem)
+    with pytest.warns(RotationRolesUnavailableWarning, match="model_h5="):
+        res.to_native(out, fem)
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -135,11 +181,11 @@ def test_to_native_sidecar_without_ndm_defaults_to_3d(tmp_path: Path) -> None:
     )
     res = ParallelModalResult.from_job(str(job))
     out = tmp_path / "modes.h5"
-    res.to_native(out, _MockFem([7]))
+    res.to_native(out, _NdfFem([7], 6))
 
     from apeGmsh.results import Results
     with Results.from_native(
-        out, fem=_MockFem([7]), model=_open_model_from_h5(out),
+        out, fem=_NdfFem([7], 6), model=_open_model_from_h5(out),
     ) as r:
         comps = r.modes[0].nodes.available_components()
         assert "displacement_z" in comps
@@ -184,9 +230,11 @@ def test_to_native_round_trips_a_MERGED_partitioned_harvest(
     res = ParallelModalResult.from_job(str(tmp_path))
     np.testing.assert_array_equal(res.shape_nodes, [1, 2, 3])
 
-    fem = _MockFem([1, 2, 3])
+    fem = _NdfFem([1, 2, 3], 6)
     out = tmp_path / "modes.h5"
-    res.to_native(out, fem)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RotationRolesUnavailableWarning)
+        res.to_native(out, fem)
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -218,7 +266,7 @@ def test_to_native_nonpositive_eigenvalue_warns(tmp_path: Path) -> None:
         rows=["0.1 0.2 0.3 0.4 0.5 0.6\n"],
     )
     res = ParallelModalResult.from_job(str(job))
-    fem = _MockFem([1])
+    fem = _NdfFem([1], 6)
     out = tmp_path / "modes.h5"
     with pytest.warns(UserWarning, match="non-positive eigenvalue"):
         res.to_native(out, fem)

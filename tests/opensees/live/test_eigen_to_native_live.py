@@ -9,8 +9,10 @@ A 2-D cantilever at ``ndf=3`` with lumped masses, ``ops.eigen(3)``:
 
 - the file's eigenvalues are the solve's, bit for bit, and
   ``frequency_hz`` / ``period_s`` follow from them;
-- every written shape equals ``ops.nodeEigenvector`` (atol 0);
-  ``displacement_x/y`` only (``ndm=2``, envelope ``ndf=3`` < 6);
+- every written shape equals ``ops.nodeEigenvector`` (atol 0):
+  ``displacement_x/y`` are DOFs 1-2 and ``rotation_z`` is DOF 3, since a
+  beam touches every node, so the DOF roles make that slot a rotation
+  (#2203); no ``displacement_z`` (``ndm=2``);
 - the root attrs name the module that solved;
 - ``path=None`` writes under ``tempfile.gettempdir()`` and the file
   opens alone; ``results()`` opens the same modes;
@@ -98,8 +100,11 @@ def test_modes_file_matches_the_solve(cantilever: Any) -> None:
             assert m.period_s == pytest.approx(
                 2.0 * math.pi / omega, rel=1e-15)
             comps = set(m.nodes.available_components())
-            assert comps == {"displacement_x", "displacement_y"}
-            for d, comp in enumerate(("displacement_x", "displacement_y")):
+            assert comps == {
+                "displacement_x", "displacement_y", "rotation_z"}
+            for d, comp in enumerate(
+                ("displacement_x", "displacement_y", "rotation_z"),
+            ):
                 got = m.nodes.get(component=comp)
                 by_node = dict(zip((int(i) for i in got.node_ids),
                                    got.values[0]))
