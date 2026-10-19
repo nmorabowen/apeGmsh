@@ -40,6 +40,7 @@ import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
+import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
 
@@ -365,15 +366,14 @@ export class LadrunoFile {
     return this.index.modes.find((m) => m.stageId === stageId) ?? null;
   }
 
-  /** One array per entry of `components` (`<RESULT>/<label>`), each (N,) at `step`, by hyperslab. */
+  /** One array per entry of `components` (`<RESULT>/<label>`), each (N,) at `step`: one hyperslab per DATA (reader/ladrunoNodal.ts). */
   readNodalStep(stageId: string, components: readonly string[], step: number): Float64Array[] {
     const s = this.stage(stageId);
     checkStep(s, step);
-    return components.map((c) => {
-      const col = this.column(s, c);
+    return readColumnsBySlab(components.map((c) => this.column(s, c)), (col, c0, c1) => {
       const ds = this.datasetAt(col.path);
-      return toFloat64(col.modal ? ds.slice([[], [col.col, col.col + 1]]) : ds.slice([[step, step + 1], [], [col.col, col.col + 1]]), ds.path);
-    });
+      return toFloat64(col.modal ? ds.slice([[], [c0, c1]]) : ds.slice([[step, step + 1], [], [c0, c1]]), ds.path);
+    }, (m) => new LadrunoError("layout", m));
   }
 
   /** Steps `k0` to `k1` (exclusive) of each entry of `components`: ((k1 - k0) * N,), step-major. */

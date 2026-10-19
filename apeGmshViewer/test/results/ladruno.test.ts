@@ -16,13 +16,14 @@
 // by name in NodalInfo.refused while the rest of the file reads.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
 await h5wasm.ready;
@@ -976,4 +977,127 @@ test("#2205: INFO@SPATIAL_DIM outside an integral 1, 2 or 3 is refused by name, 
       assert.equal(r.inferSpatialDim(), 2);
     });
   }
+});
+
+// -- one step, one hyperslab per DATA (#2202) ------------------------------------
+//
+// Oracle: the per-component read readNodalStep made before #2202, kept here as a
+// test-only reference. It opens the file on its own handle and slices one column
+// per component; the reader's slab read must return the same bits.
+
+/** Before #2202: `[step, :, col]` of the component's DATA (a mode's `[:, col]`), one slice per component. */
+function perComponentStep(f: h5wasm.File, r: LadrunoFile, stageId: string, comp: string, step: number): Float64Array {
+  const s = r.stage(stageId);
+  const result = comp.slice(0, comp.lastIndexOf("/"));
+  const col = s.nodes!.components.filter((c) => c.slice(0, c.lastIndexOf("/")) === result).indexOf(comp);
+  assert.ok(col >= 0, `${comp} in ${stageId}`);
+  const mode = r.mode(stageId);
+  const ds = f.get(mode ? `${s.nodes!.path}/${result}/DATA/${mode.stepKey}/${mode.modeKey}` : `${s.nodes!.path}/${result}/DATA`) as h5wasm.Dataset;
+  const v = mode ? ds.slice([[], [col, col + 1]]) : ds.slice([[step, step + 1], [], [col, col + 1]]);
+  if (v instanceof Float32Array) return Float64Array.from(v);
+  assert.ok(v instanceof Float64Array, `${ds.path}: ${Object.prototype.toString.call(v)}`);
+  return v;
+}
+
+function sameBits(a: Float64Array, b: Float64Array): boolean {
+  return Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
+}
+
+/** Every component of every stage at every step, read together in three selections and one twice, against the reference. */
+function slabMatchesPerComponent(path: string): number {
+  const r = openLadruno(H5, path, { part: /\.part-\d+\.ladruno$/.test(path) });
+  const f = new h5wasm.File(path, "r");
+  let checked = 0;
+  try {
+    for (const s of r.index.stages) {
+      const comps = s.nodes?.components ?? [];
+      if (comps.length === 0) continue;
+      for (let k = 0; k < s.nSteps; k++) {
+        const want = comps.map((c) => perComponentStep(f, r, s.id, c, k));
+        // all of them, backwards, and all but the first (a slab that starts past column 0)
+        for (const order of [comps, [...comps].reverse(), comps.slice(1)]) {
+          const got = r.readNodalStep(s.id, order, k);
+          order.forEach((c, i) => {
+            assert.ok(sameBits(got[i]!, want[comps.indexOf(c)]!), `${path} ${s.id} step ${k} ${c}`);
+            checked++;
+          });
+        }
+        const twice = r.readNodalStep(s.id, [comps[0]!, comps[0]!], k);
+        assert.notEqual(twice[0], twice[1], "a component asked for twice gets its own array");
+        assert.ok(sameBits(twice[0]!, want[0]!) && sameBits(twice[1]!, want[0]!));
+      }
+    }
+  } finally {
+    f.close();
+    r.close();
+  }
+  return checked;
+}
+
+test("readNodalStep's slab read returns the per-component bits, for every component at every step of every committed .ladruno", () => {
+  const dir = fileURLToPath(new URL("../../fixtures/", import.meta.url));
+  const files = readdirSync(dir).filter((n) => n.endsWith(".ladruno")).sort();
+  assert.ok(files.length >= 10, `committed .ladruno fixtures: ${files.join(", ")}`);
+  for (const name of files) assert.ok(slabMatchesPerComponent(join(dir, name)) > 0, `${name} has nodal results`);
+});
+
+test("one step of six components in two DATA is two hyperslabs, not six", () => {
+  const proto = h5wasm.Dataset.prototype;
+  const slice = proto.slice;
+  const seen: string[] = [];
+  proto.slice = function (this: h5wasm.Dataset, ranges: Parameters<typeof slice>[0]) {
+    seen.push(`${this.path} ${JSON.stringify(ranges)}`);
+    return slice.call(this, ranges);
+  };
+  try {
+    withFile(fixture("ladruno_frame3d.ladruno"), (r) => {
+      const comps = ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"];
+      seen.length = 0;
+      assert.equal(r.readNodalStep("stage_0", comps, 1).length, 6);
+      assert.deepEqual(seen, [`${DISP}/DATA [[1,2],[],[0,3]]`, "/MODEL_STAGE[1]/RESULTS/ON_NODES/ROTATION/DATA [[1,2],[],[0,3]]"]);
+      seen.length = 0;
+      r.readNodalStep("stage_0", ["DISPLACEMENT/Uz", "DISPLACEMENT/Uy"], 2);
+      assert.deepEqual(seen, [`${DISP}/DATA [[2,3],[],[1,3]]`]);
+    });
+  } finally {
+    proto.slice = slice;
+  }
+});
+
+test("a float32 DATA widens to the per-component bits through the slab read", () => {
+  const p = edited(TRUSS, (f) => {
+    const g = f.create_group("MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY");
+    g.create_attribute("COMPONENTS", "Vx,Vy,Vz");
+    g.create_dataset({ name: "ID", data: new Int32Array([1, 2, 3]), shape: [3, 1] });
+    // values float32 rounds (i / 3), so a double rounding or a wrong column shows
+    g.create_dataset({ name: "DATA", data: Float32Array.from({ length: 4 * 3 * 3 }, (_, i) => i / 3), shape: [4, 3, 3], dtype: "<f4" });
+    g.create_dataset({ name: "TIME", data: new Float64Array([0.25, 0.5, 0.75, 1.0]) });
+    g.create_dataset({ name: "STEP", data: new Int32Array([0, 1, 2, 3]) });
+  });
+  withFile(p, (r) => {
+    assert.deepEqual(r.index.stages[0]!.nodes!.components, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "VELOCITY/Vx", "VELOCITY/Vy", "VELOCITY/Vz"]);
+    const [vz, vx] = r.readNodalStep("stage_0", ["VELOCITY/Vz", "VELOCITY/Vx"], 1);
+    assert.deepEqual(Array.from(vx!), [9, 12, 15].map((i) => Math.fround(i / 3)));
+    assert.deepEqual(Array.from(vz!), [11, 14, 17].map((i) => Math.fround(i / 3)));
+  });
+  assert.equal(slabMatchesPerComponent(p), 4 * (5 + 5 + 4));
+});
+
+test("readColumnsBySlab reads each dataset once, over the asked columns only, and refuses a slab that is not whole rows", () => {
+  const calls: string[] = [];
+  // three rows of columns c0..c1; value = 10 * row + col
+  const read = (first: { path: string }, c0: number, c1: number) => {
+    calls.push(`${first.path}[${c0}:${c1}]`);
+    const out: number[] = [];
+    for (let row = 0; row < 3; row++) for (let c = c0; c < c1; c++) out.push(10 * row + c);
+    return Float64Array.from(out);
+  };
+  const err = (m: string) => new LadrunoError("layout", m);
+  const got = readColumnsBySlab([{ path: "A", col: 3 }, { path: "B", col: 0 }, { path: "A", col: 1 }], read, err);
+  assert.deepEqual(calls, ["A[1:4]", "B[0:1]"]);
+  assert.deepEqual(got.map((v) => Array.from(v)), [[3, 13, 23], [0, 10, 20], [1, 11, 21]]);
+  assert.throws(
+    () => readColumnsBySlab([{ path: "A", col: 0 }, { path: "A", col: 1 }], () => new Float64Array(3), err),
+    (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && /A: a read of columns 0\.\.2 returned 3 values/.test(e.message),
+  );
 });
