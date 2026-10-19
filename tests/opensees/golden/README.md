@@ -178,7 +178,11 @@ gain in what they check. The R1b round-trip oracle
 (`test_roundtrip_oracle.py`) therefore replays the real-`FEMData` builders
 in `tests/opensees/h5`, not these cells. It compares `ops.tcl(flat=True)`
 with `build("tcl", flat=True)`, which leaves out the partitioned
-numberer/system auto-chain a partitioned archive records (#1832). The one oracle row that reaches a
+numberer/system auto-chain a partitioned archive records (#1832). The
+replay writes its declarations, commands and analysis chain in the order
+the archive's `/opensees/program` records (#2193), so no row is class B;
+a partitioned archive, whose program records the partitioned emit, keeps
+the fixed category order. The one oracle row that reaches a
 corpus model (`test_h5_decl_params::_broad_partitioned`, through
 `build_model`) stays a class-S row for that reason.
 
