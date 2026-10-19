@@ -503,9 +503,11 @@ Slot `i` is read from whichever of `params[i]` / `params_str[i]` is not
 the sentinel. Writer: `_write_param_array` in
 `opensees/emitter/_h5_write.py`. The meaning of each slot is the OpenSees
 manual's argument order for `type`; the file carries no parameter
-names. Storing parameters by name is a pending requirement of chain K
-(K0-8, ratified on #1283); until it ships, a reader must carry its own
-per-type name table.
+names. Each declaration's parameters by field name live in
+[`/opensees/decl_params`](#opensees-decl_params-optional-opensees-2260)
+(opensees 2.26.0; writer `_write_decl_params` in
+`opensees/emitter/_h5_decls.py`); a reader that needs names reads them
+there, not from `params`.
 
 Optional: a `/comments` attribute (string) for user-supplied notes.
 
