@@ -13,6 +13,8 @@
 //   whose NUM_PARTITIONS disagree, or a PARTITION_ID that is not the file's own
 //   index refuses the set, naming the indices; a partial set is never read; parts
 //   whose INFO@RUN_ID differ are refused under Python's rule (`_validate_part_set`);
+//   parts whose spatial dimension (INFO@SPATIAL_DIM, else the coordinate width)
+//   differs are refused, each part's value named (#2245);
 // - every part has the same stages, kinds and TIME axis; a part with a shorter
 //   step axis (one still being written) refuses the set, and the common prefix is
 //   never read;
@@ -121,6 +123,7 @@ export class LadrunoPartSet {
     this.paths = parts.map((p) => p.index.path);
     this.names = this.paths.map(baseOf);
     this.checkManifest(stem, indices);
+    this.checkSpatialDim(stem);
     const p0 = parts[0]!.index;
     const warnings: string[] = [];
     parts.forEach((p, j) => warnings.push(...p.index.warnings.map((w) => `${this.names[j]}: ${w}`)));
@@ -262,6 +265,26 @@ export class LadrunoPartSet {
         );
       }
     }
+  }
+
+  /**
+   * One spatial dimension for the whole set (#2245). Each part's is resolved as the
+   * single-file reader resolves it (`inferSpatialDim`: INFO@SPATIAL_DIM, else the one
+   * coordinate width). The set takes part 0's index, so parts that disagree are refused,
+   * naming each part's value and where it came from. An unknown dimension beside a known
+   * one is a disagreement too: every conforming part carries INFO@SPATIAL_DIM, so the
+   * mix is never read as the known value. Python's `_validate_part_set` does not check
+   * this yet.
+   */
+  private checkSpatialDim(stem: string): void {
+    const dims = this.parts.map((p) => p.inferSpatialDim());
+    if (new Set(dims).size <= 1) return;
+    const said = this.parts.map((p, j) => {
+      const d = dims[j];
+      const from = p.index.spatialDim !== null ? "INFO@SPATIAL_DIM" : d !== null ? "the coordinate width" : "no INFO@SPATIAL_DIM and no single coordinate width";
+      return [this.names[j]!, d === null ? `unknown (${from})` : `${d} (${from})`] as const;
+    });
+    throw new LadrunoError("layout", `${stem}.part-<N>.ladruno: the parts disagree on the spatial dimension (${listing(said)}); they are not one model, and the set is not read`);
   }
 
   /** The parts' stages pair by position: the same count, kinds, modes and TIME axis. */
