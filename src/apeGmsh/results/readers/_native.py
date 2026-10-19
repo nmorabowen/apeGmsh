@@ -70,15 +70,15 @@ class LegacySimplexGaussCoordsWarning(UserWarning):
 #
 # The native writers (DomainCapture and the recorder transcoder) copy the
 # response catalog's ``natural_coords`` into ``_natural_coords``. The
-# catalog used to hold these classes' rules node-0-first (column ``k`` is
-# node ``k``'s weight, the last node's implicit); it now holds them in gmsh
-# reference coordinates (``1 - Σ`` on node 0), which is what every consumer
-# of ``GaussSlab.natural_coords`` evaluates. Files written before the change
-# carry the old rows with no marker of their own, so the reader recognises
-# them by value: the old rows are pinned below, copied from the catalog as
-# it stood before the change. A group whose rows equal them exactly came
-# from that catalog, and the current catalog table for the same class is
-# the same Gauss points, in the same order, in the gmsh frame.
+# catalog holds every simplex rule in gmsh reference coordinates (``1 - Σ``
+# on node 0), which is what every consumer of ``GaussSlab.natural_coords``
+# evaluates. Files from older apeGmsh versions hold the node-0-first rows
+# instead (column ``k`` is node ``k``'s weight, the last node's implicit)
+# for the classes whose catalog rule is tagged node-0-first, with no marker
+# of their own, so the reader recognises them by value: those rows are
+# pinned below. A group whose rows equal them exactly was written from
+# them, and the current catalog table for the same class is the same Gauss
+# points, in the same order, in the gmsh frame.
 
 _LEGACY_TET_GL_2_ALPHA = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
 _LEGACY_TET_GL_2_BETA = (5.0 - math.sqrt(5.0)) / 20.0
