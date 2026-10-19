@@ -218,23 +218,41 @@ def test_main_exit_one_and_format(repo, capsys):
 
 
 # W5 (lesson #2260): every h5wasm open in src/ and scripts/ goes through reader/h5open.ts.
-# These are the eight open sites origin/main had before #2261, in their exact forms.
+# The first four are the exact forms of origin/main's open sites before #2261; the rest are
+# ways around a `new <x>.File(` regex (review of #2261 at db9bf384).
 @pytest.mark.parametrize("rel, src", [
     ("apeGmshViewer/src/reader/read.ts", "const f = new h5.File(path, 'r');\n"),
     ("apeGmshViewer/src/main/main.ts", "const f = new h5wasm.File(path, \"r\");\n"),
     ("apeGmshViewer/src/main/zones.ts", "const f = new h5wasm.File(path, 'r') as unknown as H5Handle;\n"),
     ("apeGmshViewer/src/reader/ladruno.ts", "const f = new h5.File(path, 'r') as unknown as LFile;\n"),
     ("apeGmshViewer/src/reader/x.ts", "const f = new (h5 as H5Writer).File(path, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new (h5 as unknown as T).File(p, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new h5!.File(p, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new h5?.File(p, 'r');\n"),
     ("apeGmshViewer/src/reader/x.ts", "const f = new h5wasm\n  .File(path, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "import { File } from 'h5wasm/node';\n"),
+    ("apeGmshViewer/src/reader/x.ts", "import { Group, File as H5F } from \"h5wasm\";\n"),
+    ("apeGmshViewer/src/reader/x.ts", "export { File } from 'h5wasm/node';\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const { File: F } = h5wasm;\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const { Group, File } = await import('h5wasm/node');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const C = h5.File;\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const C = cond ? other : h5.File;\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const m = { ctor: h5.File };\n"),
+    ("apeGmshViewer/src/reader/x.ts", "use(h5.File, p);\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = Reflect.construct(h5.File, [p, 'r']);\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new h5wasm['File'](p, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const C = Reflect.get(h5, \"File\");\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new (await import('h5wasm/node')).File(p, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new (require('h5wasm/node')).File(p, 'r');\n"),
     ("apeGmshViewer/scripts/probe.mjs", "const f = new h5wasm.File(process.argv[2], 'r');\n"),
 ])
-def test_w5_flags_an_h5wasm_open_outside_the_opener(repo, rel, src):
+def test_w5_flags_an_h5wasm_file_reach_outside_the_opener(repo, rel, src):
     _put(repo, rel, src)
-    assert _rules(repo) == ["W5"]
+    assert set(_rules(repo)) == {"W5"}
     assert wall.scan(repo)[0].startswith(f"{rel}:1: W5 h5-open — ")
 
 
-def test_w5_allows_the_opener_tests_comments_strings_and_dom_file(repo):
+def test_w5_allows_the_opener_tests_comments_strings_types_and_dom_file(repo):
     _put(repo, "apeGmshViewer/src/reader/h5open.ts", "return new h5.File(path, 'r');\n")
     _put(repo, "apeGmshViewer/test/reader/x.test.ts", "const f = new h5wasm.File(p, 'w');\n")
     _put(repo, "apeGmshViewer/src/reader/y.ts", """\
@@ -243,5 +261,13 @@ def test_w5_allows_the_opener_tests_comments_strings_and_dom_file(repo):
         const s = "new h5.File(path, 'r')";
         const blob = new File([bytes], 'x.bin');
         const f = openH5(h5, path);
+        const g = openH5(h5wasm as unknown as H5Openable<h5wasm.File>, path);
+        let h: h5wasm.File | null = null;
+        function edit(fn: (f: h5wasm.File) => void, x?: h5wasm.File): Map<string, h5wasm.File> { return m; }
+        type T = typeof h5wasm.File;
+        const k = x as h5wasm.File;
+        import type { File } from 'h5wasm/node';
+        import { type File as F2, Group } from 'h5wasm/node';
+        const files = h5.Files;
         """)
     assert wall.scan(repo) == []

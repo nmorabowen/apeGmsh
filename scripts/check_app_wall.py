@@ -27,13 +27,22 @@ output are never read; comment-only lines are skipped):
                         `npm run lint` (dependency-cruiser) holds the same rules over
                         the same graph.
 - W5 h5-open:           lesson #2260. Under `apeGmshViewer/src/` and
-                        `apeGmshViewer/scripts/`, `new <module>.File(` (an h5wasm
-                        open) appears only in `src/reader/h5open.ts`. h5wasm hands
-                        HDF5 each file's id rounded to a double, and HDF5 dedupes
-                        open files by that id: two NTFS files whose ids differ
-                        below 2^53's resolution read as one, silently. `openH5`
-                        makes HDF5 compare exact ids. Tests are not scanned (they
-                        write fixtures with h5wasm directly).
+                        `apeGmshViewer/scripts/`, an h5wasm `File` is reached only in
+                        `src/reader/h5open.ts`. h5wasm hands HDF5 each file's id
+                        rounded to a double, and HDF5 dedupes open files by that
+                        id: two NTFS files whose ids differ below 2^53's resolution
+                        read as one, silently. `openH5` makes HDF5 compare exact
+                        ids. Outside the opener the rule flags: a `.File` member
+                        read in a value position (`new h5.File(`, `new (h5 as
+                        unknown as T).File(`, `new h5!.File(`, `const C = h5.File`,
+                        `(await import(...)).File`; a type position such as
+                        `: h5.File`, `<h5.File>` or `as h5.File` is allowed); `File`
+                        imported (not `import type`) or re-exported from an
+                        `h5wasm` specifier; `File` destructured in a
+                        `const/let/var {...} =`; the string literal `"File"`
+                        (`h5["File"]`, `Reflect.get(h5, "File")`); and
+                        `Reflect.construct`. Tests are not scanned (they write
+                        fixtures with h5wasm directly).
 
 Specifiers are read from the source with comments stripped by a scanner that
 knows strings and block comments (an `import\n * as x from '...'` spanning lines
@@ -79,10 +88,19 @@ PANEL_ALLOW_MODULES = {f"{APP}/src/state/store", f"{APP}/src/state/selectors", f
 PANEL_ALLOW_PREFIXES = (UI,)
 # What a ui/ module may reach: ui/ itself and the state types.
 UI_ALLOW_MODULES = {f"{APP}/src/state/types"}
-# W5: where an h5wasm `new <module>.File(` may appear, and where the rule looks.
+# W5: the one file that may reach an h5wasm `File`, and where the rule looks.
 H5_OPENER = f"{APP}/src/reader/h5open.ts"
 H5_SCOPE = (f"{APP}/src/", f"{APP}/scripts/")
-H5_OPEN = re.compile(r"\bnew\s+\(?\s*[\w$.]+(?:\s+as\s+[\w$.<>]+)?\s*\)?\s*\.\s*File\s*\(")
+# A `.File` / `?.File` member access (not `...File`, not `.Files`).
+H5_MEMBER = re.compile(r"(?<!\.)\??\.(?!\.)\s*File(?![\w$])")
+# `import { File } from 'h5wasm...'` / `export { File } from 'h5wasm...'` (value imports only).
+H5_IMPORT = re.compile(r"""\b(import|export)\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]h5wasm(?:/[^'"]*)?['"]""")
+H5_DESTRUCTURE = re.compile(r"\b(?:const|let|var)\s*\{[^{}]*?(?<![\w$])File(?![\w$])[^{}]*\}\s*=")
+H5_FILE_STRING = re.compile(r"""(['"`])File\1""")
+H5_REFLECT = re.compile(r"\bReflect\s*\.\s*construct\b")
+# Words after which `X.File` is a type, not a value read.
+TYPE_WORDS = {"typeof", "keyof", "as", "satisfies", "implements", "is"}
+IDENT = re.compile(r"[\w$]")
 
 
 def _panel_of(path: str) -> str | None:
@@ -117,6 +135,146 @@ def _panel_violation(rel: str, spec: str, target: str | None) -> str | None:
     other = _panel_of(target)
     what = f"panel '{other}'" if other is not None else f"'{target[len(APP) + 1:]}'"
     return f"panel '{me}' imports {what}; panels import the store, selectors, types and ui/ only"
+
+
+def _skip_ws_back(text: str, j: int) -> int:
+    while j >= 0 and text[j].isspace():
+        j -= 1
+    return j
+
+
+def _match_back(text: str, j: int) -> int:
+    """Index of the `(`/`[` that opens the closer at text[j], or -1."""
+    pairs = {")": "(", "]": "["}
+    stack = [text[j]]
+    for k in range(j - 1, -1, -1):
+        c = text[k]
+        if c in ")]":
+            stack.append(c)
+        elif c in "([":
+            if pairs[stack[-1]] != c:
+                return -1
+            stack.pop()
+            if not stack:
+                return k
+    return -1
+
+
+def _chain_start(text: str, i: int) -> int:
+    """Start of the member-expression chain whose last access (`.` or `?.`) begins at i.
+
+    Walks back over identifiers, `!`, balanced `(...)`/`[...]` (calls, casts,
+    `(await import(...))`) and earlier `.`/`?.` links.
+    """
+    while True:
+        j = _skip_ws_back(text, i - 1)
+        while j >= 0 and text[j] == "!":
+            j -= 1
+        start = j + 1
+        while j >= 0 and text[j] in ")]":
+            k = _match_back(text, j)
+            if k < 0:
+                return start
+            start, j = k, k - 1
+        while j >= 0 and IDENT.match(text[j]):
+            start, j = j, j - 1
+        k = _skip_ws_back(text, start - 1)
+        if k >= 1 and text[k] == "." and text[k - 1] != ".":
+            i = k - 1 if text[k - 1] == "?" else k
+            continue
+        return start
+
+
+def _innermost_opener(text: str, j: int) -> int:
+    """Index of the innermost unclosed `(`, `[` or `{` before j, or -1."""
+    depth = 0
+    for k in range(j - 1, -1, -1):
+        c = text[k]
+        if c in ")]}":
+            depth += 1
+        elif c in "([{":
+            if depth == 0:
+                return k
+            depth -= 1
+    return -1
+
+
+def _open_angles(seg: str) -> int:
+    seg = seg.replace("=>", "  ").replace(">=", "  ").replace("<=", "  ")
+    return seg.count("<") - seg.count(">")
+
+
+def _has_ternary(seg: str) -> bool:
+    """A conditional-operator `?` in seg (not `?.`, `??`, or an optional `x?:`/`x?)`/`x?,`)."""
+    for k, c in enumerate(seg):
+        if c != "?" or (k > 0 and seg[k - 1] == "?"):
+            continue
+        rest = seg[k + 1:].lstrip()
+        if rest and rest[0] not in ".?:),=":
+            return True
+    return False
+
+
+def _is_object_literal(text: str, brace: int) -> bool:
+    j = _skip_ws_back(text, brace - 1)
+    if j < 0:
+        return False
+    if text[j] in "=(,[:?" and not text[j - 1: j + 1] == "=>":
+        return True
+    return text[max(0, j - 5): j + 1] == "return"
+
+
+def _is_type_position(text: str, start: int) -> bool:
+    """Whether the expression starting at `start` sits where TypeScript reads a type."""
+    j = _skip_ws_back(text, start - 1)
+    if j < 0:
+        return False
+    if IDENT.match(text[j]):
+        k = j
+        while k >= 0 and IDENT.match(text[k]):
+            k -= 1
+        return text[k + 1:j + 1] in TYPE_WORDS
+    c = text[j]
+    if c in "|&":
+        return j == 0 or text[j - 1] != c  # `a | T` is a union; `a || b` is a value
+    if c == "<":
+        return True
+    if c in ",:":
+        opener = _innermost_opener(text, j)
+        seg_start = max(opener, text.rfind(";", 0, j)) + 1
+        seg = text[seg_start:j]
+        if _open_angles(seg) > 0:
+            return True  # inside `<...>`: a type argument
+        if c == ",":
+            return False
+        if opener >= 0 and text[opener] == "{" and _is_object_literal(text, opener):
+            return False  # `{ k: h5.File }`: an object-literal value
+        return not _has_ternary(seg)  # `c ? a : h5.File` is a value; `x: h5.File` an annotation
+    return False
+
+
+def _h5_findings(body: str, kept: str) -> list[tuple[int, str]]:
+    """W5 sites in one file: (line, why). `body` has strings blanked, `kept` keeps them."""
+    line = lambda text, pos: text.count("\n", 0, pos) + 1  # noqa: E731
+    out: list[tuple[int, str]] = []
+    for m in H5_MEMBER.finditer(body):
+        start = _chain_start(body, m.start())
+        if not _is_type_position(body, start):
+            out.append((line(body, start), f"a value read of `{' '.join(body[start:m.end()].split())}`"))
+    for m in H5_IMPORT.finditer(body):
+        if m.group(2):
+            continue
+        for item in m.group(3).split(","):
+            item = item.strip()
+            if not item.startswith("type ") and item.split(" as ")[0].strip() == "File":
+                out.append((line(body, m.start()), f"`File` {m.group(1)}ed from h5wasm"))
+    for m in H5_DESTRUCTURE.finditer(body):
+        out.append((line(body, m.start()), "`File` destructured"))
+    for m in H5_FILE_STRING.finditer(kept):
+        out.append((line(kept, m.start()), f"the string {m.group(0)} (a computed `File` access)"))
+    for m in H5_REFLECT.finditer(body):
+        out.append((line(body, m.start()), "Reflect.construct"))
+    return out
 
 
 def _tracked(root: Path) -> list[str]:
@@ -229,9 +387,8 @@ def scan(root: Path) -> list[str]:
                     if why:
                         add(n, "W4", "panel-import", f"{why}: '{spec}'")
             if rel.startswith(H5_SCOPE) and rel != H5_OPENER:
-                for m in H5_OPEN.finditer(body):
-                    n = body.count("\n", 0, m.start()) + 1
-                    add(n, "W5", "h5-open", f"open HDF5 through reader/h5open.ts openH5 (lesson #2260): {m.group(0)}")
+                for n, why in _h5_findings(body, "\n".join(blanked)):
+                    add(n, "W5", "h5-open", f"open HDF5 through reader/h5open.ts openH5 (lesson #2260): {why}")
         for i, ln in enumerate(blanked):
             if ln and SPAWN.search(ln) and MENTIONS.search(_statement(blanked, i)):
                 add(i + 1, "W3", "subprocess", ln)
