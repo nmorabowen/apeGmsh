@@ -201,6 +201,24 @@ def test_legacy_file_extrapolates_to_its_own_corners(
 # ---------------------------------------------------------------------------
 
 
+#: The classes whose stored rows changed: their catalog rule went from
+#: node-0-first rows to gmsh rows (a catalog diff across the change).
+#: Single-point centroids are listed too: Tri31's moved by one ulp.
+CHANGED = {"Tri31", "LadrunoCST", "SixNodeTri", "LadrunoLST", "ShellDKGT",
+           "ShellNLDKGT", "FourNodeTetrahedron", "TenNodeTetrahedron",
+           "BezierTet10"}
+
+
+def test_the_reader_maps_exactly_the_classes_whose_rows_changed() -> None:
+    from apeGmsh.results.readers._native import _SIMPLEX_GP_ROWS
+
+    assert {cls for cls, _, _ in _SIMPLEX_GP_ROWS.values()} == CHANGED
+    for cls, legacy, current in _SIMPLEX_GP_ROWS.values():
+        full = np.hstack([legacy, 1.0 - legacy.sum(axis=1, keepdims=True)])
+        np.testing.assert_allclose(current, full[:, 1:], rtol=0, atol=1e-15,
+                                   err_msg=cls)
+
+
 def _group(f: h5py.File, cls: str) -> h5py.Group:
     root = f["stages/stage_0/partitions/partition_0/elements/gauss_points"]
     (grp,) = [g for k, g in root.items() if cls in k]

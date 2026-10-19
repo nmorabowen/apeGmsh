@@ -22,18 +22,7 @@ from ...opensees._internal.schema_version import (
     SchemaVersion,
     SchemaVersionError,
 )
-from ...opensees._response_catalog import (
-    ELE_TAG_BezierTet10,
-    ELE_TAG_FourNodeTetrahedron,
-    ELE_TAG_LadrunoCST,
-    ELE_TAG_LadrunoLST,
-    ELE_TAG_ShellDKGT,
-    ELE_TAG_ShellNLDKGT,
-    ELE_TAG_SixNodeTri,
-    ELE_TAG_TenNodeTetrahedron,
-    ELE_TAG_Tri31,
-    RESPONSE_CATALOG,
-)
+from ...opensees._response_catalog import RESPONSE_CATALOG
 from .._slabs import (
     ElementSlab,
     FiberSlab,
@@ -113,59 +102,64 @@ _LEGACY_TET_GL_2 = np.array([
     [_LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_BETA],
 ], dtype=np.float64)
 
-#: class_tag -> (class name, the rows older writers stored). These are the
-#: classes whose catalog rule is node-0-first; every other class's stored
-#: rows were already what the catalog holds now.
-_LEGACY_SIMPLEX_GP_ROWS: dict[int, tuple[str, ndarray]] = {
-    ELE_TAG_Tri31: ("Tri31", _LEGACY_TRI_GL_1),
-    ELE_TAG_LadrunoCST: ("LadrunoCST", _LEGACY_TRI_GL_1),
-    ELE_TAG_SixNodeTri: ("SixNodeTri", _LEGACY_TRI_GL_2),
-    ELE_TAG_LadrunoLST: ("LadrunoLST", _LEGACY_TRI_GL_2),
-    ELE_TAG_ShellDKGT: ("ShellDKGT", _LEGACY_TRI_GL_2C),
-    ELE_TAG_ShellNLDKGT: ("ShellNLDKGT", _LEGACY_TRI_GL_2C),
-    ELE_TAG_FourNodeTetrahedron: ("FourNodeTetrahedron", _LEGACY_TET_GL_1),
-    ELE_TAG_TenNodeTetrahedron: ("TenNodeTetrahedron", _LEGACY_TET_GL_2),
-    ELE_TAG_BezierTet10: ("BezierTet10", _LEGACY_TET_GL_2),
-}
+#: Every table the catalog held node-0-first before the change.
+_LEGACY_SIMPLEX_TABLES: tuple[ndarray, ...] = (
+    _LEGACY_TRI_GL_1, _LEGACY_TRI_GL_2, _LEGACY_TRI_GL_2C,
+    _LEGACY_TET_GL_1, _LEGACY_TET_GL_2,
+)
+
+#: The catalog's tags for a rule the element writes node-0-first: exactly
+#: the classes whose stored rows changed. Every other class's stored rows
+#: were already what the catalog holds now.
+_NODE0_COORD_SYSTEMS = frozenset({"simplex_tri_node0", "simplex_tet_node0"})
 
 
-def _current_simplex_gp_rows() -> dict[int, ndarray]:
-    """The catalog's gmsh table for each class in the legacy table.
+def _node0_rows_to_gmsh(rows: ndarray) -> ndarray:
+    """Node-0-first rows (the last node's weight implicit) -> gmsh
+    ``(u, v[, w])``, the weights of nodes ``1..d``."""
+    full = np.hstack([rows, 1.0 - rows.sum(axis=1, keepdims=True)])
+    return np.ascontiguousarray(full[:, 1:])
 
-    Each class must have exactly one table across its catalog rows (every
-    rule and token), and that table must have the legacy table's shape;
-    otherwise the old rows cannot be mapped one-to-one and this raises.
+
+def _simplex_gp_rows() -> dict[int, tuple[str, ndarray, ndarray]]:
+    """class_tag -> (class name, rows older writers stored, current rows).
+
+    One entry per catalog class with a node-0-first rule. Its older rows
+    are the pinned table whose frame change is exactly the catalog's
+    current table. A class that no pinned table maps to was added after
+    the change, so no file holds older rows for it, and it is left out.
+    Two pinned tables mapping to one class, or one class mapping to two,
+    is a catalog edit this reader cannot follow, and raises.
     """
-    found: dict[int, list[ndarray]] = {t: [] for t in _LEGACY_SIMPLEX_GP_ROWS}
-    for layout in RESPONSE_CATALOG.values():
-        if layout.class_tag in found:
-            found[layout.class_tag].append(layout.natural_coords)
-    out: dict[int, ndarray] = {}
-    for tag, tables in found.items():
-        cls, legacy = _LEGACY_SIMPLEX_GP_ROWS[tag]
-        if not tables:
+    out: dict[int, tuple[str, ndarray, ndarray]] = {}
+    for (cls, _rule, _token), layout in RESPONSE_CATALOG.items():
+        if layout.coord_system not in _NODE0_COORD_SYSTEMS:
+            continue
+        current = np.array(layout.natural_coords, dtype=np.float64)
+        matches = [
+            t for t in _LEGACY_SIMPLEX_TABLES
+            if t.shape == current.shape
+            and np.array_equal(_node0_rows_to_gmsh(t), current)
+        ]
+        if len(matches) > 1:
             raise RuntimeError(
-                f"{cls} (class_tag {tag}) is no longer in RESPONSE_CATALOG; "
-                f"the native reader cannot map its older Gauss rows.",
+                f"{cls}: {len(matches)} older Gauss tables map to its "
+                f"catalog table; the native reader cannot tell them apart.",
             )
-        first = tables[0]
-        if any(not np.array_equal(t, first) for t in tables[1:]):
+        if not matches:
+            continue
+        entry = (cls, matches[0], current)
+        prev = out.setdefault(layout.class_tag, entry)
+        if prev[0] != cls or not np.array_equal(prev[1], entry[1]):
             raise RuntimeError(
-                f"{cls} (class_tag {tag}) has more than one Gauss table in "
-                f"RESPONSE_CATALOG; the native reader cannot tell which one "
-                f"an older file's rows map to.",
+                f"class_tag {layout.class_tag}: catalog rows for {prev[0]} "
+                f"and {cls} map to different older Gauss tables; the "
+                f"native reader cannot tell which one a file holds.",
             )
-        if first.shape != legacy.shape:
-            raise RuntimeError(
-                f"{cls} (class_tag {tag}): RESPONSE_CATALOG holds a "
-                f"{first.shape} Gauss table, older files hold "
-                f"{legacy.shape}; the rows cannot be mapped one-to-one.",
-            )
-        out[tag] = np.array(first, dtype=np.float64)
     return out
 
 
-_CURRENT_SIMPLEX_GP_ROWS: dict[int, ndarray] = _current_simplex_gp_rows()
+_SIMPLEX_GP_ROWS: dict[int, tuple[str, ndarray, ndarray]] = _simplex_gp_rows()
 
 
 class NativeReader:
@@ -835,7 +829,7 @@ class NativeReader:
         """A Gauss group's ``natural_coords`` in gmsh reference coordinates.
 
         For a class whose rule older writers stored node-0-first (see
-        ``_LEGACY_SIMPLEX_GP_ROWS``):
+        ``_SIMPLEX_GP_ROWS``):
 
         * rows equal to the current catalog table read unchanged;
         * rows equal to the older table are an older file, and read as the
@@ -848,12 +842,11 @@ class NativeReader:
         Every other class reads its stored rows unchanged.
         """
         class_tag = int(grp.attrs[_native.ATTR_CLASS_TAG])
-        if class_tag not in _LEGACY_SIMPLEX_GP_ROWS:
+        if class_tag not in _SIMPLEX_GP_ROWS:
             return nc
-        current = _CURRENT_SIMPLEX_GP_ROWS[class_tag]
+        cls, legacy, current = _SIMPLEX_GP_ROWS[class_tag]
         if np.array_equal(nc, current):
             return nc
-        cls, legacy = _LEGACY_SIMPLEX_GP_ROWS[class_tag]
         if np.array_equal(nc, legacy):
             return current.copy()
         if class_tag not in self._simplex_warned:
