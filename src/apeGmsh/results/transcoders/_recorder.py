@@ -41,6 +41,7 @@ import numpy as np
 from numpy import ndarray
 
 from ...opensees import OpenSeesModel
+from ...opensees._element_capabilities import _FORCE_DISP_BEAMS
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     IntRule,
@@ -495,7 +496,7 @@ class RecorderTranscoder:
         n_ip = gpx_data_cols // n_elements
         # One n_IP per element is an assumption the file cannot check: an
         # n_IP 3 and an n_IP 5 element also give 4 columns each. The model
-        # holds each element's count, so a bound model proves it (#2246).
+        # holds each element's count, so a bound model proves it.
         if self._model_h5_src is not None:
             _refuse_unequal_station_counts(
                 rec, OpenSeesModel.from_h5(self._model_h5_src),
@@ -957,14 +958,12 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
 
 
 # =====================================================================
-# Station-count and station-order checks (line-stations, #2246)
+# Station-count and station-order checks (line-stations)
 # =====================================================================
 
 #: Element tokens whose argument tail (after the connectivity) starts
-#: ``transfTag integrationTag`` (``opensees/element/beam_column.py``).
-_INTEGRATION_ELEMENT_TOKENS = frozenset({
-    "forceBeamColumn", "dispBeamColumn", "LadrunoDispBeamColumn",
-})
+#: ``transfTag integrationTag``: the opensees package's own set.
+_INTEGRATION_ELEMENT_TOKENS = _FORCE_DISP_BEAMS
 #: ``beamIntegration`` rules whose arguments are ``(secTag, N)``.
 _UNIFORM_RULE_TOKENS = frozenset({
     "Legendre", "Lobatto", "NewtonCotes", "Radau", "Trapezoidal",
