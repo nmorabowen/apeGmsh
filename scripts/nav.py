@@ -460,7 +460,7 @@ def _find_file(mods, frag, root):
         src_hits = [h for h in hits if h["rel"].startswith("src/")]
         if len(src_hits) == 1:
             return src_hits[0]
-        sys.exit("ambiguous: " + ", ".join(h["rel"] for h in hits[:8]))
+        sys.exit("ambiguous: " + ", ".join(sorted(h["rel"] for h in hits)[:8]))
     return hits[0]
 
 
@@ -741,7 +741,7 @@ def cmd_impl(mods, args):
     if not pdefs:
         sys.exit(f"no class {proto}")
     if len(pdefs) > 1:
-        sys.exit("ambiguous: " + ", ".join(f"{r}:{s[S_START]}" for r, s in pdefs[:8])
+        sys.exit("ambiguous: " + ", ".join(f"{r}:{s[S_START]}" for r, s in sorted(pdefs, key=lambda p: (p[0], p[1][S_START]))[:8])
                  + " (narrow with --file)")
     pr, ps = pdefs[0]
     pm = {n for n in ps[S_METHODS] if not n.startswith("_")}
