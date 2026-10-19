@@ -982,7 +982,7 @@ class LadrunoDispBeamColumn(Element):
         if self.c_mass:
             args.append("-cMass")
         if self.lch != "ip":
-            args.extend(["-lch", self.lch])
+            args.extend(["-lch", str(self.lch)])
         if self.nl:
             args.append("-nl")
         if self.hinge is not None:
