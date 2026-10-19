@@ -10111,7 +10111,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         a hook-dispatching for-loop if any
         :meth:`initial_stress` calls registered step hooks (Phase
         SSI-1).  Without ``analyze_steps``, the emitted deck declares
-        the model but does not drive an analysis.
+        the model but does not drive an analysis.  With it, the deck's last
+        action, once the loop returns, writes ``<mpco file>.run.json``
+        beside each MPCO recorder's output (#2210; ``read_deck_mpco``).
 
         ``per_rank=True`` (ADR 0061) writes a driver deck at ``path``
         plus one ``ranks/rank<K>_<seq>.tcl`` fragment per
@@ -10185,6 +10187,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
+            if analyze_steps is not None:  # #2210: the deck's run record, last
+                emitter.deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt)
             if stream and per_rank and (
                 emitter.stream_fragment_count() == 0
             ):
@@ -10740,6 +10744,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
         for _verb, _vargs in post_prof:
             emitter.profiler(_verb, *_vargs)
+        if analyze_steps is not None:  # #2210: the deck's run record, last
+            emitter.deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt)
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)
         self._artifacts.after_emit(self)

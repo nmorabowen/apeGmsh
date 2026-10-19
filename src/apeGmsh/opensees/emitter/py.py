@@ -22,7 +22,9 @@ from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo
 
 import math
-from typing import Any, Literal, Sequence
+import os
+import re
+from typing import Any, Callable, Literal, Sequence
 
 from .caps import TargetCaps
 from .base import (
@@ -36,7 +38,90 @@ from .base import (
 from .tcl import DECK_BANNER, provenance_stamp
 
 
-__all__ = ["PyEmitter"]
+__all__ = [
+    "DECK_RUN_SCHEMA", "DECK_RUN_SUFFIX", "PyEmitter", "deck_run_fields",
+    "deck_run_lineage",
+]
+
+#: The deck run record (#2210; the spec ratified on the issue). A deck the
+#: bridge emits with ``analyze_steps`` writes ``<recorder file>.run.json``
+#: beside each MPCO recorder's output once its analyze loop has returned
+#: without error, and never otherwise. ``convert_mpco``'s implicit-stage
+#: path reads it. This module owns the format; the Tcl deck renders the
+#: same fields from :func:`deck_run_fields`.
+DECK_RUN_SCHEMA = "apegmsh.deck_run/1"
+DECK_RUN_SUFFIX = ".run.json"
+
+
+def deck_run_lineage(
+    archive: "Callable[[str], None]",
+) -> "tuple[str, str] | None":
+    """``(model_hash, fem_hash)`` of the archive ``archive(path)`` writes.
+
+    The record names the ``model.h5`` the deck was emitted from, so the
+    bridge composes that archive (``apeSees._write_h5`` over the deck's own
+    build) into a temporary file and reads its ``/meta/lineage``. No
+    ``model.h5`` is written or read, and ``model_hash`` is unchanged. A
+    model whose archive cannot be composed warns once and gets no record;
+    the deck still emits, and ``read_deck_mpco`` of its ``.mpco`` refuses
+    to convert (check 1).
+    """
+    import tempfile
+    import warnings
+
+    import h5py
+
+    from .._internal.lineage import read_stored_lineage
+    from .h5 import H5FeatureDeferredWarning
+
+    why = ""
+    try:
+        with tempfile.TemporaryDirectory(prefix="apegmsh-deck-run-") as tmp:
+            path = os.path.join(tmp, "model.h5")
+            with warnings.catch_warnings():
+                # A deferred feature is the explicit save's warning.
+                warnings.simplefilter("ignore", H5FeatureDeferredWarning)
+                archive(path)
+            with h5py.File(path, "r") as f:
+                fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+        if model_hash is None:
+            why = "the archive carries no /meta/lineage@model_hash"
+    except Exception as exc:  # noqa: BLE001 - named in the warning below
+        why = f"its model archive cannot be composed ({exc!r})"
+    if why:
+        warnings.warn(
+            f"The deck writes no run record (#2210): {why}. read_deck_mpco "
+            "of its .mpco will read it with Results.from_mpco.",
+            RuntimeWarning, stacklevel=4,
+        )
+        return None
+    assert model_hash is not None
+    return model_hash, fem_hash or ""
+
+
+def deck_run_fields(
+    lineage: "tuple[str, str]", recorder_file: str, analysis: str,
+    steps: int, dt: "float | None",
+) -> "dict[str, Any]":
+    """The record's 12 fields, in the spec's order. The four the deck fills
+    at run time (``steps_completed``, ``opensees_backend``,
+    ``opensees_build_sha``, ``completed_iso``) are ``None`` here."""
+    from apeGmsh import __version__
+
+    return {
+        "schema": DECK_RUN_SCHEMA,
+        "model_hash": lineage[0],
+        "fem_hash": lineage[1],
+        "recorder_file": re.split(r"[\\/]", recorder_file)[-1],
+        "analysis": analysis,
+        "analyze_steps": int(steps),
+        "steps_completed": None,
+        "dt": None if dt is None else float(dt),
+        "opensees_backend": None,
+        "opensees_build_sha": None,
+        "writer": f"apeGmsh deck {__version__}",
+        "completed_iso": None,
+    }
 
 
 class _LineBuf(list[str]):
@@ -261,6 +346,10 @@ class PyEmitter:
         # it. Tracks the name of the currently-open stage so
         # ``stage_close`` (which takes no argument) can name it too.
         self._current_stage_name: str | None = None
+        # The deck run record (#2210): every MPCO recorder's file, in
+        # emit order, and the last ``analysis`` token the deck emitted.
+        self._mpco_files: list[str] = []
+        self._analysis_token: str | None = None
 
     # -- Output --------------------------------------------------------------
 
@@ -596,6 +685,8 @@ class PyEmitter:
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
+        if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
+            self._mpco_files.append(str(args[0]))
         self._lines.append(_ops_call("recorder", kind, *args))
 
     def recorder_declaration_begin(
@@ -644,7 +735,65 @@ class PyEmitter:
         self._lines.append(_ops_call("integrator", i_type, *args))
 
     def analysis(self, a_type: str) -> None:
+        self._analysis_token = str(a_type)
         self._lines.append(_ops_call("analysis", a_type))
+
+    def deck_run_record(
+        self, archive: "Callable[[str], None]", steps: int,
+        dt: "float | None",
+    ) -> None:
+        """Make the deck write its run record (#2210) as its last action.
+
+        ``apeSees.py`` calls this after everything else, and only with
+        ``analyze_steps``: the deck then writes ``<file>.run.json`` beside
+        each MPCO recorder's ``file`` (resolved as the recorder resolves
+        it), through ``<name>.tmp`` and a rename. A partitioned deck writes
+        it on rank 0 after a barrier. A failed increment raises
+        (``SystemExit``) before these lines, so a failed or killed run
+        writes nothing. With no MPCO recorder, or no ``analysis``
+        declaration (the loop cannot run), there is nothing to describe
+        and nothing is emitted. ``archive`` writes the deck's ``model.h5``
+        to a path (:func:`deck_run_lineage`).
+        """
+        if not self._mpco_files or self._analysis_token is None:
+            return
+        lineage = deck_run_lineage(archive)
+        if lineage is None:
+            return
+        done = "_apesees_i + 1" if int(steps) > 0 else "0"
+        body = [
+            "# apeGmsh deck run record (#2210): the analyze loop returned.",
+            "import json as _apesees_json, os as _apesees_os",
+            "import re as _apesees_re, time as _apesees_time",
+            "try:",
+            "    _apesees_sha = str(ops.ladrunoBuild()).strip()",
+            "except Exception:",
+            "    _apesees_sha = ''",
+            "if not _apesees_re.fullmatch('[0-9a-f]{40}', _apesees_sha):",
+            "    _apesees_sha = 'unknown'",
+        ]
+        for file in self._mpco_files:
+            fields = deck_run_fields(
+                lineage, file, self._analysis_token, steps, dt)
+            final = file + DECK_RUN_SUFFIX
+            body += [
+                f"_apesees_run = {fields!r}",
+                f"_apesees_run.update(steps_completed={done}, "
+                "opensees_backend='stock' if _apesees_sha == 'unknown' "
+                "else 'ladruno', opensees_build_sha=_apesees_sha, "
+                "completed_iso=_apesees_time.strftime("
+                "'%Y-%m-%dT%H:%M:%SZ', _apesees_time.gmtime()))",
+                f"with open({final + '.tmp'!r}, 'w', encoding='utf-8') "
+                "as _apesees_f:",
+                "    _apesees_json.dump(_apesees_run, _apesees_f)",
+                f"_apesees_os.replace({final + '.tmp'!r}, {final!r})",
+            ]
+        if self._partition_shim_emitted:
+            # Every rank finishes its loop first; one record, from rank 0.
+            body = ["if hasattr(ops, 'barrier'):", "    ops.barrier()",
+                    "if getPID() == 0:", *("    " + ln for ln in body)]
+        for line in body:
+            self._lines.append(line)
 
     def analyze(
         self, *, steps: int, dt: float | None = None,
