@@ -1109,7 +1109,7 @@ class MPCOReader:
             on_elements, canonical_component=component,
         )
         # An element in two buckets of one token is refused
-        # (MPCOElementInTwoBuckets, #2165); across ranked tokens, and a
+        # (MPCOElementInTwoBuckets); across ranked tokens, and a
         # plural token after its singular, the first source wins.
         source = self._path.name
         if buckets and token is not None and token in on_elements:
