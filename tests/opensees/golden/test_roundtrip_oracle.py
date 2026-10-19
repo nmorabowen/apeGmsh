@@ -71,8 +71,8 @@ and element tags used by element connectivity, ``fix``, ``mass``,
 ``equationConstraint``, ``region -node/-ele``, loads, recorders and
 ``addToParameter``, and every reference inside a ``proc`` body. Those need
 per-command grammar. ``test_roundtrip_oracle_live.py`` is the second net:
-it runs the bridge and replay decks of the B rows in a subprocess, and a B
-row's replay must run wherever its bridge deck runs.
+it runs the bridge and replay decks of the A and B rows in a subprocess,
+and such a row's replay must run wherever its bridge deck runs.
 
 ``N_WAIVED_ORACLE`` may only go down, and must reach 0 by 2026-12-11 (K2,
 KC4).
