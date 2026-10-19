@@ -36,6 +36,7 @@ import { parseDeclaredUnits } from "../state/units.ts";
 import { NEUTRAL_TARGET, OPENSEES_TARGET, programDecls, ZONE_FLOOR } from "./read.ts";
 import type { ProgramDecls } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
+import { openH5, type H5FS } from "./h5open.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
 export const RESULTS_TARGET = { major: 1, minor: 2 } as const;
@@ -75,6 +76,7 @@ export class ResultsError extends Error {
 /** The parts of h5wasm this reader uses (h5wasm/node, opened by path). */
 export interface ResultsH5 {
   File: new (filename: string, mode?: "r") => RFile;
+  readonly FS: H5FS | null;
   Group: abstract new (...args: never[]) => RGroup;
   Dataset: abstract new (...args: never[]) => RDataset;
 }
@@ -274,7 +276,7 @@ export interface ResultsLineage {
 
 /** Open a results.h5 and index it; reads go through the returned object. */
 export function openResults(h5: ResultsH5, path: string): ResultsFile {
-  const f = new h5.File(path, "r");
+  const f = openH5(h5, path);
   // h5wasm does not throw when HDF5 cannot open a file (a truncated file, a
   // file that is not HDF5): it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new ResultsError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
