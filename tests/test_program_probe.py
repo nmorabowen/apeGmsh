@@ -309,3 +309,52 @@ def test_fetch_reads_runs_for_every_watched_workflow():
     assert set(data["runs"]) == set(pp.WATCHED_WORKFLOWS)
     run_calls = [a for a in calls if a[0] == "run"]
     assert all("--event" in a and "schedule" in a and "main" in a for a in run_calls)
+
+
+# 7. wip-over-cap (lesson #2200) ------------------------------------------------
+
+def _wip_pr(n, gate=False):
+    pr = _pr(n)
+    pr["labels"] = [{"name": "program"}] + ([{"name": "human-gate"}] if gate else [])
+    return pr
+
+
+def test_wip_over_cap_fires_at_nine_counted_and_not_at_eight():
+    assert "wip-over-cap" in _kinds([_wip_pr(n) for n in range(9)])
+    assert "wip-over-cap" not in _kinds([_wip_pr(n) for n in range(8)])
+
+
+def test_wip_gated_approved_green_does_not_count():
+    gated = _pr(99, comments=[_verdict(1)], checks=_checks(1))
+    gated["labels"] = [{"name": "human-gate"}]
+    assert "wip-over-cap" not in _kinds([_wip_pr(n) for n in range(8)] + [gated])
+
+
+def _hist(n, created, closed=None, gate=False):
+    return {"number": n, "title": f"h{n}", "createdAt": _iso(created),
+            "closedAt": _iso(closed) if closed is not None else None, "mergedAt": None,
+            "labels": [{"name": "program"}] + ([{"name": "human-gate"}] if gate else [])}
+
+
+def _peak_kinds(history):
+    return [f for f in pp.probe({"prs": [], "issues": [], "history": history}, NOW)
+            if f["kind"] == "wip-over-cap"]
+
+
+def test_wip_peak_reconstructed_from_24h_history():
+    # nine overlap for two hours, then all close: the open set now is empty
+    hist = [_hist(n, 10, closed=8) for n in range(9)]
+    found = _peak_kinds(hist)
+    assert len(found) == 1 and "peak 9" in found[0]["title"]
+    assert "approximate" in found[0]["detail"]
+
+
+def test_wip_peak_silent_at_eight_and_when_not_overlapping():
+    assert _peak_kinds([_hist(n, 10, closed=8) for n in range(8)]) == []
+    assert _peak_kinds([_hist(n, 20 - 2 * n, closed=19 - 2 * n) for n in range(9)]) == []
+
+
+def test_wip_peak_drops_human_gate_now_and_old_prs_count_from_window_start():
+    assert _peak_kinds([_hist(n, 10, closed=8, gate=(n == 0)) for n in range(9)]) == []
+    # opened 3 days ago, still open: present at the window start
+    assert len(_peak_kinds([_hist(n, 72) for n in range(9)])) == 1
