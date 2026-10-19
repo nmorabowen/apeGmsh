@@ -1769,12 +1769,25 @@ class TestLadrunoCohesiveHinge:
         rec = RecordingEmitter()
         LadrunoCohesiveHinge(
             Mc=5e5, Gf=1200.0, penalty=2e9, penalty_ratio=500.0,
-            softening="linear",
+            softening="linear", pm=(2.5e6, 1.5), implex=True,
         )._emit(rec, tag=2)
         assert rec.calls[0][1] == (
             "LadrunoCohesiveHinge", 2, 5e5, 1200.0,
             "-penalty", 2e9, "-penaltyRatio", 500.0, "-linear",
+            "-pm", 2.5e6, 1.5, "-implex",
         )
+
+    def test_emit_with_scalar_pm(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0, pm=2.0e6)._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            "LadrunoCohesiveHinge", 3, 5e5, 1200.0, "-pm", 2.0e6,
+        )
+
+    @pytest.mark.parametrize("bad_pm", [0.0, -1.0, (0.0, 1.0), (1e6, float("nan"))])
+    def test_rejects_bad_pm(self, bad_pm: float | tuple[float, float]) -> None:
+        with pytest.raises(ValueError, match="pm"):
+            LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0, pm=bad_pm)
 
     def test_dependencies_is_empty(self) -> None:
         assert LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0).dependencies() == ()
@@ -1808,3 +1821,4 @@ class TestLadrunoCohesiveHinge:
         m = ops.uniaxialMaterial.LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0)
         assert isinstance(m, LadrunoCohesiveHinge)
         assert ops.tag_for(m) == 1
+

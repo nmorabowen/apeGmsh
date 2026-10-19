@@ -67,6 +67,9 @@ A ratchet or exception list pins a baseline (a count or a frozen set) and assert
 ### Done when
 <!-- Conditions someone can observe on main. -->
 
+### Opening the PR
+Open it with `python scripts/open_program_pr.py --title <t> --body-file <f>`, not bare `gh pr create`. It checks `Slice: #<n>` and the program WIP cap (8, PROGRAM.md §3); a refusal means the work stays pushed on its branch.
+
 ### Report
 Send the orchestrator 300 words or fewer covering:
 - the PR URL;

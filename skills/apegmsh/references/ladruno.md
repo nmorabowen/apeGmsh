@@ -179,8 +179,9 @@ those before relying on exact kwargs.
 J2 — no damage/regularization), `LadrunoConcrete3D` (:1290, plastic-damage
 concrete, `E`/`nu`/`fc`/`ft`/`Gf`/`Gc` + regularization + `-implex`),
 `LadrunoRCConcrete` / `LadrunoRCFiniteStrain` (:1807/:1833, RC plastic-damage
-+ MCFT), `LadrunoCohesiveHingeBiaxial` (:1861). These follow the ASDConcrete
-"apeGmsh owns the curve, always `-autoRegularization $lch_ref`" idiom.
++ MCFT), `LadrunoCohesiveHingeBiaxial` (:1861, `-pm` P-M coupling, `-implex`).
+These follow the ASDConcrete "apeGmsh owns the curve, always
+`-autoRegularization $lch_ref`" idiom.
 
 **ASDPlasticMaterial3D geotechnical/rock materials** (`material/nd.py`,
 `ops.nDMaterial.<Type>`, ADR 0105 / fork ADR-94). Three typed helpers wrap
@@ -311,9 +312,14 @@ vanishing silently.
 
 **Beam-column elements** (`element/beam_column.py`, `ops.element.<Type>`):
 `LadrunoDispBeamColumn` (:661, displacement-based + crack-band `lch`, optional
-`-nl` bowing strain, `-hinge`/`-hingeY`/`-hingeBiaxial` lumped hinges) and
-`LadrunoIMKBeam` (:807, concentrated-plasticity IMK). Both take `pg=` +
-`transf=` like any beam.
+`-nl` bowing strain, single-hinge `-hinge`/`-hingeY`/`-hingeBiaxial` or
+dual-end `-hingeI`/`-hingeJ`/`-hingeIJ`, `-hingeYI`/`-hingeYJ`/`-hingeYIJ`,
+`-hingeBiaxialI`/`-hingeBiaxialJ`/`-hingeBiaxialIJ` + `-hingeLoc xiI xiJ`,
+`-pm` P-M coupling, `-implex`) and `LadrunoIMKBeam` (:807,
+concentrated-plasticity IMK with `ends="both"|"i"|"j"|"none"`, `-shear`,
+`-endZones dI dJ`, `-cMass`, `-pm`, `-implex`). Both take `pg=` + `transf=`
+like any beam; `LadrunoCohesiveHinge` (`uniaxial.py`) also accepts `pm=` and
+`implex=`.
 
 **`LadrunoMembrane` (slab tributary load distribution & in-plane membrane, tag 33022, WP-098)** (`element/shell.py`, `ops.element.LadrunoMembrane`):
 Distributes a uniform surface pressure or self-weight onto supporting 1-D frame elements (`frames=`, emitting sub-segment trapezoidal `Beam3dPartialUniformLoad` objects internally) and/or point supports (`support_nodes=`), with optional in-plane CST membrane stiffness (`section=`, `mat=` + `thickness=`, or `E=`/`nu=`/`thickness=`). Accepts either a 2-D surface `pg=` (automatically extracting the CCW outer boundary node loop and CW interior hole loops from the mesh) or an explicit `nodes=` boundary loop + `holes=`.

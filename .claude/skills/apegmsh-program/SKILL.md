@@ -49,9 +49,9 @@ never implement.
 3. **Check the link's gates** in the chain issue and PROGRAM.md §5. If a gate
    is red, post a handoff saying `blocked: <gate>` and stop.
 4. **Survey in-flight work.** Run
-   `gh pr list --label program --state open --json number,title,labels,headRefName`
-   and `gh issue list --label in-flight`. Note locks, freezes, and the current
-   WIP count.
+   `python scripts/open_program_pr.py --count` (the WIP count, with the
+   ruling's exclusion) and `gh issue list --label in-flight`. Note locks and
+   freezes.
 
 ## 2. Plan
 
@@ -180,9 +180,10 @@ lock handover and handoff.
 - Two requests for one lock: the first live, small slice takes it, and the other
   plans read-only meanwhile (#1805 before #1853, 2026-10-13).
 
-**WIP slots.** The 8-PR cap is program-wide: every worker checks
-`gh pr list --label program --state open` before `gh pr create`, not its own
-session's count (the program reached 9 of 8 once; X handoff on #1202). At 8, work stays pushed on its
+**WIP slots.** The 8-PR cap is program-wide: every worker opens its PR with
+`python scripts/open_program_pr.py` (it refuses at 8 counted; `--count` shows
+the count), not its own session's count. A `human-gate` PR that is approved
+and green does not count (ruling on #2200) (the program reached 9 of 8 once; X handoff on #1202). At 8, work stays pushed on its
 branch. The coordinator may reserve the next free slot for a lock holder, so
 an idle lock doesn't wait behind unlocked work (#1901).
 

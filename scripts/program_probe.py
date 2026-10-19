@@ -1,6 +1,6 @@
 """Report stalled program PRs and lock-label conflicts (lessons #1567, #1544).
 
-Six findings over open ``program`` PRs, open issues and scheduled runs:
+Seven findings over open ``program`` PRs, open issues and scheduled runs:
 
 1. ``approved-not-landed``: approved at the head sha (a
    ``Review-verdict: <model> approve <sha>`` comment whose sha is the head),
@@ -20,6 +20,13 @@ Six findings over open ``program`` PRs, open issues and scheduled runs:
    Fewer than two completed runs is not a finding.
 6. ``unlabelled-slice``: an open PR whose body has ``Slice: #<n>`` but no
    ``program`` label, so it escapes the program-wide WIP count (#2012).
+7. ``wip-over-cap``: more than ``WIP_CAP`` (8) counted open program PRs now, or a
+   reconstructed peak above it in the last 24 h (lesson #2200). ``wip_count``
+   is shared with ``scripts/open_program_pr.py``: a PR labelled ``human-gate``
+   that is green and approved waits only on the maintainer's click and counts
+   nothing (ruling on #2200, 2026-10-19). The 24 h peak cannot replay that
+   exclusion, so it drops every PR that carries ``human-gate`` now, and the
+   finding says it is approximate.
 
     python scripts/program_probe.py            # report, exit 0
     python scripts/program_probe.py --issue    # open/update/close the tracking issue
@@ -38,7 +45,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -48,8 +55,11 @@ DEFAULT_REPO = "nmorabowen/apeGmsh"
 ISSUE_TITLE = "[Program probe] stalled program PRs and lock conflicts"
 PR_FIELDS = (
     "number,title,createdAt,updatedAt,isDraft,headRefOid,body,comments,"
-    "statusCheckRollup,closingIssuesReferences"
+    "statusCheckRollup,closingIssuesReferences,labels"
 )
+HISTORY_FIELDS = "number,title,createdAt,closedAt,mergedAt,labels"
+WIP_CAP = 8
+HUMAN_GATE = "human-gate"
 ISSUE_FIELDS = "number,title,labels,updatedAt"
 ALL_PR_FIELDS = "number,title,body,labels"
 LIMIT = "200"
@@ -109,7 +119,11 @@ def fetch(gh: Runner, repo: str) -> dict[str, list[dict]]:
                            "--limit", "2", "--json", RUN_FIELDS]))
         for wf in WATCHED_WORKFLOWS
     }
-    return {"prs": prs, "issues": issues, "open_prs": open_prs, "runs": runs}
+    history = json.loads(gh(["pr", "list", "--repo", repo, "--state", "all",
+                             "--label", "program", "--limit", LIMIT,
+                             "--json", HISTORY_FIELDS]))
+    return {"prs": prs, "issues": issues, "open_prs": open_prs, "runs": runs,
+            "history": history}
 
 
 def verdicts(pr: dict) -> list[dict]:
@@ -150,6 +164,53 @@ def last_green(pr: dict) -> datetime | None:
                 t = _ts(stamp)
                 latest = t if latest is None or t > latest else latest
     return latest
+
+
+def _labels(pr: dict) -> set[str]:
+    return {label["name"] for label in pr.get("labels") or []}
+
+
+def wip_count(prs: list[dict]) -> tuple[list[tuple[dict, str]], list[tuple[dict, str]]]:
+    """Split open ``program`` PRs into (counted, excluded), each with a reason.
+
+    Excluded: labelled ``human-gate`` and green and approved (``approval_at_head``,
+    a Review-verdict approve on the head sha; GitHub's reviewDecision is not
+    tied to the head and main does not dismiss stale reviews). Every other PR counts, drafts too.
+    """
+    counted: list[tuple[dict, str]] = []
+    excluded: list[tuple[dict, str]] = []
+    for pr in prs:
+        if HUMAN_GATE not in _labels(pr):
+            counted.append((pr, "counts"))
+        elif last_green(pr) is None:
+            counted.append((pr, "human-gate but not green: counts"))
+        elif approval_at_head(pr) is None:
+            counted.append((pr, "human-gate, green but not approved: counts"))
+        else:
+            excluded.append((pr, "human-gate, approved and green: waits on the maintainer"))
+    return counted, excluded
+
+
+def wip_peak(history: list[dict], now: datetime, *, hours: float = 24.0) -> tuple[int, datetime]:
+    """Approximate peak of open program PRs over the last ``hours`` hours.
+
+    Replays createdAt / closedAt / mergedAt; PRs carrying ``human-gate`` now are
+    dropped, because the green-and-approved test cannot be replayed.
+    """
+    start = now - timedelta(hours=hours)
+    spans = []
+    for pr in history:
+        if HUMAN_GATE in _labels(pr):
+            continue
+        end = pr.get("closedAt") or pr.get("mergedAt")
+        spans.append((_ts(pr["createdAt"]), _ts(end) if end else None))
+    moments = [start] + [c for c, _ in spans if start < c <= now]
+    best = (0, start)
+    for t in moments:
+        n = sum(1 for c, e in spans if c <= t and (e is None or e > t))
+        if n > best[0]:
+            best = (n, t)
+    return best
 
 
 def _linked_issues(pr: dict) -> set[int]:
@@ -231,6 +292,25 @@ def probe(data: dict, now: datetime, *, approved_hours: float = 4.0,
                 "kind": "unlabelled-slice", "ref": f"#{pr['number']}",
                 "title": pr["title"],
                 "detail": "body has `Slice: #<n>` but no `program` label",
+            })
+
+    counted, excluded = wip_count(prs)
+    if len(counted) > WIP_CAP:
+        refs = ", ".join("#" + str(p["number"]) for p, _ in counted)
+        findings.append({
+            "kind": "wip-over-cap", "ref": "program",
+            "title": f"{len(counted)} counted open program PRs (cap {WIP_CAP})",
+            "detail": f"counted {refs}; excluded {len(excluded)} human-gate approved-and-green",
+        })
+    if data.get("history"):
+        peak, when = wip_peak(data["history"], now)
+        if peak > WIP_CAP:
+            findings.append({
+                "kind": "wip-over-cap", "ref": "program-24h",
+                "title": f"peak {peak} open program PRs in the last 24 h (cap {WIP_CAP})",
+                "detail": f"peak at {when:%Y-%m-%d %H:%M} UTC; approximate: PRs "
+                          f"labelled human-gate now are dropped, so the exclusion "
+                          f"is not replayed",
             })
     return findings
 

@@ -384,6 +384,17 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   `tests/fixtures/ladruno/make_viewer_gauss_oracle.py` (outside the app, which never
   imports apeGmsh: ADR 0112 D4); `test/results/ladrunoGauss.test.ts` compares
   the app's reader against it.
+- `ladruno_parts2d.part-0.ladruno`, `ladruno_parts2d.part-1.ladruno` and
+  `ladruno_parts2d.h5` (#2188) are a 2-rank OpenSeesMP run (fork build
+  `80dd3f13d`, which writes `PARTITION_REDUCTION`, WP-126) and its model,
+  written by hand. Two trusses meet at node 2, which is in both parts. The
+  script stamps both parts. `ladruno_parts2d.short.part-1.ladruno` is part 1 cut
+  to its first step (a part still being written). `ladruno_parts2d.oracle.json`
+  holds Python's stitched read (`LadrunoMultiPartitionReader.read_nodes`),
+  written by `tests/fixtures/ladruno/make_viewer_parts_oracle.py` (outside the
+  app: no Python under it imports apeGmsh, ADR 0112 D4).
+  `test/results/ladrunoParts.test.ts` compares the stitch against it and
+  mutates scratch copies of the set.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
@@ -401,4 +412,48 @@ modal record.
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_gauss_oracle.py
+```
+
+The part set needs OpenSeesMP from a fork build with WP-126 and its MPI
+launcher (the paths below are the maintainer's), then Python's oracle of it:
+
+```powershell
+$mpi = "C:\Program Files (x86)\Intel\oneAPI\mpi\latest"
+$env:LADRUNO_MP_BIN = "C:\Users\nmb\Documents\Github\OpenSees\pins\paper1-single-v3-metis-80dd3f13d\bin"
+$env:LADRUNO_MPIEXEC = "$mpi\bin\mpiexec.exe"
+$env:TCL_LIBRARY = "C:\Program Files\Ladruno\OpenSees\lib\tcl8.6"
+$env:PATH = "$mpi\bin;$mpi\opt\mpi\libfabric\bin;$env:LADRUNO_MP_BIN;" + $env:PATH
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --parts
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_parts_oracle.py
+```
+
+## `legacy_simplex_*.results.h5` and `legacy_simplex.oracle.json` (#2274)
+
+Two native results files written **before** #2228 moved the simplex Gauss
+tables to gmsh reference coordinates, so their `_natural_coords` hold the
+older node-0-first rows:
+
+- `legacy_simplex_capture_tet.results.h5` is `capture_tet.h5` of
+  `tests/fixtures/native_legacy_simplex/` (PR #2273), byte for byte:
+  `DomainCapture` of a live solve (FourNodeTetrahedron, TenNodeTetrahedron,
+  BezierTet10).
+- `legacy_simplex_transcoded_tri.results.h5` is `transcoded_tri.h5` of the
+  same directory: the recorder transcoder on the engine's `.out` strains
+  (SixNodeTri, LadrunoLST).
+
+Both were written by apeGmsh's own writers at 31ba6a63c, never rebuilt from
+tables; that directory's `generate.py` says how. Every element is loaded with
+`u_i = x_i^2 / 2`, so the strain it records at a Gauss point is that point's
+world position, and carried to the corners it must give each corner its own
+coordinate. `legacy_simplex.oracle.json` is Python's
+`extrapolate_gauss_slab_to_nodes` on the slab `NativeReader` reads (with
+#2273's mapping), on a one-element gmsh-coded stand-in with nodes `1..nc` at
+the corners. `test/contour/extrapolation.test.ts` checks the app against both.
+`tests/test_app_legacy_simplex_drift.py` recomputes the oracle and fails on a
+difference; run as a script, it rewrites the file:
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/test_app_legacy_simplex_drift.py
 ```

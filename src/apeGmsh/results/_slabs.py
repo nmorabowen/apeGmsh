@@ -152,7 +152,13 @@ class LineStationSlab:
 class GaussSlab:
     """Continuum Gauss-point values.
 
-    ``natural_coords`` are in parent space ``[-1, +1]``. To get
+    ``natural_coords`` are gmsh reference coordinates for every family:
+    ``[-1, +1]^d`` for lines, quads and hexes, and ``(u, v[, w])`` on the
+    unit simplex for triangles and tets, where node 0 carries
+    ``1 - u - v[ - w]`` and node ``k`` the ``k``-th coordinate (the frame
+    the gmsh shape functions in :mod:`apeGmsh.fem._shape_functions` take).
+    Every reader converts its source's frame to this once, at the source
+    (#2228): an element's barycentric rule is never passed through. To get
     global coordinates, call ``slab.global_coords(fem)`` — interpolates
     through the bound ``FEMData``'s element shape functions for hex8 /
     quad4, falling back to a centroid + bbox-scaled approximation for

@@ -18,6 +18,7 @@
 
 import { checkZoneVersion, GEOMETRY_TARGET, readAttrs, SchemaError, ZONE_FLOOR, type H5Dataset, type H5File, type H5Group, type H5Module } from "./read.ts";
 import type { Param } from "../model/types.ts";
+import { openH5 } from "./h5open.ts";
 
 // The target and the floor live in read.ts's one version table (#1303).
 export { GEOMETRY_TARGET } from "./read.ts";
@@ -322,7 +323,7 @@ export function readGeometryZone(h5: H5Module, f: H5File, path: string): Geometr
 
 /** Open `path` and read its `/geometry` zone (see readGeometryZone). */
 export function readGeometry(h5: H5Module, path: string): GeometryZone | null {
-  const f = new h5.File(path, "r");
+  const f = openH5(h5, path);
   try {
     return readGeometryZone(h5, f, path);
   } finally {

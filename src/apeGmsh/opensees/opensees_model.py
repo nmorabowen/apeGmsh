@@ -155,6 +155,17 @@ def _fixes_at_node_width(
     return tuple(out)
 
 
+def _fem_element_arity(fem: Any) -> dict[int, int]:
+    """``{FEM element id: node count}`` over every element group of
+    ``fem``: the connectivity width a fanned-out element row was emitted
+    with (K R1b-S2, the dry run of :meth:`OpenSeesModel._load_elements`)."""
+    out: dict[int, int] = {}
+    for group in fem.elements:
+        width = int(group.connectivity.shape[1])
+        out.update(dict.fromkeys((int(e) for e in group.ids), width))
+    return out
+
+
 def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     """The archive's ``apeSees.equation_constraint`` rows, in call order.
 
@@ -507,6 +518,14 @@ class OpenSeesModel:
             ndf = int(meta.get("ndf", 0))
             snapshot_id = str(meta.get("snapshot_id", ""))
 
+            # ADR 0055 Phase 2: the staged-archival read side.  The
+            # reader fails loud (MalformedH5Error) on a structurally
+            # inconsistent stages zone; an absent group (vanilla /
+            # pre-2.18.0) yields an empty tuple and the flat paths.
+            # Read first: the typed stores below join the declarations
+            # (K R1b-S2 slot types), whose row counts check the stages
+            # zone; a broken stages zone names itself before that.
+            stages = tuple(model.stages())
             materials_by_family = model.materials_by_family()
             sections = tuple(model.sections())
             transforms = tuple(model.transforms())
@@ -522,11 +541,6 @@ class OpenSeesModel:
             # re-mints them (below it).
             initial_stress_param_tags = model.initial_stress_param_tags()
             opensees_version = model.opensees_zone_version()
-            # ADR 0055 Phase 2: the staged-archival read side.  The
-            # reader fails loud (MalformedH5Error) on a structurally
-            # inconsistent stages zone; an absent group (vanilla /
-            # pre-2.18.0) yields an empty tuple and the flat paths.
-            stages = tuple(model.stages())
             # P5.0b: partition emit records — echoed back on ``to_h5``
             # so a partitioned archive round-trips hash-stable.
             partitions = tuple(model.partitions())
@@ -538,7 +552,7 @@ class OpenSeesModel:
             solve_stamp = model.solve_stamp()
             declarations = model.declarations()
 
-            elements = cls._load_elements(model)
+            elements = cls._load_elements(model, fem)
             fixes, masses = cls._load_bcs(model)
             mass_from_model = cls._load_mass_from_model(model)
             analysis_attrs, analyze_call = cls._load_analysis(model)
@@ -1253,7 +1267,7 @@ class OpenSeesModel:
     # ==================================================================
 
     @staticmethod
-    def _load_elements(model: Any) -> tuple[ElementRecord, ...]:
+    def _load_elements(model: Any, fem: Any) -> tuple[ElementRecord, ...]:
         """Walk ``/opensees/element_meta`` into typed :class:`ElementRecord`.
 
         Mirrors :meth:`ModelData.from_h5`'s element rehydrate path:
@@ -1261,12 +1275,22 @@ class OpenSeesModel:
         are just the tail; on re-emit we keep ``connectivity=()`` so
         a future ``to_h5`` is byte-stable (the same ``arity=0`` /
         same tail land at the same datasets).
+
+        Each tail slot takes the int/float type its declaration emits
+        there (K R1b-S2, :class:`~apeGmsh.opensees._internal.replay_types.
+        SlotTypes`); the dry run needs the row's node count, which is its
+        inline connectivity or its FEM element's (``fem``, the archive's
+        own neutral zone).
         """
         import numpy as np
+
+        from .emitter.h5_reader import MalformedH5Error
 
         f = model.handle
         if "opensees" not in f or "element_meta" not in f["opensees"]:
             return ()
+        slot_types = model.slot_types()
+        arity = _fem_element_arity(fem) if slot_types.active else {}
         em_grp = f["opensees/element_meta"]
         out: list[ElementRecord] = []
         for type_group_name in em_grp:
@@ -1326,6 +1350,28 @@ class OpenSeesModel:
                     row_args[-1]
                 ):
                     row_args.pop()
+                fem_eid = int(fem_eids[i])
+                has_inline = (
+                    inline_conn is not None
+                    and fem_eid < 0
+                    and i < len(inline_conn)
+                    and len(inline_conn[i]) > 0
+                )
+                if slot_types.active and (has_inline or fem_eid > 0):
+                    if has_inline:
+                        assert inline_conn is not None
+                        n_nodes = len(inline_conn[i])
+                    elif fem_eid in arity:
+                        n_nodes = arity[fem_eid]
+                    else:
+                        raise MalformedH5Error(
+                            f"/opensees/element_meta/{type_group_name}: "
+                            f"element {int(ids[i])} is fanned out from FEM "
+                            f"element {fem_eid}, which the archive's neutral "
+                            "zone does not hold.")
+                    row_args = list(slot_types.recover(
+                        "element", int(ids[i]), type_token, row_args,
+                        nodes=n_nodes))
                 # ADR 0049: a node-pair row (fem_eid<0) restores its
                 # connectivity from inline_connectivity and re-prepends it to
                 # args, so the record is fully formed (connectivity set + args
@@ -1335,12 +1381,8 @@ class OpenSeesModel:
                 # rows keep connectivity=() and are re-attached later from the
                 # FEM via _rehydrate_element_connectivity.
                 conn: tuple[int, ...] = ()
-                if (
-                    inline_conn is not None
-                    and int(fem_eids[i]) < 0
-                    and i < len(inline_conn)
-                    and len(inline_conn[i]) > 0
-                ):
+                if has_inline:
+                    assert inline_conn is not None
                     conn = tuple(int(c) for c in inline_conn[i])
                     row_args = [*conn, *row_args]
                 out.append(ElementRecord(
@@ -2132,18 +2174,17 @@ def _merge_region_rows(
 ) -> tuple[RegionRecord, ...]:
     """One region row per tag for the deck targets.
 
-    A partitioned emit writes a ``-node`` fan-out region once per rank
-    that holds a member, each row carrying that rank's subset (the
+    A partitioned emit writes a fan-out region once per rank that holds a
+    member, each row carrying that rank's subset (the
     ``/opensees/regions`` store keeps every row, so the H5 echo stays a
     fixed point). A deck declares a tag once, so rows sharing a tag merge
-    by member union (first-occurrence order, ``_merge_node_region_args``)
-    when both are the plain ``-node`` form. Two rows sharing a tag in any
-    other shape (an ``-ele`` list, a ``-rayleigh`` or ``-damp`` tail) have
-    no safe union and raise ``ValueError`` naming the tag: replaying both
-    would redefine the region silently.
+    by member union (:func:`_union_member_region_args`) when both are a
+    member-list form the bridge's per-rank fan-out writes: ``-node ids``,
+    ``-ele ids`` or ``-node ids -ele ids``. Two rows sharing a tag in any
+    other shape (a ``-rayleigh`` or ``-damp`` tail, ``-eleRange``, an
+    empty flag list) have no safe union and raise ``ValueError`` naming
+    the tag: replaying both would redefine the region silently.
     """
-    from .emitter._h5_blocks import _merge_node_region_args
-
     out: "list[RegionRecord]" = []
     by_tag: "dict[int, int]" = {}
     for rec in regions:
@@ -2153,16 +2194,89 @@ def _merge_region_rows(
             by_tag[tag] = len(out)
             out.append(rec)
             continue
-        merged = _merge_node_region_args(out[idx].args, rec.args)
+        merged = _union_member_region_args(out[idx].args, rec.args)
         if merged is None:
             raise ValueError(
                 f"OpenSeesModel.build: /opensees/regions holds two rows for "
-                f"region {tag} that are not both plain -node member lists "
-                f"({out[idx].args!r} and {rec.args!r}); a deck cannot "
-                "declare the tag twice and there is no safe union."
+                f"region {tag} that are not both '-node ids', '-ele ids' or "
+                f"'-node ids -ele ids' member lists ({out[idx].args!r} and "
+                f"{rec.args!r}); a deck cannot declare the tag twice and "
+                "there is no safe union."
             )
         out[idx] = RegionRecord(tag=tag, args=merged)
     return tuple(out)
+
+
+def _split_member_region_args(
+    args: "tuple[int | float | str, ...]",
+) -> "tuple[list[int], list[int]] | None":
+    """``(node_ids, ele_ids)`` of a member-list region tail, else ``None``.
+
+    The accepted tails are exactly the three the bridge's per-rank region
+    fan-out writes (``apesees.py`` recorder regions): ``-node ids``,
+    ``-ele ids`` and ``-node ids -ele ids``, each flag once, ``-node``
+    first, every list non-empty and integer. Anything else (another flag,
+    a flag repeated or out of order, an empty list, a non-integer id) is
+    ``None``.
+    """
+    lists: "dict[str, list[int]]" = {}
+    flag: "str | None" = None
+    for v in args:
+        if isinstance(v, str):
+            if v not in ("-node", "-ele") or v in lists:
+                return None
+            if flag is not None and not lists[flag]:
+                return None
+            if v == "-node" and "-ele" in lists:
+                return None
+            flag = v
+            lists[v] = []
+        elif flag is not None and isinstance(v, int) and not isinstance(v, bool):
+            lists[flag].append(v)
+        else:
+            return None
+    if flag is None or not lists[flag]:
+        return None
+    return lists.get("-node", []), lists.get("-ele", [])
+
+
+def _union_member_region_args(
+    old: "tuple[int | float | str, ...]",
+    new: "tuple[int | float | str, ...]",
+) -> "tuple[int | float | str, ...] | None":
+    """Union two member-list region tails into one, as the flat deck writes it.
+
+    Replay-only (the H5 writer keeps ``_h5_blocks._merge_node_region_args``,
+    so what it archives, and ``model_hash``, do not change). Both tails
+    must parse under :func:`_split_member_region_args`, else ``None``. The
+    result is ``-node <union>`` then ``-ele <union>``, each list in
+    first-occurrence order with duplicates dropped and each flag present
+    only when its union is non-empty: the flat bridge's own
+    ``-node … -ele …`` order. A rank row with only ``-node`` (it owns no
+    element of the region) or only ``-ele`` merges the same way.
+    """
+    a = _split_member_region_args(old)
+    b = _split_member_region_args(new)
+    if a is None or b is None:
+        return None
+
+    def _union(first: "list[int]", second: "list[int]") -> "list[int]":
+        seen = set(first)
+        out = list(first)
+        for v in second:
+            if v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
+
+    nodes = _union(a[0], b[0])
+    eles = _union(a[1], b[1])
+    merged: "list[int | float | str]" = []
+    if nodes:
+        merged += ["-node", *nodes]
+    if eles:
+        merged += ["-ele", *eles]
+    return tuple(merged)
 
 
 def _resolve_lineage(

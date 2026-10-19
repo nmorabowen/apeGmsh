@@ -10,6 +10,8 @@ reads, fancy h5py indexing) if needed.
 """
 from __future__ import annotations
 
+import math
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
@@ -20,6 +22,7 @@ from ...opensees._internal.schema_version import (
     SchemaVersion,
     SchemaVersionError,
 )
+from ...opensees._response_catalog import RESPONSE_CATALOG
 from .._slabs import (
     ElementSlab,
     FiberSlab,
@@ -54,6 +57,111 @@ _ELEMENT_CATEGORY = {
 }
 
 
+class LegacySimplexGaussCoordsWarning(UserWarning):
+    """A simplex Gauss group's stored ``_natural_coords`` match neither the
+    rows older writers stored nor the current gmsh table, so the reader
+    cannot place its Gauss points and returns the stored rows as they are.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Simplex Gauss coordinates written by older apeGmsh versions
+# ---------------------------------------------------------------------------
+#
+# The native writers (DomainCapture and the recorder transcoder) copy the
+# response catalog's ``natural_coords`` into ``_natural_coords``. The
+# catalog holds every simplex rule in gmsh reference coordinates (``1 - Σ``
+# on node 0), which is what every consumer of ``GaussSlab.natural_coords``
+# evaluates. Files from older apeGmsh versions hold the node-0-first rows
+# instead (column ``k`` is node ``k``'s weight, the last node's implicit)
+# for the classes whose catalog rule is tagged node-0-first, with no marker
+# of their own, so the reader recognises them by value: those rows are
+# pinned below. A group whose rows equal them exactly was written from
+# them, and the current catalog table for the same class is the same Gauss
+# points, in the same order, in the gmsh frame.
+
+_LEGACY_TET_GL_2_ALPHA = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
+_LEGACY_TET_GL_2_BETA = (5.0 - math.sqrt(5.0)) / 20.0
+_LEGACY_TRI_GL_1 = np.array([[1.0 / 3.0, 1.0 / 3.0]], dtype=np.float64)
+_LEGACY_TRI_GL_2 = np.array([
+    [2.0 / 3.0, 1.0 / 6.0],
+    [1.0 / 6.0, 2.0 / 3.0],
+    [1.0 / 6.0, 1.0 / 6.0],
+], dtype=np.float64)
+_LEGACY_TRI_GL_2C = np.array([
+    [1.0 / 3.0, 1.0 / 3.0],
+    [1.0 / 5.0, 3.0 / 5.0],
+    [3.0 / 5.0, 1.0 / 5.0],
+    [1.0 / 5.0, 1.0 / 5.0],
+], dtype=np.float64)
+_LEGACY_TET_GL_1 = np.array([[0.25, 0.25, 0.25]], dtype=np.float64)
+_LEGACY_TET_GL_2 = np.array([
+    [_LEGACY_TET_GL_2_ALPHA, _LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_BETA],
+    [_LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_ALPHA, _LEGACY_TET_GL_2_BETA],
+    [_LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_ALPHA],
+    [_LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_BETA, _LEGACY_TET_GL_2_BETA],
+], dtype=np.float64)
+
+#: Every table the catalog held node-0-first before the change.
+_LEGACY_SIMPLEX_TABLES: tuple[ndarray, ...] = (
+    _LEGACY_TRI_GL_1, _LEGACY_TRI_GL_2, _LEGACY_TRI_GL_2C,
+    _LEGACY_TET_GL_1, _LEGACY_TET_GL_2,
+)
+
+#: The catalog's tags for a rule the element writes node-0-first: exactly
+#: the classes whose stored rows changed. Every other class's stored rows
+#: were already what the catalog holds now.
+_NODE0_COORD_SYSTEMS = frozenset({"simplex_tri_node0", "simplex_tet_node0"})
+
+
+def _node0_rows_to_gmsh(rows: ndarray) -> ndarray:
+    """Node-0-first rows (the last node's weight implicit) -> gmsh
+    ``(u, v[, w])``, the weights of nodes ``1..d``."""
+    full = np.hstack([rows, 1.0 - rows.sum(axis=1, keepdims=True)])
+    return np.ascontiguousarray(full[:, 1:])
+
+
+def _simplex_gp_rows() -> dict[int, tuple[str, ndarray, ndarray]]:
+    """class_tag -> (class name, rows older writers stored, current rows).
+
+    One entry per catalog class with a node-0-first rule. Its older rows
+    are the pinned table whose frame change is exactly the catalog's
+    current table. A class that no pinned table maps to was added after
+    the change, so no file holds older rows for it, and it is left out.
+    Two pinned tables mapping to one class, or one class mapping to two,
+    is a catalog edit this reader cannot follow, and raises.
+    """
+    out: dict[int, tuple[str, ndarray, ndarray]] = {}
+    for (cls, _rule, _token), layout in RESPONSE_CATALOG.items():
+        if layout.coord_system not in _NODE0_COORD_SYSTEMS:
+            continue
+        current = np.array(layout.natural_coords, dtype=np.float64)
+        matches = [
+            t for t in _LEGACY_SIMPLEX_TABLES
+            if t.shape == current.shape
+            and np.array_equal(_node0_rows_to_gmsh(t), current)
+        ]
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"{cls}: {len(matches)} older Gauss tables map to its "
+                f"catalog table; the native reader cannot tell them apart.",
+            )
+        if not matches:
+            continue
+        entry = (cls, matches[0], current)
+        prev = out.setdefault(layout.class_tag, entry)
+        if prev[0] != cls or not np.array_equal(prev[1], entry[1]):
+            raise RuntimeError(
+                f"class_tag {layout.class_tag}: catalog rows for {prev[0]} "
+                f"and {cls} map to different older Gauss tables; the "
+                f"native reader cannot tell which one a file holds.",
+            )
+    return out
+
+
+_SIMPLEX_GP_ROWS: dict[int, tuple[str, ndarray, ndarray]] = _simplex_gp_rows()
+
+
 class NativeReader:
     """Reader for apeGmsh native HDF5 result files."""
 
@@ -66,6 +174,8 @@ class NativeReader:
         # the refusal text. ``/stages`` reads; ``fem()`` and
         # ``opensees_model()`` refuse with that text.
         self._unavailable: dict[str, str] = {}
+        # class_tags already warned about by ``_gauss_natural_coords``.
+        self._simplex_warned: set[int] = set()
         # ADR 0023 — validate per-zone schema versions for every
         # embedded zone (results envelope, neutral, opensees). Failure
         # raises SchemaVersionError before any read API is offered.
@@ -652,8 +762,12 @@ class NativeReader:
                 eidx = np.asarray(
                     grp[_native.DSET_ELEMENT_INDEX][...], dtype=np.int64,
                 )
-                nc = np.asarray(
-                    grp[_native.DSET_NATURAL_COORDS][...], dtype=np.float64,
+                nc = self._gauss_natural_coords(
+                    grp,
+                    np.asarray(
+                        grp[_native.DSET_NATURAL_COORDS][...],
+                        dtype=np.float64,
+                    ),
                 )
                 n_gp = nc.shape[0]
 
@@ -710,6 +824,45 @@ class NativeReader:
             local_axes_quaternion=quat_out,
             time=time[t_idx],
         )
+
+    def _gauss_natural_coords(self, grp: "h5py.Group", nc: ndarray) -> ndarray:
+        """A Gauss group's ``natural_coords`` in gmsh reference coordinates.
+
+        For a class whose rule older writers stored node-0-first (see
+        ``_SIMPLEX_GP_ROWS``):
+
+        * rows equal to the current catalog table read unchanged;
+        * rows equal to the older table are an older file, and read as the
+          current table: the same Gauss points, in the same order, in the
+          gmsh frame;
+        * any other rows cannot be placed. They read unchanged, and a
+          :class:`LegacySimplexGaussCoordsWarning` names the class, the file
+          and the fix, once per class per reader.
+
+        Every other class reads its stored rows unchanged.
+        """
+        class_tag = int(grp.attrs[_native.ATTR_CLASS_TAG])
+        if class_tag not in _SIMPLEX_GP_ROWS:
+            return nc
+        cls, legacy, current = _SIMPLEX_GP_ROWS[class_tag]
+        if np.array_equal(nc, current):
+            return nc
+        if np.array_equal(nc, legacy):
+            return current.copy()
+        if class_tag not in self._simplex_warned:
+            self._simplex_warned.add(class_tag)
+            warnings.warn(
+                f"{self._path}: Gauss group {grp.name!r} ({cls}) stores "
+                f"natural coordinates that match neither the Gauss table "
+                f"older apeGmsh versions wrote for {cls} nor the current "
+                f"one, so its Gauss points cannot be placed and may read "
+                f"at the wrong positions (extrapolated corner values "
+                f"rotated). Re-capture the results, or re-transcode the "
+                f"recorder output, with this apeGmsh version.",
+                LegacySimplexGaussCoordsWarning,
+                stacklevel=3,
+            )
+        return nc
 
     # ------------------------------------------------------------------
     # Slab reads — fibers
