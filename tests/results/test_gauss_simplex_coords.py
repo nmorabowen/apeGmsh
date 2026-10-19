@@ -743,6 +743,33 @@ def test_asdshellt3_old_conversion_refuses(tmp_path: Path) -> None:
         _read_gp_param(path, "204-ASDShellT3[102:0:0]")
 
 
+def test_writer_string_alone_marks_a_conversion(tmp_path: Path) -> None:
+    """A converted group that carries ``ORDER`` is still a conversion when
+    the PROVENANCE writer names the converter."""
+    path = _converted_group_file(
+        tmp_path, "204-ASDShellT3[102:0]", np.array([[7, 1, 2, 3]]),
+        old_rows=ASDSHELLT3_GP,
+    )
+    with h5py.File(path, "r+") as f:
+        f["MODEL_STAGE[1]/MODEL/ELEMENTS/204-ASDShellT3[102:0]"].attrs[
+            "ORDER"] = np.array([1], dtype=np.int32)
+    with pytest.raises(ValueError, match="ASDShellT3 group was converted"):
+        _read_gp_param(path, "204-ASDShellT3[102:0:0]")
+
+
+def test_missing_order_alone_marks_a_conversion(tmp_path: Path) -> None:
+    """A converted partition part without the stamped PROVENANCE is still
+    a conversion: it has no ``ORDER``."""
+    path = _converted_group_file(
+        tmp_path, "204-ASDShellT3[102:0]", np.array([[7, 1, 2, 3]]),
+        old_rows=ASDSHELLT3_GP,
+    )
+    with h5py.File(path, "r+") as f:
+        del f["INFO/PROVENANCE"].attrs["writer"]
+    with pytest.raises(ValueError, match="ASDShellT3 group was converted"):
+        _read_gp_param(path, "204-ASDShellT3[102:0:0]")
+
+
 def _bezier_tri6_converted(tmp_path: Path, *, old: bool) -> Path:
     """The fork's tri fixture with its BezierTri6 group replaced by the
     converter's (rule-tagged, as other MPCO writers key it)."""
