@@ -185,9 +185,10 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
     """Element-level records the transcoder doesn't yet handle don't crash.
 
     Phase 11a wired ``gauss``. Phase 11b wired ``line_stations``
-    (Step 2c) and ``elements`` (Step 3c). Phase 11c documented
-    ``fibers`` / ``layers`` as MPCO-only — they emit a UserWarning and
-    surface in ``transcoder.unsupported``.
+    (Step 2c) and ``elements`` (Step 3c); fibres are read too (#1982).
+    A modal record (no ``.out`` emission) surfaces in
+    ``transcoder.unsupported`` without a warning; a layers record raises
+    (``tests/test_results_out_fiber_material.py``).
     """
     import warnings as _w
     fem = _MockFem([1])
@@ -204,10 +205,8 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
                 node_ids=np.array([1]),
             ),
             ResolvedRecorderRecord(
-                category="fibers", name="b",
-                components=("fiber_stress",),
-                dt=None, n_steps=None,
-                element_ids=np.array([10]),
+                category="modal", name="b", components=(),
+                dt=None, n_steps=None, n_modes=2,
             ),
         ),
     )
@@ -219,16 +218,16 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
         dofs=[1],
         value_fn=lambda k, nid, dof: 0.5,
     )
-    # Note: no b_fibers.out file; the fibers record is skipped via
-    # the deferred-category branch before any file lookup happens.
+    # Note: no file for the modal record; it is skipped before any
+    # file lookup happens.
 
     target = tmp_path / "out.h5"
     transcoder = RecorderTranscoder(spec, output_dir, target, fem)
     with _w.catch_warnings(record=True) as caught:
         _w.simplefilter("always")
         transcoder.run()
-    assert "fibers:b" in transcoder.unsupported
-    assert any("MPCO-only" in str(w.message) for w in caught)
+    assert "modal:b" in transcoder.unsupported
+    assert not [w for w in caught if "modal" in str(w.message)]
 
     with Results.from_native(target, fem=fem, model=_open_model_from_h5(target)) as r:
         # Node data parsed

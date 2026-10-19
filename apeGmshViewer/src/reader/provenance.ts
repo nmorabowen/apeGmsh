@@ -28,6 +28,7 @@
 
 import { PROVENANCE_TARGET, readAttrs, SchemaError, ZONE_FLOOR, type H5File, type H5Module } from "./read.ts";
 import { dataset, group, has, int32s, sameLength, strs, zoneVersion } from "./geometry.ts";
+import { openH5 } from "./h5open.ts";
 
 // The target and the floor live in read.ts's one version table (#1303).
 export { PROVENANCE_TARGET } from "./read.ts";
@@ -167,7 +168,7 @@ function atLeast(version: string, v: { major: number; minor: number; patch: numb
 
 /** Open `path` and read its `/provenance` zone (see readProvenanceZone). */
 export function readProvenance(h5: H5Module, path: string): ProvenanceZone | null {
-  const f = new h5.File(path, "r");
+  const f = openH5(h5, path);
   try {
     return readProvenanceZone(h5, f);
   } finally {

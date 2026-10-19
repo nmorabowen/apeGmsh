@@ -118,9 +118,49 @@ test("classify: <stem>.ladruno is the results kind, case-insensitively", () => {
   assert.deepEqual(candidates(p("m.ladruno")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.ladruno") });
 });
 
-test("a <stem>.part-<N>.ladruno opened directly is refused, naming slice 8", () => {
-  assert.throws(() => classify(p("m.part-0.ladruno")), /part 0 of a partitioned \.ladruno run; .*ADR 0122 slice 8/);
-  assert.throws(() => pairSet(p("m.PART-12.LADRUNO"), () => true), /part 12 of a partitioned .*slice 8/);
+// -- V8-b (#2188): a part set is the results of its stem (ADR 0122 slice 8) --
+
+test("classify: a <stem>.part-<N>.ladruno is the results kind of <stem>, case-insensitively", () => {
+  assert.deepEqual(classify(p("m.part-0.ladruno")), { kind: "results", stem: p("m") });
+  assert.deepEqual(classify(p("m.PART-12.LADRUNO")), { kind: "results", stem: p("m") });
+  assert.deepEqual(classify(p("a.b.part-3.ladruno")), { kind: "results", stem: p("a.b") });
+});
+
+test("opening any part opens the set under the stem; the results slot keeps the opened part", () => {
+  const d = disk("m.h5", "m.part-0.ladruno", "m.part-1.ladruno");
+  assert.deepEqual(pairSet(p("m.part-1.ladruno"), d), { model: p("m.h5"), geometry: null, results: p("m.part-1.ladruno") });
+  assert.deepEqual(pairSet(p("m.part-0.ladruno"), d), { model: p("m.h5"), geometry: null, results: p("m.part-0.ladruno") });
+});
+
+test("opening the model finds the part set by part 0; the .ladruno outranks it, and it outranks the .results.h5", () => {
+  assert.equal(pairSet(p("m.h5"), disk("m.h5", "m.part-0.ladruno", "m.part-1.ladruno")).results, p("m.part-0.ladruno"));
+  assert.equal(pairSet(p("m.h5"), disk("m.h5", "m.part-0.ladruno", "m.results.h5")).results, p("m.part-0.ladruno"));
+  assert.equal(pairSet(p("m.h5"), disk("m.h5", "m.ladruno", "m.part-0.ladruno")).results, p("m.ladruno"));
+  // An opened results file wins: the part set when a part was opened, the .ladruno when it was.
+  assert.equal(pairSet(p("m.part-1.ladruno"), disk("m.ladruno", "m.part-0.ladruno", "m.part-1.ladruno")).results, p("m.part-1.ladruno"));
+  assert.equal(pairSet(p("m.ladruno"), disk("m.ladruno", "m.part-0.ladruno")).results, p("m.ladruno"));
+});
+
+// Review of 78d3f3ae, finding 1: with part 0 gone, the model found no results and said nothing.
+test("opening the model of a set that lost part 0 puts its lowest part in the slot, so the set reader names index 0", () => {
+  const names = ["run.h5", "run.part-2.ladruno", "run.part-1.ladruno", "other.part-0.ladruno"];
+  const list = (d: string) => (d === dir ? names : []);
+  assert.equal(pairSet(p("run.h5"), disk(...names), list).results, p("run.part-1.ladruno"));
+  // Another stem's part 0 is not this stem's set; with no part of `run`, nothing is found.
+  assert.equal(pairSet(p("run.h5"), disk("run.h5", "other.part-0.ladruno"), () => ["run.h5", "other.part-0.ladruno"]).results, null);
+  // The listing is a hint: a listed name the disk does not hold is not put in the slot.
+  assert.equal(pairSet(p("run.h5"), disk("run.h5"), () => ["run.h5", "run.part-1.ladruno"]).results, null);
+  // Part 0, when present, is the slot whatever else is listed.
+  assert.equal(pairSet(p("run.h5"), disk("run.h5", "run.part-0.ladruno", "run.part-1.ladruno"), list).results, p("run.part-0.ladruno"));
+  assert.equal(unopenedSibling(p("run.ladruno"), disk("run.ladruno", "run.part-1.ladruno"), list), p("run.part-1.ladruno"));
+});
+
+test("unopenedSibling: a part names the stem's .ladruno or .results.h5, never another part of its own set", () => {
+  assert.equal(unopenedSibling(p("m.part-1.ladruno"), disk("m.part-0.ladruno", "m.part-1.ladruno")), null);
+  assert.equal(unopenedSibling(p("m.part-1.ladruno"), disk("m.part-1.ladruno", "m.results.h5")), p("m.results.h5"));
+  assert.equal(unopenedSibling(p("m.part-0.ladruno"), disk("m.part-0.ladruno", "m.ladruno", "m.results.h5")), p("m.ladruno"));
+  assert.equal(unopenedSibling(p("m.ladruno"), disk("m.ladruno", "m.part-0.ladruno")), p("m.part-0.ladruno"));
+  assert.equal(unopenedSibling(p("m.results.h5"), disk("m.results.h5", "m.part-0.ladruno")), p("m.part-0.ladruno"));
 });
 
 test("opening the model finds a .ladruno beside it when it is the only results file", () => {

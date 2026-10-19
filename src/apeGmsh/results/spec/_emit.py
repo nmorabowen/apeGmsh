@@ -19,10 +19,11 @@ are translated to OpenSees-native recorder syntax:
   (Phase 6) extracts canonical-component columns from it using the
   spec's manifest as a guide.
 
-Modal, fibers, and layers are stubbed in this module — they need
-emission patterns that don't fit the simple recorder form (modal
-needs an ``eigen`` analysis call; fibers need per-fiber coords).
-For Phase 5 they emit a pass-through comment with a TODO.
+Fibers record ``section fiberData2`` (every section, with each fibre's
+coordinates) beside an ``integrationPoints`` pair, and a material-state
+gauss record (``damage``) one ``material <gp>`` recorder per Gauss
+point. Layers are refused (:func:`layers_out_refusal`), and modal needs
+an ``eigen`` analysis call, so the exports write a comment for both.
 
 File naming
 -----------
@@ -92,8 +93,8 @@ _NODAL_SCALAR_TABLE: dict[str, tuple[str, int]] = {
 
 # Category → (ops_recorder_token, comment).
 # These are the canonical OpenSees responses for each topology level.
-# For categories that don't have a clean single-token response
-# (fibers, layers, modal), we emit a TODO comment instead.
+# Fibers and per-Gauss-point material responses have their own emitters
+# below; layers and modal get a comment in the exports instead.
 #
 # Gauss is special: the actual ops keyword (``stresses`` vs ``strains``)
 # depends on the record's components, not on the category alone. The
@@ -366,8 +367,10 @@ def emit_logical(
     """Translate one resolved record into 0+ logical recorder specs.
 
     Some records produce multiple logical recorders (e.g. a node
-    record with both displacement and velocity components). Some
-    produce zero (modal, fibers, layers — stubbed for Phase 5).
+    record with both displacement and velocity components, a fibres
+    record and its ``integrationPoints`` pair, or a material-state
+    gauss record's one recorder per Gauss point). Modal produces zero.
+    A ``layers`` record raises (:func:`layers_out_refusal`).
 
     ``stage_id``: when set, output filenames are prefixed with
     ``<stage_id>__`` so multi-stage live emission can keep separate
@@ -376,16 +379,183 @@ def emit_logical(
     """
     if record.category == "nodes":
         return list(_emit_nodes(record, output_dir, file_format, stage_id))
+    if record.category == "fibers":
+        return list(_emit_fibers(record, output_dir, file_format, stage_id))
+    if record.category == "layers":
+        raise ValueError(layers_out_refusal(record))
+    if record.category == "gauss" and _gauss_per_material_keyword(record):
+        return list(_emit_gauss_per_material(
+            record, output_dir, file_format, stage_id,
+        ))
     if record.category in ("elements", "gauss", "line_stations"):
         return list(_emit_element_simple(
             record, output_dir, file_format, stage_id,
         ))
-    if record.category in ("fibers", "layers", "modal"):
-        # Deferred — Phase 5 emits a TODO comment via the formatter
-        # by returning an empty list. The formatter inserts a comment
-        # when it sees an unsupported category.
+    if record.category == "modal":
+        # Deferred: the formatters write a comment for it instead.
         return []
     return []
+
+
+def layers_out_refusal(rec: ResolvedRecorderRecord) -> str:
+    """The refusal every ``.out`` route gives a ``layers`` record, by name."""
+    return (
+        f"Record {rec.name!r} (category='layers') is refused on the .out "
+        f"route: a layered shell's layers need each section's layer "
+        f"thickness and each element's local axes, which a classic "
+        f"recorder does not write. Record layers with spec.emit_mpco(...) "
+        f"(read with Results.from_mpco(...)) on a build with the MPCO "
+        f"recorder, or with spec.emit_default(...) on the fork."
+    )
+
+
+# =====================================================================
+# Fibres and per-Gauss-point material responses on ``.out``
+# =====================================================================
+
+#: ``section fiberData2`` with no section number answers every section of
+#: the element, section-major, with each fibre as ``[y, z, area, matTag,
+#: stress, strain]`` (ForceBeamColumn / DispBeamColumn ``setResponse``;
+#: the same on stock openseespy and the fork). One recorder then covers
+#: a record, and its paired ``integrationPoints`` file gives the sections.
+FIBER_OUT_TOKENS: tuple[str, ...] = ("section", "fiberData2")
+#: Values per fibre in a ``fiberData2`` row, and the stress / strain columns.
+FIBER_OUT_WIDTH = 6
+FIBER_OUT_COLUMNS: dict[str, int] = {"fiber_stress": 4, "fiber_strain": 5}
+
+
+def fiber_record_class(rec: ResolvedRecorderRecord) -> str:
+    """The catalogued fibre element class of a ``fibers`` record, or raise.
+
+    The ``.out`` file says nothing about the element class, so the record
+    must name it, and the response catalog must list it as a fibre-section
+    beam; an element that answers no ``fiberData2`` would shift every
+    column after it. Components other than ``fiber_stress`` /
+    ``fiber_strain`` raise by name.
+    """
+    from apeGmsh.opensees._response_catalog import is_fiber_catalogued
+    unknown = [c for c in rec.components if c not in FIBER_OUT_COLUMNS]
+    if unknown or not rec.components:
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers): component(s) "
+            f"{unknown or list(rec.components)} are not fibre responses; "
+            f"a fibres record takes {sorted(FIBER_OUT_COLUMNS)}."
+        )
+    cls = rec.element_class_name
+    if cls is None or not is_fiber_catalogued(cls, "fiber_stress"):
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers) names element class "
+            f"{cls!r}, which the response catalog does not list as a "
+            f"fibre-section beam, so its section fiberData2 columns cannot "
+            f"be read back. Pass element_class_name (one class per record, "
+            f"e.g. 'ForceBeamColumn3d')."
+        )
+    return cls
+
+
+def _emit_fibers(
+    rec: ResolvedRecorderRecord,
+    output_dir: str,
+    file_format: str,
+    stage_id: Optional[str] = None,
+) -> Iterable[LogicalRecorder]:
+    """The ``section fiberData2`` recorder of a fibres record and its
+    ``integrationPoints`` pair (the section count and locations)."""
+    fiber_record_class(rec)
+    if rec.element_ids is None or rec.element_ids.size == 0:
+        return
+    _warn_n_steps_unsupported(rec)
+    target_ids = tuple(int(e) for e in rec.element_ids)
+    file_path = _build_file_path(
+        output_dir, rec.name, "fibers", file_format, stage_id=stage_id,
+    )
+    for path, tokens, what in (
+        (file_path, FIBER_OUT_TOKENS, "fibers"),
+        (line_station_gpx_path(file_path), ("integrationPoints",),
+         "fibers gpx"),
+    ):
+        yield LogicalRecorder(
+            kind="Element", file_path=path, file_format=file_format,
+            target_kind="ele", target_ids=target_ids,
+            response_tokens=tokens, dofs=None, dt=rec.dt,
+            record_name=rec.name, comment=f"{rec.name} {what}",
+        )
+
+
+def _gauss_per_material_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
+    """The material-level response a gauss record reads per Gauss point.
+
+    ``damage`` (:data:`PER_MATERIAL_TOKENS`) has no element-level branch
+    on any catalogued host, so an element recorder of it writes only the
+    time column; ``material <gp> damage`` reaches the material. ``None``
+    for every other record.
+    """
+    from apeGmsh.opensees._response_catalog import (
+        PER_MATERIAL_TOKENS,
+        catalog_token_for_keyword,
+    )
+    keyword = _gauss_record_ops_keyword(rec)
+    if keyword is None or catalog_token_for_keyword(keyword) not in \
+            PER_MATERIAL_TOKENS:
+        return None
+    return keyword
+
+
+def per_material_gauss_layout(rec: ResolvedRecorderRecord):
+    """``(layout, class_name, int_rule)`` of a per-Gauss-point gauss record.
+
+    The emit takes its Gauss-point count from it and the ``.out``
+    transcoder its decoding, so the two cannot disagree. The class must be
+    named and catalogued for the response: the count is the element's.
+    """
+    from apeGmsh.opensees._response_catalog import (
+        RESPONSE_CATALOG,
+        catalog_token_for_keyword,
+    )
+    keyword = _gauss_per_material_keyword(rec)
+    token = catalog_token_for_keyword(keyword) if keyword else None
+    cls = rec.element_class_name
+    matches = [(rule, layout) for (c, rule, t), layout
+               in RESPONSE_CATALOG.items() if c == cls and t == token]
+    if token is None or len(matches) != 1:
+        raise ValueError(
+            f"Record {rec.name!r} (category=gauss) reads {keyword!r} per "
+            f"Gauss point (``material <gp> {keyword}``), whose point count "
+            f"is the element class's, but its element_class_name {cls!r} "
+            f"has {len(matches)} response-catalog entries for {token!r}. "
+            f"Pass the record's one element class."
+        )
+    rule, layout = matches[0]
+    return layout, cls, int(rule)
+
+
+def _emit_gauss_per_material(
+    rec: ResolvedRecorderRecord,
+    output_dir: str,
+    file_format: str,
+    stage_id: Optional[str] = None,
+) -> Iterable[LogicalRecorder]:
+    """One ``material <gp> <keyword>`` recorder per Gauss point, 1-based."""
+    layout, _cls, _rule = per_material_gauss_layout(rec)
+    keyword = _gauss_per_material_keyword(rec)
+    assert keyword is not None
+    if rec.element_ids is None or rec.element_ids.size == 0:
+        return
+    _warn_n_steps_unsupported(rec)
+    target_ids = tuple(int(e) for e in rec.element_ids)
+    for gp in range(1, layout.n_gauss_points + 1):
+        yield LogicalRecorder(
+            kind="Element",
+            file_path=_build_file_path(
+                output_dir, rec.name, f"gauss_material{gp}", file_format,
+                stage_id=stage_id,
+            ),
+            file_format=file_format, target_kind="ele",
+            target_ids=target_ids,
+            response_tokens=("material", str(gp), keyword), dofs=None,
+            dt=rec.dt, record_name=rec.name,
+            comment=f"{rec.name} gauss material {gp} {keyword}",
+        )
 
 
 # =====================================================================
@@ -917,7 +1087,7 @@ def _file_flag_py(path: str, file_format: str) -> list[str]:
 # Spec-level emission (called by ResolvedRecorderSpec methods)
 # =====================================================================
 
-_DEFERRED_CATEGORIES = frozenset({"fibers", "layers", "modal"})
+_DEFERRED_CATEGORIES = frozenset({"layers", "modal"})
 
 
 def emit_spec_tcl(
@@ -993,14 +1163,8 @@ def emit_spec_python(
 
 
 def _tcl_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
-    if rec.category in ("fibers", "layers"):
-        return (
-            f";# recorder category {rec.category!r} "
-            f"(record {rec.name!r}) is MPCO-only. "
-            f"Add an MPCO recorder (e.g. ``recorder mpco {rec.name}.mpco "
-            f"-E section.fiber.stress``) instead of relying on .out "
-            f"emission, then read with ``Results.from_mpco(...)``."
-        )
+    if rec.category == "layers":
+        return f";# REFUSED: {layers_out_refusal(rec)}"
     return (
         f";# TODO: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
@@ -1012,15 +1176,8 @@ def _tcl_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
 
 
 def _py_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
-    if rec.category in ("fibers", "layers"):
-        return (
-            f"# recorder category {rec.category!r} "
-            f"(record {rec.name!r}) is MPCO-only. "
-            f"Add an MPCO recorder (e.g. ``ops.recorder('mpco', "
-            f"'{rec.name}.mpco', '-E', 'section.fiber.stress')``) "
-            f"instead of relying on .out emission, then read with "
-            f"``Results.from_mpco(...)``."
-        )
+    if rec.category == "layers":
+        return f"# REFUSED: {layers_out_refusal(rec)}"
     return (
         f"# TODO: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "

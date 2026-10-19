@@ -12,8 +12,9 @@ Oracles:
   returns ``[]`` for every file written here;
 * ``Results.from_ladruno(path, model_h5=)`` gives the mode shapes,
   eigenvalues, frequencies and periods of ``to_native`` +
-  ``from_native`` on the same solve (rtol 1e-12), and the rotations the
-  native file drops in 2-D equal the fake's vectors exactly;
+  ``from_native`` on the same solve (rtol 1e-12), rotations included
+  (the native file writes them where the DOF roles allow, #2203), and the
+  2-D rotation_z equals the fake's vectors exactly;
 * ``INFO/PROVENANCE`` carries the archive's ``/meta/lineage`` hashes
   byte for byte, ``writer`` names this writer and ``unsupported`` names
   the element buckets it leaves out.
@@ -138,14 +139,18 @@ def test_three_modes_pass_validate_and_equal_the_native_route(
                     getattr(w, attr), rel=_RTOL)
             native = set(w.nodes.available_components())
             assert native <= set(g.nodes.available_components())
+            rot = {"rotation_z"} if ndm == 2 else {
+                "rotation_x", "rotation_y", "rotation_z"}
+            assert rot <= native
             for comp in sorted(native):
                 gs, ws = _slab(g, comp), _slab(w, comp)
                 assert sorted(gs) == sorted(ws) == sorted(ids.tolist())
                 for nid in gs:
                     assert gs[nid] == pytest.approx(ws[nid], rel=_RTOL, abs=0)
         if ndm == 2:
-            # The native file drops rotation_z in 2-D; the fork layout
-            # carries it (Rz = eigenvector entry 3).
+            # Both files carry rotation_z in 2-D (the DOF roles make
+            # eigenvector entry 3 a rotation on a frame); pin it to the
+            # fake's vectors, not only to the native file.
             for k, g in enumerate(got, start=1):
                 rz = _slab(g, "rotation_z")
                 assert rz == {int(n): vecs[(int(n), k)][2] for n in ids}
@@ -399,7 +404,8 @@ def test_parallel_modes_pass_validate_and_equal_the_native_route(
 
     lad = res.to_ladruno(tmp_path / "modes.ladruno", model_h5=archive)
     nat = tmp_path / "modes_native.h5"
-    res.to_native(nat, OpenSeesModel.from_h5(str(archive)).fem)
+    res.to_native(nat, OpenSeesModel.from_h5(str(archive)).fem,
+                  model_h5=archive)
 
     assert spec.validate(str(lad)) == []
     prov = _provenance(lad)
@@ -413,6 +419,9 @@ def test_parallel_modes_pass_validate_and_equal_the_native_route(
             for attr in ("eigenvalue", "frequency_hz", "period_s"):
                 assert getattr(g, attr) == pytest.approx(
                     getattr(w, attr), rel=_RTOL)
+            rot_comps = {"rotation_z"} if ndm == 2 else {
+                "rotation_x", "rotation_y", "rotation_z"}
+            assert rot_comps <= set(w.nodes.available_components())
             for comp in sorted(w.nodes.available_components()):
                 gs, ws = _slab(g, comp), _slab(w, comp)
                 assert sorted(gs) == sorted(ws)

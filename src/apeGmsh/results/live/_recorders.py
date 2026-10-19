@@ -8,9 +8,13 @@ user keeps driving the analysis loop themselves.
 
 Categories
 ----------
-- ``nodes``, ``elements``, ``gauss``, ``line_stations`` — emitted.
-- ``fibers``, ``layers`` — warn-and-skip (use
-  ``ResolvedRecorderSpec.emit_default`` or ``emit_mpco``).
+- ``nodes``, ``elements``, ``gauss``, ``line_stations``, ``fibers`` —
+  emitted (fibres as ``section fiberData2`` with an ``integrationPoints``
+  pair; a ``damage`` gauss record as one ``material <gp>`` recorder per
+  Gauss point).
+- ``layers`` — raises at ``__enter__``, by name (``.out`` cannot carry a
+  layered shell's layer geometry; record it with
+  ``ResolvedRecorderSpec.emit_mpco`` or, on the fork, ``emit_default``).
 - ``modal`` — raises at ``__enter__`` (modes need an eigen solve, not a
   classic recorder; record them with ``ResolvedRecorderSpec.emit_mpco``,
   whose ``modesOfVibration`` entry the MPCO reader reads), or run
@@ -70,6 +74,7 @@ from typing import TYPE_CHECKING, Optional
 from ..spec._emit import (
     element_tag_map,
     emit_logical,
+    layers_out_refusal,
     to_deck,
     to_ops_args,
 )
@@ -81,12 +86,11 @@ if TYPE_CHECKING:
 
 # Categories the live recorder path can emit today.
 _SUPPORTED_CATEGORIES = frozenset(
-    {"nodes", "elements", "gauss", "line_stations"}
+    {"nodes", "elements", "gauss", "line_stations", "fibers"}
 )
 
-# Categories that don't fit the classic recorder format and stay on
-# the MPCO / capture paths. Warn-and-skip with a pointer message.
-_NON_RECORDER_CATEGORIES = frozenset({"fibers", "layers"})
+# Layers don't fit the classic recorder format: refused at ``__enter__``.
+_NON_RECORDER_CATEGORIES = frozenset({"layers"})
 
 # Modal records need ``ops.eigen`` driving — out of scope for the
 # classic recorder path. Raises at ``__enter__``.
@@ -136,7 +140,8 @@ class LiveRecorders:
     RuntimeError
         On ``__enter__`` if the spec contains any modal records.
     ValueError
-        On ``__enter__`` if a node or element record is emitted without
+        On ``__enter__`` if the spec holds a ``layers`` record, or a node
+        or element record (fibres included) is emitted without
         ``model=``, names a FEM id the model has no element for, or
         records a DOF its nodes do not carry.
     """
@@ -192,6 +197,8 @@ class LiveRecorders:
                     f"with its writer, which needs no recorder. "
                     f"spec.emit_default(...) does not record modes."
                 )
+            if record.category in _NON_RECORDER_CATEGORIES:
+                raise ValueError(f"LiveRecorders: {layers_out_refusal(record)}")
 
         # Translate (or refuse) every node and element recorder before
         # any recorder reaches the domain, so a refusal never leaves a
@@ -253,20 +260,8 @@ class LiveRecorders:
                     )))
                 continue
 
-            if record.category in _NON_RECORDER_CATEGORIES:
-                warnings.warn(
-                    f"LiveRecorders: skipping record {record.name!r} "
-                    f"(category={record.category!r}); fiber/layer "
-                    f"data can't be emitted via classic recorders. "
-                    f"Use spec.emit_default(...) for in-process "
-                    f"capture or spec.emit_mpco(...) for the STKO MPCO "
-                    f"recorder.",
-                    stacklevel=2,
-                )
-                continue
-
-            # Modal already raised in __enter__, but defend in depth.
-            if record.category in _MODAL_CATEGORIES:
+            # Modal and layers already raised in __enter__.
+            if record.category in _MODAL_CATEGORIES | _NON_RECORDER_CATEGORIES:
                 continue
 
             warnings.warn(

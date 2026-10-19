@@ -66,9 +66,10 @@ __all__ = ["DefaultRouteWarning", "LiveDefault", "read_deck_mpco"]
 _MPCO_SUFFIX = ".mpco"
 #: The one stage the classic-recorder route opens over the whole block.
 _STAGE = "analysis"
-#: Categories the classic-recorder route skips (``LiveRecorders``), and
-#: the prefix of its per-record skip warning.
-_UNRECORDED = ("fibers", "layers")
+#: Categories the classic-recorder route does not record (``LiveRecorders``
+#: refuses layers by name; fibres are recorded), and the prefix of a
+#: per-record skip warning.
+_UNRECORDED = ("layers",)
 _SKIP_PREFIX = "LiveRecorders: skipping record"
 #: Route names, as :attr:`LiveDefault.route` reports them.
 ROUTES = ("fork", "mpco", "recorders")
@@ -375,8 +376,8 @@ class LiveDefault:
 
 
 def _begin_quietly(live: LiveRecorders) -> None:
-    """``live.begin_stage`` without its per-record fiber / layer skip
-    warnings: the route's one :class:`DefaultRouteWarning` names those
+    """``live.begin_stage`` without a per-record skip warning for an
+    :data:`_UNRECORDED` category: the route's one :class:`DefaultRouteWarning` names those
     records already. Any other warning passes through unchanged."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

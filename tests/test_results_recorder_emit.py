@@ -257,7 +257,7 @@ def test_line_stations_gpx_path_helper() -> None:
 # Deferred categories — emit a TODO comment
 # =====================================================================
 
-@pytest.mark.parametrize("category", ["fibers", "layers", "modal"])
+@pytest.mark.parametrize("category", ["layers", "modal"])
 def test_deferred_category_emits_todo(category: str) -> None:
     rec = ResolvedRecorderRecord(
         category=category, name="r",
@@ -270,10 +270,10 @@ def test_deferred_category_emits_todo(category: str) -> None:
     )
     spec = _make_spec(rec)
     [line] = spec.to_tcl_commands()
-    if category in ("fibers", "layers"):
-        # Phase 11c: fiber/layer recorders are MPCO-only — comment
-        # points the user at MPCO instead of generic TODO.
-        assert "MPCO-only" in line
+    if category == "layers":
+        # Layers are refused on .out by name; the comment points the user
+        # at MPCO instead of a generic TODO.
+        assert "REFUSED" in line and "'r'" in line
         assert "Results.from_mpco" in line
     else:
         assert "TODO" in line

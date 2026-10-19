@@ -9,6 +9,7 @@ import { statSync } from "node:fs";
 import * as h5wasm from "h5wasm/node";
 import { readGeometry, type GeometryZone } from "../reader/geometry.ts";
 import { filePath, isPseudoFile, readProvenance, type ProvenanceZone } from "../reader/provenance.ts";
+import { openH5, type H5Openable } from "../reader/h5open.ts";
 
 const isFile = (p: string): boolean => {
   try {
@@ -55,7 +56,7 @@ interface H5Handle {
 }
 
 function openFile(path: string): H5Handle {
-  const f = new h5wasm.File(path, "r") as unknown as H5Handle;
+  const f = openH5(h5wasm as unknown as H5Openable<H5Handle>, path);
   if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path}`);
   return f;
 }
