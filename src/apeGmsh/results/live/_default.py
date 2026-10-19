@@ -33,6 +33,12 @@ recorder when it works, and it works when it returns a recorder tag. When
 it raises or returns no tag, no recorder was made, a file the probe created
 is deleted, and the classic recorders open one stage over the whole block.
 
+``model_h5`` is the bridge's archive or a FEMData archive (``fem.to_h5``,
+no ``/opensees`` zone). On the classic-recorder route a FEMData archive's
+missing facts (ndm, per-node ndf, element classes) are read from the live
+domain (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`,
+#2251), and the read embeds no ``/opensees`` zone.
+
 Modal records have no default route and refuse at ``__enter__``.
 """
 from __future__ import annotations
@@ -300,7 +306,7 @@ class LiveDefault:
         self._model = OpenSeesModel.from_h5(self._model_h5)
         deck_model: Any = self._model
         if not _has_bridge_zone(self._model_h5):
-            # A FEMData archive (#2251): ndm, per-node ndf and element
+            # A FEMData archive: ndm, per-node ndf and element
             # classes are read from the live domain. With no ops.model
             # declared there is nothing to read, and the archive's own
             # refusal ("declares no ndm") stands.

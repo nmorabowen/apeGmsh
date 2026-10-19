@@ -22,7 +22,7 @@ through these tables.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ._element_capabilities import (
     SIGMA_ZZ_ELEMENT_CLASSES,
@@ -441,7 +441,7 @@ def model_h5_rotation_roles(
 #: ``ops.eleType`` class name -> the ``element`` token of the bridge class
 #: whose family it is (:data:`~._readback._CLASS_FOR_TOKEN`), so a live
 #: domain the bridge did not build classifies its rotational DOF slots by
-#: the same family tables (#2251). Each name is what stock openseespy
+#: the same family tables. Each name is what stock openseespy
 #: 3.7.1 answers for an element that token makes; a class not listed is
 #: unknown, and blocks the rotational slots of the nodes it touches and
 #: of element-less nodes, as an unknown token does.
@@ -532,7 +532,7 @@ class LiveDomainFacts:
         """The archive's lineage (its ``fem_hash`` is the FEMData's)."""
         return self._archive.lineage  # type: ignore[attr-defined]
 
-    def elements(self) -> tuple:
+    def elements(self) -> "tuple[Any, ...]":
         """The archive's element records: its ``(fem_eid, tag)`` pairing."""
         return tuple(self._archive.elements())  # type: ignore[attr-defined]
 
