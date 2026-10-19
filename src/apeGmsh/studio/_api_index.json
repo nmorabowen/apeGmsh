@@ -146,7 +146,7 @@
     },
     "EigenResult.to_native": {
       "doc": "Write the modes as ``kind=\"mode\"`` stages of a native results",
-      "signature": "to_native(path: \"'str | os.PathLike[str] | None'\" = None) -> 'Path'",
+      "signature": "to_native(path: \"'str | os.PathLike[str] | None'\" = None, *, model_h5: \"'str | os.PathLike[str] | None'\" = None) -> 'Path'",
       "skill": "references/opensees-bridge.md",
       "symbol": "EigenResult.to_native"
     },
@@ -638,7 +638,7 @@
     },
     "ParallelModalResult.to_native": {
       "doc": "Write the harvested modes as mode-kind stages in a native",
-      "signature": "to_native(path: \"'str | Any'\", fem: 'Any') -> 'None'",
+      "signature": "to_native(path: \"'str | Any'\", fem: 'Any', *, model_h5: \"'str | Any | None'\" = None) -> 'None'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ParallelModalResult.to_native"
     },
