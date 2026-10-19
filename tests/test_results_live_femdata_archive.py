@@ -368,6 +368,77 @@ def test_a_live_node_that_is_not_the_fem_node_refuses_by_id(
     assert _node_calls(ops) == []
 
 
+def _line_fem(n: int, x0: float, h: float) -> FEMData:
+    """``n`` nodes on a line at ``x0 + i h`` (tags ``1..n``), one line
+    element per gap: a fine mesh far from the origin when ``h << x0``."""
+    node_ids = np.arange(1, n + 1, dtype=np.int64)
+    coords = np.column_stack([x0 + h * np.arange(n), np.zeros(n), np.zeros(n)])
+    info = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=n - 1)
+    conn = np.column_stack([node_ids[:-1], node_ids[1:]])
+    group = ElementGroup(element_type=info, ids=np.arange(1, n, dtype=np.int64),
+                         connectivity=conn)
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=NodeComposite(node_ids=node_ids, node_coords=coords,
+                            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=n, n_elems=n - 1, bandwidth=2, types=[info]),
+        model_name="femdata_archive_fine_line",
+    )
+
+
+#: A fine mesh: 1 um spacing at x = 1000 (6 significant digits cannot
+#: tell its nodes apart).
+_FINE_X0, _FINE_H, _FINE_N = 1000.0, 1.0e-3, 9
+
+
+@pytest.mark.parametrize("shift, records", [
+    (lambda x: x, True),                          # exact
+    (lambda x: x + 1.0e-5, True),                 # noise far below h / 4
+    (lambda x: x + _FINE_H, False),               # the neighbouring node
+    (lambda x: float(f"{x:.6g}"), False),         # rounding coarser than h
+], ids=["exact", "noise", "neighbour", "6-digit-on-fine-mesh"])
+def test_a_fine_mesh_tells_noise_from_a_neighbour(tmp_path, shift, records) -> None:
+    """The tolerance follows the mesh, not the coordinate magnitude: on a
+    1 um mesh at x = 1000, a point one node over is another node, and so is
+    a 6-digit rounding that moves a node by a whole spacing."""
+    fem = _line_fem(_FINE_N, _FINE_X0, _FINE_H)
+    model_h5 = tmp_path / "fine.h5"
+    fem.to_h5(str(model_h5))
+    xs = np.asarray(fem.nodes.coords)[:, 0]
+    ids = [4, 5]
+    ops = LiveOps(ndm=1, ndf={n: 1 for n in range(1, _FINE_N + 1)},
+                  elements={1: ("Truss", (4, 5))},
+                  coords={n: (shift(float(xs[n - 1])),)
+                          for n in range(1, _FINE_N + 1)})
+    spec = _spec(fem, ("nodes", "u", ("displacement_x",), ids))
+    if records:
+        _run(spec, tmp_path / "run", model_h5, ops)
+        assert [_dofs(c) for c in _node_calls(ops)] == [[1]]
+    else:
+        with pytest.raises(ValueError, match=r"not the FEMData's first 1 at node 4"):
+            _run(spec, tmp_path / "run", model_h5, ops)
+
+
+def test_the_tolerance_is_a_quarter_of_the_nearest_other_position(
+    monkeypatch,
+) -> None:
+    """The KD-tree and the brute-force search agree; coincident nodes do
+    not shrink each other's tolerance."""
+    import sys
+
+    from apeGmsh.opensees._recorder_translate import _identity_tolerances
+
+    coords = np.array([[0.0, 0.0], [0.0, 0.0], [2.0, 0.0], [2.0, 3.0]])
+    rows = np.arange(4)
+    want = 0.25 * np.array([2.0, 2.0, 2.0, 3.0])
+    np.testing.assert_allclose(_identity_tolerances(coords, rows), want)
+    monkeypatch.setitem(sys.modules, "scipy.spatial", None)   # no SciPy
+    np.testing.assert_allclose(_identity_tolerances(coords, rows), want)
+
+
 def test_coordinates_within_the_tolerance_record(frame, tmp_path) -> None:
     """The tolerance is ``1e-9`` of the largest coordinate: a last-bit
     difference still records."""

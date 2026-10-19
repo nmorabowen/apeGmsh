@@ -8,9 +8,13 @@ or a FEMData archive. With a FEMData archive the classic-recorder route
 reads each fact from the live domain, never from the FEMData:
 `ops.getNDM()`, `ops.getNDF(node)` for each recorded node, and
 `ops.eleType` / `ops.eleNodes` of every element for the rotation roles.
-Each recorded node's `ops.nodeCoord` must equal the FEM node's first `ndm`
-coordinates (to 1e-9 of the largest coordinate), so the live node is
-known to be the FEM node. `run.results()` reads the `.out` files into a
+Each recorded node's `ops.nodeCoord` must match the FEM node's first `ndm`
+coordinates, so the live node is known to be the FEM node. The tolerance
+follows the mesh: a quarter of the node's distance to the nearest FEM node
+at another position. Within it the live point is nearer that node than
+any other. A deck that rounds its coordinates (6 significant digits,
+float32, or millimetres to 3 decimals) therefore records, while a point
+one node over refuses, however fine the mesh. `run.results()` reads the `.out` files into a
 native file with no `/opensees` zone.
 
 This records **node** results only. Element results (element, gauss,

@@ -158,11 +158,37 @@ def _build_column(ops: Any, fem: FEMData) -> "np.ndarray":
     return np.asarray(sorted(int(n) for n, _ in ref), dtype=np.int64)
 
 
-def test_column_to_surface_deck_reads_the_live_domain(opspy, tmp_path) -> None:
+class _Rounded:
+    """The live module, whose ``node`` command rounds each coordinate as a
+    hand-written deck does."""
+
+    def __init__(self, ops: Any, rnd: Any) -> None:
+        self._ops, self._rnd = ops, rnd
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ops, name)
+
+    def node(self, tag: int, *args: Any) -> Any:
+        return self._ops.node(tag, *[self._rnd(float(v)) for v in args[:3]],
+                              *args[3:])
+
+
+_ROUNDINGS = {
+    "exact": lambda v: v,
+    "6-digit": lambda v: float(f"{v:.6g}"),
+    "float32": lambda v: float(np.float32(v)),
+    "mm-3-decimals": lambda v: round(v, 3),
+}
+
+
+@pytest.mark.parametrize("rounding", list(_ROUNDINGS))
+def test_column_to_surface_deck_reads_the_live_domain(
+    opspy, tmp_path, rounding,
+) -> None:
     fem = _column_fem()
     model_h5 = tmp_path / "model.h5"
     fem.to_h5(str(model_h5))
-    ref = _build_column(opspy, fem)
+    ref = _build_column(_Rounded(opspy, _ROUNDINGS[rounding]), fem)
     built = {int(n) for n in opspy.getNodeTags()}
     ids = np.asarray([int(n) for n in fem.nodes.ids if int(n) in built],
                      dtype=np.int64)

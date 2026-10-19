@@ -492,6 +492,53 @@ def live_ndm(ops: object) -> int:
     return _live_int(ops.getNDM(), "getNDM()")  # type: ignore[attr-defined]
 
 
+def _identity_tolerances(coords: "ndarray", rows: "ndarray") -> "ndarray":
+    """A quarter of each ``coords[rows]`` point's distance to the nearest
+    point of ``coords`` at another position.
+
+    Within that radius a point is nearer its own node than any other, so
+    a match identifies the node. Points closer than ``1e-9`` of the
+    coordinate scale share one position (coincident constraint nodes):
+    coordinates cannot tell them apart, so they do not shrink each other's
+    radius. A point with no other position gets that ``1e-9`` floor. Uses
+    SciPy's ``cKDTree`` when SciPy is installed, else a chunked
+    brute-force search (``O(len(rows) * len(coords))``).
+    """
+    import numpy as np
+
+    scale = max(float(np.abs(coords).max(initial=0.0)), 1.0)
+    same = 1e-9 * scale
+    pts = coords[rows]
+    nearest = np.full(len(rows), np.inf)
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError:
+        tree = None
+    else:
+        tree = cKDTree(coords) if len(coords) > 1 else None
+    if tree is not None:
+        todo = np.arange(len(rows))
+        k = min(8, len(coords))
+        while todo.size:
+            d = np.asarray(tree.query(pts[todo], k=k)[0]).reshape(len(todo), -1)
+            d = np.where(d <= same, np.inf, d)
+            nearest[todo] = d.min(axis=1)
+            if k >= len(coords):
+                break
+            todo = todo[~np.isfinite(nearest[todo])]
+            k = min(2 * k, len(coords))
+    else:
+        chunk = max(1, 1_000_000 // max(len(coords), 1))
+        for i in range(0, len(rows), chunk):
+            d = np.linalg.norm(pts[i:i + chunk, None, :] - coords[None, :, :],
+                               axis=2)
+            d[d <= same] = np.inf
+            nearest[i:i + chunk] = d.min(axis=1)
+    out = 0.25 * nearest
+    out[~np.isfinite(out)] = same
+    return np.asarray(np.maximum(out, same))
+
+
 class LiveDomainFacts:
     """The node DOF facts of the live domain ``ops`` holds, standing in for
     the model on the emit side when the model archive is a FEMData archive
@@ -523,6 +570,10 @@ class LiveDomainFacts:
         self._ops = ops
         self._archive = archive
         self._ndm = ndm
+        #: The FEM's first ``ndm`` coordinates, and each checked node's
+        #: identity tolerance, built on first use.
+        self._coords: "ndarray | None" = None
+        self._tol: "dict[int, float]" = {}
 
     @property
     def ndm(self) -> int:
@@ -561,14 +612,18 @@ class LiveDomainFacts:
         A tag match alone does not make the live node the FEM node: a deck
         built from another FEMData shares tags, and a planar deck of a
         column along global Z maps (x, z) to (x, y), so its
-        ``displacement_y`` would be the FEM's z motion. The tolerance is
-        ``1e-9`` of the FEM's largest coordinate magnitude.
+        ``displacement_y`` would be the FEM's z motion.
+
+        The tolerance is each node's own (:func:`_identity_tolerances`): a
+        quarter of its distance to the nearest FEM node at another
+        position, so a live point within it is nearer that FEM node than
+        any other, while a deck's rounding (6 significant digits, float32,
+        millimetre decimals) on a mesh coarser than the rounding passes.
         """
         import numpy as np
 
         fem_nodes = self._archive.fem.nodes  # type: ignore[attr-defined]
         ids = np.asarray(fem_nodes.ids, dtype=np.int64)
-        coords = np.asarray(fem_nodes.coords, dtype=np.float64)
         row = {int(n): i for i, n in enumerate(ids)}
         absent = [n for n in nodes if n not in row]
         if absent:
@@ -577,13 +632,20 @@ class LiveDomainFacts:
                 "archive holds, so whether the live node is the FEM node "
                 "cannot be checked.")
         ndm = self._ndm
-        tol = 1e-9 * max(float(np.abs(coords[:, :ndm]).max(initial=0.0)), 1.0)
+        if self._coords is None:
+            self._coords = np.asarray(fem_nodes.coords, dtype=np.float64)[:, :ndm]
+        coords = self._coords
+        todo = [n for n in nodes if n not in self._tol]
+        if todo:
+            tols = _identity_tolerances(coords, np.array([row[n] for n in todo]))
+            self._tol.update(zip(todo, tols.tolist()))
         moved = []
         for n in nodes:
             xyz = self._ops.nodeCoord(n)  # type: ignore[attr-defined]
             live = np.asarray(xyz, dtype=np.float64)
-            fem = coords[row[n], :ndm]
-            if live.shape != fem.shape or np.abs(live - fem).max() > tol:
+            fem = coords[row[n]]
+            if (live.shape != fem.shape
+                    or float(np.linalg.norm(live - fem)) > self._tol[n]):
                 moved.append((n, live.tolist(), fem.tolist()))
         if moved:
             listed = "; ".join(f"node {n}: live {lv}, FEM {fv}"
