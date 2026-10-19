@@ -331,19 +331,31 @@ def test_mpco_stages_take_the_program_names_and_kinds(run) -> None:
     assert [s.kind for s in hosts] == _KINDS
 
 
+def _kinds(path: Path) -> "list[Any]":
+    with h5py.File(path, "r") as f:
+        return [attr(f[s], "KIND") for s in _ALL]
+
+
+def test_converted_kinds_are_the_programs(run) -> None:
+    """The converter writes the program's kind on each stage."""
+    assert _kinds(run["converted"]) == _KINDS
+
+
 @pytest.mark.xfail(
     strict=True, raises=AssertionError,
     reason="nmorabowen/apeGmsh#2103: a fork recorder with a modal channel "
            "stamps every stage KIND=eigen",
 )
 def test_every_stage_kind_equals_the_fork_kind(run) -> None:
-    """The converter writes the program's kind on each stage; the fork
-    labels every stage of a recorder with a modal channel ``eigen``."""
-    with h5py.File(run["fork"], "r") as a, h5py.File(run["converted"], "r") as b:
-        fork = [attr(a[s], "KIND") for s in _ALL]
-        converted = [attr(b[s], "KIND") for s in _ALL]
-    assert converted == _KINDS  # the converter side, outside the xfail
-    assert fork == converted, f"fork {fork}, converted {converted}"
+    """The fork labels every stage of a recorder with a modal channel
+    ``eigen`` (#2103). Only that exact shape is the expected failure: a
+    full fork fix XPASSes (strict), and any other mismatch, a partial fix
+    included, fails outright (``pytest.fail`` is not an AssertionError)."""
+    fork, converted = _kinds(run["fork"]), _kinds(run["converted"])
+    assert fork != ["eigen"] * len(_ALL), f"#2103 shape: fork {fork}"
+    if fork != converted:
+        pytest.fail(f"fork KIND {fork} is neither #2103's all-eigen shape "
+                    f"nor the converted {converted}")
 
 
 # ---------------------------------------------------------------------------
