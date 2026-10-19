@@ -2033,3 +2033,100 @@ def test_check_card_survives_a_cp1252_stdout_with_a_sigma_2057(monkeypatch):
 )
 def test_the_child_gets_a_replace_error_handler_2057(current, want):
     assert land_pr._safe_io_encoding(current) == want
+
+
+# --- #2176 (lesson #2143): check 12, a FORK_PIN change needs a green live-fork dispatch run -----------
+#: #2138's real changed-file list shape: FORK_PIN among source, test and doc files. Its head had no
+#: live-fork workflow_dispatch run, and the fork lane went red that night (#2143).
+FILES_2138 = ["FORK_PIN", "src/apeGmsh/opensees/apesees.py", "tests/opensees/unit/test_ladruno_membrane.py",
+              "docs/concepts/backend-capabilities.md"]
+HEAD_2138 = "faf13bc214672fdf212907b6054bbc1477ceed7d"
+
+
+def _fork_run(head, status="completed", conclusion="success"):
+    return {"databaseId": 41, "status": status, "conclusion": conclusion, "headSha": head,
+            "url": "https://github.com/nmorabowen/apeGmsh/actions/runs/41"}
+
+
+def _pin_call(head):
+    return ("run list --workflow live-fork.yml --event workflow_dispatch --commit "
+            f"{head} --json {land_pr.LIVE_FORK_RUNS_JSON}")
+
+
+def _pin_pr(files=FILES_2138, runs=(), pr=PR_1218):
+    pr = {**pr, "headRefOid": HEAD_2138}
+    gh, git = _recording(1218, pr, SQUASH_1218, files=files)
+    gh.responses[_pin_call(HEAD_2138)] = json.dumps(list(runs))
+    return gh, git
+
+
+def test_2138_shape_without_a_dispatch_run_is_refused_naming_the_command():
+    """Revert-proof: with check_fork_pin removed from `check`, this merges."""
+    gh, git = _pin_pr(runs=[])
+    with pytest.raises(land_pr.LandError, match=r"check 12: .*no live-fork workflow_dispatch run.*workflow run live-fork\.yml --ref "):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("run, message", [
+    (_fork_run(HEAD_2138, status="in_progress", conclusion=None), r"is in_progress, not completed"),
+    (_fork_run(HEAD_2138, conclusion="failure"), r"concluded failure .*actions/runs/41"),
+    (_fork_run("0" * 40), r"no live-fork workflow_dispatch run"),  # green, but on another sha
+])
+def test_fork_pin_refuses_unfinished_failed_or_foreign_runs(run, message):
+    gh, git = _pin_pr(runs=[run])
+    with pytest.raises(land_pr.LandError, match=rf"check 12: .*{message}"):
+        _run(1218, gh, git)
+
+
+def test_fork_pin_with_a_green_dispatch_on_the_head_lands(capsys):
+    gh, git = _pin_pr(runs=[_fork_run(HEAD_2138)])
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "check 12: FORK_PIN changed; live-fork dispatch run" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("labels", [["scope-ok"], ["human-gate"], ["program", "scope-ok", "human-gate"]])
+def test_no_label_overrides_check_12(labels):
+    pr = {**PR_1218, "labels": [{"name": n} for n in labels]}
+    gh, git = _pin_pr(runs=[], pr=pr)
+    with pytest.raises(land_pr.LandError, match="check 12"):
+        _run(1218, gh, git)
+
+
+def test_a_pr_without_fork_pin_makes_no_run_list_call():
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert not any(call.startswith("run list") for call in gh.calls)
+
+
+def _numbered(run, run_id):
+    return {**run, "databaseId": run_id}
+
+
+@pytest.mark.parametrize("runs, outcome", [
+    ([_numbered(_fork_run(HEAD_2138, conclusion="failure"), 40), _numbered(_fork_run(HEAD_2138), 41)], None),
+    ([_numbered(_fork_run(HEAD_2138, conclusion="cancelled"), 40), _numbered(_fork_run(HEAD_2138), 41)], None),
+    ([_numbered(_fork_run(HEAD_2138), 41), _numbered(_fork_run(HEAD_2138, conclusion="failure"), 40)], None),
+    ([_numbered(_fork_run(HEAD_2138), 40), _numbered(_fork_run(HEAD_2138, conclusion="failure"), 41)],
+     r"newest .*concluded failure .*gh run rerun 41.*workflow run live-fork\.yml --ref "),
+    ([_numbered(_fork_run(HEAD_2138), 40), _numbered(_fork_run(HEAD_2138, status="in_progress", conclusion=None), 41)],
+     r"newest .*is in_progress"),
+])
+def test_only_the_newest_dispatch_run_is_judged(runs, outcome):
+    gh, git = _pin_pr(runs=runs)
+    if outcome is None:
+        assert _run(1218, gh, git, dry_run=True) == 0
+    else:
+        with pytest.raises(land_pr.LandError, match=rf"check 12: the {outcome}"):
+            _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("row", [
+    json.dumps(["tools/PIN", "renamed", "FORK_PIN", 0, None]),
+    json.dumps(["FORK_PIN", "removed", None, 1, "@@ -1 +0,0 @@\n-abc"]),
+], ids=["renamed-away", "deleted"])
+def test_fork_pin_renamed_or_deleted_with_no_run_is_refused(row):
+    gh, git = _recording(1218, {**PR_1218, "headRefOid": HEAD_2138}, SQUASH_1218, rows=[row])
+    gh.responses[_pin_call(HEAD_2138)] = "[]"
+    with pytest.raises(land_pr.LandError, match="check 12"):
+        _run(1218, gh, git)

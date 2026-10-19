@@ -25,6 +25,10 @@ when its required checks ran on a merge base more than STALE_COMMITS commits, or
 STALE_HOURS hours, behind ``main``. The base is read from the job log's
 ``Merge <head> into <base>`` checkout line, the only place the API exposes it.
 
+Check 12 (#2138 bumped ``FORK_PIN`` with only the stock lane run; the fork side went red that night, #2143) refuses
+a PR that changes ``FORK_PIN`` unless a ``live-fork`` ``workflow_dispatch`` run on the PR head SHA completed
+green. ``live-fork`` is not a required check, so nothing else proves a new pin. No label overrides it.
+
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
 from a temp file (maintainer ruling 2 on #1686), so a PR that edits this file
@@ -861,8 +865,47 @@ def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases)
         print(f"check 11: {where} ran on base {base[:12]}, {behind} commit(s) and {hours:.0f} h behind main.")
 
 
+#: Check 12: the file a pin bump edits, and the fork lane that must have run on the new pin.
+PIN_FILE = "FORK_PIN"
+LIVE_FORK_RUNS_JSON = "databaseId,status,conclusion,headSha,url"
+
+
+def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
+    """Check 12 (#2138 -> #2143). A PR that changes ``FORK_PIN`` needs a ``live-fork`` run with
+    ``event == workflow_dispatch`` on its head SHA, completed and successful. Neither ``scope-ok``
+    nor ``human-gate`` overrides it, and it applies to every PR. A PR that leaves the pin alone
+    makes no run-list call."""
+    if not any(PIN_FILE in (row[0], row[2]) for row in rows):
+        print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
+        return
+    head = pr["headRefOid"]
+    dispatch = f"gh workflow run live-fork.yml --ref {pr['headRefName']}"
+    listing = gh(["run", "list", "--workflow", "live-fork.yml", "--event", "workflow_dispatch",
+                  "--commit", head, "--json", LIVE_FORK_RUNS_JSON])
+    runs = [run for run in json.loads(listing) if run.get("headSha") == head]
+    if not runs:
+        raise LandError(
+            f"check 12: #{number} changes {PIN_FILE} but no live-fork workflow_dispatch run exists on {head[:12]}. "
+            f"A new pin is proven by the fork lane, which is not a required check (#2138 -> #2143). Start one "
+            f"with `{dispatch}`, wait for it to finish green, then land."
+        )
+    latest = max(runs, key=lambda run: run.get("databaseId") or 0)  # only the newest dispatch counts
+    if latest.get("status") != "completed":
+        raise LandError(
+            f"check 12: the newest live-fork dispatch run on {head[:12]} is {latest.get('status')}, not completed "
+            f"({latest.get('url')}). Pending is a refusal, not a wait."
+        )
+    if latest.get("conclusion") != "success":
+        raise LandError(
+            f"check 12: the newest live-fork dispatch run on {head[:12]} concluded {latest.get('conclusion')} "
+            f"({latest.get('url')}); a {PIN_FILE} change needs it green. Re-run it with "
+            f"`gh run rerun {latest.get('databaseId')}` or start a new one with `{dispatch}`."
+        )
+    print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
+
+
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
-    """Checks 1-11, in order. Returns the PR record, or raises LandError."""
+    """Checks 1-12, in order. Returns the PR record, or raises LandError."""
     pr = json.loads(gh(["pr", "view", str(number), "--json", PR_FIELDS]))
     head = pr["headRefOid"]
     if pr["baseRefName"] != "main":
@@ -923,6 +966,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
 
     check_main_green(number, pr, gh, bases)
     check_fresh_base(number, rows, gh, bases)
+    check_fork_pin(number, pr, rows, gh)
     return pr
 
 
@@ -1050,7 +1094,7 @@ def land(
     pr = check(number, gh, git)
     head = pr["headRefOid"]
     if dry_run:
-        print(f"dry-run: #{number} passes checks 1-11 at {head[:12]}; not merging.")
+        print(f"dry-run: #{number} passes checks 1-12 at {head[:12]}; not merging.")
         return 0
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
