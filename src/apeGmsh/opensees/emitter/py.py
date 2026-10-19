@@ -21,6 +21,7 @@ from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo
 
+import io
 import math
 import os
 import re
@@ -53,50 +54,117 @@ DECK_RUN_SCHEMA = "apegmsh.deck_run/1"
 DECK_RUN_SUFFIX = ".run.json"
 
 
+class _MemoryArchive(io.BytesIO):
+    """An in-memory ``model.h5``: h5py writes it as a file object, and the
+    composition's path helpers (the provenance base directory, the stem)
+    read the name ``__fspath__`` gives. Nothing reaches the disk."""
+
+    def __fspath__(self) -> str:
+        return os.path.join(os.getcwd(), "deck_run_lineage.h5")
+
+
+#: ``(model_hash, fem_hash)`` by bridge declaration digest, for archives
+#: this process composed for a record: a second deck of the same
+#: declarations (py then tcl, one deck per ground motion) composes nothing.
+_LINEAGE_BY_DIGEST: "dict[str, tuple[str, str]]" = {}
+
+
+def _lineage_of(f: Any) -> "tuple[str | None, str | None]":
+    from .._internal.lineage import read_stored_lineage
+
+    fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+    return model_hash, fem_hash
+
+
+def _declarations(bridge: Any) -> "tuple[str, str] | None":
+    """``(digest, model name)`` of ``bridge``'s declarations, as the
+    automatic ``model.h5`` write keys them, or ``None`` for a snapshot that
+    write never handles (not a :class:`FEMData`) or that cannot be digested;
+    the lineage is then composed every time."""
+    from ...mesh.FEMData import FEMData
+    from .._internal.artifact_write import _declaration_digest
+
+    fem = bridge.fem if bridge is not None else None
+    if not isinstance(fem, FEMData):
+        return None
+    name = fem.model_name or ""
+    try:
+        return _declaration_digest(bridge, name), name
+    except Exception:  # noqa: BLE001 - an unpicklable declaration: compose
+        return None
+
+
+def _automatic_archive_lineage(
+    digest: str, name: str,
+) -> "tuple[str | None, str | None] | None":
+    """The lineage of the bridge's automatic ``model.h5`` when it holds
+    exactly these declarations (the write's own P5 record says so)."""
+    import h5py
+
+    from ..._core import default_artifact_dir
+    from .._internal.artifact_write import _LAST_WRITTEN
+
+    if not name:
+        return None
+    target = (default_artifact_dir() / f"{name}.h5").resolve()
+    if _LAST_WRITTEN.get(target) != digest or not target.is_file():
+        return None
+    with h5py.File(target, "r") as f:
+        return _lineage_of(f)
+
+
 def deck_run_lineage(
-    archive: "Callable[[str], None]",
+    archive: "Callable[[Any], None]", bridge: Any = None,
 ) -> "tuple[str, str] | None":
     """``(model_hash, fem_hash)`` of the archive ``archive(path)`` writes.
 
-    The record names the ``model.h5`` the deck was emitted from, so the
-    bridge composes that archive (``apeSees._write_h5`` over the deck's own
-    build) into a temporary file and reads its ``/meta/lineage``. No
-    ``model.h5`` is written or read, and ``model_hash`` is unchanged. A
-    model whose archive cannot be composed warns once and gets no record;
-    the deck still emits, and ``read_deck_mpco`` of its ``.mpco`` refuses
-    to convert (check 1).
+    The record names the ``model.h5`` the deck was emitted from. Its
+    lineage is reused when one of these already holds ``bridge``'s
+    declarations, by their digest: an archive composed earlier in this
+    process for a record, or the bridge's automatic ``model.h5`` (which the
+    deck emit writes first). Otherwise the bridge composes the archive
+    (``apeSees._write_h5`` over the deck's own build) in memory. No file is
+    written and ``model_hash`` is unchanged. A model whose archive cannot
+    be composed warns once and gets no record; the deck still emits, and
+    ``read_deck_mpco`` of its ``.mpco`` refuses to convert (check 1).
     """
-    import tempfile
     import warnings
 
     import h5py
 
-    from .._internal.lineage import read_stored_lineage
     from .h5 import H5FeatureDeferredWarning
 
+    key = _declarations(bridge)
+    if key is not None and key[0] in _LINEAGE_BY_DIGEST:
+        return _LINEAGE_BY_DIGEST[key[0]]
     why = ""
     try:
-        with tempfile.TemporaryDirectory(prefix="apegmsh-deck-run-") as tmp:
-            path = os.path.join(tmp, "model.h5")
+        found = None if key is None else _automatic_archive_lineage(*key)
+        if found is None:
+            buf = _MemoryArchive()
             with warnings.catch_warnings():
                 # A deferred feature is the explicit save's warning.
                 warnings.simplefilter("ignore", H5FeatureDeferredWarning)
-                archive(path)
-            with h5py.File(path, "r") as f:
-                fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+                archive(buf)
+            with h5py.File(buf, "r") as f:
+                found = _lineage_of(f)
+        model_hash, fem_hash = found
         if model_hash is None:
             why = "the archive carries no /meta/lineage@model_hash"
     except Exception as exc:  # noqa: BLE001 - named in the warning below
         why = f"its model archive cannot be composed ({exc!r})"
     if why:
         warnings.warn(
-            f"The deck writes no run record (#2210): {why}. read_deck_mpco "
-            "of its .mpco will read it with Results.from_mpco.",
+            f"The deck writes no run record: {why}. read_deck_mpco of its "
+            ".mpco will read it with Results.from_mpco.",
             RuntimeWarning, stacklevel=4,
         )
         return None
     assert model_hash is not None
-    return model_hash, fem_hash or ""
+    lineage = (model_hash, fem_hash or "")
+    if key is not None:
+        _LINEAGE_BY_DIGEST[key[0]] = lineage
+    return lineage
 
 
 def deck_run_fields(
@@ -136,9 +204,9 @@ _TCL_RUN_TIME = {"steps_completed": "%d", "opensees_backend": '"%s"',
 
 
 def deck_run_body(
-    dialect: 'Literal["py", "tcl"]', archive: "Callable[[str], None]",
+    dialect: 'Literal["py", "tcl"]', archive: "Callable[[Any], None]",
     files: "Sequence[str]", analysis: "str | None", steps: int,
-    dt: "float | None", *, partitioned: bool,
+    dt: "float | None", *, partitioned: bool, bridge: Any = None,
 ) -> "list[str]":
     """The deck lines that write the run record of each MPCO ``files``
     entry (``<file>.run.json``), in ``dialect``; ``[]`` with no file or no
@@ -148,7 +216,7 @@ def deck_run_body(
     completed from the loop's own counter, which the record follows."""
     if not files or analysis is None:
         return []
-    lineage = deck_run_lineage(archive)
+    lineage = deck_run_lineage(archive, bridge)
     if lineage is None:
         return []
     import json
@@ -852,8 +920,8 @@ class PyEmitter:
         self._lines.append(_ops_call("analysis", a_type))
 
     def _deck_run_record(
-        self, archive: "Callable[[str], None]", steps: int,
-        dt: "float | None",
+        self, archive: "Callable[[Any], None]", steps: int,
+        dt: "float | None", bridge: Any = None,
     ) -> None:
         """Make the deck write its run record (#2210) as its last action.
 
@@ -870,7 +938,7 @@ class PyEmitter:
         """
         for line in deck_run_body(
             "py", archive, self._mpco_files, self._analysis_token, steps,
-            dt, partitioned=self._partition_shim_emitted,
+            dt, partitioned=self._partition_shim_emitted, bridge=bridge,
         ):
             self._lines.append(line)
 

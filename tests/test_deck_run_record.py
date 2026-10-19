@@ -91,12 +91,13 @@ def truss_fem() -> FEMData:
     )
 
 
-def truss_bridge(mpco: "Path | None", *, analysis: str = "Static") -> Any:
+def truss_bridge(mpco: "Path | None", *, analysis: str = "Static",
+                 artifacts: bool = True) -> Any:
     """The truss on a bridge, unstaged, with one ``analysis`` declaration
     and (with ``mpco``) a bridge MPCO recorder on the nodal displacements."""
     from apeGmsh.opensees import apeSees
 
-    ops = apeSees(truss_fem(), default_orientation=None)
+    ops = apeSees(truss_fem(), default_orientation=None, _artifacts=artifacts)
     ops.model(ndm=2, ndf=2)
     mat = ops.uniaxialMaterial.ElasticMaterial(E=E)
     ops.element.Truss(pg="Bar", A=A, material=mat)
@@ -367,6 +368,129 @@ def test_a_partitioned_deck_writes_on_rank_0_after_a_barrier(
         assert barriers == 1
         written = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX).exists()
         assert written == (pid == 0)
+    assert read_record(mpco)["recorder_file"] == "run.mpco"
+
+
+def _count_archives(monkeypatch: Any) -> "list[Any]":
+    """Every path ``apeSees._write_h5`` is asked to write, in order."""
+    from apeGmsh.opensees.apesees import apeSees
+
+    seen: "list[Any]" = []
+    real = apeSees._write_h5
+
+    def spy(self: Any, path: Any, bm: Any, **kw: Any) -> None:
+        seen.append(path)
+        real(self, path, bm, **kw)
+
+    monkeypatch.setattr(apeSees, "_write_h5", spy)
+    return seen
+
+
+def test_the_record_reuses_the_automatic_archive(tmp_path, monkeypatch) -> None:
+    """With the automatic ``model.h5`` on, an export composes one archive,
+    the automatic one, and the record reads its lineage. A second deck of
+    the same declarations composes none; a changed declaration is a new
+    digest, and the record follows it."""
+    mpco = tmp_path / "deck.mpco"
+    bridge = truss_bridge(mpco)
+    seen = _count_archives(monkeypatch)
+    bridge.py(str(tmp_path / "a.py"), analyze_steps=STEPS, progress=False)
+    assert len(seen) == 1 and isinstance(seen[0], str)  # the automatic write
+    bridge.tcl(str(tmp_path / "a.tcl"), analyze_steps=STEPS, progress=False)
+    assert len(seen) == 1
+    bridge.uniaxialMaterial.ElasticMaterial(E=1.0)  # a new declaration
+    bridge.py(str(tmp_path / "b.py"), analyze_steps=STEPS, progress=False)
+    assert len(seen) == 2
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    for deck in ("a.py", "a.tcl", "b.py"):
+        if deck.endswith(".py"):
+            run_py(record_block(tmp_path / deck), build=None, done=STEPS)
+        else:
+            run_tcl(record_block(tmp_path / deck), build=None, done=STEPS)
+        rec = read_record(mpco)
+        if deck == "b.py":
+            assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+        else:
+            assert rec["model_hash"] != lineage(model)[0]
+
+
+def test_without_the_automatic_archive_it_is_composed_in_memory(
+    tmp_path, monkeypatch,
+) -> None:
+    """``_artifacts=False``: the archive is composed once, into memory (no
+    file), and its lineage is the user's ``ops.h5()`` lineage; a second
+    export reuses it."""
+    import io
+
+    mpco = tmp_path / "deck.mpco"
+    bridge = truss_bridge(mpco, artifacts=False)
+    seen = _count_archives(monkeypatch)
+    bridge.py(str(tmp_path / "d.py"), analyze_steps=STEPS, progress=False)
+    bridge.tcl(str(tmp_path / "d.tcl"), analyze_steps=STEPS, progress=False)
+    assert len(seen) == 1 and isinstance(seen[0], io.BytesIO)
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    run_py(record_block(tmp_path / "d.py"), build=None, done=STEPS)
+    assert (read_record(mpco)["model_hash"],
+            read_record(mpco)["fem_hash"]) == lineage(model)
+
+
+def _partitioned_bridge(mpco: Path) -> Any:
+    """A bridge on a two-rank snapshot (the emit-cost bench's builder), so
+    its decks carry ``getPID`` blocks."""
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.material.nd import ElasticIsotropic
+    from apeGmsh.opensees.material.uniaxial import ElasticMaterial
+    from tests.benchmarks.test_cross_rank_constraint_cost import (
+        _build_embedded_fem,
+    )
+
+    fem, host_pg, rebar_pg = _build_embedded_fem(8, 2, "hex_host_line_embed")
+    ops = apeSees(cast("object", fem), _artifacts=False)
+    ops.model(ndm=3, ndf=3)
+    nd, ux = ElasticIsotropic(E=2.0e10, nu=0.2), ElasticMaterial(E=2.0e11)
+    ops.register(nd)
+    ops.register(ux)
+    ops.element.stdBrick(pg=host_pg, material=nd)
+    ops.element.Truss(pg=rebar_pg, A=1e-4, material=ux)
+    ops.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+    ops.constraints.Transformation()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+    return ops
+
+
+@pytest.mark.filterwarnings("ignore")  # the stub's partition / penalty notes
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_a_partitioned_bridge_deck_guards_its_record(tmp_path, dialect) -> None:
+    """The bridge's own partitioned deck: every rank's loop, a barrier, then
+    the record from rank 0 alone."""
+    mpco = tmp_path / "run.mpco"
+    deck = tmp_path / f"deck.{dialect}"
+    getattr(_partitioned_bridge(mpco), dialect)(
+        str(deck), analyze_steps=STEPS, progress=False)
+    text = deck.read_text(encoding="utf-8")
+    assert "getPID" in text.split(MARK)[0]  # a partitioned deck
+    guard = ("if hasattr(ops, 'barrier'):" if dialect == "py"
+             else 'if {[info commands barrier] ne ""} { barrier }')
+    block = text[text.index(guard):]
+    assert block.index(guard) < block.index(MARK)
+    final = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX)
+    for pid in (1, 0):
+        if dialect == "py":
+            barriers = run_py(block, build=None, done=STEPS, pid=pid).barriers
+        else:
+            interp = run_tcl(block, build=None, done=STEPS, pid=pid)
+            barriers = int(interp.eval("set _apesees_barriers"))
+        assert barriers == 1
+        assert final.exists() == (pid == 0)
     assert read_record(mpco)["recorder_file"] == "run.mpco"
 
 

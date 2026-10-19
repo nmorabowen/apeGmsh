@@ -1099,8 +1099,8 @@ class TclEmitter:
         self._lines.append(_join("analysis", a_type))
 
     def _deck_run_record(
-        self, archive: "Callable[[str], None]", steps: int,
-        dt: "float | None",
+        self, archive: "Callable[[Any], None]", steps: int,
+        dt: "float | None", bridge: Any = None,
     ) -> None:
         """The Tcl deck's run record (#2210), as
         :meth:`PyEmitter._deck_run_record` (a failed increment is a Tcl
@@ -1109,7 +1109,7 @@ class TclEmitter:
 
         for line in deck_run_body(
             "tcl", archive, self._mpco_files, self._analysis_token, steps,
-            dt, partitioned=self._partition_shim_emitted,
+            dt, partitioned=self._partition_shim_emitted, bridge=bridge,
         ):
             self._lines.append(line)
 
