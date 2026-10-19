@@ -151,12 +151,24 @@ def _world_via_basis(
     order: int,
 ) -> "ndarray | None":
     """``x = B(ξ)·X`` over the element's control points, or None on a
-    basis/shape mismatch (caller falls back)."""
+    basis/shape mismatch (caller falls back).
+
+    ``natural_coord`` is gmsh ``(u, v[, w])`` (the ``GaussSlab`` contract,
+    #2228); :func:`apeGmsh._basis.basis_values` takes the element's own
+    full barycentric row, so it is rebuilt here: ``(ξ1, ξ2, ξ3) = (u, v,
+    1 - u - v)`` for the triangle (``N0 = ξ3²``), ``(L1, L2, L3, L4) =
+    (1 - u - v - w, u, v, w)`` for the tet (``N0 = L1²``).
+    """
     from .._basis import BasisError, basis_values
+    xi = np.asarray(natural_coord, dtype=np.float64).reshape(1, -1)
+    rest = 1.0 - xi.sum(axis=1, keepdims=True)
+    if topology == "tri" and xi.shape[1] == 2:
+        xi = np.hstack([xi, rest])
+    elif topology == "tet" and xi.shape[1] == 3:
+        xi = np.hstack([rest, xi])
     try:
         r = basis_values(
-            topology=topology, family=family, order=order,
-            xi=np.asarray(natural_coord, dtype=np.float64),
+            topology=topology, family=family, order=order, xi=xi,
         )
     except BasisError:
         return None

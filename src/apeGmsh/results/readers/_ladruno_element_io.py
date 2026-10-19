@@ -642,7 +642,8 @@ def _class_prefix(bucket_key: str) -> str:
 def _gp_param_for(
     model_elements: "Optional[h5py.Group]", bucket_key: str,
 ) -> Optional[ndarray]:
-    """Find ``QUADRATURE/GP_PARAM`` for the bucket's element class."""
+    """``QUADRATURE/GP_PARAM`` for the bucket's element class, in gmsh
+    reference coordinates (see :func:`gp_param_to_gmsh`)."""
     if model_elements is None:
         return None
     prefix = _class_prefix(bucket_key)
@@ -651,10 +652,138 @@ def _gp_param_for(
             continue
         grp = model_elements[name]
         if "QUADRATURE" in grp and "GP_PARAM" in grp["QUADRATURE"]:
-            return np.asarray(
+            gp = np.asarray(
                 grp["QUADRATURE"]["GP_PARAM"][...], dtype=np.float64,
             )
+            return gp_param_to_gmsh(
+                gp,
+                param_domain=_basis_attr(grp, "PARAM_DOMAIN", name),
+                topology=_basis_attr(grp, "TOPOLOGY", name),
+                family=_basis_attr(grp, "FAMILY", name),
+                where=f"MODEL/ELEMENTS/{name}",
+            )
     return None
+
+
+# =====================================================================
+# GP_PARAM frame → gmsh reference coordinates (#2228)
+# =====================================================================
+#
+# ``GaussSlab.natural_coords`` is gmsh reference coordinates for every
+# family: ``[-1, 1]^d`` for line/quad/hex, and ``(u, v[, w])`` on the
+# unit simplex (node 0 carries ``1 - Σ``) for tri/tet, which is what the
+# extrapolation and world-coordinate consumers evaluate. The fork writes a
+# simplex rule as ``PARAM_DOMAIN="bary"`` free barycentric coordinates,
+# and the frame depends on the element:
+#
+# * Lagrange tri/tet and BezierTet10 are node-0-first: column ``k`` is
+#   node ``k``'s weight, the last node's is implicit (fork
+#   ``Ladruno_ElementResults.h`` ``computeGlobalGP``: Tri31
+#   ``N0 = ξ, N1 = η``; tet ``N0 = r, …, N3 = 1 - Σ``; BezierTet10.cpp:1233
+#   ``N0 = L1²``). Gmsh ``(u, v[, w])`` is then columns ``1..`` of the full
+#   barycentric row.
+# * BezierTri6 (the only bernstein triangle) writes ``(ξ1, ξ2)`` as the
+#   weights of nodes 1 and 2 (BezierTri6.cpp:869, ``N0 = ξ3²``), which is
+#   gmsh already.
+#
+# Read as gmsh without converting, a TenNodeTetrahedron's corner values
+# came back rotated by one node and its GP world coordinates were off by
+# up to the element size, with no warning.
+
+_SIMPLEX_NDIR = {"tri": 2, "tet": 3}
+
+
+def _basis_attr(grp: "h5py.Group", name: str, where: str) -> str:
+    """A BASIS attribute (``PARAM_DOMAIN``/``TOPOLOGY``/``FAMILY``).
+
+    The fork writes all three beside every ``QUADRATURE`` group; without
+    them the frame of ``GP_PARAM`` is unknown, so a missing one raises.
+    """
+    if name not in grp.attrs:
+        raise ValueError(
+            f"MODEL/ELEMENTS/{where} carries QUADRATURE/GP_PARAM but no "
+            f"{name} attribute, so the frame of its Gauss-point "
+            f"coordinates is unknown. Refusing to guess where the points "
+            f"are."
+        )
+    return _decode_str(grp.attrs[name]).strip()
+
+
+def _node0_first(topology: str, family: str) -> bool:
+    """Whether a ``"bary"`` rule of this (topology, family) is node-0-first.
+
+    ``False`` means it is gmsh ``(u, v)`` already. An unknown pair raises:
+    the frame is per element, and a guess silently rotates the points.
+    """
+    if topology == "tri" and family == "bernstein":
+        return False
+    if topology in _SIMPLEX_NDIR and family in ("lagrange", "bernstein"):
+        return True
+    raise ValueError(
+        f"no known barycentric frame for TOPOLOGY={topology!r}, "
+        f"FAMILY={family!r}"
+    )
+
+
+def gp_param_to_gmsh(
+    gp: ndarray, *, param_domain: str, topology: str, family: str,
+    where: str,
+) -> ndarray:
+    """A file's ``GP_PARAM`` rows in gmsh reference coordinates.
+
+    ``"[-1,1]"`` rows are returned as they are. ``"bary"`` rows of a
+    node-0-first element become ``(u, v[, w]) = (L2, L3[, L4])``, where
+    ``L1..`` are the full barycentric weights of nodes ``0..``; a
+    bernstein triangle's rows are gmsh already. Any other domain, or a
+    width that does not match the topology, raises.
+    """
+    gp = np.asarray(gp, dtype=np.float64)
+    if param_domain == "[-1,1]":
+        if topology in _SIMPLEX_NDIR:
+            raise ValueError(
+                f"{where}: PARAM_DOMAIN '[-1,1]' on a {topology} element; "
+                f"a simplex rule is barycentric. Refusing to guess."
+            )
+        return gp
+    if param_domain != "bary":
+        raise ValueError(
+            f"{where}: unknown PARAM_DOMAIN {param_domain!r} (known: "
+            f"'[-1,1]', 'bary'). Refusing to guess where the Gauss points "
+            f"are."
+        )
+    ndir = _SIMPLEX_NDIR.get(topology)
+    if ndir is None or gp.ndim != 2 or gp.shape[1] != ndir:
+        raise ValueError(
+            f"{where}: PARAM_DOMAIN 'bary' with TOPOLOGY={topology!r} and "
+            f"GP_PARAM of shape {gp.shape}; expected {ndir} free "
+            f"barycentric coordinates per point on a tri (2) or tet (3)."
+        )
+    try:
+        node0_first = _node0_first(topology, family)
+    except ValueError as e:
+        raise ValueError(f"{where}: {e}. Refusing to guess.") from None
+    if not node0_first:
+        return gp
+    full = np.hstack([gp, 1.0 - gp.sum(axis=1, keepdims=True)])
+    return np.ascontiguousarray(full[:, 1:])
+
+
+def gmsh_to_gp_param(
+    natural_coords: ndarray, *, topology: str, family: str,
+) -> ndarray:
+    """The inverse of :func:`gp_param_to_gmsh` for a ``"bary"`` rule.
+
+    Gmsh ``(u, v[, w])`` rows back to the free barycentric ``GP_PARAM`` a
+    ``.ladruno`` carries for this (topology, family): node-0-first
+    ``(1 - Σ, u[, v])``, or ``(u, v)`` for a bernstein triangle. Used by
+    the MPCO → ``.ladruno`` converter, so a converted file reads back to
+    the same points.
+    """
+    nat = np.asarray(natural_coords, dtype=np.float64)
+    if not _node0_first(topology, family):
+        return nat
+    full = np.hstack([1.0 - nat.sum(axis=1, keepdims=True), nat])
+    return np.ascontiguousarray(full[:, :-1])
 
 
 # =====================================================================
