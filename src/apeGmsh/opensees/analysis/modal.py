@@ -28,9 +28,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
     from ..emitter.live import LiveOpsEmitter
@@ -906,6 +909,96 @@ class ParallelModalResult:
             )
         finally:
             writer.close()
+
+    def to_ladruno(self, path: "str | Any", *, model_h5: "str | Any") -> Path:
+        """Write the harvested modes as a stamped ``.ladruno`` and return
+        its path (ADR 0122; the twin of :meth:`to_native`).
+
+        One ``KIND="eigen"`` ``MODEL_STAGE`` holds every mode in the
+        layout the fork recorder writes for ``modesOfVibration`` +
+        ``modesOfVibrationRotational`` (the table is in
+        :mod:`apeGmsh.results.readers._ladruno_writer`), over
+        :attr:`shape_nodes`. Each node's shape columns are laid onto
+        ``Ux..Rz`` by its own DOF layout (its ndf in the archive's
+        ``/opensees/nodes_ndf``; the deck pads every node to one dof
+        list). A rotation slot holds the rotation only where the model's
+        DOF roles say so, so a u-p node's pore pressure is never written
+        as one; a slot the roles cannot settle is written as 0.0 with one
+        :class:`~apeGmsh.opensees.analysis.eigen.RotationSlotUnresolvedWarning`.
+        A non-positive eigenvalue writes 0 Hz / 0 s and warns once for
+        its mode.
+
+        ``model_h5`` is the bridge archive the deck was emitted from
+        (``ops.h5``). ``MODEL/NODES`` is its fem, ``MODEL/ELEMENTS`` is
+        empty (``INFO/PROVENANCE@unsupported`` says so), and the file is
+        stamped against it::
+
+            res = ParallelModalResult.from_job(job_dir)
+            p = res.to_ladruno("modes.ladruno", model_h5="model.h5")
+            r = Results.from_ladruno(p, model_h5="model.h5")
+
+        Raises
+        ------
+        FileNotFoundError
+            The run dir carries no mode-shape harvest.
+        ValueError
+            The archive's ``ndm`` differs from the sidecar's, or a
+            harvested node is not a node of the archive's fem or has no
+            ndf there, or ``path`` is ``model_h5`` or an ``.h5``. Nothing is
+            written.
+        """
+        from ..opensees_model import OpenSeesModel
+        from .eigen import _ladruno_slots, _spatial, _warn_unresolved
+
+        if self._shapes is None or self._shape_nodes is None:
+            raise FileNotFoundError(_NO_SHAPES_MSG)
+        check_target(path, model_h5)
+        shapes = self._shapes
+        model = OpenSeesModel.from_h5(str(model_h5))
+        ndm = int(model.ndm)
+        if self._shape_ndm is not None and int(self._shape_ndm) != ndm:
+            raise ValueError(
+                "ParallelModalResult.to_ladruno: the sidecar says ndm="
+                f"{self._shape_ndm} but {model_h5} is an ndm={ndm} model; "
+                "the run dir and the archive come from different models. "
+                "Nothing was written."
+            )
+        fem = model.fem
+        nodes_ndf = model.nodes_ndf
+        rec = [int(n) for n in self._shape_nodes]
+        fem_ids = {int(n) for n in fem.nodes.ids}
+        stray = [n for n in rec if n not in fem_ids]
+        if stray:
+            raise ValueError(
+                f"ParallelModalResult.to_ladruno: harvested node(s) "
+                f"{stray[:5]} are not nodes of the model archive's fem; the "
+                "mode shapes and the model come from different meshes. "
+                "Nothing was written."
+            )
+        unknown = [n for n in rec if n not in nodes_ndf]
+        if unknown:
+            raise ValueError(
+                f"ParallelModalResult.to_ladruno: {model_h5} records no ndf "
+                f"for harvested node(s) {unknown[:5]} (/opensees/nodes_ndf), "
+                "so their DOFs cannot be laid onto Ux..Rz. Re-write the "
+                "archive with ops.h5(...). Nothing was written."
+            )
+        layouts, rotations, unresolved = _ladruno_slots(
+            Path(model_h5), rec, nodes_ndf, ndm,
+            where="ParallelModalResult.to_ladruno")
+        spatial = np.stack([_spatial(rows, layouts) for rows in shapes])
+        _warn_unresolved("ParallelModalResult.to_ladruno", unresolved, 2)
+        return write_modes(
+            path, model_h5=model_h5,
+            node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
+            coords=np.asarray(fem.nodes.coords, dtype=np.float64),
+            ndm=ndm,
+            eigenvalues=self.eigenvalues,
+            fields=lambda k: spatial[k - 1],
+            rotations=rotations,
+            record_ids=self._shape_nodes,
+            source="modal_deck", stacklevel=3,
+        )
 
     def participation_factors(self, component: str) -> np.ndarray:
         """Not available in a distributed run — modalProperties is MPI-blind."""

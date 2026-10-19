@@ -320,9 +320,11 @@ def test_modal_record_raises_at_enter(tmp_path: Path) -> None:
         ),
     )
     fake = FakeOps()
-    with pytest.raises(RuntimeError, match="modal"):
+    with pytest.raises(RuntimeError, match="modal") as exc:
         with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)):
             pass
+    assert "emit_mpco" in str(exc.value)
+    assert "domain_capture" not in str(exc.value)
 
     # Nothing should have been emitted before the raise.
     assert fake.recorder_calls == []
@@ -569,7 +571,9 @@ def test_skips_fiber_record_with_warning(tmp_path: Path) -> None:
 
     msgs = [str(w.message) for w in caught]
     assert any(
-        "non_recorder" in m and "category='fibers'" in m and "emit_mpco" in m
+        "non_recorder" in m and "category='fibers'" in m
+        and "emit_mpco" in m and "emit_default" in m
+        and "domain_capture" not in m
         for m in msgs
     ), msgs
 

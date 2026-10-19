@@ -29,25 +29,25 @@
 # Not in this oracle: the golden emit corpus (tests/opensees/golden/cells, 86 cells).
 # It is built on FEMStub, so its archives are bridge-only and not replayable,
 # by design (#1797; golden/README.md, "Bridge-only by design").
-N_WAIVED_ORACLE = 33
-test_h5_apesees_cuts::_build_minimal_ops B 0b630b19c653c7e0  # derived B (#1885): declaration order: geomTransf and beamIntegration move; Steel02 and -GJ integral floats re-emitted as integers
-test_h5_builder_scope_replay::build_mixed_ndf_bridge B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
-test_h5_builder_scope_replay::_staged_bridge[staged_pg=Rock] B 068f56013233fa51  # declaration order: section, geomTransf, beamIntegration and damping move
-test_h5_builder_scope_replay::_staged_bridge[staged_pg=Liner] B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
-test_h5_damping::_build_with_element_damp B 701687019daf6c2a  # declaration order: damping Uniform moves
+N_WAIVED_ORACLE = 32
+test_h5_apesees_cuts::_build_minimal_ops A 5756166f7eecc4e4  # integral floats re-emitted as integers (Steel02, -GJ); order fixed by #2193
+test_h5_builder_scope_replay::build_mixed_ndf_bridge A 43674504560f101d  # integral floats re-emitted as integers (section, nDMaterial, quad thickness, damping); order fixed by #2193
+test_h5_builder_scope_replay::_staged_bridge[staged_pg=Rock] A 9312ebd9df3fb712  # integral floats re-emitted as integers (section, nDMaterial, quad thickness, damping); order fixed by #2193
+test_h5_builder_scope_replay::_staged_bridge[staged_pg=Liner] A 43674504560f101d  # integral floats re-emitted as integers (section, nDMaterial, quad thickness, damping); order fixed by #2193
+test_h5_damping::_build_with_element_damp A 486323d4aa7f11a2  # integral floats re-emitted as integers (damping, element); order fixed by #2193
 test_h5_decls::_staged[named=False] A 0c126bac02a40165  # derived A (#1885): integral floats re-emitted as integers (nDMaterial, quad thickness)
 test_h5_decls::_staged[named=True] A 0c126bac02a40165  # derived A (#1885): integral floats re-emitted as integers (nDMaterial, quad thickness)
 test_h5_decls::_flat_frame[named=False] A 4dfab89360dacaea  # integral floats re-emitted as integers
 test_h5_decls::_flat_frame[named=True] A 4dfab89360dacaea  # integral floats re-emitted as integers
 test_h5_decls::_param_stage_model A d8388eca39c6ac2f  # derived A (#1885): integral floats re-emitted as integers (nDMaterial, quad thickness)
-test_h5_names_sidecar::_build[named=False] B 645176bf20b787b7  # declaration order: geomTransf and beamIntegration move
-test_h5_names_sidecar::_build[named=True] B 645176bf20b787b7  # declaration order: geomTransf and beamIntegration move
-test_h5_decl_params::_params_frame B b57726281559dbee  # declaration order: section and geomTransf move
-test_h5_decl_params::_broad_staged B d829fde55f7ca7d4  # derived B (#1885): declaration order: rayleigh, eigen and modalDamping move; integral floats re-emitted as integers
-test_h5_decl_params::_broad_frame B c9cbbc78f2ad982a  # declaration order: section, geomTransf and constraints move
+test_h5_names_sidecar::_build[named=False] A dba9070ce2a433db  # integral floats re-emitted as integers (Steel02, -GJ); order fixed by #2193
+test_h5_names_sidecar::_build[named=True] A dba9070ce2a433db  # integral floats re-emitted as integers (Steel02, -GJ); order fixed by #2193
+test_h5_decl_params::_params_frame A 6fff47ee5c87c2b2  # integral floats re-emitted as integers (materials, section); order fixed by #2193
+test_h5_decl_params::_broad_staged A 1274f1b7d229f12b  # integral floats re-emitted as integers (nDMaterial, damping, quad thickness); order fixed by #2193
+test_h5_decl_params::_broad_frame A 6fff47ee5c87c2b2  # integral floats re-emitted as integers (materials, section); order fixed by #2193
 test_h5_decl_params::_broad_partitioned S BridgeOnlyArchiveError:no-neutral-zone  # #1797: golden-corpus model (build_model), bridge-only by design
-test_h5_initial_stress::_build_frame[with_initial_stress=False] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
-test_h5_initial_stress::_build_frame[with_initial_stress=True] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
+test_h5_initial_stress::_build_frame[with_initial_stress=False] A dba9070ce2a433db  # integral floats re-emitted as integers (Steel02, -GJ); order fixed by #2193
+test_h5_initial_stress::_build_frame[with_initial_stress=True] A dba9070ce2a433db  # integral floats re-emitted as integers (Steel02, -GJ); order fixed by #2193
 test_h5_param_tags::_update_then_stress_bridge A 0c126bac02a40165  # integral floats re-emitted as integers
 test_h5_param_tags::_flat_quad_initial_stress_bridge A 05f060033d9decbd  # integral floats re-emitted as integers
 test_h5_param_tags::_zero_some_bridge A 1be02386e4b2917a  # integral floats re-emitted as integers
@@ -56,10 +56,9 @@ test_h5_partitioned_staged_capture::_partitioned_bridge A a689fc8f9e94a573  # in
 test_h5_partitioned_staged_capture::_flat_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
 test_h5_partitions_roundtrip::_build_bridge A 1be02386e4b2917a  # integral floats re-emitted as integers (nDMaterial, quad thickness)
 test_h5_rc_layered_shell_roundtrip::_bridge A b201a51bd6f7b48e  # integral floats re-emitted as integers
-test_h5_solve_stamp::_frame_bridge[analysis=True] B 19034b94cb3ddbbd  # declaration order: system and analysis move in the chain
 test_h5_stages_reader::_real_two_stage_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
 test_h5_stages_reader::_real_kitchen_sink_bridge A 1cbec0cd483137d6  # integral floats re-emitted as integers
 test_h5_stages_replay::_no_param_two_stage_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
-test_opensees_model_build_targets::_author_simple_frame_apesees B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
+test_opensees_model_build_targets::_author_simple_frame_apesees A dba9070ce2a433db  # integral floats re-emitted as integers (Steel02, -GJ); order fixed by #2193
 test_reinforce_deck_replay::_reinforced_ops[bond_by_name=False] A 5672fc62f5b67cf2  # integral floats re-emitted as integers
-test_reinforce_deck_replay::_reinforced_ops[bond_by_name=True] B 8f75a86026d63099  # declaration order: LadrunoBondSlip moves
+test_reinforce_deck_replay::_reinforced_ops[bond_by_name=True] A e3422e07ac747533  # integral floats re-emitted as integers (nDMaterial, LadrunoBondSlip); order fixed by #2193

@@ -37,7 +37,7 @@ import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
-import type { UnitSystemId } from "../state/types.ts";
+import type { ModeFacts, UnitSystemId } from "../state/types.ts";
 
 export type AnyResultsFile = ResultsFile | LadrunoFile;
 
@@ -71,6 +71,8 @@ export interface ResultsStageMeta {
   elementIndexSpace?: string | null;
   /** 1-D beam line-station components recorded in this stage (.ladruno) */
   lineStations?: LineStationComponent[];
+  /** a `.ladruno` mode stage's eigen scalars (reader/ladruno.ts `LadrunoMode`); absent on every other stage */
+  mode?: ModeFacts;
 }
 
 export interface GaussGroupMeta {
@@ -254,6 +256,10 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     const space = prov.state === "present" ? prov.attrs.element_index_space : null;
     const elementIndexSpace = space?.state === "present" ? space.value : null;
     const names = ladrunoStageNames(rf, warningsOut);
+    // #2128: a mode stage carries its eigen scalars, so the renderer can say which mode it draws.
+    const modes = new Map<string, ModeFacts>(
+      ix.modes.map((m) => [m.stageId, { index: m.modeIndex, eigenvalue: m.eigenvalue, frequencyHz: m.frequencyHz, periodS: m.periodS }]),
+    );
     return {
       path: ix.path,
       version: "1.0.0",
@@ -278,6 +284,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         unread: [...s.unread],
         elementIndexSpace,
         lineStations: rf.availableLineStations(s.id, warningsOut),
+        ...(modes.has(s.id) ? { mode: modes.get(s.id)! } : {}),
       })),
     };
   }

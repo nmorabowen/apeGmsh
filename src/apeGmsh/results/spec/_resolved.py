@@ -12,8 +12,8 @@ build/emit time into a :class:`ResolvedRecorderSpec` — a snapshot
 tied to a specific FEMData by ``snapshot_id``.
 
 Only the spec is consumed downstream:
-- Phase 5 / 8: emit Tcl/Python recorder commands or ``recorder mpco`` lines
-- Phase 7: drive in-process domain capture
+- emit Tcl/Python recorder commands or ``recorder mpco`` lines
+- ``emit_default``: record an in-process run on the default route
 
 The spec is gmsh-independent and OpenSees-independent at the type
 level — just a numpy + dataclass payload.
@@ -27,6 +27,9 @@ import numpy as np
 from numpy import ndarray
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..live._default import LiveDefault
     from ..live._mpco import LiveMPCO
     from ..live._recorders import LiveRecorders
 
@@ -94,7 +97,8 @@ class LayerSectionDef:
     """One LayeredShellFiberSection's per-layer composition.
 
     Populated from the bridge's resolved sections at recorder-resolve time
-    for ``category="layers"`` records. Carries the data DomainCapture
+    for ``category="layers"`` records. Carries the data the in-process
+    layer capturer (results/capture, which the deletion step removes)
     cannot probe from the live openseespy domain — per-layer
     thickness and material tag — so the capture-side
     ``write_layers_group`` can populate the LayerSlab schema fully.
@@ -114,7 +118,8 @@ class LayerSectionMetadata:
 
     Bundles the LayeredShell section definitions referenced by the
     record's elements plus an ``element_to_section`` lookup map.
-    DomainCapture's ``_LayerCapturer`` consumes this to populate
+    The in-process layer capturer (results/capture, which the deletion
+    step removes) consumes this to populate
     ``LayerSlab.thickness`` (and to validate the layer count when
     probing the live domain).
 
@@ -150,8 +155,8 @@ class ResolvedRecorderRecord:
     # class to the underlying PG/label. Used by the .out transcoder
     # to disambiguate catalog entries that share a flat size for the
     # same response token (e.g. FourNodeTetrahedron vs SSPbrick).
-    # Other paths (DomainCapture via ``ops.eleType``, MPCO via the
-    # bracket key) get class info directly and do not consume this.
+    # Other paths (MPCO via the bracket key) get class info
+    # directly and do not consume this.
     element_class_name: Optional[str] = None
 
     # Tri-state out-of-plane σ_zz capability for this record's elements
@@ -287,8 +292,7 @@ class ResolvedRecorderSpec:
 
         Categories: nodes / elements / gauss / line_stations are
         emitted; fibers / layers warn-and-skip (use
-        ``ops.domain_capture(DomainCaptureSpec(opensees=ops),
-        path=...)`` or :meth:`emit_mpco` instead);
+        :meth:`emit_default` or :meth:`emit_mpco` instead);
         modal records raise on ``__enter__``.
 
         ``model`` is the built :class:`~apeGmsh.opensees.OpenSeesModel`
@@ -337,6 +341,49 @@ class ResolvedRecorderSpec:
         """
         from ..live._mpco import LiveMPCO
         return LiveMPCO(self, path, ops=ops)
+
+    def emit_default(
+        self,
+        path: "str | Path",
+        *,
+        model_h5: "str | Path",
+        ops=None,
+        overwrite: bool = False,
+    ) -> "LiveDefault":
+        """Record an in-process run on the default route for the bound build.
+
+        Returns a :class:`~apeGmsh.results.live.LiveDefault` context
+        manager; read the run with its ``results()`` after the block::
+
+            ops.h5("model.h5")
+            ops.run()
+            with spec.emit_default("run", model_h5="model.h5") as run:
+                for _ in range(n_steps):
+                    opspy.analyze(1)
+            results = run.results()
+
+        The route follows the build (``run.route``): the fork records its
+        own results file, stamps it with ``model_h5``'s pairing and opens
+        it; a stock build with the MPCO recorder records ``run.mpco`` and
+        reads it with :meth:`Results.from_mpco`; a build without MPCO
+        records classic ``.out`` files in ``run_out/`` and reads them with
+        :meth:`Results.from_recorders`. The two stock routes warn once
+        (:class:`~apeGmsh.results.live.DefaultRouteWarning`), naming why.
+
+        A stock in-process ``.mpco`` is never converted: the loop's own
+        ``analysis`` calls never reach ``model_h5``, so its stage kind is
+        not a fact. :func:`~apeGmsh.results.live.read_deck_mpco` converts
+        the ``.mpco`` of the bridge's own staged deck, run out of process.
+
+        ``model_h5`` is the bridge archive the live domain was built from.
+        ``overwrite=True`` replaces the fork's file of an earlier run, which
+        otherwise refuses. Modal records refuse: no default route records
+        modes.
+        """
+        from ..live._default import LiveDefault
+        return LiveDefault(
+            self, path, model_h5=model_h5, ops=ops, overwrite=overwrite,
+        )
 
     # ---------- Tcl / Python emission (Phase 5) ----------
 

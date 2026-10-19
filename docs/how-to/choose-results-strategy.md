@@ -181,6 +181,41 @@ If you already hold a `recorder_spec`, wrapping the loop in
 the bridge. The [MPCO how-to](results-mpco.md) covers partitioned runs and
 where to write the file.
 
+### In-process, let the build choose
+
+`recorder_spec.emit_default(...)` picks the recorder from the openseespy
+build it finds, so one notebook runs unchanged on the fork, on a stock
+build with MPCO and on pip openseespy:
+
+```python
+ops = build_bridge()
+ops.h5("model.h5")
+ops.run()
+with recorder_spec.emit_default("run", model_h5="model.h5") as run:
+    for _ in range(10):
+        opspy.analyze(1)
+opspy.wipe()
+
+results = run.results()
+```
+
+`run.route` says which recorder ran:
+
+| Build | Writes | `run.results()` |
+|---|---|---|
+| the Ladruno fork | `run.ladruno` | stamps the file with `model.h5`'s pairing, then `Results.from_ladruno` |
+| stock, with MPCO | `run.mpco` | `Results.from_mpco`, after one `DefaultRouteWarning` |
+| pip, no MPCO | classic `.out` files in `run_out/` | `Results.from_recorders`, after one `DefaultRouteWarning` |
+
+The stock MPCO file is not converted to `.ladruno`, and it stays on
+`from_mpco`. An unstaged run maps to one stage, and that stage's kind
+(static or transient) has to be a fact. Your loop drives openseespy
+directly, so a `loadConst` or a second `opspy.analysis(...)` inside the
+block never reaches `model.h5`. `read_deck_mpco` below does not apply to
+an in-process run.
+`emit_default` refuses a rerun onto an existing `run.ladruno` unless you
+pass `overwrite=True`. It has no route for modal records.
+
 ### Export, classic recorders
 
 Reach for this for cluster jobs and for decks you keep under version
@@ -232,6 +267,19 @@ Run `model.tcl` under an OpenSees that has the MPCO recorder, then:
 ```python
 results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
 ```
+
+`read_deck_mpco("run.mpco", model_h5="model.h5")`, from
+`apeGmsh.results.live`, reads the run as `.ladruno` instead. It is only for
+a `.mpco` written by running the bridge's own exported deck (`ops.py` or
+`ops.tcl`) out of process, as emitted. A staged deck (`ops.stage` blocks,
+each recording its kind) converts beside itself, and the `.mpco` is kept.
+An unstaged deck does not convert yet, because the archive does not record
+its kind as fact. [#2210](https://github.com/nmorabowen/apeGmsh/issues/2210)
+records it. Until then, an unstaged deck is read with `from_mpco` after one
+warning that says so. Other refusals raise, even when the stages would not
+pair either, such as an archive of another model or an incomplete
+partition set. An in-process run is not a deck, so read its
+`.mpco` with `from_mpco`.
 
 ## The read side is identical
 

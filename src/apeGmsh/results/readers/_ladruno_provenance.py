@@ -2,9 +2,10 @@
 
 A ``.ladruno`` pairs with the ``model.h5`` that produced it through six
 attributes apeGmsh writes into the recorder's empty ``INFO/PROVENANCE``
-group after the recorder has closed the file. The fork blesses those
-consumer writes in its schema, ``ladruno_schema_v1.md`` §7b.1 (fork doc
-PR nmorabowen/OpenSees #992); ADR 0122 D4 says the fork owns the format
+group after the recorder has closed the file, and two more name the engine
+that solved it. The fork blesses those consumer writes in its schema,
+``ladruno_schema_v1.md`` §7b.1 (fork doc PRs nmorabowen/OpenSees #992 and
+#997); ADR 0122 D4 says the fork owns the format
 and apeGmsh owns only these attributes.
 
 ==========================  ===============================================
@@ -18,7 +19,16 @@ Attribute                   Value (scalar, variable-length UTF-8 string)
 ``element_index_space``     ``"fem"``, or absent (unverified)
 ``unsupported``             JSON array of the lossy categories; ``"[]"``
 ``writer``                  the apeGmsh component and version
+``opensees_backend``        ``"ladruno"``, ``"stock"`` or ``"unknown"``
+``opensees_build_sha``      the 40-hex ``ladrunoBuild`` hash, or
+                            ``"unknown"``
 ==========================  ===============================================
+
+The last two say which engine solved the file (§7b.1, fork doc PR
+nmorabowen/OpenSees #997). The fork records no build hash of its own in the
+file, so the stamp is the only place it lives; :func:`stamp_provenance`
+always writes both, ``"unknown"`` where the value is not known, as §7b.1
+spells it.
 
 Only lowercase names are written; UPPERCASE names in ``PROVENANCE`` are
 fork-reserved and are never touched. Nothing outside ``INFO/PROVENANCE``
@@ -31,6 +41,7 @@ format (the fork-token ratchet exempts ``readers/_ladruno*``);
 from __future__ import annotations
 
 import json
+import re
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
@@ -52,9 +63,19 @@ __all__ = [
 #: The attributes this module owns, in ``INFO/PROVENANCE`` (§7b.1).
 PROVENANCE_ATTRS: tuple[str, ...] = (
     "model_hash", "fem_hash", "stage_names", "element_index_space",
-    "unsupported", "writer",
+    "unsupported", "writer", "opensees_backend", "opensees_build_sha",
 )
 _OWNED_ATTRS: tuple[str, ...] = (*PROVENANCE_ATTRS, "units")
+
+#: §7b.1 ``opensees_backend`` values. The fork's recorder writes only
+#: ``"ladruno"`` files; ``"stock"`` is possible only on a converted file.
+_BACKENDS: tuple[str, ...] = ("ladruno", "stock", "unknown")
+_RECORDER_BACKEND = "ladruno"
+_UNKNOWN = "unknown"
+#: §7b.1 ``opensees_build_sha``: 40 lowercase hex, as ``ladrunoBuild`` answers.
+_BUILD_SHA = re.compile(r"[0-9a-f]{40}")
+#: §7b.1: ``writer`` is what marks a converted file (``apeGmsh mpco->ladruno``).
+_CONVERTED_MARK = "mpco->ladruno"
 
 _PROVENANCE = "INFO/PROVENANCE"
 _STAGE_PREFIX = "MODEL_STAGE["
@@ -97,6 +118,8 @@ def stamp_provenance(
     stage_names: "Optional[Sequence[str]]" = None,
     unsupported: "Sequence[str]" = (),
     writer: "Optional[str]" = None,
+    opensees_backend: "Optional[str]" = None,
+    opensees_build_sha: "Optional[str]" = None,
     overwrite: bool = False,
 ) -> list[Path]:
     """Write the ADR 0122 D3 pairing attributes into a closed ``.ladruno``.
@@ -124,6 +147,33 @@ def stamp_provenance(
     ``unsupported`` lists the lossy categories the producer could not carry
     (``"[]"`` when none). ``writer`` defaults to ``"apeGmsh <version>"``.
 
+    ``opensees_backend`` and ``opensees_build_sha`` say which engine solved
+    the file; both are always written, ``"unknown"`` when not known
+    (§7b.1). Passed explicitly, they are written as given: the backend must
+    be one of ``"ladruno"``, ``"stock"``, ``"unknown"``, and the build 40
+    lowercase hex characters or ``"unknown"``. A build hash needs the
+    ``"ladruno"`` backend (only the fork's ``ladrunoBuild`` answers one),
+    and ``"stock"`` needs a converted file. Left out, they default from
+    the file alone; the stamp never asks an OpenSees backend, because the
+    process that stamps is not, in general, the one that recorded:
+
+    * A file the fork's recorder wrote is ``"ladruno"``: the recorder
+      exists only in the fork. Its build is ``"unknown"``: the file does
+      not carry it (§7b.1, "No fork-side equivalent today"), so only the
+      caller that ran the analysis knows it and passes it
+      (``opensees_build_sha=get_backend_build() or "unknown"``).
+    * A converted file is ``"unknown"`` for both: the ``.mpco`` does not
+      say which engine wrote it. The converter's caller may pass what it
+      knows. A file is converted when ``writer`` names ``mpco->ladruno``,
+      or, with ``writer`` left out, when the stamped ``writer`` does; that
+      ``writer`` is then kept, so the mark survives every re-stamp. A
+      ``writer`` that would drop the mark refuses (``ValueError``):
+      ``"stock"`` never sits on a file not marked as converted.
+    * A value already stamped on a part (any §7b.1 value, ``"unknown"``
+      included) is kept: a default never replaces it, so a re-stamp
+      changes nothing. An explicit value, or ``overwrite=True``, replaces
+      it.
+
     Re-stamping with identical values writes nothing. A part already
     stamped with another ``model_hash``, or carrying an owned attribute
     that is not a string, refuses unless ``overwrite=True``, which
@@ -147,6 +197,7 @@ def stamp_provenance(
     names_override = _string_list(stage_names, "stage_names")
     lossy = _string_list(unsupported, "unsupported") or []
     writer_text = _writer_text(writer)
+    backend_arg, build_arg = _engine_args(opensees_backend, opensees_build_sha)
 
     _refuse_without_file_locking()
     parts = _discover_parts(Path(path))
@@ -159,14 +210,28 @@ def stamp_provenance(
         program_names = names_override
     _check_part_set(parts)
 
+    all_facts = [_read_part(part) for part in parts]
+    writer_text, converted = _conversion(writer, writer_text, all_facts)
+    if backend_arg == "stock" and not converted:
+        raise ValueError(
+            "stamp_provenance(opensees_backend='stock'): only a converted "
+            f"file can be stock (writer naming {_CONVERTED_MARK!r}); a file "
+            "the recorder wrote is always 'ladruno' (§7b.1)."
+        )
+
     plans: list[tuple[Path, dict[str, str]]] = []
-    for part in parts:
-        facts = _read_part(part)
+    for part, facts in zip(parts, all_facts):
+        backend, build = _engine_for(
+            facts, backend_arg, build_arg, converted=converted,
+            overwrite=overwrite,
+        )
         wanted: dict[str, str] = {
             "model_hash": model_hash,
             "fem_hash": fem_hash,
             "unsupported": _json(lossy),
             "writer": writer_text,
+            "opensees_backend": backend,
+            "opensees_build_sha": build,
         }
         if model_units is not None:
             wanted["units"] = str(model_units)
@@ -235,6 +300,35 @@ def _writer_text(writer: "Optional[str]") -> str:
         raise TypeError("stamp_provenance: writer must be a non-empty str "
                         f"naming the component and version, got {writer!r}.")
     return writer
+
+
+def _engine_args(
+    backend: "Optional[str]", build: "Optional[str]",
+) -> "tuple[Optional[str], Optional[str]]":
+    """Check the explicit engine values against §7b.1; ``None`` is a default.
+
+    A 40-hex build with no backend implies ``"ladruno"``: only the fork's
+    ``ladrunoBuild`` answers a hash.
+    """
+    if backend is not None and backend not in _BACKENDS:
+        raise ValueError(
+            f"stamp_provenance(opensees_backend={backend!r}): §7b.1 allows "
+            f"exactly {list(_BACKENDS)}.")
+    if build is not None and build != _UNKNOWN and (
+            not isinstance(build, str) or not _BUILD_SHA.fullmatch(build)):
+        raise ValueError(
+            f"stamp_provenance(opensees_build_sha={build!r}): §7b.1 wants "
+            "the 40 lowercase hex characters ladrunoBuild returns, unshortened, "
+            f"or {_UNKNOWN!r}.")
+    if build is not None and build != _UNKNOWN:
+        if backend is None:
+            backend = _RECORDER_BACKEND
+        elif backend != _RECORDER_BACKEND:
+            raise ValueError(
+                f"stamp_provenance(opensees_build_sha={build!r}) needs "
+                f"opensees_backend={_RECORDER_BACKEND!r}, not {backend!r}: "
+                "only the fork's ladrunoBuild answers a build hash.")
+    return backend, build
 
 
 def _json(items: "list[str]") -> str:
@@ -674,6 +768,62 @@ def _stage_names_for(
              f"program's {kinds}")
         return None
     return list(names)
+
+
+def _conversion(
+    writer: "Optional[str]", writer_text: str, all_facts: "list[_PartFacts]",
+) -> "tuple[str, bool]":
+    """``(writer to stamp, converted)``; the conversion mark is never lost.
+
+    With ``writer`` left out, a stamped ``writer`` naming ``mpco->ladruno``
+    is kept. A passed ``writer`` without the mark, on a file that carries
+    it, refuses before any write.
+    """
+    marked = [f.owned["writer"] for f in all_facts
+              if _CONVERTED_MARK in f.owned.get("writer", "")]
+    if writer is None:
+        return (marked[0], True) if marked else (writer_text, False)
+    converted = _CONVERTED_MARK in writer_text
+    if marked and not converted:
+        raise ValueError(
+            f"stamp_provenance(writer={writer!r}): the file is stamped as "
+            f"converted (writer {marked[0]!r}); a writer without "
+            f"{_CONVERTED_MARK!r} would unmark it. Leave writer out to keep "
+            "the stamped one, or pass one naming the conversion."
+        )
+    return writer_text, converted
+
+
+def _engine_for(
+    facts: "_PartFacts", backend_arg: "Optional[str]",
+    build_arg: "Optional[str]", *, converted: bool, overwrite: bool,
+) -> "tuple[str, str]":
+    """``(opensees_backend, opensees_build_sha)`` for one part.
+
+    An explicit value wins; then, unless ``overwrite``, a §7b.1 value the
+    part already carries (``"unknown"`` included); then the default:
+    ``"ladruno"`` on a recorder file, ``"unknown"`` otherwise, and an
+    ``"unknown"`` build. Nothing here asks an OpenSees backend.
+    """
+    stamped_backend = None if overwrite else facts.owned.get("opensees_backend")
+    stamped_build = None if overwrite else facts.owned.get("opensees_build_sha")
+    if backend_arg is not None:
+        backend = backend_arg
+    elif stamped_backend in _BACKENDS and (
+            converted or stamped_backend != "stock"):
+        backend = str(stamped_backend)
+    else:
+        backend = _UNKNOWN if converted else _RECORDER_BACKEND
+    if build_arg is not None:
+        build = build_arg
+    elif backend != _RECORDER_BACKEND:
+        build = _UNKNOWN
+    elif stamped_build is not None and (
+            stamped_build == _UNKNOWN or _BUILD_SHA.fullmatch(stamped_build)):
+        build = stamped_build
+    else:
+        build = _UNKNOWN
+    return backend, build
 
 
 def _is_fem_index_space(tags: "np.ndarray", pairing: "dict[int, int]") -> bool:

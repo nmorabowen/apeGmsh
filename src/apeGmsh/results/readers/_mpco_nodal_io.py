@@ -50,13 +50,20 @@ A bucket the reader is unable to decode is listed by
 - an element class absent from :data:`NODAL_FORCE_CATALOG`;
 - a ``header_idx > 0`` bucket whose META does not spell the catalog
   layout, or carries no column names to check it by.
+
+MPCO writes each element once, to exactly one bucket. A read that would
+return one element id twice, from two buckets (header indices, custom
+rules or classes) or from one bucket's ``ID``, raises
+:class:`~._mpco_refusals.MPCOElementInTwoBuckets` (#2173). The check
+covers the ids the read returns, as :func:`read_nodal_bucket_slab`
+selects them, and reads no ``ID`` a second time.
 """
 from __future__ import annotations
 
 import warnings
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -75,6 +82,7 @@ from ._ladruno_element_io import (
     decode_local_nodal_force_columns,
     decode_nodal_force_columns,
 )
+from ._mpco_refusals import refuse_element_in_two_buckets
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -119,12 +127,45 @@ def canonical_to_nodal_force_token(
 # Per-bucket descriptor — what the reader walks
 # =====================================================================
 
+class _ReturnedIds:
+    """The element ids one read has returned so far, by bucket path.
+
+    Every bucket of one :func:`scan_nodal_force_buckets` shares one
+    ledger, so the buckets of one scan serve one read.
+    :func:`read_nodal_bucket_slab` adds each bucket's selected ids, and
+    an id seen twice raises
+    :class:`~._mpco_refusals.MPCOElementInTwoBuckets`.
+    """
+
+    def __init__(self) -> None:
+        self._by_path: dict[str, ndarray] = {}
+        self._seen = np.empty(0, dtype=np.int64)
+
+    def add(self, bucket_grp: "h5py.Group", ids: ndarray) -> None:
+        path = bucket_grp.name
+        if path in self._by_path:
+            raise RuntimeError(
+                f"MPCO bucket {path} was read twice from one scan; "
+                f"scan_nodal_force_buckets again for each read."
+            )
+        file = bucket_grp.file.filename
+        refuse_element_in_two_buckets({path: ids}, file=file)
+        if self._seen.size and np.isin(ids, self._seen).any():
+            refuse_element_in_two_buckets(
+                {**self._by_path, path: ids}, file=file,
+            )
+        self._by_path[path] = ids
+        self._seen = np.concatenate([self._seen, ids])
+
+
 @dataclass(frozen=True)
 class _NodalBucket:
     """One ``ON_ELEMENTS/<frame>/<bracket_key>`` group + its catalog layout."""
     bracket_key: str
     elem_key: MPCOElementKey
     layout: NodalForceLayout
+    #: Shared by every bucket of one scan: the ids its read has returned.
+    returned: _ReturnedIds = field(compare=False, repr=False)
 
 
 # =====================================================================
@@ -163,6 +204,9 @@ def scan_nodal_force_buckets(
         ``header_idx > 0`` bucket whose own META spells the catalog
         layout (:func:`header_bucket_meta_mismatch`). ``skipped``
         holds every other bucket with the reason it is left unread.
+        The buckets share one :class:`_ReturnedIds`, so they serve one
+        read: :func:`read_nodal_bucket_slab` refuses an element id they
+        return twice.
     """
     mapping = canonical_to_nodal_force_token(canonical_component)
     if mapping is None:
@@ -172,6 +216,7 @@ def scan_nodal_force_buckets(
         return (mpco_group_name, [], [])
 
     token_grp = on_elements_grp[mpco_group_name]
+    returned = _ReturnedIds()
     out: list[_NodalBucket] = []
     skipped: list[_SkippedNodalBucket] = []
     for bracket_key in token_grp:
@@ -208,6 +253,7 @@ def scan_nodal_force_buckets(
             bracket_key=bracket_key,
             elem_key=elem_key,
             layout=layout,
+            returned=returned,
         ))
     return (mpco_group_name, out, skipped)
 
@@ -440,6 +486,13 @@ def read_nodal_bucket_slab(
         ``element_ids``: ``(E_g_sel,)`` element tag list.
         Returns ``None`` if no elements survive filtering, the
         component is not in the layout, or the bucket has no steps.
+
+    Raises
+    ------
+    MPCOElementInTwoBuckets
+        When an element id this read returns was already returned by
+        another bucket of the same scan, or repeats in this bucket's
+        ``ID``.
     """
     layout = bucket.layout
     if canonical_component not in layout.component_layout:
@@ -468,6 +521,7 @@ def read_nodal_bucket_slab(
     )
     if not step_keys:
         return None
+    bucket.returned.add(bucket_grp, sel_ids)
 
     flat_size = layout.flat_size_per_element
     E_g = sel_ids.size

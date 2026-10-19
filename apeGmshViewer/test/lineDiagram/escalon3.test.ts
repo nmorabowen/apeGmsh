@@ -199,6 +199,8 @@ test("ladruno_frame3d: Effects loads 2-bay/2-story .ladruno with floor slabs, ru
     assert.equal(s.results?.sourceType, "ladruno");
     assert.equal(s.results?.elementIndexSpace, null);
     assert.deepEqual(s.results?.stages[0]?.lineStations, ["N", "Vy", "Vz", "T", "My", "Mz"]);
+    // #2128: the fixture follows fork schema §7.1.1, translation and rotation in two groups.
+    assert.deepEqual(s.results?.stages[0]?.nodal, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"]);
     // 2-bay / 2-story frame has 10 line2 beams/columns and 4 quad4 floor slabs:
     assert.equal(s.mesh?.counts.lineCells, 10);
     assert.equal(s.mesh?.counts.faceCells, 4);
@@ -232,6 +234,7 @@ test("ladruno_frame3d: Effects loads 2-bay/2-story .ladruno with floor slabs, ru
     if (cv.state === "ready") {
       assert.equal(cv.field, "DISPLACEMENT");
       assert.equal(cv.component.key, MAGNITUDE);
+      assert.deepEqual(cv.component.datasets, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz"], "the magnitude is of the translation only");
       assert.equal(cv.clim.mode, "history");
       assert.ok((cv.clim.max ?? 0) > 0, "DISPLACEMENT magnitude history max > 0");
       const lineMap = Int32Array.from({ length: s.mesh!.linePositions.shape[0]! }, (_, i) => i);

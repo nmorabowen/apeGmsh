@@ -829,3 +829,67 @@ worst step 18.2 ms), peak 457 MB.
 - The renderer's peak grows by 60 to 140 MB over the uncapped scrub: each
   step makes six new cap geometries (the previous ones disposed), and the
   garbage they leave is collected late.
+
+### The `.ladruno` read beside the native file (V4L-c, #2129)
+
+ADR 0122 makes the fork-written `.ladruno` the canonical results file. The
+fork writes its datasets chunked and deflated; `NativeWriter` writes
+contiguous ones. This row measures what that costs the viewer.
+`npm run measure -- <stem>.h5` with a `<stem>.ladruno` beside the model
+prints one row per results file of the set. The `.ladruno` is always
+measured. `<stem>.results.h5` of the same run is measured too when it exists.
+Main does the timing after the orbit, through the readers the app uses
+(`reader/ladruno.ts`, `reader/results.ts`), and closes the renderer's handle
+on the file first:
+
+- **index**: open to a full index (`openLadruno` / `openResults`). No
+  component data is read.
+- **one step**: the translational displacement components (`DISPLACEMENT/Ux,
+  Uy, Uz`; `displacement_x, y, z`) at the middle step. **cold** is the first
+  read in the process; **warm** is the median of 21 repeats. The OS file cache
+  was not flushed, so cold means a cold HDF5, not a cold disk.
+- **layout**: the chunk shape and filters of the displacement dataset that
+  the step reads.
+
+The run is a real one. A 1 m elastic cube (E = 30 GPa, nu = 0.2) was meshed
+with 15 x 15 x 15 transfinite `stdBrick`s (4 096 nodes, 3 375 elements),
+fixed at the base and loaded on the top face. It ran 500 LoadControl steps
+on the fork build the opensees venv imports (`79e0623670`). That build is
+older than `FORK_PIN` (`ladruno-v20261017`, `100eb9ae`), so these rows do not
+show the chunk layout a pin build writes. The bridge emitted
+the model live. A `recorder ladruno -N displacement` wrote `block.ladruno`,
+and `DomainCapture` wrote `block.results.h5` from the same steps. `ops.h5`
+saved `block.h5`, and `stamp_provenance` stamped the `.ladruno`, so it pairs
+with the model by `model_hash`. The files are not committed. The machine is
+the V4e1 to V4e3 one: Windows 11 IoT Enterprise LTSC 2024, Intel Core
+i7-13700KF, NVIDIA GeForce RTX 3070, Samsung 980 PRO NVMe SSD. Three runs, one
+after the other, on 2026-10-19, with the code of V4L-c (#2129).
+
+| run | file | size (MB) | steps | nodes | layout | index (ms) | one step cold / warm (ms) |
+|---|---|---|---|---|---|---|---|
+| 1 | `block.ladruno` | 24.78 | 500 | 4096 | chunks [2, 4096, 3], shuffle, deflate | 1.8 | 1.85 / 1.69 |
+| 1 | `block.results.h5` | 48.36 | 500 | 4096 | contiguous | 3.2 | 0.52 / 0.34 |
+| 2 | `block.ladruno` | 24.78 | 500 | 4096 | chunks [2, 4096, 3], shuffle, deflate | 3.9 | 4.05 / 4.03 |
+| 2 | `block.results.h5` | 48.36 | 500 | 4096 | contiguous | 7.6 | 1.01 / 0.70 |
+| 3 | `block.ladruno` | 24.78 | 500 | 4096 | chunks [2, 4096, 3], shuffle, deflate | 4.1 | 4.28 / 3.89 |
+| 3 | `block.results.h5` | 48.36 | 500 | 4096 | contiguous | 7.8 | 1.24 / 0.70 |
+
+Runs 2 and 3 took about twice run 1's time on both files: other sessions
+held the machine. The ratios between the two files repeat across the three
+runs:
+
+- **One warm step costs the `.ladruno` 4.97 to 5.76 times the native read**
+  (1.69, 4.03 and 3.89 ms against 0.34, 0.70 and 0.70 ms). **One cold step
+  costs it 3.45 to 4.01 times** (1.85, 4.05 and 4.28 ms against 0.52, 1.01 and
+  1.24 ms). The reader slices each component
+  out of the one `(T, N, 3)` `DATA` on its own (`[step, :, col]`). Each of the
+  three slices therefore inflates the same 2-step chunk, about 196 KB of
+  float64. A single slice of all three columns would inflate that chunk once.
+  This row does not measure that change.
+- **The `.ladruno` index takes about half the native one's time** (1.8 to
+  4.1 ms against 3.2 to 7.8 ms). These runs do not show why.
+- **The `.ladruno` is half the size on disk** (24.8 MB against 48.4 MB for the
+  same 6.1 M float64 values).
+- Runs 1 and 3 also printed the contour scrub rows for the `.ladruno`: 203.0
+  and 115.3 steps/s plain, 158.5 and 90.4 steps/s deformed. Every rate is
+  above the 30 steps/s floor of the D5 revisit trigger.

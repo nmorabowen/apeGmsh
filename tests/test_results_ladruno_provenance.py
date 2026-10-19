@@ -16,7 +16,15 @@ The oracles here are the contract itself:
 * ``stage_names`` only when the count and kinds match, else a
   :class:`StageNamesOmittedWarning`;
 * ``element_index_space="fem"`` only when every recorded element id is a
-  FEM id the archive pairs with itself.
+  FEM id the archive pairs with itself;
+* ``opensees_backend`` / ``opensees_build_sha`` (§7b.1, fork doc PR
+  nmorabowen/OpenSees #997) always written: ``"ladruno"`` on a recorder
+  file, a build only when the caller passes it, ``"unknown"`` exactly where
+  §7b.1 says so, and any stamped value (``"unknown"`` included) kept across
+  a default re-stamp.
+
+The stamp must never ask an OpenSees backend (#2208 F1):
+:func:`_no_backend` makes every resolver entry point raise, for every test.
 
 The part files are the committed ``truss2d.part-0/1`` fixtures, copied to
 a temporary directory. They predate the recorder's empty
@@ -53,10 +61,32 @@ from apeGmsh.results.writers import (
     StageNamesOmittedWarning,
     stamp_provenance,
 )
+from apeGmsh.opensees.emitter import live as _live
 from apeGmsh.results.readers._ladruno_provenance import PROVENANCE_ATTRS
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ladruno"
 PROV = "INFO/PROVENANCE"
+FORK_SHA = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
+ENGINE = ("opensees_backend", "opensees_build_sha")
+CONVERTED = "apeGmsh mpco->ladruno 9.9"
+
+
+@pytest.fixture(autouse=True)
+def _no_backend(monkeypatch: pytest.MonkeyPatch) -> "list[str]":
+    """Every resolver entry point raises: the stamp may not bind a backend."""
+    asked: list[str] = []
+
+    def refuse(name: str):
+        def call(*_a, **_k):
+            asked.append(name)
+            raise AssertionError(f"stamp_provenance asked the backend ({name})")
+        return call
+
+    for name in ("_get_ops", "get_ops", "get_backend_info",
+                 "get_backend_build"):
+        monkeypatch.setattr(_live, name, refuse(name))
+    return asked
 
 
 # ---------------------------------------------------------------------------
@@ -583,3 +613,166 @@ def test_refuses_a_nan_coordinate_on_a_shared_node(parts, model_dir, both) -> No
             arr[ids.index(2), 1] = np.nan  # node 2 is the one both parts hold
             xyz[...] = arr
     _refuses(parts, model_dir / "one_static.h5", "disagree on their MODEL")
+
+
+# ---------------------------------------------------------------------------
+# The engine: opensees_backend and opensees_build_sha (§7b.1, #2196)
+# ---------------------------------------------------------------------------
+
+
+def _engine(path: Path) -> "tuple[str, str]":
+    prov = _provenance(path)
+    return prov["opensees_backend"], prov["opensees_build_sha"]
+
+
+def _writer(path: Path) -> str:
+    return _provenance(path)["writer"]
+
+
+def test_a_default_stamp_is_ladruno_with_an_unknown_build(
+        parts, model_dir, _no_backend) -> None:
+    """The file does not carry its build, so a default stamp cannot know it."""
+    stamp_provenance(parts[0], model_dir / "one_static.h5")
+    assert [_engine(p) for p in parts] == [("ladruno", "unknown")] * 2
+    assert _no_backend == []
+
+
+def test_the_caller_passes_the_build(parts, model_dir) -> None:
+    stamp_provenance(parts[0], model_dir / "one_static.h5",
+                     opensees_build_sha=FORK_SHA)
+    assert [_engine(p) for p in parts] == [("ladruno", FORK_SHA)] * 2
+
+
+def test_engine_attributes_are_scalar_vlen_utf8(parts, model_dir) -> None:
+    stamp_provenance(parts[0], model_dir / "one_static.h5",
+                     opensees_build_sha=FORK_SHA)
+    with h5py.File(parts[0], "r") as f:
+        for name in ENGINE:
+            aid = f[PROV].attrs.get_id(name)
+            info = h5py.check_string_dtype(aid.dtype)
+            assert info is not None and info.encoding == "utf-8"
+            assert info.length is None and aid.shape == ()
+
+
+def test_a_converted_file_is_unknown(parts, model_dir) -> None:
+    stamp_provenance(parts[0], model_dir / "one_static.h5", writer=CONVERTED)
+    assert [_engine(p) for p in parts] == [("unknown", "unknown")] * 2
+
+
+def test_a_converted_file_takes_an_explicit_stock_backend(parts, model_dir) -> None:
+    stamp_provenance(parts[0], model_dir / "one_static.h5", writer=CONVERTED,
+                     opensees_backend="stock")
+    assert [_engine(p) for p in parts] == [("stock", "unknown")] * 2
+
+
+def test_three_stamps_keep_a_converted_file_and_its_engine(
+        parts, model_dir) -> None:
+    """#2208 F3: default re-stamps keep the mark and the stored engine."""
+    model = model_dir / "one_static.h5"
+    stamp_provenance(parts[0], model, writer=CONVERTED,
+                     opensees_backend="stock")
+    before = _sha(parts)
+    stamp_provenance(parts[0], model)
+    stamp_provenance(parts[1], model)
+    assert _sha(parts) == before
+    for p in parts:
+        assert _writer(p) == CONVERTED
+        assert _engine(p) == ("stock", "unknown")
+
+
+def test_a_writer_that_drops_the_conversion_mark_refuses(
+        parts, model_dir) -> None:
+    """#2208 F3: ``stock`` never ends up on a file not marked as converted."""
+    model = model_dir / "one_static.h5"
+    stamp_provenance(parts[0], model, writer=CONVERTED,
+                     opensees_backend="stock")
+    before = _sha(parts)
+    for overwrite in (False, True):
+        with pytest.raises(ValueError, match="would unmark it"):
+            stamp_provenance(parts[0], model, writer="apeGmsh 1.0",
+                             overwrite=overwrite)
+    assert _sha(parts) == before
+
+
+def test_a_stamped_stock_on_an_unmarked_file_is_not_kept(
+        parts, model_dir) -> None:
+    """A hand-written ``stock`` without the mark falls back to the default."""
+    model = model_dir / "one_static.h5"
+    stamp_provenance(parts[0], model)
+    for p in parts:
+        with h5py.File(p, "r+") as f:
+            f[PROV].attrs.create("opensees_backend", data="stock",
+                                 dtype=h5py.string_dtype("utf-8"))
+    stamp_provenance(parts[0], model)
+    assert [_engine(p) for p in parts] == [("ladruno", "unknown")] * 2
+
+
+def test_explicit_unknown_backend_writes_an_unknown_build(parts, model_dir) -> None:
+    stamp_provenance(parts[0], model_dir / "one_static.h5",
+                     opensees_backend="unknown")
+    assert [_engine(p) for p in parts] == [("unknown", "unknown")] * 2
+
+
+@pytest.mark.parametrize(("kw", "match"), [
+    ({"opensees_backend": "fork"}, "allows exactly"),
+    ({"opensees_backend": "Ladruno"}, "allows exactly"),
+    ({"opensees_build_sha": FORK_SHA[:12]}, "40 lowercase hex"),
+    ({"opensees_build_sha": FORK_SHA.upper()}, "40 lowercase hex"),
+    ({"opensees_build_sha": ""}, "40 lowercase hex"),
+    ({"opensees_backend": "unknown", "opensees_build_sha": FORK_SHA},
+     "needs opensees_backend='ladruno'"),
+    ({"opensees_backend": "stock"}, "only a converted file can be stock"),
+])
+def test_bad_engine_values_refuse_before_any_write(
+        parts, model_dir, kw, match) -> None:
+    before = _sha(parts)
+    with pytest.raises(ValueError, match=match):
+        stamp_provenance(parts[0], model_dir / "one_static.h5", **kw)
+    assert _sha(parts) == before
+
+
+def test_a_default_restamp_keeps_a_stamped_build(parts, model_dir) -> None:
+    """Idempotent: the hash the recording caller passed survives."""
+    model = model_dir / "one_static.h5"
+    stamp_provenance(parts[0], model, opensees_build_sha=FORK_SHA)
+    before = _sha(parts)
+    stamp_provenance(parts[1], model)
+    assert _sha(parts) == before
+
+
+def test_a_stamped_unknown_sticks_on_a_default_restamp(parts, model_dir) -> None:
+    """#2208 F2: ``"unknown"`` is a stamped value like any other."""
+    model = model_dir / "one_static.h5"
+    stamp_provenance(parts[0], model, opensees_backend="unknown")
+    before = _sha(parts)
+    stamp_provenance(parts[0], model)
+    assert _sha(parts) == before
+    assert [_engine(p) for p in parts] == [("unknown", "unknown")] * 2
+
+
+def test_explicit_value_replaces_a_stamped_build(parts, model_dir) -> None:
+    model = model_dir / "one_static.h5"
+    stamp_provenance(parts[0], model, opensees_build_sha=FORK_SHA)
+    stamp_provenance(parts[0], model, opensees_build_sha=OTHER_SHA)
+    assert [_engine(p) for p in parts] == [("ladruno", OTHER_SHA)] * 2
+    stamp_provenance(parts[0], model, opensees_build_sha="unknown")
+    assert [_engine(p) for p in parts] == [("ladruno", "unknown")] * 2
+
+
+def test_overwrite_drops_the_stamped_engine(parts, model_dir) -> None:
+    stamp_provenance(parts[0], model_dir / "one_static.h5",
+                     opensees_build_sha=FORK_SHA)
+    stamp_provenance(parts[0], model_dir / "offset_ids.h5", overwrite=True)
+    assert [_engine(p) for p in parts] == [("ladruno", "unknown")] * 2
+
+
+def test_a_malformed_stamped_build_becomes_unknown(parts, model_dir) -> None:
+    """A string that is neither a 40-hex hash nor ``"unknown"`` is not kept."""
+    stamp_provenance(parts[0], model_dir / "one_static.h5",
+                     opensees_build_sha=FORK_SHA)
+    for p in parts:
+        with h5py.File(p, "r+") as f:
+            f[PROV].attrs.create("opensees_build_sha", data="abc123",
+                                 dtype=h5py.string_dtype("utf-8"))
+    stamp_provenance(parts[0], model_dir / "one_static.h5")
+    assert [_engine(p) for p in parts] == [("ladruno", "unknown")] * 2

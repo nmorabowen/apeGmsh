@@ -185,10 +185,9 @@ def _per_material_strain_skip_reason(
         f"{class_name!r}, whose element-level setResponse('strains') "
         f"is unimplemented in OpenSees — an .out recorder would write "
         f"only the time column, no strain data. Use MPCO instead "
-        f"(``recorder mpco ... -E material.strain``, read with "
-        f"``Results.from_mpco(...)``), or capture in-process via "
-        f"``ops.domain_capture(DomainCaptureSpec(opensees=ops), "
-        f"path=...)`` (read with ``Results.from_native(...)``)."
+        f"(``recorder mpco ... -E material.strain``, which "
+        f"spec.emit_mpco(...) writes; read with "
+        f"``Results.from_mpco(...)``)."
     )
 
 
@@ -234,8 +233,7 @@ def line_stations_from_local_force(rec: ResolvedRecorderRecord) -> bool:
     That is the elastic-beam family (``ElasticBeam{2d,3d}``,
     ``ModElasticBeam2d``, ``ElasticTimoshenkoBeam{2d,3d}``): classes with
     no ``section force`` layout and a ``localForce`` line-stations
-    synthesis in the response catalog, the same two-way test
-    DomainCapture's line-station capturer makes. The emit and the ``.out``
+    synthesis in the response catalog. The emit and the ``.out``
     transcoder both ask this one predicate, so they cannot disagree on
     which file a record wrote.
 
@@ -394,8 +392,7 @@ def emit_logical(
 # FEM id → OpenSees tag translation at emit
 # =====================================================================
 #
-# A resolved record names elements by FEM id (the contract DomainCapture
-# honours too), but an OpenSees ``-ele`` list takes OpenSees tags, and
+# A resolved record names elements by FEM id, but an OpenSees ``-ele`` list takes OpenSees tags, and
 # under ``element_tags="sequential"`` (the bridge default) the two differ.
 # :func:`emit_logical` stays in FEM-id space: the transcoder and the cache
 # read it back to label rows and to find files. Only the command that
@@ -416,8 +413,8 @@ def element_tag_map(model: object, *, fem_snapshot_id: str) -> dict[int, int]:
     FEMData can share FEM ids with this one and would translate them to
     the wrong tags, so a mismatch raises. The pairing
     is its element records' ``(fem_eid, tag)``: the same source
-    ``ElementTagTranslator.from_model`` reads for ``from_mpco`` and
-    domain capture. Rows with the sentinel ``fem_eid < 0`` are skipped.
+    ``ElementTagTranslator.from_model`` reads for ``from_mpco``.
+    Rows with the sentinel ``fem_eid < 0`` are skipped.
     Read strictly here: that translator passes an unknown id through,
     which an emit must refuse instead (:func:`to_ops_tags`).
     """
@@ -700,8 +697,7 @@ def _emit_element_simple(
     pair is required because per-element IP locations are not
     derivable from the section-force ``.out`` alone (no META, no
     GP_X) — Phase 11b Step 2c's transcoder reads both to reconstruct
-    the same ``LineStationSlab`` shape that MPCO read and
-    DomainCapture produce. See
+    the same ``LineStationSlab`` shape that MPCO read produces. See
     ``internal_docs/plan_phase_11b_line_stations.md`` and
     ``apeGmsh.results.transcoders._recorder`` for the consumer.
 
@@ -765,8 +761,8 @@ def _emit_element_simple(
         # ``section force`` nor ``integrationPoints`` (a recorder writes
         # only the time column). Its stations come from the ``localForce``
         # end vector instead, which the transcoder turns into a
-        # two-station slab at xi = -1, +1, as DomainCapture and
-        # the MPCO local-force reader do.
+        # two-station slab at xi = -1, +1, as the MPCO local-force
+        # reader does.
         _warn_n_steps_unsupported(rec)
         yield LogicalRecorder(
             kind="Element",
@@ -1000,15 +996,18 @@ def _tcl_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
     if rec.category in ("fibers", "layers"):
         return (
             f";# recorder category {rec.category!r} "
-            f"(record {rec.name!r}) is MPCO-only in apeGmsh Phase 11c. "
+            f"(record {rec.name!r}) is MPCO-only. "
             f"Add an MPCO recorder (e.g. ``recorder mpco {rec.name}.mpco "
             f"-E section.fiber.stress``) instead of relying on .out "
             f"emission, then read with ``Results.from_mpco(...)``."
         )
     return (
-        f";# TODO Phase 5+: recorder category {rec.category!r} "
+        f";# TODO: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
-        f"Use domain capture (Phase 7) or MPCO bridge (Phase 8)."
+        f"Use an MPCO recorder (``-N modesOfVibration``, written by "
+        f"spec.emit_mpco(...), read with Results.from_mpco(...)), the "
+        f"fork's own results recorder, or ops.eigen(n) and the returned "
+        f"EigenResult's writer."
     )
 
 
@@ -1016,16 +1015,19 @@ def _py_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
     if rec.category in ("fibers", "layers"):
         return (
             f"# recorder category {rec.category!r} "
-            f"(record {rec.name!r}) is MPCO-only in apeGmsh Phase 11c. "
+            f"(record {rec.name!r}) is MPCO-only. "
             f"Add an MPCO recorder (e.g. ``ops.recorder('mpco', "
             f"'{rec.name}.mpco', '-E', 'section.fiber.stress')``) "
             f"instead of relying on .out emission, then read with "
             f"``Results.from_mpco(...)``."
         )
     return (
-        f"# TODO Phase 5+: recorder category {rec.category!r} "
+        f"# TODO: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
-        f"Use domain capture (Phase 7) or MPCO bridge (Phase 8)."
+        f"Use an MPCO recorder (``-N modesOfVibration``, written by "
+        f"spec.emit_mpco(...), read with Results.from_mpco(...)), the "
+        f"fork's own results recorder, or ops.eigen(n) and the returned "
+        f"EigenResult's writer."
     )
 
 
@@ -1207,8 +1209,8 @@ def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
             f"Record {record_name!r} (category=gauss): component "
             f"{canonical!r} (the Truss axial force) cannot go through MPCO: "
             f"MPCO writes its axialForce bucket with no GAUSS_IDS and the "
-            f"reader refuses it. Record it with spec.emit_recorders(...), "
-            f"the fork's native recorder, or ops.domain_capture(...)."
+            f"reader refuses it. Record it with spec.emit_recorders(...) "
+            f"or the fork's native recorder."
         )
     token = _canonical_to_mpco_element_token(canonical)
     if token not in _MPCO_GAUSS_READ_SIDE_KEYWORDS:
@@ -1216,7 +1218,7 @@ def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
             f"Record {record_name!r} (category=gauss): component "
             f"{canonical!r} has no MPCO -E token, so the MPCO file would "
             f"not record it. Drop it from the record, or capture it with "
-            f"spec.emit_recorders(...) or ops.domain_capture(...)."
+            f"spec.emit_recorders(...) or the fork's native recorder."
         )
     return token
 

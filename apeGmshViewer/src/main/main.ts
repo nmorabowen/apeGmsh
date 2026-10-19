@@ -30,6 +30,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
+import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { fileFromArgv, pairSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
@@ -254,8 +255,111 @@ ipcMain.handle("measure:done", (_e, result: unknown) => {
     const row = (result as Partial<Record<typeof key, ContourMeasure | null>> | null)?.[key];
     if (row) printContourRow(row);
   }
+  // ADR 0122 slice 4 (#2129): a `<stem>.ladruno` beside the model gets its read row.
+  if (mode === "measure" && file) {
+    try {
+      measureLadrunoRead(resolve(file));
+    } catch (err) {
+      process.stderr.write(`apeGmshViewer: measure: the .ladruno read row: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
+      process.exitCode = 1;
+    }
+  }
   app.quit();
 });
+
+// ---------------------------------------------------------------------------
+// The .ladruno read row (ADR 0122 slice 4, #2129). With a `<stem>.ladruno`
+// beside the measured model, main times the .ladruno's index and one nodal
+// step, and the same for `<stem>.results.h5` of the same run when one exists,
+// then prints one MEASUREMENTS row per file. It runs after the orbit, so it
+// shares no clock with the first frame; the renderer's handle on the file is
+// closed first, so the index is a fresh open. The `layout` column names the
+// displacement dataset's chunk shape and filters: the fork writes chunked,
+// deflated datasets and NativeWriter contiguous ones, and that is what the
+// two read columns compare.
+// ---------------------------------------------------------------------------
+
+/** The translational displacement components, under the .ladruno and the native reader's names. */
+const DISPLACEMENT = /^(DISPLACEMENT\/U[xyz]|displacement_[xyz])$/;
+const WARM_REPEATS = 21;
+
+interface ReadRow {
+  file: string;
+  sizeBytes: number;
+  stage: string;
+  steps: number;
+  nodes: number;
+  components: string[];
+  layout: string;
+  indexMs: number;
+  stepColdMs: number;
+  stepWarmMs: number;
+}
+
+function measureLadrunoRead(model: string): void {
+  const results = pairSet(model, existsSync).results;
+  if (results === null || !/\.ladruno$/i.test(results)) return;
+  resultsHost.close();
+  const rows = [timeRead(results, openLadruno)];
+  const native = results.replace(/\.ladruno$/i, ".results.h5");
+  if (existsSync(native)) rows.push(timeRead(native, openResults));
+  printReadRows(rows);
+}
+
+/** The index (open to a full index) and the middle step of the displacement components, cold then warm. */
+function timeRead(path: string, open: (h5: ResultsH5, path: string) => ResultsFile | LadrunoFile): ReadRow {
+  const sizeBytes = statSync(path).size;
+  const [rf, indexMs] = timed(() => open(h5wasm as unknown as ResultsH5, path));
+  let row: Omit<ReadRow, "layout">;
+  let dataset: string;
+  try {
+    const s = rf.index.stages.find((st) => st.kind !== "mode" && st.nodes?.components.some((c) => DISPLACEMENT.test(c)));
+    if (!s?.nodes) {
+      const seen = rf.index.stages.map((st) => `${st.id}: ${st.nodes ? st.nodes.components.join(", ") : "no nodal results"}`);
+      throw new Error(`${path}: the read row needs a stage with nodal displacements; the file has ${seen.join("; ") || "no stages"}`);
+    }
+    const nodes = s.nodes;
+    const comps = nodes.components.filter((c) => DISPLACEMENT.test(c));
+    const mid = Math.floor(s.nSteps / 2);
+    const [, stepColdMs] = timed(() => rf.readNodalStep(s.id, comps, mid));
+    const warm = Array.from({ length: WARM_REPEATS }, () => timed(() => rf.readNodalStep(s.id, comps, mid))[1]);
+    // The .ladruno keeps one (T, N, C) DATA per response; the native file one (T, N) dataset per component.
+    dataset = rf instanceof LadrunoFile ? `${nodes.path}/DISPLACEMENT/DATA` : `${nodes.path}/${comps[0]!}`;
+    row = { file: path, sizeBytes, stage: s.name, steps: s.nSteps, nodes: nodes.ids.length, components: comps, indexMs, stepColdMs, stepWarmMs: median(warm) };
+  } finally {
+    rf.close();
+  }
+  return { ...row, layout: layoutOf(path, dataset) };
+}
+
+/** `chunks [a, b, c], deflate` or `contiguous`, of one dataset (read after the timed handle is closed). */
+function layoutOf(path: string, dataset: string): string {
+  const f = new h5wasm.File(path, "r");
+  try {
+    if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path}`);
+    const ds = f.get(dataset);
+    if (!(ds instanceof h5wasm.Dataset)) throw new Error(`${path}: ${dataset} is not a dataset`);
+    const chunks = ds.metadata.chunks;
+    const filters = ds.filters.map((x) => x.name || `filter ${x.id}`);
+    return [chunks ? `chunks [${chunks.join(", ")}]` : "contiguous", ...filters].join(", ");
+  } finally {
+    f.close();
+  }
+}
+
+function printReadRows(rows: ReadRow[]): void {
+  process.stdout.write(
+    "| file | size (MB) | stage | steps | nodes | components | layout | index (ms) | one step cold / warm (ms) |\n" +
+      "|---|---|---|---|---|---|---|---|---|\n" +
+      rows
+        .map(
+          (r) =>
+            `| ${r.file.split(/[\\/]/).pop()} | ${(r.sizeBytes / 1048576).toFixed(2)} | ${r.stage} | ${r.steps} | ${r.nodes} | ${r.components.join(", ")} | ${r.layout} | ` +
+            `${r.indexMs.toFixed(1)} | ${r.stepColdMs.toFixed(2)} / ${r.stepWarmMs.toFixed(2)} |\n`,
+        )
+        .join(""),
+  );
+}
 
 /** Write one still: `--out` itself, or `<stem>.<suffix>.png` beside it. */
 ipcMain.handle("capture:still", async (e, suffix: string) => {

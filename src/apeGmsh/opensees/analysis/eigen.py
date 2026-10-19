@@ -12,16 +12,22 @@ live emitter so :meth:`mode_shape` can query ``ops.nodeEigenvector``
 without re-running the eigen solve. :meth:`to_native` persists the modes
 as ``kind="mode"`` stages of a native results file (the
 modes route on pip ``openseespy``), and :meth:`results` opens that file.
-No modal-mass / participation calculations live here.
+:meth:`to_ladruno` writes the same modes as a stamped ``.ladruno`` (ADR
+0122), the format the native file retires into. No modal-mass /
+participation calculations live here.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from ..._atomic_io import replace_with_retry
+from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
     from ...results.Results import Results
@@ -30,7 +36,14 @@ if TYPE_CHECKING:
     from ..node import Node
 
 
-__all__ = ["EigenResult"]
+__all__ = ["EigenResult", "RotationSlotUnresolvedWarning"]
+
+
+class RotationSlotUnresolvedWarning(UserWarning):
+    """A ``.ladruno`` export wrote a node's rotation slots as 0.0 because
+    the model's DOF roles cannot say whether they hold a rotation or a
+    pore pressure (an element-less node beside a u-p element, a node no
+    beam or shell touches). The message names the nodes and the reason."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,18 +195,14 @@ class EigenResult:
         """
         return self._write_native(path)
 
-    def _write_native(self, path: "str | os.PathLike[str] | None") -> Path:
-        """:meth:`to_native`'s body, called straight from each public
-        method so a mode warning's ``stacklevel=4`` names their caller."""
-        import tempfile
-
-        from ...results.writers._native import NativeWriter
-        from ..emitter.live import _backend_of, domain_epoch
-        from .modal import _write_mode_stages
+    def _checked_solve(self, method: str) -> "tuple[apeSees, int, int]":
+        """``(bridge, ndm, ndf)`` of the solve, or raise what
+        :meth:`to_native` documents; ``method`` names the caller."""
+        from ..emitter.live import domain_epoch
 
         if len(self.eigenvalues) == 0:
             raise ValueError(
-                "EigenResult.to_native: the solve returned no modes (an "
+                f"EigenResult.{method}: the solve returned no modes (an "
                 "eigen_feast band with no eigenvalue in it), so there is "
                 "nothing to write; no file was created."
             )
@@ -203,25 +212,145 @@ class EigenResult:
             or self._epoch is None
         ):
             raise RuntimeError(
-                "EigenResult.to_native: this result was not returned by "
+                f"EigenResult.{method}: this result was not returned by "
                 "apeSees.eigen / apeSees.eigen_feast, so it names no "
                 "bridge or solve to write."
             )
         now = domain_epoch()
         if now != self._epoch:
             raise RuntimeError(
-                "EigenResult.to_native: the live OpenSees domain was "
+                f"EigenResult.{method}: the live OpenSees domain was "
                 f"rebuilt since this eigen solve (domain epoch {self._epoch} "
                 f"-> {now}): a later LiveOpsEmitter (another eigen, "
                 "modal_properties, analyze, a second bridge, ...) replaced "
                 "the eigenvectors. Re-run ops.eigen(...) and export that "
                 "result."
             )
+        return bridge, self._ndm, self._ndf
+
+    def to_ladruno(self, path: "str | os.PathLike[str] | None" = None) -> Path:
+        """Write the modes as a stamped ``.ladruno`` and return its path.
+
+        One ``KIND="eigen"`` ``MODEL_STAGE`` holds every mode, in the
+        layout the fork recorder writes for ``modesOfVibration`` +
+        ``modesOfVibrationRotational`` (the table is in
+        :mod:`apeGmsh.results.readers._ladruno_writer`): each eigenvalue
+        as ``LAMBDA``, and each fem node's ``ops.nodeEigenvector`` laid
+        onto ``Ux..Rz`` by its own DOF layout (its vector's length is its
+        ndf). A rotation slot holds the rotation only where the model's
+        DOF roles say so: a beam or shell touches the node, or it is
+        element-less in a model without a u-p element. A u-p node's pore
+        pressure is never written as a rotation. A slot the roles cannot
+        settle is written as 0.0, with one
+        :class:`RotationSlotUnresolvedWarning` naming the nodes. A
+        non-positive eigenvalue writes 0 Hz / 0 s and raises one
+        ``UserWarning`` naming the mode, as :meth:`to_native` does.
+
+        ``MODEL/NODES`` is the bridge's fem. ``MODEL/ELEMENTS`` is empty
+        (apeGmsh holds no C++ class tag to name a bucket with), and
+        ``INFO/PROVENANCE@unsupported`` says so. The bridge's model
+        archive (``ops.h5``) is written beside the file as ``<stem>.h5``,
+        the name schema §7b.1 pairs a ``.ladruno`` with, and the file is
+        stamped against it::
+
+            p = ops.eigen(3).to_ladruno()
+            r = Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
+
+        ``r.modes`` lists one ``mode`` stage per eigenvalue. The modes
+        are written and stamped first and the archive follows, so a
+        refusal or a failed write leaves no new file behind. A
+        ``.ladruno`` already at ``path`` is replaced (the caller chose
+        that path) and is not restored if a later step fails, e.g. the
+        archive move. An existing ``<stem>.h5`` of this bridge (the same
+        lineage) is kept as it is.
+
+        Parameters
+        ----------
+        path
+            The ``.ladruno`` to write (replaced when it exists). ``None``
+            writes ``modes.ladruno`` in a fresh directory under
+            ``tempfile.gettempdir()``.
+
+        Raises
+        ------
+        FileExistsError
+            ``<stem>.h5`` exists and is not this bridge's archive: its
+            ``/meta/lineage`` hashes differ, or it has none. Nothing is
+            written.
+        ValueError
+            ``path`` has an ``.h5`` suffix, so it would be its own
+            archive (``to_ladruno("model.h5")`` would replace the
+            archive); and as :meth:`to_native`. Nothing is written.
+        RuntimeError
+            As :meth:`to_native`.
+        """
+        import tempfile
+
+        bridge, ndm, _ = self._checked_solve("to_ladruno")
+        if path is None:
+            out_path = Path(
+                tempfile.mkdtemp(prefix="apegmsh_modes_")
+            ) / "modes.ladruno"
+        else:
+            out_path = Path(os.fspath(path))
+        archive = out_path.with_suffix(".h5")
+        check_target(out_path, archive)
 
         ops = self._live.ops
+        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+        coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
+        n_modes = len(self.eigenvalues)
+        # One nodeEigenvector call per node and mode; a node's vector is
+        # as long as ITS ndf, so its length is the node's own DOF count.
+        vectors = [
+            [np.asarray(ops.nodeEigenvector(int(nid), k + 1),
+                        dtype=np.float64).ravel() for nid in node_ids]
+            for k in range(n_modes)
+        ]
+        ndf_of = {int(n): int(v.size) for n, v in zip(node_ids, vectors[0])}
+
+        with tempfile.TemporaryDirectory(
+            prefix="apegmsh_modes_", dir=out_path.parent,
+        ) as tmp:
+            staged = Path(tmp) / archive.name
+            bridge.h5(str(staged))
+            place = _archive_is_free(staged, archive)
+            layouts, rotations, unresolved = _ladruno_slots(
+                staged, node_ids, ndf_of, ndm, where="EigenResult.to_ladruno")
+            shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
+            _warn_unresolved("EigenResult.to_ladruno", unresolved, 2)
+            # The modes go first, stamped against the staged copy (the
+            # same lineage), so a refused or failed write leaves no
+            # archive behind; the archive follows them into place.
+            out = write_modes(
+                out_path, model_h5=staged, node_ids=node_ids,
+                coords=coords, ndm=ndm,
+                eigenvalues=self.eigenvalues,
+                fields=lambda k: shapes[k - 1], rotations=rotations,
+                source="eigen", stacklevel=3,
+            )
+            if place:
+                try:
+                    replace_with_retry(staged, archive)
+                except BaseException:
+                    out.unlink(missing_ok=True)
+                    raise
+        return out
+
+    def _write_native(self, path: "str | os.PathLike[str] | None") -> Path:
+        """:meth:`to_native`'s body, called straight from each public
+        method so a mode warning's ``stacklevel=4`` names their caller."""
+        import tempfile
+
+        from ...results.writers._native import NativeWriter
+        from ..emitter.live import _backend_of
+        from .modal import _write_mode_stages
+
+        bridge, ndm, ndf = self._checked_solve("to_native")
+        ops = self._live.ops
         backend = _backend_of(ops)
-        n_trans = min(3, self._ndm)
-        rotations = self._ndf >= 6
+        n_trans = min(3, ndm)
+        rotations = ndf >= 6
         node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
 
         def field(mode: int) -> np.ndarray:
@@ -289,3 +418,108 @@ class EigenResult:
             model=OpenSeesModel.from_h5(str(src)),
             model_path=None if model_h5 is None else src,
         )
+
+
+def _ladruno_slots(
+    model_h5: Path, node_ids: "Any", ndf_of: "Mapping[int, int]", ndm: int,
+    *, where: str,
+) -> "tuple[list[tuple[int, ...]], np.ndarray, list[tuple[int, str]]]":
+    """How each node's DOFs land on ``ux..rz`` for a ``.ladruno`` export.
+
+    Returns, per node of ``node_ids``: its DOF layout (DOF index -> spatial
+    slot, the emit's ``_node_layout(ndf, ndm)``), whether its rotation
+    slots hold rotations, and the ``(node, reason)`` of each node whose
+    layout keeps a rotation slot that the model's DOF roles
+    (:func:`~apeGmsh.opensees._recorder_translate.model_h5_rotation_roles`)
+    refuse for any reason but a u-p element touching it. The layout alone
+    cannot tell a 2-D frame node (ux, uy, rz) from a 2-D u-p node (ux, uy,
+    p); the roles do, so a pore pressure is never written as a rotation.
+    """
+    from .._internal.build.recorders import _node_layout
+    from .._readback import _UP_FAMILIES
+    from .._recorder_translate import model_h5_rotation_roles
+
+    ids = [int(n) for n in node_ids]
+    layouts = [_node_layout(int(ndf_of[n]), ndm) for n in ids]
+    roles = model_h5_rotation_roles(model_h5, ids, where=where)
+    up = {cls.__name__ for cls in _UP_FAMILIES}
+    rotations = np.zeros(len(ids), dtype=bool)
+    unresolved: list[tuple[int, str]] = []
+    for i, (n, lay) in enumerate(zip(ids, layouts)):
+        if not any(slot >= 3 for slot in lay):
+            continue                    # no rotation slot at all
+        why = roles.refusal(n)
+        if why is None:
+            rotations[i] = True
+        elif not (n in roles.blocked and roles.blocked[n] in up):
+            unresolved.append((n, why))
+    return layouts, rotations, unresolved
+
+
+def _spatial(rows: "Any", layouts: "list[tuple[int, ...]]") -> np.ndarray:
+    """``[n x 6]`` by spatial slot from per-node DOF rows (each row the
+    node's own DOFs, padded or not); a DOF past a row's end reads 0.0."""
+    out = np.zeros((len(layouts), 6), dtype=np.float64)
+    for i, (row, lay) in enumerate(zip(rows, layouts)):
+        vals = np.asarray(row, dtype=np.float64).ravel()
+        for dof, slot in enumerate(lay):
+            if dof < vals.size:
+                out[i, slot] = vals[dof]
+    return out
+
+
+def _warn_unresolved(
+    where: str, unresolved: "list[tuple[int, str]]", stacklevel: int,
+) -> None:
+    """One :class:`RotationSlotUnresolvedWarning` for every unsettled node."""
+    import warnings
+
+    if not unresolved:
+        return
+    node, why = unresolved[0]
+    warnings.warn(
+        f"{where}: the rotation slots of {len(unresolved)} node(s) "
+        f"({[n for n, _ in unresolved[:10]]}) are written as 0.0, neither "
+        f"a rotation nor a pore pressure: for node {node}, {why}.",
+        RotationSlotUnresolvedWarning,
+        stacklevel=stacklevel + 1,
+    )
+
+
+def _lineage(path: Path) -> "tuple[str, str] | None":
+    """``(model_hash, fem_hash)`` of an archive's ``/meta/lineage``;
+    ``None`` when the file has none or is not HDF5."""
+    import h5py
+
+    try:
+        with h5py.File(path, "r") as f:
+            if "meta" not in f or "lineage" not in f["meta"]:
+                return None
+            attrs = f["meta"]["lineage"].attrs
+            if "model_hash" not in attrs or "fem_hash" not in attrs:
+                return None
+            return str(attrs["model_hash"]), str(attrs["fem_hash"])
+    except OSError:
+        return None
+
+
+def _archive_is_free(staged: Path, archive: Path) -> bool:
+    """``True`` when ``archive`` is absent and ``staged`` must move there.
+
+    An existing ``archive`` with the lineage hashes of ``staged`` is
+    this bridge's and stays as it is (``False``). Any other existing
+    file refuses, so a session's own ``<model_name>.h5`` is never
+    replaced.
+    """
+    if not archive.exists():
+        return True
+    have = _lineage(archive) if archive.is_file() else None
+    if have is None or have != _lineage(staged):
+        raise FileExistsError(
+            f"EigenResult.to_ladruno: {archive} exists and is not this "
+            "bridge's model archive (its /meta/lineage differs or is "
+            "missing), so the .ladruno beside it cannot pair with it. "
+            "Pass a path whose <stem>.h5 is free, or remove that file. "
+            "Nothing was written."
+        )
+    return False

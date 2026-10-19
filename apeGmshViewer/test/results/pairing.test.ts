@@ -304,6 +304,8 @@ test("V4L-b1: a stamped .ladruno beside its model pairs by model_hash through th
   // Nodal components reach the store verbatim, as the reader names them.
   assert.ok(s.results!.stages[0]!.nodal.length > 0);
   assert.ok(s.results!.stages[0]!.nodal.every((c) => /^[A-Z_()]+\/\S+$/.test(c)), s.results!.stages[0]!.nodal.join(", "));
+  // #2128: the regenerated fixture's groups are fork schema §7.1.1's (ndm 3): DISPLACEMENT and ROTATION apart.
+  assert.deepEqual(s.results!.stages[0]!.nodal, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"]);
 });
 
 test("V4L-b1: an unstamped .ladruno beside a model is not drawn; the banner says why and names the remedy", async () => {

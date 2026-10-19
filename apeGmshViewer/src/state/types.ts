@@ -273,6 +273,21 @@ export interface ResultsStage {
   elementIndexSpace?: string | null;
   /** 1-D beam line-station components recorded in this stage (.ladruno) */
   lineStations?: LineStationComponent[];
+  /** a `.ladruno` mode stage's eigen scalars, as the file records them (its LAMBDA); absent elsewhere */
+  mode?: ModeFacts;
+}
+
+/**
+ * A mode's eigen scalars (reader/ladruno.ts `LadrunoMode`): the file's
+ * `LAMBDA` (omega^2) and the frequency and period derived from it, both 0 for
+ * a non-positive eigenvalue (no frequency or period).
+ */
+export interface ModeFacts {
+  /** 1-based, as the stage name `mode_<k>` */
+  index: number;
+  eigenvalue: number;
+  frequencyHz: number;
+  periodS: number;
 }
 
 /** One `gauss_points` group of a results stage (V4c2a): metadata, and its element ids as a blob ref. */
