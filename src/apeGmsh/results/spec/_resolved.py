@@ -12,8 +12,8 @@ build/emit time into a :class:`ResolvedRecorderSpec` — a snapshot
 tied to a specific FEMData by ``snapshot_id``.
 
 Only the spec is consumed downstream:
-- Phase 5 / 8: emit Tcl/Python recorder commands or ``recorder mpco`` lines
-- Phase 7: drive in-process domain capture
+- emit Tcl/Python recorder commands or ``recorder mpco`` lines
+- ``emit_default``: record an in-process run on the default route
 
 The spec is gmsh-independent and OpenSees-independent at the type
 level — just a numpy + dataclass payload.
@@ -97,7 +97,8 @@ class LayerSectionDef:
     """One LayeredShellFiberSection's per-layer composition.
 
     Populated from the bridge's resolved sections at recorder-resolve time
-    for ``category="layers"`` records. Carries the data DomainCapture
+    for ``category="layers"`` records. Carries the data the in-process
+    layer capturer (results/capture, which the deletion step removes)
     cannot probe from the live openseespy domain — per-layer
     thickness and material tag — so the capture-side
     ``write_layers_group`` can populate the LayerSlab schema fully.
@@ -117,7 +118,8 @@ class LayerSectionMetadata:
 
     Bundles the LayeredShell section definitions referenced by the
     record's elements plus an ``element_to_section`` lookup map.
-    DomainCapture's ``_LayerCapturer`` consumes this to populate
+    The in-process layer capturer (results/capture, which the deletion
+    step removes) consumes this to populate
     ``LayerSlab.thickness`` (and to validate the layer count when
     probing the live domain).
 
@@ -153,8 +155,8 @@ class ResolvedRecorderRecord:
     # class to the underlying PG/label. Used by the .out transcoder
     # to disambiguate catalog entries that share a flat size for the
     # same response token (e.g. FourNodeTetrahedron vs SSPbrick).
-    # Other paths (DomainCapture via ``ops.eleType``, MPCO via the
-    # bracket key) get class info directly and do not consume this.
+    # Other paths (MPCO via the bracket key) get class info
+    # directly and do not consume this.
     element_class_name: Optional[str] = None
 
     # Tri-state out-of-plane σ_zz capability for this record's elements
@@ -290,8 +292,7 @@ class ResolvedRecorderSpec:
 
         Categories: nodes / elements / gauss / line_stations are
         emitted; fibers / layers warn-and-skip (use
-        ``ops.domain_capture(DomainCaptureSpec(opensees=ops),
-        path=...)`` or :meth:`emit_mpco` instead);
+        :meth:`emit_default` or :meth:`emit_mpco` instead);
         modal records raise on ``__enter__``.
 
         ``model`` is the built :class:`~apeGmsh.opensees.OpenSeesModel`
