@@ -191,6 +191,29 @@ would need handling.
 Nothing in this ADR is blocked on it: the file route already carries every
 column, and the censuses read from `Results`.
 
+**Superseded in part, 2026-10-18** (#2192; maintainer ruling of 2026-10-14
+on #1767, gap G14). The seam named above was DomainCapture's per-material
+routing, and DomainCapture is being removed (#1767), so that seam will not
+exist. The live branch read now lives on the **`.ladruno` material
+channel**: the Ladruno recorder records `material.ladrunoBranch` during the
+run, and `Results.from_ladruno` reads it back through the D2 material-bucket
+seam. There is no in-process capture on this route; the run writes the
+file, and the file is read. The list above (vocabulary names, capture-spec
+category, routing pairs, catalog rows, `per_material_token`) described the
+removed seam's slice and is no longer owed. Its 8-against-27 `uri` trap
+belonged to that slice's per-GP catalog loop.
+
+What the channel carries today: `_MATERIAL_BUCKET_TOKENS["ladrunobranch"]`
+(`results/readers/_ladruno_element_io.py`) names the eight columns by
+position (D1). `Results.from_ladruno` exposes them on
+`results.elements.gauss`, and `corner_census()` reads `dp_branch` from
+there. The reader tests prove this on a hand-built `.ladruno`
+(`test_ladruno_branch_eight_slots_resolve_by_position`,
+`test_ladruno_branch_slot_order_matches_the_fork_fill_site`). What is not
+proven is a post-`61b3efa04` engine writing the bucket end to end: the live
+gate's post-fix half is still owed, as "What was measured" says. D5's text
+above stays as written.
+
 ## What was measured
 
 Fork build **`1652f945c`** (`ops.ladrunoBuild()`), i.e. **pre-`61b3efa04`**.
