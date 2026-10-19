@@ -634,6 +634,67 @@ def test_another_bridges_archive_on_the_same_mesh_is_not_used(
     assert 777.0 not in {v for c in comps.values() for v in c.values()}
 
 
+def test_coverage_counts_solid_cells_only(g: Any, tmp_path: Path) -> None:
+    """Coverage is over the nodes of 3-D cells, not of 2-D ones. A frame,
+    a stdBrick box meshed n=3 (so it has interior nodes, which no
+    surface cell holds) and a meshed plate that no element uses. The
+    deck's own archive touches every node of the box's hexahedra,
+    interior ones included, so it is used: the plate's nodes, on 2-D
+    cells only, are not solid nodes to cover. Frame and element-less
+    plate nodes keep their rotations, the brick nodes (ndf 3) get none,
+    and nothing warns. Counting 2-D cells as solid would call the plate
+    uncovered and refuse the archive (#2225 review mutant)."""
+    G = g.model.geometry
+    a, b = G.add_point(3.0, 0.0, 0.0), G.add_point(3.0, 0.0, 2.0)
+    col = G.add_line(a, b)
+    box = G.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+    plate = G.add_rectangle(5.0, 0.0, 0.0, 1.0, 1.0)
+    g.model.sync()
+    g.physical.add(1, [col], name="Frame")
+    g.physical.add(3, [box], name="Box")
+    g.physical.add(2, [plate], name="Plate")
+    g.mesh.structured.set_transfinite_box("Box", n=3)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(3)
+    g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data()
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    ops.element.elasticBeamColumn(
+        pg="Frame", transf=ops.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0)),
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    ops.element.stdBrick(
+        pg="Box", material=ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3))
+    _emit_deck(ops, tmp_path)
+    assert _conventional(fem).is_file()
+
+    hexes: set[int] = set()
+    faces: set[int] = set()
+    for group in fem.elements:
+        nodes = {int(n) for n in np.unique(group.connectivity)}
+        if int(group.element_type.dim) == 3:
+            hexes |= nodes
+        elif int(group.element_type.dim) == 2:
+            faces |= nodes
+    plate_nodes = sorted(int(n) for n in fem.nodes.select(pg="Plate").ids)
+    assert hexes - faces, "the box must have interior nodes"
+    assert set(plate_nodes) <= faces and not set(plate_nodes) & hexes
+    frame = sorted(int(n) for n in fem.nodes.select(pg="Frame").ids)
+
+    ids = _ids(fem)
+    shapes = _rows(fem, frame + plate_nodes, [])
+    res = ParallelModalResult.from_job(_job(tmp_path, ids, shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    assert caught == []
+    row = {int(n): i for i, n in enumerate(ids)}
+    for n in frame + plate_nodes:
+        assert [comps[c][n] for c in _ROT] == shapes[0, row[n], 3:].tolist()
+    for n in hexes:
+        assert [comps[c][n] for c in _ROT] == [0.0, 0.0, 0.0]
+
+
 @pytest.mark.parametrize("shell", [False, True])
 def test_pure_frame_or_shell_without_archive_keeps_rotations(
     g: Any, tmp_path: Path, shell: bool,
