@@ -994,10 +994,32 @@ def test_named_columns_untouched_by_the_resolver() -> None:
 # fork; the live counterparts are the #1969 cases in
 # tests/opensees/integration_ladruno/test_element_families_ladruno_live.py.
 
+def _node0_to_gmsh(rows: np.ndarray) -> np.ndarray:
+    """An element's node-0-first barycentric rows (column k = node k's
+    weight) in gmsh reference (u, v): the weights of nodes 1 and 2. The
+    reader hands every simplex GP over in that frame (#2228)."""
+    rows = np.asarray(rows, dtype=np.float64)
+    return np.hstack([rows, 1.0 - rows.sum(axis=1, keepdims=True)])[:, 1:]
+
+
+def _write_basis_attrs(grp, key: str) -> None:
+    """The BASIS attributes the fork writes beside every QUADRATURE group;
+    without PARAM_DOMAIN the reader refuses a GP_PARAM (#2228)."""
+    tri = any(c in key for c in ("SixNodeTri", "LadrunoLST"))
+    for name, value in zip(
+        ("PARAM_DOMAIN", "TOPOLOGY", "FAMILY"),
+        ("bary", "tri", "lagrange") if tri else ("[-1,1]", "quad", "lagrange"),
+    ):
+        grp.attrs[name] = np.array([value.encode()])
+
+
 #: LadrunoLST's own 3-point interior rule in its GP order (LadrunoLST.cpp,
-#: the SixNodeTri anchors). Spelled out: the reader takes the layout from
-#: RESPONSE_CATALOG, so reading it from there would assert nothing.
-LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
+#: the SixNodeTri anchors), node-0-first in the source, read in gmsh (u, v).
+#: Spelled out: the reader takes the layout from RESPONSE_CATALOG, so
+#: reading it from there would assert nothing.
+LST_GP = _node0_to_gmsh(
+    np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]]),
+)
 LST_KEY = "33016-LadrunoLST[0:0:0]"
 
 
@@ -1041,6 +1063,7 @@ def _lst_file(
                 "33016-LadrunoLST[201:0]/QUADRATURE",
             )
             quad.create_dataset("GP_PARAM", data=gp_param)
+            _write_basis_attrs(quad.parent, LST_KEY)
     return dst, data
 
 
@@ -1079,7 +1102,8 @@ def test_file_gp_param_wins_over_the_catalog_rule(tmp_path: Path) -> None:
     path, _ = _lst_file(tmp_path, "stresses", gp_param=own)
     with LadrunoReader(path) as r:
         slab = r.read_gauss("stage_0", "stress_xx")
-    np.testing.assert_array_equal(slab.natural_coords, own)
+    np.testing.assert_allclose(slab.natural_coords, _node0_to_gmsh(own),
+                               rtol=0, atol=1e-15)
 
 
 def test_aliased_token_with_a_wrong_width_still_refuses() -> None:
@@ -1173,10 +1197,15 @@ _G2 = 1.0 / np.sqrt(3.0)
 QUAD_GL_2 = np.array([[-_G2, -_G2], [_G2, -_G2], [_G2, _G2], [-_G2, _G2]])
 #: ASDShellT3.cpp mid-edge (XI, ETA).
 TRI_GL_2B = np.array([[0.5, 0.5], [0.0, 0.5], [0.5, 0.0]])
-#: ShellDKGT.cpp sg/tg: the centroid, then the three 1/5-3/5 points.
-TRI_GL_2C = np.array([[1 / 3, 1 / 3], [0.2, 0.6], [0.6, 0.2], [0.2, 0.2]])
-#: SixNodeTri.cpp's 3-point interior rule.
-TRI_GL_2 = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
+#: ShellDKGT.cpp sg/tg: the centroid, then the three 1/5-3/5 points,
+#: node-0-first (shape2d: N0 = sg), read in gmsh (u, v).
+TRI_GL_2C = _node0_to_gmsh(
+    np.array([[1 / 3, 1 / 3], [0.2, 0.6], [0.6, 0.2], [0.2, 0.2]]),
+)
+#: SixNodeTri.cpp's 3-point interior rule, node-0-first, read in gmsh.
+TRI_GL_2 = _node0_to_gmsh(
+    np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]]),
+)
 _G3 = np.sqrt(0.6)
 #: EightNodeQuad.cpp: corners, edge midpoints, centroid.
 QUAD8_GL_3 = np.array([
@@ -1232,6 +1261,7 @@ def _named_gp_file(
                 f"{prefix}[{rest.split(':')[0]}:0]/QUADRATURE",
             )
             quad.create_dataset("GP_PARAM", data=gp_param)
+            _write_basis_attrs(quad.parent, key)
     return dst, data
 
 
@@ -1303,7 +1333,7 @@ def test_rule_zero_file_gp_param_wins(tmp_path: Path) -> None:
         tmp_path, "209-SixNodeTri[0:0:0]", PLANE_LABELS, 3, level=4,
         gp_param=own,
     )
-    _assert_reads(path, data, PLANE_CANON, 3, own)
+    _assert_reads(path, data, PLANE_CANON, 3, _node0_to_gmsh(own))
 
 
 def test_reordered_shell_resultants_refuse(tmp_path: Path) -> None:

@@ -74,8 +74,12 @@ DISP = ("displacement_x", "displacement_y", "displacement_z")
 ROT = ("rotation_x", "rotation_y", "rotation_z")
 #: LadrunoLST's own 3-point interior rule, in the element's GP order
 #: (LadrunoLST.cpp, the SixNodeTri anchors). The element answers no
-#: ``integrationPoints`` response, so the fork source is the oracle.
-LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
+#: ``integrationPoints`` response, so the fork source is the oracle. The
+#: source lists (2/3, 1/6), (1/6, 2/3), (1/6, 1/6) node-0-first (L1 = s on
+#: node 0); the reader hands them over in gmsh (u, v), the weights of nodes
+#: 1 and 2 (#2228; the engine oracle is
+#: tests/results/test_gauss_simplex_coords.py).
+LST_GP = np.array([[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]])
 
 # ---------------------------------------------------------------------------
 # Helpers
