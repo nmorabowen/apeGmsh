@@ -33,14 +33,23 @@ A frame beam's bucket carries a custom-rule key
 sections, never the end-force layout, so any ``custom_rule_idx`` is read
 and META validation guards the layout.
 
+Every header index is read (``:0``, ``:1``, ...). MPCO opens a new
+header when elements of one class write a different META, so a
+``header_idx > 0`` bucket is read only once its own META spells the
+catalog layout: its ``NUM_COLUMNS`` and META blocks
+(:func:`validate_nodal_bucket_meta`), and its ``META/COMPONENTS``
+column names, node count and order
+(:func:`header_bucket_meta_mismatch`).
+
 A bucket the reader is unable to decode is listed by
 :func:`scan_nodal_force_buckets` with its reason, and
 :func:`warn_skipped_nodal_buckets` names its class
 (:class:`NodalForceBucketSkippedWarning`):
 
 - a bucket key that does not parse;
-- ``header_idx != 0`` (a second response header for the class);
-- an element class absent from :data:`NODAL_FORCE_CATALOG`.
+- an element class absent from :data:`NODAL_FORCE_CATALOG`;
+- a ``header_idx > 0`` bucket whose META does not spell the catalog
+  layout, or carries no column names to check it by.
 """
 from __future__ import annotations
 
@@ -61,6 +70,10 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
     parse_mpco_element_key,
     unflatten_nodal,
+)
+from ._ladruno_element_io import (
+    decode_local_nodal_force_columns,
+    decode_nodal_force_columns,
 )
 
 if TYPE_CHECKING:
@@ -145,8 +158,10 @@ def scan_nodal_force_buckets(
         under (``"globalForce"`` / ``"localForce"``), or ``None`` if
         the canonical component has no nodal-forces routing.
         ``buckets`` holds the buckets whose ``(class_name,
-        catalog_token)`` is in :data:`NODAL_FORCE_CATALOG` and whose
-        ``header_idx`` is 0, at any ``custom_rule_idx``. ``skipped``
+        catalog_token)`` is in :data:`NODAL_FORCE_CATALOG`, at any
+        ``custom_rule_idx``: every ``header_idx`` 0 bucket, and each
+        ``header_idx > 0`` bucket whose own META spells the catalog
+        layout (:func:`header_bucket_meta_mismatch`). ``skipped``
         holds every other bucket with the reason it is left unread.
     """
     mapping = canonical_to_nodal_force_token(canonical_component)
@@ -169,13 +184,6 @@ def scan_nodal_force_buckets(
                 "'<tag>-<Class>[<rule>:<cust>:<hdr>]'",
             ))
             continue
-        if elem_key.header_idx != 0:
-            skipped.append(_SkippedNodalBucket(
-                bracket_key, elem_key.class_name,
-                f"it is response header {elem_key.header_idx} of the "
-                f"class, and only header 0 is decoded",
-            ))
-            continue
         if not is_nodal_force_catalogued(elem_key.class_name, catalog_token):
             skipped.append(_SkippedNodalBucket(
                 bracket_key, elem_key.class_name,
@@ -184,6 +192,18 @@ def scan_nodal_force_buckets(
             ))
             continue
         layout = lookup_nodal_force(elem_key.class_name, catalog_token)
+        if elem_key.header_idx != 0:
+            mismatch = header_bucket_meta_mismatch(
+                token_grp[bracket_key], layout,
+                class_name=elem_key.class_name, bracket_key=bracket_key,
+            )
+            if mismatch is not None:
+                skipped.append(_SkippedNodalBucket(
+                    bracket_key, elem_key.class_name,
+                    f"it is response header {elem_key.header_idx} of the "
+                    f"class and {mismatch}",
+                ))
+                continue
         out.append(_NodalBucket(
             bracket_key=bracket_key,
             elem_key=elem_key,
@@ -304,6 +324,98 @@ def validate_nodal_bucket_meta(
             f"MPCO bucket {bracket_key!r}: META MULTIPLICITY="
             f"{int(multiplicity[0])} but nodal-forces buckets expect 1."
         )
+
+
+def _meta_column_names(bucket_grp: "h5py.Group") -> list[str] | None:
+    """The column names of a single-block bucket's ``META/COMPONENTS``.
+
+    ``None`` when META carries no ``COMPONENTS``. Raises
+    :class:`ValueError` when it holds other than one entry or one block.
+    """
+    meta = bucket_grp["META"]
+    if "COMPONENTS" not in meta:
+        return None
+    raw = np.asarray(meta["COMPONENTS"][...]).flatten()
+    if raw.size != 1:
+        raise ValueError(
+            f"its META/COMPONENTS holds {raw.size} entries, not 1"
+        )
+    text = raw[0].decode() if isinstance(raw[0], bytes) else str(raw[0])
+    blocks = [seg for seg in text.split(";") if seg]
+    if len(blocks) != 1:
+        raise ValueError(
+            f"its META/COMPONENTS names {len(blocks)} blocks, not 1"
+        )
+    return [
+        n.strip() for n in blocks[0].rpartition(".")[2].split(",")
+        if n.strip()
+    ]
+
+
+def header_bucket_meta_mismatch(
+    bucket_grp: "h5py.Group",
+    layout: NodalForceLayout,
+    *,
+    class_name: str,
+    bracket_key: str,
+) -> str | None:
+    """Why a ``header_idx > 0`` bucket's own META does not spell ``layout``.
+
+    ``None`` when it does: ``NUM_COLUMNS`` and the META blocks pass
+    :func:`validate_nodal_bucket_meta`, and the ``META/COMPONENTS`` names
+    decode, column by column, to ``layout``'s components at each of its
+    ``n_nodes_per_element`` nodes, node-slowest in catalog order. A
+    ``globalForce`` name is decoded as the ``.ladruno`` reader decodes it
+    (``Px_1``, ``Mz_2``: :func:`decode_nodal_force_columns`), and a
+    ``localForce`` name likewise (``N_1``, ``Vy_1``, the 2-D ``V_1`` or
+    ``V1``: :func:`decode_local_nodal_force_columns`).
+
+    Otherwise the reason, for :class:`NodalForceBucketSkippedWarning`:
+    a META the catalog contradicts, or a META with no column names to
+    check (no ``COMPONENTS``, or MPCO's unnamed ``C1..Cn``), which leaves
+    the order of its columns unknown.
+    """
+    try:
+        validate_nodal_bucket_meta(bucket_grp, layout, bracket_key=bracket_key)
+        names = _meta_column_names(bucket_grp)
+    except (KeyError, ValueError) as exc:
+        return f"its META contradicts the catalog layout: {exc}"
+    expected = list(layout.component_layout)
+    n_nodes = layout.n_nodes_per_element
+    where = (
+        f"the {n_nodes}-node {layout.frame} layout NODAL_FORCE_CATALOG "
+        f"gives {class_name!r} ({expected} at each node)"
+    )
+    if names is None:
+        return (
+            f"its META carries no COMPONENTS, so its columns cannot be "
+            f"checked against {where}"
+        )
+    if len(names) != layout.flat_size_per_element:
+        return (
+            f"its META names {len(names)} columns {names[:12]}, not the "
+            f"{layout.flat_size_per_element} of {where}"
+        )
+    if layout.frame == "local":
+        try:
+            decode_local_nodal_force_columns(names, class_name)
+        except ValueError as exc:
+            return f"its META column names do not match the catalog: {exc}"
+        return None
+    try:
+        columns, undecoded = decode_nodal_force_columns(
+            names, ndm=2 if layout.n_components_per_node == 3 else 3,
+        )
+    except ValueError as exc:
+        return f"its META column names {names[:12]} do not decode: {exc}"
+    k_per_node = layout.n_components_per_node
+    nodes = np.arange(n_nodes, dtype=np.int64)
+    if undecoded or set(columns) != set(expected) or any(
+        not np.array_equal(columns[c], nodes * k_per_node + k)
+        for k, c in enumerate(expected)
+    ):
+        return f"its META columns {names[:12]} do not spell {where}"
+    return None
 
 
 # =====================================================================
