@@ -3,19 +3,22 @@
 Inserts a "Record results" section after the analysis of an EOS notebook
 that builds its OpenSees model by hand from a FEMData broker (nodes and
 elements tagged by their FEM ids). The section re-runs the notebook's
-build + analysis with the **default results route**
-(``ResolvedRecorderSpec.emit_default``): the build's own recorder writes
-the run (``.ladruno`` on the Ladruno fork, ``.mpco`` on a stock build with
-MPCO, classic ``.out`` files otherwise) and ``run.results()`` reads it
-back with the matching ``Results`` factory. The cell then checks the
+build + analysis and records it on a route chosen by the build the deck
+ran on (``backend_info_of(ops)``):
+
+- **Ladruno fork:** ``ResolvedRecorderSpec.emit_default`` records the run
+  with the fork's own recorder (``.ladruno``).
+- **Stock openseespy:** the cell samples ``ops.nodeDisp`` after every
+  ``ops.analyze`` and writes a native file with ``NativeWriter``.
+  ``emit_default`` cannot record this deck on stock without MPCO: its
+  ``.out`` route needs a bridge archive that declares ``ndm``
+  (``apeSees(fem).h5``), and a hand-built deck has none.
+
+Both files are read with ``Results.from_fem(fem, path)`` (the deck tags by
+FEM id, so the FEMData snapshot is the model). The cell then checks the
 recorded last step against the live domain, node by node, and opens the
 run in the apeGmsh ResultsViewer (``Results.viewer`` honours
 ``APEGMSH_SKIP_VIEWER`` for headless runs).
-
-The deck tags nodes and elements by FEM id, so the FEMData archive
-(``fem.to_h5``) is the model archive the read pairs with: its element
-pairing is the identity. The stock route without MPCO needs a bridge
-archive that declares ``ndm`` (``apeSees(fem).h5``) and refuses this one.
 
 Algorithm:
   1. Read notebook with nbformat.
@@ -29,7 +32,8 @@ Algorithm:
   6. Concatenate cells [build_start .. build_end] verbatim and split
      them before the first top-level statement that calls
      ``ops.analyze``: the build runs before the recorder opens, the
-     analysis inside it.
+     analysis inside it. Call ``_record_step()`` after every
+     ``ops.analyze`` line; refuse a call the hook cannot follow.
   7. Refuse an eigen-only build: no default route records modes.
   8. Insert the cells where the V1 wiring was, else before the first
      top-level ``ops.wipe()`` / ``g.end()`` after the analysis (the live
@@ -160,37 +164,85 @@ def _strip_ops_wipe_before_end(code: str) -> str:
     return re.sub(r"\nops\.wipe\(\)\s*$", "", code)
 
 
+def _is_transient(code: str) -> bool:
+    """Detect ``ops.analyze(N, dt)`` two-arg form -> transient."""
+    return bool(re.search(r"ops\.analyze\(\s*[^,)]+\s*,\s*[^,)]+\s*\)", code))
+
+
+_ANALYZE_LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?:[\w, ]+=\s*)?ops\.analyze\([^\n#]*\)\s*(?:#[^\n]*)?$",
+    re.MULTILINE,
+)
+
+
+def _hook_each_analyze(code: str) -> str:
+    """After every ``ops.analyze(...)`` statement line, call
+    ``_record_step()`` at the same indentation (the stock route samples the
+    live domain there).
+
+    Raises :class:`ValueError` when an ``ops.analyze`` call sits in a form
+    the hook cannot follow (inside an expression, split over lines): a
+    step that is not sampled would read back as a missing step.
+    """
+    calls = sum(
+        1 for n in ast.walk(ast.parse(code))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "analyze" and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "ops"
+    )
+    hooked, n = _ANALYZE_LINE_RE.subn(
+        lambda m: f"{m.group(0)}\n{m.group('indent')}_record_step()", code)
+    if n != calls:
+        raise ValueError(
+            f"{calls} ops.analyze call(s) but {n} on a line of their own")
+    return hooked
+
+
 # ---------------------------------------------------------------------------
 # Cell construction
 # ---------------------------------------------------------------------------
 
 _MD_INTRO = """\
-## Record results on the default route
+## Record results
 
-The cell below re-runs the analysis with the build's own recorder,
-through ``ResolvedRecorderSpec.emit_default``: the Ladruno fork writes a
-``.ladruno`` file, a stock build with MPCO writes ``.mpco``, and a stock
-build without it writes classic ``.out`` files. ``run.results()`` reads
-the run back with the matching ``Results`` factory, and ``run.route``
-names the one that ran.
+The cell below re-runs the analysis and records it, choosing the route by
+the OpenSees build the deck ran on:
 
-The deck tags nodes and elements by their FEM ids, so the FEMData
-archive (``fem.to_h5``) is the model archive the read pairs with. The
-cell then checks the recorded last step against the live domain.
-``Results.viewer`` honours ``APEGMSH_SKIP_VIEWER``, so this notebook is
-safe to run under nbconvert / CI without changes.
+- **Ladruno fork:** ``ResolvedRecorderSpec.emit_default`` records the run
+  with the fork's own recorder (a ``.ladruno`` file).
+- **Stock openseespy:** the cell samples the live domain after every step
+  and writes a native results file with ``NativeWriter``. ``emit_default``
+  cannot record this deck on a stock build without MPCO: its ``.out``
+  route needs a bridge model archive that declares ``ndm``, and this deck
+  was built by hand.
+
+Either file is read back with ``Results.from_fem(fem, path)``: the deck
+tags nodes and elements by their FEM ids, so the FEMData snapshot is the
+model. The cell then checks the recorded last step against the live
+domain. ``Results.viewer`` honours ``APEGMSH_SKIP_VIEWER``, so this
+notebook is safe to run under nbconvert / CI without changes.
 """
 
 
-def _capture_cell(ndm: int, build_code: str, analysis_code: str) -> str:
-    """Compose the default-route cell around the notebook's own code."""
+def _capture_cell(ndm: int, build_code: str, analysis_code: str, *,
+                  transient: bool = False) -> str:
+    """Compose the record cell around the notebook's own code.
+
+    ``analysis_code`` already calls ``_record_step()`` after each
+    ``ops.analyze`` (:func:`_hook_each_analyze`).
+    """
     body = textwrap.indent(_strip_ops_wipe_before_end(analysis_code), "    ")
+    stage_kind = "transient" if transient else "static"
     return f"""\
 {MARKER}
-# Default results route: the build's own recorder records the run.
+# Record the run: the fork's own recorder on the Ladruno fork, a native
+# file sampled from the live domain on stock openseespy.
+import contextlib
 import numpy as np
-from apeGmsh import workdir
+from apeGmsh import Results, workdir
+from apeGmsh.opensees._target import backend_info_of
 from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
+from apeGmsh.results.writers import NativeWriter
 
 OUT = workdir()
 
@@ -201,35 +253,67 @@ _axes = ("x", "y", "z")[:{ndm}]
 _built = set(int(n) for n in ops.getNodeTags())
 _node_ids = np.asarray(
     [int(n) for n in fem.nodes.ids if int(n) in _built], dtype=np.int64)
-spec = ResolvedRecorderSpec(
-    fem_snapshot_id=fem.snapshot_id,
-    records=tuple(
-        ResolvedRecorderRecord(
-            category="nodes", name=kind,
-            components=tuple(f"{{kind}}_{{a}}" for a in _axes),
-            dt=None, n_steps=None, node_ids=_node_ids,
-        )
-        for kind in ("displacement", "reaction_force")
-    ),
-)
-# The deck tags nodes and elements by FEM id: the FEMData archive is the
-# model archive, and its element pairing is the identity.
-model_h5 = OUT / "model.h5"
-fem.to_h5(str(model_h5))
+_backend = backend_info_of(ops)
+_fork = _backend.kind == "fork"
+print(f"OpenSees build: {{_backend.kind}} ({{_backend.source}})")
 
-with spec.emit_default(OUT / "run", model_h5=model_h5, ops=ops,
-                       overwrite=True) as run:
+if _fork:
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=tuple(
+            ResolvedRecorderRecord(
+                category="nodes", name=kind,
+                components=tuple(f"{{kind}}_{{a}}" for a in _axes),
+                dt=None, n_steps=None, node_ids=_node_ids,
+            )
+            for kind in ("displacement", "reaction_force")
+        ),
+    )
+    # emit_default needs a model archive on disk; the deck tags nodes and
+    # elements by FEM id, so the FEMData archive is that model.
+    model_h5 = OUT / "model.h5"
+    fem.to_h5(str(model_h5))
+    _recording = spec.emit_default(OUT / "run", model_h5=model_h5, ops=ops,
+                                   overwrite=True)
+else:
+    _recording = contextlib.nullcontext()
+
+_steps = []   # stock: (time, displacement) after every step
+
+
+def _record_step():
+    if not _fork:
+        _steps.append((ops.getTime(), np.array(
+            [ops.nodeDisp(int(n))[:{ndm}] for n in _node_ids])))
+
+
+with _recording as run:
 {body}
 
-results = run.results()
-print(f"route {{run.route}} -> {{run.path}}")
+if _fork:
+    results_path = run.path
+    results = Results.from_fem(fem, results_path, cache_root=OUT)
+else:
+    results_path = OUT / "run_native.h5"
+    if results_path.exists():
+        results_path.unlink()
+    _u = np.stack([u for _, u in _steps])          # (T, N, ndm)
+    with NativeWriter(results_path) as _nw:
+        _nw.open(fem=fem, source_type="native", opensees_backend=_backend.kind)
+        _sid = _nw.begin_stage(name="analysis", kind="{stage_kind}",
+                               time=np.array([t for t, _ in _steps]))
+        _nw.write_nodes(_sid, "partition_0", node_ids=_node_ids, components={{
+            f"displacement_{{a}}": _u[:, :, k] for k, a in enumerate(_axes)}})
+        _nw.end_stage()
+    results = Results.from_fem(fem, results_path, kind="native", cache_root=OUT)
+print(f"recorded -> {{results_path}}")
 
 # The recorded last step is the live domain's displacement field.
 _slabs = [results.nodes.get(ids=_node_ids, component=f"displacement_{{a}}")
           for a in _axes]
+assert sorted(int(n) for n in _slabs[0].node_ids) == sorted(_node_ids.tolist())
 _rec = np.column_stack([s.values[-1] for s in _slabs])
 _live = np.array([ops.nodeDisp(int(n))[:{ndm}] for n in _slabs[0].node_ids])
-assert sorted(int(n) for n in _slabs[0].node_ids) == sorted(_node_ids.tolist())
 _scale = max(float(np.abs(_live).max()), 1e-300)
 assert np.allclose(_rec, _live, rtol=1e-6, atol=1e-9 * _scale), (
     "the recorded displacement disagrees with the live domain")
@@ -301,12 +385,14 @@ def wire(nb_path: Path) -> str:
         parts.append(f"# --- copied from cell {i} ---\n" + c.source.rstrip())
     try:
         build_code, analysis_code = _split_at_first_analyze("\n".join(parts))
+        analysis_code = _hook_each_analyze(analysis_code)
     except (SyntaxError, ValueError) as exc:
-        return f"[skip] {nb_path.name}: cannot split the build at ops.analyze ({exc})"
+        return f"[skip] {nb_path.name}: cannot hook the analysis ({exc})"
 
     new_cells = [
         _new_md(_MD_INTRO),
-        _new_code(_capture_cell(ndm, build_code, analysis_code)),
+        _new_code(_capture_cell(ndm, build_code, analysis_code,
+                                transient=_is_transient(code_text))),
         _new_code(_viewer_cell()),
     ]
 
