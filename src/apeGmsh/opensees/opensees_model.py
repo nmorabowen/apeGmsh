@@ -155,6 +155,17 @@ def _fixes_at_node_width(
     return tuple(out)
 
 
+def _fem_element_arity(fem: Any) -> dict[int, int]:
+    """``{FEM element id: node count}`` over every element group of
+    ``fem``: the connectivity width a fanned-out element row was emitted
+    with (K R1b-S2, the dry run of :meth:`OpenSeesModel._load_elements`)."""
+    out: dict[int, int] = {}
+    for group in fem.elements:
+        width = int(group.connectivity.shape[1])
+        out.update(dict.fromkeys((int(e) for e in group.ids), width))
+    return out
+
+
 def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     """The archive's ``apeSees.equation_constraint`` rows, in call order.
 
@@ -538,7 +549,7 @@ class OpenSeesModel:
             solve_stamp = model.solve_stamp()
             declarations = model.declarations()
 
-            elements = cls._load_elements(model)
+            elements = cls._load_elements(model, fem)
             fixes, masses = cls._load_bcs(model)
             mass_from_model = cls._load_mass_from_model(model)
             analysis_attrs, analyze_call = cls._load_analysis(model)
@@ -1253,7 +1264,7 @@ class OpenSeesModel:
     # ==================================================================
 
     @staticmethod
-    def _load_elements(model: Any) -> tuple[ElementRecord, ...]:
+    def _load_elements(model: Any, fem: Any) -> tuple[ElementRecord, ...]:
         """Walk ``/opensees/element_meta`` into typed :class:`ElementRecord`.
 
         Mirrors :meth:`ModelData.from_h5`'s element rehydrate path:
@@ -1261,12 +1272,22 @@ class OpenSeesModel:
         are just the tail; on re-emit we keep ``connectivity=()`` so
         a future ``to_h5`` is byte-stable (the same ``arity=0`` /
         same tail land at the same datasets).
+
+        Each tail slot takes the int/float type its declaration emits
+        there (K R1b-S2, :class:`~apeGmsh.opensees._internal.replay_types.
+        SlotTypes`); the dry run needs the row's node count, which is its
+        inline connectivity or its FEM element's (``fem``, the archive's
+        own neutral zone).
         """
         import numpy as np
+
+        from .emitter.h5_reader import MalformedH5Error
 
         f = model.handle
         if "opensees" not in f or "element_meta" not in f["opensees"]:
             return ()
+        slot_types = model.slot_types()
+        arity = _fem_element_arity(fem) if slot_types.active else {}
         em_grp = f["opensees/element_meta"]
         out: list[ElementRecord] = []
         for type_group_name in em_grp:
@@ -1326,6 +1347,27 @@ class OpenSeesModel:
                     row_args[-1]
                 ):
                     row_args.pop()
+                fem_eid = int(fem_eids[i])
+                has_inline = (
+                    inline_conn is not None
+                    and fem_eid < 0
+                    and i < len(inline_conn)
+                    and len(inline_conn[i]) > 0
+                )
+                if slot_types.active and (has_inline or fem_eid > 0):
+                    if has_inline:
+                        n_nodes = len(inline_conn[i])
+                    elif fem_eid in arity:
+                        n_nodes = arity[fem_eid]
+                    else:
+                        raise MalformedH5Error(
+                            f"/opensees/element_meta/{type_group_name}: "
+                            f"element {int(ids[i])} is fanned out from FEM "
+                            f"element {fem_eid}, which the archive's neutral "
+                            "zone does not hold.")
+                    row_args = list(slot_types.recover(
+                        "element", int(ids[i]), type_token, row_args,
+                        nodes=n_nodes))
                 # ADR 0049: a node-pair row (fem_eid<0) restores its
                 # connectivity from inline_connectivity and re-prepends it to
                 # args, so the record is fully formed (connectivity set + args
@@ -1335,12 +1377,8 @@ class OpenSeesModel:
                 # rows keep connectivity=() and are re-attached later from the
                 # FEM via _rehydrate_element_connectivity.
                 conn: tuple[int, ...] = ()
-                if (
-                    inline_conn is not None
-                    and int(fem_eids[i]) < 0
-                    and i < len(inline_conn)
-                    and len(inline_conn[i]) > 0
-                ):
+                if has_inline:
+                    assert inline_conn is not None
                     conn = tuple(int(c) for c in inline_conn[i])
                     row_args = [*conn, *row_args]
                 out.append(ElementRecord(
