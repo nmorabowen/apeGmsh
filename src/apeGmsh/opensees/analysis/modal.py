@@ -28,9 +28,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from ...results.readers._ladruno_writer import write_modes
 
 if TYPE_CHECKING:
     from ..emitter.live import LiveOpsEmitter
@@ -906,6 +909,63 @@ class ParallelModalResult:
             )
         finally:
             writer.close()
+
+    def to_ladruno(self, path: "str | Any", *, model_h5: "str | Any") -> Path:
+        """Write the harvested modes as a stamped ``.ladruno`` and return
+        its path (ADR 0122; the twin of :meth:`to_native`).
+
+        One ``KIND="eigen"`` ``MODEL_STAGE`` holds every mode in the
+        layout the fork recorder writes for ``modesOfVibration`` +
+        ``modesOfVibrationRotational`` (the table is in
+        :mod:`apeGmsh.results.readers._ladruno_writer`): ``Ux..`` from the
+        first ``ndm`` shape columns and, when the deck recorded them, the
+        rotations (column 3 in 2-D at ``ndf >= 3``, columns 4-6 in 3-D at
+        ``ndf >= 6``), over :attr:`shape_nodes`. A non-positive
+        eigenvalue writes 0 Hz / 0 s and warns once for its mode.
+
+        ``model_h5`` is the bridge archive the deck was emitted from
+        (``ops.h5``). ``MODEL/NODES`` is its fem, ``MODEL/ELEMENTS`` is
+        empty (``INFO/PROVENANCE@unsupported`` says so), and the file is
+        stamped against it::
+
+            res = ParallelModalResult.from_job(job_dir)
+            p = res.to_ladruno("modes.ladruno", model_h5="model.h5")
+            r = Results.from_ladruno(p, model_h5="model.h5")
+
+        Raises
+        ------
+        FileNotFoundError
+            The run dir carries no mode-shape harvest.
+        ValueError
+            The archive's ``ndm`` differs from the sidecar's, or a
+            harvested node is not a node of the archive's fem. Nothing is
+            written.
+        """
+        from ..opensees_model import OpenSeesModel
+
+        if self._shapes is None or self._shape_nodes is None:
+            raise FileNotFoundError(_NO_SHAPES_MSG)
+        shapes = self._shapes
+        model = OpenSeesModel.from_h5(str(model_h5))
+        ndm = int(model.ndm)
+        if self._shape_ndm is not None and int(self._shape_ndm) != ndm:
+            raise ValueError(
+                "ParallelModalResult.to_ladruno: the sidecar says ndm="
+                f"{self._shape_ndm} but {model_h5} is an ndm={ndm} model; "
+                "the run dir and the archive come from different models. "
+                "Nothing was written."
+            )
+        fem = model.fem
+        return write_modes(
+            path, model_h5=model_h5,
+            node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
+            coords=np.asarray(fem.nodes.coords, dtype=np.float64),
+            ndm=ndm, ndf=int(shapes.shape[2]),
+            eigenvalues=self.eigenvalues,
+            fields=lambda k: shapes[k - 1],
+            record_ids=self._shape_nodes,
+            source="modal_deck", stacklevel=3,
+        )
 
     def participation_factors(self, component: str) -> np.ndarray:
         """Not available in a distributed run — modalProperties is MPI-blind."""
