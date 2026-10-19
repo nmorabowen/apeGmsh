@@ -2570,3 +2570,128 @@ def test_factory_without_model_warns_once(g, tmp_path: Path) -> None:
             assert np.isfinite(r.nodes.get(component=comp).values).all()
     assert len([x for x in w if issubclass(x.category, AbsentDofWarning)]) == 1
 
+
+# ---------------------------------------------------------------------------
+# One spatial-dimension rule for the reader and the localForce gate (#2098)
+# ---------------------------------------------------------------------------
+#
+# ``_file_spatial_dim`` replaced the reader's own ``_spatial_dim``. Before the
+# merge the two were run over every row below, from the file root (the
+# reader's input) and from a group and a dataset inside the file (the gate's
+# input), and agreed on each. The table pins that shared answer.
+
+def _sd_stage(h, i: int, coords=None, *, model_dataset: bool = False,
+              coords_group: bool = False) -> None:
+    stage = h.create_group(f"MODEL_STAGE[{i}]")
+    stage.create_group("RESULTS/ON_ELEMENTS/localForce")
+    if model_dataset:
+        stage.create_dataset("MODEL", data=np.zeros(3))
+        return
+    nodes = stage.create_group("MODEL/NODES")
+    if coords_group:
+        nodes.create_group("COORDINATES")
+    elif coords is not None:
+        nodes.create_dataset("COORDINATES", data=np.zeros(coords))
+
+
+def _sd_info(h, value, *, dataset: bool = False) -> None:
+    info = (h.create_dataset("INFO", data=0) if dataset
+            else h.create_group("INFO"))
+    info.attrs["SPATIAL_DIM"] = value
+
+
+_SPATIAL_DIM_TABLE = [
+    # (case, build, expected): an int, None, or the exception type raised.
+    ("attribute 2 beats coordinates 3",
+     lambda h: (_sd_info(h, 2), _sd_stage(h, 1, (4, 3))), 2),
+    ("attribute 3 beats coordinates 2",
+     lambda h: (_sd_info(h, 3), _sd_stage(h, 1, (4, 2))), 3),
+    ("attribute as a one-value int32 array",
+     lambda h: (_sd_info(h, np.array([2], np.int32)),
+                _sd_stage(h, 1, (4, 3))), 2),
+    ("attribute on an INFO dataset",
+     lambda h: (_sd_info(h, 2, dataset=True), _sd_stage(h, 1, (4, 3))), 2),
+    ("INFO without the attribute: inferred",
+     lambda h: (h.create_group("INFO"), _sd_stage(h, 1, (4, 2))), 2),
+    ("absent, one stage of width 2: inferred",
+     lambda h: _sd_stage(h, 1, (4, 2)), 2),
+    ("absent, two stages of width 3: inferred",
+     lambda h: (_sd_stage(h, 1, (4, 3)), _sd_stage(h, 2, (5, 3))), 3),
+    ("absent, width 1: inferred",
+     lambda h: _sd_stage(h, 1, (4, 1)), 1),
+    ("absent, a stage without coordinates is skipped",
+     lambda h: (_sd_stage(h, 1), _sd_stage(h, 2, (4, 2))), 2),
+    ("absent, stages disagree (2 and 3)",
+     lambda h: (_sd_stage(h, 1, (4, 2)), _sd_stage(h, 2, (4, 3))), None),
+    ("absent, width 4",
+     lambda h: _sd_stage(h, 1, (4, 4)), None),
+    ("absent, 1-D coordinates",
+     lambda h: _sd_stage(h, 1, (4,)), None),
+    ("absent, 3-D coordinates",
+     lambda h: _sd_stage(h, 1, (4, 2, 1)), None),
+    ("absent, no stage carries coordinates",
+     lambda h: _sd_stage(h, 1), None),
+    ("absent, coordinates only outside a MODEL_STAGE",
+     lambda h: (_sd_stage(h, 1), h.create_dataset(
+         "X/MODEL/NODES/COORDINATES", data=np.zeros((4, 2)))), None),
+    ("absent, MODEL is a dataset",
+     lambda h: _sd_stage(h, 1, model_dataset=True), None),
+    # Malformed values, pinned as both helpers answered before the merge.
+    ("malformed: empty attribute falls through to the coordinates",
+     lambda h: (_sd_info(h, np.zeros(0, int)), _sd_stage(h, 1, (4, 2))), 2),
+    ("malformed: float attribute truncates",
+     lambda h: (_sd_info(h, 2.0), _sd_stage(h, 1, (4, 3))), 2),
+    ("malformed: multi-value attribute reads the first",
+     lambda h: (_sd_info(h, np.array([3, 2])), _sd_stage(h, 1, (4, 2))), 3),
+    ("malformed: out-of-range attribute is returned as is",
+     lambda h: (_sd_info(h, 7), _sd_stage(h, 1, (4, 2))), 7),
+    ("malformed: numeric string attribute parses",
+     lambda h: (_sd_info(h, "2"), _sd_stage(h, 1, (4, 3))), 2),
+    ("malformed: non-numeric string attribute raises",
+     lambda h: (_sd_info(h, "abc"), _sd_stage(h, 1, (4, 2))), ValueError),
+    ("malformed: COORDINATES is a group, not a dataset",
+     lambda h: _sd_stage(h, 1, coords_group=True), AttributeError),
+]
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    [pytest.param(b, e, id=c) for c, b, e in _SPATIAL_DIM_TABLE],
+)
+def test_file_spatial_dim_table(tmp_path: Path, build, expected) -> None:
+    """The same answer from the file root, a group and a dataset in it."""
+    import h5py
+
+    from apeGmsh.results.readers._ladruno_element_io import _file_spatial_dim
+
+    path = tmp_path / "dim.h5"
+    with h5py.File(path, "w") as h:
+        build(h)
+    with h5py.File(path, "r") as h:
+        nodes = [h, h["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce"]]
+        coords = h.get("MODEL_STAGE[1]/MODEL/NODES/COORDINATES")
+        if isinstance(coords, h5py.Dataset):
+            nodes.append(coords)
+        for node in nodes:
+            if isinstance(expected, type):
+                with pytest.raises(expected):
+                    _file_spatial_dim(node)
+            else:
+                assert _file_spatial_dim(node) == expected, node.name
+
+
+@pytest.mark.parametrize("path", [TRUSS, BEAM, QUAD], ids=lambda p: p.stem)
+def test_reader_ndm_is_the_shared_spatial_dim(path: Path) -> None:
+    """The reader answers from the shared helper: one definition (#2098)."""
+    import h5py
+
+    from apeGmsh.results.readers._ladruno_element_io import _file_spatial_dim
+
+    assert not hasattr(LadrunoReader, "_spatial_dim")
+    with h5py.File(path, "r") as h:
+        expected = _file_spatial_dim(h)
+    with LadrunoReader(path) as r:
+        model = r.opensees_model()
+    assert model is not None
+    assert model.ndm == expected
+

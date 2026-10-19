@@ -1590,14 +1590,20 @@ def _basic_force_refusal(
     )
 
 
-def _file_spatial_dim(group: "h5py.Group") -> Optional[int]:
+def _file_spatial_dim(node: "h5py.Group | h5py.Dataset") -> Optional[int]:
     """The ``.ladruno`` file's spatial dimension, or ``None`` if unknown.
 
-    ``INFO/SPATIAL_DIM`` when the file carries it, else the one width of
-    1, 2 or 3 that every stage's ``MODEL/NODES/COORDINATES`` agrees on
-    (the reader's own rule, #2081).
+    ``node`` is the file itself or any group or dataset inside it; the
+    answer is the file's. ``INFO/SPATIAL_DIM`` when the file carries it.
+    Otherwise the width of ``MODEL/NODES/COORDINATES``, which the writer
+    sizes by the spatial dimension, when every stage that has one agrees
+    on a width of 1, 2 or 3. Otherwise ``None``: a read that depends on
+    the dimension refuses or warns, naming the file (#2081).
+
+    The one rule for both :class:`LadrunoReader` and the ``localForce``
+    2-D gate (#2098).
     """
-    f = group.file
+    f = node.file
     if "INFO" in f and "SPATIAL_DIM" in f["INFO"].attrs:
         raw = np.asarray(f["INFO"].attrs["SPATIAL_DIM"])
         if raw.size:
