@@ -892,3 +892,30 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     assert.equal(axes.elementIds.length, 0);
   });
 });
+
+test("#2187: COMP_NAMES has one rule for line stations and Gauss points: an empty label refuses the bucket, never dropped", () => {
+  const withNames = (names: string) =>
+    edited(TRUSS, (f) => {
+      const lf = (f.get("MODEL_STAGE[1]/RESULTS/ON_ELEMENTS") as h5wasm.Group).create_group("localForce");
+      const b = lf.create_group("10-ElasticBeam2d[0]");
+      b.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+      b.create_dataset({ name: "TIME", data: new Float64Array([0.25, 0.5, 0.75, 1.0]) });
+      b.create_dataset({ name: "STEP", data: new Int32Array([0, 1, 2, 3]) });
+      b.create_dataset({ name: "DATA", data: new Float64Array(4 * 6), shape: [4, 1, 6] });
+      const cm = b.create_group("COLUMN_MAP");
+      cm.create_attribute("COMP_NAMES", names);
+      cm.create_dataset({ name: "LEVELS", data: new Int32Array([0]), shape: [1] });
+      cm.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1]), shape: [1] });
+    });
+  withFile(withNames("N_1,V_1,M_1,N_2,V_2,M_2"), (r) => {
+    const warnings: string[] = [];
+    r.availableLineStations("stage_0", warnings);
+    assert.deepEqual(warnings, []);
+  });
+  // Before #2187 the line-station parser dropped the trailing empty label and read the bucket.
+  withFile(withNames("N_1,V_1,M_1,N_2,V_2,M_2,"), (r) => {
+    const warnings: string[] = [];
+    r.availableLineStations("stage_0", warnings);
+    assert.match(warnings.join("\n"), /localForce bucket "10-ElasticBeam2d\[0\]" .* is unreadable: .*COMP_NAMES line "N_1,V_1,M_1,N_2,V_2,M_2," has an empty label/);
+  });
+});

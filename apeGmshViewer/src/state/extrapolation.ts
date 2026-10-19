@@ -217,7 +217,13 @@ export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: 
     }
     codesSeen.set(g.id, codes);
     if (g.nGauss > 1) {
-      if (!g.naturalCoords) matrix.push(`group ${g.id} has no floating-point _natural_coords`);
+      // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is not the [-1,1] these shape functions read.
+      if (!g.naturalCoords) {
+        matrix.push(
+          `group ${g.id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
+            `or a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" (the warning shown when the file opened names its domain)`,
+        );
+      }
       else {
         for (const code of codes) {
           if (!extrapolationMatrix(code, g.naturalCoords)) {

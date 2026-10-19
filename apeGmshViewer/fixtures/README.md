@@ -372,6 +372,18 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   `DISPLACEMENT` and `ROTATION` in separate groups, as §7.1.1 requires. Before
   #2128 it had one 6-component `DISPLACEMENT` group, which the fork never
   writes.
+- `ladruno_quad2d.ladruno` and `ladruno_quad2d.h5` (#2187) are a fork run and
+  the model.h5 it pairs with: a 3 x 2 grid of plane-stress `quad` elements,
+  recorded with `displacement`, `stress` and `strain` on fork build
+  `79e0623670`. Its `stress` and `strain` are 2 x 2 Gauss buckets (`COLUMN_MAP`
+  GAUSS_ID 0..3 over `QUADRATURE/GP_PARAM`, PARAM_DOMAIN `[-1,1]`). The script
+  stamps the `.ladruno` with the §7b.1 attributes (`element_index_space` =
+  `"fem"`) and writes the model by hand with the same nodes, elements and
+  hashes. `ladruno_quad2d.oracle.json` holds Python's reading of two Gauss
+  components (`LadrunoReader.read_gauss`), written by
+  `tests/fixtures/ladruno/make_viewer_gauss_oracle.py` (outside the app, which never
+  imports apeGmsh: ADR 0112 D4); `test/results/ladrunoGauss.test.ts` compares
+  the app's reader against it.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
@@ -385,4 +397,8 @@ modal record.
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --modes
 # and the 3-D portal, which also needs the fork build
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --portal3d
+# and the Gauss-point quad plate and its model (fork build), then Python's oracle of it
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_gauss_oracle.py
 ```
