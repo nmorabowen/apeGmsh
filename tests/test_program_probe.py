@@ -249,3 +249,63 @@ def test_sync_issue_collapses_duplicate_tracking_issues():
     assert pp.sync_issue(gh, "o/r", finding, NOW) == "updated #5; closed duplicates #6"
     assert [c[:3] for c in gh.calls[1:]] == [["issue", "close", "6"],
                                              ["issue", "edit", "5"]]
+
+
+# 5-6. red-lane and unlabelled-slice ---------------------------------------------
+
+def _run(days_ago, conclusion="failure", status="completed"):
+    return {"conclusion": conclusion, "status": status,
+            "createdAt": _iso(24 * days_ago), "headSha": HEAD,
+            "url": f"https://example/runs/{days_ago}"}
+
+
+def _lane(*runs, wf="benchmarks.yml"):
+    return {"prs": [], "issues": [], "runs": {wf: list(runs)}}
+
+
+def _lane_findings(data):
+    return [f for f in pp.probe(data, NOW) if f["kind"] == "red-lane"]
+
+
+def test_two_red_scheduled_runs_give_one_red_lane():
+    found = _lane_findings(_lane(_run(1), _run(2, "timed_out")))
+    assert len(found) == 1 and found[0]["ref"] == "benchmarks.yml"
+    assert "runs/1" in found[0]["detail"] and "runs/2" in found[0]["detail"]
+
+
+def test_red_then_green_is_silent():
+    assert not _lane_findings(_lane(_run(1), _run(2, "success")))
+    assert not _lane_findings(_lane(_run(1, "success"), _run(2)))
+
+
+def test_single_run_or_in_progress_or_cancelled_is_silent():
+    assert not _lane_findings(_lane(_run(1)))
+    assert not _lane_findings(_lane(_run(1, None, "in_progress"), _run(2)))
+    assert not _lane_findings(_lane(_run(1, "cancelled"), _run(2)))
+
+
+def test_unlabelled_slice_pr_is_flagged():
+    def open_pr(n, body, labels):
+        return {"number": n, "title": f"pr {n}", "body": body,
+                "labels": [{"name": x} for x in labels]}
+    data = {"prs": [], "issues": [], "open_prs": [
+        open_pr(1, "Slice: #5\n", []),
+        open_pr(2, "Slice: #5\n", ["program"]),
+        open_pr(3, "no slice here", []),
+    ]}
+    found = [f for f in pp.probe(data, NOW) if f["kind"] == "unlabelled-slice"]
+    assert [f["ref"] for f in found] == ["#1"]
+
+
+def test_fetch_reads_runs_for_every_watched_workflow():
+    calls = []
+
+    def gh(args):
+        calls.append(args)
+        if args[0] == "run":
+            return json.dumps([_run(1), _run(2)])
+        return "[]"
+    data = pp.fetch(gh, "o/r")
+    assert set(data["runs"]) == set(pp.WATCHED_WORKFLOWS)
+    run_calls = [a for a in calls if a[0] == "run"]
+    assert all("--event" in a and "schedule" in a and "main" in a for a in run_calls)

@@ -1,6 +1,6 @@
 """Report stalled program PRs and lock-label conflicts (lessons #1567, #1544).
 
-Four findings over open ``program`` PRs and open issues:
+Six findings over open ``program`` PRs, open issues and scheduled runs:
 
 1. ``approved-not-landed``: approved at the head sha (a
    ``Review-verdict: <model> approve <sha>`` comment whose sha is the head),
@@ -13,6 +13,13 @@ Four findings over open ``program`` PRs and open issues:
    no activity for more than ``--lock-hours``; with no linked PR, the issue's
    own last activity is used.
 4. ``double-lock``: one ``lock:<file>`` label on more than one open issue.
+5. ``red-lane``: a watched scheduled workflow (``WATCHED_WORKFLOWS``) whose last
+   two completed ``schedule`` runs on ``main`` both concluded ``failure``,
+   ``timed_out`` or ``startup_failure``. ``cancelled`` and ``skipped`` do not
+   count: a cancel is a concurrency or manual act, not the lane being broken.
+   Fewer than two completed runs is not a finding.
+6. ``unlabelled-slice``: an open PR whose body has ``Slice: #<n>`` but no
+   ``program`` label, so it escapes the program-wide WIP count (#2012).
 
     python scripts/program_probe.py            # report, exit 0
     python scripts/program_probe.py --issue    # open/update/close the tracking issue
@@ -44,7 +51,15 @@ PR_FIELDS = (
     "statusCheckRollup,closingIssuesReferences"
 )
 ISSUE_FIELDS = "number,title,labels,updatedAt"
+ALL_PR_FIELDS = "number,title,body,labels"
 LIMIT = "200"
+
+# Scheduled lanes nobody watches (Benchmarks sat red 10-15..10-18, #2144).
+WATCHED_WORKFLOWS: tuple[str, ...] = (
+    "live-fork.yml", "benchmarks.yml", "deps-canary.yml", "orphans.yml",
+)
+RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+RUN_FIELDS = "conclusion,status,createdAt,url,headSha"
 
 _VERDICT = re.compile(
     r"^Review-verdict:\s*(?P<model>.+?)\s+(?P<verdict>approve|changes)\s+"
@@ -86,7 +101,15 @@ def fetch(gh: Runner, repo: str) -> dict[str, list[dict]]:
                          "--label", "program", "--limit", LIMIT, "--json", PR_FIELDS]))
     issues = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open",
                             "--limit", LIMIT, "--json", ISSUE_FIELDS]))
-    return {"prs": prs, "issues": issues}
+    open_prs = json.loads(gh(["pr", "list", "--repo", repo, "--state", "open",
+                              "--limit", LIMIT, "--json", ALL_PR_FIELDS]))
+    runs = {
+        wf: json.loads(gh(["run", "list", "--repo", repo, "--workflow", wf,
+                           "--branch", "main", "--event", "schedule",
+                           "--limit", "2", "--json", RUN_FIELDS]))
+        for wf in WATCHED_WORKFLOWS
+    }
+    return {"prs": prs, "issues": issues, "open_prs": open_prs, "runs": runs}
 
 
 def verdicts(pr: dict) -> list[dict]:
@@ -186,6 +209,28 @@ def probe(data: dict, now: datetime, *, approved_hours: float = 4.0,
             findings.append({
                 "kind": "double-lock", "ref": refs, "title": label,
                 "detail": f"`{label}` is on {len(issues)} open issues",
+            })
+
+    for wf in sorted(data.get("runs") or {}):
+        done = [r for r in data["runs"][wf] if r.get("status") == "completed"]
+        done.sort(key=lambda r: r["createdAt"], reverse=True)
+        last2 = done[:2]
+        if len(last2) == 2 and all(r.get("conclusion") in RED_CONCLUSIONS for r in last2):
+            detail = "; ".join(
+                f"{r['conclusion']} {_ts(r['createdAt']):%Y-%m-%d} ({r['url']})"
+                for r in last2)
+            findings.append({
+                "kind": "red-lane", "ref": wf, "title": f"{wf} red two scheduled runs",
+                "detail": detail,
+            })
+
+    for pr in data.get("open_prs") or []:
+        names = {label["name"] for label in pr.get("labels") or []}
+        if "program" not in names and _SLICE.search(pr.get("body") or ""):
+            findings.append({
+                "kind": "unlabelled-slice", "ref": f"#{pr['number']}",
+                "title": pr["title"],
+                "detail": "body has `Slice: #<n>` but no `program` label",
             })
     return findings
 
