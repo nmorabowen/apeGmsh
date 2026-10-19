@@ -211,15 +211,25 @@ def test_mpco_lone_uncatalogued_class_warns_before_the_empty_slab(
     assert slab.values.shape[1] == 0
 
 
-def test_mpco_second_header_warns_by_name(tmp_path: Path) -> None:
+def test_mpco_second_header_with_unnamed_columns_warns_by_name(
+    tmp_path: Path,
+) -> None:
+    """A second header is read only when its META names its columns as the
+    catalog lays them out (#2115): ``_add_bucket``'s ``0.unused`` names
+    none, so the bucket warns by name and reads no rows.
+    ``tests/results/test_mpco_nodal_header_index.py`` reads the second
+    header whose META does spell the layout."""
     path = _mpco(tmp_path, [
         ("globalForce", "74-ForceBeamColumn3d[1000:1:1]",
          _flat(3, "globalForce")),
     ])
     with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
         with pytest.warns(NodalForceBucketSkippedWarning,
-                          match="'ForceBeamColumn3d'.*response header 1"):
-            r.elements.get(component="nodal_resisting_force_x")
+                          match=r"'ForceBeamColumn3d'.*response header 1 "
+                                r"of the class and its META names 1 "
+                                r"columns \['unused'\]"):
+            slab = r.elements.get(component="nodal_resisting_force_x")
+    assert slab.values.shape[1] == 0
 
 
 def test_mpco_unread_bucket_outside_the_id_filter_stays_quiet(

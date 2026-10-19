@@ -495,27 +495,57 @@ def test_layers_read_both_layer_count_headers(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Nodal forces: a header-1 bucket is named in the read's warning
+# Nodal forces: a header-1 bucket reads when its META spells the catalog
+# layout (#2115), and is named in the read's warning when it does not
 # ---------------------------------------------------------------------------
 
+_NODAL_GLOBAL_3D = ("Px", "Py", "Pz", "Mx", "My", "Mz")
 
-def test_nodal_force_header_1_is_named_beside_the_header_0_read(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "nodal.mpco"
-    labels = ",".join(f"{c}_{n}" for n in (1, 2)
-                      for c in ("Px", "Py", "Pz", "Mx", "My", "Mz"))
+
+def _nodal_two_header_file(path: Path, header_1_bases: tuple[str, ...]) -> None:
+    """ElasticBeam3d ``globalForce``: elements 1, 2 at header 0 (fork labels)
+    and element 3 at header 1, labelled with ``header_1_bases``."""
     with _file(path) as f:
-        for hdr, ids in ((0, [1, 2]), (1, [3])):
+        for hdr, ids, bases in ((0, [1, 2], _NODAL_GLOBAL_3D),
+                                (1, [3], header_1_bases)):
+            labels = ",".join(f"{c}_{n}" for n in (1, 2) for c in bases)
             _bucket(f, "globalForce",
                     f"{ELE_TAG_ElasticBeam3d}-ElasticBeam3d[1:0:{hdr}]",
                     flat=_flat(hdr, len(ids), 1, 12), ids=ids,
                     multiplicity=[1], gauss_ids=[-1], n_comp=[12],
                     components=f"0.{labels}")
+
+
+def test_nodal_force_header_1_reads_its_own_values_beside_header_0(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "nodal.mpco"
+    _nodal_two_header_file(path, _NODAL_GLOBAL_3D)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", NodalForceBucketSkippedWarning)
+        with _reader(path) as r:
+            (stage,) = r.stages()
+            slab = r.read_elements(stage.id, "nodal_resisting_force_x")
+    assert np.asarray(slab.element_ids).tolist() == [1, 2, 3]
+    # (header, element row within its bucket) for elements 1, 2, 3.
+    rows = ((0, 0), (0, 1), (1, 0))
+    want = np.array([[[_value(h, t, e, 0, 0), _value(h, t, e, 0, 6)]
+                      for h, e in rows] for t in range(N_STEPS)])
+    np.testing.assert_array_equal(np.asarray(slab.values), want)
+
+
+def test_nodal_force_misspelled_header_1_is_named_beside_the_header_0_read(
+    tmp_path: Path,
+) -> None:
+    """Px and Py swapped at header 1: its columns contradict the catalog
+    order, so it is left unread and named, and header 0 still reads."""
+    path = tmp_path / "nodal.mpco"
+    _nodal_two_header_file(path, ("Py", "Px", "Pz", "Mx", "My", "Mz"))
     with _reader(path) as r:
         (stage,) = r.stages()
         with pytest.warns(NodalForceBucketSkippedWarning,
-                          match=r"ElasticBeam3d\[1:0:1\].*response header 1"):
+                          match=r"ElasticBeam3d\[1:0:1\].*response header 1"
+                                r".*do not spell"):
             slab = r.read_elements(stage.id, "nodal_resisting_force_x")
     assert np.asarray(slab.element_ids).tolist() == [1, 2]
     want = np.array([[[_value(0, t, e, 0, 0), _value(0, t, e, 0, 6)]

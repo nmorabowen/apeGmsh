@@ -416,17 +416,27 @@ class TestBucketDiscovery:
             )
         assert buckets == []
 
-    def test_skips_header_idx_nonzero(self, tmp_path: Path) -> None:
+    def test_skips_header_idx_nonzero_without_meta(
+        self, tmp_path: Path,
+    ) -> None:
+        """A second header is read only when its own META spells the
+        catalog layout (#2115); a bucket with no META is skipped, with
+        the reason. ``tests/results/test_mpco_nodal_header_index.py``
+        reads the header that does."""
         path = tmp_path / "h.h5"
+        key = f"{ELE_TAG_ElasticBeam3d}-ElasticBeam3d[1:0:1]"
         with h5py.File(path, "w") as f:
             on_elements = f.create_group("ON_ELEMENTS")
             sf = on_elements.create_group("globalForce")
-            sf.create_group(f"{ELE_TAG_ElasticBeam3d}-ElasticBeam3d[1:0:1]")
+            sf.create_group(key)
         with h5py.File(path, "r") as f:
-            _, buckets = _mn.discover_nodal_force_buckets(
+            _, buckets, skipped = _mn.scan_nodal_force_buckets(
                 f["ON_ELEMENTS"], canonical_component="nodal_resisting_force_x",
             )
         assert buckets == []
+        assert [s.bracket_key for s in skipped] == [key]
+        assert "response header 1" in skipped[0].reason
+        assert "NUM_COLUMNS" in skipped[0].reason
 
     def test_returns_none_token_for_non_nodal_component(
         self, tmp_path: Path,
