@@ -1,36 +1,39 @@
-"""R1b oracle, live net (K2c, #1816): a class A or B replay deck must run.
+"""R1b oracle, live net (K2c, #1816): a replayed deck must run.
 
 The static declare-before-use check in ``test_roundtrip_oracle.py`` sees
 only the references the archive's ``decl_params`` name. It cannot see node
 and element tags (connectivity, ``fix``, ``region -node/-ele``, loads,
 recorders) or anything inside a ``proc`` body. This module is the second
-net: for every waived ledger row of class A or B, it writes the bridge's
-openseespy deck (``ops.py``) and the replayed one
-(``from_h5(h5()).build("py")``), and runs each in its own subprocess.
-Running the A rows also proves that their integral floats, re-emitted as
-integers, still parse in every slot under the backend (#2193: once the
-replay follows the bridge's emit order, no row is B).
+net: for every replayable corpus model (each one but the S rows), it writes
+the bridge's openseespy deck (``ops.py``) and the replayed one
+(``from_h5(h5()).build("py")``), and runs each in its own subprocess. It
+ran the waived A and B rows until #2194 left none (#2193 cleared the B
+rows, #2194 the A rows), so it now runs the corpus the static oracle
+proves equal to the bridge deck: the ``py`` target is a second deck that
+oracle never compares.
 
 A deck *runs* when the process exits 0 **and** prints the completion
 marker appended as its last line: an OpenSees error can still exit 0, so
 the marker is what proves the deck reached its end.
 
-- An A or B row: the bridge deck runs, and so does the replay.
+- A replayable model: the bridge deck runs, and so does the replay.
 - The fatal reorder (#1814): ``_broad_frame``'s replay deck runs, and the
   same deck with ``Parallel 3`` moved above ``Steel01 1`` (the reorder #1814
   fixed, now synthetic) does not, so a C-class reorder really aborts.
 
-A row whose bridge deck does not run on this backend must be one the
+A model whose bridge deck does not run on this backend must be one the
 archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
 build it, so there the test asserts only that the bridge deck did not run,
 the static check is its only net, and the test skips by name so ``-rs``
 shows it.
-:data:`_KNOWN_STOCK_FAILURES` names the rows whose bridge deck aborts on
-stock openseespy although their solve stamp claims ``requires=()``
-(``Parameter::addComponent`` finds no object for the parameter; #2220).
-They are handled like the fork rows: the test asserts the bridge deck does
-not run, then skips citing #2220. Once #2220 is fixed the assertion fails,
-and the entry must be removed.
+:data:`_KNOWN_STOCK_FAILURES` names the models whose bridge deck aborts on
+stock openseespy although their solve stamp claims ``requires=()``, each
+with its reason: #2220 (``Parameter::addComponent`` finds no object for the
+parameter; a partitioned stamp that does not name its multi-rank run), or
+the fixture fact (``_frame[modal=True]`` declares no supports, so its
+``eigen`` cannot run). They are handled like the fork rows: the test asserts
+the bridge deck does not run, then skips citing the reason. Once a deck
+runs the assertion fails, and the entry must be removed.
 Any other bridge deck that does not run fails.
 
 openseespy is never imported into the pytest process: the decks run in
@@ -61,20 +64,27 @@ pytestmark = pytest.mark.live
 _MARKER = "APEGMSH_K2C_DECK_COMPLETE"
 
 
-def _rows(klass: str, cites: str = "") -> list[Model]:
-    w = _waivers()
-    return [m for m in CORPUS
-            if m.id in w and w[m.id].klass == klass and cites in w[m.id].reason]
-
-
-#: Every waived row whose replay deck must run: class A or B, corpus order.
-_RUN_ROWS = [m for m in CORPUS if m in {*_rows("A"), *_rows("B")}]
-#: Rows whose bridge deck aborts on stock openseespy while the solve stamp
-#: claims ``requires=()``: the issue that tracks each. Not a waiver: the net
-#: asserts the bridge deck does not run, so a fix fails it until removed.
+#: Every model whose replay deck must run: the corpus but its S rows (not
+#: replayable; ``from_h5`` refuses them by name), in corpus order.
+_RUN_ROWS = [m for m in CORPUS
+             if m.id not in _waivers() or _waivers()[m.id].klass != "S"]
+#: Models whose bridge deck aborts on stock openseespy while the solve stamp
+#: claims ``requires=()``, each with its reason: the issue that tracks it, or
+#: the fixture fact that makes it unsolvable. Not a waiver: the net asserts
+#: the bridge deck does not run, so a fix fails it until removed.
+_FIXTURE_UNSOLVABLE = ("fixture has no supports; eigen cannot run "
+                       "(fixture-unsolvable, not a replay fault)")
 _KNOWN_STOCK_FAILURES: dict[str, str] = {
     "test_h5_decls::_param_stage_model": "#2220",
     "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
+    "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
+        _FIXTURE_UNSOLVABLE,
+    "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
+        _FIXTURE_UNSOLVABLE,
+    # The stamp says solve_mode="partitioned" but requires=(): it does not
+    # name the multi-rank run its rank-gated deck needs (the #2220 class).
+    # In one process rank 1's stage elements are never declared: singular.
+    "test_h5_regions_round_trip::_partitioned_staged_with_fan_out": "#2220",
 }
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
@@ -82,15 +92,20 @@ _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
     """The bridge's and the replay's openseespy decks of ``model``, and the
-    capabilities its archive's solve stamp says a backend needs."""
+    capabilities its archive's solve stamp says a backend needs. Each deck
+    sits in its own directory, its working directory when it runs: the two
+    decks write the same output files (a profiler report refuses a run id
+    its file already holds)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops = model.build()
-        bridge = tmp / "bridge.py"
+        bridge = tmp / "bridge" / "bridge.py"
+        bridge.parent.mkdir()
         ops.py(str(bridge), progress=False)
         archive = tmp / "model.h5"
         ops.h5(str(archive))
-        replay = tmp / "replay.py"
+        replay = tmp / "replay" / "replay.py"
+        replay.parent.mkdir()
         model_h5 = OpenSeesModel.from_h5(str(archive))
         model_h5.build("py", out=str(replay))
     stamp = model_h5.solve_stamp
@@ -134,20 +149,29 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """The table is exactly the two #2220 rows, each a row the net runs:
-    it can only shrink as #2220 is fixed, never grow."""
-    assert set(_KNOWN_STOCK_FAILURES) == {
-        "test_h5_decls::_param_stage_model",
-        "test_h5_stages_reader::_real_kitchen_sink_bridge",
+    """The table is exactly these five rows, each a row the net runs, each
+    citing #2220 or the fixture fact: it can only shrink as a deck is
+    fixed, never grow."""
+    assert _KNOWN_STOCK_FAILURES == {
+        "test_h5_decls::_param_stage_model": "#2220",
+        "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
+        "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
+            _FIXTURE_UNSOLVABLE,
+        "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
+            _FIXTURE_UNSOLVABLE,
+        "test_h5_regions_round_trip::_partitioned_staged_with_fan_out":
+            "#2220",
     }
     assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
-    assert all(v == "#2220" for v in _KNOWN_STOCK_FAILURES.values())
 
 
 def test_the_net_runs_some_stock_row() -> None:
     assert _RUN_ROWS and _FATAL_CASES, (
-        "the live net would run nothing: no class A or B row, or no "
+        "the live net would run nothing: no replayable corpus model, or no "
         "fatal-reorder case")
+    # Every corpus model but the S rows: none drops out silently.
+    s_rows = {w.model for w in _waivers().values() if w.klass == "S"}
+    assert {m.id for m in _RUN_ROWS} == {m.id for m in CORPUS} - s_rows
 
 
 _PROBE_PLUGIN = """import json, os, sys
@@ -206,27 +230,26 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("model", _RUN_ROWS, ids=[m.id for m in _RUN_ROWS])
-def test_a_waived_replay_runs_where_the_bridge_deck_runs(
+def test_a_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
-    issue = _KNOWN_STOCK_FAILURES.get(model.id)
-    if issue is not None:
+    reason = _KNOWN_STOCK_FAILURES.get(model.id)
+    if reason is not None:
         ran, log = _run(bridge)
         assert not ran, (
-            f"{model.id}: the bridge deck now runs; {issue} is fixed, so "
+            f"{model.id}: the bridge deck now runs ({reason} is fixed), so "
             f"remove its _KNOWN_STOCK_FAILURES entry:\n{log}")
-        pytest.skip(f"{model.id}: known stock failure {issue} (the bridge "
+        pytest.skip(f"{model.id}: known stock failure: {reason} (the bridge "
                     "deck aborts though the stamp requires nothing); "
                     "asserted that the bridge deck did not run here")
     if not _bridge_runs(model, bridge, requires):
         pytest.skip(f"{model.id}: fork-only (solve stamp requires={requires!r}); "
                     "asserted only that the bridge deck did not run here")
     ran, log = _run(replay)
-    klass = _waivers()[model.id].klass
     assert ran, (
-        f"{model.id} is class {klass} but its replay deck does not run: a "
-        "semantic difference the static check missed; make the row C with "
-        f"its bug:\n{log}")
+        f"{model.id}: the bridge deck runs but the replay deck does not: a "
+        "semantic difference the static oracle missed; track it in an "
+        f"issue:\n{log}")
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])

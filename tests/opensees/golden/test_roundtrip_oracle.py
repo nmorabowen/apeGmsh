@@ -28,6 +28,9 @@ header records that.
   reorder that uses a tag before its declaration, which aborts the deck
   (#1814). No row is class C today; :func:`test_a_c_row_is_enforced` keeps
   the class enforced on a synthetic C diff.
+- No row is class A or B either: #2193 replays the bridge's emit order, and
+  #2194 each slot's int/float type. The tests below keep both classes
+  enforced on synthetic diffs, made by switching either fix off.
 - Class S: the model is not replayable, and replay raises the named error
   (#1797).
 
@@ -71,8 +74,8 @@ and element tags used by element connectivity, ``fix``, ``mass``,
 ``equationConstraint``, ``region -node/-ele``, loads, recorders and
 ``addToParameter``, and every reference inside a ``proc`` body. Those need
 per-command grammar. ``test_roundtrip_oracle_live.py`` is the second net:
-it runs the bridge and replay decks of the A and B rows in a subprocess,
-and such a row's replay must run wherever its bridge deck runs.
+it runs the bridge and replay decks of every replayable corpus model in a
+subprocess, and each replay must run wherever its bridge deck runs.
 
 ``N_WAIVED_ORACLE`` may only go down, and must reach 0 by 2026-12-11 (K2,
 KC4).
@@ -96,6 +99,9 @@ from typing import Any, Callable
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees._internal.replay_types import (
+    ReplaySlotTypeWarning, SlotTypes,
+)
 from apeGmsh.opensees.emitter.h5_reader import (
     BridgeOnlyArchiveError, DeclarationTable, DeclRef, DeclStruct,
 )
@@ -104,8 +110,9 @@ from tests.opensees.golden import builder
 _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
 #: ``N_WAIVED_ORACLE`` (33 when the ledger opened, K2a, #1794). It may only
-#: go down: 32 once #2193 replayed ``_frame_bridge[analysis=True]`` exactly.
-_CEILING = 32
+#: go down: 32 once #2193 replayed ``_frame_bridge[analysis=True]`` exactly,
+#: 1 once #2194 kept every slot's int/float type (the S row is left).
+_CEILING = 1
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
@@ -278,9 +285,11 @@ def _emit(model: Model, out_dir: Path) -> tuple[str, Path]:
 
 def _replay(archive: Path, *, flat: bool = True) -> str:
     """The replayed deck (canonical text). ``flat=False`` only for the
-    synthetic C fixture: the deck as replay wrote it before #1832."""
+    synthetic C fixture: the deck as replay wrote it before #1832. A
+    declaration whose slot types replay cannot recover fails it (#2194)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
+        warnings.simplefilter("error", ReplaySlotTypeWarning)
         replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=flat)
     assert isinstance(replay, str)
     return _canon(replay, archive.parent)
@@ -725,35 +734,58 @@ def test_the_ledger_allows_downgrades_and_cited_escalations(
 _HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
 
 
-def test_broad_frame_derives_a_with_no_override(tmp_path: Path) -> None:
+def _untyped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Switch #2194 off in-process: every slot keeps the reader's by-value
+    type, so an integral float replays as an int, as before the fix."""
+    monkeypatch.setattr(
+        SlotTypes, "recover",
+        lambda self, kind, tag, type_token, args, nodes=0: tuple(args))
+
+
+def _a_row(model: Model, out_dir: Path) -> Waiver:
+    """An A row pinned to ``model``'s diff with slot types off (the caller
+    has applied :func:`_untyped`): the float text #2194 removed."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bridge, archive = _emit(model, out_dir)
+    replay = _replay(archive)
+    assert bridge != replay and _classify(bridge, replay) == "A"
+    return Waiver(model.id, "A", _pin(_diff(bridge, replay)), "synthetic")
+
+
+def test_broad_frame_replays_exactly(tmp_path: Path) -> None:
     """#1814 fixed: replay declares ``_broad_frame``'s materials in the
     bridge's order, so the order check passes (it was C while ``Parallel 3``
-    preceded ``Steel01 1``). #2193 fixed the rest of its order (the section
-    between the materials, the ``geomTransf``, the ``constraints`` above the
-    initial stress), so the derivation alone yields A (it was B)."""
+    preceded ``Steel01 1``). #2193 fixed the rest of its order (it was B,
+    then A), and #2194 its float text: the replay is the bridge deck."""
     bridge, archive = _emit(_HELD, tmp_path)
     replay = _replay(archive)
     assert _deck_order_violations(replay, archive) == []
-    assert _classify(bridge, replay, order_ok=True) == "A"
-    (tmp_path / "check").mkdir()
-    _check(_HELD, _waivers()[_HELD.id], tmp_path / "check")
+    assert replay == bridge
+    assert _HELD.id not in _waivers()
 
 
-def test_a_label_must_equal_the_derived_class(tmp_path: Path) -> None:
+def test_a_label_must_equal_the_derived_class(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """No override either way: a C label over a derived A fails (the
-    interim override #1812 had is gone), as a B label over a C does."""
-    w = _waivers()["test_h5_damping::_build_with_element_damp"]
-    assert w.klass == "A"
-    model = next(m for m in CORPUS if m.id == w.model)
+    interim override #1812 had is gone), as a B label over a C does. The
+    A diff is synthetic (slot types off), since no ledger row is A."""
+    model = next(m for m in CORPUS
+                 if m.id == "test_h5_damping::_build_with_element_damp")
+    _untyped(monkeypatch)
+    w = _a_row(model, tmp_path / "pin")
+    (tmp_path / "a").mkdir()
+    _check(model, w, tmp_path / "a")
     raised = Waiver(w.model, "C", w.pin, "#1814: hand-held at C")
+    (tmp_path / "c").mkdir()
     with pytest.raises(AssertionError,
                        match="the ledger says class C, the diff is class A"):
-        _check(model, raised, tmp_path)
+        _check(model, raised, tmp_path / "c")
 
 
-# Revert proof (#2193): with the emit-index merge off, a re-pinned row fails.
+# Revert proof (#2193): with the emit-index merge off, a cleared row fails.
 
-#: The rows #2193 re-pinned B -> A, whose replay follows the program's order.
+#: The rows #2193 re-pinned B -> A and #2194 deleted: their replay follows
+#: the program's order.
 _REPINNED = (
     _HELD,
     next(m for m in CORPUS if m.id ==
@@ -764,20 +796,44 @@ _REPINNED = (
 
 
 @pytest.mark.parametrize("model", _REPINNED, ids=[m.id for m in _REPINNED])
-def test_without_the_emit_index_merge_a_repinned_row_fails(
+def test_without_the_emit_index_merge_a_cleared_row_fails(
         model: Model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Revert proof: replayed in the fixed category order
-    (``OpenSeesModel._replay_order`` off, as before #2193), each row's diff
-    is B again, so its committed A row fails; with the merge on it passes."""
-    w = _waivers()[model.id]
-    assert w.klass == "A"
+    (``OpenSeesModel._replay_order`` off, as before #2193), each model's
+    diff is B again, a replay regression; with the merge on it has no row
+    and replays byte for byte."""
+    assert model.id not in _waivers()
     (tmp_path / "on").mkdir()
-    _check(model, w, tmp_path / "on")
+    _check(model, None, tmp_path / "on")
     monkeypatch.setattr(OpenSeesModel, "_replay_order", lambda self: None)
     (tmp_path / "off").mkdir()
-    with pytest.raises(AssertionError,
-                       match="the ledger says class A, the diff is class B"):
-        _check(model, w, tmp_path / "off")
+    with pytest.raises(AssertionError, match=r"class B, pin [0-9a-f]{16}"):
+        _check(model, None, tmp_path / "off")
+
+
+#: Revert proof (#2194): models whose rows #2194 deleted, covering the
+#: stores :class:`SlotTypes` types: materials and sections (Steel02, -GJ),
+#: elements (quad thickness, nDMaterial), damping and elasticBeamColumn.
+_RETYPED = tuple(next(m for m in CORPUS if m.id == i) for i in (
+    "test_h5_apesees_cuts::_build_minimal_ops",
+    "test_h5_decls::_flat_frame[named=False]",
+    "test_h5_damping::_build_with_element_damp",
+))
+
+
+@pytest.mark.parametrize("model", _RETYPED, ids=[m.id for m in _RETYPED])
+def test_without_slot_types_a_deleted_row_differs(
+        model: Model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof: with :meth:`SlotTypes.recover` off (as before #2194),
+    each model's replay writes integral floats as ints again, a class A
+    replay regression; with it on, the model has no row and matches."""
+    assert model.id not in _waivers()
+    (tmp_path / "on").mkdir()
+    _check(model, None, tmp_path / "on")
+    _untyped(monkeypatch)
+    (tmp_path / "off").mkdir()
+    with pytest.raises(AssertionError, match=r"class A, pin [0-9a-f]{16}"):
+        _check(model, None, tmp_path / "off")
 
 
 def test_without_the_emit_index_merge_the_deleted_row_differs(
@@ -864,12 +920,15 @@ def test_ledger_header_names_the_deadline_and_the_stub_corpus() -> None:
 
 _PASSING = next(m for m in CORPUS if m.id ==
                 "test_h5_commands_program::_frame[rayleigh=False,modal=False]")
-_WAIVED_A = next(m for m in CORPUS if m.id ==
-                 "test_h5_decls::_flat_frame[named=False]")
+#: A model whose replay is float text away from the bridge deck once slot
+#: types are off (:func:`_untyped`): the synthetic A diff.
+_FLOAT_TEXT = next(m for m in CORPUS if m.id ==
+                   "test_h5_decls::_flat_frame[named=False]")
 #: The one corpus model whose archive records the ADR 0027 INV-5 auto-chain
-#: (``*_runtime_fallback`` attrs). Its flat replay leaves float text only (an
-#: A row); its non-flat replay, what the oracle compared before #1832, adds
-#: the auto-chain lines: a real semantic diff, the synthetic C fixture.
+#: (``*_runtime_fallback`` attrs). Its flat replay is the bridge deck (an A
+#: row until #2194); its non-flat replay, what the oracle compared before
+#: #1832, adds the auto-chain lines: a real semantic diff, the synthetic C
+#: fixture.
 _PARTITIONED = next(m for m in CORPUS if m.id ==
                     "test_h5_partitions_roundtrip::_build_bridge")
 
@@ -892,9 +951,11 @@ def _unflat(monkeypatch: pytest.MonkeyPatch) -> None:
                         lambda archive: real_replay(archive, flat=False))
 
 
-def test_a_differing_model_with_no_row_fails(tmp_path: Path) -> None:
+def test_a_differing_model_with_no_row_fails(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _untyped(monkeypatch)
     with pytest.raises(AssertionError, match="replay regression"):
-        _check(_WAIVED_A, None, tmp_path)
+        _check(_FLOAT_TEXT, None, tmp_path)
 
 
 def test_a_stale_row_fails(tmp_path: Path) -> None:
@@ -923,7 +984,7 @@ def test_the_non_flat_replay_is_a_semantic_diff(tmp_path: Path) -> None:
     _bridge, archive = _emit(_PARTITIONED, tmp_path / "flat")
     flat = _replay(archive)
     assert _classify(bridge, unflat) == "C"
-    assert _classify(bridge, flat) == "A"
+    assert flat == bridge
     u, f = unflat.splitlines(), flat.splitlines()
     at = u.index(_AUTO_CHAIN[0])
     assert tuple(u[at:at + len(_AUTO_CHAIN)]) == _AUTO_CHAIN
@@ -958,26 +1019,27 @@ def test_a_b_label_on_a_semantic_diff_fails(
         _check(_PARTITIONED, fake, tmp_path / "b")
 
 
-def test_without_flat_the_partitioned_row_fails(
+def test_without_flat_the_partitioned_model_fails(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Revert proof (#1832): replayed without ``flat=True``, the committed
-    A row of ``_build_bridge`` fails, because the diff is class C."""
-    w = _waivers()[_PARTITIONED.id]
-    assert w.klass == "A"
+    """Revert proof (#1832): replayed without ``flat=True``, ``_build_bridge``
+    (no row since #2194) is a class C replay regression."""
+    assert _PARTITIONED.id not in _waivers()
     (tmp_path / "flat").mkdir()
-    _check(_PARTITIONED, w, tmp_path / "flat")
+    _check(_PARTITIONED, None, tmp_path / "flat")
     _unflat(monkeypatch)
     (tmp_path / "unflat").mkdir()
-    with pytest.raises(AssertionError,
-                       match="the ledger says class A, the diff is class C"):
-        _check(_PARTITIONED, w, tmp_path / "unflat")
+    with pytest.raises(AssertionError, match=r"class C, pin [0-9a-f]{16}"):
+        _check(_PARTITIONED, None, tmp_path / "unflat")
 
 
-def test_a_changed_diff_fails(tmp_path: Path) -> None:
-    w = _waivers()[_WAIVED_A.id]
+def test_a_changed_diff_fails(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _untyped(monkeypatch)
+    w = _a_row(_FLOAT_TEXT, tmp_path / "pin")
     moved = Waiver(w.model, w.klass, "f" * 16, w.reason)
+    (tmp_path / "moved").mkdir()
     with pytest.raises(AssertionError, match="differs in a new way"):
-        _check(_WAIVED_A, moved, tmp_path)
+        _check(_FLOAT_TEXT, moved, tmp_path / "moved")
 
 
 # Declare-before-use revert proofs (K2c, #1816).
