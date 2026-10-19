@@ -870,19 +870,19 @@ def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Run
             f"A new pin is proven by the fork lane, which is not a required check (#2138 -> #2143). Start one "
             f"with `{dispatch}`, wait for it to finish green, then land."
         )
-    for run in runs:
-        if run.get("status") != "completed":
-            raise LandError(
-                f"check 12: the live-fork dispatch run on {head[:12]} is {run.get('status')}, not completed "
-                f"({run.get('url')}). Pending is a refusal, not a wait."
-            )
-        if run.get("conclusion") != "success":
-            raise LandError(
-                f"check 12: the live-fork dispatch run on {head[:12]} concluded {run.get('conclusion')} "
-                f"({run.get('url')}); a {PIN_FILE} change needs it green. Fix the pin, push, and "
-                f"re-dispatch with `{dispatch}`."
-            )
-    print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {runs[0].get('url')} is green on {head[:12]}.")
+    latest = max(runs, key=lambda run: run.get("databaseId") or 0)  # only the newest dispatch counts
+    if latest.get("status") != "completed":
+        raise LandError(
+            f"check 12: the newest live-fork dispatch run on {head[:12]} is {latest.get('status')}, not completed "
+            f"({latest.get('url')}). Pending is a refusal, not a wait."
+        )
+    if latest.get("conclusion") != "success":
+        raise LandError(
+            f"check 12: the newest live-fork dispatch run on {head[:12]} concluded {latest.get('conclusion')} "
+            f"({latest.get('url')}); a {PIN_FILE} change needs it green. Re-run it with "
+            f"`gh run rerun {latest.get('databaseId')}` or start a new one with `{dispatch}`."
+        )
+    print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
 
 
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:

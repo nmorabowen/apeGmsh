@@ -2075,3 +2075,36 @@ def test_a_pr_without_fork_pin_makes_no_run_list_call():
     gh, git = _recording(1218, PR_1218, SQUASH_1218)
     assert _run(1218, gh, git, dry_run=True) == 0
     assert not any(call.startswith("run list") for call in gh.calls)
+
+
+def _numbered(run, run_id):
+    return {**run, "databaseId": run_id}
+
+
+@pytest.mark.parametrize("runs, outcome", [
+    ([_numbered(_fork_run(HEAD_2138, conclusion="failure"), 40), _numbered(_fork_run(HEAD_2138), 41)], None),
+    ([_numbered(_fork_run(HEAD_2138, conclusion="cancelled"), 40), _numbered(_fork_run(HEAD_2138), 41)], None),
+    ([_numbered(_fork_run(HEAD_2138), 41), _numbered(_fork_run(HEAD_2138, conclusion="failure"), 40)], None),
+    ([_numbered(_fork_run(HEAD_2138), 40), _numbered(_fork_run(HEAD_2138, conclusion="failure"), 41)],
+     r"newest .*concluded failure .*gh run rerun 41.*workflow run live-fork\.yml --ref "),
+    ([_numbered(_fork_run(HEAD_2138), 40), _numbered(_fork_run(HEAD_2138, status="in_progress", conclusion=None), 41)],
+     r"newest .*is in_progress"),
+])
+def test_only_the_newest_dispatch_run_is_judged(runs, outcome):
+    gh, git = _pin_pr(runs=runs)
+    if outcome is None:
+        assert _run(1218, gh, git, dry_run=True) == 0
+    else:
+        with pytest.raises(land_pr.LandError, match=rf"check 12: the {outcome}"):
+            _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("row", [
+    json.dumps(["tools/PIN", "renamed", "FORK_PIN", 0, None]),
+    json.dumps(["FORK_PIN", "removed", None, 1, "@@ -1 +0,0 @@\n-abc"]),
+], ids=["renamed-away", "deleted"])
+def test_fork_pin_renamed_or_deleted_with_no_run_is_refused(row):
+    gh, git = _recording(1218, {**PR_1218, "headRefOid": HEAD_2138}, SQUASH_1218, rows=[row])
+    gh.responses[_pin_call(HEAD_2138)] = "[]"
+    with pytest.raises(land_pr.LandError, match="check 12"):
+        _run(1218, gh, git)
