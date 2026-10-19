@@ -919,8 +919,9 @@ class ParallelModalResult:
         ``modesOfVibrationRotational`` (the table is in
         :mod:`apeGmsh.results.readers._ladruno_writer`): ``Ux..`` from the
         first ``ndm`` shape columns and, when the deck recorded them, the
-        rotations (column 3 in 2-D at ``ndf >= 3``, columns 4-6 in 3-D at
-        ``ndf >= 6``), over :attr:`shape_nodes`. A non-positive
+        rotations (column 3 in 2-D, columns 4-6 in 3-D) at each node whose
+        own ndf in the archive reaches them (a u-p pressure stays out),
+        over :attr:`shape_nodes`. A non-positive
         eigenvalue writes 0 Hz / 0 s and warns once for its mode.
 
         ``model_h5`` is the bridge archive the deck was emitted from
@@ -938,7 +939,8 @@ class ParallelModalResult:
             The run dir carries no mode-shape harvest.
         ValueError
             The archive's ``ndm`` differs from the sidecar's, or a
-            harvested node is not a node of the archive's fem. Nothing is
+            harvested node is not a node of the archive's fem or has no
+            ndf there, or ``path`` is ``model_h5`` or an ``.h5``. Nothing is
             written.
         """
         from ..opensees_model import OpenSeesModel
@@ -955,7 +957,27 @@ class ParallelModalResult:
                 "the run dir and the archive come from different models. "
                 "Nothing was written."
             )
+        # The deck pads every node to its uniform dof list, so a u-p node's
+        # pressure sits in column 4. Rotations follow each node's own ndf
+        # (the recorder's rule: above 2 in 2-D, above 5 in 3-D).
         fem = model.fem
+        nodes_ndf = model.nodes_ndf
+        # A node outside the fem is refused by write_modes, by name.
+        fem_ids = {int(n) for n in fem.nodes.ids}
+        unknown = [int(n) for n in self._shape_nodes
+                   if int(n) in fem_ids and int(n) not in nodes_ndf]
+        if unknown:
+            raise ValueError(
+                f"ParallelModalResult.to_ladruno: {model_h5} records no ndf "
+                f"for harvested node(s) {unknown[:5]} (/opensees/nodes_ndf), "
+                "so their rotations cannot be told from a pressure slot. "
+                "Re-write the archive with ops.h5(...). Nothing was written."
+            )
+        reach = 2 if ndm == 2 else 5
+        rotations = np.asarray(
+            [ndm in (2, 3) and int(n) in nodes_ndf and nodes_ndf[int(n)] > reach
+             for n in self._shape_nodes], dtype=bool,
+        )
         return write_modes(
             path, model_h5=model_h5,
             node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
@@ -963,6 +985,7 @@ class ParallelModalResult:
             ndm=ndm, ndf=int(shapes.shape[2]),
             eigenvalues=self.eigenvalues,
             fields=lambda k: shapes[k - 1],
+            rotations=rotations,
             record_ids=self._shape_nodes,
             source="modal_deck", stacklevel=3,
         )

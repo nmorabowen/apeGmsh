@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..._atomic_io import replace_with_retry
-from ...results.readers._ladruno_writer import write_modes
+from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
     from ...results.Results import Results
@@ -244,7 +244,11 @@ class EigenResult:
             p = ops.eigen(3).to_ladruno()
             r = Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
 
-        ``r.modes`` lists one ``mode`` stage per eigenvalue.
+        ``r.modes`` lists one ``mode`` stage per eigenvalue. The modes
+        are written and stamped first and the archive follows, so a
+        refusal or a failed write leaves neither file behind; an
+        existing ``<stem>.h5`` of this bridge (the same lineage) is kept
+        as it is.
 
         Parameters
         ----------
@@ -259,36 +263,16 @@ class EigenResult:
             ``<stem>.h5`` exists and is not this bridge's archive: its
             ``/meta/lineage`` hashes differ, or it has none. Nothing is
             written.
-        ValueError, RuntimeError
+        ValueError
+            ``path`` has an ``.h5`` suffix, so it would be its own
+            archive (``to_ladruno("model.h5")`` would replace the
+            archive); and as :meth:`to_native`. Nothing is written.
+        RuntimeError
             As :meth:`to_native`.
         """
         import tempfile
 
         bridge, ndm, ndf = self._checked_solve("to_ladruno")
-        ops = self._live.ops
-        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
-        coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
-
-        # The recorder's rule: translations are a node's first ndm entries,
-        # rotations its entry 3 (2-D) or 4-6 (3-D) only when its own
-        # vector reaches them, so a u-p node's pressure is no rotation.
-        rot_cols = [c for c in ((2,) if ndm == 2 else (3, 4, 5)) if c < ndf] \
-            if ndm in (2, 3) else []
-
-        def field(mode: int) -> np.ndarray:
-            # One nodeEigenvector call per node; a node's vector is as
-            # long as ITS ndf, so a shorter one fills only what it has.
-            out = np.zeros((node_ids.size, ndf), dtype=np.float64)
-            for row, nid in enumerate(node_ids):
-                vec = np.asarray(
-                    ops.nodeEigenvector(int(nid), mode), dtype=np.float64,
-                ).ravel()
-                n_t = min(ndm, ndf, vec.size)
-                out[row, :n_t] = vec[:n_t]
-                if rot_cols and vec.size > rot_cols[-1]:
-                    out[row, rot_cols] = vec[rot_cols]
-            return out
-
         if path is None:
             out_path = Path(
                 tempfile.mkdtemp(prefix="apegmsh_modes_")
@@ -296,17 +280,51 @@ class EigenResult:
         else:
             out_path = Path(os.fspath(path))
         archive = out_path.with_suffix(".h5")
+        check_target(out_path, archive)
+
+        ops = self._live.ops
+        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+        coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
+        n_modes = len(self.eigenvalues)
+        # One nodeEigenvector call per node and mode. A node's vector is
+        # as long as ITS ndf: a shorter one fills only what it has, and
+        # it has rotations only when it reaches entry 3 (2-D) or 4-6
+        # (3-D), the recorder's rule, so a u-p pressure is no rotation.
+        shapes = np.zeros((n_modes, node_ids.size, ndf), dtype=np.float64)
+        reach = np.zeros(node_ids.size, dtype=np.int64)
+        for k in range(n_modes):
+            for row, nid in enumerate(node_ids):
+                vec = np.asarray(
+                    ops.nodeEigenvector(int(nid), k + 1), dtype=np.float64,
+                ).ravel()
+                reach[row] = vec.size
+                shapes[k, row, :min(ndf, vec.size)] = vec[:ndf]
+        rotations = reach > (2 if ndm == 2 else 5) if ndm in (2, 3) \
+            else np.zeros(node_ids.size, dtype=bool)
+
         with tempfile.TemporaryDirectory(
             prefix="apegmsh_modes_", dir=out_path.parent,
         ) as tmp:
             staged = Path(tmp) / archive.name
             bridge.h5(str(staged))
-            _place_archive(staged, archive)
-        return write_modes(
-            out_path, model_h5=archive, node_ids=node_ids, coords=coords,
-            ndm=ndm, ndf=ndf, eigenvalues=self.eigenvalues, fields=field,
-            source="eigen", stacklevel=3,
-        )
+            place = _archive_is_free(staged, archive)
+            # The modes go first, stamped against the staged copy (the
+            # same lineage), so a refused or failed write leaves no
+            # archive behind; the archive follows them into place.
+            out = write_modes(
+                out_path, model_h5=staged, node_ids=node_ids,
+                coords=coords, ndm=ndm, ndf=ndf,
+                eigenvalues=self.eigenvalues,
+                fields=lambda k: shapes[k - 1], rotations=rotations,
+                source="eigen", stacklevel=3,
+            )
+            if place:
+                try:
+                    replace_with_retry(staged, archive)
+                except BaseException:
+                    out.unlink(missing_ok=True)
+                    raise
+        return out
 
     def _write_native(self, path: "str | os.PathLike[str] | None") -> Path:
         """:meth:`to_native`'s body, called straight from each public
@@ -392,34 +410,39 @@ class EigenResult:
 
 
 def _lineage(path: Path) -> "tuple[str, str] | None":
-    """``(model_hash, fem_hash)`` of an archive's ``/meta/lineage``."""
+    """``(model_hash, fem_hash)`` of an archive's ``/meta/lineage``;
+    ``None`` when the file has none or is not HDF5."""
     import h5py
 
-    with h5py.File(path, "r") as f:
-        if "meta" not in f or "lineage" not in f["meta"]:
-            return None
-        attrs = f["meta"]["lineage"].attrs
-        if "model_hash" not in attrs or "fem_hash" not in attrs:
-            return None
-        return str(attrs["model_hash"]), str(attrs["fem_hash"])
+    try:
+        with h5py.File(path, "r") as f:
+            if "meta" not in f or "lineage" not in f["meta"]:
+                return None
+            attrs = f["meta"]["lineage"].attrs
+            if "model_hash" not in attrs or "fem_hash" not in attrs:
+                return None
+            return str(attrs["model_hash"]), str(attrs["fem_hash"])
+    except OSError:
+        return None
 
 
-def _place_archive(staged: Path, archive: Path) -> None:
-    """Move the freshly written ``staged`` archive to ``archive``.
+def _archive_is_free(staged: Path, archive: Path) -> bool:
+    """``True`` when ``archive`` is absent and ``staged`` must move there.
 
-    An existing ``archive`` with the same lineage hashes is this
-    bridge's and stays as it is; any other existing file refuses, so a
-    session's own ``<model_name>.h5`` is never replaced.
+    An existing ``archive`` with the lineage hashes of ``staged`` is
+    this bridge's and stays as it is (``False``). Any other existing
+    file refuses, so a session's own ``<model_name>.h5`` is never
+    replaced.
     """
-    if archive.exists():
-        have = _lineage(archive) if archive.is_file() else None
-        if have is None or have != _lineage(staged):
-            raise FileExistsError(
-                f"EigenResult.to_ladruno: {archive} exists and is not this "
-                "bridge's model archive (its /meta/lineage differs or is "
-                "missing), so the .ladruno beside it cannot pair with it. "
-                "Pass a path whose <stem>.h5 is free, or remove that file. "
-                "Nothing was written."
-            )
-        return
-    replace_with_retry(staged, archive)
+    if not archive.exists():
+        return True
+    have = _lineage(archive) if archive.is_file() else None
+    if have is None or have != _lineage(staged):
+        raise FileExistsError(
+            f"EigenResult.to_ladruno: {archive} exists and is not this "
+            "bridge's model archive (its /meta/lineage differs or is "
+            "missing), so the .ladruno beside it cannot pair with it. "
+            "Pass a path whose <stem>.h5 is free, or remove that file. "
+            "Nothing was written."
+        )
+    return False

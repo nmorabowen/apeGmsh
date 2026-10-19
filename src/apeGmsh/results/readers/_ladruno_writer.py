@@ -29,9 +29,10 @@ against the bridge's model archive.
 ``MODEL/ELEMENTS``                  an empty group (below)
 ``MODEL/SECTION_ASSIGNMENTS``       an empty group
 ``ON_NODES/MODES_OF_VIBRATION(U)``  ``Ux[,Uy[,Uz]]`` (``ndm`` columns)
-``ON_NODES/MODES_OF_VIBRATION(R)``  ``Rz`` (``ndm=2``, ``ndf>=3``) or
-                                    ``Rx,Ry,Rz`` (``ndm=3``, ``ndf>=6``);
-                                    absent otherwise
+``ON_NODES/MODES_OF_VIBRATION(R)``  ``Rz`` (``ndm=2``: entry 3) or
+                                    ``Rx,Ry,Rz`` (``ndm=3``: entries 4-6;
+                                    ``ndm=1``: zeros), 0.0 at a node whose
+                                    own vector does not reach them
 ``DATA/STEP_0/MODE_<k>``            ``[n x nComp]``, ``k`` 0-based, with
                                     ``MODE``, ``LAMBDA``, ``OMEGA``,
                                     ``FREQUENCY``, ``PERIOD``
@@ -44,13 +45,18 @@ stays empty; the fork's ``validate()`` accepts that. ``PROVENANCE@
 unsupported`` names ``elements``: read the file with ``model_h5=`` to
 bind the element records.
 
+Both modal groups are always written, as the recorder writes them for a
+request of both tokens: the rotational group of a model without rotations
+holds zeros. ``DIMENSION`` is absent, as the recorder skips an empty
+string attribute.
+
 A non-positive eigenvalue warns once for its mode and writes ``OMEGA =
 FREQUENCY = PERIOD = 0`` (the native writer's rule, and what the reader
 reports for it); the fork writes ``sqrt`` of it, a NaN.
 
 The file is written and stamped in a staging directory under its final
 name, then moved into place: either a stamped file is at ``path`` or
-nothing new is.
+nothing new is. ``path`` may not be the model archive, nor any ``.h5``.
 """
 from __future__ import annotations
 
@@ -66,7 +72,7 @@ import numpy as np
 from ..._atomic_io import replace_with_retry
 from ._ladruno_provenance import stamp_provenance
 
-__all__ = ["write_modes"]
+__all__ = ["check_target", "write_modes"]
 
 _STAGE = "MODEL_STAGE[1]"
 _U = "MODES_OF_VIBRATION(U)"
@@ -88,6 +94,7 @@ def write_modes(
     ndf: int,
     eigenvalues: "np.ndarray | Sequence[float]",
     fields: Callable[[int], np.ndarray],
+    rotations: "np.ndarray | Sequence[bool]",
     record_ids: "np.ndarray | Sequence[int] | None" = None,
     source: str,
     stacklevel: int = 2,
@@ -112,6 +119,11 @@ def write_modes(
         ``fields(k)`` is mode ``k``'s (1-based) eigenvector field,
         ``[len(record_ids) x ndf]``, rows in ``record_ids`` order; a DOF a
         node does not carry is 0.0.
+    rotations
+        Per recorded node, whether its own eigenvector reaches the
+        rotation entries (entry 3 in 2-D, 4-6 in 3-D: the node's ndf is
+        above 2 or 5). ``False`` writes 0.0 rotations, so a u-p node's
+        pressure is never written as one.
     record_ids
         The nodes the modal groups record; ``None`` records every node.
         Each must be a node of ``node_ids``.
@@ -119,15 +131,19 @@ def write_modes(
         What the modes came from, for ``PROVENANCE@writer``
         (``"apeGmsh <source>->ladruno <version>"``): ``eigen``, ``modal_deck``.
     stacklevel
-        The non-positive-eigenvalue warning's, counted from this function.
+        Of every warning this raises, the stamp's
+        ``StageNamesOmittedWarning`` included, counted from this function.
 
     Raises
     ------
     ValueError
         No modes, an ``ndm`` outside 1-3, an ``ndf`` below 1, a node tag
         outside int32, a recorded node that is not in ``node_ids``, or a
-        field of the wrong shape. Nothing is written.
+        field of the wrong shape, or a ``path`` refused by
+        :func:`check_target`. Nothing is written.
     """
+    out = Path(os.fspath(path))
+    check_target(out, model_h5)
     lams = [float(v) for v in np.asarray(eigenvalues, dtype=np.float64).ravel()]
     if not lams:
         raise ValueError(
@@ -158,10 +174,14 @@ def write_modes(
                 f"write_modes: mode {k} has a field of shape {f.shape}; "
                 f"expected [{rids.size} x {ndf}].")
         shapes.append(f)
+    rot = np.asarray(rotations, dtype=bool).ravel()
+    if rot.shape != (rids.size,):
+        raise ValueError(
+            f"write_modes: rotations has {rot.size} entries; expected one "
+            f"per recorded node ({rids.size}).")
     scalars = [_mode_scalars(lam, k, stacklevel + 1)
                for k, lam in enumerate(lams, start=1)]
 
-    out = Path(os.fspath(path))
     staging = out.parent / f"{out.name}.partial"
     if staging.exists():  # left by an interrupted write of this path
         shutil.rmtree(staging)
@@ -169,13 +189,42 @@ def write_modes(
     try:
         staged = staging / out.name
         _write_file(staged, nids, xyz[:, :ndm], rids, ndm, ndf, lams,
-                    scalars, shapes)
-        stamp_provenance(staged, model_h5, unsupported=list(UNSUPPORTED),
-                         writer=_writer(source))
+                    scalars, shapes, rot)
+        # The stamp's warnings (StageNamesOmittedWarning) are raised again
+        # from here, so they name the caller's line, not this module.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            stamp_provenance(staged, model_h5,
+                             unsupported=list(UNSUPPORTED),
+                             writer=_writer(source))
+        for w in caught:
+            warnings.warn(w.message, w.category, stacklevel=stacklevel)
         replace_with_retry(staged, out)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return out
+
+
+def check_target(
+    path: "str | os.PathLike[str]", model_h5: "str | os.PathLike[str]",
+) -> None:
+    """Refuse a ``.ladruno`` target that would replace a model archive.
+
+    ``path`` with an ``.h5`` suffix, or one that resolves to ``model_h5``,
+    raises ``ValueError``: writing it would replace the archive the file
+    pairs with (``to_ladruno("model.h5")``).
+    """
+    out = Path(os.fspath(path))
+    if out.suffix.lower() == ".h5":
+        raise ValueError(
+            f"to_ladruno: {out} has an .h5 suffix, the suffix of a model "
+            "archive; writing the .ladruno there would replace it. Pass a "
+            ".ladruno path. Nothing was written.")
+    if out.resolve() == Path(os.fspath(model_h5)).resolve():
+        raise ValueError(
+            f"to_ladruno: {out} is the model archive the file pairs with; "
+            "writing it would replace the archive. Pass another path. "
+            "Nothing was written.")
 
 
 def _writer(source: str) -> str:
@@ -227,27 +276,29 @@ def _d(value: float) -> np.ndarray:
     return np.array([float(value)], dtype=np.float64)
 
 
-def _groups(ndm: int, ndf: int) -> list[tuple[str, list[str], list[int], str]]:
+def _groups(ndm: int) -> list[tuple[str, list[str], list[int], str]]:
     """``(name, labels, field columns, description)`` per modal group.
 
-    The recorder's rule: translations are the first ``ndm`` eigenvector
-    entries; rotations are entry 3 in 2-D and entries 4-6 in 3-D, for a
-    node that has them. A column past ``ndf`` reads 0.0.
+    The recorder's rule (``Ladruno_NodeResults.cpp``): translations are
+    the first ``ndm`` eigenvector entries; rotations are entry 3 in 2-D
+    and entries 4-6 in 3-D. In 1-D the rotational group has three
+    columns and no source entry, so it holds zeros. A column past
+    ``ndf`` reads 0.0.
     """
-    out = [(_U, ["Ux", "Uy", "Uz"][:ndm], list(range(ndm)),
-            "Eigenvector (translational components)")]
-    if ndm == 2 and ndf >= 3:
-        out.append((_R, ["Rz"], [2], "Eigenvector (rotational components)"))
-    elif ndm == 3 and ndf >= 6:
-        out.append((_R, ["Rx", "Ry", "Rz"], [3, 4, 5],
-                    "Eigenvector (rotational components)"))
-    return out
+    labels, cols = (["Rz"], [2]) if ndm == 2 else (
+        ["Rx", "Ry", "Rz"], [3, 4, 5] if ndm == 3 else [])
+    return [
+        (_U, ["Ux", "Uy", "Uz"][:ndm], list(range(ndm)),
+         "Eigenvector (translational components)"),
+        (_R, labels, cols, "Eigenvector (rotational components)"),
+    ]
 
 
 def _write_file(
     out: Path, nids: np.ndarray, xyz: np.ndarray, rids: np.ndarray,
     ndm: int, ndf: int, lams: list[float],
     scalars: list[tuple[float, float, float]], shapes: list[np.ndarray],
+    rotations: np.ndarray,
 ) -> None:
     import h5py
 
@@ -276,7 +327,7 @@ def _write_file(
 
         on_nodes = stage.create_group("RESULTS", track_order=True) \
             .create_group("ON_NODES", track_order=True)
-        for name, labels, cols, description in _groups(ndm, ndf):
+        for name, labels, cols, description in _groups(ndm):
             grp = on_nodes.create_group(name, track_order=True)
             grp.attrs["COMPONENTS"] = _s(",".join(labels))
             grp.attrs["DATA_TYPE"] = _i(_VECTORIAL if len(labels) > 1
@@ -294,10 +345,11 @@ def _write_file(
             step.attrs["TIME"] = _d(0.0)
             for k, (lam, (omega, freq, period), field) in enumerate(
                     zip(lams, scalars, shapes)):
-                block = np.zeros((rids.size, len(cols)), dtype=np.float64)
+                block = np.zeros((rids.size, len(labels)), dtype=np.float64)
+                rows = rotations if name == _R else np.ones(rids.size, bool)
                 for j, col in enumerate(cols):
                     if col < ndf:
-                        block[:, j] = field[:, col]
+                        block[rows, j] = field[rows, col]
                 dset = step.create_dataset(f"MODE_{k}", data=block)
                 dset.attrs["MODE"] = _i(k)
                 dset.attrs["LAMBDA"] = _d(lam)

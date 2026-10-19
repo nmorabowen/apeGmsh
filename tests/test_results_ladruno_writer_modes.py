@@ -292,20 +292,59 @@ def test_a_second_export_to_the_same_path_reuses_the_archive(
     assert (lad.with_suffix(".h5")).stat().st_mtime_ns == before
 
 
+@pytest.mark.parametrize("kind", ["other_bridge", "no_lineage"])
 def test_a_foreign_stem_h5_refuses_and_writes_nothing(
-    fem3: Any, bind: Any, tmp_path: Path,
+    fem2: Any, fem3: Any, bind: Any, tmp_path: Path, kind: str,
 ) -> None:
     ids = _ids(fem3)
     bind(_FakeOps([4.0], _vectors(ids, 1, {int(n): 6 for n in ids})))
     foreign = tmp_path / "m.h5"
-    with h5py.File(foreign, "w") as f:
-        f.create_group("meta/lineage").attrs["model_hash"] = "x"
+    if kind == "other_bridge":
+        # A full /meta/lineage of another model: only the hash comparison
+        # tells it from this bridge's archive.
+        _frame(fem2, ndm=2).h5(str(foreign))
+        assert set(_lineage(foreign)) >= {"model_hash", "fem_hash"}
+    else:
+        with h5py.File(foreign, "w") as f:
+            f.create_group("meta/lineage").attrs["model_hash"] = "x"
     body = foreign.read_bytes()
 
     with pytest.raises(FileExistsError, match="not this bridge's model archive"):
         _frame(fem3).eigen(1).to_ladruno(tmp_path / "m.ladruno")
     assert not (tmp_path / "m.ladruno").exists()
     assert foreign.read_bytes() == body
+
+
+def test_an_h5_target_refuses_and_keeps_the_users_archive(
+    fem3: Any, bind: Any, tmp_path: Path,
+) -> None:
+    """``ops.h5("model.h5"); ops.eigen(1).to_ladruno("model.h5")`` would
+    replace the archive with the .ladruno (``<stem>.h5`` is the path)."""
+    ids = _ids(fem3)
+    bind(_FakeOps([4.0], _vectors(ids, 1, {int(n): 6 for n in ids})))
+    ops = _frame(fem3)
+    archive = tmp_path / "model.h5"
+    ops.h5(str(archive))
+    body = archive.read_bytes()
+
+    with pytest.raises(ValueError, match="has an .h5 suffix"):
+        ops.eigen(1).to_ladruno(archive)
+    assert archive.read_bytes() == body
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["model.h5"]
+
+
+@pytest.mark.parametrize("target", ["same", "h5"])
+def test_parallel_refuses_a_target_that_is_its_archive(
+    fem3: Any, tmp_path: Path, target: str,
+) -> None:
+    archive = tmp_path / ("model.h5" if target == "h5" else "model.arch")
+    _frame(fem3, ndm=3).h5(str(archive))
+    body = archive.read_bytes()
+    job, _ = _job(tmp_path, _ids(fem3), [16.0], 6, 3)
+
+    with pytest.raises(ValueError, match="to_ladruno: .*(suffix|is the model archive)"):
+        ParallelModalResult.from_job(job).to_ladruno(archive, model_h5=archive)
+    assert archive.read_bytes() == body
 
 
 def test_a_stale_domain_refuses_before_writing(
@@ -383,6 +422,106 @@ def test_parallel_modes_pass_validate_and_equal_the_native_route(
             for comp, col in rot.items():
                 assert _slab(g, comp) == {
                     int(n): shapes[k, i, col] for i, n in enumerate(ids)}
+
+
+def test_parallel_rotations_follow_each_nodes_own_ndf(
+    fem3: Any, spec: ModuleType, tmp_path: Path,
+) -> None:
+    """A 3-D u-p node (ndf 4) under a deck padded to ndf 6: its column 4
+    is a pressure, so Rx..Rz are 0.0 there; a frame node keeps them."""
+    ids = _ids(fem3)
+    archive = tmp_path / "model.h5"
+    _frame(fem3, ndm=3).h5(str(archive))
+    up = int(ids[1])
+    with h5py.File(archive, "r+") as f:
+        grp = f["opensees/nodes_ndf"]
+        tags = grp["tags"][()]
+        ndf = grp["ndf"][()]
+        ndf[list(tags).index(up)] = 4
+        grp["ndf"][...] = ndf
+    job, shapes = _job(tmp_path, ids, [16.0], 6, 3)
+
+    lad = ParallelModalResult.from_job(job).to_ladruno(
+        tmp_path / "m.ladruno", model_h5=archive)
+
+    assert spec.validate(str(lad)) == []
+    with h5py.File(lad, "r") as f:
+        r = f[f"{_STAGE}/RESULTS/ON_NODES/{_R}/DATA/STEP_0/MODE_0"][()]
+    row = {int(n): i for i, n in enumerate(ids)}
+    np.testing.assert_array_equal(r[row[up]], [0.0, 0.0, 0.0])
+    frame = int(ids[-1])
+    np.testing.assert_array_equal(r[row[frame]], shapes[0, row[frame], 3:6])
+
+
+def test_parallel_stamp_warning_points_at_the_caller(
+    fem3: Any, tmp_path: Path,
+) -> None:
+    """A staged archive: the stamp omits ``stage_names`` and warns, from
+    the user's line."""
+    from apeGmsh.results.readers._ladruno_provenance import (
+        StageNamesOmittedWarning,
+    )
+
+    ops = _frame(fem3, ndm=3)
+    with ops.stage(name="gravity") as s:
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-6, max_iter=10),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            constraints=ops.constraints.Plain(),
+            numberer=ops.numberer.RCM(),
+            system=ops.system.UmfPack(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+    archive = tmp_path / "model.h5"
+    ops.h5(str(archive))
+    job, _ = _job(tmp_path, _ids(fem3), [16.0], 6, 3)
+    res = ParallelModalResult.from_job(job)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lad = res.to_ladruno(tmp_path / "m.ladruno", model_h5=archive)
+    omitted = [w for w in caught
+               if issubclass(w.category, StageNamesOmittedWarning)]
+    assert len(omitted) == 1
+    assert Path(omitted[0].filename) == Path(__file__)
+    assert "stage_names" not in _provenance(lad)
+
+
+@pytest.mark.parametrize("ndm,ndf,labels", [
+    (1, 1, b"Rx,Ry,Rz"), (2, 2, b"Rz"), (3, 3, b"Rx,Ry,Rz"),
+])
+def test_the_rotational_group_is_zeros_without_rotations(
+    fem3: Any, spec: ModuleType, tmp_path: Path,
+    ndm: int, ndf: int, labels: bytes,
+) -> None:
+    """The recorder writes MODES_OF_VIBRATION(R) for every model when both
+    tokens are requested; without rotational DOFs it holds zeros."""
+    from apeGmsh.results.readers._ladruno_writer import write_modes
+
+    archive = tmp_path / "model.h5"
+    _frame(fem3, ndm=3).h5(str(archive))
+    ids = _ids(fem3)
+    coords = np.asarray(fem3.nodes.coords, dtype=np.float64)
+    field = np.arange(ids.size * ndf, dtype=np.float64).reshape(ids.size, ndf)
+    lad = write_modes(
+        tmp_path / "m.ladruno", model_h5=archive, node_ids=ids,
+        coords=coords, ndm=ndm, ndf=ndf, eigenvalues=[4.0],
+        fields=lambda k: field, rotations=np.ones(ids.size, bool),
+        source="test",
+    )
+
+    assert spec.validate(str(lad)) == []
+    with h5py.File(lad, "r") as f:
+        grp = f[f"{_STAGE}/RESULTS/ON_NODES/{_R}"]
+        assert grp.attrs["COMPONENTS"][0] == labels
+        assert "DIMENSION" not in grp.attrs   # the recorder skips ""
+        block = grp["DATA/STEP_0/MODE_0"][()]
+        assert block.shape == (ids.size, len(labels.split(b",")))
+        assert not block.any()
+        u = f[f"{_STAGE}/RESULTS/ON_NODES/{_U}/DATA/STEP_0/MODE_0"][()]
+        np.testing.assert_array_equal(u, field[:, :ndm])
 
 
 def test_parallel_refuses_an_archive_of_another_dimension(
