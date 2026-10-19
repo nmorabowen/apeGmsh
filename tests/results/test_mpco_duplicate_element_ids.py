@@ -1,10 +1,11 @@
 """An MPCO nodal-force read refuses an element id held by two buckets (#2173).
 
-MPCO writes each element to exactly one bucket of a token. A file where one
-element id sits in two buckets is corrupt: the reader used to stitch both
-buckets and return that element twice, with no warning. It now raises
-:class:`NodalForceDuplicateElementError`, naming the id, both bucket paths
-and the file.
+MPCO writes each element once, to exactly one bucket of a token. A file
+where one element id sits in two buckets, or twice in one bucket's ``ID``,
+is corrupt: the reader used to stitch the rows and return that element
+twice, with no warning. It now raises :class:`MPCOElementInTwoBuckets`,
+naming the id, the bucket path(s) and the file. The check is filter-aware:
+it refuses only for ids the read returns.
 
 The oracle is the #2172 reproducer: header 0 holds elements ``[7, 11]`` and
 header 1 holds ``[11, 33]``; read before the fix, it returned
@@ -23,9 +24,13 @@ import pytest
 
 from apeGmsh.opensees._response_catalog import NODAL_FORCE_CATALOG
 from apeGmsh.results import Results
+from apeGmsh.results.readers import _mpco_nodal_io as _mn
 from apeGmsh.results.readers._mpco_nodal_io import (
     NodalForceBucketSkippedWarning,
-    NodalForceDuplicateElementError,
+)
+from apeGmsh.results.readers._mpco_refusals import (
+    MPCOElementInTwoBuckets,
+    refuse_element_in_two_buckets,
 )
 from tests.conftest import _stub_model_h5_path
 from tests.test_results_mpco_nodal_mock import _create_skeleton
@@ -126,7 +131,7 @@ def test_duplicate_element_id_refuses_by_name(
 ) -> None:
     path = _file(tmp_path, frame, keys, ([7, 11], [11, 33]))
     with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
-        with pytest.raises(NodalForceDuplicateElementError) as exc:
+        with pytest.raises(MPCOElementInTwoBuckets) as exc:
             r.elements.get(component=_component(frame))
     msg = str(exc.value)
     assert "element 11 " in msg, msg
@@ -137,14 +142,96 @@ def test_duplicate_element_id_refuses_by_name(
 
 
 @pytest.mark.parametrize(("frame", "keys"), _SPLIT_ARGS, ids=_SPLIT_IDS)
-def test_duplicate_refuses_even_when_the_id_filter_skips_it(
+def test_id_filter_that_skips_the_duplicate_reads(
     tmp_path: Path, frame: str, keys: tuple[str, str],
 ) -> None:
-    """The file is corrupt whichever elements a read asks for."""
+    """The check is filter-aware: a read that returns elements 7 and 33
+    alone returns each once, with its own values; asking for 11 refuses."""
     path = _file(tmp_path, frame, keys, ([7, 11], [11, 33]))
+    comp = _component(frame)
     with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
-        with pytest.raises(NodalForceDuplicateElementError):
-            r.elements.get(component=_component(frame), ids=[7])
+        slab = r.elements.get(component=comp, ids=[7, 33])
+        with pytest.raises(MPCOElementInTwoBuckets, match="element 11 "):
+            r.elements.get(component=comp, ids=[11])
+    np.testing.assert_array_equal(slab.element_ids, [7, 33])
+    want7 = _flat(np.array([7, 11]), 0.0)[:, 0, [0, 6]]
+    want33 = _flat(np.array([11, 33]), 0.25)[:, 1, [0, 6]]
+    np.testing.assert_array_equal(slab.values[:, 0, :], want7)
+    np.testing.assert_array_equal(slab.values[:, 1, :], want33)
+
+
+# =====================================================================
+# One element twice in one bucket: the read refuses, by name
+# =====================================================================
+
+def _one_bucket_file(tmp_path: Path, eids: list[int]) -> tuple[Path, str]:
+    key = "5-ElasticBeam3d[1:0:0]"
+    path = tmp_path / "dup_in_one.mpco"
+    f, stage_name = _create_skeleton(
+        path, node_ids=np.array([1, 2, 3], dtype=np.int32),
+        coords=np.zeros((3, 3)), n_steps=_T, dt=1.0,
+    )
+    try:
+        arr = np.asarray(eids, dtype=np.int64)
+        _add_bucket(f[stage_name], "globalForce", key, arr,
+                    _flat(arr, 0.0), _names(_G3))
+    finally:
+        f.close()
+    return path, key
+
+
+def test_repeat_inside_one_bucket_refuses_by_name(tmp_path: Path) -> None:
+    path, key = _one_bucket_file(tmp_path, [7, 11, 11])
+    with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+        with pytest.raises(MPCOElementInTwoBuckets) as exc:
+            r.elements.get(component="nodal_resisting_force_x")
+    msg = str(exc.value)
+    assert "element 11 appears twice in the MPCO bucket " in msg, msg
+    assert f"/RESULTS/ON_ELEMENTS/globalForce/{key}" in msg, msg
+    assert path.name in msg, msg
+
+
+def test_repeat_inside_one_bucket_is_filter_aware(tmp_path: Path) -> None:
+    path, _key = _one_bucket_file(tmp_path, [7, 11, 11])
+    with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+        slab = r.elements.get(component="nodal_resisting_force_x", ids=[7])
+    np.testing.assert_array_equal(slab.element_ids, [7])
+
+
+# =====================================================================
+# The helper and the per-read ledger
+# =====================================================================
+
+def test_helper_names_both_paths_and_the_file() -> None:
+    with pytest.raises(MPCOElementInTwoBuckets) as exc:
+        refuse_element_in_two_buckets(
+            {"/a": np.array([3, 9]), "/b": np.array([5, 9, 3])},
+            file="f.mpco",
+        )
+    msg = str(exc.value)
+    assert msg.startswith("f.mpco: element 3 appears in two MPCO buckets: "
+                          "/a and /b."), msg
+    assert "1 more element id(s)" in msg, msg
+    refuse_element_in_two_buckets(
+        {"/a": np.array([3, 9]), "/b": np.array([5])}, file="f.mpco")
+    refuse_element_in_two_buckets({}, file="f.mpco")
+
+
+def test_a_scan_serves_one_read(tmp_path: Path) -> None:
+    """The ledger is per scan: reading a bucket twice from one scan is a
+    caller error, raised by name rather than refused as a duplicate."""
+    path, _key = _one_bucket_file(tmp_path, [7, 11])
+    with h5py.File(path, "r") as f:
+        on_el = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+        token, buckets, _ = _mn.scan_nodal_force_buckets(
+            on_el, canonical_component="nodal_resisting_force_x")
+        grp = on_el[token][buckets[0].bracket_key]
+        kw = dict(t_idx=np.arange(_T), element_ids=None)
+        _mn.read_nodal_bucket_slab(
+            grp, buckets[0], "nodal_resisting_force_x", **kw)
+        with pytest.raises(RuntimeError, match="read twice from one scan"):
+            _mn.read_nodal_bucket_slab(
+                grp, buckets[0], "nodal_resisting_force_x", **kw)
 
 
 def test_message_counts_the_other_repeated_ids(tmp_path: Path) -> None:
@@ -152,7 +239,7 @@ def test_message_counts_the_other_repeated_ids(tmp_path: Path) -> None:
                  ("5-ElasticBeam3d[1:0:0]", "5-ElasticBeam3d[1:0:1]"),
                  ([7, 11, 21, 40], [11, 21, 33, 40]))
     with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
-        with pytest.raises(NodalForceDuplicateElementError,
+        with pytest.raises(MPCOElementInTwoBuckets,
                            match=r"element 11 .* 2 more element id"):
             r.elements.get(component="nodal_resisting_force_x")
 
