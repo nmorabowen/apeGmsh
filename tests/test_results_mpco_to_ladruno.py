@@ -151,6 +151,12 @@ def _springs_model(path: Path) -> Path:
 def _unstaged_springs_model(path: Path, kinds: "list[str]") -> Path:
     """The springs model with no ``ops.stage`` block and one ``analysis``
     call per entry of ``kinds`` (the implicit-stage rule, #1950)."""
+    _unstaged_springs_bridge(kinds).h5(str(path))
+    return path
+
+
+def _unstaged_springs_bridge(kinds: "list[str]") -> Any:
+    """The bridge :func:`_unstaged_springs_model` archives."""
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 
@@ -172,8 +178,7 @@ def _unstaged_springs_model(path: Path, kinds: "list[str]") -> Path:
         else:
             ops.integrator.Newmark(gamma=0.5, beta=0.25)
             ops.analysis.Transient()
-    ops.h5(str(path))
-    return path
+    return ops
 
 
 def _bridge_copy(src: Path, model: Path, dst: Path) -> Path:
@@ -471,27 +476,101 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# An unstaged program (#1950, coordinator ruling (iii))
+# An unstaged program: the deck's run record (#1950 ruling (iii); #2210)
 # ---------------------------------------------------------------------------
+
+#: The ratified spec's 12 fields, in order (the oracle the writer is held to
+#: in ``tests/test_deck_run_record.py``).
+RUN_FIELDS = ("schema", "model_hash", "fem_hash", "recorder_file", "analysis",
+              "analyze_steps", "steps_completed", "dt", "opensees_backend",
+              "opensees_build_sha", "writer", "completed_iso")
+_DROP = object()
+
+
+def _file_steps(src: Path) -> int:
+    from apeGmsh.results.readers._ladruno_from_mpco import _stage_step_counts
+
+    with h5py.File(src, "r") as f:
+        (steps,) = _stage_step_counts(f["MODEL_STAGE[1]"])
+    return steps
+
+
+def _record(src: Path, model: Path, *, base: "str | None" = None,
+            **override: Any) -> Path:
+    """The record a deck that ran ``src``'s steps writes, with ``override``
+    applied (``_DROP`` removes a field), beside ``base`` (``src``'s name)."""
+    with h5py.File(model, "r") as f:
+        lin = {k: str(v) for k, v in f["meta/lineage"].attrs.items()}
+    steps = _file_steps(src)
+    base = base or src.name
+    rec: "dict[str, Any]" = {
+        "schema": "apegmsh.deck_run/1", "model_hash": lin["model_hash"],
+        "fem_hash": lin["fem_hash"], "recorder_file": base,
+        "analysis": "Static", "analyze_steps": steps, "steps_completed": steps,
+        "dt": None, "opensees_backend": "stock",
+        "opensees_build_sha": "unknown", "writer": "apeGmsh deck test",
+        "completed_iso": "2026-10-19T12:00:00Z",
+    }
+    assert tuple(rec) == RUN_FIELDS
+    for key, value in override.items():
+        if value is _DROP:
+            del rec[key]
+        else:
+            rec[key] = value
+    path = src.with_name(base + ".run.json")
+    path.write_text(json.dumps(rec), encoding="utf-8")
+    return path
+
+
+def _implicit(src: Path, dst: Path, model: Path) -> list[Path]:
+    return _convert(src, dst, model, _implicit_stage=True)
 
 
 @pytest.mark.parametrize("name", sorted(_FLAT))
-def test_the_private_path_refuses_every_unstaged_program(fx, name, tmp_path) -> None:
+def test_the_private_path_refuses_every_unstaged_program_without_a_record(
+    fx, name, tmp_path,
+) -> None:
     """With ``_implicit_stage=True`` (read_deck_mpco's path) no unstaged
-    program converts, whatever its analysis calls: its kind is not archived
-    as fact. The one-call cases are the ones a rule-(i) acceptance would
-    convert, so re-adding one fails them."""
+    program converts without the deck's run record, whatever its analysis
+    calls: an in-process run writes none. The one-call cases are the ones a
+    rule-(i) acceptance would convert, so re-adding one fails them."""
     model = fx[f"flat_{name}"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+    _refuses(src, tmp_path / "out.ladruno",
+             r"not archived as fact.*check 1 \(the record\).*there is none",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 
-def test_the_private_path_refuses_an_unstaged_modes_only_file(fx, tmp_path) -> None:
-    """Every unstaged program refuses on the private path, a file of modes
-    alone included."""
-    model = fx["flat_static"]
-    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+@pytest.mark.parametrize("name, token, kind", [
+    ("static", "Static", b"static"), ("transient", "Transient", b"transient"),
+])
+def test_a_valid_record_converts_an_unstaged_program(
+    fx, name, token, kind, tmp_path,
+) -> None:
+    """All five checks hold: one implicit stage, its KIND from the one
+    ``analysis`` declaration, and every nodal slab equal to the ``.mpco``'s."""
+    model = fx[f"flat_{name}"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    _record(src, model, analysis=token)
+    (dst,) = _implicit(src, tmp_path / "deck.ladruno", model)
+    with h5py.File(dst, "r") as d:
+        assert d["MODEL_STAGE[1]"].attrs["KIND"][0] == kind
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        a = Results.from_mpco(str(src), model_h5=str(model))
+        b = Results.from_ladruno(str(dst), model_h5=str(model))
+        try:
+            keys = sorted(k for k in set(_components(a)) & set(_components(b))
+                          if k[1] == "nodes")
+            assert keys
+            for key in keys:
+                _assert_slab_equal(_read(a, key), _read(b, key), str(key))
+        finally:
+            a.close()
+            b.close()
+
+
+def _modes_only(src: Path) -> None:
     with h5py.File(src, "r+") as f:
         results = f["MODEL_STAGE[1]/RESULTS"]
         del results["ON_ELEMENTS"]
@@ -502,12 +581,174 @@ def test_the_private_path_refuses_an_unstaged_modes_only_file(fx, tmp_path) -> N
         mode = grp.create_group("DATA/STEP_0").create_dataset(
             "MODE_0", data=np.ones((4, 3)))
         mode.attrs["LAMBDA"] = np.array([4.0])
-    from apeGmsh.results.readers._ladruno_from_mpco import _holds_only_modes
 
-    with h5py.File(src, "r") as f:
-        assert _holds_only_modes(f["MODEL_STAGE[1]"])
-    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+
+def _garbage(path: Path) -> None:
+    path.write_text("{not json", encoding="utf-8")
+
+
+#: (id, model, record override or a callable on the record's path, check).
+_BROKEN: "list[tuple[str, str, Any, str]]" = [
+    ("schema", "static", {"schema": "apegmsh.deck_run/2"}, "1"),
+    ("missing-field", "static", {"dt": _DROP}, "1"),
+    ("unknown-field", "static", {"rank": 0}, "1"),
+    ("bool-steps", "static", {"analyze_steps": True}, "1"),
+    ("float-steps", "static", {"steps_completed": 4.0}, "1"),
+    ("bad-build", "static", {"opensees_build_sha": "abc"}, "1"),
+    ("bad-backend", "static", {"opensees_backend": "fork"}, "1"),
+    ("bad-time", "static", {"completed_iso": "yesterday"}, "1"),
+    ("not-json", "static", _garbage, "1"),
+    ("recorder-file", "static", {"recorder_file": "other.mpco"}, "2"),
+    ("stale-model-hash", "static", {"model_hash": "0" * 32}, "3"),
+    ("stale-fem-hash", "static", {"fem_hash": "0" * 32}, "3"),
+    ("analysis-token", "static", {"analysis": "Transient"}, "4"),
+    ("two-analyses", "two", {"analysis": "Transient"}, "4"),
+    ("no-analysis", "none", {}, "4"),
+    ("steps-completed", "static", {"steps_completed": 0}, "5"),
+]
+
+
+@pytest.mark.parametrize("model_name, override, check",
+                         [c[1:] for c in _BROKEN], ids=[c[0] for c in _BROKEN])
+def test_each_failed_check_refuses_by_name(
+    fx, model_name, override, check, tmp_path,
+) -> None:
+    """Each check refuses on its own, naming itself; read_deck_mpco then
+    warns once and reads the ``.mpco`` (nothing converted)."""
+    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+
+    model = fx[f"flat_{model_name}"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    if callable(override):
+        override(_record(src, model))
+    else:
+        _record(src, model, **override)
+    _refuses(src, tmp_path / "deck.ladruno",
+             rf"not archived as fact.*check {check} ",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = read_deck_mpco(src, model_h5=model)
+    res.close()
+    ours = [w for w in caught if w.category is DefaultRouteWarning]
+    assert len(ours) == 1 and f"check {check} " in str(ours[0].message)
+    assert not (tmp_path / "deck.ladruno").exists()
+
+
+def test_the_files_step_count_must_be_the_records(fx, tmp_path) -> None:
+    """Check 5's file half: exactly one stage of step data, of the record's
+    steps; a file of modes alone holds none."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    n = _file_steps(src) + 1
+    _record(src, model, analyze_steps=n, steps_completed=n)
+    _refuses(src, tmp_path / "deck.ladruno",
+             rf"check 5 \(the steps\).*recording \[{n - 1}\] step",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+    _record(src, model)
+    _modes_only(src)
+    _refuses(src, tmp_path / "deck.ladruno",
+             r"check 5 \(the steps\).*holds 0 MODEL_STAGE",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_a_partitioned_set_reads_the_record_beside_its_base_name(
+    fx, tmp_path,
+) -> None:
+    """Rank 0 writes one record beside ``<stem>.mpco``, naming it; every part
+    converts. A record naming a part fails check 2."""
+    model = fx["flat_static"]
+    one = _bridge_copy(SPRINGS, model, tmp_path / "one.mpco")
+    for i in (0, 1):
+        shutil.copy(one, tmp_path / f"run.part-{i}.mpco")
+    _record(tmp_path / "run.part-0.mpco", model, base="run.mpco")
+    out = _implicit(tmp_path / "run.part-1.mpco", tmp_path / "run.ladruno",
+                    model)
+    assert [p.name for p in out] == ["run.part-0.ladruno", "run.part-1.ladruno"]
+    for p in out:
+        p.unlink()
+    _record(tmp_path / "run.part-0.mpco", model, base="run.mpco",
+            recorder_file="run.part-0.mpco")
+    _refuses(tmp_path / "run.part-0.mpco", tmp_path / "run.ladruno",
+             r"check 2 \(recorder_file\)", exc=StageKindRefused,
+             model_h5=model, _implicit_stage=True)
+
+
+def test_a_record_never_excuses_another_models_archive(fx, tmp_path) -> None:
+    """A record valid for the archive does not make the ``.mpco`` that
+    archive's run: the lineage mismatch still raises, not as a kind."""
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.results.live import read_deck_mpco
+
+    ops = apeSees(_fem_from_mpco(FRAME, {"Frame": list(range(1, 12))}))
+    ops.model(ndm=3, ndf=6)
+    t = ops.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0))
+    ops.element.elasticBeamColumn(pg="Frame", transf=t, A=1.0, E=1.0,
+                                  Iz=1.0, Iy=1.0, G=1.0, J=1.0)
+    ops.integrator.LoadControl(dlam=0.1)
+    ops.analysis.Static()
+    other = tmp_path / "frame_flat.h5"
+    ops.h5(str(other))
+    src = _bridge_copy(SPRINGS, fx["flat_static"], tmp_path / "deck.mpco")
+    _record(src, other)
+    _refuses(src, tmp_path / "deck.ladruno", "is not a run of",
+             model_h5=other, _implicit_stage=True)
+    with pytest.raises(MPCOConversionRefused, match="is not a run of") as e:
+        read_deck_mpco(src, model_h5=other)
+    assert not isinstance(e.value, StageKindRefused)
+
+
+def test_an_in_process_run_after_a_deck_export_refuses(tmp_path) -> None:
+    """F2 of #2224's review: ``b.py(..., analyze_steps=N)``, then ``b.h5()``,
+    then an in-process run of the same model. The export writes no record
+    (only the deck's own run does), so the in-process ``.mpco`` refuses on
+    check 1, with one warning, and nothing is converted."""
+    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+
+    mpco = tmp_path / "deck.mpco"
+    bridge = _unstaged_springs_bridge(["static"])
+    bridge.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+    bridge.py(str(tmp_path / "deck.py"), analyze_steps=4, progress=False)
+    bridge.tcl(str(tmp_path / "deck.tcl"), analyze_steps=4, progress=False)
+    assert "deck.mpco.run.json" in (tmp_path / "deck.py").read_text("utf-8")
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    assert sorted(p.name for p in tmp_path.glob("*.run.json*")) == []
+    src = _bridge_copy(SPRINGS, model, mpco)  # what the in-process run wrote
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = read_deck_mpco(src, model_h5=model)
+    res.close()
+    ours = [w for w in caught if w.category is DefaultRouteWarning]
+    assert len(ours) == 1 and "check 1 (the record)" in str(ours[0].message)
+    assert not (tmp_path / "deck.ladruno").exists()
+
+
+def test_a_stamped_ladruno_still_pairs_after_a_later_export(tmp_path) -> None:
+    """F1/F3 of #2224's review: a deck export never rewrites ``model.h5``
+    nor moves ``model_hash``, so a ``.ladruno`` stamped before it still
+    pairs with the archive after it, and with a fresh archive."""
+    mpco = tmp_path / "deck.mpco"
+    bridge = _unstaged_springs_bridge(["static"])
+    bridge.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    src = _bridge_copy(SPRINGS, model, mpco)
+    _record(src, model)
+    (dst,) = _implicit(src, tmp_path / "deck.ladruno", model)
+    before = _sha(model)
+    bridge.py(str(tmp_path / "later.py"), analyze_steps=4, progress=False)
+    bridge.tcl(str(tmp_path / "later.tcl"), analyze_steps=4, progress=False)
+    assert _sha(model) == before
+    again = tmp_path / "again.h5"
+    bridge.h5(str(again))
+    for archive in (model, again):
+        with h5py.File(archive, "r") as m:
+            assert _prov(dst)["model_hash"] == str(
+                m["meta/lineage"].attrs["model_hash"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            Results.from_ladruno(str(dst), model_h5=str(archive)).close()
 
 
 def test_a_bare_convert_refuses_an_unstaged_program_as_before(fx, tmp_path) -> None:
