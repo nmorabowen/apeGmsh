@@ -27,11 +27,13 @@ build it, so there the test asserts only that the bridge deck did not run,
 the static check is its only net, and the test skips by name so ``-rs``
 shows it.
 :data:`_KNOWN_STOCK_FAILURES` names the models whose bridge deck aborts on
-stock openseespy although their solve stamp claims ``requires=()``
-(``Parameter::addComponent`` finds no object for the parameter; #2220).
-They are handled like the fork rows: the test asserts the bridge deck does
-not run, then skips citing #2220. Once #2220 is fixed the assertion fails,
-and the entry must be removed.
+stock openseespy although their solve stamp claims ``requires=()``, each
+with its reason: #2220 (``Parameter::addComponent`` finds no object for the
+parameter; a partitioned stamp that does not name its multi-rank run), or
+the fixture fact (``_frame[modal=True]`` declares no supports, so its
+``eigen`` cannot run). They are handled like the fork rows: the test asserts
+the bridge deck does not run, then skips citing the reason. Once a deck
+runs the assertion fails, and the entry must be removed.
 Any other bridge deck that does not run fails.
 
 openseespy is never imported into the pytest process: the decks run in
@@ -67,11 +69,22 @@ _MARKER = "APEGMSH_K2C_DECK_COMPLETE"
 _RUN_ROWS = [m for m in CORPUS
              if m.id not in _waivers() or _waivers()[m.id].klass != "S"]
 #: Models whose bridge deck aborts on stock openseespy while the solve stamp
-#: claims ``requires=()``: the issue that tracks each. Not a waiver: the net
-#: asserts the bridge deck does not run, so a fix fails it until removed.
+#: claims ``requires=()``, each with its reason: the issue that tracks it, or
+#: the fixture fact that makes it unsolvable. Not a waiver: the net asserts
+#: the bridge deck does not run, so a fix fails it until removed.
+_FIXTURE_UNSOLVABLE = ("fixture has no supports; eigen cannot run "
+                       "(fixture-unsolvable, not a replay fault)")
 _KNOWN_STOCK_FAILURES: dict[str, str] = {
     "test_h5_decls::_param_stage_model": "#2220",
     "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
+    "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
+        _FIXTURE_UNSOLVABLE,
+    "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
+        _FIXTURE_UNSOLVABLE,
+    # The stamp says solve_mode="partitioned" but requires=(): it does not
+    # name the multi-rank run its rank-gated deck needs (the #2220 class).
+    # In one process rank 1's stage elements are never declared: singular.
+    "test_h5_regions_round_trip::_partitioned_staged_with_fan_out": "#2220",
 }
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
@@ -136,14 +149,20 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """The table is exactly the two #2220 rows, each a row the net runs:
-    it can only shrink as #2220 is fixed, never grow."""
-    assert set(_KNOWN_STOCK_FAILURES) == {
-        "test_h5_decls::_param_stage_model",
-        "test_h5_stages_reader::_real_kitchen_sink_bridge",
+    """The table is exactly these five rows, each a row the net runs, each
+    citing #2220 or the fixture fact: it can only shrink as a deck is
+    fixed, never grow."""
+    assert _KNOWN_STOCK_FAILURES == {
+        "test_h5_decls::_param_stage_model": "#2220",
+        "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
+        "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
+            _FIXTURE_UNSOLVABLE,
+        "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
+            _FIXTURE_UNSOLVABLE,
+        "test_h5_regions_round_trip::_partitioned_staged_with_fan_out":
+            "#2220",
     }
     assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
-    assert all(v == "#2220" for v in _KNOWN_STOCK_FAILURES.values())
 
 
 def test_the_net_runs_some_stock_row() -> None:
@@ -214,13 +233,13 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
 def test_a_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
-    issue = _KNOWN_STOCK_FAILURES.get(model.id)
-    if issue is not None:
+    reason = _KNOWN_STOCK_FAILURES.get(model.id)
+    if reason is not None:
         ran, log = _run(bridge)
         assert not ran, (
-            f"{model.id}: the bridge deck now runs; {issue} is fixed, so "
+            f"{model.id}: the bridge deck now runs ({reason} is fixed), so "
             f"remove its _KNOWN_STOCK_FAILURES entry:\n{log}")
-        pytest.skip(f"{model.id}: known stock failure {issue} (the bridge "
+        pytest.skip(f"{model.id}: known stock failure: {reason} (the bridge "
                     "deck aborts though the stamp requires nothing); "
                     "asserted that the bridge deck did not run here")
     if not _bridge_runs(model, bridge, requires):
