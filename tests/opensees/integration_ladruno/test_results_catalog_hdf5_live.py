@@ -35,7 +35,9 @@ The fork writes SixNodeTri and EightNodeQuad under the bracket key
 reader places its GPs from the catalog's one fitting layout (#1998); the
 ``D B(xi) u`` anchor checks those coordinates. The shells write their
 resultants as ``p11,p22,p12,m11,m22,m12,q1,q2`` per GP, which the reader
-names in the catalog's 8-component shell order (#1990). Trusses are not
+names in the catalog's 8-component shell order (#1990), and their strains as
+``eps11,eps22,gamma12,theta11,theta22,theta33,gamma13,gamma23``, which it
+names as the catalog's generalised strains (#2169). Trusses are not
 repeated: ``test_element_families_ladruno_live.py`` (G7, #1949) already pins
 them on both routes.
 
@@ -162,13 +164,36 @@ PARITY_CASES = [k for k in FORK_CASES
                 ("SixNodeTri", "EightNodeQuad")]
 
 
-@pytest.mark.parametrize("key", PARITY_CASES)
+#: The shells' generalised section strains in source order (#2169): every
+#: shell tags ``eps11,eps22,gamma12,theta11,theta22,theta33,gamma13,gamma23``
+#: from ``getSectionDeformation()`` (fork 100eb9ae1). Spelled out, not read
+#: from RESPONSE_CATALOG.
+SHELL_STRAINS = ("membrane_strain_xx", "membrane_strain_yy",
+                 "membrane_strain_xy", "curvature_xx", "curvature_yy",
+                 "curvature_xy", "transverse_shear_strain_xz",
+                 "transverse_shear_strain_yz")
+
+#: ``(case, recorder token, components)``: each case's own response, and
+#: ``-E strains`` for every shell.
+PARITY_READS = [
+    pytest.param(k, CASES[k].token, CASES[k].comps, id=k)
+    for k in PARITY_CASES
+] + [
+    pytest.param(k, "strains", SHELL_STRAINS, id=f"{k}-strains")
+    for k in PARITY_CASES if CASES[k].comps == SHELL
+]
+
+
+@pytest.mark.parametrize("key,token,comps", PARITY_READS)
 def test_ladruno_matches_mpco_on_the_same_solve(
-    key: str, tmp_path: Path, stub_model_h5: Path,
+    key: str, token: str, comps: "tuple[str, ...]", tmp_path: Path,
+    stub_model_h5: Path,
 ) -> None:
     """``.ladruno`` and MPCO, recording the same step, read back the same.
 
     Values at ``rtol=1e-10``, GP for GP, and the same natural coordinates.
+    A shell's ``-E strains`` reads as the generalised strains on both, and
+    never as the continuum ``strain_xx``.
     """
     from apeGmsh.results import Results
     from apeGmsh.results._bind import ModelFemMismatchWarning
@@ -179,18 +204,22 @@ def test_ladruno_matches_mpco_on_the_same_solve(
     assert ops.eleType(built.eid) == case.cpp_class
     solve(ops)
     mpco, lad = tmp_path / "run.mpco", tmp_path / "run.ladruno"
-    ops.recorder("mpco", str(mpco), "-N", "displacement", "-E", case.token)
-    ops.recorder("ladruno", str(lad), "-N", "displacement", "-E", case.token)
+    ops.recorder("mpco", str(mpco), "-N", "displacement", "-E", token)
+    ops.recorder("ladruno", str(lad), "-N", "displacement", "-E", token)
     assert ops.analyze(1) == 0
     ops.remove("recorders")
     r_lad = Results.from_ladruno(str(lad), model_h5=stub_model_h5)
     with pytest.warns(ModelFemMismatchWarning):
         r_mpco = Results.from_mpco(str(mpco), model_h5=stub_model_h5)
+    if comps == SHELL_STRAINS:
+        listed = set(r_lad.elements.gauss.available_components())
+        assert set(SHELL_STRAINS) <= listed, (key, sorted(listed))
+        assert not {"strain_xx", "strain_yy"} & listed, (key, sorted(listed))
     slabs = [(r_lad.elements.gauss.get(component=c),
-              r_mpco.elements.gauss.get(component=c)) for c in case.comps]
+              r_mpco.elements.gauss.get(component=c)) for c in comps]
     scale = max(np.abs(np.asarray(m.values)).max() for _, m in slabs)
     assert scale > 0.0, f"{key}: MPCO reads all zeros"
-    for comp, (a, b) in zip(case.comps, slabs):
+    for comp, (a, b) in zip(comps, slabs):
         assert np.asarray(a.values).shape == (1, case.n_gp), (key, comp)
         np.testing.assert_array_equal(a.element_index, b.element_index)
         np.testing.assert_allclose(

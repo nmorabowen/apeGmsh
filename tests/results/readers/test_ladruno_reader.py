@@ -1410,6 +1410,174 @@ def test_rule_zero_material_bucket_is_placed_like_the_element(
 
 
 # ---------------------------------------------------------------------------
+# #2169 — shell `-E strains`: the generalised section strains
+# ---------------------------------------------------------------------------
+#
+# Every shell's ``setResponse("strains")`` tags its sections'
+# ``getSectionDeformation()`` per GP as these eight labels, in this order
+# (ASDShellQ4.cpp:1716, ASDShellT3.cpp:1429, ShellMITC4.cpp:667,
+# ShellMITC9.cpp:493, ShellDKGQ.cpp:614, ShellNLDKGQ.cpp:627,
+# ShellDKGT.cpp:640, ShellNLDKGT.cpp:639, fork 100eb9ae1): membrane strains,
+# curvatures (``theta33`` is the twist), transverse shear strains.
+
+SHELL_STRAIN_LABELS = ("eps11", "eps22", "gamma12", "theta11", "theta22",
+                       "theta33", "gamma13", "gamma23")
+SHELL_STRAIN_CANON = (
+    "membrane_strain_xx", "membrane_strain_yy", "membrane_strain_xy",
+    "curvature_xx", "curvature_yy", "curvature_xy",
+    "transverse_shear_strain_xz", "transverse_shear_strain_yz",
+)
+#: A GP_PARAM for ShellMITC9's nine points; the file's own coords win, so
+#: any distinct array checks the read.
+MITC9_OWN = np.linspace(-0.9, 0.9, 18).reshape(9, 2)
+
+
+@pytest.mark.parametrize("key,n_gp,gp_param,coords", [
+    ("203-ASDShellQ4[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("53-ShellMITC4[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("156-ShellDKGQ[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("157-ShellNLDKGQ[201:0:0]", 4, QUAD_GL_2, QUAD_GL_2),
+    ("54-ShellMITC9[202:0:0]", 9, MITC9_OWN, MITC9_OWN),
+    ("204-ASDShellT3[102:0:0]", 3, None, TRI_GL_2B),
+    ("167-ShellDKGT[103:0:0]", 4, None, TRI_GL_2C),
+    ("168-ShellNLDKGT[103:0:0]", 4, None, TRI_GL_2C),
+], ids=["ASDShellQ4", "ShellMITC4", "ShellDKGQ", "ShellNLDKGQ", "ShellMITC9",
+        "ASDShellT3", "ShellDKGT", "ShellNLDKGT"])
+def test_shell_strains_read_as_generalised_strains(
+    tmp_path: Path, key: str, n_gp: int,
+    gp_param: "np.ndarray | None", coords: np.ndarray,
+) -> None:
+    # They read eps11 / eps22 as the continuum strain_xx / strain_yy, with
+    # no warning, and dropped the other six columns (#2169).
+    path, data = _named_gp_file(
+        tmp_path, key, SHELL_STRAIN_LABELS, n_gp, level=2, token="strains",
+        gp_param=gp_param,
+    )
+    with LadrunoReader(path) as r:
+        available = r.available_components("stage_0", ResultLevel.GAUSS)
+    assert not {"strain_xx", "strain_yy"} & set(available), available
+    _assert_reads(path, data, SHELL_STRAIN_CANON, n_gp, coords)
+
+
+@pytest.mark.parametrize("labels", [
+    SHELL_STRAIN_LABELS[:2],                                  # eps11, eps22
+    SHELL_STRAIN_LABELS[:6],                                  # no shears
+    SHELL_STRAIN_LABELS[:3] + ("theta22", "theta11") + SHELL_STRAIN_LABELS[5:],
+], ids=["membrane-pair", "partial", "reordered"])
+def test_partial_or_reordered_shell_strains_refuse(
+    tmp_path: Path, labels: "tuple[str, ...]",
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+    )
+
+    path, _ = _named_gp_file(
+        tmp_path, "203-ASDShellQ4[201:0:0]", labels, 4, level=2,
+        token="strains", gp_param=QUAD_GL_2,
+    )
+    with LadrunoReader(path) as r:
+        with pytest.raises(GaussLayoutMismatch, match="not the full source"):
+            r.available_components("stage_0", ResultLevel.GAUSS)
+        with pytest.raises(GaussLayoutMismatch, match="not the full source"):
+            r.read_gauss("stage_0", "strain_xx")
+
+
+def test_shell_strain_labels_on_an_uncatalogued_class_refuse_when_partial(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+    )
+
+    # gamma12 / theta* name no continuum strain, so the block is the shell
+    # family's whatever the class; three of eight is not the response.
+    path, _ = _named_gp_file(
+        tmp_path, "99999-NotACatalogedClass[201:0:0]",
+        SHELL_STRAIN_LABELS[:3], 4, level=2, token="strains",
+        gp_param=QUAD_GL_2,
+    )
+    with LadrunoReader(path) as r:
+        with pytest.raises(GaussLayoutMismatch, match="not the full source"):
+            r.read_gauss("stage_0", "strain_xx")
+
+
+def test_shell_strains_the_catalog_contradicts_refuse(tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+    )
+
+    # ASDShellQ4 is catalogued with 4 GPs of shell strains, not 3.
+    path, _ = _named_gp_file(
+        tmp_path, "203-ASDShellQ4[201:0:0]", SHELL_STRAIN_LABELS, 3, level=2,
+        token="strains",
+    )
+    with LadrunoReader(path) as r:
+        with pytest.raises(GaussLayoutMismatch, match="catalog contradicts"):
+            r.read_gauss("stage_0", "curvature_xx")
+
+
+@pytest.mark.parametrize("key,labels,canon", [
+    # A continuum class keeps eps* -> strain_*, the membrane pair included.
+    ("33002-LadrunoBrick[0:0:0]",
+     ("eps11", "eps22", "eps33", "eps12", "eps23", "eps13"),
+     tuple(f"strain_{c}" for c in ("xx", "yy", "zz", "xy", "yz", "xz"))),
+    ("33002-LadrunoBrick[0:0:0]", ("eps11", "eps22"),
+     ("strain_xx", "strain_yy")),
+], ids=["six", "membrane-pair"])
+def test_continuum_strains_keep_their_names(
+    tmp_path: Path, key: str, labels: "tuple[str, ...]",
+    canon: "tuple[str, ...]",
+) -> None:
+    path, data = _named_gp_file(
+        tmp_path, key, labels, 8, level=4, token="strains",
+    )
+    _assert_reads(path, data, canon, 8, HEX_GL_2)
+
+
+@pytest.mark.parametrize("key,n_gp,coords", [
+    ("209-SixNodeTri[101:0:0]", 3, TRI_GL_2),
+    ("2-FourNodeQuad[201:0:0]", 4, QUAD_GL_2),
+    ("204-ASDShellT3[102:0:0]", 3, TRI_GL_2B),
+], ids=["SixNodeTri", "FourNodeQuad", "ASDShellT3"])
+def test_named_bucket_under_its_own_rule_is_placed_from_the_catalog(
+    tmp_path: Path, key: str, n_gp: int, coords: np.ndarray,
+) -> None:
+    # A named, non-shell bucket under a nonzero rule and with no GP_PARAM
+    # takes the class's layout of that rule, with no warning (#2168 F2).
+    path, data = _named_gp_file(tmp_path, key, PLANE_LABELS, n_gp, level=4)
+    assert coords.shape == (n_gp, 2)
+    _assert_reads(path, data, PLANE_CANON, n_gp, coords)
+
+
+def _escaped(key: str) -> str:
+    return key.replace("[", r"\[").replace("]", r"\]")
+
+
+@pytest.mark.parametrize("key,why", [
+    # A rule the catalog has no layout of for the class.
+    ("204-ASDShellT3[103:0:0]", "no layout of that class and rule"),
+    ("99999-NotACatalogedClass[201:0:0]", "no layout of that class and rule"),
+    # No bracket: the key states no rule at all.
+    ("204-ASDShellT3", "states no integration rule"),
+], ids=["ASDShellT3-wrong-rule", "uncatalogued", "bracketless"])
+def test_named_bucket_with_no_placement_warns_by_name(
+    tmp_path: Path, key: str, why: str,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussCoordsUnavailableWarning,
+    )
+
+    # #2168 review F2: these read natural coords of shape (n, 0) in silence.
+    path, data = _named_gp_file(tmp_path, key, PLANE_LABELS, 3, level=4)
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussCoordsUnavailableWarning,
+                          match=_escaped(key) + ".*" + why):
+            slab = r.read_gauss("stage_0", "stress_yy")
+    np.testing.assert_array_equal(slab.values, data[:, 0, [1, 4, 7]])
+    assert slab.natural_coords.shape == (3, 0)
+
+
+# ---------------------------------------------------------------------------
 # Overlapping tokens — one (element, GP) slot covered twice
 # ---------------------------------------------------------------------------
 #
