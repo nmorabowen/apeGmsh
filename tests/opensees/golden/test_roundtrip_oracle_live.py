@@ -134,10 +134,13 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """Every #2220 entry names a corpus row the net runs, citing its issue."""
-    run_ids = {m.id for m in _RUN_ROWS}
-    assert set(_KNOWN_STOCK_FAILURES) <= run_ids, (
-        sorted(set(_KNOWN_STOCK_FAILURES) - run_ids))
+    """The table is exactly the two #2220 rows, each a row the net runs:
+    it can only shrink as #2220 is fixed, never grow."""
+    assert set(_KNOWN_STOCK_FAILURES) == {
+        "test_h5_decls::_param_stage_model",
+        "test_h5_stages_reader::_real_kitchen_sink_bridge",
+    }
+    assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
     assert all(v == "#2220" for v in _KNOWN_STOCK_FAILURES.values())
 
 
