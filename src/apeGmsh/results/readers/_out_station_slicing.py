@@ -12,10 +12,12 @@ Two checks refuse that, so every ``.out`` reader slices by the same rule:
 * :func:`require_equal_station_counts`: each element's count, read from the
   model's ``beamIntegration``, must be the same and must equal the file's;
 * :func:`require_ordered_stations`: each element's natural stations must
-  increase strictly within [-1, 1]. Without a model this is the only check.
+  increase strictly within [-1, 1]. This is the check without a model.
 
-:func:`require_line_stations` applies both, the model check only when a model
-is bound.
+:func:`require_line_stations` applies the first when a model is bound and the
+second otherwise. A model-proven slice skips the order check: a legal rule
+can place its stations out of order (HingeRadau with ``lp_i = lp_j = 0.15``
+on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``).
 """
 from __future__ import annotations
 
@@ -130,8 +132,10 @@ def require_ordered_stations(
     """Raise unless each row of ``xi_natural`` (one element's natural
     stations) increases strictly within [-1, 1].
 
-    Every rule the bridge emits orders its stations from end i to end j, so a
-    block that does not is not one element's stations.
+    For a slice no model proves: a block that crosses an element boundary
+    carries one element's end and the next one's start, so it is out of
+    order. A block can also be out of order legally, so the refusal names
+    the order and asks for the model, which proves the slice.
     """
     tol = STATION_RANGE_TOL
     bad = ~(np.all(np.diff(xi_natural, axis=1) > 0.0, axis=1)
@@ -143,23 +147,25 @@ def require_ordered_stations(
             f"{path}: the stations read for FEM element "
             f"{int(rec.element_ids[i])} of record {rec.name!r} "
             f"({rec.category}) are {np.round(xi_natural[i], 6).tolist()}, "
-            f"which do not increase strictly within [-1, 1]. The record's "
-            f"elements probably have different integration-point counts, "
-            f"which a .out record cannot carry. Split the record so that each "
-            f"holds one point count, or pass model= to name the elements.")
+            f"which do not increase strictly within [-1, 1]. Without model= "
+            f"the equal slices of a .out record are read only when each "
+            f"element's stations are in that order, because the files carry "
+            f"no per-element point count. Pass model=, whose beamIntegration "
+            f"counts prove the slicing.")
 
 
 def require_line_stations(
     rec: "ResolvedRecorderRecord", xi_natural: ndarray, path: "str | Path",
     model_h5_src: "Path | None", fem_snapshot_id: str,
 ) -> None:
-    """Both checks on an equal-slice ``(E, n_IP)`` read of ``rec``'s stations.
+    """Check an equal-slice ``(E, n_IP)`` read of ``rec``'s stations.
 
-    With ``model_h5_src`` the model's counts prove the slicing; without one,
-    the station order is the only check (a transcode called with no model).
+    With ``model_h5_src`` the model's counts prove the slicing; without one
+    (a transcode called with no model), the station order must hold.
     """
     if model_h5_src is not None:
         require_equal_station_counts(
             rec, OpenSeesModel.from_h5(model_h5_src), fem_snapshot_id,
             int(xi_natural.shape[1]), path)
-    require_ordered_stations(rec, xi_natural, path)
+    else:
+        require_ordered_stations(rec, xi_natural, path)

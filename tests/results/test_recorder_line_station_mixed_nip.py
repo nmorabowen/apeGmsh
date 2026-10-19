@@ -10,12 +10,17 @@ gained element 2's first station, and element 2 lost it.
 Two checks now hold it:
 
 * with a bound model, each element's count comes from its
-  ``beamIntegration``; unequal counts are refused, naming the elements;
-* always, each element's stations must increase strictly within [-1, 1].
+  ``beamIntegration``; unequal counts are refused, naming the elements, and
+  equal ones prove the slice;
+* without one, each element's stations must increase strictly within
+  [-1, 1].
 
 The Legendre case shows why the model check is needed beside the station
 check: interior stations and a 12x length ratio make every mis-sliced block
-increase within [-1, 1]. Uniform records read exactly as before.
+increase within [-1, 1]. The long-hinge HingeRadau case shows why a proven
+slice skips the order check: its legal stations are out of order. Uniform
+records read exactly as before, and a ``from_recorders`` cache made by the
+previous parser is not served.
 
 The unit cases hand-write the files; the ``live`` case records the issue's
 reproducer (two ``ForceBeamColumn2d``, one section, Lobatto 3 and 5) with
@@ -59,9 +64,17 @@ def _legendre(n: int) -> Rule:
     return lambda ops, sec: ops.beamIntegration.Legendre(section=sec, n_ip=n)
 
 
-def _hinge_radau(ops: apeSees, sec: Any) -> Any:
+def _hinge_radau(ops: apeSees, sec: Any, lp: float = 0.1) -> Any:
     return ops.beamIntegration.HingeRadau(
-        section_i=sec, lp_i=0.1, section_j=sec, lp_j=0.1, section_interior=sec)
+        section_i=sec, lp_i=lp, section_j=sec, lp_j=lp, section_interior=sec)
+
+
+#: HingeRadau with lp_i = lp_j = 0.15 on L = 0.75, as OpenSees places its
+#: stations (``eleResponse(tag, "integrationPoints")``): out of order.
+HINGE_LONG = np.array([-1.0, 1.0 / 15.0, 0.2 * np.sqrt(3.0),
+                       -0.2 * np.sqrt(3.0), -1.0 / 15.0, 1.0])
+#: The ``PARSER_VERSION`` a cache written before this fix carries.
+PREVIOUS_PARSER = "1.2"
 
 
 def _two_beams(name: str, lengths: tuple[float, float]) -> tuple[Any, list[int]]:
@@ -191,7 +204,8 @@ def test_file_that_does_not_match_the_model_is_refused(tmp_path: Path) -> None:
         _transcode(tmp_path, fem, eids, model_h5)
 
 
-def test_unordered_stations_refused(tmp_path: Path) -> None:
+def test_unordered_stations_refused_without_model(tmp_path: Path) -> None:
+    """An unbound read of out-of-order stations is refused by their order."""
     lengths = (3.0, 5.0)
     fem, eids = _two_beams("unordered", lengths)
     _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO[3][::-1]))
@@ -228,6 +242,68 @@ def test_equal_counts_read_as_before(tmp_path: Path, with_model: bool, n: int,
             np.testing.assert_array_equal(slab.values, [
                 [_value(t, e, s_, k) for e in range(2) for s_ in range(n)]
                 for t in range(TIMES.size)])
+
+
+@pytest.mark.parametrize("with_model", [True, False])
+def test_long_hinge_stations_read_when_the_model_proves_the_slice(
+        tmp_path: Path, with_model: bool) -> None:
+    """Legal out-of-order stations: a model proves the slice and they read;
+    unbound, they are refused by their order, never as mixed counts."""
+    lengths = (0.75, 0.75)
+    fem, eids = _two_beams(f"hinge_long_{with_model}", lengths)
+
+    def rule(ops: apeSees, sec: Any) -> Any:
+        return _hinge_radau(ops, sec, lp=0.15)
+
+    model_h5 = _model_h5(tmp_path, fem, (rule, rule)) if with_model else None
+    _write_files(tmp_path, lengths, (HINGE_LONG, HINGE_LONG))
+    if not with_model:
+        with pytest.raises(ValueError, match=rf"{UNORDERED}.*Pass model="):
+            _transcode(tmp_path, fem, eids, model_h5)
+        return
+    target = _transcode(tmp_path, fem, eids, model_h5)
+    with Results.from_native(target, model=_open_model_from_h5(target)) as r:
+        slab = r.stage(r.stages[0].id).elements.line_stations.get(
+            component="bending_moment_z")
+        assert np.asarray(slab.element_index).tolist() == [
+            e for e in eids for _s in range(6)]
+        np.testing.assert_allclose(slab.station_natural_coord,
+                                   np.tile(HINGE_LONG, 2), atol=1e-12)
+        np.testing.assert_array_equal(slab.values, [
+            [_value(t, e, s, 1) for e in range(2) for s in range(6)]
+            for t in range(TIMES.size)])
+
+
+def test_stale_cache_from_the_previous_parser_is_not_served(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``from_recorders`` keys its cache on ``PARSER_VERSION``: a transcode
+    the previous parser cached (mis-sliced, no checks) is re-made, so the
+    record is read again and refused."""
+    lengths = (3.0, 5.0)
+    fem, eids = _two_beams("stale_cache", lengths)
+    model = OpenSeesModel.from_h5(
+        _model_h5(tmp_path, fem, (_lobatto(3), _lobatto(5))))
+    out = tmp_path / "out"
+    out.mkdir()
+    _write_files(out, lengths, (LOBATTO[3], LOBATTO[5]))
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id,
+                                records=(_record("beam", eids),))
+
+    def read() -> Results:
+        return Results.from_recorders(spec, out, fem=fem, model=model,
+                                      cache_root=tmp_path / "cache")
+
+    with monkeypatch.context() as m:    # what the previous parser cached
+        m.setattr("apeGmsh.results.schema._versions.PARSER_VERSION",
+                  PREVIOUS_PARSER)
+        m.setattr("apeGmsh.results.transcoders._recorder.require_line_stations",
+                  lambda *a: None)
+        with read() as r:
+            slab = r.elements.line_stations.get(component="axial_force")
+            assert np.asarray(slab.element_index).tolist() == [eids[0]] * 4 + [
+                eids[1]] * 4, "precondition: the stale cache holds the mis-slice"
+    with pytest.raises(ValueError, match="different integration-point counts"):
+        read()
 
 
 # =====================================================================
