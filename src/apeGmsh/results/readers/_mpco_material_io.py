@@ -63,6 +63,7 @@ from ._mpco_element_io import (
     _attr_scalar,
     catalog_layout,
     warn_uncatalogued_bucket,
+    warn_unparseable_bucket_key,
     warn_unread_custom_rule_bucket,
 )
 
@@ -362,13 +363,17 @@ def discover_material_state_buckets(
         for bracket_key in token_grp:
             if bracket_key in seen_keys:
                 continue
-            try:
-                elem_key = parse_mpco_element_key(bracket_key)
-            except ValueError:
-                continue
             what = (
                 f"gauss material-state discovery of {canonical_component!r}"
             )
+            try:
+                elem_key = parse_mpco_element_key(bracket_key)
+            except ValueError as exc:
+                warn_unparseable_bucket_key(
+                    token_grp[bracket_key], exc, what=what,
+                )
+                seen_keys.add(bracket_key)
+                continue
             if elem_key.custom_rule_idx != 0:
                 warn_unread_custom_rule_bucket(
                     token_grp[bracket_key], elem_key, what=what,

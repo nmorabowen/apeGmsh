@@ -478,7 +478,8 @@ class TestMetaValidation:
 
 class TestBucketFiltering:
     def test_uncatalogued_class_returns_empty(self, tmp_path: Path) -> None:
-        """A bucket with an unknown class name contributes nothing."""
+        """A bucket with an unknown class name contributes nothing, and is
+        named in an ``MPCOBucketSkippedWarning`` (#2160)."""
         path = tmp_path / "uncatalogued.mpco"
         f, stage_name = _create_mpco_skeleton(
             path, node_ids=np.array([1]), node_coords=np.zeros((1, 3)),
@@ -493,7 +494,12 @@ class TestBucketFiltering:
 
         with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
-            slab = s.elements.gauss.get(component="stress_xx")
+            with pytest.warns(MPCOBucketSkippedWarning, match=re.escape(
+                "stresses/999-NotCatalogued[300:0:0]: class 'NotCatalogued' "
+                "at integration rule 300 has no RESPONSE_CATALOG row for "
+                "token 'stress'",
+            )):
+                slab = s.elements.gauss.get(component="stress_xx")
             assert slab.values.shape == (1, 0)
 
     def test_custom_rule_bucket_is_named(self, tmp_path: Path) -> None:
