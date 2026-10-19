@@ -147,6 +147,34 @@ def _springs_model(path: Path) -> Path:
     return path
 
 
+def _unstaged_springs_model(path: Path, kinds: "list[str]") -> Path:
+    """The springs model with no ``ops.stage`` block and one ``analysis``
+    call per entry of ``kinds`` (the implicit-stage rule, #1950)."""
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    ops = apeSees(_fem_from_mpco(SPRINGS, {"One": [100], "Three": [200]}))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1000.0)
+    ops.element.ZeroLength(pg="One", mat_dirs=(ZeroLengthMatDir(material=mat, dof=1),))
+    ops.element.ZeroLength(pg="Three", mat_dirs=tuple(
+        ZeroLengthMatDir(material=mat, dof=d) for d in (1, 2, 3)))
+    ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+    ops.algorithm.Linear()
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    for kind in kinds:
+        if kind == "static":
+            ops.integrator.LoadControl(dlam=0.1)
+            ops.analysis.Static()
+        else:
+            ops.integrator.Newmark(gamma=0.5, beta=0.25)
+            ops.analysis.Transient()
+    ops.h5(str(path))
+    return path
+
+
 def _bridge_copy(src: Path, model: Path, dst: Path) -> Path:
     """``src`` with its element tags renumbered to the archive's ops tags.
 
@@ -189,7 +217,18 @@ def fx(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
         "springs": springs,
         "frame_src": _bridge_copy(FRAME, frame, tmp / "elasticFrame.mpco"),
         "springs_src": _bridge_copy(SPRINGS, springs, tmp / "zl_springs.mpco"),
+        **{f"flat_{name}": _unstaged_springs_model(tmp / f"flat_{name}.h5", kinds)
+           for name, kinds in _FLAT.items()},
     }
+
+
+#: Unstaged springs programs, by their ``analysis`` calls.
+_FLAT = {
+    "static": ["static"],
+    "transient": ["transient"],
+    "two": ["static", "transient"],
+    "none": [],
+}
 
 
 CASES = ("frame", "springs")
@@ -428,6 +467,61 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
         assert kinds == [b"static", b"transient", b"eigen"]
         assert "MODE_0" in d["MODEL_STAGE[3]/RESULTS/ON_NODES/"
                              "MODES_OF_VIBRATION(U)/DATA/STEP_20"]
+
+
+# ---------------------------------------------------------------------------
+# The implicit stage of an unstaged program (#1950)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["static", "transient"])
+def test_an_unstaged_program_with_one_analysis_is_one_implicit_stage(
+    fx, kind, tmp_path,
+) -> None:
+    """One MODEL_STAGE with step data and one ``analysis`` call: the stage
+    takes the call's kind, and every slab reads as the source does."""
+    model = fx[f"flat_{kind}"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    (dst,) = _convert(src, tmp_path / "out.ladruno", model)
+    with h5py.File(dst, "r") as d:
+        stages = sorted(g for g in d if g.startswith(_STAGE))
+        assert [d[g].attrs["KIND"][0] for g in stages] == [kind.encode()]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        a = Results.from_mpco(str(src), model_h5=str(model))
+        b = Results.from_ladruno(str(dst), model_h5=str(model))
+        try:
+            assert [s.kind for s in b.stages] == [kind]
+            assert [(s.id, s.n_steps) for s in a.stages] ==                 [(s.id, s.n_steps) for s in b.stages]
+            common = sorted(set(_components(a)) & set(_components(b)))
+            assert common, "nothing to read: the oracle compares no data"
+            for key in common:
+                _assert_slab_equal(_read(a, key), _read(b, key), str(key))
+        finally:
+            a.close()
+            b.close()
+
+
+@pytest.mark.parametrize("name, match", [
+    ("two", "2 analysis calls"),
+    ("none", "no analysis call"),
+])
+def test_an_unstaged_program_whose_kind_is_not_a_fact_refuses(
+    fx, name, match, tmp_path,
+) -> None:
+    model = fx[f"flat_{name}"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno", match, model_h5=model)
+
+
+def test_an_unstaged_program_never_spans_two_mpco_stages(fx, tmp_path) -> None:
+    """Two MODEL_STAGE groups with step data refuse even with one call."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    with h5py.File(src, "r+") as f:
+        f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
+    _refuses(src, tmp_path / "out.ladruno", "one implicit stage at most",
+             model_h5=model)
 
 
 def test_groups_take_their_quadrature_from_the_source_or_the_catalog(
