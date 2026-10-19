@@ -11,9 +11,9 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.scripts.json",
     "test": "node --test \"test/**/*.test.ts\"",
-    "lint": "depcruise --config .dependency-cruiser.cjs src",
+    "lint": "depcruise --config .dependency-cruiser.cjs src scripts",
     "start": "node scripts/build.mjs && node scripts/launch.mjs view",
     "measure": "node scripts/build.mjs && node scripts/launch.mjs measure",
     "capture": "node scripts/build.mjs && node scripts/launch.mjs capture",

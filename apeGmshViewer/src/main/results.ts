@@ -37,6 +37,7 @@ import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from ".
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
 import type { ModeFacts, UnitSystemId } from "../state/types.ts";
+import type { ProgramDecls } from "../model/types.ts";
 
 export type AnyResultsFile = ResultsFile | LadrunoFile;
 
@@ -102,6 +103,8 @@ export interface ResultsMeta {
   openseesVersion: string | null;
   /** V4h: the embedded /opensees/decls@program_decl marker ("absent" when missing); null with no /opensees */
   programDecl: string | null;
+  /** #2189: the embedded /opensees/program's methods and their declaration proof; null with no program (always for a .ladruno) */
+  program: ProgramDecls | null;
   /** V4c2a: the element-id verdict; element contours draw only for a verified file */
   elementIndex: ElementIndexVerdict;
   /** Consistent unit system declared in `/model/meta/@units`, `@units`, or `INFO/PROVENANCE@units`, or null when undeclared */
@@ -275,6 +278,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
       unavailableZones: [],
       openseesVersion: null,
       programDecl: null,
+      program: null,
       // #2187: the reader's one verdict (reader/ladrunoElements.ts `elementIndexVerdictOf`), as every element read uses.
       elementIndex: rf.elementIndexVerdict(),
       units: ix.units,
@@ -305,6 +309,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     unavailableZones: [...i.unavailableZones],
     openseesVersion: i.openseesVersion,
     programDecl: i.programDecl,
+    program: i.program,
     stages: i.stages.map((s) => ({
       id: s.id,
       name: s.name,
