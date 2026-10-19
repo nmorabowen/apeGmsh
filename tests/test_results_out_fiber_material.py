@@ -438,8 +438,32 @@ def test_fibre_decode_refuses_stations_out_of_order(
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
     msg = str(exc.value)
     assert "repeated or out of order" in msg and "HingeRadau" in msg
-    assert f"element {int(beam['ids'][1])} has" in msg
+    assert f"FEM element {int(beam['ids'][1])} has" in msg
     assert "do not split" not in msg
+
+
+def test_fibre_decode_refuses_a_repeated_station(
+    beam: dict[str, Any], tmp_path: Path,
+) -> None:
+    """The short-HingeRadau fault: a station repeated inside one element."""
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, 0.5])
+    spec = _spec(beam["fem"], _fibres(beam["ids"]))
+    with pytest.raises(ValueError, match="repeated or out of order") as exc:
+        _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+    assert f"FEM element {int(beam['ids'][1])} has" in str(exc.value)
+
+
+def test_fibre_decode_refuses_a_station_outside_the_range(
+    beam: dict[str, Any], tmp_path: Path,
+) -> None:
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, 1.5])
+    spec = _spec(beam["fem"], _fibres(beam["ids"]))
+    with pytest.raises(ValueError, match="outside the element's natural range") as exc:
+        _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+    msg = str(exc.value)
+    assert f"FEM element {int(beam['ids'][1])} has" in msg
+    assert "length or integration-point count" in msg
+    assert "repeated or out of order" not in msg
 
 
 def test_fibre_decode_refuses_a_count_the_model_contradicts(

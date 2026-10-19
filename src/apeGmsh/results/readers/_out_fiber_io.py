@@ -216,17 +216,24 @@ def read_fiber_record(
             f"{gpx_lr.file_path}: {n_ip} stations per element, but the model "
             f"gives {n_model}: the integrationPoints columns do not split "
             f"into the record's elements.")
-    bad = np.flatnonzero(~((np.diff(xi, axis=1) > 0.0).all(axis=1)
-                           & (np.abs(xi) <= 1.0 + 1e-12).all(axis=1)))
-    if bad.size:
-        eid = int(ids[bad[0]])
+    out = np.flatnonzero((np.abs(xi) > 1.0 + 1e-12).any(axis=1))
+    if out.size:
         raise ValueError(
-            f"{gpx_lr.file_path}: element {eid} has a station repeated or out "
-            f"of order (stations {np.round(xi[bad[0]], 6).tolist()} in "
-            f"natural coordinates; they must be strictly increasing within "
-            f"[-1, 1]). A HingeRadau rule with lp_i + lp_j >= L/4 writes "
-            f"stations like this (its interior weight is not positive), so "
-            f"the fibres cannot be placed along the element.")
+            f"{gpx_lr.file_path}: FEM element {int(ids[out[0]])} has a station "
+            f"outside the element's natural range [-1, 1] (stations "
+            f"{np.round(xi[out[0]], 6).tolist()}); the likely cause is an "
+            f"element length or integration-point count that does not match "
+            f"the file.")
+    bad = np.flatnonzero(~(np.diff(xi, axis=1) > 0.0).all(axis=1))
+    if bad.size:
+        raise ValueError(
+            f"{gpx_lr.file_path}: FEM element {int(ids[bad[0]])} has a station "
+            f"repeated or out of order (stations "
+            f"{np.round(xi[bad[0]], 6).tolist()} in natural coordinates; they "
+            f"must be strictly increasing within [-1, 1]). A HingeRadau rule "
+            f"with lp_i + lp_j >= L/4 writes stations like this (its interior "
+            f"weight is not positive), so the fibres cannot be placed along "
+            f"the element.")
     time, body, n_fib = _read_rows(fib_lr, ids.size, n_ip * FIBER_OUT_WIDTH)
     rows = body.reshape(time.size, -1, FIBER_OUT_WIDTH)
     geom = rows[0, :, :4]
