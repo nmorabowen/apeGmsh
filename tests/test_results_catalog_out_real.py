@@ -367,8 +367,11 @@ def _shape(topology: str, xi: np.ndarray) -> np.ndarray:
               0.5 * (1 - s * s) * (1 + t), 0.5 * (1 - s) * (1 - t * t)]
         return np.array(n)
     if topology in ("tri3", "tri6"):
-        l1, l2 = xi
-        l3 = 1.0 - l1 - l2
+        # The reader's frame is gmsh (u, v): node 0 carries 1 - u - v
+        # (#2228). The element's own (node-0-first) frame used to sit
+        # here, which pinned the rotated coordinates as correct.
+        u, v = xi
+        l1, l2, l3 = 1.0 - u - v, u, v
         if topology == "tri3":
             return np.array([l1, l2, l3])
         return np.array([l1 * (2 * l1 - 1), l2 * (2 * l2 - 1),

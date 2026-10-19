@@ -62,7 +62,7 @@ class TestLookup:
         assert layout.n_components_per_gp == 6
         assert layout.flat_size_per_element == 6
         assert layout.class_tag == ELE_TAG_FourNodeTetrahedron
-        assert layout.coord_system == "barycentric_tet"
+        assert layout.coord_system == "simplex_tet_node0"
         # First name should be stress_xx, last stress_xz (per _vocabulary.STRESS).
         assert layout.component_layout[0] == "stress_xx"
         assert layout.component_layout[-1] == "stress_xz"
@@ -85,16 +85,21 @@ class TestLookup:
     def test_ten_node_tet_gp_locations(self) -> None:
         """4-point Hammer-Stroud rule: alpha/beta arrangement.
 
-        Verified against TenNodeTetrahedron.cpp lines 223–226 + 593–600.
+        Verified against TenNodeTetrahedron.cpp lines 223–226 + 593–600,
+        which list (alpha, beta, beta), (beta, alpha, beta), (beta, beta,
+        alpha), (beta, beta, beta) node-0-first (column k = node k's
+        weight). The catalog holds gmsh (u, v, w) = the weights of nodes
+        1..3, so GP k sits nearest node k (#2228; the engine oracle is
+        tests/results/test_gauss_simplex_coords.py).
         """
         layout = lookup("TenNodeTetrahedron", IntRule.Tet_GL_2, "stress")
         alpha = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
         beta = (5.0 - math.sqrt(5.0)) / 20.0
         expected = np.array([
+            [beta, beta, beta],
             [alpha, beta, beta],
             [beta, alpha, beta],
             [beta, beta, alpha],
-            [beta, beta, beta],
         ])
         np.testing.assert_allclose(layout.natural_coords, expected, atol=1e-14)
 
@@ -225,7 +230,7 @@ class TestPlaneLookup:
         layout = lookup("Tri31", IntRule.Triangle_GL_1, "stress")
         assert layout.n_gauss_points == 1
         assert layout.flat_size_per_element == 3
-        assert layout.coord_system == "barycentric_tri"
+        assert layout.coord_system == "simplex_tri_node0"
         assert layout.class_tag == ELE_TAG_Tri31
         np.testing.assert_allclose(
             layout.natural_coords, [[1.0 / 3.0, 1.0 / 3.0]],
@@ -242,21 +247,22 @@ class TestPlaneLookup:
         )
 
     def test_sixnodetri_uses_triangle_gl_2_three_points(self) -> None:
-        """Canonical 3-point rule at barycentric (2/3,1/6), (1/6,2/3),
-        (1/6,1/6) — matches SixNodeTri.cpp:127–142."""
+        """Canonical 3-point rule: SixNodeTri.cpp:127–142 lists (2/3,1/6),
+        (1/6,2/3), (1/6,1/6) node-0-first; in gmsh (u, v) GP k sits
+        nearest node k (#2228)."""
         from apeGmsh.opensees._response_catalog import ELE_TAG_SixNodeTri
 
         layout = lookup("SixNodeTri", IntRule.Triangle_GL_2, "stress")
         assert layout.n_gauss_points == 3
         assert layout.flat_size_per_element == 9   # 3 GPs × 3 components
-        assert layout.coord_system == "barycentric_tri"
+        assert layout.coord_system == "simplex_tri_node0"
         assert layout.class_tag == ELE_TAG_SixNodeTri
         np.testing.assert_allclose(
             layout.natural_coords,
             [
+                [1.0 / 6.0, 1.0 / 6.0],
                 [2.0 / 3.0, 1.0 / 6.0],
                 [1.0 / 6.0, 2.0 / 3.0],
-                [1.0 / 6.0, 1.0 / 6.0],
             ],
         )
 
@@ -536,11 +542,17 @@ class TestShellLayouts:
         )
 
     def test_shelldkgt_4_point_rule(self) -> None:
-        """ShellDKGT uses the 4-point degree-3 rule: centroid + 3 corner-biased."""
+        """ShellDKGT uses the 4-point degree-3 rule: centroid + 3 corner-biased.
+
+        ShellDKGT.cpp:238–250 lists (sg, tg) = (1/3,1/3), (1/5,3/5),
+        (3/5,1/5), (1/5,1/5) node-0-first (shape2d: N0 = sg); in gmsh
+        (u, v) that is the weights of nodes 1 and 2 (#2228).
+        """
         layout = lookup("ShellDKGT", IntRule.Triangle_GL_2C, "stress")
-        np.testing.assert_array_equal(
+        np.testing.assert_allclose(
             layout.natural_coords,
-            [[1.0/3.0, 1.0/3.0], [0.2, 0.6], [0.6, 0.2], [0.2, 0.2]],
+            [[1.0/3.0, 1.0/3.0], [0.6, 0.2], [0.2, 0.2], [0.2, 0.6]],
+            rtol=0, atol=1e-15,
         )
 
     def test_layered_and_nonlayered_share_entry(self) -> None:
