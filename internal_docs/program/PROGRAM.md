@@ -96,7 +96,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 | `lock:<file>` | One in-flight semantic PR per hub file. Create on demand with `gh label create --force`. Only a slice that a live session is working may hold a lock, and only the holder carries the label. The queue for a hub lives in board text, not in labels. A chain does not hold a hub across slices. |
 | `freeze:<file>` | A split window is open, announced on the board with an expiry date. Create on demand. |
 
-**WIP:** at most 8 open program PRs at any time.
+**WIP:** at most 8 open program PRs at any time. Maintainer ruling (2026-10-19, #2200): an open program PR labelled `human-gate` that is approved and green waits only on the maintainer's click and does not count; every other open program PR counts, drafts included. `python scripts/open_program_pr.py --count` prints the count with the reason for each PR, and `scripts/program_probe.py` flags `wip-over-cap` above 8.
 
 ## 4. Merge rights and human gates
 
@@ -195,7 +195,7 @@ All `prog-*` agents follow this protocol.
 5. **Survive the watchdog.** Tool calls die at 600 s and sessions at the account or rate limit; work has survived only when it was pushed. Push the branch before any long step (an empty skeleton commit is fine), commit WIP after each verified step, and `git push` before every long run (suite, build, review wait). Open the PR when verification is done. Keep scratch files (for example `pr_body.md`) inside your own worktree, never in a shared scratchpad. Run long commands in the background with a pid file and poll; never pipe the primary command.
 6. **Land-ready PR.**
    - Commit with the attribution trailer your harness specifies.
-   - Open the PR with `gh pr create --base main --body-file -`.
+   - Open the PR with `python scripts/open_program_pr.py --title <t> --body-file <f> [--label <x>]`. It refuses a body with no `Slice: #<n>` line and refuses at 8 or more counted program PRs (§3 WIP); it adds `program` and `--base main`. Write the body to a file inside your worktree.
    - The body lists `Slice: #<n>`, `Author-model: <model>`, `Class: mechanical|semantic`, and a verification summary.
    - Add the CHANGELOG entry as `internal_docs/changelog_workflow.md` currently specifies.
 7. **Never:**
