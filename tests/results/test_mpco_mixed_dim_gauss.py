@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 
@@ -33,7 +34,9 @@ from apeGmsh.results import Results
 from apeGmsh.results.readers._mpco import (
     MPCOElementInTwoBuckets,
     MPCOGaussDimensionMixed,
+    MPCOReader,
 )
+from apeGmsh.results.readers._tag_translation import ElementTagTranslator
 from tests.conftest import _stub_model_h5_path
 from tests.test_results_mpco_element_mock import (
     _add_stress_bucket,
@@ -53,9 +56,14 @@ from tests.test_results_mpco_line_mock import (
     _add_line_station_bucket,
     _build_flat,
 )
+from tests.test_results_mpco_layer_mock import (  # noqa: F401 (fixture)
+    simple_layer_mpco,
+)
 from tests.test_results_mpco_line_mock import (
     _create_skeleton as _create_line_skeleton,
 )
+from tests.test_results_mpco_spring_mock import _add_bucket as _add_spring_bucket
+from tests.test_results_mpco_spring_mock import _make_spring_mpco
 
 _QUAD = f"{ELE_TAG_FourNodeQuad}-FourNodeQuad[{IntRule.Quad_GL_2}:0:0]"
 _TET = f"{ELE_TAG_FourNodeTetrahedron}-FourNodeTetrahedron[{IntRule.Tet_GL_1}:0:0]"
@@ -252,6 +260,8 @@ def _section_force_file(path: Path, ids_1: list[int], ids_2: list[int]) -> Path:
             (1, ids_1, np.linspace(-1.0, 1.0, 5)),
             (2, ids_2, np.array([-0.7745966, 0.0, 0.7745966])),
         ):
+            if not ids:
+                continue
             eids = np.asarray(ids, dtype=np.int32)
             flat, _ = _build_flat(
                 component_layout=layout, n_ip=gp_x.size,
@@ -390,3 +400,115 @@ class TestDuplicateIdFibers:
         slab = _fibers(path)
         assert sorted(set(slab.element_index.tolist())) == [10, 11, 12]
         assert slab.values.shape == (1, 3 * 3 * 4)
+
+
+# =====================================================================
+# Ranked line-station sources: a higher rank's element is not a repeat
+# =====================================================================
+
+def test_section_force_covers_an_element_two_local_force_buckets_hold(
+    tmp_path: Path,
+) -> None:
+    """section.force [1, 2] beside localForce buckets [2, 9] and [2, 8]:
+    element 2 is section.force's, so the localForce buckets return 9 and
+    8 only, and the read answers rather than calling 2 a repeat."""
+    path = _section_force_file(tmp_path / "ranked.mpco", [1, 2], [])
+    with h5py.File(path, "a") as f:
+        lf = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"].create_group("localForce")
+        for key, ids in (
+            ("5-ElasticBeam3d[1:0:0]", [2, 9]),
+            ("5-ElasticBeam3d[1:0:1]", [2, 8]),
+        ):
+            g = lf.create_group(key)
+            g.create_dataset("META/COMPONENTS", data=np.array([_LF_RAW]))
+            g.create_dataset("ID", data=np.asarray(ids, np.int64)[:, None])
+            ds = g.create_group("DATA").create_dataset(
+                "STEP_0", data=np.tile(np.arange(1.0, 13.0), (2, 1)),
+            )
+            ds.attrs["STEP"] = 0
+            ds.attrs["TIME"] = 1.0
+    slab = _line_stations(path)
+    # 2 section.force elements x 5 IPs, then 9 and 8 at their two ends.
+    np.testing.assert_array_equal(
+        slab.element_index, [1] * 5 + [2] * 5 + [9, 9, 8, 8],
+    )
+
+
+# =====================================================================
+# An id twice inside one bucket; the fem id when a tag map is attached
+# =====================================================================
+
+def test_gauss_id_twice_in_one_bucket_refuses(tmp_path: Path) -> None:
+    path = _stress_file(tmp_path / "twice.mpco", [(_TET, [7, 7, 11])])
+    with pytest.raises(MPCOElementInTwoBuckets) as info:
+        _gauss(path, "stress_xx")
+    msg = str(info.value)
+    assert "element 7 " in msg and "twice in one bucket" in msg
+    assert _TET in msg
+
+
+def test_error_names_the_fem_id_under_a_tag_map(tmp_path: Path) -> None:
+    path = _stress_file(
+        tmp_path / "dup.mpco", [(_TET, [7, 11]), (_TET_H1, [11, 33])],
+    )
+    reader = MPCOReader(path)
+    try:
+        reader.attach_tag_map(ElementTagTranslator(
+            {107: 7, 111: 11, 133: 33}, {7: 107, 11: 111, 33: 133},
+        ))
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            reader.read_gauss(reader.stages()[0].id, "stress_xx")
+    finally:
+        reader.close()
+    assert "element 11 (OpenSees tag; fem id 111)" in str(info.value)
+
+
+# =====================================================================
+# Springs and layers
+# =====================================================================
+
+def test_springs_two_headers_share_an_element(tmp_path: Path) -> None:
+    """The reviewer's repro: [1, 2] at ``[1:0:0]``, [2, 3] at ``[1:0:1]``
+    read back as [1, 2, 2, 3] with no word."""
+    path = _make_spring_mpco(
+        tmp_path / "dup_spr.mpco", element_ids=[1, 2], n_springs=1,
+        force_values=np.full((2, 2, 1), 3.0),
+    )
+    _add_spring_bucket(path, "basicForce", "19-ZeroLength[1:0:1]",
+                       element_ids=[2, 3], values=np.full((2, 2, 1), 9.0))
+    with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            r.elements.springs.get(component="spring_force")
+    msg = str(info.value)
+    assert "element 2 " in msg and "dup_spr.mpco" in msg
+    assert "[1:0:0]" in msg and "[1:0:1]" in msg
+
+
+def test_springs_disjoint_headers_unchanged(tmp_path: Path) -> None:
+    path = _make_spring_mpco(
+        tmp_path / "ok_spr.mpco", element_ids=[1, 2], n_springs=1,
+        force_values=np.full((2, 2, 1), 3.0),
+    )
+    _add_spring_bucket(path, "basicForce", "19-ZeroLength[1:0:1]",
+                       element_ids=[3], values=np.full((2, 1, 1), 9.0))
+    with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+        slab = r.elements.springs.get(component="spring_force")
+    np.testing.assert_array_equal(slab.element_index, [1, 2, 3])
+
+
+def test_layers_two_headers_share_an_element(
+    simple_layer_mpco,  # noqa: F811 (the imported fixture)
+) -> None:
+    """A copy of the ASDShellQ4 bucket at header 1 holds 20 and 21 again."""
+    path = simple_layer_mpco["path"]
+    key = simple_layer_mpco["bucket_key"]
+    copy = key[:-2] + "1]"
+    with h5py.File(path, "a") as f:
+        token = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/material.fiber.stress"]
+        token.copy(key, copy)
+    with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            r.elements.layers.get(component="fiber_stress")
+    msg = str(info.value)
+    assert "element 20 " in msg
+    assert key in msg and copy in msg
