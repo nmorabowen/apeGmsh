@@ -680,6 +680,133 @@ def test_gp_param_without_param_domain_refuses(tmp_path: Path) -> None:
             r.read_gauss(r.stages()[0].id, "stress_xx")
 
 
+# ---------------------------------------------------------------------------
+# Converted files: older conversions are told by inference and refused
+# ---------------------------------------------------------------------------
+
+#: ASDShellT3.cpp:148-150 mid-edge (XI, ETA), with N0 = 1 - XI - ETA
+#: (ASDShellT3.cpp:165): gmsh (u, v) as the element writes it.
+ASDSHELLT3_GP = np.array([[0.5, 0.5], [0.0, 0.5], [0.5, 0.0]])
+CONVERTED_WRITER = "apeGmsh mpco->ladruno 2.0.0"
+
+
+def _converted_group_file(tmp_path: Path, mpco_key: str, conn: np.ndarray,
+                          *, old_rows: "np.ndarray | None") -> Path:
+    """A file holding one element group written by the converter, under the
+    converter's PROVENANCE. ``old_rows`` rewrites it the way an older
+    conversion did: the catalog's rows of the time, ``FAMILY="lagrange"``."""
+    from apeGmsh.results.readers._ladruno_from_mpco import (
+        _write_element_group,
+    )
+
+    path = tmp_path / "converted.ladruno"
+    with h5py.File(path, "w") as f:
+        f.create_group("INFO/PROVENANCE").attrs["writer"] = CONVERTED_WRITER
+        src = f.create_group("_mpco").create_dataset(mpco_key, data=conn)
+        grp = f.create_group(f"MODEL_STAGE[1]/MODEL/ELEMENTS/{mpco_key}")
+        _write_element_group(mpco_key, src, grp, where=mpco_key)
+        del f["_mpco"]
+        if old_rows is not None:
+            grp.attrs["FAMILY"] = np.array([b"lagrange"])
+            grp["QUADRATURE/GP_PARAM"][...] = old_rows
+    return path
+
+
+def _read_gp_param(path: Path, key: str) -> np.ndarray:
+    from apeGmsh.results.readers._ladruno_element_io import _gp_param_for
+
+    with h5py.File(path, "r") as f:
+        return _gp_param_for(f["MODEL_STAGE[1]/MODEL/ELEMENTS"], key)
+
+
+def test_asdshellt3_new_conversion_reads_its_own_points(
+    tmp_path: Path,
+) -> None:
+    path = _converted_group_file(
+        tmp_path, "204-ASDShellT3[102:0]", np.array([[7, 1, 2, 3]]),
+        old_rows=None,
+    )
+    np.testing.assert_allclose(
+        _read_gp_param(path, "204-ASDShellT3[102:0:0]"), ASDSHELLT3_GP,
+        rtol=0, atol=1e-15,
+    )
+
+
+def test_asdshellt3_old_conversion_refuses(tmp_path: Path) -> None:
+    """The older converter stored ASDShellT3's gmsh rows as ``lagrange``;
+    read node-0-first they come back rotated, so they are refused."""
+    path = _converted_group_file(
+        tmp_path, "204-ASDShellT3[102:0]", np.array([[7, 1, 2, 3]]),
+        old_rows=ASDSHELLT3_GP,
+    )
+    with pytest.raises(ValueError, match="ASDShellT3 group was converted"):
+        _read_gp_param(path, "204-ASDShellT3[102:0:0]")
+
+
+def _bezier_tri6_converted(tmp_path: Path, *, old: bool) -> Path:
+    """The fork's tri fixture with its BezierTri6 group replaced by the
+    converter's (rule-tagged, as other MPCO writers key it)."""
+    import shutil
+
+    from apeGmsh.results.readers._ladruno_from_mpco import (
+        _write_element_group,
+    )
+
+    path = tmp_path / "tri_converted.ladruno"
+    shutil.copy(FIXTURES / "tri.ladruno", path)
+    key = "33000-BezierTri6[101:0]"
+    with h5py.File(path, "r+") as f:
+        els = f["MODEL_STAGE[1]/MODEL/ELEMENTS"]
+        fork_name = next(n for n in els if "-BezierTri6[" in n)
+        conn = np.asarray(els[fork_name]["CONNECTIVITY"][...])
+        fork_gp = np.asarray(els[fork_name]["QUADRATURE/GP_PARAM"][...])
+        del els[fork_name]
+        src = f.create_group("_mpco").create_dataset(key, data=conn)
+        grp = els.create_group(key)
+        _write_element_group(key, src, grp, where=key)
+        del f["_mpco"]
+        if old:
+            grp.attrs["FAMILY"] = np.array([b"lagrange"])
+            grp["QUADRATURE/GP_PARAM"][...] = fork_gp   # the gmsh rows
+        f["INFO/PROVENANCE"].attrs["writer"] = CONVERTED_WRITER
+    return path
+
+
+def test_bezier_tri6_new_conversion_reads_correctly(tmp_path: Path) -> None:
+    path = _bezier_tri6_converted(tmp_path, old=False)
+    with h5py.File(path, "r") as f:
+        grp = f["MODEL_STAGE[1]/MODEL/ELEMENTS/33000-BezierTri6[101:0]"]
+        assert grp.attrs["FAMILY"][0] == b"bernstein"
+    natural = _slab(path, "stress_xx", 3).natural_coords
+    world = _world(natural, _corners(FIXTURES / "tri.ladruno", 3,
+                                     "BezierTri6"), "tri")
+    want = _oracles(FIXTURES, "tri", 3, ("strain",),
+                    FIXTURES / "tri.ladruno")[0]
+    np.testing.assert_allclose(world, want, rtol=0, atol=TOL)
+
+
+def test_bezier_tri6_old_conversion_refuses(tmp_path: Path) -> None:
+    path = _bezier_tri6_converted(tmp_path, old=True)
+    with pytest.raises(ValueError, match="BezierTri6 group was converted"):
+        _slab(path, "stress_xx", 3)
+
+
+def test_fork_written_groups_are_not_taken_for_conversions() -> None:
+    """The fork writes ``ORDER`` beside every barycentric GP_PARAM and no
+    converter writer, so none of its groups goes through the refusal."""
+    from apeGmsh.results.readers._ladruno_element_io import _converted_group
+
+    for stem in ("tri", "tet"):
+        with h5py.File(FIXTURES / f"{stem}.ladruno", "r") as f:
+            checked = 0
+            for name, grp in f["MODEL_STAGE[1]/MODEL/ELEMENTS"].items():
+                if "QUADRATURE" not in grp:
+                    continue       # no GP_PARAM: the refusal never runs
+                checked += 1
+                assert not _converted_group(grp), name
+            assert checked >= 3, stem
+
+
 if __name__ == "__main__":   # regenerate the committed fixtures (fork build)
     FIXTURES.mkdir(parents=True, exist_ok=True)
     for p in FIXTURES.glob("*"):

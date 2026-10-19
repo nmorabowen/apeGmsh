@@ -53,6 +53,7 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
 )
 from .._shell_geometry import shell_quaternion
+from ._ladruno_provenance import _CONVERTED_MARK
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco_layer_io import (
     LayerBucketUnreadWarning,
@@ -655,14 +656,80 @@ def _gp_param_for(
             gp = np.asarray(
                 grp["QUADRATURE"]["GP_PARAM"][...], dtype=np.float64,
             )
+            param_domain = _basis_attr(grp, "PARAM_DOMAIN", name)
+            family = _basis_attr(grp, "FAMILY", name)
+            if param_domain == "bary" and _converted_group(grp):
+                _refuse_old_conversion(gp, family, name)
             return gp_param_to_gmsh(
                 gp,
-                param_domain=_basis_attr(grp, "PARAM_DOMAIN", name),
+                param_domain=param_domain,
                 topology=_basis_attr(grp, "TOPOLOGY", name),
-                family=_basis_attr(grp, "FAMILY", name),
+                family=family,
                 where=f"MODEL/ELEMENTS/{name}",
             )
     return None
+
+
+def _converted_group(grp: "h5py.Group") -> bool:
+    """Whether the MPCO -> .ladruno converter wrote this element group.
+
+    ``INFO/PROVENANCE@writer`` names the converter on the stamped part. Every
+    part also tells by structure: the fork writes ``ORDER`` beside every
+    barycentric ``GP_PARAM``, and the converter never does.
+    """
+    info = grp.file["INFO"] if "INFO" in grp.file else None
+    if info is not None and "PROVENANCE" in info:
+        writer = info["PROVENANCE"].attrs.get("writer")
+        if writer is not None and _CONVERTED_MARK in _decode_str(writer):
+            return True
+    return "ORDER" not in grp.attrs
+
+
+def _refuse_old_conversion(gp: ndarray, family: str, name: str) -> None:
+    """Refuse a converted barycentric ``GP_PARAM`` in the old frame.
+
+    The converter once copied the response catalog's rows as they stood,
+    labelled ``FAMILY="lagrange"``. For a class whose rule is node-0-first
+    those rows are the frame read now, so they read correctly. For a class
+    whose rule is gmsh ``(u, v)`` (``simplex_tri_gmsh``: BezierTri6,
+    ASDShellT3) they read rotated. The current converter writes such a
+    class as ``bernstein`` (BezierTri6) or in the node-0-first frame
+    (ASDShellT3), so a ``lagrange`` group still holding the catalog's gmsh
+    rows is an old conversion. It is refused by name, as is any converted
+    group whose frame cannot be told: a class the catalog does not know, or
+    rows matching neither convention.
+    """
+    cls = _class_name(name)
+    layouts = [
+        lay for (c, _rule, _tok), lay in RESPONSE_CATALOG.items() if c == cls
+    ]
+    systems = {lay.coord_system for lay in layouts}
+    if systems and all(cs.endswith("_node0") for cs in systems):
+        return
+    if layouts and systems <= {"simplex_tri_gmsh"}:
+        if family == "bernstein":
+            return
+        if cls != "BezierTri6":
+            rows = [np.asarray(lay.natural_coords, dtype=np.float64)
+                    for lay in layouts]
+            old = any(r.shape == gp.shape and np.allclose(r, gp, atol=1e-12)
+                      for r in rows)
+            new = any(
+                r.shape == gp.shape and np.allclose(
+                    gmsh_to_gp_param(r, topology="tri", family=family), gp,
+                    atol=1e-12)
+                for r in rows
+            )
+            if new and not old:
+                return
+    raise ValueError(
+        f"MODEL/ELEMENTS/{name}: this {cls} group was converted from MPCO "
+        f"by an older apeGmsh, or its frame cannot be told: its "
+        f"barycentric GP_PARAM may be gmsh rows labelled FAMILY="
+        f"{family!r}, which read here would put its Gauss points rotated. "
+        f"Re-convert the .mpco with the current apeGmsh (convert_mpco) to "
+        f"read them."
+    )
 
 
 # =====================================================================
