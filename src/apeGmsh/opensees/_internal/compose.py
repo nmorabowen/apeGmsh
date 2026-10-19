@@ -2079,7 +2079,7 @@ def _replay_staged_into(
                 # an ``order`` (K R1b-S1, #2193), as the bridge's
                 # ``replay_builder_scoped_declarations`` re-emits them.
                 _replay_units: "list[tuple[int | None, str, Any]]" = []
-                for kind, recs, emit in (
+                for scoped, recs, emit in (
                     ("geomTransf", replay_kwargs.get("transforms", ()),
                      lambda r: emitter.geomTransf(
                          r.type_token, int(r.tag), *r.vec)),
@@ -2095,10 +2095,10 @@ def _replay_staged_into(
                          r.type_token, int(r.tag), *r.args)),
                 ):
                     joined = ({} if order is None else
-                              order.tagged(kind, frozenset({kind})))
+                              order.tagged(scoped, frozenset({scoped})))
                     for rec in recs:
                         _replay_units.append((
-                            joined.get(int(rec.tag)), kind,
+                            joined.get(int(rec.tag)), scoped,
                             lambda rec=rec, emit=emit: emit(rec),
                         ))
                 _run_units(_replay_units, order)
