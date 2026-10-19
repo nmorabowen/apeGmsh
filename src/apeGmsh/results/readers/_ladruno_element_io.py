@@ -39,7 +39,11 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from numpy import ndarray
 
-from ..._vocabulary import PER_ELEMENT_NODAL_FORCES, SHELL_STRESS_RESULTANTS
+from ..._vocabulary import (
+    PER_ELEMENT_NODAL_FORCES,
+    SHELL_GENERALIZED_STRAINS,
+    SHELL_STRESS_RESULTANTS,
+)
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
@@ -543,7 +547,7 @@ class _Block:
     fiber_id: int = -1
     #: ``comp_names`` are RESPONSE_CATALOG canonicals, not file labels
     #: (set only by :func:`_catalog_gauss_fit` and
-    #: :func:`_name_shell_resultants`). ``axial_force`` is no label any
+    #: :func:`_name_shell_blocks`). ``axial_force`` is no label any
     #: label map knows, so these names are used as they are.
     catalog_named: bool = False
 
@@ -836,77 +840,128 @@ def resolve_generic_gauss_blocks(
     fit = _catalog_gauss_fit(blocks, token=token, bucket_key=bucket_key)
     if fit is not None:
         return fit.blocks
-    return _name_shell_resultants(blocks, token=token, bucket_key=bucket_key)
+    return _name_shell_blocks(blocks, token=token, bucket_key=bucket_key)
 
 
-# Shell stress resultants. The plate sections a shell integrates tag their
-# per-GP response ``p11,p22,p12,m11,m22,m12,q1,q2`` (membrane forces,
-# bending moments, transverse shears), and the shells forward it under
-# ``stresses`` as one block per GP. No label map names those tokens, so
-# without this a shell reads back an empty Gauss slab. The order is the
-# element's source order, which is the catalog's 8-component shell layout
-# (``SHELL_STRESS_RESULTANTS``). It is matched as a WHOLE tuple and never
-# label by label: ``p11`` alone names nothing anywhere else here, and a
-# partial or reordered set is a different response, refused by name.
+# Shell per-GP blocks. A shell forwards its plate sections' per-GP response
+# as one block per GP, in one of two 8-column families:
+#
+# * ``stresses``: the stress resultants ``p11,p22,p12,m11,m22,m12,q1,q2``
+#   (membrane forces, bending moments, transverse shears). No label map
+#   names those tokens, so without this a shell reads an empty Gauss slab.
+# * ``strains``: the generalised section strains
+#   ``eps11,eps22,gamma12,theta11,theta22,theta33,gamma13,gamma23``
+#   (membrane strains, curvatures, transverse shear strains), which is the
+#   section's ``getSectionDeformation()`` in order; ``theta33`` is the
+#   twist curvature. The continuum map would read ``eps11`` / ``eps22`` as
+#   the point strains ``strain_xx`` / ``strain_yy`` and drop the rest,
+#   which labels a membrane strain as a continuum one.
+#
+# Every shell the catalog knows (ShellMITC4, ShellDKGQ, ShellNLDKGQ,
+# ASDShellQ4, ShellMITC9, ShellDKGT, ShellNLDKGT, ASDShellT3) tags both
+# families in this order in its ``setResponse``, and that is the order of
+# the catalog's 8-component shell layouts (``SHELL_STRESS_RESULTANTS``,
+# ``SHELL_GENERALIZED_STRAINS``). A family is matched as a WHOLE tuple and
+# never label by label: a partial or reordered set is a different
+# response, refused by name.
+@dataclass(frozen=True)
+class _ShellFamily:
+    what: str                       # the family, for messages
+    labels: tuple[str, ...]         # the fork's tags, in its write order
+    canonicals: tuple[str, ...]     # the catalog's names, in the same order
+    #: Labels no other map here reads. A block holding one of them, and
+    #: nothing outside ``labels``, is this family's. ``eps11`` / ``eps22``
+    #: are continuum labels too, so a block of only those is the family's
+    #: only on a class the catalog has this family for under the token.
+    distinct: frozenset[str]
+
+
 _SHELL_RESULTANT_LABELS: tuple[str, ...] = (
     "p11", "p22", "p12", "m11", "m22", "m12", "q1", "q2",
 )
+_SHELL_STRAIN_LABELS: tuple[str, ...] = (
+    "eps11", "eps22", "gamma12", "theta11", "theta22", "theta33",
+    "gamma13", "gamma23",
+)
+_SHELL_FAMILIES: tuple[_ShellFamily, ...] = (
+    _ShellFamily(
+        "shell resultants (p11..q2)", _SHELL_RESULTANT_LABELS,
+        SHELL_STRESS_RESULTANTS, frozenset(_SHELL_RESULTANT_LABELS),
+    ),
+    _ShellFamily(
+        "shell generalised strains (eps11..gamma23)", _SHELL_STRAIN_LABELS,
+        SHELL_GENERALIZED_STRAINS,
+        frozenset(_SHELL_STRAIN_LABELS) - {"eps11", "eps22"},
+    ),
+)
 
 
-def _name_shell_resultants(
+def _name_shell_blocks(
     blocks: list[_Block], *, token: str, bucket_key: str,
 ) -> list[_Block]:
-    """``blocks`` with every shell-resultant GP block carrying canonicals.
+    """``blocks`` with every shell-family GP block carrying canonicals.
 
-    Returns ``blocks`` itself when no Gauss block is written in the shell
-    labels. Raises :class:`GaussLayoutMismatch` when a block uses only
-    shell labels but not the whole tuple in source order, or when the
-    catalog knows this class under this token with no 8-component shell
-    layout of this many Gauss points.
+    Returns ``blocks`` itself when no Gauss block is written in a shell
+    family's labels. Raises :class:`GaussLayoutMismatch` when a block is a
+    family's but not its whole tuple in source order, or when the catalog
+    knows this class under this token with no 8-component layout of that
+    family and this many Gauss points.
     """
-    labels = frozenset(_SHELL_RESULTANT_LABELS)
-    shell = [
-        b for b in blocks
-        if b.gauss_id >= 0 and not b.catalog_named and b.comp_names
-        and set(b.comp_names) <= labels
-    ]
-    if not shell:
-        return blocks
     class_name = _class_name(bucket_key)
-    for b in shell:
-        if b.comp_names != _SHELL_RESULTANT_LABELS:
-            raise GaussLayoutMismatch(
-                f"Bucket {token}/{bucket_key} (class {class_name!r}) writes "
-                f"shell-resultant columns {list(b.comp_names)} at Gauss "
-                f"point {b.gauss_id}, not the full source order "
-                f"{list(_SHELL_RESULTANT_LABELS)}. Refusing to guess which "
-                f"resultant each column is."
-            )
-    n_gp = len({b.gauss_index(gp) for b in shell for gp in range(b.n_gauss)})
     cat_token = _catalog_token(token)
     layouts = [
         lay for (cls, _rule, tok), lay in RESPONSE_CATALOG.items()
         if cls == class_name and tok == cat_token
     ]
-    if layouts and not any(
-        tuple(lay.component_layout) == SHELL_STRESS_RESULTANTS
-        and lay.n_gauss_points == n_gp
-        for lay in layouts
-    ):
-        offered = sorted({
-            (lay.n_gauss_points, len(lay.component_layout)) for lay in layouts
-        })
-        raise GaussLayoutMismatch(
-            f"Bucket {token}/{bucket_key} writes {n_gp} Gauss points of "
-            f"shell resultants (p11..q2), but RESPONSE_CATALOG knows class "
-            f"{class_name!r} / token {cat_token!r} only as {offered} "
-            f"(n_gauss_points, components). Refusing to read a layout the "
-            f"catalog contradicts. Fix the catalog entry or the recorder."
+    named: dict[int, tuple[str, ...]] = {}
+    for fam in _SHELL_FAMILIES:
+        labels = frozenset(fam.labels)
+        catalogued = any(
+            tuple(lay.component_layout) == fam.canonicals for lay in layouts
         )
-    shell_ids = {id(b) for b in shell}
+        shell = [
+            b for b in blocks
+            if b.gauss_id >= 0 and not b.catalog_named and b.comp_names
+            and set(b.comp_names) <= labels
+            and (catalogued or bool(set(b.comp_names) & fam.distinct))
+        ]
+        if not shell:
+            continue
+        for b in shell:
+            if b.comp_names != fam.labels:
+                raise GaussLayoutMismatch(
+                    f"Bucket {token}/{bucket_key} (class {class_name!r}) "
+                    f"writes {fam.what} columns {list(b.comp_names)} at "
+                    f"Gauss point {b.gauss_id}, not the full source order "
+                    f"{list(fam.labels)}. Refusing to guess which component "
+                    f"each column is."
+                )
+        n_gp = len({
+            b.gauss_index(gp) for b in shell for gp in range(b.n_gauss)
+        })
+        if layouts and not any(
+            tuple(lay.component_layout) == fam.canonicals
+            and lay.n_gauss_points == n_gp
+            for lay in layouts
+        ):
+            offered = sorted({
+                (lay.n_gauss_points, len(lay.component_layout))
+                for lay in layouts
+            })
+            raise GaussLayoutMismatch(
+                f"Bucket {token}/{bucket_key} writes {n_gp} Gauss points of "
+                f"{fam.what}, but RESPONSE_CATALOG knows class "
+                f"{class_name!r} / token {cat_token!r} only as {offered} "
+                f"(n_gauss_points, components). Refusing to read a layout "
+                f"the catalog contradicts. Fix the catalog entry or the "
+                f"recorder."
+            )
+        named.update((id(b), fam.canonicals) for b in shell)
+    if not named:
+        return blocks
     return [
-        replace(b, comp_names=SHELL_STRESS_RESULTANTS, catalog_named=True)
-        if id(b) in shell_ids else b
+        replace(b, comp_names=named[id(b)], catalog_named=True)
+        if id(b) in named else b
         for b in blocks
     ]
 
@@ -925,15 +980,19 @@ def _name_shell_resultants(
 # points as the element's ``stress``. So the catalog places the points from
 # the class's layouts under ANY token that have the bucket's GP count --
 # under rule 0 any catalogued rule of the class, otherwise the bucket's
-# own -- and only when all of them agree on where the points are.
+# own -- and only when all of them agree on where the points are. Any named
+# bucket the catalog cannot place this way, or whose key states no rule,
+# warns GaussCoordsUnavailableWarning by name rather than reading back
+# natural coordinates of shape ``(n, 0)`` in silence.
 
 
 class GaussCoordsUnavailableWarning(UserWarning):
     """A bucket's Gauss points read back with no natural coordinates.
 
-    The file carries no ``QUADRATURE/GP_PARAM`` for the class and
+    The file carries no ``QUADRATURE/GP_PARAM`` for the class, and either
     ``RESPONSE_CATALOG`` has no layout of the bucket's class and rule, under
-    any token, with that many Gauss points. The values are read as written;
+    any token, with that many Gauss points, or the bucket key states no
+    rule (no ``[rule:...]`` bracket). The values are read as written;
     only where each point sits is unknown, so a field drawn from them has
     no position inside the element.
     """
@@ -953,22 +1012,23 @@ def _bucket_rule(bucket_key: str) -> Optional[int]:
 
 
 def _catalog_placement(
-    gp_blocks: list[_Block], *, token: str, bucket_key: str, rule: int,
+    gp_blocks: list[_Block], *, token: str, bucket_key: str,
 ) -> Optional[ndarray]:
     """The catalog's natural coords for a named bucket with no GP_PARAM.
 
     A layout fits when its class is the bucket's, its rule is the bucket's
-    (any rule when ``rule`` is 0, which names none), and its Gauss points
-    are exactly the bucket's GP indices. The token is not compared: the
-    points are the element's, whatever response is recorded at them.
-    Returns the one placement every fitting layout shares. Raises
+    (any rule when the bracket's rule is 0, which names none), and its
+    Gauss points are exactly the bucket's GP indices. The token is not
+    compared: the points are the element's, whatever response is recorded
+    at them. Returns the one placement every fitting layout shares. Raises
     :class:`GaussLayoutMismatch` when fitting layouts place the points
     differently, and warns :class:`GaussCoordsUnavailableWarning`
-    (returning ``None``) when no layout fits.
+    (returning ``None``) when no layout fits or the key states no rule.
     """
     class_name = _class_name(bucket_key)
+    rule = _bucket_rule(bucket_key)
     gp_ids = {b.gauss_index(gp) for b in gp_blocks for gp in range(b.n_gauss)}
-    fit = [
+    fit = [] if rule is None else [
         (lay_rule, tok, lay)
         for (cls, lay_rule, tok), lay in RESPONSE_CATALOG.items()
         if cls == class_name
@@ -990,14 +1050,18 @@ def _catalog_placement(
             f"guess where each point is."
         )
     if not coords:
+        why = (
+            "its key states no integration rule to place them by"
+            if rule is None else
+            f"RESPONSE_CATALOG has no layout of that class and rule with "
+            f"{len(gp_ids)} Gauss points under any token"
+        )
         warnings.warn(
             f"Bucket {token}/{bucket_key} (class {class_name!r}, rule "
             f"{rule}) has {len(gp_ids)} Gauss points but no natural "
             f"coordinates: the file carries no QUADRATURE/GP_PARAM for the "
-            f"class, and RESPONSE_CATALOG has no layout of that class and "
-            f"rule with {len(gp_ids)} Gauss points under any token. The "
-            f"values read as written; the points have no position in the "
-            f"element.",
+            f"class, and {why}. The values read as written; the points "
+            f"have no position in the element.",
             GaussCoordsUnavailableWarning,
             stacklevel=3,
         )
@@ -1196,15 +1260,12 @@ def read_gauss_slab(
             # Whether the file's own blocks are read as they are is the
             # provenance flag the overlap tie-break needs.
             from_file_names = fit is None
-            shell_named = False
             if fit is not None:
                 blocks = fit.blocks
             else:
-                named = _name_shell_resultants(
+                blocks = _name_shell_blocks(
                     blocks, token=token, bucket_key=key,
                 )
-                shell_named = named is not blocks
-                blocks = named
             gp_blocks = [b for b in blocks if b.gauss_id >= 0]
             if not gp_blocks:
                 continue
@@ -1230,18 +1291,16 @@ def read_gauss_slab(
             data = read_hyperslab(bucket["DATA"], t_idx, rows, hit_cols)
             # The file's own GP coordinates win. An element answering no
             # ``integrationPoints`` leaves none, and then a catalog-read
-            # bucket places its points by the catalog's rule.
+            # bucket places its points by the catalog's rule, and a named
+            # bucket by its class and the rule its key states. A named
+            # bucket the catalog cannot place warns by name.
             gp_param = _gp_param_for(model_elements, key)
             if gp_param is None and fit is not None:
                 gp_param = fit.natural_coords
             elif gp_param is None:
-                # A named bucket under rule 0, or a shell's resultants
-                # under its own rule.
-                rule = _bucket_rule(key)
-                if rule is not None and (rule == 0 or shell_named):
-                    gp_param = _catalog_placement(
-                        gp_blocks, token=token, bucket_key=key, rule=rule,
-                    )
+                gp_param = _catalog_placement(
+                    gp_blocks, token=token, bucket_key=key,
+                )
 
             # One slab column per (element, matching GP). GP-major within
             # an element so natural_coords line up with element_index.
