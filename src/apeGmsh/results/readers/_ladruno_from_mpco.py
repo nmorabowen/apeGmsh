@@ -836,6 +836,12 @@ def _write_element_group(
         dst.attrs["NDIR"] = _i(basis.gp_param.shape[1])
         quad = dst.create_group("QUADRATURE", track_order=True)
         quad.create_dataset("GP_PARAM", data=basis.gp_param)
+        if basis.param_domain == "bary":
+            from ._ladruno_element_io import (
+                GP_PARAM_FRAME,
+                GP_PARAM_FRAME_ATTR,
+            )
+            dst.attrs[GP_PARAM_FRAME_ATTR] = _s(GP_PARAM_FRAME)
 
 
 def _write_node_result(

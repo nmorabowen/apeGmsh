@@ -680,6 +680,92 @@ def test_gp_param_without_param_domain_refuses(tmp_path: Path) -> None:
             r.read_gauss(r.stages()[0].id, "stress_xx")
 
 
+# ---------------------------------------------------------------------------
+# Converted files: the GP_PARAM frame marker, and older conversions
+# ---------------------------------------------------------------------------
+
+
+def _converted_copy(tmp_path: Path, stem: str, cls: str, mpco_key: str, *,
+                    old: bool) -> Path:
+    """The fork fixture with ``cls``'s element group rewritten the way the
+    MPCO -> .ladruno converter writes it, and the converter's PROVENANCE.
+
+    ``old=True`` mimics a conversion from before the frame marker: no
+    ``GP_PARAM_FRAME``, ``FAMILY="lagrange"`` for every class, and the
+    catalog rows of the time, which for BezierTri6 were gmsh (u, v).
+    """
+    import shutil
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GP_PARAM_FRAME_ATTR,
+    )
+    from apeGmsh.results.readers._ladruno_from_mpco import (
+        _write_element_group,
+    )
+
+    path = tmp_path / f"{stem}_converted.ladruno"
+    shutil.copy(FIXTURES / f"{stem}.ladruno", path)
+    with h5py.File(path, "r+") as f:
+        els = f["MODEL_STAGE[1]/MODEL/ELEMENTS"]
+        fork_name = next(n for n in els if f"-{cls}[" in n)
+        conn = np.asarray(els[fork_name]["CONNECTIVITY"][...])
+        fork_gp = np.asarray(els[fork_name]["QUADRATURE/GP_PARAM"][...])
+        del els[fork_name]
+        src = f.create_group("_mpco").create_dataset(mpco_key, data=conn)
+        grp = els.create_group(mpco_key)
+        _write_element_group(mpco_key, src, grp, where=mpco_key)
+        del f["_mpco"]
+        if old:
+            del grp.attrs[GP_PARAM_FRAME_ATTR]
+            grp.attrs["FAMILY"] = np.array([b"lagrange"])
+            grp["QUADRATURE/GP_PARAM"][...] = fork_gp   # gmsh rows, then
+        f["INFO/PROVENANCE"].attrs["writer"] = "apeGmsh mpco->ladruno 2.0.0"
+    return path
+
+
+def test_new_conversion_marks_its_frame_and_reads_correctly(
+    tmp_path: Path,
+) -> None:
+    path = _converted_copy(tmp_path, "tri", "BezierTri6",
+                           "33000-BezierTri6[101:0]", old=False)
+    with h5py.File(path, "r") as f:
+        grp = f["MODEL_STAGE[1]/MODEL/ELEMENTS/33000-BezierTri6[101:0]"]
+        assert grp.attrs["GP_PARAM_FRAME"][0] == b"ladruno-bary-1"
+        assert grp.attrs["FAMILY"][0] == b"bernstein"
+    natural = _slab(path, "stress_xx", 3).natural_coords
+    world = _world(natural, _corners(FIXTURES / "tri.ladruno", 3,
+                                     "BezierTri6"), "tri")
+    want = _oracles(FIXTURES, "tri", 3, ("strain",),
+                    FIXTURES / "tri.ladruno")[0]
+    np.testing.assert_allclose(world, want, rtol=0, atol=TOL)
+
+
+def test_old_conversion_of_a_gmsh_frame_class_refuses(tmp_path: Path) -> None:
+    """Before the marker the converter wrote BezierTri6 (and ASDShellT3)
+    gmsh rows as ``lagrange``; read node-0-first they come back rotated,
+    so the class is refused by name instead."""
+    path = _converted_copy(tmp_path, "tri", "BezierTri6",
+                           "33000-BezierTri6[101:0]", old=True)
+    with pytest.raises(ValueError, match="BezierTri6 group was written by "
+                                         "an older MPCO -> .ladruno"):
+        _slab(path, "stress_xx", 3)
+
+
+def test_old_conversion_of_a_node0_class_still_reads_correctly(
+    tmp_path: Path,
+) -> None:
+    """The older conversion wrote a node-0-first class's catalog rows,
+    which were node-0-first then: the frame read now, so no refusal."""
+    path = _converted_copy(tmp_path, "tet", "TenNodeTetrahedron",
+                           "256-TenNodeTetrahedron[301:0]", old=True)
+    natural = _slab(path, "stress_xx", 2).natural_coords
+    world = _world(natural, _corners(FIXTURES / "tet.ladruno", 2,
+                                     "TenNodeTetrahedron"), "tet")
+    want = _oracles(FIXTURES, "tet", 2, ("strain",),
+                    FIXTURES / "tet.ladruno")[0]
+    np.testing.assert_allclose(world, want, rtol=0, atol=TOL)
+
+
 if __name__ == "__main__":   # regenerate the committed fixtures (fork build)
     FIXTURES.mkdir(parents=True, exist_ok=True)
     for p in FIXTURES.glob("*"):
