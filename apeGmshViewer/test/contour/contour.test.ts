@@ -4,16 +4,18 @@
 // refused per component.
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
+import { openLadruno } from "../../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { contourLines, rampCss } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
-import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
 import { contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
@@ -447,4 +449,165 @@ test("#2187: a .ladruno Gauss component <RESULT>/<label> is a component of the f
     ["stress", ["xx", "yy"]],
     ["von_mises", ["von_mises"]],
   ]);
+});
+
+// -- #2214: .ladruno ON_NODES labels are the fork schema's, never guessed -------
+
+/**
+ * Fork schema `Ladruno_implementation/ladruno_schema_v1.md` at ladruno d370ed8b
+ * (fork PR #998): every ON_NODES group with axis labels, copied from the §7.1.1
+ * table and the §7.1.2 "Translational groups" and "Rotational groups" tables.
+ * `byNdm` holds the COMPONENTS strings for ndm 1, 2 and 3.
+ */
+const SCHEMA_7_1: readonly { section: string; family: "translational" | "rotational"; group: string; byNdm: readonly [string, string, string] }[] = [
+  { section: "§7.1.1", family: "translational", group: "DISPLACEMENT", byNdm: ["Ux", "Ux,Uy", "Ux,Uy,Uz"] },
+  { section: "§7.1.1", family: "rotational", group: "ROTATION", byNdm: ["Rx,Ry,Rz", "Rz", "Rx,Ry,Rz"] },
+  { section: "§7.1.1", family: "translational", group: "MODES_OF_VIBRATION(U)", byNdm: ["Ux", "Ux,Uy", "Ux,Uy,Uz"] },
+  { section: "§7.1.1", family: "rotational", group: "MODES_OF_VIBRATION(R)", byNdm: ["Rx,Ry,Rz", "Rz", "Rx,Ry,Rz"] },
+  { section: "§7.1.2", family: "translational", group: "VELOCITY", byNdm: ["Vx", "Vx,Vy", "Vx,Vy,Vz"] },
+  { section: "§7.1.2", family: "translational", group: "ACCELERATION", byNdm: ["Ax", "Ax,Ay", "Ax,Ay,Az"] },
+  { section: "§7.1.2", family: "translational", group: "REACTION_FORCE", byNdm: ["RFx", "RFx,RFy", "RFx,RFy,RFz"] },
+  { section: "§7.1.2", family: "translational", group: "REACTION_FORCE_INCLUDING_INERTIA", byNdm: ["RFx", "RFx,RFy", "RFx,RFy,RFz"] },
+  { section: "§7.1.2", family: "translational", group: "RAYLEIGH_FORCE", byNdm: ["RFx", "RFx,RFy", "RFx,RFy,RFz"] },
+  { section: "§7.1.2", family: "translational", group: "UNBALANCED_FORCE", byNdm: ["Fx", "Fx,Fy", "Fx,Fy,Fz"] },
+  { section: "§7.1.2", family: "translational", group: "UNBALANCED_FORCE_INCLUDING_INERTIA", byNdm: ["Fx", "Fx,Fy", "Fx,Fy,Fz"] },
+  { section: "§7.1.2", family: "translational", group: "CONSTRAINT_TIE_FORCE", byNdm: ["TFx", "TFx,TFy", "TFx,TFy,TFz"] },
+  { section: "§7.1.2", family: "rotational", group: "ANGULAR_VELOCITY", byNdm: ["RVx,RVy,RVz", "RVz", "RVx,RVy,RVz"] },
+  { section: "§7.1.2", family: "rotational", group: "ANGULAR_ACCELERATION", byNdm: ["RAx,RAy,RAz", "RAz", "RAx,RAy,RAz"] },
+  { section: "§7.1.2", family: "rotational", group: "REACTION_MOMENT", byNdm: ["RMx,RMy,RMz", "RMz", "RMx,RMy,RMz"] },
+  { section: "§7.1.2", family: "rotational", group: "REACTION_MOMENT_INCLUDING_INERTIA", byNdm: ["RMx,RMy,RMz", "RMz", "RMx,RMy,RMz"] },
+  { section: "§7.1.2", family: "rotational", group: "RAYLEIGH_MOMENT", byNdm: ["RMx,RMy,RMz", "RMz", "RMx,RMy,RMz"] },
+  { section: "§7.1.2", family: "rotational", group: "UNBALANCED_MOMENT", byNdm: ["Mx,My,Mz", "Mz", "Mx,My,Mz"] },
+  { section: "§7.1.2", family: "rotational", group: "UNBALANCED_MOMENT_INCLUDING_INERTIA", byNdm: ["Mx,My,Mz", "Mz", "Mx,My,Mz"] },
+];
+
+test("#2214: LADRUNO_AXIS_MAP holds exactly the §7.1.1/§7.1.2 labels, each on the axis its last letter names", () => {
+  const documented = new Set(SCHEMA_7_1.flatMap((r) => r.byNdm.flatMap((c) => c.split(","))));
+  assert.deepEqual(Object.keys(LADRUNO_AXIS_MAP).sort(), [...documented].sort());
+  for (const [label, axis] of Object.entries(LADRUNO_AXIS_MAP)) assert.equal(axis, label.at(-1), label);
+  // No writer emits X/Y/Z (the #2140 guesses), so they are not axis labels.
+  for (const guess of ["X", "Y", "Z"]) assert.ok(!Object.hasOwn(LADRUNO_AXIS_MAP, guess), guess);
+});
+
+test("#2214: every §7.1.1/§7.1.2 group at every ndm: translational groups get axes and a magnitude, a lone 2-D rotational z is drawn as itself", () => {
+  for (const row of SCHEMA_7_1) {
+    row.byNdm.forEach((csv, i) => {
+      const labels = csv.split(",");
+      const f = nodalFields(labels.map((l) => `${row.group}/${l}`));
+      const where = `${row.section} ${row.group} ndm ${i + 1}`;
+      assert.equal(f.length, 1, where);
+      const axes = labels.map((l) => `${l.at(-1)}=${row.group}/${l}`);
+      let want: string[];
+      // The §7.1.1 u-p caveat, which §7.1.2 applies to every rotational group.
+      if (row.family === "rotational" && labels.length === 1) want = [`${labels[0]}=${row.group}/${labels[0]}`];
+      else if (row.family === "translational" && labels.length >= 2) want = [`magnitude=${labels.map((l) => `${row.group}/${l}`).join("+")}`, ...axes];
+      else want = axes;
+      assert.deepEqual(f[0]!.components.map((c) => `${c.label}=${c.datasets.join("+")}`), want, where);
+    });
+  }
+});
+
+test("#2214: scalars (p, d_*/d_q<g>) and labels outside the schema are drawn as themselves, never as an axis", () => {
+  const f = nodalFields([
+    "PRESSURE/p",
+    "overlayPressure_7/p",
+    "DISPLACEMENT_SENSITIVITY_1/d_Ux/d_q1",
+    "DISPLACEMENT_SENSITIVITY_1/d_Uy/d_q1",
+    "ROTATION_SENSITIVITY_1/d_Rz/d_q1",
+    "VELOCITY/X",
+    "VELOCITY/Y",
+    "DISPLACEMENT/constructor",
+  ]);
+  assert.deepEqual(f.map((x) => [x.name, x.components.map((c) => `${c.label}=${c.key}`)]), [
+    ["PRESSURE", ["p=PRESSURE/p"]],
+    ["overlayPressure_7", ["p=overlayPressure_7/p"]],
+    ["DISPLACEMENT_SENSITIVITY_1", ["d_Ux/d_q1=DISPLACEMENT_SENSITIVITY_1/d_Ux/d_q1", "d_Uy/d_q1=DISPLACEMENT_SENSITIVITY_1/d_Uy/d_q1"]],
+    ["ROTATION_SENSITIVITY_1", ["d_Rz/d_q1=ROTATION_SENSITIVITY_1/d_Rz/d_q1"]],
+    // VELOCITY is translational, but X/Y are not its axes: no magnitude of guessed axes.
+    ["VELOCITY", ["X=VELOCITY/X", "Y=VELOCITY/Y"]],
+    // An Object.prototype member is not a label of the map.
+    ["DISPLACEMENT", ["constructor=DISPLACEMENT/constructor"]],
+  ]);
+});
+
+test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y as themselves, never as axes", async () => {
+  await h5wasm.ready;
+  const H5 = h5wasm as unknown as ResultsH5;
+  const p = join(mkdtempSync(join(tmpdir(), "agv-2214-")), "xy.ladruno");
+  copyFileSync(fileURLToPath(new URL("../../fixtures/ladruno_truss2d.ladruno", import.meta.url)), p);
+  const w = new h5wasm.File(p, "a");
+  try {
+    const disp = w.get("/MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT") as h5wasm.Group;
+    disp.delete_attribute("COMPONENTS");
+    disp.create_attribute("COMPONENTS", "X,Y");
+  } finally {
+    w.close();
+  }
+  const r = openLadruno(H5, p);
+  try {
+    const n = r.index.stages[0]!.nodes!;
+    assert.deepEqual(n.components, ["DISPLACEMENT/X", "DISPLACEMENT/Y"]);
+    const f = nodalFields(n.components, n.refused);
+    assert.deepEqual(f.map((x) => [x.name, x.components.map((c) => `${c.label}=${c.key}`)]), [["DISPLACEMENT", ["X=DISPLACEMENT/X", "Y=DISPLACEMENT/Y"]]]);
+    assert.ok(f[0]!.components.every((c) => !c.magnitude && !["x", "y", "z"].includes(c.label)));
+  } finally {
+    r.close();
+  }
+});
+
+/**
+ * Every committed `.ladruno` (the viewer's fixtures and the repo's
+ * tests/fixtures/ladruno) as the contour fields it offers, per stage: `|`
+ * between stages, `-` for a stage with no ON_NODES, `refused` for a file the
+ * reader refuses. Recorded on main at c394ebce8, before #2214.
+ */
+const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
+  "ladruno_frame3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
+  "ladruno_modes.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz]",
+  "ladruno_portal3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz]",
+  "ladruno_quad2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "ladruno_truss2d.badstamp.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "ladruno_truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "ladruno_truss2d.stamped.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "beam3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
+  "bezier_tet10.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
+  "bezier_tri6.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "energy.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "fiberbeam.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "node_envelope.ladruno": "-",
+  "quad2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "truss2d.part-0.ladruno": "refused",
+  "truss2d.part-1.ladruno": "refused",
+};
+
+test("#2214: every committed .ladruno contours as before (magnitude and axis grouping unchanged)", async () => {
+  await h5wasm.ready;
+  const H5 = h5wasm as unknown as ResultsH5;
+  const got: Record<string, string> = {};
+  for (const dir of [new URL("../../fixtures/", import.meta.url), new URL("../../../tests/fixtures/ladruno/", import.meta.url)]) {
+    for (const name of readdirSync(dir).filter((x) => x.endsWith(".ladruno"))) {
+      let r: ReturnType<typeof openLadruno>;
+      try {
+        r = openLadruno(H5, fileURLToPath(new URL(name, dir)));
+      } catch {
+        got[name] = "refused";
+        continue;
+      }
+      try {
+        got[name] = r.index.stages
+          .map((s) =>
+            s.nodes
+              ? nodalFields(s.nodes.components, s.nodes.refused)
+                  .map((f) => `${f.name}[${f.components.map((c) => (c.magnitude ? "magnitude" : `${c.label}=${c.key.slice(f.name.length + 1)}`)).join(" ")}]`)
+                  .join(" ")
+              : "-",
+          )
+          .join(" | ");
+      } finally {
+        r.close();
+      }
+    }
+  }
+  assert.deepEqual(got, CONTOUR_GOLDEN);
 });
