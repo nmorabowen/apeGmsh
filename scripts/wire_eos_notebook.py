@@ -4,7 +4,8 @@ Inserts a "Record results" section after the analysis of an EOS notebook
 that builds its OpenSees model by hand from a FEMData broker (nodes and
 elements tagged by their FEM ids). The section re-runs the notebook's
 build + analysis and records it on a route chosen by the build the deck
-ran on (``backend_info_of(ops)``):
+ran on. The deck binds ``ops = get_ops()`` (the module the bridge drives),
+and the cell reads ``get_backend_info().kind``:
 
 - **Ladruno fork:** ``ResolvedRecorderSpec.emit_default`` records the run
   with the fork's own recorder (``.ladruno``).
@@ -14,8 +15,11 @@ ran on (``backend_info_of(ops)``):
   ``.out`` route needs a bridge archive that declares ``ndm``
   (``apeSees(fem).h5``), and a hand-built deck has none.
 
-Both files are read with ``Results.from_fem(fem, path)`` (the deck tags by
-FEM id, so the FEMData snapshot is the model). The cell then checks the
+The fork's file is read with ``Results.from_ladruno(path, model_h5=...)``
+and the native file with ``Results.from_fem(fem, path, kind="native")``
+(the deck tags by FEM id, so the FEMData snapshot is the model). The
+native file holds displacements only; reactions and line stations are
+recorded on the fork route only. The cell then checks the
 recorded last step against the live domain, node by node, and opens the
 run in the apeGmsh ResultsViewer (``Results.viewer`` honours
 ``APEGMSH_SKIP_VIEWER`` for headless runs).
@@ -170,19 +174,21 @@ def _is_transient(code: str) -> bool:
 
 
 _ANALYZE_LINE_RE = re.compile(
-    r"^(?P<indent>[ \t]*)(?:[\w, ]+=\s*)?ops\.analyze\([^\n#]*\)\s*(?:#[^\n]*)?$",
+    r"^(?P<indent>[ \t]*)(?:(?P<lhs>\w+)\s*=\s*)?(?P<call>ops\.analyze\([^\n#]*\))"
+    r"\s*(?P<comment>#[^\n]*)?$",
     re.MULTILINE,
 )
 
 
 def _hook_each_analyze(code: str) -> str:
     """After every ``ops.analyze(...)`` statement line, call
-    ``_record_step()`` at the same indentation (the stock route samples the
-    live domain there).
+    ``_record_step()`` at the same indentation when the step converged
+    (the stock route samples the live domain there). A bare call is bound
+    to ``_ok`` so its return code can be tested.
 
     Raises :class:`ValueError` when an ``ops.analyze`` call sits in a form
-    the hook cannot follow (inside an expression, split over lines): a
-    step that is not sampled would read back as a missing step.
+    the hook cannot follow (inside an expression, unpacked, split over
+    lines): a step that is not sampled would read back as a missing step.
     """
     calls = sum(
         1 for n in ast.walk(ast.parse(code))
@@ -190,8 +196,14 @@ def _hook_each_analyze(code: str) -> str:
         and n.func.attr == "analyze" and isinstance(n.func.value, ast.Name)
         and n.func.value.id == "ops"
     )
-    hooked, n = _ANALYZE_LINE_RE.subn(
-        lambda m: f"{m.group(0)}\n{m.group('indent')}_record_step()", code)
+
+    def _sub(m: re.Match) -> str:
+        indent, lhs = m.group("indent"), m.group("lhs") or "_ok"
+        comment = f"  {m.group('comment')}" if m.group("comment") else ""
+        return (f"{indent}{lhs} = {m.group('call')}{comment}\n"
+                f"{indent}if {lhs} == 0:\n{indent}    _record_step()")
+
+    hooked, n = _ANALYZE_LINE_RE.subn(_sub, code)
     if n != calls:
         raise ValueError(
             f"{calls} ops.analyze call(s) but {n} on a line of their own")
@@ -210,16 +222,18 @@ the OpenSees build the deck ran on:
 
 - **Ladruno fork:** ``ResolvedRecorderSpec.emit_default`` records the run
   with the fork's own recorder (a ``.ladruno`` file).
-- **Stock openseespy:** the cell samples the live domain after every step
-  and writes a native results file with ``NativeWriter``. ``emit_default``
-  cannot record this deck on a stock build without MPCO: its ``.out``
-  route needs a bridge model archive that declares ``ndm``, and this deck
-  was built by hand.
+- **Stock openseespy:** the cell samples the live domain after every
+  converged step and writes a native results file with ``NativeWriter``.
+  That file holds **displacements only**: reaction forces (and, where a
+  notebook records them, line stations) are recorded on the fork only.
+  ``emit_default`` cannot record this deck on a stock build without MPCO:
+  its ``.out`` route needs a bridge model archive that declares ``ndm``,
+  and this deck was built by hand.
 
-Either file is read back with ``Results.from_fem(fem, path)``: the deck
-tags nodes and elements by their FEM ids, so the FEMData snapshot is the
-model. The cell then checks the recorded last step against the live
-domain. ``Results.viewer`` honours ``APEGMSH_SKIP_VIEWER``, so this
+The fork's file is read back with ``Results.from_ladruno``, the native one
+with ``Results.from_fem``. The deck tags nodes and elements by their FEM
+ids, so the FEMData snapshot is the model. The cell then checks the
+recorded last step against the live domain. ``Results.viewer`` honours ``APEGMSH_SKIP_VIEWER``, so this
 notebook is safe to run under nbconvert / CI without changes.
 """
 
@@ -236,11 +250,11 @@ def _capture_cell(ndm: int, build_code: str, analysis_code: str, *,
     return f"""\
 {MARKER}
 # Record the run: the fork's own recorder on the Ladruno fork, a native
-# file sampled from the live domain on stock openseespy.
+# file of displacements sampled from the live domain on stock openseespy.
 import contextlib
 import numpy as np
 from apeGmsh import Results, workdir
-from apeGmsh.opensees._target import backend_info_of
+from apeGmsh.opensees.emitter.live import get_backend_info, get_ops
 from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 from apeGmsh.results.writers import NativeWriter
 
@@ -253,7 +267,9 @@ _axes = ("x", "y", "z")[:{ndm}]
 _built = set(int(n) for n in ops.getNodeTags())
 _node_ids = np.asarray(
     [int(n) for n in fem.nodes.ids if int(n) in _built], dtype=np.int64)
-_backend = backend_info_of(ops)
+# The deck drives the module get_ops() binds; get_backend_info() names it.
+assert ops is get_ops(), "bind the deck with ops = get_ops()"
+_backend = get_backend_info()
 _fork = _backend.kind == "fork"
 print(f"OpenSees build: {{_backend.kind}} ({{_backend.source}})")
 
@@ -292,7 +308,7 @@ with _recording as run:
 
 if _fork:
     results_path = run.path
-    results = Results.from_fem(fem, results_path, cache_root=OUT)
+    results = Results.from_ladruno(str(results_path), model_h5=str(model_h5))
 else:
     results_path = OUT / "run_native.h5"
     if results_path.exists():
