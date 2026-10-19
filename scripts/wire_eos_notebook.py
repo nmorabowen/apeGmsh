@@ -31,9 +31,10 @@ Algorithm:
      ``ops.analyze``: the build runs before the recorder opens, the
      analysis inside it.
   7. Refuse an eigen-only build: no default route records modes.
-  8. Insert the cells before the first top-level ``ops.wipe()`` /
-     ``g.end()`` after the analysis (the live domain must still be up),
-     else append them.
+  8. Insert the cells where the V1 wiring was, else before the first
+     top-level ``ops.wipe()`` / ``g.end()`` after the analysis (the live
+     domain must still be up) and the section heading above it, else
+     append them.
 
 Idempotent: skips if the V2 marker is already present.
 """
@@ -224,11 +225,11 @@ results = run.results()
 print(f"route {{run.route}} -> {{run.path}}")
 
 # The recorded last step is the live domain's displacement field.
-_rec = np.column_stack([
-    results.nodes.get(ids=_node_ids, component=f"displacement_{{a}}").values[-1]
-    for a in _axes
-])
-_live = np.array([ops.nodeDisp(int(n))[:{ndm}] for n in _node_ids])
+_slabs = [results.nodes.get(ids=_node_ids, component=f"displacement_{{a}}")
+          for a in _axes]
+_rec = np.column_stack([s.values[-1] for s in _slabs])
+_live = np.array([ops.nodeDisp(int(n))[:{ndm}] for n in _slabs[0].node_ids])
+assert sorted(int(n) for n in _slabs[0].node_ids) == sorted(_node_ids.tolist())
 _scale = max(float(np.abs(_live).max()), 1e-300)
 assert np.allclose(_rec, _live, rtol=1e-6, atol=1e-9 * _scale), (
     "the recorded displacement disagrees with the live domain")
@@ -310,6 +311,10 @@ def wire(nb_path: Path) -> str:
     ]
 
     insert_at = v1_at if v1_at is not None else _teardown_index(nb, be)
+    # Keep a section heading with the code it introduces.
+    while (v1_at is None and insert_at is not None and insert_at - 1 > be
+           and nb.cells[insert_at - 1].cell_type == "markdown"):
+        insert_at -= 1
     if insert_at is None:
         nb.cells.extend(new_cells)
         where = "appended at end"
