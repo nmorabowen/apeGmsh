@@ -258,9 +258,11 @@ class EigenResult:
 
         ``r.modes`` lists one ``mode`` stage per eigenvalue. The modes
         are written and stamped first and the archive follows, so a
-        refusal or a failed write leaves neither file behind; an
-        existing ``<stem>.h5`` of this bridge (the same lineage) is kept
-        as it is.
+        refusal or a failed write leaves no new file behind. A
+        ``.ladruno`` already at ``path`` is replaced (the caller chose
+        that path) and is not restored if a later step fails, e.g. the
+        archive move. An existing ``<stem>.h5`` of this bridge (the same
+        lineage) is kept as it is.
 
         Parameters
         ----------
