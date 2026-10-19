@@ -22,3 +22,10 @@ load magnitude and distribution. The nodal forces equal the old
 resolver's least-norm forces on the same 31 nodes per end. The analysis
 subprocess timeout goes from 120 s to 1800 s, because the 80-step run takes
 about 8 minutes.
+
+The notebook now says, at the top and before its results cell, that this
+model is not yet a lateral-torsional buckling check. The end moment bends the
+section about its weak axis, the web and flange plates share no nodes, and
+the twist stays 0. The classical $M_{cr}$ it shows leaves out the warping
+term. And the left end's moment reacts into its own supports. A rewrite is
+carded as #2252.
