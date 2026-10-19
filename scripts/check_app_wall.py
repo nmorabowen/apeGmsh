@@ -26,6 +26,14 @@ output are never read; comment-only lines are skipped):
                         may not reach. Panels dispatch events and read selectors.
                         `npm run lint` (dependency-cruiser) holds the same rules over
                         the same graph.
+- W5 h5-open:           lesson #2260. Under `apeGmshViewer/src/` and
+                        `apeGmshViewer/scripts/`, `new <module>.File(` (an h5wasm
+                        open) appears only in `src/reader/h5open.ts`. h5wasm hands
+                        HDF5 each file's id rounded to a double, and HDF5 dedupes
+                        open files by that id: two NTFS files whose ids differ
+                        below 2^53's resolution read as one, silently. `openH5`
+                        makes HDF5 compare exact ids. Tests are not scanned (they
+                        write fixtures with h5wasm directly).
 
 Specifiers are read from the source with comments stripped by a scanner that
 knows strings and block comments (an `import\n * as x from '...'` spanning lines
@@ -71,6 +79,10 @@ PANEL_ALLOW_MODULES = {f"{APP}/src/state/store", f"{APP}/src/state/selectors", f
 PANEL_ALLOW_PREFIXES = (UI,)
 # What a ui/ module may reach: ui/ itself and the state types.
 UI_ALLOW_MODULES = {f"{APP}/src/state/types"}
+# W5: where an h5wasm `new <module>.File(` may appear, and where the rule looks.
+H5_OPENER = f"{APP}/src/reader/h5open.ts"
+H5_SCOPE = (f"{APP}/src/", f"{APP}/scripts/")
+H5_OPEN = re.compile(r"\bnew\s+\(?\s*[\w$.]+(?:\s+as\s+[\w$.<>]+)?\s*\)?\s*\.\s*File\s*\(")
 
 
 def _panel_of(path: str) -> str | None:
@@ -216,6 +228,10 @@ def scan(root: Path) -> list[str]:
                     why = _panel_violation(rel, spec, target)
                     if why:
                         add(n, "W4", "panel-import", f"{why}: '{spec}'")
+            if rel.startswith(H5_SCOPE) and rel != H5_OPENER:
+                for m in H5_OPEN.finditer(body):
+                    n = body.count("\n", 0, m.start()) + 1
+                    add(n, "W5", "h5-open", f"open HDF5 through reader/h5open.ts openH5 (lesson #2260): {m.group(0)}")
         for i, ln in enumerate(blanked):
             if ln and SPAWN.search(ln) and MENTIONS.search(_statement(blanked, i)):
                 add(i + 1, "W3", "subprocess", ln)

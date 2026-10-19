@@ -215,3 +215,33 @@ def test_main_exit_one_and_format(repo, capsys):
     _put(repo, "apeGmshViewer/a.py", "x = 1\nimport apeGmsh\n")
     assert wall.main(["--root", str(repo)]) == 1
     assert capsys.readouterr().out.startswith("apeGmshViewer/a.py:2: W1 py-import — ")
+
+
+# W5 (lesson #2260): every h5wasm open in src/ and scripts/ goes through reader/h5open.ts.
+# These are the eight open sites origin/main had before #2261, in their exact forms.
+@pytest.mark.parametrize("rel, src", [
+    ("apeGmshViewer/src/reader/read.ts", "const f = new h5.File(path, 'r');\n"),
+    ("apeGmshViewer/src/main/main.ts", "const f = new h5wasm.File(path, \"r\");\n"),
+    ("apeGmshViewer/src/main/zones.ts", "const f = new h5wasm.File(path, 'r') as unknown as H5Handle;\n"),
+    ("apeGmshViewer/src/reader/ladruno.ts", "const f = new h5.File(path, 'r') as unknown as LFile;\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new (h5 as H5Writer).File(path, 'r');\n"),
+    ("apeGmshViewer/src/reader/x.ts", "const f = new h5wasm\n  .File(path, 'r');\n"),
+    ("apeGmshViewer/scripts/probe.mjs", "const f = new h5wasm.File(process.argv[2], 'r');\n"),
+])
+def test_w5_flags_an_h5wasm_open_outside_the_opener(repo, rel, src):
+    _put(repo, rel, src)
+    assert _rules(repo) == ["W5"]
+    assert wall.scan(repo)[0].startswith(f"{rel}:1: W5 h5-open — ")
+
+
+def test_w5_allows_the_opener_tests_comments_strings_and_dom_file(repo):
+    _put(repo, "apeGmshViewer/src/reader/h5open.ts", "return new h5.File(path, 'r');\n")
+    _put(repo, "apeGmshViewer/test/reader/x.test.ts", "const f = new h5wasm.File(p, 'w');\n")
+    _put(repo, "apeGmshViewer/src/reader/y.ts", """\
+        // const f = new h5.File(path, 'r');
+        /* new h5wasm.File(path) */
+        const s = "new h5.File(path, 'r')";
+        const blob = new File([bytes], 'x.bin');
+        const f = openH5(h5, path);
+        """)
+    assert wall.scan(repo) == []
