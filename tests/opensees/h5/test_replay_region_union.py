@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 import pytest
 
@@ -44,6 +45,7 @@ from apeGmsh.mesh.FEMData import (
     NodeComposite,
 )
 from apeGmsh.opensees import OpenSeesModel, OpenSeesTarget, apeSees
+from apeGmsh.opensees._internal.lineage import compute_model_hash
 from apeGmsh.opensees._internal.typed_records import RegionRecord
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.opensees_model import _merge_region_rows
@@ -175,6 +177,34 @@ def test_partitioned_twin_replays_the_flat_bridge_region(tmp_path: Path) -> None
     replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=True)
     assert isinstance(replay, str)
     assert _region_lines(replay) == bridge
+
+
+def test_partitioned_twin_h5_rewrite_echoes_the_rank_rows(tmp_path: Path) -> None:
+    """The union is deck-side only: an H5 rewrite of the twin stores the
+    per-rank rows verbatim and keeps ``model_hash`` (a fixed-point guard,
+    not a regression test: this archive's rewrite never reached the
+    union)."""
+    ops = _broad_partitioned()
+    src = tmp_path / "model.h5"
+    out = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.h5(str(src))
+        OpenSeesModel.from_h5(str(src)).build("h5", out=str(out))
+
+    def rows(path: Path) -> list[tuple[int, tuple[Any, ...]]]:
+        with h5_reader.open(str(path)) as m:
+            return [(r.tag, tuple(r.args)) for r in m.regions()]
+
+    def model_hash(path: Path) -> str:
+        with h5py.File(str(path), "r") as f:
+            return compute_model_hash("", f["opensees"])
+
+    assert rows(out) == rows(src) == [
+        (1, ("-node", 2, "-ele", 2)),
+        (1, ("-node", 4, "-ele", 3)),
+    ]
+    assert model_hash(out) == model_hash(src)
 
 
 # ---------------------------------------------------------------------------
