@@ -73,7 +73,7 @@ def assess_results(
                 "model they were run on"
             )
         elif any(SIDE_CHANNEL_HASH_CAUSE in w for w in warnings):
-            # The 2.32.0 step (#1911): both markers agree, and exactly one
+            # The side-channel step: both markers agree, and exactly one
             # side's side-channel calls carry their declaration ids.
             step = ".".join(str(part) for part in SIDE_CHANNEL_DECL_FROM)
             message += (

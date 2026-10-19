@@ -171,11 +171,11 @@ def _model_hash_era_cause(
 
 
 #: The opensees schema step at which the side-channel calls' declaration
-#: ids entered the hashed ``/opensees/program.decl`` column (#1853). The
+#: ids entered the hashed ``/opensees/program.decl`` column. The
 #: ``program_decl`` marker reads ``"complete"`` on both sides of it, so
 #: :func:`_model_hash_era_cause` cannot see it. This is the one step
 #: named this way: a later ``model_hash`` change gets a new marker value,
-#: never another version rule (#1911).
+#: never another version rule.
 SIDE_CHANNEL_DECL_FROM: tuple[int, int, int] = (2, 32, 0)
 
 #: The six verbs whose calls first carried a proved declaration at
@@ -1224,9 +1224,9 @@ class Results:
                 model_records = records_program_decl(self._model.declarations)
                 cause = _model_hash_era_cause(results_records, model_records)
                 if cause is None and results_records and model_records:
-                    # Both markers "complete": the 2.32.0 step, when
-                    # exactly one side's side-channel calls carry their
-                    # declaration ids (#1911).
+                    # Both markers "complete": the side-channel step,
+                    # when exactly one side's side-channel calls carry
+                    # their declaration ids.
                     cause = _side_channel_hash_cause(
                         self._results_side_channel_proof(),
                         _side_channel_proof(
