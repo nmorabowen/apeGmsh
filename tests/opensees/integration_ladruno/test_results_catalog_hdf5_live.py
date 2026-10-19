@@ -15,8 +15,7 @@ the model builders and both oracles: the live ``eleResponse`` vector, and the
 Every file is read through the public factory at ``rtol=1e-10``. The values
 and the GP natural coordinates are separate tests, so a route that gets one
 right and the other wrong stays pinned on both. Every class x route cell
-either passes or is a strict xfail that cites a chain-B issue and asserts
-the right answer:
+passes:
 
 ================= ============ ============ ===============================
 Family            MPCO-spec    MPCO         Ladruno
@@ -24,19 +23,21 @@ Family            MPCO-spec    MPCO         Ladruno
 FourNodeQuad,     pass         pass         pass
 Tri31, SSPquad,
 solids
-SixNodeTri,       pass         pass         values pass; coords xfail #1998
-EightNodeQuad     (rule 0)     (rule 0)     (rule 0: no natural coords)
-shells (8 cases)  pass (#1991) pass         xfail #1990
+SixNodeTri,       pass         pass         pass (#1998)
+EightNodeQuad     (rule 0)     (rule 0)     (rule 0)
+shells (8 cases)  pass (#1991) pass         pass (#1990)
 trusses           G7           G7           G7
 ================= ============ ============ ===============================
 
 The fork writes SixNodeTri and EightNodeQuad under the bracket key
 ``[0:0:0]``. MPCO resolves rule 0 to the class's one catalogued rule
-(#1970). On ``.ladruno`` the values read, but the named-column bucket gets
-no natural coordinates: #1969's catalog fallback covers only generic
-``C1..Cn`` buckets (#1998). Trusses are not repeated:
-``test_element_families_ladruno_live.py`` (G7, #1949) already pins them on
-both routes.
+(#1970). On ``.ladruno`` the named-column bucket carries no GP_PARAM, so the
+reader places its GPs from the catalog's one fitting layout (#1998); the
+``D B(xi) u`` anchor checks those coordinates. The shells write their
+resultants as ``p11,p22,p12,m11,m22,m12,q1,q2`` per GP, which the reader
+names in the catalog's 8-component shell order (#1990). Trusses are not
+repeated: ``test_element_families_ladruno_live.py`` (G7, #1949) already pins
+them on both routes.
 
 The material-state tests at the end take the ``MPCO-spec`` route alone: a
 stdBrick of ASDConcrete3D pulled past cracking (``damage_*``,
@@ -76,38 +77,14 @@ from tests.test_results_catalog_out_real import (
 pytestmark = pytest.mark.ladruno_fork
 
 ROUTES = ("MPCO-spec", "MPCO", "Ladruno")
-#: Written under integration rule 0 by the fork.
-RULE_ZERO = frozenset({"SixNodeTri", "EightNodeQuad"})
-
-B_SHELL_LADRUNO = "#1990: .ladruno shell resultants (p11..q2) read an empty slab"
-B_RULE0_LADRUNO = ("#1998: .ladruno rule-0 named-column Gauss slab has no "
-                   "natural coords")
 
 #: Trusses are G7's (see the module docstring).
 FORK_CASES = [k for k, c in CASES.items() if c.anchor != "truss"]
 
 
-def _values_xfail(case: Case, route: str) -> "str | None":
-    if case.comps == SHELL and route == "Ladruno":
-        return B_SHELL_LADRUNO
-    return None
-
-
-def _coords_xfail(case: Case, route: str) -> "str | None":
-    if route == "Ladruno" and case.cpp_class in RULE_ZERO:
-        return B_RULE0_LADRUNO
-    return _values_xfail(case, route)
-
-
-def _params(xfail_for: Any) -> list[Any]:
-    out = []
-    for key in FORK_CASES:
-        for route in ROUTES:
-            reason = xfail_for(CASES[key], route)
-            marks = [] if reason is None else [pytest.mark.xfail(
-                strict=True, raises=AssertionError, reason=reason)]
-            out.append(pytest.param(key, route, id=f"{key}-{route}", marks=marks))
-    return out
+def _params() -> list[Any]:
+    return [pytest.param(key, route, id=f"{key}-{route}")
+            for key in FORK_CASES for route in ROUTES]
 
 
 def _run(case: Case, route: str, tmp_path: Path, stub_model_h5: Path):
@@ -158,7 +135,7 @@ def _run(case: Case, route: str, tmp_path: Path, stub_model_h5: Path):
     return built, truth, r
 
 
-@pytest.mark.parametrize("key,route", _params(_values_xfail))
+@pytest.mark.parametrize("key,route", _params())
 def test_catalog_values_read_back_from_hdf5(
     key: str, route: str, tmp_path: Path, stub_model_h5: Path,
 ) -> None:
@@ -169,7 +146,7 @@ def test_catalog_values_read_back_from_hdf5(
                         lambda c: r.elements.gauss.get(component=c), where=route)
 
 
-@pytest.mark.parametrize("key,route", _params(_coords_xfail))
+@pytest.mark.parametrize("key,route", _params())
 def test_catalog_gp_coords_read_back_from_hdf5(
     key: str, route: str, tmp_path: Path, stub_model_h5: Path,
 ) -> None:
@@ -177,6 +154,53 @@ def test_catalog_gp_coords_read_back_from_hdf5(
     built, truth, r = _run(case, route, tmp_path, stub_model_h5)
     assert_coords_match(case, built, truth,
                         lambda c: r.elements.gauss.get(component=c), where=route)
+
+
+#: The cases #1990 (shells) and #1998 (rule-0 named buckets) fixed.
+PARITY_CASES = [k for k in FORK_CASES
+                if CASES[k].comps == SHELL or CASES[k].cpp_class in
+                ("SixNodeTri", "EightNodeQuad")]
+
+
+@pytest.mark.parametrize("key", PARITY_CASES)
+def test_ladruno_matches_mpco_on_the_same_solve(
+    key: str, tmp_path: Path, stub_model_h5: Path,
+) -> None:
+    """``.ladruno`` and MPCO, recording the same step, read back the same.
+
+    Values at ``rtol=1e-10``, GP for GP, and the same natural coordinates.
+    """
+    from apeGmsh.results import Results
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    case = CASES[key]
+    ops = get_live_ops()
+    built = case.build(ops)
+    assert ops.eleType(built.eid) == case.cpp_class
+    solve(ops)
+    mpco, lad = tmp_path / "run.mpco", tmp_path / "run.ladruno"
+    ops.recorder("mpco", str(mpco), "-N", "displacement", "-E", case.token)
+    ops.recorder("ladruno", str(lad), "-N", "displacement", "-E", case.token)
+    assert ops.analyze(1) == 0
+    ops.remove("recorders")
+    r_lad = Results.from_ladruno(str(lad), model_h5=stub_model_h5)
+    with pytest.warns(ModelFemMismatchWarning):
+        r_mpco = Results.from_mpco(str(mpco), model_h5=stub_model_h5)
+    slabs = [(r_lad.elements.gauss.get(component=c),
+              r_mpco.elements.gauss.get(component=c)) for c in case.comps]
+    scale = max(np.abs(np.asarray(m.values)).max() for _, m in slabs)
+    assert scale > 0.0, f"{key}: MPCO reads all zeros"
+    for comp, (a, b) in zip(case.comps, slabs):
+        assert np.asarray(a.values).shape == (1, case.n_gp), (key, comp)
+        np.testing.assert_array_equal(a.element_index, b.element_index)
+        np.testing.assert_allclose(
+            a.values, b.values, rtol=1e-10, atol=1e-10 * scale,
+            err_msg=f"{key} {comp}: .ladruno vs MPCO",
+        )
+        np.testing.assert_allclose(
+            a.natural_coords, b.natural_coords, rtol=1e-10, atol=1e-14,
+            err_msg=f"{key} {comp}: GP coords, .ladruno vs MPCO",
+        )
 
 
 # ---------------------------------------------------------------------------
