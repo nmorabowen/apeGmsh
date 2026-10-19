@@ -518,6 +518,14 @@ class OpenSeesModel:
             ndf = int(meta.get("ndf", 0))
             snapshot_id = str(meta.get("snapshot_id", ""))
 
+            # ADR 0055 Phase 2: the staged-archival read side.  The
+            # reader fails loud (MalformedH5Error) on a structurally
+            # inconsistent stages zone; an absent group (vanilla /
+            # pre-2.18.0) yields an empty tuple and the flat paths.
+            # Read first: the typed stores below join the declarations
+            # (K R1b-S2 slot types), whose row counts check the stages
+            # zone; a broken stages zone names itself before that.
+            stages = tuple(model.stages())
             materials_by_family = model.materials_by_family()
             sections = tuple(model.sections())
             transforms = tuple(model.transforms())
@@ -533,11 +541,6 @@ class OpenSeesModel:
             # re-mints them (below it).
             initial_stress_param_tags = model.initial_stress_param_tags()
             opensees_version = model.opensees_zone_version()
-            # ADR 0055 Phase 2: the staged-archival read side.  The
-            # reader fails loud (MalformedH5Error) on a structurally
-            # inconsistent stages zone; an absent group (vanilla /
-            # pre-2.18.0) yields an empty tuple and the flat paths.
-            stages = tuple(model.stages())
             # P5.0b: partition emit records — echoed back on ``to_h5``
             # so a partitioned archive round-trips hash-stable.
             partitions = tuple(model.partitions())

@@ -1,31 +1,32 @@
-"""R1b oracle, live net (K2c, #1816): a class A or B replay deck must run.
+"""R1b oracle, live net (K2c, #1816): a replayed deck must run.
 
 The static declare-before-use check in ``test_roundtrip_oracle.py`` sees
 only the references the archive's ``decl_params`` name. It cannot see node
 and element tags (connectivity, ``fix``, ``region -node/-ele``, loads,
 recorders) or anything inside a ``proc`` body. This module is the second
-net: for every waived ledger row of class A or B, it writes the bridge's
-openseespy deck (``ops.py``) and the replayed one
-(``from_h5(h5()).build("py")``), and runs each in its own subprocess.
-Running the A rows also proves that their integral floats, re-emitted as
-integers, still parse in every slot under the backend (#2193: once the
-replay follows the bridge's emit order, no row is B).
+net: for every replayable corpus model (each one but the S rows), it writes
+the bridge's openseespy deck (``ops.py``) and the replayed one
+(``from_h5(h5()).build("py")``), and runs each in its own subprocess. It
+ran the waived A and B rows until #2194 left none (#2193 cleared the B
+rows, #2194 the A rows), so it now runs the corpus the static oracle
+proves equal to the bridge deck: the ``py`` target is a second deck that
+oracle never compares.
 
 A deck *runs* when the process exits 0 **and** prints the completion
 marker appended as its last line: an OpenSees error can still exit 0, so
 the marker is what proves the deck reached its end.
 
-- An A or B row: the bridge deck runs, and so does the replay.
+- A replayable model: the bridge deck runs, and so does the replay.
 - The fatal reorder (#1814): ``_broad_frame``'s replay deck runs, and the
   same deck with ``Parallel 3`` moved above ``Steel01 1`` (the reorder #1814
   fixed, now synthetic) does not, so a C-class reorder really aborts.
 
-A row whose bridge deck does not run on this backend must be one the
+A model whose bridge deck does not run on this backend must be one the
 archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
 build it, so there the test asserts only that the bridge deck did not run,
 the static check is its only net, and the test skips by name so ``-rs``
 shows it.
-:data:`_KNOWN_STOCK_FAILURES` names the rows whose bridge deck aborts on
+:data:`_KNOWN_STOCK_FAILURES` names the models whose bridge deck aborts on
 stock openseespy although their solve stamp claims ``requires=()``
 (``Parameter::addComponent`` finds no object for the parameter; #2220).
 They are handled like the fork rows: the test asserts the bridge deck does
@@ -61,15 +62,11 @@ pytestmark = pytest.mark.live
 _MARKER = "APEGMSH_K2C_DECK_COMPLETE"
 
 
-def _rows(klass: str, cites: str = "") -> list[Model]:
-    w = _waivers()
-    return [m for m in CORPUS
-            if m.id in w and w[m.id].klass == klass and cites in w[m.id].reason]
-
-
-#: Every waived row whose replay deck must run: class A or B, corpus order.
-_RUN_ROWS = [m for m in CORPUS if m in {*_rows("A"), *_rows("B")}]
-#: Rows whose bridge deck aborts on stock openseespy while the solve stamp
+#: Every model whose replay deck must run: the corpus but its S rows (not
+#: replayable; ``from_h5`` refuses them by name), in corpus order.
+_RUN_ROWS = [m for m in CORPUS
+             if m.id not in _waivers() or _waivers()[m.id].klass != "S"]
+#: Models whose bridge deck aborts on stock openseespy while the solve stamp
 #: claims ``requires=()``: the issue that tracks each. Not a waiver: the net
 #: asserts the bridge deck does not run, so a fix fails it until removed.
 _KNOWN_STOCK_FAILURES: dict[str, str] = {
@@ -146,8 +143,11 @@ def test_known_stock_failures_name_run_rows() -> None:
 
 def test_the_net_runs_some_stock_row() -> None:
     assert _RUN_ROWS and _FATAL_CASES, (
-        "the live net would run nothing: no class A or B row, or no "
+        "the live net would run nothing: no replayable corpus model, or no "
         "fatal-reorder case")
+    # Every corpus model but the S rows: none drops out silently.
+    s_rows = {w.model for w in _waivers().values() if w.klass == "S"}
+    assert {m.id for m in _RUN_ROWS} == {m.id for m in CORPUS} - s_rows
 
 
 _PROBE_PLUGIN = """import json, os, sys
@@ -206,7 +206,7 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("model", _RUN_ROWS, ids=[m.id for m in _RUN_ROWS])
-def test_a_waived_replay_runs_where_the_bridge_deck_runs(
+def test_a_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
     issue = _KNOWN_STOCK_FAILURES.get(model.id)
@@ -222,11 +222,10 @@ def test_a_waived_replay_runs_where_the_bridge_deck_runs(
         pytest.skip(f"{model.id}: fork-only (solve stamp requires={requires!r}); "
                     "asserted only that the bridge deck did not run here")
     ran, log = _run(replay)
-    klass = _waivers()[model.id].klass
     assert ran, (
-        f"{model.id} is class {klass} but its replay deck does not run: a "
-        "semantic difference the static check missed; make the row C with "
-        f"its bug:\n{log}")
+        f"{model.id}: the bridge deck runs but the replay deck does not: a "
+        "semantic difference the static oracle missed; track it in an "
+        f"issue:\n{log}")
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])
