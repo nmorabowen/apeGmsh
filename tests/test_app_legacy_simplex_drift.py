@@ -37,7 +37,16 @@ from typing import Any
 import numpy as np
 
 from apeGmsh.results._gauss_extrapolation import extrapolate_gauss_slab_to_nodes
-from apeGmsh.results.readers._native import _SIMPLEX_GP_ROWS, NativeReader
+from apeGmsh.results.readers._native import NativeReader
+
+
+def _python_rows() -> dict[int, tuple[str, np.ndarray, np.ndarray]]:
+    """Python's ``_SIMPLEX_GP_ROWS`` (#2273), imported here rather than at
+    module level: a checkout without it fails these tests by name, never
+    the whole collection."""
+    from apeGmsh.results.readers._native import _SIMPLEX_GP_ROWS
+
+    return _SIMPLEX_GP_ROWS
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_TS = ROOT / "apeGmshViewer" / "src" / "reader" / "legacySimplex.ts"
@@ -94,8 +103,9 @@ def parse_ts_table(source: str) -> dict[int, tuple[str, np.ndarray, np.ndarray]]
 
 def test_the_app_table_is_pythons_value_for_value() -> None:
     ts = parse_ts_table(LEGACY_TS.read_text(encoding="utf-8"))
-    assert sorted(ts) == sorted(_SIMPLEX_GP_ROWS), "the class tags differ"
-    for tag, (cls, legacy, current) in _SIMPLEX_GP_ROWS.items():
+    py = _python_rows()
+    assert sorted(ts) == sorted(py), "the class tags differ"
+    for tag, (cls, legacy, current) in py.items():
         ts_cls, ts_legacy, ts_current = ts[tag]
         assert ts_cls == cls, f"class tag {tag}: app {ts_cls}, Python {cls}"
         np.testing.assert_array_equal(ts_legacy, legacy, err_msg=f"{cls}: older rows")
@@ -163,12 +173,10 @@ def test_the_parser_sees_a_one_ulp_change() -> None:
     """A mutation the parser must not round away: one digit off in one value."""
     source = LEGACY_TS.read_text(encoding="utf-8")
     assert "0.33333333333333337" in source
-    mutated = source.replace("0.33333333333333337", "0.3333333333333333", 1)
-    ts = parse_ts_table(mutated)
-    assert any(
-        not np.array_equal(ts[tag][2], current)
-        for tag, (_cls, _legacy, current) in _SIMPLEX_GP_ROWS.items()
-    )
+    mutated = parse_ts_table(source.replace("0.33333333333333337", "0.3333333333333333", 1))
+    original = parse_ts_table(source)
+    assert sorted(mutated) == sorted(original)
+    assert sum(not np.array_equal(mutated[t][2], original[t][2]) for t in original) == 1
 
 
 if __name__ == "__main__":
