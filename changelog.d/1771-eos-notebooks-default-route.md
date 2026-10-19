@@ -3,19 +3,25 @@
 Twelve notebooks under `examples/EOS Examples/` (ten in `case_studies/`, two
 in `archive/`) imported the removed `Recorders` helper and called
 `DomainCapture(..., ndm=, ndf=)`, so they raised on `main`. Each now re-runs
-its hand-built deck and records it on a route chosen by the build the deck
-ran on (`backend_info_of(ops)`):
+its hand-built deck, bound with `ops = get_ops()`, and records it on a
+route chosen by `get_backend_info().kind`:
 
 - **Ladruno fork:** `ResolvedRecorderSpec.emit_default(...)` records the
-  run with the fork's own recorder, a `.ladruno` file.
-- **Stock openseespy:** the cell samples `ops.nodeDisp` after every step and
-  writes a native file with `NativeWriter`. `emit_default` cannot record
-  these decks on a stock build without MPCO: its `.out` route needs a bridge
-  model archive that declares `ndm`, and a hand-built deck has none.
+  run with the fork's own recorder, a `.ladruno` file. The notebook reads it
+  with `Results.from_ladruno(path, model_h5=...)`, and on the fork the record
+  cells raise no Python warning. In `chevron_brace_retrofit_sine` the fork's
+  recorder still prints a notice that elastic beams do not answer
+  `section.force`; it records their `localForce` instead.
+- **Stock openseespy:** the cell samples `ops.nodeDisp` after every
+  converged step and writes a native file with `NativeWriter`, read with
+  `Results.from_fem(fem, path, kind="native")`. That file holds
+  displacements only: reaction forces and line stations are recorded on the
+  fork only. `emit_default` cannot record these decks on a stock build
+  without MPCO: its `.out` route needs a bridge model archive that declares
+  `ndm`, and a hand-built deck has none.
 
-Both files are read with `Results.from_fem(fem, path)`, which raises no
-warning. The decks tag nodes and elements by FEM id, so the FEMData snapshot
-is the model. Each recorded cell asserts that the recorded node set is the
+The decks tag nodes and elements by FEM id, so the FEMData snapshot is the
+model. Each recorded cell asserts that the recorded node set is the
 one asked for, and that the last recorded step equals the live domain's
 displacements. On the fork, `chevron_brace_retrofit_sine` also records line
 stations. It asserts that the recorded element set is the requested one and
