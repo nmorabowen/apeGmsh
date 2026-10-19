@@ -13,11 +13,18 @@
 //   X1 the extrapolation matrix transposed   -> "gauss_node ... equal Python" (hex G8, quad G4)
 //   X2 the averaging divisor dropped         -> "gauss_node ... equal Python", "cell_averaged ..."
 //   X3 an unsupported type drawn as a guess  -> "an element type with no shape functions reads unsupported ..."
+//   X4 the legacy simplex remap removed (#2274) -> "a pre-#2238 native file ..." (corners rotated by one node)
+//   X5 unknown simplex rows drawn as stored     -> "simplex rows that match neither table ..."
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import * as h5wasm from "h5wasm/node";
+import { gmshSimplexRows, LEGACY_SIMPLEX_GP_ROWS } from "../../src/reader/legacySimplex.ts";
+import { openResults, type ResultsH5 } from "../../src/reader/results.ts";
 import { elementColours, toLinear } from "../../src/renderer/contour.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
 import { joinElements, NO_DATA_RGB, rampT, sampleCmap } from "../../src/state/contour.ts";
@@ -384,4 +391,127 @@ test("the join of a verified field carries its extrapolation verdict (the effect
   const jj = joinElements(s.decls, st.gauss.map((g) => ({ id: g.id, eids: h.blobs.get(g.elementIds!) as Float64Array })));
   assert.ok(jj.ok && jj.rows === j.rows);
   h.effects.dispose();
+});
+
+// -- #2274: native files written before #2238 (simplex Gauss rows node-0-first) ---------------
+//
+// fixtures/legacy_simplex_*.results.h5 are PR #2273's tests/fixtures/native_legacy_simplex
+// capture_tet.h5 and transcoded_tri.h5, byte for byte: written by apeGmsh's own writers at
+// 31ba6a63c, before #2238. Every element is loaded with u_i = x_i^2 / 2, so the strain_ii it
+// records at a Gauss point IS that point's x_i: carried to the corners it must give each
+// corner its own coordinate (the closed form). fixtures/legacy_simplex.oracle.json is
+// Python's extrapolate_gauss_slab_to_nodes on the slab NativeReader reads (with #2273's
+// mapping), written by fixtures/make_legacy_simplex_oracle.py.
+
+await h5wasm.ready;
+const H5 = h5wasm as unknown as ResultsH5;
+type LegacyOracle = Record<string, Record<string, Record<string, number[]>>>;
+const LEGACY_ORACLE = JSON.parse(readFileSync(fx("legacy_simplex.oracle.json"), "utf8")) as LegacyOracle;
+const LEGACY: Record<string, { corners: number[][]; code: number; npe: number; comps: string[] }> = {
+  "legacy_simplex_capture_tet.results.h5": {
+    corners: [[0.1, 0.2, 0.0], [2.3, 0.1, 0.4], [0.5, 1.7, 0.2], [0.3, 0.4, 1.9]],
+    code: 11,
+    npe: 10,
+    comps: ["strain_xx", "strain_yy", "strain_zz"],
+  },
+  "legacy_simplex_transcoded_tri.results.h5": {
+    corners: [[0.1, 0.2], [2.3, 0.4], [0.6, 1.8]],
+    code: 9,
+    npe: 6,
+    comps: ["strain_xx", "strain_yy"],
+  },
+};
+/** One gmsh-coded element per group, nodes 1..npe (corners first), as the oracle's stand-in. */
+const legacyCell = (code: number, npe: number) => () => ({ code, nodes: Array.from({ length: npe }, (_, i) => i + 1) });
+
+test("a pre-#2238 native file's Tet10 and tri6 groups extrapolate to their own corners, equal to Python (#2273), never rotated", () => {
+  for (const [name, spec] of Object.entries(LEGACY)) {
+    const rf = openResults(H5, fx(name));
+    try {
+      assert.deepEqual(rf.index.warnings, [], `${name}: an exact table match never warns`);
+      const st = rf.index.stages[0]!;
+      const multi = st.gauss.filter((g) => g.nGauss > 1);
+      assert.equal(multi.length, 2, `${name}: two multi-point simplex groups`);
+      for (const g of multi) {
+        assert.ok(LEGACY_SIMPLEX_GP_ROWS[g.classTag], `${name} ${g.id}: a class the table names`);
+        const rows = rf.elementIds(st.id, g.id);
+        const want = LEGACY_ORACLE[name]![String((rows.mapping === "fem_eid" ? rows.ids : rows.rawIndex)[0])]!;
+        assert.deepEqual(want["node_ids"], Array.from({ length: spec.corners.length }, (_, i) => i + 1));
+        const input = [{ id: g.id, nElements: 1, nGauss: g.nGauss, eids: Float64Array.of(0), naturalCoords: g.naturalCoords }];
+        const plan = buildPlan("gauss_node_discrete", input, legacyCell(spec.code, spec.npe));
+        spec.comps.forEach((comp, axis) => {
+          const corner = applyPlan(plan, [rf.readGaussStep(st.id, g.id, comp, 0)]).corner;
+          assert.equal(corner.length, spec.corners.length);
+          corner.forEach((v, c) => {
+            const py = want[comp]![c]!;
+            const x = spec.corners[c]![axis]!;
+            assert.ok(rel(v, py), `${name} ${g.id} ${comp} corner ${c + 1}: app ${v} vs Python ${py}`);
+            assert.ok(Math.abs(v - x) <= 1e-10, `${name} ${g.id} ${comp} corner ${c + 1}: app ${v} vs the corner's own coordinate ${x}`);
+          });
+        });
+      }
+    } finally {
+      rf.close();
+    }
+  }
+});
+
+test("the legacy table: each class's current rows are its older rows' frame change (node-0-first -> gmsh), exactly", () => {
+  for (const [tag, t] of Object.entries(LEGACY_SIMPLEX_GP_ROWS)) {
+    assert.equal(t.legacy.length, t.current.length, `${tag} ${t.cls}`);
+    t.legacy.forEach((row, i) => {
+      const full = [...row, 1 - row.reduce((a, x) => a + x, 0)];
+      assert.deepEqual(full.slice(1), t.current[i], `${tag} ${t.cls} row ${i}`);
+    });
+  }
+});
+
+test("simplex rows equal to the current table, and any class the table does not name, read unchanged", () => {
+  for (const [tag, t] of Object.entries(LEGACY_SIMPLEX_GP_ROWS)) {
+    const rows = t.current.map((r) => [...r]);
+    const m = gmshSimplexRows(Number(tag), rows, "f.h5: Gauss group g");
+    assert.ok(m.refused === null && m.rows === rows, `${t.cls}: current rows pass through`);
+  }
+  // A class with no node-0-first rule (33009 is not in the table) holding the very rows a SixNodeTri group is mapped from.
+  const sixNode = LEGACY_SIMPLEX_GP_ROWS[209]!.legacy.map((r) => [...r]);
+  assert.equal(LEGACY_SIMPLEX_GP_ROWS[33009], undefined);
+  const other = gmshSimplexRows(33009, sixNode, "f.h5: Gauss group g");
+  assert.ok(other.refused === null && other.rows === sixNode);
+});
+
+test("simplex rows that match neither table refuse that group by name: one warning per class, no natural coordinates, the node modes unsupported, the element mean still drawn", () => {
+  const p = join(mkdtempSync(join(tmpdir(), "agv-legacy-")), "odd.results.h5");
+  copyFileSync(fx("legacy_simplex_capture_tet.results.h5"), p);
+  const f = new h5wasm.File(p, "a");
+  const base = "stages/stage_0/partitions/partition_0/elements/gauss_points";
+  try {
+    for (const gid of ["rec_TenNodeTetrahedron_1", "rec_BezierTet10_2"]) {
+      const ds = f.get(`${base}/${gid}/_natural_coords`) as h5wasm.Dataset;
+      // a permutation neither table has
+      ds.write_slice([[0, 4], [0, 3]], Float64Array.from([...LEGACY_SIMPLEX_GP_ROWS[256]!.legacy].reverse().flat()));
+    }
+  } finally {
+    f.close();
+  }
+  const rf = openResults(H5, p);
+  try {
+    const st = rf.index.stages[0]!;
+    assert.equal(rf.index.warnings.length, 2, rf.index.warnings.join("\n"));
+    for (const [gid, cls] of [["rec_TenNodeTetrahedron_1", "TenNodeTetrahedron"], ["rec_BezierTet10_2", "BezierTet10"]] as const) {
+      const w = rf.index.warnings.find((x) => x.includes(`(${cls})`));
+      assert.ok(w && w.includes(p) && w.includes(gid) && /Re-capture the results, or re-transcode/.test(w), w);
+      const g = st.gauss.find((x) => x.id === gid)!;
+      assert.equal(g.naturalCoords, null, `${gid}: no natural coordinates`);
+      const input = [{ id: g.id, nElements: 1, nGauss: g.nGauss, eids: Float64Array.of(0), naturalCoords: g.naturalCoords }];
+      const cell = legacyCell(11, 10);
+      assert.match(extrapolationVerdict(input, cell).matrix!, new RegExp(`group ${gid} has no natural coordinates .*older apeGmsh versions wrote for its class`));
+      for (const mode of ["gauss_node", "gauss_node_discrete"] as const) assert.throws(() => buildPlan(mode, input, cell), /buildPlan: group/);
+      const mean = applyPlan(buildPlan("element_mean_averaged", input, cell), [rf.readGaussStep(st.id, gid, "strain_xx", 0)]);
+      assert.ok(mean.corner.every((v) => Number.isFinite(v)), `${gid}: the element mean still draws`);
+    }
+    // The one-point group the table names is untouched (its rows are still a table's).
+    assert.deepEqual(st.gauss.find((x) => x.id === "rec_FourNodeTetrahedron_0")!.naturalCoords, [[0.25, 0.25, 0.25]]);
+  } finally {
+    rf.close();
+  }
 });
