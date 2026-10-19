@@ -6,7 +6,8 @@ The app now reads the Gauss-point buckets of a fork-written `.ladruno`, the
 element's stress or strain bucket becomes a Gauss group, as a native
 `results.h5` group does (checked on a fork-written quad plate). Its components keep the file's own names, spelled
 `<result>/<label>` (for example `stress/sigma11`), so they never collide with a
-nodal component of the same label. The natural coordinates of the Gauss points
+nodal component of the same label. The contour lists them as the field
+`stress` with the component `sigma11`, as it lists nodal results. The natural coordinates of the Gauss points
 come from the file's `QUADRATURE/GP_PARAM`, never from a table in the app. A
 Gauss contour and its extrapolation to nodes work on a paired `.ladruno` as on
 a native file. Element values are served only when `INFO/PROVENANCE` stamps
@@ -21,3 +22,7 @@ domain and region buckets stay listed as unread. Beams keep their line-station
 path. Natural coordinates are offered for the extrapolation only on
 `PARAM_DOMAIN = "[-1,1]"`; a Bezier or simplex domain reads its Gauss values but
 warns that it cannot extrapolate them to nodes.
+
+The Gauss and the line-station reads now share one `COMP_NAMES` parser. An
+empty label (for example a trailing comma) refuses the bucket; the line-station
+read used to drop it and read the bucket. No committed fixture has one.
