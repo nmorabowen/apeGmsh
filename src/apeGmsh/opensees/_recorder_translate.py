@@ -340,7 +340,12 @@ def model_node_deck_dofs(
     """:func:`node_record_deck_dofs` over a built ``OpenSeesModel``: its
     ``ndm``, ``nodes_ndf`` and, for a rotational slot, the rotation roles
     of its elements (:func:`~apeGmsh.opensees._readback.rotation_roles_from_tokens`),
-    the table the ``recorder.declare`` emit and ``.read`` use."""
+    the table the ``recorder.declare`` emit and ``.read`` use.
+
+    A :class:`LiveDomainFacts` (a FEMData archive beside a live domain)
+    answers from the live domain instead (#2251)."""
+    if isinstance(model, LiveDomainFacts):
+        return model.node_deck_dofs(slot_dofs, node_ids, where=where)
     ndm = int(model.ndm)  # type: ignore[attr-defined]
     if ndm < 1:
         raise ValueError(
@@ -431,6 +436,175 @@ def model_h5_rotation_roles(
         OpenSeesModel.from_h5(model_h5),
         tuple(int(n) for n in node_ids), where=where,
     )
+
+
+#: ``ops.eleType`` class name -> the ``element`` token of the bridge class
+#: whose family it is (:data:`~._readback._CLASS_FOR_TOKEN`), so a live
+#: domain the bridge did not build classifies its rotational DOF slots by
+#: the same family tables (#2251). Each name is what stock openseespy
+#: 3.7.1 answers for an element that token makes; a class not listed is
+#: unknown, and blocks the rotational slots of the nodes it touches and
+#: of element-less nodes, as an unknown token does.
+_TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
+    "ElasticBeam2d": "elasticBeamColumn",
+    "ElasticBeam3d": "elasticBeamColumn",
+    "ForceBeamColumn2d": "forceBeamColumn",
+    "ForceBeamColumn3d": "forceBeamColumn",
+    "DispBeamColumn2d": "dispBeamColumn",
+    "DispBeamColumn3d": "dispBeamColumn",
+    "ElasticTimoshenkoBeam2d": "ElasticTimoshenkoBeam",
+    "ElasticTimoshenkoBeam3d": "ElasticTimoshenkoBeam",
+    "ShellMITC4": "ShellMITC4",
+    "ShellDKGQ": "ShellDKGQ",
+    "ASDShellQ4": "ASDShellQ4",
+    "ASDShellT3": "ASDShellT3",
+    "ZeroLength": "zeroLength",
+    "ZeroLengthSection": "zeroLengthSection",
+    "CoupledZeroLength": "CoupledZeroLength",
+    "TwoNodeLink": "twoNodeLink",
+    "Truss": "Truss",
+    "CorotTruss": "CorotTruss",
+    "InertiaTruss": "InertiaTruss",
+    "FourNodeQuad": "quad",
+    "Tri31": "tri31",
+    "SixNodeTri": "tri6n",
+    "FourNodeTetrahedron": "FourNodeTetrahedron",
+    "TenNodeTetrahedron": "TenNodeTetrahedron",
+    "Brick": "stdBrick",
+}
+
+
+def _live_int(value: object, query: str) -> int:
+    """The one integer an ``ops`` query answers (openseespy returns it as a
+    one-element list); anything else raises, naming the query."""
+    if isinstance(value, (list, tuple)) and len(value) == 1:
+        value = value[0]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"ops.{query} answered {value!r}, not one integer; the live "
+            "domain's DOF facts cannot be read from this module.")
+    return value
+
+
+def live_ndm(ops: object) -> int:
+    """``ops.getNDM()``: the live domain's spatial dimension, ``0`` when no
+    ``ops.model`` has been declared."""
+    return _live_int(ops.getNDM(), "getNDM()")  # type: ignore[attr-defined]
+
+
+class LiveDomainFacts:
+    """The node DOF facts of the live domain ``ops`` holds, standing in for
+    the model on the emit side when the model archive is a FEMData archive
+    (``fem.to_h5``: no ``/opensees`` zone, no declared ndm; #2251).
+
+    Each fact is read from the live domain, never inferred from the
+    FEMData: ``getNDM()``, ``getNDF(node)`` for each node a record names,
+    and ``eleType`` / ``eleNodes`` of every element for the rotation
+    roles (:data:`_TOKEN_FOR_LIVE_CLASS`). ``lineage`` and ``elements()``
+    are the archive's, so the snapshot check and the element pairing
+    (none, in a FEMData archive) are the archive's own.
+
+    A rotation is recorded only where it reads back as written: a FEMData
+    archive holds no ``/opensees/nodes_ndf``, so the read side cannot mask
+    a padded column (:func:`mask_absent_rotations`). A rotational slot a
+    recorded node's layout lacks, or that its elements do not establish,
+    refuses by name.
+    """
+
+    def __init__(self, ops: object, archive: object) -> None:
+        ndm = live_ndm(ops)
+        if ndm < 1:
+            raise ValueError(
+                "LiveDomainFacts: the live domain declares no ndm "
+                f"(getNDM() = {ndm}); build the model with ops.model(...) "
+                "before recording it.")
+        self._ops = ops
+        self._archive = archive
+        self._ndm = ndm
+
+    @property
+    def ndm(self) -> int:
+        """``ops.getNDM()`` of the live domain."""
+        return self._ndm
+
+    @property
+    def lineage(self) -> object:
+        """The archive's lineage (its ``fem_hash`` is the FEMData's)."""
+        return self._archive.lineage  # type: ignore[attr-defined]
+
+    def elements(self) -> tuple:
+        """The archive's element records: its ``(fem_eid, tag)`` pairing."""
+        return tuple(self._archive.elements())  # type: ignore[attr-defined]
+
+    def nodes_ndf(self, node_ids: "Iterable[int]", *, where: str) -> "dict[int, int]":
+        """``{node: ops.getNDF(node)}`` over ``node_ids``; a node the live
+        domain does not hold raises, naming it."""
+        ops = self._ops
+        built = {int(n) for n in ops.getNodeTags()}  # type: ignore[attr-defined]
+        wanted = [int(n) for n in node_ids]
+        missing = [n for n in wanted if n not in built]
+        if missing:
+            raise ValueError(
+                f"{where}: nodes {missing[:10]} are not in the live domain, "
+                "so the DOFs each records cannot be read from it. Record "
+                "the nodes the deck built.")
+        return {n: _live_int(ops.getNDF(n), f"getNDF({n})")  # type: ignore[attr-defined]
+                for n in dict.fromkeys(wanted)}
+
+    def rotation_roles(self, node_ids: "Iterable[int]") -> "RotationRoles":
+        """The rotation roles of ``node_ids`` under the live domain's
+        element classes, by the family tables the bridge path uses."""
+        import numpy as np
+
+        from ._readback import _CLASS_FOR_TOKEN, _roles_from_rows
+
+        ops = self._ops
+        by_class: "dict[str, list[int]]" = {}
+        for tag in ops.getEleTags():  # type: ignore[attr-defined]
+            name = str(ops.eleType(int(tag)))  # type: ignore[attr-defined]
+            by_class.setdefault(name, []).extend(
+                int(n) for n in ops.eleNodes(int(tag)))  # type: ignore[attr-defined]
+        rows = []
+        for name, nodes in by_class.items():
+            token = _TOKEN_FOR_LIVE_CLASS.get(name)
+            cls = None if token is None else _CLASS_FOR_TOKEN[token]
+            rows.append((cls, name, np.unique(np.asarray(nodes, dtype=np.int64))))
+        return _roles_from_rows(rows, node_ids)
+
+    def node_deck_dofs(
+        self, slot_dofs: tuple[int, ...], node_ids: tuple[int, ...], *,
+        where: str,
+    ) -> tuple[int, ...]:
+        """:func:`node_record_deck_dofs` from the live domain's facts."""
+        from ._internal.build.recorders import _node_layout
+
+        ndf = self.nodes_ndf(node_ids, where=where)
+        names = ("x", "y", "z", "rx", "ry", "rz")
+        for d in slot_dofs:
+            slot = int(d) - 1
+            if not 3 <= slot < 6:
+                continue
+            lacking = [n for n, k in ndf.items()
+                       if slot not in _node_layout(k, self._ndm)]
+            if lacking:
+                raise ValueError(
+                    f"{where}: nodes {lacking[:10]} carry no {names[slot]!r} "
+                    f"DOF in the live domain (ndm={self._ndm}, ndf "
+                    f"{ndf[lacking[0]]}). A FEMData archive holds no per-node "
+                    "ndf to mask their padded column on read; record them in "
+                    "a separate record without that component."
+                )
+        roles: "list[RotationRoles]" = []
+
+        def refusal(node: int) -> "str | None":
+            if not roles:
+                roles.append(self.rotation_roles(node_ids))
+            return roles[0].refusal(int(node))
+
+        return node_record_deck_dofs(
+            slot_dofs, node_ids, ndf, self._ndm,
+            rotation_refusal=refusal, where=where,
+        )
 
 
 def mask_absent_rotations(
