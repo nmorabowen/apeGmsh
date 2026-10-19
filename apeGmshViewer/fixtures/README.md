@@ -381,7 +381,8 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   `"fem"`) and writes the model by hand with the same nodes, elements and
   hashes. `ladruno_quad2d.oracle.json` holds Python's reading of two Gauss
   components (`LadrunoReader.read_gauss`), written by
-  `make_ladruno_gauss_oracle.py`; `test/results/ladrunoGauss.test.ts` compares
+  `tests/fixtures/ladruno/make_viewer_gauss_oracle.py` (outside the app, which never
+  imports apeGmsh: ADR 0112 D4); `test/results/ladrunoGauss.test.ts` compares
   the app's reader against it.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
@@ -399,5 +400,5 @@ modal record.
 # and the Gauss-point quad plate and its model (fork build), then Python's oracle of it
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d
 $env:PYTHONPATH = "src"
-& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_gauss_oracle.py
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_gauss_oracle.py
 ```

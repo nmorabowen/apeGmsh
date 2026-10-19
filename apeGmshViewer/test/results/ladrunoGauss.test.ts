@@ -7,7 +7,7 @@
 // QUADRATURE/GP_PARAM (+-1/sqrt 3, PARAM_DOMAIN "[-1,1]"); it is stamped with element_index_space "fem".
 //
 // The oracles name the right answer without the app:
-// - values: ladruno_quad2d.oracle.json, written by make_ladruno_gauss_oracle.py with apeGmsh's Python
+// - values: ladruno_quad2d.oracle.json, written by tests/fixtures/ladruno/make_viewer_gauss_oracle.py with apeGmsh's Python
 //   reader (LadrunoReader.read_gauss) on the same file: each Gauss point's element, natural coordinates
 //   and value. The step-0 values are half the step-1 ones (a linear model at load factors 0.5 and 1);
 // - positions: the recorder's own MODEL/ELEMENTS/.../GLOBAL_GP_COORDS. The natural coordinates the reader

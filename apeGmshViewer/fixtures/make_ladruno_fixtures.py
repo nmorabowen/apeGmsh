@@ -63,7 +63,8 @@ this file:
   ``"fem"``: the element tags are the model's ids) and writes the model.h5 by
   hand, with the same nodes, elements and lineage hashes, so the two pair. Fork
   build ``79e0623670`` (the opensees venv, 2026-10-19), FORMAT_MINOR_VERSION 0.
-  ``ladruno_quad2d.oracle.json`` is written by ``make_ladruno_gauss_oracle.py``.
+  ``ladruno_quad2d.oracle.json`` is written by ``tests/fixtures/ladruno/make_viewer_gauss_oracle.py``
+  (outside the app: it imports apeGmsh, ADR 0112 D4).
 * ``ladruno_frame3d.h5`` and ``ladruno_frame3d.ladruno``: a paired 3-D
   2-bay, 2-story frame with floor slabs, written with h5py (not a fork run).
   It follows schema §7.1.1: ``DISPLACEMENT`` = ``Ux,Uy,Uz`` and a separate

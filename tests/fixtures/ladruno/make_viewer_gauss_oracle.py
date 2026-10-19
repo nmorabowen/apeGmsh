@@ -1,11 +1,13 @@
 """Write ``ladruno_quad2d.oracle.json``: Python's reading of the fork's Gauss buckets (#2187).
 
     $env:PYTHONPATH = "<worktree>\\src"
-    python apeGmshViewer/fixtures/make_ladruno_gauss_oracle.py
+    python tests/fixtures/ladruno/make_viewer_gauss_oracle.py
 
 run from the repository root, with apeGmsh importable from ``src`` (the
 editable install may point at another checkout: check the printed path). It
-reads ``ladruno_quad2d.ladruno`` with apeGmsh's own ``.ladruno`` reader
+lives here, not under ``apeGmshViewer/``, because the app never imports
+apeGmsh (ADR 0112 D4; ``scripts/check_app_wall.py`` rule W1). It reads
+``apeGmshViewer/fixtures/ladruno_quad2d.ladruno`` with apeGmsh's own ``.ladruno`` reader
 (``LadrunoReader.read_gauss``) and records, for one component at one step,
 each Gauss point's element id, natural coordinates and value. The app's test
 (``test/results/ladrunoGauss.test.ts``) compares its reader against these
@@ -24,9 +26,10 @@ from pathlib import Path
 import apeGmsh
 from apeGmsh.results.readers._ladruno import LadrunoReader
 
-HERE = Path(__file__).resolve().parent
-SOURCE = HERE / "ladruno_quad2d.ladruno"
-OUT = HERE / "ladruno_quad2d.oracle.json"
+#: The viewer's fixtures: the fork file read, and the JSON the app's test compares against.
+FIXTURES = Path(__file__).resolve().parents[3] / "apeGmshViewer" / "fixtures"
+SOURCE = FIXTURES / "ladruno_quad2d.ladruno"
+OUT = FIXTURES / "ladruno_quad2d.oracle.json"
 
 #: (the app's component, Python's canonical name, the step) for each recorded read.
 READS = [("stress/sigma11", "stress_xx", 1), ("strain/eta12", "strain_xy", 0)]
