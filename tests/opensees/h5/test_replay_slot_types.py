@@ -241,6 +241,30 @@ class TestSeams:
         assert all(" 1 PlaneStrain 1" in ln
                    for ln in _lines(replay, "element quad "))
 
+    @pytest.mark.filterwarnings(
+        "ignore::apeGmsh.opensees.InertStaticDtWarning")
+    def test_a_legacy_stage_rayleigh_tail_is_float(
+            self, tmp_path: Path) -> None:
+        """The one change a legacy archive sees: the stage region's
+        ``-rayleigh`` cast needs no ``decl_params`` (the writer stores four
+        float coefficients by construction, #2194), so it now replays
+        ``0.1 0.0 0.0 0.0``, the bridge's text, where it replayed
+        ``0.1 0 0 0`` before."""
+        path = _archive(_build_kitchen_sink_bridge(), tmp_path)
+        _strip_decl_params(path)
+        with h5_reader.open(str(path)) as m:
+            assert not m.slot_types().active
+            (stage,) = m.stages()
+        (region,) = stage.regions
+        at = region.args.index("-rayleigh")
+        tail = region.args[at + 1:at + 5]
+        assert tail == (0.1, 0.0, 0.0, 0.0)
+        assert _types(tail) == ("float",) * 4
+        replay = OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+        assert isinstance(replay, str)
+        (line,) = [ln for ln in replay.splitlines() if "-rayleigh" in ln]
+        assert line.endswith("-rayleigh 0.1 0.0 0.0 0.0")
+
     def test_no_declarations_recover_nothing(self) -> None:
         st = SlotTypes(None)
         assert not st.active
