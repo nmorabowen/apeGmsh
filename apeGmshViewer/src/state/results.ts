@@ -14,7 +14,7 @@
 // or one still being written) is `unpairable`, and the reason names the
 // remedy. Which reader read the file is main's dispatch, by the suffix.
 
-import type { Lineage, ResultsInfo } from "./types.ts";
+import type { Lineage, ProgramDecls, ResultsInfo } from "./types.ts";
 
 export type ResultsPairing =
   /** no results file has been read */
@@ -81,14 +81,80 @@ function hashEraCause(
 }
 
 /**
+ * The opensees schema step at which the side-channel calls' declaration ids
+ * entered the hashed `/opensees/program` `decl` column (#1853). The
+ * `program_decl` marker reads "complete" on both sides of it, so
+ * `hashEraCause` cannot see it. Python's `Results.SIDE_CHANNEL_DECL_FROM`
+ * (#1911, K #2198); tests/test_app_hash_232_drift.py pins this to it. It names
+ * the step in the message only: no rule here reads a version stamp.
+ */
+export const SIDE_CHANNEL_DECL_FROM = { major: 2, minor: 32 } as const;
+const SIDE_CHANNEL_BOUNDARY = `${SIDE_CHANNEL_DECL_FROM.major}.${SIDE_CHANNEL_DECL_FROM.minor}.0`;
+
+/**
+ * The six verbs whose calls first carried a proved declaration at
+ * `SIDE_CHANNEL_DECL_FROM`: the content of that one step (h5-schema.md, the
+ * opensees zone's 2.32.0 entry), so it does not grow with the bridge. A copy of
+ * Python's `Results.SIDE_CHANNEL_DECL_VERBS` (T's ruling on #2189), pinned by
+ * tests/test_app_hash_232_drift.py: any difference fails there.
+ */
+export const SIDE_CHANNEL_DECL_VERBS: readonly string[] = [
+  "step_hook_ramp",
+  "addToParameter",
+  "flip_element_stage",
+  "update_parameter",
+  "set_node_vel",
+  "set_node_accel",
+] as const;
+
+/** Python's `Results.SIDE_CHANNEL_HASH_CAUSE`, verbatim (the drift test pins it). */
+export const SIDE_CHANNEL_HASH_CAUSE = "hash change (side-channel calls' declaration ids entered model_hash)";
+
+/**
+ * Whether a side's side-channel calls carry a proved declaration (Python
+ * `_side_channel_proof`): null when the program calls none of
+ * `SIDE_CHANNEL_DECL_VERBS` (or was not read), true when one of their runs names a
+ * declaration, so the ids are in that side's model_hash, false when every one
+ * is `-1` (an emit below the step, or a `to_h5` rewrite of one).
+ */
+export function sideChannelProof(program: ProgramDecls | null | undefined): boolean | null {
+  if (!program) return null;
+  let proof: boolean | null = null;
+  for (const verb of SIDE_CHANNEL_DECL_VERBS) {
+    if (!Object.prototype.hasOwnProperty.call(program, verb)) continue;
+    if (program[verb]) return true;
+    proof = false;
+  }
+  return proof;
+}
+
+/**
+ * The `SIDE_CHANNEL_DECL_FROM` cause of a model_hash mismatch, or null: Python's
+ * `_side_channel_hash_cause`, with its sentence. Called only when both markers
+ * read "complete". Named when both sides carry side-channel calls and exactly
+ * one side's hash includes their declaration ids; it reads the hashed column,
+ * not the version stamps (a `to_h5` rewrite is stamped current but keeps the
+ * old column and hash).
+ */
+function sideChannelHashCause(resultsProof: boolean | null, modelProof: boolean | null): string | null {
+  if (resultsProof === null || modelProof === null || resultsProof === modelProof) return null;
+  const remedy = modelProof
+    ? "re-run the analysis against the re-saved model, or open the results with the model.h5 they were run on"
+    : "open the results with the model.h5 they were run on, or re-run the analysis against this model";
+  return `likely cause: the opensees schema ${SIDE_CHANNEL_BOUNDARY} ${SIDE_CHANNEL_HASH_CAUSE}; ${remedy}`;
+}
+
+/**
  * Whether `results` pairs with the loaded model. `model` is null when no
  * model is loaded (none open, still reading, or failed); its
  * `openseesVersion` is `/meta@opensees_schema_version` of the model.h5 and
  * `programDecl` its `/opensees/decls@program_decl` marker ("absent" when
- * missing); both null when the model has no opensees zone.
+ * missing); both null when the model has no opensees zone. `program` is its
+ * `/opensees/program` as read.ts `programDecls` reads it; null or absent names
+ * no 2.32.0 cause.
  */
 export function pairResults(
-  model: { lineage: Lineage | null; openseesVersion: string | null; programDecl: string | null } | null,
+  model: { lineage: Lineage | null; openseesVersion: string | null; programDecl: string | null; program?: ProgramDecls | null } | null,
   results: ResultsInfo | null,
 ): ResultsPairing {
   if (!results) return { state: "none" };
@@ -111,8 +177,14 @@ export function pairResults(
   if (r.modelHash !== null) {
     if (!m?.modelHash) return { state: "mismatch", reason: "the results name a model_hash, and the open model has none to compare (its /meta/lineage has no model_hash)" };
     if (m.modelHash === r.modelHash) return { state: "paired", by: "model_hash" };
-    const cause = hashEraCause(model, results);
-    if (cause) return { state: "mismatch", reason: `model_hash differs: ${cause} (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
+    let cause = hashEraCause(model, results);
+    // Both markers "complete": the 2.32.0 side-channel step, as Python's
+    // Results.lineage names it (#2198). A .ladruno embeds no /opensees
+    // (programDecl null), so it never gets here: no era cause, as Python.
+    if (cause === null && recordsProgramDecl(model.programDecl) === true && recordsProgramDecl(results.programDecl) === true) {
+      cause = sideChannelHashCause(sideChannelProof(results.program), sideChannelProof(model.program));
+    }
+    if (cause)return { state: "mismatch", reason: `model_hash differs: ${cause} (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
     return { state: "mismatch", reason: `model_hash differs: the results were written from another model (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
   }
   if (r.femHash !== null) {

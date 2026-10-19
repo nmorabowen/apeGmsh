@@ -30,6 +30,7 @@ import type {
   OpsFamily,
   OpsObject,
   Param,
+  ProgramDecls,
   Table,
 } from "../model/types.ts";
 
@@ -116,9 +117,9 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * call (`-1` where unproved), and `/opensees/decls@program_decl`
  * ("complete" | "absent") says whether those joins are recorded. This app
  * reads the marker only for the results pairing (V4h, #1856: it says whether
- * the model_hash includes declaration ids), never for a join. It does not read
- * `/opensees/program` at all, and reads only
- * the datasets of `/opensees/decls`, so `decl` can never appear as an
+ * the model_hash includes declaration ids), never for a join. It reads
+ * `/opensees/program` only for that pairing too (`programDecls`, #2189), and
+ * reads only the datasets of `/opensees/decls`, so `decl` can never appear as an
  * OpenSees parameter in any window, and no join is made from it. The joins the
  * windows make are unchanged and do not depend on the marker: recorders join
  * through `/opensees/decls/rows` (recorded by the writer, not guessed); the
@@ -130,10 +131,11 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * the six side-channel verbs (`step_hook_ramp`, `addToParameter`,
  * `flip_element_stage`, `update_parameter`, `set_node_vel`, `set_node_accel`)
  * now carry their record's `decl` instead of `-1`. No path, dtype or marker
- * change, and this app does not read `/opensees/program`, so nothing here
- * reads differently. The column is hashed: a 2.32 re-emit of a model with any
- * of those calls has a new model_hash, which the results pairing shows as a
- * plain mismatch (both sides' markers say "complete").
+ * change, so no window reads differently. The column is hashed: a 2.32 re-emit
+ * of a model with any of those calls has a new model_hash. The results pairing
+ * names that change (#2189): it reads each side's `/opensees/program` methods
+ * and `decl` (`programDecls`, below) and applies Python's rule
+ * (state/results.ts `sideChannelHashCause`).
  *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
@@ -206,6 +208,7 @@ export const emptyDefinitions = (): Definitions => ({
   bcs: { fix: null, mass: null },
   stages: [],
   embeddedRebar: null,
+  program: null,
 });
 
 export function readModel(
@@ -436,7 +439,33 @@ class Reader {
       bcs: has(g, "bcs") ? this.readBcs(this.group(g, "bcs")) : { fix: null, mass: null },
       stages: has(g, "stages") ? this.readStages(this.group(g, "stages")) : [],
       embeddedRebar: this.readEmbeddedRebar(g),
+      program: this.readProgram(g),
     };
+  }
+
+  /**
+   * `/opensees/program`'s methods and their declaration proof
+   * (`programDecls`), read for the results pairing only (#2189). null when
+   * the zone has no program (a rewrite below 2.23.0 writes none); a table
+   * that cannot be read is a loud warning and null, so the pairing names no
+   * cause from it, and the model still opens.
+   */
+  private readProgram(g: H5Group): ProgramDecls | null {
+    if (!has(g, "program")) return null;
+    const node = g.get("program");
+    if (!(node instanceof this.h5.Dataset)) {
+      this.warnings.push(`${joinPath(g.path, "program")} is not a dataset; the results pairing does not read it`);
+      return null;
+    }
+    const ds = node as H5Dataset;
+    const dt = ds.dtype;
+    const columns = Array.isArray(dt) ? (dt as unknown[]).map((m) => String((m as unknown[])[0])) : [];
+    const out = programDecls(ds.path, ds.attrs["methods"]?.value, columns, ds.json_value);
+    if (typeof out === "string") {
+      this.warnings.push(`${out}; the results pairing does not read it`);
+      return null;
+    }
+    return out;
   }
 
   /**
@@ -1014,6 +1043,34 @@ function mergeParams(p: Param | Param[] | undefined, s: Param | Param[] | undefi
   for (let i = 0; i < n; i++) {
     const t = strs[i];
     out.push(typeof t === "string" && t !== "" ? t : (nums[i] ?? Number.NaN));
+  }
+  return out;
+}
+
+/**
+ * `/opensees/program` (h5-schema.md, opensees 2.23.0) as `ProgramDecls`: for
+ * each method a run calls (`method` indexes `@methods`), whether one of its
+ * runs carries a declaration (`decl >= 0`). Shared by this reader (the model)
+ * and reader/results.ts (the results' embedded zone), so both sides read the
+ * table one way. Returns the reason, naming `path`, when the table is not the
+ * schema's: no `method` or `decl` column, no `@methods` list, or a method
+ * index outside it.
+ */
+export function programDecls(path: string, methods: unknown, columns: readonly string[], rows: unknown): ProgramDecls | string {
+  const im = columns.indexOf("method");
+  const id = columns.indexOf("decl");
+  if (im < 0 || id < 0) return `${path} has no method and decl columns (it has ${JSON.stringify(columns)})`;
+  const names = typeof methods === "string" ? [methods] : methods;
+  if (!Array.isArray(names) || !names.every((x) => typeof x === "string")) return `${path}@methods is not a list of strings`;
+  if (!Array.isArray(rows)) return `${path} is not a compound table`;
+  const out: Record<string, boolean> = Object.create(null) as Record<string, boolean>;
+  for (const [k, row] of rows.entries()) {
+    const m = Array.isArray(row) ? Number(row[im]) : Number.NaN;
+    const d = Array.isArray(row) ? Number(row[id]) : Number.NaN;
+    if (!Number.isInteger(m) || m < 0 || m >= names.length) return `${path}[${k}].method is ${String(m)}, outside the ${names.length} names of @methods`;
+    if (!Number.isInteger(d)) return `${path}[${k}].decl is not an integer`;
+    const name = names[m] as string;
+    out[name] = (out[name] ?? false) || d >= 0;
   }
   return out;
 }
