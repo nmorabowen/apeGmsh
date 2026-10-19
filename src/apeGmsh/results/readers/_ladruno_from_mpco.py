@@ -48,6 +48,14 @@ program's ``ops.stage`` blocks, whose ``analysis`` record names the kind
 only modes is an ``eigen`` stage. Any other count or an unknown kind
 refuses.
 
+A program with no ``ops.stage`` block pairs with no stage. Its kind is not
+archived as fact: the archive cannot tell an in-process run from a deck,
+and it does not record a deck's ``analyze`` call (#1950, coordinator
+ruling (iii)). ``read_deck_mpco`` passes the private
+``_implicit_stage=True``, which refuses every unstaged program with that
+reason (after the lineage check); #2210 records the deck's ``analyze``
+call.
+
 ``COLUMN_MAP`` follows the fork recorder's own derivation from the same
 header MPCO's ``META`` encodes: ``LEVELS`` is the deepest path code of a
 block, ``GAUSS_ID``, ``NUM_COMP`` and ``MULTIPLICITY`` are the block's,
@@ -86,7 +94,7 @@ import numpy as np
 if TYPE_CHECKING:
     import h5py
 
-__all__ = ["MPCOConversionRefused", "convert_mpco"]
+__all__ = ["MPCOConversionRefused", "StageKindRefused", "convert_mpco"]
 
 _STAGE_PREFIX = "MODEL_STAGE["
 _PART_RE = re.compile(r"^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$")
@@ -103,6 +111,19 @@ class MPCOConversionRefused(RuntimeError):
     program's, a partition set that is incomplete or inconsistent, and a
     source that is unreadable or holds something this converter does not
     know how to carry. The source is never modified.
+    """
+
+
+class StageKindRefused(MPCOConversionRefused):
+    """The refusal is about stage kinds alone: the file's stages cannot be
+    paired with the program's, or a kind is not a fact (an unstaged
+    program).
+
+    Every other refusal (the archive is another model's, a partition set
+    is incomplete, a target or staging directory is in the way, the source
+    holds what the converter cannot carry) is a plain
+    :class:`MPCOConversionRefused`. ``read_deck_mpco`` reads the ``.mpco``
+    on this one only and re-raises the rest.
     """
 
 
@@ -123,6 +144,7 @@ def convert_mpco(
     *,
     model_h5: "str | Path",
     overwrite: bool = False,
+    _implicit_stage: bool = False,
 ) -> list[Path]:
     """Convert an ``.mpco`` (or a partitioned set) into ``.ladruno``.
 
@@ -141,6 +163,12 @@ def convert_mpco(
         ``INFO/PROVENANCE`` pairs the converted file with it.
     overwrite
         Replace existing targets. Without it an existing target refuses.
+    _implicit_stage
+        Private; only ``read_deck_mpco`` passes it. It refuses every
+        program with no ``ops.stage`` block, whatever the file holds, with
+        :class:`StageKindRefused` naming why: such a program's kind is not
+        archived as fact. Without it, an unstaged program pairs with no
+        stage (a ``.mpco`` with step data refuses, as before).
 
     Returns
     -------
@@ -160,7 +188,7 @@ def convert_mpco(
     a refusal; another failure (the stamp, the disk) re-raises its own
     error after the rollback.
     """
-    plan = _plan(Path(src), Path(dst), model_h5, overwrite)
+    plan = _plan(Path(src), Path(dst), model_h5, overwrite, _implicit_stage)
     if plan.staging.exists():  # left by an interrupted run; overwrite=True
         shutil.rmtree(plan.staging)
     try:
@@ -252,6 +280,7 @@ def _writer() -> str:
 
 def _plan(
     src: Path, dst: Path, model_h5: "Optional[str | Path]", overwrite: bool,
+    implicit_stage: bool = False,
 ) -> _Plan:
     if model_h5 is None:
         raise MPCOConversionRefused(
@@ -266,7 +295,16 @@ def _plan(
     targets = _targets(dst, len(sources), partitioned=_is_part_name(src))
     staging = targets[0].parent / f"{_set_stem(dst)}.partial"
     _refuse_existing(targets, staging, overwrite)
-    model, names, kinds, ranks = _program(model_path)
+    model, names, kinds, pending, ranks = _program(model_path)
+    # A kind refusal is held until the archive is proved to be this run's
+    # (the partition count here, the lineage after the scan): a wrong
+    # archive always refuses as one, never as a question of kinds.
+    if pending is None and implicit_stage and not names:
+        pending = StageKindRefused(
+            f"{model_path} declares no ops.stage blocks: an unstaged "
+            "program's kind is not archived as fact (#2210 records it). "
+            "Nothing was written."
+        )
     if ranks and len(ranks) != len(sources):
         raise MPCOConversionRefused(
             f"{model_path} emits {len(ranks)} partitions (ranks "
@@ -276,8 +314,18 @@ def _plan(
         )
     stage_kinds: Optional[list[str]] = None
     unsupported: set[str] = set()
-    for source in sources:
-        part_kinds = _scan_part(source, names, kinds, unsupported)
+    for i, source in enumerate(sources if pending is None else ()):
+        try:
+            part_kinds = _scan_part(source, names, kinds, unsupported)
+        except StageKindRefused as e:
+            if i == 0:
+                pending = e
+                break
+            # Part 0 paired: a later part that does not is a set that
+            # disagrees with itself, not a question of kinds.
+            raise MPCOConversionRefused(
+                f"{e} (part 0, {sources[0].name}, paired; the parts are not "
+                "from one run)") from e
         if stage_kinds is None:
             stage_kinds = part_kinds
         elif part_kinds != stage_kinds:
@@ -286,10 +334,13 @@ def _plan(
                 f"{sources[0].name} as {stage_kinds}; the parts are not "
                 "from one run."
             )
-    assert stage_kinds is not None
-    # Last, the readers' own checks: modal records, and on a set the
-    # stage signatures and time vectors of every part.
+    # Last, the readers' own checks: modal records, on a set the stage
+    # signatures and time vectors of every part, and the lineage. A held
+    # kind refusal is raised only once they pass.
     _open_with_reader(sources, model, model_path)
+    if pending is not None:
+        raise pending
+    assert stage_kinds is not None
     return _Plan(sources, targets, staging, stage_kinds, unsupported)
 
 
@@ -378,8 +429,15 @@ def _refuse_existing(
             )
 
 
-def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
-    """The model, its stage names and kinds, and its partition ranks."""
+def _program(
+    model_h5: Path,
+) -> "tuple[Any, list[str], list[str], Optional[StageKindRefused], set[int]]":
+    """The model, its stage names and kinds, and its partition ranks.
+
+    A stage whose kind is unknown is returned as a :class:`StageKindRefused`
+    (with no kinds), not raised: the caller raises it only after the
+    lineage check, so a wrong archive always refuses as one.
+    """
     from ...opensees.opensees_model import OpenSeesModel
     from .._bind import _stage_kind
 
@@ -391,12 +449,14 @@ def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
             f"({type(e).__name__}: {e})."
         ) from e
     stages = list(model.stages())
+    kind_error: Optional[StageKindRefused] = None
     try:
         kinds = [_stage_kind(s, model_path=model_h5) for s in stages]
     except ValueError as e:
-        raise MPCOConversionRefused(str(e)) from e
+        kinds, kind_error = [], StageKindRefused(str(e))
+        kind_error.__cause__ = e
     ranks = {int(p.rank) for p in model.partitions()}
-    return model, [str(s.name) for s in stages], kinds, ranks
+    return model, [str(s.name) for s in stages], kinds, kind_error, ranks
 
 
 def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:
@@ -482,7 +542,7 @@ def _scan_part(
             mode_only.append(_holds_only_modes(stage))
         hosts = [n for n, m in zip(stages, mode_only) if not m]
         if len(hosts) != len(names):
-            raise MPCOConversionRefused(
+            raise StageKindRefused(
                 f"{source} holds {len(hosts)} MODEL_STAGE group(s) with "
                 f"step data ({hosts}) but the program declares "
                 f"{len(names)} stage(s) ({list(names)}). Stage kinds cannot "

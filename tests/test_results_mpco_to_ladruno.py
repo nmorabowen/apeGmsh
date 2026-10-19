@@ -47,6 +47,7 @@ from apeGmsh.mesh.FEMData import (
     NodeComposite,
 )
 from apeGmsh.results import MPCOConversionRefused, Results, convert_mpco
+from apeGmsh.results.readers._ladruno_from_mpco import StageKindRefused
 from apeGmsh.results.writers import StageNamesOmittedWarning
 
 _FIX = Path(__file__).parent / "fixtures" / "results"
@@ -147,6 +148,34 @@ def _springs_model(path: Path) -> Path:
     return path
 
 
+def _unstaged_springs_model(path: Path, kinds: "list[str]") -> Path:
+    """The springs model with no ``ops.stage`` block and one ``analysis``
+    call per entry of ``kinds`` (the implicit-stage rule, #1950)."""
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    ops = apeSees(_fem_from_mpco(SPRINGS, {"One": [100], "Three": [200]}))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1000.0)
+    ops.element.ZeroLength(pg="One", mat_dirs=(ZeroLengthMatDir(material=mat, dof=1),))
+    ops.element.ZeroLength(pg="Three", mat_dirs=tuple(
+        ZeroLengthMatDir(material=mat, dof=d) for d in (1, 2, 3)))
+    ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+    ops.algorithm.Linear()
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    for kind in kinds:
+        if kind == "static":
+            ops.integrator.LoadControl(dlam=0.1)
+            ops.analysis.Static()
+        else:
+            ops.integrator.Newmark(gamma=0.5, beta=0.25)
+            ops.analysis.Transient()
+    ops.h5(str(path))
+    return path
+
+
 def _bridge_copy(src: Path, model: Path, dst: Path) -> Path:
     """``src`` with its element tags renumbered to the archive's ops tags.
 
@@ -189,7 +218,18 @@ def fx(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
         "springs": springs,
         "frame_src": _bridge_copy(FRAME, frame, tmp / "elasticFrame.mpco"),
         "springs_src": _bridge_copy(SPRINGS, springs, tmp / "zl_springs.mpco"),
+        **{f"flat_{name}": _unstaged_springs_model(tmp / f"flat_{name}.h5", kinds)
+           for name, kinds in _FLAT.items()},
     }
+
+
+#: Unstaged springs programs, by their ``analysis`` calls.
+_FLAT = {
+    "static": ["static"],
+    "transient": ["transient"],
+    "two": ["static", "transient"],
+    "none": [],
+}
 
 
 CASES = ("frame", "springs")
@@ -430,6 +470,62 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
                              "MODES_OF_VIBRATION(U)/DATA/STEP_20"]
 
 
+# ---------------------------------------------------------------------------
+# An unstaged program (#1950, coordinator ruling (iii))
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(_FLAT))
+def test_the_private_path_refuses_every_unstaged_program(fx, name, tmp_path) -> None:
+    """With ``_implicit_stage=True`` (read_deck_mpco's path) no unstaged
+    program converts, whatever its analysis calls: its kind is not archived
+    as fact. The one-call cases are the ones a rule-(i) acceptance would
+    convert, so re-adding one fails them."""
+    model = fx[f"flat_{name}"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_the_private_path_refuses_an_unstaged_modes_only_file(fx, tmp_path) -> None:
+    """Every unstaged program refuses on the private path, a file of modes
+    alone included."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    with h5py.File(src, "r+") as f:
+        results = f["MODEL_STAGE[1]/RESULTS"]
+        del results["ON_ELEMENTS"]
+        del results["ON_NODES"]
+        grp = results.create_group("ON_NODES/MODES_OF_VIBRATION(U)")
+        grp.attrs["COMPONENTS"] = np.array([b"Ux,Uy,Uz"])
+        grp.create_dataset("ID", data=np.arange(1, 5, dtype=np.int32)[:, None])
+        mode = grp.create_group("DATA/STEP_0").create_dataset(
+            "MODE_0", data=np.ones((4, 3)))
+        mode.attrs["LAMBDA"] = np.array([4.0])
+    from apeGmsh.results.readers._ladruno_from_mpco import _holds_only_modes
+
+    with h5py.File(src, "r") as f:
+        assert _holds_only_modes(f["MODEL_STAGE[1]"])
+    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_a_bare_convert_refuses_an_unstaged_program_as_before(fx, tmp_path) -> None:
+    """Without the private flag an unstaged program pairs with no stage,
+    as on main."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno", "declares 0 stage",
+             exc=StageKindRefused, model_h5=model)
+
+
+def test_the_private_path_still_converts_a_staged_program(fx, tmp_path) -> None:
+    (dst,) = _convert(fx["springs_src"], tmp_path / "out.ladruno",
+                      fx["springs"], _implicit_stage=True)
+    with h5py.File(dst, "r") as d:
+        assert d["MODEL_STAGE[1]"].attrs["KIND"][0] == b"static"
+
+
 def test_groups_take_their_quadrature_from_the_source_or_the_catalog(
     fx, tmp_path,
 ) -> None:
@@ -593,10 +689,11 @@ def test_a_partitioned_set_converts_part_for_part(fx, tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _refuses(src: Path, dst: Path, match: str, **kw: Any) -> None:
+def _refuses(src: Path, dst: Path, match: str, *,
+             exc: "type[Exception]" = MPCOConversionRefused, **kw: Any) -> None:
     before = _sha(src)
     listing = _left_behind(dst.parent)
-    with pytest.raises(MPCOConversionRefused, match=match):
+    with pytest.raises(exc, match=match):
         convert_mpco(src, dst, **kw)
     assert _sha(src) == before
     assert _left_behind(dst.parent) == listing
