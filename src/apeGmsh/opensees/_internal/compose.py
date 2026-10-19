@@ -863,6 +863,7 @@ def _replay_into(
     stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
     commands: "Sequence[Any]" = (),
     equation_constraints: "Sequence[Any]" = (),
+    flat: bool = False,
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -1338,7 +1339,7 @@ def _replay_into(
     # the H5 emitter accumulates via its constraints / numberer /
     # system / test / algorithm / integrator / analysis methods.
     if analysis_attrs:
-        _replay_analysis_chain(emitter, analysis_attrs)
+        _replay_analysis_chain(emitter, analysis_attrs, flat=flat)
     if analyze_call is not None:
         steps, dt = analyze_call
         if dt is None:
@@ -1396,7 +1397,7 @@ def _from_token(token: str) -> "int | float | str":
 
 
 def _replay_analysis_chain(
-    emitter: Any, attrs: "dict[str, Any]",
+    emitter: Any, attrs: "dict[str, Any]", *, flat: bool = False,
 ) -> None:
     """Replay an analysis-chain flat dict onto ``emitter``.
 
@@ -1406,6 +1407,14 @@ def _replay_analysis_chain(
     present.  ``*_args`` tuples are int-recovered (see
     :func:`_int_recover`) so a round-tripped ``NormDispIncr`` etc.
     re-renders byte-identically to the bridge.
+
+    ``flat=True`` (#1832) drops the ``numberer`` and the ``system``
+    whose attrs carry a ``*_runtime_fallback``: the ADR 0027 INV-5
+    auto-chain only a partitioned emit writes. ``apeSees.tcl(flat=True)``
+    forces the single-domain emit, which never auto-emits them, so the
+    flat replay of a partitioned archive matches that deck. A numberer
+    or system without a fallback attr was declared by the user and is
+    replayed either way.
     """
     if "handler" in attrs:
         args = _int_recover(attrs.get("handler_args", ()))
@@ -1420,9 +1429,10 @@ def _replay_analysis_chain(
     if "numberer" in attrs:
         numberer_fb = attrs.get("numberer_runtime_fallback")
         if numberer_fb is not None:
-            emitter.parallel_runtime_fallback_numberer(
-                attrs["numberer"], str(numberer_fb),
-            )
+            if not flat:
+                emitter.parallel_runtime_fallback_numberer(
+                    attrs["numberer"], str(numberer_fb),
+                )
         else:
             emitter.numberer(attrs["numberer"])
     if "system" in attrs:
@@ -1430,9 +1440,10 @@ def _replay_analysis_chain(
         if system_fb is not None:
             # The INV-5 auto-emit is the only fallback producer and
             # never carries system args.
-            emitter.parallel_runtime_fallback_system(
-                attrs["system"], str(system_fb),
-            )
+            if not flat:
+                emitter.parallel_runtime_fallback_system(
+                    attrs["system"], str(system_fb),
+                )
         else:
             emitter.system(
                 attrs["system"],
@@ -1514,6 +1525,7 @@ def _replay_staged_into(
     stages: "Sequence[Any]",
     commands: "Sequence[Any]" = (),
     program: "Sequence[Any]" = (),
+    flat: bool = False,
     **replay_kwargs: Any,
 ) -> None:
     """Re-emit a STAGED archive's deck (ADR 0055 P2.3) onto ``emitter``.
@@ -1534,6 +1546,9 @@ def _replay_staged_into(
     go to the prefix, and a stage's ``profiler`` rows bracket its
     ``analyze``. ``program`` (the ``/opensees/program`` runs) says which
     side of the analyze each row was emitted on.
+
+    ``flat`` reaches every analysis chain, the global one and each
+    stage's (see :func:`_replay_analysis_chain`).
     """
     from .build.records import ActivateAbsorbingRecord
     from .build.stage_emit import (
@@ -1650,6 +1665,7 @@ def _replay_staged_into(
         initial_stress_tags=tags,
         stage_mp_keys=_stage_mp_keys(stages),
         commands=tuple(c for c in commands if int(c.stage) < 0),
+        flat=flat,
         **replay_kwargs,
     )
     stage_commands: "dict[int, list[Any]]" = {}
@@ -1924,7 +1940,7 @@ def _replay_staged_into(
 
         # stage analysis chain.
         if st.chain_attrs:
-            _replay_analysis_chain(emitter, dict(st.chain_attrs))
+            _replay_analysis_chain(emitter, dict(st.chain_attrs), flat=flat)
 
         # load patterns (slot 16, AFTER the chain).
         for p in load_patterns:

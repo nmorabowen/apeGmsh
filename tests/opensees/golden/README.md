@@ -176,7 +176,9 @@ deliberate (T ruling on #1797): the goldens pin what the bridge emits, and
 giving every fixture a real `FEMData` would regenerate all 86 cells for no
 gain in what they check. The R1b round-trip oracle
 (`test_roundtrip_oracle.py`) therefore replays the real-`FEMData` builders
-in `tests/opensees/h5`, not these cells. The one oracle row that reaches a
+in `tests/opensees/h5`, not these cells. It compares `ops.tcl(flat=True)`
+with `build("tcl", flat=True)`, which leaves out the partitioned
+numberer/system auto-chain a partitioned archive records (#1832). The one oracle row that reaches a
 corpus model (`test_h5_decl_params::_broad_partitioned`, through
 `build_model`) stays a class-S row for that reason.
 

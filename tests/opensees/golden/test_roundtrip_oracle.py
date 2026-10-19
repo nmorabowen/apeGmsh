@@ -3,9 +3,13 @@
 For every model in :data:`CORPUS`, the deck the bridge writes and the deck
 replayed from its own archive must be equal byte for byte:
 ``ops.tcl(path, flat=True)`` against
-``OpenSeesModel.from_h5(ops.h5()).build("tcl")``. ``flat=True`` because a
-partitioned archive replays a single-process deck (the documented degrade
-that ``test_h5_commands_program.py`` already pins).
+``OpenSeesModel.from_h5(ops.h5()).build("tcl", flat=True)``. ``flat=True`` on
+the bridge because a partitioned archive replays a single-process deck (the
+documented degrade that ``test_h5_commands_program.py`` already pins), and on
+the replay because a partitioned archive records the ADR 0027 INV-5
+numberer/system auto-chain, which the bridge's flat emit never writes: the
+replay's ``flat=True`` drops exactly those recorded lines (#1832), so the
+two decks are the same mode.
 
 **The corpus is the replayable one.** These are the ``apeSees`` builders that
 already live in ``tests/opensees/h5``. Each is imported read-only and called
@@ -20,9 +24,10 @@ header records that.
 - Class B: the same lines in another order, once every number is
   normalised (so float text may differ too), **and** the replayed deck
   still declares every tag before a line uses it (K2c, #1816).
-- Class C: a semantic difference, cited to its open issue (#1832), or a
+- Class C: a semantic difference, cited to its open issue (``#NNNN``), or a
   reorder that uses a tag before its declaration, which aborts the deck
-  (#1814).
+  (#1814). No row is class C today; :func:`test_a_c_row_is_enforced` keeps
+  the class enforced on a synthetic C diff.
 - Class S: the model is not replayable, and replay raises the named error
   (#1797).
 
@@ -270,10 +275,12 @@ def _emit(model: Model, out_dir: Path) -> tuple[str, Path]:
     return _canon(deck.read_bytes().decode("utf-8"), out_dir), archive
 
 
-def _replay(archive: Path) -> str:
+def _replay(archive: Path, *, flat: bool = True) -> str:
+    """The replayed deck (canonical text). ``flat=False`` only for the
+    synthetic C fixture: the deck as replay wrote it before #1832."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        replay = OpenSeesModel.from_h5(str(archive)).build("tcl")
+        replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=flat)
     assert isinstance(replay, str)
     return _canon(replay, archive.parent)
 
@@ -759,16 +766,43 @@ def test_every_row_names_a_corpus_model() -> None:
     assert not orphans, f"ledger rows for no corpus model: {orphans}"
 
 
+def _row_errors(w: Waiver) -> list[str]:
+    """What a ledger row's citation and pin get wrong (empty: nothing)."""
+    errors: list[str] = []
+    if w.klass == "C":
+        if not _cited_issues(w.reason):
+            errors.append(f"C row cites no #NNNN: {w}")
+        if "#1798" in w.reason and not re.search(
+                r"#1798 item [123]\b", w.reason):
+            errors.append(f"#1798 cited with no item: {w}")
+    if w.klass == "S" and not ("#1797" in w.reason and w.pin in _S_ERRORS):
+        errors.append(f"S row lacks #1797 or a known error pin: {w}")
+    if w.klass in "ABC" and not re.fullmatch(r"[0-9a-f]{16}", w.pin):
+        errors.append(f"pin is not sha256[:16]: {w}")
+    return errors
+
+
+@pytest.mark.parametrize(("row", "ok"), [
+    (_W("m", "C", "1" * 16, "#1814: x"), True),
+    (_W("m", "C", "1" * 16, "order"), False),
+    (_W("m", "C", "1" * 16, "#1798 item 2"), True),
+    (_W("m", "C", "1" * 16, "#1798"), False),
+    (_W("m", "S", _NZ, "#1797"), True),
+    (_W("m", "S", _NZ, "stub"), False),
+    (_W("m", "S", "KeyError:other", "#1797"), False),
+    (_W("m", "A", "1" * 16, "r"), True),
+    (_W("m", "B", "nothex", "r"), False),
+], ids=["C-cited", "C-uncited", "C-1798-item", "C-1798-no-item", "S-ok",
+        "S-uncited", "S-unknown-error", "A-ok", "B-bad-pin"])
+def test_the_row_rules_reject_an_uncited_row(row: Waiver, ok: bool) -> None:
+    """The rules :func:`test_rows_cite_their_issue` applies, on synthetic
+    rows: with no C row in the ledger (#1832), they still assert."""
+    assert (not _row_errors(row)) is ok, _row_errors(row)
+
+
 def test_rows_cite_their_issue() -> None:
-    for w in _read_ledger()[1]:
-        if w.klass == "C":
-            assert _cited_issues(w.reason), f"C row cites no #NNNN: {w}"
-            if "#1798" in w.reason:
-                assert re.search(r"#1798 item [123]\b", w.reason), w
-        if w.klass == "S":
-            assert "#1797" in w.reason and w.pin in _S_ERRORS, w
-        if w.klass in "ABC":
-            assert re.fullmatch(r"[0-9a-f]{16}", w.pin), w
+    errors = [e for w in _read_ledger()[1] for e in _row_errors(w)]
+    assert not errors, "\n".join(errors)
 
 
 def test_ledger_header_names_the_deadline_and_the_stub_corpus() -> None:
@@ -784,8 +818,30 @@ _PASSING = next(m for m in CORPUS if m.id ==
                 "test_h5_commands_program::_frame[rayleigh=False,modal=False]")
 _WAIVED_A = next(m for m in CORPUS if m.id ==
                  "test_h5_decls::_flat_frame[named=False]")
-_SEMANTIC = next(m for m in CORPUS if m.id ==
-                 "test_h5_partitions_roundtrip::_build_bridge")
+#: The one corpus model whose archive records the ADR 0027 INV-5 auto-chain
+#: (``*_runtime_fallback`` attrs). Its flat replay leaves float text only (an
+#: A row); its non-flat replay, what the oracle compared before #1832, adds
+#: the auto-chain lines: a real semantic diff, the synthetic C fixture.
+_PARTITIONED = next(m for m in CORPUS if m.id ==
+                    "test_h5_partitions_roundtrip::_build_bridge")
+
+
+def _semantic(out_dir: Path) -> tuple[str, str, Waiver]:
+    """The bridge deck, the non-flat replay of :data:`_PARTITIONED`, and a
+    C row pinned to their diff."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bridge, archive = _emit(_PARTITIONED, out_dir)
+    replay = _replay(archive, flat=False)
+    row = Waiver(_PARTITIONED.id, "C", _pin(_diff(bridge, replay)),
+                 "#1832: synthetic, the non-flat replay")
+    return bridge, replay, row
+
+
+def _unflat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route the oracle's replay through ``build("tcl")`` (no ``flat``)."""
+    real_replay = _replay
+    monkeypatch.setattr(sys.modules[__name__], "_replay",
+                        lambda archive: real_replay(archive, flat=False))
 
 
 def test_a_differing_model_with_no_row_fails(tmp_path: Path) -> None:
@@ -799,13 +855,74 @@ def test_a_stale_row_fails(tmp_path: Path) -> None:
         _check(_PASSING, bogus, tmp_path)
 
 
-def test_a_b_label_on_a_semantic_diff_fails(tmp_path: Path) -> None:
-    """The class is derived: a C diff labelled B fails, even with its pin."""
-    w = _waivers()[_SEMANTIC.id]
-    assert w.klass == "C"
-    fake = Waiver(w.model, "B", w.pin, w.reason)
-    with pytest.raises(AssertionError, match="the ledger says class B, the diff is class C"):
-        _check(_SEMANTIC, fake, tmp_path)
+#: The ADR 0027 INV-5 auto-chain as ``TclEmitter`` writes it: what the
+#: non-flat replay of :data:`_PARTITIONED` adds and ``flat=True`` drops.
+_AUTO_CHAIN = (
+    "# ParallelPlain only exists in OpenSeesMP; fall back to RCM under "
+    "single-process OpenSees.",
+    "if {[catch {numberer ParallelPlain} _err]} { numberer RCM }",
+    "# Mumps requires OpenSeesMP + MPI; fall back to UmfPack under "
+    "single-process OpenSees.",
+    "if {[catch {system Mumps} _err]} { system UmfPack }",
+)
+
+
+def test_the_non_flat_replay_is_a_semantic_diff(tmp_path: Path) -> None:
+    """The synthetic C fixture is what #1832 removed: the non-flat replay
+    is the flat one plus exactly the four auto-chain lines, in one run."""
+    bridge, unflat, _row = _semantic(tmp_path / "unflat")
+    (tmp_path / "flat").mkdir()
+    _bridge, archive = _emit(_PARTITIONED, tmp_path / "flat")
+    flat = _replay(archive)
+    assert _classify(bridge, unflat) == "C"
+    assert _classify(bridge, flat) == "A"
+    u, f = unflat.splitlines(), flat.splitlines()
+    at = u.index(_AUTO_CHAIN[0])
+    assert tuple(u[at:at + len(_AUTO_CHAIN)]) == _AUTO_CHAIN
+    assert u[:at] + u[at + len(_AUTO_CHAIN):] == f
+
+
+def test_a_c_row_is_enforced(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no C row in the ledger, a synthetic one: a C row pinned to the
+    non-flat replay's diff passes the oracle, and the same row fails once
+    its pin no longer matches the diff."""
+    _bridge, _unflat_deck, row = _semantic(tmp_path / "pin")
+    _unflat(monkeypatch)
+    (tmp_path / "ok").mkdir()
+    _check(_PARTITIONED, row, tmp_path / "ok")
+    moved = dataclasses.replace(row, pin="f" * 16)
+    (tmp_path / "moved").mkdir()
+    with pytest.raises(AssertionError, match="differs in a new way"):
+        _check(_PARTITIONED, moved, tmp_path / "moved")
+
+
+def test_a_b_label_on_a_semantic_diff_fails(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The class is derived: a C diff labelled B fails, even with its pin
+    (on the synthetic C fixture, since no ledger row is C)."""
+    _bridge, _unflat_deck, row = _semantic(tmp_path / "pin")
+    _unflat(monkeypatch)
+    fake = dataclasses.replace(row, klass="B")
+    (tmp_path / "b").mkdir()
+    with pytest.raises(AssertionError,
+                       match="the ledger says class B, the diff is class C"):
+        _check(_PARTITIONED, fake, tmp_path / "b")
+
+
+def test_without_flat_the_partitioned_row_fails(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof (#1832): replayed without ``flat=True``, the committed
+    A row of ``_build_bridge`` fails, because the diff is class C."""
+    w = _waivers()[_PARTITIONED.id]
+    assert w.klass == "A"
+    (tmp_path / "flat").mkdir()
+    _check(_PARTITIONED, w, tmp_path / "flat")
+    _unflat(monkeypatch)
+    (tmp_path / "unflat").mkdir()
+    with pytest.raises(AssertionError,
+                       match="the ledger says class A, the diff is class C"):
+        _check(_PARTITIONED, w, tmp_path / "unflat")
 
 
 def test_a_changed_diff_fails(tmp_path: Path) -> None:
