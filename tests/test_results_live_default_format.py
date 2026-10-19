@@ -174,8 +174,11 @@ def test_fork_records_its_own_file_stamps_it_and_reads_it(files, tmp_path) -> No
     import h5py
 
     with h5py.File(target, "r") as f, h5py.File(files["model"], "r") as m:
-        assert str(f["INFO/PROVENANCE"].attrs["model_hash"]) == \
-            str(m["meta/lineage"].attrs["model_hash"])
+        prov = f["INFO/PROVENANCE"].attrs
+        assert str(prov["model_hash"]) == str(m["meta/lineage"].attrs["model_hash"])
+        # G10 (#2208): the build of the module that ran, from ladrunoBuild.
+        assert str(prov["opensees_build_sha"]) == _SHA
+        assert str(prov["opensees_backend"]) == "ladruno"
 
 
 def test_a_fork_stamp_refusal_warns_once_and_reads_unstamped(
@@ -186,7 +189,7 @@ def test_a_fork_stamp_refusal_warns_once_and_reads_unstamped(
         ProvenanceStampRefused,
     )
 
-    def refuse(path: Any, model_h5: Any) -> None:
+    def refuse(path: Any, model_h5: Any, **kw: Any) -> None:
         raise ProvenanceStampRefused(f"{path}: locked by another process")
 
     monkeypatch.setattr(_ladruno_live, "stamp_provenance", refuse)

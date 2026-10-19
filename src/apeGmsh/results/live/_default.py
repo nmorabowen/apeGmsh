@@ -8,7 +8,8 @@ asks the bound OpenSees module what it is
 Build           Records                     :meth:`LiveDefault.results`
 ==============  ==========================  =================================
 fork            the fork's own results      stamps ``INFO/PROVENANCE`` with
-                file, ``<stem>.ladruno``    ``model_h5``'s pairing (a refusal
+                file, ``<stem>.ladruno``    ``model_h5``'s pairing and the
+                                            build that solved it (a refusal
                                             warns and is skipped), then opens
                                             it with ``Results.from_ladruno``
 stock with      ``<stem>.mpco``             ``Results.from_mpco``, after one
@@ -173,6 +174,7 @@ class LiveDefault:
         self._tag: Optional[int] = None
         self._live: Optional[LiveRecorders] = None
         self._model: Optional[OpenSeesModel] = None
+        self._build = "unknown"
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -204,7 +206,12 @@ class LiveDefault:
             self._ops = get_ops()
         if self._path.parent and not self._path.parent.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)
-        if backend_info_of(self._ops).kind == "fork":
+        info = backend_info_of(self._ops)
+        if info.kind == "fork":
+            # The build of the module this run solves on: what
+            # get_backend_build() answers for the bridge's own module, and
+            # still right when the caller passes another one.
+            self._build = info.build or "unknown"
             self._enter_fork()
         else:
             self._enter_stock()
@@ -329,7 +336,7 @@ class LiveDefault:
         target = self._target
         assert target is not None
         if self._route == "fork":
-            refused = stamp_fork_file(target, self._model_h5)
+            refused = stamp_fork_file(target, self._model_h5, self._build)
             if refused is not None:
                 warnings.warn(DefaultRouteWarning(
                     f"emit_default: {target} was left unstamped and is read "

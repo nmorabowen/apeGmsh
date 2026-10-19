@@ -105,9 +105,14 @@ def test_fork_route_records_stamps_and_reads_its_own_file(tmp_path) -> None:
         _assert_tip(res, tip)
     finally:
         res.close()
+    from apeGmsh.opensees.emitter.live import get_ops
+
     with h5py.File(run.path, "r") as f, h5py.File(model, "r") as m:
-        assert str(f["INFO/PROVENANCE"].attrs["model_hash"]) == \
-            str(m["meta/lineage"].attrs["model_hash"])
+        prov = f["INFO/PROVENANCE"].attrs
+        assert str(prov["model_hash"]) == str(m["meta/lineage"].attrs["model_hash"])
+        # G10 (#2208): the default route stamps the build that solved it.
+        assert str(prov["opensees_build_sha"]) == str(get_ops().ladrunoBuild()).strip()
+        assert str(prov["opensees_backend"]) == "ladruno"
 
 
 def test_stock_in_process_keeps_the_mpco_and_warns_once(tmp_path) -> None:

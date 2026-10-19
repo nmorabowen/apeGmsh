@@ -70,8 +70,15 @@ def existing_fork_files(target: Path) -> "list[Path]":
     return found
 
 
-def stamp_fork_file(target: Path, model_h5: Path) -> Optional[str]:
+def stamp_fork_file(
+    target: Path, model_h5: Path, build: str = "unknown",
+) -> Optional[str]:
     """Stamp ``target`` with ``model_h5``'s pairing; the refusal text, if any.
+
+    ``build`` is the ``ladrunoBuild`` hash of the engine that ran the
+    analysis in this process (``"unknown"`` when it answers none): the file
+    does not carry it, so only this in-session caller can stamp it as
+    ``opensees_build_sha`` (§7b.1, G10 #2208).
 
     ``None`` when the stamp was written (or already equal). A
     :class:`ProvenanceStampRefused` is returned as its message, so the
@@ -79,7 +86,7 @@ def stamp_fork_file(target: Path, model_h5: Path) -> Optional[str]:
     else is caught.
     """
     try:
-        stamp_provenance(target, model_h5)
+        stamp_provenance(target, model_h5, opensees_build_sha=build)
     except ProvenanceStampRefused as e:
         return str(e)
     return None

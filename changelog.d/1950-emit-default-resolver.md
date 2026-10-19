@@ -6,7 +6,10 @@ the bound build with `backend_info_of` and picks the recorder:
 
 - **The Ladruno fork:** the fork's own recorder writes `<path>.ladruno`.
   `run.results()` stamps `INFO/PROVENANCE` from `model_h5` and opens the file
-  with `Results.from_ladruno`. If the file refuses the stamp, it warns once
+  with `Results.from_ladruno`. The stamp includes the build hash of the
+  engine that ran the analysis: G10's `opensees_build_sha` (#2208), read
+  from `ladrunoBuild()` of the bound module, or `"unknown"` when it answers
+  none. If the file refuses the stamp, it warns once
   and reads the file unstamped (§7b.1 rule 3).
 - **Stock openseespy with MPCO:** writes `<path>.mpco` and reads it with
   `Results.from_mpco`, after one `DefaultRouteWarning`. It does not convert
