@@ -47,6 +47,7 @@ from apeGmsh.mesh.FEMData import (
     NodeComposite,
 )
 from apeGmsh.results import MPCOConversionRefused, Results, convert_mpco
+from apeGmsh.results.readers._ladruno_from_mpco import StageKindRefused
 from apeGmsh.results.writers import StageNamesOmittedWarning
 
 _FIX = Path(__file__).parent / "fixtures" / "results"
@@ -482,7 +483,7 @@ def test_an_unstaged_program_with_one_analysis_is_one_implicit_stage(
     takes the call's kind, and every slab reads as the source does."""
     model = fx[f"flat_{kind}"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    (dst,) = _convert(src, tmp_path / "out.ladruno", model)
+    (dst,) = _convert(src, tmp_path / "out.ladruno", model, _implicit_stage=True)
     with h5py.File(dst, "r") as d:
         stages = sorted(g for g in d if g.startswith(_STAGE))
         assert [d[g].attrs["KIND"][0] for g in stages] == [kind.encode()]
@@ -511,7 +512,28 @@ def test_an_unstaged_program_whose_kind_is_not_a_fact_refuses(
 ) -> None:
     model = fx[f"flat_{name}"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    _refuses(src, tmp_path / "out.ladruno", match, model_h5=model)
+    _refuses(src, tmp_path / "out.ladruno", match, exc=StageKindRefused,
+             model_h5=model, _implicit_stage=True)
+
+
+def test_an_unknown_analysis_type_refuses(fx, tmp_path) -> None:
+    """One call whose type names no kind: never defaulted to a kind."""
+    model = Path(shutil.copy(fx["flat_static"], tmp_path / "bogus.h5"))
+    with h5py.File(model, "r+") as f:
+        f["opensees/analysis"].attrs["analysis"] = "Bogus"
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno", "names no known kind",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
+
+
+def test_a_bare_convert_refuses_an_unstaged_program_as_before(fx, tmp_path) -> None:
+    """Without the private flag (passed by read_deck_mpco alone) an
+    unstaged program pairs with no stage: the in-process archive cannot be
+    told from a deck's, so the public converter never guesses."""
+    model = fx["flat_static"]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
+    _refuses(src, tmp_path / "out.ladruno", "declares 0 stage",
+             exc=StageKindRefused, model_h5=model)
 
 
 def test_an_unstaged_program_never_spans_two_mpco_stages(fx, tmp_path) -> None:
@@ -521,7 +543,7 @@ def test_an_unstaged_program_never_spans_two_mpco_stages(fx, tmp_path) -> None:
     with h5py.File(src, "r+") as f:
         f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
     _refuses(src, tmp_path / "out.ladruno", "one implicit stage at most",
-             model_h5=model)
+             model_h5=model, _implicit_stage=True)
 
 
 def test_groups_take_their_quadrature_from_the_source_or_the_catalog(
@@ -687,10 +709,11 @@ def test_a_partitioned_set_converts_part_for_part(fx, tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _refuses(src: Path, dst: Path, match: str, **kw: Any) -> None:
+def _refuses(src: Path, dst: Path, match: str, *,
+             exc: "type[Exception]" = MPCOConversionRefused, **kw: Any) -> None:
     before = _sha(src)
     listing = _left_behind(dst.parent)
-    with pytest.raises(MPCOConversionRefused, match=match):
+    with pytest.raises(exc, match=match):
         convert_mpco(src, dst, **kw)
     assert _sha(src) == before
     assert _left_behind(dst.parent) == listing

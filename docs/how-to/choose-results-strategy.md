@@ -207,10 +207,12 @@ results = run.results()
 | stock, with MPCO | `run.mpco` | `Results.from_mpco`, after one `DefaultRouteWarning` |
 | pip, no MPCO | classic `.out` files in `run_out/` | `Results.from_recorders`, after one `DefaultRouteWarning` |
 
-The stock MPCO file is not converted to `.ladruno`. An unstaged run maps to
-one stage, and that stage's kind (static or transient) has to be a fact.
-Your loop drives openseespy directly, so a `loadConst` or a second
-`opspy.analysis(...)` inside the block never reaches `model.h5`.
+The stock MPCO file is not converted to `.ladruno`, and it stays on
+`from_mpco`. An unstaged run maps to one stage, and that stage's kind
+(static or transient) has to be a fact. Your loop drives openseespy
+directly, so a `loadConst` or a second `opspy.analysis(...)` inside the
+block never reaches `model.h5`. `read_deck_mpco` below does not apply to
+an in-process run.
 `emit_default` refuses a rerun onto an existing `run.ladruno` unless you
 pass `overwrite=True`. It has no route for modal records.
 
@@ -266,13 +268,15 @@ Run `model.tcl` under an OpenSees that has the MPCO recorder, then:
 results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
 ```
 
-To read the run as `.ladruno`, call
-`read_deck_mpco("run.mpco", model_h5="model.h5")` from
-`apeGmsh.results.live` instead. It converts the file beside itself and
-keeps the `.mpco`. An unstaged deck converts only when `model.h5`'s program
-holds exactly one `analysis` declaration, so that the stage's kind is a
-fact. Otherwise it reads the `.mpco` with `from_mpco`, after one warning
-that names the reason.
+`read_deck_mpco("run.mpco", model_h5="model.h5")`, from
+`apeGmsh.results.live`, reads the run as `.ladruno` instead. It is only for
+a `.mpco` written by running the bridge's own exported deck (`ops.py` or
+`ops.tcl`) out of process, as emitted. It converts the file beside itself
+and keeps the `.mpco`. When the stage kinds are not a fact, it reads the
+`.mpco` with `from_mpco`, after one warning that names the reason. Any
+other refusal raises: an archive of another model, or an incomplete
+partition set. An in-process run is not a deck, so read its `.mpco` with
+`from_mpco`.
 
 ## The read side is identical
 

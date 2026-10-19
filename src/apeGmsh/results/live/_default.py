@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
-from ..readers._ladruno_from_mpco import MPCOConversionRefused
+from ..readers._ladruno_from_mpco import StageKindRefused
 from ..readers._ladruno_live import (
     FORK_SUFFIX,
     convert_and_open,
@@ -66,6 +66,10 @@ __all__ = ["DefaultRouteWarning", "LiveDefault", "read_deck_mpco"]
 _MPCO_SUFFIX = ".mpco"
 #: The one stage the classic-recorder route opens over the whole block.
 _STAGE = "analysis"
+#: Categories the classic-recorder route skips (``LiveRecorders``), and
+#: the prefix of its per-record skip warning.
+_UNRECORDED = ("fibers", "layers")
+_SKIP_PREFIX = "LiveRecorders: skipping record"
 #: Route names, as :attr:`LiveDefault.route` reports them.
 ROUTES = ("fork", "mpco", "recorders")
 
@@ -89,19 +93,24 @@ def read_deck_mpco(
 ) -> Results:
     """Read the ``.mpco`` of a deck the bridge emitted, on the default route.
 
+    ``path`` is the ``.mpco`` written by running the bridge's own exported
+    deck (``ops.py`` / ``ops.tcl``) out of process, as it was emitted, and
+    ``model_h5`` the archive of that bridge. An in-process run (``ops.run()``
+    then your own ``opspy.analyze`` loop) is not a deck: read its ``.mpco``
+    with :meth:`Results.from_mpco`, or record it with
+    :meth:`ResolvedRecorderSpec.emit_default`.
+
     The ``.mpco`` (or any part of a partitioned set) converts to the fork's
     format beside it, which is then opened; the ``.mpco`` is always kept.
-    The conversion maps a program with no ``ops.stage`` block to one stage
-    only when ``model_h5``'s ``/opensees/program`` holds exactly one
-    ``analysis`` call. When it refuses (several calls, no call, an unknown
-    kind, stages that do not pair), the ``.mpco`` is read with
-    :meth:`Results.from_mpco` after one :class:`DefaultRouteWarning` that
-    quotes the refusal.
-
-    Pass only the output of a deck run as it was emitted: the rule trusts
-    ``model_h5`` to be the program that ran, which an in-process run is not
-    (use :meth:`ResolvedRecorderSpec.emit_default` there). A converted file
-    from an earlier run refuses unless ``overwrite=True``.
+    It is the one caller of ``convert_mpco``'s private implicit-stage path,
+    which maps a program with no ``ops.stage`` block to one stage only when
+    the kind is a fact. A refusal about stage kinds
+    (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`)
+    reads the ``.mpco`` with :meth:`Results.from_mpco` after one
+    :class:`DefaultRouteWarning` that quotes it. Every other refusal (the
+    archive is another model's, an incomplete partition set, a staging
+    directory in the way) raises. A converted file from an earlier run
+    refuses unless ``overwrite=True``.
     """
     mpco, model = Path(path), Path(model_h5)
     existing = existing_fork_files(fork_target_of(mpco))
@@ -112,7 +121,7 @@ def read_deck_mpco(
         )
     try:
         return convert_and_open(mpco, model, overwrite=overwrite)
-    except MPCOConversionRefused as e:
+    except StageKindRefused as e:
         warnings.warn(DefaultRouteWarning(
             f"read_deck_mpco: {mpco} was not converted and is read with "
             f"Results.from_mpco: {e}"), stacklevel=2)
@@ -259,11 +268,14 @@ class LiveDefault:
         if target.exists() and not existed:
             target.unlink()
         out = target.parent / f"{target.stem}_out"
+        skipped = [r.name for r in self._spec.records
+                   if r.category in _UNRECORDED]
+        dropped = (f" Not recorded on this route: {skipped}."
+                   if skipped else "")
         warnings.warn(DefaultRouteWarning(
             f"emit_default: this OpenSees build has no MPCO recorder "
-            f"({reason}); recording classic recorder files in {out} instead "
-            "(one stage over the whole block; fiber and layer records are "
-            "not recorded on this route)."), stacklevel=3)
+            f"({reason}); recording classic recorder files in {out} instead, "
+            f"one stage over the whole block.{dropped}"), stacklevel=3)
         self._model = OpenSeesModel.from_h5(self._model_h5)
         live = LiveRecorders(self._spec, out, ops=self._ops, model=self._model)
         live.__enter__()
@@ -272,7 +284,7 @@ class LiveDefault:
             # The classic-recorder route's own default kind, as
             # emit_recorders and from_recorders already use it; the
             # program does not state the kind of an in-process block.
-            live.begin_stage(_STAGE, kind="transient")
+            _begin_quietly(live)
         except BaseException:
             live.__exit__(None, None, None)
             self._live = None
@@ -351,6 +363,21 @@ class LiveDefault:
     def tag(self) -> Optional[int]:
         """The recorder tag of the fork or MPCO route."""
         return self._tag
+
+
+def _begin_quietly(live: LiveRecorders) -> None:
+    """``live.begin_stage`` without its per-record fiber / layer skip
+    warnings: the route's one :class:`DefaultRouteWarning` names those
+    records already. Any other warning passes through unchanged."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        live.begin_stage(_STAGE, kind="transient")
+    for w in caught:
+        text = str(w.message)
+        if text.startswith(_SKIP_PREFIX) and any(
+                f"category={c!r}" in text for c in _UNRECORDED):
+            continue
+        warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
 
 def _is_tag(tag: object) -> bool:

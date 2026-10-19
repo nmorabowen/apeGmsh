@@ -48,8 +48,10 @@ program's ``ops.stage`` blocks, whose ``analysis`` record names the kind
 only modes is an ``eigen`` stage. Any other count or an unknown kind
 refuses.
 
-A program with no ``ops.stage`` blocks maps to one implicit stage only
-when its kind is a fact (the coordinator's implicit-stage rule, #1950):
+A program with no ``ops.stage`` blocks pairs with no stage. Only through
+the private ``_implicit_stage=True`` (passed by ``read_deck_mpco`` alone)
+does it map to one implicit stage, and only when its kind is a fact (the
+coordinator's implicit-stage rule, #1950):
 the ``.mpco`` holds exactly one ``MODEL_STAGE`` with step data, and the
 archive's ``/opensees/program`` holds exactly one ``analysis`` call, whose
 type (``/opensees/analysis@analysis``) names the kind. An archive that
@@ -99,7 +101,7 @@ import numpy as np
 if TYPE_CHECKING:
     import h5py
 
-__all__ = ["MPCOConversionRefused", "convert_mpco"]
+__all__ = ["MPCOConversionRefused", "StageKindRefused", "convert_mpco"]
 
 _STAGE_PREFIX = "MODEL_STAGE["
 _PART_RE = re.compile(r"^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$")
@@ -116,6 +118,18 @@ class MPCOConversionRefused(RuntimeError):
     program's, a partition set that is incomplete or inconsistent, and a
     source that is unreadable or holds something this converter does not
     know how to carry. The source is never modified.
+    """
+
+
+class StageKindRefused(MPCOConversionRefused):
+    """The refusal is about stage kinds alone: the file's stages cannot be
+    paired with the program's, or a kind is not a fact.
+
+    Every other refusal (the archive is another model's, a partition set
+    is incomplete, a target or staging directory is in the way, the source
+    holds what the converter cannot carry) is a plain
+    :class:`MPCOConversionRefused`. ``read_deck_mpco`` reads the ``.mpco``
+    on this one only and re-raises the rest.
     """
 
 
@@ -136,6 +150,7 @@ def convert_mpco(
     *,
     model_h5: "str | Path",
     overwrite: bool = False,
+    _implicit_stage: bool = False,
 ) -> list[Path]:
     """Convert an ``.mpco`` (or a partitioned set) into ``.ladruno``.
 
@@ -154,6 +169,12 @@ def convert_mpco(
         ``INFO/PROVENANCE`` pairs the converted file with it.
     overwrite
         Replace existing targets. Without it an existing target refuses.
+    _implicit_stage
+        Private; only ``read_deck_mpco`` passes it. Without it a program
+        with no ``ops.stage`` block pairs with no stage, so a ``.mpco`` with
+        step data refuses (the archive written before an in-process run
+        cannot be told from a deck's). With it, the implicit-stage rule in
+        the module docstring applies.
 
     Returns
     -------
@@ -173,7 +194,7 @@ def convert_mpco(
     a refusal; another failure (the stamp, the disk) re-raises its own
     error after the rollback.
     """
-    plan = _plan(Path(src), Path(dst), model_h5, overwrite)
+    plan = _plan(Path(src), Path(dst), model_h5, overwrite, _implicit_stage)
     if plan.staging.exists():  # left by an interrupted run; overwrite=True
         shutil.rmtree(plan.staging)
     try:
@@ -265,6 +286,7 @@ def _writer() -> str:
 
 def _plan(
     src: Path, dst: Path, model_h5: "Optional[str | Path]", overwrite: bool,
+    implicit_stage: bool = False,
 ) -> _Plan:
     if model_h5 is None:
         raise MPCOConversionRefused(
@@ -287,11 +309,21 @@ def _plan(
             f"({[p.name for p in sources]}). Every part of the run must be "
             "present."
         )
-    implicit = _implicit_kind(model, model_path) if not names else None
+    implicit = (_implicit_kind(model, model_path)
+                if implicit_stage and not names else None)
     stage_kinds: Optional[list[str]] = None
     unsupported: set[str] = set()
-    for source in sources:
-        part_kinds = _scan_part(source, names, kinds, unsupported, implicit)
+    for i, source in enumerate(sources):
+        try:
+            part_kinds = _scan_part(source, names, kinds, unsupported, implicit)
+        except StageKindRefused as e:
+            if i == 0:
+                raise
+            # Part 0 paired: a later part that does not is a set that
+            # disagrees with itself, not a question of kinds.
+            raise MPCOConversionRefused(
+                f"{e} (part 0, {sources[0].name}, paired; the parts are not "
+                "from one run)") from e
         if stage_kinds is None:
             stage_kinds = part_kinds
         elif part_kinds != stage_kinds:
@@ -408,7 +440,7 @@ def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
     try:
         kinds = [_stage_kind(s, model_path=model_h5) for s in stages]
     except ValueError as e:
-        raise MPCOConversionRefused(str(e)) from e
+        raise StageKindRefused(str(e)) from e
     ranks = {int(p.rank) for p in model.partitions()}
     return model, [str(s.name) for s in stages], kinds, ranks
 
@@ -532,7 +564,7 @@ def _scan_part(
         if implicit is not None and hosts:
             kind, reason = implicit
             if len(hosts) > 1:
-                raise MPCOConversionRefused(
+                raise StageKindRefused(
                     f"{source} holds {len(hosts)} MODEL_STAGE group(s) with "
                     f"step data ({hosts}) but the program declares no "
                     "ops.stage blocks; an unstaged program maps to one "
@@ -540,14 +572,14 @@ def _scan_part(
                     "Nothing was written."
                 )
             if kind is None:
-                raise MPCOConversionRefused(
+                raise StageKindRefused(
                     f"{source} holds one MODEL_STAGE with step data and the "
                     f"program declares no ops.stage blocks, but {reason}. A "
                     "KIND is never guessed. Nothing was written."
                 )
             return [kind if not m else "eigen" for m in mode_only]
         if len(hosts) != len(names):
-            raise MPCOConversionRefused(
+            raise StageKindRefused(
                 f"{source} holds {len(hosts)} MODEL_STAGE group(s) with "
                 f"step data ({hosts}) but the program declares "
                 f"{len(names)} stage(s) ({list(names)}). Stage kinds cannot "

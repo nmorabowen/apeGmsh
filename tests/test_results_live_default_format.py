@@ -37,7 +37,8 @@ from apeGmsh.mesh.FEMData import (
     NodeComposite,
 )
 from apeGmsh.opensees.opensees_model import OpenSeesModel
-from apeGmsh.results import Results, convert_mpco
+from apeGmsh.results import MPCOConversionRefused, Results, convert_mpco
+from apeGmsh.results.readers._ladruno_from_mpco import StageKindRefused
 from apeGmsh.results.live import DefaultRouteWarning, LiveDefault, read_deck_mpco
 from apeGmsh.results.readers._ladruno_live import fork_recorder_args
 from apeGmsh.results.spec._emit import mpco_ops_args
@@ -48,6 +49,7 @@ from apeGmsh.results.spec._resolved import (
 from tests.test_results_mpco_to_ladruno import (
     SPRINGS,
     _bridge_copy,
+    _frame_model,
     _unstaged_springs_model,
 )
 
@@ -61,7 +63,8 @@ def files(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     model = _unstaged_springs_model(tmp / "model.h5", ["static"])
     other = _unstaged_springs_model(tmp / "other.h5", ["static", "static"])
     mpco = _bridge_copy(SPRINGS, model, tmp / "src.mpco")
-    (fork,) = convert_mpco(mpco, tmp / "src.ladruno", model_h5=model)
+    (fork,) = convert_mpco(mpco, tmp / "src.ladruno", model_h5=model,
+                           _implicit_stage=True)
     global _SNAPSHOT
     _SNAPSHOT = OpenSeesModel.from_h5(model).lineage.fem_hash
     return {"model": model, "other": other, "mpco": mpco, "fork": fork}
@@ -202,7 +205,7 @@ def test_a_fork_stamp_refusal_warns_once_and_reads_unstamped(
 def test_a_real_stamp_refusal_is_skipped_too(files, tmp_path) -> None:
     """A file stamped for another archive refuses the stamp (§7b.1 rule 3)."""
     (stale,) = convert_mpco(files["mpco"], tmp_path / "stale.ladruno",
-                            model_h5=files["model"])
+                            model_h5=files["model"], _implicit_stage=True)
     run, _ = _run(ForkOps(stale), tmp_path / "run", files["other"])
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -247,6 +250,26 @@ def test_pip_falls_back_to_classic_recorders_with_one_warning(
     assert {a[0] for a in ops.recorder_calls[1:]} == {"Node"}
     assert ops.live == {}                              # nothing left registered
     assert sorted(ops.removed) == sorted(range(1, len(ops.recorder_calls)))
+
+
+def test_pip_names_skipped_fiber_records_in_its_one_warning(files, tmp_path) -> None:
+    """The classic route's per-record fiber skip folds into the one warning."""
+    spec = ResolvedRecorderSpec(fem_snapshot_id=_SNAPSHOT, records=(
+        *_spec().records,
+        ResolvedRecorderRecord(category="fibers", name="fib",
+                               components=("fiber_stress",), dt=None,
+                               n_steps=None, element_ids=np.array([100])),
+    ))
+    ops = FakeOps(mpco=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with spec.emit_default(tmp_path / "run", model_h5=files["model"],
+                               ops=ops) as run:
+            pass
+    assert run.route == "recorders"
+    assert _cats(caught) == [DefaultRouteWarning]
+    assert "Not recorded on this route: ['fib']" in str(caught[0].message)
+    assert ops.live == {}
 
 
 def test_a_probe_that_returns_no_tag_is_a_failed_probe(files, tmp_path) -> None:
@@ -358,6 +381,25 @@ def test_a_deck_mpco_with_one_analysis_converts_and_keeps_the_mpco(
     with pytest.raises(FileExistsError, match="overwrite=True"):
         read_deck_mpco(src, model_h5=files["model"])
     read_deck_mpco(src, model_h5=files["model"], overwrite=True).close()
+
+
+@pytest.mark.parametrize("case", ["another-model", "partition-gap"])
+def test_a_refusal_that_is_not_about_kinds_raises(files, case, tmp_path) -> None:
+    """Only a stage-kind refusal falls back; the rest re-raise, unwarned."""
+    if case == "another-model":
+        model = _frame_model(tmp_path / "frame.h5", [("only", "static")])
+        src, match = shutil.copy(files["mpco"], tmp_path / "deck.mpco"), "is not a run of"
+    else:
+        model = files["model"]
+        for i in (0, 2):
+            shutil.copy(files["mpco"], tmp_path / f"deck.part-{i}.mpco")
+        src, match = tmp_path / "deck.part-0.mpco", "contiguous"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(MPCOConversionRefused, match=match) as e:
+            read_deck_mpco(src, model_h5=model)
+    assert not isinstance(e.value, StageKindRefused)
+    assert DefaultRouteWarning not in _cats(caught)
 
 
 def test_a_two_declaration_deck_warns_once_and_reads_the_mpco(

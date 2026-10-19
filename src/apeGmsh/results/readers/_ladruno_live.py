@@ -104,11 +104,12 @@ def fork_target_of(mpco: Path) -> Path:
 def convert_and_open(mpco: Path, model_h5: Path, *, overwrite: bool) -> Results:
     """Convert a deck's ``.mpco`` beside itself, then open the result.
 
+    The one caller of ``convert_mpco``'s private implicit-stage path.
     :class:`~._ladruno_from_mpco.MPCOConversionRefused` propagates, before
     anything is written; the caller decides what a refusal reads instead.
     """
     targets = convert_mpco(mpco, fork_target_of(mpco), model_h5=model_h5,
-                           overwrite=overwrite)
+                           overwrite=overwrite, _implicit_stage=True)
     paths: "str | list[str | Path]" = (
         str(targets[0]) if len(targets) == 1 else list(targets))
     return Results.from_ladruno(paths, model_h5=str(model_h5))
