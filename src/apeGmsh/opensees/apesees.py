@@ -8556,6 +8556,35 @@ def _merge_homogeneous_fixes(
     return tuple(out) if changed else records
 
 
+@dataclass(frozen=True)
+class _DeckArchive:
+    """One archive an explicit :meth:`apeSees.h5` wrote (#2210)."""
+
+    path: str
+    kwargs: "dict[str, Any]"            # model_name / cuts / sweeps, as given
+    call: "tuple[int, float | None] | None"  # the analyze call it records
+    stamp: "tuple[int, int]"            # (mtime_ns, size) after the write
+
+
+def _deck_call(
+    steps: "int | None", dt: "float | None",
+) -> "tuple[int, float | None] | None":
+    """The ``analyze`` call a deck emits for ``analyze_steps`` / ``analyze_dt``
+    (``None`` when it emits none), normalised as the archive stores it."""
+    if steps is None:
+        return None
+    return int(steps), None if dt is None else float(dt)
+
+
+def _norm_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _file_stamp(path: str) -> "tuple[int, int]":
+    st = os.stat(path)
+    return st.st_mtime_ns, st.st_size
+
+
 class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
     """The OpenSees bridge.
 
@@ -8657,6 +8686,16 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # ``run=True``) that ``ops.results(path)`` reads; ``None`` until one
         # starts, unfinished until its subprocess exits cleanly.
         self._deck_run: DeckRun | None = None
+        # #2210: the ``analyze`` call ``(steps, dt)`` of the last deck
+        # ``py``/``tcl`` emitted (``None``: no deck yet, or a deck with no
+        # ``analyze_steps``) and of the deck ``_deck_run`` ran. ``_write_h5``
+        # archives it, so an unstaged deck's step count is a fact of the
+        # archive. Each explicit ``h5()`` archive is kept by normcased path;
+        # a later deck re-writes the ones still as written
+        # (:meth:`_sync_deck_archives`).
+        self._deck_analyze: "tuple[int, float | None] | None" = None
+        self._deck_run_analyze: "tuple[int, float | None] | None" = None
+        self._h5_archives: dict[str, _DeckArchive] = {}
         # Which OpenSees runtime the subprocess paths bind, and the live
         # fork expectation.  ``None`` → env-var / PATH fallback (the
         # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
@@ -10230,6 +10269,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         elif not stream:
             with open(path, "w", encoding="utf-8") as f:
                 emitter.write_to(f)
+        call = _deck_call(analyze_steps, analyze_dt)
+        self._deck_analyze = call
+        self._sync_deck_archives(bm, verb="ops.tcl")
         self._artifacts.after_emit(self)
 
         if not run:
@@ -10239,7 +10281,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             DECK_RUN_CAUSE.format(verb="ops.tcl(..., run=True)"))
         deck_run = begin_deck_run(
             self, bm, emitter, path, verb="ops.tcl(..., run=True)")
-        self._deck_run = deck_run
+        self._deck_run, self._deck_run_analyze = deck_run, call
         binary = _resolve_opensees_binary(bin, self._opensees)
         # OpenSees.exe exits 0 after a Tcl ``error`` (an aborted analyze
         # included), so the exit code proves nothing: a sibling driver
@@ -10742,6 +10784,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             emitter.profiler(_verb, *_vargs)
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)
+        call = _deck_call(analyze_steps, analyze_dt)
+        self._deck_analyze = call
+        self._sync_deck_archives(bm, verb="ops.py")
         self._artifacts.after_emit(self)
 
         if not run:
@@ -10751,7 +10796,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             DECK_RUN_CAUSE.format(verb="ops.py(..., run=True)"))
         deck_run = begin_deck_run(
             self, bm, emitter, path, verb="ops.py(..., run=True)")
-        self._deck_run = deck_run
+        self._deck_run, self._deck_run_analyze = deck_run, call
         python_bin = _resolve_python_binary(python, self._opensees)
         # PYTHONUNBUFFERED so the child's stdout streams live through the
         # pipe rather than block-buffering until exit (the tee + live
@@ -11032,10 +11077,17 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # initial-stress persists with its stage under
         # ``/opensees/stages`` (Phase 2).
 
-        self._write_h5(
-            path, self.build(), model_name=model_name, cuts=cuts,
-            sweeps=sweeps,
-        )
+        # The name resolved here, so a re-write through a temporary
+        # sibling keeps it.
+        kwargs: "dict[str, Any]" = dict(
+            model_name=model_name or _path_stem(path), cuts=tuple(cuts),
+            sweeps=tuple(sweeps))
+        self._write_h5(path, self.build(), **kwargs)
+        # #2210: a deck emitted after this archive re-writes it, so its
+        # ``analyze`` record follows the deck whichever runs first.
+        self._h5_archives[_norm_path(path)] = _DeckArchive(
+            path=str(path), kwargs=kwargs, call=self._deck_analyze,
+            stamp=_file_stamp(path))
 
     def _write_h5(
         self,
@@ -11067,6 +11119,14 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         name = model_name or _path_stem(path)
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
+        # #2210: the deck's ``analyze`` call, where the deck emits it (after
+        # every primitive): the one of the deck run ``ops.results`` reads
+        # when ``bm`` is that run's frozen model, else the last deck's.
+        run = self._deck_run
+        call = (self._deck_run_analyze if run is not None and bm is run.built
+                else self._deck_analyze)
+        if call is not None:
+            emitter.analyze(steps=call[0], dt=call[1])
         # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
         # ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove
@@ -11129,6 +11189,62 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             - len(bm.equation_constraint_records)
         )
         self._warn_ledger(counts)
+
+    def _sync_deck_archives(self, bm: BuiltModel, *, verb: str) -> None:
+        """Re-write each explicit ``h5()`` archive whose ``analyze`` record
+        is not the deck's just emitted (#2210).
+
+        The re-write is :meth:`_write_h5` over the deck's own ``bm`` into a
+        temporary sibling and an atomic replace, so the archive is the
+        deck's model with one ``analyze`` record, never two, and a failed
+        write leaves it as it was (and raises). An archive that is gone is
+        forgotten (the automatic write's temporary file among them). One
+        that changed since ``h5()`` wrote it is not touched: it warns by
+        name and is forgotten. Replacing an earlier deck's call warns too,
+        since a run of that deck no longer matches the archive.
+        """
+        import uuid
+
+        from .._atomic_io import replace_with_retry
+        from .emitter.h5 import H5FeatureDeferredWarning
+
+        call = self._deck_analyze
+        for key, rec in list(self._h5_archives.items()):
+            if rec.call == call:
+                continue
+            try:
+                stamp = _file_stamp(rec.path)
+            except FileNotFoundError:
+                del self._h5_archives[key]
+                continue
+            if stamp != rec.stamp:
+                del self._h5_archives[key]
+                warnings.warn(
+                    f"{verb}: {rec.path!r} changed after ops.h5 wrote it, so "
+                    f"it is not re-written; it records analyze {rec.call} and "
+                    f"this deck runs analyze {call}. read_deck_mpco will not "
+                    "convert this deck's run against it; write it again with "
+                    "ops.h5.", UserWarning, stacklevel=3)
+                continue
+            if rec.call is not None:
+                warnings.warn(
+                    f"{verb}: {rec.path!r} recorded an earlier deck's analyze "
+                    f"{rec.call}; it now records this deck's, {call}. A run "
+                    "of the earlier deck no longer matches it, and "
+                    "read_deck_mpco will not convert one.",
+                    UserWarning, stacklevel=3)
+            tmp = f"{rec.path}.tmp-{uuid.uuid4().hex}"
+            try:
+                with warnings.catch_warnings():
+                    # The explicit h5() already gave its deferred warning.
+                    warnings.simplefilter("ignore", H5FeatureDeferredWarning)
+                    self._write_h5(tmp, bm, **rec.kwargs)
+                replace_with_retry(tmp, rec.path)
+            finally:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            self._h5_archives[key] = replace(
+                rec, call=call, stamp=_file_stamp(rec.path))
 
     def _warn_ledger(self, counts: "Mapping[str, int]") -> None:
         """Warn once per distinct set of ``ledger`` verbs ``h5()`` dropped.
