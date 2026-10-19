@@ -12,7 +12,8 @@ Oracles, none of which needs an OpenSees engine:
 * **the emitted code itself runs**: the record block of each deck is cut
   out of the file and executed, the Python one with ``exec`` against a
   stand-in ``ops`` and the Tcl one in Python's own Tcl interpreter
-  (``tkinter.Tcl``), and the JSON each writes is read back;
+  (``tkinter.Tcl``, in a fresh process), and the JSON each writes is
+  read back;
 * **cross-check**: the record's ``model_hash`` / ``fem_hash`` equal
   ``/meta/lineage`` of an ``ops.h5()`` written separately, and the Python
   and Tcl records agree field for field;
@@ -184,50 +185,104 @@ def run_py(block: str, *, build: "str | None", done: int, pid: int = 0,
     return ops
 
 
-def tcl() -> Any:
-    tkinter = pytest.importorskip("tkinter")
-    error: "Exception | None" = None
-    for _ in range(5):  # Windows sometimes fails one read of init.tcl
-        try:
-            interp = tkinter.Tcl()
-        except tkinter.TclError as e:
-            error = e
-            time.sleep(0.2)
-            continue
-        # The console has no stdout under pytest on Windows: a message the
-        # deck prints is collected in ``::_apesees_out`` instead; ``puts``
-        # to a channel (the record file) is the real one.
-        interp.eval("rename puts _apesees_puts; set ::_apesees_out {}")
-        interp.eval(
-            "proc puts {args} { if {[llength $args] == 1 || ([llength $args]"
-            " == 2 && [lindex $args 0] eq {-nonewline})} { lappend "
-            "::_apesees_out [lindex $args end] } else { _apesees_puts {*}$args"
-            " } }")
-        return interp
-    pytest.skip(f"tkinter.Tcl() unavailable: {error}")
+#: Runs one Tcl case in a fresh Python's own Tcl interpreter (never in the
+#: pytest process: interpreters shared there lose the thread's ``stderr``
+#: standard channel, and the next file channel's OS handle then survives its
+#: ``close``, which no OpenSees.exe deck does). ``argv``: the prelude (stubs),
+#: the body, the JSON result file.
+_TCL_RUNNER = """
+import json, sys, time, tkinter
+interp, error = None, None
+for _ in range(5):  # Windows sometimes fails one read of init.tcl
+    try:
+        interp = tkinter.Tcl()
+        break
+    except tkinter.TclError as e:
+        error = str(e)
+        time.sleep(0.2)
+if interp is None:
+    json.dump({"unavailable": error}, open(sys.argv[3], "w"))
+    sys.exit(0)
+interp.eval(open(sys.argv[1], encoding="utf-8").read())
+failed = None
+try:
+    interp.eval(open(sys.argv[2], encoding="utf-8").read())
+except tkinter.TclError as e:
+    failed = str(e)
+def get(name):
+    if interp.eval("info exists " + name) != "1":
+        return None
+    return interp.eval("set " + name)
+json.dump({
+    "error": failed,
+    "out": list(interp.splitlist(interp.eval("set ::_apesees_out"))),
+    "barriers": get("::_apesees_barriers"),
+    "tries": get("::_apesees_tries"),
+    "waits": list(interp.splitlist(get("::_apesees_waits") or "")),
+}, open(sys.argv[3], "w"))
+"""
+
+#: Every case's prelude: a message the deck prints is collected in
+#: ``::_apesees_out``; ``puts`` to a channel (the record file) is the real one.
+_TCL_PRELUDE = (
+    "rename puts _apesees_puts; set ::_apesees_out {}\n"
+    "proc puts {args} { if {[llength $args] == 1 || ([llength $args] == 2 "
+    "&& [lindex $args 0] eq {-nonewline})} { lappend ::_apesees_out "
+    "[lindex $args end] } else { _apesees_puts {*}$args } }\n"
+)
+
+
+def run_tcl_case(body: str, prelude: str = "") -> "dict[str, Any]":
+    """Run ``body`` after ``prelude`` (and the ``puts`` capture) in a fresh
+    process; its result: ``error`` (a Tcl error, or ``None``), ``out`` (the
+    printed messages), and the ``barriers`` / ``tries`` / ``waits``
+    counters the stubs keep."""
+    import subprocess
+    import sys
+    import tempfile
+
+    pytest.importorskip("tkinter")
+    with tempfile.TemporaryDirectory(prefix="apegmsh-tcl-case-") as d:
+        files = [Path(d) / n for n in ("runner.py", "prelude.tcl", "body.tcl",
+                                       "result.json")]
+        files[0].write_text(_TCL_RUNNER, encoding="utf-8")
+        files[1].write_text(_TCL_PRELUDE + prelude, encoding="utf-8")
+        files[2].write_text(body, encoding="utf-8")
+        proc = subprocess.run([sys.executable, *map(str, files)], input="",
+                              capture_output=True, text=True, timeout=300)
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        result = json.loads(files[3].read_text(encoding="utf-8"))
+    if "unavailable" in result:
+        pytest.skip(f"tkinter.Tcl() unavailable: {result['unavailable']}")
+    return result
 
 
 def run_tcl(block: str, *, build: "str | None", done: int, pid: int = 0,
-            files: "list[Path] | None" = None, np: int = 1) -> Any:
+            files: "list[Path] | None" = None, np: int = 1,
+            ) -> "dict[str, Any]":
+    """A record block, run with the deck's OpenSees commands stubbed: the
+    loop counter at ``done``, ``getPID`` / ``getNP``, a counting
+    ``barrier``, ``remove`` that closes ``files`` (adding ``FLUSH`` bytes)
+    and ``ladrunoBuild`` answering ``build``. A Tcl error fails the test."""
     files = files or []
     open_files(files)
-    interp = tcl()
-    interp.eval(f"set _apesees_i {done}")
-    interp.eval("set _apesees_barriers 0")
-    interp.eval("set _apesees_closed 0")
-    interp.call("set", "::_apesees_files", [str(p) for p in files])
-    interp.eval(f"proc getPID {{}} {{ return {pid} }}")
-    interp.eval(f"proc getNP {{}} {{ return {np} }}")
-    interp.eval("proc barrier {} { incr ::_apesees_barriers }")
-    interp.eval(
-        "proc remove {what} { incr ::_apesees_closed; "
-        "foreach p $::_apesees_files { set f [open $p a]; "
-        f"fconfigure $f -translation binary; puts -nonewline $f "
-        f"[string repeat x {FLUSH}]; close $f }} }}")
+    names = " ".join("{" + str(f) + "}" for f in files)
+    prelude = (
+        f"set _apesees_i {done}\n"
+        "set ::_apesees_barriers 0\n"
+        f"set ::_apesees_files [list {names}]\n"
+        f"proc getPID {{}} {{ return {pid} }}\n"
+        f"proc getNP {{}} {{ return {np} }}\n"
+        "proc barrier {} { incr ::_apesees_barriers }\n"
+        "proc remove {what} { foreach p $::_apesees_files { set f [open $p a]; "
+        "fconfigure $f -translation binary; puts -nonewline $f "
+        f"[string repeat x {FLUSH}]; close $f }} }}\n"
+    )
     if build is not None:
-        interp.eval(f"proc ladrunoBuild {{}} {{ return {build} }}")
-    interp.eval(block)
-    return interp
+        prelude += f"proc ladrunoBuild {{}} {{ return {build} }}\n"
+    result = run_tcl_case(block, prelude)
+    assert result["error"] is None, result["error"]
+    return result
 
 
 def read_record(mpco: Path, parts: "list[Path] | None" = None,
@@ -439,19 +494,19 @@ def test_a_refused_rename_never_fails_a_finished_run(tmp_path, dialect) -> None:
         (line,) = [ln for ln in out.splitlines() if ln.startswith("WAITS=")]
         waits = [1000 * float(w) for w in line[len("WAITS="):].split(",")]
     else:
-        interp = tcl()
-        interp.eval("proc unknown {args} { return 0 }")
-        interp.eval("rename file _apesees_real_file; set ::_apesees_tries 0")
-        interp.eval("set ::_apesees_waits {}; "
-                    "proc after {ms} { lappend ::_apesees_waits $ms }")
-        interp.eval("proc file {cmd args} { if {$cmd eq {rename}} "
-                    "{ incr ::_apesees_tries; error {permission denied} }; "
-                    "uplevel 1 [list _apesees_real_file $cmd {*}$args] }")
-        interp.eval(deck.read_text(encoding="utf-8") + "\nputs DECK-DONE\n")
-        waits = [float(w) for w in
-                 interp.splitlist(interp.eval("set ::_apesees_waits"))]
-        assert int(interp.eval("set ::_apesees_tries")) == len(waits) + 1
-        out = "\n".join(interp.splitlist(interp.eval("set ::_apesees_out")))
+        result = run_tcl_case(
+            deck.read_text(encoding="utf-8") + "\nputs DECK-DONE\n",
+            "proc unknown {args} { return 0 }\n"
+            "rename file _apesees_real_file; set ::_apesees_tries 0\n"
+            "set ::_apesees_waits {}\n"
+            "proc after {ms} { lappend ::_apesees_waits $ms }\n"
+            "proc file {cmd args} { if {$cmd eq {rename}} "
+            "{ incr ::_apesees_tries; error {permission denied} }; "
+            "uplevel 1 [list _apesees_real_file $cmd {*}$args] }\n")
+        assert result["error"] is None, result["error"]
+        waits = [float(w) for w in result["waits"]]
+        assert int(result["tries"]) == len(waits) + 1
+        out = "\n".join(result["out"])
     assert "the deck run record was not written" in out
     assert out.rstrip().endswith("DECK-DONE")
     assert not mpco.with_name("deck.mpco" + DECK_RUN_SUFFIX).exists()
@@ -506,13 +561,9 @@ def test_a_rerun_whose_loop_fails_leaves_no_record(tmp_path, dialect) -> None:
         with pytest.raises(SystemExit, match="analyze FAILED"):
             exec(compile(src, str(deck), "exec"), {"ops": FailingOps()})
     else:
-        interp = tcl()
-        interp.eval("proc unknown {args} { return 0 }")
-        interp.eval("proc analyze {args} { return -3 }")
-        import tkinter
-
-        with pytest.raises(tkinter.TclError, match="analyze FAILED"):
-            interp.eval(text)
+        result = run_tcl_case(text, "proc unknown {args} { return 0 }\n"
+                                    "proc analyze {args} { return -3 }\n")
+        assert "analyze FAILED" in (result["error"] or "")
     assert not old.exists()
     assert not old.with_name(old.name + ".tmp").exists()
 
@@ -570,16 +621,13 @@ def test_a_partitioned_deck_writes_on_rank_0_after_a_barrier(
             barriers = run_py(body, build=None, done=STEPS, pid=pid,
                               files=parts, np=2).barriers
         else:
-            interp = run_tcl(body, build=None, done=STEPS, pid=pid,
+            result = run_tcl(body, build=None, done=STEPS, pid=pid,
                              files=parts, np=2)
-            barriers = int(interp.eval("set _apesees_barriers"))
+            barriers = int(result["barriers"])
         assert barriers == 1
         written = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX).exists()
-        # Windows only: another process (Defender, the indexer) can
-        # hold the fresh .tmp; the deck then prints that it wrote no
-        # record (fix A) instead of failing the run.
         assert written == (pid == 0), (
-            "" if dialect == "py" else interp.eval("set ::_apesees_out"))
+            "" if dialect == "py" else result["out"])
     assert read_record(mpco, parts)["recorder_file"] == "run.mpco"
 
 
