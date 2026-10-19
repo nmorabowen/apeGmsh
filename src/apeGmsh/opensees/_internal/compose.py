@@ -828,6 +828,193 @@ def _write_archived_flips(
     write_planned_flips(emitter, lines, ele_tags)
 
 
+#: The builder-scoped declaration kinds a ``model BasicBuilder`` re-issue
+#: purges (ADR 0099 INV-1): no emit-order merge may put one of these units
+#: above the hoisted gated-element bracket.
+_BUILDER_SCOPED_UNITS: "frozenset[str]" = frozenset(
+    {"geomTransf", "beamIntegration", "timeSeries", "damping"})
+
+
+class _ReplayOrder:
+    """The bridge's emit order for one archive, read from
+    ``/opensees/program`` (K R1b-S1, #2193).
+
+    The deck replay (:func:`_replay_into`) groups its calls into units:
+    one per declaration record (a material, section, transform,
+    integration, series, damping, region, pattern or recorder), one per
+    ``/opensees/commands`` row, one per analysis-chain component, and one
+    per block (the nodes, each element run class, the fixes, the masses,
+    the equation constraints, the reinforce ties, the initial stress, the
+    ``analyze``). Each unit's key is the 1-based emit index of the call
+    that wrote it, so a stable sort by key replays the units in the
+    bridge's own order.
+
+    Only an archive whose program records its declaration joins
+    (:func:`~apeGmsh.opensees.emitter.h5_reader.records_program_decl`)
+    builds one; the caller keeps the fixed category order otherwise.
+
+    A tagged record is joined as ``_materials_in_emit_order`` (#1814)
+    joins a material: a ``method`` call names its declaration, and
+    ``/opensees/decls/tags`` names that declaration's tags, so the k-th
+    fresh call of a declaration wrote its k-th tag. A partition replica
+    repeats the ``(stage, row)`` of its first capture and is skipped. A
+    record that no call joins (a side pass minted it, ``decl = -1``) and a
+    block with no call in the program have no key: :func:`_replay_into`
+    keeps such a unit in its category place, right after the unit before
+    it. An analysis-chain component always has a call, so a missing one
+    raises (:func:`chain`).
+    """
+
+    __slots__ = ("_program", "_tag_runs", "_first", "_joined")
+
+    def __init__(self, program: "Sequence[Any]", declarations: Any) -> None:
+        from ..emitter.h5_reader import records_program_decl
+
+        if not records_program_decl(declarations):
+            raise ValueError(
+                "_ReplayOrder: the archive does not record its program's "
+                "declaration joins (/opensees/decls@program_decl is not "
+                "'complete'); replay it in the fixed category order.")
+        self._program = tuple(program)
+        # kind -> decl -> [(first tag, count), ...] in table order.
+        self._tag_runs: "dict[str, dict[int, list[tuple[int, int]]]]" = {}
+        for kind, first, count, decl in declarations.tags:
+            self._tag_runs.setdefault(str(kind), {}).setdefault(
+                int(decl), []).append((int(first), int(count)))
+        self._first: "dict[tuple[str, int], int]" = {}
+        for run in self._program:
+            self._first.setdefault(
+                (str(run.method), int(run.stage)), int(run.first))
+        self._joined: "dict[tuple[str, frozenset[str]], dict[int, int]]" = {}
+
+    def first(self, method: str, stage: int = -1) -> "int | None":
+        """The emit index of the first ``method`` call in ``stage``;
+        ``None`` when the program holds none."""
+        return self._first.get((method, stage))
+
+    def chain(self, method: str) -> int:
+        """The emit index of the global analysis-chain ``method`` call.
+        Raises :class:`LookupError` when the program holds none: the
+        archive stores a chain component no call wrote."""
+        from ..emitter.h5_reader import emit_index_of
+
+        return emit_index_of(self._program, method, 0, stage=-1)
+
+    def row(self, method: str, row: int) -> int:
+        """The emit index of global ``row`` of ``method``'s store
+        (:func:`~apeGmsh.opensees.emitter.h5_reader.emit_index_of`)."""
+        from ..emitter.h5_reader import emit_index_of
+
+        return emit_index_of(self._program, method, row, stage=-1)
+
+    def _fresh_calls(
+        self, methods: "frozenset[str]",
+    ) -> "list[tuple[int, int, int]]":
+        """``(decl, first emit, count)`` of each global ``methods`` run
+        that writes fresh rows (a partition replica re-writes rows a run
+        before it captured, and is skipped), in emit order."""
+        covered: "dict[str, int]" = {}
+        out: "list[tuple[int, int, int]]" = []
+        for run in self._program:
+            if run.method not in methods or int(run.stage) != -1:
+                continue
+            start = int(run.row)
+            if start < covered.get(run.method, 0):
+                continue
+            covered[run.method] = start + int(run.count)
+            out.append((int(run.decl), int(run.first), int(run.count)))
+        return out
+
+    @staticmethod
+    def _tag_at(runs: "list[tuple[int, int]]", k: int) -> "int | None":
+        """The ``k``-th tag of a declaration's tag runs, or ``None``."""
+        for first, count in runs:
+            if k < count:
+                return first + k
+            k -= count
+        return None
+
+    def tagged(self, kind: str, methods: "frozenset[str]") -> "dict[int, int]":
+        """``{tag: emit index}`` for the tags of allocator ``kind`` that a
+        global ``methods`` call declared (the first call wins)."""
+        cache_key = (kind, methods)
+        found = self._joined.get(cache_key)
+        if found is not None:
+            return found
+        tag_runs = self._tag_runs.get(kind, {})
+        calls_of_decl: "dict[int, int]" = {}
+        out: "dict[int, int]" = {}
+        for decl, first, count in self._fresh_calls(methods):
+            if decl < 0:
+                continue
+            runs = tag_runs.get(decl, [])
+            k0 = calls_of_decl.get(decl, 0)
+            calls_of_decl[decl] = k0 + count
+            for i in range(count):
+                tag = self._tag_at(runs, k0 + i)
+                if tag is None:
+                    break
+                out.setdefault(tag, first + i)
+        self._joined[cache_key] = out
+        return out
+
+    def first_element(self, member: "Any") -> "int | None":
+        """The emit index of the first global ``element`` call whose
+        element ``member(tag)`` accepts; ``None`` when no joined call
+        does. Classifies whole runs by their first tag (one run is one
+        declaration, so one element class), never element by element."""
+        tag_runs = self._tag_runs.get("element", {})
+        calls_of_decl: "dict[int, int]" = {}
+        for decl, first, count in self._fresh_calls(frozenset({"element"})):
+            if decl < 0:
+                continue
+            k0 = calls_of_decl.get(decl, 0)
+            calls_of_decl[decl] = k0 + count
+            tag = self._tag_at(tag_runs.get(decl, []), k0)
+            if tag is not None and member(tag):
+                return first
+        return None
+
+
+def _run_units(
+    units: "list[tuple[int | None, str, Any]]",
+    order: "_ReplayOrder | None",
+) -> None:
+    """Run each ``(key, kind, thunk)`` unit: in list order (the fixed
+    category order) when ``order`` is ``None``, else stably sorted by
+    emit index, a keyless unit keeping its place after the unit before
+    it (K R1b-S1, #2193).
+
+    Fails closed on ADR 0099 INV-1: a builder-scoped declaration sorted
+    above the gated-element bracket would be purged by it, so an archive
+    whose program says so raises instead of replaying a broken deck.
+    """
+    if order is None:
+        for _key, _kind, thunk in units:
+            thunk()
+        return
+    keyed: "list[tuple[int, int, str, Any]]" = []
+    last = 0
+    for seq, (key, kind, thunk) in enumerate(units):
+        if key is not None:
+            last = key
+        keyed.append((last, seq, kind, thunk))
+    keyed.sort(key=lambda u: (u[0], u[1]))
+    gated_at = next(
+        (i for i, u in enumerate(keyed) if u[2] == "gated_elements"), None)
+    if gated_at is not None:
+        early = sorted({
+            u[2] for u in keyed[:gated_at] if u[2] in _BUILDER_SCOPED_UNITS})
+        if early:
+            raise ValueError(
+                f"replay: /opensees/program emits {early} above the "
+                "builder-ndf-gated elements, whose 'model BasicBuilder' "
+                "bracket would purge them (ADR 0099 INV-1); the archive's "
+                "emit order is not one the bridge writes.")
+    for _key, _seq, _kind, thunk in keyed:
+        thunk()
+
+
 def _replay_into(
     emitter: Any,
     *,
@@ -864,6 +1051,7 @@ def _replay_into(
     commands: "Sequence[Any]" = (),
     equation_constraints: "Sequence[Any]" = (),
     flat: bool = False,
+    order: "_ReplayOrder | None" = None,
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -980,14 +1168,45 @@ def _replay_into(
         one per record) and the replay writes them, minting none; below
         it the replay re-mints them under the pre-2.27 tag-law waiver.
 
+        **The bridge's order (K R1b-S1, #2193).**  The numbered steps
+        above are the fixed category order. With ``order`` (a
+        :class:`_ReplayOrder`, built from an archive whose
+        ``/opensees/decls@program_decl`` is ``"complete"``), every unit
+        those steps write is merged by its ``/opensees/program`` emit
+        index instead, so declarations, the global commands and the
+        analysis chain interleave as the bridge emitted them (a section
+        between two materials, a ``geomTransf`` after the integrations,
+        ``system`` above the declarations, ``rayleigh`` between two
+        regions). A unit with no recorded call keeps its category place
+        after the unit before it (:func:`_run_units`). ``order=None``
+        (a legacy archive, a ``to_h5`` rewrite of one, the H5 target)
+        keeps the category order, unchanged. ``order`` needs
+        ``deck_ordering=True``: the H5 rewrite keeps its store order.
+
     Parameters mirror :class:`apeGmsh.opensees._internal.typed_records`
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
     from .build.ndf import node_coords_as_floats
 
+    if order is not None and not deck_ordering:
+        raise ValueError(
+            "_replay_into: order= merges a deck by its emit index and needs "
+            "deck_ordering=True; the H5 rewrite keeps its store order.")
+
     if fem is not None:
         _warn_skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
+
+    # Every step below appends ``(emit index | None, kind, thunk)`` units;
+    # _run_units runs them in this (category) order, or merged by emit
+    # index when ``order`` is given (K R1b-S1, #2193). ``_key`` reads a
+    # unit's index only when there is an order to merge by.
+    units: "list[tuple[int | None, str, Any]]" = []
+
+    def _key(read: Any) -> "int | None":
+        return None if order is None else read(order)
+
+    _ELEMENT = frozenset({"element"})
 
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
@@ -997,41 +1216,61 @@ def _replay_into(
     # ``-ndf K`` declarations survive the H5 round-trip.  Legacy
     # 2-tuples ``(tag, coords)`` are tolerated for callers that
     # haven't rebound to the wider shape.
-    for entry in nodes:
-        if len(entry) == 3:
-            tag, coords, node_ndf = entry
-        else:
-            tag, coords = entry
-            node_ndf = None
-        # ADR 0055 P2.3: stage-owned nodes emit INSIDE their stage block
-        # (_replay_staged_into), not in the global prefix — skip here.
-        if int(tag) in skip_node_tags:
-            continue
-        # ``ndm`` coordinates only — a trailing 0.0 in a 2-D deck
-        # swallows the following ``-ndf K`` (node_coords_as_floats).
-        # The replay path has to do this itself: it never touches
-        # build/'s node-emit helpers.
-        cs = node_coords_as_floats(coords)
-        if node_ndf is None:
-            emitter.node(int(tag), *cs)
-        else:
-            emitter.node(int(tag), *cs, ndf=int(node_ndf))
+    def _nodes() -> None:
+        for entry in nodes:
+            if len(entry) == 3:
+                tag, coords, node_ndf = entry
+            else:
+                tag, coords = entry
+                node_ndf = None
+            # ADR 0055 P2.3: stage-owned nodes emit INSIDE their stage
+            # block (_replay_staged_into), not in the global prefix.
+            if int(tag) in skip_node_tags:
+                continue
+            # ``ndm`` coordinates only — a trailing 0.0 in a 2-D deck
+            # swallows the following ``-ndf K`` (node_coords_as_floats).
+            # The replay path has to do this itself: it never touches
+            # build/'s node-emit helpers.
+            cs = node_coords_as_floats(coords)
+            if node_ndf is None:
+                emitter.node(int(tag), *cs)
+            else:
+                emitter.node(int(tag), *cs, ndf=int(node_ndf))
+
+    units.append((_key(lambda o: o.first("node")), "nodes", _nodes))
+
+    def _tagged(
+        kind: str, methods: "frozenset[str]", recs: "Sequence[Any]",
+        emit: Any,
+    ) -> None:
+        """One unit per tagged declaration record, keyed by its join."""
+        joined = {} if order is None else order.tagged(kind, methods)
+        for rec in recs:
+            units.append((
+                joined.get(int(rec.tag)), kind,
+                lambda rec=rec: emit(rec),
+            ))
 
     # 3. Materials — uniaxial first, then nD.  ADR 0011 schema mirrors
     # this group nesting; the emitter doesn't enforce order, but the
     # OpenSees domain does (a section_open referencing matTag=1 needs
     # the uniaxialMaterial 1 already present).
-    for rec in uniaxial_materials:
-        emitter.uniaxialMaterial(rec.type_token, int(rec.tag), *rec.params)
-    for rec in nd_materials:
-        emitter.nDMaterial(rec.type_token, int(rec.tag), *rec.params)
+    _tagged(
+        "uniaxialMaterial", frozenset({"uniaxialMaterial"}),
+        uniaxial_materials,
+        lambda rec: emitter.uniaxialMaterial(
+            rec.type_token, int(rec.tag), *rec.params),
+    )
+    _tagged(
+        "nDMaterial", frozenset({"nDMaterial"}), nd_materials,
+        lambda rec: emitter.nDMaterial(
+            rec.type_token, int(rec.tag), *rec.params),
+    )
 
     # 4. Sections — simple (Elastic / Aggregator) then complex
     # (Fiber).  Same ordering rule: a section_open referencing a
     # matTag needs the material registered first (already done).
-    for rec in simple_sections:
-        emitter.section(rec.type_token, int(rec.tag), *rec.params)
-    for rec in complex_sections:
+    def _complex_section(rec: Any) -> None:
         emitter.section_open(rec.type_token, int(rec.tag), *rec.params)
         for patch in rec.patches:
             emitter.patch(patch.kind, *patch.args)
@@ -1040,6 +1279,13 @@ def _replay_into(
         for layer in rec.layers:
             emitter.layer(layer.kind, *layer.args)
         emitter.section_close()
+
+    _SECTION = frozenset({"section", "section_open"})
+    _tagged(
+        "section", _SECTION, simple_sections,
+        lambda rec: emitter.section(rec.type_token, int(rec.tag), *rec.params),
+    )
+    _tagged("section", _SECTION, complex_sections, _complex_section)
 
     from .build.builder_scope import needs_builder_ndf_bracket_for_token
 
@@ -1118,32 +1364,46 @@ def _replay_into(
                 already_gated=True,
             )
     if _gated:
-        _replay_elements_bracketed(
-            emitter, _gated, ndm=int(ndm), envelope_ndf=int(ndf),
-        )
+        _gated_tags = {int(r.tag) for r in _gated}
+        units.append((
+            _key(lambda o: o.first_element(_gated_tags.__contains__)),
+            "gated_elements",
+            lambda: _replay_elements_bracketed(
+                emitter, _gated, ndm=int(ndm), envelope_ndf=int(ndf),
+            ),
+        ))
 
     # 5. Transforms.  Schema deviation (TransformRecord docstring):
     # one record per ``geomTransf`` call, not per spec.  Replay
     # produces the same call shape: one ``geomTransf`` line per
     # record's stored ``vec``.
-    for rec in transforms:
-        emitter.geomTransf(rec.type_token, int(rec.tag), *rec.vec)
+    _tagged(
+        "geomTransf", frozenset({"geomTransf"}), transforms,
+        lambda rec: emitter.geomTransf(rec.type_token, int(rec.tag), *rec.vec),
+    )
 
     # 6. Beam integration.
-    for rec in beam_integrations:
-        emitter.beamIntegration(rec.type_token, int(rec.tag), *rec.args)
+    _tagged(
+        "beamIntegration", frozenset({"beamIntegration"}), beam_integrations,
+        lambda rec: emitter.beamIntegration(
+            rec.type_token, int(rec.tag), *rec.args),
+    )
 
     # 7. Time series.
-    for rec in time_series:
-        emitter.timeSeries(rec.type_token, int(rec.tag), *rec.args)
+    _tagged(
+        "timeSeries", frozenset({"timeSeries"}), time_series,
+        lambda rec: emitter.timeSeries(rec.type_token, int(rec.tag), *rec.args),
+    )
 
     # 7b. Damping objects (ADR 0053 D3b).  After time_series (a ``-factor``
     # tail may reference a series tag) and before elements (an element's
     # ``-damp $tag`` rides in its own arg tail and resolves the object by
     # tag).  Region ``-damp`` attaches replay at 9b with the other
     # top-level regions.
-    for rec in dampings:
-        emitter.damping(rec.type_token, int(rec.tag), *rec.args)
+    _tagged(
+        "damping", frozenset({"damping"}), dampings,
+        lambda rec: emitter.damping(rec.type_token, int(rec.tag), *rec.args),
+    )
 
     # 8. Elements.  The H5 emitter consults two side channels for
     # connectivity (``set_element_nodes``) and FEM element id
@@ -1151,15 +1411,29 @@ def _replay_into(
     # H5 round-trip byte-stable AND lets Tcl / Py / Live emitters
     # ignore the calls (their ``set_*`` helpers no-op when the attr
     # is absent).
-    _replay_elements_bracketed(
-        emitter, _ungated, ndm=int(ndm), envelope_ndf=int(ndf),
-    )
+    _ungated_out = (
+        {int(r.tag) for r in _gated} | _cell_tags | set(skip_element_tags)
+        if order is not None else set())
+    units.append((
+        _key(lambda o: o.first_element(
+            lambda t: t not in _ungated_out)),
+        "elements",
+        lambda: _replay_elements_bracketed(
+            emitter, _ungated, ndm=int(ndm), envelope_ndf=int(ndf),
+        ),
+    ))
 
     # 9. Fix / mass (model-level).
-    for rec in fixes:
-        emitter.fix(int(rec.tag), *(int(d) for d in rec.dofs))
-    for rec in masses:
-        emitter.mass(int(rec.tag), *(float(v) for v in rec.values))
+    def _fixes() -> None:
+        for rec in fixes:
+            emitter.fix(int(rec.tag), *(int(d) for d in rec.dofs))
+
+    def _masses() -> None:
+        for rec in masses:
+            emitter.mass(int(rec.tag), *(float(v) for v in rec.values))
+
+    units.append((_key(lambda o: o.first("fix")), "fixes", _fixes))
+    units.append((_key(lambda o: o.first("mass")), "masses", _masses))
 
     # 9a. Global ``/opensees/commands`` rows (ADR 0114 R3a), in emit
     # order. The bridge emits them at its slot 7 (``_emit_rayleigh`` /
@@ -1171,7 +1445,11 @@ def _replay_into(
                 "row reached the global slot; route it through "
                 "_replay_staged_into."
             )
-        _replay_command(emitter, cmd, _GLOBAL_COMMAND_METHODS)
+        units.append((
+            None if order is None else int(cmd.emit_index), "command",
+            lambda cmd=cmd: _replay_command(
+                emitter, cmd, _GLOBAL_COMMAND_METHODS),
+        ))
 
     # 9b. Top-level regions: the archived row is the resolved OpenSees
     # call (tag + flag tail), so every one replays verbatim, with
@@ -1180,8 +1458,10 @@ def _replay_into(
     # the global ``rayleigh`` rows (OpenSees overwrites element Rayleigh
     # per element, so the region must come second to win, as the bridge
     # emits it) and before the recorders that name a fan-out region.
-    for rec in regions:
-        emitter.region(int(rec.tag), *rec.args)
+    _tagged(
+        "region", frozenset({"region"}), regions,
+        lambda rec: emitter.region(int(rec.tag), *rec.args),
+    )
 
     # 9b'. User ``equationConstraint`` rows, in call order,
     # where the bridge emits them: after the regions, before the initial
@@ -1203,10 +1483,14 @@ def _replay_into(
             entry_ndf = entry[2] if len(entry) == 3 else None
             if entry_ndf is not None:
                 eq_node_ndf[int(entry[0])] = int(entry_ndf)
-        emit_equation_constraints(
-            emitter, fem, equation_constraints,
-            node_ndf=eq_node_ndf, default_ndf=int(ndf),
-        )
+        units.append((
+            _key(lambda o: o.first("equationConstraint")),
+            "equation_constraints",
+            lambda: emit_equation_constraints(
+                emitter, fem, equation_constraints,
+                node_ndf=eq_node_ndf, default_ndf=int(ndf),
+            ),
+        ))
 
     # 9c'. Embedded-reinforcement ties (g.reinforce → LadrunoEmbeddedRebar),
     # after the fixes, masses, global commands, regions and the equation
@@ -1229,10 +1513,16 @@ def _replay_into(
                 f"tie(s) but its neutral zone carries {len(fem_ties)}; the "
                 "two zones disagree."
             )
-        for tie in embedded_rebars:
-            if tie.name:
-                emitter.mp_constraint_comment(tie.name)
-            emitter.embedded_rebar(int(tie.ele_tag), *tie.args)
+        def _stored_ties() -> None:
+            for tie in embedded_rebars:
+                if tie.name:
+                    emitter.mp_constraint_comment(tie.name)
+                emitter.embedded_rebar(int(tie.ele_tag), *tie.args)
+
+        units.append((
+            _key(lambda o: o.first("embedded_rebar")), "reinforce_ties",
+            _stored_ties,
+        ))
     elif fem_ties:
         if not _replays_tie_fallback(opensees_version, len(fem_ties)):
             raise ValueError(
@@ -1243,27 +1533,38 @@ def _replay_into(
         from .build.constraints import replay_reinforce_ties
         from .tag_allocator import TagAllocator
 
-        # tag-law waiver pre-2-29-reinforce-tie-replay (tag_law_ledger.txt):
-        # an archive below 2.29.0 stores no tie, so the replay mints the
-        # tie element tags (the _counters seed below and
-        # replay_reinforce_ties), past the highest replayed element tag;
-        # pre-2.29 archives only, behind the version check above.
-        _rt_tags = TagAllocator()
-        max_elem_tag = max((int(e.tag) for e in elements), default=0)
-        _rt_tags._counters["element"] = max_elem_tag
-        replay_reinforce_ties(
-            emitter, fem, _rt_tags,
-            name_to_tag=dict(reinforce_name_to_tag or {}),
-        )
+        def _derived_ties() -> None:
+            # tag-law waiver pre-2-29-reinforce-tie-replay
+            # (tag_law_ledger.txt): an archive below 2.29.0 stores no tie,
+            # so the replay mints the tie element tags (the _counters seed
+            # below and replay_reinforce_ties), past the highest replayed
+            # element tag; pre-2.29 archives only, behind the version
+            # check above.
+            _rt_tags = TagAllocator()
+            max_elem_tag = max((int(e.tag) for e in elements), default=0)
+            _rt_tags._counters["element"] = max_elem_tag
+            replay_reinforce_ties(
+                emitter, fem, _rt_tags,
+                name_to_tag=dict(reinforce_name_to_tag or {}),
+            )
+
+        units.append((
+            _key(lambda o: o.first("embedded_rebar")), "reinforce_ties",
+            _derived_ties,
+        ))
 
     # 9c''. The g.rebar.place(emit_elements=True) CorotTruss cells, in
     # archive order: the bridge's slot 7b'', after the ties. Of what
     # the bridge writes in between, the embed ties and contacts are streams
     # this replay skips, and an interface's zeroLength stays at step 8.
     if _cells:
-        _replay_elements_bracketed(
-            emitter, _cells, ndm=int(ndm), envelope_ndf=int(ndf),
-        )
+        units.append((
+            _key(lambda o: o.first_element(_cell_tags.__contains__)),
+            "rebar_cells",
+            lambda: _replay_elements_bracketed(
+                emitter, _cells, ndm=int(ndm), envelope_ndf=int(ndf),
+            ),
+        ))
 
     # 9c. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
     # patterns / the analysis chain so ``step_hook_ramp`` registers and
@@ -1280,44 +1581,51 @@ def _replay_into(
         from .build.ownership import FemToOpsTagMap
         from .build.stage_emit import emit_initial_stress_addtoparameter
 
-        # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
-        fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
-            (int(e.fem_eid), int(e.tag))
-            for e in elements
-            if int(e.fem_eid) >= 0
-        )
-        if _archives_param_tags(opensees_version):
-            name_to_param_tags = _write_archived_ramps(
-                emitter, initial_stress, initial_stress_param_tags,
-                "/opensees/initial_stress",
+        def _initial_stress() -> None:
+            # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
+            fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
+                (int(e.fem_eid), int(e.tag))
+                for e in elements
+                if int(e.fem_eid) >= 0
             )
-        else:
-            from .build.stage_emit import replay_initial_stress_global
-            from .tag_allocator import TagAllocator
+            if _archives_param_tags(opensees_version):
+                name_to_param_tags = _write_archived_ramps(
+                    emitter, initial_stress, initial_stress_param_tags,
+                    "/opensees/initial_stress",
+                )
+            else:
+                from .build.stage_emit import replay_initial_stress_global
+                from .tag_allocator import TagAllocator
 
-            # ADR 0055 P2.3: the staged caller threads its SHARED allocator
-            # so global + per-stage parameter tags accumulate on one counter
-            # (the bridge reuses one ``tags`` across everything).  Flat
-            # callers pass None → fresh allocator (unchanged behaviour).
-            # tag-law waiver pre-2-27-initial-stress-replay (ledger): an
-            # archive below 2.27.0 stores the declarative record and not
-            # its parameter tags, so replay mints them
-            # (replay_initial_stress_global); pre-2.27 archives only,
-            # behind the version check above.
-            _is_tags = initial_stress_tags or TagAllocator()
-            name_to_param_tags = replay_initial_stress_global(
-                initial_stress, emitter, _is_tags,
+                # ADR 0055 P2.3: the staged caller threads its SHARED
+                # allocator so global + per-stage parameter tags accumulate
+                # on one counter (the bridge reuses one ``tags`` across
+                # everything).  Flat callers pass None → fresh allocator
+                # (unchanged behaviour).
+                # tag-law waiver pre-2-27-initial-stress-replay (ledger): an
+                # archive below 2.27.0 stores the declarative record and not
+                # its parameter tags, so replay mints them
+                # (replay_initial_stress_global); pre-2.27 archives only,
+                # behind the version check above.
+                _is_tags = initial_stress_tags or TagAllocator()
+                name_to_param_tags = replay_initial_stress_global(
+                    initial_stress, emitter, _is_tags,
+                )
+            emit_initial_stress_addtoparameter(
+                initial_stress, emitter, fem,
+                name_to_param_tags=name_to_param_tags,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             )
-        emit_initial_stress_addtoparameter(
-            initial_stress, emitter, fem,
-            name_to_param_tags=name_to_param_tags,
-            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-        )
+
+        units.append((
+            _key(lambda o: o.first("step_hook_ramp")), "initial_stress",
+            _initial_stress,
+        ))
 
     # 10. Patterns.  ``args`` are the original ``pattern_open`` args
     # (e.g. ``(ts_tag,)`` for Plain).  Inside each pattern: loads,
     # sps, ele_loads in the order the bridge emitted them.
-    for rec in patterns:
+    def _pattern(rec: Any) -> None:
         emitter.pattern_open(rec.type_token, int(rec.tag), *rec.args)
         for load in rec.loads:
             emitter.load(int(load.target), *load.forces)
@@ -1327,25 +1635,39 @@ def _replay_into(
             emitter.eleLoad(*ele_load.args)
         emitter.pattern_close()
 
+    _tagged("pattern", frozenset({"pattern_open"}), patterns, _pattern)
+
     # 11. Recorders.  Schema 2.3.0 wraps declared recorders in a
     # begin/end context; the helper replays the wrapping so the
     # downstream emitter sees the same calls the bridge originally
     # produced.  Typed primitives (``decl_context is None``) emit
-    # bare.
-    for rec in recorders:
-        _replay_recorder(emitter, rec)
+    # bare.  The reader returns them in store-row order.
+    for i, rec in enumerate(recorders):
+        units.append((
+            _key(lambda o, i=i: o.row("recorder", i)), "recorder",
+            lambda rec=rec: _replay_recorder(emitter, rec),
+        ))
 
     # 12. Analysis chain.  ``analysis_attrs`` is the same flat dict
     # the H5 emitter accumulates via its constraints / numberer /
     # system / test / algorithm / integrator / analysis methods.
     if analysis_attrs:
-        _replay_analysis_chain(emitter, analysis_attrs, flat=flat)
+        for method, call in _analysis_chain_calls(
+                emitter, analysis_attrs, flat=flat):
+            units.append((
+                _key(lambda o, m=method: o.chain(m)), "chain", call))
     if analyze_call is not None:
         steps, dt = analyze_call
-        if dt is None:
-            emitter.analyze(steps=int(steps))
-        else:
-            emitter.analyze(steps=int(steps), dt=float(dt))
+
+        def _analyze() -> None:
+            if dt is None:
+                emitter.analyze(steps=int(steps))
+            else:
+                emitter.analyze(steps=int(steps), dt=float(dt))
+
+        units.append((_key(lambda o: o.first("analyze")), "analyze", _analyze))
+
+    _run_units(units, order)
 
 
 def _int_recover(args: "Sequence[Any]") -> "tuple[Any, ...]":
@@ -1416,9 +1738,21 @@ def _replay_analysis_chain(
     or system without a fallback attr was declared by the user and is
     replayed either way.
     """
+    for _method, call in _analysis_chain_calls(emitter, attrs, flat=flat):
+        call()
+
+
+def _analysis_chain_calls(
+    emitter: Any, attrs: "dict[str, Any]", *, flat: bool = False,
+) -> "list[tuple[str, Any]]":
+    """The calls :func:`_replay_analysis_chain` makes, in its order, each
+    as ``(program method, thunk)``: the ``/opensees/program`` method name
+    is what an emit-order merge keys the call by (K R1b-S1, #2193)."""
+    out: "list[tuple[str, Any]]" = []
     if "handler" in attrs:
         args = _int_recover(attrs.get("handler_args", ()))
-        emitter.constraints(attrs["handler"], *args)
+        out.append(("constraints", lambda: emitter.constraints(
+            attrs["handler"], *args)))
     # ADR 0027 INV-5 (P5.0b): a partitioned build auto-emits the
     # runtime-conditional numberer / system (parallel primary with a
     # serial fallback).  The fallback attrs persist alongside the
@@ -1430,37 +1764,36 @@ def _replay_analysis_chain(
         numberer_fb = attrs.get("numberer_runtime_fallback")
         if numberer_fb is not None:
             if not flat:
-                emitter.parallel_runtime_fallback_numberer(
-                    attrs["numberer"], str(numberer_fb),
-                )
+                out.append((
+                    "parallel_runtime_fallback_numberer",
+                    lambda: emitter.parallel_runtime_fallback_numberer(
+                        attrs["numberer"], str(numberer_fb)),
+                ))
         else:
-            emitter.numberer(attrs["numberer"])
+            out.append((
+                "numberer", lambda: emitter.numberer(attrs["numberer"])))
     if "system" in attrs:
         system_fb = attrs.get("system_runtime_fallback")
         if system_fb is not None:
             # The INV-5 auto-emit is the only fallback producer and
             # never carries system args.
             if not flat:
-                emitter.parallel_runtime_fallback_system(
-                    attrs["system"], str(system_fb),
-                )
+                out.append((
+                    "parallel_runtime_fallback_system",
+                    lambda: emitter.parallel_runtime_fallback_system(
+                        attrs["system"], str(system_fb)),
+                ))
         else:
-            emitter.system(
-                attrs["system"],
-                *_int_recover(attrs.get("system_args", ())),
-            )
-    if "test" in attrs:
-        emitter.test(attrs["test"], *_int_recover(attrs.get("test_args", ())))
-    if "algorithm" in attrs:
-        emitter.algorithm(
-            attrs["algorithm"], *_int_recover(attrs.get("algorithm_args", ())),
-        )
-    if "integrator" in attrs:
-        emitter.integrator(
-            attrs["integrator"], *_int_recover(attrs.get("integrator_args", ())),
-        )
+            system_args = _int_recover(attrs.get("system_args", ()))
+            out.append(("system", lambda: emitter.system(
+                attrs["system"], *system_args)))
+    for method in ("test", "algorithm", "integrator"):
+        if method in attrs:
+            out.append((method, lambda m=method: getattr(emitter, m)(
+                attrs[m], *_int_recover(attrs.get(f"{m}_args", ())))))
     if "analysis" in attrs:
-        emitter.analysis(attrs["analysis"])
+        out.append(("analysis", lambda: emitter.analysis(attrs["analysis"])))
+    return out
 
 
 def _replay_recorder(emitter: Any, rec: Any) -> None:
@@ -1575,6 +1908,7 @@ def _replay_staged_into(
     # typed Any so the bridge emit helpers (FEMData param) accept it,
     # exactly as the flat ``_replay_into(fem=...)`` path does.
     fem: Any = replay_kwargs.get("fem")
+    order: "_ReplayOrder | None" = replay_kwargs.get("order")
 
     owned_node_tags = frozenset(
         int(t) for s in stages for t in s.owned_node_ids
@@ -1739,18 +2073,35 @@ def _replay_staged_into(
                 emitter, gated_recs, ndm=_ndm, envelope_ndf=_ndf,
             )
             if emitter.caps.model_reissue_purges:
-                # Same kind order as the global prefix (steps 5-7b of
-                # ``_replay_into``): transforms, beam integrations, time
-                # series, dampings.
-                for rec in replay_kwargs.get("transforms", ()):
-                    emitter.geomTransf(rec.type_token, int(rec.tag), *rec.vec)
-                for rec in replay_kwargs.get("beam_integrations", ()):
-                    emitter.beamIntegration(
-                        rec.type_token, int(rec.tag), *rec.args)
-                for rec in replay_kwargs.get("time_series", ()):
-                    emitter.timeSeries(rec.type_token, int(rec.tag), *rec.args)
-                for rec in replay_kwargs.get("dampings", ()):
-                    emitter.damping(rec.type_token, int(rec.tag), *rec.args)
+                # Same order as the global prefix: steps 5-7b of
+                # ``_replay_into`` (transforms, beam integrations, time
+                # series, dampings), merged by emit index when there is
+                # an ``order`` (K R1b-S1, #2193), as the bridge's
+                # ``replay_builder_scoped_declarations`` re-emits them.
+                _replay_units: "list[tuple[int | None, str, Any]]" = []
+                for kind, recs, emit in (
+                    ("geomTransf", replay_kwargs.get("transforms", ()),
+                     lambda r: emitter.geomTransf(
+                         r.type_token, int(r.tag), *r.vec)),
+                    ("beamIntegration",
+                     replay_kwargs.get("beam_integrations", ()),
+                     lambda r: emitter.beamIntegration(
+                         r.type_token, int(r.tag), *r.args)),
+                    ("timeSeries", replay_kwargs.get("time_series", ()),
+                     lambda r: emitter.timeSeries(
+                         r.type_token, int(r.tag), *r.args)),
+                    ("damping", replay_kwargs.get("dampings", ()),
+                     lambda r: emitter.damping(
+                         r.type_token, int(r.tag), *r.args)),
+                ):
+                    joined = ({} if order is None else
+                              order.tagged(kind, frozenset({kind})))
+                    for rec in recs:
+                        _replay_units.append((
+                            joined.get(int(rec.tag)), kind,
+                            lambda rec=rec, emit=emit: emit(rec),
+                        ))
+                _run_units(_replay_units, order)
             _replay_elements_bracketed(
                 emitter,
                 [r for r in owned_recs
