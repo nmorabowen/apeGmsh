@@ -5,18 +5,21 @@ the fork's schema names them (`ladruno_schema_v1` §7b.1, fork PR #997). Both
 are scalar, variable-length UTF-8 strings, and both are always written:
 
 - `opensees_backend` is `"ladruno"`, `"stock"` or `"unknown"`. A file the
-  fork's recorder wrote is `"ladruno"`. A file `convert_mpco` wrote is
-  `"unknown"` unless the caller passes `opensees_backend="stock"` (or
-  `"ladruno"`).
+  fork's recorder wrote is `"ladruno"`. A converted file (its `writer` names
+  `mpco->ladruno`) is `"unknown"` unless the caller passes
+  `opensees_backend="stock"` (or `"ladruno"`).
 - `opensees_build_sha` is the 40-character hash `ladrunoBuild` returns, or
-  `"unknown"`. On a recorder file it defaults to the build of the backend
-  the bridge binds in the stamping process. It is `"unknown"` when that
-  backend is stock, has no `ladrunoBuild`, or does not import, and on a
-  converted file.
+  `"unknown"`. The file does not carry its build, so the stamp never asks an
+  OpenSees backend. The default is `"unknown"`, and the caller that ran the
+  analysis passes `opensees_build_sha=get_backend_build() or "unknown"`.
 
-Pass `opensees_backend=` and `opensees_build_sha=` to stamp a file that
-another machine or another build produced. A re-stamp keeps a known value
-already on the file, so stamping it again elsewhere changes nothing;
-`overwrite=True` or an explicit value replaces it. A value outside §7b.1,
-a build hash without the `"ladruno"` backend, or `"stock"` on a file the
-recorder wrote raises `ValueError` before anything is written.
+A default re-stamp keeps every value already stamped, `"unknown"` included.
+With `writer` left out, it also keeps a converted file's `writer`, so the
+conversion mark is never lost. An explicit value, or `overwrite=True`,
+replaces a stamped value. These raise `ValueError` before anything is
+written:
+
+- a value outside §7b.1;
+- a build hash without the `"ladruno"` backend;
+- `"stock"` on a file not marked as converted;
+- a `writer` that would unmark a converted file.

@@ -48,8 +48,6 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
-from ...opensees.emitter.live import get_backend_info
-
 if TYPE_CHECKING:
     import h5py
 
@@ -156,25 +154,25 @@ def stamp_provenance(
     lowercase hex characters or ``"unknown"``. A build hash needs the
     ``"ladruno"`` backend (only the fork's ``ladrunoBuild`` answers one),
     and ``"stock"`` needs a converted file. Left out, they default from
-    the file and from this process:
+    the file alone; the stamp never asks an OpenSees backend, because the
+    process that stamps is not, in general, the one that recorded:
 
     * A file the fork's recorder wrote is ``"ladruno"``: the recorder
-      exists only in the fork. Its build is the one the bridge's resolver
-      binds in *this* process (``get_backend_info()``, which resolves the
-      backend on first use): the 40-hex hash when that is a fork build
-      answering ``ladrunoBuild``, and ``"unknown"`` when it is stock, a
-      fork build without the command, or no backend imports at all. This
-      default is right when the stamp runs where the analysis ran; a
-      caller stamping a file another machine or another OpenSees build
-      produced passes ``opensees_build_sha`` (or ``"unknown"``) itself.
-    * A converted file (``writer``, passed or already stamped, names
-      ``mpco->ladruno``) is ``"unknown"`` for both: the stamping process
-      did not run its analysis, and the ``.mpco`` does not say which
-      engine did. The converter's caller may pass what it knows.
-    * A default never replaces a known value already stamped on a part
-      (a backend other than ``"unknown"``, or a 40-hex build), so a
-      re-stamp elsewhere keeps the engine of the run; ``overwrite=True``
-      or an explicit value replaces it.
+      exists only in the fork. Its build is ``"unknown"``: the file does
+      not carry it (§7b.1, "No fork-side equivalent today"), so only the
+      caller that ran the analysis knows it and passes it
+      (``opensees_build_sha=get_backend_build() or "unknown"``).
+    * A converted file is ``"unknown"`` for both: the ``.mpco`` does not
+      say which engine wrote it. The converter's caller may pass what it
+      knows. A file is converted when ``writer`` names ``mpco->ladruno``,
+      or, with ``writer`` left out, when the stamped ``writer`` does; that
+      ``writer`` is then kept, so the mark survives every re-stamp. A
+      ``writer`` that would drop the mark refuses (``ValueError``):
+      ``"stock"`` never sits on a file not marked as converted.
+    * A value already stamped on a part (any §7b.1 value, ``"unknown"``
+      included) is kept: a default never replaces it, so a re-stamp
+      changes nothing. An explicit value, or ``overwrite=True``, replaces
+      it.
 
     Re-stamping with identical values writes nothing. A part already
     stamped with another ``model_hash``, or carrying an owned attribute
@@ -213,21 +211,19 @@ def stamp_provenance(
     _check_part_set(parts)
 
     all_facts = [_read_part(part) for part in parts]
-    converted = _CONVERTED_MARK in writer_text or any(
-        _CONVERTED_MARK in f.owned.get("writer", "") for f in all_facts)
+    writer_text, converted = _conversion(writer, writer_text, all_facts)
     if backend_arg == "stock" and not converted:
         raise ValueError(
             "stamp_provenance(opensees_backend='stock'): only a converted "
             f"file can be stock (writer naming {_CONVERTED_MARK!r}); a file "
             "the recorder wrote is always 'ladruno' (§7b.1)."
         )
-    running_build = _RunningBuild()
 
     plans: list[tuple[Path, dict[str, str]]] = []
     for part, facts in zip(parts, all_facts):
         backend, build = _engine_for(
             facts, backend_arg, build_arg, converted=converted,
-            overwrite=overwrite, running_build=running_build,
+            overwrite=overwrite,
         )
         wanted: dict[str, str] = {
             "model_hash": model_hash,
@@ -774,71 +770,59 @@ def _stage_names_for(
     return list(names)
 
 
-class _RunningBuild:
-    """The build hash of the backend this process binds, asked at most once.
+def _conversion(
+    writer: "Optional[str]", writer_text: str, all_facts: "list[_PartFacts]",
+) -> "tuple[str, bool]":
+    """``(writer to stamp, converted)``; the conversion mark is never lost.
 
-    Asked only when a part needs the default, so a re-stamp of parts that
-    already carry a hash never resolves a backend.
+    With ``writer`` left out, a stamped ``writer`` naming ``mpco->ladruno``
+    is kept. A passed ``writer`` without the mark, on a file that carries
+    it, refuses before any write.
     """
-
-    __slots__ = ("_value",)
-
-    def __init__(self) -> None:
-        self._value: "Optional[str]" = None
-
-    def __call__(self) -> str:
-        if self._value is None:
-            self._value = _query_running_build()
-        return self._value
-
-
-def _query_running_build() -> str:
-    """``ladrunoBuild``'s hash from the bound backend, else ``"unknown"``.
-
-    ``"unknown"`` when no backend imports (``ImportError``, the resolver's
-    one failure), when it is not the fork, or when its hash is not 40
-    lowercase hex (§7b.1 writes it as returned, so it is never altered).
-    Any other error from the resolver propagates.
-    """
-    try:
-        info = get_backend_info()
-    except ImportError:
-        return _UNKNOWN
-    build = info.build
-    if info.kind != "fork" or build is None or not _BUILD_SHA.fullmatch(build):
-        return _UNKNOWN
-    return build
+    marked = [f.owned["writer"] for f in all_facts
+              if _CONVERTED_MARK in f.owned.get("writer", "")]
+    if writer is None:
+        return (marked[0], True) if marked else (writer_text, False)
+    converted = _CONVERTED_MARK in writer_text
+    if marked and not converted:
+        raise ValueError(
+            f"stamp_provenance(writer={writer!r}): the file is stamped as "
+            f"converted (writer {marked[0]!r}); a writer without "
+            f"{_CONVERTED_MARK!r} would unmark it. Leave writer out to keep "
+            "the stamped one, or pass one naming the conversion."
+        )
+    return writer_text, converted
 
 
 def _engine_for(
     facts: "_PartFacts", backend_arg: "Optional[str]",
     build_arg: "Optional[str]", *, converted: bool, overwrite: bool,
-    running_build: "_RunningBuild",
 ) -> "tuple[str, str]":
     """``(opensees_backend, opensees_build_sha)`` for one part.
 
-    An explicit value wins; then, unless ``overwrite``, a known value the
-    part already carries; then the default (see :func:`stamp_provenance`).
+    An explicit value wins; then, unless ``overwrite``, a §7b.1 value the
+    part already carries (``"unknown"`` included); then the default:
+    ``"ladruno"`` on a recorder file, ``"unknown"`` otherwise, and an
+    ``"unknown"`` build. Nothing here asks an OpenSees backend.
     """
     stamped_backend = None if overwrite else facts.owned.get("opensees_backend")
     stamped_build = None if overwrite else facts.owned.get("opensees_build_sha")
     if backend_arg is not None:
         backend = backend_arg
-    elif stamped_backend is not None and stamped_backend in _BACKENDS \
-            and stamped_backend != _UNKNOWN:
-        backend = stamped_backend
+    elif stamped_backend in _BACKENDS and (
+            converted or stamped_backend != "stock"):
+        backend = str(stamped_backend)
     else:
         backend = _UNKNOWN if converted else _RECORDER_BACKEND
     if build_arg is not None:
         build = build_arg
     elif backend != _RECORDER_BACKEND:
         build = _UNKNOWN
-    elif stamped_build is not None and _BUILD_SHA.fullmatch(stamped_build):
+    elif stamped_build is not None and (
+            stamped_build == _UNKNOWN or _BUILD_SHA.fullmatch(stamped_build)):
         build = stamped_build
-    elif converted:
-        build = _UNKNOWN
     else:
-        build = running_build()
+        build = _UNKNOWN
     return backend, build
 
 
