@@ -233,19 +233,19 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 
 **KPI baselines (2026-09-28):**
 
-| KPI | Baseline |
-|---|---|
-| Strict fix-prefixed share | 22% |
-| Index-touch share | 80–85% (all index files). From 2026-10-14 the KPI counts hand-edited index files only, with the generated skill mirror and indexes excluded: 13% on 2026-10-14 |
-| Lost-work cases | 12 |
-| Red `main` | 2 in 3 weeks |
-| Files over 2,000 lines | 15 |
-| Lazy cross-package imports | 71% |
-| Private cross-package imports | 48% |
-| `live-fork` green streak | 0 |
-| Legacy viewer LOC | 23.9k |
-| `src/` Python lines | 301.7k |
-| Line count of each hub file | `apesees.py` 14,181 |
+| KPI | Baseline | Close target |
+|---|---|---|
+| Strict fix-prefixed share | 22% | ≤ 15% over the last 4 weeks before close |
+| Index-touch share | 80–85% (all index files). From 2026-10-14 the KPI counts hand-edited index files only, with the generated skill mirror and indexes excluded: 13% on 2026-10-14 | < 20% |
+| Lost-work cases | 12 | 0 in the last 4 weeks |
+| Red `main` | 2 in 3 weeks | ≤ 1 episode in each of the last 2 weeks before close |
+| Files over 2,000 lines | 15 | ≤ 15, no new file crossing the line, and `emitter/h5.py` and `element/solid.py` below 2,000 (met) |
+| Lazy cross-package imports | 71% | ≤ 73.14% (held by the C4 ratchet) |
+| Private cross-package imports | 48% | Dropped as a KPI: the baseline method cannot be recovered |
+| `live-fork` green streak | 0 | 14 consecutive green scheduled nights |
+| Legacy viewer LOC | 23.9k | 0 |
+| `src/` Python lines | 301.7k | none set |
+| Line count of each hub file | `apesees.py` 14,181 | `apesees.py` ≤ 11,787 (no net growth by close) |
 
 The structure KPIs are a KPI, never a hard gate, except the lazy-import ratchet below; contracts are constrained, internals stay fluid.
 
@@ -287,6 +287,6 @@ Ledger: chain issue #<n>; board #1203; charter internal_docs/program/PROGRAM.md.
 
 ## 11. Program end and expiries
 
-The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target, and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work.
+The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target (the close-target column of §8; maintainer, 2026-10-19), and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work.
 
 `internal_docs/program/prototypes/` **expires on 2026-11-30**. Delete each prototype when the link that productionizes it lands; X4's retirement ledger tracks this.

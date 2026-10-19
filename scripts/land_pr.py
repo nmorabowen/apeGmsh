@@ -220,6 +220,23 @@ def _is_mains_copy() -> bool:
     return os.environ.get(MAIN_COPY_ENV) == os.path.abspath(__file__)
 
 
+def _safe_io_encoding(current: str | None) -> str:
+    """PYTHONIOENCODING for the child: keep its encoding, force errors to replace."""
+    if not current:
+        return ":replace"
+    return current if current.endswith(":replace") else current.split(":")[0] + ":replace"
+
+
+def _no_crash_on_text() -> None:
+    """A gate script must never crash on the text it reports: card amendments and PR
+    bodies carry non-ASCII (a sigma crashed check 9 on a cp1252 console, #2057). Keep
+    each stream's encoding, so the console still decodes what it is sent, and replace
+    what it cannot encode. A stream without `reconfigure` (a test's StringIO) is left."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
+
 def _run_mains_copy(argv: list[str]) -> int:
     """Run origin/main's land_pr.py, never the checkout's (maintainer ruling 2 on #1686).
 
@@ -235,7 +252,9 @@ def _run_mains_copy(argv: list[str]) -> int:
         with open(path, "w", encoding="utf-8", newline="") as out:
             out.write(source)
         print(f"land_pr: running origin/main's {SELF}, not the checkout's.", file=sys.stderr)
-        return run_python([path, *argv], {**os.environ, MAIN_COPY_ENV: path})
+        # main's copy may predate the fix in `_no_crash_on_text`, so the child gets it by env.
+        env = {**os.environ, MAIN_COPY_ENV: path, "PYTHONIOENCODING": _safe_io_encoding(os.environ.get("PYTHONIOENCODING"))}
+        return run_python([path, *argv], env)
 
 
 def _green(check: dict[str, Any]) -> bool:
@@ -603,6 +622,15 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     file on origin/main (#1939)."""
     labels = {lab["name"] for lab in pr["labels"]}
     if PROGRAM not in labels:
+        if SLICE_REF.search(_text(pr["body"])) and FIXES_RED_MAIN not in labels:  # red-main fixes keep the skip (#2041)
+            # Fail-open before #2012: #2002 and #2170 carried `Slice:` but no label, so they
+            # skipped this check and the program-wide WIP count. `scope-ok` does not apply.
+            raise LandError(
+                f"check 9: #{number}'s body has a 'Slice: #<n>' line but it is not labelled "
+                f"{PROGRAM!r}, so it escapes the program-wide WIP count "
+                f"(`gh pr list --label {PROGRAM}`) and the Owned-files check. Run "
+                f"`gh pr edit {number} --add-label {PROGRAM}`; {SCOPE_OK!r} does not override this."
+            )
         print(f"check 9: #{number} is not labelled {PROGRAM!r}; the Owned-files check does not apply.")
         return
     if SCOPE_OK in labels:
@@ -1029,6 +1057,7 @@ def land(
 
 
 def main(argv: list[str] | None = None) -> int:
+    _no_crash_on_text()
     if not _is_mains_copy():
         return _run_mains_copy(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])

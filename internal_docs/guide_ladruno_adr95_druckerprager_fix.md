@@ -70,7 +70,7 @@ semantics, the `theta` tension-softening parameter, hardening.
    Any per-Gauss-point census (`ladrunoBranch`, tangent SVD) at every station multiplies the wall
    by ~5–8×; sample at stations, not at steps.
 
-## 3. Read-back: the `ladrunoBranch` census (ADOPTED except the live capture path)
+## 3. Read-back: the `ladrunoBranch` census (ADOPTED; the live read is the `.ladruno` material channel)
 
 **Adoption status (apeGmsh, 2026-09-08).** The recorder/file half is done. `ladrunoBranch` and
 `ladrunoTangent` joined `_MATERIAL_ONLY_ELEM_TOKENS` (`opensees/recorder.py`), so a bare token is
@@ -91,12 +91,17 @@ now carries both build floors. Live gate:
 `tests/opensees/integration_ladruno/test_ladruno_dp_branch_live.py` — written and gated, but its
 post-fix half has NOT been run to green, because the venv's engine is still `1652f945c`.
 
-**Still not adopted.** The LIVE capture path. `Results` is a pure file/array reader with no ops
-handle, so the `Results.from_native(...).gauss_point_branch(...)` sketched below cannot exist as
-written; the only live seam is `DomainCapture`, whose per-material routing still hard-codes
-`catalog_token == "strain"` (`opensees/_response_catalog.py::needs_per_material_strain`).
-Generalising that table is its own slice (ADR 0108 D5 names what it needs), and it needs a
-post-`61b3efa04` build to verify.
+**The live read: the `.ladruno` material channel (2026-10-18, #2192).** `Results` is a pure
+file/array reader with no ops handle, so the `Results.from_native(...).gauss_point_branch(...)`
+sketched below cannot exist as written. The live branch read is a `material` response instead:
+record `material.ladrunoBranch` with the Ladruno recorder during the run, then read it with
+`Results.from_ladruno`, which names the eight columns through the material-bucket seam above
+(ADR 0108 D2) and feeds `corner_census()`. This re-homes ADR 0108 D5 (its 2026-10-18
+superseded-in-part note; maintainer ruling 2026-10-14 on #1767, gap G14). The in-process seam D5
+first named, DomainCapture's per-material routing, is being removed with that class (#1767), so
+the generalisation slice D5 listed is no longer owed. The reader half is tested on a hand-built
+`.ladruno` (`tests/results/readers/test_ladruno_reader.py`); a post-`61b3efa04` engine writing
+the bucket end to end is the live gate's post-fix half, still owed.
 
 The original ask, for reference:
 

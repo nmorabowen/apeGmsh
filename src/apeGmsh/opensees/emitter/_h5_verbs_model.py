@@ -612,7 +612,8 @@ class _H5ModelVerbsMixin(_H5Host):
     ) -> None:
         # The bridge sets _current_element_nodes via
         # set_element_nodes(emitter, ...) right before each element call
-        # (see _internal/build/ emit_element_spec). Reading it here
+        # (see e.g. _internal/build/element_emit.py::
+        # emit_element_spec_partitioned). Reading it here
         # gives us the connectivity for the schema's
         # /elements/{type}/connectivity dataset.
         connectivity = getattr(self, ATTR_ELEMENT_NODES, None)

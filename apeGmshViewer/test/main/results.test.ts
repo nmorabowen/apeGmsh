@@ -6,7 +6,7 @@
 // owned_element_ids or remove_element.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -139,6 +139,147 @@ test("an in-place rewrite under an open handle is caught before the read (size/m
   assert.equal((s as { changed?: true }).changed, true);
   assert.equal(h.isOpen(), false, "the stale handle is closed");
   h.close();
+});
+
+// -- V4L-b1 (#2127): a .ladruno under the same rules; its identity is its INFO/PROVENANCE
+
+const LADRUNO = RESULTS.replace(/staged_activation\.results\.h5$/, "ladruno_frame3d.ladruno");
+const LADRUNO_UNSTAMPED = RESULTS.replace(/staged_activation\.results\.h5$/, "ladruno_truss2d.ladruno");
+function scratchLadruno(src: string, name = "run.ladruno"): string {
+  const p = join(mkdtempSync(join(tmpdir(), "agv-v4l-")), name);
+  copyFileSync(src, p);
+  return p;
+}
+
+test("a .ladruno opens through main: the PROVENANCE lineage, stage names and nodal components as the reader names them", async () => {
+  const h = host();
+  const a = await h.open(LADRUNO);
+  assert.ok(a.ok, JSON.stringify(a));
+  if (!a.ok) return;
+  assert.equal(a.meta.sourceType, "ladruno");
+  assert.deepEqual(a.meta.lineage, { modelHash: "0123456789abcdef0123456789abcdef", femHash: "fedcba9876543210fedcba9876543210", resultsHash: null });
+  assert.equal(a.meta.lineageReason, null);
+  assert.deepEqual(a.meta.stages.map((s) => s.name), ["gravity", "lateral"]);
+  const comps = a.meta.stages[0]!.nodal;
+  assert.ok(comps.includes("DISPLACEMENT/Ux"), comps.join(", "));
+  const s = h.readStep({ path: LADRUNO, stage: a.meta.stages[0]!.id, step: 0, seq: 1 });
+  assert.ok(s.ok, JSON.stringify(s));
+  if (!s.ok) return;
+  assert.deepEqual(Object.keys(s.nodal), comps, "a step carries every component under the reader's name");
+  h.close();
+});
+
+test("a .ladruno the recorder is still writing (no stamp yet) opens unpaired: no lineage, and the reader's reason", async () => {
+  const a = await host().open(LADRUNO_UNSTAMPED);
+  assert.ok(a.ok);
+  if (!a.ok) return;
+  assert.equal(a.meta.lineage, null);
+  assert.match(a.meta.lineageReason!, /INFO\/PROVENANCE has no @model_hash; INFO\/PROVENANCE has no @fem_hash: the file is not stamped for pairing/);
+});
+
+test("reload seam: a .ladruno re-stamped while idle (same size and mtime) is re-indexed, never read under the old stamp", async () => {
+  // Two stamps written the same way, same length, other names: the hashes stay,
+  // so only the whole PROVENANCE tells them apart (size and mtime cannot).
+  const stamp = (names: string) =>
+    edited(LADRUNO, (f) => {
+      const g = f.get("INFO/PROVENANCE") as h5wasm.Group;
+      g.delete_attribute("stage_names");
+      g.create_attribute("stage_names", names);
+    });
+  const first = stamp('["gravity","lateral"]');
+  const second = stamp('["GRAVITY","LATERAL"]');
+  const p = scratchLadruno(first);
+  const T = 1_700_000_000; // whole seconds: the mtime round-trips exactly
+  utimesSync(p, T, T);
+  const h = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready, { idleMs: 30 });
+  const a = await h.open(p);
+  assert.ok(a.ok);
+  if (!a.ok) return;
+  await sleep(80);
+  assert.equal(h.isOpen(), false);
+  const before = statSync(p);
+  copyFileSync(second, p);
+  utimesSync(p, T, T);
+  const after = statSync(p);
+  assert.equal(after.size, before.size, "precondition: the size and mtime cannot tell the two stamps apart");
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  const s = h.readStep({ path: p, stage: a.meta.stages[0]!.id, step: 0, seq: 1 });
+  assert.equal(s.ok, false);
+  assert.equal((s as { changed?: true }).changed, true, JSON.stringify(s));
+  const again = await h.open(p);
+  assert.ok(again.ok);
+  if (!again.ok) return;
+  assert.deepEqual(again.meta.stages.map((x) => x.name), ["GRAVITY", "LATERAL"], "the re-index reads the new stamp");
+  h.close();
+});
+
+// ladruno_modes.ladruno: one MODEL_STAGE (KIND=eigen) whose STEP_0 holds two modes,
+// which the reader lists after the host as mode stages `mode_1`, `mode_2`.
+const MODES = RESULTS.replace(/staged_activation\.results\.h5$/, "ladruno_modes.ladruno");
+const MODAL = "MODEL_STAGE[1]/RESULTS/ON_NODES";
+const stampNames = (src: string, names: string) =>
+  edited(src, (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).create_attribute("stage_names", names));
+/** The modes file with a second modal set (STEP_1, a copy of STEP_0) in both modal groups: then mode names carry the host. */
+const twoSets = () =>
+  edited(MODES, (f) => {
+    for (const grp of ["MODES_OF_VIBRATION(U)", "MODES_OF_VIBRATION(R)"]) {
+      const data = f.get(`${MODAL}/${grp}/DATA`) as h5wasm.Group;
+      const step = data.create_group("STEP_1");
+      for (const mode of ["MODE_0", "MODE_1"]) {
+        const src = f.get(`${MODAL}/${grp}/DATA/STEP_0/${mode}`) as h5wasm.Dataset;
+        const ds = step.create_dataset({ name: mode, data: src.value as Float64Array, shape: src.shape!, dtype: "<d" });
+        ds.create_attribute("LAMBDA", (src.attrs["LAMBDA"]!.value as Float64Array)[0]!);
+      }
+    }
+  });
+const namesOf = async (p: string) => {
+  const a = await host().open(p);
+  assert.ok(a.ok, JSON.stringify(a));
+  return a.ok ? { names: a.meta.stages.map((s) => s.name), kinds: a.meta.stages.map((s) => s.kind), warnings: a.warnings } : { names: [], kinds: [], warnings: [] };
+};
+
+test("stage_names name the MODEL_STAGE groups only: mode stages keep their names, with the host prefix renamed", async () => {
+  const own = await namesOf(MODES);
+  assert.deepEqual(own.kinds, ["static", "mode", "mode"]);
+  assert.deepEqual(own.names.slice(1), ["mode_1", "mode_2"]);
+  // One name for the one MODEL_STAGE: the host is renamed, the modes are not counted or renamed.
+  const one = await namesOf(stampNames(MODES, '["G"]'));
+  assert.deepEqual(one.names, ["G", "mode_1", "mode_2"]);
+  assert.ok(!one.warnings.some((w) => /stage_names/.test(w)), one.warnings.join("\n"));
+  // Two modal sets: each mode stage is `<host>/<STEP>/mode_<k>`, and the host part follows the stamp.
+  const sets = await namesOf(twoSets());
+  const host0 = sets.names[0]!;
+  assert.deepEqual(sets.names.slice(1), [`${host0}/STEP_0/mode_1`, `${host0}/STEP_0/mode_2`, `${host0}/STEP_1/mode_1`, `${host0}/STEP_1/mode_2`]);
+  const renamed = await namesOf(stampNames(twoSets(), '["G"]'));
+  assert.deepEqual(renamed.names, ["G", "G/STEP_0/mode_1", "G/STEP_0/mode_2", "G/STEP_1/mode_1", "G/STEP_1/mode_2"]);
+});
+
+test("stage_names that count the mode stages too (two names, one MODEL_STAGE) keep the file's names, and warn", async () => {
+  const own = await namesOf(MODES);
+  const two = await namesOf(stampNames(MODES, '["G","H"]'));
+  assert.deepEqual(two.names, own.names);
+  assert.ok(
+    two.warnings.some((w) => /INFO\/PROVENANCE@stage_names names 2 stage\(s\), the file has 1 MODEL_STAGE group\(s\); the file's own stage names are shown$/.test(w)),
+    two.warnings.join("\n"),
+  );
+});
+
+test("shared namespace: a .ladruno opened with a .results.h5 beside it reads only itself, and warns that the other is not opened", async () => {
+  const p = scratchLadruno(LADRUNO);
+  copyFileSync(RESULTS, p.replace(/\.ladruno$/, ".results.h5"));
+  const a = await host().open(p);
+  assert.ok(a.ok);
+  if (!a.ok) return;
+  assert.equal(a.meta.sourceType, "ladruno");
+  assert.ok(a.warnings.some((w) => /^run\.results\.h5 is not opened: a set reads one results file, and run\.ladruno is this one \(the file opened wins; otherwise the \.ladruno, ADR 0122 D1\)/.test(w)), a.warnings.join("\n"));
+  // And the reverse: the native file opened beside a .ladruno names the .ladruno.
+  const n = await host().open(p.replace(/\.ladruno$/, ".results.h5"));
+  assert.ok(n.ok);
+  if (!n.ok) return;
+  assert.ok(n.warnings.some((w) => w.startsWith("run.ladruno is not opened")), n.warnings.join("\n"));
+  // Alone, no such warning.
+  const alone = await host().open(scratchLadruno(LADRUNO));
+  assert.ok(alone.ok && !alone.warnings.some((w) => /is not opened/.test(w)));
 });
 
 test("a truncated results file is a refusal answer, never a crash", async () => {

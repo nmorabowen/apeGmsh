@@ -299,8 +299,14 @@ export interface ResultsInfo {
   path: string;
   version: string;
   sourceType: string | null;
-  /** null: the file has no /meta/lineage (it cannot be paired by content) */
+  /**
+   * null: the file has no /meta/lineage (it cannot be paired by content). A
+   * `.ladruno`'s lineage is its INFO/PROVENANCE `model_hash` and `fem_hash`,
+   * null unless both are stamped (#2127)
+   */
   lineage: Lineage | null;
+  /** .ladruno: why `lineage` is null (main/results.ts, from reader/ladruno.ts), else null; absent for a native file */
+  lineageReason?: string | null;
   /** why the file looks unfinished (no results_hash), or null; it is read as it stands */
   partial: string | null;
   stages: ResultsStage[];

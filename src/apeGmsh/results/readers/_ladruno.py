@@ -49,6 +49,7 @@ from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
 from . import _ladruno_element_io as _eio
 from . import _mpco_nodal_io as _mnodal
+from ._ladruno_element_io import SpatialDimUnknown
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco import (
     _PROGRAM_STAGE_KINDS,
@@ -84,18 +85,6 @@ _DIM_UNKNOWN = (
     "no INFO/SPATIAL_DIM, and no single MODEL/NODES/COORDINATES width "
     "of 1, 2 or 3"
 )
-
-
-class SpatialDimUnknown(ValueError):
-    """A read that needs the spatial dimension, on a file that gives none.
-
-    Raised when the file has no ``INFO/SPATIAL_DIM`` and its
-    ``MODEL/NODES/COORDINATES`` widths name no one dimension, by
-    ``opensees_model`` and by a ``nodal_resisting_*`` read over indexed
-    ``P<a>_<b>`` ``globalForce`` columns (#2081). It is a ``ValueError``
-    and no ``MissingElementResults``, so a partition set reports it from
-    any rank instead of dropping that rank's elements.
-    """
 
 
 def _stage_sort_key(name: str) -> "tuple[int, str]":
@@ -619,7 +608,7 @@ class LadrunoReader:
         from types import MappingProxyType
 
         from ...opensees.opensees_model import OpenSeesModel
-        ndm = self._spatial_dim()
+        ndm = _eio._file_spatial_dim(self._h5)
         if ndm is None:
             raise SpatialDimUnknown(
                 f"{self._path.name}: the spatial dimension is unknown "
@@ -654,31 +643,6 @@ class LadrunoReader:
             _sweeps=(),
         )
 
-    def _spatial_dim(self) -> Optional[int]:
-        """The file's spatial dimension, or ``None`` when it is unknown.
-
-        ``INFO/SPATIAL_DIM`` when the file carries it. Otherwise the width
-        of ``MODEL/NODES/COORDINATES``, which the writer sizes by the
-        spatial dimension, when every stage that has one agrees on a
-        width of 1, 2 or 3. Otherwise ``None``: a read that depends on
-        the dimension refuses or warns, naming the file (#2081).
-        """
-        info = (self._h5["INFO"] if "INFO" in self._h5 else None)
-        if info is not None and "SPATIAL_DIM" in info.attrs:
-            raw = np.asarray(info.attrs["SPATIAL_DIM"])
-            if raw.size:
-                return int(raw.flat[0])
-        widths: set[int] = set()
-        for name in self._h5:
-            if not name.startswith(_STAGE_PREFIX):
-                continue
-            coords = _child(self._h5[name], "MODEL/NODES/COORDINATES")
-            if coords is not None and len(coords.shape) == 2:
-                widths.add(int(coords.shape[1]))
-        if len(widths) == 1 and widths <= {1, 2, 3}:
-            return widths.pop()
-        return None
-
     # -- components / reads --------------------------------------------
 
     def available_components(
@@ -704,7 +668,7 @@ class LadrunoReader:
         if level is ResultLevel.LINE_STATIONS:
             return sorted(_eio.line_station_available(on_elements))
         if level is ResultLevel.ELEMENTS:
-            ndm = self._spatial_dim()
+            ndm = _eio._file_spatial_dim(self._h5)
             if ndm is not None:
                 return sorted(_eio.element_available(on_elements, ndm=ndm))
             indexed = _eio.indexed_nodal_force_buckets(on_elements)
@@ -1088,7 +1052,7 @@ class LadrunoReader:
         # dimension.
         ndm: Optional[int] = None
         if component in PER_ELEMENT_NODAL_FORCES:
-            ndm = self._spatial_dim()
+            ndm = _eio._file_spatial_dim(self._h5)
             if ndm is None:
                 indexed = _eio.indexed_nodal_force_buckets(on_e)
                 if indexed and (_eio.nodal_force_token(component)

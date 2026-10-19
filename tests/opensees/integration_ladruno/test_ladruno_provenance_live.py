@@ -14,7 +14,13 @@ Oracles:
   ``PROVENANCE``, so a stamped file stays conformant);
 * ``model_hash`` / ``fem_hash`` equal the model's ``/meta/lineage``;
 * ``stage_names`` holds the program's names, because the recorder's
-  ``KIND`` per stage matches each stage's ``analysis`` record.
+  ``KIND`` per stage matches each stage's ``analysis`` record;
+* stamped with the ``ladrunoBuild()`` the deck's own engine printed,
+  passed explicitly as the recording caller would, ``opensees_backend`` is
+  ``"ladruno"`` and ``opensees_build_sha`` is that hash and, in the
+  ``live-fork`` lane (``APEGMSH_FORK_PIN_ENFORCE=1``), the ``FORK_PIN``
+  sha; a copy stamped with defaults from this process reads ``"unknown"``
+  (#2196, #2208 F4, §7b.1 at fork PR #997).
 
 Gated by the ``ladruno_fork`` marker (root conftest auto-skips off-fork).
 """
@@ -23,6 +29,8 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -102,7 +110,9 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     )
     # Close the recorder, then prove the deck ran to its end (a Tcl or
     # Python error can still exit 0 on some engines).
-    text += "\nops.remove('recorders')\nprint('DECK-DONE')\n"
+    text += ("\nops.remove('recorders')\n"
+             "print('ENGINE-BUILD=' + str(ops.ladrunoBuild()))\n"
+             "print('DECK-DONE')\n")
     deck.write_text(text, encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, str(deck)], cwd=tmp, env=_fresh_env(),
@@ -111,8 +121,19 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     assert proc.returncode == 0 and "DECK-DONE" in proc.stdout, (
         proc.stdout[-2000:] + proc.stderr[-2000:])
     assert ladruno.is_file()
-    stamp_provenance(ladruno, model_h5)
-    return {"ladruno": ladruno, "model_h5": model_h5, "tmp": tmp}
+    build = next(line.split("=", 1)[1].strip()
+                 for line in proc.stdout.splitlines()
+                 if line.startswith("ENGINE-BUILD="))
+    # A copy stamped with defaults, from this (pytest) process: it did not
+    # record the file, so it cannot know the build (#2208 F4).
+    foreign = tmp / "foreign" / "r.ladruno"
+    foreign.parent.mkdir()
+    shutil.copy(ladruno, foreign)
+    stamp_provenance(foreign, model_h5)
+    # The caller that ran the analysis passes the build it ran on.
+    stamp_provenance(ladruno, model_h5, opensees_build_sha=build)
+    return {"ladruno": ladruno, "model_h5": model_h5, "tmp": tmp,
+            "build": build, "foreign": foreign}
 
 
 def _fork_validate(tmp: Path) -> Any:
@@ -160,3 +181,23 @@ def test_stage_names_are_the_program_names(run) -> None:
     assert [k.tobytes().decode() if hasattr(k, "tobytes") else k
             for k in kinds] == ["static", "transient"]
     assert names == ["gravity", "shake"]
+
+
+def test_the_engine_is_the_fork_build_that_ran(run) -> None:
+    """The caller's stamp names the build the deck ran on (§7b.1 names)."""
+    build = run["build"]
+    assert re.fullmatch(r"[0-9a-f]{40}", build), build
+    if os.environ.get("APEGMSH_FORK_PIN_ENFORCE") == "1":
+        assert build == _pin("sha")
+    with h5py.File(run["ladruno"], "r") as f:
+        prov = f["INFO/PROVENANCE"].attrs
+        assert prov["opensees_backend"] == "ladruno"
+        assert prov["opensees_build_sha"] == build
+
+
+def test_a_default_stamp_from_another_process_is_unknown(run) -> None:
+    """The pytest process did not record the file: it may not claim a build."""
+    with h5py.File(run["foreign"], "r") as f:
+        prov = f["INFO/PROVENANCE"].attrs
+        assert prov["opensees_backend"] == "ladruno"
+        assert prov["opensees_build_sha"] == "unknown"

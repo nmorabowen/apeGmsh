@@ -44,9 +44,13 @@ Then:
 - **Open** a `.h5` file: "Open with", apeGmshViewer, or a double-click once it
   is your `.h5` program. A second open goes to the window already running.
 - **Drag and drop** a file onto the window.
-- **The set.** Opening `<stem>.h5` also opens `<stem>.geometry.h5` and
-  `<stem>.results.h5` when they exist beside it. Opening the geometry or
-  results file finds its model the same way.
+- **The set.** Opening `<stem>.h5` also opens `<stem>.geometry.h5` and a
+  results file, `<stem>.ladruno` or `<stem>.results.h5`, when they exist
+  beside it. Opening the geometry or results file finds its model the same
+  way. A set reads one results file: when both sit beside the model, the
+  one you opened wins, and otherwise the `.ladruno` (ADR 0122 D1); the
+  banner names the file that was not opened. A `<stem>.part-<N>.ladruno` is
+  refused (partitioned runs are ADR 0122 slice 8).
 - **Watching.** Each run rewrites the files (ADR 0112 D1). The app reloads a
   file once its writer has stopped for 300 ms, and picks up a sibling that
   appears or vanishes.
@@ -70,6 +74,16 @@ Then:
   replace it), and a file that changed is re-read before any step is shown;
   the newest request wins. The viewport draws the undeformed mesh unless
   the deformed shape is on.
+- **`.ladruno` results** (a Ladruno fork recorder's file) pair the same way,
+  by the `model_hash` and `fem_hash` that
+  `stamp_provenance(path, model_h5)` writes into its `INFO/PROVENANCE`
+  (ADR 0122 D3). An unstamped file, or one still being written, is not
+  drawn, and the banner says so and names the stamp. The stamp's
+  `stage_names` name the stages when it counts as many as the file has (else
+  the file's own names, with a warning), and its `element_index_space =
+  "fem"` marks the element rows as FEM ids. Nodal components keep the file's
+  names (`DISPLACEMENT/Ux`), and contour like any other. A file re-stamped
+  while open is re-read, never shown under the old stamp.
 - **Deformed shape.** On a results stage, **deformed** in the legend moves
   every drawn node to `x + scale · u`, with `u` the file's nodal
   `displacement_x`, `_y` and `_z` at the step shown (rotations are not

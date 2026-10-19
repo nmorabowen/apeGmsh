@@ -688,8 +688,10 @@ BODY_1702 = "Slice: #1696 (link S2-a, chain #1200)\nAuthor-model: Sonnet (prog-m
 
 
 def test_freeze_holder_via_slice_issue_lands_1702(capsys):
-    gh, git = _recording(1218, {**PR_1218, "body": BODY_1702}, SQUASH_1218, [BUILD], labels=FREEZE_BUILD,
-                         issues={1696: ["program", "slice", f"freeze:{BUILD}"]})
+    pr = {**PR_1218, "body": BODY_1702, "labels": [{"name": "program"}]}  # #2012: a Slice: PR carries the label
+    gh, git = _recording(1218, pr, SQUASH_1218, [BUILD], labels=FREEZE_BUILD,
+                         issues={1696: ["program", "slice", f"freeze:{BUILD}"]},
+                         cards={1696: {"body": f"### Owned files\n- `{BUILD}`\n", "comments": []}})
     assert _run(1218, gh, git) == 0
     assert "issue view 1696 --json labels" in gh.calls
     assert "held by #1696; allowed" in capsys.readouterr().out
@@ -1020,6 +1022,35 @@ def test_non_program_pr_is_not_checked_and_says_so(capsys):
     assert not any(call.startswith("issue view") for call in gh.calls)
 
 
+@pytest.mark.parametrize("body", ["Slice: #1741\nClass: semantic\n", "Slice: #2165\nAuthor-model: Sonnet\n"],
+                         ids=["2002-shape", "2170-shape"])
+@pytest.mark.parametrize("extra", [[], ["scope-ok"]], ids=["plain", "scope-ok-no-override"])
+def test_slice_pr_without_program_label_is_refused(body, extra):
+    """#2012 (2nd occurrence: #2002, #2170). Revert-proof: without the rule these merge."""
+    pr = {**PR_1218, "labels": [{"name": n} for n in ("semantic", *extra)], "body": body}
+    gh, git = _scope(OWNED_1812 + FOREIGN_1812, pr=pr)
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218's body has a 'Slice: #<n>' line but it is not labelled 'program'(.|\n)*gh pr edit 1218 --add-label program"):
+        _run(1218, gh, git, dry_run=True)
+
+
+def test_red_main_revert_with_slice_line_keeps_the_skip(capsys):
+    """#2041 shape: body `Slice: #2040`, labelled fixes-red-main, no program label."""
+    pr = {**PR_1218, "labels": [{"name": "fixes-red-main"}], "body": "Slice: #2040\n"}
+    gh, git = _scope(OWNED_1812 + FOREIGN_1812, pr=pr)
+    land_pr.check_owned(1218, pr, land_pr._changed_files(1218, gh), gh, git)
+    assert "check 9: #1218 is not labelled 'program'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("body,card", [("Slice: #1741\nClass: semantic\n", 1741), ("Slice: #2165\nClass: semantic\n", 2165)],
+                         ids=["2002-shape", "2170-shape"])
+def test_slice_pr_with_program_label_goes_on_to_the_owned_read(body, card, capsys):
+    pr = {**PR_1218, "labels": [{"name": "program"}, {"name": "semantic"}], "body": body}
+    cards = {card: {"body": CARD_1812, "comments": []}}
+    gh, git = _recording(1218, pr, SQUASH_1218, OWNED_1812, cards=cards)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert f"inside slice card #{card}'s Owned list" in capsys.readouterr().out
+
+
 def test_owned_only_runs_check_9_alone_on_a_merged_pr(monkeypatch, capsys):
     gh = Replay({
         "pr view 1812 --json labels,body": json.dumps({"labels": PROGRAM_PR["labels"], "body": PROGRAM_PR["body"]}),
@@ -1339,9 +1370,10 @@ def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line
 def test_a_bom_prefixed_body_still_holds_a_freeze_1891():
     """Review of #1917, finding 2: check 5 reads `Slice:` too. Revert-proof: without `_text`
     in `_check_freeze`, the BOM hides the line and the freeze refuses."""
-    pr = {**PR_1218, "body": "﻿" + BODY_1702.replace("\n", "\r\n")}
+    pr = {**PR_1218, "body": "﻿" + BODY_1702.replace("\n", "\r\n"), "labels": [{"name": "program"}]}
     gh, git = _recording(1218, pr, SQUASH_1218, [BUILD], labels=FREEZE_BUILD,
-                         issues={1696: ["program", "slice", f"freeze:{BUILD}"]})
+                         issues={1696: ["program", "slice", f"freeze:{BUILD}"]},
+                         cards={1696: {"body": f"### Owned files\n- `{BUILD}`\n", "comments": []}})
     assert _run(1218, gh, git) == 0
 
 
@@ -1979,3 +2011,25 @@ def test_check_card_combined_with_a_mode_flag_is_a_usage_error(extra, capsys):
         land_pr.main(["--check-card", "2000", *extra])
     assert exc.value.code == 2
     assert "--check-card" in capsys.readouterr().err
+
+
+# --- #2057: a cp1252 console must not crash the gate on non-ASCII card text ---------------------
+def test_check_card_survives_a_cp1252_stdout_with_a_sigma_2057(monkeypatch):
+    import io
+
+    sigma = {"body": "**Card amendment** Do not touch `scripts/c.py`, sigma σ."}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [sigma]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    raw = io.BytesIO()
+    wrapper = io.TextIOWrapper(raw, encoding="cp1252", newline="")
+    monkeypatch.setattr(sys, "stdout", wrapper)
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    wrapper.flush()
+    assert b"sigma ?" in raw.getvalue()
+
+
+@pytest.mark.parametrize(
+    "current,want", [(None, ":replace"), ("utf-8", "utf-8:replace"), ("cp1252:strict", "cp1252:replace")]
+)
+def test_the_child_gets_a_replace_error_handler_2057(current, want):
+    assert land_pr._safe_io_encoding(current) == want
