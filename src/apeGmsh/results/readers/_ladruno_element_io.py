@@ -53,7 +53,6 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
 )
 from .._shell_geometry import shell_quaternion
-from ._ladruno_provenance import _CONVERTED_MARK
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco_layer_io import (
     LayerBucketUnreadWarning,
@@ -656,68 +655,14 @@ def _gp_param_for(
             gp = np.asarray(
                 grp["QUADRATURE"]["GP_PARAM"][...], dtype=np.float64,
             )
-            param_domain = _basis_attr(grp, "PARAM_DOMAIN", name)
-            if param_domain == "bary":
-                _refuse_unmarked_converted_rows(grp, name)
             return gp_param_to_gmsh(
                 gp,
-                param_domain=param_domain,
+                param_domain=_basis_attr(grp, "PARAM_DOMAIN", name),
                 topology=_basis_attr(grp, "TOPOLOGY", name),
                 family=_basis_attr(grp, "FAMILY", name),
                 where=f"MODEL/ELEMENTS/{name}",
             )
     return None
-
-
-#: Stamped by the MPCO -> .ladruno converter on every element group whose
-#: barycentric GP_PARAM it writes in the frame :func:`gp_param_to_gmsh`
-#: reads (node-0-first, or gmsh for a bernstein triangle).
-GP_PARAM_FRAME_ATTR = "GP_PARAM_FRAME"
-GP_PARAM_FRAME = "ladruno-bary-1"
-
-
-def _converted_group(grp: "h5py.Group") -> bool:
-    """Whether the MPCO -> .ladruno converter wrote this element group.
-
-    The file's ``INFO/PROVENANCE@writer`` names the converter on the stamped
-    part. Every part also tells by structure: the fork writes ``ORDER``
-    beside every barycentric ``GP_PARAM``, and the converter never does.
-    """
-    info = grp.file["INFO"] if "INFO" in grp.file else None
-    if info is not None and "PROVENANCE" in info:
-        writer = info["PROVENANCE"].attrs.get("writer")
-        if writer is not None and _CONVERTED_MARK in _decode_str(writer):
-            return True
-    return "ORDER" not in grp.attrs
-
-
-def _refuse_unmarked_converted_rows(grp: "h5py.Group", name: str) -> None:
-    """Refuse a converted barycentric ``GP_PARAM`` whose frame is unknown.
-
-    Converter output without :data:`GP_PARAM_FRAME_ATTR` copied the response
-    catalog's rows as they stood then. For a class the catalog writes
-    node-0-first, that is the frame read here, so it reads correctly. For
-    BezierTri6 and ASDShellT3 the rows were gmsh ``(u, v)`` labelled
-    ``FAMILY="lagrange"``, which reads rotated, so the class is refused by
-    name, as is a class the catalog does not know.
-    """
-    if not _converted_group(grp) or GP_PARAM_FRAME_ATTR in grp.attrs:
-        return
-    cls = _class_name(name)
-    systems = {
-        lay.coord_system for (c, _rule, _tok), lay in RESPONSE_CATALOG.items()
-        if c == cls
-    }
-    if systems and all(cs.endswith("_node0") for cs in systems):
-        return
-    raise ValueError(
-        f"MODEL/ELEMENTS/{name}: this {cls} group was written by an older "
-        f"MPCO -> .ladruno conversion, which stored its barycentric "
-        f"GP_PARAM without stating its frame ({GP_PARAM_FRAME_ATTR} is "
-        f"missing), and for this class those rows read rotated. Re-convert "
-        f"the .mpco with the current apeGmsh (convert_mpco) to read its "
-        f"Gauss points."
-    )
 
 
 # =====================================================================
