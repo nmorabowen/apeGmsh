@@ -25,6 +25,12 @@ archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
 build it, so there the test asserts only that the bridge deck did not run,
 the static check is its only net, and the test skips by name so ``-rs``
 shows it.
+:data:`_KNOWN_STOCK_FAILURES` names the rows whose bridge deck aborts on
+stock openseespy although their solve stamp claims ``requires=()``
+(``Parameter::addComponent`` finds no object for the parameter; #2220).
+They are handled like the fork rows: the test asserts the bridge deck does
+not run, then skips citing #2220. Once #2220 is fixed the assertion fails,
+and the entry must be removed.
 Any other bridge deck that does not run fails.
 
 openseespy is never imported into the pytest process: the decks run in
@@ -63,6 +69,13 @@ def _rows(klass: str, cites: str = "") -> list[Model]:
 
 #: Every waived row whose replay deck must run: class A or B, corpus order.
 _RUN_ROWS = [m for m in CORPUS if m in {*_rows("A"), *_rows("B")}]
+#: Rows whose bridge deck aborts on stock openseespy while the solve stamp
+#: claims ``requires=()``: the issue that tracks each. Not a waiver: the net
+#: asserts the bridge deck does not run, so a fix fails it until removed.
+_KNOWN_STOCK_FAILURES: dict[str, str] = {
+    "test_h5_decls::_param_stage_model": "#2220",
+    "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
+}
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
 
@@ -118,6 +131,14 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
         f"{model.id}: the bridge deck does not run, and its solve stamp "
         f"requires {requires}:\n{log}")
     return ran
+
+
+def test_known_stock_failures_name_run_rows() -> None:
+    """Every #2220 entry names a corpus row the net runs, citing its issue."""
+    run_ids = {m.id for m in _RUN_ROWS}
+    assert set(_KNOWN_STOCK_FAILURES) <= run_ids, (
+        sorted(set(_KNOWN_STOCK_FAILURES) - run_ids))
+    assert all(v == "#2220" for v in _KNOWN_STOCK_FAILURES.values())
 
 
 def test_the_net_runs_some_stock_row() -> None:
@@ -185,6 +206,15 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
 def test_a_waived_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
+    issue = _KNOWN_STOCK_FAILURES.get(model.id)
+    if issue is not None:
+        ran, log = _run(bridge)
+        assert not ran, (
+            f"{model.id}: the bridge deck now runs; {issue} is fixed, so "
+            f"remove its _KNOWN_STOCK_FAILURES entry:\n{log}")
+        pytest.skip(f"{model.id}: known stock failure {issue} (the bridge "
+                    "deck aborts though the stamp requires nothing); "
+                    "asserted that the bridge deck did not run here")
     if not _bridge_runs(model, bridge, requires):
         pytest.skip(f"{model.id}: fork-only (solve stamp requires={requires!r}); "
                     "asserted only that the bridge deck did not run here")
