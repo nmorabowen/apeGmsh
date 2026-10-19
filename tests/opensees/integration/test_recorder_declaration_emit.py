@@ -553,7 +553,7 @@ class TestDeclareCrossCategory:
 
 
 class TestDeclareDeferredCategories:
-    def test_fiber_record_emit_raises_with_domain_capture_hint(self) -> None:
+    def test_fiber_record_emit_raises_with_fork_mpco_hint(self) -> None:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
@@ -571,10 +571,10 @@ class TestDeclareDeferredCategories:
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match="DomainCapture"):
+        with pytest.raises(NotImplementedError, match=r"recorder ladruno.*recorder mpco.*same two recorders"):
             bm.emit(rec)
 
-    def test_layer_record_emit_raises_with_domain_capture_hint(self) -> None:
+    def test_layer_record_emit_raises_with_fork_mpco_hint(self) -> None:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
@@ -592,10 +592,10 @@ class TestDeclareDeferredCategories:
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match="DomainCapture"):
+        with pytest.raises(NotImplementedError, match=r"recorder ladruno.*recorder mpco.*same two recorders"):
             bm.emit(rec)
 
-    def test_modal_record_emit_raises_with_domain_capture_hint(self) -> None:
+    def test_modal_record_emit_raises_with_fork_mpco_hint(self) -> None:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
@@ -609,7 +609,7 @@ class TestDeclareDeferredCategories:
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match="DomainCapture"):
+        with pytest.raises(NotImplementedError, match=r"recorder ladruno.*recorder mpco.*modesOfVibration"):
             bm.emit(rec)
 
 

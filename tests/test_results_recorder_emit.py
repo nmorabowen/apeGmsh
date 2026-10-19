@@ -276,7 +276,9 @@ def test_deferred_category_emits_todo(category: str) -> None:
         assert "MPCO-only" in line
         assert "Results.from_mpco" in line
     else:
-        assert "TODO Phase 5+" in line
+        assert "TODO" in line
+        assert "MPCO recorder or the native results recorder" in line
+        assert "Phase" not in line
     assert category in line
 
 

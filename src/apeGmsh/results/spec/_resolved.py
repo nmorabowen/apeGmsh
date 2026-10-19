@@ -12,8 +12,8 @@ build/emit time into a :class:`ResolvedRecorderSpec` — a snapshot
 tied to a specific FEMData by ``snapshot_id``.
 
 Only the spec is consumed downstream:
-- Phase 5 / 8: emit Tcl/Python recorder commands or ``recorder mpco`` lines
-- Phase 7: drive in-process domain capture
+- emit Tcl/Python recorder commands or ``recorder mpco`` lines
+- ``emit_default``: record an in-process run on the default route
 
 The spec is gmsh-independent and OpenSees-independent at the type
 level — just a numpy + dataclass payload.
@@ -290,8 +290,7 @@ class ResolvedRecorderSpec:
 
         Categories: nodes / elements / gauss / line_stations are
         emitted; fibers / layers warn-and-skip (use
-        ``ops.domain_capture(DomainCaptureSpec(opensees=ops),
-        path=...)`` or :meth:`emit_mpco` instead);
+        :meth:`emit_default` or :meth:`emit_mpco` instead);
         modal records raise on ``__enter__``.
 
         ``model`` is the built :class:`~apeGmsh.opensees.OpenSeesModel`

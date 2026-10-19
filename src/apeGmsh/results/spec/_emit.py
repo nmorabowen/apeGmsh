@@ -185,10 +185,9 @@ def _per_material_strain_skip_reason(
         f"{class_name!r}, whose element-level setResponse('strains') "
         f"is unimplemented in OpenSees — an .out recorder would write "
         f"only the time column, no strain data. Use MPCO instead "
-        f"(``recorder mpco ... -E material.strain``, read with "
-        f"``Results.from_mpco(...)``), or capture in-process via "
-        f"``ops.domain_capture(DomainCaptureSpec(opensees=ops), "
-        f"path=...)`` (read with ``Results.from_native(...)``)."
+        f"(``recorder mpco ... -E material.strain``, which "
+        f"spec.emit_mpco(...) writes; read with "
+        f"``Results.from_mpco(...)``)."
     )
 
 
@@ -235,7 +234,7 @@ def line_stations_from_local_force(rec: ResolvedRecorderRecord) -> bool:
     ``ModElasticBeam2d``, ``ElasticTimoshenkoBeam{2d,3d}``): classes with
     no ``section force`` layout and a ``localForce`` line-stations
     synthesis in the response catalog, the same two-way test
-    DomainCapture's line-station capturer makes. The emit and the ``.out``
+    the line-station response catalog makes. The emit and the ``.out``
     transcoder both ask this one predicate, so they cannot disagree on
     which file a record wrote.
 
@@ -1000,15 +999,15 @@ def _tcl_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
     if rec.category in ("fibers", "layers"):
         return (
             f";# recorder category {rec.category!r} "
-            f"(record {rec.name!r}) is MPCO-only in apeGmsh Phase 11c. "
+            f"(record {rec.name!r}) is MPCO-only. "
             f"Add an MPCO recorder (e.g. ``recorder mpco {rec.name}.mpco "
             f"-E section.fiber.stress``) instead of relying on .out "
             f"emission, then read with ``Results.from_mpco(...)``."
         )
     return (
-        f";# TODO Phase 5+: recorder category {rec.category!r} "
+        f";# TODO: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
-        f"Use domain capture (Phase 7) or MPCO bridge (Phase 8)."
+        f"Use an MPCO recorder or the native results recorder."
     )
 
 
@@ -1016,16 +1015,16 @@ def _py_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
     if rec.category in ("fibers", "layers"):
         return (
             f"# recorder category {rec.category!r} "
-            f"(record {rec.name!r}) is MPCO-only in apeGmsh Phase 11c. "
+            f"(record {rec.name!r}) is MPCO-only. "
             f"Add an MPCO recorder (e.g. ``ops.recorder('mpco', "
             f"'{rec.name}.mpco', '-E', 'section.fiber.stress')``) "
             f"instead of relying on .out emission, then read with "
             f"``Results.from_mpco(...)``."
         )
     return (
-        f"# TODO Phase 5+: recorder category {rec.category!r} "
+        f"# TODO: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
-        f"Use domain capture (Phase 7) or MPCO bridge (Phase 8)."
+        f"Use an MPCO recorder or the native results recorder."
     )
 
 
@@ -1207,8 +1206,8 @@ def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
             f"Record {record_name!r} (category=gauss): component "
             f"{canonical!r} (the Truss axial force) cannot go through MPCO: "
             f"MPCO writes its axialForce bucket with no GAUSS_IDS and the "
-            f"reader refuses it. Record it with spec.emit_recorders(...), "
-            f"the fork's native recorder, or ops.domain_capture(...)."
+            f"reader refuses it. Record it with spec.emit_recorders(...) "
+            f"or the fork's native recorder."
         )
     token = _canonical_to_mpco_element_token(canonical)
     if token not in _MPCO_GAUSS_READ_SIDE_KEYWORDS:
@@ -1216,7 +1215,7 @@ def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
             f"Record {record_name!r} (category=gauss): component "
             f"{canonical!r} has no MPCO -E token, so the MPCO file would "
             f"not record it. Drop it from the record, or capture it with "
-            f"spec.emit_recorders(...) or ops.domain_capture(...)."
+            f"spec.emit_recorders(...) or the fork's native recorder."
         )
     return token
 
