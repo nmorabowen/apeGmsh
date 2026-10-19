@@ -15,6 +15,7 @@
 //   X3 an unsupported type drawn as a guess  -> "an element type with no shape functions reads unsupported ..."
 //   X4 the legacy simplex remap removed (#2274) -> "a pre-#2238 native file ..." (corners rotated by one node)
 //   X5 unknown simplex rows drawn as stored     -> "simplex rows that match neither table ..."
+//   X6 the exact match loosened to a tolerance  -> "the match is exact, as np.array_equal ..."
 
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
@@ -477,6 +478,26 @@ test("simplex rows equal to the current table, and any class the table does not 
   assert.equal(LEGACY_SIMPLEX_GP_ROWS[33009], undefined);
   const other = gmshSimplexRows(33009, sixNode, "f.h5: Gauss group g");
   assert.ok(other.refused === null && other.rows === sixNode);
+});
+
+/** The next double above `x` (one ulp up), by its bits. */
+function ulpUp(x: number): number {
+  const b = new BigInt64Array(Float64Array.of(x).buffer);
+  b[0]! += 1n;
+  return new Float64Array(b.buffer)[0]!;
+}
+
+test("the match is exact, as np.array_equal: rows one ulp off either table are refused, never remapped or passed as current", () => {
+  for (const [tag, t] of Object.entries(LEGACY_SIMPLEX_GP_ROWS)) {
+    for (const which of ["legacy", "current"] as const) {
+      const rows = t[which].map((r) => [...r]);
+      const last = rows.length - 1;
+      rows[last]![0] = ulpUp(rows[last]![0]!);
+      assert.notEqual(rows[last]![0], t[which][last]![0], `${t.cls}: the nudge is one ulp, not zero`);
+      const m = gmshSimplexRows(Number(tag), rows, "f.h5: Gauss group g");
+      assert.ok(m.rows === null && m.refused !== null && m.refused.includes(`(${t.cls})`), `${t.cls} ${which} rows one ulp off must be refused`);
+    }
+  }
 });
 
 test("simplex rows that match neither table refuse that group by name: one warning per class, no natural coordinates, the node modes unsupported, the element mean still drawn", () => {
