@@ -619,6 +619,60 @@ test("mode shape (fork-written ladruno_modes): the eigenvector rows deform the n
   host.close();
 });
 
+test("paired modal .ladruno through the store: mode 1 is a ready deformed shape from MODES_OF_VIBRATION(U), x + s φ, and the legend names λ, f and T", async () => {
+  // A stamped copy of frame3d (pairs with ladruno_frame3d.h5 by its PROVENANCE) with a modal
+  // record added under MODEL_STAGE[1], as the fork writes one (§7.1 / §7.1.1): mode 1 sways in x.
+  await h5wasm.ready;
+  const p = join(mkdtempSync(join(tmpdir(), "v4lb2-modal-")), "modal3d.ladruno");
+  copyFileSync(FRAME3D, p);
+  const root = "MODEL_STAGE[1]";
+  const coords = await ladrunoArray(FRAME3D, `${root}/MODEL/NODES/COORDINATES`);
+  const ids = await ladrunoArray(FRAME3D, `${root}/RESULTS/ON_NODES/DISPLACEMENT/ID`);
+  const n = ids.value.length;
+  const lambdas = [100, 400];
+  const shape = (m: number) => Float64Array.from({ length: 3 * n }, (_, i) => (i % 3 === m ? 0.05 * (coords.value[3 * Math.floor(i / 3) + 2]! / 6) : 0));
+  const f = new h5wasm.File(p, "a");
+  try {
+    const on = f.get(`${root}/RESULTS/ON_NODES`) as h5wasm.Group;
+    for (const [group, labels] of [["MODES_OF_VIBRATION(U)", "Ux,Uy,Uz"], ["MODES_OF_VIBRATION(R)", "Rx,Ry,Rz"]] as const) {
+      const g = on.create_group(group);
+      g.create_attribute("COMPONENTS", labels);
+      g.create_dataset({ name: "ID", data: Int32Array.from(ids.value), shape: [n, 1], dtype: "<i4" });
+      const step = g.create_group("DATA").create_group("STEP_0");
+      lambdas.forEach((lam, i) => {
+        const data = group.endsWith("(U)") ? shape(i) : new Float64Array(3 * n);
+        const ds = step.create_dataset({ name: `MODE_${i}`, data, shape: [n, 3], dtype: "<d" });
+        ds.create_attribute("LAMBDA", lam, null, "<d");
+      });
+    }
+  } finally {
+    f.close();
+  }
+  const h = await opened(FRAME3D_MODEL, p);
+  const stages = h.store.get().results!.stages;
+  const idx = stages.findIndex((st) => st.id === "stage_0_mode_1");
+  assert.ok(idx >= 0 && stages[idx]!.kind === "mode", stages.map((st) => `${st.id}:${st.kind}`).join(", "));
+  assert.deepEqual(stages[idx]!.mode, { index: 1, eigenvalue: 100, frequencyHz: 10 / (2 * Math.PI), periodS: (2 * Math.PI) / 10 }, "main passes the mode's facts to the store");
+  const scale = 10;
+  const { s, v, full } = await showDeformed(h, idx, 0, scale);
+  assert.equal(v.state, "ready");
+  assert.deepEqual(v.state === "ready" ? v.datasets : null, ["MODES_OF_VIBRATION(U)/Ux", "MODES_OF_VIBRATION(U)/Uy", "MODES_OF_VIBRATION(U)/Uz"]);
+  // λ = 100: f = sqrt(λ)/2π = 1.5915 Hz, T = 1/f = 0.62832 s (5 significant digits, as the legend prints them).
+  const notes = deformLines(s).notes.map((x) => x.text);
+  assert.ok(notes.some((t) => t.startsWith("mode 1: eigenvalue λ = 100, f = 1.5915 Hz, T = 0.62832 s")), notes.join(" | "));
+  // Closed form: every drawn vertex is x + s φ(node), φ_x = 0.05 z / 6 (the record written above).
+  const model = await coordsOf(FRAME3D_MODEL);
+  for (const [pos, vn] of [[full.tri, s.mesh!.vertexNodes.tri], [full.line, s.mesh!.vertexNodes.line]] as const) {
+    (h.blobs.get(vn) as Float64Array).forEach((id, i) => {
+      const [x, y, z] = model.get(id)!;
+      const phi = [0.05 * (z / 6), 0, 0];
+      const want = [x, y, z].map((c, a) => Math.fround(Math.fround(c) + scale * phi[a]!));
+      for (let a = 0; a < 3; a++) assert.ok(near(pos[3 * i + a]!, want[a]!), `vertex ${i} node ${id} axis ${a}: ${pos[3 * i + a]} vs ${want[a]}`);
+    });
+  }
+  h.effects.dispose();
+});
+
 test("fork-written 3-D portal (ladruno_portal3d): DISPLACEMENT and ROTATION are separate groups; deform reads DISPLACEMENT, equal to the fork's nodeDisp", async () => {
   const { host } = harness();
   const a = await host.open(PORTAL3D);
