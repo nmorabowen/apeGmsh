@@ -360,6 +360,18 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   (`c744d6e70`) and writes no `INFO/FORMAT_MINOR_VERSION`, so the file is
   FORMAT_MINOR_VERSION 0. Regenerating it on a pin build would give minor 1,
   and the closed forms would not change.
+- `ladruno_portal3d.ladruno` (#2128) comes from a fork run: a 3-D portal frame
+  recorded with `displacement`, `rotation`, both modal groups, `section.force`
+  and `localForce`, on the same fork build `79e062367`. It shows what the fork
+  writes at ndm 3 under schema §7.1.1. `DISPLACEMENT` (`Ux,Uy,Uz`) and
+  `ROTATION` (`Rx,Ry,Rz`) are separate groups, and so are
+  `MODES_OF_VIBRATION(U)` and `(R)`. Its oracle is the `nodeDisp` values the
+  same run printed.
+- `ladruno_frame3d.h5` and `ladruno_frame3d.ladruno` (#2140) are a paired 3-D
+  frame written with h5py, not by a fork run. Since #2128 the `.ladruno` keeps
+  `DISPLACEMENT` and `ROTATION` in separate groups, as §7.1.1 requires. Before
+  #2128 it had one 6-component `DISPLACEMENT` group, which the fork never
+  writes.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
@@ -371,4 +383,6 @@ modal record.
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py
 # and the modes file, which needs a Ladruno fork build behind openseespy
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --modes
+# and the 3-D portal, which also needs the fork build
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --portal3d
 ```
