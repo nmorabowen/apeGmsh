@@ -36,6 +36,7 @@ from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
+from ._mpco_refusals import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 from ._tag_translation import ElementTagTranslator
 
@@ -117,20 +118,6 @@ class MPCOGaussDimensionMixed(ValueError):
     """
 
 
-class MPCOElementInTwoBuckets(ValueError):
-    """One MPCO read finds an element recorded twice: in two buckets of
-    a result, or in two rows of one bucket.
-
-    MPCO writes each element once per result, so a repeat is a corrupt or
-    merged file, and the joined slab would hold that element twice. The
-    Gauss, material-state, line-station, fiber, layer and spring reads
-    refuse, naming the element (its OpenSees tag, and its fem id when a
-    tag map is attached), the bucket path(s) and the file (#2165; the
-    nodal-force read's counterpart is #2173). Only the ids a read returns
-    are checked: a read whose ``element_ids`` leave the repeated element
-    out answers.
-    """
-
 
 def _refuse_mixed_gauss_dims(
     parts: "Sequence[tuple[str, ndarray]]", *, component: str, source: str,
@@ -175,7 +162,9 @@ def _refuse_duplicate_element_ids(
     (:func:`_returned_rows`) — within one bucket or across two.
 
     ``to_fem`` relabels an OpenSees tag to its fem id (the read's
-    ``index_to_fem``); ``None`` when no tag map is attached.
+    ``index_to_fem``); ``None`` when no tag map is attached. The policy
+    is :func:`~._mpco_refusals.refuse_element_in_two_buckets`'s; this
+    variant also names the read and, under a tag map, the fem id.
     """
     if not parts:
         return
