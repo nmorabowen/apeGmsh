@@ -311,8 +311,8 @@ class LiveDefault:
             # declared there is nothing to read, and the archive's own
             # refusal ("declares no ndm") stands.
             self._neutral = True
-            _refuse_element_records(self._spec, self._model_h5)
             if live_ndm(self._ops) >= 1:
+                _refuse_element_records(self._spec, self._model_h5)
                 deck_model = LiveDomainFacts(self._ops, self._model)
         live = LiveRecorders(self._spec, out, ops=self._ops, model=deck_model)
         live.__enter__()

@@ -500,7 +500,9 @@ class LiveDomainFacts:
     Each fact is read from the live domain, never inferred from the
     FEMData: ``getNDM()``, ``getNDF(node)`` for each node a record names,
     and ``eleType`` / ``eleNodes`` of every element for the rotation
-    roles (:data:`_TOKEN_FOR_LIVE_CLASS`). ``lineage`` and ``elements()``
+    roles (:data:`_TOKEN_FOR_LIVE_CLASS`). Each recorded node's
+    ``nodeCoord`` must be the FEM node's first ``ndm`` coordinates, so the
+    tag names the same node in both. ``lineage`` and ``elements()``
     are the archive's, so the snapshot check and the element pairing
     (none, in a FEMData archive) are the archive's own.
 
@@ -548,8 +550,53 @@ class LiveDomainFacts:
                 f"{where}: nodes {missing[:10]} are not in the live domain, "
                 "so the DOFs each records cannot be read from it. Record "
                 "the nodes the deck built.")
+        self._check_coords(list(dict.fromkeys(wanted)), where=where)
         return {n: _live_int(ops.getNDF(n), f"getNDF({n})")  # type: ignore[attr-defined]
                 for n in dict.fromkeys(wanted)}
+
+    def _check_coords(self, nodes: "list[int]", *, where: str) -> None:
+        """Refuse, by node id, a recorded node whose live ``nodeCoord`` is
+        not the FEM node's first ``ndm`` coordinates.
+
+        A tag match alone does not make the live node the FEM node: a deck
+        built from another FEMData shares tags, and a planar deck of a
+        column along global Z maps (x, z) to (x, y), so its
+        ``displacement_y`` would be the FEM's z motion. The tolerance is
+        ``1e-9`` of the FEM's largest coordinate magnitude.
+        """
+        import numpy as np
+
+        fem_nodes = self._archive.fem.nodes  # type: ignore[attr-defined]
+        ids = np.asarray(fem_nodes.ids, dtype=np.int64)
+        coords = np.asarray(fem_nodes.coords, dtype=np.float64)
+        row = {int(n): i for i, n in enumerate(ids)}
+        absent = [n for n in nodes if n not in row]
+        if absent:
+            raise ValueError(
+                f"{where}: nodes {absent[:10]} are not in the FEMData the "
+                "archive holds, so whether the live node is the FEM node "
+                "cannot be checked.")
+        ndm = self._ndm
+        tol = 1e-9 * max(float(np.abs(coords[:, :ndm]).max(initial=0.0)), 1.0)
+        moved = []
+        for n in nodes:
+            xyz = self._ops.nodeCoord(n)  # type: ignore[attr-defined]
+            live = np.asarray(xyz, dtype=np.float64)
+            fem = coords[row[n], :ndm]
+            if live.shape != fem.shape or np.abs(live - fem).max() > tol:
+                moved.append((n, live.tolist(), fem.tolist()))
+        if moved:
+            listed = "; ".join(f"node {n}: live {lv}, FEM {fv}"
+                               for n, lv, fv in moved[:3])
+            more = len(moved) - min(len(moved), 3)
+            raise ValueError(
+                f"{where}: the live domain's node coordinates are not the "
+                f"FEMData's first {ndm} at {listed}"
+                + (f"; and {more} more node(s)" if more else "")
+                + ". The deck was not built from this FEMData (or maps its "
+                "axes), so its DOFs would record another node's or another "
+                "axis's motion. Pass the FEMData archive the deck was built "
+                "from, with the deck's node coordinates.")
 
     def rotation_roles(self, node_ids: "Iterable[int]") -> "RotationRoles":
         """The rotation roles of ``node_ids`` under the live domain's

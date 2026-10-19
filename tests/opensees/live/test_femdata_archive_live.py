@@ -272,6 +272,56 @@ def test_a_mixed_ndf_deck_reads_each_node_at_its_own_dofs(opspy, tmp_path) -> No
         res.close()
 
 
+def _bar_fem(tip: "tuple[float, float, float]") -> FEMData:
+    """Nodes 1 at the origin and 2 at ``tip``, one line element."""
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=1)
+    pg = PhysicalGroupSet({})
+    group = ElementGroup(element_type=line, ids=np.array([7], dtype=np.int64),
+                         connectivity=np.array([[1, 2]], dtype=np.int64))
+    return FEMData(
+        nodes=NodeComposite(node_ids=np.array([1, 2], dtype=np.int64),
+                            node_coords=np.array([[0.0, 0.0, 0.0], tip]),
+                            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=2, n_elems=1, bandwidth=2, types=[line]),
+        model_name="femdata_archive_bar",
+    )
+
+
+@pytest.mark.parametrize("fem_tip, deck_tip, match", [
+    # A FEM column along global Z, its planar deck mapping (x, z) to (x, y):
+    # the deck's displacement_y is the FEM's z motion.
+    ((0.0, 0.0, L), (0.0, L),
+     r"node 2: live \[0\.0, 2\.0\], FEM \[0\.0, 0\.0\]"),
+    # A deck built from another FEMData that shares node tags 1 and 2.
+    ((L, 0.0, 0.0), (2.0 * L, 0.0),
+     r"node 2: live \[4\.0, 0\.0\], FEM \[2\.0, 0\.0\]"),
+], ids=["axis-swap", "foreign-femdata"])
+def test_a_deck_node_that_is_not_the_fem_node_refuses_by_id(
+    opspy, tmp_path, fem_tip, deck_tip, match,
+) -> None:
+    fem = _bar_fem(fem_tip)
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 2, "-ndf", 3)
+    opspy.node(1, 0.0, 0.0)
+    opspy.node(2, *deck_tip)
+    opspy.geomTransf("Linear", 1)
+    opspy.element("elasticBeamColumn", 7, 1, 2, 1.0e-2, E, IZ, 1)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("tip", ("displacement_x", "displacement_y"),
+                         np.array([1, 2])),))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DefaultRouteWarning)
+        with pytest.raises(ValueError, match=match):
+            with spec.emit_default(tmp_path / "run", model_h5=model_h5,
+                                   ops=NoMPCO(opspy)):
+                pass
+
+
 def test_a_rotation_at_a_tet_node_refuses_by_name(opspy, tmp_path) -> None:
     fem = _mixed_fem()
     model_h5 = tmp_path / "model.h5"

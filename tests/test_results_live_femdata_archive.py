@@ -62,13 +62,18 @@ def _value(step: int, node: int, dof: int) -> float:
 class LiveOps:
     """A pip build: no MPCO, a live domain answered from tables.
 
-    ``ndm``; ``ndf`` ``{node: ndf}``; ``elements`` ``{tag: (class, nodes)}``.
-    Each live query is counted in ``asked``.
+    ``ndm``; ``ndf`` ``{node: ndf}``; ``elements`` ``{tag: (class, nodes)}``;
+    ``coords`` ``{node: xyz}`` (default: the frame FEMData's first ``ndm``,
+    where a deck built from it places them). Each live query is counted in
+    ``asked``.
     """
 
     def __init__(self, ndm: int, ndf: "dict[int, int]",
-                 elements: "dict[int, tuple[str, tuple[int, ...]]]") -> None:
+                 elements: "dict[int, tuple[str, tuple[int, ...]]]",
+                 coords: "dict[int, tuple[float, ...]] | None" = None) -> None:
         self.ndm, self.ndf, self.elements = ndm, ndf, elements
+        self.coords = ({n: tuple(_FRAME_XYZ[n][:ndm]) for n in ndf
+                        if n in _FRAME_XYZ} if coords is None else coords)
         self.asked: list[str] = []
         self.recorder_calls: list[tuple] = []
         self._live: dict[int, tuple] = {}
@@ -85,6 +90,10 @@ class LiveOps:
     def getNDF(self, node: int) -> list:
         self.asked.append(f"getNDF:{node}")
         return [self.ndf[node]]
+
+    def nodeCoord(self, node: int) -> list:
+        self.asked.append(f"nodeCoord:{node}")
+        return list(self.coords[node])
 
     def getEleTags(self) -> list:
         self.asked.append("getEleTags")
@@ -130,15 +139,20 @@ class StrictOps(LiveOps):
     def _never(self, *_: Any) -> list:
         raise AssertionError("the bridge archive asked the live domain")
 
-    getNDM = getNDF = getNodeTags = getEleTags = eleType = eleNodes = _never  # type: ignore[assignment]
+    getNDM = getNDF = getNodeTags = nodeCoord = _never  # type: ignore[assignment]
+    getEleTags = eleType = eleNodes = _never  # type: ignore[assignment]
+
+
+#: The frame FEMData's node coordinates.
+_FRAME_XYZ = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0),
+              3: (0.0, 1.0, 1.0), 4: (1.0, 1.0, 1.0)}
 
 
 def _frame_fem() -> FEMData:
     """Nodes 1-4 at 3-D coordinates, one line element 3-4: the FEMData
     says nothing about ndm or ndf."""
     node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
-    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-                       [0.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
+    coords = np.array([_FRAME_XYZ[n] for n in (1, 2, 3, 4)])
     info = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
                           count=1)
     group = ElementGroup(element_type=info, ids=np.array([1], dtype=np.int64),
@@ -321,12 +335,49 @@ def test_element_records_refuse_by_name(frame, tmp_path) -> None:
 
 def test_no_live_domain_keeps_the_archive_refusal(frame, tmp_path) -> None:
     """``getNDM()`` answers 0 before any ``ops.model``: nothing to read, so
-    the archive's own refusal stands, word for word."""
+    the archive's own refusal stands, word for word, ahead of the element
+    refusal."""
     fem, model_h5 = frame
     ops = LiveOps(ndm=0, ndf={}, elements={})
     with pytest.raises(ValueError, match=r"model= declares no ndm \(ndm=0\)"):
-        _run(_spec(fem, ("nodes", "all", _DISP3, [1, 2])),
+        _run(_spec(fem, ("nodes", "all", _DISP3, [1, 2]),
+                   ("elements", "beam", ("axial_force",), [1])),
              tmp_path / "run", model_h5, ops)
+
+
+@pytest.mark.parametrize("coords, match", [
+    # A planar deck that maps the frame's (y, z) to (x, y): node 3 at
+    # (0, 1, 1) placed at (1, 1) would record its z motion as
+    # displacement_y.
+    ({3: (1.0, 1.0), 4: (1.0, 1.0)},
+     r"not the FEMData's first 2 at node 3: live \[1\.0, 1\.0\], "
+     r"FEM \[0\.0, 1\.0\]"),
+    # A deck built from another FEMData whose node tags overlap.
+    ({3: (5.0, 1.0), 4: (6.0, 1.0)},
+     r"node 3: live \[5\.0, 1\.0\].*node 4: live \[6\.0, 1\.0\]"),
+], ids=["axis-swap", "foreign-femdata"])
+def test_a_live_node_that_is_not_the_fem_node_refuses_by_id(
+    frame, tmp_path, coords, match,
+) -> None:
+    fem, model_h5 = frame
+    ops = LiveOps(ndm=2, ndf={3: 3, 4: 3},
+                  elements={8: ("ElasticBeam2d", (3, 4))}, coords=coords)
+    with pytest.raises(ValueError, match=match):
+        _run(_spec(fem, ("nodes", "tip", ("displacement_x", "displacement_y"),
+                         [3, 4])), tmp_path / "run", model_h5, ops)
+    assert _node_calls(ops) == []
+
+
+def test_coordinates_within_the_tolerance_record(frame, tmp_path) -> None:
+    """The tolerance is ``1e-9`` of the largest coordinate: a last-bit
+    difference still records."""
+    fem, model_h5 = frame
+    ops = LiveOps(ndm=2, ndf={3: 3, 4: 3},
+                  elements={8: ("ElasticBeam2d", (3, 4))},
+                  coords={3: (0.0, 1.0 + 1e-12), 4: (1.0 - 1e-12, 1.0)})
+    _run(_spec(fem, ("nodes", "tip", ("displacement_x",), [3, 4])),
+         tmp_path / "run", model_h5, ops)
+    assert [_dofs(c) for c in _node_calls(ops)] == [[1]]
 
 
 def test_an_offline_read_of_a_femdata_archive_keeps_refusing(frame, tmp_path) -> None:
@@ -356,7 +407,8 @@ def test_a_bridge_archive_never_asks_the_live_domain_and_matches(tmp_path) -> No
                        ("displacement_x", "displacement_y", "reaction_force_x"),
                        [1, 2]))
     table: dict[str, Any] = dict(ndm=2, ndf={1: 2, 2: 2},
-                                 elements={1: ("Truss", (1, 2))})
+                                 elements={1: ("Truss", (1, 2))},
+                                 coords={1: (0.0, 0.0), 2: (2.0, 0.0)})
     strict, live = StrictOps(**table), LiveOps(**table)
     _run(spec, tmp_path / "a" / "run", bridge_h5, strict)
     _run(spec, tmp_path / "b" / "run", fem_h5, live)
