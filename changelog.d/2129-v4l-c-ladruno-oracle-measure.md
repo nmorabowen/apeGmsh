@@ -7,8 +7,10 @@ bridge and stamps copies of a fork-written `.ladruno` with
 on them, through `apeGmshViewer/scripts/pair_oracle.ts`. A file stamped
 against the model pairs by `model_hash`. An unstamped file is unpairable. A
 stamp from another model on the same mesh is a mismatch, never a `fem_hash`
-pairing. The test skips with the reason when node 22.18 or later, or the
-app's `npm ci`, is missing.
+pairing. Locally, the test skips with the reason when node 22.18 or later,
+or the app's `npm ci`, is missing. The `app-tests` CI job runs it with
+`APEGMSH_APP_ORACLE_REQUIRED=1`, so there a missing node or h5wasm fails the
+job instead of skipping.
 
 `npm run measure -- <stem>.h5` with a `<stem>.ladruno` beside the model now
 prints the `.ladruno` read row. The row gives the index time, the time to
