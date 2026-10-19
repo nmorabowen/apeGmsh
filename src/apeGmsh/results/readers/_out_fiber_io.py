@@ -28,6 +28,7 @@ from ..spec._emit import (
     fiber_record_class,
     per_material_gauss_layout,
 )
+from ._out_station_slicing import STATION_RANGE_TOL, require_equal_station_counts
 
 if TYPE_CHECKING:
     from ..spec._emit import LogicalRecorder
@@ -62,63 +63,32 @@ def require_translated(
     return model
 
 
-#: Element-family suffixes whose args start ``$transfTag $integrationTag``:
+#: Element-family suffixes of the beams a fibres record reads:
 #: ``forceBeamColumn``, ``dispBeamColumn`` and its fork variant (matched by
 #: suffix, so no fork name is spelled here). Other fibre classes refuse.
 _FIBER_BEAM_SUFFIXES = ("forcebeamcolumn", "dispbeamcolumn")
-#: ``beamIntegration`` rules whose args are ``$secTag $N``: ``N`` points.
-_FIXED_N_RULES = frozenset({"Lobatto", "Legendre", "NewtonCotes", "Radau", "Trapezoidal"})
-#: Hinge rules have a fixed count, measured on stock openseespy 3.7.1.2 and
-#: the fork (``integrationPoints`` and ``section fiberData2`` agree).
-_HINGE_RULE_POINTS = {"HingeRadau": 6, "HingeRadauTwo": 6,
-                      "HingeMidpoint": 4, "HingeEndpoint": 4}
 
 
-def _rule_points(rule: Any) -> "int | None":
-    """A ``beamIntegration`` record's integration-point count, or ``None``."""
-    if rule.type_token in _FIXED_N_RULES:
-        return int(rule.args[1])
-    return _HINGE_RULE_POINTS.get(rule.type_token)
+def require_record_class(rec: "ResolvedRecorderRecord", model: Any) -> None:
+    """Refuse a fibres record whose elements are not all of its class.
 
-
-def model_integration_points(rec: "ResolvedRecorderRecord", model: Any) -> "int | None":
-    """The one integration-point count the model gives every element of a
-    fibres record, or ``None`` when they all share one rule of a type whose
-    count this table does not know: uniform, but unchecked.
-
-    ``.out`` carries no per-element count, so a record whose elements the
-    model gives different (or unknown, under different rules) counts is
-    refused: its columns would divide evenly into the wrong sections. Each
-    element's type token must be the record's class without its ``2d`` /
-    ``3d`` suffix (``ForceBeamColumn3d`` is ``forceBeamColumn``), one of the
-    families above, with a ``beamIntegration`` rule in the model; any other
-    element is refused by its token, so a record mixing classes is too.
+    Each element's type token must be the record's class without its
+    ``2d`` / ``3d`` suffix (``ForceBeamColumn3d`` is ``forceBeamColumn``),
+    one of the families above; any other element is refused by its token,
+    so a record mixing classes is too. The point counts are then checked by
+    the rule both ``.out`` readers share
+    (:func:`._out_station_slicing.require_equal_station_counts`).
     """
     family = str(rec.element_class_name)[:-2].lower()
     rows = {int(r.fem_eid): r for r in model.elements()}
-    rules = {int(b.tag): b for b in model.beam_integration()}
-    tags: set[int] = set()
     for e in np.asarray(rec.element_ids, dtype=np.int64).tolist():
-        row = rows[e]
-        token = row.type_token.lower()
-        if (token != family or not token.endswith(_FIBER_BEAM_SUFFIXES)
-                or int(row.args[1]) not in rules):
+        token = rows[e].type_token.lower()
+        if token != family or not token.endswith(_FIBER_BEAM_SUFFIXES):
             raise ValueError(
                 f"Record {rec.name!r} (category=fibers): FEM element {e} is "
-                f"{row.type_token!r} in the model, not the record's class "
-                f"{rec.element_class_name!r} as a force or displacement beam "
-                f"with a beamIntegration rule, so its integration-point count "
-                f"cannot be checked.")
-        tags.add(int(row.args[1]))
-    counts = {_rule_points(rules[t]) for t in tags}
-    if len(tags) > 1 and (len(counts) != 1 or None in counts):
-        raise ValueError(
-            f"Record {rec.name!r} (category=fibers): its elements use "
-            f"beamIntegration rules {sorted(tags)}, with integration-point "
-            f"counts {sorted(counts, key=str)}; .out carries no per-element "
-            f"count, so the record must hold one count. Split the record by "
-            f"integration rule.")
-    return counts.pop()
+                f"{rows[e].type_token!r} in the model, not the record's class "
+                f"{rec.element_class_name!r} as a force or displacement beam, "
+                f"so its integration-point count cannot be checked.")
 
 
 def _read_rows(lr: "LogicalRecorder", n_elements: int, unit: int,
@@ -189,11 +159,13 @@ def read_fiber_record(
 
     ``lengths_of(ids)`` gives the elements' lengths, in ``ids`` order;
     ``None`` when the record emitted nothing (no elements). The pair gives
-    each element's natural stations; the count is one per record, which
-    the model must confirm (:func:`model_integration_points`), and each
-    element's stations must increase strictly within ``[-1, 1]``, so a
-    record mixing counts is refused, never split evenly into wrong
-    sections. The fibre file gives
+    each element's natural stations. The count is one per record, which the
+    model must confirm by the rule both ``.out`` readers share
+    (:func:`._out_station_slicing.require_equal_station_counts`, which also
+    refuses a rule of unknown count), and each element's stations must
+    increase strictly within ``[-1, 1]``, to the shared slack a file written
+    at ``-precision 6`` needs. So a record mixing counts is refused, never
+    split evenly into wrong sections. The fibre file gives
     ``n_sections * n_fibres * 6`` columns per element, element-major,
     section-mid, fibre-fast: the MPCO fibre-slab order. No response gives a
     section's fibre count, so every (element, section) must carry one fibre
@@ -204,19 +176,15 @@ def read_fiber_record(
     class_name = fiber_record_class(rec)
     if not logicals:
         return None
-    n_model = model_integration_points(
-        rec, require_translated(rec, model_h5_src, fem_snapshot_id))
+    model = require_translated(rec, model_h5_src, fem_snapshot_id)
+    require_record_class(rec, model)
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
     _t, gpx, n_ip = _read_rows(gpx_lr, ids.size, 1)
+    require_equal_station_counts(rec, model, fem_snapshot_id, n_ip, gpx_lr.file_path)
     xi = np.stack([normalise_integration_points(gpx[0, i], float(length))
                    for i, length in enumerate(lengths_of(ids))])
-    if n_model is not None and n_ip != n_model:
-        raise ValueError(
-            f"{gpx_lr.file_path}: {n_ip} stations per element, but the model "
-            f"gives {n_model}: the integrationPoints columns do not split "
-            f"into the record's elements.")
-    out = np.flatnonzero(~(np.abs(xi) <= 1.0 + 1e-12).all(axis=1))
+    out = np.flatnonzero(~(np.abs(xi) <= 1.0 + STATION_RANGE_TOL).all(axis=1))
     if out.size:
         raise ValueError(
             f"{gpx_lr.file_path}: FEM element {int(ids[out[0]])} has a station "
