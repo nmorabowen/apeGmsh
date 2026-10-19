@@ -161,11 +161,58 @@ test("a .ladruno opens through main: the PROVENANCE lineage, stage names and nod
   assert.equal(a.meta.lineageReason, null);
   assert.deepEqual(a.meta.stages.map((s) => s.name), ["gravity", "lateral"]);
   const comps = a.meta.stages[0]!.nodal;
-  assert.ok(comps.includes("DISPLACEMENT/Ux"), comps.join(", "));
+  // #2128: fork schema §7.1.1 at ndm 3, translation and rotation in two groups.
+  assert.deepEqual(comps, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"]);
+  assert.ok(a.meta.stages.every((st) => st.mode === undefined), "a static stage carries no mode facts");
   const s = h.readStep({ path: LADRUNO, stage: a.meta.stages[0]!.id, step: 0, seq: 1 });
   assert.ok(s.ok, JSON.stringify(s));
   if (!s.ok) return;
   assert.deepEqual(Object.keys(s.nodal), comps, "a step carries every component under the reader's name");
+  h.close();
+});
+
+test("#2128: a .ladruno mode stage carries its eigen scalars from the file's LAMBDA; the closed form of ladruno_modes", async () => {
+  const MODES = RESULTS.replace(/staged_activation\.results\.h5$/, "ladruno_modes.ladruno");
+  const h = host();
+  const a = await h.open(MODES);
+  assert.ok(a.ok, JSON.stringify(a));
+  if (!a.ok) return;
+  const host0 = a.meta.stages.find((st) => st.kind !== "mode")!;
+  assert.equal(host0.mode, undefined, "the host (eigen) stage is not a mode");
+  const modes = a.meta.stages.filter((st) => st.kind === "mode");
+  assert.deepEqual(modes.map((st) => st.mode!.index), [1, 2]);
+  // Two trusses EA = 1000, L = 1, unit masses: lambda = (k/m)(3 -/+ sqrt 5)/2 (make_ladruno_fixtures.py).
+  modes.forEach((st, i) => {
+    const lambda = (1000 * (3 + (i === 0 ? -1 : 1) * Math.sqrt(5))) / 2;
+    const m = st.mode!;
+    assert.ok(Math.abs(m.eigenvalue - lambda) < 1e-6 * lambda, `${st.id}: λ ${m.eigenvalue} vs ${lambda}`);
+    assert.ok(Math.abs(m.frequencyHz - Math.sqrt(lambda) / (2 * Math.PI)) < 1e-9, `${st.id}: f ${m.frequencyHz}`);
+    assert.ok(Math.abs(m.periodS * m.frequencyHz - 1) < 1e-12, `${st.id}: T = 1/f`);
+  });
+  h.close();
+});
+
+test("#2128 (#2140 on a real recorder file): the fork-written 3-D portal's line stations read with DISPLACEMENT and ROTATION as separate groups", async () => {
+  const PORTAL = RESULTS.replace(/staged_activation\.results\.h5$/, "ladruno_portal3d.ladruno");
+  const h = host();
+  const a = await h.open(PORTAL);
+  assert.ok(a.ok, JSON.stringify(a));
+  if (!a.ok) return;
+  assert.deepEqual(a.warnings, []);
+  const st = a.meta.stages[0]!;
+  assert.deepEqual(st.nodal, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"]);
+  assert.deepEqual(st.lineStations, ["N", "Vy", "Vz", "T", "My", "Mz"]);
+  const s = h.readStep({ path: PORTAL, stage: st.id, step: st.time.length - 1, seq: 1, lineDiagram: "Mz" });
+  assert.ok(s.ok, JSON.stringify(s));
+  if (!s.ok) return;
+  const ld = s.lineDiagram!;
+  // Three forceBeamColumn3d elements, three Lobatto stations each, with their local axes.
+  assert.deepEqual(Array.from(ld.elementIndex), [1, 1, 1, 2, 2, 2, 3, 3, 3]);
+  assert.deepEqual(Array.from(ld.stationNaturalCoord), [-1, 0, 1, -1, 0, 1, -1, 0, 1]);
+  assert.ok(Array.from(ld.values).every(Number.isFinite) && Array.from(ld.values).some((v) => Math.abs(v) > 0.1), Array.from(ld.values).join(", "));
+  // The girder (element 2) under a sway: Mz antisymmetric about its midspan station.
+  const g = Array.from(ld.values).slice(3, 6);
+  assert.ok(Math.abs(g[0]! + g[2]!) < 1e-9 && Math.abs(g[1]!) < 1e-9, g.join(", "));
   h.close();
 });
 
