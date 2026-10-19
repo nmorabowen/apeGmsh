@@ -48,20 +48,12 @@ program's ``ops.stage`` blocks, whose ``analysis`` record names the kind
 only modes is an ``eigen`` stage. Any other count or an unknown kind
 refuses.
 
-A program with no ``ops.stage`` blocks pairs with no stage. Only through
-the private ``_implicit_stage=True`` (passed by ``read_deck_mpco`` alone)
-does it map to one implicit stage, and only when its kind is a fact (the
-coordinator's implicit-stage rule, #1950):
-the ``.mpco`` holds exactly one ``MODEL_STAGE`` with step data, and the
-archive's ``/opensees/program`` holds exactly one ``analysis`` call, whose
-type (``/opensees/analysis@analysis``) names the kind. An archive that
-records no ``analysis`` call, records several, or names a type with no
-known kind refuses, and so does a second ``MODEL_STAGE`` with step data.
-The rule trusts the archive to be the program that ran: true for a deck
-the bridge emitted and run as it was written, and not for an in-process
-run whose loop issued its own ``analysis`` calls (the program never sees
-them), which is why the default resolver
-(:meth:`ResolvedRecorderSpec.emit_default`) never converts one.
+A program with no ``ops.stage`` block pairs with no stage. Its kind is not
+archived as fact: the archive cannot tell an in-process run from a deck,
+and it does not record a deck's ``analyze`` call (#1950, coordinator
+ruling (iii)). ``read_deck_mpco`` passes the private
+``_implicit_stage=True``, which refuses every unstaged program up front
+with that reason; a follow-up card records the deck's ``analyze`` call.
 
 ``COLUMN_MAP`` follows the fork recorder's own derivation from the same
 header MPCO's ``META`` encodes: ``LEVELS`` is the deepest path code of a
@@ -123,7 +115,8 @@ class MPCOConversionRefused(RuntimeError):
 
 class StageKindRefused(MPCOConversionRefused):
     """The refusal is about stage kinds alone: the file's stages cannot be
-    paired with the program's, or a kind is not a fact.
+    paired with the program's, or a kind is not a fact (an unstaged
+    program).
 
     Every other refusal (the archive is another model's, a partition set
     is incomplete, a target or staging directory is in the way, the source
@@ -170,11 +163,11 @@ def convert_mpco(
     overwrite
         Replace existing targets. Without it an existing target refuses.
     _implicit_stage
-        Private; only ``read_deck_mpco`` passes it. Without it a program
-        with no ``ops.stage`` block pairs with no stage, so a ``.mpco`` with
-        step data refuses (the archive written before an in-process run
-        cannot be told from a deck's). With it, the implicit-stage rule in
-        the module docstring applies.
+        Private; only ``read_deck_mpco`` passes it. It refuses every
+        program with no ``ops.stage`` block, whatever the file holds, with
+        :class:`StageKindRefused` naming why: such a program's kind is not
+        archived as fact. Without it, an unstaged program pairs with no
+        stage (a ``.mpco`` with step data refuses, as before).
 
     Returns
     -------
@@ -302,6 +295,12 @@ def _plan(
     staging = targets[0].parent / f"{_set_stem(dst)}.partial"
     _refuse_existing(targets, staging, overwrite)
     model, names, kinds, ranks = _program(model_path)
+    if implicit_stage and not names:
+        raise StageKindRefused(
+            f"{model_path} declares no ops.stage blocks: an unstaged "
+            "program's kind is not archived as fact; follow-up card "
+            "pending. Nothing was written."
+        )
     if ranks and len(ranks) != len(sources):
         raise MPCOConversionRefused(
             f"{model_path} emits {len(ranks)} partitions (ranks "
@@ -309,13 +308,11 @@ def _plan(
             f"({[p.name for p in sources]}). Every part of the run must be "
             "present."
         )
-    implicit = (_implicit_kind(model, model_path)
-                if implicit_stage and not names else None)
     stage_kinds: Optional[list[str]] = None
     unsupported: set[str] = set()
     for i, source in enumerate(sources):
         try:
-            part_kinds = _scan_part(source, names, kinds, unsupported, implicit)
+            part_kinds = _scan_part(source, names, kinds, unsupported)
         except StageKindRefused as e:
             if i == 0:
                 raise
@@ -445,34 +442,6 @@ def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
     return model, [str(s.name) for s in stages], kinds, ranks
 
 
-def _implicit_kind(model: Any, model_h5: Path) -> "tuple[Optional[str], str]":
-    """The kind of an unstaged program's one implicit stage, as a fact.
-
-    ``(kind, "")`` when ``/opensees/program`` holds exactly one ``analysis``
-    call and its type has a kind; otherwise ``(None, reason)``. The count is
-    over the program tape, not the ``/opensees/analysis`` group, because the
-    group keeps only the last call's type.
-    """
-    from .._bind import _ANALYSIS_KIND
-
-    calls = sum(r.count for r in model.program() if r.method == "analysis")
-    if calls == 0:
-        return None, (
-            f"{model_h5} records no analysis call in /opensees/program, so "
-            "the run's kind is not known")
-    if calls > 1:
-        return None, (
-            f"{model_h5} records {calls} analysis calls in /opensees/program, "
-            "so the one stage may hold more than one kind")
-    a_type = model.analysis().get("analysis")
-    kind = _ANALYSIS_KIND.get(str(a_type)) if a_type is not None else None
-    if kind is None:
-        return None, (
-            f"{model_h5} declares analysis {a_type!r}, which names no "
-            f"known kind ({sorted(_ANALYSIS_KIND)})")
-    return kind, ""
-
-
 def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:
     """Refuse a source ``from_mpco`` would refuse, or would bind elsewhere.
 
@@ -523,14 +492,8 @@ def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:
 def _scan_part(
     source: Path, names: Sequence[str], kinds: Sequence[str],
     unsupported: set[str],
-    implicit: "Optional[tuple[Optional[str], str]]" = None,
 ) -> list[str]:
-    """Check one source part and return its stage kinds.
-
-    ``implicit`` is :func:`_implicit_kind` of an unstaged program (``None``
-    for a staged one): its one stage is the part's one ``MODEL_STAGE`` with
-    step data, when the kind is known.
-    """
+    """Check one source part and return its stage kinds."""
     import h5py
 
     try:
@@ -561,23 +524,6 @@ def _scan_part(
             _scan_stage(stage, f"{source}:{name}", unsupported)
             mode_only.append(_holds_only_modes(stage))
         hosts = [n for n, m in zip(stages, mode_only) if not m]
-        if implicit is not None and hosts:
-            kind, reason = implicit
-            if len(hosts) > 1:
-                raise StageKindRefused(
-                    f"{source} holds {len(hosts)} MODEL_STAGE group(s) with "
-                    f"step data ({hosts}) but the program declares no "
-                    "ops.stage blocks; an unstaged program maps to one "
-                    "implicit stage at most, and a KIND is never guessed. "
-                    "Nothing was written."
-                )
-            if kind is None:
-                raise StageKindRefused(
-                    f"{source} holds one MODEL_STAGE with step data and the "
-                    f"program declares no ops.stage blocks, but {reason}. A "
-                    "KIND is never guessed. Nothing was written."
-                )
-            return [kind if not m else "eigen" for m in mode_only]
         if len(hosts) != len(names):
             raise StageKindRefused(
                 f"{source} holds {len(hosts)} MODEL_STAGE group(s) with "

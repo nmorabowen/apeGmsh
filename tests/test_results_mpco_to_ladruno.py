@@ -471,79 +471,59 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The implicit stage of an unstaged program (#1950)
+# An unstaged program (#1950, coordinator ruling (iii))
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", ["static", "transient"])
-def test_an_unstaged_program_with_one_analysis_is_one_implicit_stage(
-    fx, kind, tmp_path,
-) -> None:
-    """One MODEL_STAGE with step data and one ``analysis`` call: the stage
-    takes the call's kind, and every slab reads as the source does."""
-    model = fx[f"flat_{kind}"]
-    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    (dst,) = _convert(src, tmp_path / "out.ladruno", model, _implicit_stage=True)
-    with h5py.File(dst, "r") as d:
-        stages = sorted(g for g in d if g.startswith(_STAGE))
-        assert [d[g].attrs["KIND"][0] for g in stages] == [kind.encode()]
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        a = Results.from_mpco(str(src), model_h5=str(model))
-        b = Results.from_ladruno(str(dst), model_h5=str(model))
-        try:
-            assert [s.kind for s in b.stages] == [kind]
-            assert [(s.id, s.n_steps) for s in a.stages] ==                 [(s.id, s.n_steps) for s in b.stages]
-            common = sorted(set(_components(a)) & set(_components(b)))
-            assert common, "nothing to read: the oracle compares no data"
-            for key in common:
-                _assert_slab_equal(_read(a, key), _read(b, key), str(key))
-        finally:
-            a.close()
-            b.close()
-
-
-@pytest.mark.parametrize("name, match", [
-    ("two", "2 analysis calls"),
-    ("none", "no analysis call"),
-])
-def test_an_unstaged_program_whose_kind_is_not_a_fact_refuses(
-    fx, name, match, tmp_path,
-) -> None:
+@pytest.mark.parametrize("name", sorted(_FLAT))
+def test_the_private_path_refuses_every_unstaged_program(fx, name, tmp_path) -> None:
+    """With ``_implicit_stage=True`` (read_deck_mpco's path) no unstaged
+    program converts, whatever its analysis calls: its kind is not archived
+    as fact. The one-call cases are the ones a rule-(i) acceptance would
+    convert, so re-adding one fails them."""
     model = fx[f"flat_{name}"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    _refuses(src, tmp_path / "out.ladruno", match, exc=StageKindRefused,
-             model_h5=model, _implicit_stage=True)
+    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
+             exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 
-def test_an_unknown_analysis_type_refuses(fx, tmp_path) -> None:
-    """One call whose type names no kind: never defaulted to a kind."""
-    model = Path(shutil.copy(fx["flat_static"], tmp_path / "bogus.h5"))
-    with h5py.File(model, "r+") as f:
-        f["opensees/analysis"].attrs["analysis"] = "Bogus"
+def test_the_private_path_refuses_an_unstaged_modes_only_file(fx, tmp_path) -> None:
+    """Every unstaged program refuses on the private path, a file of modes
+    alone included."""
+    model = fx["flat_static"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    _refuses(src, tmp_path / "out.ladruno", "names no known kind",
+    with h5py.File(src, "r+") as f:
+        results = f["MODEL_STAGE[1]/RESULTS"]
+        del results["ON_ELEMENTS"]
+        del results["ON_NODES"]
+        grp = results.create_group("ON_NODES/MODES_OF_VIBRATION(U)")
+        grp.attrs["COMPONENTS"] = np.array([b"Ux,Uy,Uz"])
+        grp.create_dataset("ID", data=np.arange(1, 5, dtype=np.int32)[:, None])
+        mode = grp.create_group("DATA/STEP_0").create_dataset(
+            "MODE_0", data=np.ones((4, 3)))
+        mode.attrs["LAMBDA"] = np.array([4.0])
+    from apeGmsh.results.readers._ladruno_from_mpco import _holds_only_modes
+
+    with h5py.File(src, "r") as f:
+        assert _holds_only_modes(f["MODEL_STAGE[1]"])
+    _refuses(src, tmp_path / "out.ladruno", "not archived as fact",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 
 def test_a_bare_convert_refuses_an_unstaged_program_as_before(fx, tmp_path) -> None:
-    """Without the private flag (passed by read_deck_mpco alone) an
-    unstaged program pairs with no stage: the in-process archive cannot be
-    told from a deck's, so the public converter never guesses."""
+    """Without the private flag an unstaged program pairs with no stage,
+    as on main."""
     model = fx["flat_static"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
     _refuses(src, tmp_path / "out.ladruno", "declares 0 stage",
              exc=StageKindRefused, model_h5=model)
 
 
-def test_an_unstaged_program_never_spans_two_mpco_stages(fx, tmp_path) -> None:
-    """Two MODEL_STAGE groups with step data refuse even with one call."""
-    model = fx["flat_static"]
-    src = _bridge_copy(SPRINGS, model, tmp_path / "src.mpco")
-    with h5py.File(src, "r+") as f:
-        f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
-    _refuses(src, tmp_path / "out.ladruno", "one implicit stage at most",
-             model_h5=model, _implicit_stage=True)
+def test_the_private_path_still_converts_a_staged_program(fx, tmp_path) -> None:
+    (dst,) = _convert(fx["springs_src"], tmp_path / "out.ladruno",
+                      fx["springs"], _implicit_stage=True)
+    with h5py.File(dst, "r") as d:
+        assert d["MODEL_STAGE[1]"].attrs["KIND"][0] == b"static"
 
 
 def test_groups_take_their_quadrature_from_the_source_or_the_catalog(

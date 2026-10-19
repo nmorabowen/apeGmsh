@@ -271,12 +271,13 @@ results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
 `read_deck_mpco("run.mpco", model_h5="model.h5")`, from
 `apeGmsh.results.live`, reads the run as `.ladruno` instead. It is only for
 a `.mpco` written by running the bridge's own exported deck (`ops.py` or
-`ops.tcl`) out of process, as emitted. It converts the file beside itself
-and keeps the `.mpco`. When the stage kinds are not a fact, it reads the
-`.mpco` with `from_mpco`, after one warning that names the reason. Any
-other refusal raises: an archive of another model, or an incomplete
-partition set. An in-process run is not a deck, so read its `.mpco` with
-`from_mpco`.
+`ops.tcl`) out of process, as emitted. A staged deck (`ops.stage` blocks,
+each recording its kind) converts beside itself, and the `.mpco` is kept.
+An unstaged deck does not convert yet, because the archive does not record
+its kind as fact. It is read with `from_mpco` after one warning that says
+so. Other refusals raise, such as an archive of another model or an
+incomplete partition set. An in-process run is not a deck, so read its
+`.mpco` with `from_mpco`.
 
 ## The read side is identical
 

@@ -17,16 +17,15 @@ stock without   classic recorder files in   ``Results.from_recorders``, after
 MPCO (pip)      ``<stem>_out/``             one :class:`DefaultRouteWarning`
 ==============  ==========================  =================================
 
-Why the stock MPCO run is not converted: the conversion maps a program with
-no ``ops.stage`` block to one implicit stage only when its kind is a fact,
-and in process it never is. The loop inside the ``with`` block drives the
-module directly (``opspy.loadConst``, ``opspy.analysis("Transient")``),
-those calls never reach the model archive, and MPCO opens a new stage on a
-domain change only. A deck the bridge emitted is the program that ran, so
-:func:`read_deck_mpco` converts its ``.mpco`` when the archive's program
-holds exactly one ``analysis`` call (the implicit-stage rule of
-:func:`~apeGmsh.results.convert_mpco`), and otherwise reads the ``.mpco``
-after one warning that names the refusal.
+Why the stock MPCO run is not converted: a program with no ``ops.stage``
+block would have to map to one stage whose kind is a fact, and in process
+it never is. The loop inside the ``with`` block drives the module directly
+(``opspy.loadConst``, ``opspy.analysis("Transient")``), those calls never
+reach the model archive, and MPCO opens a new stage on a domain change
+only. :func:`read_deck_mpco` converts the ``.mpco`` of the bridge's own
+exported deck when the program is staged (each stage records its kind);
+an unstaged deck's kind is not archived either, so it reads the ``.mpco``
+after one warning (coordinator ruling (iii) on #1950).
 
 The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
@@ -102,9 +101,12 @@ def read_deck_mpco(
 
     The ``.mpco`` (or any part of a partitioned set) converts to the fork's
     format beside it, which is then opened; the ``.mpco`` is always kept.
-    It is the one caller of ``convert_mpco``'s private implicit-stage path,
-    which maps a program with no ``ops.stage`` block to one stage only when
-    the kind is a fact. A refusal about stage kinds
+    A staged program converts: each ``ops.stage`` records its kind. An
+    unstaged program does not (its kind is not archived as fact, and the
+    archive does not record the deck's ``analyze`` call; a follow-up card
+    will), so it refuses through ``convert_mpco``'s private
+    ``_implicit_stage`` path, which only this function passes. A refusal
+    about stage kinds
     (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`)
     reads the ``.mpco`` with :meth:`Results.from_mpco` after one
     :class:`DefaultRouteWarning` that quotes it. Every other refusal (the
@@ -258,8 +260,8 @@ class LiveDefault:
                     f"{target} and read with Results.from_mpco, not "
                     "converted: its analysis kind is not a fact (the loop's "
                     "own analysis calls never reach the model archive). "
-                    "convert_mpco converts the .mpco of a deck the bridge "
-                    "emitted."), stacklevel=3)
+                    "read_deck_mpco converts the .mpco of the bridge's own "
+                    "staged deck run out of process."), stacklevel=3)
             except BaseException:
                 self._remove(int(tag))
                 self._tag = None

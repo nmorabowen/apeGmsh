@@ -371,8 +371,8 @@ class ResolvedRecorderSpec:
 
         A stock in-process ``.mpco`` is never converted: the loop's own
         ``analysis`` calls never reach ``model_h5``, so its stage kind is
-        not a fact. :func:`~apeGmsh.results.convert_mpco` converts the
-        ``.mpco`` of a deck the bridge emitted.
+        not a fact. :func:`~apeGmsh.results.live.read_deck_mpco` converts
+        the ``.mpco`` of the bridge's own staged deck, run out of process.
 
         ``model_h5`` is the bridge archive the live domain was built from.
         ``overwrite=True`` replaces the fork's file of an earlier run, which

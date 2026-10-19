@@ -10,10 +10,11 @@ compared to ``ops.nodeDisp`` and to that closed form at ``rtol=1e-12``.
   hidden (``kind == "stock"``). The ``.mpco`` is kept, read with
   ``from_mpco`` after exactly one warning, and never converted.
 * **a deck, out of process** (``read_deck_mpco``): the bridge's deck runs
-  in a fresh process with a bridge MPCO recorder. With one ``analysis``
-  call, unstaged or in one ``ops.stage``, the ``.mpco`` converts and the
-  converted read equals the ``.mpco`` read; with two calls it is read with
-  ``from_mpco`` after exactly one warning.
+  in a fresh process with a bridge MPCO recorder. In one ``ops.stage`` the
+  ``.mpco`` converts and the converted read equals the ``.mpco`` read.
+  Unstaged, with one ``analysis`` call or two, it is read with
+  ``from_mpco`` after exactly one warning (coordinator ruling (iii): an
+  unstaged program's kind is not archived as fact).
 
 Gated by the ``ladruno_fork`` marker (root conftest auto-skips off-fork).
 """
@@ -168,11 +169,8 @@ def _deck_run(tmp_path: Path, *, analyses: int = 1, staged: bool = False,
     return mpco, model
 
 
-@pytest.mark.parametrize("staged", [False, True], ids=["unstaged", "one-stage"])
-def test_a_deck_with_one_analysis_converts_and_equals_the_mpco(
-    tmp_path, staged,
-) -> None:
-    mpco, model = _deck_run(tmp_path, staged=staged)
+def test_a_staged_deck_converts_and_equals_the_mpco(tmp_path) -> None:
+    mpco, model = _deck_run(tmp_path, staged=True)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         ref = Results.from_mpco(str(mpco), model_h5=str(model))
@@ -187,16 +185,17 @@ def test_a_deck_with_one_analysis_converts_and_equals_the_mpco(
     assert mpco.exists() and (tmp_path / "deck.ladruno").exists()
 
 
-def test_a_deck_with_two_analysis_calls_warns_once_and_reads_the_mpco(
-    tmp_path,
+@pytest.mark.parametrize("analyses", [1, 2], ids=["one-call", "two-calls"])
+def test_an_unstaged_deck_warns_once_and_reads_the_mpco(
+    tmp_path, analyses,
 ) -> None:
-    mpco, model = _deck_run(tmp_path, analyses=2)
+    mpco, model = _deck_run(tmp_path, analyses=analyses)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         res = read_deck_mpco(mpco, model_h5=model)
     try:
         assert [w.category for w in caught] == [DefaultRouteWarning]
-        assert "2 analysis calls" in str(caught[0].message)
+        assert "not archived as fact" in str(caught[0].message)
         np.testing.assert_allclose(tip_x(res)[-1], TRUSS_TIP, rtol=1e-12)
     finally:
         res.close()

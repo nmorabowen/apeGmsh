@@ -9,9 +9,9 @@ the file that build's recorder would have written:
 * **pip** (``recorder('mpco', ...)`` raises): nothing for MPCO; the classic
   recorders it accepts are counted, and removed.
 
-``read_deck_mpco`` (a deck's ``.mpco``) is tested on the same capture: one
-``analysis`` call converts it, two read it with ``from_mpco`` after one
-warning.
+``read_deck_mpco`` (a deck's ``.mpco``) is tested on the same capture: a
+staged program converts it; an unstaged one, with one ``analysis`` call or
+two, reads it with ``from_mpco`` after one warning (ruling (iii)).
 
 The oracle for the reads is the committed capture: every node value the
 route returns equals ``Results.from_mpco`` of the same file. Warning counts
@@ -50,6 +50,7 @@ from tests.test_results_mpco_to_ladruno import (
     SPRINGS,
     _bridge_copy,
     _frame_model,
+    _springs_model,
     _unstaged_springs_model,
 )
 
@@ -60,14 +61,15 @@ _DISP = ("displacement_x", "displacement_y", "displacement_z")
 @pytest.fixture(scope="module")
 def files(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     tmp = tmp_path_factory.mktemp("emit_default")
-    model = _unstaged_springs_model(tmp / "model.h5", ["static"])
+    model = _springs_model(tmp / "model.h5")          # one static ops.stage
     other = _unstaged_springs_model(tmp / "other.h5", ["static", "static"])
+    flat = _unstaged_springs_model(tmp / "flat.h5", ["static"])
     mpco = _bridge_copy(SPRINGS, model, tmp / "src.mpco")
-    (fork,) = convert_mpco(mpco, tmp / "src.ladruno", model_h5=model,
-                           _implicit_stage=True)
+    (fork,) = convert_mpco(mpco, tmp / "src.ladruno", model_h5=model)
     global _SNAPSHOT
     _SNAPSHOT = OpenSeesModel.from_h5(model).lineage.fem_hash
-    return {"model": model, "other": other, "mpco": mpco, "fork": fork}
+    return {"model": model, "other": other, "flat": flat, "mpco": mpco,
+            "fork": fork}
 
 
 #: The springs FEMData's snapshot id (``model.h5``'s ``fem_hash``): the
@@ -205,7 +207,7 @@ def test_a_fork_stamp_refusal_warns_once_and_reads_unstamped(
 def test_a_real_stamp_refusal_is_skipped_too(files, tmp_path) -> None:
     """A file stamped for another archive refuses the stamp (§7b.1 rule 3)."""
     (stale,) = convert_mpco(files["mpco"], tmp_path / "stale.ladruno",
-                            model_h5=files["model"], _implicit_stage=True)
+                            model_h5=files["model"])
     run, _ = _run(ForkOps(stale), tmp_path / "run", files["other"])
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -365,9 +367,7 @@ def test_results_inside_the_block_refuses(files, tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_deck_mpco_with_one_analysis_converts_and_keeps_the_mpco(
-    files, tmp_path,
-) -> None:
+def test_a_staged_deck_mpco_converts_and_keeps_the_mpco(files, tmp_path) -> None:
     src = shutil.copy(files["mpco"], tmp_path / "deck.mpco")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -402,18 +402,22 @@ def test_a_refusal_that_is_not_about_kinds_raises(files, case, tmp_path) -> None
     assert DefaultRouteWarning not in _cats(caught)
 
 
-def test_a_two_declaration_deck_warns_once_and_reads_the_mpco(
-    files, tmp_path,
+@pytest.mark.parametrize("name", ["flat", "other"], ids=["one-call", "two-calls"])
+def test_an_unstaged_deck_warns_once_and_reads_the_mpco(
+    files, name, tmp_path,
 ) -> None:
-    src = _bridge_copy(SPRINGS, files["other"], tmp_path / "deck.mpco")
+    """Ruling (iii): no unstaged deck converts, one ``analysis`` call or two;
+    the one-call case is the one a rule-(i) acceptance would convert."""
+    model = files[name]
+    src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        res = read_deck_mpco(src, model_h5=files["other"])
+        res = read_deck_mpco(src, model_h5=model)
     try:
         assert _cats(caught) == [DefaultRouteWarning]
-        assert "2 analysis calls" in str(caught[0].message)
+        assert "not archived as fact" in str(caught[0].message)
         assert not (tmp_path / "deck.ladruno").exists()
-        _assert_nodes_equal(res, src, files["other"])
+        _assert_nodes_equal(res, src, model)
     finally:
         res.close()
 
