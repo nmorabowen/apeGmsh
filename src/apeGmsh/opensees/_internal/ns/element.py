@@ -237,35 +237,117 @@ class _ElementNS(_BridgeNamespace):
         lch: str | float = "ip",
         nl: bool = False,
         hinge: UniaxialMaterial | str | None = None,
+        hinge_i: UniaxialMaterial | str | None = None,
+        hinge_j: UniaxialMaterial | str | None = None,
+        hinge_ij: (
+            UniaxialMaterial
+            | str
+            | tuple[UniaxialMaterial | str, UniaxialMaterial | str]
+            | None
+        ) = None,
         hinge_y: UniaxialMaterial | str | None = None,
+        hinge_yi: UniaxialMaterial | str | None = None,
+        hinge_yj: UniaxialMaterial | str | None = None,
+        hinge_yij: (
+            UniaxialMaterial
+            | str
+            | tuple[UniaxialMaterial | str, UniaxialMaterial | str]
+            | None
+        ) = None,
         hinge_biaxial: NDMaterial | str | None = None,
+        hinge_biaxial_i: NDMaterial | str | None = None,
+        hinge_biaxial_j: NDMaterial | str | None = None,
+        hinge_biaxial_ij: (
+            NDMaterial
+            | str
+            | tuple[NDMaterial | str, NDMaterial | str]
+            | None
+        ) = None,
+        hinge_loc: float | tuple[float, float] | None = None,
+        pm: float | tuple[float, float] | None = None,
+        implex: bool = False,
         damp: Damping | None = None,
     ) -> LadrunoDispBeamColumn:
         """``element LadrunoDispBeamColumn`` — disp-based beam with fork hinges.
 
         Ladruno fork (``ELE_TAG`` 33013/33014); the :class:`dispBeamColumn`
         shape plus per-IP crack-band ``lch`` regularization, ``-nl`` bowing,
-        and embedded cohesive rotation hinges. ``hinge``/``hinge_y`` are
-        uniaxial laws (typically ``LadrunoCohesiveHinge``); ``hinge_biaxial``
-        is an nDMaterial (``LadrunoCohesiveHingeBiaxial``). All accept a
-        registered handle or its name. See :class:`LadrunoDispBeamColumn`.
+        and embedded cohesive rotation hinges (single-hinge ``hinge``/``hinge_y``/
+        ``hinge_biaxial`` or dual-end ``hinge_i``/``hinge_j``/``hinge_ij``,
+        ``hinge_yi``/``hinge_yj``/``hinge_yij``, ``hinge_biaxial_i``/
+        ``hinge_biaxial_j``/``hinge_biaxial_ij`` with ``hinge_loc``, ``pm``,
+        and ``implex``). All material arguments accept a registered handle or
+        its name. See :class:`LadrunoDispBeamColumn`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
         """
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
-        if hinge is not None:
-            hinge = self._bridge._resolve(hinge, base=UniaxialMaterial)
-        if hinge_y is not None:
-            hinge_y = self._bridge._resolve(hinge_y, base=UniaxialMaterial)
-        if hinge_biaxial is not None:
-            hinge_biaxial = self._bridge._resolve(hinge_biaxial, base=NDMaterial)
+
+        def _res_uni(
+            m: "UniaxialMaterial | str | None",
+        ) -> "UniaxialMaterial | None":
+            return None if m is None else self._bridge._resolve(
+                m, base=UniaxialMaterial)
+
+        def _res_uni_pair(
+            m: "UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None",
+        ) -> "UniaxialMaterial | tuple[UniaxialMaterial, UniaxialMaterial] | None":
+            if m is None:
+                return None
+            if isinstance(m, tuple):
+                if len(m) != 2:
+                    raise ValueError(
+                        "LadrunoDispBeamColumn: dual-end hinge tuple must "
+                        f"have length 2, got {len(m)}."
+                    )
+                return (
+                    self._bridge._resolve(m[0], base=UniaxialMaterial),
+                    self._bridge._resolve(m[1], base=UniaxialMaterial),
+                )
+            return self._bridge._resolve(m, base=UniaxialMaterial)
+
+        def _res_nd(m: "NDMaterial | str | None") -> "NDMaterial | None":
+            return None if m is None else self._bridge._resolve(
+                m, base=NDMaterial)
+
+        def _res_nd_pair(
+            m: "NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None",
+        ) -> "NDMaterial | tuple[NDMaterial, NDMaterial] | None":
+            if m is None:
+                return None
+            if isinstance(m, tuple):
+                if len(m) != 2:
+                    raise ValueError(
+                        "LadrunoDispBeamColumn: dual-end biaxial hinge tuple "
+                        f"must have length 2, got {len(m)}."
+                    )
+                return (
+                    self._bridge._resolve(m[0], base=NDMaterial),
+                    self._bridge._resolve(m[1], base=NDMaterial),
+                )
+            return self._bridge._resolve(m, base=NDMaterial)
+
         return self._bridge._register(
             LadrunoDispBeamColumn(
                 pg=pg, transf=transf, integration=integration,
                 mass=mass, c_mass=c_mass, lch=lch, nl=nl,
-                hinge=hinge, hinge_y=hinge_y, hinge_biaxial=hinge_biaxial,
+                hinge=_res_uni(hinge),
+                hinge_i=_res_uni(hinge_i),
+                hinge_j=_res_uni(hinge_j),
+                hinge_ij=_res_uni_pair(hinge_ij),
+                hinge_y=_res_uni(hinge_y),
+                hinge_yi=_res_uni(hinge_yi),
+                hinge_yj=_res_uni(hinge_yj),
+                hinge_yij=_res_uni_pair(hinge_yij),
+                hinge_biaxial=_res_nd(hinge_biaxial),
+                hinge_biaxial_i=_res_nd(hinge_biaxial_i),
+                hinge_biaxial_j=_res_nd(hinge_biaxial_j),
+                hinge_biaxial_ij=_res_nd_pair(hinge_biaxial_ij),
+                hinge_loc=hinge_loc,
+                pm=pm,
+                implex=implex,
                 damp=damp,
             )
         )
@@ -288,16 +370,23 @@ class _ElementNS(_BridgeNamespace):
         mat_zj: UniaxialMaterial | str | None = None,
         mat_yi: UniaxialMaterial | str | None = None,
         mat_yj: UniaxialMaterial | str | None = None,
+        shear: float | tuple[float, float] | tuple[float, float, float] | None = None,
+        end_zones: tuple[float, float] | None = None,
         mass: float | None = None,
+        c_mass: bool = False,
+        pm: float | tuple[float, float] | None = None,
+        implex: bool = False,
     ) -> LadrunoIMKBeam:
         """``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam.
 
-        Ladruno fork (``ELE_TAG`` 33003/33004); an elastic beam with uncoupled
-        moment-rotation IMK hinges at the ends. Supply ``G``/``Jx``/``Iy`` for
-        the 3-D variant. Hinge laws are uniaxial materials selected per end via
-        ``ends`` (symmetric ``mat_z``/``mat_y``) or per-end overrides
-        (``mat_zi``/``mat_zj``/``mat_yi``/``mat_yj``); each accepts a handle or
-        name. See :class:`LadrunoIMKBeam`.
+        Ladruno fork (``ELE_TAG`` 33003/33004); an elastic Euler-Bernoulli or
+        Timoshenko (``shear``) beam with moment-rotation hinges at the ends,
+        optional rigid end offsets (``end_zones``), parabolic axial-moment
+        interaction (``pm``), and element-level ``implex``. Supply ``G``/``Jx``/
+        ``Iy`` for the 3-D variant. Hinge laws are uniaxial materials selected
+        per end via ``ends`` (symmetric ``mat_z``/``mat_y``) or per-end
+        overrides (``mat_zi``/``mat_zj``/``mat_yi``/``mat_yj``); each accepts a
+        handle or name. See :class:`LadrunoIMKBeam`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -315,7 +404,8 @@ class _ElementNS(_BridgeNamespace):
                 mat_z=_res(mat_z), mat_y=_res(mat_y),
                 mat_zi=_res(mat_zi), mat_zj=_res(mat_zj),
                 mat_yi=_res(mat_yi), mat_yj=_res(mat_yj),
-                mass=mass,
+                shear=shear, end_zones=end_zones,
+                mass=mass, c_mass=c_mass, pm=pm, implex=implex,
             )
         )
 

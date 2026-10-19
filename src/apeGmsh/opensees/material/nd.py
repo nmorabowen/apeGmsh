@@ -4336,11 +4336,12 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
     OpenSees command (Ladruno fork, ``ND_TAG`` **33004**)::
 
         nDMaterial LadrunoCohesiveHingeBiaxial tag Mcz Gfz Mcy Gfy \
-            [-exp | -linear] [-penaltyRatio r] [-bk eta]
+            [-exp | -linear] [-penaltyRatio r] [-bk eta] \
+            [-pm P0 [alpha]] [-implex]
 
     The coupled strong-axis/weak-axis (Mz–My) cohesive interaction surface
     that drives the biaxial embedded hinge of
-    ``LadrunoDispBeamColumn -hingeBiaxial``. Each axis carries its own
+    ``LadrunoDispBeamColumn -hingeBiaxial*``. Each axis carries its own
     cohesive moment ``Mc`` and fracture energy ``Gf``; the mixed-mode
     fracture energy follows the Benzeggagh-Kenane law
     ``Gf_mix = Gfz + (Gfy - Gfz)·wy^eta``.
@@ -4368,6 +4369,11 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
     bk_eta
         Benzeggagh-Kenane mode-mix exponent (``-bk``; default 1.0, must be
         > 0).
+    pm
+        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
+        (``-pm P0 [alpha]``, ``P0 > 0``).
+    implex
+        If ``True``, append ``-implex`` for IMPLEX integration.
     """
 
     _SOFTENING: ClassVar[frozenset[str]] = frozenset({"exponential", "linear"})
@@ -4379,6 +4385,8 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
     softening: str = "exponential"
     penalty_ratio: float = 1000.0
     bk_eta: float = 1.0
+    pm: float | tuple[float, float] | None = None
+    implex: bool = False
 
     def __post_init__(self) -> None:
         for label, val in (("Mcz", self.Mcz), ("Gfz", self.Gfz),
@@ -4403,6 +4411,38 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
                 "LadrunoCohesiveHingeBiaxial: bk_eta must be > 0, got "
                 f"{self.bk_eta!r}"
             )
+        if self.pm is not None:
+            if isinstance(self.pm, tuple):
+                if len(self.pm) != 2:
+                    raise ValueError(
+                        "LadrunoCohesiveHingeBiaxial: pm tuple must have length 2 "
+                        f"(P0, alpha), got {self.pm!r}"
+                    )
+                p0, alpha = self.pm
+                if isinstance(p0, bool) or not (p0 > 0) or p0 == float("inf"):
+                    raise ValueError(
+                        "LadrunoCohesiveHingeBiaxial: pm P0 must be finite and > 0, "
+                        f"got {p0!r}"
+                    )
+                if (
+                    isinstance(alpha, bool)
+                    or not (alpha == alpha)
+                    or alpha in (float("inf"), float("-inf"))
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHingeBiaxial: pm alpha must be finite, "
+                        f"got {alpha!r}"
+                    )
+            else:
+                if (
+                    isinstance(self.pm, bool)
+                    or not (self.pm > 0)
+                    or self.pm == float("inf")
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHingeBiaxial: pm P0 must be finite and > 0, "
+                        f"got {self.pm!r}"
+                    )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | str] = [self.Mcz, self.Gfz, self.Mcy, self.Gfy]
@@ -4412,6 +4452,13 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
             args += ["-penaltyRatio", self.penalty_ratio]
         if self.bk_eta != 1.0:
             args += ["-bk", self.bk_eta]
+        if self.pm is not None:
+            if isinstance(self.pm, tuple):
+                args += ["-pm", float(self.pm[0]), float(self.pm[1])]
+            else:
+                args += ["-pm", float(self.pm)]
+        if self.implex:
+            args.append("-implex")
         emitter.nDMaterial("LadrunoCohesiveHingeBiaxial", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:

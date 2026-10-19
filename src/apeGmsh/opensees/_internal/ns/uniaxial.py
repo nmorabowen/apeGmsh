@@ -593,14 +593,17 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         penalty: float | None = None,
         penalty_ratio: float = 1000.0,
         softening: str = "exponential",
+        pm: float | tuple[float, float] | None = None,
+        implex: bool = False,
         name: str | None = None,
     ) -> LadrunoCohesiveHinge:
         """``uniaxialMaterial LadrunoCohesiveHinge`` — cohesive moment-rotation hinge.
 
         Ladruno fork (``MAT_TAG`` 33003); the discrete rotation-jump law
         ``M([[theta]])`` carrying fracture energy ``Gf`` per hinge — the
-        embedded-hinge law of ``LadrunoDispBeamColumn -hinge``. See
-        :class:`LadrunoCohesiveHinge`.
+        embedded-hinge law of ``LadrunoDispBeamColumn -hinge*`` and
+        ``LadrunoIMKBeam``, with optional ``pm`` axial-moment interaction and
+        ``implex`` extrapolation. See :class:`LadrunoCohesiveHinge`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -608,7 +611,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         return self._bridge._register(
             LadrunoCohesiveHinge(
                 Mc=Mc, Gf=Gf, penalty=penalty, penalty_ratio=penalty_ratio,
-                softening=softening,
+                softening=softening, pm=pm, implex=implex,
             ),
             name=name,
         )
