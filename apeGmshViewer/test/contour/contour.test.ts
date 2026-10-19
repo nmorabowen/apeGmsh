@@ -13,7 +13,7 @@ import { ResultsHost } from "../../src/main/results.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { contourLines, rampCss } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
-import { CMAPS, CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
 import { contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
@@ -421,4 +421,30 @@ test("declared vs undeclared units: declared files auto-select native units; und
   assert.equal(h.store.get().contour.targetUnits, "as_stored");
 
   h.effects.dispose();
+});
+
+test("#2187: a .ladruno Gauss component <RESULT>/<label> is a component of the field <RESULT>; native names keep their fields", () => {
+  const g = (id: string, components: string[], refused: { component: string; reason: string }[] = []) => ({
+    id, components, refused, nElements: 1, nGauss: 4, localAxes: false, naturalCoords: null,
+  });
+  const fields = gaussFields([
+    g("stress/31-FourNodeQuad[201:0:0]", ["stress/sigma11", "stress/sigma22", "stress/sigma12"]),
+    g("strain/31-FourNodeQuad[201:0:0]", ["strain/eta11", "strain/eta22", "strain/eta12"]),
+  ]);
+  assert.deepEqual(fields.map((f) => [f.name, f.components.map((c) => [c.key, c.label]), f.refused]), [
+    ["stress", [["stress/sigma11", "sigma11"], ["stress/sigma22", "sigma22"], ["stress/sigma12", "sigma12"]], null],
+    ["strain", [["strain/eta11", "eta11"], ["strain/eta22", "eta22"], ["strain/eta12", "eta12"]], null],
+  ]);
+  // Two element classes of one result are one field; a refused bucket of it refuses the field, by its name.
+  const two = gaussFields([
+    g("stress/31-FourNodeQuad[201:0:0]", ["stress/sigma11"]),
+    g("stress/33000-BezierTri6[1000:1:0]", [], [{ component: "stress/sigma11", reason: "the counts disagree" }]),
+  ]);
+  assert.equal(two.length, 1);
+  assert.match(two[0]!.refused!, /group stress\/33000-BezierTri6\[1000:1:0\] refused stress\/sigma11 \(the counts disagree\)/);
+  // Native names (no `/`) are split as before.
+  assert.deepEqual(gaussFields([g("g0", ["stress_xx", "stress_yy", "von_mises"])]).map((f) => [f.name, f.components.map((c) => c.label)]), [
+    ["stress", ["xx", "yy"]],
+    ["von_mises", ["von_mises"]],
+  ]);
 });

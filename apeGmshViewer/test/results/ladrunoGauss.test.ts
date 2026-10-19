@@ -98,6 +98,8 @@ interface BucketSpec {
   data?: { values: Float64Array; shape: [number, number, number] };
   time?: Float64Array;
   step?: Int32Array;
+  /** the bucket's ID rows; the default is elements 1..6 */
+  ids?: number[];
 }
 
 /**
@@ -110,7 +112,8 @@ function addBucket(f: h5wasm.File, result: string, spec: BucketSpec = {}, key = 
   const n = gaussId.length;
   const col = (v: number[]) => ({ data: new Int32Array(v), shape: [v.length, 1] });
   const data = spec.data ?? { values: SRC.data, shape: [2, 6, 12] as [number, number, number] };
-  g.create_dataset({ name: "ID", data: new Int32Array([1, 2, 3, 4, 5, 6]), shape: [6, 1] });
+  const ids = spec.ids ?? [1, 2, 3, 4, 5, 6];
+  g.create_dataset({ name: "ID", data: new Int32Array(ids), shape: [ids.length, 1] });
   g.create_dataset({ name: "TIME", data: spec.time ?? SRC.time });
   g.create_dataset({ name: "STEP", data: spec.step ?? new Int32Array([0, 1]) });
   g.create_dataset({ name: "DATA", data: data.values, shape: data.shape });
@@ -271,6 +274,10 @@ test("a PARAM_DOMAIN other than [-1,1] still reads the Gauss values, offers no n
       [STRAIN, 3, null],
     ]);
     assert.equal(r.index.warnings.length, 2);
+    // The at-nodes refusal names the domain cause, never "not floating point" alone.
+    const g = s.gauss[0]!;
+    const v = extrapolationVerdict([{ id: g.id, nElements: 6, nGauss: 4, eids: new Float64Array([1, 2, 3, 4, 5, 6]), naturalCoords: g.naturalCoords }], (id) => ({ code: 3, nodes: CONN[id]! }));
+    assert.match(v.matrix!, /stress\/31-FourNodeQuad\[201:0:0\] has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]"/);
     assert.match(r.index.warnings[0]!, /stress\/31-FourNodeQuad\[201:0:0\]: .*PARAM_DOMAIN is "bary", not "\[-1,1\]"; its Gauss points are read, but not extrapolated to nodes/);
   });
 });
@@ -338,6 +345,34 @@ test("seam partial writes: a DATA step axis that disagrees with TIME and STEP is
   assert.match(refusalOf(p, `short_steps/${KEY}`)[0]!, /holds 1 steps, TIME 2 and STEP 2: the step axes disagree/);
   const q = edited(QUAD, (f) => addBucket(f, "other_time", { time: new Float64Array([0.25, 0.5]) }));
   assert.match(refusalOf(q, `other_time/${KEY}`)[0]!, /TIME is not the stage's time/);
+});
+
+test("seam partial writes: a DATA element axis that disagrees with ID is refused", () => {
+  const p = edited(QUAD, (f) => addBucket(f, "short_ids", { ids: [1, 2, 3, 4, 5] }));
+  assert.match(refusalOf(p, `short_ids/${KEY}`)[0]!, /DATA has 6 element rows and .*\/ID 5 ids \(a partial write\)/);
+});
+
+/** A copy with a second quad element group `31-FourNodeQuad[201:1]` (GP_PARAM copied, GLOBAL_GP_COORDS `width` wide) and a stress bucket of it. */
+function secondGroup(width: number): string {
+  // h5wasm cannot rewrite the fixture's model group, so the copy adds a second one and a bucket of it.
+  return edited(QUAD, (f) => {
+    const src = f.get(`${STAGE}/MODEL/ELEMENTS/${MODEL_KEY}/QUADRATURE/GP_PARAM`) as h5wasm.Dataset;
+    const grp = (f.get(`${STAGE}/MODEL/ELEMENTS`) as h5wasm.Group).create_group("31-FourNodeQuad[201:1]");
+    grp.create_attribute("PARAM_DOMAIN", "[-1,1]");
+    grp.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: src.value as Float64Array, shape: [4, 2] });
+    grp.create_dataset({ name: "GLOBAL_GP_COORDS", data: new Float64Array(6 * width), shape: [6, width] });
+    addBucket(f, "stress", {}, "31-FourNodeQuad[201:1:0]");
+  });
+}
+
+test("positions: a GLOBAL_GP_COORDS whose width is no multiple of GP_PARAM's rows refuses the bucket", () => {
+  assert.match(refusalOf(secondGroup(7), "stress/31-FourNodeQuad[201:1:0]")[0]!, /GLOBAL_GP_COORDS has shape \(6, 7\), not \(elements, 4 x dimension\)/);
+  // The same group with an 8-wide GLOBAL_GP_COORDS reads: the refusal is the width, nothing else.
+  withFile(secondGroup(8), (r) => {
+    const g = r.index.stages[0]!.gauss.find((x) => x.id === "stress/31-FourNodeQuad[201:1:0]")!;
+    assert.deepEqual(g.refused, []);
+    assert.equal(g.components.length, 3);
+  });
 });
 
 test("seam degenerate: a bucket with no Gauss point (G == 0) is refused alone", () => {

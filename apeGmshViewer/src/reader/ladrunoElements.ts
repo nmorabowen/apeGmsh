@@ -76,13 +76,16 @@ interface GaussBucket {
 
 const not = (reason: string) => ({ reason });
 
-/** Whether a `.ladruno`'s element rows are FEM element ids: only a well-formed `element_index_space = "fem"` says so. */
+/**
+ * Whether a `.ladruno`'s element rows are FEM element ids: only a well-formed
+ * `element_index_space = "fem"` says so (#2079 Q6). The one verdict: main's meta
+ * and every element read take it from here.
+ */
 export function elementIndexVerdictOf(space: SpaceFact | null): ElementIndexVerdict {
-  const tail = "so its element rows are not known to be FEM element ids";
-  if (space === null) return { verified: false, reason: `the file has no INFO/PROVENANCE group, ${tail}` };
+  const tail = "its element rows are not known to be FEM element ids";
+  if (space === null) return { verified: false, reason: `the file has no INFO/PROVENANCE group, so ${tail}` };
   if (space.state === "malformed") return { verified: false, reason: `${space.reason}; ${tail}` };
-  if (space.state === "absent") return { verified: false, reason: `INFO/PROVENANCE has no @element_index_space, ${tail}` };
-  if (space.value !== "fem") return { verified: false, reason: `INFO/PROVENANCE@element_index_space is ${JSON.stringify(space.value)}, not "fem", ${tail}` };
+  if (space.state === "absent" || space.value !== "fem") return { verified: false, reason: `INFO/PROVENANCE has no @element_index_space = "fem", so ${tail}` };
   return { verified: true };
 }
 
@@ -189,7 +192,7 @@ export class LadrunoGauss {
     const mult = this.intsOf(cm, "MULTIPLICITY");
     const fiber = this.intsOf(cm, "FIBER_ID");
     if (gids.some((x) => x < 0) || mult?.some((m) => m !== 1) || fiber?.some((x) => x >= 0)) return null;
-    const model = matchModelGroup(modelElements, key, (n) => this.groupOf(modelElements!, n));
+    const model = modelGroupFor(modelElements, key, (n) => this.groupOf(modelElements!, n));
     const quad = model ? this.groupOf(model, "QUADRATURE") : null;
     const gp = quad ? this.datasetOf(quad, "GP_PARAM") : null;
     const ndir = gp?.shape?.length === 2 ? gp.shape[1]! : gp?.shape?.length === 1 ? 1 : null;
@@ -198,7 +201,7 @@ export class LadrunoGauss {
     const id = `${result}/${key}`;
     const classTag = Number(/^(\d+)-/.exec(key)?.[1] ?? -1);
     const rule = intOf(oneValue(model?.attrs["INTEGRATION_RULE"]?.value));
-    const blocks = compNames(cm, gids.length);
+    const blocks = parseCompNames(cm.path, cm.attrs["COMP_NAMES"]?.value, gids.length, "GAUSS_ID");
     const labels = typeof blocks === "string" ? null : blocks[0] ?? [];
     const refuse = (reason: string, ids = new Float64Array(0)): GaussBucket => ({
       info: {
@@ -301,11 +304,12 @@ export class LadrunoGauss {
 }
 
 /**
- * The MODEL/ELEMENTS group of a bucket: the same `<classTag>-<ClassName>`, whose
- * bracket fields are the first fields of the bucket's (`31-FourNodeQuad[201:0]` for
- * `31-FourNodeQuad[201:0:0]`). Null when none matches.
+ * The MODEL/ELEMENTS group of an ON_ELEMENTS bucket: the same
+ * `<classTag>-<ClassName>`, whose bracket fields are the first fields of the
+ * bucket's (`31-FourNodeQuad[201:0]` for `31-FourNodeQuad[201:0:0]`). Null when none
+ * matches. The one match: the Gauss and the line-station reads both use it.
  */
-function matchModelGroup(modelElements: EGroup | null, key: string, groupOf: (name: string) => EGroup | null): EGroup | null {
+export function modelGroupFor<G>(modelElements: { keys(): string[] } | null, key: string, groupOf: (name: string) => G | null): G | null {
   if (!modelElements) return null;
   const parse = (k: string) => /^(?<cls>[^[]+)(?:\[(?<f>[^\]]*)\])?$/.exec(k)?.groups;
   const b = parse(key);
@@ -320,17 +324,23 @@ function matchModelGroup(modelElements: EGroup | null, key: string, groupOf: (na
   return null;
 }
 
-/** COMP_NAMES as one label list per block, or why it cannot be read. */
-function compNames(cm: EGroup, nBlocks: number): string[][] | string {
-  const raw = oneValue(cm.attrs["COMP_NAMES"]?.value);
-  if (typeof raw !== "string") return `${cm.path} has no string COMP_NAMES attribute`;
-  const lines = nBlocks === 0 ? [] : raw.split("\n");
-  if (lines.length !== nBlocks) return `${cm.path}@COMP_NAMES has ${lines.length} lines and GAUSS_ID ${nBlocks} rows`;
+/**
+ * A COLUMN_MAP's COMP_NAMES (schema §7.2: one CSV line per block) as one label
+ * list per block, or why it cannot be read: not a string, a line count that is
+ * not the `nBlocks` rows of `rowsOf`, an empty label or a repeated one. The one
+ * parser: the Gauss and the line-station reads both use it (fail closed: an empty
+ * label is refused, never dropped).
+ */
+export function parseCompNames(cmPath: string, attr: unknown, nBlocks: number, rowsOf: "GAUSS_ID" | "LEVELS"): string[][] | string {
+  const raw = oneValue(attr);
+  if (typeof raw !== "string") return `${cmPath} has no string COMP_NAMES attribute`;
+  const lines = nBlocks === 0 && raw === "" ? [] : raw.split("\n");
+  if (lines.length !== nBlocks) return `${cmPath}@COMP_NAMES has ${lines.length} lines and ${rowsOf} ${nBlocks} rows`;
   const out: string[][] = [];
   for (const line of lines) {
     const names = line.split(",").map((t) => t.trim());
-    if (names.some((t) => t === "")) return `${cm.path}@COMP_NAMES line ${JSON.stringify(line)} has an empty label`;
-    if (new Set(names).size !== names.length) return `${cm.path}@COMP_NAMES line ${JSON.stringify(line)} repeats a label`;
+    if (names.some((t) => t === "")) return `${cmPath}@COMP_NAMES line ${JSON.stringify(line)} has an empty label`;
+    if (new Set(names).size !== names.length) return `${cmPath}@COMP_NAMES line ${JSON.stringify(line)} repeats a label`;
     out.push(names);
   }
   return out;
@@ -341,8 +351,8 @@ function sameTime(v: unknown, time: Float64Array): boolean {
   return t !== null && t.length === time.length && t.every((x, i) => x === time[i]);
 }
 
-/** A scalar attribute, or the one element of a one-element array (the fork writes shape (1,)). */
-function oneValue(v: unknown): unknown {
+/** A scalar attribute, or the one element of a one-element array (the fork writes shape (1,)). Shared with reader/ladruno.ts. */
+export function oneValue(v: unknown): unknown {
   if (Array.isArray(v)) return v.length === 1 ? v[0] : v;
   if (ArrayBuffer.isView(v) && !(v instanceof DataView)) {
     const a = v as unknown as ArrayLike<unknown>;
@@ -351,7 +361,8 @@ function oneValue(v: unknown): unknown {
   return v;
 }
 
-function intOf(v: unknown): number | null {
+/** An integer attribute value (number or bigint), else null. Shared with reader/ladruno.ts. */
+export function intOf(v: unknown): number | null {
   if (typeof v === "bigint") return Number(v);
   if (typeof v === "number" && Number.isInteger(v)) return v;
   return null;

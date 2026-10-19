@@ -31,7 +31,6 @@ import {
   openLadruno,
   type LadrunoLineStationStep,
   type LineStationComponent,
-  type ProvenanceFact,
 } from "../reader/ladruno.ts";
 import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
@@ -205,13 +204,6 @@ const signature = (path: string): string => {
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 
-/** Why a `.ladruno`'s element rows are unverified: no `element_index_space`, or one that is not "fem" (#2079 Q6). */
-function unverifiedSpace(space: ProvenanceFact | null): string {
-  if (space === null) return "the file has no INFO/PROVENANCE group, so its element rows are not known to be FEM element ids";
-  if (space.state === "malformed") return `${space.reason}; its element rows are not known to be FEM element ids`;
-  return 'INFO/PROVENANCE has no @element_index_space = "fem", so its element rows are not known to be FEM element ids';
-}
-
 /**
  * Each stage's name (aligned with `index.stages`). A well-formed
  * INFO/PROVENANCE@stage_names names the MODEL_STAGE (host) stages when it
@@ -283,7 +275,8 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
       unavailableZones: [],
       openseesVersion: null,
       programDecl: null,
-      elementIndex: elementIndexSpace === "fem" ? { verified: true } : { verified: false, reason: unverifiedSpace(space) },
+      // #2187: the reader's one verdict (reader/ladrunoElements.ts `elementIndexVerdictOf`), as every element read uses.
+      elementIndex: rf.elementIndexVerdict(),
       units: ix.units,
       elementIndexSpace,
       stages: ix.stages.map((s, k) => ({

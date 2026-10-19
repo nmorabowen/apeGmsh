@@ -38,7 +38,7 @@
 
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
-import { elementIndexVerdictOf, LadrunoGauss, type ElementIndexVerdict } from "./ladrunoElements.ts";
+import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
@@ -1175,23 +1175,14 @@ export class LadrunoFile {
       const gaussDs = this.dataset(cm, "GAUSS_ID");
       const levels = intsAsNumbers(levelsDs);
       const gauss = intsAsNumbers(gaussDs);
-      const compNamesAttr = cm.attrs["COMP_NAMES"];
-      if (!compNamesAttr) return { reason: `${cm.path} has no COMP_NAMES attribute` };
-      const rawCompNames = oneValue(compNamesAttr.value);
-      if (typeof rawCompNames !== "string") return { reason: `${cm.path}@COMP_NAMES is not a string` };
-      const lines = rawCompNames.split("\n");
       const nBlocks = levels.length;
-      if (lines.length !== nBlocks) {
-        return { reason: `COLUMN_MAP has ${nBlocks} rows but COMP_NAMES has ${lines.length} lines — malformed .ladruno bucket.` };
-      }
+      const lines = parseCompNames(cm.path, cm.attrs["COMP_NAMES"]?.value, nBlocks, "LEVELS");
+      if (typeof lines === "string") return { reason: lines };
       const mult = cm.keys().includes("MULTIPLICITY") ? intsAsNumbers(this.dataset(cm, "MULTIPLICITY")) : null;
       const blocks: BucketBlock[] = [];
       let col = 0;
       for (let i = 0; i < nBlocks; i++) {
-        const names = lines[i]!
-          .split(",")
-          .map((t) => t.trim())
-          .filter((t) => t.length > 0);
+        const names = lines[i]!;
         const m = mult && i < mult.length ? Math.trunc(mult[i]!) : 1;
         blocks.push({
           level: Math.trunc(levels[i]!),
@@ -1238,27 +1229,21 @@ export class LadrunoFile {
     };
   }
 
+  /** The first natural coordinate of each GP_PARAM row of the bucket's element group (`modelGroupFor`), or null. */
   private gpParamFor(modelElements: LGroup | null, bucketKey: string): Float64Array | null {
-    if (!modelElements) return null;
-    const prefix = classPrefixOfBucket(bucketKey);
-    for (const name of modelElements.keys()) {
-      if (classPrefixOfBucket(name) !== prefix) continue;
-      const grp = this.optionalGroup(modelElements, name);
-      if (!grp) continue;
-      const quad = this.optionalGroup(grp, "QUADRATURE");
-      if (!quad || !quad.keys().includes("GP_PARAM")) continue;
-      const ds = this.dataset(quad, "GP_PARAM");
-      const shape = ds.shape ?? [];
-      const cols = shape.length === 2 ? shape[1]! : 1;
-      const nRows = shape[0] ?? 0;
-      if (nRows === 0 || cols === 0) return null;
-      const raw = toFloat64(ds.value, ds.path);
-      if (cols === 1) return raw;
-      const firstCol = new Float64Array(nRows);
-      for (let i = 0; i < nRows; i++) firstCol[i] = raw[i * cols]!;
-      return firstCol;
-    }
-    return null;
+    const grp = modelGroupFor(modelElements, bucketKey, (n) => this.optionalGroup(modelElements!, n));
+    const quad = grp ? this.optionalGroup(grp, "QUADRATURE") : null;
+    if (!quad || !quad.keys().includes("GP_PARAM")) return null;
+    const ds = this.dataset(quad, "GP_PARAM");
+    const shape = ds.shape ?? [];
+    const cols = shape.length === 2 ? shape[1]! : 1;
+    const nRows = shape[0] ?? 0;
+    if (nRows === 0 || cols === 0) return null;
+    const raw = toFloat64(ds.value, ds.path);
+    if (cols === 1) return raw;
+    const firstCol = new Float64Array(nRows);
+    for (let i = 0; i < nRows; i++) firstCol[i] = raw[i * cols]!;
+    return firstCol;
   }
 
   private readSectionBucketStations(
@@ -1634,22 +1619,6 @@ function eigenScalars(lambda: number, modeIndex: number, source: string, warning
   }
   warnings.push(`${source}: mode ${modeIndex} has a non-positive eigenvalue (${lambda}); a spurious or unstable mode. Its frequency and period read 0`);
   return [0, 0];
-}
-
-/** A scalar attribute, or the one element of a one-element array (the fork writes shape (1,)). */
-function oneValue(v: unknown): unknown {
-  if (Array.isArray(v)) return v.length === 1 ? v[0] : v;
-  if (ArrayBuffer.isView(v) && !(v instanceof DataView)) {
-    const a = v as unknown as ArrayLike<unknown>;
-    return a.length === 1 ? a[0] : v;
-  }
-  return v;
-}
-
-function intOf(v: unknown): number | null {
-  if (typeof v === "bigint") return Number(v);
-  if (typeof v === "number" && Number.isInteger(v)) return v;
-  return null;
 }
 
 function optionalInt(g: LGroup, key: string): number | null {
