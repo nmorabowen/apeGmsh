@@ -301,8 +301,13 @@ class LiveDefault:
     # Read back
     # ------------------------------------------------------------------
 
-    def results(self) -> Results:
-        """Open what the run recorded, on the route ``__enter__`` picked."""
+    def results(self, *, cache_root: "str | Path | None" = None) -> Results:
+        """Open what the run recorded, on the route ``__enter__`` picked.
+
+        ``cache_root`` is where the classic-recorder route caches its
+        transcoded file (:meth:`Results.from_recorders`); the other routes
+        read their file in place and ignore it.
+        """
         if not self._exited:
             raise RuntimeError(
                 "LiveDefault.results() reads the run after the with block "
@@ -323,7 +328,8 @@ class LiveDefault:
             assert self._live is not None and self._model is not None
             return Results.from_recorders(
                 self._spec, target, fem=FEMData.from_h5(str(self._model_h5)),
-                model=self._model, stages=self._live.stages,
+                cache_root=cache_root, model=self._model,
+                stages=self._live.stages,
             )
         raise RuntimeError(f"LiveDefault has no route {self._route!r}; "
                            f"expected one of {ROUTES}.")

@@ -28,6 +28,14 @@ from typing import Any
 import numpy as np
 import pytest
 
+from apeGmsh.mesh._element_types import ElementGroup, make_type_info
+from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
+from apeGmsh.mesh.FEMData import (
+    ElementComposite,
+    FEMData,
+    MeshInfo,
+    NodeComposite,
+)
 from apeGmsh.opensees.opensees_model import OpenSeesModel
 from apeGmsh.results import Results, convert_mpco
 from apeGmsh.results.live import DefaultRouteWarning, LiveDefault, read_deck_mpco
@@ -364,5 +372,169 @@ def test_a_two_declaration_deck_warns_once_and_reads_the_mpco(
         assert "2 analysis calls" in str(caught[0].message)
         assert not (tmp_path / "deck.ladruno").exists()
         _assert_nodes_equal(res, src, files["other"])
+    finally:
+        res.close()
+
+
+# ---------------------------------------------------------------------------
+# A real domain: the two-node truss (shared with the fork lane's file)
+# ---------------------------------------------------------------------------
+
+TRUSS_L, TRUSS_E, TRUSS_A, TRUSS_P = 2.0, 2.0e11, 1.0e-4, 1.0e4
+TRUSS_STEPS = 4
+#: The tip's displacement at full load, P L / (E A).
+TRUSS_TIP = TRUSS_P * TRUSS_L / (TRUSS_E * TRUSS_A)
+
+
+def truss_fem() -> FEMData:
+    node_ids = np.array([1, 2], dtype=np.int64)
+    coords = np.array([[0.0, 0.0, 0.0], [TRUSS_L, 0.0, 0.0]])
+    info = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=1)
+    group = ElementGroup(element_type=info, ids=np.array([1], dtype=np.int64),
+                         connectivity=np.array([[1, 2]], dtype=np.int64))
+    pg = {
+        (1, 1): {"name": "Bar", "node_ids": node_ids, "node_coords": coords,
+                 "element_ids": group.ids},
+        (0, 2): {"name": "Base", "node_ids": node_ids[:1],
+                 "node_coords": coords[:1]},
+        (0, 3): {"name": "Tip", "node_ids": node_ids[1:],
+                 "node_coords": coords[1:]},
+    }
+    return FEMData(
+        nodes=NodeComposite(node_ids=node_ids, node_coords=coords,
+                            physical=PhysicalGroupSet(pg), labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group},
+                                  physical=PhysicalGroupSet(pg),
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=2, n_elems=1, bandwidth=2, types=[info]),
+        model_name="emit_default_truss",
+    )
+
+
+def truss_bridge(
+    fem: FEMData, *, analyses: int = 1, staged: bool = False,
+    mpco: "Path | None" = None,
+) -> Any:
+    """The truss on a bridge: a static load ramp in TRUSS_STEPS steps.
+
+    ``analyses`` static ``analysis`` calls are declared (unstaged), or one
+    ``ops.stage`` block holds the load and the chain (``staged``). ``mpco``
+    declares a bridge MPCO recorder on the tip's displacement.
+    """
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=TRUSS_E)
+    ops.element.Truss(pg="Bar", A=TRUSS_A, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+    ops.fix(pg="Tip", dofs=(0, 1))
+    if mpco is not None:
+        ops.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+
+    def chain() -> "dict[str, Any]":
+        return dict(
+            test=ops.test.NormDispIncr(tol=1e-12, max_iter=10),
+            algorithm=ops.algorithm.Linear(),
+            integrator=ops.integrator.LoadControl(dlam=1.0 / TRUSS_STEPS),
+            constraints=ops.constraints.Plain(), numberer=ops.numberer.RCM(),
+            system=ops.system.BandGeneral(), analysis=ops.analysis.Static(),
+        )
+
+    if staged:
+        with ops.stage(name="load") as s:
+            with s.pattern(series=ops.timeSeries.Linear()) as pat:
+                pat.load(pg="Tip", forces=(TRUSS_P, 0.0))
+            s.analysis(**chain())
+            s.run(n_increments=TRUSS_STEPS)
+        return ops
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as pat:
+        pat.load(pg="Tip", forces=(TRUSS_P, 0.0))
+    for _ in range(analyses):
+        chain()  # each primitive registers on the bridge as it is made
+    return ops
+
+
+def truss_spec(fem: FEMData) -> ResolvedRecorderSpec:
+    return ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedRecorderRecord(
+            category="nodes", name="tip",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None, node_ids=np.array([2]),
+        ),),
+    )
+
+
+def tip_x(res: Results) -> np.ndarray:
+    """The tip's ``displacement_x`` history, one value per recorded step."""
+    slab = res.stage(res.stages[-1].id).nodes.get(component="displacement_x")
+    values = np.asarray(slab.values)
+    ids = list(np.asarray(slab.node_ids))
+    return values[:, ids.index(2)]
+
+
+class NoMPCO:
+    """The live module with no fork signal and no MPCO recorder.
+
+    On pip openseespy this is the module itself: its probe fails on its
+    own. On a build that has MPCO the wrapper refuses it, so the same test
+    runs the classic-recorder route on any build.
+    """
+
+    _HIDDEN = frozenset({"ladrunoBuild", "ladrunoSchema"})
+
+    def __init__(self, ops: Any) -> None:
+        self._ops = ops
+
+    def __getattr__(self, name: str) -> Any:
+        if name in NoMPCO._HIDDEN:
+            raise AttributeError(name)
+        return getattr(self._ops, name)
+
+    def recorder(self, *args: Any) -> Any:
+        if args and args[0] == "mpco":
+            raise RuntimeError("recorder mpco: not in this build")
+        return self._ops.recorder(*args)
+
+
+@pytest.mark.live
+def test_live_classic_recorder_route_reads_the_run_and_leaves_no_recorder(
+    tmp_path,
+) -> None:
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    opspy = get_ops()
+    fem = truss_fem()
+    bridge = truss_bridge(fem)
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    bridge.run()
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with truss_spec(fem).emit_default(tmp_path / "run", model_h5=model,
+                                              ops=NoMPCO(opspy)) as run:
+                for _ in range(TRUSS_STEPS):
+                    assert opspy.analyze(1) == 0
+        assert run.route == "recorders"
+        assert [w.category for w in caught] == [DefaultRouteWarning]
+        tip = opspy.nodeDisp(2, 1)
+        out = sorted(run.path.iterdir())
+        assert out, "the classic recorders wrote nothing"
+        sizes = [f.stat().st_size for f in out]
+        assert opspy.analyze(1) == 0            # a step after the block ...
+        assert [f.stat().st_size for f in out] == sizes  # ... records nothing
+    finally:
+        opspy.wipe()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        x = tip_x(res)
+        assert x.shape == (TRUSS_STEPS,)
+        np.testing.assert_allclose(x[-1], tip, rtol=1e-12)
+        np.testing.assert_allclose(x[-1], TRUSS_TIP, rtol=1e-12)
     finally:
         res.close()
