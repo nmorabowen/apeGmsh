@@ -442,3 +442,30 @@ def test_side_channel_proof_reads_only_the_step_verbs() -> None:
     assert _side_channel_proof([("fix", 3), ("set_node_vel", -1)]) is False
     assert _side_channel_proof(
         [("set_node_vel", -1), ("set_node_accel", 2)]) is True
+    # decl 0 is the first /opensees/decls row: a proof, not "none".
+    assert _side_channel_proof([("set_node_vel", 0)]) is True
+
+
+def test_marker_cause_takes_precedence_over_the_side_channel_step(
+    tmp_path: Path,
+) -> None:
+    """Results from the pre-marker corpus file (side-channel calls, all
+    decl -1) against a current emit with proved side-channel calls: the
+    markers disagree, so the marker cause is named exactly, and the
+    side-channel step, which the columns alone would also suggest, is
+    not."""
+    legacy = _legacy(tmp_path)
+    runs = _side_channel_runs(legacy)
+    assert runs and all(d == -1 for d in runs)
+    results = _results(legacy, tmp_path)
+    warning, stored, model_hash = _mismatch(
+        results, _side_channel_model(tmp_path))
+    assert warning == (
+        _old_text(stored, model_hash)
+        + f"; likely cause: the opensees schema {OPENSEES_PROGRAM_DECL_FROM} "
+        f"{MODEL_HASH_ERA_CAUSE} (the model's hash includes declaration "
+        "ids, the results file's does not); re-run the analysis against "
+        "the re-saved model, or open the results with the model.h5 they "
+        "were run on"
+    )
+    assert SIDE_CHANNEL_HASH_CAUSE not in warning
