@@ -348,6 +348,65 @@ def test_a_deck_node_that_is_not_the_fem_node_refuses_by_id(
                 pass
 
 
+@pytest.mark.parametrize("beam_tip, spring_node", [(2, 3), (3, 2)],
+                         ids=["as-the-fem", "tags-2-3-swapped"])
+def test_coincident_nodes_record_only_when_their_elements_pin_them(
+    opspy, tmp_path, beam_tip, spring_node,
+) -> None:
+    """The review's swap deck: nodes 2, 3 and 4 at (2, 0), a cantilever
+    on 1-2 and a zero-length spring on 4-3. Swapping tags 2 and 3 keeps
+    every coordinate, and would record each node's motion under the
+    other's tag."""
+    from tests.test_results_live_femdata_archive import _coincident_fem
+
+    fem = _coincident_fem(with_spring=True)
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 2, "-ndf", 3)
+    opspy.node(1, 0.0, 0.0)
+    for n in (beam_tip, spring_node, 4):
+        opspy.node(n, L, 0.0)
+    opspy.fix(1, 1, 1, 1)
+    opspy.fix(4, 1, 1, 1)
+    opspy.fix(spring_node, 0, 0, 1)
+    opspy.geomTransf("Linear", 1)
+    opspy.element("elasticBeamColumn", 1, 1, beam_tip, 1.0e-2, E, IZ, 1)
+    opspy.uniaxialMaterial("Elastic", 9, 1.0e3)
+    opspy.element("zeroLength", 2, 4, spring_node, "-mat", 9, 9, "-dir", 1, 2)
+    opspy.timeSeries("Linear", 1)
+    opspy.pattern("Plain", 1, 1)
+    opspy.load(beam_tip, 0.0, P, 0.0)
+    opspy.load(spring_node, 0.0, 1.0, 0.0)
+    for cmd, args in (("constraints", ("Plain",)), ("numberer", ("RCM",)),
+                      ("system", ("BandGeneral",)),
+                      ("test", ("NormDispIncr", 1.0e-12, 10)),
+                      ("algorithm", ("Linear",)),
+                      ("integrator", ("LoadControl", 1.0)),
+                      ("analysis", ("Static",))):
+        getattr(opspy, cmd)(*args)
+    ids = np.array([2, 3])
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("u", ("displacement_y",), ids),))
+    if (beam_tip, spring_node) == (3, 2):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DefaultRouteWarning)
+            with pytest.raises(ValueError, match=r"node 2: FEM element 1 has "
+                                                 r"nodes \[1, 2\]"):
+                with spec.emit_default(tmp_path / "run", model_h5=model_h5,
+                                       ops=NoMPCO(opspy)):
+                    pass
+        return
+    res = _emit(spec, tmp_path, model_h5, opspy, 1)
+    try:
+        u = _last(res, ids, ("displacement_y",))[:, 0]
+        np.testing.assert_allclose(
+            u, [opspy.nodeDisp(2, 2), opspy.nodeDisp(3, 2)], rtol=1e-12, atol=0)
+        np.testing.assert_allclose(u, [UY, 1.0 / 1.0e3], rtol=1e-9)
+    finally:
+        res.close()
+
+
 def test_a_rotation_at_a_tet_node_refuses_by_name(opspy, tmp_path) -> None:
     fem = _mixed_fem()
     model_h5 = tmp_path / "model.h5"

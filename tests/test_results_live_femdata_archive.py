@@ -422,21 +422,81 @@ def test_a_fine_mesh_tells_noise_from_a_neighbour(tmp_path, shift, records) -> N
             _run(spec, tmp_path / "run", model_h5, ops)
 
 
-def test_the_tolerance_is_a_quarter_of_the_nearest_other_position(
-    monkeypatch,
-) -> None:
-    """The KD-tree and the brute-force search agree; coincident nodes do
-    not shrink each other's tolerance."""
-    import sys
-
+def test_the_tolerance_is_a_quarter_of_the_nearest_other_position() -> None:
+    """Coincident nodes do not shrink each other's tolerance, and the grid
+    search equals a brute-force nearest-neighbour search on a graded,
+    clustered cloud (the cells grow for the isolated points)."""
     from apeGmsh.opensees._recorder_translate import _identity_tolerances
 
     coords = np.array([[0.0, 0.0], [0.0, 0.0], [2.0, 0.0], [2.0, 3.0]])
-    rows = np.arange(4)
-    want = 0.25 * np.array([2.0, 2.0, 2.0, 3.0])
-    np.testing.assert_allclose(_identity_tolerances(coords, rows), want)
-    monkeypatch.setitem(sys.modules, "scipy.spatial", None)   # no SciPy
-    np.testing.assert_allclose(_identity_tolerances(coords, rows), want)
+    np.testing.assert_allclose(_identity_tolerances(coords, np.arange(4)),
+                               0.25 * np.array([2.0, 2.0, 2.0, 3.0]))
+
+    rng = np.random.default_rng(2251)
+    cloud = np.vstack([rng.random((400, 3)) * 1e-2,          # a dense cluster
+                       rng.random((40, 3)) * 1e3,            # sparse far points
+                       np.repeat(rng.random((5, 3)), 2, axis=0)])  # coincident pairs
+    d = np.linalg.norm(cloud[:, None, :] - cloud[None, :, :], axis=2)
+    d[d <= 1e-9 * max(np.abs(cloud).max(), 1.0)] = np.inf
+    rows = np.arange(len(cloud))
+    np.testing.assert_allclose(_identity_tolerances(cloud, rows),
+                               0.25 * d.min(axis=1), rtol=1e-12)
+
+
+def _coincident_fem(with_spring: bool) -> FEMData:
+    """Node 1 at the origin and nodes 2, 3, 4 at (2, 0, 0): a beam 1-2
+    and, with ``with_spring``, a zero-length element 4-3."""
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2 if with_spring else 1)
+    ids = [1, 2] if with_spring else [1]
+    conn = [[1, 2], [4, 3]] if with_spring else [[1, 2]]
+    group = ElementGroup(element_type=line, ids=np.array(ids, dtype=np.int64),
+                         connectivity=np.array(conn, dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=NodeComposite(
+            node_ids=np.array([1, 2, 3, 4], dtype=np.int64),
+            node_coords=np.array([[0.0, 0.0, 0.0]] + [[2.0, 0.0, 0.0]] * 3),
+            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=4, n_elems=len(ids), bandwidth=2, types=[line]),
+        model_name=f"femdata_archive_coincident_{with_spring}",
+    )
+
+
+_AT_TIP = {1: (0.0, 0.0), 2: (2.0, 0.0), 3: (2.0, 0.0), 4: (2.0, 0.0)}
+
+
+@pytest.mark.parametrize("with_spring, beam, spring, match", [
+    (True, (1, 2), (4, 3), None),
+    (True, (1, 3), (4, 2),
+     r"node 2: FEM element 1 has nodes \[1, 2\], the live element 1 has "
+     r"\[1, 3\]"),
+    (False, (1, 2), (4, 3),
+     r"nodes \[3\] share their position with another FEM node, and no FEM "
+     r"element touches them"),
+], ids=["pinned", "tags-2-3-swapped", "no-element"])
+def test_coincident_nodes_are_told_apart_by_their_elements(
+    tmp_path, with_spring, beam, spring, match,
+) -> None:
+    """Nodes 2, 3 and 4 share one position, so coordinates match whatever
+    their tags; the live elements must pin each tag."""
+    fem = _coincident_fem(with_spring)
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = LiveOps(ndm=2, ndf={n: 3 for n in _AT_TIP},
+                  elements={1: ("ElasticBeam2d", beam),
+                            2: ("ZeroLength", spring)},
+                  coords=dict(_AT_TIP))
+    spec = _spec(fem, ("nodes", "u", ("displacement_y",), [2, 3]))
+    if match is None:
+        _run(spec, tmp_path / "run", model_h5, ops)
+        assert [_dofs(c) for c in _node_calls(ops)] == [[2]]
+    else:
+        with pytest.raises(ValueError, match=match):
+            _run(spec, tmp_path / "run", model_h5, ops)
+        assert _node_calls(ops) == []
 
 
 def test_coordinates_within_the_tolerance_record(frame, tmp_path) -> None:

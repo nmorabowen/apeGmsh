@@ -12,9 +12,18 @@ Each recorded node's `ops.nodeCoord` must match the FEM node's first `ndm`
 coordinates, so the live node is known to be the FEM node. The tolerance
 follows the mesh: a quarter of the node's distance to the nearest FEM node
 at another position. Within it the live point is nearer that node than
-any other. A deck that rounds its coordinates (6 significant digits,
-float32, or millimetres to 3 decimals) therefore records, while a point
-one node over refuses, however fine the mesh. `run.results()` reads the `.out` files into a
+any node at another position. A deck that rounds its coordinates (6
+significant digits, float32, or millimetres to 3 decimals) therefore
+records, while a point at another node's position refuses, however fine
+the mesh.
+
+Coordinates cannot tell apart nodes that share one position: a
+zero-length spring's ends, or an `equalDOF` or rigid-link pair. For
+such a node, every FEM element touching it must exist live under its FEM
+id, with `eleNodes` equal to its FEM connectivity in order. Otherwise a
+deck that swapped the two tags would record each node's motion under the
+other's tag. A shared-position node that no FEM element touches refuses
+by name. `run.results()` reads the `.out` files into a
 native file with no `/opensees` zone.
 
 This records **node** results only. Element results (element, gauss,

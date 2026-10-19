@@ -492,48 +492,90 @@ def live_ndm(ops: object) -> int:
     return _live_int(ops.getNDM(), "getNDM()")  # type: ignore[attr-defined]
 
 
+def _same_position(coords: "ndarray") -> float:
+    """The distance under which two FEM nodes share one position:
+    ``1e-9`` of the coordinate scale."""
+    import numpy as np
+
+    return 1e-9 * max(float(np.abs(coords).max(initial=0.0)), 1.0)
+
+
+def _near_points(
+    coords: "ndarray", rows: "ndarray", h: float, same: float,
+) -> "tuple[ndarray, ndarray]":
+    """For each point ``coords[rows]``: the nearest other point farther
+    than ``same`` among the ``3**d`` grid cells of side ``h`` around it
+    (``inf`` when there is none), and whether another point lies within
+    ``same`` of it.
+
+    Every point within ``h`` of a query lies in those cells, so a nearest
+    distance at most ``h`` is exact. NumPy only: cells are matched by
+    ``np.unique`` over integer cell tuples, so no cell index can overflow.
+    """
+    import itertools
+
+    import numpy as np
+
+    n, d = coords.shape
+    cell = np.floor((coords - coords.min(axis=0)) / h).astype(np.int64)
+    offs = np.array(list(itertools.product((-1, 0, 1), repeat=d)),
+                    dtype=np.int64)
+    k = len(offs)
+    probe = (cell[rows][:, None, :] + offs[None, :, :]).reshape(-1, d)
+    inv = np.unique(np.vstack([cell, probe]), axis=0,
+                    return_inverse=True)[1].ravel()
+    order = np.argsort(inv[:n], kind="stable")
+    sorted_cells = inv[:n][order]
+    lo = np.searchsorted(sorted_cells, inv[n:], "left")
+    cnt = np.searchsorted(sorted_cells, inv[n:], "right") - lo
+    owner = np.repeat(np.arange(len(rows) * k) // k, cnt)
+    first = np.repeat(lo, cnt)
+    step = np.arange(int(cnt.sum())) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    cand = order[first + step]
+    dist = np.linalg.norm(coords[cand] - coords[rows[owner]], axis=1)
+    other = cand != rows[owner]
+    shared = np.zeros(len(rows), dtype=bool)
+    shared[owner[other & (dist <= same)]] = True
+    best = np.full(len(rows), np.inf)
+    far = other & (dist > same)
+    np.minimum.at(best, owner[far], dist[far])
+    return best, shared
+
+
 def _identity_tolerances(coords: "ndarray", rows: "ndarray") -> "ndarray":
     """A quarter of each ``coords[rows]`` point's distance to the nearest
     point of ``coords`` at another position.
 
-    Within that radius a point is nearer its own node than any other, so
-    a match identifies the node. Points closer than ``1e-9`` of the
-    coordinate scale share one position (coincident constraint nodes):
-    coordinates cannot tell them apart, so they do not shrink each other's
-    radius. A point with no other position gets that ``1e-9`` floor. Uses
-    SciPy's ``cKDTree`` when SciPy is installed, else a chunked
-    brute-force search (``O(len(rows) * len(coords))``).
+    Within that radius a point is nearer its own node than any other
+    node at another position. Points closer than :func:`_same_position`
+    share one position (coincident constraint nodes): coordinates cannot
+    tell them apart, so they do not shrink each other's radius, and
+    :meth:`LiveDomainFacts._check_shared_positions` tells them apart by
+    element instead. A point with no other position gets the
+    :func:`_same_position` floor.
+
+    The search bins the points on a grid near the mean spacing and grows
+    the cells fourfold for the points whose nearest neighbour lies
+    farther than one cell, so a graded mesh costs a few passes, not a
+    quadratic search.
     """
     import numpy as np
 
-    scale = max(float(np.abs(coords).max(initial=0.0)), 1.0)
-    same = 1e-9 * scale
-    pts = coords[rows]
+    same = _same_position(coords)
     nearest = np.full(len(rows), np.inf)
-    try:
-        from scipy.spatial import cKDTree
-    except ImportError:
-        tree = None
-    else:
-        tree = cKDTree(coords) if len(coords) > 1 else None
-    if tree is not None:
+    spans = np.ptp(coords, axis=0)
+    live = spans > same
+    if live.any() and len(coords) > 1:
+        h = max(float(np.prod(spans[live]) / len(coords))
+                ** (1.0 / int(live.sum())), 2.0 * same)
+        diag = float(np.linalg.norm(spans))
         todo = np.arange(len(rows))
-        k = min(8, len(coords))
         while todo.size:
-            d = np.asarray(tree.query(pts[todo], k=k)[0]).reshape(len(todo), -1)
-            d = np.where(d <= same, np.inf, d)
-            nearest[todo] = d.min(axis=1)
-            if k >= len(coords):
-                break
-            todo = todo[~np.isfinite(nearest[todo])]
-            k = min(2 * k, len(coords))
-    else:
-        chunk = max(1, 1_000_000 // max(len(coords), 1))
-        for i in range(0, len(rows), chunk):
-            d = np.linalg.norm(pts[i:i + chunk, None, :] - coords[None, :, :],
-                               axis=2)
-            d[d <= same] = np.inf
-            nearest[i:i + chunk] = d.min(axis=1)
+            best, _ = _near_points(coords, rows[todo], h, same)
+            done = (best <= h) | (h > diag)
+            nearest[todo[done]] = best[done]
+            todo = todo[~done]
+            h *= 4.0
     out = 0.25 * nearest
     out[~np.isfinite(out)] = same
     return np.asarray(np.maximum(out, same))
@@ -570,10 +612,11 @@ class LiveDomainFacts:
         self._ops = ops
         self._archive = archive
         self._ndm = ndm
-        #: The FEM's first ``ndm`` coordinates, and each checked node's
-        #: identity tolerance, built on first use.
+        #: The FEM's first ``ndm`` coordinates and its ``{node: row}``,
+        #: built on first use, and the nodes already shown to be the FEM's.
         self._coords: "ndarray | None" = None
-        self._tol: "dict[int, float]" = {}
+        self._row: "dict[int, int]" = {}
+        self._verified: "set[int]" = set()
 
     @property
     def ndm(self) -> int:
@@ -606,59 +649,132 @@ class LiveDomainFacts:
                 for n in dict.fromkeys(wanted)}
 
     def _check_coords(self, nodes: "list[int]", *, where: str) -> None:
-        """Refuse, by node id, a recorded node whose live ``nodeCoord`` is
-        not the FEM node's first ``ndm`` coordinates.
+        """Refuse, by node id, a recorded node the live domain does not
+        show to be the FEM node of that tag.
 
         A tag match alone does not make the live node the FEM node: a deck
         built from another FEMData shares tags, and a planar deck of a
         column along global Z maps (x, z) to (x, y), so its
-        ``displacement_y`` would be the FEM's z motion.
-
-        The tolerance is each node's own (:func:`_identity_tolerances`): a
-        quarter of its distance to the nearest FEM node at another
-        position, so a live point within it is nearer that FEM node than
-        any other, while a deck's rounding (6 significant digits, float32,
-        millimetre decimals) on a mesh coarser than the rounding passes.
+        ``displacement_y`` would be the FEM's z motion. So the live
+        ``nodeCoord`` must be the FEM node's first ``ndm`` coordinates:
+        exactly, or within the node's own tolerance
+        (:func:`_identity_tolerances`), which a deck's rounding (6
+        significant digits, float32, millimetre decimals) on a mesh coarser
+        than the rounding stays inside. Coordinates cannot tell apart nodes
+        at one position, so those are checked by element
+        (:meth:`_check_shared_positions`).
         """
         import numpy as np
 
-        fem_nodes = self._archive.fem.nodes  # type: ignore[attr-defined]
-        ids = np.asarray(fem_nodes.ids, dtype=np.int64)
-        row = {int(n): i for i, n in enumerate(ids)}
+        nodes = [n for n in nodes if n not in self._verified]
+        if not nodes:
+            return
+        if self._coords is None:
+            fem_nodes = self._archive.fem.nodes  # type: ignore[attr-defined]
+            self._row = {int(n): i for i, n in enumerate(
+                np.asarray(fem_nodes.ids, dtype=np.int64))}
+            self._coords = np.asarray(
+                fem_nodes.coords, dtype=np.float64)[:, :self._ndm]
+        coords, row = self._coords, self._row
         absent = [n for n in nodes if n not in row]
         if absent:
             raise ValueError(
                 f"{where}: nodes {absent[:10]} are not in the FEMData the "
                 "archive holds, so whether the live node is the FEM node "
                 "cannot be checked.")
-        ndm = self._ndm
-        if self._coords is None:
-            self._coords = np.asarray(fem_nodes.coords, dtype=np.float64)[:, :ndm]
-        coords = self._coords
-        todo = [n for n in nodes if n not in self._tol]
-        if todo:
-            tols = _identity_tolerances(coords, np.array([row[n] for n in todo]))
-            self._tol.update(zip(todo, tols.tolist()))
-        moved = []
+        moved: "list[tuple[int, list[float], list[float]]]" = []
+        inexact: "list[tuple[int, ndarray]]" = []
         for n in nodes:
             xyz = self._ops.nodeCoord(n)  # type: ignore[attr-defined]
             live = np.asarray(xyz, dtype=np.float64)
             fem = coords[row[n]]
-            if (live.shape != fem.shape
-                    or float(np.linalg.norm(live - fem)) > self._tol[n]):
+            if live.shape != fem.shape:
                 moved.append((n, live.tolist(), fem.tolist()))
+            elif not np.array_equal(live, fem):
+                inexact.append((n, live))
+        if inexact:
+            tols = _identity_tolerances(
+                coords, np.array([row[n] for n, _ in inexact]))
+            moved.extend(
+                (n, live.tolist(), coords[row[n]].tolist())
+                for (n, live), tol in zip(inexact, tols.tolist())
+                if float(np.linalg.norm(live - coords[row[n]])) > tol)
         if moved:
+            moved.sort()
             listed = "; ".join(f"node {n}: live {lv}, FEM {fv}"
                                for n, lv, fv in moved[:3])
             more = len(moved) - min(len(moved), 3)
             raise ValueError(
                 f"{where}: the live domain's node coordinates are not the "
-                f"FEMData's first {ndm} at {listed}"
+                f"FEMData's first {self._ndm} at {listed}"
                 + (f"; and {more} more node(s)" if more else "")
                 + ". The deck was not built from this FEMData (or maps its "
                 "axes), so its DOFs would record another node's or another "
                 "axis's motion. Pass the FEMData archive the deck was built "
                 "from, with the deck's node coordinates.")
+        self._check_shared_positions(nodes, where=where)
+        self._verified.update(nodes)
+
+    def _check_shared_positions(self, nodes: "list[int]", *, where: str) -> None:
+        """Refuse a recorded node that shares its position with another FEM
+        node unless the live elements pin its tag.
+
+        Two nodes at one position (a zero-length spring's ends, an
+        ``equalDOF`` or rigid-link pair) match any coordinate check, so a
+        deck that swaps their tags would record each one's motion under
+        the other. Each FEM element touching such a node must exist live
+        under its FEM id with ``eleNodes`` equal to its FEM connectivity,
+        in order; a shared-position node no FEM element touches refuses
+        by name, since nothing tells its tag from the other node's.
+        """
+        import numpy as np
+
+        coords, row = self._coords, self._row
+        assert coords is not None
+        same = _same_position(coords)
+        _, shared = _near_points(
+            coords, np.array([row[n] for n in nodes]), 2.0 * same, same)
+        at = [n for n, s in zip(nodes, shared.tolist()) if s]
+        if not at:
+            return
+        wanted = np.array(at, dtype=np.int64)
+        touching: "dict[int, list[tuple[int, list[int]]]]" = {n: [] for n in at}
+        for group in self._archive.fem.elements:  # type: ignore[attr-defined]
+            conn = np.asarray(group.connectivity, dtype=np.int64)
+            hit = np.isin(conn, wanted)
+            for i in np.flatnonzero(hit.any(axis=1)):
+                nodes_i = [int(v) for v in conn[i]]
+                for v in conn[i][hit[i]]:
+                    touching[int(v)].append((int(group.ids[i]), nodes_i))
+        lone = [n for n in at if not touching[n]]
+        if lone:
+            raise ValueError(
+                f"{where}: nodes {lone[:10]} share their position with "
+                "another FEM node, and no FEM element touches them, so "
+                "neither coordinates nor elements tell their live tags from "
+                "the other node's. Drop them from the record, or record "
+                "them through the bridge's model archive (ops.h5(...)).")
+        ops = self._ops
+        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+        bad: "list[str]" = []
+        for n in at:
+            for eid, conn_i in touching[n]:
+                live = ([int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
+                        if eid in live_tags else None)
+                if live != conn_i:
+                    bad.append(
+                        f"node {n}: FEM element {eid} has nodes {conn_i}, "
+                        + ("no live element has that tag" if live is None
+                           else f"the live element {eid} has {live}"))
+                    break
+        if bad:
+            raise ValueError(
+                f"{where}: nodes that share their position with another FEM "
+                "node are not pinned by their elements: "
+                + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". The deck may have swapped the tags of coincident nodes, "
+                "which would record each one's motion under the other.")
 
     def rotation_roles(self, node_ids: "Iterable[int]") -> "RotationRoles":
         """The rotation roles of ``node_ids`` under the live domain's
