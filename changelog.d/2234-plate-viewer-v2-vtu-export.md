@@ -15,8 +15,9 @@ also used the removed `Results.to_mesh_data` and the retired Python viewer's
 - **Lamé check:** the analytical radial displacement had the wrong sign on its
   `B/r` term, so its curve disagreed with the FEM. It now reads
   `u_r = (1+ν)/E·[(1-2ν)·A·r − B/r]` (plane strain). The line-probe cell
-  asserts the FEM `u_r` is within 1% of it: the error is 0.6%, against 221%
-  with the old formula.
+  asserts the FEM `u_r` is within 1% of it. The error is 0.6%, against 221%
+  for the old formula and 6.5% for the plane-stress formula, so the check
+  also tells plane strain from plane stress.
 
 The record cells from #1771 are unchanged. The notebook runs on the Ladruno
 fork and on stock openseespy.
