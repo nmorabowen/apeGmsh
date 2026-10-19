@@ -40,6 +40,8 @@ const TRANSLATIONAL = new Set(["displacement", "velocity", "acceleration", "disp
 /** Translational `.ladruno` ON_NODES result families whose vector magnitude is offered. */
 const LADRUNO_TRANSLATIONAL = new Set([
   "DISPLACEMENT",
+  // a mode stage's translation (fork schema §7.1.1), as a native mode stage's `displacement`
+  "MODES_OF_VIBRATION(U)",
   "VELOCITY",
   "ACCELERATION",
   "REACTION_FORCE",
@@ -64,6 +66,15 @@ const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> = {
   Y: "y",
   Z: "z",
 };
+
+/**
+ * The fork's rotation groups (`ladruno_schema_v1.md` §7.1.1). At ndm 2 each
+ * holds one label, `Rz`, a copy of DOF index 2: on a u-p node (the `*UP` /
+ * pressure-DOF elements) that is the pore pressure, not a rotation, and the
+ * file does not say which. So a group whose only label is `Rz` is drawn as
+ * its own component, labelled `Rz`, never as rotation z.
+ */
+const LADRUNO_ROTATION = new Set(["ROTATION", "MODES_OF_VIBRATION(R)"]);
 
 /** The key of the magnitude component. A dataset name never has this form (the `|` cannot appear in a vocabulary name). */
 export const MAGNITUDE = "|magnitude|";
@@ -113,12 +124,19 @@ export function nodalFields(names: readonly string[], refused: readonly { compon
     }
     return p;
   };
+  // §7.1.1 trap: a rotation group whose only label is `Rz` (ndm 2) may hold a pore pressure.
+  const rotationLabels = new Map<string, string[]>();
+  for (const n of names) {
+    const slash = /^([^/]+)\/(.+)$/.exec(n);
+    if (slash && LADRUNO_ROTATION.has(slash[1]!)) rotationLabels.set(slash[1]!, [...(rotationLabels.get(slash[1]!) ?? []), slash[2]!]);
+  }
+  const loneRz = new Set([...rotationLabels].filter(([, l]) => l.length === 1 && l[0] === "Rz").map(([f]) => f));
   for (const n of names) {
     const slash = /^([^/]+)\/(.+)$/.exec(n);
     if (slash) {
       const field = slash[1]!;
       const sub = slash[2]!;
-      const axis = LADRUNO_AXIS_MAP[sub];
+      const axis = loneRz.has(field) ? undefined : LADRUNO_AXIS_MAP[sub];
       if (axis && !at(field).axis.has(axis)) at(field).axis.set(axis, n);
       else at(field).other.push(n);
       continue;
