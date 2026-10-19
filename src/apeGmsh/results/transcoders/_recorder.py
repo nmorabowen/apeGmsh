@@ -18,7 +18,7 @@ Scope
   elastic beam's two stations are synthesised from ``localForce``.
 - ``elements`` records (Phase 11b) — per-element-node forces.
 - ``fibers`` records — ``section fiberData2`` beside an
-  ``integrationPoints`` pair, read as the MPCO fibre slab (#1982); a
+  ``integrationPoints`` pair, read as the MPCO fibre slab; a
   ``damage`` gauss record is read from its per-Gauss-point files.
 - ``layers`` — refused by name (``spec._emit.layers_out_refusal``).
 - ``modal`` — emission deferred, so the transcoder skips too.

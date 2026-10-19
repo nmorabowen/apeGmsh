@@ -416,7 +416,7 @@ def layers_out_refusal(rec: ResolvedRecorderRecord) -> str:
 #: ``section fiberData2`` with no section number answers every section of
 #: the element, section-major, with each fibre as ``[y, z, area, matTag,
 #: stress, strain]`` (ForceBeamColumn / DispBeamColumn ``setResponse``;
-#: probe #1976 on stock openseespy and the fork). One recorder then covers
+#: the same on stock openseespy and the fork). One recorder then covers
 #: a record, and its paired ``integrationPoints`` file gives the sections.
 FIBER_OUT_TOKENS: tuple[str, ...] = ("section", "fiberData2")
 #: Values per fibre in a ``fiberData2`` row, and the stress / strain columns.
