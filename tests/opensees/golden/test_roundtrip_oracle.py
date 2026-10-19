@@ -103,8 +103,9 @@ from tests.opensees.golden import builder
 
 _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
-#: ``N_WAIVED_ORACLE`` when the ledger opened (K2a, #1794). It may only go down.
-_CEILING = 33
+#: ``N_WAIVED_ORACLE`` (33 when the ledger opened, K2a, #1794). It may only
+#: go down: 32 once #2193 replayed ``_frame_bridge[analysis=True]`` exactly.
+_CEILING = 32
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
@@ -724,28 +725,75 @@ def test_the_ledger_allows_downgrades_and_cited_escalations(
 _HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
 
 
-def test_broad_frame_derives_b_with_no_override(tmp_path: Path) -> None:
+def test_broad_frame_derives_a_with_no_override(tmp_path: Path) -> None:
     """#1814 fixed: replay declares ``_broad_frame``'s materials in the
-    bridge's order, so the order check passes and the derivation alone
-    yields B (it was C while ``Parallel 3`` preceded ``Steel01 1``)."""
+    bridge's order, so the order check passes (it was C while ``Parallel 3``
+    preceded ``Steel01 1``). #2193 fixed the rest of its order (the section
+    between the materials, the ``geomTransf``, the ``constraints`` above the
+    initial stress), so the derivation alone yields A (it was B)."""
     bridge, archive = _emit(_HELD, tmp_path)
     replay = _replay(archive)
     assert _deck_order_violations(replay, archive) == []
-    assert _classify(bridge, replay, order_ok=True) == "B"
+    assert _classify(bridge, replay, order_ok=True) == "A"
     (tmp_path / "check").mkdir()
     _check(_HELD, _waivers()[_HELD.id], tmp_path / "check")
 
 
 def test_a_label_must_equal_the_derived_class(tmp_path: Path) -> None:
-    """No override either way: a C label over a derived B fails (the
+    """No override either way: a C label over a derived A fails (the
     interim override #1812 had is gone), as a B label over a C does."""
     w = _waivers()["test_h5_damping::_build_with_element_damp"]
-    assert w.klass == "B"
+    assert w.klass == "A"
     model = next(m for m in CORPUS if m.id == w.model)
     raised = Waiver(w.model, "C", w.pin, "#1814: hand-held at C")
     with pytest.raises(AssertionError,
-                       match="the ledger says class C, the diff is class B"):
+                       match="the ledger says class C, the diff is class A"):
         _check(model, raised, tmp_path)
+
+
+# Revert proof (#2193): with the emit-index merge off, a re-pinned row fails.
+
+#: The rows #2193 re-pinned B -> A, whose replay follows the program's order.
+_REPINNED = (
+    _HELD,
+    next(m for m in CORPUS if m.id ==
+         "test_h5_builder_scope_replay::build_mixed_ndf_bridge"),
+    next(m for m in CORPUS if m.id ==
+         "test_h5_decl_params::_broad_staged"),
+)
+
+
+@pytest.mark.parametrize("model", _REPINNED, ids=[m.id for m in _REPINNED])
+def test_without_the_emit_index_merge_a_repinned_row_fails(
+        model: Model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof: replayed in the fixed category order
+    (``OpenSeesModel._replay_order`` off, as before #2193), each row's diff
+    is B again, so its committed A row fails; with the merge on it passes."""
+    w = _waivers()[model.id]
+    assert w.klass == "A"
+    (tmp_path / "on").mkdir()
+    _check(model, w, tmp_path / "on")
+    monkeypatch.setattr(OpenSeesModel, "_replay_order", lambda self: None)
+    (tmp_path / "off").mkdir()
+    with pytest.raises(AssertionError,
+                       match="the ledger says class A, the diff is class B"):
+        _check(model, w, tmp_path / "off")
+
+
+def test_without_the_emit_index_merge_the_deleted_row_differs(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof for the deleted row: ``_frame_bridge[analysis=True]``
+    replays byte for byte (no row), and with the merge off its ``system`` and
+    ``analysis`` fall below the declarations again: a replay regression."""
+    model = next(m for m in CORPUS if m.id ==
+                 "test_h5_solve_stamp::_frame_bridge[analysis=True]")
+    assert model.id not in _waivers()
+    (tmp_path / "on").mkdir()
+    _check(model, None, tmp_path / "on")
+    monkeypatch.setattr(OpenSeesModel, "_replay_order", lambda self: None)
+    (tmp_path / "off").mkdir()
+    with pytest.raises(AssertionError, match=r"class B, pin [0-9a-f]{16}"):
+        _check(model, None, tmp_path / "off")
 
 
 def test_an_added_row_fails_the_carve_out() -> None:
