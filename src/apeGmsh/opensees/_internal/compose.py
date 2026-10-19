@@ -1533,24 +1533,21 @@ def _replay_into(
         from .build.constraints import replay_reinforce_ties
         from .tag_allocator import TagAllocator
 
-        def _derived_ties() -> None:
-            # tag-law waiver pre-2-29-reinforce-tie-replay
-            # (tag_law_ledger.txt): an archive below 2.29.0 stores no tie,
-            # so the replay mints the tie element tags (the _counters seed
-            # below and replay_reinforce_ties), past the highest replayed
-            # element tag; pre-2.29 archives only, behind the version
-            # check above.
-            _rt_tags = TagAllocator()
-            max_elem_tag = max((int(e.tag) for e in elements), default=0)
-            _rt_tags._counters["element"] = max_elem_tag
-            replay_reinforce_ties(
-                emitter, fem, _rt_tags,
-                name_to_tag=dict(reinforce_name_to_tag or {}),
-            )
-
+        # tag-law waiver pre-2-29-reinforce-tie-replay (tag_law_ledger.txt):
+        # an archive below 2.29.0 stores no tie, so the replay mints the
+        # tie element tags (the _counters seed below and
+        # replay_reinforce_ties), past the highest replayed element tag;
+        # pre-2.29 archives only, behind the version check above. The
+        # allocator is seeded here and the ties emit in their unit's turn.
+        _rt_tags = TagAllocator()
+        max_elem_tag = max((int(e.tag) for e in elements), default=0)
+        _rt_tags._counters["element"] = max_elem_tag
         units.append((
             _key(lambda o: o.first("embedded_rebar")), "reinforce_ties",
-            _derived_ties,
+            lambda: replay_reinforce_ties(
+                emitter, fem, _rt_tags,
+                name_to_tag=dict(reinforce_name_to_tag or {}),
+            ),
         ))
 
     # 9c''. The g.rebar.place(emit_elements=True) CorotTruss cells, in
@@ -1581,46 +1578,47 @@ def _replay_into(
         from .build.ownership import FemToOpsTagMap
         from .build.stage_emit import emit_initial_stress_addtoparameter
 
-        def _initial_stress() -> None:
-            # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
-            fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
-                (int(e.fem_eid), int(e.tag))
-                for e in elements
-                if int(e.fem_eid) >= 0
-            )
-            if _archives_param_tags(opensees_version):
-                name_to_param_tags = _write_archived_ramps(
-                    emitter, initial_stress, initial_stress_param_tags,
-                    "/opensees/initial_stress",
-                )
-            else:
-                from .build.stage_emit import replay_initial_stress_global
-                from .tag_allocator import TagAllocator
+        # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
+        fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
+            (int(e.fem_eid), int(e.tag))
+            for e in elements
+            if int(e.fem_eid) >= 0
+        )
+        # Each unit writes the ramps (the keyword argument is evaluated
+        # first), then one addToParameter per element and component.
+        _is_key = _key(lambda o: o.first("step_hook_ramp"))
+        if _archives_param_tags(opensees_version):
+            units.append((_is_key, "initial_stress", lambda: (
+                emit_initial_stress_addtoparameter(
+                    initial_stress, emitter, fem,
+                    name_to_param_tags=_write_archived_ramps(
+                        emitter, initial_stress, initial_stress_param_tags,
+                        "/opensees/initial_stress",
+                    ),
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                ))))
+        else:
+            from .build.stage_emit import replay_initial_stress_global
+            from .tag_allocator import TagAllocator
 
-                # ADR 0055 P2.3: the staged caller threads its SHARED
-                # allocator so global + per-stage parameter tags accumulate
-                # on one counter (the bridge reuses one ``tags`` across
-                # everything).  Flat callers pass None → fresh allocator
-                # (unchanged behaviour).
-                # tag-law waiver pre-2-27-initial-stress-replay (ledger): an
-                # archive below 2.27.0 stores the declarative record and not
-                # its parameter tags, so replay mints them
-                # (replay_initial_stress_global); pre-2.27 archives only,
-                # behind the version check above.
-                _is_tags = initial_stress_tags or TagAllocator()
-                name_to_param_tags = replay_initial_stress_global(
-                    initial_stress, emitter, _is_tags,
-                )
-            emit_initial_stress_addtoparameter(
-                initial_stress, emitter, fem,
-                name_to_param_tags=name_to_param_tags,
-                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-            )
-
-        units.append((
-            _key(lambda o: o.first("step_hook_ramp")), "initial_stress",
-            _initial_stress,
-        ))
+            # ADR 0055 P2.3: the staged caller threads its SHARED allocator
+            # so global + per-stage parameter tags accumulate on one counter
+            # (the bridge reuses one ``tags`` across everything).  Flat
+            # callers pass None → fresh allocator (unchanged behaviour).
+            # tag-law waiver pre-2-27-initial-stress-replay (ledger): an
+            # archive below 2.27.0 stores the declarative record and not
+            # its parameter tags, so replay mints them
+            # (replay_initial_stress_global); pre-2.27 archives only,
+            # behind the version check above.
+            _is_tags = initial_stress_tags or TagAllocator()
+            units.append((_is_key, "initial_stress", lambda: (
+                emit_initial_stress_addtoparameter(
+                    initial_stress, emitter, fem,
+                    name_to_param_tags=replay_initial_stress_global(
+                        initial_stress, emitter, _is_tags,
+                    ),
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                ))))
 
     # 10. Patterns.  ``args`` are the original ``pattern_open`` args
     # (e.g. ``(ts_tag,)`` for Plain).  Inside each pattern: loads,
