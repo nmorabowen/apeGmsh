@@ -21,6 +21,7 @@ permissions:
   pull-requests: read
   checks: read      # statusCheckRollup: check runs on the PR head
   statuses: read    # statusCheckRollup: commit statuses
+  actions: read     # gh run list: last scheduled runs of the watched lanes (red-lane)
 
 jobs:
   probe:
