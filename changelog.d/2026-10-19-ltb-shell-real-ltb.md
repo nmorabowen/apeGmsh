@@ -22,8 +22,15 @@ the weak axis, and the twist stayed 0.
   asserts that the intercept recovers the 4 mm imperfection within 10 %.
   It also asserts that the twist matches the closed-form second-order twist
   within 5 % and grows past the bifurcation.
-- `LTB_SHELL_MOMENT_AXIS=weak` is the mutation. With it, the end moments
-  act about the weak axis and the M_cr assert fails.
+- Two documented mutations make the asserts fail:
+  - Setting `warping = 1.0` drops the warping term. The closed form falls
+    to 45.23 kN·m against 76.76 kN·m from the Southwell fit, so the M_cr
+    assert fails.
+  - Setting `LTB_SHELL_MOMENT_AXIS=weak` puts the end moments about the
+    weak axis. The section does not twist and no pre-buckling points fall
+    in the fit window, so the window assert fails.
+- The analysis cell asserts that its subprocess exited 0, so the results
+  cell cannot read a stale JSON file.
 
 The notebook runs end to end on the Ladruno fork and on stock openseespy,
 and records on each build's default route as before.
