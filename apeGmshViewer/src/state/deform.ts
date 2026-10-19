@@ -20,11 +20,15 @@
 //   whole deformed shape: it is never drawn from the axes that survived;
 // - an axis is never assumed: unnamed components (`displacement_`, `[k]`)
 //   refuse, and a missing `displacement_z` is 0 only in a model declared
-//   2-D (`ndm` 2), where z is not a degree of freedom.
+//   2-D (`ndm` 2), where z is not a degree of freedom;
+// - a `.ladruno` translation is read by the fork schema's names (§7.1.1,
+//   `LADRUNO_TRANSLATION`): `DISPLACEMENT`, or `MODES_OF_VIBRATION(U)` on a
+//   mode stage, with labels `Ux`, `Uy`, `Uz`; any other label refuses by
+//   name, and `ROTATION` / `MODES_OF_VIBRATION(R)` are never read.
 
 import { fieldsOf } from "./contour.ts";
 import type { Param } from "../model/types.ts";
-import type { ResultsStage, SpatialNdm } from "./types.ts";
+import type { ModeFacts, ResultsStage, SpatialNdm } from "./types.ts";
 
 /** The reference ghost's opacity: the Qt `GHOST_OPACITY`. */
 export const GHOST_OPACITY = 0.3;
@@ -44,17 +48,121 @@ export type DisplacementAxes =
 const DISP_NAME = /^displacement_([^_]*)$/;
 
 /**
+ * A `.ladruno` stage's translation, as the fork's format names it
+ * (`Ladruno_implementation/ladruno_schema_v1.md` §7.1.1, fork 3b17c32f).
+ * Translation and rotation are two separate ON_NODES groups, never one
+ * 6-component group: a results stage's translation is `DISPLACEMENT`, a mode
+ * stage's `MODES_OF_VIBRATION(U)` (reader/ladruno.ts names each component
+ * `<group>/<label>`). Their COMPONENTS labels depend on ndm only: `Ux`
+ * (ndm 1), `Ux,Uy` (ndm 2), `Ux,Uy,Uz` (ndm 3). This reads the format's
+ * documented names (ADR 0112 D2 as amended); it is not a token table (ADR
+ * 0122 D7).
+ *
+ * `ROTATION` and `MODES_OF_VIBRATION(R)` are never read here. §7.1.1: a 2-D
+ * u-p node's `ROTATION/Rz` holds its pore pressure, and a 1-D model's
+ * `ROTATION` is three columns of zeros; neither is ever part of a deformed
+ * shape.
+ */
+export const LADRUNO_TRANSLATION: Readonly<Record<ResultsStage["kind"], string>> = {
+  static: "DISPLACEMENT",
+  transient: "DISPLACEMENT",
+  mode: "MODES_OF_VIBRATION(U)",
+};
+
+/** The §7.1.1 translational labels, in x, y, z order. */
+export const LADRUNO_AXIS_LABELS = ["Ux", "Uy", "Uz"] as const;
+
+/**
+ * The verdict once the x, y and z datasets are found (null where absent),
+ * shared by the native and `.ladruno` names; `names` spells each axis as the
+ * file does, for the reasons.
+ */
+function axesVerdict(
+  label: string,
+  ndm: SpatialNdm,
+  [x, y, z]: readonly [string | null, string | null, string | null],
+  names: readonly [string, string, string],
+): DisplacementAxes {
+  if (x && y && z) return { ok: true, datasets: [x, y, z], note: null };
+  if (x && y && !z) {
+    if (ndm.ndm === 2) {
+      return {
+        ok: true,
+        datasets: [x, y, null],
+        // h5-schema.md, "Nodal results": a shorthand request is clipped to the model's ndm, so a 2-D file has no z;
+        // the fork writes `Ux,Uy` at ndm 2 (schema §7.1.1).
+        note: `2-D model (ndm 2, ${ndm.source}): z is not a degree of freedom, so it stays at the node's z`,
+      };
+    }
+    return {
+      ok: false,
+      kind: "refused",
+      reason:
+        `stage ${label} records no ${names[2]} and the model is not declared 2-D ` +
+        `(${ndm.ndm === null ? ndm.reason : `ndm ${ndm.ndm}`}): a z displacement of 0 would be a guess`,
+    };
+  }
+  const missing = ([0, 1] as const).filter((k) => ![x, y][k]).map((k) => names[k]);
+  return { ok: false, kind: "refused", reason: `stage ${label} records no ${missing.join(" or ")}: the deformed shape needs every translational axis` };
+}
+
+/**
+ * A `.ladruno` stage's translation (see LADRUNO_TRANSLATION), or null when
+ * the stage names none of its group (a native stage, or a `.ladruno` stage
+ * with no translation recorded). A label outside §7.1.1's refuses by name:
+ * which column is x, y or z is never guessed.
+ */
+function ladrunoAxes(stage: ResultsStage, ndm: SpatialNdm, label: string): DisplacementAxes | null {
+  const group = LADRUNO_TRANSLATION[stage.kind];
+  const prefix = `${group}/`;
+  const comps = stage.nodal.filter((n) => n.startsWith(prefix));
+  if (!comps.length) return null;
+  const odd = comps.filter((n) => !(LADRUNO_AXIS_LABELS as readonly string[]).includes(n.slice(prefix.length)));
+  if (odd.length) {
+    return {
+      ok: false,
+      kind: "refused",
+      reason:
+        `${odd.join(", ")} name${odd.length === 1 ? "s" : ""} no axis of the fork schema's ${group} labels ` +
+        `(${LADRUNO_AXIS_LABELS.join(", ")}, ladruno_schema_v1.md §7.1.1), so which is x, y or z is ambiguous`,
+    };
+  }
+  const at = (l: string) => (comps.includes(`${prefix}${l}`) ? `${prefix}${l}` : null);
+  const names = LADRUNO_AXIS_LABELS.map((l) => `${prefix}${l}`) as unknown as readonly [string, string, string];
+  return axesVerdict(label, ndm, [at("Ux"), at("Uy"), at("Uz")], names);
+}
+
+/**
  * The displacement datasets of a stage, or why the deformed shape cannot use
  * them. `stage.nodal` holds what the reader read; `stage.refusedNodal` what
  * it refused one by one (V4c1's partial-write refusal), which never appears
  * in `nodal`, so it is checked first: a refused z must not read as "a 2-D
- * file has no z".
+ * file has no z". A `.ladruno` stage is read by its schema names
+ * (`ladrunoAxes`), a native one by the canonical vocabulary.
  */
 export function displacementAxes(stage: ResultsStage, ndm: SpatialNdm): DisplacementAxes {
+  const v = translationAxes(stage, ndm);
+  if (!v.ok || !stage.mode) return v;
+  return { ...v, note: [modeNote(stage.mode), v.note].filter((n) => n !== null).join("; ") };
+}
+
+const sig = (x: number): string => String(Number(x.toPrecision(5)));
+
+/**
+ * What the legend says of a mode shape: the file's eigenvalue, and its
+ * frequency and period when the eigenvalue is positive. An eigenvector has
+ * no physical amplitude, so the scale is relative.
+ */
+export function modeNote(m: ModeFacts): string {
+  const eigen = `mode ${m.index}: eigenvalue λ = ${sig(m.eigenvalue)}`;
+  const fT = m.eigenvalue > 0 ? `, f = ${sig(m.frequencyHz)} Hz, T = ${sig(m.periodS)} s` : " (not positive: no frequency or period)";
+  return `${eigen}${fT}; a mode shape has no physical amplitude, so the scale is relative`;
+}
+
+function translationAxes(stage: ResultsStage, ndm: SpatialNdm): DisplacementAxes {
   const label = stage.name || stage.id;
-  const refused = stage.refusedNodal.filter(
-    (r) => DISP_NAME.test(r.component) || r.component === "DISPLACEMENT" || r.component.startsWith("DISPLACEMENT/"),
-  );
+  const group = LADRUNO_TRANSLATION[stage.kind];
+  const refused = stage.refusedNodal.filter((r) => DISP_NAME.test(r.component) || r.component === group || r.component.startsWith(`${group}/`));
   if (refused.length) {
     return {
       ok: false,
@@ -64,36 +172,10 @@ export function displacementAxes(stage: ResultsStage, ndm: SpatialNdm): Displace
         "the deformed shape is never drawn from the axes that survive",
     };
   }
+  const ladruno = ladrunoAxes(stage, ndm, label);
+  if (ladruno) return ladruno;
   const field = fieldsOf(stage).find((f) => f.name === DISPLACEMENT);
-  if (!field) {
-    if (stage.nodal.some((n) => n.startsWith("DISPLACEMENT/"))) {
-      const lAxis = (lo: "x" | "y" | "z", hi: "X" | "Y" | "Z"): string | null =>
-        stage.nodal.find((n) => n === `DISPLACEMENT/U${lo}` || n === `DISPLACEMENT/${hi}`) ?? null;
-      const lx = lAxis("x", "X");
-      const ly = lAxis("y", "Y");
-      const lz = lAxis("z", "Z");
-      if (lx && ly && lz) return { ok: true, datasets: [lx, ly, lz], note: null };
-      if (lx && ly && !lz) {
-        if (ndm.ndm === 2) {
-          return {
-            ok: true,
-            datasets: [lx, ly, null],
-            note: `2-D model (ndm 2, ${ndm.source}): z is not a degree of freedom, so it stays at the node's z`,
-          };
-        }
-        return {
-          ok: false,
-          kind: "refused",
-          reason:
-            `stage ${label} records no displacement_z and the model is not declared 2-D ` +
-            `(${ndm.ndm === null ? ndm.reason : `ndm ${ndm.ndm}`}): a z displacement of 0 would be a guess`,
-        };
-      }
-      const missing = (["x", "y"] as const).filter((a) => (a === "x" ? !lx : !ly)).map((a) => `displacement_${a}`);
-      return { ok: false, kind: "refused", reason: `stage ${label} records no ${missing.join(" or ")}: the deformed shape needs every translational axis` };
-    }
-    return { ok: false, kind: "absent", reason: `stage ${label} records no nodal displacement` };
-  }
+  if (!field) return { ok: false, kind: "absent", reason: `stage ${label} records no nodal displacement` };
   const odd = field.components.filter((c) => !c.magnitude && !["x", "y", "z"].includes(c.label));
   if (odd.length) {
     return {
@@ -103,27 +185,7 @@ export function displacementAxes(stage: ResultsStage, ndm: SpatialNdm): Displace
     };
   }
   const axis = (a: string) => field.components.find((c) => !c.magnitude && c.label === a)?.key ?? null;
-  const x = axis("x"), y = axis("y"), z = axis("z");
-  if (x && y && z) return { ok: true, datasets: [x, y, z], note: null };
-  if (x && y && !z) {
-    if (ndm.ndm === 2) {
-      return {
-        ok: true,
-        datasets: [x, y, null],
-        // h5-schema.md, "Nodal results": a shorthand request is clipped to the model's ndm, so a 2-D file has no displacement_z.
-        note: `2-D model (ndm 2, ${ndm.source}): z is not a degree of freedom, so it stays at the node's z`,
-      };
-    }
-    return {
-      ok: false,
-      kind: "refused",
-      reason:
-        `stage ${label} records no displacement_z and the model is not declared 2-D ` +
-        `(${ndm.ndm === null ? ndm.reason : `ndm ${ndm.ndm}`}): a z displacement of 0 would be a guess`,
-    };
-  }
-  const missing = (["x", "y"] as const).filter((a) => !axis(a)).map((a) => `displacement_${a}`);
-  return { ok: false, kind: "refused", reason: `stage ${label} records no ${missing.join(" or ")}: the deformed shape needs every translational axis` };
+  return axesVerdict(label, ndm, [axis("x"), axis("y"), axis("z")], ["displacement_x", "displacement_y", "displacement_z"]);
 }
 
 const parseVersion = (v: string): number[] | null => {

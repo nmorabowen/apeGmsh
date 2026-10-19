@@ -2,6 +2,7 @@
 
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py          # the h5py ones
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --modes  # + the fork run
+    python apeGmshViewer/fixtures/make_ladruno_fixtures.py --portal3d  # + the 3-D fork run
 
 run from the repository root. The first form needs h5py and numpy only; the
 second also needs a Ladruno fork build of OpenSees behind ``openseespy`` (the
@@ -40,6 +41,19 @@ this file:
   the file is FORMAT_MINOR_VERSION 0 (schema §2a: its ``KIND`` is the
   recorder-wide label, here the eigen promotion). Regenerate it on a pin
   build to get minor 1; the closed forms do not change.
+* ``ladruno_portal3d.ladruno`` (``--portal3d``): a fork run. A 3-D portal
+  (two 3 m columns, one 4 m girder, fixed bases, forceBeamColumn on an
+  elastic section), two LoadControl 0.5 steps of a lateral and gravity load,
+  then ``eigen -fullGenLapack 2`` and ``record``, with ``-N displacement
+  rotation modesOfVibration modesOfVibrationRotational -E section.force
+  localForce``. It is the fork-written witness of schema §7.1.1 at ndm 3:
+  ``DISPLACEMENT`` = ``Ux,Uy,Uz`` and ``ROTATION`` = ``Rx,Ry,Rz`` are separate
+  groups (the run asserts it), and so are the two modal groups. Fork build
+  ``79e062367`` (the opensees venv, 2026-10-19), FORMAT_MINOR_VERSION 0.
+* ``ladruno_frame3d.h5`` and ``ladruno_frame3d.ladruno``: a paired 3-D
+  2-bay, 2-story frame with floor slabs, written with h5py (not a fork run).
+  It follows schema §7.1.1: ``DISPLACEMENT`` = ``Ux,Uy,Uz`` and a separate
+  ``ROTATION`` = ``Rx,Ry,Rz`` (all zeros), never one 6-component group.
 
 No apeGmsh import: the app never runs apeGmsh (ADR 0112 D4), and these files
 are what the fork writes, not what apeGmsh would make of them.
@@ -135,6 +149,65 @@ def modes() -> None:
     with h5py.File(out, "r") as f:
         on = f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
         assert {"DISPLACEMENT", "MODES_OF_VIBRATION(U)", "MODES_OF_VIBRATION(R)"} <= set(on), list(on)
+
+
+_PORTAL3D_RUN = r"""
+import sys
+import openseespy.opensees as ops
+
+path = sys.argv[1]
+ops.wipe()
+ops.model("basic", "-ndm", 3, "-ndf", 6)
+for tag, xyz in {1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 3.0), 3: (4.0, 0.0, 3.0), 4: (4.0, 0.0, 0.0)}.items():
+    ops.node(tag, *xyz)
+ops.fix(1, 1, 1, 1, 1, 1, 1)
+ops.fix(4, 1, 1, 1, 1, 1, 1)
+ops.section("Elastic", 1, 2.0e8, 0.01, 1.0e-4, 1.0e-4, 8.0e7, 2.0e-4)
+ops.geomTransf("Linear", 1, 1.0, 0.0, 0.0)
+ops.geomTransf("Linear", 2, 0.0, 0.0, 1.0)
+ops.beamIntegration("Lobatto", 1, 1, 3)
+ops.element("forceBeamColumn", 1, 1, 2, 1, 1)
+ops.element("forceBeamColumn", 2, 2, 3, 2, 1)
+ops.element("forceBeamColumn", 3, 4, 3, 1, 1)
+ops.mass(2, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0)
+ops.mass(3, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.load(2, 10.0, 0.0, -5.0, 0.0, 0.0, 0.0)
+ops.load(3, 0.0, 2.0, -5.0, 0.0, 0.0, 0.0)
+ops.recorder("ladruno", path, "-N", "displacement", "rotation", "modesOfVibration", "modesOfVibrationRotational",
+             "-E", "section.force", "localForce")
+ops.system("BandGen")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 0.5)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(2)
+print("lambda", ops.eigen("-fullGenLapack", 2))
+ops.record()
+ops.wipe()
+"""
+
+
+def portal3d() -> None:
+    out = HERE / "ladruno_portal3d.ladruno"
+    if out.exists():
+        out.unlink()
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    subprocess.run([sys.executable, "-c", _PORTAL3D_RUN, str(out)], check=True, env=env)
+    with h5py.File(out, "r") as f:
+        on = f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
+        # Fork schema §7.1.1 at ndm 3: four separate groups, translation never mixed with rotation.
+        want = {"DISPLACEMENT": "Ux,Uy,Uz", "ROTATION": "Rx,Ry,Rz", "MODES_OF_VIBRATION(U)": "Ux,Uy,Uz", "MODES_OF_VIBRATION(R)": "Rx,Ry,Rz"}
+        got = {k: _text(on[k].attrs["COMPONENTS"]) for k in on}
+        assert got == want, got
+
+
+def _text(attr: object) -> str:
+    """One string attribute as text: the fork writes COMPONENTS as a (1,) array of bytes."""
+    v = np.asarray(attr).reshape(-1)[0]
+    return v.decode() if isinstance(v, bytes) else str(v)
 
 
 def frame3d() -> None:
@@ -301,12 +374,9 @@ def frame3d() -> None:
 
             res = st.create_group("RESULTS")
             on_nodes = res.create_group("ON_NODES")
-            disp_grp = on_nodes.create_group("DISPLACEMENT")
-            disp_grp.attrs.create("COMPONENTS", data="Ux,Uy,Uz,Rx,Ry,Rz", dtype=VLEN_UTF8)
-            disp_grp.create_dataset("ID", data=node_ids.astype(np.int32).reshape(-1, 1))
-            disp_grp.create_dataset("TIME", data=time_arr)
-            disp_grp.create_dataset("STEP", data=step_arr)
-            disp_data = np.zeros((3, n_nodes, 6), dtype=np.float64)
+            # Fork schema §7.1.1: translation and rotation are two groups, never one
+            # 6-component DISPLACEMENT; at ndm 3 they are `Ux,Uy,Uz` and `Rx,Ry,Rz`.
+            disp_data = np.zeros((3, n_nodes, 3), dtype=np.float64)
             for step_i, lf in enumerate([0.33, 0.67, 1.0]):
                 sway = 0.015 * lf if stage_kind == "lateral" else 0.0
                 for n_i, (_, _, z_coord) in enumerate(node_coords):
@@ -314,7 +384,16 @@ def frame3d() -> None:
                         story_factor = z_coord / 3.0
                         disp_data[step_i, n_i, 0] = sway * story_factor
                         disp_data[step_i, n_i, 2] = -0.02 * lf * story_factor
-            disp_grp.create_dataset("DATA", data=disp_data)
+            for group, labels, data in (
+                ("DISPLACEMENT", "Ux,Uy,Uz", disp_data),
+                ("ROTATION", "Rx,Ry,Rz", np.zeros((3, n_nodes, 3), dtype=np.float64)),
+            ):
+                grp = on_nodes.create_group(group)
+                grp.attrs.create("COMPONENTS", data=labels, dtype=VLEN_UTF8)
+                grp.create_dataset("ID", data=node_ids.astype(np.int32).reshape(-1, 1))
+                grp.create_dataset("TIME", data=time_arr)
+                grp.create_dataset("STEP", data=step_arr)
+                grp.create_dataset("DATA", data=data)
 
             on_elems = res.create_group("ON_ELEMENTS")
             sf_grp = on_elems.create_group("section.force")
@@ -368,6 +447,7 @@ def frame3d() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--modes", action="store_true", help="also run the fork to write ladruno_modes.ladruno")
+    ap.add_argument("--portal3d", action="store_true", help="also run the fork to write ladruno_portal3d.ladruno")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -375,6 +455,8 @@ def main() -> None:
     frame3d()
     if args.modes:
         modes()
+    if args.portal3d:
+        portal3d()
 
 
 if __name__ == "__main__":
