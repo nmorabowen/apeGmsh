@@ -41,7 +41,6 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from ...mesh.FEMData import FEMData
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
@@ -327,7 +326,7 @@ class LiveDefault:
         if self._route == "recorders":
             assert self._live is not None and self._model is not None
             return Results.from_recorders(
-                self._spec, target, fem=FEMData.from_h5(str(self._model_h5)),
+                self._spec, target, fem=self._model.fem,
                 cache_root=cache_root, model=self._model,
                 stages=self._live.stages,
             )
