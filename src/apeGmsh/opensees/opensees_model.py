@@ -107,6 +107,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from apeGmsh.results.Results import Results
 
     from ._internal.build.records import InitialStressRecord
+    from ._internal.compose import _ReplayOrder
     from ._target import BackendInfo
     from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
@@ -841,6 +842,12 @@ class OpenSeesModel:
         TypeError
             ``out=`` missing for the ``"h5"`` target.
         """
+        # The target first: an unknown one is named as such, flat or not.
+        if target not in ("tcl", "py", "live", "h5"):
+            raise ValueError(
+                f"OpenSeesModel.build: unknown target {target!r}. "
+                "Supported targets are 'tcl', 'py', 'live', 'h5'."
+            )
         if flat and target not in ("tcl", "py"):
             raise ValueError(
                 f"OpenSeesModel.build({target!r}, flat=True): flat applies "
@@ -870,11 +877,7 @@ class OpenSeesModel:
                     "required for the h5 target."
                 )
             self.to_h5(out)
-            return None
-        raise ValueError(
-            f"OpenSeesModel.build: unknown target {target!r}. "
-            "Supported targets are 'tcl', 'py', 'live', 'h5'."
-        )
+        return None
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -1500,6 +1503,32 @@ class OpenSeesModel:
                 nd, "nDMaterial", self._program, self._declarations),
         )
 
+    def _replay_order(self) -> "_ReplayOrder | None":
+        """The bridge's emit order for the deck targets (K R1b-S1, #2193).
+
+        ``None`` (the fixed category order) for a model made from the
+        emitter's buffers (no ``_opensees_version``: it holds its records
+        in call order already) and for an archive whose
+        ``/opensees/decls@program_decl`` is not ``"complete"`` (every file
+        below opensees 2.31.0, and a ``to_h5`` rewrite of one): such a
+        file records no order to merge by.
+
+        ``None`` too for a partitioned archive (a ``partition_open`` call
+        in its program): its program records the ADR 0027 partitioned
+        emit, which declares every material and series above the
+        partition blocks that hold the nodes and elements. The replay
+        writes a single-domain deck, whose bridge order
+        (``apeSees.tcl(flat=True)``) that program does not record.
+        """
+        from ._internal.compose import _ReplayOrder
+        from .emitter.h5_reader import records_program_decl
+
+        if (self._opensees_version is None
+                or not records_program_decl(self._declarations)
+                or any(r.method == "partition_open" for r in self._program)):
+            return None
+        return _ReplayOrder(self._program, self._declarations)
+
     def _populate_emitter(self, emitter: Any, *, flat: bool = False) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
@@ -1595,6 +1624,7 @@ class OpenSeesModel:
             equation_constraints=_equation_constraint_records(
                 self._declarations),
             embedded_rebars=self._embedded_rebars,
+            order=self._replay_order(),
         )
 
         # ADR 0055 P2.3: a staged archive re-emits through the staged
