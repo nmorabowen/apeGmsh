@@ -7,6 +7,12 @@
 // matches the mesh only. Never by name, path or session id: the open set
 // finds the files by stem (src/main/pairing.ts), this decides whether they
 // belong together. Pure: tested in Node (test/results/pairing.test.ts).
+//
+// A `.ladruno` (ADR 0122 D3; #2127) pairs by the same rule, its lineage the
+// INFO/PROVENANCE `model_hash` and `fem_hash` that `stamp_provenance` copies
+// from the model.h5. An unstamped file (a recorder's output before the stamp,
+// or one still being written) is `unpairable`, and the reason names the
+// remedy. Which reader read the file is main's dispatch, by the suffix.
 
 import type { Lineage, ResultsInfo } from "./types.ts";
 
@@ -22,6 +28,8 @@ export type ResultsPairing =
   | { state: "unpairable"; reason: string };
 
 const short = (h: string): string => h.slice(0, 8);
+/** main/results.ts reads a path with this suffix with reader/ladruno.ts. */
+const LADRUNO = /\.ladruno$/i;
 
 /**
  * The first opensees minor whose hashed `/opensees/program` `decl` column
@@ -86,6 +94,13 @@ export function pairResults(
   if (!results) return { state: "none" };
   if (!model) return { state: "noModel" };
   const r = results.lineage;
+  if (!r && LADRUNO.test(results.path)) {
+    const why = results.lineageReason ?? "INFO/PROVENANCE carries no model_hash and fem_hash";
+    return {
+      state: "unpairable",
+      reason: `${why}. Stamp it with stamp_provenance(path, model_h5) against the model.h5 the run was emitted from (ADR 0122 D3), then reopen it`,
+    };
+  }
   if (!r) {
     return {
       state: "unpairable",
@@ -118,6 +133,7 @@ export function pairingNotice(p: ResultsPairing, resultsName: string): string | 
     case "mismatch":
       return `Results not drawn: ${resultsName} does not belong to this model (${p.reason}).`;
     case "noModel":
+      if (LADRUNO.test(resultsName)) return `Results not drawn: no model is open for ${resultsName}; open the model.h5 the run was emitted from.`;
       return `Results not drawn: no model is open for ${resultsName}. Its embedded /model is not drawn by this version; open the model.h5 it was written from.`;
     case "unpairable":
       return `Results not drawn: ${p.reason}.`;

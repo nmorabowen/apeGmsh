@@ -14,14 +14,26 @@
 // changed is never read under the old index: the read answers `changed`, and
 // the renderer re-indexes it. No Electron import: the tests drive this class
 // in Node.
+//
+// A `.ladruno` (ADR 0122 D1; #2127) is read by reader/ladruno.ts under the
+// same rules. It has no results_hash: its identity on re-open is its whole
+// INFO/PROVENANCE as read (the `model_hash` and every other stamped
+// attribute), so a file re-stamped while open is re-indexed, never read
+// under the old pairing. Its lineage is the PROVENANCE `model_hash` and
+// `fem_hash`, only when both are stamped (a stamp written in part reads as
+// unpaired, schema §7b.1); `element_index_space` stands in for the native
+// root stamp, and `stage_names` names the MODEL_STAGE groups when it counts
+// as many.
 
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import {
   LadrunoFile,
   openLadruno,
   type LadrunoLineStationStep,
   type LineStationComponent,
+  type ProvenanceFact,
 } from "../reader/ladruno.ts";
+import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
@@ -33,10 +45,9 @@ function openAnyResults(h5: ResultsH5, path: string): AnyResultsFile {
   return path.toLowerCase().endsWith(".ladruno") ? openLadruno(h5, path) : openResults(h5, path);
 }
 
-function resultsHashOf(rf: AnyResultsFile): string | null {
-  if (rf instanceof LadrunoFile) {
-    return rf.index.lineage ? `${rf.index.lineage.modelHash}:${rf.index.lineage.femHash}` : null;
-  }
+/** What a re-open compares: a native file's results_hash; a `.ladruno`'s whole INFO/PROVENANCE as read. */
+function identityOf(rf: AnyResultsFile): string | null {
+  if (rf instanceof LadrunoFile) return `provenance:${JSON.stringify(rf.index.provenance)}`;
   return rf.index.lineage?.resultsHash ?? null;
 }
 
@@ -81,6 +92,8 @@ export interface ResultsMeta {
   version: string;
   sourceType: string | null;
   lineage: { femHash: string | null; modelHash: string | null; resultsHash: string | null } | null;
+  /** .ladruno: why `lineage` is null (the file is not stamped for pairing), else null; absent for a native file */
+  lineageReason?: string | null;
   partial: string | null;
   stages: ResultsStageMeta[];
   unavailableZones: string[];
@@ -188,34 +201,75 @@ const signature = (path: string): string => {
 };
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
+
+/** Why a `.ladruno`'s element rows are unverified: no `element_index_space`, or one that is not "fem" (#2079 Q6). */
+function unverifiedSpace(space: ProvenanceFact | null): string {
+  if (space === null) return "the file has no INFO/PROVENANCE group, so its element rows are not known to be FEM element ids";
+  if (space.state === "malformed") return `${space.reason}; its element rows are not known to be FEM element ids`;
+  return 'INFO/PROVENANCE has no @element_index_space = "fem", so its element rows are not known to be FEM element ids';
+}
+
+/**
+ * Each stage's name (aligned with `index.stages`). A well-formed
+ * INFO/PROVENANCE@stage_names names the MODEL_STAGE (host) stages when it
+ * counts as many; a mode stage keeps its own name, its host prefix renamed.
+ * Otherwise every stage keeps the file's name, and a malformed or miscounted
+ * stage_names warns. An absent one is silent (the pairing says unstamped).
+ */
+function ladrunoStageNames(rf: LadrunoFile, warningsOut?: string[]): string[] {
+  const ix = rf.index;
+  const own = ix.stages.map((s) => s.name);
+  const prov = ix.provenance;
+  if (prov.state !== "present") return own;
+  const fact = prov.attrs.stage_names;
+  if (fact.state === "absent") return own;
+  const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; the file's own stage names are shown`);
+  if (fact.state === "malformed" || prov.stageNames === null) {
+    warn(fact.state === "malformed" ? fact.reason : "INFO/PROVENANCE@stage_names could not be read");
+    return own;
+  }
+  const hosts = ix.stages.filter((s) => Object.hasOwn(ix.fileKinds, s.id));
+  if (prov.stageNames.length !== hosts.length) {
+    warn(`INFO/PROVENANCE@stage_names names ${prov.stageNames.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
+    return own;
+  }
+  const renamed = new Map(hosts.map((h, k) => [h.id, { from: h.name, to: prov.stageNames![k]! }]));
+  const hostOf = new Map(ix.modes.map((m) => [m.stageId, m.hostStageId]));
+  return ix.stages.map((s) => {
+    const r = renamed.get(s.id);
+    if (r) return r.to;
+    const host = hostOf.get(s.id);
+    const h = host === undefined ? undefined : renamed.get(host);
+    return h && s.name.startsWith(`${h.from}/`) ? `${h.to}/${s.name.slice(h.from.length + 1)}` : s.name;
+  });
+}
 
 export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta {
   if (rf instanceof LadrunoFile) {
-    const prov = rf.index.provenance;
-    const pattr = (k: "fem_hash" | "model_hash" | "element_index_space") =>
-      prov.state === "present" && prov.attrs[k]?.state === "present" ? prov.attrs[k].value : null;
-    const femHash = pattr("fem_hash");
-    const modelHash = pattr("model_hash");
-    const lineage = modelHash !== null || femHash !== null ? { femHash, modelHash, resultsHash: null } : null;
-    const elementIndexSpace = pattr("element_index_space");
+    const ix = rf.index;
+    const prov = ix.provenance;
+    // Lineage only when both hashes are stamped (reader/ladruno.ts `lineageOf`); else unpairable, with the reader's reason.
+    const lineage = ix.lineage ? { femHash: ix.lineage.femHash, modelHash: ix.lineage.modelHash, resultsHash: null } : null;
+    const space = prov.state === "present" ? prov.attrs.element_index_space : null;
+    const elementIndexSpace = space?.state === "present" ? space.value : null;
+    const names = ladrunoStageNames(rf, warningsOut);
     return {
-      path: rf.index.path,
+      path: ix.path,
       version: "1.0.0",
       sourceType: "ladruno",
       lineage,
+      lineageReason: ix.lineageReason,
       partial: null,
       unavailableZones: [],
       openseesVersion: null,
       programDecl: null,
-      elementIndex:
-        elementIndexSpace === "fem"
-          ? { verified: true }
-          : { verified: false, reason: 'INFO/PROVENANCE@element_index_space is not "fem"' },
-      units: rf.index.units,
+      elementIndex: elementIndexSpace === "fem" ? { verified: true } : { verified: false, reason: unverifiedSpace(space) },
+      units: ix.units,
       elementIndexSpace,
-      stages: rf.index.stages.map((s, idx) => ({
+      stages: ix.stages.map((s, k) => ({
         id: s.id,
-        name: prov.state === "present" && prov.stageNames?.[idx] ? prov.stageNames[idx]! : s.name,
+        name: names[k]!,
         kind: s.kind,
         time: Array.from(s.time),
         nodal: s.nodes ? [...s.nodes.components] : [],
@@ -271,7 +325,7 @@ export class ResultsHost {
   /** the open handle, or null while idle */
   private file: AnyResultsFile | null = null;
   /** the file indexed by the last `open`, and its identity then; null before any open */
-  private indexed: { path: string; signature: string; resultsHash: string | null } | null = null;
+  private indexed: { path: string; signature: string; identity: string | null } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** scans running now, and those asked to stop (each checks between chunks) */
   private readonly running = new Set<number>();
@@ -300,7 +354,7 @@ export class ResultsHost {
       const sig = signature(path);
       const rf = openAnyResults(this.h5, path);
       this.file = rf;
-      this.indexed = { path, signature: sig, resultsHash: resultsHashOf(rf) };
+      this.indexed = { path, signature: sig, identity: identityOf(rf) };
       this.armIdle();
       const nodeIds: Record<string, Float64Array> = {};
       for (const st of rf.index.stages) if (st.nodes) nodeIds[st.id] = st.nodes.ids;
@@ -318,6 +372,14 @@ export class ResultsHost {
         }
       }
       const warnings = [...rf.index.warnings];
+      // One results slot per set (pairing.ts): the stem's other results file is never read; say so.
+      const other = unopenedSibling(path, existsSync);
+      if (other !== null) {
+        warnings.push(
+          `${baseName(other)} is not opened: a set reads one results file, and ${baseName(path)} is this one ` +
+            "(the file opened wins; otherwise the .ladruno, ADR 0122 D1). Open the other file itself to read it",
+        );
+      }
       const meta = metaOf(rf, warnings);
       return { ok: true, meta, nodeIds, elementIds, warnings, sizeBytes: Number(sig.split(":")[0]), readMs: performance.now() - t };
     } catch (err) {
@@ -337,7 +399,7 @@ export class ResultsHost {
     }
     if (this.file) return this.file;
     const rf = openAnyResults(this.h5, path);
-    if (resultsHashOf(rf) !== ix.resultsHash) {
+    if (identityOf(rf) !== ix.identity) {
       rf.close();
       return null;
     }

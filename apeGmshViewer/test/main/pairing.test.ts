@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { candidates, classify, fileFromArgv, inSet, pairSet, samePath, sameSet } from "../../src/main/pairing.ts";
+import { candidates, classify, fileFromArgv, inSet, pairSet, samePath, sameSet, stemSet, unopenedSibling } from "../../src/main/pairing.ts";
 
 const dir = resolve("/runs/frame 1");
 const p = (name: string) => join(dir, name);
@@ -108,4 +108,56 @@ test("fileFromArgv: packaged double-click, unpackaged --file, second-instance sw
   );
   assert.equal(fileFromArgv(["app.exe"], 1, cwd), null);
   assert.equal(fileFromArgv(["electron", "C:/app", "--mode=view"], 2, cwd), null);
+});
+
+// -- V4L-b1 (#2127): the .ladruno is a results file of the set (ADR 0122 D1) --
+
+test("classify: <stem>.ladruno is the results kind, case-insensitively", () => {
+  assert.deepEqual(classify(p("m.ladruno")), { kind: "results", stem: p("m") });
+  assert.deepEqual(classify(p("M.LaDrUnO")), { kind: "results", stem: p("M") });
+  assert.deepEqual(candidates(p("m.ladruno")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.ladruno") });
+});
+
+test("a <stem>.part-<N>.ladruno opened directly is refused, naming slice 8", () => {
+  assert.throws(() => classify(p("m.part-0.ladruno")), /part 0 of a partitioned \.ladruno run; .*ADR 0122 slice 8/);
+  assert.throws(() => pairSet(p("m.PART-12.LADRUNO"), () => true), /part 12 of a partitioned .*slice 8/);
+});
+
+test("opening the model finds a .ladruno beside it when it is the only results file", () => {
+  assert.deepEqual(pairSet(p("m.h5"), disk("m.h5", "m.ladruno")), { model: p("m.h5"), geometry: null, results: p("m.ladruno") });
+  assert.deepEqual(pairSet(p("m.ladruno"), disk("m.h5", "m.geometry.h5", "m.ladruno")), {
+    model: p("m.h5"),
+    geometry: p("m.geometry.h5"),
+    results: p("m.ladruno"),
+  });
+});
+
+// The T ruling (2026-10-16): the opened file wins if it is a results file; otherwise the .ladruno.
+test("both results files beside the model: one results slot; the opened one wins, else the .ladruno", () => {
+  const both = disk("m.h5", "m.geometry.h5", "m.results.h5", "m.ladruno");
+  assert.equal(pairSet(p("m.h5"), both).results, p("m.ladruno"), "from the model: the .ladruno (canonical)");
+  assert.equal(pairSet(p("m.geometry.h5"), both).results, p("m.ladruno"), "from the geometry: the .ladruno");
+  assert.equal(pairSet(p("m.results.h5"), both).results, p("m.results.h5"), "the opened native file wins");
+  assert.equal(pairSet(p("m.ladruno"), both).results, p("m.ladruno"), "the opened .ladruno wins");
+});
+
+test("the watcher's re-evaluation keeps the rule: the opened results file wins while it exists", () => {
+  const c = candidates(p("m.results.h5"));
+  assert.equal(stemSet(c, disk("m.h5", "m.results.h5", "m.ladruno")).results, p("m.results.h5"));
+  assert.equal(stemSet(c, disk("m.h5", "m.ladruno")).results, p("m.ladruno"), "the opened file gone: the other one");
+  const fromModel = candidates(p("m.h5"));
+  assert.equal(stemSet(fromModel, disk("m.h5", "m.results.h5")).results, p("m.results.h5"), "no .ladruno: the native file, as before");
+  assert.equal(stemSet(fromModel, disk("m.h5", "m.results.h5", "m.ladruno")).results, p("m.ladruno"));
+});
+
+test("stemSet refuses Candidates candidates() did not make (it could not know which file was opened)", () => {
+  assert.throws(() => stemSet({ model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5") }, () => true), /candidates\(\) made/);
+});
+
+test("unopenedSibling: the stem's other results file when it exists, for the banner", () => {
+  const both = disk("m.results.h5", "m.ladruno");
+  assert.equal(unopenedSibling(p("m.ladruno"), both), p("m.results.h5"));
+  assert.equal(unopenedSibling(p("m.results.h5"), both), p("m.ladruno"));
+  assert.equal(unopenedSibling(p("m.ladruno"), disk("m.ladruno")), null);
+  assert.equal(unopenedSibling(p("results_small.h5"), () => true), null, "a file read as results under another name has no pair");
 });
