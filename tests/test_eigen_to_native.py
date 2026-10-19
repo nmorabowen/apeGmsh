@@ -235,22 +235,31 @@ def test_vectors_are_the_domain_vectors_read_once_per_node(
             np.testing.assert_array_equal(_component(out, stage, comp), want)
 
 
-def test_2d_frame_writes_in_plane_translations_only(
+def test_2d_frame_writes_its_real_rotation_z(
     fem2: Any, bind: Any, tmp_path: Path,
 ) -> None:
+    """A 2-D frame (ndf 3: ux, uy, rz). The bridge's own archive gives
+    the DOF roles (a beam touches every node), so entry 3 of each vector
+    is rotation_z, written as is (#2203); no displacement_z in 2-D."""
     ids = _node_ids(fem2)
     vecs = _vectors(ids, 1, {int(n): 3 for n in ids})
     bind(_FakeOps([16.0], vecs))
     r = _frame(fem2, ndm=2).eigen(1)
 
-    out = r.to_native(tmp_path / "modes.h5")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        out = r.to_native(tmp_path / "modes.h5")
 
     with h5py.File(out, "r") as f:
         (name,) = list(f["stages"])
-    assert _components(out, name) == {"displacement_x", "displacement_y"}
+    assert _components(out, name) == {
+        "displacement_x", "displacement_y", "rotation_z"}
     np.testing.assert_array_equal(
         _component(out, name, "displacement_y"),
         np.array([[vecs[(int(n), 1)][1] for n in ids]]))
+    np.testing.assert_array_equal(
+        _component(out, name, "rotation_z"),
+        np.array([[vecs[(int(n), 1)][2] for n in ids]]))
 
 
 def test_mixed_ndf_never_raises_and_zero_fills(

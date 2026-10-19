@@ -44,6 +44,7 @@ from apeGmsh.opensees.emitter import live
 from apeGmsh.opensees.opensees_model import OpenSeesModel
 
 from tests.test_eigen_to_native import _build_fem, _FakeOps, _frame, _vectors
+from tests.test_parallel_modal_to_native import _NdfFem
 from tests.test_results_ladruno_writer_modes import (
     _ForkFake,
     _up_beside_frame_2d,
@@ -193,6 +194,76 @@ def test_reproducer_with_model_h5_writes_zero_not_777(
     for n in frame:
         assert [comps[c][n] for c in _ROT] == [4.0, 5.0, 6.0]
     assert 777.0 not in {v for c in comps.values() for v in c.values()}
+
+
+def _frame_and_up_job(tmp_path: Path) -> tuple[ParallelModalResult, np.ndarray]:
+    """Nodes 1, 2 a 3-D frame (ux..rz); nodes 3, 4 a 3-D u-p solid
+    (ux, uy, uz, p), padded to the deck's ndf 6 with p = 777."""
+    shapes = np.array([[
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        [1.5, 2.5, 3.5, 4.5, 5.5, 6.5],
+        [0.1, 0.2, 0.3, 777.0, 0.0, 0.0],
+        [0.4, 0.5, 0.6, 777.0, 0.0, 0.0],
+    ]])
+    return (ParallelModalResult.from_job(
+        _job(tmp_path, [1, 2, 3, 4], shapes, 3)), shapes)
+
+
+def test_3d_frame_beside_up_without_model_h5_keeps_frame_rotations(
+    tmp_path: Path,
+) -> None:
+    """``fem`` carries each node's ndf: the ndf-6 frame nodes keep their
+    rotations, the ndf-4 u-p nodes get 0.0 (never 777), and nothing warns."""
+    res, shapes = _frame_and_up_job(tmp_path)
+    fem = _NdfFem([1, 2, 3, 4], {1: 6, 2: 6, 3: 4, 4: 4})
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    assert caught == []
+    assert set(_ROT) <= set(comps)
+    for i, n in enumerate((1, 2)):
+        assert [comps[c][n] for c in _ROT] == shapes[0, i, 3:].tolist()
+    for i, n in ((2, 3), (3, 4)):
+        assert [comps[c][n] for c in _ROT] == [0.0, 0.0, 0.0]
+        assert comps["displacement_z"][n] == shapes[0, i, 2]
+    assert 777.0 not in {v for c in comps.values() for v in c.values()}
+
+
+def test_a_node_of_unknown_ndf_writes_no_rotation_and_is_named(
+    tmp_path: Path,
+) -> None:
+    """``fem`` holds no ndf for node 3: it writes 0.0, not 777, and the
+    one warning names it; the frame nodes keep their rotations."""
+    res, shapes = _frame_and_up_job(tmp_path)
+    fem = _NdfFem([1, 2, 3, 4], {1: 6, 2: 6, 4: 4})
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    named = _of(caught, RotationRolesUnavailableWarning)
+    assert len(named) == 1 and len(_of(caught, UserWarning)) == 1
+    assert "1 node(s) ([3])" in str(named[0].message)
+    assert [comps[c][3] for c in _ROT] == [0.0, 0.0, 0.0]
+    assert [comps[c][1] for c in _ROT] == shapes[0, 0, 3:].tolist()
+
+
+def test_2d_without_model_h5_ndf_2_is_silent_ndf_3_is_named(
+    tmp_path: Path,
+) -> None:
+    """2-D deck of ndf 3: a node of ndf 2 reaches no rotation slot
+    (silent); a node of ndf 3 may be a frame or a u-p node, so it writes
+    no rotation_z and the warning names it."""
+    shapes = np.array([[[0.1, 0.2, 0.0], [1.1, 1.2, 777.0]]])
+    res = ParallelModalResult.from_job(_job(tmp_path, [1, 2], shapes, 2))
+
+    comps, caught = _native(res, tmp_path / "a.h5", _NdfFem([1, 2], 2))
+    assert caught == []
+    assert set(comps) == {"displacement_x", "displacement_y"}
+
+    comps, caught = _native(
+        res, tmp_path / "b.h5", _NdfFem([1, 2], {1: 2, 2: 3}))
+    named = _of(caught, RotationRolesUnavailableWarning)
+    assert len(named) == 1 and "([2])" in str(named[0].message)
+    assert set(comps) == {"displacement_x", "displacement_y"}
 
 
 @pytest.mark.parametrize("ndf", [3, 4])

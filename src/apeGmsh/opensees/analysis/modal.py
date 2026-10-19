@@ -53,12 +53,13 @@ __all__ = [
 
 
 class RotationRolesUnavailableWarning(UserWarning):
-    """:meth:`ParallelModalResult.to_native` wrote no ``rotation_*``
-    because it was given no ``model_h5=``. The deck's DOF list reaches a
-    rotation slot (2-D ``ndf`` 3, 3-D ``ndf`` 6), and only the model's
-    DOF roles can say whether a node's entry there is a rotation, a pore
-    pressure (a u-p node) or the recorder's zero padding. The message
-    names the deck's ``ndm`` / ``ndf`` and says to pass ``model_h5=``."""
+    """:meth:`ParallelModalResult.to_native`, given no ``model_h5=``,
+    wrote no rotation for some nodes: the deck's DOF list reaches a
+    rotation slot, and neither the deck nor ``fem`` settles what a node
+    holds there (a 2-D node of ndf 3: a frame's rotation or a u-p node's
+    pore pressure; a node whose ndf ``fem`` does not carry). Only the
+    model's DOF roles can. The message names the nodes and says to pass
+    ``model_h5=``."""
 
 
 #: The spatial slots (``ux..rz`` = 0..5) a native mode stage writes as
@@ -560,6 +561,48 @@ def _native_fields(
     return spatial, slots
 
 
+def _fem_ndf_slots(
+    fem: Any, rec: "Sequence[int]", ndf: int, ndm: int,
+) -> "tuple[list[tuple[int, ...]], np.ndarray, list[tuple[int, str]]]":
+    """Per node of ``rec``, without a model archive: its DOF layout,
+    whether its rotation slots hold rotations, and the ``(node, reason)``
+    of each node that only the DOF roles could settle.
+
+    The node's own ndf comes from ``fem.nodes.ndf_for`` (a
+    ``LookupError`` means ``fem`` does not carry it). A 3-D node of ndf 6
+    holds rotations in DOFs 4-6; a node whose layout reaches no native
+    rotation slot holds none (a 3-D u-p node, ndf 4); any other node (a
+    2-D node of ndf 3: ``(ux, uy, rz)`` or ``(ux, uy, p)``) and a node
+    of unknown ndf are unsettled. An unknown node is laid out on its
+    translations only, so nothing of it lands in a rotation slot.
+    """
+    from .._internal.build.recorders import _node_layout
+
+    native = _NATIVE_ROTATION_SLOTS.get(int(ndm), ())
+    trans = tuple(range(min(3, ndm, ndf)))
+    layouts: list[tuple[int, ...]] = []
+    rotations = np.zeros(len(rec), dtype=bool)
+    unsettled: list[tuple[int, str]] = []
+    for i, n in enumerate(rec):
+        try:
+            own = int(fem.nodes.ndf_for(int(n)))
+        except LookupError:
+            layouts.append(trans)
+            unsettled.append((int(n), "fem carries no ndf for it"))
+            continue
+        lay = _node_layout(own, ndm)
+        layouts.append(lay)
+        if not any(s in native for s in lay):
+            continue                    # its own DOFs reach no rotation
+        if ndm == 3 and own == 6:
+            rotations[i] = True
+        else:
+            unsettled.append((int(n), (
+                f"ndf {own} in {ndm}-D may carry a rotation (a frame) or a "
+                "pore pressure (a u-p element) in that slot")))
+    return layouts, rotations, unsettled
+
+
 def _deck_archive(
     model_h5: "str | Any", rec: "Sequence[int]", shape_ndm: "int | None",
     *, where: str,
@@ -985,11 +1028,20 @@ class ParallelModalResult:
         :meth:`to_ladruno` and :meth:`EigenResult.to_native` follow the
         same rule.
 
-        Without ``model_h5`` nothing is guessed: when the deck's DOF list
-        reaches a rotation slot (2-D ndf 3, 3-D ndf 6) no ``rotation_*``
-        is written, and one :class:`RotationRolesUnavailableWarning` says
-        to pass ``model_h5=``. A deck whose DOF list reaches none (2-D
-        ndf 2, 3-D ndf 3 or 4) writes translations only, silently.
+        Without ``model_h5`` nothing is guessed. A deck whose DOF list
+        reaches no rotation slot (2-D ndf 2, 3-D ndf 3 or 4) writes
+        translations only, silently. Otherwise each node's own ndf is read
+        from ``fem`` (``fem.nodes.ndf_for``): a 3-D node of ndf 6 holds
+        rotations in DOFs 4-6 and writes them, and a node whose own DOFs
+        reach no rotation slot (a 3-D u-p node, ndf 4) writes 0.0 there,
+        both silently. A node left unsettled, a 2-D node of ndf 3 (frame
+        or u-p) or one whose ndf ``fem`` does not carry, writes no
+        rotation (0.0 in the slot, or no ``rotation_*`` at all when no node
+        holds one), with one :class:`RotationRolesUnavailableWarning` that
+        names the nodes and says to pass ``model_h5=``. A fem snapshot the
+        bridge built carries no per-node ndf (the bridge keeps it in the
+        archive's ``/opensees/nodes_ndf``), so for it every node of such a
+        deck is unsettled.
 
         ``fem`` must be the same FEM snapshot the deck was emitted from
         (the recorder column order is the sorted mesh node tags).
@@ -1022,22 +1074,31 @@ class ParallelModalResult:
         if model_h5 is None:
             ndm = int(self._shape_ndm if self._shape_ndm is not None else 3)
             n_trans = min(3, ndm, ndf)
-            spatial = np.zeros(shapes.shape[:2] + (6,), dtype=np.float64)
-            spatial[..., :n_trans] = shapes[..., :n_trans]
             reach = [s for s in _node_layout(ndf, ndm)
                      if s in _NATIVE_ROTATION_SLOTS.get(ndm, ())]
-            if reach:
-                warnings.warn(
-                    f"{where}: the deck records DOFs 1..{ndf} of every node "
-                    f"in {ndm}-D, so a node's entry in a rotation slot may "
-                    "be a rotation, a u-p node's pore pressure or zero "
-                    "padding, and only the model's DOF roles can say which. "
-                    "No rotation_* was written. Pass model_h5= (the archive "
-                    "the deck was emitted from, ops.h5) to write the "
-                    "rotations the roles allow.",
-                    RotationRolesUnavailableWarning,
-                    stacklevel=2,
-                )
+            if not reach:
+                spatial = np.zeros(shapes.shape[:2] + (6,), dtype=np.float64)
+                spatial[..., :n_trans] = shapes[..., :n_trans]
+            else:
+                layouts, rotations, unsettled = _fem_ndf_slots(
+                    fem, rec, ndf, ndm)
+                spatial, rotation_slots = _native_fields(
+                    shapes, layouts, rotations, ndm)
+                if unsettled:
+                    node, why = unsettled[0]
+                    warnings.warn(
+                        f"{where}: {len(unsettled)} node(s) "
+                        f"({[n for n, _ in unsettled[:10]]}) write no "
+                        f"rotation: for node {node}, {why}. The deck "
+                        f"records DOFs 1..{ndf} of every node, so their "
+                        "entry in a rotation slot may be a rotation, a u-p "
+                        "node's pore pressure or zero padding, and only the "
+                        "model's DOF roles can say which. Pass model_h5= "
+                        "(the archive the deck was emitted from, ops.h5) "
+                        "to write the rotations the roles allow.",
+                        RotationRolesUnavailableWarning,
+                        stacklevel=2,
+                    )
         else:
             model = _deck_archive(model_h5, rec, self._shape_ndm, where=where)
             ndm = int(model.ndm)
