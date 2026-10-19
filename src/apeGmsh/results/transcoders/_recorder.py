@@ -40,8 +40,6 @@ from typing import TYPE_CHECKING, Any, Iterable
 import numpy as np
 from numpy import ndarray
 
-from ...opensees import OpenSeesModel
-from ...opensees._element_capabilities import _FORCE_DISP_BEAMS
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     IntRule,
@@ -63,6 +61,7 @@ from ...opensees._response_catalog import (
     unflatten_nodal,
 )
 from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
+from ..readers._out_station_slicing import require_line_stations
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
@@ -244,6 +243,8 @@ class RecorderTranscoder:
         """
         if self._model_h5_src is None:
             return False
+        from ...opensees import OpenSeesModel
+
         model = OpenSeesModel.from_h5(self._model_h5_src)
         if model.lineage.fem_hash != self._spec.fem_snapshot_id:
             return False
@@ -433,11 +434,6 @@ class RecorderTranscoder:
         6. Group elements by ``(gp_x signature, section_codes)`` so
            heterogeneous beam-integration assignments produce
            separate write_line_stations_group calls.
-
-        The files carry no per-element point count, so every element must
-        have the same one. A bound model proves it, naming the elements
-        otherwise; each element's stations must also increase strictly
-        within [-1, 1], which is the only check without a model.
         """
         if rec.element_class_name is None:
             raise ValueError(
@@ -494,14 +490,6 @@ class RecorderTranscoder:
                 f"columns per element."
             )
         n_ip = gpx_data_cols // n_elements
-        # One n_IP per element is an assumption the file cannot check: an
-        # n_IP 3 and an n_IP 5 element also give 4 columns each. The model
-        # holds each element's count, so a bound model proves it.
-        if self._model_h5_src is not None:
-            _refuse_unequal_station_counts(
-                rec, OpenSeesModel.from_h5(self._model_h5_src),
-                self._spec.fem_snapshot_id, n_ip, gpx_lr.file_path,
-            )
         # Reshape to (E, n_IP) of physical xi*L.
         xi_phys = first_gpx_row[1:].reshape(n_elements, n_ip)
 
@@ -514,9 +502,7 @@ class RecorderTranscoder:
         xi_natural = np.empty_like(xi_phys)
         for i, L in enumerate(element_lengths):
             xi_natural[i] = normalise_integration_points(xi_phys[i], L)
-        # Without a model, this is the check: a slice that crosses an
-        # element boundary carries one element's end and the next one's start.
-        _refuse_unordered_stations(rec, xi_natural, gpx_lr.file_path)
+        require_line_stations(rec, xi_natural, gpx_lr.file_path, self._model_h5_src, self._spec.fem_snapshot_id)
 
         # ── Read the section.force file: total cols = 1 + E*n_IP*K ──
         first_section_row = np.loadtxt(
@@ -597,6 +583,7 @@ class RecorderTranscoder:
                 f"Line-stations record {rec.name!r} names elastic-beam class "
                 f"{rec.element_class_name!r}: pass model= (model_h5_src=) so every "
                 f"element is checked to be an elastic beam; without one it is refused.")
+        from ...opensees import OpenSeesModel
         refuse_non_elastic_local_force(
             rec, OpenSeesModel.from_h5(self._model_h5_src),
             fem_snapshot_id=self._spec.fem_snapshot_id)
@@ -955,125 +942,6 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
         c2 = coords[fem.nodes.index(int(nodes[-1]))]
         out[i] = float(np.linalg.norm(c2 - c1))
     return out
-
-
-# =====================================================================
-# Station-count and station-order checks (line-stations)
-# =====================================================================
-
-#: Element tokens whose argument tail (after the connectivity) starts
-#: ``transfTag integrationTag``: the opensees package's own set.
-_INTEGRATION_ELEMENT_TOKENS = _FORCE_DISP_BEAMS
-#: ``beamIntegration`` rules whose arguments are ``(secTag, N)``.
-_UNIFORM_RULE_TOKENS = frozenset({
-    "Legendre", "Lobatto", "NewtonCotes", "Radau", "Trapezoidal",
-})
-#: The plastic-hinge rules' fixed point counts: OpenSees's
-#: ``integrationPoints`` response gives 6, 6, 4 and 4 positions.
-_HINGE_RULE_POINTS = {
-    "HingeRadau": 6, "HingeRadauTwo": 6, "HingeMidpoint": 4, "HingeEndpoint": 4,
-}
-#: Slack on the natural range [-1, 1]: a ``.out`` written at OpenSees's
-#: default ``-precision 6`` puts an end station near 1 + 1e-5.
-_STATION_RANGE_TOL = 1.0e-4
-
-
-def _model_station_counts(
-    rec: "ResolvedRecorderRecord", model: OpenSeesModel, fem_snapshot_id: str,
-) -> ndarray:
-    """Each element's integration-point count in ``model``, in record order.
-
-    An element the model does not hold, one that is not a beam with a
-    ``beamIntegration``, or a rule this table does not know is refused by
-    name: its count would be a guess.
-    """
-    element_tag_map(model, fem_snapshot_id=fem_snapshot_id)   # lineage, or raise
-    by_fem = {int(r.fem_eid): r for r in model.elements() if int(r.fem_eid) >= 0}
-    rules = {int(bi.tag): bi for bi in model.beam_integration()}
-    assert rec.element_ids is not None
-    counts = np.empty(len(rec.element_ids), dtype=np.int64)
-    for i, e in enumerate(rec.element_ids):
-        what = f"Line-stations record {rec.name!r}: FEM element {int(e)}"
-        if int(e) not in by_fem:
-            raise ValueError(f"{what} has no element in model=.")
-        er = by_fem[int(e)]
-        tail = er.args[len(er.connectivity):]
-        if er.type_token not in _INTEGRATION_ELEMENT_TOKENS or len(tail) < 2:
-            raise ValueError(
-                f"{what} is a {er.type_token!r} in model=, not a beam with a "
-                f"beamIntegration ({sorted(_INTEGRATION_ELEMENT_TOKENS)}), so "
-                f"its section stations are unknown.")
-        integ_tag = int(tail[1])
-        if integ_tag not in rules:
-            raise ValueError(
-                f"{what} names beamIntegration {integ_tag}, which model= "
-                f"does not hold.")
-        bi = rules[integ_tag]
-        if bi.type_token in _UNIFORM_RULE_TOKENS:
-            counts[i] = int(bi.args[1])
-        elif bi.type_token in _HINGE_RULE_POINTS:
-            counts[i] = _HINGE_RULE_POINTS[bi.type_token]
-        else:
-            raise ValueError(
-                f"{what} uses beamIntegration {bi.type_token!r}, whose "
-                f"point count is not known here; known: "
-                f"{sorted(_UNIFORM_RULE_TOKENS | set(_HINGE_RULE_POINTS))}.")
-    return counts
-
-
-def _refuse_unequal_station_counts(
-    rec: "ResolvedRecorderRecord", model: OpenSeesModel, fem_snapshot_id: str,
-    n_ip: int, path: str,
-) -> None:
-    """Raise unless every element of ``rec`` has ``n_ip`` points in ``model``.
-
-    A ``.out`` record gives one column block per element and no count, so
-    it is sliced into equal blocks; elements with different counts would
-    be cut across their boundaries.
-    """
-    counts = _model_station_counts(rec, model, fem_snapshot_id)
-    assert rec.element_ids is not None
-    if np.unique(counts).size > 1:
-        by_count: dict[int, list[int]] = {}
-        for e, c in zip(rec.element_ids, counts):
-            by_count.setdefault(int(c), []).append(int(e))
-        listing = "; ".join(
-            f"{c} points: FEM elements {ids[:10]}{' ...' if len(ids) > 10 else ''}"
-            for c, ids in sorted(by_count.items()))
-        raise ValueError(
-            f"Line-stations record {rec.name!r}: its elements have different "
-            f"integration-point counts in model= ({listing}). A .out record "
-            f"carries no per-element count, so it cannot be sliced into "
-            f"elements reliably. Split the record so that each holds one "
-            f"point count.")
-    if int(counts[0]) != n_ip:
-        raise ValueError(
-            f"{path}: {n_ip} integration points per element, but model= gives "
-            f"its elements {int(counts[0])}. The file does not match the model.")
-
-
-def _refuse_unordered_stations(
-    rec: "ResolvedRecorderRecord", xi_natural: ndarray, path: str,
-) -> None:
-    """Raise unless each element's stations increase strictly within [-1, 1].
-
-    Every rule the bridge emits orders its stations from end i to end j,
-    so a block that does not is not one element's stations.
-    """
-    tol = _STATION_RANGE_TOL
-    bad = ~(np.all(np.diff(xi_natural, axis=1) > 0.0, axis=1)
-            & np.all(np.abs(xi_natural) <= 1.0 + tol, axis=1))
-    if bad.any():
-        assert rec.element_ids is not None
-        i = int(np.flatnonzero(bad)[0])
-        raise ValueError(
-            f"{path}: the stations read for FEM element "
-            f"{int(rec.element_ids[i])} of line-stations record {rec.name!r} "
-            f"are {np.round(xi_natural[i], 6).tolist()}, which do not increase "
-            f"strictly within [-1, 1]. The record's elements probably have "
-            f"different integration-point counts, which a .out record cannot "
-            f"carry. Split the record so that each holds one point count, or "
-            f"pass model= to name the elements.")
 
 
 # =====================================================================
