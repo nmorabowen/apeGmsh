@@ -592,6 +592,48 @@ def test_stale_archive_is_not_read_for_roles(g: Any, tmp_path: Path) -> None:
     assert not set(_ROT) & set(comps)
 
 
+def test_another_bridges_archive_on_the_same_mesh_is_not_used(
+    g: Any, tmp_path: Path,
+) -> None:
+    """The review's two-bridge reproducer (#2225, delta review at
+    1e12778e). Bridge A is frame + LadrunoUP, bridge B is frame-only, on
+    the same fem and model_name. B's modal_deck overwrites A's archive
+    with a matching fem_hash. A's harvest through ``to_native(path, fem)``
+    must not read B's roles (the u-p nodes would be element-less there,
+    so 777 would land in rotation_x): the archive misses the solid nodes,
+    so it is ignored with the warning, and solids are present, so every
+    rotation is omitted with the second warning."""
+    import h5py
+
+    from apeGmsh.opensees.analysis.modal import StaleModelArchiveWarning
+
+    fem, ops_a, frame, up = _frame_3d(g, with_up=True)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    _emit_deck(ops_a, tmp_path / "a")
+    ops_b = apeSees(fem)
+    ops_b.model(ndm=3, ndf=6)
+    ops_b.element.elasticBeamColumn(
+        pg="Frame", transf=ops_b.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0)),
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    _emit_deck(ops_b, tmp_path / "b")
+    archive = _conventional(fem)
+    with h5py.File(archive, "r") as f:     # B's file, A's mesh hash
+        assert str(f["meta/lineage"].attrs["fem_hash"]) == str(fem.snapshot_id)
+    tokens = {r.type_token for r in OpenSeesModel.from_h5(str(archive)).elements()}
+    assert tokens and not any("UP" in t for t in tokens)   # frame-only
+    shapes = _rows(fem, frame, up)
+    res = ParallelModalResult.from_job(_job(tmp_path, _ids(fem), shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    stale = _of(caught, StaleModelArchiveWarning)
+    assert len(stale) == 1 and "solid" in str(stale[0].message)
+    assert len(_of(caught, RotationRolesUnavailableWarning)) == 1
+    assert not set(_ROT) & set(comps)
+    assert 777.0 not in {v for c in comps.values() for v in c.values()}
+
+
 @pytest.mark.parametrize("shell", [False, True])
 def test_pure_frame_or_shell_without_archive_keeps_rotations(
     g: Any, tmp_path: Path, shell: bool,

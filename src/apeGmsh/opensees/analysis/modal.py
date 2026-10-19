@@ -579,11 +579,15 @@ def _discover_archive(fem: Any, *, where: str) -> "Path | None":
     The bridge writes it at ``default_artifact_dir() /
     f"{fem.model_name}.h5"`` after a deck emit (ADR 0112 D1). It is used
     only when its ``/meta/lineage`` ``fem_hash`` equals
-    ``fem.snapshot_id`` and it holds the ``/opensees`` zone the roles
-    need. A file there that fails either check is ignored with one
-    :class:`StaleModelArchiveWarning`. An unnamed snapshot has no such
-    path, and no file there is nothing to say: both return ``None``
-    silently.
+    ``fem.snapshot_id``, it holds the ``/opensees`` zone the roles need,
+    and it covers the model: every fem node on a solid (3-D) cell is
+    touched by one of its elements. ``fem_hash`` names the mesh only, so a
+    second bridge on the same fem and ``model_name`` (a frame-only one
+    beside a frame + u-p one) leaves a matching hash over other elements;
+    the coverage check refuses that file. A file there that fails any
+    check is ignored with one :class:`StaleModelArchiveWarning` naming the
+    reason. An unnamed snapshot has no such path, and no file there is
+    nothing to say: both return ``None`` silently.
     """
     import warnings
 
@@ -605,9 +609,20 @@ def _discover_archive(fem: Any, *, where: str) -> "Path | None":
                f"{str(fem.snapshot_id)!r} (another run of the model)")
     else:
         with h5py.File(path, "r") as f:
-            if "opensees" in f:
+            has_zone = "opensees" in f
+        if not has_zone:
+            why = "it has no /opensees zone, so no element records to read"
+        else:
+            bare = _uncovered_solid_nodes(fem, path, where=where)
+            if not bare:
                 return path
-        why = "it has no /opensees zone, so no element records to read"
+            why = (
+                f"none of its elements touches {len(bare)} node(s) on solid "
+                f"cells of this fem ({bare[:10]}), so it is not the model "
+                "this deck ran (another bridge on the same mesh and "
+                "model_name wrote it last) and its roles would call those "
+                "nodes' slots element-less rotations"
+            )
     warnings.warn(
         f"{where}: ignored {path} as the deck's model archive: {why}. The "
         "rotations follow the rules for a call without model_h5=; pass "
@@ -617,6 +632,25 @@ def _discover_archive(fem: Any, *, where: str) -> "Path | None":
         stacklevel=3,
     )
     return None
+
+
+def _uncovered_solid_nodes(
+    fem: Any, model_h5: Path, *, where: str,
+) -> list[int]:
+    """The sorted fem nodes on a solid (3-D) cell that no element of
+    ``model_h5`` touches (``RotationRoles.touched`` of
+    :func:`~apeGmsh.opensees._recorder_translate.model_h5_rotation_roles`).
+    Empty when the archive covers every solid node, or there is none."""
+    from .._recorder_translate import model_h5_rotation_roles
+
+    solid: set[int] = set()
+    for group in fem.elements:
+        if int(group.element_type.dim) == 3:
+            solid.update(int(n) for n in np.unique(group.connectivity))
+    if not solid:
+        return []
+    roles = model_h5_rotation_roles(model_h5, sorted(solid), where=where)
+    return sorted(solid - roles.touched)
 
 
 def _has_solid_cells(fem: Any) -> bool:
@@ -1099,9 +1133,11 @@ class ParallelModalResult:
         1. **The deck's own archive.** ``modal_deck`` leaves the bridge's
            archive at ``default_artifact_dir() / f"{fem.model_name}.h5"``.
            When that file's ``/meta/lineage`` ``fem_hash`` is
-           ``fem.snapshot_id`` and it holds ``/opensees``, its roles are
-           used as if passed. A file there that does not match is
-           ignored, with one :class:`StaleModelArchiveWarning`.
+           ``fem.snapshot_id``, it holds ``/opensees``, and its elements
+           touch every fem node on a solid cell, its roles are used as if
+           passed. A file there that fails a check (another run, or
+           another bridge on the same mesh and name that wrote it last)
+           is ignored, with one :class:`StaleModelArchiveWarning`.
         2. **A 3-D deck of ndf 6 on a fem with no solid (3-D) cell**
            writes DOFs 4-6 of every node as rotations, silently, as main
            did: without a 3-D cell there is no u-p element, so the slot
