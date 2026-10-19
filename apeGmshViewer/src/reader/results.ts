@@ -33,7 +33,9 @@
 
 import { LINE_STATION_COMPONENTS, type LineStationComponent, type UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits } from "../state/units.ts";
-import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./read.ts";
+import { NEUTRAL_TARGET, OPENSEES_TARGET, programDecls, ZONE_FLOOR } from "./read.ts";
+import type { ProgramDecls } from "../model/types.ts";
+import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
 export const RESULTS_TARGET = { major: 1, minor: 2 } as const;
@@ -91,6 +93,8 @@ interface RGroup extends RNode {
 interface RDataset extends RNode {
   shape: number[] | null;
   metadata: { type: number; size: number };
+  /** a compound dataset's `[name, type]` members (read by `readProgram` only) */
+  dtype: unknown;
   value: unknown;
   slice(ranges: ([] | [number | null] | [number | null, number | null])[]): unknown;
 }
@@ -234,6 +238,14 @@ export interface ResultsIndex {
    * file embeds no `/opensees`.
    */
   programDecl: string | null;
+  /**
+   * The embedded `/opensees/program`'s side-channel calls and their
+   * declaration proof (read.ts `programDecls`, #2189): the pairing names the
+   * opensees 2.32.0 `model_hash` change from it. null when the file embeds no
+   * `/opensees`, its decls marker is not "complete", it has no program, or a
+   * warning says the table could not be read.
+   */
+  program: ProgramDecls | null;
   stages: StageInfo[];
   warnings: string[];
   /**
@@ -306,6 +318,7 @@ export class ResultsFile {
       unavailableZones: embedded.unavailable,
       openseesVersion: embedded.openseesVersion,
       programDecl: this.readProgramDecl(f),
+      program: this.readProgram(f, warnings),
       stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
       warnings,
       lineage,
@@ -321,6 +334,30 @@ export class ResultsFile {
     if (!ops.keys().includes("decls")) return "absent";
     const marker = this.group(ops, "decls").attrs["program_decl"]?.value;
     return marker === undefined ? "absent" : typeof marker === "string" ? marker : JSON.stringify(marker);
+  }
+
+  /**
+   * The embedded `/opensees/program` (see `ResultsIndex.program`), read only
+   * when the embedded decls marker reads "complete" (the 2.32.0 rule needs
+   * it); an unreadable table warns and reads as null.
+   */
+  private readProgram(f: RFile, warnings: string[]): ProgramDecls | null {
+    if (this.readProgramDecl(f) !== "complete") return null;
+    const ops = this.group(f, "opensees");
+    if (!ops.keys().includes("program")) return null;
+    const node = ops.get("program");
+    if (!(node instanceof this.h5.Dataset)) {
+      warnings.push(`${ops.path}/program is not a dataset; the results pairing does not read it`);
+      return null;
+    }
+    const ds = node as RDataset;
+    const columns = Array.isArray(ds.dtype) ? (ds.dtype as unknown[]).map((m) => String((m as unknown[])[0])) : [];
+    const out = programDecls(ds.path, ds.attrs["methods"]?.value, columns, () => ds.value, SIDE_CHANNEL_DECL_VERBS);
+    if (typeof out === "string") {
+      warnings.push(`${out}; the results pairing does not read it`);
+      return null;
+    }
+    return out;
   }
 
   /** `/meta/lineage@{fem,model,results}_hash`; a stamp that is not a string is refused, never read as absent. */

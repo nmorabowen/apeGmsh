@@ -8,13 +8,13 @@
 // returns and fails on a TypedArray, an ArrayBuffer, a Map or a Set.
 
 import type { Field } from "../chain/resolve.ts";
-import type { Definitions, OpsFamily, Param, SequenceZone } from "../model/types.ts";
+import type { Definitions, OpsFamily, Param, ProgramDecls, SequenceZone } from "../model/types.ts";
 
 // Panels import their chain types from here, never from src/chain (the
 // panel allow-list: state/store, state/selectors, state/types, ui/).
 export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 // The model-definition data, as the reader read it (plain data: no typed array).
-export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, OpsFamily, SequenceZone, StageDef, Table } from "../model/types.ts";
+export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, OpsFamily, ProgramDecls, SequenceZone, StageDef, Table } from "../model/types.ts";
 
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
@@ -338,6 +338,14 @@ export interface ResultsInfo {
    * version stamp, says whether the results' model_hash includes declaration ids.
    */
   programDecl: string | null;
+  /**
+   * #2189: the embedded `/opensees/program`'s side-channel calls and whether
+   * each carries a declaration (reader/read.ts `programDecls`). The pairing
+   * names the opensees 2.32.0 model_hash change from it (state/results.ts).
+   * null (no program, a marker that is not "complete", a .ladruno) or absent
+   * (an info built without it) names no cause.
+   */
+  program?: ProgramDecls | null;
   /**
    * V4c2a: the element-id verdict; element contours draw only for a verified
    * file (#1711/#1752). Absent (a results info built without it) reads as
