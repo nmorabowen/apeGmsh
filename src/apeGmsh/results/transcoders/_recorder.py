@@ -57,15 +57,12 @@ from ...opensees._response_catalog import (
 )
 from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
+from ..readers._out_fiber_io import read_fiber_record, read_per_material_gauss, write_fiber_records
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
-    FIBER_OUT_COLUMNS,
-    FIBER_OUT_WIDTH,
     element_tag_map,
-    fiber_record_class,
     layers_out_refusal,
     line_stations_from_local_force,
-    per_material_gauss_layout,
     refuse_non_elastic_local_force,
 )
 from ..writers._cache import quiet_emit_logical
@@ -165,7 +162,7 @@ class RecorderTranscoder:
                     self._write_gauss_records(w, sid, gauss)
                     self._write_line_station_records(w, sid, lines)
                     self._write_nodal_force_records(w, sid, nodal)
-                    self._write_fiber_records(w, sid, fibers)
+                    write_fiber_records(w, sid, fibers)
                     w.end_stage()
             partial.replace(self._target_path)
         finally:
@@ -179,7 +176,10 @@ class RecorderTranscoder:
         parse = {"nodes": self._parse_node_record, "gauss": self._parse_gauss_record,
                  "line_stations": self._parse_line_station_record,
                  "elements": self._parse_nodal_force_record,
-                 "fibers": self._parse_fiber_record}
+                 "fibers": lambda rec: read_fiber_record(rec, quiet_emit_logical(
+                     rec, output_dir=str(self._output_dir), file_format=self._file_format,
+                     stage_id=self._stage_id), lambda ids: _resolve_element_lengths(self._fem, ids),
+                     self._model_h5_src, self._spec.fem_snapshot_id)}
         payloads: dict[str, list] = {category: [] for category in parse}
         self.unsupported = []
         for rec in self._spec.records:
@@ -338,8 +338,9 @@ class RecorderTranscoder:
         ))
         if not logicals:
             return None
-        if logicals[0].response_tokens[0] == "material":
-            return self._parse_per_material_record(rec, logicals)
+        if logicals[0].response_tokens[0] == "material":   # _out_fiber_io
+            return _GaussRecordPayload(rec.name, np.asarray(rec.element_ids), *read_per_material_gauss(
+                rec, logicals, self._model_h5_src, self._spec.fem_snapshot_id))
         if len(logicals) > 1:
             raise ValueError(
                 f"Gauss record {rec.name!r} unexpectedly emitted "
@@ -387,138 +388,6 @@ class RecorderTranscoder:
             time=time,
             flat=flat,
         )
-
-    def _require_translated(self, rec: "ResolvedRecorderRecord") -> None:
-        """Refuse a fibre or per-material record whose ids no model pairs.
-
-        Its rows are labelled with the spec's FEM ids, which the emit
-        translated through the model's ``(fem_eid, tag)`` pairing; without
-        that model, or with ids it does not hold, the labels are unproven.
-        """
-        from ...opensees import OpenSeesModel
-        if self._model_h5_src is None:
-            raise ValueError(
-                f"Record {rec.name!r} ({rec.category}): its .out rows name "
-                f"elements by OpenSees tag, translated from FEM ids through "
-                f"the model's pairing. Pass the model (model_h5_src=, or "
-                f"Results.from_recorders(..., model=)).")
-        tags = element_tag_map(OpenSeesModel.from_h5(self._model_h5_src),
-                               fem_snapshot_id=self._spec.fem_snapshot_id)
-        missing = [int(e) for e in np.asarray(rec.element_ids) if int(e) not in tags]
-        if missing:
-            raise ValueError(
-                f"Record {rec.name!r} ({rec.category}): FEM element ids "
-                f"{missing[:10]} have no OpenSees element in the model.")
-
-    def _parse_per_material_record(
-        self, rec: "ResolvedRecorderRecord", logicals: list,
-    ) -> "_GaussRecordPayload":
-        """The ``material <gp> <token>`` files of a gauss record, one per
-        Gauss point, as one ``(T, E, n_GP * K)`` payload (GP-slow, the
-        :func:`unflatten` order). A material whose response width is not
-        the catalog's ``K`` fails the column check, never mis-decodes."""
-        self._require_translated(rec)
-        layout, class_name, int_rule = per_material_gauss_layout(rec)
-        if len(logicals) != layout.n_gauss_points:
-            raise ValueError(f"Gauss record {rec.name!r}: {len(logicals)} per-point "
-                             f"files for {layout.n_gauss_points} Gauss points.")
-        ids = np.asarray(rec.element_ids, dtype=np.int64)
-        time, per_gp = None, []
-        for lr in logicals:
-            t, flat = _txt.parse_element_file(
-                lr.file_path, lr, layout.n_components_per_gp)
-            if time is not None and not np.array_equal(t, time):
-                raise ValueError(f"{lr.file_path}: its time column differs from "
-                                 f"the record's other Gauss-point files.")
-            time = t
-            per_gp.append(flat)
-        assert time is not None
-        return _GaussRecordPayload(
-            record_name=rec.name,
-            element_ids=ids, class_name=class_name, int_rule=int_rule,
-            layout=layout, time=time,
-            flat=np.stack(per_gp, axis=2).reshape(time.size, ids.size, -1),
-        )
-
-    def _parse_fiber_record(
-        self, rec: "ResolvedRecorderRecord",
-    ) -> "_FiberRecordPayload | None":
-        """A ``section fiberData2`` file and its ``integrationPoints`` pair.
-
-        The pair gives each element's sections (one count per record, as
-        line stations) and their natural stations; the fibre file gives
-        ``n_sections * n_fibres * 6`` columns per element, element-major,
-        section-mid, fibre-fast: the MPCO fibre-slab order. No response
-        gives a section's fibre count, so every (element, section) must carry
-        one fibre table (``y, z, area, matTag``) on every row: a record whose
-        elements carry different fibre counts, which the column count alone
-        can hide, then reads as unequal tables and is refused.
-        """
-        class_name = fiber_record_class(rec)
-        logicals = list(quiet_emit_logical(
-            rec, output_dir=str(self._output_dir),
-            file_format=self._file_format, stage_id=self._stage_id,
-        ))
-        if not logicals:
-            return None
-        self._require_translated(rec)
-        fib_lr, gpx_lr = logicals
-        ids = np.asarray(rec.element_ids, dtype=np.int64)
-
-        def per_element(lr, unit: int) -> int:
-            row = np.loadtxt(lr.file_path, dtype=np.float64, max_rows=1, ndmin=1)
-            n, rem = divmod(row.size - 1, ids.size * unit)
-            if n < 1 or rem:
-                raise ValueError(
-                    f"{lr.file_path}: {row.size - 1} data columns are not "
-                    f"{ids.size} elements x a whole number of {unit}-value "
-                    f"entries; a fibres record needs one element class and "
-                    f"one section layout.")
-            return n
-
-        n_ip = per_element(gpx_lr, 1)
-        _, gpx = _txt.parse_element_file(gpx_lr.file_path, gpx_lr, n_ip)
-        xi = np.stack([normalise_integration_points(gpx[0, i], length) for i, length
-                       in enumerate(_resolve_element_lengths(self._fem, ids))])
-        n_fib = per_element(fib_lr, n_ip * FIBER_OUT_WIDTH)
-        time, flat = _txt.parse_element_file(
-            fib_lr.file_path, fib_lr, n_ip * n_fib * FIBER_OUT_WIDTH)
-        rows = flat.reshape(time.size, -1, FIBER_OUT_WIDTH)
-        geom = rows[0, :, :4]
-        table = geom[:n_fib]
-        if not np.array_equal(rows[:, :, :4].reshape(-1, n_fib, 4),
-                              np.broadcast_to(table, (rows.shape[0] * ids.size * n_ip, n_fib, 4))):
-            raise ValueError(
-                f"{fib_lr.file_path}: the fibre tables (y, z, area, matTag) "
-                f"differ between the record's sections or steps, so its "
-                f"{ids.size} elements cannot be split into fibres reliably: "
-                f".out carries no per-section fibre count. Split the record "
-                f"so that each holds one fibre section.")
-        return _FiberRecordPayload(
-            record_name=rec.name, class_name=class_name, time=time,
-            index=dict(
-                element_index=np.repeat(ids, n_ip * n_fib),
-                gp_index=np.tile(np.repeat(np.arange(n_ip, dtype=np.int64), n_fib), ids.size),
-                y=geom[:, 0], z=geom[:, 1], area=geom[:, 2],
-                material_tag=np.round(geom[:, 3]).astype(np.int64),
-                station_natural_coord=np.repeat(xi.ravel(), n_fib),
-            ),
-            components={c: np.ascontiguousarray(rows[:, :, FIBER_OUT_COLUMNS[c]])
-                        for c in rec.components},
-        )
-
-    def _write_fiber_records(
-        self, writer: NativeWriter, stage_id: str,
-        records: list["_FiberRecordPayload"],
-    ) -> None:
-        """Write each fibre payload as one fibers group."""
-        for i, fr in enumerate(records):
-            writer.write_fibers_group(
-                stage_id, "partition_0",
-                group_id=f"{fr.record_name}_{fr.class_name}_{i}",
-                section_tag=-1, section_class="(recorder)",
-                components=fr.components, **fr.index,
-            )
 
     def _write_gauss_records(
         self,
@@ -955,19 +824,6 @@ class _GaussRecordPayload:
         self.layout = layout
         self.time = time
         self.flat = flat
-
-
-class _FiberRecordPayload:
-    """One ``fibers`` record's parse: the fibre index columns and values."""
-    __slots__ = ("record_name", "class_name", "time", "index", "components")
-
-    def __init__(self, record_name: str, class_name: str, time: ndarray,
-                 index: dict[str, ndarray], components: dict[str, ndarray]) -> None:
-        self.record_name = record_name
-        self.class_name = class_name
-        self.time = time
-        self.index = index
-        self.components = components
 
 
 class _LineStationGroupPayload:

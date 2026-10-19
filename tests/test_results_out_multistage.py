@@ -159,9 +159,9 @@ def test_a_generator_of_stages_is_read_once(tmp_path: Path) -> None:
         assert [s.name for s in r.stages] == ["gravity", "shake"]
 
 
-def test_fibers_warn_before_a_cadence_mismatch_raises(tmp_path: Path) -> None:
-    """The order on main: the fiber/layer skip warns, then the step-count
-    mismatch between two records raises."""
+def test_layers_refused_before_a_cadence_mismatch_raises(tmp_path: Path) -> None:
+    """A layers record is refused by name while the stage is parsed, before
+    the step-count mismatch between two other records is checked."""
     fem = _MockFem([1, 2])
     out = tmp_path / "out"
     out.mkdir()
@@ -170,16 +170,15 @@ def test_fibers_warn_before_a_cadence_mismatch_raises(tmp_path: Path) -> None:
                                dt=None, n_steps=None, node_ids=np.array([1])),
         ResolvedRecorderRecord(category="nodes", name="b", components=("displacement_x",),
                                dt=None, n_steps=None, node_ids=np.array([2])),
-        ResolvedRecorderRecord(category="fibers", name="f", components=("fiber_stress",),
+        ResolvedRecorderRecord(category="layers", name="f", components=("fiber_stress",),
                                dt=None, n_steps=None, element_ids=np.array([1])),
     ))
     for name, time in (("a", [0.1, 0.2]), ("b", [0.1, 0.2, 0.3])):
         _write_synthetic_node_out(out / f"{name}_disp.out", time=time,
                                   node_ids=[int(name == "b") + 1], dofs=[1],
                                   value_fn=lambda k, nid, dof: 0.0)
-    with pytest.warns(UserWarning, match="cannot transcode fiber/layer"):
-        with pytest.raises(ValueError, match="cadences must match within one stage"):
-            RecorderTranscoder(spec, out, tmp_path / "t.h5", fem).run()
+    with pytest.raises(ValueError, match=r"'f' \(category='layers'\) is refused"):
+        RecorderTranscoder(spec, out, tmp_path / "t.h5", fem).run()
     assert not (tmp_path / "t.h5").exists()
 
 

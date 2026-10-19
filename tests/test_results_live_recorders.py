@@ -427,8 +427,8 @@ def test_emit_recorders_line_stations_emits_pair(tmp_path: Path) -> None:
 
 
 def test_emit_recorders_mixed_categories(tmp_path: Path) -> None:
-    """Spec with nodes + gauss + line_stations + skipped fibers — count
-    the recorders carefully."""
+    """Spec with nodes + gauss + line_stations + fibers — count the
+    recorders carefully."""
     spec = _make_spec(
         ResolvedRecorderRecord(
             category="nodes", name="n",
@@ -449,23 +449,23 @@ def test_emit_recorders_mixed_categories(tmp_path: Path) -> None:
             element_ids=np.array([20]),
         ),
         ResolvedRecorderRecord(
-            category="fibers", name="fib_skip",
+            category="fibers", name="fib",
             components=("fiber_stress",),
             dt=None, n_steps=None,
             element_ids=np.array([30]),
+            element_class_name="ForceBeamColumn3d",
         ),
     )
     fake = FakeOps()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
-            live.begin_stage("s")
-            # 1 (nodes) + 1 (gauss) + 2 (line_stations pair) = 4
-            assert len(fake.recorder_calls) == 4
-            assert live.tags == (1, 2, 3, 4)
-            live.end_stage()
-    assert any("fib_skip" in str(w.message) for w in caught)
-    assert len(fake.remove_calls) == 4
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
+        live.begin_stage("s")
+        # 1 (nodes) + 1 (gauss) + 2 (line_stations pair) + 2 (fibres pair)
+        assert len(fake.recorder_calls) == 6
+        assert live.tags == (1, 2, 3, 4, 5, 6)
+        assert fake.recorder_calls[4][-2:] == ("section", "fiberData2")
+        assert fake.recorder_calls[5][-1] == "integrationPoints"
+        live.end_stage()
+    assert len(fake.remove_calls) == 6
 
 
 # =====================================================================
@@ -545,7 +545,9 @@ def test_single_use(tmp_path: Path) -> None:
             pass
 
 
-def test_skips_fiber_record_with_warning(tmp_path: Path) -> None:
+def test_refuses_layers_record_by_name(tmp_path: Path) -> None:
+    """A layers record raises at ``__enter__``, before any recorder, by
+    name, pointing at the routes that record layers."""
     spec = _make_spec(
         ResolvedRecorderRecord(
             category="nodes", name="ok",
@@ -554,28 +556,21 @@ def test_skips_fiber_record_with_warning(tmp_path: Path) -> None:
             node_ids=np.array([1]),
         ),
         ResolvedRecorderRecord(
-            category="fibers", name="non_recorder",
+            category="layers", name="non_recorder",
             components=("fiber_stress",),
             dt=None, n_steps=None,
             element_ids=np.array([100]),
         ),
     )
     fake = FakeOps()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
-            live.begin_stage("s")
-            assert len(fake.recorder_calls) == 1
-            assert fake.recorder_calls[0][0] == "Node"
-            live.end_stage()
-
-    msgs = [str(w.message) for w in caught]
-    assert any(
-        "non_recorder" in m and "category='fibers'" in m
-        and "emit_mpco" in m and "emit_default" in m
-        and "domain_capture" not in m
-        for m in msgs
-    ), msgs
+    with pytest.raises(ValueError) as info:
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)):
+            pass
+    m = str(info.value)
+    assert ("'non_recorder'" in m and "category='layers'" in m
+            and "emit_mpco" in m and "emit_default" in m
+            and "domain_capture" not in m), m
+    assert fake.recorder_calls == []
 
 
 # =====================================================================

@@ -364,5 +364,5 @@ def test_damage_decode_refuses_another_width(
     rec = _damage(cube["ids"])
     for lr in emit_logical(rec, output_dir=str(tmp_path)):
         _write(lr.file_path, np.ones((len(TIMES), 3)))    # a 3-value damage
-    with pytest.raises(ValueError, match="expected 3 columns"):
+    with pytest.raises(ValueError, match="data columns"):
         _transcode(cube, _spec(cube["fem"], rec), tmp_path, tmp_path / "r.h5")
