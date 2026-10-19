@@ -422,11 +422,19 @@ def test_a_fine_mesh_tells_noise_from_a_neighbour(tmp_path, shift, records) -> N
             _run(spec, tmp_path / "run", model_h5, ops)
 
 
-def test_the_tolerance_is_a_quarter_of_the_nearest_other_position() -> None:
+@pytest.mark.parametrize("budget", [4_000_000, 50],
+                         ids=["one-chunk", "many-chunks"])
+def test_the_tolerance_is_a_quarter_of_the_nearest_other_position(
+    monkeypatch, budget,
+) -> None:
     """Coincident nodes do not shrink each other's tolerance, and the grid
     search equals a brute-force nearest-neighbour search on a graded,
-    clustered cloud (the cells grow for the isolated points)."""
+    clustered cloud (the cells grow for the isolated points), whether the
+    candidate pairs fit one chunk or need many."""
+    from apeGmsh.opensees import _recorder_translate
     from apeGmsh.opensees._recorder_translate import _identity_tolerances
+
+    monkeypatch.setattr(_recorder_translate, "_PAIR_BUDGET", budget)
 
     coords = np.array([[0.0, 0.0], [0.0, 0.0], [2.0, 0.0], [2.0, 3.0]])
     np.testing.assert_allclose(_identity_tolerances(coords, np.arange(4)),

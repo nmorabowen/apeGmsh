@@ -500,6 +500,11 @@ def _same_position(coords: "ndarray") -> float:
     return 1e-9 * max(float(np.abs(coords).max(initial=0.0)), 1.0)
 
 
+#: Candidate pairs :func:`_near_points` forms at once (about 8 arrays of
+#: this length are alive per chunk).
+_PAIR_BUDGET = 4_000_000
+
+
 def _near_points(
     coords: "ndarray", rows: "ndarray", h: float, same: float,
 ) -> "tuple[ndarray, ndarray]":
@@ -511,6 +516,9 @@ def _near_points(
     Every point within ``h`` of a query lies in those cells, so a nearest
     distance at most ``h`` is exact. NumPy only: cells are matched by
     ``np.unique`` over integer cell tuples, so no cell index can overflow.
+    The query rows are taken in chunks of at most :data:`_PAIR_BUDGET`
+    candidate pairs (a single row may exceed it alone), so a dense cluster
+    bounds the memory, not the square of its cell's population.
     """
     import itertools
 
@@ -528,17 +536,25 @@ def _near_points(
     sorted_cells = inv[:n][order]
     lo = np.searchsorted(sorted_cells, inv[n:], "left")
     cnt = np.searchsorted(sorted_cells, inv[n:], "right") - lo
-    owner = np.repeat(np.arange(len(rows) * k) // k, cnt)
-    first = np.repeat(lo, cnt)
-    step = np.arange(int(cnt.sum())) - np.repeat(np.cumsum(cnt) - cnt, cnt)
-    cand = order[first + step]
-    dist = np.linalg.norm(coords[cand] - coords[rows[owner]], axis=1)
-    other = cand != rows[owner]
+    per_row = np.cumsum(cnt.reshape(len(rows), k).sum(axis=1))
     shared = np.zeros(len(rows), dtype=bool)
-    shared[owner[other & (dist <= same)]] = True
     best = np.full(len(rows), np.inf)
-    far = other & (dist > same)
-    np.minimum.at(best, owner[far], dist[far])
+    start = 0
+    while start < len(rows):
+        done = int(per_row[start - 1]) if start else 0
+        stop = max(start + 1, int(np.searchsorted(
+            per_row, done + _PAIR_BUDGET, "right")))
+        c = cnt[start * k:stop * k]
+        owner = start + np.repeat(np.arange((stop - start) * k) // k, c)
+        first = np.repeat(lo[start * k:stop * k], c)
+        step = np.arange(int(c.sum())) - np.repeat(np.cumsum(c) - c, c)
+        cand = order[first + step]
+        dist = np.linalg.norm(coords[cand] - coords[rows[owner]], axis=1)
+        other = cand != rows[owner]
+        shared[owner[other & (dist <= same)]] = True
+        far = other & (dist > same)
+        np.minimum.at(best, owner[far], dist[far])
+        start = stop
     return best, shared
 
 
