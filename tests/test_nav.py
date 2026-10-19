@@ -285,6 +285,25 @@ def test_impl_refuses_an_ambiguous_protocol_and_file_picks_one(root, capsys):
     assert out[0].startswith("Drawable (geo/shapes.py:10) declares 2 public methods")
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_ambiguous_candidates_ignore_filesystem_order(root, capsys, monkeypatch, reverse):
+    """#2258: the candidate list is sorted by path then line, whatever order
+    os.walk yields (it varies across Linux runners)."""
+    (root / "src" / "apeGmsh" / "geo" / "other.py").write_text(
+        "class Drawable:\n    def draw(self): ...\n")
+    real_walk = nav.os.walk
+
+    def walk(top):
+        for dirpath, dirnames, filenames in real_walk(top):
+            dirnames.sort(reverse=reverse)
+            yield dirpath, dirnames, sorted(filenames, reverse=reverse)
+
+    monkeypatch.setattr(nav.os, "walk", walk)
+    with pytest.raises(SystemExit, match=r"ambiguous: src/apeGmsh/geo/other.py:1, "
+                                         r"src/apeGmsh/geo/shapes.py:10 "):
+        run(root, capsys, "impl", "Drawable.draw")
+
+
 @pytest.mark.parametrize("line", ["0", "57"])
 def test_at_refuses_a_line_outside_the_file(root, capsys, line):
     with pytest.raises(SystemExit, match=f"shapes.py has 56 lines; line {line} is out of range"):
