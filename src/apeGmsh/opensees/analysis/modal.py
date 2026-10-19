@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._core import default_artifact_dir
 from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
@@ -48,8 +49,19 @@ __all__ = [
     "RandomResponseResult",
     "ResponseSpectrumResult",
     "RotationRolesUnavailableWarning",
+    "StaleModelArchiveWarning",
     "SteadyStateResult",
 ]
+
+
+class StaleModelArchiveWarning(UserWarning):
+    """:meth:`ParallelModalResult.to_native` found a file at the archive
+    path ``modal_deck`` writes (``default_artifact_dir() /
+    "<fem.model_name>.h5"``) and did not use it: its ``/meta/lineage``
+    ``fem_hash`` is not ``fem.snapshot_id`` (another run of the model), or
+    it has no lineage or no ``/opensees`` zone. The rotations then follow
+    the rules for a call without ``model_h5``. The message names the file
+    and the reason."""
 
 
 class RotationRolesUnavailableWarning(UserWarning):
@@ -561,6 +573,58 @@ def _native_fields(
     return spatial, slots
 
 
+def _discover_archive(fem: Any, *, where: str) -> "Path | None":
+    """The archive ``modal_deck`` left for ``fem``, or ``None``.
+
+    The bridge writes it at ``default_artifact_dir() /
+    f"{fem.model_name}.h5"`` after a deck emit (ADR 0112 D1). It is used
+    only when its ``/meta/lineage`` ``fem_hash`` equals
+    ``fem.snapshot_id`` and it holds the ``/opensees`` zone the roles
+    need. A file there that fails either check is ignored with one
+    :class:`StaleModelArchiveWarning`. An unnamed snapshot has no such
+    path, and no file there is nothing to say: both return ``None``
+    silently.
+    """
+    import warnings
+
+    import h5py
+
+    from .eigen import _lineage
+
+    name = fem.model_name
+    if not name:
+        return None
+    path = default_artifact_dir() / f"{name}.h5"
+    if not path.is_file():
+        return None
+    lineage = _lineage(path)
+    if lineage is None:
+        why = "it has no /meta/lineage hashes (or is not HDF5)"
+    elif lineage[1] != str(fem.snapshot_id):
+        why = (f"its fem_hash {lineage[1]!r} is not this fem's snapshot_id "
+               f"{str(fem.snapshot_id)!r} (another run of the model)")
+    else:
+        with h5py.File(path, "r") as f:
+            if "opensees" in f:
+                return path
+        why = "it has no /opensees zone, so no element records to read"
+    warnings.warn(
+        f"{where}: ignored {path} as the deck's model archive: {why}. The "
+        "rotations follow the rules for a call without model_h5=; pass "
+        "model_h5= (the archive the deck was emitted from, ops.h5) to "
+        "name it.",
+        StaleModelArchiveWarning,
+        stacklevel=3,
+    )
+    return None
+
+
+def _has_solid_cells(fem: Any) -> bool:
+    """Whether ``fem`` holds any 3-D (solid) cell, by its gmsh element
+    types (``fem.elements.types``, each with its ``dim``)."""
+    return any(int(t.dim) == 3 for t in fem.elements.types)
+
+
 def _fem_ndf_slots(
     fem: Any, rec: "Sequence[int]", ndf: int, ndm: int,
 ) -> "tuple[list[tuple[int, ...]], np.ndarray, list[tuple[int, str]]]":
@@ -1030,18 +1094,30 @@ class ParallelModalResult:
 
         Without ``model_h5`` nothing is guessed. A deck whose DOF list
         reaches no rotation slot (2-D ndf 2, 3-D ndf 3 or 4) writes
-        translations only, silently. Otherwise each node's own ndf is read
-        from ``fem`` (``fem.nodes.ndf_for``): a 3-D node of ndf 6 holds
-        rotations in DOFs 4-6 and writes them, and a node whose own DOFs
-        reach no rotation slot (a 3-D u-p node, ndf 4) writes 0.0 there,
-        both silently. A node left unsettled, a 2-D node of ndf 3 (frame
-        or u-p) or one whose ndf ``fem`` does not carry, writes no
-        rotation (0.0 in the slot, or no ``rotation_*`` at all when no node
-        holds one), with one :class:`RotationRolesUnavailableWarning` that
-        names the nodes and says to pass ``model_h5=``. A fem snapshot the
-        bridge built carries no per-node ndf (the bridge keeps it in the
-        archive's ``/opensees/nodes_ndf``), so for it every node of such a
-        deck is unsettled.
+        translations only, silently. Otherwise, in this order:
+
+        1. **The deck's own archive.** ``modal_deck`` leaves the bridge's
+           archive at ``default_artifact_dir() / f"{fem.model_name}.h5"``.
+           When that file's ``/meta/lineage`` ``fem_hash`` is
+           ``fem.snapshot_id`` and it holds ``/opensees``, its roles are
+           used as if passed. A file there that does not match is
+           ignored, with one :class:`StaleModelArchiveWarning`.
+        2. **A 3-D deck of ndf 6 on a fem with no solid (3-D) cell**
+           writes DOFs 4-6 of every node as rotations, silently, as main
+           did: without a 3-D cell there is no u-p element, so the slot
+           holds a frame or shell rotation or zero padding, never a
+           pressure.
+        3. **Otherwise** each node's own ndf is read from ``fem``
+           (``fem.nodes.ndf_for``): a 3-D node of ndf 6 writes its
+           rotations, and a node whose own DOFs reach no rotation slot (a
+           3-D u-p node, ndf 4) writes 0.0 there, both silently. A node
+           left unsettled, a 2-D node of ndf 3 (frame or u-p) or one
+           whose ndf ``fem`` does not carry, writes no rotation (0.0 in
+           the slot, or no ``rotation_*`` at all when no node holds one),
+           with one :class:`RotationRolesUnavailableWarning` that names
+           the nodes and says to pass ``model_h5=``. A fem snapshot the
+           bridge built carries no per-node ndf, so for it every node of
+           such a deck is unsettled.
 
         ``fem`` must be the same FEM snapshot the deck was emitted from
         (the recorder column order is the sorted mesh node tags).
@@ -1071,14 +1147,26 @@ class ParallelModalResult:
         ndf = int(shapes.shape[2])
         rec = [int(n) for n in self._shape_nodes]
         rotation_slots: tuple[int, ...] = ()
+        roles_h5: "str | Any | None" = model_h5
         if model_h5 is None:
             ndm = int(self._shape_ndm if self._shape_ndm is not None else 3)
-            n_trans = min(3, ndm, ndf)
             reach = [s for s in _node_layout(ndf, ndm)
                      if s in _NATIVE_ROTATION_SLOTS.get(ndm, ())]
+            if reach:
+                roles_h5 = _discover_archive(fem, where=where)
+        if roles_h5 is None:
+            n_trans = min(3, ndm, ndf)
             if not reach:
                 spatial = np.zeros(shapes.shape[:2] + (6,), dtype=np.float64)
                 spatial[..., :n_trans] = shapes[..., :n_trans]
+            elif ndm == 3 and ndf == 6 and not _has_solid_cells(fem):
+                # No 3-D cell, so no u-p (or other solid) element: every
+                # node is a frame, shell or element-less node, and DOFs
+                # 4-6 are rotations or zero padding (a truss or membrane
+                # node), never a pressure. What main wrote, unchanged.
+                spatial, rotation_slots = _native_fields(
+                    shapes, [_node_layout(6, 3)] * len(rec),
+                    np.ones(len(rec), dtype=bool), ndm)
             else:
                 layouts, rotations, unsettled = _fem_ndf_slots(
                     fem, rec, ndf, ndm)
@@ -1100,11 +1188,11 @@ class ParallelModalResult:
                         stacklevel=2,
                     )
         else:
-            model = _deck_archive(model_h5, rec, self._shape_ndm, where=where)
+            model = _deck_archive(roles_h5, rec, self._shape_ndm, where=where)
             ndm = int(model.ndm)
             n_trans = min(3, ndm, ndf)
             layouts, rotations, unresolved = _ladruno_slots(
-                Path(model_h5), rec, model.nodes_ndf, ndm, where=where)
+                Path(roles_h5), rec, model.nodes_ndf, ndm, where=where)
             spatial, rotation_slots = _native_fields(
                 shapes, layouts, rotations, ndm)
             _warn_unresolved(where, unresolved, 2)

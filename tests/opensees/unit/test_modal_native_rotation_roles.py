@@ -124,15 +124,17 @@ def _of(caught: list[warnings.WarningMessage], cls: type) -> list[Any]:
 # ---------------------------------------------------------------------------
 
 def test_reproducer_without_model_h5_writes_no_rotation(
-    fem3: Any, tmp_path: Path,
+    tmp_path: Path,
 ) -> None:
-    """Sidecar ndf 6, row ``[0.1, 0.2, 0.3, 777, 0, 0]``: column 4 may be a
-    rotation or a pressure, so no rotation_* is written, with one warning
-    that names the fix, raised from the caller's line."""
+    """Sidecar ndf 6, row ``[0.1, 0.2, 0.3, 777, 0, 0]``, on a fem with
+    solid cells and no per-node ndf: column 4 may be a rotation or a
+    pressure, so no rotation_* is written, with one warning that names
+    the fix, raised from the caller's line."""
     shapes = np.array([[[0.1, 0.2, 0.3, 777.0, 0.0, 0.0]]])
     res = ParallelModalResult.from_job(_job(tmp_path, [1], shapes, 3))
 
-    comps, caught = _native(res, tmp_path / "m.h5", fem3)
+    comps, caught = _native(
+        res, tmp_path / "m.h5", _NdfFem([1], {}, solid=True))
 
     assert set(comps) == {"displacement_x", "displacement_y", "displacement_z"}
     assert [comps[c][1] for c in sorted(comps)] == [0.1, 0.2, 0.3]
@@ -452,3 +454,303 @@ def test_eigen_model_h5_names_the_roles_archive(
 
     assert a == b
     assert set(_ROT) <= set(a)
+
+
+# ---------------------------------------------------------------------------
+# Without model_h5: the deck's own archive, then the solid-free fallback
+# (T's ruling on #2225: a plain 3-D frame keeps the rotations main wrote)
+# ---------------------------------------------------------------------------
+
+def _frame_3d(g: Any, *, with_up: bool) -> tuple[Any, apeSees, list[int], list[int]]:
+    """A session-built 3-D portal frame (ndf 6), optionally beside a
+    LadrunoUP box (ndf 4): ``(fem, ops, frame_nodes, up_nodes)``."""
+    G = g.model.geometry
+    a, b = G.add_point(3.0, 0.0, 0.0), G.add_point(3.0, 0.0, 2.0)
+    c, d = G.add_point(5.0, 0.0, 2.0), G.add_point(5.0, 0.0, 0.0)
+    lines = [G.add_line(a, b), G.add_line(b, c), G.add_line(c, d)]
+    if with_up:
+        box = G.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+    g.model.sync()
+    g.physical.add(1, lines, name="Frame")
+    if with_up:
+        g.physical.add(3, [box], name="Soil")
+        g.mesh.structured.set_transfinite_box("Soil", n=2)
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(3 if with_up else 1)
+    g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data()
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    ops.element.elasticBeamColumn(
+        pg="Frame", transf=ops.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0)),
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    up: list[int] = []
+    if with_up:
+        ops.element.LadrunoUP(
+            pg="Soil",
+            material=ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0),
+            Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4, 1e-4),
+        )
+        up = sorted(int(n) for n in fem.nodes.select(pg="Soil").ids)
+    frame = sorted(int(n) for n in fem.nodes.select(pg="Frame").ids)
+    return fem, ops, frame, up
+
+
+def _rows(fem: Any, frame: list[int], up: list[int]) -> np.ndarray:
+    """One mode: frame rows ``[1..6] + node``, u-p rows ``[.., .., .., 777,
+    0, 0]`` (ux, uy, uz, p padded to ndf 6)."""
+    ids = _ids(fem)
+    out = np.zeros((1, ids.size, 6))
+    for i, n in enumerate(ids.tolist()):
+        if n in up:
+            out[0, i] = [0.1, 0.2, 0.3, 777.0, 0.0, 0.0]
+        else:
+            out[0, i] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+            out[0, i] += 0.01 * n
+    return out
+
+
+def _conventional(fem: Any) -> Path:
+    from apeGmsh._core import default_artifact_dir
+
+    return default_artifact_dir() / f"{fem.model_name}.h5"
+
+
+def _emit_deck(ops: apeSees, tmp_path: Path) -> None:
+    ops.modal_deck(str(tmp_path / "deck.tcl"), band=(0.1, 100.0))
+
+
+def test_found_matching_archive_gives_the_roles(g: Any, tmp_path: Path) -> None:
+    """``modal_deck`` leaves the archive at the conventional path with this
+    fem's hash: its roles are used. A frame beside a u-p box keeps the
+    frame's rotations, the u-p nodes get 0.0 (never 777), no warning."""
+    fem, ops, frame, up = _frame_3d(g, with_up=True)
+    _emit_deck(ops, tmp_path)
+    assert _conventional(fem).is_file()
+    shapes = _rows(fem, frame, up)
+    res = ParallelModalResult.from_job(_job(tmp_path, _ids(fem), shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    assert caught == []
+    row = {int(n): i for i, n in enumerate(_ids(fem))}
+    for n in frame:
+        assert [comps[c][n] for c in _ROT] == shapes[0, row[n], 3:].tolist()
+    for n in up:
+        assert [comps[c][n] for c in _ROT] == [0.0, 0.0, 0.0]
+    assert 777.0 not in {v for c in comps.values() for v in c.values()}
+
+
+def test_stale_archive_is_ignored_with_a_warning(g: Any, tmp_path: Path) -> None:
+    """The file at the conventional path carries another fem_hash: it is
+    ignored with one StaleModelArchiveWarning naming it, and the call
+    falls through to the rules without an archive (a pure frame: the
+    solid-free fallback keeps the rotations)."""
+    import h5py
+
+    from apeGmsh.opensees.analysis.modal import StaleModelArchiveWarning
+
+    fem, ops, frame, _ = _frame_3d(g, with_up=False)
+    _emit_deck(ops, tmp_path)
+    archive = _conventional(fem)
+    with h5py.File(archive, "r+") as f:
+        f["meta/lineage"].attrs["fem_hash"] = "0" * 16
+    shapes = _rows(fem, frame, [])
+    res = ParallelModalResult.from_job(_job(tmp_path, _ids(fem), shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    stale = _of(caught, StaleModelArchiveWarning)
+    assert len(stale) == 1 and len(_of(caught, UserWarning)) == 1
+    assert "fem_hash" in str(stale[0].message)
+    assert archive.name in str(stale[0].message)
+    assert Path(stale[0].filename) == Path(__file__)
+    for i, n in enumerate(_ids(fem).tolist()):
+        assert [comps[c][n] for c in _ROT] == shapes[0, i, 3:].tolist()
+
+
+def test_stale_archive_is_not_read_for_roles(g: Any, tmp_path: Path) -> None:
+    """A stale archive whose roles would keep the frame rotations of a
+    solid model is still not used: the u-p + frame model with its
+    fem_hash changed omits every rotation and warns twice (stale, then
+    the roles it lacks)."""
+    import h5py
+
+    from apeGmsh.opensees.analysis.modal import StaleModelArchiveWarning
+
+    fem, ops, frame, up = _frame_3d(g, with_up=True)
+    _emit_deck(ops, tmp_path)
+    with h5py.File(_conventional(fem), "r+") as f:
+        f["meta/lineage"].attrs["fem_hash"] = "0" * 16
+    shapes = _rows(fem, frame, up)
+    res = ParallelModalResult.from_job(_job(tmp_path, _ids(fem), shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    assert len(_of(caught, StaleModelArchiveWarning)) == 1
+    assert len(_of(caught, RotationRolesUnavailableWarning)) == 1
+    assert not set(_ROT) & set(comps)
+
+
+@pytest.mark.parametrize("shell", [False, True])
+def test_pure_frame_or_shell_without_archive_keeps_rotations(
+    g: Any, tmp_path: Path, shell: bool,
+) -> None:
+    """No archive (the bridge never emitted) and no solid cell: every node
+    is a frame or shell node, so DOFs 4-6 are rotations; silent."""
+    G = g.model.geometry
+    if shell:
+        G.add_rectangle(0.0, 0.0, 0.0, 2.0, 1.0)
+        g.model.sync()
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(2)
+    else:
+        G.add_line(G.add_point(0.0, 0.0, 0.0), G.add_point(0.0, 0.0, 3.0))
+        g.model.sync()
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(1)
+    g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data()
+    assert not _conventional(fem).exists()
+    ids = _ids(fem)
+    shapes = _rows(fem, ids.tolist(), [])
+    res = ParallelModalResult.from_job(_job(tmp_path, ids, shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    assert caught == []
+    for i, n in enumerate(ids.tolist()):
+        assert [comps[c][n] for c in _ROT] == shapes[0, i, 3:].tolist()
+
+
+def test_solids_without_archive_omit_rotations_with_the_warning(
+    g: Any, tmp_path: Path,
+) -> None:
+    """A frame beside a u-p box, no archive: solid cells are present and
+    the fem carries no ndf, so every rotation is omitted, one warning
+    names the fix, and 777 is never written."""
+    fem, _ops, frame, up = _frame_3d(g, with_up=True)
+    assert not _conventional(fem).exists()
+    shapes = _rows(fem, frame, up)
+    res = ParallelModalResult.from_job(_job(tmp_path, _ids(fem), shapes, 3))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    named = _of(caught, RotationRolesUnavailableWarning)
+    assert len(named) == 1 and len(_of(caught, UserWarning)) == 1
+    assert "model_h5=" in str(named[0].message)
+    assert not set(_ROT) & set(comps)
+    assert 777.0 not in {v for c in comps.values() for v in c.values()}
+
+
+def test_2d_ndf_3_without_archive_warns(g: Any, tmp_path: Path) -> None:
+    """2-D ndf 3, no archive, no solid cell (a frame column only): still
+    ambiguous (``(ux, uy, rz)`` or ``(ux, uy, p)``), so no rotation_z and
+    the warning; the solid-free fallback is a 3-D rule only."""
+    G = g.model.geometry
+    G.add_line(G.add_point(0.0, 0.0, 0.0), G.add_point(0.0, 2.0, 0.0))
+    g.model.sync()
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(1)
+    fem = g.mesh.queries.get_fem_data()
+    ids = _ids(fem)
+    shapes = np.array([[[1.0, 2.0, 3.0 + i] for i in range(ids.size)]])
+    res = ParallelModalResult.from_job(_job(tmp_path, ids, shapes, 2))
+
+    comps, caught = _native(res, tmp_path / "m.h5", fem)
+
+    assert len(_of(caught, RotationRolesUnavailableWarning)) == 1
+    assert set(comps) == {"displacement_x", "displacement_y"}
+
+
+# ---------------------------------------------------------------------------
+# A plain 3-D frame writes exactly what origin/main's writer wrote
+# ---------------------------------------------------------------------------
+
+def _main_to_native(
+    eigenvalues: Any, nodes: Any, shapes: np.ndarray, ndm: int,
+    path: Path, fem: Any,
+) -> None:
+    """``ParallelModalResult.to_native`` as on origin/main at ``a1dddeac``
+    (and ``_write_mode_stages`` with it), frozen here as the oracle: the
+    first ``min(3, ndm, ndf)`` columns as displacements and, at ndf >= 6,
+    columns 4-6 as rotations, for every node."""
+    import math
+
+    from apeGmsh.results.writers._native import NativeWriter
+
+    ndf = int(shapes.shape[2])
+    n_trans, rotations = min(3, ndm, ndf), ndf >= 6
+    axes = ("x", "y", "z")
+    writer = NativeWriter(path)
+    writer.open(fem=fem, source_type="parallel_modal",
+                source_path="<modal_deck harvest>")
+    try:
+        for mode_idx, lam in enumerate(eigenvalues, start=1):
+            lam_f = float(lam)
+            omega = math.sqrt(lam_f) if lam_f > 0 else 0.0
+            sid = writer.begin_stage(
+                name=f"mode_{mode_idx}", kind="mode", time=np.array([0.0]),
+                eigenvalue=lam_f,
+                frequency_hz=float(omega / (2.0 * math.pi)),
+                period_s=float(2.0 * math.pi / omega) if omega > 0 else 0.0,
+                mode_index=mode_idx,
+            )
+            field = shapes[mode_idx - 1]
+            comps = {f"displacement_{axes[a]}": field[:, a][None, :]
+                     for a in range(n_trans)}
+            if rotations:
+                for a in range(3):
+                    comps[f"rotation_{axes[a]}"] = field[:, 3 + a][None, :]
+            writer.write_nodes(sid, "partition_0",
+                               node_ids=np.asarray(nodes), components=comps)
+            writer.end_stage()
+    finally:
+        writer.close()
+
+
+def _stage_walk(path: Path) -> dict[str, Any]:
+    """Every dataset and attr under ``/stages`` (stage ids by mode)."""
+    out: dict[str, Any] = {}
+    with h5py.File(path, "r") as f:
+        stages = f["stages"]
+        for sid in stages:
+            key = f"mode_{int(stages[sid].attrs['mode_index'])}"
+            for a, v in stages[sid].attrs.items():
+                out[f"{key}@{a}"] = np.asarray(v).tolist()
+
+            def visit(name: str, obj: Any, key: str = key) -> None:
+                if isinstance(obj, h5py.Dataset):
+                    out[f"{key}/{name}"] = (
+                        obj.dtype.str, np.asarray(obj[()]).tolist())
+            stages[sid].visititems(visit)
+    return out
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_plain_3d_frame_matches_mains_writer(
+    g: Any, tmp_path: Path, archive: bool,
+) -> None:
+    """A plain 3-D frame, ``to_native(path, fem)`` with no ``model_h5``:
+    with the deck's archive found or with none, ``/stages`` is dataset
+    for dataset and attr for attr what origin/main's writer wrote."""
+    fem, ops, frame, _ = _frame_3d(g, with_up=False)
+    if archive:
+        _emit_deck(ops, tmp_path)
+    assert _conventional(fem).is_file() is archive
+    ids = _ids(fem)
+    shapes = np.concatenate([_rows(fem, frame, []), -_rows(fem, frame, [])])
+    res = ParallelModalResult.from_job(_job(tmp_path, ids, shapes, 3))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res.to_native(tmp_path / "ours.h5", fem)
+    _main_to_native(res.eigenvalues, ids, shapes, 3,
+                    tmp_path / "main.h5", fem)
+
+    ours, main = _stage_walk(tmp_path / "ours.h5"), _stage_walk(
+        tmp_path / "main.h5")
+    assert sum("rotation_" in k for k in main) == 2 * 3
+    assert ours.keys() == main.keys()
+    assert {k for k in ours if ours[k] != main[k]} == set()
+

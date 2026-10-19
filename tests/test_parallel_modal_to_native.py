@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -25,14 +26,30 @@ from tests.conftest import _open_model_from_h5
 from tests.test_results_domain_capture import _MockFem
 
 
+class _Cells(list):  # type: ignore[type-arg]
+    """An empty element list (what ``compute_snapshot_id`` iterates) that
+    also answers ``.types`` with gmsh types of the given ``dim``s."""
+
+    def __init__(self, dims: "tuple[int, ...]") -> None:
+        super().__init__()
+        self.types = [SimpleNamespace(dim=d) for d in dims]
+
+
 class _NdfFem(_MockFem):
     """``_MockFem`` that carries a per-node ndf (``fem.nodes.ndf_for``):
     one value for every node, or a ``{node: ndf}`` table; a node outside
     the table raises ``LookupError``, as ``NodeComposite.ndf_for`` does
-    for an undeclared ndf."""
+    for an undeclared ndf. ``solid`` says whether its gmsh element types
+    include a 3-D cell; it has no ``model_name``, so no conventional
+    archive path (#2203)."""
 
-    def __init__(self, node_ids: list[int], ndf: "int | dict[int, int]") -> None:
+    def __init__(
+        self, node_ids: list[int], ndf: "int | dict[int, int]",
+        *, solid: bool = True,
+    ) -> None:
         super().__init__(node_ids)
+        self.model_name = None
+        self.elements = _Cells((1, 3) if solid else (1,))
         table = (dict(ndf) if isinstance(ndf, dict)
                  else {int(n): int(ndf) for n in node_ids})
 
