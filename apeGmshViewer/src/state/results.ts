@@ -89,7 +89,6 @@ function hashEraCause(
  * the step in the message only: no rule here reads a version stamp.
  */
 export const SIDE_CHANNEL_DECL_FROM = { major: 2, minor: 32 } as const;
-const SIDE_CHANNEL_BOUNDARY = `${SIDE_CHANNEL_DECL_FROM.major}.${SIDE_CHANNEL_DECL_FROM.minor}.0`;
 
 /**
  * The six verbs whose calls first carried a proved declaration at
@@ -109,6 +108,19 @@ export const SIDE_CHANNEL_DECL_VERBS: readonly string[] = [
 
 /** Python's `Results.SIDE_CHANNEL_HASH_CAUSE`, verbatim (the drift test pins it). */
 export const SIDE_CHANNEL_HASH_CAUSE = "hash change (side-channel calls' declaration ids entered model_hash)";
+
+/**
+ * Python's whole line (`_side_channel_hash_cause`), one per direction, as
+ * literals so tests/test_app_hash_232_drift.py compares each with Python's
+ * output: frame, step, phrase and remedy. FORWARD: the model's hash includes
+ * the side-channel ids and the results' does not; REVERSE: the other way.
+ * test/results/pairing.test.ts checks they carry `SIDE_CHANNEL_DECL_FROM` and
+ * `SIDE_CHANNEL_HASH_CAUSE`.
+ */
+export const SIDE_CHANNEL_LINE_FORWARD =
+  "likely cause: the opensees schema 2.32.0 hash change (side-channel calls' declaration ids entered model_hash); re-run the analysis against the re-saved model, or open the results with the model.h5 they were run on";
+export const SIDE_CHANNEL_LINE_REVERSE =
+  "likely cause: the opensees schema 2.32.0 hash change (side-channel calls' declaration ids entered model_hash); open the results with the model.h5 they were run on, or re-run the analysis against this model";
 
 /**
  * Whether a side's side-channel calls carry a proved declaration (Python
@@ -138,10 +150,7 @@ export function sideChannelProof(program: ProgramDecls | null | undefined): bool
  */
 function sideChannelHashCause(resultsProof: boolean | null, modelProof: boolean | null): string | null {
   if (resultsProof === null || modelProof === null || resultsProof === modelProof) return null;
-  const remedy = modelProof
-    ? "re-run the analysis against the re-saved model, or open the results with the model.h5 they were run on"
-    : "open the results with the model.h5 they were run on, or re-run the analysis against this model";
-  return `likely cause: the opensees schema ${SIDE_CHANNEL_BOUNDARY} ${SIDE_CHANNEL_HASH_CAUSE}; ${remedy}`;
+  return modelProof ? SIDE_CHANNEL_LINE_FORWARD : SIDE_CHANNEL_LINE_REVERSE;
 }
 
 /**
@@ -184,7 +193,7 @@ export function pairResults(
     if (cause === null && recordsProgramDecl(model.programDecl) === true && recordsProgramDecl(results.programDecl) === true) {
       cause = sideChannelHashCause(sideChannelProof(results.program), sideChannelProof(model.program));
     }
-    if (cause)return { state: "mismatch", reason: `model_hash differs: ${cause} (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
+    if (cause) return { state: "mismatch", reason: `model_hash differs: ${cause} (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
     return { state: "mismatch", reason: `model_hash differs: the results were written from another model (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
   }
   if (r.femHash !== null) {

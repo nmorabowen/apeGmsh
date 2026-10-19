@@ -339,10 +339,11 @@ export interface ResultsInfo {
    */
   programDecl: string | null;
   /**
-   * #2189: the embedded `/opensees/program`'s methods and whether each carries
-   * a declaration (reader/read.ts `programDecls`). The pairing names the
-   * opensees 2.32.0 model_hash change from it (state/results.ts). null (no
-   * program, a .ladruno) or absent (an info built without it) names no cause.
+   * #2189: the embedded `/opensees/program`'s side-channel calls and whether
+   * each carries a declaration (reader/read.ts `programDecls`). The pairing
+   * names the opensees 2.32.0 model_hash change from it (state/results.ts).
+   * null (no program, a marker that is not "complete", a .ladruno) or absent
+   * (an info built without it) names no cause.
    */
   program?: ProgramDecls | null;
   /**

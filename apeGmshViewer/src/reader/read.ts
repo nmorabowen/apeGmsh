@@ -33,6 +33,7 @@ import type {
   ProgramDecls,
   Table,
 } from "../model/types.ts";
+import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 
 /** The parts of the h5wasm module this reader uses. */
 export interface H5Module {
@@ -444,14 +445,17 @@ class Reader {
   }
 
   /**
-   * `/opensees/program`'s methods and their declaration proof
-   * (`programDecls`), read for the results pairing only (#2189). null when
-   * the zone has no program (a rewrite below 2.23.0 writes none); a table
-   * that cannot be read is a loud warning and null, so the pairing names no
-   * cause from it, and the model still opens.
+   * `/opensees/program`'s side-channel calls and their declaration proof
+   * (`programDecls`), read for the results pairing only (#2189). Read only
+   * where the 2.32.0 rule can use it: the decls marker reads "complete", and
+   * the table itself only when `@methods` names a side-channel verb. null
+   * when the marker is not "complete" or the zone has no program (a rewrite
+   * below 2.23.0 writes none); a table that cannot be read is a loud warning
+   * and null, so the pairing names no cause from it, and the model still opens.
    */
   private readProgram(g: H5Group): ProgramDecls | null {
-    if (!has(g, "program")) return null;
+    if (!has(g, "program") || !has(g, "decls")) return null;
+    if (this.group(g, "decls").attrs["program_decl"]?.value !== "complete") return null;
     const node = g.get("program");
     if (!(node instanceof this.h5.Dataset)) {
       this.warnings.push(`${joinPath(g.path, "program")} is not a dataset; the results pairing does not read it`);
@@ -460,7 +464,7 @@ class Reader {
     const ds = node as H5Dataset;
     const dt = ds.dtype;
     const columns = Array.isArray(dt) ? (dt as unknown[]).map((m) => String((m as unknown[])[0])) : [];
-    const out = programDecls(ds.path, ds.attrs["methods"]?.value, columns, ds.json_value);
+    const out = programDecls(ds.path, ds.attrs["methods"]?.value, columns, () => ds.value, SIDE_CHANNEL_DECL_VERBS);
     if (typeof out === "string") {
       this.warnings.push(`${out}; the results pairing does not read it`);
       return null;
@@ -1049,28 +1053,36 @@ function mergeParams(p: Param | Param[] | undefined, s: Param | Param[] | undefi
 
 /**
  * `/opensees/program` (h5-schema.md, opensees 2.23.0) as `ProgramDecls`: for
- * each method a run calls (`method` indexes `@methods`), whether one of its
- * runs carries a declaration (`decl >= 0`). Shared by this reader (the model)
- * and reader/results.ts (the results' embedded zone), so both sides read the
- * table one way. Returns the reason, naming `path`, when the table is not the
- * schema's: no `method` or `decl` column, no `@methods` list, or a method
- * index outside it.
+ * each of `verbs` a run calls (`method` indexes `@methods`), whether one of
+ * its runs carries a declaration (`decl >= 0`). Shared by this reader (the
+ * model) and reader/results.ts (the results' embedded zone), so both sides
+ * read the table one way. `rows` is called only when `@methods` names one of
+ * `verbs`: a program that cannot call one is `{}` without reading its table.
+ *
+ * Returns the reason, naming `path`, when the table is not the schema's: no
+ * `method` or `decl` column, an `@methods` that is not a 1-D list of strings
+ * (a scalar string is refused: h5wasm reads a one-name list as `["x"]`, and
+ * Python reads a scalar as its characters, so it would name no verb), or a
+ * method index outside it.
  */
-export function programDecls(path: string, methods: unknown, columns: readonly string[], rows: unknown): ProgramDecls | string {
+export function programDecls(path: string, methods: unknown, columns: readonly string[], rows: () => unknown, verbs: readonly string[]): ProgramDecls | string {
   const im = columns.indexOf("method");
   const id = columns.indexOf("decl");
   if (im < 0 || id < 0) return `${path} has no method and decl columns (it has ${JSON.stringify(columns)})`;
-  const names = typeof methods === "string" ? [methods] : methods;
-  if (!Array.isArray(names) || !names.every((x) => typeof x === "string")) return `${path}@methods is not a list of strings`;
-  if (!Array.isArray(rows)) return `${path} is not a compound table`;
+  if (!Array.isArray(methods) || !methods.every((x) => typeof x === "string")) return `${path}@methods is not a list of strings`;
+  const names = methods as string[];
+  const wanted = new Set(verbs);
   const out: Record<string, boolean> = Object.create(null) as Record<string, boolean>;
-  for (const [k, row] of rows.entries()) {
+  if (!names.some((n) => wanted.has(n))) return out;
+  const table = rows();
+  if (!Array.isArray(table)) return `${path} is not a compound table`;
+  for (const [k, row] of table.entries()) {
     const m = Array.isArray(row) ? Number(row[im]) : Number.NaN;
     const d = Array.isArray(row) ? Number(row[id]) : Number.NaN;
     if (!Number.isInteger(m) || m < 0 || m >= names.length) return `${path}[${k}].method is ${String(m)}, outside the ${names.length} names of @methods`;
     if (!Number.isInteger(d)) return `${path}[${k}].decl is not an integer`;
-    const name = names[m] as string;
-    out[name] = (out[name] ?? false) || d >= 0;
+    const name = names[m]!;
+    if (wanted.has(name)) out[name] = (out[name] ?? false) || d >= 0;
   }
   return out;
 }

@@ -35,6 +35,7 @@ import { LINE_STATION_COMPONENTS, type LineStationComponent, type UnitSystemId }
 import { parseDeclaredUnits } from "../state/units.ts";
 import { NEUTRAL_TARGET, OPENSEES_TARGET, programDecls, ZONE_FLOOR } from "./read.ts";
 import type { ProgramDecls } from "../model/types.ts";
+import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
 export const RESULTS_TARGET = { major: 1, minor: 2 } as const;
@@ -95,7 +96,6 @@ interface RDataset extends RNode {
   /** a compound dataset's `[name, type]` members (read by `readProgram` only) */
   dtype: unknown;
   value: unknown;
-  json_value: unknown;
   slice(ranges: ([] | [number | null] | [number | null, number | null])[]): unknown;
 }
 interface RFile extends RGroup {
@@ -239,10 +239,11 @@ export interface ResultsIndex {
    */
   programDecl: string | null;
   /**
-   * The embedded `/opensees/program`'s methods and their declaration proof
-   * (read.ts `programDecls`, #2189): the pairing names the opensees 2.32.0
-   * `model_hash` change from it. null when the file embeds no `/opensees`, or
-   * no program, or a table a warning says it could not read.
+   * The embedded `/opensees/program`'s side-channel calls and their
+   * declaration proof (read.ts `programDecls`, #2189): the pairing names the
+   * opensees 2.32.0 `model_hash` change from it. null when the file embeds no
+   * `/opensees`, its decls marker is not "complete", it has no program, or a
+   * warning says the table could not be read.
    */
   program: ProgramDecls | null;
   stages: StageInfo[];
@@ -335,9 +336,13 @@ export class ResultsFile {
     return marker === undefined ? "absent" : typeof marker === "string" ? marker : JSON.stringify(marker);
   }
 
-  /** The embedded `/opensees/program` (see `ResultsIndex.program`); an unreadable table warns and reads as null. */
+  /**
+   * The embedded `/opensees/program` (see `ResultsIndex.program`), read only
+   * when the embedded decls marker reads "complete" (the 2.32.0 rule needs
+   * it); an unreadable table warns and reads as null.
+   */
   private readProgram(f: RFile, warnings: string[]): ProgramDecls | null {
-    if (!f.keys().includes("opensees")) return null;
+    if (this.readProgramDecl(f) !== "complete") return null;
     const ops = this.group(f, "opensees");
     if (!ops.keys().includes("program")) return null;
     const node = ops.get("program");
@@ -347,7 +352,7 @@ export class ResultsFile {
     }
     const ds = node as RDataset;
     const columns = Array.isArray(ds.dtype) ? (ds.dtype as unknown[]).map((m) => String((m as unknown[])[0])) : [];
-    const out = programDecls(ds.path, ds.attrs["methods"]?.value, columns, ds.json_value);
+    const out = programDecls(ds.path, ds.attrs["methods"]?.value, columns, () => ds.value, SIDE_CHANNEL_DECL_VERBS);
     if (typeof out === "string") {
       warnings.push(`${out}; the results pairing does not read it`);
       return null;

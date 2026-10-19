@@ -163,9 +163,10 @@ export interface DeclTable {
 
 /**
  * `/opensees/program` (opensees 2.23.0) reduced to what the results pairing
- * reads (#2189): each Protocol method the program calls, `true` when one of
- * its runs carries a declaration (`decl >= 0`), `false` when every run is
- * `-1`. A name in `@methods` that no run calls is not a key. Read only for
+ * reads (#2189): each side-channel verb (state/results.ts
+ * `SIDE_CHANNEL_DECL_VERBS`) the program calls, `true` when one of its runs
+ * carries a declaration (`decl >= 0`), `false` when every run is `-1`. No
+ * other method is a key; `{}` is a program that calls none. Read only for
  * the results pairing (state/results.ts `sideChannelProof`).
  */
 export type ProgramDecls = Readonly<Record<string, boolean>>;
@@ -230,7 +231,7 @@ export interface Definitions {
   stages: StageDef[];
   /** `/opensees/constraints/embeddedRebar` (opensees 2.29.0), read for the bond material each tie names; null when the file has no such group */
   embeddedRebar: EmbeddedRebarTies | null;
-  /** `/opensees/program`'s calls and their declaration proof (#2189); null when the file has none, or a warning says why it was not read */
+  /** `/opensees/program`'s side-channel calls and their declaration proof (#2189); null when the decls marker is not "complete", the file has no program, or a warning says why it was not read */
   program: ProgramDecls | null;
 }
 

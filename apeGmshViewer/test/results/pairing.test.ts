@@ -11,7 +11,17 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { pairingNotice, pairResults, SIDE_CHANNEL_DECL_VERBS, sideChannelProof } from "../../src/state/results.ts";
+import {
+  pairingNotice,
+  pairResults,
+  SIDE_CHANNEL_DECL_FROM,
+  SIDE_CHANNEL_DECL_VERBS,
+  SIDE_CHANNEL_HASH_CAUSE,
+  SIDE_CHANNEL_LINE_FORWARD,
+  SIDE_CHANNEL_LINE_REVERSE,
+  sideChannelProof,
+} from "../../src/state/results.ts";
+import { openModel } from "../../src/reader/node.ts";
 import { programDecls } from "../../src/reader/read.ts";
 import { noticesOf, resultsPairing } from "../../src/state/selectors.ts";
 import { initialState, reduce, type State } from "../../src/state/store.ts";
@@ -369,6 +379,8 @@ test("V4L-b1: element_index_space \"fem\" verifies the element rows; absent is u
 
 const FORWARD = "re-run the analysis against the re-saved model, or open the results with the model.h5 they were run on";
 const REVERSE = "open the results with the model.h5 they were run on, or re-run the analysis against this model";
+/** The `/opensees/program` columns (h5-schema.md, opensees 2.23.0). */
+const COLS = ["first", "count", "method", "store", "row", "stage", "decl"];
 /** Python's line (`_side_channel_hash_cause`), verbatim, inside the viewer's reason. */
 const scLine = (remedy: string, rv = "cccccccc", mv = "bbbbbbbb") =>
   `model_hash differs: likely cause: the opensees schema 2.32.0 hash change (side-channel calls' declaration ids entered model_hash); ${remedy} (results ${rv}…, model ${mv}…)`;
@@ -450,24 +462,43 @@ test("#2189: sideChannelProof reads only the six verbs; a decl of 0 is a proof",
     assert.equal(sideChannelProof({ [verb]: true }), true, verb);
     assert.equal(sideChannelProof({ [verb]: false }), false, verb);
   }
-  // programDecls: decl 0 proves, -1 does not; a run of any verb with decl >= 0 makes it proved.
-  const cols = ["first", "count", "method", "store", "row", "stage", "decl"];
-  const t = programDecls("/opensees/program", ["node", "set_node_vel", "update_parameter", "unused"], cols, [
-    [1, 4, 0, 0, 0, -1, -1],
+  // programDecls: decl 0 proves, -1 does not; a run of a verb with decl >= 0 makes it proved; other methods are no key.
+  const t = programDecls("/opensees/program", ["node", "set_node_vel", "update_parameter", "unused"], COLS, () => [
+    [1, 4, 0, 0, 0, -1, 0],
     [5, 1, 1, 1, 0, 0, -1],
     [6, 1, 1, 1, 1, 0, 0],
     [7, 1, 2, 2, 0, 0, -1],
-  ]);
-  assert.deepEqual({ ...(t as ProgramDecls) }, { node: false, set_node_vel: true, update_parameter: false });
+  ], SIDE_CHANNEL_DECL_VERBS);
+  assert.deepEqual({ ...(t as ProgramDecls) }, { set_node_vel: true, update_parameter: false });
   assert.equal(sideChannelProof(t as ProgramDecls), true);
 });
 
+test("#2189: the two sentences are Python's frame around SIDE_CHANNEL_DECL_FROM and SIDE_CHANNEL_HASH_CAUSE", () => {
+  const head = `likely cause: the opensees schema ${SIDE_CHANNEL_DECL_FROM.major}.${SIDE_CHANNEL_DECL_FROM.minor}.0 ${SIDE_CHANNEL_HASH_CAUSE}; `;
+  assert.equal(SIDE_CHANNEL_LINE_FORWARD, head + FORWARD);
+  assert.equal(SIDE_CHANNEL_LINE_REVERSE, head + REVERSE);
+});
+
+test("#2189: programDecls reads the table only when @methods names a side-channel verb", () => {
+  let read = 0;
+  const rows = () => {
+    read += 1;
+    return [[1, 1, 0, 0, 0, -1, 0]];
+  };
+  assert.deepEqual({ ...(programDecls("/p", ["node", "element"], COLS, rows, SIDE_CHANNEL_DECL_VERBS) as ProgramDecls) }, {});
+  assert.equal(read, 0, "a program that cannot call a side-channel verb is never read");
+  assert.deepEqual({ ...(programDecls("/p", ["set_node_vel"], COLS, rows, SIDE_CHANNEL_DECL_VERBS) as ProgramDecls) }, { set_node_vel: true });
+  assert.equal(read, 1);
+});
+
 test("#2189: programDecls refuses a table that is not the schema's, naming the path", () => {
-  const cols = ["first", "count", "method", "store", "row", "stage", "decl"];
-  assert.match(programDecls("/opensees/program", ["a"], ["first", "method"], []) as string, /^\/opensees\/program has no method and decl columns/);
-  assert.match(programDecls("/opensees/program", undefined, cols, []) as string, /@methods is not a list of strings/);
-  assert.match(programDecls("/opensees/program", ["a"], cols, [[1, 1, 3, 0, 0, -1, -1]]) as string, /\[0\]\.method is 3, outside the 1 names of @methods/);
-  assert.match(programDecls("/opensees/program", ["a"], cols, [[1, 1, 0, 0, 0, -1, 0.5]]) as string, /\[0\]\.decl is not an integer/);
+  const V = SIDE_CHANNEL_DECL_VERBS;
+  assert.match(programDecls("/opensees/program", ["a"], ["first", "method"], () => [], V) as string, /^\/opensees\/program has no method and decl columns/);
+  assert.match(programDecls("/opensees/program", undefined, COLS, () => [], V) as string, /@methods is not a list of strings/);
+  // A scalar @methods is refused (review of 66a19a33): Python iterates it as characters and names no verb.
+  assert.match(programDecls("/opensees/program", "set_node_vel", COLS, () => [[1, 1, 0, 0, 0, -1, -1]], V) as string, /@methods is not a list of strings/);
+  assert.match(programDecls("/opensees/program", ["set_node_vel"], COLS, () => [[1, 1, 3, 0, 0, -1, -1]], V) as string, /\[0\]\.method is 3, outside the 1 names of @methods/);
+  assert.match(programDecls("/opensees/program", ["set_node_vel"], COLS, () => [[1, 1, 0, 0, 0, -1, 0.5]], V) as string, /\[0\]\.decl is not an integer/);
 });
 
 test("#2189: a .ladruno never names an era cause (Python's non-native reader returns None)", () => {
@@ -509,15 +540,64 @@ const scResults = (proved: boolean) =>
     sideChannelCall(f, proved);
   });
 
-test("#2189: both readers read /opensees/program; the staged pair calls no side-channel verb", async () => {
-  const s = await stagedState();
-  const r = await stagedResults();
-  for (const p of [s.definitions?.program, r.info.program]) {
+/**
+ * The review's reproducer (66a19a33): every run is method 0 with decl -1, and
+ * `@methods` is `methods` (a scalar string, or a one-name list).
+ */
+function oneMethodProgram(f: h5wasm.File, methods: string | string[]): void {
+  const ds = f.get("opensees/program") as h5wasm.Dataset;
+  ds.delete_attribute("methods");
+  ds.create_attribute("methods", methods);
+  const dtype = ds.dtype as unknown as [string, string][];
+  (ds.value as number[][]).forEach((row, i) => {
+    const cols = new Map(dtype.map(([n, t], j) => [n, (t === "<h" ? Int16Array : Int32Array).from([n === "method" ? 0 : n === "decl" ? -1 : row[j]!])]));
+    ds.write_slice([[i, i + 1]], cols);
+  });
+}
+const oneMethodResults = (methods: string | string[]) =>
+  editedCopy(RESULTS, "staged_activation.results.h5", (f) => {
+    setAttr(f, "meta/lineage", "model_hash", H("e"));
+    setAttr(f, "opensees/decls", "program_decl", "complete");
+    oneMethodProgram(f, methods);
+  });
+
+test("#2189: both readers read /opensees/program only under a complete marker; the staged pair calls no side-channel verb", async () => {
+  // The staged pair (2.27.0) has no marker: the program is not read on either side.
+  assert.equal((await stagedState()).definitions?.program, null);
+  assert.equal((await stagedResults()).info.program, null);
+  // With the marker "complete": read, and no side-channel verb is called.
+  const s = await pairedState(editedCopy(MODEL, "staged_activation.h5", (f) => setAttr(f, "opensees/decls", "program_decl", "complete")), otherResults("complete"));
+  for (const p of [s.definitions?.program, s.results?.program]) {
     assert.ok(p);
-    assert.equal(p["remove_element"], false);
-    assert.equal(p["node"], false, "below 2.31 every decl is -1");
+    assert.deepEqual({ ...p }, {});
     assert.equal(sideChannelProof(p), null);
   }
+});
+
+test("#2189 (review reproducer): a scalar @methods is refused on the results side, with a warning, and names no cause", async () => {
+  const scalar = oneMethodResults("set_node_vel");
+  const r = await stagedResults(scalar);
+  assert.equal(r.info.program, null);
+  assert.ok(r.warnings.some((w) => /\/opensees\/program@methods is not a list of strings; the results pairing does not read it/.test(w)), r.warnings.join("\n"));
+  assert.equal(bannerReason(await pairedState(scModel(true), scalar)), "the results were written from another model (results eeeeeeee…, model f359ba2f…)");
+});
+
+test("#2189 (review reproducer): a scalar @methods is refused on the model side, with a warning, and names no cause", async () => {
+  const scalar = editedCopy(MODEL, "staged_activation.h5", (f) => {
+    setAttr(f, "opensees/decls", "program_decl", "complete");
+    oneMethodProgram(f, "set_node_vel");
+  });
+  const m = await openModel(scalar);
+  assert.equal(m.opensees?.definitions.program, null);
+  assert.ok(m.warnings.some((w) => /\/opensees\/program@methods is not a list of strings; the results pairing does not read it/.test(w)), m.warnings.join("\n"));
+  assert.equal(bannerReason(await pairedState(scalar, scResults(true))), "the results were written from another model (results eeeeeeee…, model f359ba2f…)");
+});
+
+test("#2189: a one-name @methods list (shape (1,)) still reads, and names the step", async () => {
+  const one = oneMethodResults(["set_node_vel"]);
+  const r = await stagedResults(one);
+  assert.deepEqual({ ...r.info.program! }, { set_node_vel: false });
+  assert.equal(`model_hash differs: ${bannerReason(await pairedState(scModel(true), one))}`, scLine(FORWARD, "eeeeeeee", "f359ba2f"));
 });
 
 test("#2189: through the readers, a proved model against unproved results names the step in the banner; the reverse too", async () => {

@@ -2,36 +2,41 @@
 equals Python's.
 
 ``apeGmshViewer/src/state/results.ts`` names the opensees schema 2.32.0
-``model_hash`` change with three constants copied from
+``model_hash`` change with constants copied from
 ``src/apeGmsh/results/Results.py`` (K, #2198):
 
 - ``SIDE_CHANNEL_DECL_VERBS``, the six verbs of that step (T's ruling on
   #2189: a TS copy, pinned here);
 - ``SIDE_CHANNEL_DECL_FROM``, the step itself, named in the message;
-- ``SIDE_CHANNEL_HASH_CAUSE``, the phrase of Python's line, so the banner
-  carries the sentence verbatim.
+- ``SIDE_CHANNEL_HASH_CAUSE``, the phrase of Python's line;
+- ``SIDE_CHANNEL_LINE_FORWARD`` / ``SIDE_CHANNEL_LINE_REVERSE``, Python's
+  whole line in each direction (frame, step, phrase and remedy), compared
+  with what ``_side_channel_hash_cause`` returns, so a change to any word of
+  Python's sentence fails here.
 
-This test parses both files **as text** (``ast`` for Python, a regex for
-TypeScript), the way ``test_app_ladruno_gate_drift.py`` does: it imports
-nothing across the ADR 0112 D4 wall, and the app imports nothing from here.
-Any difference fails.
+This test parses results.ts **as text** (a regex), the way
+``test_app_ladruno_gate_drift.py`` does, and Python's constants with ``ast``;
+the sentences are Python's own output. It imports nothing across the ADR 0112
+D4 wall, and the app imports nothing from here. Any difference fails.
 
-It also pins the ``.ladruno`` parity: Python names no era cause for a
-non-native reader (both results-side probes return ``None``), and the app
-never names one for a ``.ladruno`` (``test/results/pairing.test.ts``).
+It also pins the ``.ladruno`` parity: Python names no era cause for a real
+``.ladruno`` opened with ``Results.from_ladruno`` (both results-side probes
+return ``None``), and the app never names one for a ``.ladruno``
+(``test/results/pairing.test.ts``).
 """
 from __future__ import annotations
 
 import ast
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_TS = ROOT / "apeGmshViewer" / "src" / "state" / "results.ts"
 RESULTS_PY = ROOT / "src" / "apeGmsh" / "results" / "Results.py"
+#: A stamped fork ``.ladruno`` (apeGmshViewer/fixtures/make_ladruno_fixtures.py).
+LADRUNO = ROOT / "apeGmshViewer" / "fixtures" / "ladruno_truss2d.stamped.ladruno"
 
 _TS_VERBS = re.compile(
     r"^export const SIDE_CHANNEL_DECL_VERBS\s*(?::[^=]+)?=\s*"
@@ -45,6 +50,10 @@ _TS_FROM = re.compile(
 )
 _TS_CAUSE = re.compile(
     r'^export const SIDE_CHANNEL_HASH_CAUSE\s*=\s*"(?P<text>[^"]*)";', re.MULTILINE,
+)
+_TS_LINE = re.compile(
+    r'^export const SIDE_CHANNEL_LINE_(?P<dir>FORWARD|REVERSE)\s*=\s*"(?P<text>[^"]*)";',
+    re.MULTILINE,
 )
 _TS_STRING = re.compile(r'^\s*"(?P<s>[^"]*)"\s*$')
 
@@ -75,6 +84,19 @@ def parse_ts_cause(source: str) -> str:
     m = _TS_CAUSE.search(source)
     assert m is not None, f'{RESULTS_TS}: no `export const SIDE_CHANNEL_HASH_CAUSE = "...";`'
     return m.group("text")
+
+
+def parse_ts_lines(source: str) -> dict[str, str]:
+    """``SIDE_CHANNEL_LINE_FORWARD`` / ``_REVERSE`` from the results.ts text."""
+    found: dict[str, str] = {}
+    for m in _TS_LINE.finditer(source):
+        assert m.group("dir") not in found, f"{RESULTS_TS}: SIDE_CHANNEL_LINE_{m.group('dir')} is defined twice"
+        found[m.group("dir")] = m.group("text")
+    assert set(found) == {"FORWARD", "REVERSE"}, (
+        f"{RESULTS_TS}: expected `export const SIDE_CHANNEL_LINE_FORWARD =` and `_REVERSE =`, "
+        f"each a string literal; found {sorted(found)}"
+    )
+    return found
 
 
 def parse_py_constants(source: str) -> dict[str, object]:
@@ -143,16 +165,31 @@ def test_app_cause_phrase_is_pythons(results_ts: str, py_constants: dict[str, ob
     assert parse_ts_cause(results_ts) == py_constants["SIDE_CHANNEL_HASH_CAUSE"]
 
 
-def test_python_names_no_era_cause_for_a_non_native_reader() -> None:
-    """The ``.ladruno`` parity, Python's half: a reader that is not the
-    native one (``LadrunoReader``, ``MPCOReader``) gives ``None`` from both
-    results-side probes, so ``Results.lineage`` names no era cause. The app's
-    half is ``pairing.test.ts`` "a .ladruno never names an era cause"."""
-    from apeGmsh.results.Results import Results, _side_channel_hash_cause
+def test_app_sentences_are_pythons(results_ts: str) -> None:
+    """The whole line, both directions, against Python's own output:
+    ``_side_channel_hash_cause(results_proof, model_proof)``. FORWARD is the
+    model's hash with the ids (``model_proof`` True), REVERSE the results'."""
+    from apeGmsh.results.Results import _side_channel_hash_cause
 
-    stub = SimpleNamespace(_reader=object())
-    assert Results._results_records_program_decl(stub) is None  # type: ignore[arg-type]
-    assert Results._results_side_channel_proof(stub) is None  # type: ignore[arg-type]
+    lines = parse_ts_lines(results_ts)
+    assert lines["FORWARD"] == _side_channel_hash_cause(False, True)
+    assert lines["REVERSE"] == _side_channel_hash_cause(True, False)
+
+
+def test_python_names_no_era_cause_for_a_ladruno() -> None:
+    """The ``.ladruno`` parity, Python's half: a real ``.ladruno`` opened
+    with ``Results.from_ladruno`` (a ``LadrunoReader``) gives ``None`` from
+    both results-side probes, so ``Results.lineage`` names no era cause. The
+    app's half is ``pairing.test.ts`` "a .ladruno never names an era cause"."""
+    from apeGmsh.results.Results import Results, _side_channel_hash_cause
+    from apeGmsh.results.readers._ladruno import LadrunoReader
+
+    assert LADRUNO.is_file(), f"{LADRUNO} is missing"
+    results = Results.from_ladruno(LADRUNO)
+    reader = getattr(results._reader, "base_reader", results._reader)
+    assert isinstance(reader, LadrunoReader), type(reader)
+    assert results._results_records_program_decl() is None
+    assert results._results_side_channel_proof() is None
     assert _side_channel_hash_cause(None, True) is None
     assert _side_channel_hash_cause(None, False) is None
 
@@ -175,9 +212,12 @@ def test_parser_reads_the_committed_shape() -> None:
         "export const SIDE_CHANNEL_DECL_VERBS: readonly string[] = [\n"
         '  "x",\n  "y",\n] as const;\n'
         'export const SIDE_CHANNEL_HASH_CAUSE = "hash change (z)";\n'
+        'export const SIDE_CHANNEL_LINE_FORWARD =\n  "f; a";\n'
+        'export const SIDE_CHANNEL_LINE_REVERSE = "r; b";\n'
     )
     assert parse_ts_verbs(sample) == ("x", "y")
     assert parse_ts_from(sample) == (2, 32, 0)
     assert parse_ts_cause(sample) == "hash change (z)"
+    assert parse_ts_lines(sample) == {"FORWARD": "f; a", "REVERSE": "r; b"}
     with pytest.raises(AssertionError, match="not a string literal"):
         parse_ts_verbs("export const SIDE_CHANNEL_DECL_VERBS = [VERB] as const;\n")
