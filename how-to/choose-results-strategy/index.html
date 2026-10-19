@@ -1494,6 +1494,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#in-process-let-the-build-choose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In-process, let the build choose
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#export-classic-recorders" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3764,6 +3775,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#in-process-let-the-build-choose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In-process, let the build choose
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#export-classic-recorders" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4016,28 +4038,77 @@ the bridge and it opens with the domain:</p>
 <code>with recorder_spec.emit_mpco("run.mpco"):</code> does the same without touching
 the bridge. The <a href="../results-mpco/">MPCO how-to</a> covers partitioned runs and
 where to write the file.</p>
+<h3 id="in-process-let-the-build-choose">In-process, let the build choose<a class="headerlink" href="#in-process-let-the-build-choose" title="Permanent link">&para;</a></h3>
+<p><code>recorder_spec.emit_default(...)</code> picks the recorder from the openseespy
+build it finds, so one notebook runs unchanged on the fork, on a stock
+build with MPCO and on pip openseespy:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">build_bridge</span><span class="p">()</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">with</span> <span class="n">recorder_spec</span><span class="o">.</span><span class="n">emit_default</span><span class="p">(</span><span class="s2">"run"</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">"model.h5"</span><span class="p">)</span> <span class="k">as</span> <span class="n">run</span><span class="p">:</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="n">opspy</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">opspy</span><span class="o">.</span><span class="n">wipe</span><span class="p">()</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">results</span> <span class="o">=</span> <span class="n">run</span><span class="o">.</span><span class="n">results</span><span class="p">()</span>
+</span></code></pre></div>
+<p><code>run.route</code> says which recorder ran:</p>
+<table>
+<thead>
+<tr>
+<th>Build</th>
+<th>Writes</th>
+<th><code>run.results()</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>the Ladruno fork</td>
+<td><code>run.ladruno</code></td>
+<td>stamps the file with <code>model.h5</code>'s pairing, then <code>Results.from_ladruno</code></td>
+</tr>
+<tr>
+<td>stock, with MPCO</td>
+<td><code>run.mpco</code></td>
+<td><code>Results.from_mpco</code>, after one <code>DefaultRouteWarning</code></td>
+</tr>
+<tr>
+<td>pip, no MPCO</td>
+<td>classic <code>.out</code> files in <code>run_out/</code></td>
+<td><code>Results.from_recorders</code>, after one <code>DefaultRouteWarning</code></td>
+</tr>
+</tbody>
+</table>
+<p>The stock MPCO file is not converted to <code>.ladruno</code>, and it stays on
+<code>from_mpco</code>. An unstaged run maps to one stage, and that stage's kind
+(static or transient) has to be a fact. Your loop drives openseespy
+directly, so a <code>loadConst</code> or a second <code>opspy.analysis(...)</code> inside the
+block never reaches <code>model.h5</code>. <code>read_deck_mpco</code> below does not apply to
+an in-process run.
+<code>emit_default</code> refuses a rerun onto an existing <code>run.ladruno</code> unless you
+pass <code>overwrite=True</code>. It has no route for modal records.</p>
 <h3 id="export-classic-recorders">Export, classic recorders<a class="headerlink" href="#export-classic-recorders" title="Permanent link">&para;</a></h3>
 <p>Reach for this for cluster jobs and for decks you keep under version
 control. <code>ops.tcl</code> writes the model and its analysis chain, and a short
 driver adds the recorders and the analysis:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">build_bridge</span><span class="p">()</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"model.tcl"</span><span class="p">)</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">Path</span><span class="p">(</span><span class="s2">"run.tcl"</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">([</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="s2">"source model.tcl"</span><span class="p">,</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="s2">"file mkdir out"</span><span class="p">,</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="o">*</span><span class="n">recorder_spec</span><span class="o">.</span><span class="n">to_tcl_commands</span><span class="p">(</span><span class="n">output_dir</span><span class="o">=</span><span class="s2">"out"</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">),</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="s2">"analyze 10"</span><span class="p">,</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="s2">"wipe"</span><span class="p">,</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">])</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">build_bridge</span><span class="p">()</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"model.tcl"</span><span class="p">)</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">Path</span><span class="p">(</span><span class="s2">"run.tcl"</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">([</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="s2">"source model.tcl"</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="s2">"file mkdir out"</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="o">*</span><span class="n">recorder_spec</span><span class="o">.</span><span class="n">to_tcl_commands</span><span class="p">(</span><span class="n">output_dir</span><span class="o">=</span><span class="s2">"out"</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">),</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="s2">"analyze 10"</span><span class="p">,</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="s2">"wipe"</span><span class="p">,</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">])</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Run <code>run.tcl</code> wherever OpenSees lives, bring <code>out/</code> back beside <code>model.h5</code>,
 and read it. A deck's files carry no stage prefix, so the read takes no
 <code>stage_id=</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">recorder_spec</span><span class="p">,</span> <span class="s2">"out"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">recorder_spec</span><span class="p">,</span> <span class="s2">"out"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
 </span></code></pre></div>
 <p>For an openseespy deck,
 <code>recorder_spec.to_python_commands(output_dir="out", model=model)</code> returns
@@ -4045,21 +4116,33 @@ the same recorders as <code>ops.recorder(...)</code> lines.</p>
 <h3 id="export-mpco">Export, MPCO<a class="headerlink" href="#export-mpco" title="Permanent link">&para;</a></h3>
 <p>The STKO-shop production path, and the one that scales to parallel runs.
 The bridge's MPCO recorder rides into the deck as one <code>recorder mpco</code> line:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">build_bridge</span><span class="p">()</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">recorder</span><span class="o">.</span><span class="n">MPCO</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="s2">"run.mpco"</span><span class="p">,</span> <span class="n">nodal_responses</span><span class="o">=</span><span class="p">(</span><span class="s2">"displacement"</span><span class="p">,))</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"model.tcl"</span><span class="p">,</span> <span class="n">analyze_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">build_bridge</span><span class="p">()</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">recorder</span><span class="o">.</span><span class="n">MPCO</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="s2">"run.mpco"</span><span class="p">,</span> <span class="n">nodal_responses</span><span class="o">=</span><span class="p">(</span><span class="s2">"displacement"</span><span class="p">,))</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"model.tcl"</span><span class="p">,</span> <span class="n">analyze_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Run <code>model.tcl</code> under an OpenSees that has the MPCO recorder, then:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">"run.mpco"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">"model.h5"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">"run.mpco"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">"model.h5"</span><span class="p">)</span>
 </span></code></pre></div>
+<p><code>read_deck_mpco("run.mpco", model_h5="model.h5")</code>, from
+<code>apeGmsh.results.live</code>, reads the run as <code>.ladruno</code> instead. It is only for
+a <code>.mpco</code> written by running the bridge's own exported deck (<code>ops.py</code> or
+<code>ops.tcl</code>) out of process, as emitted. A staged deck (<code>ops.stage</code> blocks,
+each recording its kind) converts beside itself, and the <code>.mpco</code> is kept.
+An unstaged deck does not convert yet, because the archive does not record
+its kind as fact. <a href="https://github.com/nmorabowen/apeGmsh/issues/2210">#2210</a>
+records it. Until then, an unstaged deck is read with <code>from_mpco</code> after one
+warning that says so. Other refusals raise, even when the stages would not
+pair either, such as an archive of another model or an incomplete
+partition set. An in-process run is not a deck, so read its
+<code>.mpco</code> with <code>from_mpco</code>.</p>
 <h2 id="the-read-side-is-identical">The read side is identical<a class="headerlink" href="#the-read-side-is-identical" title="Permanent link">&para;</a></h2>
 <p>Whichever recipe ran, the query is the same:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">tip</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Tip"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_y"</span><span class="p">)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"tip deflection = </span><span class="si">{</span><span class="n">tip</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">results</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">tip</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Tip"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_y"</span><span class="p">)</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"tip deflection = </span><span class="si">{</span><span class="n">tip</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">results</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </span></code></pre></div>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>tip deflection = -6.75 mm
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>tip deflection = -6.75 mm
 </span></code></pre></div>
 <p>Everything else about reading, from stages and time slicing to modes,
 fibers and the viewers, works the same way whichever constructor opened the
