@@ -666,7 +666,7 @@ def _gp_param_for(
 
 
 # =====================================================================
-# GP_PARAM frame → gmsh reference coordinates (#2228)
+# GP_PARAM frame → gmsh reference coordinates
 # =====================================================================
 #
 # ``GaussSlab.natural_coords`` is gmsh reference coordinates for every
@@ -687,8 +687,8 @@ def _gp_param_for(
 #   gmsh already.
 #
 # Read as gmsh without converting, a TenNodeTetrahedron's corner values
-# came back rotated by one node and its GP world coordinates were off by
-# up to the element size, with no warning.
+# come back rotated by one node and its GP world coordinates are off by up
+# to the element size, with no warning.
 
 _SIMPLEX_NDIR = {"tri": 2, "tet": 3}
 

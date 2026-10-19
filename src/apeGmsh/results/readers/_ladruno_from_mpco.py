@@ -661,8 +661,8 @@ _TOPOLOGY_BY_COORDS = {
 #: The fork's Bernstein (Bezier) classes: their ``.ladruno`` FAMILY is
 #: ``bernstein`` (the element answers the ``basisInfo`` probe), every other
 #: catalog class is ``lagrange``. FAMILY also picks the frame of a
-#: triangle's ``GP_PARAM`` (#2228), so a BezierTri6 written as ``lagrange``
-#: read back with its points rotated.
+#: triangle's ``GP_PARAM``, so a BezierTri6 written as ``lagrange`` reads
+#: back with its points rotated.
 _BERNSTEIN_CLASSES = frozenset({"BezierTri6", "BezierTet10"})
 
 
