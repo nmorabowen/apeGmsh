@@ -293,6 +293,28 @@ def test_the_record_follows_the_loop_and_ends_the_deck(exported, dialect) -> Non
     assert block.rstrip().splitlines()[-1].startswith(rename)
 
 
+def test_a_torn_write_leaves_no_record(exported, monkeypatch) -> None:
+    """Atomic: the record is written to ``<name>.tmp`` and renamed, so a
+    write that fails half way leaves no ``.run.json`` for a reader to see."""
+    def torn(obj: Any, f: Any, *args: Any, **kw: Any) -> None:
+        f.write('{"schema": "apeg')
+        raise OSError("disk full")
+
+    monkeypatch.setattr(json, "dump", torn)
+    with pytest.raises(OSError, match="disk full"):
+        run_py(record_block(exported["py"]), build=None, done=STEPS)
+    final = exported["mpco"].with_name("deck.mpco" + DECK_RUN_SUFFIX)
+    assert not final.exists()
+    assert final.with_name(final.name + ".tmp").exists()
+    # The Tcl block takes the same two steps.
+    lines = record_block(exported["tcl"]).splitlines()
+    (opened,) = [ln for ln in lines if ln.startswith("set _apesees_f [open ")]
+    assert opened.endswith('.run.json.tmp" w]')
+    assert lines[-1].startswith("file rename -force ")
+    assert '.run.json.tmp" "' in lines[-1]
+    assert lines[-1].endswith('.run.json"')
+
+
 @pytest.mark.parametrize("dialect", ["py", "tcl"])
 def test_no_record_without_analyze_steps_or_an_mpco_recorder(
     tmp_path, dialect,
