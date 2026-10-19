@@ -9,10 +9,13 @@ user keeps driving the analysis loop themselves.
 Categories
 ----------
 - ``nodes``, ``elements``, ``gauss``, ``line_stations`` — emitted.
-- ``fibers``, ``layers`` — warn-and-skip (use MPCO or domain capture).
-- ``modal`` — raises at ``__enter__`` (needs ``ops.eigen()``
-  driving, which lives on :meth:`DomainCapture.capture_modes`,
-  opened with ``ops.domain_capture(spec, path=...)``).
+- ``fibers``, ``layers`` — warn-and-skip (use
+  ``ResolvedRecorderSpec.emit_default`` or ``emit_mpco``).
+- ``modal`` — raises at ``__enter__`` (modes need an eigen solve, not a
+  classic recorder; record them with ``ResolvedRecorderSpec.emit_mpco``,
+  whose ``modesOfVibration`` entry the MPCO reader reads), or run
+  ``ops.eigen(n)`` and write the returned ``EigenResult`` with
+  ``EigenResult.to_ladruno``, which needs no recorder).
 
 Multi-stage support
 -------------------
@@ -174,19 +177,20 @@ class LiveRecorders:
         self._opened = True
 
         # Modal records can't be emitted on the classic recorder path —
-        # they need ops.eigen() driving. Fail fast so the user knows
-        # to use domain capture for that portion.
+        # they need an eigen solve. Fail fast so the user knows to
+        # record that portion with spec.emit_mpco(...).
         for record in self._spec.records:
             if record.category in _MODAL_CATEGORIES:
                 raise RuntimeError(
                     f"LiveRecorders cannot emit modal record "
-                    f"{record.name!r}: modal capture requires "
-                    f"ops.eigen() driving. Remove the modal records "
-                    f"from the spec before calling emit_recorders, "
-                    f"and capture modes in-process instead: "
-                    f"cap = ops.domain_capture(DomainCaptureSpec("
-                    f"opensees=ops), path=...) then "
-                    f"cap.capture_modes(n)."
+                    f"{record.name!r}: modes are not a classic-recorder "
+                    f"result. Remove the modal records from the spec "
+                    f"before calling emit_recorders, and record them "
+                    f"with spec.emit_mpco(...) (modesOfVibration, read "
+                    f"with Results.from_mpco), or on any build run "
+                    f"ops.eigen(n) and write the returned EigenResult "
+                    f"with its writer, which needs no recorder. "
+                    f"spec.emit_default(...) does not record modes."
                 )
 
         # Translate (or refuse) every node and element recorder before
@@ -254,9 +258,8 @@ class LiveRecorders:
                     f"LiveRecorders: skipping record {record.name!r} "
                     f"(category={record.category!r}); fiber/layer "
                     f"data can't be emitted via classic recorders. "
-                    f"Use ops.domain_capture(DomainCaptureSpec("
-                    f"opensees=ops), path=...) for in-process capture "
-                    f"or spec.emit_mpco(...) for the STKO MPCO "
+                    f"Use spec.emit_default(...) for in-process "
+                    f"capture or spec.emit_mpco(...) for the STKO MPCO "
                     f"recorder.",
                     stacklevel=2,
                 )
