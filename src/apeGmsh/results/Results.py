@@ -170,6 +170,86 @@ def _model_hash_era_cause(
     )
 
 
+#: The opensees schema step at which the side-channel calls' declaration
+#: ids entered the hashed ``/opensees/program.decl`` column (#1853). The
+#: ``program_decl`` marker reads ``"complete"`` on both sides of it, so
+#: :func:`_model_hash_era_cause` cannot see it. This is the one step
+#: named this way: a later ``model_hash`` change gets a new marker value,
+#: never another version rule (#1911).
+SIDE_CHANNEL_DECL_FROM: tuple[int, int, int] = (2, 32, 0)
+
+#: The six verbs whose calls first carried a proved declaration at
+#: :data:`SIDE_CHANNEL_DECL_FROM`: the content of that one step, so it
+#: does not grow with the emitter.
+SIDE_CHANNEL_DECL_VERBS: frozenset[str] = frozenset({
+    "step_hook_ramp", "addToParameter", "flip_element_stage",
+    "update_parameter", "set_node_vel", "set_node_accel"})
+
+#: The phrase a ``model hash mismatch`` lineage warning carries when the
+#: two sides differ across :data:`SIDE_CHANNEL_DECL_FROM`. ``assess``
+#: keys its ``RES.LINEAGE`` message on it. It does not contain
+#: :data:`MODEL_HASH_ERA_CAUSE`.
+SIDE_CHANNEL_HASH_CAUSE = (
+    "hash change (side-channel calls' declaration ids entered model_hash)"
+)
+
+
+def _side_channel_proof(runs: "Iterable[tuple[str, int]]") -> bool | None:
+    """Whether an archive's side-channel calls carry a proved declaration.
+
+    ``runs`` are the ``(method, decl)`` pairs of ``/opensees/program``.
+    Returns ``None`` when no run is one of :data:`SIDE_CHANNEL_DECL_VERBS`,
+    ``True`` when one of them names a declaration (``decl >= 0``), so the
+    ids are in that archive's ``model_hash``, and ``False`` when every
+    one is ``-1``: an emit below :data:`SIDE_CHANNEL_DECL_FROM`, or a
+    ``to_h5`` rewrite of one, which echoes the old column.
+    """
+    proof: bool | None = None
+    for method, decl in runs:
+        if method in SIDE_CHANNEL_DECL_VERBS:
+            if decl >= 0:
+                return True
+            proof = False
+    return proof
+
+
+def _side_channel_hash_cause(
+    results_proof: bool | None, model_proof: bool | None,
+) -> str | None:
+    """Name the :data:`SIDE_CHANNEL_DECL_FROM` cause of a ``model_hash``
+    mismatch, or ``None``.
+
+    Called only when both sides record their program declarations (the
+    ``program_decl`` markers agree at ``"complete"``). Each argument is
+    :func:`_side_channel_proof` of one side's ``/opensees/program``. The
+    cause is named when both sides carry side-channel calls and exactly
+    one side's ``model_hash`` includes their declaration ids. It reads the
+    hashed column, not the ``opensees_schema_version`` stamp: a ``to_h5``
+    rewrite of an older archive is stamped current but keeps the old
+    column and hash. Still a heuristic ("likely"): the two models may also
+    differ in other ways.
+    """
+    if results_proof is None or model_proof is None:
+        return None
+    if results_proof == model_proof:
+        return None
+    boundary = ".".join(str(part) for part in SIDE_CHANNEL_DECL_FROM)
+    if model_proof:
+        remedy = (
+            "re-run the analysis against the re-saved model, or open the "
+            "results with the model.h5 they were run on"
+        )
+    else:
+        remedy = (
+            "open the results with the model.h5 they were run on, or "
+            "re-run the analysis against this model"
+        )
+    return (
+        f"likely cause: the opensees schema {boundary} "
+        f"{SIDE_CHANNEL_HASH_CAUSE}; {remedy}"
+    )
+
+
 def _resolve_results_kind(kind: str, path: Any) -> str:
     """Resolve ``Results.from_fem``'s ``kind`` to a concrete reader.
 
@@ -1140,10 +1220,20 @@ class Results:
                 # /opensees/decls@program_decl on the results file.
                 # Still a warning; a results file with no /opensees zone
                 # keeps the text.
-                cause = _model_hash_era_cause(
-                    self._results_records_program_decl(),
-                    records_program_decl(self._model.declarations),
-                )
+                results_records = self._results_records_program_decl()
+                model_records = records_program_decl(self._model.declarations)
+                cause = _model_hash_era_cause(results_records, model_records)
+                if cause is None and results_records and model_records:
+                    # Both markers "complete": the 2.32.0 step, when
+                    # exactly one side's side-channel calls carry their
+                    # declaration ids (#1911).
+                    cause = _side_channel_hash_cause(
+                        self._results_side_channel_proof(),
+                        _side_channel_proof(
+                            (run.method, run.decl)
+                            for run in self._model.program()
+                        ),
+                    )
                 if cause is not None:
                     message += "; " + cause
                 warnings.append(message)
@@ -1207,6 +1297,42 @@ class Results:
         if isinstance(marker, bytes):
             marker = marker.decode("utf-8", "replace")
         return marker is not None and str(marker) == PROGRAM_DECL_COMPLETE
+
+    def _results_side_channel_proof(self) -> "bool | None":
+        """:func:`_side_channel_proof` of the results file's embedded
+        ``/opensees/program`` (copied verbatim from the source model.h5).
+        ``None`` for a non-native reader, no program, a program whose
+        columns are not ``method`` / ``decl`` coded as the reader writes
+        them, or a closed handle: the cause is then never guessed. Called
+        only on a ``model_hash`` mismatch whose markers agree.
+        """
+        from .readers._native import NativeReader
+
+        reader = getattr(self._reader, "base_reader", self._reader)
+        if not isinstance(reader, NativeReader):
+            return None
+        h5 = reader._h5
+        try:
+            if "opensees" not in h5 or "program" not in h5["opensees"]:
+                return None
+            ds = h5["opensees"]["program"]
+            names = tuple(ds.dtype.names or ())
+            if "method" not in names or "decl" not in names:
+                return None
+            methods = [
+                m.decode("utf-8", "replace") if isinstance(m, bytes) else str(m)
+                for m in ds.attrs["methods"]
+            ]
+            table = ds[()]
+            codes = [int(m) for m in table["method"]]
+            if any(not 0 <= m < len(methods) for m in codes):
+                return None
+            pairs = [
+                (methods[m], int(d)) for m, d in zip(codes, table["decl"])
+            ]
+        except (KeyError, OSError, ValueError):
+            return None
+        return _side_channel_proof(pairs)
 
     def bind(self, fem: "FEMData") -> "Results":
         """Re-bind to ``fem``.

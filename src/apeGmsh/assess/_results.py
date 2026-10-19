@@ -59,7 +59,11 @@ def assess_results(
         message = f"{len(warnings)} lineage warning(s)"
         # Name the declaration-id hash change when one of the warnings
         # says that is the cause. Still a warning.
-        from apeGmsh.results.Results import MODEL_HASH_ERA_CAUSE
+        from apeGmsh.results.Results import (
+            MODEL_HASH_ERA_CAUSE,
+            SIDE_CHANNEL_DECL_FROM,
+            SIDE_CHANNEL_HASH_CAUSE,
+        )
 
         if any(MODEL_HASH_ERA_CAUSE in w for w in warnings):
             message += (
@@ -67,6 +71,16 @@ def assess_results(
                 f"{MODEL_HASH_ERA_CAUSE}, not corruption; re-run the analysis "
                 "against the re-saved model, or pair the results with the "
                 "model they were run on"
+            )
+        elif any(SIDE_CHANNEL_HASH_CAUSE in w for w in warnings):
+            # The 2.32.0 step (#1911): both markers agree, and exactly one
+            # side's side-channel calls carry their declaration ids.
+            step = ".".join(str(part) for part in SIDE_CHANNEL_DECL_FROM)
+            message += (
+                "; the model_hash mismatch likely spans the opensees schema "
+                f"{step} {SIDE_CHANNEL_HASH_CAUSE}, not corruption; re-run "
+                "the analysis against the re-saved model, or pair the "
+                "results with the model they were run on"
             )
         findings.append(_finding(
             "RES.LINEAGE",
