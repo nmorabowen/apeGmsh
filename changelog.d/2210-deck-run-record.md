@@ -41,7 +41,10 @@ your own `opspy.analyze` loop) never writes a record, so it never converts.
 A deck export never touches `model.h5` or `model_hash`. The hashes come from
 the bridge's automatic `model.h5` when it holds the same declarations.
 Otherwise the emitter builds the same archive in memory, so nothing is
-written to a temporary file.
+written to a temporary file. A partitioned model is the exception: building
+its archive at every export costs too much. When no cached lineage exists
+for it, the export writes no record lines and warns once, and its run is
+read with `Results.from_mpco`. #2263 restores conversion for this case.
 
 The record cannot catch a deck that someone edited by hand to run a different
 analysis.

@@ -189,10 +189,21 @@ def tcl() -> Any:
     error: "Exception | None" = None
     for _ in range(5):  # Windows sometimes fails one read of init.tcl
         try:
-            return tkinter.Tcl()
+            interp = tkinter.Tcl()
         except tkinter.TclError as e:
             error = e
             time.sleep(0.2)
+            continue
+        # The console has no stdout under pytest on Windows: a message the
+        # deck prints is collected in ``::_apesees_out`` instead; ``puts``
+        # to a channel (the record file) is the real one.
+        interp.eval("rename puts _apesees_puts; set ::_apesees_out {}")
+        interp.eval(
+            "proc puts {args} { if {[llength $args] == 1 || ([llength $args]"
+            " == 2 && [lindex $args 0] eq {-nonewline})} { lappend "
+            "::_apesees_out [lindex $args end] } else { _apesees_puts {*}$args"
+            " } }")
+        return interp
     pytest.skip(f"tkinter.Tcl() unavailable: {error}")
 
 
@@ -235,7 +246,8 @@ def read_record(mpco: Path, parts: "list[Path] | None" = None,
     assert sizes == [st.st_size for st in stats]
     assert all(st.st_size == 2004 + FLUSH for st in stats)  # after the close
     for m, st in zip(mtimes, stats):
-        assert m == (int(st.st_mtime) if isinstance(m, int) else st.st_mtime)
+        assert m == (st.st_mtime_ns // 10**9 if isinstance(m, int)
+                     else st.st_mtime)
     return rec
 
 
@@ -353,11 +365,10 @@ def test_the_record_follows_the_loop_and_ends_the_deck(exported, dialect) -> Non
     close = "ops.remove('recorders')" if dialect == "py" else "remove recorders"
     assert block[1] == close  # the recorders close before anything is stated
     rename = "_apesees_os.replace(" if dialect == "py" else "file rename -force "
-    last = block[-1] if dialect == "py" else block[-2]
-    assert last.strip().startswith(rename)
+    assert any(rename in ln for ln in block[-8:])  # the rename ends the deck
 
 
-def test_a_torn_write_leaves_no_record(exported, monkeypatch) -> None:
+def test_a_torn_write_leaves_no_record(exported, monkeypatch, capsys) -> None:
     """Atomic: the record is written to ``<name>.tmp`` and renamed, so a
     write that fails half way leaves no ``.run.json`` for a reader to see."""
     def torn(obj: Any, f: Any, *args: Any, **kw: Any) -> None:
@@ -365,9 +376,9 @@ def test_a_torn_write_leaves_no_record(exported, monkeypatch) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(json, "dump", torn)
-    with pytest.raises(OSError, match="disk full"):
-        run_py(record_block(exported["py"]), build=None, done=STEPS,
-               files=[exported["mpco"]])
+    run_py(record_block(exported["py"]), build=None, done=STEPS,
+           files=[exported["mpco"]])  # the run is not failed by it
+    assert "record was not written: disk full" in capsys.readouterr().out
     final = exported["mpco"].with_name("deck.mpco" + DECK_RUN_SUFFIX)
     assert not final.exists()
     assert final.with_name(final.name + ".tmp").exists()
@@ -376,10 +387,65 @@ def test_a_torn_write_leaves_no_record(exported, monkeypatch) -> None:
     (opened,) = [ln for ln in lines
                  if ln.strip().startswith("set _apesees_f [open ")]
     assert opened.endswith('.run.json.tmp" w]')
-    (renamed,) = [ln for ln in lines
-                  if ln.strip().startswith("file rename -force ")]
+    (renamed,) = [ln for ln in lines if "file rename -force " in ln]
     assert '.run.json.tmp" "' in renamed
-    assert renamed.endswith('.run.json"')
+    assert renamed.endswith('.run.json"} _apesees_rerr]} { break }')
+
+
+#: Runs a py deck in a fresh interpreter with every OpenSees call a no-op
+#: that succeeds and every rename refused, then prints the run's marker.
+_REFUSING_RUNNER = """
+import os, sys, types
+def refuse(*a, **k):
+    raise PermissionError("held by another process")
+os.replace = refuse
+ops = types.ModuleType("openseespy.opensees")
+ops.__getattr__ = lambda name: (lambda *a, **k: 0)
+pkg = types.ModuleType("openseespy")
+pkg.opensees = ops
+sys.modules["openseespy"], sys.modules["openseespy.opensees"] = pkg, ops
+deck = sys.argv[1]
+exec(compile(open(deck, encoding="utf-8").read(), deck, "exec"),
+     {"__name__": "__main__"})
+print("DECK-DONE")
+"""
+
+
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_a_refused_rename_never_fails_a_finished_run(tmp_path, dialect) -> None:
+    """Fix A: the whole deck runs, its loop succeeds, and the record's
+    rename is refused every time (a handle Defender or the indexer holds).
+    The rename is retried, then the deck prints that the record was not
+    written and still ends normally: exit 0 and its marker (py, in a fresh
+    process), or no Tcl error and the marker (Tcl). No record is left."""
+    import subprocess
+    import sys
+
+    mpco = tmp_path / "deck.mpco"
+    deck = tmp_path / f"deck.{dialect}"
+    getattr(truss_bridge(mpco), dialect)(str(deck), analyze_steps=STEPS,
+                                         progress=False)
+    open_files([mpco])  # what the recorder wrote
+    if dialect == "py":
+        runner = tmp_path / "runner.py"
+        runner.write_text(_REFUSING_RUNNER, encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(runner), str(deck)],
+                              cwd=tmp_path, capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        out = proc.stdout
+    else:
+        interp = tcl()
+        interp.eval("proc unknown {args} { return 0 }")
+        interp.eval("rename file _apesees_real_file; set ::_apesees_tries 0")
+        interp.eval("proc file {cmd args} { if {$cmd eq {rename}} "
+                    "{ incr ::_apesees_tries; error {permission denied} }; "
+                    "uplevel 1 [list _apesees_real_file $cmd {*}$args] }")
+        interp.eval(deck.read_text(encoding="utf-8") + "\nputs DECK-DONE\n")
+        assert int(interp.eval("set ::_apesees_tries")) == 10
+        out = "\n".join(interp.splitlist(interp.eval("set ::_apesees_out")))
+    assert "the deck run record was not written" in out
+    assert out.rstrip().endswith("DECK-DONE")
+    assert not mpco.with_name("deck.mpco" + DECK_RUN_SUFFIX).exists()
 
 
 @pytest.mark.parametrize("dialect", ["py", "tcl"])
@@ -476,12 +542,16 @@ def test_an_export_writes_no_record_and_leaves_model_h5_alone(tmp_path) -> None:
 def test_a_partitioned_deck_writes_on_rank_0_after_a_barrier(
     tmp_path, dialect,
 ) -> None:
+    """With a lineage already cached for these declarations (here from a
+    serial export of the same bridge), a partitioned deck's record lines
+    close every rank's recorders, then a barrier, then rank 0 writes."""
     mpco = tmp_path / "run.mpco"
     parts = [tmp_path / f"run.part-{k}.mpco" for k in (0, 1)]
     bridge = truss_bridge(mpco)
+    bridge.py(str(tmp_path / "serial.py"), analyze_steps=STEPS, progress=False)
     body = "\n".join(deck_run_body(
         dialect, bridge.h5, [str(mpco)], "Static", STEPS, None,
-        partitioned=True)) + "\n"
+        partitioned=True, bridge=bridge)) + "\n"
     for pid in (1, 0):
         if dialect == "py":
             barriers = run_py(body, build=None, done=STEPS, pid=pid,
@@ -492,7 +562,11 @@ def test_a_partitioned_deck_writes_on_rank_0_after_a_barrier(
             barriers = int(interp.eval("set _apesees_barriers"))
         assert barriers == 1
         written = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX).exists()
-        assert written == (pid == 0)
+        # Windows only: another process (Defender, the indexer) can
+        # hold the fresh .tmp; the deck then prints that it wrote no
+        # record (fix A) instead of failing the run.
+        assert written == (pid == 0), (
+            "" if dialect == "py" else interp.eval("set ::_apesees_out"))
     assert read_record(mpco, parts)["recorder_file"] == "run.mpco"
 
 
@@ -594,37 +668,80 @@ def _partitioned_bridge(mpco: Path) -> Any:
     return ops
 
 
-@pytest.mark.filterwarnings("ignore")  # the stub's partition / penalty notes
-@pytest.mark.parametrize("dialect", ["py", "tcl"])
-def test_a_partitioned_bridge_deck_guards_its_record(tmp_path, dialect) -> None:
-    """The bridge's own partitioned deck: every rank's loop, then every
-    rank closes its recorders, a barrier, and the record from rank 0 alone,
-    naming each part's size and mtime."""
+def _emit_partitioned(tmp_path: Path, dialect: str, monkeypatch: Any,
+                      ) -> "tuple[Path, list[str]]":
+    """Emit the two-rank bridge deck with ``analyze_steps``; composing an
+    archive fails the test, and the run-record warnings are returned."""
+    import warnings
+
+    from apeGmsh.opensees.emitter import py as pym
+
+    def no_compose(self: Any, *a: Any, **k: Any) -> None:
+        raise AssertionError("a partitioned export composed an archive")
+
+    monkeypatch.setattr(pym._MemoryArchive, "__init__", no_compose)
     mpco = tmp_path / "run.mpco"
-    parts = [tmp_path / f"run.part-{k}.mpco" for k in (0, 1)]
     deck = tmp_path / f"deck.{dialect}"
-    getattr(_partitioned_bridge(mpco), dialect)(
-        str(deck), analyze_steps=STEPS, progress=False)
+    bridge = _partitioned_bridge(mpco)
+    seen = _count_archives(monkeypatch)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        getattr(bridge, dialect)(str(deck), analyze_steps=STEPS,
+                                 progress=False)
+    assert seen == []  # nor through the bridge
+    ours = [str(w.message) for w in caught
+            if issubclass(w.category, RuntimeWarning)
+            and "run record" in str(w.message)]
+    return deck, ours
+
+
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_a_partitioned_bridge_deck_skips_its_record_without_composing(
+    tmp_path, dialect, monkeypatch,
+) -> None:
+    """T's option (2): a partitioned model with no cached lineage composes
+    no archive and emits no record lines; it warns once, naming why. The
+    old record is still removed before the recorder opens."""
+    deck, ours = _emit_partitioned(tmp_path, dialect, monkeypatch)
+    assert len(ours) == 1, ours
+    assert "partitioned" in ours[0] and "no lineage" in ours[0]
+    assert "Results.from_mpco" in ours[0]
     text = deck.read_text(encoding="utf-8")
-    assert "getPID" in text.split(MARK)[0]  # a partitioned deck
-    guard = ("if hasattr(ops, 'barrier'):" if dialect == "py"
-             else 'if {[info commands barrier] ne ""} { barrier }')
-    close = "ops.remove('recorders')" if dialect == "py" else "remove recorders"
-    write = "_apesees_run = " if dialect == "py" else "set _apesees_f [open "
-    block = text[text.index(MARK):]
-    assert block.index(close) < block.index(guard) < block.index(write)
-    final = mpco.with_name("run.mpco" + DECK_RUN_SUFFIX)
-    for pid in (1, 0):
-        if dialect == "py":
-            barriers = run_py(block, build=None, done=STEPS, pid=pid,
-                              files=parts, np=2).barriers
-        else:
-            interp = run_tcl(block, build=None, done=STEPS, pid=pid,
-                             files=parts, np=2)
-            barriers = int(interp.eval("set _apesees_barriers"))
-        assert barriers == 1
-        assert final.exists() == (pid == 0)
-    assert read_record(mpco, parts)["recorder_file"] == "run.mpco"
+    assert "getPID" in text  # a partitioned deck
+    assert MARK not in text
+    unlink = ("__import__('os').remove(" if dialect == "py"
+              else "file delete -force -- ")
+    assert unlink in text
+
+
+def test_a_skipped_partitioned_record_reads_with_from_mpco(
+    tmp_path, monkeypatch,
+) -> None:
+    """The run of such a deck leaves its parts and no record: read_deck_mpco
+    finds none (check 1), warns once and reads with ``from_mpco``."""
+    import shutil
+    import warnings
+
+    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+    from tests.test_results_mpco_to_ladruno import (
+        SPRINGS,
+        _bridge_copy,
+        _unstaged_springs_model,
+    )
+
+    deck, _ = _emit_partitioned(tmp_path, "tcl", monkeypatch)
+    model = _unstaged_springs_model(tmp_path / "model.h5", ["static"])
+    one = _bridge_copy(SPRINGS, model, tmp_path / "one.mpco")
+    for k in (0, 1):  # the parts the deck's MPCO recorder writes
+        shutil.copy(one, tmp_path / f"run.part-{k}.mpco")
+    assert not (tmp_path / ("run.mpco" + DECK_RUN_SUFFIX)).exists()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = read_deck_mpco(tmp_path / "run.part-0.mpco", model_h5=model)
+    res.close()
+    msgs = [str(w.message) for w in caught if w.category is DefaultRouteWarning]
+    assert len(msgs) == 1 and "check 1 (the record)" in msgs[0]
+    assert sorted(p.name for p in tmp_path.glob("*.ladruno")) == []
 
 
 @pytest.mark.filterwarnings("ignore:model.h5 not written")  # the auto-write's

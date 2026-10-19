@@ -114,7 +114,8 @@ def _automatic_archive_lineage(
 
 
 def deck_run_lineage(
-    archive: "Callable[[Any], None]", bridge: Any = None,
+    archive: "Callable[[Any], None]", bridge: Any = None, *,
+    compose: bool = True,
 ) -> "tuple[str, str] | None":
     """``(model_hash, fem_hash)`` of the archive ``archive(path)`` writes.
 
@@ -124,9 +125,12 @@ def deck_run_lineage(
     process for a record, or the bridge's automatic ``model.h5`` (which the
     deck emit writes first). Otherwise the bridge composes the archive
     (``apeSees._write_h5`` over the deck's own build) in memory. No file is
-    written and ``model_hash`` is unchanged. A model whose archive cannot
-    be composed warns once and gets no record; the deck still emits, and
-    ``read_deck_mpco`` of its ``.mpco`` refuses to convert (check 1).
+    written and ``model_hash`` is unchanged. With ``compose=False`` (a
+    partitioned deck, whose archive is too costly to compose at every
+    export) nothing is composed: with no reused lineage it warns once and
+    gets no record. So does a model whose archive cannot be composed; the
+    deck still emits, and ``read_deck_mpco`` of its ``.mpco`` refuses to
+    convert (check 1).
     """
     import warnings
 
@@ -140,7 +144,13 @@ def deck_run_lineage(
     why = ""
     try:
         found = None if key is None else _automatic_archive_lineage(*key)
-        if found is None:
+        if found is None and not compose:
+            why = ("the model is partitioned and no lineage of these "
+                   "declarations is cached, and a partitioned model's "
+                   "archive is not composed at export; converting the run "
+                   "needs the model's lineage first")
+            found = (None, None)
+        elif found is None:
             buf = _MemoryArchive()
             with warnings.catch_warnings():
                 # A deferred feature is the explicit save's warning.
@@ -149,7 +159,7 @@ def deck_run_lineage(
             with h5py.File(buf, "r") as f:
                 found = _lineage_of(f)
         model_hash, fem_hash = found
-        if model_hash is None:
+        if model_hash is None and not why:
             why = "the archive carries no /meta/lineage@model_hash"
     except Exception as exc:  # noqa: BLE001 - named in the warning below
         why = f"its model archive cannot be composed ({exc!r})"
@@ -225,38 +235,58 @@ _TCL_RUN_TIME = {
 }
 
 
+#: Tries of the record's final rename before the deck gives up on it.
+_RENAME_TRIES = 10
+_NOT_WRITTEN = "apeGmsh: the deck run record was not written"
+
+
 def _py_record(fields: "dict[str, Any]", file: str, done: str,
                partitioned: bool) -> "list[str]":
+    """One file's record, in Python. Any ``OSError`` on the way (a file
+    another process briefly holds refuses the rename, a full disk) prints
+    one line and leaves no record: a finished run never fails here."""
     final = file + DECK_RUN_SUFFIX
     tmp = final + ".tmp"
     stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
     parts = (f"['%s.part-%d.mpco' % ({stem!r}, _k) for _k in "
              "range(_apesees_np)]" if partitioned else f"[{file!r}]")
     one = [] if partitioned else [
-        "    _apesees_size, _apesees_mtime = _apesees_size[0], "
+        "        _apesees_size, _apesees_mtime = _apesees_size[0], "
         "_apesees_mtime[0]"]
     return [
         f"_apesees_parts = {parts}",
-        "if all(_apesees_os.path.isfile(_p) for _p in _apesees_parts):",
-        "    _apesees_st = [_apesees_os.stat(_p) for _p in _apesees_parts]",
-        "    _apesees_size = [_s.st_size for _s in _apesees_st]",
-        "    _apesees_mtime = [_s.st_mtime for _s in _apesees_st]",
+        "try:",
+        "    if all(_apesees_os.path.isfile(_p) for _p in _apesees_parts):",
+        "        _apesees_st = [_apesees_os.stat(_p) for _p in _apesees_parts]",
+        "        _apesees_size = [_s.st_size for _s in _apesees_st]",
+        "        _apesees_mtime = [_s.st_mtime for _s in _apesees_st]",
         *one,
-        f"    _apesees_run = {fields!r}",
-        "    _apesees_run.update(recorder_size=_apesees_size, "
+        f"        _apesees_run = {fields!r}",
+        "        _apesees_run.update(recorder_size=_apesees_size, "
         f"recorder_mtime=_apesees_mtime, steps_completed={done}, "
         "opensees_backend='stock' if _apesees_sha == 'unknown' "
         "else 'ladruno', opensees_build_sha=_apesees_sha, "
         "completed_iso=_apesees_time.strftime("
         "'%Y-%m-%dT%H:%M:%SZ', _apesees_time.gmtime()))",
-        f"    with open({tmp!r}, 'w', encoding='utf-8') as _apesees_f:",
-        "        _apesees_json.dump(_apesees_run, _apesees_f)",
-        f"    _apesees_os.replace({tmp!r}, {final!r})",
+        f"        with open({tmp!r}, 'w', encoding='utf-8') as _apesees_f:",
+        "            _apesees_json.dump(_apesees_run, _apesees_f)",
+        f"        for _apesees_k in range({_RENAME_TRIES}):",
+        "            try:",
+        f"                _apesees_os.replace({tmp!r}, {final!r})",
+        "                break",
+        "            except OSError:",
+        f"                if _apesees_k == {_RENAME_TRIES - 1}:",
+        "                    raise",
+        "                _apesees_time.sleep(0.2)",
+        "except OSError as _apesees_e:",
+        f"    print('{_NOT_WRITTEN}: %s' % _apesees_e, flush=True)",
     ]
 
 
 def _tcl_record(fields: "dict[str, Any]", file: str,
                 partitioned: bool) -> "list[str]":
+    """One file's record, in Tcl, inside a ``catch``: any error on the way
+    prints one line and leaves no record, never failing a finished run."""
     import json
 
     q = _tcl_quote
@@ -268,36 +298,47 @@ def _tcl_record(fields: "dict[str, Any]", file: str,
         for k, v in fields.items()) + "}"
     args = " ".join(_TCL_RUN_TIME[k][1] for k in fields if k in _TCL_RUN_TIME)
     write = [
-        f"    set _apesees_f [open {q(tmp)} w]",
-        "    fconfigure $_apesees_f -encoding utf-8",
-        f"    puts -nonewline $_apesees_f [format {q(template)} {args}]",
-        "    close $_apesees_f",
-        f"    file rename -force {q(tmp)} {q(final)}",
-        "}",
+        f"        set _apesees_f [open {q(tmp)} w]",
+        "        fconfigure $_apesees_f -encoding utf-8",
+        f"        puts -nonewline $_apesees_f [format {q(template)} {args}]",
+        "        close $_apesees_f",
+        "        for {set _apesees_k 0} {1} {incr _apesees_k} {",
+        f"            if {{![catch {{file rename -force {q(tmp)} {q(final)}}} "
+        "_apesees_rerr]} { break }",
+        f"            if {{$_apesees_k >= {_RENAME_TRIES - 1}}} "
+        "{ error $_apesees_rerr }",
+        "            after 200",
+        "        }",
+        "    }",
     ]
     if not partitioned:
-        return [
-            f"if {{[file isfile {q(file)}]}} {{",
-            f"    set _apesees_size [file size {q(file)}]",
-            f"    set _apesees_mtime [file mtime {q(file)}]",
+        body = [
+            f"    if {{[file isfile {q(file)}]}} {{",
+            f"        set _apesees_size [file size {q(file)}]",
+            f"        set _apesees_mtime [file mtime {q(file)}]",
             *write,
         ]
-    stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
-    return [
-        "set _apesees_sizes {}; set _apesees_mtimes {}; set _apesees_ok 1",
-        "for {set _apesees_k 0} {$_apesees_k < $_apesees_np} "
-        "{incr _apesees_k} {",
-        f"    set _apesees_p [format {{%s.part-%d.mpco}} {q(stem)} "
-        "$_apesees_k]",
-        "    if {![file isfile $_apesees_p]} { set _apesees_ok 0; break }",
-        "    lappend _apesees_sizes [file size $_apesees_p]",
-        "    lappend _apesees_mtimes [file mtime $_apesees_p]",
-        "}",
-        "if {$_apesees_ok} {",
-        '    set _apesees_size "\\[[join $_apesees_sizes {, }]\\]"',
-        '    set _apesees_mtime "\\[[join $_apesees_mtimes {, }]\\]"',
-        *write,
-    ]
+    else:
+        stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
+        body = [
+            "    set _apesees_sizes {}; set _apesees_mtimes {}; "
+            "set _apesees_ok 1",
+            "    for {set _apesees_k 0} {$_apesees_k < $_apesees_np} "
+            "{incr _apesees_k} {",
+            f"        set _apesees_p [format {{%s.part-%d.mpco}} {q(stem)} "
+            "$_apesees_k]",
+            "        if {![file isfile $_apesees_p]} "
+            "{ set _apesees_ok 0; break }",
+            "        lappend _apesees_sizes [file size $_apesees_p]",
+            "        lappend _apesees_mtimes [file mtime $_apesees_p]",
+            "    }",
+            "    if {$_apesees_ok} {",
+            '        set _apesees_size "\\[[join $_apesees_sizes {, }]\\]"',
+            '        set _apesees_mtime "\\[[join $_apesees_mtimes {, }]\\]"',
+            *write,
+        ]
+    return ["if {[catch {", *body,
+            f'}} _apesees_err]}} {{ puts "{_NOT_WRITTEN}: $_apesees_err" }}']
 
 
 def deck_run_body(
@@ -321,7 +362,7 @@ def deck_run_body(
     build); the steps completed from the loop's own counter."""
     if not files or analysis is None:
         return []
-    lineage = deck_run_lineage(archive, bridge)
+    lineage = deck_run_lineage(archive, bridge, compose=not partitioned)
     if lineage is None:
         return []
     head = ["# apeGmsh deck run record: the analyze loop returned; the "
