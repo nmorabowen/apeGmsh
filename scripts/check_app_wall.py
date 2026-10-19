@@ -94,7 +94,7 @@ H5_SCOPE = (f"{APP}/src/", f"{APP}/scripts/")
 # A `.File` / `?.File` member access (not `...File`, not `.Files`).
 H5_MEMBER = re.compile(r"(?<!\.)\??\.(?!\.)\s*File(?![\w$])")
 # `import { File } from 'h5wasm...'` / `export { File } from 'h5wasm...'` (value imports only).
-H5_IMPORT = re.compile(r"""\b(import|export)\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]h5wasm(?:/[^'"]*)?['"]""")
+H5_IMPORT = re.compile(r"""\b(import|export)\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]h5wasm(?:/[^'"]*)?['"]""")
 H5_DESTRUCTURE = re.compile(r"\b(?:const|let|var)\s*\{[^{}]*?(?<![\w$])File(?![\w$])[^{}]*\}\s*=")
 H5_FILE_STRING = re.compile(r"""(['"`])File\1""")
 H5_REFLECT = re.compile(r"\bReflect\s*\.\s*construct\b")

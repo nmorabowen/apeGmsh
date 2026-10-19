@@ -232,6 +232,7 @@ def test_main_exit_one_and_format(repo, capsys):
     ("apeGmshViewer/src/reader/x.ts", "const f = new h5wasm\n  .File(path, 'r');\n"),
     ("apeGmshViewer/src/reader/x.ts", "import { File } from 'h5wasm/node';\n"),
     ("apeGmshViewer/src/reader/x.ts", "import { Group, File as H5F } from \"h5wasm\";\n"),
+    ("apeGmshViewer/src/reader/x.ts", "import h5, { File } from \"h5wasm/node\";\n"),
     ("apeGmshViewer/src/reader/x.ts", "export { File } from 'h5wasm/node';\n"),
     ("apeGmshViewer/src/reader/x.ts", "const { File: F } = h5wasm;\n"),
     ("apeGmshViewer/src/reader/x.ts", "const { Group, File } = await import('h5wasm/node');\n"),
