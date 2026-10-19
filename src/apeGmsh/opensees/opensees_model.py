@@ -842,8 +842,7 @@ class OpenSeesModel:
         TypeError
             ``out=`` missing for the ``"h5"`` target.
         """
-        # The target first: an unknown one is named as such, flat or not
-        # (#2193, from #2199's review).
+        # The target first: an unknown one is named as such, flat or not.
         if target not in ("tcl", "py", "live", "h5"):
             raise ValueError(
                 f"OpenSeesModel.build: unknown target {target!r}. "

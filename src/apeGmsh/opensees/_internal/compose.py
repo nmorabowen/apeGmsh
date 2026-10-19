@@ -1199,7 +1199,7 @@ def _replay_into(
 
     # Every step below appends ``(emit index | None, kind, thunk)`` units;
     # _run_units runs them in this (category) order, or merged by emit
-    # index when ``order`` is given (K R1b-S1, #2193). ``_key`` reads a
+    # index when ``order`` is given. ``_key`` reads a
     # unit's index only when there is an order to merge by.
     units: "list[tuple[int | None, str, Any]]" = []
 
@@ -2076,7 +2076,7 @@ def _replay_staged_into(
                 # Same order as the global prefix: steps 5-7b of
                 # ``_replay_into`` (transforms, beam integrations, time
                 # series, dampings), merged by emit index when there is
-                # an ``order`` (K R1b-S1, #2193), as the bridge's
+                # an ``order``, as the bridge's
                 # ``replay_builder_scoped_declarations`` re-emits them.
                 _replay_units: "list[tuple[int | None, str, Any]]" = []
                 for scoped, recs, emit in (
