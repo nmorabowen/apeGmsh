@@ -38,10 +38,8 @@ from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo, OpenSeesTarget
 
-import json
 import math
 import os
-import re
 from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
 )
@@ -469,12 +467,6 @@ def _join(*parts: Any) -> str:
     except _NonFiniteArg as exc:
         raise _nonfinite_error(parts, exc.value) from None
     return " ".join(out)
-
-
-def _tcl_quote(text: str) -> str:
-    """``text`` as one double-quoted Tcl word, with every character Tcl
-    would substitute or count (``\\ [ ] $ { } "``) backslash-escaped."""
-    return '"' + re.sub(r'([\\\[\]${}"])', r"\\\1", text) + '"'
 
 
 class TclEmitter:
@@ -1110,51 +1102,15 @@ class TclEmitter:
         self, archive: "Callable[[str], None]", steps: int,
         dt: "float | None",
     ) -> None:
-        """The Tcl deck's run record (#2210), written as
-        :meth:`PyEmitter.deck_run_record` writes it: last, only after the
-        loop returned (a failed increment is a Tcl ``error`` first)."""
-        from .py import DECK_RUN_SUFFIX, deck_run_fields, deck_run_lineage
+        """The Tcl deck's run record (#2210), as
+        :meth:`PyEmitter.deck_run_record` (a failed increment is a Tcl
+        ``error`` before it)."""
+        from .py import deck_run_body
 
-        if not self._mpco_files or self._analysis_token is None:
-            return
-        lineage = deck_run_lineage(archive)
-        if lineage is None:
-            return
-        q = _tcl_quote
-        body = [
-            "# apeGmsh deck run record (#2210): the analyze loop returned.",
-            "if {[catch {ladrunoBuild} _apesees_sha] || ![regexp "
-            "{^[0-9a-f]{40}$} [string trim $_apesees_sha]]} {",
-            "    set _apesees_sha unknown; set _apesees_backend stock",
-            "} else {",
-            "    set _apesees_sha [string trim $_apesees_sha]; "
-            "set _apesees_backend ladruno",
-            "}",
-        ]
-        run_time = {"steps_completed": "%d", "opensees_backend": '"%s"',
-                    "opensees_build_sha": '"%s"', "completed_iso": '"%s"'}
-        for file in self._mpco_files:
-            fields = deck_run_fields(
-                lineage, file, self._analysis_token, steps, dt)
-            template = "{" + ", ".join(
-                f"{json.dumps(k)}: " + (run_time[k] if k in run_time else
-                                        json.dumps(v).replace("%", "%%"))
-                for k, v in fields.items()) + "}"
-            tmp, final = q(file + DECK_RUN_SUFFIX + ".tmp"), q(file + DECK_RUN_SUFFIX)
-            body += [
-                f"set _apesees_f [open {tmp} w]",
-                "fconfigure $_apesees_f -encoding utf-8",
-                f"puts -nonewline $_apesees_f [format {q(template)} $_apesees_i "
-                "$_apesees_backend $_apesees_sha [clock format [clock seconds] "
-                "-format {%Y-%m-%dT%H:%M:%SZ} -gmt 1]]",
-                "close $_apesees_f",
-                f"file rename -force {tmp} {final}",
-            ]
-        if self._partition_shim_emitted:
-            # Every rank finishes its loop first; one record, from rank 0.
-            body = ['if {[info commands barrier] ne ""} { barrier }',
-                    "if {[getPID] == 0} {", *("    " + ln for ln in body), "}"]
-        for line in body:
+        for line in deck_run_body(
+            "tcl", archive, self._mpco_files, self._analysis_token, steps,
+            dt, partitioned=self._partition_shim_emitted,
+        ):
             self._lines.append(line)
 
     def analyze(
