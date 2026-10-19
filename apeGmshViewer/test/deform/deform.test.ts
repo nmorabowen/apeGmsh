@@ -33,12 +33,13 @@ import { basePositions, deformFull, edgesShown, gatherInto, positionsFor, writeP
 import { hitElement } from "../../src/renderer/selection.ts";
 import type { ModelFile } from "../../src/model/types.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
-import { columnOf } from "../../src/state/contour.ts";
-import { displacementAxes, spatialNdm, vertexDisplacements } from "../../src/state/deform.ts";
+import * as h5wasm from "h5wasm/node";
+import { columnOf, nodalFields } from "../../src/state/contour.ts";
+import { displacementAxes, LADRUNO_TRANSLATION, modeNote, spatialNdm, vertexDisplacements } from "../../src/state/deform.ts";
 import { loadModel } from "../../src/state/load.ts";
 import { deformView, noticesOf } from "../../src/state/selectors.ts";
 import type { ResultsStage, SpatialNdm } from "../../src/state/types.ts";
-import { closedForm, NODATA, NODATA_RESULTS, opened, STAGED, STAGED_RESULTS, STAGES, until } from "../contour/harness.ts";
+import { closedForm, harness, NODATA, NODATA_RESULTS, opened, STAGED, STAGED_RESULTS, STAGES, until } from "../contour/harness.ts";
 
 const DEFORM_2D = fileURLToPath(new URL("../../fixtures/deform_2d.h5", import.meta.url));
 const DEFORM_2D_RESULTS = fileURLToPath(new URL("../../fixtures/deform_2d.results.h5", import.meta.url));
@@ -415,4 +416,239 @@ test("pick: a click on the deformed mesh selects the element drawn there (faces 
   assert.equal(info.elements[at(centroid)!.element], triWant, "the face drawn at the deformed centroid");
   assert.equal(info.elements[at(mid)!.element], lineWant, "the truss chord drawn at the deformed midpoint");
   h.effects.dispose();
+});
+
+// -- V4L-b2 (#2128): a .ladruno's translation, by the fork schema's names (§7.1.1) --
+//
+// Fork `ladruno_schema_v1.md` §7.1.1 (fork 3b17c32f): translation and rotation are
+// separate ON_NODES groups. `DISPLACEMENT` (a mode stage: `MODES_OF_VIBRATION(U)`)
+// is `Ux` / `Ux,Uy` / `Ux,Uy,Uz` at ndm 1 / 2 / 3; `ROTATION` is `Rx,Ry,Rz` / `Rz` /
+// `Rx,Ry,Rz`. Deform reads the translation group only.
+
+const L_FIX = (name: string) => fileURLToPath(new URL(`../../fixtures/${name}`, import.meta.url));
+const FRAME3D_MODEL = L_FIX("ladruno_frame3d.h5");
+const FRAME3D = L_FIX("ladruno_frame3d.ladruno");
+const MODES = L_FIX("ladruno_modes.ladruno");
+const PORTAL3D = L_FIX("ladruno_portal3d.ladruno");
+const D3 = ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz"];
+
+test("ladruno: DISPLACEMENT/Ux,Uy,Uz are x, y, z; ROTATION is never read; the group names the schema section", () => {
+  assert.deepEqual(LADRUNO_TRANSLATION, { static: "DISPLACEMENT", transient: "DISPLACEMENT", mode: "MODES_OF_VIBRATION(U)" });
+  const ok = displacementAxes(stage({ nodal: [...D3, "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"] }), NDM3);
+  assert.deepEqual(ok, { ok: true, datasets: D3, note: null });
+  // The file's column order does not matter: the labels say the axes.
+  assert.deepEqual(displacementAxes(stage({ nodal: ["ROTATION/Rz", "DISPLACEMENT/Uz", "DISPLACEMENT/Ux", "DISPLACEMENT/Uy"] }), NDM3), ok);
+  // 2-D (ndm 2): `Ux,Uy`, z is 0 only in a model declared 2-D.
+  const two = displacementAxes(stage({ nodal: ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "ROTATION/Rz"] }), NDM2);
+  assert.ok(two.ok);
+  assert.deepEqual(two.datasets, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", null]);
+  for (const ndm of [NDM3, NONE]) {
+    const r = displacementAxes(stage({ nodal: ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy"] }), ndm);
+    assert.ok(!r.ok && r.kind === "refused" && /records no DISPLACEMENT\/Uz and the model is not declared 2-D/.test(r.reason), JSON.stringify(r));
+  }
+  // A stage that records only rotations has no displacement (never "rotation as translation").
+  const rotOnly = displacementAxes(stage({ nodal: ["ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"] }), NDM3);
+  assert.ok(!rotOnly.ok && rotOnly.kind === "absent", JSON.stringify(rotOnly));
+  // The group the reader refused (a partial write) refuses the deformed shape by name.
+  const refused = displacementAxes(stage({ nodal: ["ROTATION/Rz"], refusedNodal: [{ component: "DISPLACEMENT", reason: "a partial write" }] }), NDM2);
+  assert.ok(!refused.ok && refused.kind === "refused" && /^DISPLACEMENT not read \(a partial write\)/.test(refused.reason), JSON.stringify(refused));
+});
+
+test("ladruno: a label outside §7.1.1 refuses by name (the axis is never guessed), including a combined 6-component group", () => {
+  const uq = displacementAxes(stage({ nodal: ["DISPLACEMENT/Ux", "DISPLACEMENT/Uq", "DISPLACEMENT/Uz"] }), NDM3);
+  assert.ok(!uq.ok && uq.kind === "refused", JSON.stringify(uq));
+  assert.match(!uq.ok ? uq.reason : "", /^DISPLACEMENT\/Uq names no axis of the fork schema's DISPLACEMENT labels \(Ux, Uy, Uz, ladruno_schema_v1\.md §7\.1\.1\)/);
+  // `X`/`Y`/`Z` are not the schema's labels either (the pre-#2128 code accepted them).
+  const xyz = displacementAxes(stage({ nodal: ["DISPLACEMENT/X", "DISPLACEMENT/Y", "DISPLACEMENT/Z"] }), NDM3);
+  assert.ok(!xyz.ok && /DISPLACEMENT\/X, DISPLACEMENT\/Y, DISPLACEMENT\/Z name no axis/.test(xyz.reason), JSON.stringify(xyz));
+  // The pre-#2128 hand-built frame3d layout: rotations inside DISPLACEMENT are refused, never dropped silently.
+  const six = displacementAxes(stage({ nodal: [...D3, "DISPLACEMENT/Rx", "DISPLACEMENT/Ry", "DISPLACEMENT/Rz"] }), NDM3);
+  assert.ok(!six.ok && /DISPLACEMENT\/Rx, DISPLACEMENT\/Ry, DISPLACEMENT\/Rz name no axis/.test(six.reason), JSON.stringify(six));
+});
+
+test("trap 1 (§7.1.1): a 2-D u-p node's ROTATION/Rz is pore pressure; deform never reads it and contour never calls it rotation z", () => {
+  // ndm 2, ndf 3 on a u-p element: DISPLACEMENT = Ux,Uy; ROTATION/Rz holds the pore pressure.
+  const up = stage({ nodal: ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "ROTATION/Rz"] });
+  const d = displacementAxes(up, NDM2);
+  assert.ok(d.ok);
+  assert.ok(!d.datasets.includes("ROTATION/Rz"), "the pore pressure is never a displacement axis");
+  // Contour: the lone Rz is its own component (labelled Rz), never the z of a rotation vector.
+  const rot = nodalFields(up.nodal).find((f) => f.name === "ROTATION")!;
+  assert.deepEqual(rot.components.map((c) => `${c.label}=${c.key}`), ["Rz=ROTATION/Rz"]);
+  // A mode stage's rotational group follows the same rule.
+  const modal = nodalFields(["MODES_OF_VIBRATION(U)/Ux", "MODES_OF_VIBRATION(U)/Uy", "MODES_OF_VIBRATION(R)/Rz"]);
+  assert.deepEqual(modal.find((f) => f.name === "MODES_OF_VIBRATION(R)")!.components.map((c) => `${c.label}=${c.key}`), ["Rz=MODES_OF_VIBRATION(R)/Rz"]);
+  // ...and the mode's translation offers its magnitude, as a native mode stage's displacement does.
+  assert.deepEqual(modal.find((f) => f.name === "MODES_OF_VIBRATION(U)")!.components.map((c) => c.label), ["magnitude", "x", "y"]);
+  // At ndm 3 the three rotation labels are a rotation vector (§7.1.1 copies DOF 3..5 there).
+  const r3 = nodalFields(["ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"]).find((f) => f.name === "ROTATION")!;
+  assert.deepEqual(r3.components.map((c) => c.label), ["x", "y", "z"]);
+});
+
+test("trap 2 (§7.1.1): a 1-D model's ROTATION is three zero columns; it never stands in for the missing axes", () => {
+  const oneD = stage({ nodal: ["DISPLACEMENT/Ux", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"] });
+  for (const ndm of [NDM2, NDM3, NONE]) {
+    const r = displacementAxes(oneD, ndm);
+    assert.ok(!r.ok && r.kind === "refused", JSON.stringify(r));
+    // The refusal names the translation the file lacks, never a rotation column.
+    assert.match(!r.ok ? r.reason : "", /records no DISPLACEMENT\/Uy: the deformed shape needs every translational axis$/);
+    assert.doesNotMatch(!r.ok ? r.reason : "", /ROTATION/);
+  }
+});
+
+test("ladruno mode stage: MODES_OF_VIBRATION(U) is the translation, (R) is never read, and the legend names the eigenvalue and period", () => {
+  const lam = 381.96601125;
+  const mode = { index: 1, eigenvalue: lam, frequencyHz: Math.sqrt(lam) / (2 * Math.PI), periodS: (2 * Math.PI) / Math.sqrt(lam) };
+  const st = stage({ id: "stage_0_mode_1", name: "mode_1", kind: "mode", time: [0], nodal: ["MODES_OF_VIBRATION(U)/Ux", "MODES_OF_VIBRATION(U)/Uy", "MODES_OF_VIBRATION(R)/Rz"], mode });
+  const r = displacementAxes(st, NDM2);
+  assert.ok(r.ok);
+  assert.deepEqual(r.datasets, ["MODES_OF_VIBRATION(U)/Ux", "MODES_OF_VIBRATION(U)/Uy", null]);
+  assert.equal(r.note, `${modeNote(mode)}; 2-D model (ndm 2, test): z is not a degree of freedom, so it stays at the node's z`);
+  assert.equal(modeNote(mode), "mode 1: eigenvalue λ = 381.97, f = 3.1105 Hz, T = 0.32149 s; a mode shape has no physical amplitude, so the scale is relative");
+  assert.match(modeNote({ index: 3, eigenvalue: -2, frequencyHz: 0, periodS: 0 }), /^mode 3: eigenvalue λ = -2 \(not positive: no frequency or period\)/);
+  // A mode stage reads its own group only: a DISPLACEMENT component on it is not its translation.
+  const wrong = displacementAxes(stage({ kind: "mode", nodal: D3 }), NDM3);
+  assert.ok(!wrong.ok, JSON.stringify(wrong));
+  // A refused modal group refuses the mode shape by name.
+  const refusedU = displacementAxes(stage({ kind: "mode", nodal: ["MODES_OF_VIBRATION(R)/Rz"], refusedNodal: [{ component: "MODES_OF_VIBRATION(U)", reason: "a partial write" }] }), NDM2);
+  assert.ok(!refusedU.ok && /^MODES_OF_VIBRATION\(U\) not read/.test(refusedU.reason), JSON.stringify(refusedU));
+  // A native mode stage is unchanged: displacement_* and no note of its own.
+  assert.deepEqual(displacementAxes(stage({ kind: "mode", nodal: ["displacement_x", "displacement_y", "displacement_z"] }), NDM3), { ok: true, datasets: ["displacement_x", "displacement_y", "displacement_z"], note: null });
+});
+
+/** One dataset of a `.ladruno`, read with h5wasm directly (not through the app's reader). */
+async function ladrunoArray(path: string, ds: string): Promise<{ value: Float64Array; shape: number[] }> {
+  await h5wasm.ready;
+  const f = new h5wasm.File(path, "r");
+  try {
+    const d = f.get(ds) as h5wasm.Dataset;
+    return { value: Float64Array.from(d.value as ArrayLike<number>), shape: [...(d.shape ?? [])] };
+  } finally {
+    f.close();
+  }
+}
+
+test("oracle (.ladruno, paired frame3d): every deformed vertex is MODEL/NODES/COORDINATES + s × DISPLACEMENT/DATA of its node", async () => {
+  const h = await opened(FRAME3D_MODEL, FRAME3D);
+  const stageIdx = 1; // "lateral" = MODEL_STAGE[2]
+  const k = 2;
+  const scale = 10;
+  const root = "MODEL_STAGE[2]";
+  const coords = await ladrunoArray(FRAME3D, `${root}/MODEL/NODES/COORDINATES`);
+  const ids = await ladrunoArray(FRAME3D, `${root}/RESULTS/ON_NODES/DISPLACEMENT/ID`);
+  const data = await ladrunoArray(FRAME3D, `${root}/RESULTS/ON_NODES/DISPLACEMENT/DATA`);
+  const [, n, c] = data.shape as [number, number, number];
+  assert.equal(c, 3, "§7.1.1: DISPLACEMENT has three columns at ndm 3");
+  assert.equal(coords.shape[0], n);
+  // The hand-built fixture's NODES has no ID: its rows are the DISPLACEMENT/ID order, which the model.h5 confirms.
+  const model = await coordsOf(FRAME3D_MODEL);
+  const want = new Map<number, number[]>();
+  let moved = 0;
+  for (let j = 0; j < n; j++) {
+    const id = ids.value[j]!;
+    const x = [0, 1, 2].map((a) => coords.value[3 * j + a]!);
+    assert.deepEqual(model.get(id), x, `node ${id}: the model.h5 and the .ladruno agree on its coordinates`);
+    const w = x.map((xa, a) => Math.fround(Math.fround(xa) + scale * data.value[(k * n + j) * 3 + a]!));
+    if (w[0] !== Math.fround(x[0]!)) moved++;
+    want.set(id, w);
+  }
+  assert.ok(moved > 0, "the lateral stage sways: the oracle is not the undeformed mesh");
+  const { s, v, full } = await showDeformed(h, stageIdx, k, scale);
+  assert.equal(v.state, "ready");
+  assert.deepEqual(v.state === "ready" ? v.datasets : null, D3, "deform reads DISPLACEMENT, never ROTATION");
+  for (const [pos, vn] of [[full.tri, s.mesh!.vertexNodes.tri], [full.line, s.mesh!.vertexNodes.line]] as const) {
+    const nodes = h.blobs.get(vn) as Float64Array;
+    assert.ok(nodes.length > 0, "slabs (faces) and beams (lines) both have vertices");
+    nodes.forEach((id, i) => {
+      const w = want.get(id)!;
+      for (let a = 0; a < 3; a++) assert.ok(near(pos[3 * i + a]!, w[a]!), `vertex ${i} node ${id} axis ${a}: ${pos[3 * i + a]} vs ${w[a]}`);
+    });
+  }
+  h.effects.dispose();
+});
+
+test("mutation (.ladruno): DISPLACEMENT relabelled Ux,Uq,Uz refuses the deformed shape by the label's name", async () => {
+  await h5wasm.ready;
+  const p = join(mkdtempSync(join(tmpdir(), "v4lb2-")), "ladruno_frame3d.ladruno");
+  copyFileSync(FRAME3D, p);
+  const f = new h5wasm.File(p, "a");
+  try {
+    for (const g of ["MODEL_STAGE[1]", "MODEL_STAGE[2]"]) {
+      const grp = f.get(`${g}/RESULTS/ON_NODES/DISPLACEMENT`) as h5wasm.Group;
+      grp.delete_attribute("COMPONENTS");
+      grp.create_attribute("COMPONENTS", "Ux,Uq,Uz");
+    }
+  } finally {
+    f.close();
+  }
+  const h = await opened(FRAME3D_MODEL, p);
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
+  h.store.dispatch({ type: "setDeform", on: true });
+  await until(() => h.store.get().resultStep?.status === "ready", "the step");
+  const s = h.store.get();
+  const v = deformView(s);
+  assert.equal(v.state, "refused");
+  assert.match(v.state === "refused" ? v.reason : "", /^DISPLACEMENT\/Uq names no axis of the fork schema's DISPLACEMENT labels/);
+  assert.ok(noticesOf(s).some((x) => x.startsWith("Deformed shape not drawn: DISPLACEMENT/Uq names no axis")), noticesOf(s).join("\n"));
+  assert.equal(h.effects.currentDisplacement(), null, "nothing is computed from Ux and Uz");
+  h.effects.dispose();
+});
+
+test("mode shape (fork-written ladruno_modes): the eigenvector rows deform the nodes; closed form Ux3/Ux2 = 2 - λ/k; the legend names λ", async () => {
+  const { host } = harness();
+  const a = await host.open(MODES);
+  assert.ok(a.ok, a.ok ? "" : a.error);
+  const k = 1000;
+  for (const [m, sign] of [[1, -1], [2, 1]] as const) {
+    const meta = a.meta.stages.find((x) => x.id === `stage_0_mode_${m}`)!;
+    const lambda = (k * (3 + sign * Math.sqrt(5))) / 2;
+    assert.ok(Math.abs(meta.mode!.eigenvalue - lambda) < 1e-6 * lambda, `mode ${m}: λ ${meta.mode!.eigenvalue} vs ${lambda}`);
+    const axes = displacementAxes({ ...meta }, NDM2);
+    assert.ok(axes.ok, JSON.stringify(axes));
+    assert.deepEqual(axes.datasets, ["MODES_OF_VIBRATION(U)/Ux", "MODES_OF_VIBRATION(U)/Uy", null]);
+    assert.ok(axes.note!.startsWith(`mode ${m}: eigenvalue λ = ${Number(lambda.toPrecision(5))}, f = `), axes.note!);
+    const r = await host.readStep({ path: MODES, stage: meta.id, step: 0, seq: m });
+    assert.ok(r.ok);
+    const ids: Float64Array = a.nodeIds[meta.id]!;
+    const d = vertexDisplacements(ids, columnOf(ids), [r.nodal["MODES_OF_VIBRATION(U)/Ux"]!, r.nodal["MODES_OF_VIBRATION(U)/Uy"]!, null]);
+    assert.equal(d.count, 0);
+    const ux = (node: number): number => d.d[3 * Array.from(ids).indexOf(node)]!;
+    assert.equal(ux(1), 0, "node 1 is fixed");
+    assert.ok(Math.abs(ux(3) / ux(2) - (2 - lambda / k)) < 1e-9, `mode ${m}: Ux3/Ux2 = ${ux(3) / ux(2)}, closed form ${2 - lambda / k}`);
+  }
+  host.close();
+});
+
+test("fork-written 3-D portal (ladruno_portal3d): DISPLACEMENT and ROTATION are separate groups; deform reads DISPLACEMENT, equal to the fork's nodeDisp", async () => {
+  const { host } = harness();
+  const a = await host.open(PORTAL3D);
+  assert.ok(a.ok, a.ok ? "" : a.error);
+  const meta = a.meta.stages[0]!;
+  assert.deepEqual(meta.nodal, [...D3, "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"], "§7.1.1 at ndm 3, as the fork writes it");
+  const axes = displacementAxes({ ...meta }, NDM3);
+  assert.ok(axes.ok);
+  assert.deepEqual(axes.datasets, D3);
+  const r = await host.readStep({ path: PORTAL3D, stage: meta.id, step: meta.time.length - 1, seq: 1 });
+  assert.ok(r.ok);
+  // Cross-engine oracle: ops.nodeDisp(2) and (3) printed by the same fork run that wrote the file
+  // (make_ladruno_fixtures.py `_PORTAL3D_RUN`, after the second LoadControl step).
+  const ids = Array.from(a.nodeIds[meta.id]!);
+  const nodeDisp: Record<number, number[]> = {
+    2: [0.0008771164181733662, 0.0002456163480553718, -2.9071217963256807e-6],
+    3: [0.0008671566596220584, 0.000654383651944626, -1.2092878203674294e-5],
+  };
+  for (const [node, u] of Object.entries(nodeDisp)) {
+    D3.forEach((c, i) => {
+      const got = r.nodal[c]![ids.indexOf(Number(node))]!;
+      assert.ok(Math.abs(got - u[i]!) <= 1e-15, `node ${node} ${c}: ${got} vs nodeDisp ${u[i]}`);
+    });
+  }
+  // Its mode stages read MODES_OF_VIBRATION(U) and carry the file's LAMBDA.
+  const modes = a.meta.stages.filter((x) => x.kind === "mode");
+  assert.deepEqual(modes.map((x) => x.mode!.index), [1, 2]);
+  for (const mst of modes) {
+    const ax = displacementAxes({ ...mst }, NDM3);
+    assert.ok(ax.ok && ax.datasets.every((ds) => ds!.startsWith("MODES_OF_VIBRATION(U)/")), JSON.stringify(ax));
+  }
+  host.close();
 });
