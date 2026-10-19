@@ -182,7 +182,9 @@ numberer/system auto-chain a partitioned archive records (#1832). The
 replay writes its declarations, commands and analysis chain in the order
 the archive's `/opensees/program` records (#2193), so no row is class B;
 a partitioned archive, whose program records the partitioned emit, keeps
-the fixed category order. The one oracle row that reaches a
+the fixed category order. Each replayed slot keeps the int/float type its
+declaration emits, recovered from `/opensees/decl_params` (#2194), so no
+row is class A either. The one oracle row that reaches a
 corpus model (`test_h5_decl_params::_broad_partitioned`, through
 `build_model`) stays a class-S row for that reason.
 
