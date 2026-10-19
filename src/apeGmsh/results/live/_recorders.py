@@ -13,7 +13,9 @@ Categories
   ``ResolvedRecorderSpec.emit_default`` or ``emit_mpco``).
 - ``modal`` — raises at ``__enter__`` (modes need an eigen solve, not a
   classic recorder; record them with ``ResolvedRecorderSpec.emit_mpco``,
-  whose ``modesOfVibration`` entry the MPCO reader reads).
+  whose ``modesOfVibration`` entry the MPCO reader reads), or run
+  ``ops.eigen(n)`` and write the returned ``EigenResult`` with
+  ``EigenResult.to_ladruno``, which needs no recorder).
 
 Multi-stage support
 -------------------
@@ -185,8 +187,10 @@ class LiveRecorders:
                     f"result. Remove the modal records from the spec "
                     f"before calling emit_recorders, and record them "
                     f"with spec.emit_mpco(...) (modesOfVibration, read "
-                    f"with Results.from_mpco). spec.emit_default(...) "
-                    f"does not record modes either."
+                    f"with Results.from_mpco), or on any build run "
+                    f"ops.eigen(n) and write the returned EigenResult "
+                    f"with its writer, which needs no recorder. "
+                    f"spec.emit_default(...) does not record modes."
                 )
 
         # Translate (or refuse) every node and element recorder before

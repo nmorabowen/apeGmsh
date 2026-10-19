@@ -132,19 +132,17 @@ def _emit_recorder_declaration(
 
     for record in decl.records:
         if record.category in ("fibers", "layers", "modal"):
-            if record.category == "modal":
-                what = (
-                    "the same two recorders with modesOfVibration "
-                    "(modal records)"
-                )
-            else:
-                what = "the same two recorders (fibre and layer records)"
+            modal = (
+                " with nodal_responses=(\"modesOfVibration\",)"
+                if record.category == "modal" else ""
+            )
             raise NotImplementedError(
                 f"RecorderDeclaration record(category={record.category!r}) "
-                "is not file-emit-able as a classic recorder; use "
-                "`recorder ladruno` on the Ladruno fork "
-                "(read with Results.from_ladruno) or `recorder mpco` on "
-                f"stock (read with Results.from_mpco): {what}."
+                "is not file-emit-able as a classic recorder. Use "
+                f"ops.recorder.Ladruno(...){modal} on the Ladruno fork "
+                "(`recorder ladruno`, read with Results.from_ladruno) or "
+                f"ops.recorder.MPCO(...){modal} on stock "
+                "(`recorder mpco`, read with Results.from_mpco)."
             )
         if record.category not in (
             "nodes", "elements", "line_stations", "gauss",

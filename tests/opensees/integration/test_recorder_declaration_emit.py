@@ -571,7 +571,7 @@ class TestDeclareDeferredCategories:
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match=r"recorder ladruno.*recorder mpco.*same two recorders"):
+        with pytest.raises(NotImplementedError, match=r"ops\.recorder\.Ladruno.*ops\.recorder\.MPCO"):
             bm.emit(rec)
 
     def test_layer_record_emit_raises_with_fork_mpco_hint(self) -> None:
@@ -592,7 +592,7 @@ class TestDeclareDeferredCategories:
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match=r"recorder ladruno.*recorder mpco.*same two recorders"):
+        with pytest.raises(NotImplementedError, match=r"ops\.recorder\.Ladruno.*ops\.recorder\.MPCO"):
             bm.emit(rec)
 
     def test_modal_record_emit_raises_with_fork_mpco_hint(self) -> None:
@@ -609,7 +609,7 @@ class TestDeclareDeferredCategories:
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match=r"recorder ladruno.*recorder mpco.*modesOfVibration"):
+        with pytest.raises(NotImplementedError, match=r"ops\.recorder\.Ladruno.*modesOfVibration.*ops\.recorder\.MPCO"):
             bm.emit(rec)
 
 

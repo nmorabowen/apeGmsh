@@ -277,7 +277,7 @@ def test_deferred_category_emits_todo(category: str) -> None:
         assert "Results.from_mpco" in line
     else:
         assert "TODO" in line
-        assert "MPCO recorder or the native results recorder" in line
+        assert "MPCO recorder" in line
         assert "Phase" not in line
     assert category in line
 
@@ -888,3 +888,18 @@ def test_unknown_token_refusal_names_the_unknown_token_not_pore_pressure(
     why = rotation_roles_from_tokens(
         [("LadrunoUP", (1, 2))], [99]).refusal(99)
     assert why is not None and "pore pressure" in why
+
+
+def test_tri31_strain_skip_reason_names_mpco_route() -> None:
+    from apeGmsh.results.spec._emit import _per_material_strain_skip_reason
+    rec = ResolvedRecorderRecord(
+        category="gauss", name="tri_strain",
+        components=("strain_xx",),
+        dt=None, n_steps=None,
+        element_ids=np.array([1]),
+        element_class_name="Tri31",
+    )
+    reason = _per_material_strain_skip_reason(rec)
+    assert reason is not None
+    assert "emit_mpco" in reason and "material.strain" in reason
+    assert "domain_capture" not in reason
