@@ -531,6 +531,22 @@ def _reads(m: dict[str, Any], tmp: Path, cls: str, n_ip: int) -> Any:
         return np.asarray(slab.gp_index).copy()
 
 
+@pytest.mark.parametrize("row", [[math.nan, math.nan], [0.5, math.nan]])
+def test_fibre_decode_refuses_a_nan_station(row: list, tmp_path: Path) -> None:
+    """A NaN station fails every comparison; a 1-point element has no
+    ``diff`` to catch it, so the range guard must."""
+    m = _two_beams(tmp_path, "out_fib_nan", ndm=2, elements=(
+        ("B1", "forceBeamColumn",
+         lambda ops, sec: ops.beamIntegration.Legendre(section=sec, n_ip=1)),
+        ("B2", "forceBeamColumn",
+         lambda ops, sec: ops.beamIntegration.Legendre(section=sec, n_ip=1))))
+    m["cls"] = "ForceBeamColumn2d"
+    _uniform_files(m, tmp_path, row)
+    spec = _spec(m["fem"], _fibres(m["ids"], cls="ForceBeamColumn2d"))
+    with pytest.raises(ValueError, match="outside the element's natural range"):
+        _transcode(m, spec, tmp_path, tmp_path / "r.h5")
+
+
 def test_fork_disp_beam_fibres_read(tmp_path: Path) -> None:
     """``LadrunoDispBeamColumn2d`` is in the fibre catalog and its element
     args carry the integration tag where the stock beams do: it reads."""

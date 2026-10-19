@@ -216,7 +216,7 @@ def read_fiber_record(
             f"{gpx_lr.file_path}: {n_ip} stations per element, but the model "
             f"gives {n_model}: the integrationPoints columns do not split "
             f"into the record's elements.")
-    out = np.flatnonzero((np.abs(xi) > 1.0 + 1e-12).any(axis=1))
+    out = np.flatnonzero(~(np.abs(xi) <= 1.0 + 1e-12).all(axis=1))
     if out.size:
         raise ValueError(
             f"{gpx_lr.file_path}: FEM element {int(ids[out[0]])} has a station "
