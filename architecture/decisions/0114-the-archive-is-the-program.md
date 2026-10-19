@@ -246,6 +246,10 @@ the archive keeps it; replay never allocates one) stands.
    flips to equality, retiring the conditional in
    [ADR 0093](0093-zerolength-interface-constraint.md) INV-5 (its S8
    amendment).
+
+   *Note, 2026-10-18 (K cleanup, #2185).* S7 shipped (#1563,
+   `8025197f`) and the test above was renamed on the flip: it is now
+   `tests/opensees/integration/test_interface_partitioned_emit.py::test_interface_plus_embedded_exactly_once_with_flat_tags`.
 5. **The archive.** Tags with no archived row today (the initial-stress
    and absorbing parameters, `update_parameter`) are archived per row in
    K1-8 (opensees 2.27.0). There is no `/opensees/tag_blocks` table: a

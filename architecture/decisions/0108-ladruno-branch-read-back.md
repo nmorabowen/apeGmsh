@@ -7,6 +7,8 @@ against the installed fork build `1652f945c`, which is **pre-fix** — see
 they have not been run to green, and cannot be until the venv's engine is
 rebuilt at or after `61b3efa04`.
 
+**Superseded in part:** D5 (2026-10-18), see the note in D5.
+
 **Sibling of** [ADR 0103](0103-sanisand-integrator-deck-contract.md) and
 [ADR 0105](0105-asdplastic-deck-contract-after-ladruno-adr94.md) — same
 shape a third time: a fork change becomes an apeGmsh **read-back**
@@ -190,6 +192,35 @@ would need handling.
 
 Nothing in this ADR is blocked on it: the file route already carries every
 column, and the censuses read from `Results`.
+
+**Superseded in part, 2026-10-18** (#2192; maintainer ruling of 2026-10-14
+on #1767, gap G14). The seam named above was DomainCapture's per-material
+routing, and DomainCapture is being removed (#1767), so that seam will not
+exist. The live branch read now lives on the **`.ladruno` material
+channel**: the Ladruno recorder records `material.ladrunoBranch` during the
+run, and `Results.from_ladruno` reads it back through the D2 material-bucket
+seam. There is no in-process capture on this route; the run writes the
+file, and the file is read. The list above (vocabulary names, capture-spec
+category, routing pairs, catalog rows, `per_material_token`) described the
+removed seam's slice and is no longer owed. Its 8-against-27 `uri` trap
+belonged to that slice's per-GP catalog loop. For the same reason, D2's
+closing sentence, which ties a `RESPONSE_CATALOG` entry to generalising the
+live capture path ("see D5"), is moot: that generalisation will not happen.
+
+What the channel carries today: `_MATERIAL_BUCKET_TOKENS["ladrunobranch"]`
+(`results/readers/_ladruno_element_io.py`) names the eight columns by
+position (D1). `Results.from_ladruno` exposes them on
+`results.elements.gauss`, and `corner_census()` reads `dp_branch` from
+there. The reader tests prove the reader half on a hand-built `.ladruno`:
+the eight names appear in `available_components`
+(`test_ladruno_branch_eight_slots_resolve_by_position`), and the slot map
+matches the fork's fill site
+(`test_ladruno_branch_slot_order_matches_the_fork_fill_site`). The path
+from `from_ladruno` through `results.elements.gauss` to `corner_census()`
+was probed in #2197, but no committed test pins it. What is not
+proven is a post-`61b3efa04` engine writing the bucket end to end: the live
+gate's post-fix half is still owed, as "What was measured" says. D5's text
+above stays as written.
 
 ## What was measured
 

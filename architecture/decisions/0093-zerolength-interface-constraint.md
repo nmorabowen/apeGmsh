@@ -326,6 +326,12 @@ axes from the master face geometry, per-pair tributary-scaled materials.
   The conditional in item 1 ends with K1-3d S7, which numbers partitioned
   decks in flat order: flat and partitioned interface tags then match
   unconditionally, and the drift pin flips to equality.
+
+  *Note, 2026-10-18 (K cleanup, #2185).* K1-3d S7 shipped (#1563,
+  `8025197f`): flat↔partitioned interface-tag identity is now
+  unconditional, and the S8 item 1 conditional above is retired. The
+  mixed-model pin is
+  `tests/opensees/integration/test_interface_partitioned_emit.py::test_interface_plus_embedded_exactly_once_with_flat_tags`.
 - **INV-6 — staged: claimable by name, emitted on the equilibrated ground.**
   `g.constraints.interface(..., name="RockLinerInterface")` +
   `s.interface(name="RockLinerInterface")` inside a stage claims the records
