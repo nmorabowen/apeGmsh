@@ -1534,6 +1534,21 @@ def test_continuum_strains_keep_their_names(
     _assert_reads(path, data, canon, 8, HEX_GL_2)
 
 
+@pytest.mark.parametrize("key,n_gp,coords", [
+    ("209-SixNodeTri[101:0:0]", 3, TRI_GL_2),
+    ("2-FourNodeQuad[201:0:0]", 4, QUAD_GL_2),
+    ("204-ASDShellT3[102:0:0]", 3, TRI_GL_2B),
+], ids=["SixNodeTri", "FourNodeQuad", "ASDShellT3"])
+def test_named_bucket_under_its_own_rule_is_placed_from_the_catalog(
+    tmp_path: Path, key: str, n_gp: int, coords: np.ndarray,
+) -> None:
+    # A named, non-shell bucket under a nonzero rule and with no GP_PARAM
+    # takes the class's layout of that rule, with no warning (#2168 F2).
+    path, data = _named_gp_file(tmp_path, key, PLANE_LABELS, n_gp, level=4)
+    assert coords.shape == (n_gp, 2)
+    _assert_reads(path, data, PLANE_CANON, n_gp, coords)
+
+
 def _escaped(key: str) -> str:
     return key.replace("[", r"\[").replace("]", r"\]")
 
