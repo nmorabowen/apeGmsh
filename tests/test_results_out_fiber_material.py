@@ -434,8 +434,12 @@ def test_fibre_decode_refuses_stations_out_of_order(
     """The second guard: within an element, stations increase strictly."""
     _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
     spec = _spec(beam["fem"], _fibres(beam["ids"]))
-    with pytest.raises(ValueError, match="strictly increasing"):
+    with pytest.raises(ValueError, match="strictly increasing") as exc:
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+    msg = str(exc.value)
+    assert "repeated or out of order" in msg and "HingeRadau" in msg
+    assert f"element {int(beam['ids'][1])} has" in msg
+    assert "do not split" not in msg
 
 
 def test_fibre_decode_refuses_a_count_the_model_contradicts(
