@@ -205,7 +205,7 @@ def test_fibres_round_trip_through_out(ndm: int, element: str,
     assert any(f2o[e] != e for e in span), "the translation is not exercised"
 
     assert sorted(r.elements.fibers.available_components()) == [
-        "fiber_stress", "fiber_strain"]
+        "fiber_strain", "fiber_stress"]
     ea = E_FIB * FIB_A * len(fibres)
     eiz = E_FIB * sum(FIB_A * y * y for y, _z in fibres)
     eiy = E_FIB * sum(FIB_A * z * z for _y, z in fibres)
