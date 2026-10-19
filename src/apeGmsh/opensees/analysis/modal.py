@@ -47,8 +47,24 @@ __all__ = [
     "ParallelModalResult",
     "RandomResponseResult",
     "ResponseSpectrumResult",
+    "RotationRolesUnavailableWarning",
     "SteadyStateResult",
 ]
+
+
+class RotationRolesUnavailableWarning(UserWarning):
+    """:meth:`ParallelModalResult.to_native` wrote no ``rotation_*``
+    because it was given no ``model_h5=``. The deck's DOF list reaches a
+    rotation slot (2-D ``ndf`` 3, 3-D ``ndf`` 6), and only the model's
+    DOF roles can say whether a node's entry there is a rotation, a pore
+    pressure (a u-p node) or the recorder's zero padding. The message
+    names the deck's ``ndm`` / ``ndf`` and says to pass ``model_h5=``."""
+
+
+#: The spatial slots (``ux..rz`` = 0..5) a native mode stage writes as
+#: ``rotation_*``, per ``ndm``: ``rotation_z`` in 2-D, all three in 3-D,
+#: as the ``.ladruno`` writer writes ``Rz`` / ``Rx,Ry,Rz``.
+_NATIVE_ROTATION_SLOTS: dict[int, tuple[int, ...]] = {2: (5,), 3: (3, 4, 5)}
 
 
 _NO_SHAPES_MSG = (
@@ -437,7 +453,7 @@ def _write_mode_stages(
     node_ids: np.ndarray,
     fields: Callable[[int], np.ndarray],
     n_trans: int,
-    rotations: bool,
+    rotation_slots: Sequence[int] = (),
     stacklevel: int = 3,
 ) -> None:
     """Write one ``kind="mode"`` stage per eigenvalue into an open
@@ -449,10 +465,11 @@ def _write_mode_stages(
     stage ``mode_<k>`` at ``time = [0.0]`` with the
     ``eigenvalue`` / ``frequency_hz`` / ``period_s`` / ``mode_index``
     attrs, ``displacement_*`` from columns ``0 .. n_trans-1`` of
-    ``fields(k)`` and, iff ``rotations``, ``rotation_*`` from columns
-    3-5. ``fields(k)`` is the ``(n_nodes, ncols)`` shape of mode ``k``
-    (1-indexed), rows in ``node_ids`` order. Each caller passes its own
-    ``n_trans`` / ``rotations`` rule.
+    ``fields(k)`` and one ``rotation_*`` per entry of ``rotation_slots``
+    (3, 4, 5 are ``rotation_x/y/z``). ``fields(k)`` is the ``(n_nodes,
+    6)`` shape of mode ``k`` (1-indexed) by spatial slot ``ux..rz``, rows
+    in ``node_ids`` order, with 0.0 in a slot that holds no rotation at
+    its node; :func:`_native_fields` builds it from the DOF roles.
 
     A non-positive eigenvalue warns once for that mode and writes
     ``frequency_hz = period_s = 0``; ``stacklevel`` counts from this
@@ -496,17 +513,92 @@ def _write_mode_stages(
             components[f"displacement_{axes[axis_idx]}"] = (
                 field[:, axis_idx][None, :]
             )
-        if rotations:
-            for axis_idx in range(3):
-                components[f"rotation_{axes[axis_idx]}"] = (
-                    field[:, 3 + axis_idx][None, :]
-                )
+        for slot in rotation_slots:
+            components[f"rotation_{axes[int(slot) - 3]}"] = (
+                field[:, int(slot)][None, :]
+            )
         writer.write_nodes(
             sid, "partition_0",
             node_ids=node_ids,
             components=components,
         )
         writer.end_stage()
+
+
+def _native_fields(
+    modes: "Sequence[Any] | np.ndarray",
+    layouts: "Sequence[tuple[int, ...]]",
+    rotations: np.ndarray,
+    ndm: int,
+) -> "tuple[np.ndarray, tuple[int, ...]]":
+    """The ``(n_modes, n_nodes, 6)`` spatial mode shapes a native writer
+    writes, and the slots it writes as ``rotation_*``.
+
+    ``modes[k]`` holds each node's DOF row (its own DOFs, padded or not),
+    laid onto ``ux..rz`` by that node's ``layouts`` entry (the emit's
+    ``_node_layout``). A node whose ``rotations`` entry is ``False`` (its
+    DOF roles refuse a rotation: a u-p pore pressure, a node no beam or
+    shell touches) writes 0.0 in every rotation slot, the native
+    convention for a node without rotations. The slots returned are
+    those of :data:`_NATIVE_ROTATION_SLOTS` for ``ndm`` that the layout of
+    at least one rotation-holding node reaches; none when no node holds
+    a rotation.
+    """
+    from .eigen import _spatial
+
+    lays = list(layouts)
+    if len(modes):
+        spatial = np.stack([_spatial(rows, lays) for rows in modes])
+    else:
+        spatial = np.zeros((0, len(lays), 6), dtype=np.float64)
+    rot = np.asarray(rotations, dtype=bool)
+    spatial[:, ~rot, 3:] = 0.0
+    slots = tuple(
+        s for s in _NATIVE_ROTATION_SLOTS.get(int(ndm), ())
+        if any(r and s in lay for r, lay in zip(rot, lays))
+    )
+    return spatial, slots
+
+
+def _deck_archive(
+    model_h5: "str | Any", rec: "Sequence[int]", shape_ndm: "int | None",
+    *, where: str,
+) -> Any:
+    """The :class:`~apeGmsh.opensees.opensees_model.OpenSeesModel` of
+    ``model_h5``, checked against modes over nodes ``rec``: the
+    ``ndm`` of ``shape_ndm`` (when known), every node in its fem, and a
+    ``/opensees/nodes_ndf`` entry for each. Raises ``ValueError`` naming
+    ``where`` otherwise; the caller has written nothing yet."""
+    from ..opensees_model import OpenSeesModel
+
+    model = OpenSeesModel.from_h5(str(model_h5))
+    ndm = int(model.ndm)
+    if shape_ndm is not None and int(shape_ndm) != ndm:
+        raise ValueError(
+            f"{where}: the modes are ndm={shape_ndm} (the sidecar's, or "
+            f"the solve's) but {model_h5} is an ndm={ndm} model; the "
+            "modes and the archive come from different models. Nothing "
+            "was written."
+        )
+    fem_ids = {int(n) for n in model.fem.nodes.ids}
+    stray = [n for n in rec if n not in fem_ids]
+    if stray:
+        raise ValueError(
+            f"{where}: node(s) "
+            f"{stray[:5]} are not nodes of the model archive's fem; the "
+            "mode shapes and the model come from different meshes. "
+            "Nothing was written."
+        )
+    nodes_ndf = model.nodes_ndf
+    unknown = [n for n in rec if n not in nodes_ndf]
+    if unknown:
+        raise ValueError(
+            f"{where}: {model_h5} records no ndf "
+            f"for node(s) {unknown[:5]} (/opensees/nodes_ndf), "
+            "so their DOFs cannot be laid onto Ux..Rz. Re-write the "
+            "archive with ops.h5(...). Nothing was written."
+        )
+    return model
 
 
 def _read_mode_row(mode_file: Any, n_nodes: int, ndf: int) -> np.ndarray:
@@ -855,37 +947,106 @@ class ParallelModalResult:
             )
         return np.asarray(self._shapes[m - 1], dtype=np.float64)
 
-    def to_native(self, path: "str | Any", fem: Any) -> None:
+    def to_native(
+        self, path: "str | Any", fem: Any, *, model_h5: "str | Any | None" = None,
+    ) -> None:
         """Write the harvested modes as mode-kind stages in a native
         results H5 (ADR 0077 P4 viewer binding).
 
-        Produces the exact layout ``DomainCapture.capture_modes`` writes
-        — one stage per mode (``name="mode_<k>"``, ``kind="mode"``, with
+        Produces the layout ``DomainCapture.capture_modes`` writes: one
+        stage per mode (``name="mode_<k>"``, ``kind="mode"``, with
         ``eigenvalue`` / ``frequency_hz`` / ``period_s`` /
-        ``mode_index``) carrying ``displacement_x/y/z`` (first
-        ``min(3, ndm)`` shape columns) and, when the deck recorded
-        ``ndf >= 6``, ``rotation_x/y/z`` (columns 4–6) at a single
-        ``time = [0.0]`` station — so the existing surface consumes the
-        distributed run with zero new viewer code::
+        ``mode_index``) at a single ``time = [0.0]`` station, carrying
+        ``displacement_x/y/z`` (the first ``min(3, ndm, ndf)`` shape
+        columns) and the ``rotation_*`` the model's DOF roles allow, so
+        the existing surface consumes the distributed run with zero new
+        viewer code::
 
             res = ParallelModalResult.from_job(job_dir)
-            res.to_native("modes.h5", fem)
+            res.to_native("modes.h5", fem, model_h5="model.h5")
             r = Results.from_native("modes.h5", fem=fem)
             r.modes[0].frequency_hz;  r.viewer()
+
+        **Rotations follow the DOF roles.** The deck records DOFs
+        ``1..ndf`` for every node and pads a short node with zeros, so a
+        row's entry in a rotation slot may be a rotation, a u-p node's
+        pore pressure, or padding; a 2-D node of ndf 3 is ``(ux, uy, rz)``
+        on a frame and ``(ux, uy, p)`` on a u-p element. With
+        ``model_h5`` (the bridge archive the deck was emitted from,
+        ``ops.h5``) each node's columns are laid onto ``ux..rz`` by its
+        own ndf (``/opensees/nodes_ndf``), and a rotation slot holds the
+        rotation only where
+        :func:`~apeGmsh.opensees._recorder_translate.model_h5_rotation_roles`
+        says so: a 2-D frame keeps its ``rotation_z``, and a pore
+        pressure is never written as a rotation. A node whose slot holds
+        no rotation writes 0.0 there; a slot the roles cannot settle (an
+        element-less node beside a u-p class) also writes 0.0, with one
+        :class:`~apeGmsh.opensees.analysis.eigen.RotationSlotUnresolvedWarning`.
+        :meth:`to_ladruno` and :meth:`EigenResult.to_native` follow the
+        same rule.
+
+        Without ``model_h5`` nothing is guessed: when the deck's DOF list
+        reaches a rotation slot (2-D ndf 3, 3-D ndf 6) no ``rotation_*``
+        is written, and one :class:`RotationRolesUnavailableWarning` says
+        to pass ``model_h5=``. A deck whose DOF list reaches none (2-D
+        ndf 2, 3-D ndf 3 or 4) writes translations only, silently.
 
         ``fem`` must be the same FEM snapshot the deck was emitted from
         (the recorder column order is the sorted mesh node tags).
         A non-positive eigenvalue warns and writes ``frequency_hz =
         period_s = 0`` (the ``capture_modes`` convention). Requires the
-        P3 shape harvest — a run dir without the sidecar fails loud.
-        """
-        from ...results.writers._native import NativeWriter
+        P3 shape harvest; a run dir without the sidecar fails loud.
 
+        Raises
+        ------
+        FileNotFoundError
+            The run dir carries no mode-shape harvest.
+        ValueError
+            ``model_h5`` has another ``ndm`` than the sidecar, or a
+            harvested node is not a node of its fem or has no ndf there.
+            Nothing is written.
+        """
+        import warnings
+
+        from ...results.writers._native import NativeWriter
+        from .._internal.build.recorders import _node_layout
+        from .eigen import _ladruno_slots, _warn_unresolved
+
+        where = "ParallelModalResult.to_native"
         if self._shapes is None or self._shape_nodes is None:
             raise FileNotFoundError(_NO_SHAPES_MSG)
         shapes = self._shapes
         ndf = int(shapes.shape[2])
-        ndm = int(self._shape_ndm if self._shape_ndm is not None else 3)
+        rec = [int(n) for n in self._shape_nodes]
+        rotation_slots: tuple[int, ...] = ()
+        if model_h5 is None:
+            ndm = int(self._shape_ndm if self._shape_ndm is not None else 3)
+            n_trans = min(3, ndm, ndf)
+            spatial = np.zeros(shapes.shape[:2] + (6,), dtype=np.float64)
+            spatial[..., :n_trans] = shapes[..., :n_trans]
+            reach = [s for s in _node_layout(ndf, ndm)
+                     if s in _NATIVE_ROTATION_SLOTS.get(ndm, ())]
+            if reach:
+                warnings.warn(
+                    f"{where}: the deck records DOFs 1..{ndf} of every node "
+                    f"in {ndm}-D, so a node's entry in a rotation slot may "
+                    "be a rotation, a u-p node's pore pressure or zero "
+                    "padding, and only the model's DOF roles can say which. "
+                    "No rotation_* was written. Pass model_h5= (the archive "
+                    "the deck was emitted from, ops.h5) to write the "
+                    "rotations the roles allow.",
+                    RotationRolesUnavailableWarning,
+                    stacklevel=2,
+                )
+        else:
+            model = _deck_archive(model_h5, rec, self._shape_ndm, where=where)
+            ndm = int(model.ndm)
+            n_trans = min(3, ndm, ndf)
+            layouts, rotations, unresolved = _ladruno_slots(
+                Path(model_h5), rec, model.nodes_ndf, ndm, where=where)
+            spatial, rotation_slots = _native_fields(
+                shapes, layouts, rotations, ndm)
+            _warn_unresolved(where, unresolved, 2)
 
         writer = NativeWriter(path)
         # No ``opensees_backend`` / ``opensees_build`` (F2-b): the modes
@@ -903,9 +1064,9 @@ class ParallelModalResult:
                 writer,
                 self.eigenvalues,
                 self._shape_nodes,
-                lambda k: shapes[k - 1],
-                n_trans=min(3, ndm, ndf),
-                rotations=ndf >= 6,
+                lambda k: spatial[k - 1],
+                n_trans=n_trans,
+                rotation_slots=rotation_slots,
             )
         finally:
             writer.close()
@@ -947,47 +1108,21 @@ class ParallelModalResult:
             ndf there, or ``path`` is ``model_h5`` or an ``.h5``. Nothing is
             written.
         """
-        from ..opensees_model import OpenSeesModel
         from .eigen import _ladruno_slots, _spatial, _warn_unresolved
 
+        where = "ParallelModalResult.to_ladruno"
         if self._shapes is None or self._shape_nodes is None:
             raise FileNotFoundError(_NO_SHAPES_MSG)
         check_target(path, model_h5)
         shapes = self._shapes
-        model = OpenSeesModel.from_h5(str(model_h5))
-        ndm = int(model.ndm)
-        if self._shape_ndm is not None and int(self._shape_ndm) != ndm:
-            raise ValueError(
-                "ParallelModalResult.to_ladruno: the sidecar says ndm="
-                f"{self._shape_ndm} but {model_h5} is an ndm={ndm} model; "
-                "the run dir and the archive come from different models. "
-                "Nothing was written."
-            )
-        fem = model.fem
-        nodes_ndf = model.nodes_ndf
         rec = [int(n) for n in self._shape_nodes]
-        fem_ids = {int(n) for n in fem.nodes.ids}
-        stray = [n for n in rec if n not in fem_ids]
-        if stray:
-            raise ValueError(
-                f"ParallelModalResult.to_ladruno: harvested node(s) "
-                f"{stray[:5]} are not nodes of the model archive's fem; the "
-                "mode shapes and the model come from different meshes. "
-                "Nothing was written."
-            )
-        unknown = [n for n in rec if n not in nodes_ndf]
-        if unknown:
-            raise ValueError(
-                f"ParallelModalResult.to_ladruno: {model_h5} records no ndf "
-                f"for harvested node(s) {unknown[:5]} (/opensees/nodes_ndf), "
-                "so their DOFs cannot be laid onto Ux..Rz. Re-write the "
-                "archive with ops.h5(...). Nothing was written."
-            )
+        model = _deck_archive(model_h5, rec, self._shape_ndm, where=where)
+        ndm = int(model.ndm)
+        fem = model.fem
         layouts, rotations, unresolved = _ladruno_slots(
-            Path(model_h5), rec, nodes_ndf, ndm,
-            where="ParallelModalResult.to_ladruno")
+            Path(model_h5), rec, model.nodes_ndf, ndm, where=where)
         spatial = np.stack([_spatial(rows, layouts) for rows in shapes])
-        _warn_unresolved("ParallelModalResult.to_ladruno", unresolved, 2)
+        _warn_unresolved(where, unresolved, 2)
         return write_modes(
             path, model_h5=model_h5,
             node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
