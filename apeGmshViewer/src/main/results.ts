@@ -247,6 +247,19 @@ function ladrunoStageNames(rf: LadrunoFile, warningsOut?: string[]): string[] {
   });
 }
 
+/** One gauss group as the store keeps it, from either reader (a `.ladruno`'s since #2187). */
+function gaussMeta(g: StageInfo["gauss"][number]): GaussGroupMeta {
+  return {
+    id: g.id,
+    components: [...g.components],
+    refused: g.refused.map((r) => ({ ...r })),
+    nElements: g.nElements,
+    nGauss: g.nGauss,
+    localAxes: g.localAxes,
+    naturalCoords: g.naturalCoords ? g.naturalCoords.map((r) => [...r]) : null,
+  };
+}
+
 export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta {
   if (rf instanceof LadrunoFile) {
     const ix = rf.index;
@@ -280,7 +293,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         time: Array.from(s.time),
         nodal: s.nodes ? [...s.nodes.components] : [],
         refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
-        gauss: [],
+        gauss: s.gauss.map(gaussMeta),
         unread: [...s.unread],
         elementIndexSpace,
         lineStations: rf.availableLineStations(s.id, warningsOut),
@@ -306,15 +319,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
       time: Array.from(s.time),
       nodal: s.nodes ? [...s.nodes.components] : [],
       refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
-      gauss: s.gauss.map((g) => ({
-        id: g.id,
-        components: [...g.components],
-        refused: g.refused.map((r) => ({ ...r })),
-        nElements: g.nElements,
-        nGauss: g.nGauss,
-        localAxes: g.localAxes,
-        naturalCoords: g.naturalCoords ? g.naturalCoords.map((r) => [...r]) : null,
-      })),
+      gauss: s.gauss.map(gaussMeta),
       unread: [...s.unread],
       elementIndexSpace: i.elementIndexSpace,
       lineStations: verified ? rf.availableLineStations(s.id) : [],
@@ -367,7 +372,7 @@ export class ResultsHost {
       for (const st of rf.index.stages) if (st.nodes) nodeIds[st.id] = st.nodes.ids;
       // V4c2a (#1711/#1752 gate): element rows leave main only for a verified file.
       const elementIds: Record<string, Record<string, Float64Array>> = {};
-      if (!(rf instanceof LadrunoFile) && rf.elementIndexVerdict().verified) {
+      if (rf.elementIndexVerdict().verified) {
         for (const st of rf.index.stages) {
           const byGroup: Record<string, Float64Array> = {};
           for (const g of st.gauss) {
@@ -444,9 +449,6 @@ export class ResultsHost {
       comps.forEach((c, i) => (nodal[c] = values[i]!));
       const gauss: Record<string, Float64Array> = {};
       if (req.element !== undefined) {
-        if (rf instanceof LadrunoFile) {
-          throw new Error(`element gauss results are not served from .ladruno file ${req.path}`);
-        }
         const st = s as StageInfo;
         const v = rf.elementIndexVerdict();
         // Fail closed: an unverified file's element values are never served (the renderer refuses them first).
@@ -506,10 +508,7 @@ export class ResultsHost {
       if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk since it was indexed` };
       const st = rf.stage(req.stage);
       if (req.source === "line") return await this.scanLine(req, rf, st, progress, opts, t);
-      if (req.source === "element") {
-        if (rf instanceof LadrunoFile) throw new Error(`element gauss scan is not supported on .ladruno file ${req.path}`);
-        return await this.scanElement(req, rf, st as StageInfo, progress, opts, t);
-      }
+      if (req.source === "element") return await this.scanElement(req, rf, st as StageInfo, progress, opts, t);
       const n = st.nodes?.ids.length ?? 0;
       if (!st.nodes) throw new Error(`stage ${st.id} has no nodal results`);
       if (req.components.length === 0) throw new Error("a scan needs at least one component");
@@ -624,7 +623,7 @@ export class ResultsHost {
    */
   private async scanElement(
     req: ScanRequest,
-    first: ResultsFile,
+    first: AnyResultsFile,
     st: StageInfo,
     progress: (p: ScanProgress) => void,
     opts: { chunkSteps?: number; paceMs?: number; progressMs?: number },
@@ -652,7 +651,7 @@ export class ResultsHost {
     for (let k0 = 0; k0 < T; k0 += chunk) {
       if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
       const rf = this.handle(req.path);
-      if (!rf || rf instanceof LadrunoFile) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
+      if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
       this.armIdle();
       const k1 = Math.min(T, k0 + chunk);
       if (plan) {

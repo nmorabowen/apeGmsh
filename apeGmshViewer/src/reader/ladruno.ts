@@ -21,8 +21,8 @@
 // - a nodal result whose datasets disagree (DATA's step axis against TIME and
 //   STEP, its node axis against ID, its component axis against COMPONENTS) is
 //   refused by name in `NodalInfo.refused`, with the reason, never read;
-// - element results, envelopes and the domain and region buckets are listed in
-//   `unread`, not skipped silently (Gauss points are slice 8);
+// - Gauss-point element buckets are read by reader/ladrunoElements.ts (#2187); other
+//   element results, envelopes, the domain and region buckets are listed in `unread`;
 // - `KIND=eigen` is not a mode (Python `_ladruno.py::_KIND_MAP`): the fork labels
 //   every stage of a recorder that asks for modesOfVibration `eigen`, so the stage
 //   keeps its steps as a static stage, and each mode under
@@ -38,7 +38,8 @@
 
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
-import type { NodalInfo, ResultsH5, StageInfo } from "./results.ts";
+import { elementIndexVerdictOf, LadrunoGauss, type ElementIndexVerdict } from "./ladrunoElements.ts";
+import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
 export const LADRUNO_GENERATOR = "Ladruno";
@@ -272,10 +273,12 @@ export class LadrunoFile {
   private readonly f: LFile;
   private readonly columns = new Map<string, Map<string, Column>>();
   private readonly nodeColumn = new Map<string, Map<number, number>>();
+  private readonly gauss: LadrunoGauss;
 
   constructor(h5: ResultsH5, f: LFile, path: string) {
     this.h5 = h5;
     this.f = f;
+    this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
     const info = this.gate(path);
     const formatMinorVersion = optionalInt(info, "FORMAT_MINOR_VERSION") ?? 0;
@@ -375,6 +378,27 @@ export class LadrunoFile {
     const col = this.column(s, component);
     const ds = this.datasetAt(col.path);
     return toFloat64(col.modal ? ds.slice([[j, j + 1], [col.col, col.col + 1]]) : ds.slice([[], [j, j + 1], [col.col, col.col + 1]]), ds.path);
+  }
+
+  /** One Gauss-group component at `step`: (E * G,), element-major (reader/results.ts `readGaussStep`). */
+  readGaussStep(stageId: string, groupId: string, component: string, step: number): Float64Array {
+    checkStep(this.stage(stageId), step);
+    return this.gauss.read(this.stage(stageId), groupId, component, step, step + 1);
+  }
+
+  /** Steps `k0` to `k1` (exclusive) of one Gauss-group component: ((k1 - k0) * E * G,), step-major then element-major. */
+  readGaussRows(stageId: string, groupId: string, component: string, k0: number, k1: number): Float64Array {
+    return this.gauss.read(this.stage(stageId), groupId, component, k0, k1);
+  }
+
+  /** A Gauss group's element rows: FEM ids only under a well-formed element_index_space = "fem" (#2079 Q6). */
+  elementIds(stageId: string, groupId: string): ElementIds {
+    return this.gauss.elementIds(this.stage(stageId).id, groupId, this.elementIndexVerdict());
+  }
+
+  elementIndexVerdict(): ElementIndexVerdict {
+    const p = this.index.provenance;
+    return elementIndexVerdictOf(p.state === "present" ? p.attrs.element_index_space : null);
   }
 
   // -- line stations & local axes (Escalón 2) ---------------------------------
@@ -765,9 +789,11 @@ export class LadrunoFile {
     const results = g.keys().includes("RESULTS") ? this.group(g, "RESULTS") : null;
     const unread: string[] = [];
     let onNodes: LGroup | null = null;
+    let [onElements, elementsAt]: [LGroup | null, number] = [null, 0];
     if (results) {
       for (const b of results.keys()) {
         if (b === "ON_NODES") onNodes = this.group(results, b);
+        else if (b === "ON_ELEMENTS") [onElements, elementsAt] = [this.group(results, b), unread.length];
         else if (UNREAD_BUCKETS.has(b)) {
           const bg = this.group(results, b);
           for (const r of bg.keys()) unread.push(`${b}/${r}`);
@@ -805,6 +831,8 @@ export class LadrunoFile {
         cols.set(comp, { path: `${a.group.path}/DATA`, col: c, modal: false });
       });
     }
+    const elements = onElements ? this.gauss.indexStage(id, onElements, this.optionalSubgroup(g, ["MODEL", "ELEMENTS"]), time, warnings) : null;
+    unread.splice(elementsAt, 0, ...(elements?.unread ?? []));
     const hasNodal = onNodes !== null && onNodes.keys().some((k) => !MODAL_GROUPS.includes(k));
     const nodes: NodalInfo | null = hasNodal ? { path: onNodes!.path, ids, components, refused } : null;
     this.columns.set(id, cols);
@@ -816,7 +844,7 @@ export class LadrunoFile {
       nSteps: time.length,
       partition: "partition_0",
       nodes,
-      gauss: [],
+      gauss: elements?.gauss ?? [],
       unread,
     };
     return { stage, fileKind: kind, onNodes };
