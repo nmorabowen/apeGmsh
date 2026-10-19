@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { pairResults } from "../../src/state/results.ts";
+import { pairingNotice, pairResults } from "../../src/state/results.ts";
 import { noticesOf, resultsPairing } from "../../src/state/selectors.ts";
 import { initialState, reduce, type State } from "../../src/state/store.ts";
 import type { Lineage, ResultsInfo } from "../../src/state/types.ts";
@@ -276,6 +276,21 @@ test("V4L-b1: a .ladruno with no stamp is unpairable and the reason names stamp_
   assert.deepEqual(pairResults(mod(lin(H("a"), H("b"))), { ...l, lineage: lin(H("a"), H("b"), null) }), { state: "paired", by: "model_hash" });
   // Native, unchanged: no /meta/lineage names the native reason.
   assert.match((pairResults(mod(lin(H("a"), H("b"))), res(null)) as { reason: string }).reason, /^the results file has no \/meta\/lineage \(results 1\.1\.0\)/);
+});
+
+test("V4L-b1: a .ladruno with no model open: not drawn, and the notice asks for the model.h5 (it has no embedded /model)", async () => {
+  assert.equal(
+    pairingNotice({ state: "noModel" }, "run.ladruno"),
+    "Results not drawn: no model is open for run.ladruno; open the model.h5 the run was emitted from.",
+  );
+  assert.equal(pairingNotice({ state: "noModel" }, "RUN.LADRUNO"), "Results not drawn: no model is open for RUN.LADRUNO; open the model.h5 the run was emitted from.");
+  // A native file keeps its sentence.
+  assert.match(pairingNotice({ state: "noModel" }, "x.results.h5")!, /^Results not drawn: no model is open for x\.results\.h5\. Its embedded \/model is not drawn/);
+  // Through the store: the stamped .ladruno read with no model.
+  const r = await stagedResults(L_STAMPED);
+  const s = reduce(reduce(initialState, { type: "fileOpened", artifact: "results", path: r.info.path }), { type: "resultsLoaded", ...r });
+  assert.deepEqual(resultsPairing(s), { state: "noModel" });
+  assert.deepEqual(noticesOf(s).filter((n) => n.startsWith("Results not drawn")), ["Results not drawn: no model is open for ladruno_frame3d.ladruno; open the model.h5 the run was emitted from."]);
 });
 
 test("V4L-b1: a stamped .ladruno beside its model pairs by model_hash through the real readers; its stages go on the axis", async () => {

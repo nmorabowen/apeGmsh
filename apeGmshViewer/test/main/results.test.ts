@@ -213,6 +213,57 @@ test("reload seam: a .ladruno re-stamped while idle (same size and mtime) is re-
   h.close();
 });
 
+// ladruno_modes.ladruno: one MODEL_STAGE (KIND=eigen) whose STEP_0 holds two modes,
+// which the reader lists after the host as mode stages `mode_1`, `mode_2`.
+const MODES = RESULTS.replace(/staged_activation\.results\.h5$/, "ladruno_modes.ladruno");
+const MODAL = "MODEL_STAGE[1]/RESULTS/ON_NODES";
+const stampNames = (src: string, names: string) =>
+  edited(src, (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).create_attribute("stage_names", names));
+/** The modes file with a second modal set (STEP_1, a copy of STEP_0) in both modal groups: then mode names carry the host. */
+const twoSets = () =>
+  edited(MODES, (f) => {
+    for (const grp of ["MODES_OF_VIBRATION(U)", "MODES_OF_VIBRATION(R)"]) {
+      const data = f.get(`${MODAL}/${grp}/DATA`) as h5wasm.Group;
+      const step = data.create_group("STEP_1");
+      for (const mode of ["MODE_0", "MODE_1"]) {
+        const src = f.get(`${MODAL}/${grp}/DATA/STEP_0/${mode}`) as h5wasm.Dataset;
+        const ds = step.create_dataset({ name: mode, data: src.value as Float64Array, shape: src.shape!, dtype: "<d" });
+        ds.create_attribute("LAMBDA", (src.attrs["LAMBDA"]!.value as Float64Array)[0]!);
+      }
+    }
+  });
+const namesOf = async (p: string) => {
+  const a = await host().open(p);
+  assert.ok(a.ok, JSON.stringify(a));
+  return a.ok ? { names: a.meta.stages.map((s) => s.name), kinds: a.meta.stages.map((s) => s.kind), warnings: a.warnings } : { names: [], kinds: [], warnings: [] };
+};
+
+test("stage_names name the MODEL_STAGE groups only: mode stages keep their names, with the host prefix renamed", async () => {
+  const own = await namesOf(MODES);
+  assert.deepEqual(own.kinds, ["static", "mode", "mode"]);
+  assert.deepEqual(own.names.slice(1), ["mode_1", "mode_2"]);
+  // One name for the one MODEL_STAGE: the host is renamed, the modes are not counted or renamed.
+  const one = await namesOf(stampNames(MODES, '["G"]'));
+  assert.deepEqual(one.names, ["G", "mode_1", "mode_2"]);
+  assert.ok(!one.warnings.some((w) => /stage_names/.test(w)), one.warnings.join("\n"));
+  // Two modal sets: each mode stage is `<host>/<STEP>/mode_<k>`, and the host part follows the stamp.
+  const sets = await namesOf(twoSets());
+  const host0 = sets.names[0]!;
+  assert.deepEqual(sets.names.slice(1), [`${host0}/STEP_0/mode_1`, `${host0}/STEP_0/mode_2`, `${host0}/STEP_1/mode_1`, `${host0}/STEP_1/mode_2`]);
+  const renamed = await namesOf(stampNames(twoSets(), '["G"]'));
+  assert.deepEqual(renamed.names, ["G", "G/STEP_0/mode_1", "G/STEP_0/mode_2", "G/STEP_1/mode_1", "G/STEP_1/mode_2"]);
+});
+
+test("stage_names that count the mode stages too (two names, one MODEL_STAGE) keep the file's names, and warn", async () => {
+  const own = await namesOf(MODES);
+  const two = await namesOf(stampNames(MODES, '["G","H"]'));
+  assert.deepEqual(two.names, own.names);
+  assert.ok(
+    two.warnings.some((w) => /INFO\/PROVENANCE@stage_names names 2 stage\(s\), the file has 1 MODEL_STAGE group\(s\); the file's own stage names are shown$/.test(w)),
+    two.warnings.join("\n"),
+  );
+});
+
 test("shared namespace: a .ladruno opened with a .results.h5 beside it reads only itself, and warns that the other is not opened", async () => {
   const p = scratchLadruno(LADRUNO);
   copyFileSync(RESULTS, p.replace(/\.ladruno$/, ".results.h5"));
