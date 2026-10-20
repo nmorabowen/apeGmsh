@@ -557,10 +557,12 @@ test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y a
 
 /**
  * Every committed `.ladruno` (the viewer's fixtures and the repo's
- * tests/fixtures/ladruno) as the contour fields it offers, per stage: `|`
- * between stages, `-` for a stage with no ON_NODES, `refused: part <k> of
- * <stem>` for a part file, which the reader refuses (any other open error
- * fails the test). Recorded on main at c394ebce8, before #2214.
+ * tests/fixtures/ladruno and tests/fixtures/simplex_gp) as the contour fields
+ * it offers, per stage: `|` between stages, `-` for a stage with no ON_NODES,
+ * `refused: part <k> of <stem>` for a part file, which the reader refuses (any
+ * other open error fails the test). The rows of the fixtures on main at
+ * c394ebce8 were recorded there, before #2214; the rest were added as their
+ * fixtures landed (#2241 parts2d, simplex_gp tet/tri).
  */
 const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "ladruno_frame3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
@@ -568,7 +570,7 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "ladruno_parts2d.part-0.ladruno": "refused: part 0 of ladruno_parts2d",
   "ladruno_parts2d.part-1.ladruno": "refused: part 1 of ladruno_parts2d",
   "ladruno_parts2d.short.part-1.ladruno": "refused: part 1 of ladruno_parts2d.short",
-  "ladruno_portal3d.ladruno":"DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz]",
+  "ladruno_portal3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz]",
   "ladruno_quad2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.badstamp.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
@@ -583,13 +585,19 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "truss2d.part-0.ladruno": "refused: part 0 of truss2d",
   "truss2d.part-1.ladruno": "refused: part 1 of truss2d",
+  "tet.ladruno": "-",
+  "tri.ladruno": "-",
 };
 
 test("#2214: every committed .ladruno contours as before (magnitude and axis grouping unchanged)", async () => {
   await h5wasm.ready;
   const H5 = h5wasm as unknown as ResultsH5;
   const got: Record<string, string> = {};
-  for (const dir of [new URL("../../fixtures/", import.meta.url), new URL("../../../tests/fixtures/ladruno/", import.meta.url)]) {
+  for (const dir of [
+    new URL("../../fixtures/", import.meta.url),
+    new URL("../../../tests/fixtures/ladruno/", import.meta.url),
+    new URL("../../../tests/fixtures/simplex_gp/", import.meta.url),
+  ]) {
     for (const name of readdirSync(dir).filter((x) => x.endsWith(".ladruno"))) {
       let r: ReturnType<typeof openLadruno>;
       try {
