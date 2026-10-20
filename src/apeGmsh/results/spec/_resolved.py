@@ -51,11 +51,11 @@ ALL_CATEGORIES: tuple[str, ...] = (
 
 #: Family shorthands a resolved record records as written, by category:
 #: the emit asks for the family's whole response and the read decodes it
-#: under the canonical names. #2340 checked each against its explicit
-#: components: the gauss three on stock pip and on the fork, and
-#: ``section_force`` on the ``.out`` route (MPCO and the fork's file refuse
-#: it by name). Any other non-canonical component records nothing in its
-#: category and is refused by :class:`ResolvedRecorderRecord`.
+#: under the canonical names, so each reads back what its explicit
+#: components do (``section_force`` on the ``.out`` route; MPCO and the
+#: fork's file refuse it by name). Any other non-canonical component
+#: records nothing in its category and is refused by
+#: :class:`ResolvedRecorderRecord`.
 _RECORDED_SHORTHANDS: dict[str, frozenset[str]] = {
     "gauss": frozenset({"stress", "strain", "plastic_strain"}),
     "line_stations": frozenset({"section_force"}),
@@ -69,8 +69,8 @@ def _refuse_unrecorded_components(
 
     A resolved record carries canonical names: no route expands a
     shorthand here (the record holds no ``ndm`` / ``ndf`` to clip it
-    to), so ``"displacement"`` on a node record wrote no recorder and
-    read back empty with no warning (#2340).
+    to), so ``"displacement"`` on a node record would write no recorder
+    and read back empty with no warning.
     """
     kept = _RECORDED_SHORTHANDS.get(category, frozenset())
     for comp in components:
