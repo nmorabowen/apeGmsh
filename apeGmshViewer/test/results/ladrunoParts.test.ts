@@ -239,6 +239,48 @@ const partition = (id: number | null, count: number) => (f: h5wasm.File) => {
 const threeParts = () =>
   scratchSet([PART[0]!, PART[1]!, PART[1]!], { 0: partition(null, 3), 1: both(partition(null, 3), perturb(1.5, 1 / 7)), 2: both(partition(2, 3), perturb(-2, 1 / 3)) });
 
+/**
+ * `body` with every Map and Set it builds capped at `cap` number keys, as V8 caps them
+ * at 2^24 entries: a set of more than 2^24 nodes, at the fixture's scale (3 nodes).
+ * Only number keys count (node ids are numbers; component and part names are strings).
+ * The real Map and Set are restored however `body` ends.
+ */
+function underIdCap<T>(cap: number, body: () => T): T {
+  const [RealMap, RealSet] = [globalThis.Map, globalThis.Set];
+  const full = () => new RangeError(`Set maximum size exceeded (stub: ${cap} number keys)`);
+  class CappedMap<K, V> extends RealMap<K, V> {
+    override set(k: K, v: V): this {
+      if (typeof k === "number" && !this.has(k) && this.size >= cap) throw full();
+      return super.set(k, v);
+    }
+  }
+  class CappedSet<V> extends RealSet<V> {
+    override add(v: V): this {
+      if (typeof v === "number" && !this.has(v) && this.size >= cap) throw full();
+      return super.add(v);
+    }
+  }
+  globalThis.Map = CappedMap as unknown as MapConstructor;
+  globalThis.Set = CappedSet as unknown as SetConstructor;
+  try {
+    return body();
+  } finally {
+    globalThis.Map = RealMap;
+    globalThis.Set = RealSet;
+  }
+}
+
+test("#2354: the set's node union is a sorted typed array, no Set or Map of node ids, so a set past 2^24 nodes stitches (a cap of 2 ids stands in)", () => {
+  const { id, nSteps, components } = withSet(PART[0]!, (s) => ({ ...s.index.stages[0]!, components: s.index.stages[0]!.nodes!.components }));
+  const want = components.map((c) => perComponentStitch(PART, id, c, 0, nSteps)); // the one-component oracle, outside the cap
+  underIdCap(2, () =>
+    withSet(PART[0]!, (s) => {
+      assert.deepEqual(Array.from(s.index.stages[0]!.nodes!.ids), [1, 2, 3]);
+      s.readNodalRows(id, components, 0, nSteps).forEach((got, i) => assert.ok(sameBits(got, want[i]!), `${components[i]}: the capped set's stitch differs`));
+    }),
+  );
+});
+
 test("#2297: readNodalRows and readNodalStep return the one-component-per-call bits, every component, every range, several selections", () => {
   // The committed set, opened from either part (its interface copies agree), then sets whose copies differ.
   for (const opened of PART) assert.equal(setMatchesPerComponent(opened), 3 * (4 + 4 + 3 + 2 + 2), `${opened}`);

@@ -28,7 +28,7 @@ import { firstListing, LadrunoError, openLadruno, type LadrunoFile } from "../..
 import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
 import { spatialDimOf, type SpatialDimMetadata } from "../../src/reader/ladrunoInfo.ts";
 import { resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes } from "../../src/reader/ladrunoLocalAxes.ts";
-import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
+import { nodeColumnLookup, readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
 await h5wasm.ready;
@@ -329,6 +329,78 @@ test("#2299: uniqueNodeIds names repeats in file order, caps at 10, and passes 2
   assert.equal(uniqueNodeIds(big, "f.ladruno", "/ID", err), big, "the ids are returned as given");
   const ms = performance.now() - t0;
   assert.ok(ms < 5000, `2^24 + 1 unique ids took ${ms.toFixed(0)} ms`);
+});
+
+/**
+ * `body` with every Map and Set it builds capped at `cap` number keys, as V8 caps them
+ * at 2^24 entries: a stage of more than 2^24 nodes, at a fixture's scale. Only number
+ * keys count (node ids are numbers; component and stage names are strings). The real
+ * Map and Set are restored however `body` ends.
+ */
+function underIdCap<T>(cap: number, body: () => T): T {
+  const [RealMap, RealSet] = [globalThis.Map, globalThis.Set];
+  const full = () => new RangeError(`Map maximum size exceeded (stub: ${cap} number keys)`);
+  class CappedMap<K, V> extends RealMap<K, V> {
+    override set(k: K, v: V): this {
+      if (typeof k === "number" && !this.has(k) && this.size >= cap) throw full();
+      return super.set(k, v);
+    }
+  }
+  class CappedSet<V> extends RealSet<V> {
+    override add(v: V): this {
+      if (typeof v === "number" && !this.has(v) && this.size >= cap) throw full();
+      return super.add(v);
+    }
+  }
+  globalThis.Map = CappedMap as unknown as MapConstructor;
+  globalThis.Set = CappedSet as unknown as SetConstructor;
+  try {
+    return body();
+  } finally {
+    globalThis.Map = RealMap;
+    globalThis.Set = RealSet;
+  }
+}
+
+test("#2354: readNodeHistory finds a node's column with no Map of node ids, so a stage past 2^24 nodes reads (a Map capped at 2 ids stands in)", () => {
+  // DISPLACEMENT/ID 1, 2, 3 as committed, and reversed to 3, 2, 1 with DATA untouched:
+  // node n then reads column 3 - n, so its Ux is the closed form of node 4 - n.
+  const reversed = edited(TRUSS, (f) => (f.get(`${DISP}/ID`) as h5wasm.Dataset).write_slice([[0, 3], [0, 1]], new Int32Array([3, 2, 1])));
+  for (const [path, nodeOfColumn] of [[TRUSS, (n: number) => n], [reversed, (n: number) => 4 - n]] as const) {
+    withFile(path, (r) => {
+      r.readNodalStep("stage_0", ["DISPLACEMENT/Ux"], 0); // the component columns are cached outside the cap
+      underIdCap(2, () => {
+        for (const n of [1, 2, 3]) {
+          const h = r.readNodeHistory("stage_0", "DISPLACEMENT/Ux", n);
+          assert.deepEqual(Array.from(h).map((v) => +v.toFixed(12)), [1, 2, 3, 4].map((k) => +ux(nodeOfColumn(n), 0.25 * k).toFixed(12)), `${path} node ${n}`);
+        }
+        assert.throws(() => r.readNodeHistory("stage_0", "DISPLACEMENT/Ux", 4), (e: unknown) => e instanceof LadrunoError && e.kind === "argument" && /stage stage_0 records no node 4/.test(e.message));
+      });
+    });
+  }
+  // The stand-in bites: the capped Map refuses a third id, as V8's refuses the 2^24 + 1st.
+  assert.throws(() => underIdCap(2, () => new Map([1, 2, 3].map((n) => [n, n]))), RangeError);
+});
+
+test("#2354: nodeColumnLookup answers each id's row over 2^24 + 1 ids, ascending (searched in place) or not, and refuses a repeated id by name", () => {
+  const err = (m: string) => new LadrunoError("layout", m);
+  const N = 2 ** 24 + 1;
+  const asc = new Float64Array(N).map((_, i) => 10 * i + 7);
+  const desc = new Float64Array(N).map((_, i) => N - i);
+  const t0 = performance.now();
+  const inPlace = nodeColumnLookup(asc, err);
+  const sorted = nodeColumnLookup(desc, err);
+  const ms = performance.now() - t0;
+  assert.ok(ms < 10000, `2 x (2^24 + 1) ids took ${ms.toFixed(0)} ms`);
+  for (const i of [0, 1, 2 ** 24 - 1, 2 ** 24]) {
+    assert.equal(inPlace(10 * i + 7), i);
+    assert.equal(sorted(N - i), i);
+  }
+  for (const n of [0, 8, 10 * N + 7, 1.5, NaN]) assert.equal(inPlace(n), -1, `inPlace(${n})`);
+  for (const n of [0, N + 1, 1.5, NaN]) assert.equal(sorted(n), -1, `sorted(${n})`);
+  const mixed = nodeColumnLookup(Float64Array.from([30, 10, 20, -5]), err);
+  assert.deepEqual([30, 10, 20, -5, 15].map((n) => mixed(n)), [0, 1, 2, 3, -1]);
+  assert.throws(() => nodeColumnLookup(Float64Array.from([4, 9, 4]), err), (e: unknown) => e instanceof LadrunoError && /holds id 4 at rows 0 and 2; a node is listed once per file/.test((e as Error).message));
 });
 
 test("stages sort by their integer id; one with no ON_NODES has no nodal block", () => {
