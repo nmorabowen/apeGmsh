@@ -835,7 +835,7 @@ _BUILDER_SCOPED_UNITS: "frozenset[str]" = frozenset(
     {"geomTransf", "beamIntegration", "timeSeries", "damping"})
 
 #: The section of ``BuiltModel._emit_flat`` that writes each replay unit
-#: kind, in deck order (K R1b-S3b, #2277). A partitioned archive's program
+#: kind, in deck order. A partitioned archive's program
 #: records the ADR 0027 emit (declarations above the partition blocks
 #: that hold the nodes, elements, fixes and patterns), so its replay sorts
 #: by ``(section, emit index)`` to write the flat deck. Two kinds have no
@@ -1120,7 +1120,7 @@ def _run_units(
                 "builder-ndf-gated elements, whose 'model BasicBuilder' "
                 "bracket would purge them (ADR 0099 INV-1); the archive's "
                 "emit order is not one the bridge writes.")
-    for _key, _seq, _kind, thunk in keyed:
+    for _sort, _seq, _kind, thunk in keyed:
         thunk()
 
 
