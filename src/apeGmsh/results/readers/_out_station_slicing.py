@@ -32,6 +32,7 @@ from numpy import ndarray
 
 from ...opensees import OpenSeesModel
 from ...opensees._element_capabilities import _FORCE_DISP_BEAMS
+from ...opensees._recorder_translate import LiveDomainFacts
 from ..spec._emit import element_tag_map
 
 if TYPE_CHECKING:
@@ -100,7 +101,7 @@ def model_station_counts(
 
 def line_station_count(
     rec: "ResolvedRecorderRecord", n_columns: int, path: "str | Path",
-    model: "OpenSeesModel | None", fem_snapshot_id: str,
+    model: "OpenSeesModel | LiveDomainFacts | None", fem_snapshot_id: str,
 ) -> int:
     """The integration-point count of every element of ``rec``, whose
     ``integrationPoints`` file at ``path`` has ``n_columns`` data columns.
@@ -109,8 +110,11 @@ def line_station_count(
     checks) the model's counts decide, and they are checked first: unequal
     counts are refused naming the elements by count, as the fibre reader
     refuses them (#2267), before the columns are divided. Equal counts that
-    do not fill ``n_columns`` mean the file is not from this model. Without
-    a model, the columns must divide evenly by element.
+    do not fill ``n_columns`` mean the file is not from this model. A live
+    pairing over a FEMData archive (:class:`LiveDomainFacts`) gives each
+    element's count from the sections it read before the run (#2290), by
+    the same rule. Without a model, the columns must divide evenly by
+    element.
     """
     assert rec.element_ids is not None
     n_elements = len(rec.element_ids)
@@ -121,7 +125,13 @@ def line_station_count(
                 f"{n_elements} elements. The integrationPoints file should be "
                 f"element-major with n_IP columns per element.")
         return n_columns // n_elements
-    counts = model_station_counts(rec, model, fem_snapshot_id)
+    if isinstance(model, LiveDomainFacts):
+        source = "the live domain"
+        counts = np.array([len(model.fiber_sections(int(e))[0])
+                           for e in rec.element_ids], dtype=np.int64)
+    else:
+        source = "model="
+        counts = model_station_counts(rec, model, fem_snapshot_id)
     if np.unique(counts).size > 1:
         by_count: dict[int, list[int]] = {}
         for e, c in zip(rec.element_ids, counts):
@@ -131,7 +141,7 @@ def line_station_count(
             for c, ids in sorted(by_count.items()))
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): its elements have "
-            f"different integration-point counts in model= ({listing}). A .out "
+            f"different integration-point counts in {source} ({listing}). A .out "
             f"record carries no per-element count, so it cannot be sliced into "
             f"elements reliably. Split the record so that each holds one "
             f"point count.")
@@ -139,7 +149,7 @@ def line_station_count(
     if n_columns != n_elements * n_ip:
         raise ValueError(
             f"{path}: {n_columns} data columns over {n_elements} elements, but "
-            f"model= gives its elements {n_ip} integration points each. The "
+            f"{source} gives its elements {n_ip} integration points each. The "
             f"file does not match the model.")
     return n_ip
 
