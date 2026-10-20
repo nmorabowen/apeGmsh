@@ -3,11 +3,13 @@
 // in fixtures/README.md), not values copied from this app's own output.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
 import { resolveChain, walk, type ElementRef } from "../src/chain/resolve.ts";
 import { buildMesh, colourGroups, IdLookup } from "../src/mesh/build.ts";
+import type { ModelFile } from "../src/model/types.ts";
 import { openModel } from "../src/reader/node.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/shoebuckle.h5", import.meta.url));
@@ -137,6 +139,46 @@ test("#2359: colourGroups on the fixture equals the Map it replaced, entry for e
   const ref = new Map<number, number>();
   groups.forEach((g, gi) => g.elementIds.forEach((e) => ref.has(e) || ref.set(e, gi)));
   assert.deepEqual([...byElement.entries()], [...ref.entries()]);
+});
+
+/** sha-256 (first 16 hex) of everything `buildMesh` returns, buffers in their order. */
+function meshDigest(m: ReturnType<typeof buildMesh>): string {
+  const h = createHash("sha256");
+  for (const b of [m.linePositions, m.lineNodes, m.triPositions, m.triNodes, m.edgePositions, m.edgeNodes]) h.update(new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
+  h.update(JSON.stringify([m.lineRefs, m.triRefs, m.legend, m.center, m.radius, m.counts, m.warnings]));
+  return h.digest("hex").slice(0, 16);
+}
+
+test("#2359: buildMesh output, order included, equals the golden taken before the Map replacement", async () => {
+  // Digests of base a6dbe901's buildMesh (the Map and Set build) on these committed models:
+  // solids (boundary-face order), tets, quads and lines (outline-edge order).
+  const GOLDEN: Record<string, string> = {
+    "contour_staged.h5": "c4ab5807d2387714",
+    "elem_solid.h5": "2b856b3f8732a36c",
+    "extrap_plane.h5": "e3a5ff05efbe31b1",
+    "extrap_tet.h5": "448ff010888cf7ed",
+    "ladruno_quad2d.h5": "4632cda98a405f76",
+    "shoebuckle.h5": "5600661971c14d23",
+  };
+  for (const [name, want] of Object.entries(GOLDEN)) {
+    const m = await openModel(fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url)));
+    assert.equal(meshDigest(buildMesh(m)), want, name);
+  }
+});
+
+test("#2359: a node id the model lists twice draws at its last row, as the Map's set-each-time did", () => {
+  const m: ModelFile = {
+    ...model,
+    // id 7 at rows 0 and 2: the line 7-8 is drawn from row 2's coordinates.
+    nodeIds: Float64Array.from([7, 8, 7]),
+    nodeCoords: Float64Array.from([0, 0, 0, 1, 0, 0, 5, 5, 5]),
+    blocks: [{ alias: "line2", code: 1, dim: 1, npe: 2, ids: Float64Array.from([1]), connectivity: Float64Array.from([7, 8]) }],
+    physicalGroups: [],
+    opensees: null,
+  };
+  const mesh = buildMesh(m);
+  assert.deepEqual(Array.from(mesh.linePositions), [5, 5, 5, 1, 0, 0]);
+  assert.deepEqual(Array.from(mesh.lineNodes), [7, 8]);
 });
 
 function archElementRef(): ElementRef {

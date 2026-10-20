@@ -1,4 +1,4 @@
-### FIXED — apeGmshViewer builds the mesh and the contour past 2^24 nodes and elements (#2359)
+### FIXED — apeGmshViewer: the contour's and the mesh build's node and element lookups no longer cap at 2^24 (#2359)
 
 The readers no longer stop at 2^24 nodes (#2354, #2358), but the renderer path
 still did. The contour, the deformed shape and the section caps found a node's
@@ -17,5 +17,6 @@ model lists twice resolves to its last row. The contour values, the deformed
 shape, and the `buildMesh` output are byte-identical on every committed
 `model.h5`, `.ladruno` and native `results.h5`. Collections of this kind elsewhere
 in `state/` (the load, the search index, the activation filter, the adjacency, the
-line diagrams, the extrapolation plan) are left for follow-up slices. Plain arrays
-in the mesh build still stop at 2^27 entries, about 14.9 million drawn triangles.
+line diagrams, the extrapolation plan) are left for follow-up slices. `buildMesh`
+itself still stops at about 2^27 entries in its plain-array position buffers,
+about 14.9 million drawn triangles (#2362).
