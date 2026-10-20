@@ -55,6 +55,10 @@ export interface LocalAxesDataset {
 export interface LocalAxesReads {
   optionalGroup(parent: LocalAxesGroup, name: string): LocalAxesGroup | null;
   dataset(parent: LocalAxesGroup, name: string): LocalAxesDataset;
+  /** A child dataset, or null when absent or not a dataset. */
+  optionalDataset(parent: LocalAxesGroup, name: string): LocalAxesDataset | null;
+  /** One step of a `(steps, elements, components)` dataset, as float64. */
+  stepSlice(ds: LocalAxesDataset, step: number): Float64Array;
   ints(ds: LocalAxesDataset): Float64Array;
   floats(v: unknown, where: string): Float64Array;
   /** The file's name, for a refusal or a warning. */
@@ -151,6 +155,35 @@ export function warnModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesRead
     const fault = frameFault(nE, frameRowsOf(frameDs.shape), count(frameDs.shape), idDs);
     if (fault !== null) reads.warn(notRead(reads, frameDs, fault));
   });
+}
+
+/** The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` (`stepLa`) at `step`, one entry per bucket read. */
+export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, reads: LocalAxesReads): FrameRows[] {
+  const read: FrameRows[] = [];
+  const readBucket = (b: LocalAxesGroup) => {
+    if (!b.keys().includes("ID") || !b.keys().includes("DATA")) return;
+    const idDs = reads.optionalDataset(b, "ID");
+    const dataDs = reads.optionalDataset(b, "DATA");
+    if (!idDs || !dataDs) return;
+    const shape = dataDs.shape ?? [];
+    if (shape.length !== 3 || step >= shape[0]!) return;
+    const ids = reads.ints(idDs);
+    const nE = ids.length;
+    if (nE <= 0 || shape[1] !== nE) return;
+    const slice = reads.stepSlice(dataDs, step);
+    if (slice.length === 0 || slice.length % nE !== 0) return;
+    const cols = slice.length / nE;
+    if (cols !== shape[2]) return;
+    read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
+  };
+  if (stepLa.keys().includes("ID") && stepLa.keys().includes("DATA")) {
+    readBucket(stepLa);
+  }
+  for (const k of stepLa.keys()) {
+    const sub = reads.optionalGroup(stepLa, k);
+    if (sub) readBucket(sub);
+  }
+  return read;
 }
 
 /** Per-element frames, as reader/ladruno.ts `LadrunoLocalAxes` documents them. */
