@@ -3791,15 +3791,26 @@ execution strategy</strong>, and the strategies are just its consumers.</p>
 <li><strong>Live MPCO</strong> — <code>spec.emit_mpco(path)</code> issues one in-process
   <code>recorder mpco</code> call, with a build-gate at <code>__enter__</code> that raises
   with a remediation pointer when the active build lacks the recorder.</li>
-<li><strong>Domain capture</strong> — the native path. This one grew its own
-  declarative class, <code>DomainCaptureSpec</code>, resolved on the bridge:
+<li><strong>Default route</strong> — <code>spec.emit_default(path, model_h5=...)</code> returns
+  a <code>LiveDefault</code> context manager that asks the bound module what it is
+  at <code>__enter__</code> and picks one of the three strategies above: the fork's
+  own <code>.ladruno</code> recorder (stamped with <code>model_h5</code>'s pairing, read with
+  <code>Results.from_ladruno</code>), a live MPCO recorder on a stock build that
+  has one (read with <code>Results.from_mpco</code>), or live classic recorders
+  over one stage (read with <code>Results.from_recorders</code>). The two stock
+  routes warn once with a <code>DefaultRouteWarning</code>; <code>run.results()</code> opens
+  whichever file the route wrote. Modal records have no default route:
+  modes come from <code>EigenResult.to_native()</code> / <code>.results()</code> on stock, and
+  from the fork's <code>.ladruno</code> on the fork.</li>
+<li><strong>Domain capture (legacy)</strong> — the older native path, which the
+  default route replaces. It has its own declarative class,
+  <code>DomainCaptureSpec</code>, resolved on the bridge:
   <code>ops.domain_capture(spec, path=...)</code> returns a <code>DomainCapture</code>
   context manager that queries the live domain (<code>ops.nodeDisp</code>,
   <code>ops.eleResponse</code>, …) on each <code>cap.step()</code>, buffers in RAM, and
-  flushes chunked writes through <code>NativeWriter</code> at stage end.
-  <code>capture_modes()</code> runs the eigen analysis and writes one stage per
-  mode. The bridge is forwarded through so the capture file gets its
-  <code>/opensees/</code> zone composed in — the Composed-file pattern again.</li>
+  flushes chunked writes through <code>NativeWriter</code> at stage end. The
+  pages teach the default route; this one stays until its removal
+  slice lands.</li>
 </ul>
 <p>Text and live emission cannot drift apart because they share one core.
 <code>emit_logical()</code> turns a resolved record into <code>LogicalRecorder</code>

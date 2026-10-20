@@ -3742,12 +3742,13 @@ data came from MPCO.</p>
   Closing the file collides with the sync client and aborts the kernel (leaving
   a stale open-for-write flag). Write to a local temp path; copy afterward if
   you must.</li>
-<li><strong>MPCO needs an STKO-built openseespy.</strong> Vanilla <code>openseespy</code> distributions
-  don't ship the MPCO recorder; <code>emit_mpco.__enter__</code> raises a <code>RuntimeError</code>
-  with a remediation pointer. If you don't have STKO's bundled Python, use
-  native domain <strong>capture</strong> (<code>ops_bridge.domain_capture(...)</code> →
-  <code>Results.from_native</code>) for the same fibers/layers/modal coverage without
-  MPCO.</li>
+<li><strong>MPCO needs a build that has it.</strong> Vanilla <code>openseespy</code> distributions
+  don't ship the MPCO recorder (STKO's bundled Python and the Ladruno fork
+  do); <code>emit_mpco.__enter__</code> raises a <code>RuntimeError</code> with a remediation
+  pointer. Without one, record with <code>spec.emit_default(...)</code>: on pip
+  openseespy it falls back to classic <code>.out</code> recorders, which cover nodes,
+  element forces, gauss points, line stations and fibres, but not layers.
+  Modes come from <code>ops.eigen(n).results()</code> on any build.</li>
 <li><strong>Loads are opt-in.</strong> <code>g.loads.*</code> cases do not auto-emit; import each into a
   pattern with <code>p.from_model("&lt;case&gt;")</code>. Because nothing auto-emits, there is no
   double-count trap.</li>
@@ -3757,10 +3758,10 @@ data came from MPCO.</p>
   keep one copy, and reactions and unbalanced forces are summed, because
   each rank stores only its own elements' share.
   Pass <code>merge_partitions=False</code> to read only the named partition.</li>
-<li><strong>MPCO vs native capture:</strong> use MPCO for STKO interoperability and parallel
-  runs; use <code>ops_bridge.domain_capture(...)</code> when you control a plain
-  openseespy build and want apeGmsh's native HDF5 (same read API, broadest
-  coverage, no STKO build).</li>
+<li><strong>MPCO vs the default route:</strong> use MPCO for STKO interoperability and
+  parallel runs; use <code>spec.emit_default(...)</code> when one in-process script
+  should run on whatever build it finds: the fork's <code>.ladruno</code>, a stock
+  <code>.mpco</code>, or pip's <code>.out</code> files, all read with the same API.</li>
 </ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

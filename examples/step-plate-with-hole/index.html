@@ -4041,9 +4041,9 @@ concentration factor.</p>
 <p>For per-element fields like this we read straight from the live
 OpenSees domain — <code>ops.run(wipe=False)</code> leaves it open, and
 <code>eleResponse(tag, "stress")</code> returns each <code>Tri31</code>'s stress. (Iterate
-<code>opspy.getEleTags()</code> for the live element tags.) The capture-pipeline
-sibling, <code>DomainCaptureSpec(...).nodes(...)</code> →
-<code>Results.from_native</code>, is the route when you want a results file and
+<code>opspy.getEleTags()</code> for the live element tags.) The recording-pipeline
+sibling, a recorder spec's <code>emit_default(...)</code> → <code>run.results()</code>, is
+the route when you want a results file and
 <code>results.show_web()</code> to spin the deformed plate around in a browser;
 here a single static read is all the benchmark needs.</p>
 </div>
