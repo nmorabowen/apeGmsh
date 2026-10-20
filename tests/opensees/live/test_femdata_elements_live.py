@@ -17,6 +17,10 @@ itself) and on a build that has MPCO.
   1e-12.
 - A deck whose element connectivity is not the FEM's refuses by id, and
   an element class with no bridge token refuses by name.
+- A statically determinate truss: its Gauss ``axial_force`` record, which
+  MPCO cannot write, takes the classic recorders on any stock build and
+  equals the live ``axialForce`` at rtol 1e-12 and the joint equilibrium
+  closed form (#2290 D).
 """
 from __future__ import annotations
 
@@ -403,3 +407,107 @@ def test_an_unmapped_live_class_refuses_by_name(opspy, tmp_path) -> None:
                          np.array([3]), "ElasticBeam2d"),))
     _refuses(spec, tmp_path, model_h5, opspy,
              r"'ModElasticBeam2d': FEM elements \[3\]")
+
+
+# ---------------------------------------------------------------------------
+# A determinate truss: the Gauss axial force MPCO cannot write (#2290 D)
+# ---------------------------------------------------------------------------
+
+PX, PY = 1.0e4, -2.0e4
+
+
+class _StockView(NoMPCO):
+    """The live module with no fork signal, its MPCO recorder kept where the
+    build has one; each recorder type asked is logged in ``asked``."""
+
+    def __init__(self, ops: Any) -> None:
+        super().__init__(ops)
+        self.asked: "list[str]" = []
+
+    def recorder(self, *args: Any) -> Any:
+        self.asked.append(str(args[0]))
+        return self._ops.recorder(*args)
+
+
+def test_truss_gauss_axial_force_skips_mpco_and_is_the_live_response(
+    opspy, tmp_path,
+) -> None:
+    """Pinned at 1 (0, 0), a roller at 2 (4, 0), the apex 3 (2, 3) loaded
+    (PX, PY). MPCO stays visible (``_StockView``, not NoMPCO):
+    ``mpco_ops_args`` refuses the record on every stock build, so the route
+    takes the classic recorders without probing MPCO."""
+    coords = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [2.0, 3.0, 0.0]])
+    conn = {1: (1, 2), 2: (2, 3), 3: (1, 3)}
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=3)
+    group = ElementGroup(element_type=line, ids=np.array([1, 2, 3], dtype=np.int64),
+                         connectivity=np.array(list(conn.values()), dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 4, dtype=np.int64),
+                            node_coords=coords, physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=3, n_elems=3, bandwidth=3, types=[line]),
+        model_name="femdata_elements_truss")
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 2, "-ndf", 2)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        opspy.node(int(nid), float(xyz[0]), float(xyz[1]))
+    opspy.fix(1, 1, 1)
+    opspy.fix(2, 0, 1)
+    opspy.uniaxialMaterial("Elastic", 1, E)
+    for e, (i, j) in conn.items():
+        opspy.element("Truss", e, i, j, A * e, 1)
+    opspy.timeSeries("Linear", 1)
+    opspy.pattern("Plain", 1, 1)
+    opspy.load(3, PX, PY)
+    for cmd, args in (("constraints", ("Plain",)), ("numberer", ("RCM",)),
+                      ("system", ("BandGeneral",)),
+                      ("test", ("NormDispIncr", 1.0e-12, 10)),
+                      ("algorithm", ("Linear",)),
+                      ("integrator", ("LoadControl", 1.0 / _STEPS)),
+                      ("analysis", ("Static",))):
+        getattr(opspy, cmd)(*args)
+    ids = np.array([3, 1, 2], dtype=np.int64)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("gauss", "axial", ("axial_force",), ids, "Truss"),))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        view = _StockView(opspy)
+        with spec.emit_default(tmp_path / "run", model_h5=model_h5,
+                               ops=view) as run:
+            for _ in range(_STEPS):
+                assert opspy.analyze(1) == 0
+    assert run.route == "recorders" and "mpco" not in view.asked
+    (w,) = caught
+    assert w.category is DefaultRouteWarning
+    assert "a record cannot go through MPCO" in str(w.message)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        slab = res.elements.gauss.get(component="axial_force", ids=ids)
+        index = np.asarray(slab.element_index, dtype=np.int64)
+        assert sorted(index.tolist()) == [1, 2, 3]       # one Gauss point each
+        # Line_GL_1: the one point at mid-length, where a truss's constant
+        # axial force is sampled.
+        np.testing.assert_array_equal(np.asarray(slab.natural_coords),
+                                      [[0.0]] * 3)
+        order = np.argsort(index)
+        got = np.asarray(slab.values)[:, order]
+        truth = np.array([opspy.eleResponse(e, "axialForce")[0]
+                          for e in (1, 2, 3)])
+        np.testing.assert_allclose(got[-1], truth, **_RTOL)
+        # Joint 3, members 2 (toward 2) and 3 (toward 1) in tension:
+        # N2 - N3 = -PX sqrt(13) / 2, N2 + N3 = PY sqrt(13) / 3; joint 2
+        # (free in x): N1 = -2 N2 / sqrt(13).
+        r13 = np.sqrt(13.0)
+        n2 = (-PX * r13 / 2 + PY * r13 / 3) / 2
+        n3 = (PX * r13 / 2 + PY * r13 / 3) / 2
+        np.testing.assert_allclose(got[-1], [-2 * n2 / r13, n2, n3], rtol=1e-9)
+        np.testing.assert_allclose(got[0], got[-1] / _STEPS, rtol=1e-9)
+    finally:
+        res.close()

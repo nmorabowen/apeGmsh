@@ -65,8 +65,10 @@ def _value(step: int, eid: int, k: int) -> float:
 
 
 class ElementOps(LiveOps):
-    """``LiveOps`` that also writes each ``Element`` recorder's file: six
-    columns per element (a tet's one Gauss point)."""
+    """``LiveOps`` that also writes each ``Element`` recorder's file:
+    ``columns`` per element (six: a tet's one Gauss point)."""
+
+    columns = 6
 
     def remove(self, what: str, tag: int) -> None:
         args = list(self._live[tag])
@@ -79,7 +81,8 @@ class ElementOps(LiveOps):
         while isinstance(args[k], int):
             eles.append(args[k])
             k += 1
-        rows = [[float(s)] + [_value(s, e, c) for e in eles for c in range(6)]
+        rows = [[float(s)] + [_value(s, e, c) for e in eles
+                              for c in range(self.columns)]
                 for s in range(1, _STEPS + 1)]
         np.savetxt(path, np.asarray(rows))
 
@@ -356,3 +359,76 @@ def test_a_pairing_and_a_model_archive_are_exclusive(tets, tmp_path) -> None:
     with pytest.raises(TypeError, match=r"not both"):
         RecorderTranscoder(_spec(fem), tmp_path, tmp_path / "r.h5", fem,
                            model_h5_src=model_h5, pairing=_Pairing(fem, {}))
+
+
+# ---------------------------------------------------------------------------
+# A record MPCO cannot write takes the classic recorders (#2290 D)
+# ---------------------------------------------------------------------------
+
+
+class MpcoTrussOps(ElementOps):
+    """A build that has an MPCO recorder (its probe would return a tag),
+    recording one axial-force column per truss."""
+
+    columns = 1
+
+    def recorder(self, *args: Any) -> int:
+        if args[0] != "mpco":
+            return super().recorder(*args)
+        self.recorder_calls.append(args)
+        return len(self.recorder_calls)
+
+
+def test_a_truss_axial_force_record_skips_mpco_for_the_classic_recorders(
+    tmp_path,
+) -> None:
+    """MPCO writes the Truss ``axialForce`` bucket with no ``GAUSS_IDS``, so
+    ``mpco_ops_args`` refuses the record. The route takes the classic
+    recorders without probing MPCO, even on a build that has it, and the
+    read gives the file's axial force at the truss's one Gauss point."""
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2)
+    group = ElementGroup(element_type=line, ids=np.array([1, 2], dtype=np.int64),
+                         connectivity=np.array([[1, 2], [2, 5]], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 6, dtype=np.int64),
+                            node_coords=np.array([_XYZ[n] for n in range(1, 6)]),
+                            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=5, n_elems=2, bandwidth=2, types=[line]),
+        model_name="femdata_elements_trusses")
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = MpcoTrussOps(ndm=3, ndf={n: 3 for n in _XYZ},
+                       elements={1: ("Truss", (1, 2)), 2: ("Truss", (2, 5))},
+                       coords=dict(_XYZ))
+    rec = ResolvedRecorderRecord(
+        category="gauss", name="axial", components=("axial_force",), dt=None,
+        n_steps=None, element_ids=np.array([2, 1]), element_class_name="Truss")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with _spec(fem, rec).emit_default(tmp_path / "run", model_h5=model_h5,
+                                          ops=ops) as run:
+            pass
+    assert run.route == "recorders"
+    assert [c for c in ops.recorder_calls if c[0] == "mpco"] == []
+    (w,) = caught
+    assert w.category is DefaultRouteWarning
+    assert "a record cannot go through MPCO (Record 'axial'" in str(w.message)
+    assert not (tmp_path / "run.mpco").exists()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        slab = res.elements.gauss.get(component="axial_force",
+                                      ids=np.array([1, 2]))
+        index = [int(i) for i in np.asarray(slab.element_index)]
+        assert sorted(index) == [1, 2]                 # one Gauss point each
+        np.testing.assert_array_equal(np.asarray(slab.natural_coords), [[0.0]] * 2)
+        np.testing.assert_array_equal(
+            np.asarray(slab.values),
+            [[_value(s, e, 0) for e in index] for s in range(1, _STEPS + 1)])
+    finally:
+        res.close()
