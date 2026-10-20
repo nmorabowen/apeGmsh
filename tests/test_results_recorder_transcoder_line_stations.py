@@ -131,20 +131,23 @@ NO_MODEL = r"pass model_h5_src= .* or pairing="
 def _run_with_known_counts(
     monkeypatch: pytest.MonkeyPatch, spec: ResolvedRecorderSpec,
     tmp_path: Path, target: Path, fem, n_ip: int,
-) -> None:
+) -> RecorderTranscoder:
     """Transcode ``spec`` with each element's count known to be ``n_ip``.
 
     These mocked files come with no model, and a model-less read is refused
     by name, since nothing names a count (#2331): that is asserted first.
     The test wrote the files, so it knows the count a model's
     ``beamIntegration`` would give; it stands in for one, checked against
-    the file's columns, and the decode is then held to the files.
+    the file's columns, and the decode is then held to the files. Returns
+    the transcoder that ran.
     """
-    def run() -> None:
-        RecorderTranscoder(
+    def run() -> RecorderTranscoder:
+        transcoder = RecorderTranscoder(
             spec, output_dir=tmp_path, target_path=target, fem=fem,
             stage_name="static", stage_kind="static",
-        ).run()
+        )
+        transcoder.run()
+        return transcoder
 
     with pytest.raises(ValueError, match=NO_MODEL):
         run()
@@ -157,7 +160,7 @@ def _run_with_known_counts(
     monkeypatch.setattr(recorder_module, "require_station_source",
                         lambda *_a: None)
     monkeypatch.setattr(recorder_module, "line_station_count", counts)
-    run()
+    return run()
 
 
 class TestResolveElementLengths:

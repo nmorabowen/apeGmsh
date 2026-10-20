@@ -23,6 +23,9 @@ import numpy as np
 import pytest
 
 from tests.conftest import _open_model_from_h5
+from tests.test_results_recorder_transcoder_line_stations import (
+    _run_with_known_counts,
+)
 from tests.fixtures.recorder_models import identity_model
 
 
@@ -86,7 +89,7 @@ class _BeamFem:
 
 
 def test_force_beam_3d_lobatto5_aggregated_three_way_agreement(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Three-way physics agreement on a 5-IP Lobatto ForceBeamColumn3d cantilever.
 
@@ -94,6 +97,10 @@ def test_force_beam_3d_lobatto5_aggregated_three_way_agreement(
     test. Pure axial tip load → axial force = applied load at every
     IP, all transverse components zero. Verifies the .out transcoder
     produces the same numbers as the other two paths.
+
+    The hand-written deck has no bridge model, so the transcode with no
+    model is refused by name first (#2331); the deck's
+    ``beamIntegration Lobatto 1 11 5`` then gives the count a model would.
     """
     launcher = _resolve_tcl_launcher()
     if launcher is None:
@@ -202,14 +209,10 @@ def test_force_beam_3d_lobatto5_aggregated_three_way_agreement(
 
     # ── Run the transcoder over the emitted files ────────────────
     from apeGmsh.results import Results
-    from apeGmsh.results.transcoders._recorder import RecorderTranscoder
 
     target = tmp_path / "transcoded.h5"
-    transcoder = RecorderTranscoder(
-        spec, output_dir=tmp_path, target_path=target, fem=fem,
-        stage_name="static", stage_kind="static",
-    )
-    transcoder.run()
+    transcoder = _run_with_known_counts(
+        monkeypatch, spec, tmp_path, target, fem, n_ip=5)
     assert transcoder.unsupported == [], (
         f"unexpected unsupported records: {transcoder.unsupported}"
     )
