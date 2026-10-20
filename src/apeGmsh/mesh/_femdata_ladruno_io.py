@@ -114,7 +114,7 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             element_groups[info.code] = ElementGroup(
                 element_type=info, ids=ids, connectivity=connectivity,
             )
-    warn_unknown_dims(guessed, source=".ladruno MODEL")
+    warn_unknown_dims(guessed, source="fork-recorder MODEL")
 
     # Physical groups from ladruno SETS (MODEL/SETS/SET_<tag>).
     pg_dict: dict[tuple[int, int], dict] = {}
