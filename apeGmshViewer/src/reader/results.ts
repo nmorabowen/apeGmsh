@@ -70,6 +70,9 @@ const GAUSS_INDEX = new Set(["_element_index", "_natural_coords", "_local_axes_q
 const LINE_STATION_INDEX = new Set(["_element_index", "_station_natural_coord", "_local_axes_quaternion"]);
 const H5T_FLOAT = 1;
 const H5T_STRING = 3;
+/** Why a native stage lists a node once: its one partition holds each node's column once (#2358). */
+const NATIVE_NODE_ONCE = "a node is listed once per partition, and this reader reads one partition per stage";
+
 /** HDF5 `H5T_CSET_UTF8`; h5wasm reports it as `metadata.cset` (`H5T_CSET_ASCII` is 0). */
 const H5T_CSET_UTF8 = 1;
 
@@ -716,7 +719,7 @@ export class ResultsFile {
     // in Python. Boundary nodes copied across partitions, which Python's native
     // reader dedups first-wins, never reach this reader.
     const idDs = this.dataset(g, "_ids");
-    const ids = uniqueNodeIds(intsAsNumbers(idDs), this.path, idDs.path, (m) => new ResultsError("layout", m));
+    const ids = uniqueNodeIds(intsAsNumbers(idDs), this.path, idDs.path, (m) => new ResultsError("layout", m), NATIVE_NODE_ONCE);
     const components: string[] = [];
     const refused: { component: string; reason: string }[] = [];
     for (const k of g.keys()) {

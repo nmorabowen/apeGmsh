@@ -21,6 +21,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openResults, ResultsError, sortStageIds, type ResultsH5 } from "../../src/reader/results.ts";
+import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
 import { ResultsHost } from "../../src/main/results.ts";
 
 await h5wasm.ready;
@@ -221,7 +222,14 @@ test("#2358: a node id listed twice in _ids is refused at open, by name (file, d
   // Row 17 of _ids set to 1: node 1 at rows 0 and 17. Opened, a step read would return
   // both columns, a contour keep the first and a node history the other.
   const p = withNodeIds([...Array.from({ length: 17 }, (_, j) => j + 1), 1]);
-  refuses(p, "layout", new RegExp(`^${p.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}: ${NODE_IDS} lists node id\\(s\\) more than once \\(id 1 at rows 0, 17\\)`));
+  refuses(p, "layout", new RegExp(`^${p.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}: ${NODE_IDS} lists node id\\(s\\) more than once \\(id 1 at rows 0, 17\\); a node is listed once per partition, and this reader reads one partition per stage$`));
+  // The .ladruno part-set reason is the .ladruno reader's, not this one's.
+  assert.throws(() => openResults(H5, p), (e: unknown) => e instanceof ResultsError && !/PARTITION_REDUCTION/.test(e.message));
+  // ...and the .ladruno callers, which pass no reason, keep their message to the letter (#2299).
+  assert.throws(
+    () => uniqueNodeIds(Float64Array.of(5, 3, 3), "f.ladruno", "/D/ID", (m) => new Error(m)),
+    { message: "f.ladruno: /D/ID lists node id(s) more than once (id 3 at rows 1, 2); a node is listed once per file, and a part set that sums partition copies (PARTITION_REDUCTION=SUM) would count it twice" },
+  );
 });
 
 // -- #1768: the element mapping is stamp-only ------------------------------------

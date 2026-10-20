@@ -25,11 +25,18 @@
 /** How many repeated ids a refusal names (Python's `_REPEATED_SHOWN`). */
 const REPEATED_SHOWN = 10;
 
-/** `ids`, read from the dataset `dataset` of `file`; one holding an id twice is refused through `err`. */
-export function uniqueNodeIds(ids: Float64Array, file: string, dataset: string, err: (message: string) => Error): Float64Array {
+/** Why a `.ladruno` file lists a node once: the default `why` of `uniqueNodeIds`. */
+export const LADRUNO_NODE_ONCE = "a node is listed once per file, and a part set that sums partition copies (PARTITION_REDUCTION=SUM) would count it twice";
+
+/**
+ * `ids`, read from the dataset `dataset` of `file`; one holding an id twice is refused
+ * through `err`. `why` ends the message: why the format lists a node once. It defaults
+ * to the `.ladruno` reason; the native reader passes its own (#2358).
+ */
+export function uniqueNodeIds(ids: Float64Array, file: string, dataset: string, err: (message: string) => Error, why: string = LADRUNO_NODE_ONCE): Float64Array {
   const reps = repeatsOf(Float64Array.from(ids).sort());
   if (reps.length === 0) return ids;
-  throw err(`${file}: ${dataset} lists node id(s) more than once (${repeatedRows(ids, reps)}); a node is listed once per file, and a part set that sums partition copies (PARTITION_REDUCTION=SUM) would count it twice`);
+  throw err(`${file}: ${dataset} lists node id(s) more than once (${repeatedRows(ids, reps)}); ${why}`);
 }
 
 /** One element-id list: where it was read (`at`: the dataset, with its file when a set has several), and its ids. */
