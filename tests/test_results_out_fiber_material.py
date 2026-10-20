@@ -595,7 +595,7 @@ def test_mixed_counts_whose_columns_do_not_divide_name_the_counts(
     tmp_path: Path,
 ) -> None:
     """Lobatto 3 beside Lobatto 4: 7 stations do not divide by 2 elements.
-    The model refuses the mix before the file is read, so the message names
+    The model refuses the mix before the columns divide, so the message names
     the counts, not the column layout (#2256)."""
     m = _two_beams(tmp_path, "out_fib_3_4", ndm=3, elements=(
         ("B1", "forceBeamColumn", _lobatto(3)), ("B2", "forceBeamColumn", _lobatto(4))))

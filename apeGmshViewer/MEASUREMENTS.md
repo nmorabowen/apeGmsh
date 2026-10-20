@@ -944,3 +944,49 @@ and its scrub rates read high and low.
   in runs 2 and 3, and the deformed one from 150.9 to 163.0 to 184.7 to
   186.5. A scrub step is more than the read (the contour and the render), so
   it gains less than the read.
+
+### The `.ladruno` history scan in one hyperslab per `DATA` (#2270)
+
+`LadrunoFile.readNodalRows`, the read the contour's history scan makes in
+main, now reads columns `c0..c1` of each `DATA` over the chunk's steps in one
+slice, `[k0:k1, :, c0:c1]`, through #2202's `readColumnsBySlab`. Before, it
+sliced `[k0:k1, :, col]` once per component, so the magnitude scan of the
+three displacement components inflated every 2-step chunk of the history
+three times. The values are bit-identical (`test/results/ladruno.test.ts`).
+A one-component scan reads the same one column as before.
+
+The method is #2202's: `npm run measure -- block.h5`, the same machine, and
+the **history scan (ms)** column of the `.ladruno` contour row (the
+`DISPLACEMENT` magnitude over the whole-history range, timed from the
+dispatch to the scan's `done`, in 20 ms polls). The files are **kept**, not
+rebuilt: #2202's rebuild of the V4L-c run (`block.ladruno`, 24.72 MB,
+`DATA` (500, 4096, 3) float64, chunks [2, 4096, 3], shuffle, deflate),
+copied unchanged. The scan reads 40 steps a chunk (main's 4 MB budget). The
+**before** rows run the reader at `6ae712a6` (main, with #2202), the
+**after** rows this change; nothing else differs. The six runs alternated,
+after 1, before 1, after 2, before 2, after 3, before 3, on 2026-10-20.
+
+| run | reader | history scan (ms) | CPU before / during | scrub plain / deformed (steps/s) |
+|---|---|---|---|---|
+| 1 | after (#2270) | 423 | 33 / 25 % | 158.4 / 109.9 |
+| 1 | before (`6ae712a6`) | 1093 | 7 / 14 % | 166.0 / 113.9 |
+| 2 | after (#2270) | 444 | 8 / 16 % | 160.5 / 113.6 |
+| 2 | before (`6ae712a6`) | 998 | 6 / 16 % | 161.9 / 108.1 |
+| 3 | after (#2270) | 436 | 11 / 19 % | 167.5 / 116.4 |
+| 3 | before (`6ae712a6`) | 988 | 25 / 24 % | 159.9 / 113.2 |
+
+The reads alone, in Node, on the same file: the scan's 13 `readNodalRows`
+calls of three components, seven fresh opens each, the readers alternated
+before, after, before. Before: medians 429 and 433 ms (425 to 575). After:
+median 157 ms (154 to 167).
+
+- **The history scan drops from 988 to 1093 ms to 423 to 444 ms**, 2.3 to
+  2.6 times less run by run. The reads alone drop from about 430 ms to
+  157 ms, 2.7 times less: each chunk is inflated once, not three times.
+- **The scrub does not change** (158.4 to 167.5 steps/s after, 159.9 to
+  166.0 before): its step read is `readNodalStep`, which #2202 already
+  changed.
+- #2202's runs on these files printed a history scan of 509 to 528 ms (874
+  under load) for the same `readNodalRows` that the before rows here run at
+  988 to 1093 ms. These runs do not explain the gap; the comparison above
+  is between readers alternated in one session.

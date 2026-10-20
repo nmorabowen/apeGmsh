@@ -184,7 +184,7 @@ class RecorderTranscoder:
                  "fibers": lambda rec: read_fiber_record(rec, quiet_emit_logical(
                      rec, output_dir=str(self._output_dir), file_format=self._file_format,
                      stage_id=self._stage_id), lambda ids: _resolve_element_lengths(self._fem, ids),
-                     self._model_h5_src, self._spec.fem_snapshot_id)}
+                     self._model_or_pairing(), self._spec.fem_snapshot_id)}
         payloads: dict[str, list] = {category: [] for category in parse}
         self.unsupported = []
         for rec in self._spec.records:
@@ -346,7 +346,7 @@ class RecorderTranscoder:
             return None
         if logicals[0].response_tokens[0] == "material":   # _out_fiber_io
             return _GaussRecordPayload(rec.name, np.asarray(rec.element_ids), *read_per_material_gauss(
-                rec, logicals, self._model_h5_src, self._spec.fem_snapshot_id))
+                rec, logicals, self._model_or_pairing(), self._spec.fem_snapshot_id))
         if len(logicals) > 1:
             raise ValueError(
                 f"Gauss record {rec.name!r} unexpectedly emitted "
@@ -487,7 +487,8 @@ class RecorderTranscoder:
         n_elements = len(rec.element_ids)
         gpx_data_cols = first_gpx_row.size - 1   # subtract -time column
         # A bound model's per-element counts are checked before the columns divide.
-        n_ip = line_station_count(rec, gpx_data_cols, gpx_lr.file_path, self._model_h5_src,
+        n_ip = line_station_count(rec, gpx_data_cols, gpx_lr.file_path,
+                                  None if self._model_h5_src is None else self._model_or_pairing(),
                                   self._spec.fem_snapshot_id)
         # Reshape to (E, n_IP) of physical xi*L.
         xi_phys = first_gpx_row[1:].reshape(n_elements, n_ip)
