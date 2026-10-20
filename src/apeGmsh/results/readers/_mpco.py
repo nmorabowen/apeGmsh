@@ -36,6 +36,7 @@ from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
+from ._mpco_refusals import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 from ._tag_translation import ElementTagTranslator
 
@@ -101,6 +102,98 @@ def _warn_skipped_buckets(
         f"MPCO {what} in {source} left {len(skipped)} bucket(s) "
         f"unread, so their elements return no values: {listing}.",
         MPCOBucketSkippedWarning, stacklevel=3,
+    )
+
+
+class MPCOGaussDimensionMixed(ValueError):
+    """One Gauss read joins classes whose natural coordinates differ in
+    width (a 2-D ``FourNodeQuad`` beside a 3-D ``FourNodeTetrahedron``).
+
+    A :class:`~apeGmsh.results._slabs.GaussSlab` carries one
+    ``natural_coords`` array, ``(sum_GP, dim)``, so the read has no
+    faithful answer: padding the 2-D points with a zero ``zeta`` or
+    dropping the 3-D one would place Gauss points wrongly. The read
+    refuses, naming one bucket of each width; a read narrowed to one
+    class's elements answers (#2165).
+    """
+
+
+
+def _refuse_mixed_gauss_dims(
+    parts: "Sequence[tuple[str, ndarray]]", *, component: str, source: str,
+) -> None:
+    """Raise :class:`MPCOGaussDimensionMixed` when ``parts`` — ``(bucket
+    label, natural_coords)`` pairs — hold more than one coordinate width."""
+    first_of_width: dict[int, str] = {}
+    for label, natural_coords in parts:
+        first_of_width.setdefault(int(np.shape(natural_coords)[1]), label)
+    if len(first_of_width) < 2:
+        return
+    listing = "; ".join(
+        f"{dim}-D natural coordinates in {label}"
+        for dim, label in sorted(first_of_width.items())
+    )
+    raise MPCOGaussDimensionMixed(
+        f"MPCO gauss read of {component!r} in {source} joins classes with "
+        f"different natural-coordinate widths ({listing}). A GaussSlab "
+        f"holds one (sum_GP, dim) natural_coords array, and padding or "
+        f"truncating the coordinates would misplace Gauss points. Read "
+        f"one class's elements at a time (element_ids, or a physical "
+        f"group holding one class)."
+    )
+
+
+def _returned_rows(bucket_grp: "h5py.Group", returned: ndarray) -> ndarray:
+    """The bucket's ``ID`` rows whose element the read returned, one entry
+    per row (``returned`` repeats per Gauss point, station or fiber)."""
+    rows = np.asarray(bucket_grp["ID"][...]).ravel().astype(np.int64)
+    return rows[np.isin(rows, np.asarray(returned, dtype=np.int64))]
+
+
+def _refuse_duplicate_element_ids(
+    parts: "Sequence[tuple[str, ndarray]]",
+    *,
+    what: str,
+    source: str,
+    to_fem: "Optional[Any]" = None,
+) -> None:
+    """Raise :class:`MPCOElementInTwoBuckets` when an element id repeats
+    in ``parts`` — ``(bucket path, returned ID rows)`` pairs, in read order
+    (:func:`_returned_rows`) — within one bucket or across two.
+
+    ``to_fem`` relabels an OpenSees tag to its fem id (the read's
+    ``index_to_fem``); ``None`` when no tag map is attached. The policy
+    is :func:`~._mpco_refusals.refuse_element_in_two_buckets`'s; this
+    variant also names the read and, under a tag map, the fem id.
+    """
+    if not parts:
+        return
+    rows = [np.asarray(ids, dtype=np.int64).ravel() for _, ids in parts]
+    ids = np.concatenate(rows)
+    owner = np.repeat(np.arange(len(rows)), [r.size for r in rows])
+    order = np.argsort(ids, kind="stable")
+    ids_sorted = ids[order]
+    repeat = np.flatnonzero(ids_sorted[1:] == ids_sorted[:-1])
+    if repeat.size == 0:
+        return
+    k = int(repeat[0])
+    eid = int(ids_sorted[k])
+    name = f"element {eid}"
+    if to_fem is not None:
+        fem = int(np.asarray(to_fem(np.array([eid], dtype=np.int64)))[0])
+        name = f"element {eid} (OpenSees tag; fem id {fem})"
+    first = parts[int(owner[order[k]])][0]
+    second = parts[int(owner[order[k + 1]])][0]
+    where = (
+        f"twice in one bucket, {first}" if first == second
+        else f"in two buckets, {first} and {second}"
+    )
+    n_repeated = np.unique(ids_sorted[repeat]).size
+    raise MPCOElementInTwoBuckets(
+        f"MPCO {what} in {source}: {name} is recorded {where} "
+        f"({n_repeated} element id(s) repeat). MPCO writes each element "
+        f"once per result, so the file is corrupt or merged, and the read "
+        f"would return the element twice."
     )
 
 
@@ -1028,8 +1121,13 @@ class MPCOReader:
         token, buckets = _mline.discover_line_station_buckets(
             on_elements, canonical_component=component,
         )
+        # An element recorded twice within one token, in one bucket or
+        # two, is refused (MPCOElementInTwoBuckets); across ranked
+        # tokens, and a
+        # plural token after its singular, the first source wins.
         if buckets and token is not None and token in on_elements:
             token_grp = on_elements[token]
+            token_parts: list[tuple[str, ndarray]] = []
             for bucket in buckets:
                 bucket_grp = token_grp[bucket.bracket_key]
                 result = _mline.read_line_bucket_slab(
@@ -1043,10 +1141,17 @@ class MPCOReader:
                 element_index_parts.append(element_index)
                 station_coord_parts.append(station_coord)
                 section_force_eids.update(int(e) for e in element_index)
+                token_parts.append((
+                    bucket_grp.name, _returned_rows(bucket_grp, element_index),
+                ))
+            self._refuse_repeated_elements(
+                token_parts, what=f"line-stations read of {component!r}",
+                index_to_fem=index_to_fem,
+            )
 
         # ── localForce (rank 1), then basicForce end moments (rank 2),
-        # each skipping every element a higher rank or an earlier bucket
-        # covers. A plural token reads as its singular, after it. ──
+        # each skipping every element a higher rank covers. A plural
+        # token reads as its singular, after it. ──
         covered = set(section_force_eids)
         skipped: list[tuple[str, str]] = []
 
@@ -1066,6 +1171,10 @@ class MPCOReader:
                 ("basicForces", _mlocal.discover_basic_force_buckets),
             )
         ):
+            # Ids this token would return: a higher rank (or the singular
+            # token, for a plural) covers the rest.
+            covered_above = list(covered)
+            src_parts: list[tuple[str, ndarray]] = []
             for lf in ranked:
                 bucket_grp = on_elements[src_token][lf.bracket_key]
                 if lf.refusal is not None:
@@ -1099,6 +1208,10 @@ class MPCOReader:
                 if result is None:
                     continue
                 values, element_index, station_coord = result
+                src_parts.append((bucket_grp.name, _returned_rows(
+                    bucket_grp,
+                    element_index[~np.isin(element_index, covered_above)],
+                )))
                 keep_mask = ~np.isin(element_index, list(covered))
                 if not keep_mask.any():
                     continue
@@ -1106,6 +1219,10 @@ class MPCOReader:
                 element_index_parts.append(element_index[keep_mask])
                 station_coord_parts.append(station_coord[keep_mask])
                 covered.update(int(e) for e in element_index[keep_mask])
+            self._refuse_repeated_elements(
+                src_parts, what=f"line-stations read of {component!r}",
+                index_to_fem=index_to_fem,
+            )
 
         # ── Never a source: globalForce and every other token.
         # Name the ones that were a requested element's only candidate.
@@ -1181,6 +1298,8 @@ class MPCOReader:
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
         natural_coords_parts: list[ndarray] = []
+        bucket_labels: list[str] = []
+        row_parts: list[tuple[str, ndarray]] = []
 
         for bucket in buckets:
             # Buckets may live under different alias group names
@@ -1197,9 +1316,19 @@ class MPCOReader:
             values_parts.append(values)
             element_index_parts.append(element_index)
             natural_coords_parts.append(natural_coords)
+            bucket_labels.append(
+                f"{bucket.elem_key.class_name} ({bucket_grp.name})"
+            )
+            row_parts.append(
+                (bucket_labels[-1], _returned_rows(bucket_grp, element_index))
+            )
 
         if not values_parts:
             return _empty_gauss_slab(component, time, t_idx)
+        self._refuse_unjoinable_gauss(
+            bucket_labels, natural_coords_parts, row_parts,
+            component=component, index_to_fem=index_to_fem,
+        )
 
         return GaussSlab(
             component=component,
@@ -1233,6 +1362,8 @@ class MPCOReader:
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
         natural_coords_parts: list[ndarray] = []
+        bucket_labels: list[str] = []
+        row_parts: list[tuple[str, ndarray]] = []
 
         skipped: list[tuple[str, str]] = []
         for bucket in buckets:
@@ -1254,6 +1385,12 @@ class MPCOReader:
             values_parts.append(values)
             element_index_parts.append(element_index)
             natural_coords_parts.append(natural_coords)
+            bucket_labels.append(
+                f"{bucket.elem_key.class_name} ({bucket_grp.name})"
+            )
+            row_parts.append(
+                (bucket_labels[-1], _returned_rows(bucket_grp, element_index))
+            )
         _warn_skipped_buckets(
             skipped, what=f"gauss material-state read of {component!r}",
             source=self._path.name,
@@ -1261,6 +1398,10 @@ class MPCOReader:
 
         if not values_parts:
             return _empty_gauss_slab(component, time, t_idx)
+        self._refuse_unjoinable_gauss(
+            bucket_labels, natural_coords_parts, row_parts,
+            component=component, index_to_fem=index_to_fem,
+        )
 
         return GaussSlab(
             component=component,
@@ -1271,6 +1412,40 @@ class MPCOReader:
             natural_coords=np.concatenate(natural_coords_parts, axis=0),
             local_axes_quaternion=None,
             time=time[t_idx],
+        )
+
+    def _refuse_unjoinable_gauss(
+        self,
+        bucket_labels: list[str],
+        natural_coords_parts: list[ndarray],
+        row_parts: list[tuple[str, ndarray]],
+        *,
+        component: str,
+        index_to_fem: Any,
+    ) -> None:
+        """Refuse a Gauss join of mixed coordinate widths or of an element
+        recorded twice, before ``np.concatenate``."""
+        _refuse_mixed_gauss_dims(
+            list(zip(bucket_labels, natural_coords_parts)),
+            component=component, source=self._path.name,
+        )
+        self._refuse_repeated_elements(
+            row_parts, what=f"gauss read of {component!r}",
+            index_to_fem=index_to_fem,
+        )
+
+    def _refuse_repeated_elements(
+        self,
+        parts: list[tuple[str, ndarray]],
+        *,
+        what: str,
+        index_to_fem: Any,
+    ) -> None:
+        """:func:`_refuse_duplicate_element_ids` for this file; the fem id
+        is named only when a tag map is attached."""
+        _refuse_duplicate_element_ids(
+            parts, what=what, source=self._path.name,
+            to_fem=index_to_fem if self._tag_map is not None else None,
         )
 
     def read_fibers(
@@ -1317,6 +1492,7 @@ class MPCOReader:
         z_parts: list[ndarray] = []
         area_parts: list[ndarray] = []
         material_tag_parts: list[ndarray] = []
+        row_parts: list[tuple[str, ndarray]] = []
 
         for bucket in buckets:
             bucket_grp = token_grp[bucket.bracket_key]
@@ -1337,9 +1513,16 @@ class MPCOReader:
             z_parts.append(z)
             area_parts.append(area)
             material_tag_parts.append(mtag)
+            row_parts.append(
+                (bucket_grp.name, _returned_rows(bucket_grp, ei))
+            )
 
         if not values_parts:
             return _empty_fiber_slab(component, time, t_idx)
+        self._refuse_repeated_elements(
+            row_parts, what=f"fiber read of {component!r}",
+            index_to_fem=index_to_fem,
+        )
 
         return FiberSlab(
             component=component,
@@ -1398,6 +1581,7 @@ class MPCOReader:
         sub_gp_index_parts: list[ndarray] = []
         thickness_parts: list[ndarray] = []
         quaternion_parts: list[ndarray] = []
+        row_parts: list[tuple[str, ndarray]] = []
 
         for bucket in buckets:
             # Buckets may live under either ``material.fiber.<X>``
@@ -1451,12 +1635,19 @@ class MPCOReader:
             sub_gp_index_parts.append(subi)
             thickness_parts.append(thick)
             quaternion_parts.append(quat)
+            row_parts.append(
+                (bucket_grp.name, _returned_rows(bucket_grp, ei))
+            )
         _mlayer.warn_unread_layer_buckets(
             unread, source=self._path.name, stacklevel=2,
         )
 
         if not values_parts:
             return _empty_layer_slab(component, time, t_idx)
+        self._refuse_repeated_elements(
+            row_parts, what=f"layers read of {component!r}",
+            index_to_fem=index_to_fem,
+        )
 
         return LayerSlab(
             component=component,
@@ -1501,6 +1692,7 @@ class MPCOReader:
 
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
+        row_parts: list[tuple[str, ndarray]] = []
 
         skipped: list[tuple[str, str]] = []
         for bucket in buckets:
@@ -1519,6 +1711,7 @@ class MPCOReader:
             values, ei = result
             values_parts.append(values)
             element_index_parts.append(ei)
+            row_parts.append((bucket_grp.name, _returned_rows(bucket_grp, ei)))
         _warn_skipped_buckets(
             skipped, what=f"springs read of {component!r}",
             source=self._path.name,
@@ -1526,6 +1719,10 @@ class MPCOReader:
 
         if not values_parts:
             return _empty_spring_slab(component, time, t_idx)
+        self._refuse_repeated_elements(
+            row_parts, what=f"springs read of {component!r}",
+            index_to_fem=index_to_fem,
+        )
 
         return SpringSlab(
             component=component,

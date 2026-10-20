@@ -34,10 +34,12 @@ import type {
   Table,
 } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
+import { openH5, type H5FS } from "./h5open.ts";
 
 /** The parts of the h5wasm module this reader uses. */
 export interface H5Module {
   File: new (filename: string, mode?: "r") => H5File;
+  readonly FS: H5FS | null;
   Group: abstract new (...args: never[]) => H5Group;
   Dataset: abstract new (...args: never[]) => H5Dataset;
 }
@@ -218,7 +220,7 @@ export function readModel(
   sizeBytes: number,
 ): ModelFile {
   const t0 = performance.now();
-  const f = new h5.File(path, "r");
+  const f = openH5(h5, path);
   try {
     const r = new Reader(h5, f);
     const model = r.read(path, sizeBytes);

@@ -74,6 +74,8 @@ CLASSES: dict[str, tuple[str, int]] = {
     "DispBeamColumn3d": ("dispBeamColumn", 3),
     "LadrunoDispBeamColumn2d": ("LadrunoDispBeamColumn", 2),
     "LadrunoDispBeamColumn3d": ("LadrunoDispBeamColumn", 3),
+    "LadrunoIMKBeam2d": ("LadrunoIMKBeam", 2),
+    "LadrunoIMKBeam": ("LadrunoIMKBeam", 3),
 }
 
 
@@ -98,15 +100,29 @@ def _build(ops: apeSees, token: str, ndm: int) -> None:
     if ndm == 2:
         ops.model(ndm=2, ndf=3)
         tr = ops.geomTransf.Linear()
-        sec = ops.section.Elastic(E=2.0e11, A=0.02, Iz=3.0e-4)
+        if token == "LadrunoIMKBeam":
+            ops.element.LadrunoIMKBeam(
+                pg="Frame", A=0.02, E=2.0e11, Iz=3.0e-4, transf=tr
+            )
+        else:
+            sec = ops.section.Elastic(E=2.0e11, A=0.02, Iz=3.0e-4)
+            integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+            make: Callable[..., Any] = getattr(ops.element, token)
+            make(pg="Frame", transf=tr, integration=integ)
     else:
         ops.model(ndm=3, ndf=6)
         tr = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
-        sec = ops.section.Elastic(E=2.0e11, A=0.02, Iz=3.0e-4, Iy=2.0e-4,
-                                  G=8.0e10, J=1.5e-4)
-    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
-    make: Callable[..., Any] = getattr(ops.element, token)
-    make(pg="Frame", transf=tr, integration=integ)
+        if token == "LadrunoIMKBeam":
+            ops.element.LadrunoIMKBeam(
+                pg="Frame", A=0.02, E=2.0e11, G=8.0e10, Jx=1.5e-4,
+                Iy=2.0e-4, Iz=3.0e-4, transf=tr,
+            )
+        else:
+            sec = ops.section.Elastic(E=2.0e11, A=0.02, Iz=3.0e-4, Iy=2.0e-4,
+                                      G=8.0e10, J=1.5e-4)
+            integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+            make = getattr(ops.element, token)
+            make(pg="Frame", transf=tr, integration=integ)
     ops.fix(label="base", dofs=(1,) * (3 if ndm == 2 else 6))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(node=ops.nodes.one(label="tip"), forces=TIP[ndm])

@@ -39,7 +39,9 @@
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
+import { spatialDimOf } from "./ladrunoInfo.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
+import { openH5 } from "./h5open.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
 export const LADRUNO_GENERATOR = "Ladruno";
@@ -151,7 +153,7 @@ export interface LadrunoIndex {
   formatVersion: number;
   /** `INFO@FORMAT_MINOR_VERSION`; absent means 0 (schema §2) */
   formatMinorVersion: number;
-  /** `INFO@SPATIAL_DIM` when it is 1, 2 or 3, else null */
+  /** `INFO@SPATIAL_DIM` (1, 2 or 3; any other value is refused, reader/ladrunoInfo.ts), null when absent */
   spatialDim: number | null;
   /** host stages (`stage_<i>`, MODEL_STAGE order) and, after each, its mode stages */
   stages: StageInfo[];
@@ -262,7 +264,7 @@ export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean 
       `${path} is part ${part.groups!.idx} of the partitioned set ${part.groups!.stem}.part-<N>.ladruno; this reader reads one file, not a part set`,
     );
   }
-  const f = new h5.File(path, "r") as unknown as LFile;
+  const f = openH5(h5, path) as unknown as LFile;
   // h5wasm does not throw when HDF5 cannot open a file: it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new LadrunoError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {
@@ -298,7 +300,7 @@ export class LadrunoFile {
     if (part && (!partitioned || partitions === null || partitionId === null)) {
       throw new LadrunoError("layout", `${path}: named as a part file, but INFO@PARTITIONED, NUM_PARTITIONS and PARTITION_ID do not say it is one part of a partitioned run (schema §2)`);
     }
-    const dim = optionalInt(info, "SPATIAL_DIM");
+    const dim = spatialDimOf(info.attrs.SPATIAL_DIM, path, (m) => new LadrunoError("layout", m));
     for (const k of f.keys()) {
       if (k !== "INFO" && !k.startsWith(STAGE_PREFIX)) warnings.push(`/${k}: not a root group of the ladruno schema; not read`);
     }
@@ -321,7 +323,7 @@ export class LadrunoFile {
       generator: LADRUNO_GENERATOR,
       formatVersion,
       formatMinorVersion,
-      spatialDim: dim !== null && dim >= 1 && dim <= 3 ? dim : null,
+      spatialDim: dim,
       stages,
       fileKinds: Object.fromEntries(hosts.map((h) => [h.stage.id, h.fileKind])),
       modes: modes.facts,
@@ -429,7 +431,7 @@ export class LadrunoFile {
   // -- line stations & local axes (Escalón 2) ---------------------------------
 
   /**
-   * Infer the file's spatial dimension: `INFO@SPATIAL_DIM` when 1, 2 or 3, else
+   * Infer the file's spatial dimension: `INFO@SPATIAL_DIM` when present, else
    * from `MODEL/NODES/COORDINATES` column width (`shape[1]` in `{1, 2, 3}`),
    * matching Python `_file_spatial_dim` (#2081).
    */

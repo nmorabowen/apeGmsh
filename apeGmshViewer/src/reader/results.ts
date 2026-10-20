@@ -36,6 +36,8 @@ import { parseDeclaredUnits } from "../state/units.ts";
 import { NEUTRAL_TARGET, OPENSEES_TARGET, programDecls, ZONE_FLOOR } from "./read.ts";
 import type { ProgramDecls } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
+import { openH5, type H5FS } from "./h5open.ts";
+import { gmshSimplexRows } from "./legacySimplex.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
 export const RESULTS_TARGET = { major: 1, minor: 2 } as const;
@@ -75,6 +77,7 @@ export class ResultsError extends Error {
 /** The parts of h5wasm this reader uses (h5wasm/node, opened by path). */
 export interface ResultsH5 {
   File: new (filename: string, mode?: "r") => RFile;
+  readonly FS: H5FS | null;
   Group: abstract new (...args: never[]) => RGroup;
   Dataset: abstract new (...args: never[]) => RDataset;
 }
@@ -274,7 +277,7 @@ export interface ResultsLineage {
 
 /** Open a results.h5 and index it; reads go through the returned object. */
 export function openResults(h5: ResultsH5, path: string): ResultsFile {
-  const f = new h5.File(path, "r");
+  const f = openH5(h5, path);
   // h5wasm does not throw when HDF5 cannot open a file (a truncated file, a
   // file that is not HDF5): it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new ResultsError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
@@ -293,10 +296,14 @@ export class ResultsFile {
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   /** Whether `_element_index` holds FEM ids, from the root stamp alone (#1768). */
   private readonly elementSpace: { verified: true } | { verified: false; reason: string };
+  /** The path the file opened from, named in the index's warnings; and the class tags already warned about (#2274). */
+  private readonly path: string;
+  private readonly simplexWarned = new Set<number>();
 
   constructor(h5: ResultsH5, f: RFile, path: string) {
     this.h5 = h5;
     this.f = f;
+    this.path = path;
     const warnings: string[] = [];
     const version = checkResultsVersion(f.attrs, warnings);
     const modelMeta = f.keys().includes("model") && this.group(f, "model").keys().includes("meta") ? this.group(this.group(f, "model"), "meta") : null;
@@ -319,7 +326,7 @@ export class ResultsFile {
       openseesVersion: embedded.openseesVersion,
       programDecl: this.readProgramDecl(f),
       program: this.readProgram(f, warnings),
-      stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
+      stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id, warnings)),
       warnings,
       lineage,
       partial: partialOf(version, lineage),
@@ -640,7 +647,7 @@ export class ResultsFile {
 
   // -- index ---------------------------------------------------------------
 
-  private readStage(g: RGroup, id: string): StageInfo {
+  private readStage(g: RGroup, id: string, warnings: string[]): StageInfo {
     const name = g.attrs["name"]?.value;
     const kind = g.attrs["kind"]?.value;
     if (typeof name !== "string") throw new ResultsError("layout", `${g.path} has no string @name`);
@@ -672,7 +679,7 @@ export class ResultsFile {
           if (cat === "_ids") continue; // reserved, written by no writer (h5-schema.md "What is absent")
           if (!ELEMENT_CATEGORIES.has(cat)) throw new ResultsError("layout", `${eg.path}/${cat}: not an element category this reader knows`);
           const cg = this.group(eg, cat);
-          if (cat === "gauss_points") for (const gid of cg.keys()) gauss.push(this.readGauss(this.group(cg, gid), gid, T));
+          if (cat === "gauss_points") for (const gid of cg.keys()) gauss.push(this.readGauss(this.group(cg, gid), gid, T, warnings));
           else if (cat === "line_stations" && this.elementSpace.verified) {
             for (const gid of cg.keys()) lineStations.push(this.readLineStationGroup(this.group(cg, gid), gid, T));
           } else if (cg.keys().length > 0) unread.push(`${cat} (${cg.keys().length} groups)`);
@@ -715,7 +722,7 @@ export class ResultsFile {
     return { path: g.path, ids, components, refused };
   }
 
-  private readGauss(g: RGroup, id: string, T: number): GaussGroupInfo {
+  private readGauss(g: RGroup, id: string, T: number, warnings: string[]): GaussGroupInfo {
     const eidx = this.dataset(g, "_element_index");
     const nc = this.dataset(g, "_natural_coords");
     const E = eidx.shape?.length === 1 ? eidx.shape[0]! : -1;
@@ -759,7 +766,18 @@ export class ResultsFile {
       const flat = toFloat64(nc.value, nc.path);
       naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * D, (r + 1) * D)));
     }
-    return { id, path: g.path, classTag: intAttr(g, "class_tag"), intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components, refused, localAxes, naturalCoords };
+    // #2274: a triangle or tet group written before #2238 holds node-0-first rows; they read in gmsh
+    // coordinates (legacySimplex.ts), or, matching neither table, offer none and warn once per class.
+    const classTag = intAttr(g, "class_tag");
+    if (naturalCoords) {
+      const m = gmshSimplexRows(classTag, naturalCoords, `${this.path}: Gauss group ${g.path}`);
+      naturalCoords = m.rows;
+      if (m.refused !== null && !this.simplexWarned.has(classTag)) {
+        this.simplexWarned.add(classTag);
+        warnings.push(m.refused);
+      }
+    }
+    return { id, path: g.path, classTag, intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components, refused, localAxes, naturalCoords };
   }
 
   private readLineStationGroup(g: RGroup, id: string, T: number): LineStationGroupInfo {
