@@ -243,9 +243,6 @@ def _is_clipped(view: Any, world: Any) -> bool:
         pt = np.asarray(world, dtype=np.float64).reshape(1, 3)
     except (TypeError, ValueError):
         return False
-    specs = _specs(view)
-    if not specs:
-        return False
     return not bool(_visible_mask(view, pt)[0])
 
 
@@ -269,20 +266,13 @@ def _nearest(coords: "np.ndarray", world: Any) -> Optional[int]:
     the question is which target it landed nearest to, not whether one
     is near enough. A tolerance here would make a click on a coarse
     element's face silently do nothing.
-
-    A non-finite row (an unplaced Gauss point is NaN) is never a hit:
-    ``argmin`` returns the first NaN, so it would win every click.
-    ``None`` when no row is finite.
     """
     pts = np.asarray(coords, dtype=np.float64)
     if pts.size == 0:
         return None
     delta = pts - np.asarray(world, dtype=np.float64).reshape(1, 3)
     d2 = np.einsum("ij,ij->i", delta, delta)
-    finite = np.isfinite(d2)
-    if not finite.any():
-        return None
-    return int(np.argmin(np.where(finite, d2, np.inf)))
+    return int(np.nanargmin(d2)) if np.isfinite(d2).any() else None
 
 
 def _inside_box(
