@@ -848,6 +848,67 @@ def test_a_class_less_truss_axial_force_leaves_mpco_by_its_live_class(
     assert "eleType" in ops.asked
 
 
+def _bridge_trusses(tmp: Path) -> Path:
+    """Trusses of FEM ids 7 (nodes 1-2) and 9 (nodes 2-3) on the bridge,
+    archived as ``ops.h5``: the bridge tags them in sequence, not 7 and 9."""
+    from apeGmsh.opensees import apeSees
+
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2)
+    ids = np.array([7, 9], dtype=np.int64)
+    group = ElementGroup(element_type=line, ids=ids,
+                         connectivity=np.array([[1, 2], [2, 3]], dtype=np.int64))
+    node_ids = np.array([1, 2, 3], dtype=np.int64)
+    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]])
+    pg = PhysicalGroupSet({(1, 1): {"name": "Bar", "node_ids": node_ids,
+                                    "node_coords": coords, "element_ids": ids}})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=node_ids, node_coords=coords, physical=pg,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=3, n_elems=2, bandwidth=2, types=[line]),
+        model_name="femdata_elements_bridge_trusses")
+    bridge = apeSees(fem, default_orientation=None)
+    bridge.model(ndm=2, ndf=2)
+    mat = bridge.uniaxialMaterial.ElasticMaterial(E=1.0)
+    bridge.element.Truss(pg="Bar", A=1.0, material=mat)
+    model_h5 = tmp / "ops.h5"
+    bridge.h5(str(model_h5))
+    return model_h5
+
+
+def test_a_class_less_truss_axial_force_over_the_bridge_archive_reads_its_tags(
+    tmp_path,
+) -> None:
+    """Over the bridge's archive the live classes are read at the archive's
+    tags (``element_tag_map``), not at the FEM ids: FEM elements 7 and 9
+    are live elements 2 and 3. Reading them at 7 and 9 would find no live
+    element and keep the axial force on MPCO, which refuses it (#2298's
+    deferred gap)."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+    from apeGmsh.results.spec._emit import element_tag_map
+
+    model_h5 = _bridge_trusses(tmp_path)
+    model = OpenSeesModel.from_h5(model_h5)
+    tags = element_tag_map(model, fem_snapshot_id=model.fem.snapshot_id)
+    assert tags == {7: 2, 9: 3}
+    ops = MpcoTrussOps(ndm=2, ndf={1: 2, 2: 2, 3: 2},
+                       elements={2: ("Truss", (1, 2)), 3: ("Truss", (2, 3))},
+                       coords={1: (0.0, 0.0), 2: (1.0, 0.0), 3: (1.0, 1.0)})
+    rec = ResolvedRecorderRecord(
+        category="gauss", name="axial", components=("axial_force",), dt=None,
+        n_steps=None, element_ids=np.array([9, 7]), element_class_name=None)
+    spec = ResolvedRecorderSpec(fem_snapshot_id=model.fem.snapshot_id,
+                                records=(rec,))
+    run = _run(spec, tmp_path / "run", model_h5, ops)
+    assert run.route == "recorders"
+    assert [c for c in ops.recorder_calls if c[0] == "mpco"] == []
+    (call,) = _element_calls(ops)
+    assert call[call.index("-ele") + 1:call.index("-ele") + 3] == (3, 2)
+    assert ops.asked.count("eleType") == 2
+
+
 def test_the_reroute_raises_no_mpco_line_stations_warning(tmp_path) -> None:
     """A class-less line-stations record beside the Truss axial force: the
     MPCO emit would warn that elastic beams may read empty, but the run
