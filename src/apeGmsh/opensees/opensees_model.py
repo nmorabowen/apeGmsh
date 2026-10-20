@@ -1555,19 +1555,19 @@ class OpenSeesModel:
         below opensees 2.31.0, and a ``to_h5`` rewrite of one): such a
         file records no order to merge by.
 
-        ``None`` too for a partitioned archive (a ``partition_open`` call
-        in its program): its program records the ADR 0027 partitioned
-        emit, which declares every material and series above the
-        partition blocks that hold the nodes and elements. The replay
-        writes a single-domain deck, whose bridge order
-        (``apeSees.tcl(flat=True)``) that program does not record.
+        A partitioned archive (a ``partition_open`` call in its program)
+        records the ADR 0027 emit, which declares every material and
+        series above the partition blocks that hold the nodes and
+        elements. Its order sorts each unit by the ``_emit_flat`` section
+        first (:meth:`_ReplayOrder.section`, K R1b-S3b, #2277), so the
+        replay writes the single-domain deck ``apeSees.tcl(flat=True)``
+        writes.
         """
         from ._internal.compose import _ReplayOrder
         from .emitter.h5_reader import records_program_decl
 
         if (self._opensees_version is None
-                or not records_program_decl(self._declarations)
-                or any(r.method == "partition_open" for r in self._program)):
+                or not records_program_decl(self._declarations)):
             return None
         return _ReplayOrder(self._program, self._declarations)
 
