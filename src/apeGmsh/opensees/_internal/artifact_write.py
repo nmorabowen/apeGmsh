@@ -154,7 +154,9 @@ def lineage_key(bridge: "_ProcedureHost") -> str | None:
         return None
     try:
         return _declaration_digest(bridge, fem.model_name or "")
-    except Exception:  # noqa: BLE001 - an unpicklable declaration
+    except (pickle.PicklingError, TypeError, AttributeError):
+        # What pickle raises for an object it cannot pickle (a lock, a
+        # local function); any other failure propagates.
         return None
 
 

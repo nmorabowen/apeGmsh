@@ -957,6 +957,60 @@ def test_an_explicit_h5_spares_the_in_memory_compose(
     assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
 
 
+def test_a_kept_automatic_file_never_lends_its_lineage(
+    tmp_path, monkeypatch, memo,
+) -> None:
+    """Bridge A's export writes the automatic ``model.h5``; a ``/geometry``
+    zone added to it makes the next automatic write a "keep" (this run's
+    fuller file, left as it is). Bridge B on the same snapshot with another
+    E then exports: its record carries B's lineage, never the kept file's
+    (A's), though P5 now records B's digest at that path."""
+    import h5py
+
+    from apeGmsh.opensees.apesees import apeSees
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    fem = truss_fem()
+    mpco = tmp_path / "run.mpco"
+
+    def bridge(e: float) -> Any:
+        ops = apeSees(fem, default_orientation=None)
+        ops.model(ndm=2, ndf=2)
+        mat = ops.uniaxialMaterial.ElasticMaterial(E=e)
+        ops.element.Truss(pg="Bar", A=A, material=mat)
+        ops.fix(pg="Base", dofs=(1, 1))
+        ops.fix(pg="Tip", dofs=(0, 1))
+        ops.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as pat:
+            pat.load(pg="Tip", forces=(P, 0.0))
+        ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+        ops.algorithm.Linear()
+        ops.constraints.Plain()
+        ops.numberer.RCM()
+        ops.system.BandGeneral()
+        ops.integrator.LoadControl(dlam=1.0 / STEPS)
+        ops.analysis.Static()
+        return ops
+
+    bridge(E).py(str(tmp_path / "a.py"), analyze_steps=STEPS, progress=False)
+    target = tmp_path / "deck_run_record_truss.h5"
+    with h5py.File(target, "a") as f:
+        f.create_group("geometry")  # a zone the bridge's write would drop
+    kept = lineage(target)
+    b = bridge(E / 2)
+    seen = _count_archives(monkeypatch)
+    b.py(str(tmp_path / "b.py"), analyze_steps=STEPS, progress=False)
+    assert lineage(target) == kept  # "keep": the file was not rewritten
+    assert len(seen) == 1 and not isinstance(seen[0], str)  # in memory
+    model = tmp_path / "b.h5"
+    b.h5(str(model))
+    assert lineage(model)[0] != kept[0]
+    run_py(record_block(tmp_path / "b.py"), build=None, done=STEPS,
+           files=[mpco])
+    rec = read_record(mpco)
+    assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+
+
 @pytest.mark.filterwarnings("ignore:model.h5 not written")  # the auto-write's
 def test_an_archive_that_cannot_be_composed_warns_and_writes_no_record(
     tmp_path, monkeypatch,
