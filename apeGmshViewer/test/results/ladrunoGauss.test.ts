@@ -352,7 +352,7 @@ test("seam partial writes: a DATA element axis that disagrees with ID is refused
   assert.match(refusalOf(p, `short_ids/${KEY}`)[0]!, /DATA has 6 element rows and .*\/ID 5 ids \(a partial write\)/);
 });
 
-/** A copy with a second quad element group `31-FourNodeQuad[201:1]` (GP_PARAM copied, GLOBAL_GP_COORDS `width` wide) and a stress bucket of it. */
+/** A copy with a second quad element group `31-FourNodeQuad[201:1]` (GP_PARAM copied, GLOBAL_GP_COORDS `width` wide) and a stress bucket of it, elements 7..12. */
 function secondGroup(width: number): string {
   // h5wasm cannot rewrite the fixture's model group, so the copy adds a second one and a bucket of it.
   return edited(QUAD, (f) => {
@@ -361,7 +361,8 @@ function secondGroup(width: number): string {
     grp.create_attribute("PARAM_DOMAIN", "[-1,1]");
     grp.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: src.value as Float64Array, shape: [4, 2] });
     grp.create_dataset({ name: "GLOBAL_GP_COORDS", data: new Float64Array(6 * width), shape: [6, width] });
-    addBucket(f, "stress", {}, "31-FourNodeQuad[201:1:0]");
+    // Other elements than the first bucket's 1..6: one element in two buckets of a token is refused (#2316).
+    addBucket(f, "stress", { ids: [7, 8, 9, 10, 11, 12] }, "31-FourNodeQuad[201:1:0]");
   });
 }
 
@@ -406,7 +407,7 @@ test("fibers, element-level rows and buckets with no structured column map stay 
     assert.deepEqual(s.unread, ["ON_ELEMENTS/fiber_mult", "ON_ELEMENTS/fiber_id", "ON_ELEMENTS/element_level"]);
   });
   // One result, two buckets: the read one leaves the result; the other stays, by its bucket name.
-  const q = edited(QUAD, (f) => addBucket(f, "stress", { gaussId: [-1, -1, -1, -1] }, "31-FourNodeQuad[201:0:1]"));
+  const q = edited(QUAD, (f) => addBucket(f, "stress", { gaussId: [-1, -1, -1, -1], ids: [7, 8, 9, 10, 11, 12] }, "31-FourNodeQuad[201:0:1]"));
   withFile(q, (r) => assert.deepEqual(r.index.stages[0]!.unread, ["ON_ELEMENTS/stress/31-FourNodeQuad[201:0:1]"]));
 });
 

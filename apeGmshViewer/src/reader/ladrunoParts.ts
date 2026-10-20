@@ -31,10 +31,15 @@
 //   indices named;
 // - element results (Gauss points, line stations) are not stitched by this slice:
 //   they are listed in `unread`, and the element-id verdict is unverified, so no
-//   element row of a part set leaves main.
+//   element row of a part set leaves main;
+// - each element lives on one rank (#2316): an element id that the Gauss buckets of
+//   one result hold in two part files refuses the set, naming both parts. Each part
+//   already refused an id twice in one of its tokens at its own open
+//   (reader/ladrunoElements.ts). A node in two parts is legal (an interface node).
 //
 // Browser-safe: no Node import. The directory listing is the caller's (`list`).
 
+import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
 import type { ElementIndexVerdict } from "./ladrunoElements.ts";
 import { LadrunoError, openLadruno, type LadrunoFile, type LadrunoIndex, type LadrunoLineage, type LadrunoLineStationSlab, type LadrunoLineStationStep, type LadrunoMode, type LineStationComponent } from "./ladruno.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
@@ -131,6 +136,7 @@ export class LadrunoPartSet {
     const warnings: string[] = [];
     parts.forEach((p, j) => warnings.push(...p.index.warnings.map((w) => `${this.names[j]}: ${w}`)));
     this.checkStages();
+    this.checkElementIds(stem);
     const stages = p0.stages.map((s) => this.stitchStage(s.id));
     const { lineage, reason } = this.lineage();
     const units = parts.every((p) => p.index.units === p0.units) ? p0.units : null;
@@ -332,6 +338,35 @@ export class LadrunoPartSet {
         throw new LadrunoError("layout", `${this.names[0]} and ${this.names[j]} record different modes: they are not from one eigen solution`);
       }
     });
+  }
+
+  /**
+   * One rank per element (#2316): per stage, the element ids of each result's Gauss buckets
+   * over every part, any id two parts hold refused by name (Python's
+   * `_mpco_multi._refuse_element_in_two_partitions`, #2310). Line-station buckets are not
+   * reached from here: a part's LadrunoFile serves their element ids only with a full read.
+   */
+  private checkElementIds(stem: string): void {
+    for (const s of this.parts[0]!.index.stages) {
+      const byToken = new Map<string, IdList[]>();
+      this.parts.forEach((p, j) => {
+        for (const g of p.stage(s.id).gauss) {
+          const token = g.path.slice(0, g.path.lastIndexOf("/"));
+          const e = p.elementIds(s.id, g.id);
+          const lists = byToken.get(token) ?? [];
+          lists.push({ at: `${this.names[j]} ${g.path}/ID`, ids: e.mapping === "fem_eid" ? e.ids : e.rawIndex });
+          byToken.set(token, lists);
+        }
+      });
+      for (const [token, lists] of byToken) {
+        uniqueElementIds(
+          lists,
+          `${stem}.part-<N>.ladruno: ${token}`,
+          "each element lives on one rank, so the set would read it twice; the set is not read",
+          (m) => new LadrunoError("layout", m),
+        );
+      }
+    }
   }
 
   /** The set's stage `id`: the union node index, and each component the parts stitch. */
