@@ -26,6 +26,16 @@
 // the file gives no frame. Python and MPCO do the same (#2090). An empty ID beside
 // FRAME rows is refused by name: those frames belong to no element.
 //
+// A per-step bucket (`RESULTS/ON_ELEMENTS/LOCAL_AXES`, schema §5, which the fork at
+// FORK_PIN does not write) has no such fallback (#2349): at a step the stored frame
+// is the answer, and the reference frame in its place is a wrong frame for a
+// co-rotational element, warned or not. So a bucket that cannot be paired with its
+// ids, or with the stage's steps, is refused by name (the file, the bucket, the step):
+// ID or DATA missing or not a dataset, a DATA that is not (steps, elements, 3|4|9),
+// a step or row count that is not the stage's or the ID's, or an empty ID beside
+// rows. (An id twice in the step's buckets is refused at open, as in any ON_ELEMENTS
+// token, by reader/ladrunoElements.ts.) A step-less read does not read them.
+//
 // The frames are resolved with sorted typed arrays, never a Set or Map sized by the
 // element count, which V8 caps at 2^24 entries (as reader/ladrunoChecks.ts does).
 //
@@ -157,26 +167,41 @@ export function warnModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesRead
   });
 }
 
-/** The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` (`stepLa`) at `step`, one entry per bucket read. */
-export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, reads: LocalAxesReads): FrameRows[] {
+/**
+ * The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` (`stepLa`) at `step`, one entry
+ * per bucket read; `nSteps` is the stage's step count. A bucket is `{ID[nE],
+ * DATA[nSteps, nE, 3|4|9]}`, on `stepLa` itself or one per class group. Any other
+ * bucket is refused by name (the file, the bucket, the step). An id listed twice in
+ * the step's buckets is refused at open, by reader/ladrunoElements.ts.
+ */
+export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nSteps: number, reads: LocalAxesReads): FrameRows[] {
   const read: FrameRows[] = [];
   const readBucket = (b: LocalAxesGroup) => {
-    if (!b.keys().includes("ID") || !b.keys().includes("DATA")) return;
+    const refuse = (what: string) =>
+      reads.fail(`${reads.file}: ${b.path} ${what}; a step's frame is read only as stored, and the reference frame in its place would be the wrong frame, so the local axes at step ${step} are not read`);
+    const hasId = b.keys().includes("ID");
+    const hasData = b.keys().includes("DATA");
+    if (!hasId || !hasData) throw refuse(hasId ? "holds an ID but no DATA" : hasData ? "holds a DATA but no ID" : "holds neither an ID nor a DATA");
     const idDs = reads.optionalDataset(b, "ID");
     const dataDs = reads.optionalDataset(b, "DATA");
-    if (!idDs || !dataDs) return;
+    if (!idDs || !dataDs) throw refuse(`holds ${idDs ? "a DATA" : "an ID"} that is not a dataset`);
     const shape = dataDs.shape ?? [];
-    if (shape.length !== 3 || step >= shape[0]!) return;
+    if (shape.length !== 3) throw refuse(`has DATA of shape (${shape.join(", ")}), not (steps, elements, components)`);
+    if (shape[0] !== nSteps) throw refuse(`has DATA for ${shape[0]} step(s), but the stage has ${nSteps}`);
     const ids = reads.ints(idDs);
     const nE = ids.length;
-    if (nE <= 0 || shape[1] !== nE) return;
+    if (nE === 0) {
+      if (shape[1] === 0) return;
+      throw refuse(`has an empty ID, but its DATA holds ${shape[1]} row(s) per step; a frame row belongs to the element its ID row names, so these belong to no element`);
+    }
+    if (shape[1] !== nE) throw refuse(`has DATA holding ${shape[1]} row(s) per step for the ${nE} id(s) of its ID`);
+    const cols = shape[2]!;
+    if (!FRAME_WIDTHS.includes(cols)) throw refuse(`has DATA rows ${cols} wide, not 3 (the local z axis), 4 (a quaternion) or 9 (a rotation matrix)`);
     const slice = reads.stepSlice(dataDs, step);
-    if (slice.length === 0 || slice.length % nE !== 0) return;
-    const cols = slice.length / nE;
-    if (cols !== shape[2]) return;
+    if (slice.length !== nE * cols) throw refuse(`read ${slice.length} value(s) from DATA at step ${step}, not ${nE} row(s) ${cols} wide`);
     read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
   };
-  if (stepLa.keys().includes("ID") && stepLa.keys().includes("DATA")) {
+  if (stepLa.keys().includes("ID") || stepLa.keys().includes("DATA")) {
     readBucket(stepLa);
   }
   for (const k of stepLa.keys()) {

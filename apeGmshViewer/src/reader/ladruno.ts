@@ -731,12 +731,13 @@ export class LadrunoFile {
     const modelLa = this.optionalSubgroup(hostGrp, ["MODEL", "LOCAL_AXES"]);
     const groups: FrameRows[] = modelLa ? collectModelLocalAxes(modelLa, this.localAxesReads(options?.warningsOut)) : [];
 
-    // 2. Per-step RESULTS/ON_ELEMENTS/LOCAL_AXES (only when `options?.step !== undefined`; wins over MODEL/LOCAL_AXES)
+    // 2. Per-step RESULTS/ON_ELEMENTS/LOCAL_AXES (only when `options?.step !== undefined`; wins over MODEL/LOCAL_AXES).
+    //    A malformed bucket is refused by name, never replaced by the reference frame (#2349).
     const step = options?.step;
     if (step !== undefined) {
       const stepLa = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS", "LOCAL_AXES"]);
       if (stepLa && step >= 0 && step < hostStage.nSteps) {
-        groups.push(...collectStepLocalAxes(stepLa, step, this.localAxesReads(options?.warningsOut)));
+        groups.push(...collectStepLocalAxes(stepLa, step, hostStage.nSteps, this.localAxesReads(options?.warningsOut)));
       }
     }
     return resolveLocalAxes(groups, options?.elementIds);
