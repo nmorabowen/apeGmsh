@@ -559,6 +559,11 @@ class TclEmitter:
         # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
         # (the default, byte-identical to before).
         self._stream: _TclStreamState | None = None
+        # The deck run record, as on the py deck.
+        self._mpco_files: list[str] = []
+        self._analysis_token: str | None = None
+        # Set by the bridge when the deck will write a record.
+        self._run_record: bool = False
 
     # -- Output --------------------------------------------------------------
 
@@ -1042,6 +1047,13 @@ class TclEmitter:
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
+        if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
+            self._mpco_files.append(str(args[0]))
+        if kind == "mpco" and args and self._run_record:
+            from .py import deck_run_unlink
+
+            for line in deck_run_unlink("tcl", str(args[0])):
+                self._lines.append(line)
         self._lines.append(_join("recorder", kind, *args))
 
     def recorder_declaration_begin(
@@ -1090,7 +1102,24 @@ class TclEmitter:
         self._lines.append(_join("integrator", i_type, *args))
 
     def analysis(self, a_type: str) -> None:
+        self._analysis_token = str(a_type)
         self._lines.append(_join("analysis", a_type))
+
+    def _deck_run_record(
+        self, archive: "Callable[[Any], None]", steps: int,
+        dt: "float | None", bridge: Any = None, deck: str = "",
+    ) -> None:
+        """The Tcl deck's run record (#2210), as
+        :meth:`PyEmitter._deck_run_record` (a failed increment is a Tcl
+        ``error`` before it)."""
+        from .py import deck_run_body
+
+        for line in deck_run_body(
+            "tcl", archive, self._mpco_files, self._analysis_token, steps,
+            dt, partitioned=self._partition_shim_emitted, bridge=bridge,
+            deck=deck,
+        ):
+            self._lines.append(line)
 
     def analyze(
         self, *, steps: int, dt: float | None = None,

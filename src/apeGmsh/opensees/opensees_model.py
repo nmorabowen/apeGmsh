@@ -2174,18 +2174,17 @@ def _merge_region_rows(
 ) -> tuple[RegionRecord, ...]:
     """One region row per tag for the deck targets.
 
-    A partitioned emit writes a ``-node`` fan-out region once per rank
-    that holds a member, each row carrying that rank's subset (the
+    A partitioned emit writes a fan-out region once per rank that holds a
+    member, each row carrying that rank's subset (the
     ``/opensees/regions`` store keeps every row, so the H5 echo stays a
     fixed point). A deck declares a tag once, so rows sharing a tag merge
-    by member union (first-occurrence order, ``_merge_node_region_args``)
-    when both are the plain ``-node`` form. Two rows sharing a tag in any
-    other shape (an ``-ele`` list, a ``-rayleigh`` or ``-damp`` tail) have
-    no safe union and raise ``ValueError`` naming the tag: replaying both
-    would redefine the region silently.
+    by member union (:func:`_union_member_region_args`) when both are a
+    member-list form the bridge's per-rank fan-out writes: ``-node ids``,
+    ``-ele ids`` or ``-node ids -ele ids``. Two rows sharing a tag in any
+    other shape (a ``-rayleigh`` or ``-damp`` tail, ``-eleRange``, an
+    empty flag list) have no safe union and raise ``ValueError`` naming
+    the tag: replaying both would redefine the region silently.
     """
-    from .emitter._h5_blocks import _merge_node_region_args
-
     out: "list[RegionRecord]" = []
     by_tag: "dict[int, int]" = {}
     for rec in regions:
@@ -2195,16 +2194,89 @@ def _merge_region_rows(
             by_tag[tag] = len(out)
             out.append(rec)
             continue
-        merged = _merge_node_region_args(out[idx].args, rec.args)
+        merged = _union_member_region_args(out[idx].args, rec.args)
         if merged is None:
             raise ValueError(
                 f"OpenSeesModel.build: /opensees/regions holds two rows for "
-                f"region {tag} that are not both plain -node member lists "
-                f"({out[idx].args!r} and {rec.args!r}); a deck cannot "
-                "declare the tag twice and there is no safe union."
+                f"region {tag} that are not both '-node ids', '-ele ids' or "
+                f"'-node ids -ele ids' member lists ({out[idx].args!r} and "
+                f"{rec.args!r}); a deck cannot declare the tag twice and "
+                "there is no safe union."
             )
         out[idx] = RegionRecord(tag=tag, args=merged)
     return tuple(out)
+
+
+def _split_member_region_args(
+    args: "tuple[int | float | str, ...]",
+) -> "tuple[list[int], list[int]] | None":
+    """``(node_ids, ele_ids)`` of a member-list region tail, else ``None``.
+
+    The accepted tails are exactly the three the bridge's per-rank region
+    fan-out writes (``apesees.py`` recorder regions): ``-node ids``,
+    ``-ele ids`` and ``-node ids -ele ids``, each flag once, ``-node``
+    first, every list non-empty and integer. Anything else (another flag,
+    a flag repeated or out of order, an empty list, a non-integer id) is
+    ``None``.
+    """
+    lists: "dict[str, list[int]]" = {}
+    flag: "str | None" = None
+    for v in args:
+        if isinstance(v, str):
+            if v not in ("-node", "-ele") or v in lists:
+                return None
+            if flag is not None and not lists[flag]:
+                return None
+            if v == "-node" and "-ele" in lists:
+                return None
+            flag = v
+            lists[v] = []
+        elif flag is not None and isinstance(v, int) and not isinstance(v, bool):
+            lists[flag].append(v)
+        else:
+            return None
+    if flag is None or not lists[flag]:
+        return None
+    return lists.get("-node", []), lists.get("-ele", [])
+
+
+def _union_member_region_args(
+    old: "tuple[int | float | str, ...]",
+    new: "tuple[int | float | str, ...]",
+) -> "tuple[int | float | str, ...] | None":
+    """Union two member-list region tails into one, as the flat deck writes it.
+
+    Replay-only (the H5 writer keeps ``_h5_blocks._merge_node_region_args``,
+    so what it archives, and ``model_hash``, do not change). Both tails
+    must parse under :func:`_split_member_region_args`, else ``None``. The
+    result is ``-node <union>`` then ``-ele <union>``, each list in
+    first-occurrence order with duplicates dropped and each flag present
+    only when its union is non-empty: the flat bridge's own
+    ``-node … -ele …`` order. A rank row with only ``-node`` (it owns no
+    element of the region) or only ``-ele`` merges the same way.
+    """
+    a = _split_member_region_args(old)
+    b = _split_member_region_args(new)
+    if a is None or b is None:
+        return None
+
+    def _union(first: "list[int]", second: "list[int]") -> "list[int]":
+        seen = set(first)
+        out = list(first)
+        for v in second:
+            if v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
+
+    nodes = _union(a[0], b[0])
+    eles = _union(a[1], b[1])
+    merged: "list[int | float | str]" = []
+    if nodes:
+        merged += ["-node", *nodes]
+    if eles:
+        merged += ["-ele", *eles]
+    return tuple(merged)
 
 
 def _resolve_lineage(

@@ -641,6 +641,16 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         has_line_stations=True,
         ndf_required={2: 3, 3: 6},
     ),
+    "LadrunoIMKBeam": _ElemSpec(
+        mat_family="uni", needs_transf=True,
+        ndm_ok=frozenset({2, 3}), ndf_ok=frozenset({3, 6}),
+        gmsh_etypes=frozenset({1}),
+        node_reorder={1: (0, 1)},
+        slots_2d=("nodes", "A", "E", "Iz", "transfTag"),
+        slots_3d=("nodes", "A", "E", "G", "Jx", "Iy", "Iz", "transfTag"),
+        has_line_stations=True,
+        ndf_required={2: 3, 3: 6},
+    ),
 }
 
 
@@ -679,10 +689,9 @@ _EXTRA_CLASS_NDF_OK: dict[str, "frozenset[int]"] = {
     "ASDShellT3": frozenset({6}),
     "forceBeamColumn": frozenset({3, 6}),
     "dispBeamColumn": frozenset({3, 6}),
-    # Ladruno-fork beams — ndm-dispatched, 2D ndf=3 / 3D ndf=6 like the
+    # Ladruno-fork disp beam — ndm-dispatched, 2D ndf=3 / 3D ndf=6 like the
     # standard force/disp beams.
     "LadrunoDispBeamColumn": frozenset({3, 6}),
-    "LadrunoIMKBeam": frozenset({3, 6}),
     "InertiaTruss": frozenset({2, 3, 6}),
     "ZeroLength": frozenset({1, 2, 3, 4, 5, 6}),
     "ZeroLengthSection": frozenset({3, 6}),
@@ -705,7 +714,6 @@ _EXTRA_CLASS_REQUIRED_FLOOR: dict[str, dict[int, int]] = {
     "forceBeamColumn": {2: 3, 3: 6},
     "dispBeamColumn": {2: 3, 3: 6},
     "LadrunoDispBeamColumn": {2: 3, 3: 6},
-    "LadrunoIMKBeam": {2: 3, 3: 6},
     "InertiaTruss": {2: 2, 3: 3},
     "ZeroLength": {2: 1, 3: 1},
     "ZeroLengthSection": {2: 3, 3: 6},

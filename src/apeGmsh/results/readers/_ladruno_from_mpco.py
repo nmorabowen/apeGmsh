@@ -49,12 +49,34 @@ only modes is an ``eigen`` stage. Any other count or an unknown kind
 refuses.
 
 A program with no ``ops.stage`` block pairs with no stage. Its kind is not
-archived as fact: the archive cannot tell an in-process run from a deck,
-and it does not record a deck's ``analyze`` call (#1950, coordinator
-ruling (iii)). ``read_deck_mpco`` passes the private
-``_implicit_stage=True``, which refuses every unstaged program with that
-reason (after the lineage check); #2210 records the deck's ``analyze``
-call.
+archived as fact: the archive cannot tell an in-process run from a deck
+(#1950, coordinator ruling (iii)), and ``model.h5`` never records a run.
+The deck does instead (#2210, route (c)): a deck ``ops.py`` / ``ops.tcl``
+emitted with ``analyze_steps`` writes ``<recorder file>.run.json`` beside
+its ``.mpco`` once its analyze loop has returned and its recorders have
+closed (``DECK_RUN_SCHEMA`` in ``opensees/emitter/py.py``); the same deck
+removes any older record before it opens the recorder. ``read_deck_mpco``
+passes the private ``_implicit_stage=True``, under which an unstaged
+program is one implicit stage only when all six checks on that record
+hold:
+
+1. the record exists beside the ``.mpco`` (for a part, beside
+   ``<stem>.mpco``), holds the 14 fields and ``schema`` is
+   ``apegmsh.deck_run/2``;
+2. ``recorder_file`` is the ``.mpco``'s basename (``<stem>.mpco`` for a set);
+3. ``model_hash`` and ``fem_hash`` equal ``model_h5``'s ``/meta/lineage``;
+4. ``/opensees/program`` holds exactly one ``analysis`` declaration, whose
+   token equals the record's ``analysis`` and has a kind;
+5. the file holds exactly one stage of step data, whose step count equals
+   ``steps_completed``, which equals ``analyze_steps``;
+6. every ``.mpco`` on disk has the ``recorder_size`` and
+   ``recorder_mtime`` the deck recorded after closing it (one per part for
+   a set), so a later writer of the same file (an in-process run beside a
+   stale record) refuses.
+
+Any miss is a :class:`StageKindRefused` naming the check, held until the
+lineage check passes. An in-process run never writes a record. What the
+record cannot see is a deck hand-edited to run something else.
 
 ``COLUMN_MAP`` follows the fork recorder's own derivation from the same
 header MPCO's ``META`` encodes: ``LEVELS`` is the deepest path code of a
@@ -87,7 +109,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 import numpy as np
 
@@ -164,11 +186,12 @@ def convert_mpco(
     overwrite
         Replace existing targets. Without it an existing target refuses.
     _implicit_stage
-        Private; only ``read_deck_mpco`` passes it. It refuses every
-        program with no ``ops.stage`` block, whatever the file holds, with
-        :class:`StageKindRefused` naming why: such a program's kind is not
-        archived as fact. Without it, an unstaged program pairs with no
-        stage (a ``.mpco`` with step data refuses, as before).
+        Private; only ``read_deck_mpco`` passes it. A program with no
+        ``ops.stage`` block is then one implicit stage, converted only when
+        the deck's run record passes checks 1 to 5 of the module docstring,
+        else refused with :class:`StageKindRefused` naming the check.
+        Without it, an unstaged program pairs with no stage (a ``.mpco``
+        with step data refuses, as before).
 
     Returns
     -------
@@ -299,12 +322,14 @@ def _plan(
     # A kind refusal is held until the archive is proved to be this run's
     # (the partition count here, the lineage after the scan): a wrong
     # archive always refuses as one, never as a question of kinds.
+    steps: Optional[int] = None
     if pending is None and implicit_stage and not names:
-        pending = StageKindRefused(
-            f"{model_path} declares no ops.stage blocks: an unstaged "
-            "program's kind is not archived as fact (#2210 records it). "
-            "Nothing was written."
-        )
+        try:
+            kind, steps = _deck_run(model, model_path, sources)
+        except StageKindRefused as e:
+            pending = e
+        else:
+            names, kinds = [""], [kind]
     if ranks and len(ranks) != len(sources):
         raise MPCOConversionRefused(
             f"{model_path} emits {len(ranks)} partitions (ranks "
@@ -316,7 +341,8 @@ def _plan(
     unsupported: set[str] = set()
     for i, source in enumerate(sources if pending is None else ()):
         try:
-            part_kinds = _scan_part(source, names, kinds, unsupported)
+            part_kinds = _scan_part(source, names, kinds, unsupported,
+                                    steps=steps)
         except StageKindRefused as e:
             if i == 0:
                 pending = e
@@ -459,6 +485,164 @@ def _program(
     return model, [str(s.name) for s in stages], kinds, kind_error, ranks
 
 
+#: The deck run record: ``opensees/emitter/py.py`` writes it and
+#: owns the format; ``tests/test_deck_run_record.py`` pins these to it.
+_RUN_SCHEMA = "apegmsh.deck_run/2"
+_RUN_SUFFIX = ".run.json"
+#: Its 14 fields and their JSON types (``dt`` may be ``null``; a
+#: partitioned deck's ``recorder_size`` / ``recorder_mtime`` are lists).
+_RUN_FIELDS: "dict[str, tuple[type, ...]]" = {
+    "schema": (str,), "model_hash": (str,), "fem_hash": (str,),
+    "recorder_file": (str,), "recorder_size": (int, list),
+    "recorder_mtime": (float, int, list), "analysis": (str,),
+    "analyze_steps": (int,),
+    "steps_completed": (int,), "dt": (float, int, type(None)),
+    "opensees_backend": (str,), "opensees_build_sha": (str,),
+    "writer": (str,), "completed_iso": (str,),
+}
+_ISO_UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
+def _mpco_base_name(source: Path) -> str:
+    """``run.mpco`` for ``run.mpco`` and for any ``run.part-<N>.mpco``."""
+    m = re.match(r"^(?P<stem>.+?)\.part-\d+\.mpco$", source.name)
+    return f"{m.group('stem')}.mpco" if m else source.name
+
+
+def _deck_run(
+    model: Any, model_h5: Path, sources: "list[Path]",
+) -> "tuple[str, int]":
+    """The kind and step count of an unstaged program's one implicit stage,
+    from the deck's run record (checks 1 to 4, the record's half of 5, and 6;
+    :func:`_scan_part` holds the file's half), or a
+    :class:`StageKindRefused` naming the check that failed."""
+    import json
+
+    from .._bind import _ANALYSIS_KIND
+    from ._ladruno_provenance import (
+        _BACKENDS,
+        _BUILD_SHA,
+        ProvenanceStampRefused,
+        _lineage_hashes,
+    )
+
+    source = sources[0]
+    base = _mpco_base_name(source)
+    path = source.with_name(base + _RUN_SUFFIX)
+
+    def refuse(check: str, why: str) -> StageKindRefused:
+        return StageKindRefused(
+            f"{model_h5} declares no ops.stage blocks, so its one stage's "
+            "kind is not archived as fact and comes only from the deck's "
+            f"run record {path}; check {check} failed: {why}. Nothing was "
+            "written.")
+
+    if not path.is_file():
+        raise refuse("1 (the record)", "there is none (an in-process run, a "
+                     "deck emitted without analyze_steps and a deck whose "
+                     "loop did not finish write none)")
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        raise refuse("1 (the record)", f"it is not readable JSON ({e})") from e
+    if not isinstance(rec, dict) or rec.get("schema") != _RUN_SCHEMA:
+        found = rec.get("schema") if isinstance(rec, dict) else type(rec).__name__
+        raise refuse("1 (the record)",
+                     f"its schema is {found!r}, not {_RUN_SCHEMA!r}")
+    bad = sorted(set(rec) ^ set(_RUN_FIELDS)) + sorted(
+        k for k, types in _RUN_FIELDS.items() if k in rec and (
+            not isinstance(rec[k], types) or isinstance(rec[k], bool)))
+    if (not bad and (rec["opensees_backend"] not in _BACKENDS
+                     or not (rec["opensees_build_sha"] == "unknown"
+                             or _BUILD_SHA.fullmatch(rec["opensees_build_sha"]))
+                     or not _ISO_UTC.fullmatch(rec["completed_iso"]))):
+        bad = ["opensees_backend / opensees_build_sha / completed_iso"]
+    if bad:
+        raise refuse("1 (the record)", f"its fields {bad} are missing, "
+                     "unknown or of the wrong type")
+    if rec["recorder_file"] != base:
+        raise refuse("2 (recorder_file)", f"it describes "
+                     f"{rec['recorder_file']!r}, not {base!r}")
+    try:
+        stored = _lineage_hashes(model_h5)
+    except ProvenanceStampRefused as e:
+        raise refuse("3 (the lineage)", str(e)) from e
+    if (rec["model_hash"], rec["fem_hash"]) != stored:
+        raise refuse("3 (the lineage)", f"it names model_hash "
+                     f"{rec['model_hash']!r} and fem_hash {rec['fem_hash']!r}"
+                     f", but the archive's are {stored[0]!r} and "
+                     f"{stored[1]!r} (another model, or an older archive)")
+    n_analysis = sum(int(r.count) for r in model.program()
+                     if r.method == "analysis")
+    token = model.analysis().get("analysis")
+    if n_analysis != 1 or token != rec["analysis"] or token not in _ANALYSIS_KIND:
+        raise refuse("4 (the analysis)", f"/opensees/program holds "
+                     f"{n_analysis} analysis declaration(s), the last "
+                     f"{token!r}; one is needed, equal to the record's "
+                     f"{rec['analysis']!r}, with a kind (known: "
+                     f"{sorted(_ANALYSIS_KIND)})")
+    if rec["steps_completed"] != rec["analyze_steps"]:
+        raise refuse("5 (the steps)", f"the loop completed "
+                     f"{rec['steps_completed']} of {rec['analyze_steps']} "
+                     "steps")
+    _check_files(rec, sources, refuse, path)
+    return _ANALYSIS_KIND[token], int(rec["steps_completed"])
+
+
+def _check_files(
+    rec: "dict[str, Any]", sources: "list[Path]",
+    refuse: "Callable[[str, str], StageKindRefused]", record: Path,
+) -> None:
+    """Check 6: every ``.mpco`` on disk is the file the deck closed, by the
+    size and modification time its runtime recorded after closing it (one
+    value for a single file, a list in part order for a set). An integer
+    mtime (Tcl's ``file mtime``) is compared with the whole seconds on
+    disk, a float (Python's ``os.stat``) exactly.
+
+    Two fences, in integer nanoseconds, catch a writer the size and a
+    whole-second mtime cannot (a same-size overwrite within the second):
+    the record, written after the close, is never older than any ``.mpco``;
+    and on a whole-second clock (both times exact seconds) a ``.mpco`` in
+    the record's own second cannot be ordered against it, so it refuses."""
+    rec_ns = record.stat().st_mtime_ns
+    sizes, mtimes = rec["recorder_size"], rec["recorder_mtime"]
+    many = len(sources) > 1
+    if (isinstance(sizes, list) != many or isinstance(mtimes, list) != many
+            or (many and not len(sizes) == len(mtimes) == len(sources))):
+        raise refuse("6 (the files)", f"it records recorder_size {sizes!r} "
+                     f"and recorder_mtime {mtimes!r} for {len(sources)} "
+                     "file(s)")
+    pairs = list(zip(sizes, mtimes)) if many else [(sizes, mtimes)]
+    for src, (size, mtime) in zip(sources, pairs):
+        if not (_is_int(size) and (_is_int(mtime) or isinstance(mtime, float))):
+            raise refuse("6 (the files)", f"{src.name}: size {size!r} and "
+                         f"mtime {mtime!r} are not numbers")
+        st = src.stat()
+        ns = st.st_mtime_ns
+        disk = ns // 10**9 if _is_int(mtime) else st.st_mtime
+        if st.st_size != size or disk != mtime:
+            raise refuse("6 (the files)", f"{src.name} is {st.st_size} bytes "
+                         f"modified at {disk!r}, but the deck closed it at "
+                         f"{size} bytes modified at {mtime!r} (another run "
+                         "wrote it since)")
+        if ns > rec_ns:
+            raise refuse("6 (the files)", f"{src.name} was modified at "
+                         f"{ns} ns, after the record ({rec_ns} ns), which "
+                         "the deck writes only after closing it (another "
+                         "run wrote it since)")
+        if (ns % 10**9 == 0 and rec_ns % 10**9 == 0
+                and ns // 10**9 == rec_ns // 10**9):
+            raise refuse("6 (the files)", f"{src.name} and the record carry "
+                         "whole-second times in the same second "
+                         f"({ns // 10**9}): on this filesystem's clock a "
+                         "later writer of the file cannot be told from the "
+                         "deck's own close")
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:
     """Refuse a source ``from_mpco`` would refuse, or would bind elsewhere.
 
@@ -508,9 +692,14 @@ def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:
 
 def _scan_part(
     source: Path, names: Sequence[str], kinds: Sequence[str],
-    unsupported: set[str],
+    unsupported: set[str], *, steps: Optional[int] = None,
 ) -> list[str]:
-    """Check one source part and return its stage kinds."""
+    """Check one source part and return its stage kinds.
+
+    ``steps`` is the implicit stage's step count from the deck's run record
+    (:func:`_deck_run`): the file must then hold exactly one stage of step
+    data, every result of which records ``steps`` steps (check 5).
+    """
     import h5py
 
     try:
@@ -541,6 +730,17 @@ def _scan_part(
             _scan_stage(stage, f"{source}:{name}", unsupported)
             mode_only.append(_holds_only_modes(stage))
         hosts = [n for n, m in zip(stages, mode_only) if not m]
+        if steps is not None:
+            counts = (_stage_step_counts(h5[hosts[0]]) if len(hosts) == 1
+                      else set())
+            if len(hosts) != 1 or counts != {steps}:
+                raise StageKindRefused(
+                    f"{source}: check 5 (the steps) of the deck's run record "
+                    f"failed: the file holds {len(hosts)} MODEL_STAGE "
+                    f"group(s) with step data ({hosts}), recording "
+                    f"{sorted(counts)} step(s); one stage of the record's "
+                    f"{steps} steps is needed (an unstaged program's kind is "
+                    "not archived as fact otherwise). Nothing was written.")
         if len(hosts) != len(names):
             raise StageKindRefused(
                 f"{source} holds {len(hosts)} MODEL_STAGE group(s) with "
@@ -629,6 +829,23 @@ def _holds_only_modes(stage: "h5py.Group") -> bool:
     return has_modes
 
 
+def _stage_step_counts(stage: "h5py.Group") -> "set[int]":
+    """The step counts of a stage's non-modal results (empty: none)."""
+    from ._mpco_translation import is_modal_result_name
+
+    if "RESULTS" not in stage:
+        return set()
+    results = stage["RESULTS"]
+    groups: list[Any] = []
+    if "ON_NODES" in results:
+        groups += [g for n, g in results["ON_NODES"].items()
+                   if not is_modal_result_name(n)]
+    if "ON_ELEMENTS" in results:
+        groups += [b for t in results["ON_ELEMENTS"].values()
+                   for b in t.values()]
+    return {_step_count(g) for g in groups if "DATA" in g}
+
+
 def _step_count(grp: "h5py.Group") -> int:
     if "DATA" not in grp:
         return 0
@@ -653,9 +870,17 @@ _TOPOLOGY_BY_COORDS = {
     ("isoparametric_1d", 1): ("line", "[-1,1]"),
     ("isoparametric", 2): ("quad", "[-1,1]"),
     ("isoparametric", 3): ("hex", "[-1,1]"),
-    ("barycentric_tri", 2): ("tri", "bary"),
-    ("barycentric_tet", 3): ("tet", "bary"),
+    ("simplex_tri_node0", 2): ("tri", "bary"),
+    ("simplex_tri_gmsh", 2): ("tri", "bary"),
+    ("simplex_tet_node0", 3): ("tet", "bary"),
 }
+
+#: The fork's Bernstein (Bezier) classes: their ``.ladruno`` FAMILY is
+#: ``bernstein`` (the element answers the ``basisInfo`` probe), every other
+#: catalog class is ``lagrange``. FAMILY also picks the frame of a
+#: triangle's ``GP_PARAM``, so a BezierTri6 written as ``lagrange`` reads
+#: back with its points rotated.
+_BERNSTEIN_CLASSES = frozenset({"BezierTri6", "BezierTet10"})
 
 
 def _basis(gname: str, dset: Any, where: str) -> _Basis:
@@ -707,7 +932,15 @@ def _basis(gname: str, dset: Any, where: str) -> _Basis:
     topo = _TOPOLOGY_BY_COORDS.get((coord_system, int(shape[1])))
     if topo is None:
         return unknown
-    return _Basis(topo[0], "lagrange", topo[1], coords.copy())
+    family = (
+        "bernstein" if key.class_name in _BERNSTEIN_CLASSES else "lagrange"
+    )
+    if topo[1] == "bary":
+        # The catalog holds gmsh coordinates; GP_PARAM carries the
+        # .ladruno barycentric frame, which the reader converts back.
+        from ._ladruno_element_io import gmsh_to_gp_param
+        coords = gmsh_to_gp_param(coords, topology=topo[0], family=family)
+    return _Basis(topo[0], family, topo[1], coords.copy())
 
 
 # ---------------------------------------------------------------------------

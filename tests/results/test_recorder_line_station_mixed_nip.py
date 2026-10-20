@@ -37,6 +37,7 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.results import Results
+from apeGmsh.results.readers._out_fiber_io import model_integration_points
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,
@@ -178,6 +179,46 @@ def test_lobatto_3_and_5_refused_by_name_with_model(tmp_path: Path) -> None:
         _transcode(tmp_path, fem, eids, model_h5)
 
 
+#: Lobatto 4's stations: 3 + 4 = 7 columns, which two elements do not divide.
+LOBATTO_4 = np.array([-1.0, -np.sqrt(0.2), np.sqrt(0.2), 1.0])
+
+
+def test_lobatto_3_and_4_refused_for_its_counts_with_model(tmp_path: Path) -> None:
+    """#2267: a bound model's counts are checked before the columns divide,
+    so a 3 + 4 record (7 columns over 2 elements) is refused for its counts,
+    not as "not divisible". The fibre reader refuses the same elements for
+    their counts too (``_out_fiber_io.model_integration_points``: "its
+    elements use beamIntegration rules [...], with integration-point counts
+    [3, 4]"), pinned here on the same model."""
+    lengths = (3.0, 5.0)
+    fem, eids = _two_beams("mix34_model", lengths)
+    model_h5 = _model_h5(tmp_path, fem, (_lobatto(3), _lobatto(4)))
+    _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO_4))
+    with pytest.raises(
+        ValueError,
+        match=(rf"different integration-point counts in model= \(3 points: "
+               rf"FEM elements \[{eids[0]}\]; 4 points: FEM elements "
+               rf"\[{eids[1]}\]\)")):
+        _transcode(tmp_path, fem, eids, model_h5)
+    fibres = ResolvedRecorderRecord(
+        category="fibers", name="beam", components=("fiber_stress",), dt=None,
+        n_steps=None, element_ids=np.asarray(eids, dtype=np.int64),
+        element_class_name="ForceBeamColumn2d")
+    with pytest.raises(ValueError,
+                       match=r"with integration-point counts \[3, 4\]"):
+        model_integration_points(fibres, OpenSeesModel.from_h5(model_h5))
+
+
+def test_lobatto_3_and_4_without_model_is_not_divisible(tmp_path: Path) -> None:
+    """The model-less path is unchanged: 7 columns do not divide by 2."""
+    lengths = (3.0, 5.0)
+    fem, eids = _two_beams("mix34_nomodel", lengths)
+    _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO_4))
+    with pytest.raises(ValueError,
+                       match="7 data columns is not divisible by 2 elements"):
+        _transcode(tmp_path, fem, eids, None)
+
+
 def test_legendre_mix_the_station_check_misses_is_refused_by_the_model(
         tmp_path: Path) -> None:
     """Legendre 2 on L = 1 beside Legendre 4 on L = 12: every equal block of
@@ -298,6 +339,8 @@ def test_stale_cache_from_the_previous_parser_is_not_served(
                   PREVIOUS_PARSER)
         m.setattr("apeGmsh.results.transcoders._recorder.require_line_stations",
                   lambda *a: None)
+        m.setattr("apeGmsh.results.transcoders._recorder.line_station_count",
+                  lambda rec, n_columns, *a: n_columns // len(rec.element_ids))
         with read() as r:
             slab = r.elements.line_stations.get(component="axial_force")
             assert np.asarray(slab.element_index).tolist() == [eids[0]] * 4 + [

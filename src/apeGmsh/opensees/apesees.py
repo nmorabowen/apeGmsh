@@ -10111,7 +10111,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         a hook-dispatching for-loop if any
         :meth:`initial_stress` calls registered step hooks (Phase
         SSI-1).  Without ``analyze_steps``, the emitted deck declares
-        the model but does not drive an analysis.
+        the model but does not drive an analysis.  With it, the deck's last
+        action, once the loop returns, closes every recorder (``.out``
+        included) and writes ``<mpco file>.run.json`` beside each MPCO
+        recorder's output (#2210; ``read_deck_mpco``); the automatic
+        ``model.h5`` is then written before the deck file.
 
         ``per_rank=True`` (ADR 0061) writes a driver deck at ``path``
         plus one ``ranks/rank<K>_<seq>.tcl`` fragment per
@@ -10157,6 +10161,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = TclEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
+        emitter._run_record = analyze_steps is not None
         # ADR 0099 S5: ``per_rank`` is applied around / after ``bm.emit``
         # (live fragment routing under ``stream``, post-hoc span slicing
         # otherwise), so the INV-4 gate inside emit cannot see it. Stamp
@@ -10185,6 +10190,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
+            if analyze_steps is not None:  # the run record, last; it reuses
+                self._artifacts.after_emit(self)  # this model.h5's lineage
+                emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self, path)
             if stream and per_rank and (
                 emitter.stream_fragment_count() == 0
             ):
@@ -10732,6 +10740,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = PyEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
+        emitter._run_record = analyze_steps is not None
         pre_prof, post_prof = self._split_profiler_records()
         bm.emit(emitter)
         for _verb, _vargs in pre_prof:
@@ -10740,6 +10749,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
         for _verb, _vargs in post_prof:
             emitter.profiler(_verb, *_vargs)
+        if analyze_steps is not None:  # the run record, last; it reuses
+            self._artifacts.after_emit(self)  # this model.h5's lineage
+            emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self, path)
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)
         self._artifacts.after_emit(self)
@@ -11032,10 +11044,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # initial-stress persists with its stage under
         # ``/opensees/stages`` (Phase 2).
 
-        self._write_h5(
-            path, self.build(), model_name=model_name, cuts=cuts,
-            sweeps=sweeps,
-        )
+        self._write_h5(path, self.build(), model_name=model_name, cuts=cuts, sweeps=sweeps)
+        self._artifacts.remember_lineage(self, path)  # a later deck's run record reuses it
 
     def _write_h5(
         self,

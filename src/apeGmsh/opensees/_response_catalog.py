@@ -168,6 +168,11 @@ ELE_TAG_ElasticTimoshenkoBeam3d = 146
 # plasticity with a beamIntegration rule => line-stations topology.
 ELE_TAG_LadrunoDispBeamColumn2d = 33013
 ELE_TAG_LadrunoDispBeamColumn3d = 33014
+# Ladruno-fork IMK concentrated-plasticity beam (live from ladruno:SRC/classTags.h).
+# Closed-form elastic interior + rotational end springs (no sections) =>
+# nodal-forces + localForce line-station synthesis.
+ELE_TAG_LadrunoIMKBeam = 33003
+ELE_TAG_LadrunoIMKBeam2d = 33004
 # Zero-length elements (Phase 11d). Tags from
 # ``OpenSees/SRC/classTags.h``.
 ELE_TAG_ZeroLength = 19
@@ -202,10 +207,22 @@ class ResponseLayout:
         ``natural_coords`` correctly:
 
         - ``"isoparametric"`` — ``[-1, +1]^dim`` (line, quad, hex).
-        - ``"barycentric_tet"`` — volume coordinates ``(L1, L2, L3)``
-          with the implicit fourth ``L4 = 1 - L1 - L2 - L3`` (tet).
-        - ``"barycentric_tri"`` — area coordinates ``(L1, L2)`` with
-          ``L3 = 1 - L1 - L2`` (triangle).
+        - ``"simplex_tri_node0"`` / ``"simplex_tet_node0"`` — gmsh
+          reference-simplex coordinates ``(u, v[, w])``, the ones the
+          gmsh shape functions take (node 0 carries ``1 - u - v[ - w]``,
+          node ``k`` carries the ``k``-th coordinate). The element's
+          own rule is written node-0-first (column ``k`` is node ``k``'s
+          weight, the last node's is implicit); the table here is that
+          rule converted once, so ``natural_coords`` is gmsh for every
+          family (#2228).
+        - ``"simplex_tri_gmsh"`` — gmsh reference-triangle coordinates
+          ``(u, v)`` as above, for an element whose own rule is already
+          written in that frame (BezierTri6, ASDShellT3: node 0 carries
+          ``1 - ξ - η``). The values are the element's own.
+
+        Every simplex tag holds gmsh coordinates. The tag records the
+        frame the ELEMENT writes its rule in, which a writer of that
+        rule (the ``.ladruno`` ``GP_PARAM``) needs.
     n_components_per_gp
         Number of scalar components emitted per Gauss point.
     component_layout
@@ -430,8 +447,9 @@ class LayeredShellLayout:
         OpenSees ``ELE_TAG_*`` integer for this element class.
     coord_system
         Tag describing the surface parent domain
-        (``"isoparametric"`` for quad shells,
-        ``"barycentric_tri"`` for triangle shells).
+        (``"isoparametric"`` for quad shells, ``"simplex_tri_node0"``
+        or ``"simplex_tri_gmsh"`` for triangle shells; see
+        :class:`ResponseLayout`).
     surface_int_rule
         Integration-rule enum for the shell's surface GP rule
         (e.g. ``IntRule.Quad_GL_2`` for ASDShellQ4). The on-disk
@@ -490,9 +508,28 @@ class ZeroLengthLayout:
 # Gauss-point coordinate tables
 # =====================================================================
 
+def _node0_bary_to_gmsh(free: ndarray) -> ndarray:
+    """An element's node-0-first barycentric rule → gmsh ``(u, v[, w])``.
+
+    ``free`` is ``(n_gp, d)``: column ``k`` is node ``k``'s weight and the
+    last node's weight is implicit (``1 - Σ``). That is how Tri31,
+    SixNodeTri, LadrunoCST/LST, ShellDKGT/NLDKGT, FourNodeTetrahedron,
+    TenNodeTetrahedron and BezierTet10 write their points (for example
+    TenNodeTetrahedron's ``N0 = r, N1 = s, N2 = u, N3 = 1 - r - s - u``,
+    fork ``Ladruno_ElementResults.h`` ``computeGlobalGP``). Gmsh puts
+    ``1 - Σ`` on node 0 and coordinate ``k`` on node ``k + 1``, so
+    ``(u, v[, w])`` is the weights of nodes ``1..d`` (#2228).
+    """
+    full = np.hstack([free, 1.0 - free.sum(axis=1, keepdims=True)])
+    return np.ascontiguousarray(full[:, 1:])
+
+
 # Tet_GL_1 — single point at the volume centroid.
-# FourNodeTetrahedron.cpp:226 — sg = {0.25}, weight 1/6.
-_TET_GL_1_COORDS: ndarray = np.array([[0.25, 0.25, 0.25]], dtype=np.float64)
+# FourNodeTetrahedron.cpp:226 — sg = {0.25}, weight 1/6. The centroid is
+# the same point in every barycentric frame.
+_TET_GL_1_COORDS: ndarray = _node0_bary_to_gmsh(
+    np.array([[0.25, 0.25, 0.25]], dtype=np.float64),
+)
 
 # Tet_GL_2 — 4-point Hammer-Stroud rule.
 # TenNodeTetrahedron.cpp:223–226 — sg = {alpha, beta, beta, beta}
@@ -500,7 +537,11 @@ _TET_GL_1_COORDS: ndarray = np.array([[0.25, 0.25, 0.25]], dtype=np.float64)
 # Loop body picks (sg[k], sg[|1-k|], sg[|2-k|]) for k = 0..3.
 _TET_GL_2_ALPHA = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
 _TET_GL_2_BETA = (5.0 - math.sqrt(5.0)) / 20.0
-_TET_GL_2_COORDS: ndarray = np.array([
+# The element's rows below are node-0-first (column k = node k's weight,
+# node 3's implicit); the table holds them in gmsh (u, v, w), so GP 0 (the
+# point near node 0) reads (beta, beta, beta). BezierTet10.cpp:102 (GP4_L)
+# lists the same rows in the same frame and order.
+_TET_GL_2_COORDS: ndarray = _node0_bary_to_gmsh(np.array([
     # k=0: (alpha, beta, beta)
     [_TET_GL_2_ALPHA, _TET_GL_2_BETA, _TET_GL_2_BETA],
     # k=1: (beta, alpha, beta)   — sg[|1-1|]=sg[0]=alpha, sg[|2-1|]=sg[1]=beta
@@ -509,7 +550,7 @@ _TET_GL_2_COORDS: ndarray = np.array([
     [_TET_GL_2_BETA, _TET_GL_2_BETA, _TET_GL_2_ALPHA],
     # k=3: (beta, beta, beta)    — sg[|1-3|]=sg[2]=beta, sg[|2-3|]=sg[1]=beta
     [_TET_GL_2_BETA, _TET_GL_2_BETA, _TET_GL_2_BETA],
-], dtype=np.float64)
+], dtype=np.float64))
 
 # Hex_GL_1 — single point at the parent-cube centroid.
 # SSPbrick.cpp uses one Gauss point at (0, 0, 0) in [-1, +1]³.
@@ -551,32 +592,35 @@ _QUAD_GL_2_COORDS: ndarray = np.array([
 ], dtype=np.float64)
 
 # Triangle_GL_1 — single point at the area-coord centroid (1/3, 1/3).
-# The third area coord is implicit: L3 = 1 - L1 - L2 = 1/3.
-_TRI_GL_1_COORDS: ndarray = np.array(
+# The third area coord is implicit: L3 = 1 - L1 - L2 = 1/3. The centroid
+# is the same point in every barycentric frame.
+_TRI_GL_1_COORDS: ndarray = _node0_bary_to_gmsh(np.array(
     [[1.0 / 3.0, 1.0 / 3.0]], dtype=np.float64,
-)
+))
 
 # Triangle_GL_2 — the canonical 3-point Gauss-Legendre rule on the
-# triangle, degree-2 exact. Points at barycentric (2/3, 1/6, 1/6),
-# (1/6, 2/3, 1/6), (1/6, 1/6, 2/3) — listed here as (L1, L2) with L3
-# implicit. Weights are 1/6 each (sum = 1/2 = unit-triangle area).
-# Matches SixNodeTri.cpp:127–142.
-_TRI_GL_2_COORDS: ndarray = np.array([
-    [2.0 / 3.0, 1.0 / 6.0],  # gp 0: near corner 1
-    [1.0 / 6.0, 2.0 / 3.0],  # gp 1: near corner 2
-    [1.0 / 6.0, 1.0 / 6.0],  # gp 2: near corner 3
-], dtype=np.float64)
+# triangle, degree-2 exact. SixNodeTri.cpp:127–142 lists the points as
+# (s, t) = (2/3, 1/6), (1/6, 2/3), (1/6, 1/6), and its shape functions
+# (SixNodeTri.cpp:1333) put s on node 0 and t on node 1: node-0-first.
+# LadrunoLST.cpp:68–76 lists the same rows in the same frame. Weights are
+# 1/6 each (sum = 1/2 = unit-triangle area). In gmsh (u, v):
+_TRI_GL_2_COORDS: ndarray = _node0_bary_to_gmsh(np.array([
+    [2.0 / 3.0, 1.0 / 6.0],  # gp 0: near node 0 -> gmsh (1/6, 1/6)
+    [1.0 / 6.0, 2.0 / 3.0],  # gp 1: near node 1 -> gmsh (2/3, 1/6)
+    [1.0 / 6.0, 1.0 / 6.0],  # gp 2: near node 2 -> gmsh (1/6, 2/3)
+], dtype=np.float64))
 
-# BezierTri6 integrates the SAME three points in a DIFFERENT index order
-# than SixNodeTri (BezierTri6.cpp): GP0 near corner 3. This is the fallback
-# coords array ONLY — the canonical read takes per-GP coords from the file's
-# QUADRATURE/GP_PARAM (the recorder is self-describing). It must NOT borrow
-# _TRI_GL_2_COORDS, which would silently permute each Tri6 GP's reported
-# (x, y). See plan_bezier_elements_integration.md "Tri6 GP-index-order".
+# BezierTri6 writes its points (ξ1, ξ2) as the weights of nodes 1 and 2
+# (BezierTri6.cpp:869: N0 = ξ3² with ξ3 = 1 - ξ1 - ξ2), which IS gmsh
+# (u, v): these are the element's own values, unconverted. In gmsh terms
+# its GP order is SixNodeTri's (GP k near node k), so the two tables are
+# now equal; they stay separate because they come from two elements'
+# sources. The canonical .ladruno read still takes per-GP coords from the
+# file's QUADRATURE/GP_PARAM.
 _TRI_GL_2_COORDS_BEZIER: ndarray = np.array([
-    [1.0 / 6.0, 1.0 / 6.0],  # gp 0: near corner 3
-    [2.0 / 3.0, 1.0 / 6.0],  # gp 1: near corner 1
-    [1.0 / 6.0, 2.0 / 3.0],  # gp 2: near corner 2
+    [1.0 / 6.0, 1.0 / 6.0],  # gp 0: near node 0
+    [2.0 / 3.0, 1.0 / 6.0],  # gp 1: near node 1
+    [1.0 / 6.0, 2.0 / 3.0],  # gp 2: near node 2
 ], dtype=np.float64)
 
 # Hex_GL_3 — 27 GPs in OpenSees Twenty_Node_Brick's corner-edge-face-
@@ -647,25 +691,26 @@ _QUAD_GL_3_COORDS_MITC9: ndarray = np.array([
     [          0.0,           0.0],   # 8  centroid
 ], dtype=np.float64)
 
-# Triangle_GL_2B — 3 GPs at the area-coord midpoints of the triangle
-# edges. Used by ASDShellT3 (ASDShellT3.cpp:148–150 mid-edge XI/ETA).
-# The (XI, ETA) values from the source map directly to (L1, L2)
-# pairs with L3 = 1 - L1 - L2 implicit.
+# Triangle_GL_2B — 3 GPs at the midpoints of the triangle edges. Used by
+# ASDShellT3 (ASDShellT3.cpp:148–150 mid-edge XI/ETA). Its shape
+# functions (ASDShellT3.cpp:165) are N0 = 1 - ξ - η, N1 = ξ, N2 = η, so
+# (XI, ETA) is already gmsh (u, v): the element's own values, unconverted.
 _TRI_GL_2B_COORDS: ndarray = np.array([
-    [0.5, 0.5],   # edge between vertices 1-2 (L3 = 0)
-    [0.0, 0.5],   # edge between vertices 1-3 (L1 = 0)
-    [0.5, 0.0],   # edge between vertices 2-3 (L2 = 0)
+    [0.5, 0.5],   # edge between nodes 1-2
+    [0.0, 0.5],   # edge between nodes 0-2
+    [0.5, 0.0],   # edge between nodes 0-1
 ], dtype=np.float64)
 
 # Triangle_GL_2C — 4-point quadrature used by ShellDKGT / ShellNLDKGT
-# (ShellDKGT.cpp:238–250 sg/tg arrays). One centroid + three
-# barycentric points each at (1/5, 1/5, 3/5)-type permutations.
-_TRI_GL_2C_COORDS: ndarray = np.array([
+# (ShellDKGT.cpp:238–250 sg/tg arrays). One centroid + three points at
+# (1/5, 1/5, 3/5)-type permutations. ShellDKGT::shape2d puts sg on node 0
+# and tg on node 1 (ShellDKGT.cpp:2102), so the rows are node-0-first.
+_TRI_GL_2C_COORDS: ndarray = _node0_bary_to_gmsh(np.array([
     [1.0 / 3.0, 1.0 / 3.0],   # 0  centroid
-    [1.0 / 5.0, 3.0 / 5.0],   # 1  near vertex 2
-    [3.0 / 5.0, 1.0 / 5.0],   # 2  near vertex 1
-    [1.0 / 5.0, 1.0 / 5.0],   # 3  near vertex 3
-], dtype=np.float64)
+    [1.0 / 5.0, 3.0 / 5.0],   # 1  near node 1
+    [3.0 / 5.0, 1.0 / 5.0],   # 2  near node 0
+    [1.0 / 5.0, 1.0 / 5.0],   # 3  near node 2
+], dtype=np.float64))
 
 # Line_GL_1 — single point at the parent-line midpoint. Used by
 # trusses, zero-length elements, and simple bearings (anything in
@@ -710,13 +755,13 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # ── FourNodeTetrahedron (1 GP) ────────────────────────────────────
     ("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress"): _continuum_layout(
         n_gp=1, natural_coords=_TET_GL_1_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRESS,
         class_tag=ELE_TAG_FourNodeTetrahedron,
     ),
     ("FourNodeTetrahedron", IntRule.Tet_GL_1, "strain"): _continuum_layout(
         n_gp=1, natural_coords=_TET_GL_1_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRAIN,
         class_tag=ELE_TAG_FourNodeTetrahedron,
     ),
@@ -737,45 +782,45 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # mis-decoding it (see ``results/capture/_domain.py``).
     ("TenNodeTetrahedron", IntRule.Tet_GL_2, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRESS,
         class_tag=ELE_TAG_TenNodeTetrahedron,
     ),
     ("TenNodeTetrahedron", IntRule.Tet_GL_2, "strain"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRAIN,
         class_tag=ELE_TAG_TenNodeTetrahedron,
     ),
 
     # ── BezierTet10 (Ladruno fork, 10-node Bernstein tet, 4 GPs) ──────
     # Shares TenNodeTetrahedron's 4-point Tet_GL_2 rule AND its GP index
-    # order (BezierTet10.cpp's GP4_L (a,b,b)/(b,a,b)/(b,b,a)/(b,b,b)
-    # matches _TET_GL_2_COORDS exactly — unlike the Tri6 sibling there is
-    # NO permuted-order trap here). Registered under both the real rule and
+    # order (BezierTet10.cpp's GP4_L (a,b,b)/(b,a,b)/(b,b,a)/(b,b,b) is
+    # the same node-0-first rows _TET_GL_2_COORDS converts, and its
+    # Bernstein N1 = L1² puts L1 on node 0). Registered under both the real rule and
     # Custom (the Ladruno recorder serves it via the element's self-declared
     # basisInfo / CustomIntegrationRule path).
     ("BezierTet10", IntRule.Tet_GL_2, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRESS,
         class_tag=ELE_TAG_BezierTet10,
     ),
     ("BezierTet10", IntRule.Tet_GL_2, "strain"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRAIN,
         class_tag=ELE_TAG_BezierTet10,
     ),
     ("BezierTet10", IntRule.Custom, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRESS,
         class_tag=ELE_TAG_BezierTet10,
     ),
     ("BezierTet10", IntRule.Custom, "strain"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
-        coord_system="barycentric_tet",
+        coord_system="simplex_tet_node0",
         component_names=STRAIN,
         class_tag=ELE_TAG_BezierTet10,
     ),
@@ -933,13 +978,13 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # Single Gauss point at the area-coord centroid (1/3, 1/3, 1/3).
     ("Tri31", IntRule.Triangle_GL_1, "stress"): _continuum_layout(
         n_gp=1, natural_coords=_TRI_GL_1_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_Tri31,
     ),
     ("Tri31", IntRule.Triangle_GL_1, "strain"): _continuum_layout(
         n_gp=1, natural_coords=_TRI_GL_1_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_Tri31,
     ),
@@ -947,7 +992,7 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     ("Tri31", IntRule.Triangle_GL_1, "stress_plane_strain"):
         _continuum_layout(
             n_gp=1, natural_coords=_TRI_GL_1_COORDS,
-            coord_system="barycentric_tri",
+            coord_system="simplex_tri_node0",
             component_names=STRESS_PLANE_STRAIN,
             class_tag=ELE_TAG_Tri31,
         ),
@@ -959,13 +1004,13 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # layout as Tri31 (which it reduces to).
     ("LadrunoCST", IntRule.Triangle_GL_1, "stress"): _continuum_layout(
         n_gp=1, natural_coords=_TRI_GL_1_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_LadrunoCST,
     ),
     ("LadrunoCST", IntRule.Triangle_GL_1, "strain"): _continuum_layout(
         n_gp=1, natural_coords=_TRI_GL_1_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_LadrunoCST,
     ),
@@ -974,7 +1019,7 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     ("LadrunoCST", IntRule.Triangle_GL_1, "stress_plane_strain"):
         _continuum_layout(
             n_gp=1, natural_coords=_TRI_GL_1_COORDS,
-            coord_system="barycentric_tri",
+            coord_system="simplex_tri_node0",
             component_names=STRESS_PLANE_STRAIN,
             class_tag=ELE_TAG_LadrunoCST,
         ),
@@ -983,17 +1028,18 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # Ladruno-fork T6 (tag 33016, ADR 70 P3). ``stress``/``strain`` return
     # Vector(3 * numgp) = 3 comp × 3 GPs, and the element's own 3-point
     # interior rule (LadrunoLST.cpp:68–76) lists (2/3, 1/6), (1/6, 2/3),
-    # (1/6, 1/6) — the SixNodeTri anchor order, so ``_TRI_GL_2_COORDS``
-    # applies unpermuted (unlike the BezierTri6 sibling).
+    # (1/6, 1/6) node-0-first (LadrunoLST.cpp:964: L1 = s on node 0) — the
+    # SixNodeTri rows in the SixNodeTri frame, so ``_TRI_GL_2_COORDS``
+    # applies.
     ("LadrunoLST", IntRule.Triangle_GL_2, "stress"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_LadrunoLST,
     ),
     ("LadrunoLST", IntRule.Triangle_GL_2, "strain"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_LadrunoLST,
     ),
@@ -1003,7 +1049,7 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     ("LadrunoLST", IntRule.Triangle_GL_2, "stress_plane_strain"):
         _continuum_layout(
             n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-            coord_system="barycentric_tri",
+            coord_system="simplex_tri_node0",
             component_names=STRESS_PLANE_STRAIN,
             class_tag=ELE_TAG_LadrunoLST,
         ),
@@ -1030,33 +1076,33 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     #   SixNodeTri → Triangle_GaussLegendre_2.
     ("SixNodeTri", IntRule.Triangle_GL_2, "stress"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_SixNodeTri,
     ),
     ("SixNodeTri", IntRule.Triangle_GL_2, "strain"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_SixNodeTri,
     ),
     ("SixNodeTri", IntRule.Custom, "stress"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_SixNodeTri,
     ),
     ("SixNodeTri", IntRule.Custom, "strain"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_SixNodeTri,
     ),
 
     # ── BezierTri6 (Ladruno fork, 6-node Bernstein triangle, 3 GPs) ───
-    # Same 3-point degree-2 rule as SixNodeTri, but the fork integrates the
-    # GPs in a permuted index order (_TRI_GL_2_COORDS_BEZIER, GP0 near
-    # corner 3). Registered under BOTH Triangle_GL_2 (the real rule) and
+    # Same 3-point degree-2 rule as SixNodeTri, written in the gmsh frame
+    # (_TRI_GL_2_COORDS_BEZIER; GP k sits near node k, as SixNodeTri's
+    # does). Registered under BOTH Triangle_GL_2 (the real rule) and
     # Custom (1000) — the Ladruno recorder serves these via the element's
     # self-declared basisInfo / CustomIntegrationRule path, exactly like the
     # SixNodeTri Custom mirror above. These rows carry component-layout /
@@ -1065,47 +1111,47 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # fork's GP order so a coords fallback never permutes a Tri6 GP).
     ("BezierTri6", IntRule.Triangle_GL_2, "stress"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_gmsh",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_BezierTri6,
     ),
     ("BezierTri6", IntRule.Triangle_GL_2, "strain"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_gmsh",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_BezierTri6,
     ),
     ("BezierTri6", IntRule.Custom, "stress"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_gmsh",
         component_names=STRESS_2D,
         class_tag=ELE_TAG_BezierTri6,
     ),
     ("BezierTri6", IntRule.Custom, "strain"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_gmsh",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_BezierTri6,
     ),
     # BezierTri6.cpp:1552 — see the stress_plane_strain note on
     # FourNodeQuad. Mirrored under BOTH rules exactly like this class's
     # ``stress`` entries above, since MPCO brackets it as Custom.
-    # NOTE its GP order is the permuted _TRI_GL_2_COORDS_BEZIER, so a
-    # 12-column plane-strain block is genuinely ambiguous between
+    # NOTE its coord_system ("simplex_tri_gmsh") differs from LadrunoLST's
+    # ("simplex_tri_node0"), so a 12-column plane-strain block is ambiguous between
     # BezierTri6 and LadrunoLST — ``_identify_layout`` raises and asks
     # for a ``class_hint``, exactly as it already does for the 9-column
     # ``stress`` block these two classes also share.
     ("BezierTri6", IntRule.Triangle_GL_2, "stress_plane_strain"):
         _continuum_layout(
             n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
-            coord_system="barycentric_tri",
+            coord_system="simplex_tri_gmsh",
             component_names=STRESS_PLANE_STRAIN,
             class_tag=ELE_TAG_BezierTri6,
         ),
     ("BezierTri6", IntRule.Custom, "stress_plane_strain"):
         _continuum_layout(
             n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
-            coord_system="barycentric_tri",
+            coord_system="simplex_tri_gmsh",
             component_names=STRESS_PLANE_STRAIN,
             class_tag=ELE_TAG_BezierTri6,
         ),
@@ -1305,25 +1351,25 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # DomainCapture support on triangles.
     ("ShellDKGT", IntRule.Triangle_GL_2C, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=SHELL_STRESS_RESULTANTS,
         class_tag=ELE_TAG_ShellDKGT,
     ),
     ("ShellDKGT", IntRule.Triangle_GL_2C, "strain"): _continuum_layout(
         n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=SHELL_GENERALIZED_STRAINS,
         class_tag=ELE_TAG_ShellDKGT,
     ),
     ("ShellNLDKGT", IntRule.Triangle_GL_2C, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=SHELL_STRESS_RESULTANTS,
         class_tag=ELE_TAG_ShellNLDKGT,
     ),
     ("ShellNLDKGT", IntRule.Triangle_GL_2C, "strain"): _continuum_layout(
         n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_node0",
         component_names=SHELL_GENERALIZED_STRAINS,
         class_tag=ELE_TAG_ShellNLDKGT,
     ),
@@ -1332,13 +1378,13 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # ASDShellT3.cpp:148–150. Petracca's shell.
     ("ASDShellT3", IntRule.Triangle_GL_2B, "stress"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2B_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_gmsh",
         component_names=SHELL_STRESS_RESULTANTS,
         class_tag=ELE_TAG_ASDShellT3,
     ),
     ("ASDShellT3", IntRule.Triangle_GL_2B, "strain"): _continuum_layout(
         n_gp=3, natural_coords=_TRI_GL_2B_COORDS,
-        coord_system="barycentric_tri",
+        coord_system="simplex_tri_gmsh",
         component_names=SHELL_GENERALIZED_STRAINS,
         class_tag=ELE_TAG_ASDShellT3,
     ),
@@ -1576,6 +1622,15 @@ NODAL_FORCE_CATALOG: dict[tuple[str, str], NodalForceLayout] = {
         _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "global"),
     ("ElasticTimoshenkoBeam3d", "local_force"):
         _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "local"),
+    # ── LadrunoIMKBeam (closed-form elastic interior + end springs) ──
+    ("LadrunoIMKBeam2d", "global_force"):
+        _nodal_force_2d(ELE_TAG_LadrunoIMKBeam2d, "global"),
+    ("LadrunoIMKBeam2d", "local_force"):
+        _nodal_force_2d(ELE_TAG_LadrunoIMKBeam2d, "local"),
+    ("LadrunoIMKBeam", "global_force"):
+        _nodal_force_3d(ELE_TAG_LadrunoIMKBeam, "global"),
+    ("LadrunoIMKBeam", "local_force"):
+        _nodal_force_3d(ELE_TAG_LadrunoIMKBeam, "local"),
 }
 
 #: The closed-form elastic beams above: the classes whose line stations are
@@ -1666,9 +1721,9 @@ _LAYER_SHELL_CLASSES: tuple[tuple[str, int, str, int], ...] = (
     ("ShellNLDKGQ",  ELE_TAG_ShellNLDKGQ,  "isoparametric",    IntRule.Quad_GL_2),
     ("ASDShellQ4",   ELE_TAG_ASDShellQ4,   "isoparametric",    IntRule.Quad_GL_2),
     ("ShellMITC9",   ELE_TAG_ShellMITC9,   "isoparametric",    IntRule.Quad_GL_3),
-    ("ShellDKGT",    ELE_TAG_ShellDKGT,    "barycentric_tri",  IntRule.Triangle_GL_2C),
-    ("ShellNLDKGT",  ELE_TAG_ShellNLDKGT,  "barycentric_tri",  IntRule.Triangle_GL_2C),
-    ("ASDShellT3",   ELE_TAG_ASDShellT3,   "barycentric_tri",  IntRule.Triangle_GL_2B),
+    ("ShellDKGT",    ELE_TAG_ShellDKGT,    "simplex_tri_node0", IntRule.Triangle_GL_2C),
+    ("ShellNLDKGT",  ELE_TAG_ShellNLDKGT,  "simplex_tri_node0", IntRule.Triangle_GL_2C),
+    ("ASDShellT3",   ELE_TAG_ASDShellT3,   "simplex_tri_gmsh",  IntRule.Triangle_GL_2B),
 )
 
 

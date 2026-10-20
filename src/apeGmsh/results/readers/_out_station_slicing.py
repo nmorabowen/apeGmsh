@@ -9,13 +9,16 @@ the next one's first station.
 
 Two checks refuse that, so every ``.out`` reader slices by the same rule:
 
-* :func:`require_equal_station_counts`: each element's count, read from the
-  model's ``beamIntegration``, must be the same and must equal the file's;
+* :func:`line_station_count`: with a model bound, each element's count, read
+  from the model's ``beamIntegration``, must be the same and must fill the
+  file's columns. It runs before the columns are divided, so a 3 + 4 record
+  is refused for its counts, as the fibre reader refuses it, and never as
+  "not divisible" (#2267). Without a model it only divides the columns;
 * :func:`require_ordered_stations`: each element's natural stations must
   increase strictly within [-1, 1]. This is the check without a model.
 
-:func:`require_line_stations` applies the first when a model is bound and the
-second otherwise. A model-proven slice skips the order check: a legal rule
+:func:`require_line_stations` applies the second when no model is bound. A
+model-proven slice skips the order check: a legal rule
 can place its stations out of order (HingeRadau with ``lp_i = lp_j = 0.15``
 on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``).
 """
@@ -95,18 +98,30 @@ def model_station_counts(
     return counts
 
 
-def require_equal_station_counts(
-    rec: "ResolvedRecorderRecord", model: OpenSeesModel, fem_snapshot_id: str,
-    n_ip: int, path: "str | Path",
-) -> None:
-    """Raise unless every element of ``rec`` has ``n_ip`` points in ``model``.
+def line_station_count(
+    rec: "ResolvedRecorderRecord", n_columns: int, path: "str | Path",
+    model_h5_src: "Path | None", fem_snapshot_id: str,
+) -> int:
+    """The integration-point count of every element of ``rec``, whose
+    ``integrationPoints`` file at ``path`` has ``n_columns`` data columns.
 
-    ``n_ip`` is the count an equal slice of the file at ``path`` gives.
-    Unequal counts are refused naming the elements by count; equal ones that
-    differ from ``n_ip`` mean the file is not from this model.
+    With ``model_h5_src`` the model's counts decide, and they are checked
+    first: unequal counts are refused naming the elements by count, as the
+    fibre reader refuses them (#2267), before the columns are divided. Equal
+    counts that do not fill ``n_columns`` mean the file is not from this
+    model. Without a model, the columns must divide evenly by element.
     """
-    counts = model_station_counts(rec, model, fem_snapshot_id)
     assert rec.element_ids is not None
+    n_elements = len(rec.element_ids)
+    if model_h5_src is None:
+        if n_columns % n_elements != 0:
+            raise ValueError(
+                f"{path}: {n_columns} data columns is not divisible by "
+                f"{n_elements} elements. The integrationPoints file should be "
+                f"element-major with n_IP columns per element.")
+        return n_columns // n_elements
+    counts = model_station_counts(
+        rec, OpenSeesModel.from_h5(model_h5_src), fem_snapshot_id)
     if np.unique(counts).size > 1:
         by_count: dict[int, list[int]] = {}
         for e, c in zip(rec.element_ids, counts):
@@ -120,10 +135,13 @@ def require_equal_station_counts(
             f"record carries no per-element count, so it cannot be sliced into "
             f"elements reliably. Split the record so that each holds one "
             f"point count.")
-    if int(counts[0]) != n_ip:
+    n_ip = int(counts[0])
+    if n_columns != n_elements * n_ip:
         raise ValueError(
-            f"{path}: {n_ip} integration points per element, but model= gives "
-            f"its elements {int(counts[0])}. The file does not match the model.")
+            f"{path}: {n_columns} data columns over {n_elements} elements, but "
+            f"model= gives its elements {n_ip} integration points each. The "
+            f"file does not match the model.")
+    return n_ip
 
 
 def require_ordered_stations(
@@ -160,12 +178,10 @@ def require_line_stations(
 ) -> None:
     """Check an equal-slice ``(E, n_IP)`` read of ``rec``'s stations.
 
-    With ``model_h5_src`` the model's counts prove the slicing; without one
-    (a transcode called with no model), the station order must hold.
+    With ``model_h5_src`` the model's counts proved the slicing already
+    (:func:`line_station_count` gave ``n_IP``), so there is nothing left to
+    check; without one (a transcode called with no model), the station order
+    must hold.
     """
-    if model_h5_src is not None:
-        require_equal_station_counts(
-            rec, OpenSeesModel.from_h5(model_h5_src), fem_snapshot_id,
-            int(xi_natural.shape[1]), path)
-    else:
+    if model_h5_src is None:
         require_ordered_stations(rec, xi_natural, path)

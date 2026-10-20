@@ -35,7 +35,7 @@ from .._slabs import (
 )
 from . import _mpco_nodal_io as _mnodal
 from ._ladruno import LadrunoReader, warn_stage_kind_conflicts
-from ._ladruno_element_io import MissingElementResults
+from ._ladruno_element_io import MissingElementResults, _file_spatial_dim
 from ._mpco_multi import (
     _concat_element_slabs,
     _concat_fiber_slabs,
@@ -99,6 +99,26 @@ def discover_partition_files(path: str | Path) -> list[Path]:
             f"{list(range(max(indices) + 1))}."
         )
     return [path for _, path in matches]
+
+
+def _part_spatial_dim(reader: LadrunoReader) -> tuple[Optional[int], str]:
+    """A part's spatial dimension and where it came from (#2267).
+
+    The value is :func:`_file_spatial_dim`'s, the one rule every
+    ``.ladruno`` read uses: ``INFO/SPATIAL_DIM``, else the one
+    ``MODEL/NODES/COORDINATES`` width, else ``None``. An attribute that
+    is not an integral 1, 2 or 3 raises :class:`SpatialDimInvalid`
+    naming the part.
+    """
+    f = reader._h5
+    dim = _file_spatial_dim(f)
+    if dim is None:
+        return None, "no INFO@SPATIAL_DIM and no single coordinate width"
+    # The helper reads a non-empty attribute and falls through otherwise.
+    if ("INFO" in f and "SPATIAL_DIM" in f["INFO"].attrs
+            and np.asarray(f["INFO"].attrs["SPATIAL_DIM"]).size):
+        return dim, "INFO@SPATIAL_DIM"
+    return dim, "the coordinate width"
 
 
 class _Sentinel:
@@ -187,6 +207,14 @@ class LadrunoMultiPartitionReader:
         than ``"process"``), ``RUN_ID`` must match too. A mismatch means
         stale ``.part-N`` files from an earlier run sit next to the new
         ones. Files that predate an attribute skip that check.
+
+        Every part must also have the same spatial dimension, resolved per
+        part by :func:`_part_spatial_dim` (#2267, the viewer's #2245 rule).
+        A part of unknown dimension beside a part of known dimension is a
+        disagreement too: the fork writes ``INFO/SPATIAL_DIM`` into every
+        part it creates, so the mix is never read as the known value. A
+        set whose parts are all of unknown dimension passes, and its
+        dimension-dependent reads refuse as a single file's do.
         """
         mans = [r.partition_manifest() for r in self._readers]
         names = [p.name for p in self._paths]
@@ -225,6 +253,19 @@ class LadrunoMultiPartitionReader:
                     "files from an earlier run are mixed in; delete them "
                     "and re-run, or pass the exact file list."
                 )
+
+        dims = [_part_spatial_dim(r) for r in self._readers]
+        if len({d for d, _ in dims}) > 1:
+            said = ", ".join(
+                f"{nm}={'unknown' if d is None else d} ({src})"
+                for nm, (d, src) in zip(names, dims)
+            )
+            raise ValueError(
+                "Partitioned .ladruno files disagree on the spatial "
+                f"dimension: {said}. They are not one model, and the set "
+                "is not read; delete the stale part files and re-run, or "
+                "pass the exact file list."
+            )
 
     def _validate_consistency(self) -> None:
         self._validate_part_set()

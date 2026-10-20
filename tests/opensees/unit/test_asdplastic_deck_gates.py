@@ -134,8 +134,8 @@ class TestCapabilityFlag:
             # Section-based shells / membrane macro-element — outside PR #838 roster.
             "ASDShellQ4", "LadrunoMembrane", "ShellDKGQ", "ShellMITC4",
             # Uniaxial trusses / beams.
-            "ElasticTimoshenkoBeam", "corotTruss", "elasticBeamColumn",
-            "truss",
+            "ElasticTimoshenkoBeam", "LadrunoIMKBeam", "corotTruss",
+            "elasticBeamColumn", "truss",
             # Raw G/v/rho, no matTag at all (ADR 0054).
             "ASDAbsorbingBoundary2D", "ASDAbsorbingBoundary3D",
         }, "the unmeasured set must stay exactly the non-NDMaterial hosts"

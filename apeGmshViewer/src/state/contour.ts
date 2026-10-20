@@ -37,44 +37,84 @@ const AXES = ["x", "y", "z"] as const;
  */
 const TRANSLATIONAL = new Set(["displacement", "velocity", "acceleration", "displacement_increment", "reaction_force"]);
 
-/** Translational `.ladruno` ON_NODES result families whose vector magnitude is offered. */
+/**
+ * The `.ladruno` ON_NODES groups whose vector magnitude is offered: the
+ * translational groups of fork schema `ladruno_schema_v1.md` (§7.1.1 and the
+ * §7.1.2 "Translational groups" table, fork ≥ d370ed8b). Each holds the
+ * node's first `ndm` DOFs. The `…_INCLUDING_INERTIA` and Rayleigh variants
+ * share their base group's labels (§7.1.2).
+ */
 const LADRUNO_TRANSLATIONAL = new Set([
+  // §7.1.1
   "DISPLACEMENT",
-  // a mode stage's translation (fork schema §7.1.1), as a native mode stage's `displacement`
-  "MODES_OF_VIBRATION(U)",
+  "MODES_OF_VIBRATION(U)", // a mode stage's translation, as a native mode stage's `displacement`
+  // §7.1.2
   "VELOCITY",
   "ACCELERATION",
   "REACTION_FORCE",
-  "RAYLEIGH_FORCES",
+  "REACTION_FORCE_INCLUDING_INERTIA",
+  "RAYLEIGH_FORCE",
+  "UNBALANCED_FORCE",
+  "UNBALANCED_FORCE_INCLUDING_INERTIA",
+  "CONSTRAINT_TIE_FORCE",
 ]);
 
-/** Axis mapping for `.ladruno` ON_NODES `<RESULT>/<label>` component labels. */
-const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> = {
-  Ux: "x",
-  Uy: "y",
-  Uz: "z",
-  Vx: "x",
-  Vy: "y",
-  Vz: "z",
-  Ax: "x",
-  Ay: "y",
-  Az: "z",
-  Rx: "x",
-  Ry: "y",
-  Rz: "z",
-  X: "x",
-  Y: "y",
-  Z: "z",
+/**
+ * The axis of each `.ladruno` ON_NODES `<RESULT>/<label>` label: exactly the
+ * labels fork schema `ladruno_schema_v1.md` §7.1.1 and §7.1.2 document (fork
+ * ≥ d370ed8b), and no other (ADR 0122 D7). A label not here is drawn as its
+ * own component, never as a guessed axis: `X`/`Y`/`Z` (no writer emits them),
+ * the scalar `p` (PRESSURE, `overlayPressure_<tag>`) and the sensitivity
+ * labels `d_<sym>/d_q<g>` (§7.1.2).
+ */
+export const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> = {
+  // §7.1.1: DISPLACEMENT, MODES_OF_VIBRATION(U)
+  Ux: "x", Uy: "y", Uz: "z",
+  // §7.1.1: ROTATION, MODES_OF_VIBRATION(R)
+  Rx: "x", Ry: "y", Rz: "z",
+  // §7.1.2 translational: VELOCITY
+  Vx: "x", Vy: "y", Vz: "z",
+  // §7.1.2 translational: ACCELERATION
+  Ax: "x", Ay: "y", Az: "z",
+  // §7.1.2 translational: REACTION_FORCE, REACTION_FORCE_INCLUDING_INERTIA, RAYLEIGH_FORCE
+  RFx: "x", RFy: "y", RFz: "z",
+  // §7.1.2 translational: UNBALANCED_FORCE, UNBALANCED_FORCE_INCLUDING_INERTIA
+  Fx: "x", Fy: "y", Fz: "z",
+  // §7.1.2 translational: CONSTRAINT_TIE_FORCE
+  TFx: "x", TFy: "y", TFz: "z",
+  // §7.1.2 rotational: ANGULAR_VELOCITY
+  RVx: "x", RVy: "y", RVz: "z",
+  // §7.1.2 rotational: ANGULAR_ACCELERATION
+  RAx: "x", RAy: "y", RAz: "z",
+  // §7.1.2 rotational: REACTION_MOMENT, REACTION_MOMENT_INCLUDING_INERTIA, RAYLEIGH_MOMENT
+  RMx: "x", RMy: "y", RMz: "z",
+  // §7.1.2 rotational: UNBALANCED_MOMENT, UNBALANCED_MOMENT_INCLUDING_INERTIA
+  Mx: "x", My: "y", Mz: "z",
 };
 
 /**
- * The fork's rotation groups (`ladruno_schema_v1.md` §7.1.1). At ndm 2 each
- * holds one label, `Rz`, a copy of DOF index 2: on a u-p node (the `*UP` /
- * pressure-DOF elements) that is the pore pressure, not a rotation, and the
- * file does not say which. So a group whose only label is `Rz` is drawn as
- * its own component, labelled `Rz`, never as rotation z.
+ * The fork's rotational groups (`ladruno_schema_v1.md` §7.1.1, and the
+ * §7.1.2 "Rotational groups" table). At ndm 2 each holds one `z` label, a
+ * copy of DOF index 2: on a u-p node (ndf 3, the `*UP` / pressure-DOF
+ * elements) that is the pore pressure, not a rotation, and the file does not
+ * say which (the §7.1.1 caveat, which §7.1.2 applies to every rotational
+ * group). So a rotational group whose only label is its `z` label is drawn as
+ * its own component, labelled as the file names it (`Rz`, `RMz`, ...), never
+ * as the z of a rotation vector.
  */
-const LADRUNO_ROTATION = new Set(["ROTATION", "MODES_OF_VIBRATION(R)"]);
+const LADRUNO_ROTATION = new Set([
+  // §7.1.1
+  "ROTATION",
+  "MODES_OF_VIBRATION(R)",
+  // §7.1.2
+  "ANGULAR_VELOCITY",
+  "ANGULAR_ACCELERATION",
+  "REACTION_MOMENT",
+  "REACTION_MOMENT_INCLUDING_INERTIA",
+  "RAYLEIGH_MOMENT",
+  "UNBALANCED_MOMENT",
+  "UNBALANCED_MOMENT_INCLUDING_INERTIA",
+]);
 
 /** The key of the magnitude component. A dataset name never has this form (the `|` cannot appear in a vocabulary name). */
 export const MAGNITUDE = "|magnitude|";
@@ -124,19 +164,19 @@ export function nodalFields(names: readonly string[], refused: readonly { compon
     }
     return p;
   };
-  // §7.1.1 trap: a rotation group whose only label is `Rz` (ndm 2) may hold a pore pressure.
+  // §7.1.1/§7.1.2 trap: a rotational group whose only label is its `z` label (ndm 2) may hold a pore pressure.
   const rotationLabels = new Map<string, string[]>();
   for (const n of names) {
     const slash = /^([^/]+)\/(.+)$/.exec(n);
     if (slash && LADRUNO_ROTATION.has(slash[1]!)) rotationLabels.set(slash[1]!, [...(rotationLabels.get(slash[1]!) ?? []), slash[2]!]);
   }
-  const loneRz = new Set([...rotationLabels].filter(([, l]) => l.length === 1 && l[0] === "Rz").map(([f]) => f));
+  const loneZ = new Set([...rotationLabels].filter(([, l]) => l.length === 1 && LADRUNO_AXIS_MAP[l[0]!] === "z").map(([f]) => f));
   for (const n of names) {
     const slash = /^([^/]+)\/(.+)$/.exec(n);
     if (slash) {
       const field = slash[1]!;
       const sub = slash[2]!;
-      const axis = loneRz.has(field) ? undefined : LADRUNO_AXIS_MAP[sub];
+      const axis = loneZ.has(field) || !Object.hasOwn(LADRUNO_AXIS_MAP, sub) ? undefined : LADRUNO_AXIS_MAP[sub];
       if (axis && !at(field).axis.has(axis)) at(field).axis.set(axis, n);
       else at(field).other.push(n);
       continue;
