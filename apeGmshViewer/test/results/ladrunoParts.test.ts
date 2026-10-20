@@ -13,8 +13,8 @@
 //
 // Each mutation is a scratch copy of the set: a part removed, a PARTITION_REDUCTION
 // absent, unknown or UNSUPPORTED, a NUM_PARTITIONS that disagrees, a part past the
-// count, a part still being written, an unstamped or differently stamped part, and
-// a part re-stamped while the set is open.
+// count, a part still being written, parts that disagree on the spatial dimension,
+// an unstamped or differently stamped part, and a part re-stamped while the set is open.
 
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -25,8 +25,8 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { pairSet } from "../../src/main/pairing.ts";
 import { ResultsHost } from "../../src/main/results.ts";
-import { LadrunoError } from "../../src/reader/ladruno.ts";
-import { openLadrunoSet, partOf, partSiblings, PART_SET_ELEMENTS_UNREAD, type LadrunoPartSet } from "../../src/reader/ladrunoParts.ts";
+import { LadrunoError, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings, PART_SET_ELEMENTS_UNREAD } from "../../src/reader/ladrunoParts.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { pairResults } from "../../src/state/results.ts";
 import type { ResultsInfo } from "../../src/state/types.ts";
@@ -222,6 +222,50 @@ test("RUN_ID is not compared when a part has none, when a part's RUN_ID_SCOPE is
     withSet(part(0), (s) => assert.deepEqual(Array.from(s.index.stages[0]!.nodes!.ids), [1, 2, 3]));
     rmSync(dir, { recursive: true });
   }
+});
+
+// #2245: the set takes part 0's index, so its parts must agree on the spatial dimension,
+// resolved per part as the single-file reader does (INFO@SPATIAL_DIM, else the one
+// coordinate width). The committed parts both say 2.
+const spatialDim = (dim: number | null) => (f: h5wasm.File) => setAttr(f.get("INFO") as unknown as AttrNode, "SPATIAL_DIM", dim);
+
+test("SPATIAL_DIM: part 1 rewritten as 3 against part 0's 2 is refused, naming each part's value, from either part", () => {
+  const { dir, part } = scratchSet(PART, { 1: spatialDim(3) });
+  for (const k of [0, 1]) {
+    refuses(part(k), /run\.part-<N>\.ladruno: the parts disagree on the spatial dimension \(run\.part-0\.ladruno = 2 \(INFO@SPATIAL_DIM\), run\.part-1\.ladruno = 3 \(INFO@SPATIAL_DIM\)\)/);
+  }
+  rmSync(dir, { recursive: true });
+});
+
+test("SPATIAL_DIM absent from part 1: its dimension is its coordinate width (2), which agrees, so the set reads", () => {
+  const { dir, part } = scratchSet(PART, { 1: spatialDim(null) });
+  withSet(part(0), (s) => assert.deepEqual(Array.from(s.index.stages[0]!.nodes!.ids), [1, 2, 3]));
+  rmSync(dir, { recursive: true });
+});
+
+// h5wasm 0.10 cannot delete or reshape a dataset, so a part whose coordinate width is 3,
+// or that has no coordinates, is a stand-in: the check reads only `index` and
+// `inferSpatialDim()`, and it runs right after the manifest check.
+function standIns(dims: { attr: number | null; inferred: number | null }[]): LadrunoFile[] {
+  return dims.map((d, j) => ({
+    index: { path: `run.part-${j}.ladruno`, spatialDim: d.attr, partition: { count: dims.length, id: j, runId: null, runIdScope: null } },
+    inferSpatialDim: () => d.inferred,
+    close: () => undefined,
+  })) as unknown as LadrunoFile[];
+}
+
+test("SPATIAL_DIM absent: a coordinate width of 3, or no single width, beside part 0's 2 is refused, naming where each value came from", () => {
+  const open = (dims: Parameters<typeof standIns>[0]) => () => new LadrunoPartSet("run.part-0.ladruno", "run", [0, 1], standIns(dims));
+  const refusal = (pattern: RegExp) => (e: unknown) => e instanceof LadrunoError && pattern.test(e.message);
+  assert.throws(
+    open([{ attr: 2, inferred: 2 }, { attr: null, inferred: 3 }]),
+    refusal(/\(run\.part-0\.ladruno = 2 \(INFO@SPATIAL_DIM\), run\.part-1\.ladruno = 3 \(the coordinate width\)\)/),
+  );
+  // Unknown beside known is a disagreement: the set is never read as part 0's 2.
+  assert.throws(
+    open([{ attr: 2, inferred: 2 }, { attr: null, inferred: null }]),
+    refusal(/run\.part-1\.ladruno = unknown \(no INFO@SPATIAL_DIM and no single coordinate width\)\)/),
+  );
 });
 
 // -- PARTITION_REDUCTION ----------------------------------------------------------
