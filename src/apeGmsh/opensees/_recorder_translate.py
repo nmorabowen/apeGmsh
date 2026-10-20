@@ -943,10 +943,14 @@ class LiveDomainFacts:
         Two nodes at one position (a zero-length spring's ends, an
         ``equalDOF`` or rigid-link pair) match any coordinate check, so a
         deck that swaps their tags would record each one's motion under
-        the other. Each FEM element touching such a node must exist live
-        under its FEM id with ``eleNodes`` equal to its FEM connectivity,
-        in order; a shared-position node no FEM element touches refuses
-        by name, since nothing tells its tag from the other node's.
+        the other. Each FEM element touching such a node that the deck
+        built (a live element of its FEM id) must have ``eleNodes`` equal
+        to its FEM connectivity, in order, and at least one must exist. A
+        FEM element the deck did not build (the point and edge elements of
+        ``get_fem_data()`` beside a deck of beams or solids, #2342) pins
+        nothing and is passed over. A shared-position node that no FEM
+        element touches, or that no built one does, refuses by name, since
+        nothing tells its tag from the other node's.
         """
         import numpy as np
 
@@ -977,16 +981,27 @@ class LiveDomainFacts:
                 "them through the bridge's model archive (ops.h5(...)).")
         ops = self._ops
         live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+        unbuilt = [n for n in at
+                   if not any(eid in live_tags for eid, _ in touching[n])]
+        if unbuilt:
+            raise ValueError(
+                f"{where}: nodes {unbuilt[:10]} share their position with "
+                "another FEM node, and no FEM element that touches them is a "
+                "live element of its FEM id, so neither coordinates nor "
+                "elements tell their live tags from the other node's. Tag "
+                "the deck's elements by their FEM ids, drop the nodes from "
+                "the record, or record them through the bridge's model "
+                "archive (ops.h5(...)).")
         bad: "list[str]" = []
         for n in at:
             for eid, conn_i in touching[n]:
-                live = ([int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
-                        if eid in live_tags else None)
+                if eid not in live_tags:
+                    continue      # an element the deck did not build
+                live = [int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
                 if live != conn_i:
                     bad.append(
                         f"node {n}: FEM element {eid} has nodes {conn_i}, "
-                        + ("no live element has that tag" if live is None
-                           else f"the live element {eid} has {live}"))
+                        f"the live element {eid} has {live}")
                     break
         if bad:
             raise ValueError(
