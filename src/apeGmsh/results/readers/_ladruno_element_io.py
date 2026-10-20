@@ -2402,7 +2402,8 @@ def read_element_slab(
     if not values_parts:
         return None
     _refuse_repeated_element(
-        bucket_paths, eid_parts, token=token, file=_file_name(on_elements),
+        bucket_paths, eid_parts, what=f"element read of token {token!r}",
+        file=_file_name(on_elements),
     )
     return (
         np.concatenate(values_parts, axis=1),
@@ -2416,11 +2417,11 @@ def _file_name(group: "h5py.Group") -> str:
 
 
 def _refuse_repeated_element(
-    paths: list[str], ids: list[ndarray], *, token: str, file: str,
+    paths: list[str], ids: list[ndarray], *, what: str, file: str,
 ) -> None:
-    """Raise :class:`MPCOElementInTwoBuckets` when an element id the
-    element read returns sits in two buckets of ``token``, or twice in
-    one (#2221).
+    """Raise :class:`MPCOElementInTwoBuckets` when an element id an
+    element read (``what``) returns sits in two buckets of its token, or
+    twice in one (#2221).
 
     The fork writes each element once per token, so a repeat is a
     corrupt or merged file, and the stitch would return the element
@@ -2450,7 +2451,7 @@ def _refuse_repeated_element(
         if n_ids > 1 else ""
     )
     raise MPCOElementInTwoBuckets(
-        f"{file}: element read of token {token!r}: element {eid} appears "
+        f"{file}: {what}: element {eid} appears "
         f"{where}. The recorder writes each element once per token, so "
         f"the file is corrupt; the read refuses rather than return "
         f"element {eid} twice.{more}"
@@ -2849,6 +2850,7 @@ def read_nodal_force_slab(
     n_ref: "Optional[int]" = None
     key_ref: "Optional[str]" = None
     dropped: list[tuple[str, int, ndarray]] = []
+    bucket_paths: list[str] = []
 
     for key in token_grp:
         bucket = token_grp[key]
@@ -2882,6 +2884,7 @@ def read_nodal_force_slab(
             continue
         values_parts.append(read_hyperslab(bucket["DATA"], t_idx, rows, cols))
         eid_parts.append(sel_ids)
+        bucket_paths.append(bucket.name)
 
     if skipped:
         detail = "; ".join(f"{k!r}: {why}" for k, why in skipped)
@@ -2919,6 +2922,11 @@ def read_nodal_force_slab(
         )
     if not values_parts:
         return None
+    _refuse_repeated_element(
+        bucket_paths, eid_parts,
+        what=f"element read of {canonical!r} (token {token!r})",
+        file=_file_name(on_elements),
+    )
     return (
         np.concatenate(values_parts, axis=1),
         np.concatenate(eid_parts),

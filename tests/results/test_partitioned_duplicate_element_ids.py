@@ -24,7 +24,17 @@ from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
 from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
 from apeGmsh.results.readers._mpco_refusals import MPCOElementInTwoBuckets
-from tests.results.test_mpco_mixed_dim_gauss import _TET, _gauss, _stress_file
+from tests.results.test_mpco_mixed_dim_gauss import (
+    _TET,
+    _fiber_file,
+    _gauss,
+    _section_force_file,
+    _stress_file,
+)
+from tests.test_results_mpco_layer_mock import (  # noqa: F401 (fixture)
+    simple_layer_mpco,
+)
+from tests.test_results_mpco_spring_mock import _make_spring_mpco
 
 _FIX = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno"
 _STAGE = "MODEL_STAGE[1]"
@@ -180,3 +190,129 @@ class TestLadrunoElementStitch:
                 r.stages()[0].id, "force", element_ids=np.array([9]),
             )
         np.testing.assert_array_equal(slab.element_ids, [9])
+
+
+# =====================================================================
+# .ladruno single file: the nodal-force decode stitches buckets too
+# =====================================================================
+
+_LOCAL_FORCE = f"{_STAGE}/RESULTS/ON_ELEMENTS/localForce"
+_BEAM_KEY = "5-ElasticBeam3d[1:0:0]"
+_BEAM_KEY_9 = "5-ElasticBeam3d[1:0:9]"
+
+
+def _beam_dup(path: Path) -> Path:
+    """``beam3d.ladruno`` with its localForce bucket (element 1) copied
+    to a second key: element 1 sits in two buckets of the token."""
+    shutil.copy(_FIX / "beam3d.ladruno", path)
+    with h5py.File(path, "r+") as f:
+        f[_LOCAL_FORCE].copy(_BEAM_KEY, _BEAM_KEY_9)
+    return path
+
+
+class TestLadrunoNodalForceStitch:
+    @pytest.mark.parametrize("component", [
+        "nodal_resisting_force_local_x", "nodal_resisting_moment_local_z",
+    ])
+    def test_decoded_read_refuses(self, tmp_path: Path, component: str) -> None:
+        """Before the fix these read element_ids [1, 1] with no word,
+        while the raw ``localForce`` read refused."""
+        path = _beam_dup(tmp_path / "dup_beam.ladruno")
+        with LadrunoReader(path) as r:
+            with pytest.raises(MPCOElementInTwoBuckets) as info:
+                r.read_elements(r.stages()[0].id, component)
+        msg = str(info.value)
+        assert msg.startswith(
+            f"dup_beam.ladruno: element read of {component!r} "
+            f"(token 'localForce')",
+        )
+        assert f"{_LOCAL_FORCE}/{_BEAM_KEY}" in msg
+        assert f"{_LOCAL_FORCE}/{_BEAM_KEY_9}" in msg
+
+    def test_raw_token_read_refuses(self, tmp_path: Path) -> None:
+        path = _beam_dup(tmp_path / "dup_beam.ladruno")
+        with LadrunoReader(path) as r:
+            with pytest.raises(MPCOElementInTwoBuckets, match="element 1 "):
+                r.read_elements(r.stages()[0].id, "localForce")
+
+    def test_undoubled_file_reads(self, tmp_path: Path) -> None:
+        shutil.copy(_FIX / "beam3d.ladruno", tmp_path / "ok.ladruno")
+        with LadrunoReader(tmp_path / "ok.ladruno") as r:
+            slab = r.read_elements(
+                r.stages()[0].id, "nodal_resisting_force_local_x",
+            )
+        np.testing.assert_array_equal(slab.element_ids, [1])
+
+
+# =====================================================================
+# MPCO partitioned: the line-station, fiber, layer and spring stitches
+# =====================================================================
+
+def _multi_read(paths: list[Path], method: str, component: str):
+    with MPCOMultiPartitionReader(paths) as r:
+        return getattr(r, method)(r.stages()[0].id, component)
+
+
+def _assert_two_parts(info, eid: int) -> None:
+    msg = str(info.value)
+    assert f"element {eid} comes back from two partition files" in msg
+    assert "part-0.mpco and " in msg and "part-1.mpco" in msg
+
+
+class TestMPCOPartitionedStitches:
+    def test_line_stations(self, tmp_path: Path) -> None:
+        paths = [
+            _section_force_file(tmp_path / "L.part-0.mpco", [1, 2], []),
+            _section_force_file(tmp_path / "L.part-1.mpco", [2, 3], []),
+        ]
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            _multi_read(paths, "read_line_stations", "axial_force")
+        _assert_two_parts(info, 2)
+
+    def test_line_stations_disjoint(self, tmp_path: Path) -> None:
+        paths = [
+            _section_force_file(tmp_path / "L.part-0.mpco", [1, 2], []),
+            _section_force_file(tmp_path / "L.part-1.mpco", [3], []),
+        ]
+        slab = _multi_read(paths, "read_line_stations", "axial_force")
+        assert sorted(set(slab.element_index.tolist())) == [1, 2, 3]
+
+    def test_fibers(self, tmp_path: Path) -> None:
+        paths = [
+            _fiber_file(tmp_path / "F.part-0.mpco", [10, 11], [12]),
+            _fiber_file(tmp_path / "F.part-1.mpco", [11], [13]),
+        ]
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            _multi_read(paths, "read_fibers", "fiber_stress")
+        _assert_two_parts(info, 11)
+
+    def test_fibers_disjoint(self, tmp_path: Path) -> None:
+        paths = [
+            _fiber_file(tmp_path / "F.part-0.mpco", [10, 11], [12]),
+            _fiber_file(tmp_path / "F.part-1.mpco", [14], [13]),
+        ]
+        slab = _multi_read(paths, "read_fibers", "fiber_stress")
+        assert sorted(set(slab.element_index.tolist())) == [10, 11, 12, 13, 14]
+
+    def test_springs(self, tmp_path: Path) -> None:
+        paths = [
+            _make_spring_mpco(
+                tmp_path / f"S.part-{i}.mpco", element_ids=ids, n_springs=1,
+                force_values=np.full((2, 2, 1), 3.0),
+            )
+            for i, ids in enumerate(([1, 2], [2, 3]))
+        ]
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            _multi_read(paths, "read_springs", "spring_force")
+        _assert_two_parts(info, 2)
+
+    def test_layers(self, tmp_path: Path, simple_layer_mpco) -> None:  # noqa: F811
+        """Both parts are a copy of the ASDShellQ4 file (elements 20, 21)."""
+        paths = []
+        for i in (0, 1):
+            dst = tmp_path / f"Y.part-{i}.mpco"
+            shutil.copy(simple_layer_mpco["path"], dst)
+            paths.append(dst)
+        with pytest.raises(MPCOElementInTwoBuckets) as info:
+            _multi_read(paths, "read_layers", "fiber_stress")
+        _assert_two_parts(info, 20)
