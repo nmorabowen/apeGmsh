@@ -734,6 +734,29 @@ def test_line_stations_that_are_not_the_live_sections_refuse_by_id(
         run.results(cache_root=tmp_path / "cache")
 
 
+@pytest.mark.parametrize("written, shown", [
+    # Element 2's middle station 1e-3 off in natural coordinates (L = 3):
+    # ten times the -precision 6 slack, so the file is another rule's.
+    ((0.0, 1.5 + 1.5e-3, 3.0), r"\[-1\.0, 0\.001, 1\.0\]"),
+    # The right stations, its last two swapped: only their order is wrong,
+    # and the live order is what places each section.
+    ((0.0, 3.0, 1.5), r"\[-1\.0, 1\.0, 0\.0\]"),
+], ids=["near-miss", "swapped-pair"])
+def test_line_stations_near_the_live_sections_still_refuse_by_id(
+    tmp_path, written, shown,
+) -> None:
+    fem, model_h5 = _beam_fem(tmp_path)
+    loc = {e: tuple(f * L for f in _LOBATTO_3) for e, L in _BEAM_L.items()}
+    ops = FiberOps(locations=loc, fibres={1: (), 2: ()},
+                   written={1: loc[1], 2: written}, cls="ForceBeamColumn2d")
+    run = _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
+    with pytest.raises(ValueError, match=(
+            rf"FEM element 2 of record 'ls' \(line_stations\) has stations "
+            rf"{shown} in the file, but its live sections are at "
+            rf"\[-1\.0, 0\.0, 1\.0\]")):
+        run.results(cache_root=tmp_path / "cache")
+
+
 # ---------------------------------------------------------------------------
 # A per-Gauss-point material record reads through the pairing (#2290 A)
 # ---------------------------------------------------------------------------
