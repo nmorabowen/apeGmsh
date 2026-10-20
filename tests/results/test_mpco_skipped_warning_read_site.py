@@ -23,15 +23,23 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._response_catalog import IntRule
+from apeGmsh.opensees._response_catalog import (
+    ELE_TAG_FourNodeTetrahedron,
+    IntRule,
+)
+from apeGmsh.results import Results
 from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning, MPCOReader
+from tests.conftest import _stub_model_h5_path
 from tests.results.test_mpco_custom_rule_discovery import (
     _add_damage,
     _add_tet_stress,
     _skeleton,
     _tet,
 )
-from tests.test_results_mpco_element_mock import _create_mpco_skeleton
+from tests.test_results_mpco_element_mock import (
+    _add_stress_bucket,
+    _create_mpco_skeleton,
+)
 from tests.test_results_mpco_spring_mock import _add_bucket, _make_spring_mpco
 
 #: Gauss / material-state fixture: element 1 reads, each other id sits in
@@ -283,3 +291,135 @@ def test_spring_read_names_only_skipped_buckets_it_asked_for(
     assert set(slab.element_index.tolist()) == (
         {1} if element_ids is not None else {1, 2}
     )
+
+
+# =====================================================================
+# Decoder refusals at read time: the same filter
+# =====================================================================
+
+_HDR1 = _READ[:-2] + "1]"   # a second header of the readable class
+
+
+@pytest.fixture
+def refused_meta_file(tmp_path: Path) -> Path:
+    """Element 1 reads. Element 5 sits in a header-1 stress bucket whose
+    META labels refuse the catalog's names, and element 6 in a header-1
+    damage bucket whose ``NUM_COLUMNS`` contradicts its META."""
+    path = tmp_path / "refused.mpco"
+    f, stage = _skeleton(path)
+    try:
+        _add_tet_stress(f[stage], _READ, 1)
+        _add_stress_bucket(
+            f[stage], bracket_key=_HDR1,
+            class_tag=ELE_TAG_FourNodeTetrahedron,
+            int_rule=IntRule.Tet_GL_1,
+            element_ids=np.array([5], dtype=np.int32),
+            flat_data=np.full((2, 1, 6), 5.0), n_gauss_points=1,
+            component_labels=(
+                "sigma_xx", "sigma_yy", "sigma_zz",
+                "sigma_xy", "sigma_yz", "bogus",
+            ),
+        )
+        _add_damage(f[stage], _READ, eid=1, n_gp=1)
+        _add_damage(f[stage], _HDR1, eid=6, n_gp=1)
+        f[stage][f"RESULTS/ON_ELEMENTS/material.damage/{_HDR1}"].attrs[
+            "NUM_COLUMNS"
+        ] = np.array([99], dtype=np.int32)
+    finally:
+        f.close()
+    return path
+
+
+@pytest.mark.parametrize(("component", "group", "eid", "what"), [
+    ("stress_xx", "stresses", 5, "gauss read of 'stress_xx'"),
+    ("damage_tension", "material.damage", 6,
+     "gauss material-state read of 'damage_tension'"),
+], ids=["gauss-meta-labels", "material-state-meta"])
+@pytest.mark.parametrize("asked", [False, True], ids=["excluded", "included"])
+def test_a_decoder_refusal_is_named_only_when_asked(
+    refused_meta_file: Path, component: str, group: str, eid: int,
+    what: str, asked: bool,
+) -> None:
+    element_ids = np.array([1, eid] if asked else [1])
+    slab, skips = _read_gauss(refused_meta_file, component, element_ids)
+    np.testing.assert_array_equal(slab.element_index, [1])
+    if not asked:
+        assert skips == [], [str(w.message) for w in skips]
+        return
+    assert len(skips) == 1, [str(w.message) for w in skips]
+    msg = str(skips[0].message)
+    assert f"/{group}/{_HDR1}:" in msg
+    assert what in msg
+
+
+# =====================================================================
+# Through the composite: a listing that gates a filtered read is quiet
+# =====================================================================
+
+@pytest.fixture
+def composite_stress_file(tmp_path: Path) -> Path:
+    path = tmp_path / "composite.mpco"
+    f, stage = _skeleton(path)
+    try:
+        _add_tet_stress(f[stage], _READ, 1)
+        _add_tet_stress(f[stage], _CUSTOM, 2)
+    finally:
+        f.close()
+    return path
+
+
+_COMPOSITE_CALLS = {
+    "derived": lambda g, ids: g.get(component="von_mises_stress", ids=ids),
+    "census": lambda g, ids: g.tension_census(ids=ids),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_COMPOSITE_CALLS))
+@pytest.mark.parametrize(("ids", "named"), [
+    ([1], False), ([1, 2], True), (None, True),
+], ids=["excluded", "included", "unfiltered"])
+def test_a_composite_listing_before_a_filtered_read_is_quiet(
+    composite_stress_file: Path, call: str, ids, named: bool,
+) -> None:
+    """The derived read and the census list the stored components before
+    they read. Under a filter only the read names a skipped bucket, and
+    only one holding a requested element; unfiltered, it is named."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")   # the stub model's mismatch notice
+        r = Results.from_mpco(
+            str(composite_stress_file), model_h5=_stub_model_h5_path(),
+        )
+    try:
+        _, skips = _record(
+            lambda: _COMPOSITE_CALLS[call](r.elements.gauss, ids),
+        )
+    finally:
+        r._reader.close()
+    if not named:
+        assert skips == [], [str(w.message) for w in skips]
+        return
+    assert _named_keys(skips, [_CUSTOM]), [str(w.message) for w in skips]
+
+
+def test_a_shell_derived_listing_before_a_filtered_read_is_quiet(
+    composite_stress_file: Path,
+) -> None:
+    """The shell-derived path lists too. On solid stress only it refuses
+    (no shell resultants), and under a filter that excludes the skipped
+    bucket it names no bucket on the way."""
+    from apeGmsh._vocabulary import DERIVED_SHELL_SCALARS
+
+    component = sorted(DERIVED_SHELL_SCALARS)[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")   # the stub model's mismatch notice
+        r = Results.from_mpco(
+            str(composite_stress_file), model_h5=_stub_model_h5_path(),
+        )
+    try:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            with pytest.raises(ValueError, match="missing shell resultants"):
+                r.elements.gauss.get(component=component, ids=[1])
+    finally:
+        r._reader.close()
+    assert _skips(record) == [], [str(w.message) for w in _skips(record)]

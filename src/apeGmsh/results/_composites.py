@@ -7,8 +7,10 @@ delegates to the bound ``ResultsReader`` for the actual slab read.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
-from typing import TYPE_CHECKING, Iterable, Optional
+import warnings
+from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -29,6 +31,26 @@ from .readers._protocol import ResultLevel, TimeSlice
 
 if TYPE_CHECKING:
     from .Results import Results
+
+
+@contextlib.contextmanager
+def _listing_gates_read(*, filtered: bool) -> Iterator[None]:
+    """Around a Gauss listing that only gates the read that follows it.
+
+    A filtered MPCO read names each skipped bucket that holds an element
+    it asked for, itself (#2293); the listing would name every skipped
+    bucket in the file. Under a filter its ``MPCOBucketSkippedWarning``
+    is muted, so the read that follows does the naming. Unfiltered, the
+    listing names every one, as a listing does.
+    """
+    if not filtered:
+        yield
+        return
+    from .readers._mpco import MPCOBucketSkippedWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", MPCOBucketSkippedWarning)
+        yield
 
 
 # =====================================================================
@@ -1244,9 +1266,10 @@ class GaussResultsComposite(
         cannot read.
         """
         base = _derived.shell_base_components(component)
-        stored = set(
-            self._r._reader.available_components(sid, ResultLevel.GAUSS)
-        )
+        with _listing_gates_read(filtered=eids is not None):
+            stored = set(
+                self._r._reader.available_components(sid, ResultLevel.GAUSS)
+            )
         missing = [b for b in base if b not in stored]
         if missing:
             raise ValueError(
@@ -1289,9 +1312,10 @@ class GaussResultsComposite(
         * ``None`` — leave the out-of-plane component at zero.
         """
         base = _derived.base_components_for(component, ndm=3)
-        stored = set(
-            self._r._reader.available_components(sid, ResultLevel.GAUSS)
-        )
+        with _listing_gates_read(filtered=eids is not None):
+            stored = set(
+                self._r._reader.available_components(sid, ResultLevel.GAUSS)
+            )
         present = [b for b in base if b in stored]
         if not present:
             raise ValueError(
@@ -1355,7 +1379,9 @@ class GaussResultsComposite(
         recorded" would be the same answer, and for ``dp_branch`` the
         second one is what a pre-``61b3efa04`` engine produces.
         """
-        available = self.available_components(stage=stage)
+        filtered = any(x is not None for x in (pg, label, selection, ids))
+        with _listing_gates_read(filtered=filtered):
+            available = self.available_components(stage=stage)
         if component not in available:
             raise ValueError(
                 f"Cannot take this census: {component!r} is not in these "
