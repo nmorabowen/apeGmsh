@@ -29,10 +29,17 @@
 //   TIME that is not the stage's, and a bucket with no Gauss point (G == 0, as
 //   V4c2a refuses natively);
 // - element rows are the bucket's ID: FEM element ids only when
-//   INFO/PROVENANCE@element_index_space is the well-formed "fem" (#2079 Q6).
+//   INFO/PROVENANCE@element_index_space is the well-formed "fem" (#2079 Q6);
+// - an element id is listed once per token (#2316): every bucket of every
+//   ON_ELEMENTS token is checked at open, Gauss or not (line-station, fiber and
+//   LOCAL_AXES buckets too), and an id twice in one bucket, or in two buckets of one
+//   token, refuses the file by name (reader/ladrunoChecks.ts). A bucket whose ID is
+//   absent or not an (n, 1) integer dataset holds no element row any read takes, so it
+//   lists none. Two tokens holding one element is the norm (stress and strain).
 //
 // Browser-safe: no Node import, and no import of reader/ladruno.ts (it imports this).
 
+import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
 import type { ElementIds, GaussGroupInfo } from "./results.ts";
 
 const H5T_INTEGER = 0;
@@ -47,6 +54,10 @@ interface ENode {
 export interface EGroup extends ENode {
   keys(): string[];
   get(name: string): unknown;
+}
+/** The open file: its root group, and the name a refusal gives it. */
+export interface EFile extends EGroup {
+  filename: string;
 }
 interface EDataset extends ENode {
   shape: number[] | null;
@@ -105,11 +116,11 @@ export function gatherGauss(raw: Float64Array, nSteps: number, E: number, lo: nu
 
 export class LadrunoGauss {
   private readonly h5: ECtors;
-  private readonly file: EGroup;
+  private readonly file: EFile;
   private readonly fail: ElementsFail;
   private readonly buckets = new Map<string, Map<string, GaussBucket>>();
 
-  constructor(h5: ECtors, file: EGroup, fail: ElementsFail) {
+  constructor(h5: ECtors, file: EFile, fail: ElementsFail) {
     this.h5 = h5;
     this.file = file;
     this.fail = fail;
@@ -131,14 +142,26 @@ export class LadrunoGauss {
       }
       const left: string[] = [];
       let read = 0;
+      // The token's element ids: its buckets' (the flat LOCAL_AXES layout keeps one ID on the token itself).
+      const lists: IdList[] = [];
+      const own = this.elementIdsIn(rg);
+      if (own) lists.push({ at: `${rg.path}/ID`, ids: own });
       for (const key of rg.keys()) {
         const bg = this.groupOf(rg, key);
-        const b = bg ? this.bucket(result, key, bg, modelElements, time, warnings) : null;
+        const ids = bg ? this.elementIdsIn(bg) : null;
+        if (ids) lists.push({ at: `${bg!.path}/ID`, ids });
+        const b = bg ? this.bucket(result, key, bg, ids, modelElements, time, warnings) : null;
         if (b) {
           byId.set(b.info.id, b);
           read++;
         } else left.push(key);
       }
+      uniqueElementIds(
+        lists,
+        `${this.file.filename}: ${rg.path}`,
+        "the recorder writes each element once per token, so a repeat would read as two rows of one element; the file is not read",
+        (m) => this.fail("layout", m),
+      );
       if (read === 0) unread.push(`ON_ELEMENTS/${result}`);
       else for (const key of left) unread.push(`ON_ELEMENTS/${result}/${key}`);
     }
@@ -183,8 +206,8 @@ export class LadrunoGauss {
     return b;
   }
 
-  /** A Gauss bucket, read or refused; null when the bucket is not one (it stays unread). */
-  private bucket(result: string, key: string, bg: EGroup, modelElements: EGroup | null, time: Float64Array, warnings: string[]): GaussBucket | null {
+  /** A Gauss bucket, read or refused; null when the bucket is not one (it stays unread). `idRows` is `elementIdsIn(bg)`. */
+  private bucket(result: string, key: string, bg: EGroup, idRows: Float64Array | null, modelElements: EGroup | null, time: Float64Array, warnings: string[]): GaussBucket | null {
     const cm = this.groupOf(bg, "COLUMN_MAP");
     const gidDs = cm ? this.datasetOf(cm, "GAUSS_ID") : null;
     if (!cm || !gidDs || gidDs.metadata.type !== H5T_INTEGER) return null;
@@ -203,7 +226,7 @@ export class LadrunoGauss {
     const rule = intOf(oneValue(model?.attrs["INTEGRATION_RULE"]?.value));
     const blocks = parseCompNames(cm.path, cm.attrs["COMP_NAMES"]?.value, gids.length, "GAUSS_ID");
     const labels = typeof blocks === "string" ? null : blocks[0] ?? [];
-    const refuse = (reason: string, ids = new Float64Array(0)): GaussBucket => ({
+    const refuse = (reason: string, ids: Float64Array = new Float64Array(0)): GaussBucket => ({
       info: {
         id,
         path: bg.path,
@@ -226,9 +249,8 @@ export class LadrunoGauss {
     const missing = ["ID", "DATA", "TIME", "STEP"].filter((_, i) => !ds[i]);
     if (missing.length) return refuse(`${bg.path} has no dataset ${missing.join(", ")}`);
     const [idDs, dataDs, timeDs, stepDs] = ds as EDataset[];
-    const idShape = idDs!.shape ?? [];
-    if (!(idShape.length === 1 || (idShape.length === 2 && idShape[1] === 1)) || idDs!.metadata.type !== H5T_INTEGER) return refuse(`${idDs!.path} is not an (n, 1) integer dataset`);
-    const ids = Float64Array.from(ints(idDs!));
+    if (!idRows) return refuse(`${idDs!.path} is not an (n, 1) integer dataset`);
+    const ids = idRows;
     const shape = dataDs!.shape ?? [];
     if (shape.length !== 3 || dataDs!.metadata.type !== H5T_FLOAT) return refuse(`${dataDs!.path} is not a 3-D floating-point dataset (T, elements, columns)`, ids);
     const [T, nE, width] = shape as [number, number, number];
@@ -282,6 +304,17 @@ export class LadrunoGauss {
       ids,
       columns,
     };
+  }
+
+  /** The element ids of a bucket's ID, when it is an (n, 1) or (n,) integer dataset; else null (no read takes its rows). */
+  private elementIdsIn(bg: EGroup): Float64Array | null {
+    const ds = this.datasetOf(bg, "ID");
+    const shape = ds?.shape ?? [];
+    if (!ds || ds.metadata.type !== H5T_INTEGER || !(shape.length === 1 || (shape.length === 2 && shape[1] === 1))) return null;
+    const v = ds.value;
+    if (v instanceof BigInt64Array || v instanceof BigUint64Array) return Float64Array.from(v, Number);
+    if (ArrayBuffer.isView(v) && !(v instanceof DataView)) return Float64Array.from(v as unknown as ArrayLike<number>);
+    throw this.fail("dtype", `${ds.path}: read returned ${Object.prototype.toString.call(v)}, not an integer array`);
   }
 
   private groupOf(parent: EGroup, name: string): EGroup | null {
