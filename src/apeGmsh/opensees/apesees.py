@@ -11044,10 +11044,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # initial-stress persists with its stage under
         # ``/opensees/stages`` (Phase 2).
 
-        self._write_h5(
-            path, self.build(), model_name=model_name, cuts=cuts,
-            sweeps=sweeps,
-        )
+        self._write_h5(path, self.build(), model_name=model_name, cuts=cuts, sweeps=sweeps)
+        self._artifacts.remember_lineage(self, path)  # a later deck's run record reuses it
 
     def _write_h5(
         self,

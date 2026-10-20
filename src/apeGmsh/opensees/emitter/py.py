@@ -63,12 +63,6 @@ class _MemoryArchive(io.BytesIO):
         return os.path.join(os.getcwd(), "deck_run_lineage.h5")
 
 
-#: ``(model_hash, fem_hash)`` by bridge declaration digest, for archives
-#: this process composed for a record: a second deck of the same
-#: declarations (py then tcl, one deck per ground motion) composes nothing.
-_LINEAGE_BY_DIGEST: "dict[str, tuple[str, str]]" = {}
-
-
 def _lineage_of(f: Any) -> "tuple[str | None, str | None]":
     from .._internal.lineage import read_stored_lineage
 
@@ -76,41 +70,19 @@ def _lineage_of(f: Any) -> "tuple[str | None, str | None]":
     return model_hash, fem_hash
 
 
-def _declarations(bridge: Any) -> "tuple[str, str] | None":
-    """``(digest, model name)`` of ``bridge``'s declarations, as the
-    automatic ``model.h5`` write keys them, or ``None`` for a snapshot that
-    write never handles (not a :class:`FEMData`) or that cannot be digested;
-    the lineage is then composed every time."""
+def _no_key_cause(bridge: Any) -> str:
+    """Why ``bridge``'s declarations have no lineage key: a snapshot that
+    is not a :class:`FEMData`, or the digest's own error, by type."""
     from ...mesh.FEMData import FEMData
     from .._internal.artifact_write import _declaration_digest
 
-    fem = bridge.fem if bridge is not None else None
-    if not isinstance(fem, FEMData):
-        return None
-    name = fem.model_name or ""
+    if bridge is None or not isinstance(bridge.fem, FEMData):
+        return "its snapshot is not a FEMData"
     try:
-        return _declaration_digest(bridge, name), name
-    except Exception:  # noqa: BLE001 - an unpicklable declaration: compose
-        return None
-
-
-def _automatic_archive_lineage(
-    digest: str, name: str,
-) -> "tuple[str | None, str | None] | None":
-    """The lineage of the bridge's automatic ``model.h5`` when it holds
-    exactly these declarations (the write's own P5 record says so)."""
-    import h5py
-
-    from ..._core import default_artifact_dir
-    from .._internal.artifact_write import _LAST_WRITTEN
-
-    if not name:
-        return None
-    target = (default_artifact_dir() / f"{name}.h5").resolve()
-    if _LAST_WRITTEN.get(target) != digest or not target.is_file():
-        return None
-    with h5py.File(target, "r") as f:
-        return _lineage_of(f)
+        _declaration_digest(bridge, bridge.fem.model_name or "")
+    except Exception as exc:  # noqa: BLE001 - its type is the answer
+        return f"a declaration cannot be digested ({type(exc).__name__})"
+    return "a declaration cannot be digested"
 
 
 def deck_run_lineage(
@@ -119,40 +91,44 @@ def deck_run_lineage(
 ) -> "tuple[str, str] | None":
     """``(model_hash, fem_hash)`` of the archive ``archive(path)`` writes.
 
-    The record names the ``model.h5`` the deck was emitted from. Its
-    lineage is reused when one of these already holds ``bridge``'s
-    declarations, by their digest: an archive composed earlier in this
-    process for a record, or the bridge's automatic ``model.h5`` (which the
-    deck emit writes first). Otherwise the bridge composes the archive
-    (``apeSees._write_h5`` over the deck's own build) in memory. No file is
-    written and ``model_hash`` is unchanged. With ``compose=False`` (a
-    partitioned deck, whose archive is too costly to compose at every
-    export) nothing is composed: with no reused lineage it warns once and
-    gets no record. So does a model whose archive cannot be composed; the
-    deck still emits, and ``read_deck_mpco`` of its ``.mpco`` refuses to
-    convert (check 1). The warning names ``deck`` and points at the
-    user's export call.
+    The record names the ``model.h5`` the deck was emitted from. Every
+    archive the bridge composes (an explicit ``ops.h5(path)``, the
+    automatic ``model.h5`` the deck emit writes first, an earlier deck's
+    record) memoises its lineage by the digest of the declarations it
+    holds (:func:`~apeGmsh.opensees._internal.artifact_write.lineage_key`),
+    and the record reuses it: no archive is composed. Otherwise the
+    bridge composes the archive (``apeSees._write_h5`` over the deck's own
+    build) in memory, once per declaration set. No file is written and
+    ``model_hash`` is unchanged. With ``compose=False`` (a partitioned
+    deck: its archive is too costly to compose at every export, and P3
+    never writes it automatically) nothing is composed: with no memoised
+    lineage it warns once and gets no record. So does a model whose archive
+    cannot be composed; the deck still emits, and ``read_deck_mpco`` of its
+    ``.mpco`` refuses to convert (check 1). The warning names ``deck`` and
+    points at the user's export call.
     """
     import warnings
 
     import h5py
 
     from .._internal._stacklevel import _stacklevel_outside_package
+    from .._internal.artifact_write import _LINEAGE_BY_DIGEST, lineage_key
     from .h5 import H5FeatureDeferredWarning
 
-    key = _declarations(bridge)
-    if key is not None and key[0] in _LINEAGE_BY_DIGEST:
-        return _LINEAGE_BY_DIGEST[key[0]]
+    key = None if bridge is None else lineage_key(bridge)
+    if key is not None and key in _LINEAGE_BY_DIGEST:
+        return _LINEAGE_BY_DIGEST[key]
     why = ""
     try:
-        found = None if key is None else _automatic_archive_lineage(*key)
-        if found is None and not compose:
+        if not compose:
             why = ("the model is partitioned and no lineage of these "
-                   "declarations is cached, and a partitioned model's "
-                   "archive is not composed at export; converting the run "
-                   "needs the model's lineage first")
-            found = (None, None)
-        elif found is None:
+                   "declarations is memoised (an export composes no archive "
+                   "for a partitioned model); " + (
+                       "call ops.h5(path) before the export to record it"
+                       if key is not None
+                       else f"{_no_key_cause(bridge)}, so none can be"))
+            found: "tuple[str | None, str | None]" = (None, None)
+        else:
             buf = _MemoryArchive()
             with warnings.catch_warnings():
                 # A deferred feature is the explicit save's warning.
@@ -176,7 +152,7 @@ def deck_run_lineage(
     assert model_hash is not None
     lineage = (model_hash, fem_hash or "")
     if key is not None:
-        _LINEAGE_BY_DIGEST[key[0]] = lineage
+        _LINEAGE_BY_DIGEST[key] = lineage
     return lineage
 
 

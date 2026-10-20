@@ -807,6 +807,268 @@ def test_a_skipped_partitioned_record_reads_with_from_mpco(
     assert sorted(p.name for p in tmp_path.glob("*.ladruno")) == []
 
 
+@pytest.fixture
+def memo(monkeypatch: Any) -> "dict[str, tuple[str, str]]":
+    """An empty process-wide lineage memo for this test, restored after it
+    (#2263: ``ops.h5()`` and every deck record fill it)."""
+    from apeGmsh.opensees._internal import artifact_write as aw
+
+    fresh: "dict[str, tuple[str, str]]" = {}
+    monkeypatch.setattr(aw, "_LINEAGE_BY_DIGEST", fresh)
+    return fresh
+
+
+@pytest.fixture(scope="module")
+def parted_fem() -> FEMData:
+    """A real two-partition FEMData (a gmsh-partitioned tet box), so the
+    bridge can digest its declarations: the bench stub cannot be."""
+    from apeGmsh import apeGmsh
+
+    with apeGmsh(verbose=False, _artifacts=False, model_name="parted") as g:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+        g.physical.add_volume("b", name="B")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(dim=3)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    assert len(fem.partitions) == 2
+    return fem
+
+
+def _parted_bridge(fem: FEMData, mpco: Path) -> Any:
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem, _artifacts=False)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)
+    ops.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+    ops.constraints.Transformation()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+    return ops
+
+
+def _export_no_compose(bridge: Any, deck: Path, monkeypatch: Any,
+                       ) -> "list[str]":
+    """Export ``deck`` (its dialect by suffix) with ``analyze_steps``; any
+    archive composed during the export fails the test. The run-record
+    warnings are returned."""
+    import warnings
+
+    from apeGmsh.opensees.apesees import apeSees
+    from apeGmsh.opensees.emitter import py as pym
+
+    def no_compose(*a: Any, **k: Any) -> None:
+        raise AssertionError("the export composed an archive")
+
+    with monkeypatch.context() as m:
+        m.setattr(pym._MemoryArchive, "__init__", no_compose)
+        m.setattr(apeSees, "_write_h5", no_compose)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            getattr(bridge, deck.suffix[1:])(str(deck), analyze_steps=STEPS,
+                                             progress=False)
+    return [str(w.message) for w in caught
+            if issubclass(w.category, RuntimeWarning)
+            and "run record" in str(w.message)]
+
+
+def _run_parted(deck: Path, mpco: Path) -> "dict[str, Any]":
+    """Run ``deck``'s record block as rank 0 of two; the record it writes."""
+    parts = [mpco.with_name(f"{mpco.stem}.part-{k}.mpco") for k in (0, 1)]
+    run = run_py if deck.suffix == ".py" else run_tcl
+    run(record_block(deck), build=None, done=STEPS, pid=0, files=parts, np=2)
+    return read_record(mpco, parts)
+
+
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_ops_h5_lets_a_partitioned_deck_record_without_composing(
+    tmp_path, dialect, monkeypatch, memo, parted_fem,
+) -> None:
+    """#2263: ``ops.h5()`` memoises the lineage it wrote, by declaration
+    digest. A partitioned deck exported afterwards stamps its record with
+    it, composing no archive, and the record equals that ``model.h5``."""
+    mpco = tmp_path / "run.mpco"
+    bridge = _parted_bridge(parted_fem, mpco)
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    assert list(memo.values()) == [lineage(model)]
+    deck = tmp_path / f"deck.{dialect}"
+    assert _export_no_compose(bridge, deck, monkeypatch) == []
+    text = deck.read_text(encoding="utf-8")
+    assert "getPID" in text and MARK in text
+    rec = _run_parted(deck, mpco)
+    assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+
+
+def test_the_memo_follows_the_declarations_in_every_order(
+    tmp_path, monkeypatch, memo, parted_fem,
+) -> None:
+    """Export before ``ops.h5()``: no record, with the remedy named. After
+    it: the record is that archive's. A changed declaration makes the memo
+    stale for the new digest (no record again, never the old lineage) until
+    the next ``ops.h5()``, whose lineage the next record then carries."""
+    mpco = tmp_path / "run.mpco"
+    bridge = _parted_bridge(parted_fem, mpco)
+    first = _export_no_compose(bridge, tmp_path / "d0.py", monkeypatch)
+    assert len(first) == 1 and "call ops.h5(path) before" in first[0]
+    assert MARK not in (tmp_path / "d0.py").read_text(encoding="utf-8")
+    m1 = tmp_path / "m1.h5"
+    bridge.h5(str(m1))
+    assert _export_no_compose(bridge, tmp_path / "d1.py", monkeypatch) == []
+    rec1 = _run_parted(tmp_path / "d1.py", mpco)
+    assert (rec1["model_hash"], rec1["fem_hash"]) == lineage(m1)
+    bridge.uniaxialMaterial.ElasticMaterial(E=1.0)  # a new declaration
+    stale = _export_no_compose(bridge, tmp_path / "d2.tcl", monkeypatch)
+    assert len(stale) == 1
+    assert MARK not in (tmp_path / "d2.tcl").read_text(encoding="utf-8")
+    m2 = tmp_path / "m2.h5"
+    bridge.h5(str(m2))
+    assert lineage(m2)[0] != lineage(m1)[0]
+    assert lineage(m2)[1] == lineage(m1)[1]  # the same mesh
+    assert _export_no_compose(bridge, tmp_path / "d3.tcl", monkeypatch) == []
+    rec2 = _run_parted(tmp_path / "d3.tcl", mpco)
+    assert (rec2["model_hash"], rec2["fem_hash"]) == lineage(m2)
+
+
+def test_an_explicit_h5_spares_the_in_memory_compose(
+    tmp_path, monkeypatch, memo,
+) -> None:
+    """A serial model with no automatic archive (``_artifacts=False``)
+    composes nothing either once ``ops.h5()`` ran: the lineage is the
+    declarations', whatever name or directory the archive was written
+    under, and the record equals another ``ops.h5()`` of the bridge."""
+    mpco = tmp_path / "deck.mpco"
+    bridge = truss_bridge(mpco, artifacts=False)
+    (tmp_path / "elsewhere").mkdir()
+    bridge.h5(str(tmp_path / "elsewhere" / "x.h5"), model_name="other")
+    assert _export_no_compose(bridge, tmp_path / "d.py", monkeypatch) == []
+    model = tmp_path / "model.h5"
+    bridge.h5(str(model))
+    assert lineage(model) == lineage(tmp_path / "elsewhere" / "x.h5")
+    run_py(record_block(tmp_path / "d.py"), build=None, done=STEPS,
+           files=[mpco])
+    rec = read_record(mpco)
+    assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+
+
+def test_a_kept_automatic_file_never_lends_its_lineage(
+    tmp_path, monkeypatch, memo,
+) -> None:
+    """Bridge A's export writes the automatic ``model.h5``; a ``/geometry``
+    zone added to it makes the next automatic write a "keep" (this run's
+    fuller file, left as it is). Bridge B on the same snapshot with another
+    E then exports: its record carries B's lineage, never the kept file's
+    (A's), though P5 now records B's digest at that path."""
+    import h5py
+
+    from apeGmsh.opensees.apesees import apeSees
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    fem = truss_fem()
+    mpco = tmp_path / "run.mpco"
+
+    def bridge(e: float) -> Any:
+        ops = apeSees(fem, default_orientation=None)
+        ops.model(ndm=2, ndf=2)
+        mat = ops.uniaxialMaterial.ElasticMaterial(E=e)
+        ops.element.Truss(pg="Bar", A=A, material=mat)
+        ops.fix(pg="Base", dofs=(1, 1))
+        ops.fix(pg="Tip", dofs=(0, 1))
+        ops.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as pat:
+            pat.load(pg="Tip", forces=(P, 0.0))
+        ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+        ops.algorithm.Linear()
+        ops.constraints.Plain()
+        ops.numberer.RCM()
+        ops.system.BandGeneral()
+        ops.integrator.LoadControl(dlam=1.0 / STEPS)
+        ops.analysis.Static()
+        return ops
+
+    bridge(E).py(str(tmp_path / "a.py"), analyze_steps=STEPS, progress=False)
+    target = tmp_path / "deck_run_record_truss.h5"
+    with h5py.File(target, "a") as f:
+        f.create_group("geometry")  # a zone the bridge's write would drop
+    kept = lineage(target)
+    b = bridge(E / 2)
+    seen = _count_archives(monkeypatch)
+    b.py(str(tmp_path / "b.py"), analyze_steps=STEPS, progress=False)
+    assert lineage(target) == kept  # "keep": the file was not rewritten
+    assert len(seen) == 1 and not isinstance(seen[0], str)  # in memory
+    model = tmp_path / "b.h5"
+    b.h5(str(model))
+    assert lineage(model)[0] != kept[0]
+    run_py(record_block(tmp_path / "b.py"), build=None, done=STEPS,
+           files=[mpco])
+    rec = read_record(mpco)
+    assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+
+
+class _Undigestible(float):
+    """A value its own pickling refuses with a ``ValueError`` (neither a
+    ``PicklingError`` nor a ``TypeError``): the digest cannot be taken."""
+
+    def __reduce_ex__(self, proto: Any) -> Any:
+        raise ValueError("cannot pickle a tagged quantity")
+
+
+@pytest.mark.parametrize("artifacts", [False, True])
+def test_an_undigestible_declaration_never_fails_an_export_or_h5(
+    tmp_path, monkeypatch, memo, artifacts,
+) -> None:
+    """Fail closed: a declaration the digest cannot take leaves the memo
+    empty, and ``ops.py`` / ``ops.tcl`` with ``analyze_steps`` and
+    ``ops.h5()`` all succeed. The serial record is composed in memory and
+    equals ``ops.h5()``."""
+    import warnings
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path / "auto"))
+    mpco = tmp_path / "deck.mpco"
+    bridge = truss_bridge(mpco, artifacts=artifacts)
+    bridge.uniaxialMaterial.ElasticMaterial(E=_Undigestible(1.0))
+    model = tmp_path / "model.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # the automatic write's own warning
+        for dialect in ("py", "tcl"):
+            getattr(bridge, dialect)(str(tmp_path / f"d.{dialect}"),
+                                     analyze_steps=STEPS, progress=False)
+        bridge.h5(str(model))
+    assert memo == {}
+    for dialect in ("py", "tcl"):
+        assert MARK in (tmp_path / f"d.{dialect}").read_text(encoding="utf-8")
+    run_py(record_block(tmp_path / "d.py"), build=None, done=STEPS,
+           files=[mpco])
+    rec = read_record(mpco)
+    assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+
+
+def test_an_undigestible_partitioned_export_warns_once_without_a_record(
+    tmp_path, monkeypatch, memo, parted_fem,
+) -> None:
+    """A partitioned model whose declarations cannot be digested gets no
+    record even after ``ops.h5()`` (which succeeds): each export composes
+    nothing and warns once, naming the digest's error by type."""
+    mpco = tmp_path / "run.mpco"
+    bridge = _parted_bridge(parted_fem, mpco)
+    bridge.uniaxialMaterial.ElasticMaterial(E=_Undigestible(1.0))
+    bridge.h5(str(tmp_path / "model.h5"))
+    assert memo == {}
+    for dialect in ("py", "tcl"):
+        deck = tmp_path / f"d.{dialect}"
+        ours = _export_no_compose(bridge, deck, monkeypatch)
+        assert len(ours) == 1, ours
+        assert "a declaration cannot be digested (ValueError)" in ours[0]
+        assert "pickled" not in ours[0]
+        assert MARK not in deck.read_text(encoding="utf-8")
+
+
 @pytest.mark.filterwarnings("ignore:model.h5 not written")  # the auto-write's
 def test_an_archive_that_cannot_be_composed_warns_and_writes_no_record(
     tmp_path, monkeypatch,
