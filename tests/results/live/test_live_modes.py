@@ -77,6 +77,8 @@ class FakeOps:
         self.vectors = {(n, k): rng.standard_normal(ndf[n]) * 10.0 ** (k - 3)
                         for n in coords for k in range(1, len(eigenvalues) + 1)}
         self.solved: "list[int]" = []
+        #: The arguments of each ``eigen`` call.
+        self.calls: "list[tuple[Any, ...]]" = []
 
     def getNDM(self) -> list[int]:
         return [self.ndm]
@@ -99,7 +101,9 @@ class FakeOps:
     def eleNodes(self, tag: int) -> list[int]:
         return list(self.elements[tag][1])
 
-    def eigen(self, n: int) -> list[float]:
+    def eigen(self, *args: Any) -> list[float]:
+        self.calls.append(args)
+        n = int(args[-1])
         self.solved.append(n)
         return list(self.eigenvalues[:n])
 
@@ -260,7 +264,7 @@ def test_a_failed_solve_refuses_with_the_cause(tmp_path: Path) -> None:
     def fail(n: int) -> list[float]:
         raise _SolverError("See stderr output")
 
-    ops.eigen = fail  # type: ignore[method-assign]
+    ops.eigen = fail  # type: ignore[method-assign,assignment]
     out = tmp_path / "modes.h5"
     with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed .*wipeAnalysis") as err:
         capture_live_modes(fem, 2, out, ops=ops)
@@ -270,6 +274,44 @@ def test_a_failed_solve_refuses_with_the_cause(tmp_path: Path) -> None:
     # the words notebook 17 uses.
     assert ('call ops.wipeAnalysis(), then ops.system("BandGeneral") again, '
             "before capture_live_modes") in str(err.value)
+    # ... then the way to keep one's own system (#2366 F2).
+    assert ("; or, to keep your own system, define ops.analysis(...) with it "
+            "before the first eigen.") in str(err.value)
+
+
+@pytest.mark.parametrize("solver", ["-genBandArpack", "-fullGenLapack"])
+def test_the_solver_flag_is_forwarded(tmp_path: Path, solver: str) -> None:
+    fem, ops = _frame_2d()
+    capture_live_modes(fem, 3, tmp_path / "modes.h5", ops=ops, solver=solver)
+    assert ops.calls == [(solver, 3)]
+
+
+def test_no_solver_calls_the_default(tmp_path: Path) -> None:
+    fem, ops = _frame_2d()
+    capture_live_modes(fem, 3, tmp_path / "modes.h5", ops=ops)
+    assert ops.calls == [(3,)]
+
+
+@pytest.mark.parametrize("solver", ["-bogus", "fullGenLapack", "-symmBandLapack", "", "-standard"])
+def test_an_unknown_solver_flag_refuses_by_name(tmp_path: Path, solver: str) -> None:
+    """openseespy ignores an unknown flag and solves with its default, so
+    the capture must refuse it rather than pass it on."""
+    fem, ops = _frame_2d()
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=rf"solver={solver!r} is not an eigen solver flag"):
+        capture_live_modes(fem, 2, out, ops=ops, solver=solver)
+    assert ops.calls == [] and not out.exists()
+
+
+def test_the_docstring_guards_the_capture_s_own_solve() -> None:
+    """A check outside the capture does not guard its solve (#2366 F1): the
+    docstring names the in-capture guards and suggests no standalone
+    ``-fullGenLapack`` solve."""
+    doc = " ".join((capture_live_modes.__doc__ or "").split())
+    assert "does not guard the capture's own solve" in doc
+    assert 'pass ``solver="-fullGenLapack"``' in doc
+    assert 'declare ``ops.system("BandGeneral")`` before capturing' in doc
+    assert 'ops.eigen("-fullGenLapack"' not in doc
 
 
 def test_a_short_solve_refuses(tmp_path: Path) -> None:

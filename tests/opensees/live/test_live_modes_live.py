@@ -408,3 +408,37 @@ def test_the_documented_remedy_keeps_the_bandgeneral_guard(opspy: Any, tmp_path:
     with pytest.raises(ValueError, match=r"mode 1 has a non-positive or non-finite eigenvalue \(-10\)"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
+
+
+def test_the_fullgen_solver_guards_the_capture(opspy: Any, tmp_path: Path) -> None:
+    """#2366 F1: the default stock solver gives a plausible [1, 1] for the
+    3-spring deck; ``solver="-fullGenLapack"`` makes the capture's own
+    solve see the -10 and refuse it by name, writing nothing."""
+    ops = opspy
+    fem = _springs(ops)
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=r"mode 1 has a non-positive or non-finite eigenvalue \(-10\)"):
+        capture_live_modes(fem, 2, out, ops=ops, solver="-fullGenLapack")
+    assert not out.exists()
+
+
+def test_an_analysis_with_the_user_s_system_solves_twice(opspy: Any, tmp_path: Path) -> None:
+    """#2366 F2: with ``ops.analysis(...)`` defined on a non-default system
+    (UmfPack) before the first eigen, a second solve works on stock and
+    stays right: [-10, 100] before and after the capture, which refuses
+    the -10 by name."""
+    ops = opspy
+    fem = _springs(ops)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-8, 10)
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    np.testing.assert_allclose(ops.eigen(2), [-10.0, 100.0], rtol=1e-12)
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=r"mode 1 has a non-positive or non-finite eigenvalue \(-10\)"):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
+    np.testing.assert_allclose(ops.eigen(2), [-10.0, 100.0], rtol=1e-12)
