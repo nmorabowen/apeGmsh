@@ -100,28 +100,28 @@ def model_station_counts(
 
 def line_station_count(
     rec: "ResolvedRecorderRecord", n_columns: int, path: "str | Path",
-    model_h5_src: "Path | None", fem_snapshot_id: str,
+    model: "OpenSeesModel | None", fem_snapshot_id: str,
 ) -> int:
     """The integration-point count of every element of ``rec``, whose
     ``integrationPoints`` file at ``path`` has ``n_columns`` data columns.
 
-    With ``model_h5_src`` the model's counts decide, and they are checked
-    first: unequal counts are refused naming the elements by count, as the
-    fibre reader refuses them (#2267), before the columns are divided. Equal
-    counts that do not fill ``n_columns`` mean the file is not from this
-    model. Without a model, the columns must divide evenly by element.
+    With ``model`` (loaded by the caller, which reads it once for all its
+    checks) the model's counts decide, and they are checked first: unequal
+    counts are refused naming the elements by count, as the fibre reader
+    refuses them (#2267), before the columns are divided. Equal counts that
+    do not fill ``n_columns`` mean the file is not from this model. Without
+    a model, the columns must divide evenly by element.
     """
     assert rec.element_ids is not None
     n_elements = len(rec.element_ids)
-    if model_h5_src is None:
+    if model is None:
         if n_columns % n_elements != 0:
             raise ValueError(
                 f"{path}: {n_columns} data columns is not divisible by "
                 f"{n_elements} elements. The integrationPoints file should be "
                 f"element-major with n_IP columns per element.")
         return n_columns // n_elements
-    counts = model_station_counts(
-        rec, OpenSeesModel.from_h5(model_h5_src), fem_snapshot_id)
+    counts = model_station_counts(rec, model, fem_snapshot_id)
     if np.unique(counts).size > 1:
         by_count: dict[int, list[int]] = {}
         for e, c in zip(rec.element_ids, counts):

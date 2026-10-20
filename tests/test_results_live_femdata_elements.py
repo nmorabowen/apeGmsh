@@ -22,7 +22,10 @@ The oracles:
 * each unproved id refuses by id, an unmapped class by name, and nothing
   reaches the domain then;
 * the pairing's type token gates an elastic beam's ``localForce``
-  stations as the bridge model's does.
+  stations as the bridge model's does;
+* a per-Gauss-point material record reads through the pairing, file
+  ``gp`` at catalog point ``gp - 1``; a fibres record still refuses by
+  name (#2290).
 """
 from __future__ import annotations
 
@@ -65,8 +68,10 @@ def _value(step: int, eid: int, k: int) -> float:
 
 
 class ElementOps(LiveOps):
-    """``LiveOps`` that also writes each ``Element`` recorder's file: six
-    columns per element (a tet's one Gauss point)."""
+    """``LiveOps`` that also writes each ``Element`` recorder's file:
+    ``columns`` per element (six: a tet's one Gauss point)."""
+
+    columns = 6
 
     def remove(self, what: str, tag: int) -> None:
         args = list(self._live[tag])
@@ -79,7 +84,8 @@ class ElementOps(LiveOps):
         while isinstance(args[k], int):
             eles.append(args[k])
             k += 1
-        rows = [[float(s)] + [_value(s, e, c) for e in eles for c in range(6)]
+        rows = [[float(s)] + [_value(s, e, c) for e in eles
+                              for c in range(self.columns)]
                 for s in range(1, _STEPS + 1)]
         np.savetxt(path, np.asarray(rows))
 
@@ -294,25 +300,125 @@ def test_an_id_the_femdata_lacks_refuses_by_id(tets, tmp_path) -> None:
         _run(_spec(fem, _gauss([1, 9])), tmp_path / "run", model_h5, _ops())
 
 
-@pytest.mark.parametrize("category, comps, cls", [
-    ("fibers", ("fiber_stress",), "ForceBeamColumn3d"),
-    ("gauss", ("damage_tension", "damage_compression"), "Brick"),
-], ids=["fibers", "per-material-gauss"])
-def test_a_record_that_needs_the_bridge_archive_refuses_by_name(
-    tets, tmp_path, category, comps, cls,
-) -> None:
+def test_a_fibres_record_refuses_by_name(tets, tmp_path) -> None:
     """A fibres record takes each element's ``beamIntegration`` from the
-    model archive, a per-Gauss-point material record its pairing: a
-    FEMData archive holds neither."""
+    model archive, which a FEMData archive does not hold."""
     fem, model_h5 = tets
     ops = _ops()
     rec = ResolvedRecorderRecord(
-        category=category, name="need", components=comps, dt=None,
-        n_steps=None, element_ids=np.array([1]), element_class_name=cls)
+        category="fibers", name="need", components=("fiber_stress",), dt=None,
+        n_steps=None, element_ids=np.array([1]),
+        element_class_name="ForceBeamColumn3d")
     with pytest.raises(ValueError, match=r"records \['need'\] read each "
                                          r"element's integration rule"):
         _run(_spec(fem, rec), tmp_path / "run", model_h5, ops)
     assert "eleNodes" not in ops.asked and ops.recorder_calls[1:] == []
+
+
+# ---------------------------------------------------------------------------
+# A per-Gauss-point material record reads through the pairing (#2290 A)
+# ---------------------------------------------------------------------------
+
+_HEX_XYZ = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (1.0, 1.0, 0.0),
+            4: (0.0, 1.0, 0.0), 5: (0.0, 0.0, 1.0), 6: (1.0, 0.0, 1.0),
+            7: (1.0, 1.0, 1.0), 8: (0.0, 1.0, 1.0)}
+_DAMAGE = ("damage_tension", "damage_compression")
+
+
+class DamageOps(ElementOps):
+    """``ElementOps`` whose ``material <gp> damage`` files hold two columns
+    per element, valued by their point: column ``k`` of point ``gp`` is
+    ``_value(step, e, 10 * gp + k)``."""
+
+    def remove(self, what: str, tag: int) -> None:
+        args = list(self._live[tag])
+        if args[0] != "Element" or "material" not in args:
+            return super().remove(what, tag)
+        del self._live[tag]
+        gp = int(args[args.index("material") + 1])
+        k = args.index("-ele") + 1
+        eles: list[int] = []
+        while isinstance(args[k], int):
+            eles.append(args[k])
+            k += 1
+        rows = [[float(s)] + [_value(s, e, 10 * gp + c) for e in eles
+                              for c in range(2)]
+                for s in range(1, _STEPS + 1)]
+        np.savetxt(Path(args[args.index("-file") + 1]), np.asarray(rows))
+
+
+def _hex_fem(tmp: Path) -> "tuple[FEMData, Path]":
+    hexa = make_type_info(code=5, gmsh_name="Hexahedron 8", dim=3, order=1,
+                          npe=8, count=1)
+    group = ElementGroup(element_type=hexa, ids=np.array([7], dtype=np.int64),
+                         connectivity=np.array([list(_HEX_XYZ)], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 9, dtype=np.int64),
+                            node_coords=np.array(list(_HEX_XYZ.values())),
+                            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={5: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=8, n_elems=1, bandwidth=8, types=[hexa]),
+        model_name="femdata_elements_hex")
+    path = tmp / "fem.h5"
+    fem.to_h5(str(path))
+    return fem, path
+
+
+def _damage_rec(cls: str = "Brick") -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="gauss", name="dmg", components=_DAMAGE, dt=None,
+        n_steps=None, element_ids=np.array([7]), element_class_name=cls)
+
+
+def _damage_ops() -> DamageOps:
+    return DamageOps(ndm=3, ndf={n: 3 for n in _HEX_XYZ},
+                     elements={7: ("Brick", tuple(_HEX_XYZ))},
+                     coords=dict(_HEX_XYZ))
+
+
+def test_a_per_material_damage_record_reads_through_the_pairing(tmp_path) -> None:
+    """Eight ``material <gp> damage`` files of a live ``Brick`` read under
+    its FEM id, file ``gp`` at the catalog's point ``gp - 1`` (Brick.cpp's
+    order, ``k`` fastest)."""
+    fem, model_h5 = _hex_fem(tmp_path)
+    ops = _damage_ops()
+    run = _run(_spec(fem, _damage_rec()), tmp_path / "run", model_h5, ops)
+    calls = _element_calls(ops)
+    assert [c[c.index("material") + 1] for c in calls] == [
+        str(g) for g in range(1, 9)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        s = 1.0 / np.sqrt(3.0)
+        for k, comp in enumerate(_DAMAGE):
+            slab = res.elements.gauss.get(component=comp, ids=np.array([7]))
+            assert [int(i) for i in np.asarray(slab.element_index)] == [7] * 8
+            np.testing.assert_allclose(
+                np.asarray(slab.natural_coords),
+                [((-s, s)[g // 4], (-s, s)[(g // 2) % 2], (-s, s)[g % 2])
+                 for g in range(8)], atol=1e-15)
+            np.testing.assert_array_equal(
+                np.asarray(slab.values),
+                [[_value(st, 7, 10 * gp + k) for gp in range(1, 9)]
+                 for st in range(1, _STEPS + 1)], err_msg=comp)
+    finally:
+        res.close()
+
+
+def test_a_per_material_record_of_another_class_refuses(tmp_path) -> None:
+    """The layout is the record's class's, so the live class gates it."""
+    fem, model_h5 = _hex_fem(tmp_path)
+    ops = _damage_ops()
+    with pytest.raises(ValueError, match=r"record 'dmg' names element class "
+                                         r"'LadrunoBrick', but the live "
+                                         r"domain has FEM elements 7 as "
+                                         r"'Brick'"):
+        _run(_spec(fem, _damage_rec("LadrunoBrick")), tmp_path / "run",
+             model_h5, ops)
+    assert _element_calls(ops) == []
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +457,180 @@ def test_the_pairing_type_token_gates_elastic_local_force(tets, tmp_path) -> Non
         tr.run()
 
 
+def test_a_fibres_record_over_a_pairing_refuses_by_name(tets, tmp_path) -> None:
+    """A pairing carries no ``beamIntegration``, so a fibres record handed
+    to the transcoder with one refuses by name, not on a missing method."""
+    fem, _ = tets
+    rec = ResolvedRecorderRecord(
+        category="fibers", name="fib", components=("fiber_stress",), dt=None,
+        n_steps=None, element_ids=np.array([1]),
+        element_class_name="ForceBeamColumn3d")
+    tr = RecorderTranscoder(_spec(fem, rec), tmp_path, tmp_path / "r.h5", fem,
+                            pairing=_Pairing(fem, {1: "forceBeamColumn"}))
+    with pytest.raises(ValueError, match=r"Record 'fib' \(category=fibers\): "
+                                         r"its stations are counted from each "
+                                         r"element's beamIntegration"):
+        tr.run()
+
+
 def test_a_pairing_and_a_model_archive_are_exclusive(tets, tmp_path) -> None:
     fem, model_h5 = tets
     with pytest.raises(TypeError, match=r"not both"):
         RecorderTranscoder(_spec(fem), tmp_path, tmp_path / "r.h5", fem,
                            model_h5_src=model_h5, pairing=_Pairing(fem, {}))
+
+
+# ---------------------------------------------------------------------------
+# A record MPCO cannot write takes the classic recorders (#2290 D)
+# ---------------------------------------------------------------------------
+
+
+class MpcoTrussOps(ElementOps):
+    """A build that has an MPCO recorder (its probe would return a tag),
+    recording one axial-force column per truss."""
+
+    columns = 1
+
+    def recorder(self, *args: Any) -> int:
+        if args[0] != "mpco":
+            return super().recorder(*args)
+        self.recorder_calls.append(args)
+        return len(self.recorder_calls)
+
+
+def _truss_fem(tmp: Path) -> "tuple[FEMData, Path, MpcoTrussOps]":
+    """Trusses 1 (nodes 1-2) and 2 (nodes 2-5), live as ``Truss``."""
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2)
+    group = ElementGroup(element_type=line, ids=np.array([1, 2], dtype=np.int64),
+                         connectivity=np.array([[1, 2], [2, 5]], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 6, dtype=np.int64),
+                            node_coords=np.array([_XYZ[n] for n in range(1, 6)]),
+                            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=5, n_elems=2, bandwidth=2, types=[line]),
+        model_name="femdata_elements_trusses")
+    model_h5 = tmp / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = MpcoTrussOps(ndm=3, ndf={n: 3 for n in _XYZ},
+                       elements={1: ("Truss", (1, 2)), 2: ("Truss", (2, 5))},
+                       coords=dict(_XYZ))
+    return fem, model_h5, ops
+
+
+def _truss_rec(components: "tuple[str, ...]" = ("axial_force",),
+               name: str = "axial", category: str = "gauss",
+               cls: str = "Truss") -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category=category, name=name, components=components, dt=None,
+        n_steps=None, element_ids=np.array([2, 1]), element_class_name=cls)
+
+
+def test_a_truss_axial_force_record_skips_mpco_for_the_classic_recorders(
+    tmp_path,
+) -> None:
+    """MPCO writes the Truss ``axialForce`` bucket with no ``GAUSS_IDS``, so
+    the route takes the classic recorders without probing MPCO, even on a
+    build that has it, naming the rerouted record. The read gives the
+    file's axial force at the truss's one Gauss point."""
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    rec = _truss_rec()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with _spec(fem, rec).emit_default(tmp_path / "run", model_h5=model_h5,
+                                          ops=ops) as run:
+            pass
+    assert run.route == "recorders"
+    assert [c for c in ops.recorder_calls if c[0] == "mpco"] == []
+    (w,) = caught
+    assert w.category is DefaultRouteWarning
+    assert str(w.message).startswith(
+        "emit_default: MPCO cannot write the Truss axial force (records "
+        "{'axial': ['axial_force']} record its axialForce bucket with no "
+        "GAUSS_IDS, which the MPCO reader refuses); recording classic "
+        "recorder files in ")
+    assert not (tmp_path / "run.mpco").exists()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        slab = res.elements.gauss.get(component="axial_force",
+                                      ids=np.array([1, 2]))
+        index = [int(i) for i in np.asarray(slab.element_index)]
+        assert sorted(index) == [1, 2]                 # one Gauss point each
+        np.testing.assert_array_equal(np.asarray(slab.natural_coords), [[0.0]] * 2)
+        np.testing.assert_array_equal(
+            np.asarray(slab.values),
+            [[_value(s, e, 0) for e in index] for s in range(1, _STEPS + 1)])
+    finally:
+        res.close()
+
+
+_NO_TOKEN = r"component 'displacement_x' has no MPCO -E token"
+_DEFORMATION = (r"component 'axial_strain' cannot go through MPCO: the MPCO "
+                r"reader does not decode its section.deformation bucket")
+
+
+@pytest.mark.parametrize("records, match", [
+    ((_truss_rec(("displacement_x",)),), _NO_TOKEN),
+    ((_truss_rec(("axial_force", "displacement_x")),), _NO_TOKEN),
+    ((_truss_rec(), _truss_rec(("displacement_x",), name="u")), _NO_TOKEN),
+    ((_truss_rec(("axial_strain",), name="ls", category="line_stations",
+                 cls="ForceBeamColumn3d"),), _DEFORMATION),
+    ((_truss_rec(), _truss_rec(("axial_strain",), name="ls",
+                               category="line_stations",
+                               cls="ForceBeamColumn3d")), _DEFORMATION),
+], ids=["no-token", "no-token-beside-axial", "no-token-record-beside-axial",
+        "section-deformation", "section-deformation-beside-axial"])
+def test_only_the_truss_axial_force_leaves_mpco(tmp_path, records, match) -> None:
+    """Every other MPCO refusal stands at ``__enter__``, with or without a
+    Truss axial force beside it: a gauss component with no ``-E`` token
+    and a line-stations section deformation would read back empty on the
+    classic recorders too."""
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    with pytest.raises(ValueError, match=match):
+        _run(_spec(fem, *records), tmp_path / "run", model_h5, ops)
+    assert ops.recorder_calls == [] and "eleNodes" not in ops.asked
+
+
+_TRUSS_AXIAL = (r"component 'axial_force' \(the Truss axial force\) cannot "
+                r"go through MPCO")
+
+
+@pytest.mark.parametrize("cls", ["ElasticBeam3d", None],
+                         ids=["named", "class-less"])
+def test_an_elastic_beam_axial_force_keeps_the_mpco_refusal(tmp_path, cls) -> None:
+    """Only the Truss family's ``axial_force`` leaves MPCO. An elastic
+    beam's, named or found by its live ``eleType``, has no Gauss
+    ``axialForce`` the classic read decodes either: refused by name at
+    ``__enter__``, as on main, not read empty after the run."""
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    ops.elements = {1: ("ElasticBeam3d", (1, 2)), 2: ("ElasticBeam3d", (2, 5))}
+    with pytest.raises(ValueError, match=_TRUSS_AXIAL):
+        _run(_spec(fem, _truss_rec(cls=cls)), tmp_path / "run", model_h5, ops)
+    assert ops.recorder_calls == [] and "eleNodes" not in ops.asked
+
+
+def test_a_class_less_truss_axial_force_leaves_mpco_by_its_live_class(
+    tmp_path,
+) -> None:
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    run = _run(_spec(fem, _truss_rec(cls=None)), tmp_path / "run", model_h5,
+               ops)
+    assert run.route == "recorders"
+    assert [c for c in ops.recorder_calls if c[0] == "mpco"] == []
+    assert "eleType" in ops.asked
+
+
+def test_the_reroute_raises_no_mpco_line_stations_warning(tmp_path) -> None:
+    """A class-less line-stations record beside the Truss axial force: the
+    MPCO emit would warn that elastic beams may read empty, but the run
+    never makes an MPCO recorder, so nothing warns but the route."""
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    ls = _truss_rec(("axial_force",), name="ls", category="line_stations",
+                    cls=None)
+    run = _run(_spec(fem, _truss_rec(), ls), tmp_path / "run", model_h5, ops)
+    assert run.route == "recorders"

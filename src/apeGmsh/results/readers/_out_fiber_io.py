@@ -10,7 +10,10 @@ result; nothing here opens a writer.
 
 Each record's rows are labelled with the spec's FEM ids, so each reader
 first proves the model's ``(fem_eid, tag)`` pairing holds every one of them
-(:func:`require_translated`): the emit translated through it.
+(:func:`require_translated`): the emit translated through it. The caller
+loads that model once and passes it: the bridge's ``OpenSeesModel``, or the
+live pairing a FEMData archive's run proved (#2269), which a per-material
+gauss record reads through (#2290) and a fibres record refuses.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 import numpy as np
 from numpy import ndarray
 
+from ...opensees import OpenSeesModel
 from ...opensees._response_catalog import ResponseLayout, normalise_integration_points
 from ..spec._emit import (
     FIBER_OUT_COLUMNS,
@@ -39,31 +43,29 @@ if TYPE_CHECKING:
 
 
 def require_translated(
-    rec: "ResolvedRecorderRecord", model_h5_src: "Path | None",
-    fem_snapshot_id: str,
-) -> Any:
-    """Refuse a fibre or per-material record whose ids no model pairs, and
-    return that model (an ``OpenSeesModel``).
+    rec: "ResolvedRecorderRecord", model: Any, fem_snapshot_id: str,
+) -> None:
+    """Refuse a fibre or per-material record whose ids no model pairs.
 
     Its rows are labelled with the spec's FEM ids, which the emit
-    translated through the model's ``(fem_eid, tag)`` pairing; without
-    that model, or with ids it does not hold, the labels are unproven.
+    translated through the ``(fem_eid, tag)`` pairing of ``model``: the
+    bridge's ``OpenSeesModel``, or a live pairing
+    (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`, its
+    lineage and proved ``elements()``). Without one, or with ids it does
+    not hold, the labels are unproven.
     """
-    from ...opensees import OpenSeesModel
-    if model_h5_src is None:
+    if model is None:
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): its .out rows name "
             f"elements by OpenSees tag, translated from FEM ids through the "
             f"model's pairing. Pass the model (model_h5_src=, or "
             f"Results.from_recorders(..., model=)).")
-    model = OpenSeesModel.from_h5(model_h5_src)
     tags = element_tag_map(model, fem_snapshot_id=fem_snapshot_id)
     missing = [int(e) for e in np.asarray(rec.element_ids) if int(e) not in tags]
     if missing:
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): FEM element ids "
             f"{missing[:10]} have no OpenSees element in the model.")
-    return model
 
 
 #: Element-family suffixes of the beams a fibres record reads:
@@ -113,16 +115,20 @@ def _read_rows(lr: "LogicalRecorder", n_elements: int, unit: int,
 
 def read_per_material_gauss(
     rec: "ResolvedRecorderRecord", logicals: Sequence["LogicalRecorder"],
-    model_h5_src: "Path | None", fem_snapshot_id: str,
+    model: Any, fem_snapshot_id: str,
 ) -> tuple[str, int, ResponseLayout, ndarray, ndarray]:
     """``(class_name, int_rule, layout, time, flat)`` of a gauss record's
     ``material <gp> <token>`` files, one per Gauss point.
 
-    ``flat`` is ``(T, E, n_GP * K)``, GP-slow: the ``unflatten`` order, with
-    file ``gp`` at catalog point ``gp - 1``. A material whose response
-    width is not the catalog's ``K`` fails the column check.
+    ``model`` is the bridge's model or a live pairing
+    (:func:`require_translated`); the layout is the record's class's in
+    the catalog either way, and a live pairing has proved that class by
+    ``eleType``. ``flat`` is ``(T, E, n_GP * K)``, GP-slow: the
+    ``unflatten`` order, with file ``gp`` at catalog point ``gp - 1``. A
+    material whose response width is not the catalog's ``K`` fails the
+    column check.
     """
-    require_translated(rec, model_h5_src, fem_snapshot_id)
+    require_translated(rec, model, fem_snapshot_id)
     layout, class_name, int_rule = per_material_gauss_layout(rec)
     k = layout.n_components_per_gp
     if len(logicals) != layout.n_gauss_points:
@@ -155,7 +161,7 @@ class FiberRecordPayload:
 
 def read_fiber_record(
     rec: "ResolvedRecorderRecord", logicals: Sequence["LogicalRecorder"],
-    lengths_of: Callable[[ndarray], ndarray], model_h5_src: "Path | None",
+    lengths_of: Callable[[ndarray], ndarray], model: Any,
     fem_snapshot_id: str,
 ) -> "FiberRecordPayload | None":
     """A ``section fiberData2`` file and its ``integrationPoints`` pair.
@@ -180,14 +186,21 @@ def read_fiber_record(
     class_name = fiber_record_class(rec)
     if not logicals:
         return None
-    model = require_translated(rec, model_h5_src, fem_snapshot_id)
+    require_translated(rec, model, fem_snapshot_id)
+    if not isinstance(model, OpenSeesModel):
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers): its stations are counted "
+            f"from each element's beamIntegration, which only the bridge's "
+            f"model archive holds; a live pairing over a FEMData archive "
+            f"carries none. Record it through the bridge's model archive "
+            f"(ops.h5(...)).")
     require_record_class(rec, model)
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
     # The whole row as one block; the model's counts then divide it, checked
     # before the columns are, since a mix need not divide by the elements.
     _t, row, n_columns = _read_rows(gpx_lr, 1, 1)
-    n_ip = line_station_count(rec, n_columns, gpx_lr.file_path, model_h5_src,
+    n_ip = line_station_count(rec, n_columns, gpx_lr.file_path, model,
                               fem_snapshot_id)
     gpx = row.reshape(row.shape[0], ids.size, n_ip)
     xi = np.stack([normalise_integration_points(gpx[0, i], float(length))
