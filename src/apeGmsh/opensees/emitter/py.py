@@ -70,6 +70,21 @@ def _lineage_of(f: Any) -> "tuple[str | None, str | None]":
     return model_hash, fem_hash
 
 
+def _no_key_cause(bridge: Any) -> str:
+    """Why ``bridge``'s declarations have no lineage key: a snapshot that
+    is not a :class:`FEMData`, or the digest's own error, by type."""
+    from ...mesh.FEMData import FEMData
+    from .._internal.artifact_write import _declaration_digest
+
+    if bridge is None or not isinstance(bridge.fem, FEMData):
+        return "its snapshot is not a FEMData"
+    try:
+        _declaration_digest(bridge, bridge.fem.model_name or "")
+    except Exception as exc:  # noqa: BLE001 - its type is the answer
+        return f"a declaration cannot be digested ({type(exc).__name__})"
+    return "a declaration cannot be digested"
+
+
 def deck_run_lineage(
     archive: "Callable[[Any], None]", bridge: Any = None, *,
     compose: bool = True, deck: str = "",
@@ -110,9 +125,8 @@ def deck_run_lineage(
                    "declarations is memoised (an export composes no archive "
                    "for a partitioned model); " + (
                        "call ops.h5(path) before the export to record it"
-                       if key is not None else "its snapshot is not a "
-                       "FEMData, or a declaration cannot be pickled, so "
-                       "none can be"))
+                       if key is not None
+                       else f"{_no_key_cause(bridge)}, so none can be"))
             found: "tuple[str | None, str | None]" = (None, None)
         else:
             buf = _MemoryArchive()

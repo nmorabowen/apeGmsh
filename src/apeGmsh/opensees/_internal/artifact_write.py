@@ -145,8 +145,8 @@ def lineage_key(bridge: "_ProcedureHost") -> str | None:
     declarations by: P5's, under the snapshot's own name.  ``None`` for a
     snapshot that is not a :class:`FEMData` (its bridge-only archive has
     no neutral zone, so no lineage to reuse) or a declaration that cannot
-    be pickled; nothing is then memoised, and a deck composes or refuses
-    by its own rule."""
+    be digested (whatever its pickling raises); nothing is then memoised,
+    and a deck composes or refuses by its own rule."""
     from ...mesh.FEMData import FEMData
 
     fem = bridge._fem
@@ -154,9 +154,9 @@ def lineage_key(bridge: "_ProcedureHost") -> str | None:
         return None
     try:
         return _declaration_digest(bridge, fem.model_name or "")
-    except (pickle.PicklingError, TypeError, AttributeError):
-        # What pickle raises for an object it cannot pickle (a lock, a
-        # local function); any other failure propagates.
+    except Exception:  # noqa: BLE001 - a declaration that cannot be digested
+        # Whatever pickle or an object's own ``__reduce_ex__`` raises: the
+        # export and ``h5()`` go on, and the deck says why it has no record.
         return None
 
 

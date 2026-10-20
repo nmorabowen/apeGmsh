@@ -1011,6 +1011,64 @@ def test_a_kept_automatic_file_never_lends_its_lineage(
     assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
 
 
+class _Undigestible(float):
+    """A value its own pickling refuses with a ``ValueError`` (neither a
+    ``PicklingError`` nor a ``TypeError``): the digest cannot be taken."""
+
+    def __reduce_ex__(self, proto: Any) -> Any:
+        raise ValueError("cannot pickle a tagged quantity")
+
+
+@pytest.mark.parametrize("artifacts", [False, True])
+def test_an_undigestible_declaration_never_fails_an_export_or_h5(
+    tmp_path, monkeypatch, memo, artifacts,
+) -> None:
+    """Fail closed: a declaration the digest cannot take leaves the memo
+    empty, and ``ops.py`` / ``ops.tcl`` with ``analyze_steps`` and
+    ``ops.h5()`` all succeed. The serial record is composed in memory and
+    equals ``ops.h5()``."""
+    import warnings
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path / "auto"))
+    mpco = tmp_path / "deck.mpco"
+    bridge = truss_bridge(mpco, artifacts=artifacts)
+    bridge.uniaxialMaterial.ElasticMaterial(E=_Undigestible(1.0))
+    model = tmp_path / "model.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # the automatic write's own warning
+        for dialect in ("py", "tcl"):
+            getattr(bridge, dialect)(str(tmp_path / f"d.{dialect}"),
+                                     analyze_steps=STEPS, progress=False)
+        bridge.h5(str(model))
+    assert memo == {}
+    for dialect in ("py", "tcl"):
+        assert MARK in (tmp_path / f"d.{dialect}").read_text(encoding="utf-8")
+    run_py(record_block(tmp_path / "d.py"), build=None, done=STEPS,
+           files=[mpco])
+    rec = read_record(mpco)
+    assert (rec["model_hash"], rec["fem_hash"]) == lineage(model)
+
+
+def test_an_undigestible_partitioned_export_warns_once_without_a_record(
+    tmp_path, monkeypatch, memo, parted_fem,
+) -> None:
+    """A partitioned model whose declarations cannot be digested gets no
+    record even after ``ops.h5()`` (which succeeds): each export composes
+    nothing and warns once, naming the digest's error by type."""
+    mpco = tmp_path / "run.mpco"
+    bridge = _parted_bridge(parted_fem, mpco)
+    bridge.uniaxialMaterial.ElasticMaterial(E=_Undigestible(1.0))
+    bridge.h5(str(tmp_path / "model.h5"))
+    assert memo == {}
+    for dialect in ("py", "tcl"):
+        deck = tmp_path / f"d.{dialect}"
+        ours = _export_no_compose(bridge, deck, monkeypatch)
+        assert len(ours) == 1, ours
+        assert "a declaration cannot be digested (ValueError)" in ours[0]
+        assert "pickled" not in ours[0]
+        assert MARK not in deck.read_text(encoding="utf-8")
+
+
 @pytest.mark.filterwarnings("ignore:model.h5 not written")  # the auto-write's
 def test_an_archive_that_cannot_be_composed_warns_and_writes_no_record(
     tmp_path, monkeypatch,
