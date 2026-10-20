@@ -2,28 +2,40 @@
 
 Post-processing container.
 
-## Construction — `model=` is required
+## Construction — every `Results` has a model
 
-Every `Results` constructor requires a model, so the post-processing
-container always has a read-side broker to resolve names, PGs, and
-connectivity against:
+Every `Results` carries a model, so the post-processing container always
+has a read-side broker to resolve names, PGs, and connectivity against.
+An in-process run recorded with `spec.emit_default(...)` opens with
+`run.results()`, which picks the reader for the route the build took and
+passes the model for you. Each reader can also be called directly:
 
 ```python
 from apeGmsh import Results
 from apeGmsh.opensees import OpenSeesModel
 
-# Native apeGmsh HDF5 (a Composed file carrying results + model is common)
-model = OpenSeesModel.from_h5("run.h5")
-results = Results.from_native("run.h5", model=model)     # model= REQUIRED
+# The default route: run.results() after `with spec.emit_default(...) as run:`
+results = run.results()
 
-# STKO .mpco — model_h5= points at the sibling model archive
+# Ladruno fork .ladruno: model_h5= binds the archive's PGs and labels
+results = Results.from_ladruno("run.ladruno", model_h5="model.h5")
+
+# STKO .mpco: model_h5= points at the sibling model archive
 results = Results.from_mpco("run.mpco", model_h5="model.h5")  # model_h5= REQUIRED
 
-# Live recorders — fem= and model=
-results = Results.from_recorders(spec, "out/", fem=fem, model=model)
+# Classic recorder files: fem= and model=
+model = OpenSeesModel.from_h5("model.h5")
+results = Results.from_recorders(spec, "out/", fem=fem, model=model)  # model= REQUIRED
+
+# Native apeGmsh HDF5, e.g. the modes file EigenResult.to_native() writes
+p = ops.eigen(3).to_native()          # the file embeds the bridge's model
+results = Results.from_native(p, model=OpenSeesModel.from_h5(p))  # model= REQUIRED
 ```
 
-Omitting `model=` (or `model_h5=` for `from_mpco`) raises `TypeError`.
+Omitting `model=` (`from_recorders`, `from_native`) or `model_h5=`
+(`from_mpco`) raises `TypeError`. `from_ladruno` builds its broker from
+the file's own `MODEL` group when `model_h5=` is left out, but then the
+read has no physical groups or labels.
 
 `results.model` is **never `None`** on a constructed `Results` (ADR 0020
 INV-1). Reach the neutral `FEMData` zone through the broker chain:
