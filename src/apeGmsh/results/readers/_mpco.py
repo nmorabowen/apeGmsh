@@ -77,6 +77,13 @@ class MPCOBucketSkippedWarning(UserWarning):
         ``<tag>-<Class>[<rule>:<cust>:<hdr>]`` (#2165). A key under two
         alias groups of one token is named once.
 
+    Discovery only records a skipped bucket; the read names it, and only
+    when the bucket holds an element the read asked for (``element_ids``,
+    or a selection that resolves to them). An unfiltered read and a
+    component listing name every one, and a bucket whose ``ID`` cannot
+    be read is always named. The same filter holds for a bucket refused
+    by its decoder (#2165).
+
     The layer level names its unread buckets, an unparseable key among
     them, in
     :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`,
@@ -687,12 +694,16 @@ class MPCOReader:
         if on_elements is None:
             return []
         out: set[str] = set()
+        # A listing asks for every element: each bucket discovery leaves
+        # unread is named, once.
+        discovery_skipped: list[_melem.SkippedBucket] = []
         # Tensor canonicals (catalog-driven, fixed shape): any axis
         # suffix discovers the same buckets, so probe with ``_xx``.
         for prefix in ("stress", "strain"):
-            _, buckets = _melem.discover_gauss_buckets(
+            _, buckets, scan_skipped = _melem.scan_gauss_buckets(
                 on_elements, canonical_component=f"{prefix}_xx",
             )
+            discovery_skipped.extend(scan_skipped)
             for b in buckets:
                 out.update(b.layout.component_layout)
         # Material-state canonicals (META-driven, variable shape).
@@ -700,9 +711,10 @@ class MPCOReader:
         # the bucket's META declares.
         skipped: list[tuple[str, str]] = []
         for parent in ("damage", "equivalent_plastic_strain", "plastic_strain"):
-            _, mat_buckets = _mmat.discover_material_state_buckets(
+            _, mat_buckets, scan_skipped = _mmat.scan_material_state_buckets(
                 on_elements, canonical_component=parent,
             )
+            discovery_skipped.extend(scan_skipped)
             for mb in mat_buckets:
                 bucket_grp = on_elements[mb.mpco_group_name][mb.bracket_key]
                 try:
@@ -715,6 +727,9 @@ class MPCOReader:
                     skipped.append((bucket_grp.name, str(exc)))
                     continue
                 out.update(canonicals)
+        _melem.warn_skipped_buckets(
+            discovery_skipped, element_ids=None, stacklevel=3,
+        )
         _warn_skipped_buckets(
             skipped, what="gauss material-state component listing",
             source=self._path.name,
@@ -747,12 +762,17 @@ class MPCOReader:
         if on_elements is None:
             return []
         out: set[str] = set()
+        discovery_skipped: list[_melem.SkippedBucket] = []
         for canonical in ("fiber_stress", "fiber_strain"):
-            _, buckets = _mfiber.discover_fiber_buckets(
+            _, buckets, scan_skipped = _mfiber.scan_fiber_buckets(
                 on_elements, canonical_component=canonical,
             )
+            discovery_skipped.extend(scan_skipped)
             if buckets:
                 out.add(canonical)
+        _melem.warn_skipped_buckets(
+            discovery_skipped, element_ids=None, stacklevel=3,
+        )
         return sorted(out)
 
     def _layers_available_components(self, mpco_name: str) -> list[str]:
@@ -811,8 +831,11 @@ class MPCOReader:
         # (the routing only depends on the topology, not the specific
         # component name); ``axial_force`` is always present in v1.
         if model_elements is not None:
-            _, buckets = _mline.discover_line_station_buckets(
+            _, buckets, scan_skipped = _mline.scan_line_station_buckets(
                 on_elements, canonical_component="axial_force",
+            )
+            _melem.warn_skipped_buckets(
+                scan_skipped, element_ids=None, stacklevel=3,
             )
             for bucket in buckets:
                 try:
@@ -854,11 +877,15 @@ class MPCOReader:
             return []
         out: set[str] = set()
         skipped: list[tuple[str, str]] = []
+        discovery_skipped: list[_melem.SkippedBucket] = []
         for root in ("spring_force", "spring_deformation"):
-            _, buckets = _mspring.discover_spring_buckets(
+            scan = _mspring.scan_spring_buckets(
                 on_elements, canonical_component=root,
             )
-            for b in buckets:
+            discovery_skipped.extend(_mspring.skipped_spring_buckets(
+                on_elements, scan, canonical_component=root,
+            ))
+            for b in scan.buckets:
                 bucket_grp = on_elements[b.mpco_group_name][b.bracket_key]
                 try:
                     canonicals = _mspring.spring_canonicals_in_bucket(
@@ -868,6 +895,9 @@ class MPCOReader:
                     skipped.append((bucket_grp.name, str(exc)))
                     continue
                 out.update(canonicals)
+        _melem.warn_skipped_buckets(
+            discovery_skipped, element_ids=None, stacklevel=3,
+        )
         _warn_skipped_buckets(
             skipped, what="springs component listing", source=self._path.name,
         )
@@ -1118,8 +1148,11 @@ class MPCOReader:
         section_force_eids: set[int] = set()
 
         # ── section.force / Custom-rule path ────────────────────────
-        token, buckets = _mline.discover_line_station_buckets(
+        token, buckets, scan_skipped = _mline.scan_line_station_buckets(
             on_elements, canonical_component=component,
+        )
+        _melem.warn_skipped_buckets(
+            scan_skipped, element_ids=element_ids, stacklevel=2,
         )
         # An element recorded twice within one token, in one bucket or
         # two, is refused (MPCOElementInTwoBuckets); across ranked
@@ -1288,8 +1321,11 @@ class MPCOReader:
                 index_to_fem,
             )
 
-        token, buckets = _melem.discover_gauss_buckets(
+        token, buckets, scan_skipped = _melem.scan_gauss_buckets(
             on_elements, canonical_component=component,
+        )
+        _melem.warn_skipped_buckets(
+            scan_skipped, element_ids=element_ids, stacklevel=2,
         )
         if not buckets:
             return _empty_gauss_slab(component, time, t_idx)
@@ -1353,8 +1389,12 @@ class MPCOReader:
         """META-driven material-state read — separate from the catalog
         path because ``n_components_per_gp`` depends on the assigned
         constitutive model, not just the element class."""
-        token, buckets = _mmat.discover_material_state_buckets(
+        token, buckets, scan_skipped = _mmat.scan_material_state_buckets(
             on_elements, canonical_component=component,
+        )
+        # stacklevel 3: past read_gauss, at its caller.
+        _melem.warn_skipped_buckets(
+            scan_skipped, element_ids=element_ids, stacklevel=3,
         )
         if not buckets:
             return _empty_gauss_slab(component, time, t_idx)
@@ -1375,9 +1415,11 @@ class MPCOReader:
                 )
             except ValueError as exc:
                 # A refused bucket (malformed META) is named in the one
-                # warning below; MaterialStateComponentRefused is a
-                # LookupError and reaches the caller.
-                skipped.append((bucket_grp.name, str(exc)))
+                # warning below when it holds a requested element;
+                # MaterialStateComponentRefused is a LookupError and
+                # reaches the caller.
+                if _melem.holds_requested_element(bucket_grp, element_ids):
+                    skipped.append((bucket_grp.name, str(exc)))
                 continue
             if result is None:
                 continue
@@ -1477,8 +1519,11 @@ class MPCOReader:
 
         element_ids, index_to_fem = self._element_read_translation(element_ids)
 
-        token, buckets = _mfiber.discover_fiber_buckets(
+        token, buckets, scan_skipped = _mfiber.scan_fiber_buckets(
             on_elements, canonical_component=component,
+        )
+        _melem.warn_skipped_buckets(
+            scan_skipped, element_ids=element_ids, stacklevel=2,
         )
         if not buckets:
             return _empty_fiber_slab(component, time, t_idx)
@@ -1684,9 +1729,16 @@ class MPCOReader:
 
         element_ids, index_to_fem = self._element_read_translation(element_ids)
 
-        _, buckets = _mspring.discover_spring_buckets(
+        scan = _mspring.scan_spring_buckets(
             on_elements, canonical_component=component,
         )
+        _melem.warn_skipped_buckets(
+            _mspring.skipped_spring_buckets(
+                on_elements, scan, canonical_component=component,
+            ),
+            element_ids=element_ids, stacklevel=2,
+        )
+        buckets = scan.buckets
         if not buckets:
             return _empty_spring_slab(component, time, t_idx)
 
@@ -1704,7 +1756,8 @@ class MPCOReader:
                     element_ids=element_ids,
                 )
             except ValueError as exc:
-                skipped.append((bucket_grp.name, str(exc)))
+                if _melem.holds_requested_element(bucket_grp, element_ids):
+                    skipped.append((bucket_grp.name, str(exc)))
                 continue
             if result is None:
                 continue

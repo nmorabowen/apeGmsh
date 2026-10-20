@@ -60,9 +60,11 @@ from ...opensees._response_catalog import (
     unflatten,
 )
 from ._mpco_element_io import (
+    SkippedBucket,
     _attr_scalar,
+    unparseable_skip,
     validate_bucket_meta,
-    warn_unparseable_bucket_key,
+    warn_skipped_buckets,
 )
 
 if TYPE_CHECKING:
@@ -180,17 +182,38 @@ def discover_line_station_buckets(
     *,
     canonical_component: str,
 ) -> tuple[str | None, list[_LineBucket]]:
-    """Walk ``ON_ELEMENTS/<section group>/`` and return catalogued buckets.
+    """:func:`scan_line_station_buckets`, naming every bucket it skips.
+
+    For a caller with no element filter: each skipped bucket is named in
+    one ``MPCOBucketSkippedWarning`` pointing at this function's caller.
+    A read calls the scan itself and names only the skipped buckets that
+    hold an element it asked for (#2165).
+    """
+    token, buckets, skipped = scan_line_station_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    warn_skipped_buckets(skipped, element_ids=None, stacklevel=2)
+    return (token, buckets)
+
+
+def scan_line_station_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_LineBucket], list[SkippedBucket]]:
+    """Walk ``ON_ELEMENTS/<section group>/`` and return catalogued
+    buckets, with every bucket left unread, without warning.
 
     Returns
     -------
-    (mpco_group_name, buckets)
+    (mpco_group_name, buckets, skipped)
         ``mpco_group_name`` is the ON_ELEMENTS child name we looked
         under (``"section.force"`` or ``"section.deformation"``), or
         ``None`` if the canonical component has no line-stations
         routing. ``buckets`` is the list whose ``(class_name,
         catalog_token)`` is in :data:`CUSTOM_RULE_CATALOG`,
-        ``int_rule == Custom``, and ``header_idx == 0``.
+        ``int_rule == Custom``, and ``header_idx == 0``. ``skipped``
+        holds every bucket whose key does not parse.
 
     Raises
     ------
@@ -207,7 +230,7 @@ def discover_line_station_buckets(
     """
     mapping = canonical_to_line_station_token(canonical_component)
     if mapping is None:
-        return (None, [])
+        return (None, [], [])
     mpco_group_name, catalog_token = mapping
     if mpco_group_name not in _SECTION_KIND_BY_GROUP:
         raise ValueError(
@@ -225,18 +248,19 @@ def discover_line_station_buckets(
                 f"'-E {mpco_group_name}' (recorded groups: "
                 f"{sorted(on_elements_grp)})."
             )
-        return (mpco_group_name, [])
+        return (mpco_group_name, [], [])
 
     token_grp = on_elements_grp[mpco_group_name]
     out: list[_LineBucket] = []
+    skipped: list[SkippedBucket] = []
     for bracket_key in token_grp:
         try:
             elem_key = parse_mpco_element_key(bracket_key)
         except ValueError as exc:
-            warn_unparseable_bucket_key(
+            skipped.append(unparseable_skip(
                 token_grp[bracket_key], exc,
                 what=f"line-station discovery of {canonical_component!r}",
-            )
+            ))
             continue
         catalogued = is_custom_rule_catalogued(
             elem_key.class_name, catalog_token)
@@ -265,7 +289,7 @@ def discover_line_station_buckets(
             custom=custom,
             kind=kind,
         ))
-    return (mpco_group_name, out)
+    return (mpco_group_name, out, skipped)
 
 
 # =====================================================================
