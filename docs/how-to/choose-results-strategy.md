@@ -15,30 +15,39 @@ there. *Export* writes a standalone `.tcl` or `.py` deck (`ops.tcl(...)` /
 process.
 
 **Read** decides how the numbers get back into apeGmsh's label and query
-world: **native capture** (apeGmsh queries the live domain and writes its
-own HDF5), **classic recorders** (OpenSees `.out` / `.xml` files), or
-**MPCO** (STKO's `.mpco` HDF5).
+world: the **Ladruno fork's own recorder** (a `.ladruno` HDF5 file),
+**classic recorders** (OpenSees `.out` / `.xml` files), or **MPCO**
+(STKO's `.mpco` HDF5).
 
-On this page `ops` is always the bridge and `opspy` is the openseespy module
-(`import openseespy.opensees as opspy`).
+On this page `ops` is always the bridge and `opspy` is the OpenSees module
+the bridge builds into (`opspy = get_ops()`, from
+`apeGmsh.opensees.emitter.live`). Beside a fork build,
+`import openseespy.opensees` can bind a second module with its own, empty
+domain, so the recipes never import it.
 
 ## The grid
 
-|  | **Read: native capture** → `from_native` | **Read: classic recorders** → `from_recorders` | **Read: MPCO** → `from_mpco` |
+|  | **Read: `.ladruno`** → `from_ladruno` | **Read: classic recorders** → `from_recorders` | **Read: MPCO** → `from_mpco` |
 |---|---|---|---|
-| **Run: in-process** | `ops.domain_capture(capture_spec, path=...)`. The default: every category from nodes to fibers and layers, plus mode shapes via `cap.capture_modes(n)`. | `recorder_spec.emit_recorders("out", model=model)`. Nodes, element forces, gauss points and line stations; fiber and layer records are skipped and modal ones raise. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibers, layers and modes, on a build that has the MPCO recorder. |
-| **Run: export** | *(none: capture needs a live domain in your Python session)* | `recorder_spec.to_tcl_commands(...)` in a driver around `ops.tcl(...)`. Reproducible, check-in-able, cluster-friendly. | `ops.recorder.MPCO(...)` before `ops.tcl(...)`. One `recorder mpco` line in the deck; run it under an OpenSees that has the recorder. |
+| **Run: in-process** | `recorder_spec.emit_default("run", model_h5=...)`. The default: on the fork it records the fork's own file; on a stock build it falls back to the MPCO cell, and on pip openseespy to the classic cell, so one script runs on every build. | `recorder_spec.emit_recorders("out", model=model)`. Nodes, element forces, gauss points, line stations and fibres; layer and modal records raise by name. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibres, layers and modes, on a build that has the MPCO recorder. |
+| **Run: export** | `read_deck_mpco("run.mpco", model_h5=...)` converts the `.mpco` of the bridge's own deck to `.ladruno` beside it. | `recorder_spec.to_tcl_commands(...)` in a driver around `ops.tcl(...)`. Reproducible, check-in-able, cluster-friendly. | `ops.recorder.MPCO(...)` before `ops.tcl(...)`. One `recorder mpco` line in the deck; run it under an OpenSees that has the recorder. |
 
-`capture_spec` is a `DomainCaptureSpec`, which names what to record by
-physical group. `recorder_spec` is a `ResolvedRecorderSpec`, which holds
-concrete node and element IDs. The recipes below build both.
+`recorder_spec` is a `ResolvedRecorderSpec`, which holds concrete node and
+element IDs; a physical group resolves to them once, with
+`fem.nodes.select(pg=...).ids`. The recipes below build one.
 
-Start with in-process capture unless something pushes you off it. It needs
-nothing beyond a stock openseespy, covers the most, and writes one file that
-carries its own model, which is why the tutorials use it. The other cells
-answer specific pressures: classic recorders when you want plain OpenSees
-output files, MPCO when the results must open in STKO, and export when the
-run has to happen somewhere your notebook is not.
+Modes are not a recorder record on any in-process route. `ops.eigen(n)`
+returns an `EigenResult`, and its `.results()` writes the modes to a file
+and opens them as a `Results` (`to_native(path)` keeps the file, and
+`to_ladruno(path)` writes them as a `.ladruno`). The
+[modal example](../examples/modal-analysis.md) walks through it.
+
+Start with the default route unless something pushes you off it. It needs
+nothing beyond the openseespy you have, picks the richest recorder your
+build offers, and is what the tutorials use. The other cells answer
+specific pressures: classic recorders when you want plain OpenSees output
+files, MPCO when the results must open in STKO, and export when the run has
+to happen somewhere your notebook is not.
 
 ## The recipes
 
@@ -48,9 +57,12 @@ and each recipe reads that number back.
 
 ```python
 import numpy as np
-import openseespy.opensees as opspy
 from apeGmsh import apeGmsh, Results
 from apeGmsh.opensees import apeSees, OpenSeesModel
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
+
+opspy = get_ops()
 
 L, E, b, h, P = 3.0, 200e9, 0.10, 0.20, 10_000.0
 A, Iz = b * h, b * h**3 / 12.0
@@ -80,52 +92,8 @@ def build_bridge():
     ops.test.NormDispIncr(tol=1e-10, max_iter=10); ops.algorithm.Linear()
     ops.integrator.LoadControl(dlam=0.1); ops.analysis.Static()
     return ops
-```
 
-Each recipe starts from a fresh bridge, because a recorder declared on a
-bridge rides along into everything that bridge emits afterwards.
-
-### In-process, native capture
-
-`ops.run()` builds the model and its analysis chain into openseespy without
-analysing, so your loop can call `cap.step` after every increment:
-
-```python
-from apeGmsh.results.capture import DomainCaptureSpec
-
-ops = build_bridge()
-capture_spec = DomainCaptureSpec(opensees=ops)
-capture_spec.nodes(pg="Tip", components=["displacement"])
-
-ops.run()
-with ops.domain_capture(capture_spec, path="run.h5") as cap:
-    cap.begin_stage("load", kind="static")
-    for _ in range(10):
-        opspy.analyze(1)
-        cap.step(t=opspy.getTime())
-    cap.end_stage()
-opspy.wipe()
-
-results = Results.from_native("run.h5", fem=fem,
-                              model=OpenSeesModel.from_h5("run.h5"))
-```
-
-Don't step with the bridge's own `ops.analyze(steps=1)` here: it rebuilds
-the domain from scratch on every call, so each `cap.step` would record the
-first increment again. The run file carries its own model, which is why the
-same path feeds `OpenSeesModel.from_h5`. For mode shapes, call
-`cap.capture_modes(n)` inside the block on a model that has mass.
-
-### In-process, classic recorders
-
-Reach for this when you want plain OpenSees recorder files from a notebook
-run and need only nodes, element forces, gauss points or line stations. A
-`ResolvedRecorderSpec` holds IDs rather than names, so resolve the physical
-group once, as an array:
-
-```python
-from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
-
+# What to record: the tip's displacement, by node id.
 recorder_spec = ResolvedRecorderSpec(
     fem_snapshot_id=fem.snapshot_id,
     records=(ResolvedRecorderRecord(
@@ -135,7 +103,58 @@ recorder_spec = ResolvedRecorderSpec(
         node_ids=np.asarray(fem.nodes.select(pg="Tip").ids),
     ),),
 )
+```
 
+Each recipe starts from a fresh bridge, because a recorder declared on a
+bridge rides along into everything that bridge emits afterwards.
+
+### In-process, the default route
+
+`ops.run()` builds the model and its analysis chain into OpenSees without
+analysing, and `emit_default` opens the recorder your build supports around
+your own loop:
+
+```python
+ops = build_bridge()
+ops.h5("model.h5")                  # the model archive every route reads with
+ops.run()
+with recorder_spec.emit_default("run", model_h5="model.h5") as run:
+    for _ in range(10):
+        opspy.analyze(1)
+opspy.wipe()
+
+results = run.results()
+```
+
+`run.route` says which recorder ran:
+
+| Build | Writes | `run.results()` |
+|---|---|---|
+| the Ladruno fork | `run.ladruno` | stamps the file with `model.h5`'s pairing, then `Results.from_ladruno` |
+| stock, with MPCO | `run.mpco` | `Results.from_mpco`, after one `DefaultRouteWarning` |
+| pip, no MPCO | classic `.out` files in `run_out/` | `Results.from_recorders`, after one `DefaultRouteWarning` |
+
+Don't step with the bridge's own `ops.analyze(steps=1)` here: it rebuilds
+the domain from scratch, and the recorder the block opened goes with it.
+Read with `run.results()` after the block has closed.
+
+The stock MPCO file is not converted to `.ladruno`, and it stays on
+`from_mpco`. An unstaged run maps to one stage, and that stage's kind
+(static or transient) has to be a fact. Your loop drives OpenSees
+directly, so a `loadConst` or a second `opspy.analysis(...)` inside the
+block never reaches `model.h5`. `read_deck_mpco` below does not apply to
+an in-process run.
+`emit_default` refuses a rerun onto an existing `run.ladruno` unless you
+pass `overwrite=True`. It has no route for modal records; modes come from
+`ops.eigen(n)`, as the grid says.
+
+### In-process, classic recorders
+
+Reach for this when you want plain OpenSees recorder files from a notebook
+run whatever the build, and need nodes, element forces, gauss points, line
+stations or fibres:
+
+```python
 ops = build_bridge()
 ops.h5("model.h5")                  # the model archive the read needs
 model = OpenSeesModel.from_h5("model.h5")
@@ -180,41 +199,6 @@ If you already hold a `recorder_spec`, wrapping the loop in
 `with recorder_spec.emit_mpco("run.mpco"):` does the same without touching
 the bridge. The [MPCO how-to](results-mpco.md) covers partitioned runs and
 where to write the file.
-
-### In-process, let the build choose
-
-`recorder_spec.emit_default(...)` picks the recorder from the openseespy
-build it finds, so one notebook runs unchanged on the fork, on a stock
-build with MPCO and on pip openseespy:
-
-```python
-ops = build_bridge()
-ops.h5("model.h5")
-ops.run()
-with recorder_spec.emit_default("run", model_h5="model.h5") as run:
-    for _ in range(10):
-        opspy.analyze(1)
-opspy.wipe()
-
-results = run.results()
-```
-
-`run.route` says which recorder ran:
-
-| Build | Writes | `run.results()` |
-|---|---|---|
-| the Ladruno fork | `run.ladruno` | stamps the file with `model.h5`'s pairing, then `Results.from_ladruno` |
-| stock, with MPCO | `run.mpco` | `Results.from_mpco`, after one `DefaultRouteWarning` |
-| pip, no MPCO | classic `.out` files in `run_out/` | `Results.from_recorders`, after one `DefaultRouteWarning` |
-
-The stock MPCO file is not converted to `.ladruno`, and it stays on
-`from_mpco`. An unstaged run maps to one stage, and that stage's kind
-(static or transient) has to be a fact. Your loop drives openseespy
-directly, so a `loadConst` or a second `opspy.analysis(...)` inside the
-block never reaches `model.h5`. `read_deck_mpco` below does not apply to
-an in-process run.
-`emit_default` refuses a rerun onto an existing `run.ladruno` unless you
-pass `overwrite=True`. It has no route for modal records.
 
 ### Export, classic recorders
 
@@ -273,12 +257,13 @@ results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
 a `.mpco` written by running the bridge's own exported deck (`ops.py` or
 `ops.tcl`) out of process, as emitted. A staged deck (`ops.stage` blocks,
 each recording its kind) converts beside itself, and the `.mpco` is kept.
-An unstaged deck does not convert yet, because the archive does not record
-its kind as fact. [#2210](https://github.com/nmorabowen/apeGmsh/issues/2210)
-records it. Until then, an unstaged deck is read with `from_mpco` after one
-warning that says so. Other refusals raise, even when the stages would not
-pair either, such as an archive of another model or an incomplete
-partition set. An in-process run is not a deck, so read its
+An unstaged deck converts on its own run record: a deck emitted with
+`analyze_steps=`, like the one above, writes `run.mpco.run.json` beside the
+`.mpco` once its analyze loop has returned, and the conversion checks that
+record against the `.mpco`, `model.h5` and the program (one `analysis`
+declaration, and the steps it ran). When a check fails, the deck is read
+with `from_mpco` after one warning that names the check. Other refusals
+raise, such as an archive of another model or an incomplete partition set. An in-process run is not a deck, so read its
 `.mpco` with `from_mpco`.
 
 ## The read side is identical
@@ -301,10 +286,13 @@ file; the [Results concept page](../concepts/results.md) walks through it.
 
 ## Notes / gotchas
 
-- **Every constructor needs the model.** `from_native` and `from_recorders`
+- **Every constructor needs the model.** `from_recorders` (and
+  `from_native`, which opens the modes file `EigenResult.to_native` writes)
   take an in-memory `model=` (`OpenSeesModel.from_h5(...)`); `from_mpco`
   takes `model_h5=` as a path, because MPCO files carry no `/opensees/`
   zone. Omitting it raises `TypeError`. `from_recorders` also needs `fem=`.
+  `from_ladruno` takes `model_h5=` too, and binds that archive's physical
+  groups and labels. `emit_default` passes the model for you.
 - **Bridge-declared recorders are not what `from_recorders` reads.** The
   read finds files by the names its spec generates (`out/tip_disp.out`
   above). Recorders declared on the bridge ride into `ops.run()` and every
@@ -313,13 +301,15 @@ file; the [Results concept page](../concepts/results.md) walks through it.
   `ops.recorder.Node(...)` after its `file=`. Use them when you consume the
   `.out` files yourself, and generate the recorders from the spec when
   apeGmsh should read them back.
-- **Fibers, layers and modes skip the classic path.** `emit_recorders`
-  warns and skips fiber and layer records, and raises at `__enter__` on a
-  modal one. Route those through native capture or MPCO.
+- **Layers and modes have no classic path.** `emit_recorders` records
+  fibre records (`section fiberData2` at each integration point), and raises
+  at `__enter__` on a layer or a modal record, naming it. Record layers with
+  MPCO or on the fork; take modes from `ops.eigen(n)`.
 - **MPCO needs a build that has it.** Not every openseespy build ships the
   MPCO recorder (STKO's bundled Python does), and `emit_mpco` raises at
   `__enter__` with a remediation pointer when it is missing. Without such a
-  build, native capture gives the same fiber, layer and modal coverage.
+  build, the default route falls back to classic recorders, which record
+  fibres but not layers.
 - **Loads are opt-in (ADR 0051).** MP constraints auto-emit, but
   `g.loads.*` cases do not: import one into a bridge pattern with
   `pat.from_model(case)`, or author loads with `pat.load(...)` as the
@@ -332,8 +322,8 @@ file; the [Results concept page](../concepts/results.md) walks through it.
   constructor on this page opens onto.
 - How-to: [Export to a Tcl or openseespy script](export-script.md) ·
   [Get results via MPCO](results-mpco.md).
-- API: [`apeGmsh.results.Results`](../api/results.md): `from_native`,
-  `from_recorders`, `from_mpco` and the fork's `from_ladruno`.
+- API: [`apeGmsh.results.Results`](../api/results.md): `from_recorders`,
+  `from_mpco`, the fork's `from_ladruno`, and `from_native` for modes.
 
 ---
 

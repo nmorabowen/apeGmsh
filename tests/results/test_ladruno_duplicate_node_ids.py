@@ -34,7 +34,9 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.readers._ladruno import (
+    LadrunoEmptyLocalAxesId,
     LadrunoReader,
+    LadrunoRepeatedElementId,
     LadrunoRepeatedNodeId,
 )
 from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
@@ -389,6 +391,220 @@ def test_node_shared_across_parts_still_sums(tmp_path: Path) -> None:
     np.testing.assert_allclose(ry.values[-1], [30.0, 5.0, 15.0])
     np.testing.assert_allclose(ry.values[0], [15.0, 2.5, 7.5])
     np.testing.assert_allclose(uy.values[-1], [0.0, -0.1, -0.2])
+
+
+# ---------------------------------------------------------------------
+# MODEL/LOCAL_AXES: one frame per element (#2322)
+# ---------------------------------------------------------------------
+#
+# The viewer's twins are #2321 (repeats) and #2336 (a malformed group).
+# The oracle is the viewer reviewer's reproducer: ladruno_frame3d.ladruno
+# lists ForceBeamColumn3d ids 1..10 in both stages. Writing 1 into row 1
+# made the file open with read_local_axes ids [1, 3, ..., 10]: element 1
+# took row 1's frame and element 2 was gone.
+
+_FRAME3D = _REPO / "apeGmshViewer/fixtures/ladruno_frame3d.ladruno"
+_BEAM = "ForceBeamColumn3d"
+
+
+def _axes(stage: int, cls: str = _BEAM) -> str:
+    return f"/MODEL_STAGE[{stage}]/MODEL/LOCAL_AXES/{cls}"
+
+
+def _frame3d(tmp_path: Path) -> Path:
+    path = tmp_path / "frame3d.ladruno"
+    shutil.copy(_FRAME3D, path)
+    with h5py.File(path, "r") as f:
+        for stage in (1, 2):
+            assert f[_axes(stage) + "/ID"][...].ravel().tolist() == list(
+                range(1, 11),
+            )
+            assert f[_axes(stage) + "/FRAME"].shape == (10, 4)
+    return path
+
+
+def _write_axes(
+    path: Path, group: str, *, ids: "Sequence[int] | None" = None,
+    frames: "np.ndarray | None" = None,
+) -> None:
+    """Replace (or create) ``group``'s ``ID`` and/or ``FRAME``."""
+    with h5py.File(path, "a") as f:
+        grp = f.require_group(group)
+        for name, data in (("ID", ids), ("FRAME", frames)):
+            if data is None:
+                continue
+            if name in grp:
+                del grp[name]
+            grp.create_dataset(
+                name, data=np.asarray(
+                    data, dtype=np.int64 if name == "ID" else np.float64,
+                ),
+            )
+
+
+def _frames(n: int) -> np.ndarray:
+    return np.tile([1.0, 0.0, 0.0, 0.0], (n, 1))
+
+
+def test_local_axes_repeat_within_one_class_refuses(tmp_path: Path) -> None:
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(1), ids=[1, 1, 3, 4, 5, 6, 7, 8, 9, 10])
+    with pytest.raises(LadrunoRepeatedElementId) as info:
+        LadrunoReader(path)
+    err = info.value
+    ds = _axes(1) + "/ID"
+    assert err.file == path
+    assert err.datasets == (ds,)
+    assert err.repeated == {1: [(ds, 0), (ds, 1)]}
+    msg = str(err)
+    assert str(path) in msg
+    assert f"1 at {ds} row 0, {ds} row 1" in msg
+    _assert_closed(path)
+
+
+def test_local_axes_repeat_across_classes_refuses(tmp_path: Path) -> None:
+    """Element 3 is a ForceBeamColumn3d and an ElasticBeam3d: one element,
+    two frames. The second class's group sorts first by name, so the
+    places come back in first-id order, not h5py's order."""
+    path = _frame3d(tmp_path)
+    other = _axes(1, "5-ElasticBeam3d")
+    _write_axes(path, other, ids=[3], frames=_frames(1))
+    with pytest.raises(LadrunoRepeatedElementId) as info:
+        LadrunoReader(path)
+    err = info.value
+    beam = _axes(1) + "/ID"
+    assert err.datasets == tuple(sorted((beam, other + "/ID")))
+    assert err.repeated == {3: [(beam, 2), (other + "/ID", 0)]}
+    assert other + "/ID" in str(err) and beam in str(err)
+    _assert_closed(path)
+
+
+def test_local_axes_repeat_in_a_later_stage_refuses(tmp_path: Path) -> None:
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(2), ids=[1, 2, 3, 4, 5, 6, 7, 8, 9, 9])
+    with pytest.raises(LadrunoRepeatedElementId) as info:
+        LadrunoReader(path)
+    ds = _axes(2) + "/ID"
+    assert info.value.repeated == {9: [(ds, 8), (ds, 9)]}
+
+
+def test_local_axes_repeat_refuses_through_public_entry(
+    tmp_path: Path,
+) -> None:
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(1), ids=[1, 1, 3, 4, 5, 6, 7, 8, 9, 10])
+    with pytest.raises(LadrunoRepeatedElementId, match="LOCAL_AXES"):
+        Results.from_ladruno(path)
+    _assert_closed(path)
+
+
+def test_distinct_local_axes_ids_over_classes_still_open(
+    tmp_path: Path,
+) -> None:
+    """Distinct ids out of order, interleaved with another class's
+    range, are not repeats; each element reads its own frame."""
+    path = _frame3d(tmp_path)
+    other = _axes(1, "5-ElasticBeam3d")
+    q = np.array([[0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0]])
+    _write_axes(path, other, ids=[12, 0], frames=q)
+    with LadrunoReader(path) as r:
+        stage = r.stages()[0].id
+        la = r.read_local_axes(stage)
+        beam = r.read_local_axes(stage, element_ids=np.arange(1, 11))
+    assert la.element_ids.tolist() == [0, *range(1, 11), 12]
+    np.testing.assert_array_equal(la.quaternions[0], q[1])
+    np.testing.assert_array_equal(la.quaternions[-1], q[0])
+    with h5py.File(path, "r") as f:
+        stored = f[_axes(1) + "/FRAME"][...]
+    np.testing.assert_array_equal(beam.quaternions, stored)
+
+
+def test_local_axes_empty_id_with_frames_refuses(tmp_path: Path) -> None:
+    """Before: the 10 frames were skipped without a word."""
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(1), ids=[])
+    with pytest.raises(LadrunoEmptyLocalAxesId) as info:
+        LadrunoReader(path)
+    err = info.value
+    assert err.file == path
+    assert err.group == _axes(1)
+    assert err.frame_shape == (10, 4)
+    msg = str(err)
+    assert str(path) in msg
+    assert f"{_axes(1)}/ID is empty (0 ids)" in msg
+    assert f"{_axes(1)}/FRAME has shape (10, 4)" in msg
+    _assert_closed(path)
+
+
+@pytest.mark.parametrize("n_frames", [11, 9], ids=["more", "fewer"])
+def test_local_axes_count_mismatch_is_not_refused_at_open(
+    tmp_path: Path, n_frames: int,
+) -> None:
+    """A FRAME/ID count mismatch with ids present is left to the readers:
+    the layered-shell read warns and recomputes it (#2090,
+    test_results_layer_catalog_shellmitc3.py). Pinned so the open-time
+    check does not grow into that contract unannounced."""
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(1), frames=_frames(n_frames))
+    with LadrunoReader(path):
+        pass
+
+
+def test_empty_local_axes_group_still_opens(tmp_path: Path) -> None:
+    """No id and no frame is a consistent empty group, as the viewer's
+    #2336 reads it."""
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(1, "5-ElasticBeam3d"), ids=[],
+                frames=np.zeros((0, 4)))
+    with LadrunoReader(path) as r:
+        la = r.read_local_axes(r.stages()[0].id)
+    assert la.element_ids.tolist() == list(range(1, 11))
+
+
+def _part_with_axes(
+    path: Path, part: int, ids: Sequence[int],
+) -> Path:
+    _file(path, part=part, reaction=_REACTION_PART0, disp=_DISP_PART0)
+    _write_axes(path, _axes(1, "5-ElasticBeam3d"), ids=ids,
+                frames=_frames(len(ids)))
+    return path
+
+
+def test_part_set_where_one_part_repeats_a_frame_id_refuses(
+    tmp_path: Path,
+) -> None:
+    p0 = _part_with_axes(tmp_path / "run.part-0.ladruno", 0, [1, 2])
+    p1 = _part_with_axes(tmp_path / "run.part-1.ladruno", 1, [3, 4, 3])
+    with pytest.raises(LadrunoRepeatedElementId) as info:
+        LadrunoMultiPartitionReader([p0, p1])
+    ds = _axes(1, "5-ElasticBeam3d") + "/ID"
+    assert info.value.file == p1
+    assert info.value.repeated == {3: [(ds, 0), (ds, 2)]}
+    _assert_closed(p0)
+    _assert_closed(p1)
+
+
+def test_part_set_where_one_part_has_frames_without_ids_refuses(
+    tmp_path: Path,
+) -> None:
+    p0 = _part_with_axes(tmp_path / "run.part-0.ladruno", 0, [1, 2])
+    _write_axes(p0, _axes(1, "5-ElasticBeam3d"), ids=[])
+    p1 = _part_with_axes(tmp_path / "run.part-1.ladruno", 1, [3, 4])
+    with pytest.raises(LadrunoEmptyLocalAxesId) as info:
+        LadrunoMultiPartitionReader([p0, p1])
+    assert info.value.file == p0
+    assert info.value.frame_shape == (2, 4)
+    _assert_closed(p0)
+    _assert_closed(p1)
+
+
+def test_part_set_with_distinct_frame_ids_opens(tmp_path: Path) -> None:
+    paths = [
+        _part_with_axes(tmp_path / "run.part-0.ladruno", 0, [1, 2]),
+        _part_with_axes(tmp_path / "run.part-1.ladruno", 1, [3, 4]),
+    ]
+    with LadrunoMultiPartitionReader(paths):
+        pass
 
 
 # ---------------------------------------------------------------------
