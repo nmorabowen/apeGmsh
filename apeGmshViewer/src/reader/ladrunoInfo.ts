@@ -11,14 +11,22 @@
 // what Python sees. Python reads an integer, an enum over one, a float, or a
 // string; it refuses a compound (even one member, which h5wasm returns as that
 // member) and an opaque. h5wasm decodes no float but float32 and float64 (it
-// throws a plain Error), so any other width is refused here by name; Python
-// reads a float16 2.0 as 2, the one place this reader is stricter. A
+// throws a plain Error), so any other width is refused here by name. A
 // fixed-length string reaches Python as bytes: any byte outside ASCII is refused,
 // where h5wasm decodes ASCII as windows-1252 (so b'\xa02' read " 2", then 2).
 // h5wasm also cuts the string at its first NUL and exposes no bytes past it. For
 // a NULLTERM string that cut is HDF5's own, as for Python. For a NULLPAD or
 // SPACEPAD string Python keeps the bytes after the NUL (b'2\x003' is refused,
-// b'2\x00' reads as 2), which this reader cannot see, so a NUL there is refused.
+// b'2\x00' reads as 2), which this reader cannot see, so any NUL there is refused.
+// h5py decodes a variable-length string as UTF-8 whatever its cset; for an ASCII
+// cset h5wasm gives one char per byte, so the bytes are decoded here the same way.
+//
+// Known, intentional divergences (this reader refuses, Python reads 2): a float16
+// 2.0, a NULLPAD b'2\x00', an HDF5 array type (1,) of int32, a bitfield, and a
+// variable-length sequence of int32. No writer produces any of them (#2324).
+// Known gap: a variable-length UTF-8 string goes through h5wasm's lax UTF-8
+// decoder, which reads the overlong b'\xc0\xb2' as "2"; Python refuses it. The
+// raw bytes are out of this module's reach.
 //
 // Browser-safe: no Node import. The caller passes its own error factory, as
 // reader/ladrunoElements.ts does, so this module imports nothing from ladruno.ts.
@@ -56,9 +64,9 @@ const shown = (x: unknown): string => (typeof x === "string" ? JSON.stringify(x)
 
 /**
  * The h5wasm attribute metadata (h5wasm `Metadata`) this rule reads. `size`,
- * `strpad` and `enum_type` are optional only because the caller's structural
- * type leaves them out. h5wasm always reports them, and a missing one that this
- * rule needs throws instead of skipping the check.
+ * `strpad`, `cset` and `enum_type` are optional only because the caller's
+ * structural type leaves some out. h5wasm always reports them, and a missing one
+ * that this rule needs is refused, naming the file, instead of skipping the check.
  */
 export interface SpatialDimMetadata {
   type: number;
@@ -66,15 +74,20 @@ export interface SpatialDimMetadata {
   shape: number[] | null;
   size?: number;
   strpad?: number;
+  cset?: number;
   enum_type?: { type: number };
 }
 
-// HDF5 H5T_class_t and H5T_str_t values, as h5wasm reports them.
+type NeedKey = "size" | "strpad" | "cset" | "enum_type";
+type Need = <K extends NeedKey>(key: K) => NonNullable<SpatialDimMetadata[K]>;
+
+// HDF5 H5T_class_t, H5T_str_t and H5T_cset_t values, as h5wasm reports them.
 const H5T_INTEGER = 0;
 const H5T_FLOAT = 1;
 const H5T_STRING = 3;
 const H5T_ENUM = 8;
 const H5T_STR_NULLTERM = 0;
+const H5T_CSET_ASCII = 0;
 const CLASS_NAMES: Record<number, string> = {
   2: "a time value",
   4: "a bitfield",
@@ -85,35 +98,50 @@ const CLASS_NAMES: Record<number, string> = {
   10: "an array type",
 };
 
-function need<K extends "size" | "strpad" | "enum_type">(m: SpatialDimMetadata, key: K): NonNullable<SpatialDimMetadata[K]> {
-  const v = m[key];
-  if (v === undefined || v === null) {
-    throw new Error(`INFO@SPATIAL_DIM: the attribute metadata has no ${key}, which h5wasm always reports for HDF5 type class ${m.type}`);
-  }
-  return v as NonNullable<SpatialDimMetadata[K]>;
-}
-
 /** Why Python refuses this attribute's HDF5 type, or why h5wasm cannot decode it; null when the value may be read. */
-function typeRefusal(m: SpatialDimMetadata): string | null {
+function typeRefusal(m: SpatialDimMetadata, need: Need): string | null {
   if (m.type === H5T_INTEGER || m.type === H5T_STRING) return null;
-  if (m.type === H5T_ENUM) return need(m, "enum_type").type === H5T_INTEGER ? null : "an enum over no integer type";
+  if (m.type === H5T_ENUM) return need("enum_type").type === H5T_INTEGER ? null : "an enum over no integer type";
   if (m.type === H5T_FLOAT) {
-    const size = need(m, "size");
+    const size = need("size");
     return size === 4 || size === 8 ? null : `a ${size * 8}-bit float, which this reader cannot decode`;
   }
   return `${CLASS_NAMES[m.type] ?? "a value"} (HDF5 type class ${m.type}), not a number or a string`;
 }
 
 /** Why Python reads this h5wasm-decoded fixed-length string otherwise, or null when it reads the same text. */
-function fixedStringRefusal(m: SpatialDimMetadata, s: string): string | null {
+function fixedStringRefusal(s: string, need: Need): string | null {
   // windows-1252 and UTF-8 both decode every byte outside ASCII to a code point outside it.
   if (/[^\x00-\x7f]/.test(s)) return `the fixed-length string ${shown(s)}, which holds a byte outside ASCII`;
   // All ASCII, so one char per byte: a shorter string was cut at a NUL.
-  const size = need(m, "size");
-  if (s.length < size && need(m, "strpad") !== H5T_STR_NULLTERM) {
+  const size = need("size");
+  if (s.length < size && need("strpad") !== H5T_STR_NULLTERM) {
     return `a ${size}-byte fixed-length string with a NUL after ${shown(s)}, past which this reader cannot see`;
   }
   return null;
+}
+
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * The text h5py reads from a variable-length string of ASCII cset, or null when
+ * h5py reads no text. h5py decodes the bytes as UTF-8 (invalid bytes become lone
+ * surrogates, which `float()` refuses); h5wasm's `AsciiToString` gives one char
+ * per byte, so the bytes are exactly recoverable.
+ */
+function vlenAsciiText(s: string): string | null {
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c > 0xff) return null;
+    bytes[i] = c;
+  }
+  try {
+    return UTF8.decode(bytes);
+  } catch (e) {
+    if (e instanceof TypeError) return null;
+    throw e;
+  }
 }
 
 /**
@@ -125,16 +153,31 @@ export function spatialDimOf(attr: { value: unknown; metadata: SpatialDimMetadat
   if (attr === undefined) return null;
   const m = attr.metadata;
   const refused = (what: string) => refuse(`${path}: INFO@SPATIAL_DIM is ${what}; the spatial dimension must be an integral 1, 2 or 3`);
-  if (m.shape !== null && m.shape.reduce((a, b) => a * b, 1) === 0) return null;
-  const byType = typeRefusal(m);
-  if (byType !== null) throw refused(byType);
-  const values = valuesOf(attr.value);
-  if (values.length === 0) return null;
-  if (m.type === H5T_STRING && !m.vlen) {
-    for (const v of values) {
-      const why = typeof v === "string" ? fixedStringRefusal(m, v) : null;
-      if (why !== null) throw refused(why);
+  const need: Need = (key) => {
+    const v = m[key];
+    if (v === undefined || v === null) {
+      throw refused(`of HDF5 type class ${m.type}, and its h5wasm metadata has no ${key}, which this reader needs to read it`);
     }
+    return v as NonNullable<SpatialDimMetadata[typeof key]>;
+  };
+  if (m.shape !== null && m.shape.reduce((a, b) => a * b, 1) === 0) return null;
+  const byType = typeRefusal(m, need);
+  if (byType !== null) throw refused(byType);
+  let values = valuesOf(attr.value);
+  if (values.length === 0) return null;
+  if (m.type === H5T_STRING) {
+    values = values.map((v) => {
+      if (typeof v !== "string") throw refused(`a string that h5wasm returned as a ${typeof v}`);
+      if (!m.vlen) {
+        const why = fixedStringRefusal(v, need);
+        if (why !== null) throw refused(why);
+        return v;
+      }
+      if (need("cset") !== H5T_CSET_ASCII) return v;
+      const text = vlenAsciiText(v);
+      if (text === null) throw refused(`the variable-length ASCII string ${shown(v)}, whose bytes are not UTF-8, as h5py decodes them`);
+      return text;
+    });
   }
   const n = values.length === 1 ? floatOf(values[0]) : NaN;
   if (n === 1 || n === 2 || n === 3) return n;

@@ -26,7 +26,7 @@ import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import { firstListing, LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
-import { spatialDimOf } from "../../src/reader/ladrunoInfo.ts";
+import { spatialDimOf, type SpatialDimMetadata } from "../../src/reader/ladrunoInfo.ts";
 import { resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes } from "../../src/reader/ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
@@ -1499,35 +1499,55 @@ test("#2205: INFO@SPATIAL_DIM outside an integral 1, 2 or 3 is refused by name, 
 //
 // h5wasm cannot write most of these types (no float16, no NULLPAD string, no lone
 // byte 0xA0), so they come from h5py: one root attribute per case, deflated and
-// base64-encoded below. Regenerate with h5py 3.15:
+// base64-encoded below. This script (h5py 3.15.1, numpy 2.3.5) prints exactly
+// SPATIAL_DIM_CASES; two runs gave the same bytes.
 //
+//   import base64, io, zlib
+//   import h5py, numpy as np
 //   T = h5py.h5t
+//   def scalar(f, name, tid, data, mtype):
+//       h5py.h5a.create(f.id, name.encode(), tid, h5py.h5s.create(h5py.h5s.SCALAR)).write(data, mtype=mtype)
 //   def fixed(f, name, raw, pad=T.STR_NULLPAD, cset=T.CSET_ASCII):
 //       t = T.C_S1.copy(); t.set_size(len(raw)); t.set_strpad(pad); t.set_cset(cset)
-//       h5py.h5a.create(f.id, name.encode(), t, h5py.h5s.create(h5py.h5s.SCALAR)).write(np.array(raw, f"S{len(raw)}"), mtype=t)
-//   with h5py.File(buf, "w") as f:   # then zlib.compress(buf.getvalue(), 9), base64
+//       scalar(f, name, t, np.array(raw, f"S{len(raw)}"), t)
+//   def vlen(f, name, raw, enc):
+//       f.attrs.create(name, raw, dtype=h5py.string_dtype(enc))
+//   buf = io.BytesIO()
+//   with h5py.File(buf, "w") as f:
 //       fixed(f, "nbsp_2", b"\xa02"); fixed(f, "2_nbsp", b"2\xa0"); fixed(f, "utf8_nbsp_2", b"\xc2\xa02", cset=T.CSET_UTF8)
 //       fixed(f, "2_nul_3", b"2\x003"); fixed(f, "2_nul_3_spacepad", b"2\x003", pad=T.STR_SPACEPAD)
 //       fixed(f, "nul_2", b"\x002"); fixed(f, "2_nul", b"2\x00"); fixed(f, "2_nul_3_nullterm", b"2\x003", pad=T.STR_NULLTERM)
 //       fixed(f, "2", b"2"); fixed(f, "2_spaces_spacepad", b"2  ", pad=T.STR_SPACEPAD)
+//       vlen(f, "vlen_ascii_nbsp_2", b"\xa02", "ascii"); vlen(f, "vlen_ascii_utf8_nbsp_2", b"\xc2\xa02", "ascii")
+//       vlen(f, "vlen_utf8_overlong_2", b"\xc0\xb2", "utf-8"); f.attrs["vlen_2"] = "2"
 //       f.attrs["float16_2"] = np.float16(2)
-//       # float128_2: IEEE_F64LE copied, set_size(16), set_precision(128), set_fields(127, 112, 15, 0, 112),
-//       # set_ebias(16383), written from a float64 2.0
+//       q = T.IEEE_F64LE.copy(); q.set_size(16); q.set_precision(128); q.set_fields(127, 112, 15, 0, 112); q.set_ebias(16383)
+//       scalar(f, "float128_2", q, np.array(2.0, "<f8"), T.IEEE_F64LE)
 //       f.attrs["compound_1_member"] = np.array((2,), [("a", "<i4")])
 //       f.attrs["compound_1_member_x1"] = np.array([(2,)], [("a", "<i4")])
-//       f.attrs["opaque_02"] = np.void(b"\x02"); f.attrs["float32_2"] = np.float32(2); f.attrs["int8_2"] = np.int8(2)
-//       f.attrs["uint64_3"] = np.uint64(3); f.attrs["bool_true"] = np.bool_(True); f.attrs["vlen_2"] = "2"
+//       f.attrs["opaque_02"] = np.void(b"\x02")
+//       scalar(f, "array_type_int32_x1", T.array_create(T.STD_I32LE, (1,)), np.array([2], "<i4"), T.array_create(T.NATIVE_INT32, (1,)))
+//       scalar(f, "bitfield_8", T.STD_B8LE, np.array(2, "u1"), T.NATIVE_UINT8)
+//       vs = np.empty((), h5py.vlen_dtype("<i4")); vs[()] = np.array([2], "<i4")
+//       scalar(f, "vlen_sequence_int32", T.vlen_create(T.STD_I32LE), vs, None)
+//       f.attrs["float32_2"] = np.float32(2); f.attrs["int8_2"] = np.int8(2); f.attrs["uint64_3"] = np.uint64(3)
+//       f.attrs["bool_true"] = np.bool_(True)
 //       f.attrs.create("enum_2", np.int8(2), dtype=h5py.enum_dtype({"A": 1, "B": 2}, basetype="i1"))
+//       f.attrs["int32_space_1"] = np.array([2], "<i4"); f.attrs["int64_space_1"] = [2]; f.attrs["int32_space_2"] = np.array([2, 2], "<i4")
+//   print(base64.b64encode(zlib.compress(buf.getvalue(), 9)).decode())
 const SPATIAL_DIM_CASES = [
-  "eNrtVT1v01AUvXbaxpigxISSwIInxJg4qMqARAK4ZKhExIfE9nBaV0LyF4lddWtH+BcdGfkNTIwd+Tfl+fk+5/kjwNAF8c6Q",
-  "G9vn3HPfvTfOl9mL/Vv6fR1SaBpsQQdEXCEu+8Vr/vwDRgXjZ4xfVX6/x56hnGbP8puN7PrbdhbfvrZtMX/ZR+L/xsyeztP4",
-  "Hq81jD/UIo/v4fyafA3c1/Jet+AR+jVpLRoEi1VELIAuLUAV6riw6vkWSRVVvnXB+QPktxg/iY/HhJtQdA2AhqD7jkZrH437",
-  "JB4ZMR+Rb8EI+WPkGyKfrCLn0I2cI96HrrpJz/12sj5QdVpJ+VxQ6cPO2q+Gj/SN9dFPL3aXfl4f/Kk+NdNzvpJxN/vdRj/W",
-  "iVW5IZV+mCbqJ6jX4Q7VH3uhEw/3CM9vmG1Q8U2ob4PeLu0tymmeGd6/KeSxxjyRYZ7hZp5D1Ibo6mkpTxGTFkT5uZ7QfIeh",
-  "H4VJcESGxHf9hbtE4l2aYItG5y9/Hx0t49M3esFfzft5jvd3qW+/6ktOh9fiqygF/2odg3wu6VzDyPmUuGTA57ILxX1Y62rm",
-  "ObKEeT7I6+hp0DuDyhwmRf8m+0V/DGI2y/QcivBGq/rzfbzBdAkV7j0mo7wPuXJS0Ddy/Tyv/yFlLsLQI/EycfF5X800Yh37",
-  "04M3NvtPfmfzpOW+rvezyfK6QeKn56nLN0XNM55D/V2fm6zPJ54bpPnu0bl28Jx1fUrjpbb+/vL5qwOFN6ZmH6zSHv1sy/9W",
-  "CQkJCQkJCQkJCQkJCYl/Db8Aqw+Tbg==",
+  "eNrtWcFO20AQHTtA3JQ2CYEmtIemF4R6Ik6FckBqaBvKAamIUqm3rQmmiuTYbmIjOMGx/QuOnPsFVU899o/oej1rr9cJ0Ipb",
+  "90nJxt43b2ZnxpEy+bb9ZutB6XEJIhgGzEAFRFwhfj/JXvP9T7hquH7F9VLn95+xvQber6B+s4B85O3v9XqivuxH4f/Gdm9z",
+  "N1o/4rWB6y89y+N9uHtHfnm/Xi7F16tz8ToPq+ivSGMxwD0Y+8QEqNEAdCGOC3My3ySRRZ5vXnD+GvLnGT8MjjqEO6GoVQEK",
+  "gt1PdJT6Mbif0CFt5kfkm9BGfgf5VZFPxr7Vt33rkOehpk+z5/7m4jxQ6ygS+VyQy8Nc6m8CH+lT46PvTmCPhkl8cFN8emzP",
+  "+VrMne5vAf2xTIzlhOTy0Wyi/W5iv0jtjx3bJda4PxiI1QNY1oB1ViXRMDL9G+Xicjbt6bev3+1ogAYST+wzfl2Q+qIg8X98",
+  "j9cZ6bnh8aHrZF96zOCkrL6TFBQUFBQUFBQUFBQUFBTuGlX84S/PV9N5Q12eN2RGRjfNGwrCvEHP6C6lukzRO7ZHjud+jkcZ",
+  "y5p26zlGgel2cb+Y6po362iCzkxGp8R0jhzPClrryXyl2izjzKICpVkolaU5B5pTnW28f1/QMTtcqNo8w8yfg18G/+qlpJNF",
+  "dx583F+ADarX94a+F7qHpEWG9vDAHiHxkRafw7pl/SsGn8U0c/mNz3Ge1GsDGnm/5KR1J341LVeXbBxrSV2i+ZnnW19Cm6zx",
+  "uixBdu6W2vF+W6SeDLBGI+uUBKe+TQZu0DYxfHiO9Rc1xBjzup2kvtEk9WAQHA1s55DEt6m36X0rx5X069imZ3L7GBrbX8be",
+  "nVYnsX9np/UvPWbav08TnboB9TPI9V03m+8iOx+NiPVuFMf15+J5ucfsQmq4/oK0k7onlt3c90Q2LyVYifLqeQ4JRqGN+w09",
+  "thHj2NrceR/9ybO/96HHReU+Sp/HItO13XAYnWeS3ibavOIa+qRzcr2H9HMD4mZiw1zS+qf+zunRtGX1Mnn7e70kPvOa+HRJ",
+  "R8fXH7Pf2hk=",
 ].join("");
 
 {
@@ -1548,18 +1568,24 @@ const SPATIAL_DIM_CASES = [
     ["2", 2],
     ["2_spaces_spacepad", 2], // HDF5 strips SPACEPAD; float() skips the rest
     ["2_nul_3_nullterm", 2], // NULLTERM: HDF5 itself ends the string at the NUL
+    ["vlen_2", 2],
+    ["vlen_ascii_utf8_nbsp_2", 2], // h5py decodes the bytes as UTF-8: U+00A0, which float() skips
     ["float32_2", 2],
     ["int8_2", 2],
     ["uint64_3", 3],
     ["bool_true", 1], // h5py's FALSE/TRUE enum
     ["enum_2", 2],
-    ["vlen_2", 2],
+    // A plain integer dataspace (1,), as the fork's writei and apeGmsh's _i() write.
+    ["int32_space_1", 2],
+    ["int64_space_1", 2],
   ];
   const refused: [string, RegExp][] = [
     // Case 1: windows-1252 decoded 0xA0 to U+00A0, which float() skips, so b'\xa02' read 2.
     ["nbsp_2", /is the fixed-length string " 2", which holds a byte outside ASCII;/],
     ["2_nbsp", /is the fixed-length string "2 ", which holds a byte outside ASCII;/],
     ["utf8_nbsp_2", /is the fixed-length string " 2", which holds a byte outside ASCII;/],
+    // Case 1, variable length: AsciiToString gave U+00A0 for 0xA0, which is no UTF-8.
+    ["vlen_ascii_nbsp_2", /is the variable-length ASCII string " 2", whose bytes are not UTF-8, as h5py decodes them;/],
     // Case 2: h5wasm cut b'2\x003' at the NUL and read 2.
     ["2_nul_3", /is a 3-byte fixed-length string with a NUL after "2", past which this reader cannot see;/],
     ["2_nul_3_spacepad", /is a 3-byte fixed-length string with a NUL after "2", past which/],
@@ -1570,17 +1596,35 @@ const SPATIAL_DIM_CASES = [
     ["compound_1_member", /is a compound \(HDF5 type class 6\), not a number or a string;/],
     ["compound_1_member_x1", /is a compound \(HDF5 type class 6\), not a number or a string;/],
     ["opaque_02", /is an opaque value \(HDF5 type class 5\), not a number or a string;/],
+    ["int32_space_2", /is \[2, 2\];/],
   ];
-  // Stricter than Python, pinned: Python reads both as 2. h5wasm decodes no float16
-  // and shows no byte past a NUL, so b'2\x00' cannot be told from b'2\x003'.
-  const stricter: [string, RegExp][] = [
+  // Python reads each of these as 2. No writer, current or past, produces any of
+  // them (#2324 evidence table), so the reader stays fail-closed. h5wasm decodes no
+  // float16 and shows no byte past a NUL, so b'2\x00' cannot be told from b'2\x003'.
+  const divergent: [string, RegExp][] = [
     ["float16_2", /is a 16-bit float, which this reader cannot decode;/],
     ["2_nul", /is a 2-byte fixed-length string with a NUL after "2", past which/],
+    ["array_type_int32_x1", /is an array type \(HDF5 type class 10\), not a number or a string;/],
+    ["bitfield_8", /is a bitfield \(HDF5 type class 4\), not a number or a string;/],
+    ["vlen_sequence_int32", /is a variable-length sequence \(HDF5 type class 9\), not a number or a string;/],
   ];
+  // A known gap, pinned: h5wasm's UTF8ToString decodes the overlong b'\xc0\xb2' as
+  // "2", and the raw bytes are out of ladrunoInfo.ts's reach. Python refuses it.
+  const gap: [string, number][] = [["vlen_utf8_overlong_2", 2]];
+  const refusedByName = (name: string, pattern: RegExp) =>
+    assert.throws(
+      () => dimOf(name),
+      (e: unknown) =>
+        e instanceof LadrunoError &&
+        e.kind === "layout" &&
+        e.message.startsWith(`${p}: INFO@SPATIAL_DIM is `) &&
+        pattern.test(e.message) &&
+        / the spatial dimension must be an integral 1, 2 or 3$/.test(e.message),
+    );
   test("#2324: the h5py file holds exactly the tabled cases", () => {
     const f = new h5wasm.File(p, "r");
     try {
-      assert.deepEqual(Object.keys(f.attrs).sort(), [...read, ...refused, ...stricter].map(([n]) => n).sort());
+      assert.deepEqual(Object.keys(f.attrs).sort(), [...read, ...refused, ...divergent, ...gap].map(([n]) => n).sort());
     } finally {
       f.close();
     }
@@ -1588,20 +1632,36 @@ const SPATIAL_DIM_CASES = [
   for (const [name, dim] of read) {
     test(`#2324: INFO@SPATIAL_DIM ${name} reads as ${dim}, as in Python`, () => assert.equal(dimOf(name), dim));
   }
-  for (const [name, pattern] of [...refused, ...stricter]) {
-    test(`#2324: INFO@SPATIAL_DIM ${name} is refused by name`, () => {
-      assert.throws(
-        () => dimOf(name),
-        (e: unknown) =>
-          e instanceof LadrunoError &&
-          e.kind === "layout" &&
-          e.message.startsWith(`${p}: INFO@SPATIAL_DIM is `) &&
-          pattern.test(e.message) &&
-          / the spatial dimension must be an integral 1, 2 or 3$/.test(e.message),
-      );
-    });
+  for (const [name, pattern] of refused) {
+    test(`#2324: INFO@SPATIAL_DIM ${name} is refused by name, as in Python`, () => refusedByName(name, pattern));
+  }
+  for (const [name, pattern] of divergent) {
+    test(`#2324: INFO@SPATIAL_DIM ${name} is refused by name (known intentional divergence from Python, which reads 2)`, () => refusedByName(name, pattern));
+  }
+  for (const [name, dim] of gap) {
+    test(`#2324: INFO@SPATIAL_DIM ${name} reads as ${dim} (known gap: Python refuses it; needs the raw bytes)`, () => assert.equal(dimOf(name), dim));
   }
 }
+
+test("#2324: metadata missing a field the rule needs is refused through the caller's factory, naming the file", () => {
+  const refuse = (m: string) => new LadrunoError("layout", m);
+  const cases: [SpatialDimMetadata, string][] = [
+    [{ type: 1, vlen: false, shape: [] }, "size"],
+    [{ type: 8, vlen: false, shape: [] }, "enum_type"],
+    [{ type: 3, vlen: true, shape: [] }, "cset"],
+    [{ type: 3, vlen: false, shape: [], size: 3 }, "strpad"],
+  ];
+  for (const [metadata, key] of cases) {
+    assert.throws(
+      () => spatialDimOf({ value: "2", metadata }, "f.ladruno", refuse),
+      (e: unknown) =>
+        e instanceof LadrunoError &&
+        e.kind === "layout" &&
+        e.message === `f.ladruno: INFO@SPATIAL_DIM is of HDF5 type class ${metadata.type}, and its h5wasm metadata has no ${key}, which this reader needs to read it; the spatial dimension must be an integral 1, 2 or 3`,
+      key,
+    );
+  }
+});
 
 test("#2324: a one-member compound INFO@SPATIAL_DIM refuses the open, by name", () => {
   const p = edited(TRUSS, (f) => {
