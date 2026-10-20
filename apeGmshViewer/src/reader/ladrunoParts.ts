@@ -231,14 +231,17 @@ export class LadrunoPartSet {
   }
 
   elementIds(stageId: string, groupId: string): ElementIds {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
   readGaussStep(stageId: string, groupId: string): Float64Array {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
   readGaussRows(stageId: string, groupId: string): Float64Array {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
@@ -248,10 +251,12 @@ export class LadrunoPartSet {
   }
 
   readLineStations(stageId: string, component: string): LadrunoLineStationSlab {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, line stations ${component}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
   readLineStationStep(stageId: string, component: string): LadrunoLineStationStep {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, line stations ${component}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
@@ -345,6 +350,8 @@ export class LadrunoPartSet {
    * over every part, any id two parts hold refused by name (Python's
    * `_mpco_multi._refuse_element_in_two_partitions`, #2310). Line-station buckets are not
    * reached from here: a part's LadrunoFile serves their element ids only with a full read.
+   *
+   * Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
    */
   private checkElementIds(stem: string): void {
     for (const s of this.parts[0]!.index.stages) {
