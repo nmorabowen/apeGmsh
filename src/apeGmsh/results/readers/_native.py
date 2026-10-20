@@ -35,6 +35,7 @@ from .._slabs import (
 from .._time import resolve_time_slice
 from ..schema import _native
 from ._gauss_refusals import GaussDimensionMixed, refuse_mixed_gauss_dims
+from ._ladruno import _repeated_rows
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -56,6 +57,80 @@ _ELEMENT_CATEGORY = {
     "fibers": _native.GROUP_FIBERS,
     "layers": _native.GROUP_LAYERS,
 }
+
+
+#: How many repeated ids a refusal message names before "and N more".
+_SHOWN = 5
+
+
+class NativeRepeatedNodeId(ValueError):
+    """A native results file lists one node id twice in one partition's
+    ``nodes/_ids``.
+
+    Raised when the file is opened. A repeated id would read as two
+    columns of one node, and the reader's per-node dedup would keep the
+    first copy silently. A node in two *partitions* is a different case:
+    see :class:`NativePartitionCopiesDisagree`.
+
+    ``file`` is the file path, ``dataset`` the HDF5 path of the ``_ids``
+    dataset, and ``repeated`` maps each repeated id to the rows it sits at.
+    """
+
+    def __init__(
+        self, file: Path, dataset: str, repeated: "dict[int, list[int]]",
+    ) -> None:
+        self.file = file
+        self.dataset = dataset
+        self.repeated = repeated
+        shown = dict(list(repeated.items())[:_SHOWN])
+        more = (
+            f" and {len(repeated) - _SHOWN} more"
+            if len(repeated) > _SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: {dataset} lists node id(s) more than once "
+            f"(id: rows {shown}{more}). Each node is listed once per "
+            f"partition; a repeated id would read as two columns of one "
+            f"node, and only the first would be kept. The file is malformed."
+        )
+
+
+class NativePartitionCopiesDisagree(ValueError):
+    """A node held by several partitions has copies of one component that
+    are not bit-for-bit equal.
+
+    Native files carry no partition-reduction rule (MPCO and ``.ladruno``
+    have ``PARTITION_REDUCTION``), so the reader cannot tell a partial
+    per-partition value (a reaction or unbalanced load, which would have
+    to be summed) from a replicated one (a displacement). A node's copies
+    are read only when every partition holds the same value, so keeping
+    the first is exact; any other copy set refuses rather than return one
+    partition's share as the whole.
+
+    ``copies`` maps each disagreeing node id to the partitions that hold it.
+    """
+
+    def __init__(
+        self, file: Path, stage_id: str, component: str,
+        copies: "dict[int, list[str]]",
+    ) -> None:
+        self.file = file
+        self.stage_id = stage_id
+        self.component = component
+        self.copies = copies
+        shown = dict(list(copies.items())[:_SHOWN])
+        more = (
+            f" and {len(copies) - _SHOWN} more"
+            if len(copies) > _SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: stage {stage_id!r} component {component!r}: node "
+            f"id(s) held by several partitions have copies that differ "
+            f"(id: partitions {shown}{more}). Native results files carry no "
+            f"partition-reduction rule, so partial per-partition values "
+            f"(reactions, unbalanced loads) cannot be summed, and a copy is "
+            f"read only when every partition holds the same value."
+        )
 
 
 class LegacySimplexGaussCoordsWarning(UserWarning):
@@ -182,12 +257,41 @@ class NativeReader:
         # raises SchemaVersionError before any read API is offered.
         try:
             self._validate_per_zone_versions()
+            self._refuse_repeated_node_ids()
         except Exception:
             try:
                 self._h5.close()
             except Exception:
                 pass
             raise
+
+    def _refuse_repeated_node_ids(self) -> None:
+        """Raise :class:`NativeRepeatedNodeId` if one partition's
+        ``nodes/_ids`` lists a node id twice (#2360).
+
+        Checked per partition, so a boundary node replicated across
+        partitions is not refused here; ``read_nodes`` checks its copies.
+        A partition with no ``nodes`` group or no ``_ids`` lists no node.
+        """
+        stages_root = _native.STAGES_GROUP[1:]
+        if stages_root not in self._h5:
+            return
+        for sid in self._h5[stages_root]:
+            for pid in self.partitions(sid):
+                nodes_path = _native.nodes_path(sid, pid)[1:]
+                if nodes_path not in self._h5:
+                    continue
+                nodes_grp = self._h5[nodes_path]
+                if _native.DSET_IDS not in nodes_grp:
+                    continue
+                dataset = nodes_grp[_native.DSET_IDS]
+                repeated = _repeated_rows(
+                    np.asarray(dataset[...], dtype=np.int64).ravel(),
+                )
+                if repeated:
+                    raise NativeRepeatedNodeId(
+                        self._path, dataset.name, repeated,
+                    )
 
     def _validate_per_zone_versions(self) -> None:
         """Apply the floor check (ADR 0113 (#1303)) to every zone present.
@@ -670,8 +774,8 @@ class NativeReader:
             else np.asarray(node_ids, dtype=np.int64)
         )
 
-        chunks_values: list[ndarray] = []
-        chunks_ids: list[ndarray] = []
+        # The partitions holding ``component``, with the rows they select.
+        selected: list[tuple[str, "h5py.Group", "slice | ndarray", ndarray]] = []
         for pid in self.partitions(stage_id):
             nodes_path = _native.nodes_path(stage_id, pid)[1:]
             if nodes_path not in self._h5:
@@ -684,7 +788,7 @@ class NativeReader:
             )
 
             if node_ids_filter is None:
-                sel = slice(None)
+                sel: "slice | ndarray" = slice(None)
                 sel_ids = all_ids
             else:
                 mask = np.isin(all_ids, node_ids_filter)
@@ -692,14 +796,42 @@ class NativeReader:
                     continue
                 sel = np.where(mask)[0]
                 sel_ids = all_ids[sel]
+            selected.append((pid, nodes_grp, sel, sel_ids))
 
+        # Node ids held by more than one partition (a repeat within one
+        # partition is refused at open, so a repeat here is a copy).
+        shared = np.array([], dtype=np.int64)
+        if len(selected) > 1:
+            uniq, counts = np.unique(
+                np.concatenate([s[3] for s in selected]), return_counts=True,
+            )
+            shared = uniq[counts > 1]
+
+        chunks_values: list[ndarray] = []
+        chunks_ids: list[ndarray] = []
+        copy_vals: list[ndarray] = []
+        copy_ids: list[ndarray] = []
+        copy_pids: list[str] = []
+        for pid, nodes_grp, sel, sel_ids in selected:
             full = nodes_grp[component][...]                 # (T, N)
-            values = full[t_idx]
             if not isinstance(sel, slice):
-                values = values[:, sel]
-
-            chunks_values.append(values)
+                full = full[:, sel]
+            if shared.size:
+                is_copy = np.isin(sel_ids, shared)
+                if is_copy.any():
+                    copy_vals.append(full[:, is_copy])
+                    copy_ids.append(sel_ids[is_copy])
+                    copy_pids.extend([pid] * int(is_copy.sum()))
+            chunks_values.append(full[t_idx])
             chunks_ids.append(sel_ids)
+
+        if copy_ids:
+            self._refuse_disagreeing_copies(
+                stage_id, component,
+                np.concatenate(copy_ids),
+                np.concatenate(copy_vals, axis=1),
+                np.array(copy_pids),
+            )
 
         values = (
             np.concatenate(chunks_values, axis=1) if chunks_values
@@ -710,10 +842,11 @@ class NativeReader:
             else np.array([], dtype=np.int64)
         )
         # Boundary nodes are replicated across partition domains. Dedup
-        # by id (first occurrence wins, matching the MPCO multi-reader)
-        # so a shared node yields one column, not one per partition. Only
-        # reorders when duplicates exist, so disjoint-owner files are
-        # byte-identical to the plain concatenation.
+        # by id (first occurrence wins) so a shared node yields one
+        # column, not one per partition; the copies were checked equal
+        # above, so the first is every copy. Only reorders when
+        # duplicates exist, so disjoint-owner files are byte-identical to
+        # the plain concatenation.
         if ids_out.size:
             uniq, first_idx = np.unique(ids_out, return_index=True)
             if uniq.size != ids_out.size:
@@ -722,6 +855,37 @@ class NativeReader:
         return NodeSlab(
             component=component, values=values,
             node_ids=ids_out, time=time[t_idx],
+        )
+
+    def _refuse_disagreeing_copies(
+        self, stage_id: str, component: str,
+        ids: ndarray, values: ndarray, pids: ndarray,
+    ) -> None:
+        """Raise :class:`NativePartitionCopiesDisagree` unless every copy
+        of each node in ``ids`` is bit-for-bit equal to its first copy,
+        over every step of the stage (not only the requested slice).
+
+        ``ids`` lists one node id per column of ``values`` (``(T, M)``),
+        and ``pids`` the partition each column came from, in read order.
+        The comparison is on the bytes, so NaN copies agree and ``0.0``
+        and ``-0.0`` do not.
+        """
+        _, first, inverse = np.unique(
+            ids, return_index=True, return_inverse=True,
+        )
+        cells = np.ascontiguousarray(values)
+        n_steps, n_cols = cells.shape
+        raw = cells.view(np.uint8).reshape(
+            n_steps, n_cols, cells.dtype.itemsize,
+        )
+        differs = (raw != raw[:, first[inverse], :]).any(axis=(0, 2))
+        if not differs.any():
+            return
+        copies: dict[int, list[str]] = {}
+        for nid in np.unique(ids[differs]).tolist():
+            copies[int(nid)] = pids[ids == nid].tolist()
+        raise NativePartitionCopiesDisagree(
+            self._path, stage_id, component, copies,
         )
 
     # ------------------------------------------------------------------
