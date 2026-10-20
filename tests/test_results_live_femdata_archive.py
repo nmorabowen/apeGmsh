@@ -507,6 +507,61 @@ def test_coincident_nodes_are_told_apart_by_their_elements(
         assert _node_calls(ops) == []
 
 
+def _with_point_elements(fem: FEMData, nodes: "list[int]") -> FEMData:
+    """``fem`` with a Gmsh point element (ids from 10) on each of
+    ``nodes``, ahead of its other groups, as ``get_fem_data()`` holds the
+    meshed points beside the elements a deck builds."""
+    point = make_type_info(code=15, gmsh_name="Point", dim=0, order=1,
+                           npe=1, count=len(nodes))
+    groups = {15: ElementGroup(
+        element_type=point,
+        ids=np.arange(10, 10 + len(nodes), dtype=np.int64),
+        connectivity=np.asarray(nodes, dtype=np.int64).reshape(-1, 1))}
+    groups.update({g.element_type.code: g for g in fem.elements})
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=fem.nodes,
+        elements=ElementComposite(groups=groups, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=fem.info.n_nodes,
+                      n_elems=fem.info.n_elems + len(nodes), bandwidth=2,
+                      types=[point, *fem.info.types]),
+        model_name=f"{fem.model_name}_points",
+    )
+
+
+@pytest.mark.parametrize("with_spring, beam, spring, match", [
+    (True, (1, 2), (4, 3), None),
+    (True, (1, 3), (4, 2),
+     r"node 2: FEM element 1 has nodes \[1, 2\], the live element 1 has "
+     r"\[1, 3\]"),
+    (False, (1, 2), (4, 3),
+     r"nodes \[3\] share their position with another FEM node, and no FEM "
+     r"element that touches them is a live element of its FEM id"),
+], ids=["pinned", "tags-2-3-swapped", "no-built-element"])
+def test_unbuilt_fem_elements_pin_nothing_and_refuse_nothing(
+    tmp_path, with_spring, beam, spring, match,
+) -> None:
+    """#2342: the point elements a deck did not build (FEM ids 10-12) are
+    passed over. The live elements still pin nodes 2-4 or refuse a swap,
+    and a node only an unbuilt element touches refuses by name."""
+    fem = _with_point_elements(_coincident_fem(with_spring), [2, 3, 4])
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = LiveOps(ndm=2, ndf={n: 3 for n in _AT_TIP},
+                  elements={1: ("ElasticBeam2d", beam),
+                            2: ("ZeroLength", spring)},
+                  coords=dict(_AT_TIP))
+    spec = _spec(fem, ("nodes", "u", ("displacement_y",), [2, 3]))
+    if match is None:
+        _run(spec, tmp_path / "run", model_h5, ops)
+        assert [_dofs(c) for c in _node_calls(ops)] == [[2]]
+    else:
+        with pytest.raises(ValueError, match=match):
+            _run(spec, tmp_path / "run", model_h5, ops)
+        assert _node_calls(ops) == []
+
+
 def test_coordinates_within_the_tolerance_record(frame, tmp_path) -> None:
     """The tolerance is ``1e-9`` of the largest coordinate: a last-bit
     difference still records."""
