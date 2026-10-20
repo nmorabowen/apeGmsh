@@ -38,9 +38,8 @@ apeGmsh materials are typed dataclasses on the `ops.nDMaterial.*` namespace; eac
 **handle** you pass to elements via `material=`.
 
 ```python
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
 
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
@@ -240,10 +239,12 @@ Softening + non-symmetry makes plain Newton fragile.
 
 ```python
 import numpy as np
-import openseespy.opensees as opspy        # the live handle; on a Ladruno build: `import opensees as opspy`
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
+
+opspy = get_ops()                          # the live handle: the module the bridge builds into
 
 with apeGmsh(model_name="column") as g:
     # … geometry + PGs "Body","Base","Top" … then:
@@ -267,31 +268,39 @@ with apeGmsh(model_name="column") as g:
     ops.constraints.Transformation(); ops.numberer.RCM(); ops.system.UmfPack()
     ops.test.NormDispIncr(tol=1e-6, max_iter=20); ops.algorithm.KrylovNewton()
     ops.integrator.LoadControl(incr=0.1); ops.analysis.Static()
+    ops.h5("column_model.h5")                             # the model archive the read pairs with
     ops.run(wipe=False)                                   # build + leave the domain live
     opspy.analyze(10)                                     # apply gravity in 10 increments
     opspy.loadConst('-time', 0.0)                         # hold gravity, reset pseudo-time
 
-    # --- STAGE 2: lateral push under displacement control, capturing the curve ---
+    # --- STAGE 2: lateral push under displacement control, recording the curve ---
     tsp = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=tsp) as pat:
         pat.load(pg="Top", forces=(1.0, 0.0, 0.0))        # UNIT reference load (sets push direction)
     n_steps, dU = 600, -0.05e-3
     ops.integrator.DisplacementControl(node=ctrl_id, dof=1, dU=dU)
 
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(pg="Top",  components="displacement")
-    spec.nodes(pg="Base", components="reaction_force")
-    with ops.domain_capture(spec, path="pushover.h5") as cap:
-        cap.begin_stage("pushover", kind="static")
+    xyz = ("x", "y", "z")
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(
+            ResolvedRecorderRecord(
+                category="nodes", name="top",
+                components=tuple(f"displacement_{a}" for a in xyz),
+                dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Top").ids),
+            ResolvedRecorderRecord(
+                category="nodes", name="base",
+                components=tuple(f"reaction_force_{a}" for a in xyz),
+                dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Base").ids),
+        ),
+    )
+    with spec.emit_default("pushover", model_h5="column_model.h5") as run:
         for k in range(n_steps):
             if opspy.analyze(1) != 0:
                 print(f"non-convergence at step {k}"); break
-            cap.step(t=(k + 1) * abs(dU))
-        cap.end_stage()
 
-# --- read the capacity curve back, by name ---
-om = OpenSeesModel.from_h5("pushover.h5", fem_root="/model")
-with Results.from_native("pushover.h5", model=om) as r:
+# --- read the capacity curve back, by name (on the fork: Results.from_ladruno) ---
+with run.results() as r:
     ux = np.asarray(r.nodes.get(pg="Top",  component="displacement_x").values)[:, 0]
     V  = -np.asarray(r.nodes.get(pg="Base", component="reaction_force_x").values).sum(axis=1)
 # (ux, V) is the pushover curve.
