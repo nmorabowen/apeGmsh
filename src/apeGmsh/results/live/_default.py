@@ -87,7 +87,12 @@ from ..readers._ladruno_live import (
     stamp_fork_file,
 )
 from ..Results import Results
-from ..spec._emit import collect_mpco_tokens, element_tag_map, mpco_ops_args
+from ..spec._emit import (
+    collect_mpco_tokens,
+    element_tag_map,
+    line_stations_from_local_force,
+    mpco_ops_args,
+)
 from ._recorders import LiveRecorders
 
 if TYPE_CHECKING:
@@ -553,7 +558,10 @@ def _pair_live_elements(
     every element it records. A ``fibers`` record's elements then have
     their section locations and fibre counts read from the live domain
     (:meth:`LiveDomainFacts.record_fiber_sections`): a FEMData archive
-    holds no ``beamIntegration`` to count them from.
+    holds no ``beamIntegration`` to count them from. A ``line_stations``
+    record read from ``section force`` has its elements' section locations
+    read the same way (:meth:`LiveDomainFacts.record_line_stations`), so
+    the read slices its ``.out`` pair by their counts (#2328).
     """
     records = [r for r in spec.records if r.category in _ELEMENT_CATEGORIES]
     if not records:
@@ -588,6 +596,15 @@ def _pair_live_elements(
                 (int(e) for e in (r.element_ids if r.element_ids is not None
                                   else ())),
                 where=f"emit_default: fibres record {r.name!r}")
+        elif (r.category == "line_stations" and r.element_class_name
+              is not None and not line_stations_from_local_force(r)):
+            # The .out pair carries no per-element count: the read slices
+            # it by these. A class-less record is refused on read,
+            # before any count is asked for.
+            facts.record_line_stations(
+                (int(e) for e in (r.element_ids if r.element_ids is not None
+                                  else ())),
+                where=f"emit_default: line-stations record {r.name!r}")
     return facts
 
 

@@ -765,3 +765,131 @@ def test_a_fibres_record_over_an_elastic_section_refuses_by_name(
     _refuses(spec, tmp_path, model_h5, opspy,
              r"fibres record 'fib': FEM element 1 answers fiberData2 of 0 "
              r"values at section 1, not whole fibres of 6")
+
+
+# ---------------------------------------------------------------------------
+# Line stations sliced by the live section counts (#2328)
+# ---------------------------------------------------------------------------
+
+#: Two vertical displacement beams of elastic sections: element 1 on nodes
+#: 1-2 (L = 1, Legendre 2), element 2 on nodes 3-4 (L = 13, Legendre 4).
+#: Their 6 stations split 3 + 3 by an equal slice, and both blocks increase
+#: within [-1, 1] once normalised by their own block's length, so before
+#: #2328 the record read element 2's base station as element 1's third,
+#: with no warning.
+_MIXED_L = (1.0, 13.0)
+_LEGENDRE = {2: np.polynomial.legendre.leggauss(2)[0],
+             4: np.polynomial.legendre.leggauss(4)[0]}
+_LS_COMPS = ("axial_force", "bending_moment_z")
+
+
+def _mixed_fem() -> FEMData:
+    coords = np.array([[0.0, 0.0, 0.0], [0.0, _MIXED_L[0], 0.0],
+                       [W, 0.0, 0.0], [W, _MIXED_L[1], 0.0]])
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2)
+    group = ElementGroup(
+        element_type=line, ids=np.array([1, 2], dtype=np.int64),
+        connectivity=np.array([[1, 2], [3, 4]], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 5, dtype=np.int64),
+                            node_coords=coords, physical=pg,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=4, n_elems=2, bandwidth=2, types=[line]),
+        model_name="femdata_elements_mixed_stations",
+    )
+
+
+def _build_mixed(ops: Any, fem: FEMData) -> None:
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        ops.node(int(nid), float(xyz[0]), float(xyz[1]))
+    ops.fix(1, 1, 1, 1)
+    ops.fix(3, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.section("Elastic", 1, E, A, IZ)
+    ops.beamIntegration("Legendre", 1, 1, 2)
+    ops.beamIntegration("Legendre", 2, 1, 4)
+    ops.element("dispBeamColumn", 1, 1, 2, 1, 1)
+    ops.element("dispBeamColumn", 2, 3, 4, 1, 2)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tip in (2, 4):
+        ops.load(tip, PL, -PN, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("BandGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 10)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / _STEPS)
+    ops.analysis("Static")
+
+
+def _stations_rec(name: str, ids: "list[int]") -> ResolvedRecorderRecord:
+    return _record("line_stations", name, _LS_COMPS, np.array(ids),
+                   "DispBeamColumn2d")
+
+
+def test_mixed_line_stations_refuse_by_their_live_counts(opspy, tmp_path) -> None:
+    """The stock reproducer of #2328: the record is refused by its live
+    section counts, naming each element, before the columns are divided."""
+    fem = _mixed_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_mixed(opspy, fem)
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id,
+                                records=(_stations_rec("ls", [1, 2]),))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DefaultRouteWarning)
+        with spec.emit_default(tmp_path / "run", model_h5=model_h5,
+                               ops=NoMPCO(opspy)) as run:
+            for _ in range(_STEPS):
+                assert opspy.analyze(1) == 0
+    with pytest.raises(ValueError,
+                       match=r"different integration-point counts in the live "
+                             r"domain \(2 points: FEM elements \[1\]; 4 points: "
+                             r"FEM elements \[2\]\)"):
+        run.results(cache_root=tmp_path / "cache")
+
+
+def test_mixed_line_stations_split_by_count_are_the_live_section_force(
+    opspy, tmp_path,
+) -> None:
+    """Split by count, each record reads its element's own stations: the
+    Legendre points, and each station's ``(P, Mz)`` equal to the live
+    ``section force`` at rtol 1e-12. The base station carries the largest
+    moment ``PL (L - x)`` (rtol 1e-9), which checks the order physically."""
+    fem = _mixed_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_mixed(opspy, fem)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_stations_rec("short", [1]), _stations_rec("long", [2])))
+    res = _emit(spec, tmp_path, model_h5, opspy, _STEPS)
+    try:
+        ls = res.elements.line_stations
+        for e, n_ip, length in ((1, 2, _MIXED_L[0]), (2, 4, _MIXED_L[1])):
+            ids = np.array([e])
+            for k, comp in enumerate(_LS_COMPS):
+                slab = ls.get(component=comp, ids=ids)
+                rows = _by_element(slab, e)
+                assert len(rows) == n_ip
+                xi = np.asarray(slab.station_natural_coord)[rows]
+                np.testing.assert_allclose(xi, _LEGENDRE[n_ip], rtol=0,
+                                           atol=1e-12)
+                truth = [opspy.eleResponse(e, "section", ip, "force")[k]
+                         for ip in range(1, n_ip + 1)]
+                vals = np.asarray(slab.values)[-1][rows]
+                np.testing.assert_allclose(vals, truth, **_RTOL,
+                                           err_msg=f"{comp} of element {e}")
+                if comp == "bending_moment_z":
+                    x = 0.5 * (xi + 1.0) * length
+                    np.testing.assert_allclose(np.abs(vals), PL * (length - x),
+                                               rtol=1e-9)
+                    assert np.argmax(np.abs(vals)) == 0
+    finally:
+        res.close()

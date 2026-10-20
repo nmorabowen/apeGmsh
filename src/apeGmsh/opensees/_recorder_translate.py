@@ -664,7 +664,10 @@ class LiveDomainFacts:
     record's section facts are read from the live domain before the run
     (:meth:`record_fiber_sections`, #2290): each section's location
     (``sectionLocation``) and fibre count (``fiberData2``). The read
-    slices the ``.out`` fibre file by them (:meth:`fiber_sections`).
+    slices the ``.out`` fibre file by them (:meth:`fiber_sections`). A
+    line-stations record's section locations are read the same way
+    (:meth:`record_line_stations`, #2328), and the read slices its
+    ``.out`` pair by their counts (:meth:`station_count`).
     """
 
     def __init__(self, ops: object, archive: object) -> None:
@@ -689,6 +692,9 @@ class LiveDomainFacts:
         #: ``{fem_eid: (section locations, fibre counts)}`` of the paired
         #: fibre beams :meth:`record_fiber_sections` read.
         self._sections: "dict[int, tuple[tuple[float, ...], tuple[int, ...]]]" = {}
+        #: ``{fem_eid: section locations}`` of the paired beams
+        #: :meth:`record_line_stations` or :meth:`record_fiber_sections` read.
+        self._stations: "dict[int, tuple[float, ...]]" = {}
 
     @property
     def ndm(self) -> int:
@@ -1085,6 +1091,7 @@ class LiveDomainFacts:
                 continue
             self._sections[e] = (
                 locations, tuple(n // _FIBER_DATA2_WIDTH for n in sizes))
+            self._stations[e] = locations
         if bad:
             raise ValueError(
                 f"{where}: " + "; ".join(bad[:3])
@@ -1105,6 +1112,56 @@ class LiveDomainFacts:
                 f"FEM element {e}: its sections were not read from the live "
                 "domain before the run, so its fibres cannot be placed.")
         return self._sections[e]
+
+    def record_line_stations(
+        self, element_ids: "Iterable[int]", *, where: str,
+    ) -> None:
+        """Read the section locations of each paired FEM element of
+        ``element_ids`` from the live domain (``sectionLocation(e)``), for
+        the line-stations read (#2328).
+
+        A ``.out`` line-stations pair carries no per-element point count,
+        so the read slices its columns by these counts
+        (:func:`~apeGmsh.results.readers._out_station_slicing.line_station_count`):
+        a FEMData archive holds no ``beamIntegration`` to count them from.
+        They are read before the run, while the domain holds the element.
+        An element :meth:`pair_elements` has not proved, or one with no
+        sections, refuses by FEM id.
+        """
+        ops = self._ops
+        bad: "list[str]" = []
+        for e in dict.fromkeys(int(v) for v in element_ids):
+            if e not in self._paired:
+                raise ValueError(
+                    f"{where}: FEM element {e} is not paired with a live "
+                    "element, so its sections cannot be read from the live "
+                    "domain.")
+            if e in self._stations:
+                continue
+            raw = ops.sectionLocation(e)  # type: ignore[attr-defined]
+            locations = tuple(float(x) for x in (raw or ()))
+            if not locations:
+                bad.append(f"FEM element {e} ({self._live_class[e]!r}) has "
+                           f"no sections (sectionLocation answered {raw!r})")
+                continue
+            self._stations[e] = locations
+        if bad:
+            raise ValueError(
+                f"{where}: " + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". Its stations cannot be counted; record force or "
+                "displacement beams, or an elastic beam under its own class.")
+
+    def station_count(self, fem_eid: int) -> int:
+        """The section count of a FEM element :meth:`record_line_stations`
+        or :meth:`record_fiber_sections` read; any other id refuses, naming
+        it. Read from the record, never from the live domain."""
+        e = int(fem_eid)
+        if e not in self._stations:
+            raise ValueError(
+                f"FEM element {e}: its sections were not read from the live "
+                "domain before the run, so its stations cannot be counted.")
+        return len(self._stations[e])
 
 
 #: Values per fibre of a ``section fiberData2`` response: ``[y, z, area,

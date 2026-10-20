@@ -557,6 +557,78 @@ def test_a_file_fibre_count_that_is_not_the_live_one_refuses(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# A line-stations record is sliced by the live section counts (#2328)
+# ---------------------------------------------------------------------------
+
+#: Element 1 (L = 2) with 2 sections, element 2 (L = 3) with 4: 6 stations
+#: split 3 + 3 by an equal slice, and both blocks then increase within
+#: [-1, 1] (-0.8, -0.4, 0 and 0, 1/3, 2/3), so the order check alone reads
+#: element 2's first station as element 1's third.
+_MIXED = {1: (0.2, 0.6), 2: (1.0, 1.5, 2.0, 2.5)}
+
+
+def _stations_rec(ids: "list[int]" = [1, 2]) -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="line_stations", name="ls",
+        components=("axial_force", "bending_moment_z"), dt=None, n_steps=None,
+        element_ids=np.array(ids), element_class_name="ForceBeamColumn2d")
+
+
+def _stations_ops(locations: "dict[int, tuple[float, ...] | None]") -> FiberOps:
+    return FiberOps(locations=locations, fibres={1: (), 2: ()},
+                    cls="ForceBeamColumn2d")
+
+
+def test_line_stations_of_unequal_live_counts_refuse_by_count(tmp_path) -> None:
+    """The section locations are read at ``__enter__``, and the read
+    refuses the record by its counts before the columns are divided. With
+    no counts, the equal slice passes the order check and reads element
+    2's first station as element 1's (the stock reproducer of #2328)."""
+    fem, model_h5 = _beam_fem(tmp_path)
+    ops = _stations_ops(dict(_MIXED))
+    run = _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
+    assert [a for a in ops.asked if a.startswith("sectionLocation")] == [
+        "sectionLocation:1", "sectionLocation:2"]
+    with pytest.raises(ValueError,
+                       match=r"Record 'ls' \(line_stations\): its elements have "
+                             r"different integration-point counts in the live "
+                             r"domain \(2 points: FEM elements \[1\]; 4 points: "
+                             r"FEM elements \[2\]\)"):
+        run.results(cache_root=tmp_path / "cache")
+
+
+def test_line_stations_of_equal_live_counts_read_each_element(tmp_path) -> None:
+    fem, model_h5 = _beam_fem(tmp_path)
+    loc = {e: tuple(f * L for f in _LOBATTO_3) for e, L in _BEAM_L.items()}
+    run = _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5,
+               _stations_ops(loc))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        slab = res.elements.line_stations.get(component="axial_force")
+        np.testing.assert_array_equal(slab.element_index, np.repeat([1, 2], 3))
+        np.testing.assert_allclose(slab.station_natural_coord,
+                                   np.tile([-1.0, 0.0, 1.0], 2),
+                                   rtol=0, atol=1e-15)
+    finally:
+        res.close()
+
+
+def test_a_line_stations_element_with_no_sections_refuses_before_the_run(
+    tmp_path,
+) -> None:
+    fem, model_h5 = _beam_fem(tmp_path)
+    ops = _stations_ops({1: _MIXED[1], 2: None})
+    with pytest.raises(ValueError,
+                       match=r"line-stations record 'ls': FEM element 2 "
+                             r"\('ForceBeamColumn2d'\) has no sections "
+                             r"\(sectionLocation answered None\)"):
+        _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
+    assert _element_calls(ops) == []
+
+
+# ---------------------------------------------------------------------------
 # A per-Gauss-point material record reads through the pairing (#2290 A)
 # ---------------------------------------------------------------------------
 
