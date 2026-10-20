@@ -127,6 +127,28 @@ def test_lst_group_is_selected_and_drawn_as_a_surface(tmp_path, ladruno):
 
 
 @pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
+def test_viewer_substrate_draws_lst_and_cst_as_triangles(tmp_path, ladruno):
+    """The substrate picks a non-Gmsh code's VTK cell by ``(dim, npe)``.
+
+    With the dim=3 guess a LadrunoLST became a 6-point VTK_WEDGE, and the
+    #2302 discrete contour left those cells unpainted. LadrunoCST in a 3-D
+    model became a VTK_LINE. Both are VTK_TRIANGLE (5), drawn from the
+    three corner nodes.
+    """
+    pytest.importorskip("pyvista")
+    from apeGmsh.viewers.data import ViewerData
+    from apeGmsh.viewers.scene.fem_scene import build_fem_scene
+
+    fem = _read(tmp_path, [("LadrunoLST", 6), ("LadrunoCST", 3)],
+                ladruno=ladruno, ndm=3)
+    scene = build_fem_scene(ViewerData.from_fem(fem))
+    assert not scene.skipped_types
+    assert list(scene.grid.celltypes) == [5, 5]
+    corners = scene.grid.cell_connectivity.reshape(2, 3)
+    assert (scene.node_ids[corners] == [[1, 2, 3], [1, 2, 3]]).all()
+
+
+@pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
 def test_uncatalogued_undeclared_class_is_named_in_a_warning(
         tmp_path, ladruno):
     with pytest.warns(ElementDimUnknownWarning, match="MadeUpPanel"):
