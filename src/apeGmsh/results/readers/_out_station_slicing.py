@@ -157,6 +157,28 @@ def line_station_count(
     return n_ip
 
 
+def require_station_source(
+    rec: "ResolvedRecorderRecord", model_h5_src: "Path | None", pairing: object,
+) -> None:
+    """Refuse ``rec`` by name when neither a model archive nor a pairing is
+    bound, before any file is read.
+
+    The ``.out`` pair carries no per-element count, and no other input names
+    one. Dividing the columns evenly proves nothing: a mixed record whose
+    columns divide (Legendre 2 + 4 on L 1 and 13, 3 + 3 columns) passes the
+    order check. Equal counts are refused too, since nothing proves them equal.
+    """
+    if model_h5_src is None and pairing is None:
+        raise ValueError(
+            f"Line-stations record {rec.name!r} ({rec.element_class_name}) is "
+            f"transcoded with no model: pass model_h5_src= (the bridge's "
+            f"model.h5) or pairing= (a live pairing), which give each "
+            f"element's integration-point count. A .out record carries no "
+            f"per-element count, so without one a record whose elements have "
+            f"different counts can be sliced across element boundaries "
+            f"without error. Results.from_recorders(model=) passes it.")
+
+
 def require_ordered_stations(
     rec: "ResolvedRecorderRecord", xi_natural: ndarray, path: "str | Path",
 ) -> None:
