@@ -36,6 +36,7 @@ from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
+from ._gauss_refusals import GaussDimensionMixed
 from ._mpco_refusals import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 from ._tag_translation import ElementTagTranslator
@@ -112,9 +113,13 @@ def _warn_skipped_buckets(
     )
 
 
-class MPCOGaussDimensionMixed(ValueError):
+class MPCOGaussDimensionMixed(GaussDimensionMixed):
     """One Gauss read joins classes whose natural coordinates differ in
     width (a 2-D ``FourNodeQuad`` beside a 3-D ``FourNodeTetrahedron``).
+
+    The MPCO reader's :class:`GaussDimensionMixed` (a ``ValueError``), so
+    one ``except GaussDimensionMixed`` catches the refusal from every
+    reader.
 
     A :class:`~apeGmsh.results._slabs.GaussSlab` carries one
     ``natural_coords`` array, ``(sum_GP, dim)``, so the read has no

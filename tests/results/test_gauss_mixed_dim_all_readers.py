@@ -247,8 +247,40 @@ class TestNative:
         np.testing.assert_array_equal(slab.values, [[value]])
 
 
-def test_mpco_error_is_a_value_error() -> None:
-    """Both refusal classes stay ``ValueError``s, so a caller catching
-    the old numpy ``ValueError`` still catches the named refusal."""
+def _refusal_mpco_single(tmp_path: Path) -> None:
+    _gauss(_stress_file(tmp_path / "mixed.mpco", [(_QUAD, [5]), (_TET, [10])]),
+           "stress_xx")
+
+
+def _refusal_mpco_partitioned(tmp_path: Path) -> None:
+    _gauss(_mpco_parts(tmp_path), "stress_xx")
+
+
+def _refusal_ladruno(tmp_path: Path) -> None:
+    with LadrunoReader(_ladruno(tmp_path / "mixed.ladruno")) as r:
+        _lad_read(r)
+
+
+def _refusal_native(tmp_path: Path) -> None:
+    _native_read(_native(tmp_path / "mixed.h5"))
+
+
+@pytest.mark.parametrize("read", [
+    _refusal_mpco_single, _refusal_mpco_partitioned, _refusal_ladruno,
+    _refusal_native,
+], ids=["mpco-single", "mpco-partitioned", "ladruno", "native"])
+def test_one_except_catches_every_reader(tmp_path: Path, read) -> None:
+    """``MPCOGaussDimensionMixed`` is a ``GaussDimensionMixed``, so one
+    ``except GaussDimensionMixed`` catches the refusal from all four
+    readers, and it stays a ``ValueError``."""
+    try:
+        read(tmp_path)
+    except GaussDimensionMixed as exc:
+        assert isinstance(exc, ValueError)
+    else:
+        pytest.fail("the mixed-width read did not refuse")
+
+
+def test_refusal_classes_are_value_errors() -> None:
+    assert issubclass(MPCOGaussDimensionMixed, GaussDimensionMixed)
     assert issubclass(GaussDimensionMixed, ValueError)
-    assert issubclass(MPCOGaussDimensionMixed, ValueError)
