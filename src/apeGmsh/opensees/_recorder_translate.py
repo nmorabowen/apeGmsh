@@ -943,10 +943,17 @@ class LiveDomainFacts:
         Two nodes at one position (a zero-length spring's ends, an
         ``equalDOF`` or rigid-link pair) match any coordinate check, so a
         deck that swaps their tags would record each one's motion under
-        the other. Each FEM element touching such a node must exist live
-        under its FEM id with ``eleNodes`` equal to its FEM connectivity,
-        in order; a shared-position node no FEM element touches refuses
-        by name, since nothing tells its tag from the other node's.
+        the other. Each FEM element touching such a node that the deck
+        built (a live element of its FEM id) must have ``eleNodes`` equal
+        to its FEM connectivity, in order. A FEM element the deck did not
+        build is passed over only when its nodes are all nodes of one of
+        those built elements: a point, edge or face of it (what
+        ``get_fem_data()`` holds beside a deck of beams or solids, #2342),
+        which that element already pins. Any other unbuilt element refuses,
+        since a deck may have built it under another tag with the
+        coincident nodes swapped. A shared-position node no FEM element
+        touches refuses by name, since nothing tells its tag from the other
+        node's.
         """
         import numpy as np
 
@@ -979,15 +986,29 @@ class LiveDomainFacts:
         live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
         bad: "list[str]" = []
         for n in at:
+            pinned: "list[set[int]]" = []
+            why = ""
             for eid, conn_i in touching[n]:
-                live = ([int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
-                        if eid in live_tags else None)
+                if eid not in live_tags:
+                    continue
+                live = [int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
                 if live != conn_i:
-                    bad.append(
-                        f"node {n}: FEM element {eid} has nodes {conn_i}, "
-                        + ("no live element has that tag" if live is None
-                           else f"the live element {eid} has {live}"))
+                    why = (f"FEM element {eid} has nodes {conn_i}, the live "
+                           f"element {eid} has {live}")
                     break
+                pinned.append(set(conn_i))
+            if not why:
+                # An unbuilt point, edge or face of a built element is
+                # pinned by it; any other unbuilt element is not.
+                why = next((
+                    f"FEM element {eid} has nodes {conn_i}, no live element "
+                    "has that tag, and no built element at the node holds "
+                    "its nodes"
+                    for eid, conn_i in touching[n]
+                    if eid not in live_tags
+                    and not any(set(conn_i) <= p for p in pinned)), "")
+            if why:
+                bad.append(f"node {n}: {why}")
         if bad:
             raise ValueError(
                 f"{where}: nodes that share their position with another FEM "
