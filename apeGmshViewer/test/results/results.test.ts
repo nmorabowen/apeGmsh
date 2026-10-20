@@ -232,6 +232,45 @@ test("#2358: a node id listed twice in _ids is refused at open, by name (file, d
   );
 });
 
+/** `body`, with every Float64Array sort counted; the inherited sort is restored however `body` ends. */
+function countingSorts<T>(body: () => T): { result: T; sorts: number } {
+  const proto = Float64Array.prototype as unknown as { sort: (cmp?: (a: number, b: number) => number) => Float64Array };
+  if (Object.hasOwn(proto, "sort")) throw new Error("Float64Array.prototype already has its own sort");
+  const inherited = proto.sort;
+  let sorts = 0;
+  proto.sort = function (this: Float64Array, cmp?: (a: number, b: number) => number) {
+    sorts++;
+    return inherited.call(this, cmp);
+  };
+  try {
+    return { result: body(), sorts };
+  } finally {
+    delete (proto as { sort?: unknown }).sort;
+  }
+}
+
+test("#2358: uniqueNodeIds accepts strictly ascending ids in one O(n) pass with no sorted copy; any other order takes the sort and a repeat is still refused", () => {
+  const err = (m: string) => new Error(m);
+  const N = 10 ** 7;
+  const asc = new Float64Array(N).map((_, i) => 3 * i + 1);
+  const t0 = performance.now();
+  const fast = countingSorts(() => uniqueNodeIds(asc, "f", "/ids", err));
+  const ms = performance.now() - t0;
+  assert.equal(fast.sorts, 0, "a strictly ascending list is never copied and sorted");
+  assert.equal(fast.result, asc, "the list itself is returned");
+  assert.ok(ms < 1000, `10^7 ascending ids took ${ms.toFixed(0)} ms`);
+  // The stand-in bites: an order that is not strictly ascending is sorted.
+  assert.equal(countingSorts(() => uniqueNodeIds(Float64Array.of(1, 3, 2), "f", "/ids", err)).sorts, 1);
+  // A NaN fails the strict comparison and takes the sort path, which accepts it as before.
+  const nan = Float64Array.of(1, NaN, 2);
+  assert.deepEqual(countingSorts(() => uniqueNodeIds(nan, "f", "/ids", err)), { result: nan, sorts: 1 });
+  // A repeat in a descending or an unsorted list is still refused, with the same message.
+  for (const [ids, rows] of [[[5, 3, 3], "id 3 at rows 1, 2"], [[3, 9, 1, 3], "id 3 at rows 0, 3"], [[2, 2], "id 2 at rows 0, 1"]] as const) {
+    const { sorts } = countingSorts(() => assert.throws(() => uniqueNodeIds(Float64Array.from(ids), "f", "/ids", err), { message: `f: /ids lists node id(s) more than once (${rows}); ${"a node is listed once per file, and a part set that sums partition copies (PARTITION_REDUCTION=SUM) would count it twice"}` }));
+    assert.equal(sorts, 1, `${ids}`);
+  }
+});
+
 // -- #1768: the element mapping is stamp-only ------------------------------------
 
 /** Open `path`, read group_0's mapping, and check it is "unverified" with no `ids` to join on. */

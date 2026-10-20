@@ -14,9 +14,10 @@
 //
 // Both checks sort a typed copy and compare neighbours: no Set or Map sized by the
 // id count, which V8 caps at 2^24 entries (a file with more ids would throw an
-// unnamed RangeError), and an O(n log n) cost of about a second at 10^7 ids. The
-// element check first tries an O(n) pass with no copy, which proves the ids the
-// fork writes (ascending, in buckets whose ranges do not overlap) unique.
+// unnamed RangeError), and an O(n log n) cost of about a second at 10^7 ids. Each
+// check first tries an O(n) pass with no copy, which proves the ids the writers
+// emit unique: strictly ascending node ids (#2358), and element ids ascending in
+// buckets whose ranges do not overlap.
 //
 // Browser-safe: no Node import, and no HDF5 access (W5): the caller reads the ids
 // and passes its own error factory, as reader/ladrunoInfo.ts does, so this module
@@ -34,9 +35,19 @@ export const LADRUNO_NODE_ONCE = "a node is listed once per file, and a part set
  * to the `.ladruno` reason; the native reader passes its own (#2358).
  */
 export function uniqueNodeIds(ids: Float64Array, file: string, dataset: string, err: (message: string) => Error, why: string = LADRUNO_NODE_ONCE): Float64Array {
+  if (strictlyAscending(ids)) return ids; // the fast path: O(n), no copy, no sort
   const reps = repeatsOf(Float64Array.from(ids).sort());
   if (reps.length === 0) return ids;
   throw err(`${file}: ${dataset} lists node id(s) more than once (${repeatedRows(ids, reps)}); ${why}`);
+}
+
+/**
+ * Whether every id is greater than the one before it, so none repeats. A NaN fails the
+ * strict comparison, so a list holding one (beyond its first row) takes the sort path.
+ */
+function strictlyAscending(ids: Float64Array): boolean {
+  for (let i = 1; i < ids.length; i++) if (!(ids[i]! > ids[i - 1]!)) return false;
+  return true;
 }
 
 /** One element-id list: where it was read (`at`: the dataset, with its file when a set has several), and its ids. */
