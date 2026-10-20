@@ -12,13 +12,19 @@ spinning up a real Gmsh mesh.
 """
 from __future__ import annotations
 
+import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
+import h5py
 import numpy as np
 import pytest
 
 from apeGmsh.results._gauss_extrapolation import (
+    GaussToNodeAccumulator,
+    WarnGaussExtrapolationDegraded,
     _build_extrapolation_matrix,
+    extrapolate_gauss_slab_per_element,
     extrapolate_gauss_slab_to_nodes,
     per_element_max_gp_count,
 )
@@ -487,3 +493,234 @@ def test_time_axis_preserved():
     np.testing.assert_allclose(nodal_out[0], np.full(8, 1.0), atol=1e-12)
     np.testing.assert_allclose(nodal_out[1], np.full(8, 2.0), atol=1e-12)
     np.testing.assert_allclose(nodal_out[2], np.full(8, 3.0), atol=1e-12)
+
+
+# =====================================================================
+# The file's own FEMData (codes = -class_tag), #2240
+# =====================================================================
+#
+# A FEMData read from a result file's MODEL group keys every class by
+# ``-class_tag``, which names no topology. Extrapolation looked that code
+# up in the gmsh-keyed shape-function catalog, missed, and averaged every
+# multi-point element to its mean, silently: a linear field came back flat.
+# The oracle is the engine's. The fixtures are one fork solve under
+# ``u_i = x_i^2 / 2`` (tests/results/test_gauss_simplex_coords.py, SOLVE),
+# so a quadratic element's recorded strain eps_ii at a Gauss point IS that
+# point's coordinate x_i, and extrapolating that linear field to the
+# corners must give each corner its own coordinate. A bilinear class cannot
+# reproduce the field, so it takes the fork's GLOBAL_GP_COORDS instead.
+
+_SIMPLEX_GP = Path(__file__).resolve().parent / "fixtures" / "simplex_gp"
+_AXES = {"tri": ("xx", "yy"), "tet": ("xx", "yy", "zz")}
+
+
+def _file_reader(path: Path):
+    from apeGmsh.results.readers._ladruno import LadrunoReader
+    from apeGmsh.results.readers._mpco import MPCOReader
+
+    return (LadrunoReader(path) if path.suffix == ".ladruno"
+            else MPCOReader(path))
+
+
+def _file_fem_and_slab(path: Path, component: str, eid: int):
+    """The file's own FEMData and one element's slab of ``component``."""
+    with warnings.catch_warnings():
+        # The readers' own provenance warnings are not under test here.
+        warnings.simplefilter("ignore")
+        with _file_reader(path) as r:
+            fem = r.fem()
+            slab = r.read_gauss(
+                r.stages()[0].id, component, element_ids=np.array([eid]),
+            )
+    sel = np.asarray(slab.element_index) == eid
+    assert int(sel.sum()) > 1, f"{path.name}: {eid} is not multi-point"
+    return fem, _make_gauss_slab(
+        component, np.asarray(slab.values)[:, sel],
+        np.asarray(slab.element_index)[sel],
+        np.asarray(slab.natural_coords)[sel],
+    )
+
+
+def _corner_truth(fem, corner_nids, axis: int) -> np.ndarray:
+    pos = {int(n): k for k, n in enumerate(fem.nodes.ids)}
+    return np.asarray(fem.nodes.coords)[
+        [pos[int(n)] for n in corner_nids], axis]
+
+
+def _group_code(fem, eid: int) -> int:
+    for g in fem.elements:
+        if eid in {int(i) for i in g.ids}:
+            return int(g.element_type.code)
+    raise KeyError(eid)
+
+
+@pytest.mark.parametrize("ext", ["ladruno", "mpco"])
+@pytest.mark.parametrize("stem,eid,cls", [
+    ("tri", 2, "SixNodeTri"),
+    ("tri", 3, "BezierTri6"),
+    ("tri", 4, "LadrunoLST"),
+    ("tet", 2, "TenNodeTetrahedron"),
+    ("tet", 3, "BezierTet10"),
+])
+def test_p2_simplex_on_the_files_own_fem_uses_the_gauss_positions(
+    ext: str, stem: str, eid: int, cls: str,
+) -> None:
+    """With the file's own FEMData each P2 simplex corner gets its own
+    coordinate, on both paths, with no degradation warning. Before #2240
+    every corner got the element mean (an error of 1.3 on these)."""
+    path = _SIMPLEX_GP / f"{stem}.{ext}"
+    n_corner = 3 if stem == "tri" else 4
+    for axis, comp in enumerate(_AXES[stem]):
+        fem, slab = _file_fem_and_slab(path, f"strain_{comp}", eid)
+        assert _group_code(fem, eid) < 0, "not the file-coded FEMData"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", WarnGaussExtrapolationDegraded)
+            per = extrapolate_gauss_slab_per_element(slab, fem)
+            acc = GaussToNodeAccumulator(
+                slab.element_index, slab.natural_coords, fem,
+            )
+        (corners,) = per.corner_node_ids
+        assert corners.size == n_corner, f"{cls}: mid-side nodes kept"
+        np.testing.assert_allclose(
+            per.values[0][-1], _corner_truth(fem, corners, axis), rtol=0,
+            atol=1e-10, err_msg=f"{cls} {comp}",
+        )
+        np.testing.assert_allclose(
+            acc.accumulate(np.asarray(slab.values)[-1]),
+            _corner_truth(fem, acc.node_ids, axis), rtol=0, atol=1e-10,
+            err_msg=f"{cls} {comp} (accumulator)",
+        )
+
+
+def _global_gp(path: Path, eid: int, n_gp: int) -> np.ndarray:
+    """The fork's ``GLOBAL_GP_COORDS`` for one element, ``(n_gp, 3)``."""
+    with h5py.File(path, "r") as f:
+        for grp in f["MODEL_STAGE[1]/MODEL/ELEMENTS"].values():
+            if int(grp["CONNECTIVITY"][0, 0]) == eid:
+                g = np.asarray(grp["GLOBAL_GP_COORDS"][0], dtype=np.float64)
+                return g.reshape(n_gp, -1)
+    raise KeyError(eid)
+
+
+@pytest.mark.parametrize("stem,eid,cls,n_corner", [
+    ("tri", 5, "FourNodeQuad", 4),
+    ("tet", 4, "Brick", 8),
+])
+def test_bilinear_class_on_the_files_own_fem_uses_the_gauss_positions(
+    stem: str, eid: int, cls: str, n_corner: int,
+) -> None:
+    """The fork's GP world positions as the field. A world coordinate is
+    (tri)linear in the natural coordinates, so each corner gets its own.
+    The file-coded quad and brick were averaged to the mean as well."""
+    path = _SIMPLEX_GP / f"{stem}.ladruno"
+    fem, slab = _file_fem_and_slab(path, "stress_xx", eid)
+    gp_world = _global_gp(path, eid, slab.element_index.size)
+    for axis in range(len(_AXES[stem])):
+        one = _make_gauss_slab("x", gp_world[None, :, axis],
+                               slab.element_index, slab.natural_coords)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", WarnGaussExtrapolationDegraded)
+            per = extrapolate_gauss_slab_per_element(one, fem)
+        (corners,) = per.corner_node_ids
+        assert corners.size == n_corner
+        np.testing.assert_allclose(
+            per.values[0][0], _corner_truth(fem, corners, axis), rtol=0,
+            atol=1e-10, err_msg=f"{cls} axis {axis}",
+        )
+
+
+def _file_coded_fem(name: str, code: int, npe: int, dim: int = 3):
+    """One file-coded element (code = -class_tag) with id 7, nodes 1..npe."""
+    tags = np.arange(1, npe + 1, dtype=np.int64)
+
+    class _Group:
+        element_type = SimpleNamespace(code=code, gmsh_name=name,
+                                       dim=dim, npe=npe)
+        ids = np.array([7], dtype=np.int64)
+        connectivity = tags[None, :]
+
+        def __len__(self) -> int:
+            return 1
+
+    return SimpleNamespace(
+        nodes=SimpleNamespace(ids=tags, coords=np.zeros((npe, 3))),
+        elements=[_Group()],
+    )
+
+
+_TRI_GL2 = np.array([[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]])
+
+
+@pytest.mark.parametrize("nat", [
+    np.full((3, 2), np.nan),
+    np.zeros((3, 0)),
+    np.array([[0.1, np.nan], [0.2, 0.3], [0.4, 0.5]]),
+], ids=["all-nan", "no-columns", "partly-nan"])
+def test_file_coded_element_without_gp_positions_warns_by_name(
+    nat: np.ndarray,
+) -> None:
+    """Rows with no usable natural coordinates (a reader joined two widths
+    and blanked them, or none were recorded) cannot be extrapolated: the
+    mean is taken and the class is named, on both paths."""
+    fem = _file_coded_fem("SixNodeTri", -209, 6)
+    slab = _make_gauss_slab("x", np.array([[1.0, 2.0, 3.0]]),
+                            np.full(3, 7), nat)
+    with pytest.warns(WarnGaussExtrapolationDegraded,
+                      match=r"SixNodeTri \(code -209\).*no natural "
+                            r"coordinates"):
+        per = extrapolate_gauss_slab_per_element(slab, fem)
+    np.testing.assert_allclose(per.values[0][0], 2.0)
+    with pytest.warns(WarnGaussExtrapolationDegraded, match="SixNodeTri"):
+        GaussToNodeAccumulator(slab.element_index, slab.natural_coords, fem)
+
+
+def test_file_coded_topology_without_shape_functions_warns_by_name() -> None:
+    """A 13-node class with 3-D Gauss points (a P2 pyramid) has no shape
+    functions here: warned by name, never a silent mean."""
+    fem = _file_coded_fem("SomePyramid13", -999, 13)
+    nat = np.array([[0.1, 0.1, 0.1], [0.2, 0.1, 0.3]])
+    slab = _make_gauss_slab("x", np.array([[1.0, 3.0]]), np.full(2, 7), nat)
+    with pytest.warns(WarnGaussExtrapolationDegraded,
+                      match=r"SomePyramid13 \(code -999\).*13-node element "
+                            r"with 3-D Gauss points"):
+        extrapolate_gauss_slab_per_element(slab, fem)
+
+
+def test_gmsh_type_without_shape_functions_warns_by_code() -> None:
+    """The same rule on a gmsh-coded FEMData (a 5-node pyramid, type 7)."""
+    nodes = [(i + 1, [0.0, 0.0, 0.0]) for i in range(5)]
+    fem = _fake_fem(nodes, [(11, 7, [1, 2, 3, 4, 5])])
+    nat = np.array([[0.1, 0.1, 0.1], [0.2, 0.1, 0.3]])
+    slab = _make_gauss_slab("x", np.array([[1.0, 3.0]]), np.full(2, 11), nat)
+    with pytest.warns(WarnGaussExtrapolationDegraded,
+                      match="gmsh element type 7"):
+        extrapolate_gauss_slab_to_nodes(slab, fem)
+
+
+def test_single_gp_file_coded_element_is_exact_and_silent() -> None:
+    """One GP is a constant: no coordinates are needed, nothing warns, and
+    a P2 tri still paints only its three corners."""
+    fem = _file_coded_fem("SixNodeTri", -209, 6)
+    slab = _make_gauss_slab("x", np.array([[4.2]]), np.array([7]),
+                            np.array([[1 / 3, 1 / 3]]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnGaussExtrapolationDegraded)
+        per = extrapolate_gauss_slab_per_element(slab, fem)
+    assert per.corner_node_ids[0].tolist() == [1, 2, 3]
+    np.testing.assert_allclose(per.values[0][0], 4.2)
+
+
+def test_file_coded_p2_tri_resolves_by_its_gauss_width_not_group_dim() -> None:
+    """The group says dim=3 (the class-name guess LadrunoLST gets from a
+    ``TOPOLOGY "custom"`` file); its Gauss rows are 2-D, so it is a Tri6,
+    not a 6-node wedge."""
+    fem = _file_coded_fem("LadrunoLST", -33016, 6, dim=3)
+    xy = np.array([[0.1, 0.2], [2.3, 0.4], [0.6, 1.8]])
+    fem.nodes.coords[:3, :2] = xy
+    u, v = _TRI_GL2[:, 0], _TRI_GL2[:, 1]
+    gp_x = (1 - u - v) * xy[0, 0] + u * xy[1, 0] + v * xy[2, 0]
+    slab = _make_gauss_slab("x", gp_x[None, :], np.full(3, 7), _TRI_GL2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnGaussExtrapolationDegraded)
+        per = extrapolate_gauss_slab_per_element(slab, fem)
+    np.testing.assert_allclose(per.values[0][0], xy[:, 0], atol=1e-12)

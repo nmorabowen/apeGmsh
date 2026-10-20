@@ -51,11 +51,24 @@ Public API
 ``per_element_max_gp_count(slab)``
     Quick check used by ``ContourDiagram`` to decide whether to take
     the cell-data (``n_gp == 1``) or the extrapolation path.
+
+Either FEMData
+--------------
+
+A gmsh-built FEMData keys each element group by its gmsh type code. A
+FEMData read from a result file's own ``MODEL`` group (``.ladruno``,
+MPCO) keys it by ``-class_tag``, which names no topology, so each such
+element is resolved from its node count and the parent dimension its
+Gauss points live in (#2240). An element whose GP positions cannot be
+used (no shape functions for its topology, or rows that carry no
+natural coordinates) is averaged to its element mean, and one
+:class:`WarnGaussExtrapolationDegraded` per call names its class.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -114,6 +127,151 @@ _LINEAR_COUNTERPART: dict[int, int] = {
 }
 
 
+# A file-coded element (code = -class_tag) → the gmsh code of its shape,
+# keyed on ``(parent dim, node count)``. The parent dim is the width of the
+# element's own Gauss-point rows (``_gp_parent_dim``), never the FEMData
+# group's ``dim``: that is a class-name heuristic for a ``TOPOLOGY
+# "custom"`` class, and it calls the 6-node LadrunoLST triangle 3-D. Every
+# OpenSees / Ladruno class of these shapes numbers its corners first, in
+# the gmsh corner order its gmsh natural coordinates are written against
+# (#2228). Wedges and pyramids are left out: no fork class with a verified
+# corner convention, so they warn rather than guess.
+_GMSH_CODE_BY_PARENT_DIM_NPE: dict[tuple[int, int], int] = {
+    (1, 2): 1,     # Line2
+    (2, 3): 2,     # Tri3        Tri31, LadrunoCST, ShellDKGT, ASDShellT3
+    (2, 4): 3,     # Quad4       FourNodeQuad, ShellMITC4, ASDShellQ4
+    (2, 6): 9,     # Tri6        SixNodeTri, LadrunoLST, BezierTri6
+    (2, 8): 16,    # Quad8       EightNodeQuad
+    (2, 9): 10,    # Quad9       NineNodeQuad, ShellMITC9
+    (3, 4): 4,     # Tet4        FourNodeTetrahedron
+    (3, 8): 5,     # Hex8        Brick, SSPbrick
+    (3, 10): 11,   # Tet10       TenNodeTetrahedron, BezierTet10
+    (3, 20): 17,   # Hex20       20NodeBrick
+    (3, 27): 12,   # Hex27       27NodeBrick
+}
+
+
+class WarnGaussExtrapolationDegraded(UserWarning):
+    """Some elements' Gauss values could not be extrapolated through
+    their Gauss-point positions and were averaged to the element mean.
+
+    Raised once per call. The message names each class (or gmsh type)
+    and why: no shape functions for its topology, or Gauss rows that
+    carry no natural coordinates.
+    """
+
+
+class _ElementEntry(NamedTuple):
+    """One FEMData element as the extrapolation sees it."""
+    code: int            # gmsh code, or -class_tag for a file-coded FEMData
+    nodes: ndarray       # the full connectivity row
+    label: str           # names the class in a degradation warning
+
+
+class _ElementPlan(NamedTuple):
+    """How one element's GP values reach its corners."""
+    M: Optional[ndarray]     # (n_corner, n_gp); None → the element mean
+    corner_nids: ndarray
+    degraded: Optional[str]  # why the mean was taken, when n_gp > 1
+
+
+def _gp_parent_dim(nat_e: ndarray) -> Optional[int]:
+    """The parent dimension an element's Gauss rows live in, or ``None``.
+
+    That is the number of leading columns finite in every row. Readers
+    pad a narrower class with NaN when one slab joins several widths, so
+    a padded column is all NaN. A partly-finite column, or no finite
+    column at all, means the rows carry no usable coordinates.
+    """
+    if nat_e.ndim != 2 or nat_e.shape[1] == 0:
+        return None
+    finite = np.isfinite(nat_e)
+    col_ok = finite.all(axis=0)
+    k = int(np.argmin(col_ok)) if not col_ok.all() else int(col_ok.size)
+    if k == 0 or finite[:, k:].any():
+        return None
+    return k
+
+
+def _plan_element(
+    entry: _ElementEntry, nat_e: ndarray,
+) -> _ElementPlan:
+    """Resolve one element's topology, corners and extrapolation matrix."""
+    if nat_e.ndim == 1:
+        nat_e = nat_e[:, None]
+    n_gp = nat_e.shape[0]
+    pdim = _gp_parent_dim(nat_e)
+    code = int(entry.code)
+    if code >= 0:
+        gmsh_code: Optional[int] = code
+    elif pdim is None:
+        gmsh_code = None
+    else:
+        gmsh_code = _GMSH_CODE_BY_PARENT_DIM_NPE.get(
+            (pdim, int(entry.nodes.size)),
+        )
+
+    corner_nids = entry.nodes
+    if gmsh_code is not None:
+        catalog = get_shape_functions(
+            _LINEAR_COUNTERPART.get(gmsh_code, gmsh_code),
+        )
+        if catalog is not None and entry.nodes.size >= catalog[3]:
+            corner_nids = entry.nodes[:catalog[3]]
+
+    if n_gp == 1:
+        # One value: the constant is all the element says; no coordinates
+        # are needed to broadcast it.
+        return _ElementPlan(None, corner_nids, None)
+    if gmsh_code is None:
+        reason = (
+            "its Gauss rows carry no natural coordinates" if pdim is None
+            else f"no shape functions for a {entry.nodes.size}-node "
+                 f"element with {pdim}-D Gauss points"
+        )
+        return _ElementPlan(None, corner_nids, reason)
+    need = _PARENT_DIM.get(gmsh_code)
+    if need is not None and (pdim is None or pdim < need):
+        return _ElementPlan(
+            None, corner_nids,
+            f"its Gauss rows carry no {need}-D natural coordinates",
+        )
+    key = (gmsh_code, nat_e.tobytes())
+    if key not in _EXTRAP_MATRIX_CACHE:
+        _EXTRAP_MATRIX_CACHE[key] = _build_extrapolation_matrix(
+            nat_e, gmsh_code,
+        )
+    M = _EXTRAP_MATRIX_CACHE[key]
+    if M is None:
+        return _ElementPlan(
+            None, corner_nids,
+            f"no shape functions for gmsh element type {gmsh_code}",
+        )
+    if M.shape[0] != corner_nids.size:
+        return _ElementPlan(
+            None, corner_nids,
+            f"{corner_nids.size} corner nodes against the "
+            f"{M.shape[0]} its gmsh type {gmsh_code} needs",
+        )
+    return _ElementPlan(M, corner_nids, None)
+
+
+def _warn_degraded(degraded: "dict[tuple[str, str], int]") -> None:
+    """One :class:`WarnGaussExtrapolationDegraded` naming every class."""
+    if not degraded:
+        return
+    listing = "; ".join(
+        f"{n} element(s) of {label}: {reason}"
+        for (label, reason), n in sorted(degraded.items())
+    )
+    warnings.warn(
+        "Gauss-to-node extrapolation averaged some elements to their "
+        f"element mean, ignoring their Gauss-point positions ({listing}).",
+        WarnGaussExtrapolationDegraded,
+        stacklevel=3,
+    )
+
+
 def per_element_max_gp_count(slab: "GaussSlab") -> int:
     """Return the largest number of GPs any single element has.
 
@@ -156,28 +314,28 @@ def _build_extrapolation_matrix(
     return np.linalg.pinv(A)        # (n_real_corners, n_gp)
 
 
-def _build_element_index(fem: "FEMData") -> dict[int, tuple[int, ndarray]]:
-    """Map element ID → ``(gmsh_code, real_corner_node_ids)``.
+def _build_element_index(fem: "FEMData") -> dict[int, _ElementEntry]:
+    """Map element ID → :class:`_ElementEntry` (code, full row, label).
 
-    Higher-order types are truncated to their linear-counterpart
-    corner count (e.g. tri6 → first 3 nodes, hex27 → first 8 nodes)
-    because that's what ``_build_extrapolation_matrix`` projects onto
-    and what the substrate paints.
+    The corners are taken per element in :func:`_plan_element`, once the
+    element's Gauss rows are known: a file-coded element's topology is
+    resolved from them. Higher-order types are truncated there to their
+    linear-counterpart corner count (tri6 → first 3 nodes, hex27 → first
+    8), which is what ``_build_extrapolation_matrix`` projects onto and
+    what the substrate paints.
     """
-    out: dict[int, tuple[int, ndarray]] = {}
+    out: dict[int, _ElementEntry] = {}
     for group in fem.elements:
-        type_code = int(group.element_type.code)
-        effective_code = _LINEAR_COUNTERPART.get(type_code, type_code)
-        catalog = get_shape_functions(effective_code)
-        n_corner = catalog[3] if catalog is not None else None
+        et = group.element_type
+        type_code = int(et.code)
+        label = (
+            f"gmsh element type {type_code}" if type_code >= 0
+            else f"{et.gmsh_name} (code {type_code})"
+        )
         ids = np.asarray(group.ids, dtype=np.int64)
         conn = np.asarray(group.connectivity, dtype=np.int64)
         for k in range(len(group)):
-            eid = int(ids[k])
-            row = conn[k]
-            if n_corner is not None and row.size >= n_corner:
-                row = row[:n_corner]
-            out[eid] = (type_code, np.asarray(row, dtype=np.int64))
+            out[int(ids[k])] = _ElementEntry(type_code, conn[k], label)
     return out
 
 
@@ -259,43 +417,39 @@ def extrapolate_gauss_slab_per_element(
     out_eids: list[int] = []
     out_corner_nids: list = []
     out_values: list = []
+    degraded: dict[tuple[str, str], int] = {}
 
     for rows in groups:
         if rows.size == 0:
             continue
         eid = int(eidx[rows[0]])
-        info = elem_index.get(eid)
-        if info is None:
+        entry = elem_index.get(eid)
+        if entry is None:
             continue
-        type_code, corner_nids = info
-        n_gp_e = rows.size
         gp_vals = values[:, rows]    # (T, n_gp_e)
         nat_e = nat[rows]            # (n_gp_e, dim)
+        plan = _plan_element(entry, nat_e)
+        corner_nids = plan.corner_nids
 
-        if n_gp_e == 1:
+        if plan.M is None:
+            # One GP, or a degraded element: the element mean (for one
+            # GP, its value) at every corner.
+            if plan.degraded is not None:
+                key = (entry.label, plan.degraded)
+                degraded[key] = degraded.get(key, 0) + 1
+            mean_vals = gp_vals.mean(axis=1, keepdims=True)
             per_corner = np.broadcast_to(
-                gp_vals, (T, corner_nids.size),
+                mean_vals, (T, corner_nids.size),
             ).astype(np.float64, copy=True)
         else:
-            _key = (int(type_code), nat_e.tobytes())
-            if _key not in _EXTRAP_MATRIX_CACHE:
-                _EXTRAP_MATRIX_CACHE[_key] = _build_extrapolation_matrix(
-                    nat_e, type_code,
-                )
-            M = _EXTRAP_MATRIX_CACHE[_key]
-            if M is None or M.shape[0] != corner_nids.size:
-                mean_vals = gp_vals.mean(axis=1, keepdims=True)
-                per_corner = np.broadcast_to(
-                    mean_vals, (T, corner_nids.size),
-                ).astype(np.float64, copy=True)
-            else:
-                per_corner = gp_vals @ M.T    # (T, n_corner)
-                per_corner = np.ascontiguousarray(per_corner, dtype=np.float64)
+            per_corner = gp_vals @ plan.M.T    # (T, n_corner)
+            per_corner = np.ascontiguousarray(per_corner, dtype=np.float64)
 
         out_eids.append(eid)
         out_corner_nids.append(corner_nids)
         out_values.append(per_corner)
 
+    _warn_degraded(degraded)
     return PerElementCornerValues(
         element_ids=np.asarray(out_eids, dtype=np.int64),
         corner_node_ids=out_corner_nids,
@@ -350,30 +504,23 @@ class GaussToNodeAccumulator:
         # the set of unique node IDs that receive any contribution.
         per_elem: list = []
         all_nids: set = set()
+        degraded: dict[tuple[str, str], int] = {}
         for rows in groups:
             if rows.size == 0:
                 continue
             eid = int(eidx[rows[0]])
-            info = elem_index_dict.get(eid)
-            if info is None:
+            entry = elem_index_dict.get(eid)
+            if entry is None:
                 continue
-            type_code, corner_nids = info
-            nat_e = nat[rows]
-            n_gp_e = rows.size
-            if n_gp_e == 1:
-                M = None
-            else:
-                _key = (int(type_code), nat_e.tobytes())
-                if _key not in _EXTRAP_MATRIX_CACHE:
-                    _EXTRAP_MATRIX_CACHE[_key] = _build_extrapolation_matrix(
-                        nat_e, type_code,
-                    )
-                M = _EXTRAP_MATRIX_CACHE[_key]
-                if M is None or M.shape[0] != corner_nids.size:
-                    M = None
+            plan = _plan_element(entry, nat[rows])
+            if plan.degraded is not None:
+                key = (entry.label, plan.degraded)
+                degraded[key] = degraded.get(key, 0) + 1
+            corner_nids = plan.corner_nids
             for nid in corner_nids:
                 all_nids.add(int(nid))
-            per_elem.append((rows, M, corner_nids))
+            per_elem.append((rows, plan.M, corner_nids))
+        _warn_degraded(degraded)
 
         self.node_ids = np.fromiter(
             sorted(all_nids), dtype=np.int64, count=len(all_nids),
