@@ -173,8 +173,101 @@ class LadrunoRepeatedNodeId(ValueError):
         )
 
 
-#: How many repeated ids a :class:`LadrunoRepeatedNodeId` message names.
+class LadrunoRepeatedElementId(ValueError):
+    """A ``.ladruno`` ``MODEL/LOCAL_AXES`` gives one element id two frames.
+
+    Raised when the file is opened. ``MODEL/LOCAL_AXES`` keeps one
+    ``<classTag>-<Class>/{ID, FRAME}`` group per class, and an element has
+    one frame, so an id is listed once per stage over *all* of a stage's
+    class groups. A repeat within one ``ID``, or an id in two classes'
+    ``ID`` lists, would be resolved by the last write: the element takes
+    another row's frame and the repeated row's element is lost (#2322).
+
+    ``file`` is the file path, ``datasets`` the ``ID`` datasets the
+    repeats sit in, and ``repeated`` maps each repeated id to its
+    ``(dataset, row)`` places.
+    """
+
+    def __init__(
+        self, file: Path, repeated: "dict[int, list[tuple[str, int]]]",
+    ) -> None:
+        self.file = file
+        self.repeated = repeated
+        self.datasets = tuple(sorted({
+            ds for places in repeated.values() for ds, _ in places
+        }))
+        shown = "; ".join(
+            f"{eid} at " + ", ".join(f"{ds} row {row}" for ds, row in places)
+            for eid, places in list(repeated.items())[:_REPEATED_SHOWN]
+        )
+        more = (
+            f"; and {len(repeated) - _REPEATED_SHOWN} more"
+            if len(repeated) > _REPEATED_SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: MODEL/LOCAL_AXES lists element id(s) more than once "
+            f"in {', '.join(self.datasets)} (element {shown}{more}). An "
+            f"element has one frame, listed once over every class's ID; a "
+            f"repeated id would give an element another row's frame and "
+            f"drop the repeated row's element. The file is malformed."
+        )
+
+
+class LadrunoMalformedLocalAxes(ValueError):
+    """A ``.ladruno`` ``MODEL/LOCAL_AXES/<class>`` group whose ``ID`` and
+    ``FRAME`` disagree.
+
+    Raised when the file is opened. ``FRAME`` holds one 4-value quaternion
+    ``(w, x, y, z)`` per ``ID`` row. More ``FRAME`` rows than ids used to
+    be ignored, fewer raised a bare ``IndexError``, and an empty ``ID``
+    beside stored frames was skipped (#2322). An empty ``ID`` with an
+    empty ``FRAME`` is a consistent empty group and opens.
+
+    ``file`` is the file path, ``group`` the class group's HDF5 path,
+    ``id_count`` the number of ids and ``frame_shape`` the ``FRAME`` shape.
+    """
+
+    def __init__(
+        self, file: Path, group: str, id_count: int,
+        frame_shape: "tuple[int, ...]",
+    ) -> None:
+        self.file = file
+        self.group = group
+        self.id_count = id_count
+        self.frame_shape = frame_shape
+        ids = "is empty" if id_count == 0 else f"has {id_count} id(s)"
+        what = f"{group}/ID {ids} but {group}/FRAME has shape {frame_shape}"
+        super().__init__(
+            f"{file}: {what}. FRAME holds one 4-value frame (w, x, y, z) "
+            f"per ID row, so {id_count} id(s) need {4 * id_count} values; "
+            f"the frames cannot be matched to their elements. The file is "
+            f"malformed."
+        )
+
+
+#: How many repeated ids a :class:`LadrunoRepeatedNodeId` or
+#: :class:`LadrunoRepeatedElementId` message names.
 _REPEATED_SHOWN = 10
+
+
+def _repeated_rows(ids: ndarray) -> "dict[int, list[int]]":
+    """Each id ``ids`` lists more than once, mapped to its rows; ``{}``
+    when every id is distinct.
+
+    The fork writes ids ascending, so a strictly increasing list (one
+    pairwise comparison) is accepted without sorting; any other list is
+    checked with ``np.unique``, so an unsorted list of distinct ids
+    passes. The comparison never subtracts: ``np.diff`` wraps in int64,
+    so ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
+    """
+    if ids.size < 2 or bool((ids[1:] > ids[:-1]).all()):
+        return {}
+    uniq, counts = np.unique(ids, return_counts=True)
+    if uniq.size == ids.size:
+        return {}
+    return {
+        int(n): np.flatnonzero(ids == n).tolist() for n in uniq[counts > 1]
+    }
 
 #: Stage subgroups whose result groups carry a node ``ID`` list: the time
 #: series (with the modal groups) and the ``-envelope`` extremes.
@@ -243,6 +336,7 @@ class LadrunoReader:
         try:
             self._validate_identity()
             self._refuse_repeated_node_ids()
+            self._refuse_malformed_local_axes()
             self._stage_cache: Optional[list[StageInfo]] = None
             self._stage_to_grp: dict[str, str] = {}
             # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
@@ -314,24 +408,71 @@ class LadrunoReader:
                     self._refuse_repeated_ids(res["ID"], model=False)
 
     def _refuse_repeated_ids(self, dataset, *, model: bool) -> None:
-        """Raise :class:`LadrunoRepeatedNodeId` if ``dataset`` repeats an id.
-
-        The fork writes ids ascending, so a strictly increasing list (one
-        pairwise comparison) is accepted without sorting; any other list is
-        checked with ``np.unique``, so an unsorted list of distinct ids
-        still opens. The comparison never subtracts: ``np.diff`` wraps in
-        int64, so ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
-        """
+        """Raise :class:`LadrunoRepeatedNodeId` if ``dataset`` repeats an
+        id (the check is :func:`_repeated_rows`)."""
         ids = np.asarray(dataset[...], dtype=np.int64).ravel()
-        if ids.size < 2 or bool((ids[1:] > ids[:-1]).all()):
-            return
-        uniq, counts = np.unique(ids, return_counts=True)
-        if uniq.size == ids.size:
-            return
-        raise LadrunoRepeatedNodeId(self._path, dataset.name, {
-            int(n): np.flatnonzero(ids == n).tolist()
-            for n in uniq[counts > 1]
-        }, model=model)
+        repeated = _repeated_rows(ids)
+        if repeated:
+            raise LadrunoRepeatedNodeId(
+                self._path, dataset.name, repeated, model=model,
+            )
+
+    def _refuse_malformed_local_axes(self) -> None:
+        """Refuse a stage's ``MODEL/LOCAL_AXES`` that cannot give each
+        element one frame (#2322).
+
+        Per stage, each ``<class>/{ID, FRAME}`` group must hold four
+        ``FRAME`` values per id (:class:`LadrunoMalformedLocalAxes`), and
+        no element id may repeat within one ``ID`` or across the classes'
+        ``ID`` lists (:class:`LadrunoRepeatedElementId`). Every reader of
+        the frames (``read_local_axes``, the line-station quaternions, the
+        layered-shell frames) reads them from a file opened here.
+
+        The groups are concatenated in the order of their first id, so the
+        fork's ascending, class-contiguous ids keep :func:`_repeated_rows`'s
+        sorted fast path. A child that is not a group, or a group without
+        both datasets, holds no frame to repeat and is left to the readers.
+        """
+        import h5py
+
+        for stage in sorted(
+            (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
+            key=_stage_sort_key,
+        ):
+            axes = _child(self._h5[stage], "MODEL/LOCAL_AXES")
+            if not isinstance(axes, h5py.Group):
+                continue
+            id_lists: list[tuple[str, ndarray]] = []
+            for cls_name in axes:
+                sub = axes[cls_name]
+                if (not isinstance(sub, h5py.Group) or "ID" not in sub
+                        or "FRAME" not in sub):
+                    continue
+                ids = np.asarray(sub["ID"][...], dtype=np.int64).ravel()
+                frame_shape = tuple(int(s) for s in sub["FRAME"].shape)
+                if int(np.prod(frame_shape)) != 4 * ids.size:
+                    raise LadrunoMalformedLocalAxes(
+                        self._path, sub.name, ids.size, frame_shape,
+                    )
+                if ids.size:
+                    id_lists.append((sub["ID"].name, ids))
+            if not id_lists:
+                continue
+            id_lists.sort(key=lambda item: int(item[1][0]))
+            sizes = np.array([ids.size for _, ids in id_lists])
+            starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+            repeated = _repeated_rows(
+                np.concatenate([ids for _, ids in id_lists]),
+            )
+            if repeated:
+                places: dict[int, list[tuple[str, int]]] = {}
+                for eid, rows in repeated.items():
+                    owner = np.searchsorted(starts, rows, side="right") - 1
+                    places[eid] = [
+                        (id_lists[k][0], int(r - starts[k]))
+                        for k, r in zip(owner.tolist(), rows)
+                    ]
+                raise LadrunoRepeatedElementId(self._path, places)
 
     def close(self) -> None:
         try:
