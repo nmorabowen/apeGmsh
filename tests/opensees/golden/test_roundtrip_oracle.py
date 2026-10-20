@@ -1274,9 +1274,10 @@ def test_the_twin_replays_exactly_without_a_row(tmp_path: Path) -> None:
 @pytest.mark.parametrize("model", [_TWIN, _MASSED], ids=["twin", "massed"])
 def test_without_the_flat_section_sort_the_twin_fails(
         model: Model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Revert proof for S3b (#2277) through the twin: with every unit in
-    section 0, as before the fix, the partitioned replay is in emit order
-    and differs from the bridge's flat deck, a replay regression."""
+    """S3b (#2277) seen through the twin: with every unit in section 0, a
+    partitioned replay sorts by emit index alone, which is the ADR 0027
+    partitioned emit's order, not the flat deck's, and the twin's replay
+    differs from the bridge's flat deck: a replay regression."""
     from apeGmsh.opensees._internal import compose
 
     (tmp_path / "on").mkdir()
