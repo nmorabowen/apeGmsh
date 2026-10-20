@@ -665,6 +665,7 @@ def _two_column_frame_partitioned(
     stages: tuple[tuple[str, float, int], ...] = (
         ("gravity", 10.0, 2), ("push", -5.0, 1)),
     mass: bool = False,
+    stock_solver: bool = False,
 ) -> apeSees:
     """The golden corpus's ``build_model("two_column_frame_partitioned",
     "staged_partitioned", "recording")`` recipe, on the real
@@ -681,7 +682,12 @@ def _two_column_frame_partitioned(
 
     ``mass=True`` adds a lumped mass on ``"Top"`` (the S3b review, #2277):
     a partitioned deck with both ``fix`` and ``mass`` lines, so a replay
-    that swaps those two flat sections differs from the bridge."""
+    that swaps those two flat sections differs from the bridge.
+
+    ``stock_solver=True`` declares ``RCM`` / ``UmfPack`` in place of the
+    golden's ``ParallelRCM`` / ``Mumps``, which a single-process stock
+    build does not have: the live net's stand-in for the golden-bound twin
+    (``test_roundtrip_oracle_live._STAND_INS``, T ruling on #2195)."""
     ops = apeSees(_two_column_frame_fem(partitions))
     ops.model(ndm=3, ndf=6)
     transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
@@ -708,8 +714,10 @@ def _two_column_frame_partitioned(
                 algorithm=ops.algorithm.Newton(),
                 integrator=ops.integrator.LoadControl(dlam=0.5),
                 constraints=ops.constraints.Plain(),
-                numberer=ops.numberer.ParallelRCM(),
-                system=ops.system.Mumps(),
+                numberer=(ops.numberer.RCM() if stock_solver
+                          else ops.numberer.ParallelRCM()),
+                system=(ops.system.UmfPack() if stock_solver
+                        else ops.system.Mumps()),
                 analysis=ops.analysis.Static())
             s.run(n_increments=n)
     return ops

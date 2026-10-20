@@ -173,8 +173,11 @@ CORPUS: tuple[Model, ...] = (
         "_params_frame", "_broad_staged", "_broad_frame",
         "_broad_partitioned")),
     # The twin with a lumped mass (#2277 review): fix and mass lines in one
-    # partitioned deck, so their flat sections cannot swap unseen.
-    _m("test_h5_decl_params", "_two_column_frame_partitioned", mass=True),
+    # partitioned deck, so their flat sections cannot swap unseen. It
+    # declares RCM / UmfPack, so it is also the live net's stock-runnable
+    # stand-in for the golden-bound twin (T ruling on #2195).
+    _m("test_h5_decl_params", "_two_column_frame_partitioned", mass=True,
+       stock_solver=True),
     *(_m("test_h5_initial_stress", "_build_frame", with_initial_stress=w)
       for w in _B),
     *(_m("test_h5_param_tags", f) for f in (
@@ -1185,7 +1188,8 @@ def test_without_the_order_check_a_fatal_reorder_fails_its_pin(
 _TWIN = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_partitioned")
 #: The twin with a lumped mass on ``"Top"`` (the #2277 review finding).
 _MASSED = next(m for m in CORPUS if m.id ==
-               "test_h5_decl_params::_two_column_frame_partitioned[mass=True]")
+               "test_h5_decl_params::_two_column_frame_partitioned"
+               "[mass=True,stock_solver=True]")
 #: The golden cell's own ``FEMStub`` model: bridge-only, so not in the corpus.
 _STUB = _m("test_h5_decl_params", "_broad_partitioned_stub")
 #: The cell the twin reproduces.

@@ -36,11 +36,18 @@ the bridge deck does not run, then skips citing the reason. Once a deck
 runs the assertion fails, and the entry must be removed.
 Any other bridge deck that does not run fails.
 
+:data:`_STAND_INS` names corpus models the net runs through a stand-in
+instead (T ruling on #2195): the golden cell's twin must keep the cell's
+``ParallelRCM`` / ``Mumps``, so its stand-in, the same model with
+``RCM`` / ``UmfPack`` and a lumped mass, runs in its place. A test pins
+that the two decks differ only there and that the twin's deck aborts.
+
 openseespy is never imported into the pytest process: the decks run in
 subprocesses, so the gate is ``importlib.util.find_spec`` (#1836).
 """
 from __future__ import annotations
 
+import difflib
 import importlib.util
 import json
 import os
@@ -64,10 +71,22 @@ pytestmark = pytest.mark.live
 _MARKER = "APEGMSH_K2C_DECK_COMPLETE"
 
 
+_TWIN_ID = "test_h5_decl_params::_broad_partitioned"
+_STAND_IN_ID = ("test_h5_decl_params::_two_column_frame_partitioned"
+                "[mass=True,stock_solver=True]")
+#: Corpus models the net runs through a stand-in (T ruling on #2195). The
+#: golden cell's twin must emit the cell's deck, whose ``numberer
+#: ParallelRCM`` / ``system Mumps`` no single-process stock build has. Its
+#: stand-in is the same model with ``RCM`` / ``UmfPack`` and a lumped mass;
+#: :func:`test_a_stand_in_is_its_model_but_for_solver_and_mass` pins that,
+#: and that the twin's own bridge deck aborts on that pair.
+_STAND_INS: dict[str, str] = {_TWIN_ID: _STAND_IN_ID}
 #: Every model whose replay deck must run: the corpus but its S rows (not
-#: replayable; ``from_h5`` refuses them by name), in corpus order.
+#: replayable; ``from_h5`` refuses them by name) and the models a stand-in
+#: runs for, in corpus order.
 _RUN_ROWS = [m for m in CORPUS
-             if m.id not in _waivers() or _waivers()[m.id].klass != "S"]
+             if (m.id not in _waivers() or _waivers()[m.id].klass != "S")
+             and m.id not in _STAND_INS]
 #: Models whose bridge deck aborts on stock openseespy while the solve stamp
 #: claims ``requires=()``, each with its reason: the issue that tracks it, or
 #: the fixture fact that makes it unsolvable. Not a waiver: the net asserts
@@ -85,11 +104,6 @@ _KNOWN_STOCK_FAILURES: dict[str, str] = {
     # name the multi-rank run its rank-gated deck needs (the #2220 class).
     # In one process rank 1's stage elements are never declared: singular.
     "test_h5_regions_round_trip::_partitioned_staged_with_fan_out": "#2220",
-    # The golden cell's twin (#2195) and its massed variant: the same
-    # partitioned stamp with requires=(), on a rank-gated deck that declares
-    # the cell's `system Mumps`, which a single-process build does not have.
-    "test_h5_decl_params::_broad_partitioned": "#2220",
-    "test_h5_decl_params::_two_column_frame_partitioned[mass=True]": "#2220",
 }
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
@@ -100,17 +114,22 @@ def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
     capabilities its archive's solve stamp says a backend needs. Each deck
     sits in its own directory, its working directory when it runs: the two
     decks write the same output files (a profiler report refuses a run id
-    its file already holds)."""
+    its file already holds). Each directory holds an empty ``out/``: the
+    golden recipe's recorders write under it (``out/run.mpco``), OpenSees
+    creates no directory, and an MPCO file in a missing one aborts the deck
+    with an HDF5 error."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops = model.build()
         bridge = tmp / "bridge" / "bridge.py"
         bridge.parent.mkdir()
+        (bridge.parent / "out").mkdir()
         ops.py(str(bridge), progress=False)
         archive = tmp / "model.h5"
         ops.h5(str(archive))
         replay = tmp / "replay" / "replay.py"
         replay.parent.mkdir()
+        (replay.parent / "out").mkdir()
         model_h5 = OpenSeesModel.from_h5(str(archive))
         model_h5.build("py", out=str(replay))
     stamp = model_h5.solve_stamp
@@ -154,10 +173,10 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """The table is exactly these seven rows, each a row the net runs, each
+    """The table is exactly these five rows, each a row the net runs, each
     citing #2220 or the fixture fact: it can only shrink as a deck is
-    fixed, never grow. The last two joined with the S row's twin (#2195),
-    which the net runs now that the ledger has no S row."""
+    fixed, never grow. The S row's twin (#2195) did not grow it: the net
+    runs a stand-in for it (:data:`_STAND_INS`)."""
     assert _KNOWN_STOCK_FAILURES == {
         "test_h5_decls::_param_stage_model": "#2220",
         "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
@@ -167,9 +186,6 @@ def test_known_stock_failures_name_run_rows() -> None:
             _FIXTURE_UNSOLVABLE,
         "test_h5_regions_round_trip::_partitioned_staged_with_fan_out":
             "#2220",
-        "test_h5_decl_params::_broad_partitioned": "#2220",
-        "test_h5_decl_params::_two_column_frame_partitioned[mass=True]":
-            "#2220",
     }
     assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
 
@@ -178,13 +194,55 @@ def test_the_net_runs_some_stock_row() -> None:
     assert _RUN_ROWS and _FATAL_CASES, (
         "the live net would run nothing: no replayable corpus model, or no "
         "fatal-reorder case")
-    # Every corpus model but the S rows: none drops out silently.
+    # Every corpus model but the S rows and the stand-in-run ones: none
+    # drops out silently.
     s_rows = {w.model for w in _waivers().values() if w.klass == "S"}
-    assert {m.id for m in _RUN_ROWS} == {m.id for m in CORPUS} - s_rows
-    # The ledger has no S row since #2195: the net runs the whole corpus,
-    # the golden cell's twin included.
-    assert not s_rows and "test_h5_decl_params::_broad_partitioned" in {
-        m.id for m in _RUN_ROWS}
+    run = {m.id for m in _RUN_ROWS}
+    assert run == {m.id for m in CORPUS} - s_rows - set(_STAND_INS)
+    # The ledger has no S row since #2195. The one stand-in is pinned: it
+    # runs (no known-failure entry), and it stands in for the twin only.
+    assert not s_rows
+    assert _STAND_INS == {_TWIN_ID: _STAND_IN_ID}
+    assert _STAND_IN_ID in run and _STAND_IN_ID not in _KNOWN_STOCK_FAILURES
+
+
+def _changed(a: list[str], b: list[str]) -> tuple[list[str], list[str]]:
+    """The lines only ``a`` has and the lines only ``b`` has, in order."""
+    gone: list[str] = []
+    new: list[str] = []
+    for ln in difflib.unified_diff(a, b, lineterm="", n=0):
+        if ln.startswith(("---", "+++", "@@")):
+            continue
+        (gone if ln[0] == "-" else new).append(ln[1:].strip())
+    return gone, new
+
+
+@pytest.mark.parametrize("twin_id", list(_STAND_INS))
+def test_a_stand_in_is_its_model_but_for_solver_and_mass(
+        twin_id: str, tmp_path: Path) -> None:
+    """The stand-in's bridge deck is the twin's but for the solver pair and
+    the ``mass`` lines, and the twin's own bridge deck aborts on this
+    backend at that pair. Once a stock build runs it, this fails: delete
+    the stand-in and let the net run the twin."""
+    by_id = {m.id: m for m in CORPUS}
+    twin, stand_in = by_id[twin_id], by_id[_STAND_INS[twin_id]]
+    (tmp_path / "twin").mkdir()
+    (tmp_path / "stand_in").mkdir()
+    t_bridge, _t_replay, _req = _decks(twin, tmp_path / "twin")
+    s_bridge, _s_replay, _req = _decks(stand_in, tmp_path / "stand_in")
+    gone, new = _changed(t_bridge.read_text(encoding="utf-8").splitlines(),
+                         s_bridge.read_text(encoding="utf-8").splitlines())
+    assert gone and {ln.split("(")[0] for ln in gone} == {
+        "ops.numberer", "ops.system"}
+    assert all("'ParallelRCM'" in ln or "'Mumps'" in ln for ln in gone), gone
+    assert {ln.split("(")[0] for ln in new} == {
+        "ops.numberer", "ops.system", "ops.mass"}
+    assert all("'RCM'" in ln or "'UmfPack'" in ln
+               for ln in new if not ln.startswith("ops.mass(")), new
+    ran, log = _run(t_bridge)
+    assert not ran and ("Mumps" in log or "Numberer" in log), (
+        f"{twin_id}: the twin's bridge deck no longer aborts on its "
+        f"ParallelRCM / Mumps pair; drop its stand-in:\n{log}")
 
 
 _PROBE_PLUGIN = """import json, os, sys
