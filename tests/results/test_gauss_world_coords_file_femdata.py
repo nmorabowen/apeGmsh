@@ -221,14 +221,113 @@ def test_class_without_shape_functions_warns_by_name() -> None:
         compute_global_coords_from_arrays(np.full(2, 7), nat, fem)
 
 
-def test_rows_without_natural_coords_sit_at_origin_and_warn() -> None:
-    """All-NaN rows name no position: the GPs are left at the origin and
-    the class is named, never an invented placement."""
+def test_rows_without_natural_coords_are_nan_and_warn() -> None:
+    """All-NaN rows name no position: the GPs are NaN, never the origin or
+    an invented placement, and the class is named."""
     fem = _fem(_TET10, code=-256, dim=3, npe=10, name="TenNodeTetrahedron")
     with pytest.warns(WarnGaussCoordsApproximate,
-                      match=r"ORIGIN.*TenNodeTetrahedron \(code -256\).*"
-                            r"no natural coordinates"):
+                      match=r"4 GP\(s\) carry no natural coordinates and "
+                            r"are NaN.*TenNodeTetrahedron \(code -256\)"):
         out = compute_global_coords_from_arrays(
             np.full(4, 7), np.full((4, 3), np.nan), fem,
         )
-    np.testing.assert_array_equal(out, np.zeros((4, 3)))
+    assert np.isnan(out).all()
+
+
+@pytest.mark.parametrize("code,name", [(-256, "TenNodeTetrahedron"),
+                                       (11, "")])
+def test_one_unplaceable_row_leaves_the_others_placed(
+    code: int, name: str,
+) -> None:
+    """One GP without coordinates is NaN; its element's other GPs are still
+    placed, on a file-coded and a gmsh-coded FEMData alike."""
+    nat = _TET_GP4.copy()
+    nat[2] = np.nan
+    eids = np.full(4, 7)
+    want = compute_global_coords_from_arrays(
+        eids[[0, 1, 3]], _TET_GP4[[0, 1, 3]],
+        _fem(_TET10, code=11, dim=3, npe=10),
+    )
+    with pytest.warns(WarnGaussCoordsApproximate,
+                      match=r"1 GP\(s\) carry no natural coordinates"):
+        out = compute_global_coords_from_arrays(
+            eids, nat, _fem(_TET10, code=code, dim=3, npe=10, name=name),
+        )
+    assert np.isnan(out[2]).all()
+    np.testing.assert_allclose(out[[0, 1, 3]], want, rtol=0, atol=1e-14)
+
+
+# ---------------------------------------------------------------------
+# 20-node hexes: the file stores them in serendipity order
+# ---------------------------------------------------------------------
+#
+# ``brcshl`` (``SRC/element/UP-ucsd/shp3dv.cpp``), the shape functions of
+# both LadrunoBrick20 and Twenty_Node_Brick, numbers the nodes: corners,
+# lower-ring mid-edges, upper-ring mid-edges, verticals. Its RA/SA/TA table
+# (x2) is transcribed here, independently of the bridge's permutation.
+_SERENDIPITY_NAT = np.array([
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+    [0, -1, -1], [1, 0, -1], [0, 1, -1], [-1, 0, -1],
+    [0, -1, 1], [1, 0, 1], [0, 1, 1], [-1, 0, 1],
+    [-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0],
+], dtype=np.float64)
+_G3 = np.sqrt(0.6) * np.array([-1.0, 0.0, 1.0])
+_HEX_GP27 = np.array([[a, b, c] for c in _G3 for b in _G3 for a in _G3])
+
+
+@pytest.mark.parametrize("cls,code", [("LadrunoBrick20", -33018),
+                                      ("Twenty_Node_Brick", -49)])
+def test_twenty_node_hex_in_serendipity_order_lands_on_the_cube(
+    cls: str, code: int,
+) -> None:
+    """The cube [0, 2]^3, nodes in the file's serendipity order: each GP is
+    at ``1 + xi``. Read as gmsh order it was off by 1.89, silently."""
+    fem = _fem(1.0 + _SERENDIPITY_NAT, code=code, dim=3, npe=20, name=cls)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnGaussCoordsApproximate)
+        out = compute_global_coords_from_arrays(np.full(27, 7), _HEX_GP27,
+                                                fem)
+    np.testing.assert_allclose(out, 1.0 + _HEX_GP27, rtol=0, atol=1e-13)
+
+
+def test_curved_twenty_node_hex_matches_the_gmsh_coded_placement() -> None:
+    """A curved LadrunoBrick20 in serendipity order lands where the same
+    element does as a gmsh Hex20 in gmsh order: the full map, mid-edge
+    nodes included, through the right edges."""
+    from apeGmsh.opensees._element_capabilities import (
+        GMSH_HEX20_TO_SERENDIPITY,
+    )
+
+    rng = np.random.default_rng(3)
+    ser = 1.0 + _SERENDIPITY_NAT
+    ser[8:] += 0.15 * rng.standard_normal((12, 3))
+    gmsh = np.empty_like(ser)
+    gmsh[list(GMSH_HEX20_TO_SERENDIPITY)] = ser
+    eids = np.full(27, 7)
+    want = compute_global_coords_from_arrays(
+        eids, _HEX_GP27, _fem(gmsh, code=17, dim=3, npe=20),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnGaussCoordsApproximate)
+        out = compute_global_coords_from_arrays(
+            eids, _HEX_GP27,
+            _fem(ser, code=-33018, dim=3, npe=20, name="LadrunoBrick20"),
+        )
+    np.testing.assert_allclose(out, want, rtol=0, atol=1e-13)
+
+
+@pytest.mark.parametrize("npe,name", [(20, "SomeBrick20"),
+                                      (27, "SomeBrick27"),
+                                      (27, "TwentySevenNodeBrick")])
+def test_quadratic_hex_of_unknown_node_order_warns_by_name(
+    npe: int, name: str,
+) -> None:
+    """A 20- or 27-node class whose node order is not established here is
+    not read as gmsh order: bbox, warned by name."""
+    nodes = 1.0 + np.random.default_rng(1).random((npe, 3))
+    fem = _fem(nodes, code=-999, dim=3, npe=npe, name=name)
+    with pytest.warns(WarnGaussCoordsApproximate,
+                      match=rf"{name} \(code -999\).*node order of a "
+                            rf"{npe}-node 3-D class is not established"):
+        compute_global_coords_from_arrays(np.full(27, 7), _HEX_GP27, fem)

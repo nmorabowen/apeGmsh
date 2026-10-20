@@ -47,11 +47,8 @@ import numpy as np
 from numpy import ndarray
 
 from ..fem._shape_functions import get_shape_functions
-from ._gauss_extrapolation import (
-    _GMSH_CODE_BY_PARENT_DIM_NPE,
-    _PARENT_DIM,
-    _gp_parent_dim,
-)
+from ..opensees._element_capabilities import GMSH_HEX20_TO_SERENDIPITY
+from ._gauss_extrapolation import _GMSH_CODE_BY_PARENT_DIM_NPE, _PARENT_DIM
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
@@ -203,77 +200,171 @@ class _ElementInfo(NamedTuple):
     bezier: "tuple[str, str] | None"
 
 
-def _place_element(
-    info: _ElementInfo, nat_e: ndarray,
-) -> "tuple[ndarray | None, str | None, bool]":
-    """``(world, None, True)`` for an element placed by its own basis.
+def _inverse(perm: "tuple[int, ...]") -> "tuple[int, ...]":
+    inv = [0] * len(perm)
+    for k, j in enumerate(perm):
+        inv[j] = k
+    return tuple(inv)
 
-    Otherwise ``(None, reason, by_bbox)``: ``by_bbox`` says whether the
-    caller may still approximate the GPs by the centroid+bbox map (their
-    natural coordinates are usable) or must leave them at the origin.
 
-    A file-coded element (``code = -class_tag``) is resolved to a gmsh
-    shape exactly as the Gauss-to-node extrapolation resolves it: from its
-    node count and the width of its own Gauss rows. Every class of these
-    shapes writes its nodes in gmsh order (corners first, then mid-edge
-    nodes on gmsh's edges), so the gmsh catalog's full P2 shape functions
-    are the element's own.
+#: File-coded classes (keyed by ``-class_tag``) of a quadratic shape whose
+#: node order is established, and how to read their row in gmsh order (``gmsh_row = file_row[perm]``;
+#: ``None`` is gmsh's own order). A quadratic shape's map runs through its
+#: mid-edge nodes, so a class missing here is not guessed: it takes the bbox
+#: approximation and is named. Linear shapes need only the corner order every
+#: class shares, so they are not listed.
+#:
+#: * SixNodeTri, LadrunoLST, TenNodeTetrahedron: gmsh order. The fixture solve
+#:   in ``tests/fixtures/simplex_gp`` writes them so and each reproduces
+#:   ``u = x²/2`` exactly, which a misordered element could not.
+#: * EightNodeQuad, NineNodeQuad: gmsh order (their ``shapeFunction``: mid-
+#:   edges (1,2) (2,3) (3,4) (4,1), then the centre).
+#: * LadrunoBrick20, Twenty_Node_Brick: the serendipity order of ``brcshl``
+#:   (``shp3dv``), which ``LadrunoBrick20._emit`` writes by
+#:   ``GMSH_HEX20_TO_SERENDIPITY``; read back through its inverse.
+_GMSH_ORDER_OF_FILE_CLASS: "dict[int, tuple[int, ...] | None]" = {
+    -209: None,      # SixNodeTri
+    -33016: None,    # LadrunoLST
+    -256: None,      # TenNodeTetrahedron
+    -208: None,      # EightNodeQuad
+    -207: None,      # NineNodeQuad
+    -33018: _inverse(GMSH_HEX20_TO_SERENDIPITY),   # LadrunoBrick20
+    -49: _inverse(GMSH_HEX20_TO_SERENDIPITY),      # Twenty_Node_Brick
+}
+
+#: Gmsh codes whose map uses only the corners (any class's corner order).
+_LINEAR_GMSH_CODES = frozenset({1, 2, 3, 4, 5})
+
+
+class _Placement(NamedTuple):
+    """How one element's GPs were placed.
+
+    ``world`` is ``(n_gp, 3)``; a row is NaN when that GP carries no
+    natural coordinates (``n_unplaced``). ``bbox_reason`` is set when the
+    placeable rows took the centroid+bbox approximation.
     """
+    world: ndarray
+    bbox_reason: "str | None"
+    n_unplaced: int
+
+
+def _prefix_widths(nat_e: ndarray) -> ndarray:
+    """Per row: how many leading columns are finite, or ``-1`` when a finite
+    value follows a NaN (the row is not a padded narrower row)."""
+    fin = np.isfinite(nat_e)
+    n_col = nat_e.shape[1]
+    width = np.where(fin.all(axis=1), n_col, np.argmin(fin, axis=1))
+    after = np.arange(n_col)[None, :] >= width[:, None]
+    width[(fin & after).any(axis=1)] = -1
+    return width
+
+
+def _place_element(info: _ElementInfo, nat_e: ndarray) -> _Placement:
+    """Place one element's GPs by its own basis where it is known.
+
+    A file-coded element (``code = -class_tag``) is resolved to a gmsh shape
+    as the Gauss-to-node extrapolation resolves it, from its node count and
+    the width of its own Gauss rows. A quadratic shape is evaluated through
+    its full shape functions only for a class in
+    :data:`_GMSH_ORDER_OF_FILE_CLASS`.
+
+    Rows without natural coordinates in the needed columns are NaN; the
+    element's other rows are still placed.
+    """
+    n_gp = nat_e.shape[0]
+    world = np.full((n_gp, 3), np.nan, dtype=np.float64)
     npe = int(info.node_coords.shape[0])
+    nodes = info.node_coords
+    bbox_reason: "str | None" = None
+
     if info.bezier is not None:
         topo, fam = info.bezier
         need = 2 if topo == "tri" else 3
-        if nat_e.shape[1] < need or not np.isfinite(nat_e[:, :need]).all():
-            return None, (
-                f"its Gauss rows carry no {need}-D natural coordinates"
-            ), False
+        ok = (np.isfinite(nat_e[:, :need]).all(axis=1)
+              if nat_e.shape[1] >= need else np.zeros(n_gp, dtype=bool))
         p = _simplex_order(topo, npe)
-        world = None if p is None else _world_via_basis(
-            nat_e[:, :need], info.node_coords,
-            topology=topo, family=fam, order=p,
-        )
-        if world is None:
-            return None, (
-                f"no {fam} {topo} basis on its {npe} control points"
-            ), True
-        return world, None, True
+        placed = None
+        if ok.any() and p is not None:
+            placed = _world_via_basis(nat_e[ok, :need], nodes,
+                                      topology=topo, family=fam, order=p)
+        if placed is not None:
+            world[ok] = placed
+        elif ok.any():
+            bbox_reason = f"no {fam} {topo} basis on its {npe} control points"
+        return _finish(world, nat_e[:, :need], nodes, ok, bbox_reason)
 
     if info.code >= 0:
-        gmsh_code: int = info.code
+        gmsh_code: "int | None" = info.code
+        need_dim = _PARENT_DIM.get(info.code)
     else:
-        pdim = _gp_parent_dim(nat_e)
-        if pdim is None:
-            return None, "its Gauss rows carry no natural coordinates", False
+        width = _prefix_widths(nat_e)
+        pdim = int(width.max()) if width.size else 0
+        if pdim <= 0:
+            return _Placement(world, None, n_gp)
+        need_dim = pdim
+        gmsh_code = None
         if info.dim is not None and pdim > info.dim:
-            return None, (
+            bbox_reason = (
                 f"its {pdim}-D Gauss rows contradict its group's "
                 f"dim={info.dim}"
-            ), True
-        resolved = _GMSH_CODE_BY_PARENT_DIM_NPE.get((pdim, npe))
-        if resolved is None:
-            return None, (
-                f"no shape functions for a {npe}-node element with "
-                f"{pdim}-D Gauss points"
-            ), True
-        gmsh_code = resolved
+            )
+        else:
+            gmsh_code = _GMSH_CODE_BY_PARENT_DIM_NPE.get((pdim, npe))
+            if gmsh_code is None:
+                bbox_reason = (
+                    f"no shape functions for a {npe}-node element with "
+                    f"{pdim}-D Gauss points"
+                )
+            elif gmsh_code not in _LINEAR_GMSH_CODES:
+                if info.code not in _GMSH_ORDER_OF_FILE_CLASS:
+                    bbox_reason = (
+                        f"the node order of a {npe}-node {pdim}-D class is "
+                        f"not established here"
+                    )
+                    gmsh_code = None
+                else:
+                    perm = _GMSH_ORDER_OF_FILE_CLASS[info.code]
+                    if perm is not None:
+                        nodes = nodes[list(perm)]
 
+    if need_dim is None:
+        ok = np.isfinite(nat_e).all(axis=1)
+    elif nat_e.shape[1] < need_dim:
+        ok = np.zeros(n_gp, dtype=bool)
+    else:
+        ok = np.isfinite(nat_e[:, :need_dim]).all(axis=1)
+    if bbox_reason is not None or not ok.any():
+        return _finish(world, _cols(nat_e, need_dim), nodes, ok, bbox_reason)
+
+    assert gmsh_code is not None
     catalog = get_shape_functions(gmsh_code)
-    need_dim = _PARENT_DIM.get(gmsh_code)
     if catalog is None or need_dim is None:
-        return None, f"no shape functions for gmsh element type {gmsh_code}", True
+        return _finish(world, _cols(nat_e, need_dim), nodes, ok,
+                       f"no shape functions for gmsh element type {gmsh_code}")
     N_fn, _, _, n_nodes = catalog
     if npe < n_nodes:
-        return None, (
+        return _finish(world, _cols(nat_e, need_dim), nodes, ok, (
             f"{npe} nodes against the {n_nodes} its gmsh type "
             f"{gmsh_code} needs"
-        ), True
-    if (nat_e.shape[1] < need_dim
-            or not np.isfinite(nat_e[:, :need_dim]).all()):
-        return None, (
-            f"its Gauss rows carry no {need_dim}-D natural coordinates"
-        ), False
-    N = N_fn(nat_e[:, :need_dim])                 # (n_gp, n_nodes)
-    return N @ info.node_coords[:n_nodes], None, True
+        ))
+    N = N_fn(nat_e[ok, :need_dim])                 # (n_ok, n_nodes)
+    world[ok] = N @ nodes[:n_nodes]
+    return _Placement(world, None, int(n_gp - ok.sum()))
+
+
+def _cols(nat_e: ndarray, need: "int | None") -> ndarray:
+    return nat_e if need is None else nat_e[:, :need]
+
+
+def _finish(
+    world: ndarray, nat_e: ndarray, nodes: ndarray, ok: ndarray,
+    bbox_reason: "str | None",
+) -> _Placement:
+    """Fill the placeable rows by the bbox map when a reason says so."""
+    if bbox_reason is not None:
+        for r in np.flatnonzero(ok):
+            world[r] = _world_via_bbox(nat_e[r], nodes)
+    return _Placement(world, bbox_reason, int(ok.size - ok.sum()))
 
 
 # --------------------------------------------------------------------- #
@@ -371,7 +462,7 @@ def compute_global_coords_from_arrays(
     # Degradation counters — aggregated into ONE warning below.
     bbox: dict[tuple[str, str], int] = {}
     bbox_codes: set[int] = set()
-    at_origin: dict[tuple[str, str], int] = {}
+    unplaced: dict[str, int] = {}
     unresolved_eids: set[int] = set()
     order = np.argsort(eids, kind="stable")
     splits = np.flatnonzero(np.diff(eids[order])) + 1
@@ -383,19 +474,18 @@ def compute_global_coords_from_arrays(
             # ORIGIN, which is worse than approximate. Counted loud.
             unresolved_eids.add(eid)
             continue
-        world, reason, by_bbox = _place_element(info, nat[rows])
-        if world is not None:
-            out[rows] = world
-            continue
-        key = (info.label, str(reason))
-        if not by_bbox:
-            at_origin[key] = at_origin.get(key, 0) + rows.size
-            continue
-        out[rows] = [_world_via_bbox(nat[r], info.node_coords) for r in rows]
-        bbox[key] = bbox.get(key, 0) + rows.size
-        bbox_codes.add(info.code)
+        placed = _place_element(info, nat[rows])
+        out[rows] = placed.world
+        if placed.n_unplaced:
+            unplaced[info.label] = (
+                unplaced.get(info.label, 0) + placed.n_unplaced
+            )
+        if placed.bbox_reason is not None:
+            key = (info.label, placed.bbox_reason)
+            bbox[key] = bbox.get(key, 0) + rows.size - placed.n_unplaced
+            bbox_codes.add(info.code)
 
-    if bbox or at_origin or unresolved_eids:
+    if bbox or unplaced or unresolved_eids:
         parts: list[str] = []
         if bbox:
             listing = "; ".join(
@@ -408,14 +498,13 @@ def compute_global_coords_from_arrays(
                 f"{sorted(bbox_codes)}, exact only for axis-aligned "
                 f"elements; {listing})"
             )
-        if at_origin:
+        if unplaced:
             listing = "; ".join(
-                f"{n} GP(s) of {label}: {why}"
-                for (label, why), n in sorted(at_origin.items())
+                f"{n} GP(s) of {label}" for label, n in sorted(unplaced.items())
             )
             parts.append(
-                f"{sum(at_origin.values())} GP(s) could not be placed "
-                f"and sit at the ORIGIN ({listing})"
+                f"{sum(unplaced.values())} GP(s) carry no natural "
+                f"coordinates and are NaN ({listing})"
             )
         if unresolved_eids:
             sample = sorted(unresolved_eids)[:5]
