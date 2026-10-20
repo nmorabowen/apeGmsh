@@ -11,6 +11,10 @@ The oracle is the same model and load run again through the stock route
 the MPCO read at ``rtol=1e-12``, and the tip equals ``P L / E A``. One
 build cannot write both formats in one run, so the model runs twice.
 
+A raw deck over a FEMData-only archive (``fem.to_h5``, no bridge, no
+``ndm``) is read by group too; its oracle is the live domain's
+displacement at every step, and the tip's closed form.
+
 Gated by the ``ladruno_fork`` marker (root conftest auto-skips off-fork).
 """
 from __future__ import annotations
@@ -37,7 +41,10 @@ from apeGmsh.results.spec._resolved import (
     ResolvedRecorderSpec,
 )
 from tests.test_results_live_default_format import (
+    TRUSS_A,
+    TRUSS_E,
     TRUSS_L,
+    TRUSS_P,
     TRUSS_STEPS,
     TRUSS_TIP,
     truss_bridge,
@@ -175,3 +182,85 @@ def test_group_reads_equal_the_mpco_route(runs, sel, nodes) -> None:
     finally:
         res.close()
         ref.close()
+
+
+# ---------------------------------------------------------------------------
+# A raw deck over a FEMData-only archive (fem.to_h5): no bridge, no ndm
+# ---------------------------------------------------------------------------
+
+
+def _raw_deck(ops: Any) -> None:
+    """The truss as a hand-built deck, tagged by FEM id (no bridge)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, TRUSS_L, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, TRUSS_E)
+    ops.element("Truss", 1, 1, 2, TRUSS_A, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, TRUSS_P, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("BandGeneral")
+    ops.test("NormDispIncr", 1e-12, 10)
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 1.0 / TRUSS_STEPS)
+    ops.analysis("Static")
+
+
+@pytest.mark.parametrize(
+    "sel, nodes",
+    [({"pg": "Tip"}, [2]), ({"pg": "Bar"}, [1, 2]), ({"label": _LABEL}, [2])],
+    ids=["pg-Tip", "pg-Bar", "label"],
+)
+def test_a_raw_deck_over_a_femdata_archive_reads_by_group(
+    tmp_path, sel, nodes,
+) -> None:
+    """``emit_default(model_h5=fem.to_h5(...))`` on the fork: the archive
+    records no ndm, the file's dimension (2) drives the check, and each
+    group read equals the live domain's displacements at every step."""
+    from apeGmsh.opensees._target import backend_info_of
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = get_ops()
+    assert backend_info_of(ops).kind == "fork"
+    fem = _fem()
+    archive = tmp_path / "fem.h5"
+    fem.to_h5(str(archive))
+    _raw_deck(ops)
+    live = np.zeros((TRUSS_STEPS, 2, 2))
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with _spec(fem).emit_default(tmp_path / "run", model_h5=archive,
+                                         ops=ops) as run:
+                for k in range(TRUSS_STEPS):
+                    assert ops.analyze(1) == 0
+                    for j, n in enumerate((1, 2)):
+                        live[k, :, j] = [ops.nodeDisp(n, d) for d in (1, 2)]
+    finally:
+        ops.wipe()
+    assert run.route == "fork" and caught == []
+    # A FEMData archive carries no model_hash, so the fork file cannot be
+    # stamped: that is the one warning (no ModelFemMismatchWarning).
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = run.results()
+    assert [w.category for w in caught] == [DefaultRouteWarning], [
+        str(w.message) for w in caught]
+    assert "unstamped" in str(caught[0].message)
+    try:
+        for d, comp in enumerate(_DISP):
+            ids, vals = _read(res, comp, **sel)
+            np.testing.assert_array_equal(ids, nodes)
+            cols = [n - 1 for n in nodes]
+            np.testing.assert_allclose(vals, live[:, d, cols], rtol=1e-12,
+                                       atol=0.0)
+        ids, ux = _read(res, "displacement_x", **sel)
+        np.testing.assert_allclose(ux[-1, list(ids).index(2)], TRUSS_TIP,
+                                   rtol=1e-12)
+    finally:
+        res.close()
