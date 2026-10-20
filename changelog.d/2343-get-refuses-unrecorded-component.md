@@ -13,10 +13,12 @@ the stage being read lists at that level. The composites are
 - **A family name** raises `ComponentNotRecorded` (a `ValueError`), naming the
   members to read one at a time. A family name is one that prefixes listed
   names, such as `"displacement"`, `"stress"` or `"bending_moment"`.
-- **Any other unrecorded name**, such as a typo or a name from another level,
-  still returns the empty slab. It now also emits one
-  `ComponentNotRecordedWarning` per call, listing what is recorded.
-- **Stays silent and empty:** a recorded name on an empty selection, and a
+- **A name outside apeGmsh's vocabulary**, such as a typo, still returns the
+  empty slab. It now also emits one `ComponentNotRecordedWarning` per call,
+  listing what is recorded.
+- **Stays silent and empty:** a canonical name the stage does not record,
+  such as `displacement_z` on a 2-D model, which the library's own x/y/z
+  loops ask for. Also silent: a recorded name on an empty selection, and a
   read that leaves a recorded bucket unread. That read already names the
   bucket.
 
