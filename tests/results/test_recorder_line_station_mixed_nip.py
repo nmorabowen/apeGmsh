@@ -12,14 +12,15 @@ Two checks now hold it:
 * with a bound model, each element's count comes from its
   ``beamIntegration``; unequal counts are refused, naming the elements, and
   equal ones prove the slice;
-* without one, each element's stations must increase strictly within
-  [-1, 1].
+* without one (no ``model_h5_src=``, no ``pairing=``), nothing names a
+  count, so the record is refused by name before any file is read (#2331),
+  equal counts included.
 
 The Legendre case shows why the model check is needed beside the station
 check: interior stations and a 12x length ratio make every mis-sliced block
 increase within [-1, 1]. The long-hinge HingeRadau case shows why a proven
 slice skips the order check: its legal stations are out of order. Uniform
-records read exactly as before, and a ``from_recorders`` cache made by the
+records read with a model exactly as before, and a ``from_recorders`` cache made by the
 previous parser is not served.
 
 The unit cases hand-write the files; the ``live`` case records the issue's
@@ -51,7 +52,8 @@ LOBATTO = {3: np.array([-1.0, 0.0, 1.0]),
            5: np.array([-1.0, -np.sqrt(3.0 / 7.0), 0.0, np.sqrt(3.0 / 7.0), 1.0])}
 LEGENDRE = {2: np.array([-1.0, 1.0]) / np.sqrt(3.0),
             4: np.polynomial.legendre.leggauss(4)[0]}
-UNORDERED = "do not increase strictly within"
+#: The model-less refusal (#2331): it names both inputs that give a count.
+NO_MODEL = r"pass model_h5_src= .* or pairing="
 TIMES = np.array([1.0, 2.0])
 
 Rule = Callable[[apeSees, Any], Any]
@@ -157,11 +159,11 @@ def _transcode(tmp: Path, fem: Any, eids: list[int],
 # =====================================================================
 
 def test_lobatto_3_and_5_refused_without_model(tmp_path: Path) -> None:
-    """The issue's record: the station check catches it with no model."""
+    """The issue's record, with no model: refused by name."""
     lengths = (3.0, 5.0)
     fem, eids = _two_beams("mix35_nomodel", lengths)
     _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO[5]))
-    with pytest.raises(ValueError, match=UNORDERED):
+    with pytest.raises(ValueError, match=NO_MODEL):
         _transcode(tmp_path, fem, eids, None)
     assert not (tmp_path / "out.h5").exists()
 
@@ -215,14 +217,15 @@ def test_lobatto_3_and_4_refused_for_its_counts_with_model(tmp_path: Path) -> No
     assert "section layout" not in str(exc.value)
 
 
-def test_lobatto_3_and_4_without_model_is_not_divisible(tmp_path: Path) -> None:
-    """The model-less path is unchanged: 7 columns do not divide by 2."""
+def test_lobatto_3_and_4_without_model_is_refused_by_name(tmp_path: Path) -> None:
+    """With no model, 7 columns over 2 elements are refused by name, before
+    the columns are divided."""
     lengths = (3.0, 5.0)
     fem, eids = _two_beams("mix34_nomodel", lengths)
     _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO_4))
-    with pytest.raises(ValueError,
-                       match="7 data columns is not divisible by 2 elements"):
+    with pytest.raises(ValueError, match=NO_MODEL):
         _transcode(tmp_path, fem, eids, None)
+    assert not (tmp_path / "out.h5").exists()
 
 
 def test_legendre_mix_the_station_check_misses_is_refused_by_the_model(
@@ -252,12 +255,14 @@ def test_file_that_does_not_match_the_model_is_refused(tmp_path: Path) -> None:
 
 
 def test_unordered_stations_refused_without_model(tmp_path: Path) -> None:
-    """An unbound read of out-of-order stations is refused by their order."""
+    """An unbound read of out-of-order stations is refused by name, before
+    their order is read."""
     lengths = (3.0, 5.0)
     fem, eids = _two_beams("unordered", lengths)
     _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO[3][::-1]))
-    with pytest.raises(ValueError, match=rf"FEM element {eids[1]} .*{UNORDERED}"):
+    with pytest.raises(ValueError, match=NO_MODEL):
         _transcode(tmp_path, fem, eids, None)
+    assert not (tmp_path / "out.h5").exists()
 
 
 # =====================================================================
@@ -277,6 +282,11 @@ def test_equal_counts_read_as_before(tmp_path: Path, with_model: bool, n: int,
     fem, eids = _two_beams(f"uniform_{n}_{with_model}", lengths)
     model_h5 = _model_h5(tmp_path, fem, (rule, rule)) if with_model else None
     _write_files(tmp_path, lengths, (xi, xi))
+    if not with_model:    # nothing proves the counts equal (#2331)
+        with pytest.raises(ValueError, match=NO_MODEL):
+            _transcode(tmp_path, fem, eids, model_h5)
+        assert not (tmp_path / "out.h5").exists()
+        return
     target = _transcode(tmp_path, fem, eids, model_h5)
     with Results.from_native(target, model=_open_model_from_h5(target)) as r:
         s = r.stage(r.stages[0].id)
@@ -295,7 +305,7 @@ def test_equal_counts_read_as_before(tmp_path: Path, with_model: bool, n: int,
 def test_long_hinge_stations_read_when_the_model_proves_the_slice(
         tmp_path: Path, with_model: bool) -> None:
     """Legal out-of-order stations: a model proves the slice and they read;
-    unbound, they are refused by their order, never as mixed counts."""
+    unbound, they are refused by name, never as mixed counts."""
     lengths = (0.75, 0.75)
     fem, eids = _two_beams(f"hinge_long_{with_model}", lengths)
 
@@ -305,8 +315,9 @@ def test_long_hinge_stations_read_when_the_model_proves_the_slice(
     model_h5 = _model_h5(tmp_path, fem, (rule, rule)) if with_model else None
     _write_files(tmp_path, lengths, (HINGE_LONG, HINGE_LONG))
     if not with_model:
-        with pytest.raises(ValueError, match=rf"{UNORDERED}.*Pass model="):
+        with pytest.raises(ValueError, match=NO_MODEL):
             _transcode(tmp_path, fem, eids, model_h5)
+        assert not (tmp_path / "out.h5").exists()
         return
     target = _transcode(tmp_path, fem, eids, model_h5)
     with Results.from_native(target, model=_open_model_from_h5(target)) as r:
@@ -415,7 +426,7 @@ def test_live_lobatto_3_and_5_refused_and_split_matches_ele_response(
 
     with pytest.raises(ValueError, match="3 points: FEM elements"):
         read((mixed,), model, "c_model")
-    with pytest.raises(ValueError, match=UNORDERED):    # no model: the transcoder alone
+    with pytest.raises(ValueError, match=NO_MODEL):    # no model: refused by name
         RecorderTranscoder(
             ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(mixed,)),
             output_dir=out, target_path=tmp_path / "none.h5", fem=fem,

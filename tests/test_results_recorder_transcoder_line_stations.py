@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
+from apeGmsh.results.transcoders import _recorder as recorder_module
 from apeGmsh.results.transcoders._recorder import (
     RecorderTranscoder,
     _resolve_element_lengths,
@@ -122,6 +123,42 @@ def _write_gpx_out(
 # =====================================================================
 # Element-length resolver
 # =====================================================================
+
+#: The model-less refusal (#2331): it names both inputs that give a count.
+NO_MODEL = r"pass model_h5_src= .* or pairing="
+
+
+def _run_with_known_counts(
+    monkeypatch: pytest.MonkeyPatch, spec: ResolvedRecorderSpec,
+    tmp_path: Path, target: Path, fem, n_ip: int,
+) -> None:
+    """Transcode ``spec`` with each element's count known to be ``n_ip``.
+
+    These mocked files come with no model, and a model-less read is refused
+    by name, since nothing names a count (#2331): that is asserted first.
+    The test wrote the files, so it knows the count a model's
+    ``beamIntegration`` would give; it stands in for one, checked against
+    the file's columns, and the decode is then held to the files.
+    """
+    def run() -> None:
+        RecorderTranscoder(
+            spec, output_dir=tmp_path, target_path=target, fem=fem,
+            stage_name="static", stage_kind="static",
+        ).run()
+
+    with pytest.raises(ValueError, match=NO_MODEL):
+        run()
+    assert not target.exists()
+
+    def counts(rec, n_columns, *_a):
+        assert n_columns == n_ip * len(rec.element_ids)
+        return n_ip
+
+    monkeypatch.setattr(recorder_module, "require_station_source",
+                        lambda *_a: None)
+    monkeypatch.setattr(recorder_module, "line_station_count", counts)
+    run()
+
 
 class TestResolveElementLengths:
     def test_duck_typed_path(self) -> None:
@@ -246,14 +283,11 @@ class TestForceBeamColumn3dAggregated:
         )
         return fem, spec, tmp_path / "out.h5"
 
-    def test_full_round_trip(self, tmp_path: Path) -> None:
+    def test_full_round_trip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         fem, spec, target = self._setup(tmp_path)
-        transcoder = RecorderTranscoder(
-            spec, output_dir=tmp_path,
-            target_path=target, fem=fem,
-            stage_name="static", stage_kind="static",
-        )
-        transcoder.run()
+        _run_with_known_counts(monkeypatch, spec, tmp_path, target, fem, 5)
 
         with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
@@ -285,7 +319,9 @@ class TestForceBeamColumn3dAggregated:
 
 
 class TestForceBeamColumn3dBareSection:
-    def test_bare_4comp_section_excludes_shears(self, tmp_path: Path) -> None:
+    def test_bare_4comp_section_excludes_shears(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Bare FiberSection3d (4 comps: P, Mz, My, T) — shears absent."""
         L = 4.0
         n_ip = 3
@@ -325,10 +361,7 @@ class TestForceBeamColumn3dBareSection:
             snapshot_id=fem.snapshot_id,
         )
         target = tmp_path / "out.h5"
-        RecorderTranscoder(
-            spec, output_dir=tmp_path, target_path=target, fem=fem,
-            stage_name="static", stage_kind="static",
-        ).run()
+        _run_with_known_counts(monkeypatch, spec, tmp_path, target, fem, n_ip)
 
         with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
@@ -341,7 +374,9 @@ class TestForceBeamColumn3dBareSection:
 
 
 class TestForceBeamColumn2dBare:
-    def test_2d_bare_section_2_components(self, tmp_path: Path) -> None:
+    def test_2d_bare_section_2_components(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """ForceBeamColumn2d, bare 2D section (P, Mz)."""
         L = 3.0
         n_ip = 3
@@ -378,10 +413,7 @@ class TestForceBeamColumn2dBare:
             snapshot_id=fem.snapshot_id,
         )
         target = tmp_path / "out.h5"
-        RecorderTranscoder(
-            spec, output_dir=tmp_path, target_path=target, fem=fem,
-            stage_name="static", stage_kind="static",
-        ).run()
+        _run_with_known_counts(monkeypatch, spec, tmp_path, target, fem, n_ip)
         with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             ax = s.elements.line_stations.get(component="axial_force")
@@ -391,7 +423,9 @@ class TestForceBeamColumn2dBare:
 
 
 class TestMultiBucketSplit:
-    def test_two_elements_different_n_ip(self, tmp_path: Path) -> None:
+    def test_two_elements_different_n_ip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Two beams with different beamIntegrations → two write groups.
 
         OpenSees can record both elements through one ``recorder
@@ -470,10 +504,7 @@ class TestMultiBucketSplit:
             snapshot_id=fem.snapshot_id,
         )
         target = tmp_path / "out.h5"
-        RecorderTranscoder(
-            spec, output_dir=tmp_path, target_path=target, fem=fem,
-            stage_name="static", stage_kind="static",
-        ).run()
+        _run_with_known_counts(monkeypatch, spec, tmp_path, target, fem, n_ip)
 
         with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
