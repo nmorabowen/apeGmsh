@@ -59,7 +59,7 @@ import pickle
 import uuid
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     # The bridge, as the procedure mixins and ``apeSees`` itself see it:
@@ -177,6 +177,29 @@ def remember_lineage(bridge: "_ProcedureHost", archive: object) -> None:
         _LINEAGE_BY_DIGEST[key] = (model_hash, fem_hash or "")
 
 
+def emit_deck_tail(
+    bridge: "_ProcedureHost", emitter: Any, bm: Any, pre_prof: Any, post_prof: Any,
+    analyze_steps: "int | None", analyze_dt: Any, path: Any,
+) -> None:
+    """Emit ``bm`` into ``emitter``, then the deck's tail: the profiler
+    records, the ``analyze`` line and, last, the run record (#2210; it
+    reuses the automatic ``model.h5``'s lineage).  ``apeSees.py`` and
+    ``apeSees.tcl`` share it (#2289)."""
+    bm.emit(emitter)
+    for _verb, _vargs in pre_prof:
+        emitter.profiler(_verb, *_vargs)
+    if analyze_steps is not None:
+        emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+    for _verb, _vargs in post_prof:
+        emitter.profiler(_verb, *_vargs)
+    if analyze_steps is not None:
+        bridge._artifacts.after_emit(bridge, stacklevel=_STACKLEVEL + 1)
+        emitter._deck_run_record(
+            lambda p: cast("Any", bridge)._write_h5(p, bm), int(analyze_steps),
+            analyze_dt, bridge, path,
+        )
+
+
 class BridgeArtifactWriter:
     """One bridge's automatic-write state: the opt-out and whether it
     has warned.  What was last written lives in :data:`_LAST_WRITTEN`,
@@ -192,7 +215,9 @@ class BridgeArtifactWriter:
         self.enabled = bool(enabled)
         self._warned = False
 
-    def after_emit(self, bridge: "_ProcedureHost") -> None:
+    def after_emit(
+        self, bridge: "_ProcedureHost", stacklevel: int = _STACKLEVEL,
+    ) -> None:
         """Write ``bridge``'s ``model.h5`` at the conventional path if it
         is due.  Called by every terminal emit site; never raises."""
         if not self.enabled or self._warned:
@@ -238,7 +263,7 @@ class BridgeArtifactWriter:
                         "model.h5 path; the bridge writes nothing "
                         "automatically. Call ops.h5(path).",
                         BridgeArtifactWarning,
-                        stacklevel=_STACKLEVEL,
+                        stacklevel=stacklevel,
                     )
                 return
             # P3: a mesh the kernel partitioned is an MPI deck's; its
@@ -253,7 +278,7 @@ class BridgeArtifactWriter:
                     f"model.h5 being outside V2's scope. Call ops.h5(path) "
                     f"to write the model anyway.",
                     BridgeArtifactWarning,
-                    stacklevel=_STACKLEVEL,
+                    stacklevel=stacklevel,
                 )
                 return
             target = (default_artifact_dir() / f"{name}.h5").resolve()
@@ -303,5 +328,5 @@ class BridgeArtifactWriter:
                 f"{target if target is not None else '<unresolved>'}: "
                 f"{exc!r}. The bridge does not try again.",
                 BridgeArtifactWarning,
-                stacklevel=_STACKLEVEL,
+                stacklevel=stacklevel,
             )

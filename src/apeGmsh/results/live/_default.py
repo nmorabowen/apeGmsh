@@ -37,7 +37,11 @@ is deleted, and the classic recorders open one stage over the whole block.
 no ``/opensees`` zone). On the classic-recorder route a FEMData archive's
 missing facts (ndm, per-node ndf, element classes) are read from the live
 domain (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`,
-#2251), and the read embeds no ``/opensees`` zone.
+#2251), and the read embeds no ``/opensees`` zone. Element records
+(Gauss points, line stations, nodal forces) pair each FEM element with
+the live element of its id, proved by ``eleNodes`` against the FEM
+connectivity and typed by ``eleType`` (#2269); the read carries that
+pairing.
 
 Modal records have no default route and refuse at ``__enter__``.
 """
@@ -68,7 +72,7 @@ from ..spec._emit import mpco_ops_args
 from ._recorders import LiveRecorders
 
 if TYPE_CHECKING:
-    from ..spec._resolved import ResolvedRecorderSpec
+    from ..spec._resolved import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 __all__ = ["DefaultRouteWarning", "LiveDefault", "read_deck_mpco"]
 
@@ -158,8 +162,13 @@ class LiveDefault:
         route's read pairs with it. A FEMData archive declares no ndm and
         archives no per-node ndf or element classes, so the
         classic-recorder route reads them from the live domain
-        (``getNDM``, ``getNDF``, ``eleType``; #2251) and records node
-        records only: it pairs no FEM element id with an OpenSees tag.
+        (``getNDM``, ``getNDF``, ``eleType``; #2251). It pairs no FEM
+        element id with an OpenSees tag either, so an element record pairs
+        each FEM element with the live element of its own id only when
+        that element's ``eleNodes`` is the FEM connectivity in order and
+        its class is known; any other id refuses, naming it (#2269).
+        ``fibers`` and per-Gauss-point material records refuse by name:
+        they need the bridge's archive.
     ops
         The OpenSees module, or a stand-in for testing. Defaults to the
         module the bridge drives.
@@ -192,6 +201,9 @@ class LiveDefault:
         #: The classic-recorder route over a FEMData archive (no
         #: ``/opensees`` zone): read with no bridge zone embedded.
         self._neutral = False
+        #: The live facts of that route, with the element pairing proved
+        #: at ``__enter__``; the read carries the pairing.
+        self._facts: Optional[LiveDomainFacts] = None
         self._build = "unknown"
 
     # ------------------------------------------------------------------
@@ -312,8 +324,11 @@ class LiveDefault:
             # refusal ("declares no ndm") stands.
             self._neutral = True
             if live_ndm(self._ops) >= 1:
-                _refuse_element_records(self._spec, self._model_h5)
-                deck_model = LiveDomainFacts(self._ops, self._model)
+                _refuse_unpairable_records(self._spec, self._model_h5)
+                self._facts = _pair_live_elements(
+                    self._spec, LiveDomainFacts(self._ops, self._model),
+                    self._model_h5)
+                deck_model = self._facts
         live = LiveRecorders(self._spec, out, ops=self._ops, model=deck_model)
         live.__enter__()
         self._live = live
@@ -377,7 +392,7 @@ class LiveDefault:
             if self._neutral:
                 return _read_neutral_recorders(
                     self._spec, target, self._model, self._live.stages,
-                    cache_root=cache_root,
+                    facts=self._facts, cache_root=cache_root,
                 )
             return Results.from_recorders(
                 self._spec, target, fem=self._model.fem,
@@ -434,17 +449,101 @@ def _has_bridge_zone(model_h5: Path) -> bool:
         return "opensees" in f
 
 
-def _refuse_element_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
-    """Refuse, by name, the records a FEMData archive cannot pair: it holds
-    no ``(fem_eid, tag)`` pairing, and identity is never assumed."""
-    named = [r.name for r in spec.records if r.category in _ELEMENT_CATEGORIES]
+def _refuse_unpairable_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
+    """Refuse, by name, the element records a FEMData archive cannot read
+    even with the live pairing: a ``fibers`` record and a per-Gauss-point
+    material record (``material <gp> ...``) take each element's
+    ``beamIntegration`` or the bridge's own pairing from the model archive,
+    which a FEMData archive does not hold."""
+    from ..writers._cache import quiet_emit_logical
+
+    with warnings.catch_warnings():
+        # The test translation only; the emit warns once, as it does.
+        warnings.simplefilter("ignore")
+        named = [r.name for r in spec.records if r.category == "fibers" or (
+            r.category == "gauss" and any(
+                lr.response_tokens[:1] == ("material",)
+                for lr in quiet_emit_logical(r, output_dir="", file_format="out")))]
     if named:
         raise ValueError(
-            f"emit_default: records {named} name elements by FEM id, and "
-            f"{model_h5} is a FEMData archive (no /opensees zone), which "
-            "pairs no FEM id with an OpenSees element tag. Record nodes "
-            "only, or pass the bridge's model archive (ops.h5(...))."
+            f"emit_default: records {named} read each element's integration "
+            f"rule or material points through the bridge's model archive, "
+            f"and {model_h5} is a FEMData archive (no /opensees zone). "
+            "Record them through the bridge's model archive (ops.h5(...))."
         )
+
+
+def _pair_live_elements(
+    spec: "ResolvedRecorderSpec", facts: LiveDomainFacts, model_h5: Path,
+) -> LiveDomainFacts:
+    """Pair every FEM element an element record names with the live
+    element of its own id, by fact (:meth:`LiveDomainFacts.pair_elements`),
+    and check each record's class against the live classes.
+
+    A FEMData archive pairs no FEM id with an OpenSees tag, and identity
+    is never assumed: each element is proved to be the live one, or the
+    run refuses, naming it. A record that names its element class (the
+    response catalog's key on read) must name the live ``eleType`` of
+    every element it records.
+    """
+    records = [r for r in spec.records if r.category in _ELEMENT_CATEGORIES]
+    if not records:
+        return facts
+    where = (f"emit_default: records {[r.name for r in records]} name "
+             f"elements by FEM id, and {model_h5} is a FEMData archive (no "
+             "/opensees zone), so each element is paired from the live "
+             "domain")
+    facts.pair_elements(
+        (int(e) for r in records for e in (r.element_ids if r.element_ids
+                                           is not None else ())),
+        where=where)
+    for r in records:
+        cls = r.element_class_name
+        if cls is None or r.element_ids is None:
+            continue
+        other = sorted({(facts.live_class(int(e)), int(e)) for e in r.element_ids
+                        if facts.live_class(int(e)) != cls})
+        if other:
+            raise ValueError(
+                f"emit_default: record {r.name!r} names element class "
+                f"{cls!r}, but the live domain has FEM elements "
+                + ", ".join(f"{e} as {c!r}" for c, e in other[:10])
+                + ". Its results would be decoded as another class's; name "
+                "the live class, or split the record by class.")
+    for r in records:
+        if r.category == "elements":
+            _refuse_uncatalogued_nodal_forces(r, facts)
+    return facts
+
+
+def _refuse_uncatalogued_nodal_forces(
+    rec: "ResolvedRecorderRecord", facts: LiveDomainFacts,
+) -> None:
+    """Refuse, before the run, an ``elements`` record the read could not
+    decode: one that names no class (a ``.out`` file carries none), or
+    whose elements' live class has no nodal-force layout for its frame."""
+    from ...opensees._response_catalog import (
+        gauss_routing_for_canonical,
+        is_nodal_force_catalogued,
+    )
+
+    if rec.element_class_name is None:
+        raise ValueError(
+            f"emit_default: elements record {rec.name!r} names no element "
+            "class, and a .out file carries none, so its nodal forces "
+            "cannot be decoded. Name the live element class.")
+    tokens = sorted({routing[1] for c in rec.components if (
+        routing := gauss_routing_for_canonical(c, topology="nodal_forces"))})
+    classes = sorted({facts.live_class(int(e)) for e in (
+        rec.element_ids if rec.element_ids is not None else ())})
+    missing = [(cls, t) for cls in classes for t in tokens
+               if not is_nodal_force_catalogued(cls, t)]
+    if missing:
+        raise ValueError(
+            f"emit_default: elements record {rec.name!r} records nodal "
+            f"forces of live classes with no nodal-force layout {missing}, "
+            "so the read could not decode them. Record a catalogued class, "
+            "or its response as another category.")
 
 
 def _read_neutral_recorders(
@@ -453,16 +552,20 @@ def _read_neutral_recorders(
     model: OpenSeesModel,
     stages: "tuple[Any, ...]",
     *,
+    facts: Optional[LiveDomainFacts],
     cache_root: "str | Path | None",
 ) -> Results:
     """Read a FEMData-archive run's classic recorder files.
 
     The transcode embeds no ``/opensees`` zone (the archive has none, and
     :meth:`OpenSeesModel.to_h5` would refuse to write one), so the file
-    holds ``/meta`` and ``/model`` only; it is cached like
-    :meth:`Results.from_recorders` caches, keyed apart from every
-    model-bearing transcode. The emit refused every rotation the read
-    could not keep as written, so no read mask is owed.
+    holds ``/meta`` and ``/model`` only. The element pairing the run
+    proved (``facts``) is carried into the transcode, so element rows are
+    stamped as FEM ids and an elastic beam's ``localForce`` stations are
+    checked by its live type token. The file is cached like
+    :meth:`Results.from_recorders` caches, keyed by that pairing, apart
+    from every model-bearing transcode. The emit refused every rotation
+    the read could not keep as written, so no read mask is owed.
     """
     from ..schema._versions import PARSER_VERSION
     from ..transcoders import RecorderTranscoder
@@ -476,11 +579,14 @@ def _read_neutral_recorders(
     ]
     key = _cache.compute_cache_key(
         source_files, parser_version=PARSER_VERSION,
-        fem_snapshot_id=fem.snapshot_id, model_token=None, stages=plan,
+        fem_snapshot_id=fem.snapshot_id,
+        model_token=None if facts is None else _cache.model_cache_token(facts),
+        stages=plan,
     )
     cached_h5, _ = _cache.cache_paths(_cache.resolve_cache_root(cache_root), key)
     if not cached_h5.exists():
-        RecorderTranscoder(spec, out_dir, cached_h5, fem, stages=stages).run()
+        RecorderTranscoder(spec, out_dir, cached_h5, fem, stages=stages,
+                           pairing=facts).run()
     return Results.from_native(cached_h5, fem=fem, model=model)
 
 
