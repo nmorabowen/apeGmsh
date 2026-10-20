@@ -38,9 +38,11 @@ Any other bridge deck that does not run fails.
 
 :data:`_STAND_INS` names corpus models the net runs through a stand-in
 instead (T ruling on #2195): the golden cell's twin must keep the cell's
-``ParallelRCM`` / ``Mumps``, so its stand-in, the same model with
-``RCM`` / ``UmfPack`` and a lumped mass, runs in its place. A test pins
-that the two decks differ only there and that the twin's deck aborts.
+MPCO recorder and ``ParallelRCM`` / ``Mumps``, none of which stock
+openseespy has, so its stand-in, the same model with ``RCM`` /
+``UmfPack``, no MPCO recorder and a lumped mass, runs in its place. A test
+pins that the two decks differ only there and that the twin's deck aborts
+on one of those commands.
 
 openseespy is never imported into the pytest process: the decks run in
 subprocesses, so the gate is ``importlib.util.find_spec`` (#1836).
@@ -73,13 +75,14 @@ _MARKER = "APEGMSH_K2C_DECK_COMPLETE"
 
 _TWIN_ID = "test_h5_decl_params::_broad_partitioned"
 _STAND_IN_ID = ("test_h5_decl_params::_two_column_frame_partitioned"
-                "[mass=True,stock_solver=True]")
+                "[mass=True,stock=True]")
 #: Corpus models the net runs through a stand-in (T ruling on #2195). The
-#: golden cell's twin must emit the cell's deck, whose ``numberer
-#: ParallelRCM`` / ``system Mumps`` no single-process stock build has. Its
-#: stand-in is the same model with ``RCM`` / ``UmfPack`` and a lumped mass;
+#: golden cell's twin must emit the cell's deck, whose ``recorder mpco``,
+#: ``numberer ParallelRCM`` and ``system Mumps`` no single-process stock
+#: build has. Its stand-in is the same model with ``RCM`` / ``UmfPack``, no
+#: MPCO recorder and a lumped mass;
 #: :func:`test_a_stand_in_is_its_model_but_for_solver_and_mass` pins that,
-#: and that the twin's own bridge deck aborts on that pair.
+#: and that the twin's own bridge deck aborts on one of those commands.
 _STAND_INS: dict[str, str] = {_TWIN_ID: _STAND_IN_ID}
 #: Every model whose replay deck must run: the corpus but its S rows (not
 #: replayable; ``from_h5`` refuses them by name) and the models a stand-in
@@ -114,22 +117,17 @@ def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
     capabilities its archive's solve stamp says a backend needs. Each deck
     sits in its own directory, its working directory when it runs: the two
     decks write the same output files (a profiler report refuses a run id
-    its file already holds). Each directory holds an empty ``out/``: the
-    golden recipe's recorders write under it (``out/run.mpco``), OpenSees
-    creates no directory, and an MPCO file in a missing one aborts the deck
-    with an HDF5 error."""
+    its file already holds)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops = model.build()
         bridge = tmp / "bridge" / "bridge.py"
         bridge.parent.mkdir()
-        (bridge.parent / "out").mkdir()
         ops.py(str(bridge), progress=False)
         archive = tmp / "model.h5"
         ops.h5(str(archive))
         replay = tmp / "replay" / "replay.py"
         replay.parent.mkdir()
-        (replay.parent / "out").mkdir()
         model_h5 = OpenSeesModel.from_h5(str(archive))
         model_h5.build("py", out=str(replay))
     stamp = model_h5.solve_stamp
@@ -217,13 +215,36 @@ def _changed(a: list[str], b: list[str]) -> tuple[list[str], list[str]]:
     return gone, new
 
 
+#: What the stand-in's bridge deck drops from the twin's and adds to it,
+#: exactly: the MPCO recorder and its per-rank ``-R`` region rows, and the
+#: golden's parallel pair in both stages; the lumped masses and a serial
+#: pair in their place. Nothing else differs.
+_STAND_IN_DROPS = [
+    "ops.region(1, '-node', 2, '-ele', 2)",
+    "ops.region(1, '-node', 4, '-ele', 3)",
+    "ops.recorder('mpco', 'out/run.mpco', '-N', 'displacement', '-E', "
+    "'force', '-R', 1)",
+    *["ops.numberer('ParallelRCM')", "ops.system('Mumps', '-matrixType', 0)"] * 2,
+]
+_STAND_IN_ADDS = [
+    "ops.mass(2, 2.0, 2.0, 2.0, 0.0, 0.0, 0.0)",
+    "ops.mass(4, 2.0, 2.0, 2.0, 0.0, 0.0, 0.0)",
+    *["ops.numberer('RCM')", "ops.system('UmfPack')"] * 2,
+]
+#: The commands a single-process stock openseespy refuses in the twin's
+#: deck, as its error log names them; the stand-in drops each of them.
+_STOCK_REFUSES = ("recorder type mpco is unknown", "unknown system type Mumps",
+                  "Numberer")
+
+
 @pytest.mark.parametrize("twin_id", list(_STAND_INS))
 def test_a_stand_in_is_its_model_but_for_solver_and_mass(
         twin_id: str, tmp_path: Path) -> None:
-    """The stand-in's bridge deck is the twin's but for the solver pair and
-    the ``mass`` lines, and the twin's own bridge deck aborts on this
-    backend at that pair. Once a stock build runs it, this fails: delete
-    the stand-in and let the net run the twin."""
+    """The stand-in's bridge deck is the twin's but for the MPCO recorder,
+    the solver pair and the ``mass`` lines (:data:`_STAND_IN_DROPS`,
+    :data:`_STAND_IN_ADDS`), and the twin's own bridge deck aborts on this
+    backend at one of the dropped commands. Once a stock build runs it,
+    this fails: delete the stand-in and let the net run the twin."""
     by_id = {m.id: m for m in CORPUS}
     twin, stand_in = by_id[twin_id], by_id[_STAND_INS[twin_id]]
     (tmp_path / "twin").mkdir()
@@ -232,17 +253,11 @@ def test_a_stand_in_is_its_model_but_for_solver_and_mass(
     s_bridge, _s_replay, _req = _decks(stand_in, tmp_path / "stand_in")
     gone, new = _changed(t_bridge.read_text(encoding="utf-8").splitlines(),
                          s_bridge.read_text(encoding="utf-8").splitlines())
-    assert gone and {ln.split("(")[0] for ln in gone} == {
-        "ops.numberer", "ops.system"}
-    assert all("'ParallelRCM'" in ln or "'Mumps'" in ln for ln in gone), gone
-    assert {ln.split("(")[0] for ln in new} == {
-        "ops.numberer", "ops.system", "ops.mass"}
-    assert all("'RCM'" in ln or "'UmfPack'" in ln
-               for ln in new if not ln.startswith("ops.mass(")), new
+    assert (gone, new) == (_STAND_IN_DROPS, _STAND_IN_ADDS)
     ran, log = _run(t_bridge)
-    assert not ran and ("Mumps" in log or "Numberer" in log), (
-        f"{twin_id}: the twin's bridge deck no longer aborts on its "
-        f"ParallelRCM / Mumps pair; drop its stand-in:\n{log}")
+    assert not ran and any(r in log for r in _STOCK_REFUSES), (
+        f"{twin_id}: the twin's bridge deck no longer aborts on a command "
+        f"its stand-in drops; drop the stand-in:\n{log}")
 
 
 _PROBE_PLUGIN = """import json, os, sys

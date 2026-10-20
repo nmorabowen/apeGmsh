@@ -15,17 +15,17 @@ The golden pins `OpenSeesTarget(mode="stock")` and writes the `# apeGmsh …;
 backend stock` stamp. The twin pins no target and writes no stamp, because
 the archive does not carry the target mode (#2278). Mutations that drop a
 stage or swap the ranks change the twin's deck. Dropping a partition makes
-the bridge refuse its serial `system Mumps`. A second twin adds a lumped mass
-and declares `RCM` / `UmfPack`. With the mass, the corpus fails when the fix
-and mass sections of the flat replay order are swapped (the #2277 review
-finding). The S, orphan-row and add-row rules are now held by synthetic rows
-on the `FEMStub` model.
+the bridge refuse its serial `system Mumps`. A second twin (`stock=True`)
+adds a lumped mass, declares `RCM` / `UmfPack` and leaves out the MPCO
+recorder. With the mass, the corpus fails when the fix and mass sections of
+the flat replay order are swapped (the #2277 review finding). The S,
+orphan-row and add-row rules are now held by synthetic rows on the `FEMStub`
+model.
 
-The live net cannot run the golden twin on stock: it must keep the cell's
-`ParallelRCM` / `Mumps`, and stock has neither. The net runs the second twin
-in its place (`_STAND_INS`), and the known-stock-failure table stays at five
-rows. A live test pins three things: the two decks differ only in the solver
-pair and the `mass` lines, the stand-in runs, and the twin's own deck aborts
-on that pair. Each live deck directory now holds an empty `out/`, because an
-MPCO recorder writing into a missing directory aborts the deck. Tests only;
-no library code changes.
+The live net cannot run the golden twin on stock openseespy. The twin must
+keep the cell's MPCO recorder and `ParallelRCM` / `Mumps`, and stock has none
+of the three. The net runs the second twin in its place (`_STAND_INS`), and
+the known-stock-failure table stays at five rows. A live test pins three
+things: the two bridge decks differ in exactly those lines and the `mass`
+lines, the stand-in runs, and the twin's own deck aborts on one of the
+dropped commands. Tests only; no library code changes.

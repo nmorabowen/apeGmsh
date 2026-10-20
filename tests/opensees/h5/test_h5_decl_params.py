@@ -665,7 +665,7 @@ def _two_column_frame_partitioned(
     stages: tuple[tuple[str, float, int], ...] = (
         ("gravity", 10.0, 2), ("push", -5.0, 1)),
     mass: bool = False,
-    stock_solver: bool = False,
+    stock: bool = False,
 ) -> apeSees:
     """The golden corpus's ``build_model("two_column_frame_partitioned",
     "staged_partitioned", "recording")`` recipe, on the real
@@ -684,9 +684,10 @@ def _two_column_frame_partitioned(
     a partitioned deck with both ``fix`` and ``mass`` lines, so a replay
     that swaps those two flat sections differs from the bridge.
 
-    ``stock_solver=True`` declares ``RCM`` / ``UmfPack`` in place of the
-    golden's ``ParallelRCM`` / ``Mumps``, which a single-process stock
-    build does not have: the live net's stand-in for the golden-bound twin
+    ``stock=True`` keeps to what a single-process stock openseespy has: it
+    declares ``RCM`` / ``UmfPack`` in place of the golden's ``ParallelRCM``
+    / ``Mumps``, and no MPCO recorder (stock has no ``recorder mpco``). It
+    is the live net's stand-in for the golden-bound twin
     (``test_roundtrip_oracle_live._STAND_INS``, T ruling on #2195)."""
     ops = apeSees(_two_column_frame_fem(partitions))
     ops.model(ndm=3, ndf=6)
@@ -701,9 +702,10 @@ def _two_column_frame_partitioned(
         file="out/node_disp.out", response="disp", pg="Top", dofs=(1, 2))
     ops.recorder.Element(
         file="out/ele_force.out", response=("globalForce",), pg="Cols")
-    ops.recorder.MPCO(
-        file="out/run.mpco", nodal_responses=("displacement",),
-        elem_responses=("force",), nodes_pg="Top", elements_pg="Cols")
+    if not stock:
+        ops.recorder.MPCO(
+            file="out/run.mpco", nodal_responses=("displacement",),
+            elem_responses=("force",), nodes_pg="Top", elements_pg="Cols")
     for name, force, n in stages:
         with ops.stage(name=name) as s:
             series = ops.timeSeries.Linear()
@@ -714,9 +716,9 @@ def _two_column_frame_partitioned(
                 algorithm=ops.algorithm.Newton(),
                 integrator=ops.integrator.LoadControl(dlam=0.5),
                 constraints=ops.constraints.Plain(),
-                numberer=(ops.numberer.RCM() if stock_solver
+                numberer=(ops.numberer.RCM() if stock
                           else ops.numberer.ParallelRCM()),
-                system=(ops.system.UmfPack() if stock_solver
+                system=(ops.system.UmfPack() if stock
                         else ops.system.Mumps()),
                 analysis=ops.analysis.Static())
             s.run(n_increments=n)
