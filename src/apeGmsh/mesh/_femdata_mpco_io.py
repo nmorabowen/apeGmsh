@@ -24,7 +24,6 @@ import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy import ndarray
 
 if TYPE_CHECKING:
     import h5py
