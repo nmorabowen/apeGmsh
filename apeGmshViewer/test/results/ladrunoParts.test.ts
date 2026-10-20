@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { pairSet } from "../../src/main/pairing.ts";
 import { ResultsHost } from "../../src/main/results.ts";
-import { LadrunoError, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings, PART_SET_ELEMENTS_UNREAD } from "../../src/reader/ladrunoParts.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { pairResults } from "../../src/state/results.ts";
@@ -136,6 +136,215 @@ test("the closed form: node 2's displacement is one copy, its reaction the sum o
       assert.ok(!close(rx![1]!, p0[0]!, 1e-3) && !close(rx![1]!, p1[0]!, 1e-3));
     });
   });
+});
+
+// -- one read per part for every component (#2297) --------------------------------
+
+function sameBits(a: Float64Array, b: Float64Array): boolean {
+  return Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
+}
+
+/**
+ * Before #2297: one component per call. Each part's column is read on its own
+ * (`readNodalRows(stage, [c], k0, k1)`), over the sorted union of the parts' node ids;
+ * NONE writes the parts last to first, SUM adds them in part order from 0.
+ */
+function perComponentStitch(paths: readonly string[], stageId: string, comp: string, k0: number, k1: number): Float64Array {
+  const parts = paths.map((p) => openLadruno(H5, p, { part: true }));
+  try {
+    const ids = parts.map((p) => Array.from(p.stage(stageId).nodes!.ids));
+    const union = [...new Set(ids.flat())].sort((a, b) => a - b);
+    const at = new Map(union.map((n, i) => [n, i]));
+    const kinds = [...new Set(parts.map((p) => p.nodalReduction(stageId, comp)))];
+    assert.equal(kinds.length, 1, `${comp}: one PARTITION_REDUCTION`);
+    const sum = kinds[0] === "SUM";
+    const T = k1 - k0;
+    const N = union.length;
+    const out = new Float64Array(T * N);
+    const order = sum ? parts.map((_, j) => j) : parts.map((_, j) => parts.length - 1 - j);
+    for (const j of order) {
+      const rows = parts[j]!.readNodalRows(stageId, [comp], k0, k1)[0]!;
+      const nj = ids[j]!.length;
+      for (let k = 0; k < T; k++) {
+        for (let i = 0; i < nj; i++) {
+          const a = k * N + at.get(ids[j]![i]!)!;
+          out[a] = sum ? out[a]! + rows[k * nj + i]! : rows[k * nj + i]!;
+        }
+      }
+    }
+    return out;
+  } finally {
+    for (const p of parts) p.close();
+  }
+}
+
+/** The whole history, each single step, and an inner range. */
+function rangesOf(nSteps: number): [number, number][] {
+  const out: [number, number][] = [[0, nSteps]];
+  for (let k = 0; k < nSteps; k++) out.push([k, k + 1]);
+  if (nSteps >= 3) out.push([1, nSteps - 1]);
+  return out;
+}
+
+/** The set's rows, in several selections, against the one-component-per-call stitch, bit for bit; the count of arrays checked. */
+function setMatchesPerComponent(opened: string): number {
+  let checked = 0;
+  withSet(opened, (s) => {
+    for (const st of s.index.stages) {
+      const comps = st.nodes?.components ?? [];
+      if (comps.length === 0) continue;
+      const selections = [comps, [...comps].reverse(), comps.slice(1), [comps[comps.length - 1]!, comps[0]!]];
+      for (const [k0, k1] of rangesOf(st.nSteps)) {
+        const want = comps.map((c) => perComponentStitch(s.paths, st.id, c, k0, k1));
+        for (const order of selections) {
+          const got = s.readNodalRows(st.id, order, k0, k1);
+          assert.equal(got.length, order.length);
+          order.forEach((c, i) => {
+            assert.ok(sameBits(got[i]!, want[comps.indexOf(c)]!), `${opened} ${st.id} steps ${k0}..${k1} ${c} in [${order.join(", ")}]`);
+            checked++;
+          });
+          if (k1 === k0 + 1) {
+            const step = s.readNodalStep(st.id, order, k0);
+            order.forEach((c, i) => assert.ok(sameBits(step[i]!, want[comps.indexOf(c)]!), `${opened} ${st.id} step ${k0} ${c}`));
+          }
+        }
+        const twice = s.readNodalRows(st.id, [comps[0]!, comps[0]!], k0, k1);
+        assert.notEqual(twice[0], twice[1], "a component asked for twice gets its own array");
+        assert.ok(sameBits(twice[0]!, want[0]!) && sameBits(twice[1]!, want[0]!));
+        checked += 2;
+      }
+    }
+  });
+  return checked;
+}
+
+/** Every nodal DATA of the part rewritten as `factor` times itself plus a per-value offset, so each part's copy differs. */
+const perturb = (factor: number) => (f: h5wasm.File) => {
+  for (const r of ["DISPLACEMENT", "REACTION_FORCE"]) {
+    const ds = f.get(`${ON_NODES}/${r}/DATA`) as h5wasm.Dataset;
+    const [T, n, c] = ds.shape as [number, number, number];
+    const v = ds.value as Float64Array;
+    assert.ok(v instanceof Float64Array, `${ds.path} is float64`);
+    ds.write_slice([[0, T], [0, n], [0, c]], Float64Array.from(v, (x, i) => x * factor + (i + 1) / 7));
+  }
+};
+const both = (...edits: ((f: h5wasm.File) => void)[]) => (f: h5wasm.File) => edits.forEach((e) => e(f));
+const partition = (id: number | null, count: number) => (f: h5wasm.File) => {
+  const info = f.get("INFO") as unknown as AttrNode;
+  if (id !== null) setAttr(info, "PARTITION_ID", id);
+  setAttr(info, "NUM_PARTITIONS", count);
+};
+
+/** A 3-part set: the committed parts and a third, a copy of part 1; parts 1 and 2 perturbed so that no two copies of node 2 agree. */
+const threeParts = () =>
+  scratchSet([PART[0]!, PART[1]!, PART[1]!], { 0: partition(null, 3), 1: both(partition(null, 3), perturb(1.5)), 2: both(partition(2, 3), perturb(-2)) });
+
+test("#2297: readNodalRows and readNodalStep return the one-component-per-call bits, every component, every range, several selections", () => {
+  // The committed set, opened from either part (its interface copies agree), then sets whose copies differ.
+  for (const opened of PART) assert.equal(setMatchesPerComponent(opened), 3 * (4 + 4 + 3 + 2 + 2), `${opened}`);
+  const two = scratchSet(PART, { 1: perturb(1.5) });
+  const three = threeParts();
+  try {
+    assert.ok(setMatchesPerComponent(two.part(1)) > 0);
+    assert.ok(setMatchesPerComponent(three.part(2)) > 0);
+  } finally {
+    rmSync(two.dir, { recursive: true });
+    rmSync(three.dir, { recursive: true });
+  }
+});
+
+test("#2297: in a 3-part set node 2's NONE value is part 0's copy and its SUM the three copies added in part order", () => {
+  const three = threeParts();
+  try {
+    const own = (k: number, comp: string) => {
+      const p = openLadruno(H5, three.part(k), { part: true });
+      try {
+        const st = p.index.stages[0]!;
+        const i = Array.from(st.nodes!.ids).indexOf(2);
+        const rows = p.readNodalRows(st.id, [comp], 0, st.nSteps)[0]!;
+        return Array.from({ length: st.nSteps }, (_, step) => rows[step * st.nodes!.ids.length + i]!);
+      } finally {
+        p.close();
+      }
+    };
+    withSet(three.part(0), (s) => {
+      const st = s.index.stages[0]!;
+      const [ux, rfx] = s.readNodalRows(st.id, ["DISPLACEMENT/Ux", "REACTION_FORCE/RFx"], 0, st.nSteps);
+      const copies = [0, 1, 2].map((k) => own(k, "DISPLACEMENT/Ux"));
+      const partials = [0, 1, 2].map((k) => own(k, "REACTION_FORCE/RFx"));
+      for (let step = 0; step < st.nSteps; step++) {
+        assert.equal(new Set(copies.map((c) => c[step])).size, 3, "the three copies of node 2 differ");
+        assert.equal(ux![step * 3 + 1], copies[0]![step], `step ${step}: Ux2 is part 0's copy`);
+        assert.equal(rfx![step * 3 + 1], 0 + partials[0]![step]! + partials[1]![step]! + partials[2]![step]!, `step ${step}: RFx2 is the parts' sum`);
+      }
+    });
+  } finally {
+    rmSync(three.dir, { recursive: true });
+  }
+});
+
+test("#2297: N components of P parts are P hyperslabs per DATA, not N x P", () => {
+  const proto = h5wasm.Dataset.prototype;
+  const slice = proto.slice;
+  const seen: string[] = [];
+  proto.slice = function (this: h5wasm.Dataset, ranges: Parameters<typeof slice>[0]) {
+    seen.push(this.path);
+    return slice.call(this, ranges);
+  };
+  const three = threeParts();
+  try {
+    for (const [opened, P] of [[PART[0]!, 2], [three.part(0), 3]] as const) {
+      withSet(opened, (s) => {
+        const st = s.index.stages[0]!;
+        const comps = st.nodes!.components;
+        assert.equal(comps.length, 4);
+        const perData = () => {
+          const n = new Map<string, number>();
+          for (const p of seen) n.set(p, (n.get(p) ?? 0) + 1);
+          return n;
+        };
+        const reads: (() => unknown)[] = [
+          () => s.readNodalRows(st.id, comps, 0, st.nSteps),
+          () => s.readNodalStep(st.id, [...comps].reverse(), 1),
+          () => s.readNodalRows(st.id, [comps[0]!, comps[0]!, comps[3]!], 0, 1),
+        ];
+        for (const read of reads) {
+          seen.length = 0;
+          read();
+          const n = perData();
+          assert.deepEqual([...n.keys()].sort(), [`${ON_NODES}/DISPLACEMENT/DATA`, `${ON_NODES}/REACTION_FORCE/DATA`]);
+          for (const [path, count] of n) assert.equal(count, P, `${path}: ${count} slices for ${P} parts`);
+        }
+      });
+    }
+  } finally {
+    proto.slice = slice;
+    rmSync(three.dir, { recursive: true });
+  }
+});
+
+test("#2297: every component is checked before any part is read; the range check comes first", () => {
+  const proto = h5wasm.Dataset.prototype;
+  const slice = proto.slice;
+  let slices = 0;
+  proto.slice = function (this: h5wasm.Dataset, ranges: Parameters<typeof slice>[0]) {
+    slices++;
+    return slice.call(this, ranges);
+  };
+  try {
+    withSet(PART[0]!, (s) => {
+      const st = s.index.stages[0]!;
+      slices = 0;
+      assert.throws(() => s.readNodalRows(st.id, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uz"], 0, 1), /stage stage_0 of the part set has no component "DISPLACEMENT\/Uz"/);
+      assert.throws(() => s.readNodalRows(st.id, ["DISPLACEMENT/Uz"], 0, st.nSteps + 1), /steps 0\.\.3 are not a range inside stage stage_0 \(0\.\.2\)/);
+      assert.throws(() => s.readNodalRows("stage_9", ["DISPLACEMENT/Ux"], 0, 1), /no stage "stage_9"/);
+      assert.equal(slices, 0, "a refused read reads nothing");
+      assert.deepEqual(s.readNodalRows(st.id, [], 0, 1), []);
+      assert.equal(slices, 0, "no component, no read");
+    });
+  } finally {
+    proto.slice = slice;
+  }
 });
 
 test("element results of a part set are listed unread, and the element verdict is unverified", () => {
