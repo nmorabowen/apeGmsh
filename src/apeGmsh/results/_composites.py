@@ -65,13 +65,21 @@ def _listing_gates_read(*, filtered: bool) -> Iterator[list[str]]:
 
 
 class ComponentNotRecorded(ValueError):
+    """A read named a component FAMILY instead of one of its members.
+
+    Every reader answers an unknown name with an EMPTY slab. For a family
+    shorthand (``"displacement"`` on a stage that records
+    ``displacement_x/_y/_z``) that read "no data" on a populated file
+    (#2343). The composites raise this instead, naming the members.
+    """
+
+
+class ComponentNotRecordedWarning(UserWarning):
     """A read named a component the stage does not record at that level.
 
-    Every reader answers an unknown name with an EMPTY slab, which reads
-    as "no data here" when the data was recorded under another name: a
-    family shorthand (``"displacement"`` for ``displacement_x/_y/_z``), a
-    typo, or a level that holds no such quantity (#2343). The composites
-    raise this instead. A known name on an empty selection stays empty.
+    A typo or a name from another level: the read still returns its
+    empty slab, as it always has, and says so once per call (#2343).
+    A recorded name on an empty selection does not warn.
     """
 
 
@@ -80,7 +88,7 @@ def _unread_bucket_warnings() -> tuple[type[Warning], ...]:
 
     Such a read returns an empty slab for a name the file does record,
     and names the bucket (#2293, #2305): the empty answer is spoken for,
-    so :func:`_refuse_if_unrecorded` must not turn it into a refusal."""
+    so :func:`_refuse_if_unrecorded` neither refuses nor warns on it."""
     from .readers._ladruno_element_io import LineStationBucketSkippedWarning
     from .readers._mpco import MPCOBucketSkippedWarning
     from .readers._mpco_layer_io import LayerBucketUnreadWarning
@@ -96,17 +104,25 @@ def _unread_bucket_warnings() -> tuple[type[Warning], ...]:
 
 def _refuse_if_unrecorded(read, component: str, sid: str, level: ResultLevel,
                           reader):
-    """Run ``read()``; refuse when it is empty for an unrecorded name.
+    """Run ``read()``, and answer an empty result for an unrecorded name.
+
+    * Data, or a name ``sid`` lists at ``level`` (an empty selection):
+      the slab, silently.
+    * A read that leaves a recorded bucket unread
+      (:func:`_unread_bucket_warnings`): the slab, silently here, since
+      the read already named that bucket (#2293, #2305).
+    * A family prefix of listed names: :class:`ComponentNotRecorded`,
+      naming the members.
+    * Any other name: the empty slab, with one
+      :class:`ComponentNotRecordedWarning`.
 
     The listing is asked only when the read came back empty (no entity
     columns), so a read that returns data never pays for it, and a name
-    a reader accepts beyond its listing (a raw token) keeps working.
-    The listing is the one for ``sid``, the stage just read. Its
-    ``MPCOBucketSkippedWarning`` s are held back: the read already named
-    the skipped buckets it touched (#2293, #2305). Before refusing, the
-    read is repeated with its warnings recorded: if it leaves a recorded
-    bucket unread (:func:`_unread_bucket_warnings`), the first read has
-    already named that bucket, and its empty slab is the answer.
+    a reader accepts beyond its listing (a raw token) keeps working. The
+    listing is the one for ``sid``, the stage just read; its
+    ``MPCOBucketSkippedWarning`` s are held back, because the read
+    already named the skipped buckets it touched. The unread check
+    repeats the read with its warnings recorded, and swallowed.
     """
     slab = read()
     if np.asarray(slab.values).shape[1] != 0:
@@ -122,15 +138,19 @@ def _refuse_if_unrecorded(read, component: str, sid: str, level: ResultLevel,
     if any(issubclass(w.category, unread) for w in again):
         return slab
     family = sorted(c for c in available if c.startswith(f"{component}_"))
-    hint = (
-        f" {component!r} is a family name: read its components one at a "
-        f"time ({', '.join(family)})."
-        if family else ""
-    )
-    raise ComponentNotRecorded(
+    if family:
+        raise ComponentNotRecorded(
+            f"{component!r} is a component family at the {level.value} "
+            f"level of stage {sid!r}, not a component: read its members "
+            f"one at a time ({', '.join(family)})."
+        )
+    warnings.warn(
         f"{component!r} is not recorded at the {level.value} level of "
-        f"stage {sid!r}.{hint} Available: {sorted(available)}."
+        f"stage {sid!r}; the read is empty. Available: {sorted(available)}.",
+        ComponentNotRecordedWarning,
+        stacklevel=3,
     )
+    return slab
 
 
 # =====================================================================

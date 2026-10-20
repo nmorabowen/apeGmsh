@@ -1,12 +1,16 @@
-"""A composite ``get()`` refuses a name the stage does not record (#2343).
+"""A composite ``get()`` answers an unrecorded name out loud (#2343).
 
 Every reader answers an unknown component with an EMPTY slab. Before
 #2343 the composites passed that through, so a family shorthand
-(``"displacement"`` for ``displacement_x/_y/_z``) or a typo read as "no
-data" on a populated file. The composites now raise
-:class:`ComponentNotRecorded` by name and list what the stage records.
-A known name on an empty selection still reads as empty: that is a real
-answer, not a missing one.
+(``"displacement"`` for ``displacement_x/_y/_z``) read as "no data" on a
+populated file. T's ruling (option C, on #2343):
+
+* a family prefix of the stage's listed names raises
+  :class:`ComponentNotRecorded`, naming the members;
+* any other unrecorded name (a typo) still returns empty, with one
+  :class:`ComponentNotRecordedWarning`;
+* a recorded name on an empty selection, and a read that leaves a
+  recorded bucket unread, stay silent and empty.
 
 Oracles: the written values (native, MPCO) and the committed ``.ladruno``
 fixture's own explicit reads, at ``rtol=1e-12``.
@@ -20,7 +24,10 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
-from apeGmsh.results._composites import ComponentNotRecorded
+from apeGmsh.results._composites import (
+    ComponentNotRecorded,
+    ComponentNotRecordedWarning,
+)
 from apeGmsh.results.writers import NativeWriter
 
 from tests.conftest import _open_model_from_h5, _stub_model_h5_path
@@ -85,15 +92,31 @@ def test_native_family_shorthand_refuses_by_name(native) -> None:
     with pytest.raises(ComponentNotRecorded) as exc:
         native.nodes.get(component="displacement", stage="full")
     msg = str(exc.value)
-    assert "'displacement' is a family name" in msg
+    assert "'displacement' is a component family" in msg
     assert "displacement_x, displacement_y, displacement_z" in msg
+    # A ValueError, like node_envelope's refusal and the census's.
+    assert isinstance(exc.value, ValueError)
 
 
-def test_native_refusal_is_a_value_error(native) -> None:
-    # Callers that already catch ValueError (node_envelope's refusal,
-    # the census) keep one except clause for every refusal by name.
-    with pytest.raises(ValueError):
-        native.nodes.get(component="displacment_x", stage="full")
+def _warned(fn):
+    """Run ``fn``; return (result, the ComponentNotRecordedWarning texts)."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = fn()
+    return out, [
+        str(w.message) for w in caught
+        if issubclass(w.category, ComponentNotRecordedWarning)
+    ]
+
+
+def test_native_typo_warns_once_and_stays_empty(native) -> None:
+    slab, texts = _warned(lambda: native.nodes.get(
+        component="displacment_x", stage="full",
+    ))
+    assert slab.values.shape == (3, 0)
+    assert len(texts) == 1
+    assert "'displacment_x' is not recorded at the nodes level" in texts[0]
+    assert "displacement_x" in texts[0]
 
 
 def test_native_explicit_components_read_the_written_values(native) -> None:
@@ -111,10 +134,12 @@ def test_native_listing_is_the_stage_being_read(native) -> None:
     assert native.nodes.get(
         component="displacement_y", stage="full",
     ).values.shape == (3, 3)
-    with pytest.raises(ComponentNotRecorded) as exc:
-        native.nodes.get(component="displacement_y", stage="x_only")
-    assert "stage" in str(exc.value)
-    assert "['displacement_x']" in str(exc.value)
+    slab, texts = _warned(lambda: native.nodes.get(
+        component="displacement_y", stage="x_only",
+    ))
+    assert slab.values.shape == (3, 0)
+    assert len(texts) == 1
+    assert "['displacement_x']" in texts[0]
 
 
 def test_native_mode_stage(native) -> None:
@@ -123,14 +148,16 @@ def test_native_mode_stage(native) -> None:
         mode.nodes.get(component="displacement_y").values,
         _disp(1)[:1], rtol=1e-12,
     )
-    with pytest.raises(ComponentNotRecorded, match="family name"):
+    with pytest.raises(ComponentNotRecorded, match="component family"):
         mode.nodes.get(component="displacement")
 
 
 def test_native_known_name_on_empty_selection_stays_empty(native) -> None:
-    slab = native.nodes.get(
-        component="displacement_x", ids=[999_999], stage="full",
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        slab = native.nodes.get(
+            component="displacement_x", ids=[999_999], stage="full",
+        )
     assert slab.values.shape == (3, 0)
     assert slab.node_ids.size == 0
 
@@ -138,17 +165,23 @@ def test_native_known_name_on_empty_selection_stays_empty(native) -> None:
 @pytest.mark.parametrize(
     "level", ["gauss", "line_stations", "fibers", "layers", "springs"],
 )
-def test_native_element_levels_refuse_an_unrecorded_name(
+def test_native_element_levels_warn_on_an_unrecorded_name(
     native, level: str,
 ) -> None:
     composite = getattr(native.elements, level)
-    with pytest.raises(ComponentNotRecorded, match=level):
-        composite.get(component="stress", stage="full")
+    slab, texts = _warned(
+        lambda: composite.get(component="stress", stage="full"),
+    )
+    assert np.asarray(slab.values).shape[1] == 0
+    assert len(texts) == 1 and f"the {level} level" in texts[0]
 
 
-def test_native_per_element_node_level_refuses(native) -> None:
-    with pytest.raises(ComponentNotRecorded, match="elements level"):
-        native.elements.get(component="globalForce", stage="full")
+def test_native_per_element_node_level_warns(native) -> None:
+    slab, texts = _warned(
+        lambda: native.elements.get(component="globalForce", stage="full"),
+    )
+    assert slab.values.shape[1] == 0
+    assert len(texts) == 1 and "the elements level" in texts[0]
 
 
 # ---------------------------------------------------------------------
@@ -197,8 +230,19 @@ def test_ladruno_spatial_query_refuses_through_get() -> None:
 
 def test_ladruno_known_name_on_empty_selection_stays_empty() -> None:
     r = Results.from_ladruno(LADRUNO / "truss2d.ladruno")
-    slab = r.nodes.get(component="displacement_x", ids=[999_999])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        slab = r.nodes.get(component="displacement_x", ids=[999_999])
     assert slab.values.shape[1] == 0
+
+
+def test_ladruno_typo_warns_once_and_stays_empty() -> None:
+    r = Results.from_ladruno(LADRUNO / "beam3d.ladruno")
+    slab, texts = _warned(
+        lambda: r.elements.line_stations.get(component="shear_q"),
+    )
+    assert slab.values.shape[1] == 0
+    assert len(texts) == 1 and "bending_moment_y" in texts[0]
 
 
 # ---------------------------------------------------------------------
@@ -302,7 +346,17 @@ def test_mpco_filtered_refusal_adds_no_skip_warning(mpco_single) -> None:
 
 
 def test_mpco_known_name_on_empty_selection_stays_empty(mpco_single) -> None:
-    slab = mpco_single.elements.gauss.get(
-        component="stress_xx", ids=[999_999],
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        slab = mpco_single.elements.gauss.get(
+            component="stress_xx", ids=[999_999],
+        )
     assert slab.values.shape[1] == 0
+
+
+@pytest.mark.parametrize("which", ["mpco_single", "mpco_two_parts"])
+def test_mpco_typo_warns_once_and_stays_empty(which: str, request) -> None:
+    r = request.getfixturevalue(which)
+    slab, texts = _warned(lambda: r.nodes.get(component="dispalcement_x"))
+    assert slab.values.shape == (3, 0)
+    assert len(texts) == 1 and "displacement_z" in texts[0]
