@@ -10,8 +10,9 @@ so the expected file is known entry by entry:
 * a rotation slot holds the rotation only where a beam touches the node;
   a 3-D solid node writes 0.0 there, and a node under an unknown class
   writes 0.0 with one ``RotationSlotUnresolvedWarning``;
-* each refusal (wrong coordinates, a missing node, a non-positive
-  eigenvalue, a short solve, a vector whose length is not the node's ndf,
+* each refusal (wrong coordinates, a missing node, a non-positive or
+  non-finite eigenvalue, a failed solve, a short solve, a vector whose
+  length is not the node's ndf,
   ``n_modes`` < 1, the archive as the output path) names its cause and
   writes nothing.
 
@@ -239,13 +240,31 @@ def test_a_missing_node_refuses_by_id(tmp_path: Path) -> None:
     assert ops.solved == [] and not out.exists()
 
 
-@pytest.mark.parametrize("lam", [0.0, -2.5, float("nan")])
+@pytest.mark.parametrize("lam", [0.0, -2.5, float("nan"), float("inf")])
 def test_a_non_positive_eigenvalue_refuses_by_mode(tmp_path: Path, lam: float) -> None:
     fem, ops = _frame_2d()
     ops.eigenvalues = [4.0, lam, 300.0]
     out = tmp_path / "modes.h5"
-    with pytest.raises(ValueError, match=r"capture_live_modes: mode 2 has a non-positive eigenvalue"):
+    with pytest.raises(ValueError, match=r"capture_live_modes: mode 2 has a non-positive or non-finite eigenvalue"):
         capture_live_modes(fem, 3, out, ops=ops)
+    assert not out.exists()
+
+
+class _SolverError(Exception):
+    """Stands in for the module's ``OpenSeesError``."""
+
+
+def test_a_failed_solve_refuses_with_the_cause(tmp_path: Path) -> None:
+    fem, ops = _frame_2d()
+
+    def fail(n: int) -> list[float]:
+        raise _SolverError("See stderr output")
+
+    ops.eigen = fail  # type: ignore[method-assign]
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed .*wipeAnalysis") as err:
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert isinstance(err.value.__cause__, _SolverError)
     assert not out.exists()
 
 

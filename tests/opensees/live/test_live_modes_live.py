@@ -21,8 +21,9 @@ Oracles, read back through ``Results.from_native``:
   where a beam touches the node, 0.0 at a brick node.
 
 Refusals on the live domain: a deck node off its FEM coordinates, a FEM
-node the deck never built, and a non-positive eigenvalue (a negative
-spring), each naming its cause and writing nothing.
+node the deck never built, a non-positive eigenvalue (a negative
+spring), and a second default solve that stock openseespy refuses, each
+naming its cause and writing nothing.
 """
 from __future__ import annotations
 
@@ -327,6 +328,27 @@ def test_a_non_positive_eigenvalue_refuses(opspy: Any, tmp_path: Path) -> None:
     fem = _fem(xy, {1: ("Line 2", 1, [[1, 2], [2, 3], [3, 4]], [1, 2, 3])},
                "live_modes_neg")
     out = tmp_path / "modes.h5"
-    with pytest.raises(ValueError, match=r"capture_live_modes: mode \d+ has a non-positive eigenvalue"):
+    with pytest.raises(ValueError, match=r"capture_live_modes: mode \d+ has a non-positive or non-finite eigenvalue"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
+
+
+def test_a_second_default_solve_refuses_with_the_remedy(opspy: Any, tmp_path: Path) -> None:
+    """Stock openseespy 3.7.1: a second default ``eigen`` in a domain with
+    no analysis fails ("no EigenSOE has been set"), so the capture refuses,
+    names ``ops.wipeAnalysis()``, and that remedy works. The fork solves
+    twice without it, so there the capture succeeds at once."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
+    ops = opspy
+    _cantilever_2d(ops, xy)
+    ops.eigen(2)                                 # the user's own solve
+    out = tmp_path / "modes.h5"
+    if get_backend_info().kind == "stock":
+        with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed .*wipeAnalysis") as err:
+            capture_live_modes(_line_fem(xy), 2, out, ops=ops)
+        assert err.value.__cause__ is not None and not out.exists()
+        ops.wipeAnalysis()
+    capture_live_modes(_line_fem(xy), 2, out, ops=ops)
+    assert out.exists()
