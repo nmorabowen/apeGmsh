@@ -710,7 +710,11 @@ export class ResultsFile {
 
   private readNodes(g: RGroup, T: number): NodalInfo {
     // A node listed twice is refused at open, by name (#2358): readNodalStep would
-    // return both columns, a contour keep the first and a history the other.
+    // return both columns, a contour keep the first and a history the other. This
+    // reader reads exactly one partition (readStage refuses a stage with several), so
+    // `_ids` is one chunk and a repeat is a repeat within one chunk, as #2360 refuses
+    // in Python. Boundary nodes copied across partitions, which Python's native
+    // reader dedups first-wins, never reach this reader.
     const idDs = this.dataset(g, "_ids");
     const ids = uniqueNodeIds(intsAsNumbers(idDs), this.path, idDs.path, (m) => new ResultsError("layout", m));
     const components: string[] = [];
