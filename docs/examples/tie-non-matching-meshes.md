@@ -58,9 +58,10 @@ all.
 
 ```python
 import numpy as np
-from apeGmsh import apeGmsh, Part, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh, Part
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (mm, N, MPa) ---
 w, Ha, Hb = 200.0, 500.0, 500.0
@@ -133,18 +134,28 @@ ops.numberer.RCM(); ops.system.UmfPack()
 ops.test.NormDispIncr(tol=1e-7, max_iter=50); ops.algorithm.Newton()
 ops.integrator.LoadControl(dlam=1.0); ops.analysis.Static()
 
-# --- 3. Solve, capture the top displacement and the base reaction ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(label="blockB.top", components=["displacement_z"], name="top")
-spec.nodes(label="blockA.bot", components=["reaction_force_z"], name="base")
-with ops.domain_capture(spec, path="tie.h5") as cap:
-    cap.begin_stage("axial", kind="static")
-    ret = ops.analyze(steps=1)
-    cap.step(t=1.0); cap.end_stage()
+# --- 3. Solve, record the top displacement and the base reaction ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="top", components=("displacement_z",),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(label="blockB.top").ids,
+        ),
+        ResolvedRecorderRecord(
+            category="nodes", name="base", components=("reaction_force_z",),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(label="blockA.bot").ids,
+        ),
+    ),
+)
+ops.h5("tie.h5")
+ops.run()
+opspy = get_ops()
+with spec.emit_default("tie_run", model_h5="tie.h5") as run:
+    ret = opspy.analyze(1)
 
 # --- 4. Check: load transmitted, displacement vs the monolithic bar ---
-om = OpenSeesModel.from_h5("tie.h5", fem_root="/model")
-with Results.from_native("tie.h5", model=om) as r:
+with run.results() as r:
     uz = float(np.mean(r.nodes.get(label="blockB.top", component="displacement_z").values[-1, :]))
     Rz = float(np.sum(r.nodes.get(label="blockA.bot", component="reaction_force_z").values[-1, :]))
 d_bar = P * L / (E * A)            # monolithic axial bar: exact PL/EA
@@ -160,7 +171,7 @@ interface: master(A.top)=58 nodes, slave(B.bot)=20 nodes  ->  NON-matching
 tie resolved into 20 interpolation records (one per projected slave node)
 converged (0=yes): 0
 base reaction Rz = -1,000,000 N   vs applied P = 1,000,000 N   (tie carries the load)
-top uz = 0.12836 mm   monolithic PL/EA = 0.12500 mm   diff = 2.69%
+top uz = 0.12831 mm   monolithic PL/EA = 0.12500 mm   diff = 2.65%
 ```
 
 The interface is genuinely **non-matching** — 58 nodes on the fine side, 20
@@ -248,8 +259,8 @@ you.)
 ## Step 3 — Read the load path and the displacement
 
 ```python
-spec.nodes(label="blockB.top", components=["displacement_z"], name="top")
-spec.nodes(label="blockA.bot", components=["reaction_force_z"], name="base")
+node_ids=fem.nodes.select(label="blockB.top").ids,    # record "top"
+node_ids=fem.nodes.select(label="blockA.bot").ids,    # record "base"
 ...
 Rz = float(np.sum(r.nodes.get(label="blockA.bot", component="reaction_force_z").values[-1, :]))
 ```
