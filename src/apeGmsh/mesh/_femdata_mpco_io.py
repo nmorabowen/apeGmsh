@@ -208,7 +208,26 @@ _DIM_BY_CLASS_TOKEN: tuple[tuple[str, int], ...] = (
 class ElementDimUnknownWarning(UserWarning):
     """A results file names an element class whose topological dim is
     neither in the response catalog nor declared by the file, so the
-    FEMData-from-file ``dim`` of that group is a class-name guess."""
+    FEMData-from-file ``dim`` of that group is a class-name guess.
+
+    Fired once per ``(class, guessed dim)`` per Python session: another
+    read of the same file, or of a file holding the same class, adds no
+    new fact (#2312)."""
+
+
+class ElementDimContradictionWarning(UserWarning):
+    """A results file declares a topological dim (the ``.ladruno`` BASIS
+    ``TOPOLOGY``) that contradicts the response catalog's parent dim for
+    that class. The dim is known, so this is not an
+    :class:`ElementDimUnknownWarning`: the catalog wins and the file's
+    declaration is named as wrong. Fired once per ``(class, declared,
+    catalogued)`` per Python session (#2312)."""
+
+
+# Dim facts already warned this session, so repeated reads warn each once.
+# A key enters only after ``warnings.warn`` returns: under an ``error``
+# filter the raise leaves it unregistered and the next read raises again.
+_DIM_WARNED: "set[tuple]" = set()
 
 
 @functools.lru_cache(maxsize=1)
@@ -255,36 +274,58 @@ def element_dim(
     parent dimension; otherwise the file's own declaration
     (``declared``, the ``.ladruno`` BASIS ``TOPOLOGY``); otherwise the
     class-name guess, with ``known=False`` so the caller names the
-    class in an :class:`ElementDimUnknownWarning`. A declaration that
-    contradicts the catalog is warned and the catalog wins.
+    class through :func:`warn_unknown_dims`. A declaration that
+    contradicts the catalog loses to it (the result differs from
+    ``declared``); the caller names it through
+    :func:`warn_dim_contradictions`.
     """
     catalogued = _catalog_parent_dims().get(class_name)
     if catalogued is not None:
-        if declared is not None and declared != catalogued:
-            warnings.warn(
-                f"element class {class_name!r}: the file declares "
-                f"topological dim {declared}, the response catalog gives "
-                f"{catalogued}; using the catalog's.",
-                ElementDimUnknownWarning,
-                stacklevel=3,
-            )
         return catalogued, True
     if declared is not None:
         return declared, True
     return _guess_dim_from_class(class_name, npe, ndm), False
 
 
-def warn_unknown_dims(guessed: "dict[str, int]", *, source: str) -> None:
-    """One :class:`ElementDimUnknownWarning` naming every guessed class."""
-    if not guessed:
+def _warn_new(
+    facts: "dict[tuple, str]", head: str, tail: str,
+    category: "type[Warning]",
+) -> None:
+    """One warning listing the facts (key -> text) not yet warned this
+    session; the keys are registered only once the warning returns."""
+    fresh = {k: t for k, t in facts.items() if k not in _DIM_WARNED}
+    if not fresh:
         return
-    listing = ", ".join(f"{c} (dim={d})" for c, d in sorted(guessed.items()))
-    warnings.warn(
+    listing = ", ".join(t for _k, t in sorted(fresh.items()))
+    warnings.warn(f"{head}{listing}{tail}", category, stacklevel=4)
+    _DIM_WARNED.update(fresh)
+
+
+def warn_unknown_dims(guessed: "dict[str, int]", *, source: str) -> None:
+    """One :class:`ElementDimUnknownWarning` naming every guessed class
+    (``guessed``: class -> guessed dim) not yet warned this session."""
+    _warn_new(
+        {("unknown", c, d): f"{c} (dim={d})" for c, d in guessed.items()},
         f"{source}: element class(es) not in the response catalog and "
-        f"with no declared topology, so their dim is a class-name guess: "
-        f"{listing}. Selection by dim and drawing follow that guess.",
+        f"with no declared topology, so their dim is a class-name guess: ",
+        ". Selection by dim and drawing follow that guess.",
         ElementDimUnknownWarning,
-        stacklevel=3,
+    )
+
+
+def warn_dim_contradictions(
+    contradicted: "dict[str, tuple[int, int]]", *, source: str,
+) -> None:
+    """One :class:`ElementDimContradictionWarning` naming every class
+    whose declared dim contradicts the catalog (``contradicted``: class
+    -> ``(declared, catalogued)``) not yet warned this session."""
+    _warn_new(
+        {("contradiction", c, d, k): f"{c} (declared {d}, catalog {k})"
+         for c, (d, k) in contradicted.items()},
+        f"{source}: the file's declared topological dim contradicts the "
+        f"response catalog's parent dim for element class(es) ",
+        "; using the catalog's.",
+        ElementDimContradictionWarning,
     )
 
 

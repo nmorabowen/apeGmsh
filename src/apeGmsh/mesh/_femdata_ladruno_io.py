@@ -12,7 +12,10 @@ a partial FEMData without an element-class table. This mirrors
 * element order comes from the BASIS ``ORDER`` attr; the topological dim
   is the response catalog's parent dimension for a catalogued class, else
   the BASIS ``TOPOLOGY``, else a class-name guess that is warned
-  (:func:`apeGmsh.mesh._femdata_mpco_io.element_dim`).
+  (:func:`apeGmsh.mesh._femdata_mpco_io.element_dim`). A ``TOPOLOGY``
+  that contradicts the catalog is named in its own
+  ``ElementDimContradictionWarning``; each warning names a class once
+  per session.
 
 Like the MPCO synthesizer this is a *partial* FEMData (no apeGmsh labels,
 no pre-mesh declarations); element type codes are negated class tags so
@@ -73,11 +76,16 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             [coords, np.zeros((coords.shape[0], 1), dtype=np.float64)]
         )
 
-    from ._femdata_mpco_io import element_dim, warn_unknown_dims
+    from ._femdata_mpco_io import (
+        element_dim,
+        warn_dim_contradictions,
+        warn_unknown_dims,
+    )
 
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
     guessed: dict[str, int] = {}
+    contradicted: dict[str, tuple[int, int]] = {}
     elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for grp_name in elements_grp:
@@ -95,11 +103,12 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             connectivity = data[:, 1:].copy()
             npe = connectivity.shape[1]
 
-            dim, known = element_dim(
-                class_name, npe, ndm, declared=_declared_dim(elem_grp),
-            )
+            declared = _declared_dim(elem_grp)
+            dim, known = element_dim(class_name, npe, ndm, declared=declared)
             if not known:
                 guessed[class_name] = dim
+            elif declared is not None and dim != declared:
+                contradicted[class_name] = (declared, dim)
             order = _attr_int(elem_grp, "ORDER", default=1)
 
             info = make_type_info(
@@ -115,6 +124,7 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
                 element_type=info, ids=ids, connectivity=connectivity,
             )
     warn_unknown_dims(guessed, source="fork-recorder MODEL")
+    warn_dim_contradictions(contradicted, source="fork-recorder MODEL")
 
     # Physical groups from ladruno SETS (MODEL/SETS/SET_<tag>).
     pg_dict: dict[tuple[int, int], dict] = {}
