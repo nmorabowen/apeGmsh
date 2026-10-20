@@ -218,14 +218,14 @@ function setMatchesPerComponent(opened: string): number {
   return checked;
 }
 
-/** Every nodal DATA of the part rewritten as `factor` times itself plus a per-value offset, so each part's copy differs. */
-const perturb = (factor: number) => (f: h5wasm.File) => {
+/** Every nodal DATA of the part rewritten as `factor` times itself plus `offset` times each value's position, so each part's copy differs. */
+const perturb = (factor: number, offset: number) => (f: h5wasm.File) => {
   for (const r of ["DISPLACEMENT", "REACTION_FORCE"]) {
     const ds = f.get(`${ON_NODES}/${r}/DATA`) as h5wasm.Dataset;
     const [T, n, c] = ds.shape as [number, number, number];
     const v = ds.value as Float64Array;
     assert.ok(v instanceof Float64Array, `${ds.path} is float64`);
-    ds.write_slice([[0, T], [0, n], [0, c]], Float64Array.from(v, (x, i) => x * factor + (i + 1) / 7));
+    ds.write_slice([[0, T], [0, n], [0, c]], Float64Array.from(v, (x, i) => x * factor + (i + 1) * offset));
   }
 };
 const both = (...edits: ((f: h5wasm.File) => void)[]) => (f: h5wasm.File) => edits.forEach((e) => e(f));
@@ -237,12 +237,12 @@ const partition = (id: number | null, count: number) => (f: h5wasm.File) => {
 
 /** A 3-part set: the committed parts and a third, a copy of part 1; parts 1 and 2 perturbed so that no two copies of node 2 agree. */
 const threeParts = () =>
-  scratchSet([PART[0]!, PART[1]!, PART[1]!], { 0: partition(null, 3), 1: both(partition(null, 3), perturb(1.5)), 2: both(partition(2, 3), perturb(-2)) });
+  scratchSet([PART[0]!, PART[1]!, PART[1]!], { 0: partition(null, 3), 1: both(partition(null, 3), perturb(1.5, 1 / 7)), 2: both(partition(2, 3), perturb(-2, 1 / 3)) });
 
 test("#2297: readNodalRows and readNodalStep return the one-component-per-call bits, every component, every range, several selections", () => {
   // The committed set, opened from either part (its interface copies agree), then sets whose copies differ.
   for (const opened of PART) assert.equal(setMatchesPerComponent(opened), 3 * (4 + 4 + 3 + 2 + 2), `${opened}`);
-  const two = scratchSet(PART, { 1: perturb(1.5) });
+  const two = scratchSet(PART, { 1: perturb(1.5, 1 / 7) });
   const three = threeParts();
   try {
     assert.ok(setMatchesPerComponent(two.part(1)) > 0);

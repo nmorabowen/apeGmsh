@@ -23,7 +23,8 @@
 //   (§7.1) says how its copies combine: NONE keeps the first part's copy, SUM adds
 //   the copies in part order. A result with no PARTITION_REDUCTION, a value outside
 //   the §7.1 table, UNSUPPORTED, parts that disagree, or a result some part does not
-//   record, is refused by name in `NodalInfo.refused`, never assumed NONE;
+//   record, is refused by name in `NodalInfo.refused`, never assumed NONE. A read
+//   reads each part once for all the asked components and stitches in memory (#2297);
 // - pairing: the set's lineage is the parts' PROVENANCE `model_hash` and `fem_hash`
 //   only when every part carries the same both (§7b.1 "Partitioned sets"); an
 //   unstamped part, or parts that disagree, leave the set unpaired, with the part
