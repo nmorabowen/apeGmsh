@@ -1027,6 +1027,95 @@ test("#2348: readLineStations' id lookups and bucket precedence take 2^24 + 1 el
   assert.ok(second!.every((t) => t === 0));
 });
 
+/** Run `body` with Set and Map holding at most `cap` entries, as V8 caps them at 2^24: past it they throw its RangeError. */
+function withCappedCollections<T>(cap: number, body: () => T): T {
+  const [RealSet, RealMap] = [Set, Map];
+  class CappedSet<V> extends RealSet<V> {
+    override add(v: V) {
+      if (this.size >= cap && !this.has(v)) throw new RangeError("Set maximum size exceeded");
+      return super.add(v);
+    }
+  }
+  class CappedMap<K, V> extends RealMap<K, V> {
+    override set(k: K, v: V) {
+      if (this.size >= cap && !this.has(k)) throw new RangeError("Map maximum size exceeded");
+      return super.set(k, v);
+    }
+  }
+  const g = globalThis as { Set: unknown; Map: unknown };
+  [g.Set, g.Map] = [CappedSet, CappedMap];
+  try {
+    return body();
+  } finally {
+    [g.Set, g.Map] = [RealSet, RealMap];
+  }
+}
+
+// #2348, at the read itself: portal3d with M more elements (ids 101..100+M), each in a
+// second localForce bucket, the first S of them in a second section.force bucket too
+// (DATA[k, j, c] = 1000 id + 10 k + c in both), read with Set and Map capped at CAP
+// entries, below S and M. The read's own small Sets (component names, stations: 12
+// at most here) fit. A Set of the elements asked for, of those a section bucket
+// serves, or of those an earlier bucket took does not, as past 2^24 in V8.
+test("#2348: readLineStations, with a filter and per step, builds no Set or Map sized by the element count", () => {
+  const [M, S, CAP] = [300, 150, 100];
+  const ON = "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS";
+  const added = Array.from({ length: M }, (_, j) => 101 + j);
+  /** A copy of `token`'s portal3d bucket under a new key, holding `ids`. */
+  const copyBucket = (f: h5wasm.File, token: string, ids: number[]) => {
+    const src = f.get(`${ON}/${token}/74-ForceBeamColumn3d[1000:1:0]`) as h5wasm.Group;
+    const b = (f.get(`${ON}/${token}`) as h5wasm.Group).create_group("74-ForceBeamColumn3d[1001:1:0]");
+    for (const [k, a] of Object.entries(src.attrs)) b.create_attribute(k, a.value as never);
+    b.create_dataset({ name: "ID", data: Int32Array.from(ids), shape: [ids.length, 1] });
+    const n = ids.length;
+    const data = new Float64Array(3 * n * 12);
+    for (let k = 0; k < 3; k++) for (let j = 0; j < n; j++) for (let c = 0; c < 12; c++) data[(k * n + j) * 12 + c] = 1000 * ids[j]! + 10 * k + c;
+    b.create_dataset({ name: "DATA", data, shape: [3, n, 12] });
+    for (const name of ["TIME", "STEP"]) {
+      const d = src.get(name) as h5wasm.Dataset;
+      b.create_dataset({ name, data: d.value as never, shape: d.shape!, dtype: d.dtype });
+    }
+    const cm = src.get("COLUMN_MAP") as h5wasm.Group;
+    const out = b.create_group("COLUMN_MAP");
+    for (const [k, a] of Object.entries(cm.attrs)) out.create_attribute(k, a.value as never);
+    for (const name of cm.keys()) {
+      const d = cm.get(name) as h5wasm.Dataset;
+      out.create_dataset({ name, data: d.value as never, shape: d.shape!, dtype: d.dtype });
+    }
+  };
+  const p = edited(fixture("ladruno_portal3d.ladruno"), (f) => {
+    copyBucket(f, "localForce", added);
+    copyBucket(f, "section.force", added.slice(0, S));
+  });
+  withFile(p, (r) => {
+    const all = r.readLineStations("stage_0", "N");
+    // Rank 0 wins: 1..3 and 101..100+S read their three section stations (P at columns 0, 4, 8); the rest two localForce stations.
+    assert.deepEqual([...new Set(Array.from(all.elementIndex))], [1, 2, 3, ...added.slice(0, S), ...added.slice(S)]);
+    const rowOfStep = (e: number, k: number, n: number) => {
+      const at = Array.from(all.elementIndex).indexOf(e);
+      return Array.from(all.values.subarray(k * all.nStationsTotal + at, k * all.nStationsTotal + at + n));
+    };
+    for (let k = 0; k < 3; k++) {
+      for (const e of [101, 100 + S]) assert.deepEqual(rowOfStep(e, k, 3), [0, 4, 8].map((c) => 1000 * e + 10 * k + c), "N at the three sections");
+      for (const e of [101 + S, 100 + M]) assert.deepEqual(rowOfStep(e, k, 2), [-(1000 * e + 10 * k), 1000 * e + 10 * k + 6], "N at the two ends, signed as localForce is");
+    }
+    const picked = [100 + M, 2, 999999, ...added.slice(0, S + 50).reverse()];
+    const free = r.readLineStations("stage_0", "N", { elementIds: picked });
+    const freeStep = r.readLineStationStep("stage_0", "N", 2, { elementIds: picked });
+    const freeAll = r.readLineStationStep("stage_0", "N", 1);
+    withCappedCollections(CAP, () => {
+      assert.deepEqual(r.readLineStations("stage_0", "N"), all);
+      assert.deepEqual(r.readLineStations("stage_0", "N", { elementIds: picked }), free);
+      assert.deepEqual(r.readLineStationStep("stage_0", "N", 2, { elementIds: picked }), freeStep);
+      assert.deepEqual(r.readLineStationStep("stage_0", "N", 1), freeAll);
+    });
+    // The filter keeps the bucket order, rank 0 first: 2 and the section-served picks, then the localForce picks.
+    assert.deepEqual([...new Set(Array.from(free.elementIndex))], [2, ...added.slice(0, S), ...added.slice(S, S + 50), 100 + M]);
+    // The cap bites: a Set of the elements throws inside it.
+    assert.throws(() => withCappedCollections(CAP, () => new Set(added)), RangeError);
+  });
+});
+
 // #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (schema §5; the fork at
 // FORK_PIN does not write it) that could not be paired with its ids or the stage's
 // steps used to be dropped with no word, so a step read drew the MODEL (reference)
