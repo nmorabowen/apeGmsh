@@ -213,35 +213,32 @@ class LadrunoRepeatedElementId(ValueError):
         )
 
 
-class LadrunoMalformedLocalAxes(ValueError):
-    """A ``.ladruno`` ``MODEL/LOCAL_AXES/<class>`` group whose ``ID`` and
-    ``FRAME`` disagree.
+class LadrunoEmptyLocalAxesId(ValueError):
+    """A ``.ladruno`` ``MODEL/LOCAL_AXES/<class>`` group whose ``ID`` is
+    empty while its ``FRAME`` holds frames.
 
     Raised when the file is opened. ``FRAME`` holds one 4-value quaternion
-    ``(w, x, y, z)`` per ``ID`` row. More ``FRAME`` rows than ids used to
-    be ignored, fewer raised a bare ``IndexError``, and an empty ``ID``
-    beside stored frames was skipped (#2322). An empty ``ID`` with an
-    empty ``FRAME`` is a consistent empty group and opens.
+    ``(w, x, y, z)`` per ``ID`` row, so frames with no id belong to no
+    element; they used to be skipped without a word (#2322). An empty
+    ``ID`` with an empty ``FRAME`` is a consistent empty group and opens.
+    Any other ``FRAME``/``ID`` count disagreement is not refused here: the
+    layered-shell read warns and recomputes it (#2090).
 
-    ``file`` is the file path, ``group`` the class group's HDF5 path,
-    ``id_count`` the number of ids and ``frame_shape`` the ``FRAME`` shape.
+    ``file`` is the file path, ``group`` the class group's HDF5 path and
+    ``frame_shape`` the ``FRAME`` shape.
     """
 
     def __init__(
-        self, file: Path, group: str, id_count: int,
-        frame_shape: "tuple[int, ...]",
+        self, file: Path, group: str, frame_shape: "tuple[int, ...]",
     ) -> None:
         self.file = file
         self.group = group
-        self.id_count = id_count
         self.frame_shape = frame_shape
-        ids = "is empty" if id_count == 0 else f"has {id_count} id(s)"
-        what = f"{group}/ID {ids} but {group}/FRAME has shape {frame_shape}"
         super().__init__(
-            f"{file}: {what}. FRAME holds one 4-value frame (w, x, y, z) "
-            f"per ID row, so {id_count} id(s) need {4 * id_count} values; "
-            f"the frames cannot be matched to their elements. The file is "
-            f"malformed."
+            f"{file}: {group}/ID is empty (0 ids) but {group}/FRAME has "
+            f"shape {frame_shape}. FRAME holds one 4-value frame "
+            f"(w, x, y, z) per ID row, so these frames belong to no "
+            f"element. The file is malformed."
         )
 
 
@@ -418,20 +415,24 @@ class LadrunoReader:
             )
 
     def _refuse_malformed_local_axes(self) -> None:
-        """Refuse a stage's ``MODEL/LOCAL_AXES`` that cannot give each
-        element one frame (#2322).
+        """Refuse a stage's ``MODEL/LOCAL_AXES`` that would give an element
+        another row's frame, or frames to no element (#2322).
 
-        Per stage, each ``<class>/{ID, FRAME}`` group must hold four
-        ``FRAME`` values per id (:class:`LadrunoMalformedLocalAxes`), and
-        no element id may repeat within one ``ID`` or across the classes'
-        ``ID`` lists (:class:`LadrunoRepeatedElementId`). Every reader of
-        the frames (``read_local_axes``, the line-station quaternions, the
+        Per stage, no element id may repeat within one ``<class>/ID`` or
+        across the classes' ``ID`` lists (:class:`LadrunoRepeatedElementId`),
+        and an empty ``ID`` may not sit beside stored frames
+        (:class:`LadrunoEmptyLocalAxesId`). Every reader of the frames
+        (``read_local_axes``, the line-station quaternions, the
         layered-shell frames) reads them from a file opened here.
+
+        Not refused here: any other ``FRAME``/``ID`` count disagreement
+        (the layered-shell read warns and recomputes it, #2090), and a
+        child that is not a group or lacks either dataset; those are left
+        to the readers.
 
         The groups are concatenated in the order of their first id, so the
         fork's ascending, class-contiguous ids keep :func:`_repeated_rows`'s
-        sorted fast path. A child that is not a group, or a group without
-        both datasets, holds no frame to repeat and is left to the readers.
+        sorted fast path.
         """
         import h5py
 
@@ -449,10 +450,10 @@ class LadrunoReader:
                         or "FRAME" not in sub):
                     continue
                 ids = np.asarray(sub["ID"][...], dtype=np.int64).ravel()
-                frame_shape = tuple(int(s) for s in sub["FRAME"].shape)
-                if int(np.prod(frame_shape)) != 4 * ids.size:
-                    raise LadrunoMalformedLocalAxes(
-                        self._path, sub.name, ids.size, frame_shape,
+                if ids.size == 0 and sub["FRAME"].size:
+                    raise LadrunoEmptyLocalAxesId(
+                        self._path, sub.name,
+                        tuple(int(s) for s in sub["FRAME"].shape),
                     )
                 if ids.size:
                     id_lists.append((sub["ID"].name, ids))

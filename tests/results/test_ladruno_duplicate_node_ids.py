@@ -34,7 +34,7 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.readers._ladruno import (
-    LadrunoMalformedLocalAxes,
+    LadrunoEmptyLocalAxesId,
     LadrunoReader,
     LadrunoRepeatedElementId,
     LadrunoRepeatedNodeId,
@@ -519,33 +519,35 @@ def test_distinct_local_axes_ids_over_classes_still_open(
     np.testing.assert_array_equal(beam.quaternions, stored)
 
 
-@pytest.mark.parametrize(
-    "n_ids, n_frames", [(10, 11), (10, 9), (0, 10)],
-    ids=["more-frames", "fewer-frames", "empty-id"],
-)
-def test_local_axes_frame_id_mismatch_refuses(
-    tmp_path: Path, n_ids: int, n_frames: int,
-) -> None:
-    """Before: more frames were ignored, fewer raised a bare IndexError
-    on read_local_axes, and an empty ID skipped the frames silently."""
+def test_local_axes_empty_id_with_frames_refuses(tmp_path: Path) -> None:
+    """Before: the 10 frames were skipped without a word."""
     path = _frame3d(tmp_path)
-    _write_axes(path, _axes(1), ids=list(range(1, n_ids + 1)),
-                frames=_frames(n_frames))
-    with pytest.raises(LadrunoMalformedLocalAxes) as info:
+    _write_axes(path, _axes(1), ids=[])
+    with pytest.raises(LadrunoEmptyLocalAxesId) as info:
         LadrunoReader(path)
     err = info.value
     assert err.file == path
     assert err.group == _axes(1)
-    assert err.id_count == n_ids
-    assert err.frame_shape == (n_frames, 4)
+    assert err.frame_shape == (10, 4)
     msg = str(err)
     assert str(path) in msg
-    assert f"{_axes(1)}/FRAME has shape ({n_frames}, 4)" in msg
-    assert (
-        f"{_axes(1)}/ID is empty" if n_ids == 0
-        else f"{_axes(1)}/ID has {n_ids} id(s)"
-    ) in msg
+    assert f"{_axes(1)}/ID is empty (0 ids)" in msg
+    assert f"{_axes(1)}/FRAME has shape (10, 4)" in msg
     _assert_closed(path)
+
+
+@pytest.mark.parametrize("n_frames", [11, 9], ids=["more", "fewer"])
+def test_local_axes_count_mismatch_is_not_refused_at_open(
+    tmp_path: Path, n_frames: int,
+) -> None:
+    """A FRAME/ID count mismatch with ids present is left to the readers:
+    the layered-shell read warns and recomputes it (#2090,
+    test_results_layer_catalog_shellmitc3.py). Pinned so the open-time
+    check does not grow into that contract unannounced."""
+    path = _frame3d(tmp_path)
+    _write_axes(path, _axes(1), frames=_frames(n_frames))
+    with LadrunoReader(path):
+        pass
 
 
 def test_empty_local_axes_group_still_opens(tmp_path: Path) -> None:
@@ -582,16 +584,16 @@ def test_part_set_where_one_part_repeats_a_frame_id_refuses(
     _assert_closed(p1)
 
 
-def test_part_set_where_one_part_has_a_frame_mismatch_refuses(
+def test_part_set_where_one_part_has_frames_without_ids_refuses(
     tmp_path: Path,
 ) -> None:
     p0 = _part_with_axes(tmp_path / "run.part-0.ladruno", 0, [1, 2])
-    _write_axes(p0, _axes(1, "5-ElasticBeam3d"), frames=_frames(3))
+    _write_axes(p0, _axes(1, "5-ElasticBeam3d"), ids=[])
     p1 = _part_with_axes(tmp_path / "run.part-1.ladruno", 1, [3, 4])
-    with pytest.raises(LadrunoMalformedLocalAxes) as info:
+    with pytest.raises(LadrunoEmptyLocalAxesId) as info:
         LadrunoMultiPartitionReader([p0, p1])
     assert info.value.file == p0
-    assert (info.value.id_count, info.value.frame_shape) == (2, (3, 4))
+    assert info.value.frame_shape == (2, 4)
     _assert_closed(p0)
     _assert_closed(p1)
 
