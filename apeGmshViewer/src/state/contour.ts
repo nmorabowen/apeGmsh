@@ -20,6 +20,7 @@
 //   element connectivity, `MeshInfo.vertexNodes`), never a node found by
 //   position: coincident nodes (interfaces, ties) keep their own values.
 
+import { IdLookup } from "../mesh/build.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
 import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
@@ -540,13 +541,13 @@ export const RANGE_MODES: readonly { range: ContourRange; label: string }[] = [
 
 // -- vertices -------------------------------------------------------------------
 
-/** The column of each node id in a field's `_ids`. */
-export function columnOf(ids: Float64Array): Map<number, number> {
-  const m = new Map<number, number>();
-  ids.forEach((id, j) => {
-    if (!m.has(id)) m.set(id, j);
-  });
-  return m;
+/**
+ * The column of each node id in a field's `_ids`; an id listed twice keeps
+ * its first column. A sorted lookup with a Map's reading API, not a Map: V8
+ * caps a Map at 2^24 entries, and a stage can record more nodes (#2359).
+ */
+export function columnOf(ids: Float64Array): IdLookup {
+  return IdLookup.of(ids, (j) => j, "first");
 }
 
 /**
