@@ -21,7 +21,7 @@ from __future__ import annotations
 import functools
 import re
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 import numpy as np
 
@@ -67,7 +67,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
     # Per-class element groups
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
-    guessed: dict[str, int] = {}
+    guessed: set[tuple[str, int]] = set()
     elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for ds_name in elements_grp:
@@ -83,7 +83,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
             npe = connectivity.shape[1]
             dim, known = element_dim(class_name, npe, ndm)
             if not known:
-                guessed[class_name] = dim
+                guessed.add((class_name, dim))
 
             # Synthetic ElementTypeInfo — code is negated class_tag
             # so it never collides with Gmsh-numbered types.
@@ -301,11 +301,15 @@ def _warn_new(
     _DIM_WARNED.update(fresh)
 
 
-def warn_unknown_dims(guessed: "dict[str, int]", *, source: str) -> None:
-    """One :class:`ElementDimUnknownWarning` naming every guessed class
-    (``guessed``: class -> guessed dim) not yet warned this session."""
+def warn_unknown_dims(
+    guessed: "Iterable[tuple[str, int]]", *, source: str,
+) -> None:
+    """One :class:`ElementDimUnknownWarning` naming every guessed
+    ``(class, dim)`` pair not yet warned this session. Pairs, not a
+    class -> dim map: two groups of one class can guess two dims, and
+    each is named."""
     _warn_new(
-        {("unknown", c, d): f"{c} (dim={d})" for c, d in guessed.items()},
+        {("unknown", c, d): f"{c} (dim={d})" for c, d in guessed},
         f"{source}: element class(es) not in the response catalog and "
         f"with no declared topology, so their dim is a class-name guess: ",
         ". Selection by dim and drawing follow that guess.",
@@ -314,14 +318,14 @@ def warn_unknown_dims(guessed: "dict[str, int]", *, source: str) -> None:
 
 
 def warn_dim_contradictions(
-    contradicted: "dict[str, tuple[int, int]]", *, source: str,
+    contradicted: "Iterable[tuple[str, int, int]]", *, source: str,
 ) -> None:
-    """One :class:`ElementDimContradictionWarning` naming every class
-    whose declared dim contradicts the catalog (``contradicted``: class
-    -> ``(declared, catalogued)``) not yet warned this session."""
+    """One :class:`ElementDimContradictionWarning` naming every
+    ``(class, declared, catalogued)`` triple not yet warned this session
+    (two groups of one class can declare two different dims)."""
     _warn_new(
         {("contradiction", c, d, k): f"{c} (declared {d}, catalog {k})"
-         for c, (d, k) in contradicted.items()},
+         for c, d, k in contradicted},
         f"{source}: the file's declared topological dim contradicts the "
         f"response catalog's parent dim for element class(es) ",
         "; using the catalog's.",

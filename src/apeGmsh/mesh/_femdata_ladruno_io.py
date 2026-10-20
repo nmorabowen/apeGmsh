@@ -84,8 +84,8 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
 
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
-    guessed: dict[str, int] = {}
-    contradicted: dict[str, tuple[int, int]] = {}
+    guessed: set[tuple[str, int]] = set()
+    contradicted: set[tuple[str, int, int]] = set()
     elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for grp_name in elements_grp:
@@ -106,9 +106,9 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             declared = _declared_dim(elem_grp)
             dim, known = element_dim(class_name, npe, ndm, declared=declared)
             if not known:
-                guessed[class_name] = dim
+                guessed.add((class_name, dim))
             elif declared is not None and dim != declared:
-                contradicted[class_name] = (declared, dim)
+                contradicted.add((class_name, declared, dim))
             order = _attr_int(elem_grp, "ORDER", default=1)
 
             info = make_type_info(

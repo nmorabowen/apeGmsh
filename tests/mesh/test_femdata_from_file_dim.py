@@ -253,6 +253,35 @@ def test_contradiction_warns_once_per_class_not_per_group_or_read(tmp_path):
 
 
 @pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
+def test_two_groups_of_one_class_guessing_two_dims_are_both_named(
+        tmp_path, ladruno):
+    """FooThing with 2 and 4 nodes in a 3-D model guesses dims 1 and 3:
+    both are named and both are spent, not only the last group's."""
+    path = _write(tmp_path, [("FooThing", 2), ("FooThing", 4)],
+                  ladruno=ladruno)
+    got = _recorded(path, ladruno=ladruno, reads=2)
+    assert len(got) == 1
+    msg = str(got[0].message)
+    assert "FooThing (dim=1)" in msg and "FooThing (dim=3)" in msg
+    fem = _read_path(path, ladruno=ladruno)
+    assert sorted(int(g.element_type.dim) for g in fem.elements) == [1, 3]
+
+
+def test_two_groups_of_one_class_contradicting_two_ways_are_both_named(
+        tmp_path):
+    path = _write(tmp_path, [("LadrunoLST", 6), ("LadrunoLST", 6)],
+                  ladruno=True)
+    with h5py.File(path, "r+") as f:
+        f["MODEL/ELEMENTS/1-LadrunoLST[0:0]"].attrs["TOPOLOGY"] = "wedge"
+        f["MODEL/ELEMENTS/2-LadrunoLST[0:0]"].attrs["TOPOLOGY"] = "line"
+    got = _recorded(path, ladruno=True, reads=2)
+    assert [w.category for w in got] == [ElementDimContradictionWarning]
+    msg = str(got[0].message)
+    assert "LadrunoLST (declared 3, catalog 2)" in msg
+    assert "LadrunoLST (declared 1, catalog 2)" in msg
+
+
+@pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
 def test_a_raised_warning_is_not_spent(tmp_path, ladruno):
     """Under an ``error`` filter every read raises: a warning that became
     an exception was not delivered, so it is not marked as warned."""
