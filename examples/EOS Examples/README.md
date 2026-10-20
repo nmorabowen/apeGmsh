@@ -1,8 +1,8 @@
 # apeGmsh examples
 
-Each example lives in its own folder. Outputs (`outputs/capture.h5`,
-`outputs/recorders/`, etc.) are written under that folder and are
-git-ignored.
+Each example lives in its own folder. Outputs (`outputs/model.h5`,
+`outputs/run.ladruno` or `outputs/run_out/`, etc.) are written under that
+folder and are git-ignored.
 
 ```
 EOS Examples/
@@ -22,8 +22,8 @@ EOS Examples/
 ```python
 from apeGmsh import workdir
 OUT = workdir()                        # creates ./outputs/
-results_capture = OUT / "capture.h5"   # DomainCapture target
-out_dir         = OUT / "recorders"    # .out files (Results.from_recorders)
+model_h5 = OUT / "model.h5"            # the bridge's archive (ops.h5)
+run_path = OUT / "run"                 # emit_default sets the suffix
 ```
 
 `workdir()` returns `./outputs/` and creates it if missing — that
@@ -34,9 +34,10 @@ folder.
 
 | Method | When |
 |---|---|
-| `DomainCapture` (recommended) | Capture results during an in-process OpenSees run. Writes a single `capture.h5`. |
+| `ResolvedRecorderSpec.emit_default` (recommended) | Record an in-process OpenSees run on the route the build supports: `run.ladruno` on the Ladruno fork, `run.mpco` on a stock build with MPCO, classic `.out` files in `run_out/` on pip openseespy. Read it back with `run.results()`. |
+| `EigenResult.results()` | Open the modes of a bridge eigen solve as a `Results`, one stage per mode (`to_native(path)` keeps the file). An `EigenResult` comes only from `apeSees.eigen(n)` on a model built through the bridge; a plain `openseespy` `ops.eigen(n)` returns bare eigenvalues and has no route yet (#2342). |
 | `Results.from_recorders` | Run OpenSees with disk-backed `.out` recorders, then read them back. |
-| `Results.from_native` | Open an existing apeGmsh native HDF5 file (e.g. one produced earlier). |
+| `Results.from_native` | Open an existing apeGmsh native HDF5 file (e.g. the modes file `to_native` wrote). |
 
 The manual `NativeWriter` path is intentionally not used in these
 examples — it's a niche option for non-OpenSees solvers that want to
