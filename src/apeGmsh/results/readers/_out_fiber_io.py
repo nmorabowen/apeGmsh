@@ -30,8 +30,7 @@ from ..spec._emit import (
 )
 from ._out_station_slicing import (
     STATION_RANGE_TOL,
-    model_station_counts,
-    require_equal_station_counts,
+    line_station_count,
 )
 
 if TYPE_CHECKING:
@@ -81,7 +80,7 @@ def require_record_class(rec: "ResolvedRecorderRecord", model: Any) -> None:
     one of the families above; any other element is refused by its token,
     so a record mixing classes is too. The point counts are then checked by
     the rule both ``.out`` readers share
-    (:func:`._out_station_slicing.require_equal_station_counts`).
+    (:func:`._out_station_slicing.line_station_count`).
     """
     family = str(rec.element_class_name)[:-2].lower()
     rows = {int(r.fem_eid): r for r in model.elements()}
@@ -165,8 +164,9 @@ def read_fiber_record(
     ``None`` when the record emitted nothing (no elements). The pair gives
     each element's natural stations. The count is one per record, which the
     model must confirm by the rule both ``.out`` readers share
-    (:func:`._out_station_slicing.require_equal_station_counts`, which also
-    refuses a rule of unknown count), and each element's stations must
+    (:func:`._out_station_slicing.line_station_count`, which checks the
+    counts before the columns divide and refuses a rule of unknown count),
+    and each element's stations must
     increase strictly within ``[-1, 1]``, to the shared slack a file written
     at ``-precision 6`` needs. So a record mixing counts is refused, never
     split evenly into wrong sections. The fibre file gives
@@ -184,14 +184,13 @@ def read_fiber_record(
     require_record_class(rec, model)
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
-    # The model alone refuses mixed counts, before the file: their columns
-    # need not even divide by the element count.
-    n_model = int(model_station_counts(rec, model, fem_snapshot_id)[0])
-    require_equal_station_counts(rec, model, fem_snapshot_id, n_model, gpx_lr.file_path)
-    _t, gpx, n_ip = _read_rows(gpx_lr, ids.size, 1)
-    if n_ip != n_model:     # the shared refusal of a file that is not the model's
-        require_equal_station_counts(rec, model, fem_snapshot_id, n_ip, gpx_lr.file_path)
-    xi =np.stack([normalise_integration_points(gpx[0, i], float(length))
+    # The whole row as one block; the model's counts then divide it, checked
+    # before the columns are, since a mix need not divide by the elements.
+    _t, row, n_columns = _read_rows(gpx_lr, 1, 1)
+    n_ip = line_station_count(rec, n_columns, gpx_lr.file_path, model_h5_src,
+                              fem_snapshot_id)
+    gpx = row.reshape(row.shape[0], ids.size, n_ip)
+    xi = np.stack([normalise_integration_points(gpx[0, i], float(length))
                    for i, length in enumerate(lengths_of(ids))])
     out = np.flatnonzero(~(np.abs(xi) <= 1.0 + STATION_RANGE_TOL).all(axis=1))
     if out.size:
