@@ -13,7 +13,9 @@ first proves the model's ``(fem_eid, tag)`` pairing holds every one of them
 (:func:`require_translated`): the emit translated through it. The caller
 loads that model once and passes it: the bridge's ``OpenSeesModel``, or the
 live pairing a FEMData archive's run proved (#2269), which a per-material
-gauss record reads through (#2290) and a fibres record refuses.
+gauss record reads through (#2290). A fibres record reads through it too: the
+pairing read each element's section locations and fibre counts from the live
+domain before the run, in place of the bridge archive's ``beamIntegration``.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import numpy as np
 from numpy import ndarray
 
 from ...opensees import OpenSeesModel
+from ...opensees._recorder_translate import LiveDomainFacts
 from ...opensees._response_catalog import ResponseLayout, normalise_integration_points
 from ..spec._emit import (
     FIBER_OUT_COLUMNS,
@@ -182,18 +185,25 @@ def read_fiber_record(
     table (``y, z, area, matTag``) on every row: a record whose elements
     carry different fibre counts, which the column count alone can hide,
     then reads as unequal tables and is refused.
+
+    Over a live pairing (:class:`LiveDomainFacts`, a FEMData archive's run)
+    the counts are the live domain's, read before the run: each element's
+    ``sectionLocation`` count stands in for its ``beamIntegration`` by the
+    same rule, every section must carry one ``fiberData2`` fibre count that
+    the file's columns then confirm, and the file's stations must be the
+    live section locations (:func:`_require_live_fibers`).
     """
     class_name = fiber_record_class(rec)
     if not logicals:
         return None
     require_translated(rec, model, fem_snapshot_id)
-    if not isinstance(model, OpenSeesModel):
+    if not isinstance(model, (OpenSeesModel, LiveDomainFacts)):
         raise ValueError(
             f"Record {rec.name!r} (category=fibers): its stations are counted "
-            f"from each element's beamIntegration, which only the bridge's "
-            f"model archive holds; a live pairing over a FEMData archive "
-            f"carries none. Record it through the bridge's model archive "
-            f"(ops.h5(...)).")
+            f"from each element's beamIntegration in the bridge's model "
+            f"archive, or from the sections a live pairing read before the "
+            f"run; a {type(model).__name__} carries neither. Record it through "
+            f"the bridge's model archive (ops.h5(...)) or emit_default.")
     require_record_class(rec, model)
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
@@ -222,8 +232,16 @@ def read_fiber_record(
             f"must be strictly increasing within [-1, 1]). A HingeRadau rule "
             f"with lp_i + lp_j >= L/4 writes stations like this (its interior "
             f"weight is not positive), so the fibres cannot be placed along "
-            f"the element.")
+            f"the fibres cannot be placed along the element.")
+    live_fib = (_require_live_fibers(rec, model, xi, lengths_of(ids),
+                                     gpx_lr.file_path)
+                if isinstance(model, LiveDomainFacts) else None)
     time, body, n_fib = _read_rows(fib_lr, ids.size, n_ip * FIBER_OUT_WIDTH)
+    if live_fib is not None and n_fib != live_fib:
+        raise ValueError(
+            f"{fib_lr.file_path}: {n_fib} fibres per section in the file, but "
+            f"the live domain gave each section {live_fib} before the run. "
+            f"The file does not match the live domain.")
     rows = body.reshape(time.size, -1, FIBER_OUT_WIDTH)
     geom = rows[0, :, :4]
     if not np.array_equal(rows[:, :, :4].reshape(-1, n_fib, 4), np.broadcast_to(
@@ -246,6 +264,47 @@ def read_fiber_record(
         components={c: np.ascontiguousarray(rows[:, :, FIBER_OUT_COLUMNS[c]])
                     for c in rec.components},
     )
+
+
+def _require_live_fibers(
+    rec: "ResolvedRecorderRecord", facts: LiveDomainFacts, xi: ndarray,
+    lengths: ndarray, path: "str | Path",
+) -> int:
+    """The one fibre count of every section of ``rec``'s elements, from
+    the sections the live pairing read before the run, or raise.
+
+    Each element's file stations ``xi`` (natural, ``(E, n_IP)``) must be
+    its live section locations, to the slack a ``-precision 6`` file needs,
+    so each fibre table is placed at the section that wrote it. A record
+    whose sections carry different fibre counts is refused naming them: a
+    ``.out`` row carries no per-section count, so it cannot be split.
+    """
+    ids = np.asarray(rec.element_ids, dtype=np.int64)
+    by_count: dict[int, list[str]] = {}
+    for i, e in enumerate(ids.tolist()):
+        locations, fibres = facts.fiber_sections(e)
+        live = normalise_integration_points(
+            np.asarray(locations, dtype=np.float64), float(lengths[i]))
+        off = np.abs(live - xi[i])
+        if not (off <= STATION_RANGE_TOL).all():
+            raise ValueError(
+                f"{path}: FEM element {e} has stations "
+                f"{np.round(xi[i], 6).tolist()} in the file, but its live "
+                f"sections are at {np.round(live, 6).tolist()} (natural "
+                f"coordinates). The file does not match the live domain.")
+        for k, n in enumerate(fibres, start=1):
+            by_count.setdefault(int(n), []).append(f"{e}:{k}")
+    if len(by_count) > 1:
+        listing = "; ".join(
+            f"{n} fibres: sections {where[:6]}{' ...' if len(where) > 6 else ''}"
+            for n, where in sorted(by_count.items()))
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers): its sections carry "
+            f"different fibre counts in the live domain ({listing}; FEM "
+            f"element:section). A .out row carries no per-section fibre count, "
+            f"so it cannot be split into fibres reliably. Split the record so "
+            f"that each holds one fibre section.")
+    return next(iter(by_count))
 
 
 def write_fiber_records(writer: Any, stage_id: str,

@@ -623,6 +623,12 @@ class LiveDomainFacts:
     a padded column (:func:`mask_absent_rotations`). A rotational slot a
     recorded node's layout lacks, or that its elements do not establish,
     refuses by name.
+
+    A FEMData archive holds no ``beamIntegration`` either, so a fibres
+    record's section facts are read from the live domain before the run
+    (:meth:`record_fiber_sections`, #2290): each section's location
+    (``sectionLocation``) and fibre count (``fiberData2``). The read
+    slices the ``.out`` fibre file by them (:meth:`fiber_sections`).
     """
 
     def __init__(self, ops: object, archive: object) -> None:
@@ -644,6 +650,9 @@ class LiveDomainFacts:
         self._paired: "dict[int, Any]" = {}
         #: ``{fem_eid: live eleType}`` of the same elements.
         self._live_class: "dict[int, str]" = {}
+        #: ``{fem_eid: (section locations, fibre counts)}`` of the paired
+        #: fibre beams :meth:`record_fiber_sections` read.
+        self._sections: "dict[int, tuple[tuple[float, ...], tuple[int, ...]]]" = {}
 
     @property
     def ndm(self) -> int:
@@ -969,6 +978,76 @@ class LiveDomainFacts:
             slot_dofs, node_ids, ndf, self._ndm,
             rotation_refusal=refusal, where=where,
         )
+
+    def record_fiber_sections(
+        self, element_ids: "Iterable[int]", *, where: str,
+    ) -> None:
+        """Read the section facts of each paired FEM element of
+        ``element_ids`` from the live domain, for the fibre read.
+
+        ``sectionLocation(e)`` gives the element's section locations along
+        its length, in section order, and section ``k`` (1-based) carries
+        ``len(eleResponse(e, 'section', k, 'fiberData2')) / 6`` fibres:
+        ``fiberData2`` answers ``[y, z, area, matTag, stress, strain]``
+        per fibre. They are read before the run, while the domain holds
+        the element. An element :meth:`pair_elements` has not proved, one
+        with no sections, or a section whose ``fiberData2`` holds no whole
+        fibre (no fibre section, or a short answer), refuses by FEM id:
+        its fibres could not be placed.
+        """
+        ops = self._ops
+        bad: "list[str]" = []
+        for e in dict.fromkeys(int(v) for v in element_ids):
+            if e not in self._paired:
+                raise ValueError(
+                    f"{where}: FEM element {e} is not paired with a live "
+                    "element, so its sections cannot be read from the live "
+                    "domain.")
+            if e in self._sections:
+                continue
+            raw = ops.sectionLocation(e)  # type: ignore[attr-defined]
+            locations = tuple(float(x) for x in (raw or ()))
+            if not locations:
+                bad.append(f"FEM element {e} ({self._live_class[e]!r}) has "
+                           f"no sections (sectionLocation answered {raw!r})")
+                continue
+            sizes = [len(ops.eleResponse(  # type: ignore[attr-defined]
+                e, "section", k, "fiberData2"))
+                for k in range(1, len(locations) + 1)]
+            short = [(k, n) for k, n in enumerate(sizes, start=1)
+                     if n == 0 or n % _FIBER_DATA2_WIDTH]
+            if short:
+                bad.append(f"FEM element {e} answers fiberData2 of "
+                           f"{short[0][1]} values at section {short[0][0]}, "
+                           f"not whole fibres of {_FIBER_DATA2_WIDTH}")
+                continue
+            self._sections[e] = (
+                locations, tuple(n // _FIBER_DATA2_WIDTH for n in sizes))
+        if bad:
+            raise ValueError(
+                f"{where}: " + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". Its fibres cannot be placed along the element; record "
+                "fibre-section force or displacement beams only.")
+
+    def fiber_sections(
+        self, fem_eid: int,
+    ) -> "tuple[tuple[float, ...], tuple[int, ...]]":
+        """``(section locations, fibre count per section)`` of a FEM
+        element :meth:`record_fiber_sections` read; any other id refuses,
+        naming it. Read from the record, never from the live domain, so it
+        holds after the domain is wiped."""
+        e = int(fem_eid)
+        if e not in self._sections:
+            raise ValueError(
+                f"FEM element {e}: its sections were not read from the live "
+                "domain before the run, so its fibres cannot be placed.")
+        return self._sections[e]
+
+
+#: Values per fibre of a ``section fiberData2`` response: ``[y, z, area,
+#: matTag, stress, strain]`` (ForceBeamColumn / DispBeamColumn).
+_FIBER_DATA2_WIDTH = 6
 
 
 def mask_absent_rotations(
