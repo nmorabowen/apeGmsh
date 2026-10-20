@@ -449,12 +449,12 @@ def model_h5_rotation_roles(
 #: of element-less nodes, as an unknown token does.
 #:
 #: The second block holds catalogued classes the bridge builds no element
-#: of (#2290). Each takes the token of its family's bridge class, so the
-#: token types the rotation family and the token gates only (an elastic
-#: beam's ``localForce``, a fibre beam's family): a force beam variant is
-#: ``forceBeamColumn``, never an elastic beam. The response layout is the
-#: catalog's entry for the live class, which the record must name. Each
-#: one has a stock live oracle in
+#: of. Each takes the token of its family's bridge class, so the token
+#: types the rotation family and the token gates only (an elastic beam's
+#: ``localForce``, a fibre beam's family): a force beam variant is
+#: ``forceBeamColumn``, never an elastic beam. The read decodes the
+#: response by the catalog entry of the class the record names. Each one
+#: has a stock live oracle in
 #: ``tests/opensees/live/test_live_unmapped_classes_live.py``.
 _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "ElasticBeam2d": "elasticBeamColumn",
