@@ -783,10 +783,8 @@ class LiveDomainFacts:
                 + (f"; and {len(twins) - 3} more" if len(twins) > 3 else "")
                 + ". eleNodes cannot tell those elements apart, so a deck "
                 "that swapped their tags would record each one's response "
-                "under the other's id. Drop them from the record, name the "
-                "record's element class where each twin is a live element of "
-                "another class, or record them through the bridge's model "
-                "archive (ops.h5(...)).")
+                "under the other's id. Drop them from the record, or record "
+                "them through the bridge's model archive (ops.h5(...)).")
         bad: "list[str]" = []
         live_nodes: "dict[int, list[int]]" = {}
         classes: "dict[int, str]" = {}

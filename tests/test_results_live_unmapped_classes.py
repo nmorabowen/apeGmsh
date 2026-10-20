@@ -290,7 +290,11 @@ def test_no_record_classes_keeps_the_strict_refusal(tmp_path) -> None:
     """The call without ``named_classes`` (today's emit route) refuses as
     before, asking nothing of the twins."""
     facts, ops = _twin_facts(tmp_path, {5: _BEAM, 6: _TRUSS})
-    with pytest.raises(ValueError, match=r"FEM element 5 shares nodes"):
+    with pytest.raises(ValueError, match=(
+            r"FEM element 5 shares nodes \[1, 2\] with \[6\]\. eleNodes "
+            r"cannot tell those elements apart, .* Drop them from the record, "
+            r"or record them through the bridge's model archive "
+            r"\(ops\.h5\(\.\.\.\)\)\.$")):
         facts.pair_elements([5], where="t")
     assert "eleType" not in ops.asked and "eleNodes" not in ops.asked
 

@@ -1,4 +1,4 @@
-### ADDED — a raw deck over a FEMData archive records nine more catalogued element classes on stock, and twins of different live classes can pair (#2290, part C)
+### ADDED — a raw deck over a FEMData archive records nine more catalogued element classes on stock, and the live pairing can tell twins of different classes apart, with no route using it yet (#2290, part C)
 
 `spec.emit_default(..., model_h5=<fem.to_h5 file>)` on a stock build with no
 MPCO recorder pairs each recorded FEM element with the live element of its
@@ -22,13 +22,14 @@ where the element sampled it.
 Still refused by class name: `BezierTri6` and `BezierTet10` (stock cannot
 build them); `ShellMITC9` (stock answers 84 stress values for its 72);
 `ElasticForceBeamColumn2d`/`3d` (their `section force` file is empty);
-`ForceBeamColumnWarping2d` (no stock section it can invert); `Truss2` and
-`CorotTruss2` (their axial force waits for #2290 part D); and
-`ModElasticBeam2d`.
+`ForceBeamColumnWarping2d` (no stock section it can invert). `Truss2`,
+`CorotTruss2` and `ModElasticBeam2d` are still refused here and come in a
+follow-up.
 
 `LiveDomainFacts.pair_elements` also takes `named_classes`, the classes each
 recorded element's records name. With it, a recorded element that shares
 its ordered nodes with another FEM element pairs when every record of it
 names a class, every twin is live, and no twin's live class is a named one.
 The class gate then refuses a swapped deck. Without it, twins refuse as
-before. The emit route does not pass it yet.
+before. No route passes it yet, so `emit_default` still refuses every
+recorded element that has a twin. The follow-up wires it in.
