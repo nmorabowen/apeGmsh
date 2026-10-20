@@ -13,10 +13,13 @@ result:
   the bridge's archive holds.
 - **A Truss `axial_force` Gauss record** now takes the classic recorders.
   MPCO cannot write this record, so `emit_default` used to raise before it
-  tried the MPCO recorder. Now a spec with a Truss `axial_force` component
-  skips MPCO, on every stock build, and the `DefaultRouteWarning` names the
-  records it reroutes. Every other MPCO refusal still raises at `__enter__`,
-  with or without a Truss axial force beside it: a gauss component with no
-  MPCO token, or a section deformation on line stations.
+  tried the MPCO recorder. Now such a record skips MPCO, on every stock
+  build, and the `DefaultRouteWarning` names the records it reroutes. It
+  counts as a Truss record when its class is in the Truss family, or, when
+  it names no class, when every element's live `eleType` is. Every other
+  MPCO refusal still raises at `__enter__`, with or without a Truss axial
+  force beside it: an `axial_force` on any other class (an elastic beam,
+  say), a gauss component with no MPCO token, or a section deformation on
+  line stations.
 
 The `.out` fibre read now loads the model once. It used to load it twice.

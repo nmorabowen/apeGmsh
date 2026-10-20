@@ -594,3 +594,43 @@ def test_only_the_truss_axial_force_leaves_mpco(tmp_path, records, match) -> Non
     with pytest.raises(ValueError, match=match):
         _run(_spec(fem, *records), tmp_path / "run", model_h5, ops)
     assert ops.recorder_calls == [] and "eleNodes" not in ops.asked
+
+
+_TRUSS_AXIAL = (r"component 'axial_force' \(the Truss axial force\) cannot "
+                r"go through MPCO")
+
+
+@pytest.mark.parametrize("cls", ["ElasticBeam3d", None],
+                         ids=["named", "class-less"])
+def test_an_elastic_beam_axial_force_keeps_the_mpco_refusal(tmp_path, cls) -> None:
+    """Only the Truss family's ``axial_force`` leaves MPCO. An elastic
+    beam's, named or found by its live ``eleType``, has no Gauss
+    ``axialForce`` the classic read decodes either: refused by name at
+    ``__enter__``, as on main, not read empty after the run."""
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    ops.elements = {1: ("ElasticBeam3d", (1, 2)), 2: ("ElasticBeam3d", (2, 5))}
+    with pytest.raises(ValueError, match=_TRUSS_AXIAL):
+        _run(_spec(fem, _truss_rec(cls=cls)), tmp_path / "run", model_h5, ops)
+    assert ops.recorder_calls == [] and "eleNodes" not in ops.asked
+
+
+def test_a_class_less_truss_axial_force_leaves_mpco_by_its_live_class(
+    tmp_path,
+) -> None:
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    run = _run(_spec(fem, _truss_rec(cls=None)), tmp_path / "run", model_h5,
+               ops)
+    assert run.route == "recorders"
+    assert [c for c in ops.recorder_calls if c[0] == "mpco"] == []
+    assert "eleType" in ops.asked
+
+
+def test_the_reroute_raises_no_mpco_line_stations_warning(tmp_path) -> None:
+    """A class-less line-stations record beside the Truss axial force: the
+    MPCO emit would warn that elastic beams may read empty, but the run
+    never makes an MPCO recorder, so nothing warns but the route."""
+    fem, model_h5, ops = _truss_fem(tmp_path)
+    ls = _truss_rec(("axial_force",), name="ls", category="line_stations",
+                    cls=None)
+    run = _run(_spec(fem, _truss_rec(), ls), tmp_path / "run", model_h5, ops)
+    assert run.route == "recorders"

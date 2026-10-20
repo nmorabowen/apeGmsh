@@ -393,6 +393,27 @@ def test_a_zero_length_nodal_force_record_refuses_before_the_run(
              r"no nodal-force layout \[\('ZeroLength', 'global_force'\)\]")
 
 
+@pytest.mark.parametrize("cls", ["ElasticBeam2d", None],
+                         ids=["named", "class-less"])
+def test_an_elastic_girder_axial_force_refuses_by_name_before_the_run(
+    opspy, tmp_path, cls,
+) -> None:
+    """Only the Truss family's Gauss ``axial_force`` leaves MPCO (#2290 D);
+    the portal's elastic girder keeps the MPCO refusal at ``__enter__``,
+    named or found by its live ``eleType``."""
+    fem = _portal_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_portal(opspy, fem)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("gauss", "axial", ("axial_force",), np.array([3]),
+                         cls),))
+    _refuses(spec, tmp_path, model_h5, opspy,
+             r"component 'axial_force' \(the Truss axial force\) cannot go "
+             r"through MPCO")
+
+
 def test_an_unmapped_live_class_refuses_by_name(opspy, tmp_path) -> None:
     """``ModElasticBeam2d`` is an elastic beam the live-class table does not
     hold: its type token is unknown, so it refuses by its class name."""
