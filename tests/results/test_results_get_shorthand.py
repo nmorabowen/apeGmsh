@@ -155,9 +155,13 @@ def test_native_per_element_node_level_refuses(native) -> None:
 # .ladruno (committed fork fixtures)
 # ---------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["truss2d", "beam3d"])
+# ``truss2d.part-0`` opens the two-part set: the multi-part reader's
+# listing is the union over parts of the one stage being read.
+@pytest.mark.parametrize("name", ["truss2d", "beam3d", "truss2d.part-0"])
 def test_ladruno_family_shorthand_refuses_by_name(name: str) -> None:
     r = Results.from_ladruno(LADRUNO / f"{name}.ladruno")
+    if name.endswith("part-0"):
+        assert type(r._reader).__name__ == "LadrunoMultiPartitionReader"
     comps = [c for c in r.nodes.available_components()
              if c.startswith("displacement_")]
     assert comps, "fixture must record displacement components"
