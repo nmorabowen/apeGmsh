@@ -85,6 +85,11 @@ _KNOWN_STOCK_FAILURES: dict[str, str] = {
     # name the multi-rank run its rank-gated deck needs (the #2220 class).
     # In one process rank 1's stage elements are never declared: singular.
     "test_h5_regions_round_trip::_partitioned_staged_with_fan_out": "#2220",
+    # The golden cell's twin (#2195) and its massed variant: the same
+    # partitioned stamp with requires=(), on a rank-gated deck that declares
+    # the cell's `system Mumps`, which a single-process build does not have.
+    "test_h5_decl_params::_broad_partitioned": "#2220",
+    "test_h5_decl_params::_two_column_frame_partitioned[mass=True]": "#2220",
 }
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
@@ -149,9 +154,10 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """The table is exactly these five rows, each a row the net runs, each
+    """The table is exactly these seven rows, each a row the net runs, each
     citing #2220 or the fixture fact: it can only shrink as a deck is
-    fixed, never grow."""
+    fixed, never grow. The last two joined with the S row's twin (#2195),
+    which the net runs now that the ledger has no S row."""
     assert _KNOWN_STOCK_FAILURES == {
         "test_h5_decls::_param_stage_model": "#2220",
         "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
@@ -160,6 +166,9 @@ def test_known_stock_failures_name_run_rows() -> None:
         "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
             _FIXTURE_UNSOLVABLE,
         "test_h5_regions_round_trip::_partitioned_staged_with_fan_out":
+            "#2220",
+        "test_h5_decl_params::_broad_partitioned": "#2220",
+        "test_h5_decl_params::_two_column_frame_partitioned[mass=True]":
             "#2220",
     }
     assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
@@ -172,6 +181,10 @@ def test_the_net_runs_some_stock_row() -> None:
     # Every corpus model but the S rows: none drops out silently.
     s_rows = {w.model for w in _waivers().values() if w.klass == "S"}
     assert {m.id for m in _RUN_ROWS} == {m.id for m in CORPUS} - s_rows
+    # The ledger has no S row since #2195: the net runs the whole corpus,
+    # the golden cell's twin included.
+    assert not s_rows and "test_h5_decl_params::_broad_partitioned" in {
+        m.id for m in _RUN_ROWS}
 
 
 _PROBE_PLUGIN = """import json, os, sys

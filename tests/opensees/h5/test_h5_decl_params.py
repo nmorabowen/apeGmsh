@@ -719,7 +719,8 @@ def _broad_partitioned() -> apeSees:
     """The golden corpus's staged, partitioned, recording frame on a real
     :class:`FEMData` (#2195): the replayable twin of
     :func:`_broad_partitioned_stub`. Its bridge deck is that cell's golden
-    deck (``test_roundtrip_oracle.py`` pins it), and its archive replays."""
+    deck but for the backend stamp line (``test_roundtrip_oracle.py`` pins
+    it), and its archive replays exactly, so the oracle ledger has no row."""
     return _two_column_frame_partitioned()
 
 
