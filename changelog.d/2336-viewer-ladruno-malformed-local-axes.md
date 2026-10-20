@@ -8,10 +8,13 @@ been set aside.
 
 The reader still falls back the same way, as the Python reader and MPCO do
 (#2090), but it now says so. A `FRAME` with more or fewer rows than its `ID`,
-or with rows that are not 3, 4 or 9 wide, warns through the read's
-`warningsOut`. The warning names the file, the dataset and both counts. An
-empty `ID` beside `FRAME` rows is refused by name as a `LadrunoError` of kind
-`layout`, because those frames belong to no element.
+or with rows that are not 3, 4 or 9 wide, warns when the file opens, among the
+open warnings of a stage that has line stations. The check reads only the
+datasets' shapes. The same warning is also given to the `warningsOut` of
+`readLocalAxes` and the line-station reads. It names the file, the dataset
+and both counts. An empty `ID` beside `FRAME` rows is refused by name when
+the frames are read, as a `LadrunoError` of kind `layout`, because those
+frames belong to no element.
 
 `readLocalAxes` and the line-station reads now resolve the frames with sorted
 typed arrays instead of a `Map` per element. A `Map` or `Set` holds at most

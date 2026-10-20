@@ -856,9 +856,15 @@ test("#2336: a MODEL/LOCAL_AXES FRAME with more or fewer rows than its ID warns 
     const p = withClass([11, 12], Float64Array.from({ length: rows * 4 }, (_, i) => (i % 4 === 0 ? 1 : 0)), [rows, 4]);
     const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/FRAME holds ${rows} row\\(s\\) for the 2 id\\(s\\) of ${escapedRe(EB_LA)}/ID; its frames are not read, so its elements have no recorded frame and a diagram computes theirs from the model`);
     withFile(p, (r) => {
+      // At open: the index's line-station listing (main/results.ts metaOf) warns, from the shapes alone.
+      const atOpen: string[] = [];
+      assert.ok(r.availableLineStations("stage_0", atOpen).includes("N"));
+      assert.equal(atOpen.length, 1);
+      assert.match(atOpen[0]!, named);
       const warnings: string[] = [];
       const axes = r.readLocalAxes("stage_0", { warningsOut: warnings });
       assert.deepEqual(Array.from(axes.elementIds), TEN, "ForceBeamColumn3d reads; ElasticBeam3d does not");
+      assert.deepEqual(warnings, atOpen, "open and the read say it in the same words");
       assert.equal(warnings.length, 1);
       assert.match(warnings[0]!, named);
       // Asked for by id, 11 and 12 read as unrecorded (hasRecorded 0, z NaN); 1 keeps its frame.
@@ -880,6 +886,9 @@ test("#2336: a MODEL/LOCAL_AXES FRAME with more or fewer rows than its ID warns 
     const warnings: string[] = [];
     const axes = r.readLocalAxes("stage_0", { warningsOut: warnings });
     assert.deepEqual(warnings, []);
+    const atOpen: string[] = [];
+    r.availableLineStations("stage_0", atOpen);
+    assert.deepEqual(atOpen, []);
     assert.deepEqual(Array.from(axes.zRec.subarray(0, 3)).map((v) => +v.toFixed(12)), [0, 1, 0]);
   });
 });
@@ -889,6 +898,9 @@ test("#2336: a MODEL/LOCAL_AXES FRAME whose rows are not 3, 4 or 9 wide warns by
   withFile(p, (r) => {
     const warnings: string[] = [];
     assert.deepEqual(Array.from(r.readLocalAxes("stage_0", { warningsOut: warnings }).elementIds), TEN);
+    const atOpen: string[] = [];
+    r.availableLineStations("stage_0", atOpen);
+    assert.deepEqual(atOpen, warnings, "open warns in the read's words");
     assert.equal(warnings.length, 1);
     assert.match(warnings[0]!, new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/FRAME holds rows 5 wide for the 2 id\\(s\\) of ${escapedRe(EB_LA)}/ID, not 3 \\(the local z axis\\), 4 \\(a quaternion\\) or 9 \\(a rotation matrix\\); `));
   });
@@ -898,6 +910,10 @@ test("#2336: an empty MODEL/LOCAL_AXES ID beside FRAME rows refuses readLocalAxe
   const p = withClass([], Float64Array.from([1, 0, 0, 0, 1, 0, 0, 0]), [2, 4]);
   const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/ID is empty, but ${escapedRe(EB_LA)}/FRAME holds 2 row\\(s\\); .*belong to no element; the local axes are not read$`);
   withFile(p, (r) => {
+    // Open lists the stage's line stations without a word: the read refuses the empty ID.
+    const atOpen: string[] = [];
+    assert.ok(r.availableLineStations("stage_0", atOpen).includes("N"));
+    assert.deepEqual(atOpen, []);
     refusesAxes(() => r.readLocalAxes("stage_0"), named);
     refusesAxes(() => r.readLineStations("stage_0", "N"), named);
     assert.deepEqual(Array.from(r.readLocalAxes("stage_1").elementIds), TEN);

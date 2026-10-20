@@ -20,7 +20,8 @@
 // A group whose frames cannot be paired with its ids is not read, and says so (#2336).
 // A FRAME whose row count is not the ID's (more rows or fewer), or whose rows are not
 // 3, 4 or 9 wide, warns by name (the file, the dataset, both counts) through the
-// read's warningsOut; its elements keep no recorded frame, and a diagram computes
+// read's warningsOut, and at open, from the shapes alone, through the line-station
+// listing of a stage that has line stations (warnModelLocalAxes); its elements keep no recorded frame, and a diagram computes
 // theirs from the model (the geomTransf vecxz, or the default), as for any element
 // the file gives no frame. Python and MPCO do the same (#2090). An empty ID beside
 // FRAME rows is refused by name: those frames belong to no element.
@@ -76,45 +77,58 @@ export interface FrameRows {
 /** The row widths decodeLocalAxesRow decodes: the local z axis, a quaternion, a rotation matrix. */
 const FRAME_WIDTHS = [3, 4, 9];
 
-/** The frame rows of `MODEL/LOCAL_AXES` (`modelLa`), one entry per group read: sized by the class count, not the id count. */
-export function collectModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesReads): FrameRows[] {
-  const read: FrameRows[] = [];
-  const readSub = (sub: LocalAxesGroup) => {
+/** Call `fn` on each group of `MODEL/LOCAL_AXES` (the flat layout first) that holds an ID and a FRAME (or LOCAL_AXES). */
+function eachFrameGroup(modelLa: LocalAxesGroup, reads: LocalAxesReads, fn: (idDs: LocalAxesDataset, frameDs: LocalAxesDataset) => void): void {
+  const visit = (sub: LocalAxesGroup) => {
     const frameName = sub.keys().includes("FRAME") ? "FRAME" : sub.keys().includes("LOCAL_AXES") ? "LOCAL_AXES" : null;
     if (!sub.keys().includes("ID") || !frameName) return;
-    const idDs = reads.dataset(sub, "ID");
-    const frameDs = reads.dataset(sub, frameName);
-    const ids = reads.ints(idDs);
-    const raw = reads.floats(frameDs.value, frameDs.path);
-    const nE = ids.length;
-    const frameShape = frameDs.shape ?? [];
-    const rows = frameShape.length >= 2 ? frameShape[0]! : null;
-    const held = rows !== null ? `${rows} row(s)` : `${raw.length} value(s)`;
-    if (nE === 0) {
-      if (raw.length === 0) return;
-      throw reads.fail(`${reads.file}: ${idDs.path} is empty, but ${frameDs.path} holds ${held}; a frame row belongs to the element its ID row names, so these belong to no element; the local axes are not read`);
-    }
-    const fault =
-      rows !== null && rows !== nE
-        ? `holds ${held} for the ${nE} id(s) of ${idDs.path}`
-        : raw.length === 0 || raw.length % nE !== 0
-          ? `holds ${held}, not one whole row for each of the ${nE} id(s) of ${idDs.path}`
-          : !FRAME_WIDTHS.includes(raw.length / nE)
-            ? `holds rows ${raw.length / nE} wide for the ${nE} id(s) of ${idDs.path}, not 3 (the local z axis), 4 (a quaternion) or 9 (a rotation matrix)`
-            : null;
-    if (fault !== null) {
-      reads.warn(`${reads.file}: ${frameDs.path} ${fault}; its frames are not read, so its elements have no recorded frame and a diagram computes theirs from the model (the geomTransf vecxz, or the default)`);
-      return;
-    }
-    read.push({ at: idDs.path, ids, raw, cols: raw.length / nE, source: "model_local_axes" });
+    fn(reads.dataset(sub, "ID"), reads.dataset(sub, frameName));
   };
   if (modelLa.keys().includes("ID")) {
-    readSub(modelLa);
+    visit(modelLa);
   }
   for (const k of modelLa.keys()) {
     const sub = reads.optionalGroup(modelLa, k);
-    if (sub) readSub(sub);
+    if (sub) visit(sub);
   }
+}
+
+/** What FRAME holds: its rows when it is 2-D, else its value count. */
+const heldBy = (rows: number | null, values: number): string => (rows !== null ? `${rows} row(s)` : `${values} value(s)`);
+
+/** Why a FRAME of `rows` rows (null when not 2-D) and `values` values cannot be paired with the `nE` (> 0) ids of `idDs`, or null when it can. */
+function frameFault(nE: number, rows: number | null, values: number, idDs: LocalAxesDataset): string | null {
+  const held = heldBy(rows, values);
+  if (rows !== null && rows !== nE) return `holds ${held} for the ${nE} id(s) of ${idDs.path}`;
+  if (values === 0 || values % nE !== 0) return `holds ${held}, not one whole row for each of the ${nE} id(s) of ${idDs.path}`;
+  if (!FRAME_WIDTHS.includes(values / nE)) return `holds rows ${values / nE} wide for the ${nE} id(s) of ${idDs.path}, not 3 (the local z axis), 4 (a quaternion) or 9 (a rotation matrix)`;
+  return null;
+}
+
+const notRead = (reads: LocalAxesReads, frameDs: LocalAxesDataset, fault: string): string =>
+  `${reads.file}: ${frameDs.path} ${fault}; its frames are not read, so its elements have no recorded frame and a diagram computes theirs from the model (the geomTransf vecxz, or the default)`;
+
+const frameRowsOf = (shape: number[] | null): number | null => (shape && shape.length >= 2 ? shape[0]! : null);
+
+/** The frame rows of `MODEL/LOCAL_AXES` (`modelLa`), one entry per group read: sized by the class count, not the id count. */
+export function collectModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesReads): FrameRows[] {
+  const read: FrameRows[] = [];
+  eachFrameGroup(modelLa, reads, (idDs, frameDs) => {
+    const ids = reads.ints(idDs);
+    const raw = reads.floats(frameDs.value, frameDs.path);
+    const nE = ids.length;
+    const rows = frameRowsOf(frameDs.shape);
+    if (nE === 0) {
+      if (raw.length === 0) return;
+      throw reads.fail(`${reads.file}: ${idDs.path} is empty, but ${frameDs.path} holds ${heldBy(rows, raw.length)}; a frame row belongs to the element its ID row names, so these belong to no element; the local axes are not read`);
+    }
+    const fault = frameFault(nE, rows, raw.length, idDs);
+    if (fault !== null) {
+      reads.warn(notRead(reads, frameDs, fault));
+      return;
+    }
+    read.push({ at: idDs.path, ids, raw, cols: raw.length / nE, source: "model_local_axes" });
+  });
   uniqueElementIds(
     read,
     `${reads.file}: ${modelLa.path}`,
@@ -122,6 +136,21 @@ export function collectModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesR
     reads.fail,
   );
   return read;
+}
+
+/**
+ * The open-time half of collectModelLocalAxes: from the datasets' shapes alone (no
+ * values read), warn through `reads.warn` of each group whose FRAME cannot be paired
+ * with its ID, in the words a read uses. An empty ID is left to the read, which refuses it.
+ */
+export function warnModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesReads): void {
+  const count = (shape: number[] | null): number => (shape ? shape.reduce((a, b) => a * b, 1) : 0);
+  eachFrameGroup(modelLa, reads, (idDs, frameDs) => {
+    const nE = count(idDs.shape);
+    if (nE === 0) return;
+    const fault = frameFault(nE, frameRowsOf(frameDs.shape), count(frameDs.shape), idDs);
+    if (fault !== null) reads.warn(notRead(reads, frameDs, fault));
+  });
 }
 
 /** Per-element frames, as reader/ladruno.ts `LadrunoLocalAxes` documents them. */
