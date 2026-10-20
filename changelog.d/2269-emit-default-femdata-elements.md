@@ -33,6 +33,12 @@ domain:
 - by FEM id: an element that is not live under its FEM id, whose live
   nodes differ from the FEM connectivity or its order, whose nodes are
   not the FEM's, or that the FEMData does not hold;
+- by FEM id, naming both: an element whose ordered connectivity another
+  FEM element shares (a stacked quad pair). `eleNodes` cannot tell the
+  two apart, so a deck that swapped their tags would record each one's
+  response under the other's id;
+- an `elements` record that names no class, or whose live class has no
+  nodal-force layout for its frame (for example `ZeroLength`);
 - by class name: a live class with no bridge token (for example
   `ModElasticBeam2d`), or a record class that is not the live class;
 - by record name: `fibers` and per-Gauss-point material records, which need
