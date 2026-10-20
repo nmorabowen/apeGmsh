@@ -117,9 +117,9 @@ class RecorderTranscoder:
         self._model_h5_src = None if model_h5_src is None else Path(model_h5_src)
         # An element pairing in hand, for a read with no model archive: an
         # object with ``lineage`` and ``elements()`` (fem_eid, tag,
-        # type_token), such as the live facts a FEMData-archive run proved
-        # (#2269). It stands in for the model's pairing where only the
-        # pairing is read; it composes no /opensees zone.
+        # type_token), such as the live facts a FEMData-archive run proved.
+        # It stands in for the model's pairing where only the pairing is
+        # read; it composes no /opensees zone.
         self._pairing = pairing
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
