@@ -402,7 +402,13 @@ def test_mpco_gauss_derived_scalar_records_raw_tensor() -> None:
 
 @pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
 def test_mpco_unmapped_gauss_component_raises(emit) -> None:
-    rec = _gauss(("stress_xx", "unrouted_quantity_xx"), name="bad")
+    # ResolvedRecorderRecord refuses a non-canonical component when it is
+    # built (#2340), so this name never reaches the emit through the
+    # constructor. The MPCO emit's own refusal is the seam under test here,
+    # kept as a second line of defence: set the name past the guard.
+    rec = _gauss(("stress_xx",), name="bad")
+    object.__setattr__(rec, "components",
+                       ("stress_xx", "unrouted_quantity_xx"))
     with pytest.raises(ValueError, match=r"'bad'.*'unrouted_quantity_xx'"):
         emit([rec])
 

@@ -444,7 +444,7 @@ def test_emit_recorders_mixed_categories(tmp_path: Path) -> None:
         ),
         ResolvedRecorderRecord(
             category="line_stations", name="ls",
-            components=("bending_moment",),
+            components=("bending_moment_z",),
             dt=None, n_steps=None,
             element_ids=np.array([20]),
         ),
