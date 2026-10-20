@@ -32,7 +32,12 @@ header records that.
   #2194 each slot's int/float type. The tests below keep both classes
   enforced on synthetic diffs, made by switching either fix off.
 - Class S: the model is not replayable, and replay raises the named error
-  (#1797).
+  (#1797). No row is S either since #2195 put a real-``FEMData`` twin of
+  the last one (the golden cell ``two_column_frame_partitioned /
+  staged_partitioned / recording``) in the corpus; the ``FEMStub`` model
+  itself keeps the class enforced (:func:`test_an_s_row_is_enforced`).
+
+The ledger is empty. Its machinery stays, each rule held by synthetic rows.
 
 A/B/C rows pin the sha256 of the exact normalised diff. The class is never
 taken on trust: the oracle derives it from the two decks and fails a row whose
@@ -111,8 +116,9 @@ _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
 #: ``N_WAIVED_ORACLE`` (33 when the ledger opened, K2a, #1794). It may only
 #: go down: 32 once #2193 replayed ``_frame_bridge[analysis=True]`` exactly,
-#: 1 once #2194 kept every slot's int/float type (the S row is left).
-_CEILING = 1
+#: 1 once #2194 kept every slot's int/float type (the S row was left), 0
+#: once #2195 replaced that row's ``FEMStub`` model with a real twin.
+_CEILING = 0
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
@@ -166,6 +172,9 @@ CORPUS: tuple[Model, ...] = (
     *(_m("test_h5_decl_params", f) for f in (
         "_params_frame", "_broad_staged", "_broad_frame",
         "_broad_partitioned")),
+    # The twin with a lumped mass (#2277 review): fix and mass lines in one
+    # partitioned deck, so their flat sections cannot swap unseen.
+    _m("test_h5_decl_params", "_two_column_frame_partitioned", mass=True),
     *(_m("test_h5_initial_stress", "_build_frame", with_initial_stress=w)
       for w in _B),
     *(_m("test_h5_param_tags", f) for f in (
@@ -864,10 +873,24 @@ def test_a_deleted_row_passes_the_carve_out() -> None:
         {"m": _W("m", "C", "1" * 16, "r")}, {}) == []
 
 
-def test_every_row_names_a_corpus_model() -> None:
+def _orphans(rows: "list[Waiver]") -> list[str]:
+    """The rows that name no :data:`CORPUS` model."""
     corpus = {m.id for m in CORPUS}
-    orphans = [w.model for w in _read_ledger()[1] if w.model not in corpus]
+    return [w.model for w in rows if w.model not in corpus]
+
+
+def test_every_row_names_a_corpus_model() -> None:
+    orphans = _orphans(_read_ledger()[1])
     assert not orphans, f"ledger rows for no corpus model: {orphans}"
+
+
+def test_an_orphan_row_is_reported() -> None:
+    """The rule above, on a synthetic row now that the ledger is empty: an
+    S row for the ``FEMStub`` model, which is not in the corpus, is an
+    orphan; the same row for its twin is not."""
+    stub = _W(_STUB.id, "S", _NZ, "#1797: synthetic")
+    assert _orphans([stub]) == [_STUB.id]
+    assert _orphans([dataclasses.replace(stub, model=_TWIN.id)]) == []
 
 
 def _row_errors(w: Waiver) -> list[str]:
@@ -1152,3 +1175,169 @@ def test_without_the_order_check_a_fatal_reorder_fails_its_pin(
     with pytest.raises(AssertionError,
                        match="the ledger says class C, the diff is class B"):
         _check(_HELD, row, tmp_path / "off")
+
+
+# ---------------------------------------------------------------------------
+# The last S row's twin (#2195): the golden cell on a real FEMData
+# ---------------------------------------------------------------------------
+
+#: The real-``FEMData`` twin of the golden cell, in the corpus with no row.
+_TWIN = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_partitioned")
+#: The twin with a lumped mass on ``"Top"`` (the #2277 review finding).
+_MASSED = next(m for m in CORPUS if m.id ==
+               "test_h5_decl_params::_two_column_frame_partitioned[mass=True]")
+#: The golden cell's own ``FEMStub`` model: bridge-only, so not in the corpus.
+_STUB = _m("test_h5_decl_params", "_broad_partitioned_stub")
+#: The cell the twin reproduces.
+_CELL = ("two_column_frame_partitioned", "staged_partitioned", "recording")
+#: The row this slice deleted; re-adding it must fail the carve-out.
+_DELETED_S_ROW = (
+    "test_h5_decl_params::_broad_partitioned S "
+    "BridgeOnlyArchiveError:no-neutral-zone  # #1797: golden-corpus model "
+    "(build_model), bridge-only by design")
+
+
+def _twin_deck(build: Callable[[], apeSees], out_dir: Path) -> str:
+    """``build()``'s non-flat Tcl deck as the golden cell renders it
+    (``builder.render_deck``: ``ops.tcl(model.tcl)``, collected)."""
+    out_dir.mkdir(parents=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        build().tcl(str(out_dir / "model.tcl"))
+    return builder._collect(out_dir)
+
+
+def _golden_without_stamp() -> str:
+    """The cell's golden deck minus its one backend-stamp line: the golden
+    pins ``OpenSeesTarget(mode="stock")``, the unpinned twin stamps nothing
+    (T ruling on #2195; archiving the mode is #2278)."""
+    path = builder.golden_paths(*_CELL)[0]
+    lines = path.read_bytes().decode("utf-8").replace("\r\n", "\n").split("\n")
+    stamps = [ln for ln in lines if builder.STAMP_LINE.match(ln)]
+    assert stamps == [f"# apeGmsh {builder.VERSION_TOKEN}; backend stock"], stamps
+    return "\n".join(ln for ln in lines if ln not in stamps)
+
+
+def _twin_factory(**kwargs: Any) -> Callable[[], apeSees]:
+    return lambda: _m("test_h5_decl_params", "_two_column_frame_partitioned",
+                      **kwargs).build()
+
+
+def test_the_twin_is_the_golden_cell(tmp_path: Path) -> None:
+    """The twin's bridge deck is the golden cell's deck byte for byte, but
+    for the stamp line the unpinned twin does not write."""
+    deck = _twin_deck(_TWIN.build, tmp_path / "twin")
+    assert not builder.STAMP_LINE.search(deck)
+    assert deck == _golden_without_stamp()
+
+
+#: Mutations of the twin: a dropped stage, and the two columns' ranks
+#: swapped. Each changes the deck, so the golden equality is not vacuous.
+_TWIN_MUTATIONS = {
+    "drop-stage-push": {"stages": (("gravity", 10.0, 2),)},
+    "swap-ranks": {"partitions": {
+        1: {"node_ids": [3, 4], "element_ids": [2]},
+        2: {"node_ids": [1, 2], "element_ids": [1]}}},
+}
+
+
+@pytest.mark.parametrize("mutation", list(_TWIN_MUTATIONS))
+def test_a_mutated_twin_is_not_the_golden_cell(
+        mutation: str, tmp_path: Path) -> None:
+    deck = _twin_deck(_twin_factory(**_TWIN_MUTATIONS[mutation]), tmp_path / "m")
+    assert builder.first_deck_mismatch(_golden_without_stamp(), deck) is not None
+
+
+def test_a_twin_with_one_partition_is_refused(tmp_path: Path) -> None:
+    """Dropping a partition leaves a serial deck that declares ``system
+    Mumps``, which the bridge refuses: the partitions are load-bearing."""
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    one = {1: {"node_ids": [1, 2, 3, 4], "element_ids": [1, 2]}}
+    with pytest.raises(BridgeError, match=r"`system Mumps` declared on a serial deck"):
+        _twin_deck(_twin_factory(partitions=one), tmp_path / "m")
+
+
+def test_the_twin_replays_exactly_without_a_row(tmp_path: Path) -> None:
+    """The S row is gone: the twin and its massed variant replay byte for
+    byte, and the replay is partitioned (its program opens rank blocks)."""
+    assert _waivers() == {}
+    for model in (_TWIN, _MASSED):
+        assert model.id not in _waivers()
+        out = tmp_path / model.function
+        out.mkdir()
+        _check(model, None, out)
+        order = OpenSeesModel.from_h5(str(out / "model.h5"))._replay_order()
+        assert order is not None and order.partitioned
+
+
+@pytest.mark.parametrize("model", [_TWIN, _MASSED], ids=["twin", "massed"])
+def test_without_the_flat_section_sort_the_twin_fails(
+        model: Model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof for S3b (#2277) through the twin: with every unit in
+    section 0, as before the fix, the partitioned replay is in emit order
+    and differs from the bridge's flat deck, a replay regression."""
+    from apeGmsh.opensees._internal import compose
+
+    (tmp_path / "on").mkdir()
+    _check(model, None, tmp_path / "on")
+    monkeypatch.setattr(compose._ReplayOrder, "section", lambda self, kind, key: 0)
+    (tmp_path / "off").mkdir()
+    with pytest.raises(AssertionError, match="replay regression"):
+        _check(model, None, tmp_path / "off")
+
+
+def test_swapped_fix_and_mass_sections_fail(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The #2277 review finding: swap ``fixes`` and ``masses`` in
+    ``_FLAT_SECTIONS`` and the massed twin replays its ``mass`` lines above
+    its ``fix`` lines, a class B replay regression. The mass-free twin has
+    no ``mass`` line, so the same swap leaves it exact: the mass is what
+    makes the corpus see the swap."""
+    from apeGmsh.opensees._internal import compose
+
+    sections = compose._FLAT_SECTIONS
+    fixes, masses = sections["fixes"], sections["masses"]
+    assert fixes < masses
+    monkeypatch.setitem(sections, "fixes", masses)
+    monkeypatch.setitem(sections, "masses", fixes)
+    (tmp_path / "twin").mkdir()
+    _check(_TWIN, None, tmp_path / "twin")
+    (tmp_path / "massed").mkdir()
+    with pytest.raises(AssertionError, match="class B, pin"):
+        _check(_MASSED, None, tmp_path / "massed")
+    (tmp_path / "diff").mkdir()
+    diff = _diff(*_emit_and_replay(_MASSED, tmp_path / "diff"))
+    changed = [ln for ln in diff.splitlines()
+               if ln[0] in "+-" and not ln.startswith(("+++", "---"))]
+    assert changed and {ln[1:].split()[0] for ln in changed} == {"mass"}
+
+
+def test_an_s_row_is_enforced(tmp_path: Path) -> None:
+    """With no S row in the ledger, the stub model holds the class: an S
+    row on it passes (the bridge emits, ``from_h5`` refuses by name); with
+    no row its refusal fails the oracle; and an S row on the twin, which
+    replays, fails too."""
+    row = _W(_STUB.id, "S", _NZ, "#1797: synthetic, the FEMStub model")
+    assert _row_errors(row) == []
+    (tmp_path / "s").mkdir()
+    _check(_STUB, row, tmp_path / "s")
+    (tmp_path / "none").mkdir()
+    with pytest.raises(BridgeOnlyArchiveError, match="no neutral zone"):
+        _check(_STUB, None, tmp_path / "none")
+    (tmp_path / "twin").mkdir()
+    with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
+        _check(_TWIN, dataclasses.replace(row, model=_TWIN.id), tmp_path / "twin")
+
+
+def test_re_adding_the_deleted_s_row_fails_the_carve_out() -> None:
+    """The committed ledger with the deleted S row appended: its count
+    exceeds :data:`_CEILING`, and against the committed ledger the row is
+    an added one, refused as a replay regression."""
+    text = _LEDGER.read_text(encoding="utf-8").replace(
+        "N_WAIVED_ORACLE = 0", "N_WAIVED_ORACLE = 1")
+    n, rows, _h = _read_ledger(f"{text}\n{_DELETED_S_ROW}\n")
+    assert n == len(rows) == 1 and n > _CEILING
+    errors = _ledger_transition_errors(
+        {w.model: w for w in _read_ledger()[1]}, {w.model: w for w in rows})
+    assert len(errors) == 1 and "added row (class S)" in errors[0]
