@@ -25,15 +25,19 @@ Two units take their section from the archive:
 The replay of the staged, partitioned recording frame (the real-FEMData
 twin of `_broad_partitioned`) now equals `ops.tcl(flat=True)` line for
 line. A unit kind that no section places, a recorder region whose recorder
-no global call wrote, and a program that opens partition blocks only inside
+no call wrote, and a program that opens partition blocks only inside
 stages each raise.
 
 A single-domain archive replays exactly as before. A test pins every deck
 target over every unpartitioned round-trip model and every `schema_corpus`
 file.
 
-Not fixed here: `_emit_flat` writes a global pattern after the recorders
-(a pattern waits on its series in the topological order), and a
-partitioned program writes it inside the rank blocks, above them. No emit
-index recovers that order, so such a deck still replays the pattern first,
-as before.
+Not fixed here, and replayed as before:
+
+- `_emit_flat` writes a global pattern after the recorders (a pattern
+  waits on its series in the topological order). A partitioned program
+  writes it inside the rank blocks, above them, and no emit index recovers
+  that order, so such a deck still replays the pattern first.
+- When a stage claims an MPCO recorder, `_emit_flat` writes its region
+  inside the stage block. A partitioned archive stores that region with
+  the global regions, so the replay writes it there.

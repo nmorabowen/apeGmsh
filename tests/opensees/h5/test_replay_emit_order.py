@@ -528,8 +528,19 @@ def test_a_recorder_region_without_its_recorder_raises() -> None:
     order = _partitioned_order(
         _run(8, "region", decl=0), decls=(_MPCO,),
         tags=(("region", 1, 1, 0),))
-    with pytest.raises(LookupError, match="no global 'recorder' call"):
+    with pytest.raises(LookupError, match="no 'recorder' call"):
         order.tagged("region", frozenset({"region"}))
+
+
+def test_a_stage_claimed_recorders_region_stays_with_the_regions() -> None:
+    """A stage claims the recorder (its call is inside a stage block), so
+    the global region keeps its own index in the regions' section, the
+    place main's category order gave it."""
+    order = _partitioned_order(
+        _run(8, "region", decl=0), _run(9, "recorder", stage=0, decl=0),
+        decls=(_MPCO,), tags=(("region", 1, 1, 0),))
+    assert order.tagged("region", frozenset({"region"})) == {1: 8}
+    assert order.section("region", 8) == order.section("command", 8)
 
 
 # ---------------------------------------------------------------------------

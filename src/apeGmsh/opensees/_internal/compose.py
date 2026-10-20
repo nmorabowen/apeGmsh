@@ -1026,8 +1026,9 @@ class _ReplayOrder:
         recorder (an MPCO filter region, which ADR 0027 writes once per
         rank, above the recorders) takes that recorder's emit index, as
         ``_emit_flat`` writes the region just above its recorder (#2277).
-        Raises :class:`LookupError` when the program holds no global call
-        of that recorder."""
+        A recorder that a stage claims keeps its region with the other
+        regions. Raises :class:`LookupError` when the program holds no
+        call of that recorder at all."""
         cache_key = (kind, methods)
         found = self._joined.get(cache_key)
         if found is not None:
@@ -1051,15 +1052,23 @@ class _ReplayOrder:
             for decl, first, _count in self._fresh_calls(
                     frozenset({"recorder"})):
                 recorder_at.setdefault(decl, first)
+            staged = {
+                int(run.decl) for run in self._program
+                if run.method == "recorder" and int(run.stage) >= 0}
             for decl, runs in tag_runs.items():
                 if decl < 0 or self._decls[decl].family != "recorder":
                     continue
                 if decl not in recorder_at:
+                    if decl in staged:
+                        # A stage claims the recorder: the global region
+                        # replays with the other regions, as the category
+                        # order wrote it.
+                        continue
                     raise LookupError(
                         f"replay: region declaration "
                         f"{self._decls[decl].key!r} belongs to a recorder "
-                        "that no global 'recorder' call in "
-                        "/opensees/program wrote.")
+                        "that no 'recorder' call in /opensees/program "
+                        "wrote.")
                 for first, count in runs:
                     for tag in range(first, first + count):
                         out[tag] = recorder_at[decl]
