@@ -42,7 +42,7 @@ import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
-import { collectModelLocalAxes, resolveLocalAxes, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
+import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
@@ -736,7 +736,7 @@ export class LadrunoFile {
     if (step !== undefined) {
       const stepLa = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS", "LOCAL_AXES"]);
       if (stepLa && step >= 0 && step < hostStage.nSteps) {
-        groups.push(...this.collectStepLocalAxes(stepLa, step));
+        groups.push(...collectStepLocalAxes(stepLa, step, this.localAxesReads(options?.warningsOut)));
       }
     }
     return resolveLocalAxes(groups, options?.elementIds);
@@ -1103,6 +1103,12 @@ export class LadrunoFile {
     return g instanceof this.h5.Group ? (g as unknown as LGroup) : null;
   }
 
+  private optionalDataset(parent: LGroup, name: string): LDataset | null {
+    if (!parent.keys().includes(name)) return null;
+    const d = parent.get(name);
+    return d instanceof this.h5.Dataset ? (d as unknown as LDataset) : null;
+  }
+
   private optionalSubgroup(parent: LGroup, path: readonly string[]): LGroup | null {
     let cur: LGroup | null = parent;
     for (const seg of path) {
@@ -1415,38 +1421,7 @@ export class LadrunoFile {
 
   /** The group, dataset and dtype reads reader/ladrunoLocalAxes.ts takes from this file; a group it does not read warns into `warningsOut`. */
   private localAxesReads(warningsOut: string[] | undefined): LocalAxesReads {
-    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), ints: intsAsNumbers, floats: toFloat64, file: this.f.filename, fail: (m) => new LadrunoError("layout", m), warn: (m) => warningsOut?.push(m) };
-  }
-
-  /** The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` at `step`, one entry per bucket read. */
-  private collectStepLocalAxes(stepLa: LGroup, step: number): FrameRows[] {
-    const read: FrameRows[] = [];
-    const readBucket = (b: LGroup) => {
-      if (!b.keys().includes("ID") || !b.keys().includes("DATA")) return;
-      const idNode = b.get("ID");
-      const dataNode = b.get("DATA");
-      if (!(idNode instanceof this.h5.Dataset) || !(dataNode instanceof this.h5.Dataset)) return;
-      const idDs = idNode as unknown as LDataset;
-      const dataDs = dataNode as unknown as LDataset;
-      const shape = dataDs.shape ?? [];
-      if (shape.length !== 3 || step >= shape[0]!) return;
-      const ids = intsAsNumbers(idDs);
-      const nE = ids.length;
-      if (nE <= 0 || shape[1] !== nE) return;
-      const slice = toFloat64(dataDs.slice([[step, step + 1], [], []]), dataDs.path);
-      if (slice.length === 0 || slice.length % nE !== 0) return;
-      const cols = slice.length / nE;
-      if (cols !== shape[2]) return;
-      read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
-    };
-    if (stepLa.keys().includes("ID") && stepLa.keys().includes("DATA")) {
-      readBucket(stepLa);
-    }
-    for (const k of stepLa.keys()) {
-      const sub = this.optionalGroup(stepLa, k);
-      if (sub) readBucket(sub);
-    }
-    return read;
+    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), optionalDataset: (p: LGroup, n) => this.optionalDataset(p, n), stepSlice: (d: LDataset, step) => toFloat64(d.slice([[step, step + 1], [], []]), d.path), ints: intsAsNumbers, floats: toFloat64, file: this.f.filename, fail: (m) => new LadrunoError("layout", m), warn: (m) => warningsOut?.push(m) };
   }
 }
 
