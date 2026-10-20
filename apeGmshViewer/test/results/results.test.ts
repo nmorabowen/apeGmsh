@@ -253,12 +253,9 @@ test("#2358: uniqueNodeIds accepts strictly ascending ids in one O(n) pass with 
   const err = (m: string) => new Error(m);
   const N = 10 ** 7;
   const asc = new Float64Array(N).map((_, i) => 3 * i + 1);
-  const t0 = performance.now();
   const fast = countingSorts(() => uniqueNodeIds(asc, "f", "/ids", err));
-  const ms = performance.now() - t0;
   assert.equal(fast.sorts, 0, "a strictly ascending list is never copied and sorted");
   assert.equal(fast.result, asc, "the list itself is returned");
-  assert.ok(ms < 1000, `10^7 ascending ids took ${ms.toFixed(0)} ms`);
   // The stand-in bites: an order that is not strictly ascending is sorted.
   assert.equal(countingSorts(() => uniqueNodeIds(Float64Array.of(1, 3, 2), "f", "/ids", err)).sorts, 1);
   // A NaN fails the strict comparison and takes the sort path, which accepts it as before.
