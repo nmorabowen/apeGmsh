@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { uniqueElementIds, type IdList } from "../../src/reader/ladrunoChecks.ts";
 import { gatherGauss } from "../../src/reader/ladrunoElements.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { applyPlan, buildPlan, extrapolationVerdict, shapeOf, type CellOf } from "../../src/state/extrapolation.ts";
@@ -433,6 +434,19 @@ const esc = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 function refusedAtOpen(path: string, named: RegExp): void {
   assert.throws(() => openLadruno(H5, path), (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && named.test(e.message), `expected a refusal at open matching ${named}`);
 }
+
+test("#2316 uniqueElementIds: interleaved buckets with no repeat pass; ascending buckets that share an id, and an id twice in one, are named", () => {
+  const err = (m: string) => new Error(m);
+  const check = (lists: IdList[]) => uniqueElementIds(lists, "W", "Y", err);
+  // Each list ascends and the ranges overlap: the sort path, and nothing repeats.
+  check([{ at: "A", ids: [1, 3, 5] }, { at: "B", ids: [2, 4, 6] }]);
+  check([{ at: "A", ids: [5] }, { at: "B", ids: [1] }, { at: "C", ids: [] }, { at: "D", ids: [2, 3] }]);
+  assert.throws(() => check([{ at: "A", ids: [1, 3, 5] }, { at: "B", ids: [2, 5, 6] }]), /^Error: W lists element id\(s\) more than once \(id 5 at A row 2 and B row 1\); Y$/);
+  assert.throws(() => check([{ at: "A", ids: [4, 4, 1, 4] }]), /^Error: W lists element id\(s\) more than once \(id 4 at A rows 0, 1, 3\); Y$/);
+  // Past REPEATED_SHOWN repeated ids, the rest are counted, not listed.
+  const many = Array.from({ length: 12 }, (_, i) => i + 1);
+  assert.throws(() => check([{ at: "A", ids: many }, { at: "B", ids: many }]), /id 10 at A row 9 and B row 9; and 2 more\); Y$/);
+});
 
 test("#2316: a stress bucket whose ID lists element 2 twice refuses the file at open, by name, rather than reading element 3's Gauss rows as element 2", () => {
   // ID 1..6 -> 1, 2, 2, 4, 5, 6. Unrefused, the group reads 6 rows over 5 elements: element 2 twice, element 3 gone.

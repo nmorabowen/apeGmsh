@@ -14,7 +14,9 @@
 //
 // Both checks sort a typed copy and compare neighbours: no Set or Map sized by the
 // id count, which V8 caps at 2^24 entries (a file with more ids would throw an
-// unnamed RangeError), and an O(n log n) cost of a few hundred ms at 10^7 ids.
+// unnamed RangeError), and an O(n log n) cost of about a second at 10^7 ids. The
+// element check first tries an O(n) pass with no copy, which proves the ids the
+// fork writes (ascending, in buckets whose ranges do not overlap) unique.
 //
 // Browser-safe: no Node import, and no HDF5 access (W5): the caller reads the ids
 // and passes its own error factory, as reader/ladrunoInfo.ts does, so this module
@@ -42,6 +44,7 @@ export interface IdList {
  * of a part set) and `why` says why an element is listed once there.
  */
 export function uniqueElementIds(lists: readonly IdList[], what: string, why: string, err: (message: string) => Error): void {
+  if (plainlyUnique(lists)) return;
   let n = 0;
   for (const l of lists) n += l.ids.length;
   if (n < 2) return;
@@ -54,6 +57,24 @@ export function uniqueElementIds(lists: readonly IdList[], what: string, why: st
   const reps = repeatsOf(all.sort());
   if (reps.length === 0) return;
   throw err(`${what} lists element id(s) more than once (${elementPlaces(lists, reps)}); ${why}`);
+}
+
+/**
+ * The fast path: every list strictly increasing and no two lists' [first, last] ranges
+ * overlapping, so no id repeats. The fork writes its buckets so (ascending ids, one
+ * class per bucket), and the check is O(n) with no copy. Anything else, including an
+ * overlap that holds no repeat, takes the sort.
+ */
+function plainlyUnique(lists: readonly IdList[]): boolean {
+  const ranges: [number, number][] = []; // one per list: sized by the bucket count, not the id count
+  for (const { ids } of lists) {
+    if (ids.length === 0) continue;
+    for (let i = 1; i < ids.length; i++) if (!(ids[i]! > ids[i - 1]!)) return false;
+    ranges.push([ids[0]!, ids[ids.length - 1]!]);
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  for (let i = 1; i < ranges.length; i++) if (!(ranges[i]![0] > ranges[i - 1]![1])) return false;
+  return true;
 }
 
 /** The distinct ids that `sorted` (ascending) holds more than once, ascending; empty when none. */

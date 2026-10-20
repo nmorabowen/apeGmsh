@@ -566,8 +566,9 @@ test("#2316: element 7 in the stress buckets of both parts refuses the set at op
     assert.ok(st.unread.includes(`${GROUP} (${PART_SET_ELEMENTS_UNREAD})`), st.unread.join("; "));
   });
   rmSync(ok.dir, { recursive: true });
-  // Element 7 on both parts (row 0 of part 0, row 1 of part 1): one element on two ranks.
-  const bad = scratchSet(PART, { 0: quadStress([7, 8]), 1: quadStress([9, 7]) });
+  // Element 7 on both parts (row 0 of part 0, row 1 of part 1): one element on two ranks. Each part's
+  // ids ascend, so only their overlapping ranges send the check past its fast path.
+  const bad = scratchSet(PART, { 0: quadStress([7, 8]), 1: quadStress([6, 7]) });
   const named = new RegExp(
     `^run\\.part-<N>\\.ladruno: ${BUCKET.slice(0, BUCKET.lastIndexOf("/")).replace(/[[\]]/g, "\\$&")} lists element id\\(s\\) more than once ` +
       `\\(id 7 at run\\.part-0\\.ladruno ${BUCKET.replace(/[[\]]/g, "\\$&")}/ID row 0 and run\\.part-1\\.ladruno ${BUCKET.replace(/[[\]]/g, "\\$&")}/ID row 1\\); each element lives on one rank`,
