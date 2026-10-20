@@ -168,6 +168,11 @@ ELE_TAG_ElasticTimoshenkoBeam3d = 146
 # plasticity with a beamIntegration rule => line-stations topology.
 ELE_TAG_LadrunoDispBeamColumn2d = 33013
 ELE_TAG_LadrunoDispBeamColumn3d = 33014
+# Ladruno-fork IMK concentrated-plasticity beam (live from ladruno:SRC/classTags.h).
+# Closed-form elastic interior + rotational end springs (no sections) =>
+# nodal-forces + localForce line-station synthesis.
+ELE_TAG_LadrunoIMKBeam = 33003
+ELE_TAG_LadrunoIMKBeam2d = 33004
 # Zero-length elements (Phase 11d). Tags from
 # ``OpenSees/SRC/classTags.h``.
 ELE_TAG_ZeroLength = 19
@@ -1617,6 +1622,15 @@ NODAL_FORCE_CATALOG: dict[tuple[str, str], NodalForceLayout] = {
         _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "global"),
     ("ElasticTimoshenkoBeam3d", "local_force"):
         _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "local"),
+    # ── LadrunoIMKBeam (closed-form elastic interior + end springs) ──
+    ("LadrunoIMKBeam2d", "global_force"):
+        _nodal_force_2d(ELE_TAG_LadrunoIMKBeam2d, "global"),
+    ("LadrunoIMKBeam2d", "local_force"):
+        _nodal_force_2d(ELE_TAG_LadrunoIMKBeam2d, "local"),
+    ("LadrunoIMKBeam", "global_force"):
+        _nodal_force_3d(ELE_TAG_LadrunoIMKBeam, "global"),
+    ("LadrunoIMKBeam", "local_force"):
+        _nodal_force_3d(ELE_TAG_LadrunoIMKBeam, "local"),
 }
 
 #: The closed-form elastic beams above: the classes whose line stations are

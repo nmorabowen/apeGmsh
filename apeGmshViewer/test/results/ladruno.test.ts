@@ -919,3 +919,61 @@ test("#2187: COMP_NAMES has one rule for line stations and Gauss points: an empt
     assert.match(warnings.join("\n"), /localForce bucket "10-ElasticBeam2d\[0\]" .* is unreadable: .*COMP_NAMES line "N_1,V_1,M_1,N_2,V_2,M_2," has an empty label/);
   });
 });
+
+// -- INFO@SPATIAL_DIM (#2205) ---------------------------------------------------
+
+test("#2205: INFO@SPATIAL_DIM outside an integral 1, 2 or 3 is refused by name, as Python's SpatialDimInvalid; 1, 2, 3 read; absent infers", () => {
+  type AttrData = Parameters<h5wasm.Group["create_attribute"]>[1];
+  const withDim = (data: AttrData | null, shape: number[] | null = null) =>
+    edited(TRUSS, (f) => {
+      const info = f.get("INFO") as h5wasm.Group;
+      if (Object.keys(info.attrs).includes("SPATIAL_DIM")) info.delete_attribute("SPATIAL_DIM");
+      if (data !== null) info.create_attribute("SPATIAL_DIM", data, shape);
+    });
+  const escaped = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  // Python's SpatialDimInvalid cases (#2174, tests/results/readers/test_ladruno_reader.py
+  // _SPATIAL_DIM_TABLE): 7, 0, -1, 2.9 (no truncation), 'abc', two values [3, 2].
+  const refused: [AttrData, number[] | null, string][] = [
+    [new Int32Array([7]), [1], "7"],
+    [new Int32Array([0]), [1], "0"],
+    [new Int32Array([-1]), [1], "-1"],
+    [new Float64Array([2.9]), [1], "2.9"],
+    ["abc", null, '"abc"'],
+    [new Int32Array([3, 2]), [2], "[3, 2]"],
+    // float() skips no U+FEFF (JS trim() does) and no U+001C; Python reads "２", the viewer refuses non-ASCII digits.
+    ["\ufeff2", null, '"\ufeff2"'],
+    ["\x1c2", null, '"\\u001c2"'],
+    ["２", null, '"２"'],
+  ];
+  for (const [data, shape, shown] of refused) {
+    const p = withDim(data, shape);
+    refuses(p, "layout", new RegExp(`^${escaped(p)}: INFO@SPATIAL_DIM is ${escaped(shown)}; the spatial dimension must be an integral 1, 2 or 3$`));
+  }
+  // Python reads float(value) in {1, 2, 3}: an integer of any width, 2.0, a numeric string.
+  const read: [AttrData, number[] | null, number][] = [
+    [new Int32Array([1]), [1], 1],
+    [new Int32Array([2]), [1], 2],
+    [new Int32Array([3]), null, 3],
+    [new BigInt64Array([3n]), [1], 3],
+    [new Float64Array([2.0]), [1], 2],
+    ["2", null, 2],
+    [" 2 ", null, 2],
+    // float() skips U+0085 and U+3000 (JS trim() skips no U+0085).
+    ["\x852\x85", null, 2],
+    ["\u30002", null, 2],
+  ];
+  for (const [data, shape, dim] of read) {
+    withFile(withDim(data, shape), (r) => {
+      assert.equal(r.index.spatialDim, dim);
+      assert.equal(r.inferSpatialDim(), dim);
+    });
+  }
+  // Absent, or present with no value: unknown in the index, then inferred from
+  // MODEL/NODES/COORDINATES (the truss is 2-D), as Python falls through.
+  for (const p of [withDim(null), withDim(new Int32Array([]), [0])]) {
+    withFile(p, (r) => {
+      assert.equal(r.index.spatialDim, null);
+      assert.equal(r.inferSpatialDim(), 2);
+    });
+  }
+});

@@ -297,13 +297,13 @@ def test_unknown_dimension_rank_fails_the_partition_read(
         tmp_path: Path) -> None:
     # Rank 0 infers 2-D from its MODEL; rank 1 has no MODEL. Rank 1's
     # elements are never dropped in silence: the set refuses, naming it.
+    # Since #2267 (the viewer's #2245 rule) an unknown dimension beside a
+    # known one refuses the set at open, before any read.
     paths = [
         _file(tmp_path, f"truss2d.part-{i}.ladruno",
               [("12-Truss[1:0:0]", _TRUSS_2D_NDF3[1], [i + 1])],
               drop_model=(i == 1))
         for i in range(2)
     ]
-    with LadrunoMultiPartitionReader(paths) as m:
-        with pytest.raises(SpatialDimUnknown,
-                           match=r"truss2d\.part-1\.ladruno.*SPATIAL_DIM"):
-            _read(m, "nodal_resisting_force_x")
+    with pytest.raises(ValueError, match=r"truss2d\.part-1\.ladruno=unknown"):
+        LadrunoMultiPartitionReader(paths)

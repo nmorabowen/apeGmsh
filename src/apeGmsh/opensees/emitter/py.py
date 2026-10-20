@@ -21,8 +21,11 @@ from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo
 
+import io
 import math
-from typing import Any, Literal, Sequence
+import os
+import re
+from typing import Any, Callable, Literal, Sequence
 
 from .caps import TargetCaps
 from .base import (
@@ -36,7 +39,412 @@ from .base import (
 from .tcl import DECK_BANNER, provenance_stamp
 
 
-__all__ = ["PyEmitter"]
+__all__ = [
+    "DECK_RUN_SCHEMA", "DECK_RUN_SUFFIX", "PyEmitter", "deck_run_body",
+    "deck_run_fields", "deck_run_lineage", "deck_run_unlink",
+]
+
+#: The deck run record (the ratified spec of the slice). A deck the
+#: bridge emits with ``analyze_steps`` writes ``<recorder file>.run.json``
+#: beside each MPCO recorder's output once its analyze loop has returned
+#: without error, and never otherwise. ``convert_mpco``'s implicit-stage
+#: path reads it. This module owns the format; the Tcl deck renders the
+#: same fields from :func:`deck_run_fields`.
+DECK_RUN_SCHEMA = "apegmsh.deck_run/2"
+DECK_RUN_SUFFIX = ".run.json"
+
+
+class _MemoryArchive(io.BytesIO):
+    """An in-memory ``model.h5``: h5py writes it as a file object, and the
+    composition's path helpers (the provenance base directory, the stem)
+    read the name ``__fspath__`` gives. Nothing reaches the disk."""
+
+    def __fspath__(self) -> str:
+        return os.path.join(os.getcwd(), "deck_run_lineage.h5")
+
+
+#: ``(model_hash, fem_hash)`` by bridge declaration digest, for archives
+#: this process composed for a record: a second deck of the same
+#: declarations (py then tcl, one deck per ground motion) composes nothing.
+_LINEAGE_BY_DIGEST: "dict[str, tuple[str, str]]" = {}
+
+
+def _lineage_of(f: Any) -> "tuple[str | None, str | None]":
+    from .._internal.lineage import read_stored_lineage
+
+    fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+    return model_hash, fem_hash
+
+
+def _declarations(bridge: Any) -> "tuple[str, str] | None":
+    """``(digest, model name)`` of ``bridge``'s declarations, as the
+    automatic ``model.h5`` write keys them, or ``None`` for a snapshot that
+    write never handles (not a :class:`FEMData`) or that cannot be digested;
+    the lineage is then composed every time."""
+    from ...mesh.FEMData import FEMData
+    from .._internal.artifact_write import _declaration_digest
+
+    fem = bridge.fem if bridge is not None else None
+    if not isinstance(fem, FEMData):
+        return None
+    name = fem.model_name or ""
+    try:
+        return _declaration_digest(bridge, name), name
+    except Exception:  # noqa: BLE001 - an unpicklable declaration: compose
+        return None
+
+
+def _automatic_archive_lineage(
+    digest: str, name: str,
+) -> "tuple[str | None, str | None] | None":
+    """The lineage of the bridge's automatic ``model.h5`` when it holds
+    exactly these declarations (the write's own P5 record says so)."""
+    import h5py
+
+    from ..._core import default_artifact_dir
+    from .._internal.artifact_write import _LAST_WRITTEN
+
+    if not name:
+        return None
+    target = (default_artifact_dir() / f"{name}.h5").resolve()
+    if _LAST_WRITTEN.get(target) != digest or not target.is_file():
+        return None
+    with h5py.File(target, "r") as f:
+        return _lineage_of(f)
+
+
+def deck_run_lineage(
+    archive: "Callable[[Any], None]", bridge: Any = None, *,
+    compose: bool = True, deck: str = "",
+) -> "tuple[str, str] | None":
+    """``(model_hash, fem_hash)`` of the archive ``archive(path)`` writes.
+
+    The record names the ``model.h5`` the deck was emitted from. Its
+    lineage is reused when one of these already holds ``bridge``'s
+    declarations, by their digest: an archive composed earlier in this
+    process for a record, or the bridge's automatic ``model.h5`` (which the
+    deck emit writes first). Otherwise the bridge composes the archive
+    (``apeSees._write_h5`` over the deck's own build) in memory. No file is
+    written and ``model_hash`` is unchanged. With ``compose=False`` (a
+    partitioned deck, whose archive is too costly to compose at every
+    export) nothing is composed: with no reused lineage it warns once and
+    gets no record. So does a model whose archive cannot be composed; the
+    deck still emits, and ``read_deck_mpco`` of its ``.mpco`` refuses to
+    convert (check 1). The warning names ``deck`` and points at the
+    user's export call.
+    """
+    import warnings
+
+    import h5py
+
+    from .._internal._stacklevel import _stacklevel_outside_package
+    from .h5 import H5FeatureDeferredWarning
+
+    key = _declarations(bridge)
+    if key is not None and key[0] in _LINEAGE_BY_DIGEST:
+        return _LINEAGE_BY_DIGEST[key[0]]
+    why = ""
+    try:
+        found = None if key is None else _automatic_archive_lineage(*key)
+        if found is None and not compose:
+            why = ("the model is partitioned and no lineage of these "
+                   "declarations is cached, and a partitioned model's "
+                   "archive is not composed at export; converting the run "
+                   "needs the model's lineage first")
+            found = (None, None)
+        elif found is None:
+            buf = _MemoryArchive()
+            with warnings.catch_warnings():
+                # A deferred feature is the explicit save's warning.
+                warnings.simplefilter("ignore", H5FeatureDeferredWarning)
+                archive(buf)
+            with h5py.File(buf, "r") as f:
+                found = _lineage_of(f)
+        model_hash, fem_hash = found
+        if model_hash is None and not why:
+            why = "the archive carries no /meta/lineage@model_hash"
+    except Exception as exc:  # noqa: BLE001 - named in the warning below
+        why = f"its model archive cannot be composed ({exc!r})"
+    if why:
+        warnings.warn(
+            f"The deck {deck or '(unnamed)'} writes no run record: {why}. "
+            "read_deck_mpco of its .mpco will read it with "
+            "Results.from_mpco.",
+            RuntimeWarning, stacklevel=_stacklevel_outside_package(),
+        )
+        return None
+    assert model_hash is not None
+    lineage = (model_hash, fem_hash or "")
+    if key is not None:
+        _LINEAGE_BY_DIGEST[key[0]] = lineage
+    return lineage
+
+
+def deck_run_fields(
+    lineage: "tuple[str, str]", recorder_file: str, analysis: str,
+    steps: int, dt: "float | None",
+) -> "dict[str, Any]":
+    """The record's 14 fields, in the spec's order. The six the deck fills
+    at run time (``recorder_size``, ``recorder_mtime``, ``steps_completed``,
+    ``opensees_backend``, ``opensees_build_sha``, ``completed_iso``) are
+    ``None`` here."""
+    from apeGmsh import __version__
+
+    return {
+        "schema": DECK_RUN_SCHEMA,
+        "model_hash": lineage[0],
+        "fem_hash": lineage[1],
+        "recorder_file": re.split(r"[\\/]", recorder_file)[-1],
+        "recorder_size": None,
+        "recorder_mtime": None,
+        "analysis": analysis,
+        "analyze_steps": int(steps),
+        "steps_completed": None,
+        "dt": None if dt is None else float(dt),
+        "opensees_backend": None,
+        "opensees_build_sha": None,
+        "writer": f"apeGmsh deck {__version__}",
+        "completed_iso": None,
+    }
+
+
+def _tcl_quote(text: str) -> str:
+    """``text`` as one double-quoted Tcl word, with every character Tcl
+    would substitute or count (``\\ [ ] $ { } "``) backslash-escaped."""
+    return '"' + re.sub(r'([\\\[\]${}"])', r"\\\1", text) + '"'
+
+
+def deck_run_unlink(dialect: 'Literal["py", "tcl"]', file: str) -> "list[str]":
+    """The lines a record-writing deck runs just before it opens its MPCO
+    recorder on ``file``: an earlier ``<file>.run.json`` is removed, so a
+    run that then fails, and any later writer of the same ``.mpco``, never
+    sits beside an old record."""
+    final = file + DECK_RUN_SUFFIX
+    if dialect == "py":
+        return ["try:", f"    __import__('os').remove({final!r})",
+                "except OSError:", "    pass"]
+    return [f"file delete -force -- {_tcl_quote(final)}"]
+
+
+#: The fields a Tcl deck fills at run time: the ``format`` conversion and
+#: the variable that holds the value.
+_TCL_RUN_TIME = {
+    "recorder_size": ("%s", "$_apesees_size"),
+    "recorder_mtime": ("%s", "$_apesees_mtime"),
+    "steps_completed": ("%d", "$_apesees_i"),
+    "opensees_backend": ('"%s"', "$_apesees_backend"),
+    "opensees_build_sha": ('"%s"', "$_apesees_sha"),
+    "completed_iso": ('"%s"', "$_apesees_iso"),
+}
+
+
+#: The record's final rename is retried while another process (Defender,
+#: the indexer) holds the fresh file: waits from 50 ms, doubling, capped at
+#: 1 s each, within a 30 s budget of waits; then the deck gives up on it.
+_RENAME_FIRST_MS, _RENAME_CAP_MS, _RENAME_BUDGET_MS = 50, 1000, 30000
+_NOT_WRITTEN = "apeGmsh: the deck run record was not written"
+
+
+def _py_record(fields: "dict[str, Any]", file: str, done: str,
+               partitioned: bool) -> "list[str]":
+    """One file's record, in Python. Any ``OSError`` on the way (a file
+    another process briefly holds refuses the rename, a full disk) prints
+    one line and leaves no record: a finished run never fails here."""
+    final = file + DECK_RUN_SUFFIX
+    tmp = final + ".tmp"
+    stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
+    parts = (f"['%s.part-%d.mpco' % ({stem!r}, _k) for _k in "
+             "range(_apesees_np)]" if partitioned else f"[{file!r}]")
+    one = [] if partitioned else [
+        "        _apesees_size, _apesees_mtime = _apesees_size[0], "
+        "_apesees_mtime[0]"]
+    return [
+        f"_apesees_parts = {parts}",
+        "try:",
+        "    if all(_apesees_os.path.isfile(_p) for _p in _apesees_parts):",
+        "        _apesees_st = [_apesees_os.stat(_p) for _p in _apesees_parts]",
+        "        _apesees_size = [_s.st_size for _s in _apesees_st]",
+        "        _apesees_mtime = [_s.st_mtime for _s in _apesees_st]",
+        *one,
+        f"        _apesees_run = {fields!r}",
+        "        _apesees_run.update(recorder_size=_apesees_size, "
+        f"recorder_mtime=_apesees_mtime, steps_completed={done}, "
+        "opensees_backend='stock' if _apesees_sha == 'unknown' "
+        "else 'ladruno', opensees_build_sha=_apesees_sha, "
+        "completed_iso=_apesees_time.strftime("
+        "'%Y-%m-%dT%H:%M:%SZ', _apesees_time.gmtime()))",
+        f"        with open({tmp!r}, 'w', encoding='utf-8') as _apesees_f:",
+        "            _apesees_json.dump(_apesees_run, _apesees_f)",
+        f"        _apesees_wait, _apesees_left = {_RENAME_FIRST_MS}, "
+        f"{_RENAME_BUDGET_MS}",
+        "        while True:",
+        "            try:",
+        f"                _apesees_os.replace({tmp!r}, {final!r})",
+        "                break",
+        "            except OSError:",
+        "                if _apesees_left <= 0:",
+        "                    raise",
+        "                _apesees_time.sleep(_apesees_wait / 1000.0)",
+        "                _apesees_left -= _apesees_wait",
+        f"                _apesees_wait = min({_RENAME_CAP_MS}, 2 * _apesees_wait)",
+        "except OSError as _apesees_e:",
+        f"    print('{_NOT_WRITTEN}: %s' % _apesees_e, flush=True)",
+    ]
+
+
+def _tcl_record(fields: "dict[str, Any]", file: str,
+                partitioned: bool) -> "list[str]":
+    """One file's record, in Tcl, inside a ``catch``: any error on the way
+    prints one line and leaves no record, never failing a finished run."""
+    import json
+
+    q = _tcl_quote
+    final = file + DECK_RUN_SUFFIX
+    tmp = final + ".tmp"
+    template = "{" + ", ".join(
+        f"{json.dumps(k)}: " + (_TCL_RUN_TIME[k][0] if k in _TCL_RUN_TIME
+                                else json.dumps(v).replace("%", "%%"))
+        for k, v in fields.items()) + "}"
+    args = " ".join(_TCL_RUN_TIME[k][1] for k in fields if k in _TCL_RUN_TIME)
+    write = [
+        f"        set _apesees_f [open {q(tmp)} w]",
+        "        fconfigure $_apesees_f -encoding utf-8",
+        f"        puts -nonewline $_apesees_f [format {q(template)} {args}]",
+        "        close $_apesees_f",
+        f"        set _apesees_wait {_RENAME_FIRST_MS}; "
+        f"set _apesees_left {_RENAME_BUDGET_MS}",
+        f"        while {{[catch {{file rename -force {q(tmp)} {q(final)}}} "
+        "_apesees_rerr]} {",
+        "            if {$_apesees_left <= 0} { error $_apesees_rerr }",
+        "            after $_apesees_wait",
+        "            incr _apesees_left [expr {-$_apesees_wait}]",
+        "            set _apesees_wait [expr {2 * $_apesees_wait > "
+        f"{_RENAME_CAP_MS} ? {_RENAME_CAP_MS} : 2 * $_apesees_wait}}]",
+        "        }",
+        "    }",
+    ]
+    if not partitioned:
+        body = [
+            f"    if {{[file isfile {q(file)}]}} {{",
+            f"        set _apesees_size [file size {q(file)}]",
+            f"        set _apesees_mtime [file mtime {q(file)}]",
+            *write,
+        ]
+    else:
+        stem = file[: -len(".mpco")] if file.endswith(".mpco") else file
+        body = [
+            "    set _apesees_sizes {}; set _apesees_mtimes {}; "
+            "set _apesees_ok 1",
+            "    for {set _apesees_k 0} {$_apesees_k < $_apesees_np} "
+            "{incr _apesees_k} {",
+            f"        set _apesees_p [format {{%s.part-%d.mpco}} {q(stem)} "
+            "$_apesees_k]",
+            "        if {![file isfile $_apesees_p]} "
+            "{ set _apesees_ok 0; break }",
+            "        lappend _apesees_sizes [file size $_apesees_p]",
+            "        lappend _apesees_mtimes [file mtime $_apesees_p]",
+            "    }",
+            "    if {$_apesees_ok} {",
+            '        set _apesees_size "\\[[join $_apesees_sizes {, }]\\]"',
+            '        set _apesees_mtime "\\[[join $_apesees_mtimes {, }]\\]"',
+            *write,
+        ]
+    return ["if {[catch {", *body,
+            f'}} _apesees_err]}} {{ puts "{_NOT_WRITTEN}: $_apesees_err" }}']
+
+
+def deck_run_body(
+    dialect: 'Literal["py", "tcl"]', archive: "Callable[[Any], None]",
+    files: "Sequence[str]", analysis: "str | None", steps: int,
+    dt: "float | None", *, partitioned: bool, bridge: Any = None,
+    deck: str = "",
+) -> "list[str]":
+    """The deck lines that write the run record of each MPCO ``files``
+    entry (``<file>.run.json``), in ``dialect``; ``[]`` with no file or no
+    ``analysis`` token (nothing to describe).
+
+    The lines close every recorder first (``remove recorders``), so each
+    ``.mpco`` is final. That closes every recorder the deck opened at its
+    end, the text ``.out`` recorders included, as process exit would,
+    so nothing after the record writes to them. The record names each
+    file's size and modification time as the deck's runtime reports them
+    (a list, one per part in rank
+    order, for a partitioned deck; no record when a file is missing). The
+    engine's backend and build come from ``ladrunoBuild`` (the G10 rule: a
+    40-hex answer is the fork, anything else is stock with an ``unknown``
+    build); the steps completed from the loop's own counter."""
+    if not files or analysis is None:
+        return []
+    lineage = deck_run_lineage(archive, bridge, compose=not partitioned,
+                               deck=deck)
+    if lineage is None:
+        return []
+    head = ["# apeGmsh deck run record: the analyze loop returned; the "
+            "recorders close first, so each .mpco is final."]
+    done = "_apesees_i + 1" if int(steps) > 0 else "0"
+    if dialect == "py":
+        head.append("ops.remove('recorders')")
+        body = [
+            "import json as _apesees_json, os as _apesees_os",
+            "import re as _apesees_re, time as _apesees_time",
+            "try:",
+            "    _apesees_sha = str(ops.ladrunoBuild()).strip()",
+            "except Exception:",
+            "    _apesees_sha = ''",
+            "if not _apesees_re.fullmatch('[0-9a-f]{40}', _apesees_sha):",
+            "    _apesees_sha = 'unknown'",
+        ]
+        if partitioned:
+            body += ["try:", "    _apesees_np = int(ops.getNP())",
+                     "except Exception:", "    _apesees_np = 1"]
+    else:
+        head.append("remove recorders")
+        body = [
+            "if {[catch {ladrunoBuild} _apesees_sha] || ![regexp "
+            "{^[0-9a-f]{40}$} [string trim $_apesees_sha]]} {",
+            "    set _apesees_sha unknown; set _apesees_backend stock",
+            "} else {",
+            "    set _apesees_sha [string trim $_apesees_sha]; "
+            "set _apesees_backend ladruno",
+            "}",
+            # UTC from the epoch in plain expr (days-from-civil inverted):
+            # ``clock format`` needs Tcl's library scripts, which an
+            # ``OpenSees.exe`` may not ship.
+            "set _apesees_s [clock seconds]",
+            "set _apesees_z [expr {$_apesees_s / 86400 + 719468}]",
+            "set _apesees_e [expr {$_apesees_z / 146097}]",
+            "set _apesees_z [expr {$_apesees_z - $_apesees_e * 146097}]",
+            "set _apesees_y [expr {($_apesees_z - $_apesees_z / 1460 + "
+            "$_apesees_z / 36524 - $_apesees_z / 146096) / 365}]",
+            "set _apesees_z [expr {$_apesees_z - (365 * $_apesees_y + "
+            "$_apesees_y / 4 - $_apesees_y / 100)}]",
+            "set _apesees_m [expr {(5 * $_apesees_z + 2) / 153}]",
+            "set _apesees_d [expr {$_apesees_z - (153 * $_apesees_m + 2) / 5 + 1}]",
+            "set _apesees_m [expr {$_apesees_m < 10 ? $_apesees_m + 3 : "
+            "$_apesees_m - 9}]",
+            "set _apesees_y [expr {$_apesees_y + $_apesees_e * 400 + "
+            "($_apesees_m <= 2)}]",
+            "set _apesees_t [expr {$_apesees_s % 86400}]",
+            "set _apesees_iso [format {%04d-%02d-%02dT%02d:%02d:%02dZ} "
+            "$_apesees_y $_apesees_m $_apesees_d [expr {$_apesees_t / 3600}] "
+            "[expr {$_apesees_t / 60 % 60}] [expr {$_apesees_t % 60}]]",
+        ]
+        if partitioned:
+            body.append("if {[catch {getNP} _apesees_np]} { set _apesees_np 1 }")
+    for file in files:
+        fields = deck_run_fields(lineage, file, analysis, steps, dt)
+        body += (_py_record(fields, file, done, partitioned) if dialect == "py"
+                 else _tcl_record(fields, file, partitioned))
+    if not partitioned:
+        return head + body
+    # Every rank closes its recorders and finishes its loop first; one
+    # record, from rank 0.
+    indented = ["    " + ln for ln in body]
+    if dialect == "py":
+        return [*head, "if hasattr(ops, 'barrier'):", "    ops.barrier()",
+                "if getPID() == 0:", *indented]
+    return [*head, 'if {[info commands barrier] ne ""} { barrier }',
+            "if {[getPID] == 0} {", *indented, "}"]
 
 
 class _LineBuf(list[str]):
@@ -261,6 +669,12 @@ class PyEmitter:
         # it. Tracks the name of the currently-open stage so
         # ``stage_close`` (which takes no argument) can name it too.
         self._current_stage_name: str | None = None
+        # The deck run record: every MPCO recorder's file, in
+        # emit order, and the last ``analysis`` token the deck emitted.
+        self._mpco_files: list[str] = []
+        self._analysis_token: str | None = None
+        # Set by the bridge when the deck will write a record.
+        self._run_record: bool = False
 
     # -- Output --------------------------------------------------------------
 
@@ -596,6 +1010,11 @@ class PyEmitter:
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
+        if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
+            self._mpco_files.append(str(args[0]))
+        if kind == "mpco" and args and self._run_record:
+            for line in deck_run_unlink("py", str(args[0])):
+                self._lines.append(line)
         self._lines.append(_ops_call("recorder", kind, *args))
 
     def recorder_declaration_begin(
@@ -644,7 +1063,32 @@ class PyEmitter:
         self._lines.append(_ops_call("integrator", i_type, *args))
 
     def analysis(self, a_type: str) -> None:
+        self._analysis_token = str(a_type)
         self._lines.append(_ops_call("analysis", a_type))
+
+    def _deck_run_record(
+        self, archive: "Callable[[Any], None]", steps: int,
+        dt: "float | None", bridge: Any = None, deck: str = "",
+    ) -> None:
+        """Make the deck write its run record (#2210) as its last action.
+
+        ``apeSees.py`` calls this after everything else, and only with
+        ``analyze_steps``: the deck then writes ``<file>.run.json`` beside
+        each MPCO recorder's ``file`` (resolved as the recorder resolves
+        it), through ``<name>.tmp`` and a rename. A partitioned deck writes
+        it on rank 0 after a barrier. A failed increment raises
+        (``SystemExit``) before these lines, so a failed or killed run
+        writes nothing. With no MPCO recorder, or no ``analysis``
+        declaration (the loop cannot run), there is nothing to describe
+        and nothing is emitted. ``archive`` writes the deck's ``model.h5``
+        to a path (:func:`deck_run_lineage`).
+        """
+        for line in deck_run_body(
+            "py", archive, self._mpco_files, self._analysis_token, steps,
+            dt, partitioned=self._partition_shim_emitted, bridge=bridge,
+            deck=deck,
+        ):
+            self._lines.append(line)
 
     def analyze(
         self, *, steps: int, dt: float | None = None,
