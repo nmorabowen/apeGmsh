@@ -261,9 +261,7 @@ def test_line_stations_gpx_path_helper() -> None:
 def test_deferred_category_emits_todo(category: str) -> None:
     rec = ResolvedRecorderRecord(
         category=category, name="r",
-        components=("fiber_stress",) if category in ("fibers",) else (
-            ("stress_xx",) if category == "layers" else ()
-        ),
+        components=("fiber_stress",) if category == "layers" else (),
         dt=None, n_steps=None,
         element_ids=(np.array([1]) if category != "modal" else None),
         n_modes=5 if category == "modal" else None,

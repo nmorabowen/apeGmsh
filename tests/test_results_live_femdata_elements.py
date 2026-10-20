@@ -373,12 +373,12 @@ def test_an_elements_record_without_nodal_forces_refuses_before_the_run(
     fem, model_h5 = tets
     ops = _ops()
     rec = ResolvedRecorderRecord(
-        category="elements", name="nf", components=("stress_xx",), dt=None,
-        n_steps=None, element_ids=np.array([1]),
+        category="elements", name="nf", components=("spring_force",),
+        dt=None, n_steps=None, element_ids=np.array([1]),
         element_class_name="FourNodeTetrahedron")
     with pytest.raises(ValueError, match=r"elements record 'nf' has no "
                                          r"nodal_resisting_\* component "
-                                         r"\(\['stress_xx'\]\)"):
+                                         r"\(\['spring_force'\]\)"):
         _run(_spec(fem, rec), tmp_path / "run", model_h5, ops)
     assert _element_calls(ops) == []
 
@@ -1034,31 +1034,37 @@ def test_a_truss_axial_force_record_skips_mpco_for_the_classic_recorders(
         res.close()
 
 
-_NO_TOKEN = r"component 'displacement_x' has no MPCO -E token"
 _DEFORMATION = (r"component 'axial_strain' cannot go through MPCO: the MPCO "
                 r"reader does not decode its section.deformation bucket")
 
 
 @pytest.mark.parametrize("records, match", [
-    ((_truss_rec(("displacement_x",)),), _NO_TOKEN),
-    ((_truss_rec(("axial_force", "displacement_x")),), _NO_TOKEN),
-    ((_truss_rec(), _truss_rec(("displacement_x",), name="u")), _NO_TOKEN),
     ((_truss_rec(("axial_strain",), name="ls", category="line_stations",
                  cls="ForceBeamColumn3d"),), _DEFORMATION),
     ((_truss_rec(), _truss_rec(("axial_strain",), name="ls",
                                category="line_stations",
                                cls="ForceBeamColumn3d")), _DEFORMATION),
-], ids=["no-token", "no-token-beside-axial", "no-token-record-beside-axial",
-        "section-deformation", "section-deformation-beside-axial"])
+], ids=["section-deformation", "section-deformation-beside-axial"])
 def test_only_the_truss_axial_force_leaves_mpco(tmp_path, records, match) -> None:
     """Every other MPCO refusal stands at ``__enter__``, with or without a
-    Truss axial force beside it: a gauss component with no ``-E`` token
-    and a line-stations section deformation would read back empty on the
-    classic recorders too."""
+    Truss axial force beside it: a line-stations section deformation would
+    read back empty on the classic recorders too."""
     fem, model_h5, ops = _truss_fem(tmp_path)
     with pytest.raises(ValueError, match=match):
         _run(_spec(fem, *records), tmp_path / "run", model_h5, ops)
     assert ops.recorder_calls == [] and "eleNodes" not in ops.asked
+
+
+@pytest.mark.parametrize("components", [
+    ("displacement_x",), ("axial_force", "displacement_x"),
+], ids=["no-token", "no-token-beside-axial"])
+def test_a_gauss_component_with_no_token_never_reaches_mpco(components) -> None:
+    """Every gauss component but the Truss axial force has an MPCO ``-E``
+    token; one with none belongs to another category, so the record refuses
+    it by name when built, before any route is chosen (#2344)."""
+    with pytest.raises(ValueError, match=r"'displacement_x' belongs to "
+                                         r"category 'nodes', not 'gauss'"):
+        _truss_rec(components, name="u")
 
 
 _TRUSS_AXIAL = (r"component 'axial_force' \(the Truss axial force\) cannot "

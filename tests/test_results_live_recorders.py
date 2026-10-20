@@ -620,7 +620,7 @@ def test_resolved_record_coerces_list_ids_to_ndarray(tmp_path: Path) -> None:
 
     erec = ResolvedRecorderRecord(
         category="elements", name="beams",
-        components=("force_x",),
+        components=("nodal_resisting_force_x",),
         dt=None, n_steps=None,
         element_ids=(10, 11),
     )
