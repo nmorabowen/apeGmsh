@@ -536,15 +536,16 @@ def _with_point_elements(fem: FEMData, nodes: "list[int]") -> FEMData:
      r"node 2: FEM element 1 has nodes \[1, 2\], the live element 1 has "
      r"\[1, 3\]"),
     (False, (1, 2), (4, 3),
-     r"nodes \[3\] share their position with another FEM node, and no FEM "
-     r"element that touches them is a live element of its FEM id"),
+     r"node 3: FEM element 11 has nodes \[3\], no live element has that "
+     r"tag, and no built element at the node holds its nodes"),
 ], ids=["pinned", "tags-2-3-swapped", "no-built-element"])
-def test_unbuilt_fem_elements_pin_nothing_and_refuse_nothing(
+def test_unbuilt_points_of_built_elements_are_pinned_by_them(
     tmp_path, with_spring, beam, spring, match,
 ) -> None:
     """#2342: the point elements a deck did not build (FEM ids 10-12) are
-    passed over. The live elements still pin nodes 2-4 or refuse a swap,
-    and a node only an unbuilt element touches refuses by name."""
+    pinned by the built elements that hold their nodes. The live elements
+    still refuse a swap, and a node only an unbuilt element touches
+    refuses by name."""
     fem = _with_point_elements(_coincident_fem(with_spring), [2, 3, 4])
     model_h5 = tmp_path / "fem.h5"
     fem.to_h5(str(model_h5))
@@ -560,6 +561,51 @@ def test_unbuilt_fem_elements_pin_nothing_and_refuse_nothing(
         with pytest.raises(ValueError, match=match):
             _run(spec, tmp_path / "run", model_h5, ops)
         assert _node_calls(ops) == []
+
+
+#: Nodes 2 and 3 share (2, 0); 4, 5 and 6 sit apart.
+_PARTIAL_XYZ = {1: (0.0, 0.0), 2: (2.0, 0.0), 3: (2.0, 0.0), 4: (4.0, 0.0),
+                5: (2.0, 2.0), 6: (2.0, -2.0)}
+
+
+def test_a_partial_swap_under_other_tags_refuses(tmp_path) -> None:
+    """#2351 review F1: beams 1 = [1, 2] and 3 = [3, 5] are built under
+    their FEM ids and match, but beams 2 = [2, 4] and 4 = [3, 6] are built
+    under tags 901 = [3, 4] and 902 = [2, 6], the coincident nodes
+    swapped. An unbuilt FEM element that is no point, edge or face of a
+    built one pins nothing, so node 2 would record the 6-side motion."""
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=4)
+    group = ElementGroup(
+        element_type=line, ids=np.array([1, 2, 3, 4], dtype=np.int64),
+        connectivity=np.array([[1, 2], [2, 4], [3, 5], [3, 6]],
+                              dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(
+            node_ids=np.arange(1, 7, dtype=np.int64),
+            node_coords=np.array([(*_PARTIAL_XYZ[n], 0.0) for n in range(1, 7)]),
+            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=6, n_elems=4, bandwidth=2, types=[line]),
+        model_name="femdata_archive_partial_swap",
+    )
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = LiveOps(ndm=2, ndf={n: 3 for n in _PARTIAL_XYZ},
+                  elements={1: ("ElasticBeam2d", (1, 2)),
+                            3: ("ElasticBeam2d", (3, 5)),
+                            901: ("ElasticBeam2d", (3, 4)),
+                            902: ("ElasticBeam2d", (2, 6))},
+                  coords=dict(_PARTIAL_XYZ))
+    spec = _spec(fem, ("nodes", "u", ("displacement_y",), [2, 3]))
+    with pytest.raises(ValueError, match=(
+            r"node 2: FEM element 2 has nodes \[2, 4\], no live element has "
+            r"that tag.*node 3: FEM element 4 has nodes \[3, 6\], no live "
+            r"element has that tag")):
+        _run(spec, tmp_path / "run", model_h5, ops)
+    assert _node_calls(ops) == []
 
 
 def test_coordinates_within_the_tolerance_record(frame, tmp_path) -> None:
