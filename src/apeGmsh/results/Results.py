@@ -794,7 +794,7 @@ class Results:
             if model_h5 is not None:
                 from ..opensees.opensees_model import OpenSeesModel
                 bound_model = OpenSeesModel.from_h5(model_h5)
-                # As in from_mpco (#2329): the archive's FEMData carries
+                # As in from_mpco: the archive's FEMData carries
                 # the physical groups and labels the file's MODEL group
                 # lacks; a model of another mesh warns and binds the file's.
                 bound_fem = _resolve_fem_via_model(
