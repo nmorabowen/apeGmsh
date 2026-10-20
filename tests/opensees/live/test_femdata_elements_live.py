@@ -421,8 +421,9 @@ def test_an_elastic_girder_axial_force_refuses_by_name_before_the_run(
 
 
 def test_an_unmapped_live_class_refuses_by_name(opspy, tmp_path) -> None:
-    """``ModElasticBeam2d`` is an elastic beam the live-class table does not
-    hold: its type token is unknown, so it refuses by its class name."""
+    """``ElasticForceBeamColumn2d`` is a beam the live-class table does not
+    hold (stock writes it an empty ``section force`` file): its type token
+    is unknown, so it refuses by its class name."""
     fem = _portal_fem()
     model_h5 = tmp_path / "model.h5"
     fem.to_h5(str(model_h5))
@@ -430,15 +431,17 @@ def test_an_unmapped_live_class_refuses_by_name(opspy, tmp_path) -> None:
     for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
         opspy.node(int(nid), float(xyz[0]), float(xyz[1]))
     opspy.geomTransf("Linear", 1)
-    opspy.element("ModElasticBeam2d", 3, 2, 3, A, E, IZ, 1.0, 1.0, 1.0, 1)
-    assert opspy.eleType(3) == "ModElasticBeam2d"
+    opspy.section("Elastic", 1, E, A, IZ)
+    opspy.beamIntegration("Lobatto", 1, 1, N_IP)
+    opspy.element("elasticForceBeamColumn", 3, 2, 3, 1, 1)
+    assert opspy.eleType(3) == "ElasticForceBeamColumn2d"
     spec = ResolvedRecorderSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(_record("line_stations", "beam",
                          ("axial_force", "shear_y", "bending_moment_z"),
                          np.array([3]), "ElasticBeam2d"),))
     _refuses(spec, tmp_path, model_h5, opspy,
-             r"'ModElasticBeam2d': FEM elements \[3\]")
+             r"'ElasticForceBeamColumn2d': FEM elements \[3\]")
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +771,139 @@ def test_a_fibres_record_over_an_elastic_section_refuses_by_name(
 
 
 # ---------------------------------------------------------------------------
+# Twins told apart by their record classes (#2328)
+# ---------------------------------------------------------------------------
+
+#: An elastic beam and a truss on the same nodes [1, 2]: a horizontal
+#: cantilever of length W, its tip pulled by (PX, PY). Both carry axial force
+#: in proportion to their EA; the beam alone carries the shear.
+
+
+def _twin_beam_truss_fem() -> FEMData:
+    coords = np.array([[0.0, 0.0, 0.0], [W, 0.0, 0.0]])
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2)
+    group = ElementGroup(
+        element_type=line, ids=np.array([5, 6], dtype=np.int64),
+        connectivity=np.array([[1, 2], [1, 2]], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 3, dtype=np.int64),
+                            node_coords=coords, physical=pg,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=2, n_elems=2, bandwidth=2, types=[line]),
+        model_name="femdata_elements_twin_beam_truss",
+    )
+
+
+def _build_beam_truss(ops: Any, fem: FEMData, *, beam: int = 5,
+                      truss: "int | None" = 6, truss_as_beam: bool = False) -> None:
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        ops.node(int(nid), float(xyz[0]), float(xyz[1]))
+    ops.fix(1, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.uniaxialMaterial("Elastic", 1, E)
+    ops.element("elasticBeamColumn", beam, 1, 2, A, E, IZ, 1)
+    if truss is not None and truss_as_beam:
+        ops.element("elasticBeamColumn", truss, 1, 2, A, E, IZ, 1)
+    elif truss is not None:
+        ops.element("Truss", truss, 1, 2, 3.0 * A, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, PX, PY, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("BandGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 10)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / _STEPS)
+    ops.analysis("Static")
+
+
+_TWIN_NODAL = ("nodal_resisting_force_x", "nodal_resisting_force_y",
+               "nodal_resisting_moment_z")
+
+
+def _twin_spec(fem: FEMData, beam_cls: "str | None" = "ElasticBeam2d",
+               truss_cls: "str | None" = "Truss") -> ResolvedRecorderSpec:
+    return ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        _record("elements", "beam_nf", _TWIN_NODAL, np.array([5]), beam_cls),
+        _record("gauss", "truss_n", ("axial_force",), np.array([6]),
+                truss_cls)))
+
+
+def test_twins_of_other_classes_record_under_their_named_classes(
+    opspy, tmp_path,
+) -> None:
+    """Each record names its class, and each twin is live as the other
+    class: the beam's nodal forces are its live ``globalForce`` and the
+    truss's axial force its live ``axialForce``, at rtol 1e-12. The axial
+    load splits by EA (truss 3 EA, beam EA): ``N6 = 3 PX / 4``."""
+    fem = _twin_beam_truss_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_beam_truss(opspy, fem)
+    res = _emit(_twin_spec(fem), tmp_path, model_h5, opspy, _STEPS)
+    try:
+        gf = np.asarray(opspy.eleResponse(5, "globalForce"))
+        for k, comp in enumerate(_TWIN_NODAL):
+            slab = res.elements.get(component=comp, ids=np.array([5]))
+            assert [int(i) for i in np.asarray(slab.element_ids)] == [5]
+            np.testing.assert_allclose(np.asarray(slab.values)[-1][0],
+                                       gf[[k, k + 3]], **_RTOL, err_msg=comp)
+        slab = res.elements.gauss.get(component="axial_force", ids=np.array([6]))
+        assert np.asarray(slab.element_index).tolist() == [6]
+        got = np.asarray(slab.values)[-1]
+        np.testing.assert_allclose(got, opspy.eleResponse(6, "axialForce"),
+                                   **_RTOL)
+        np.testing.assert_allclose(got, [0.75 * PX], rtol=1e-6)
+    finally:
+        res.close()
+
+
+def test_a_swapped_twin_deck_refuses_by_its_live_class(opspy, tmp_path) -> None:
+    """The deck built the truss under the beam's id and the beam under the
+    truss's. The record names ``ElasticBeam2d`` for 5, and its twin 6 is
+    live as that class, so the classes cannot tell them apart: refused."""
+    fem = _twin_beam_truss_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 2, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        opspy.node(int(nid), float(xyz[0]), float(xyz[1]))
+    opspy.geomTransf("Linear", 1)
+    opspy.uniaxialMaterial("Elastic", 1, E)
+    opspy.element("Truss", 5, 1, 2, 3.0 * A, 1)
+    opspy.element("elasticBeamColumn", 6, 1, 2, A, E, IZ, 1)
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        _record("elements", "beam_nf", _TWIN_NODAL, np.array([5]),
+                "ElasticBeam2d"),))
+    _refuses(spec, tmp_path, model_h5, opspy,
+             r"FEM element 5 shares nodes \[1, 2\] with \[6\]\. eleNodes "
+             r"cannot tell those elements apart")
+
+
+@pytest.mark.parametrize("variant", ["equal-class", "no-class", "twin-not-live"])
+def test_twins_the_classes_cannot_tell_apart_still_refuse(
+    opspy, tmp_path, variant,
+) -> None:
+    fem = _twin_beam_truss_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_beam_truss(opspy, fem, truss=None if variant == "twin-not-live" else 6,
+                      truss_as_beam=variant == "equal-class")
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        _record("elements", "beam_nf", _TWIN_NODAL, np.array([5]),
+                None if variant == "no-class" else "ElasticBeam2d"),))
+    _refuses(spec, tmp_path, model_h5, opspy,
+             r"FEM element 5 shares nodes \[1, 2\] with \[6\].*eleNodes cannot "
+             r"tell those elements apart.* name the record's element class")
+
+
+# ---------------------------------------------------------------------------
 # Line stations sliced by the live section counts (#2328)
 # ---------------------------------------------------------------------------
 
@@ -891,5 +1027,59 @@ def test_mixed_line_stations_split_by_count_are_the_live_section_force(
                     np.testing.assert_allclose(np.abs(vals), PL * (length - x),
                                                rtol=1e-9)
                     assert np.argmax(np.abs(vals)) == 0
+    finally:
+        res.close()
+
+
+def test_a_long_hinge_beam_reads_its_live_out_of_order_stations(
+    opspy, tmp_path,
+) -> None:
+    """One force beam of HingeRadau with ``lp = 4`` on ``L = 13``
+    (``lp_i + lp_j >= L/4``): its six stations are written out of order,
+    legally. They are the live section locations read at ``__enter__``, so
+    the read places each one as written, and each station's ``(P, Mz)``
+    equals the live ``section force`` at rtol 1e-12."""
+    length, lp = _MIXED_L[1], 4.0
+    fem = _mixed_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 2, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        opspy.node(int(nid), float(xyz[0]), float(xyz[1]))
+    for node in (1, 2, 3):     # 1 and 2 carry no element here
+        opspy.fix(node, 1, 1, 1)
+    opspy.geomTransf("Linear", 1)
+    opspy.section("Elastic", 1, E, A, IZ)
+    opspy.beamIntegration("HingeRadau", 1, 1, lp, 1, lp, 1)
+    opspy.element("forceBeamColumn", 2, 3, 4, 1, 1)
+    opspy.timeSeries("Linear", 1)
+    opspy.pattern("Plain", 1, 1)
+    opspy.load(4, PL, -PN, 0.0)
+    for cmd, args in (("constraints", ("Plain",)), ("numberer", ("RCM",)),
+                      ("system", ("BandGeneral",)),
+                      ("test", ("NormDispIncr", 1.0e-12, 10)),
+                      ("algorithm", ("Newton",)),
+                      ("integrator", ("LoadControl", 1.0 / _STEPS)),
+                      ("analysis", ("Static",))):
+        getattr(opspy, cmd)(*args)
+    xi_live = 2.0 * np.asarray(opspy.sectionLocation(2)) / length - 1.0
+    assert xi_live.size == 6 and not np.all(np.diff(xi_live) > 0)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("line_stations", "hinge", _LS_COMPS, np.array([2]),
+                         "ForceBeamColumn2d"),))
+    res = _emit(spec, tmp_path, model_h5, opspy, _STEPS)
+    try:
+        for k, comp in enumerate(_LS_COMPS):
+            slab = res.elements.line_stations.get(component=comp,
+                                                  ids=np.array([2]))
+            rows = _by_element(slab, 2)
+            np.testing.assert_allclose(
+                np.asarray(slab.station_natural_coord)[rows], xi_live,
+                rtol=0, atol=1e-12)
+            truth = [opspy.eleResponse(2, "section", ip, "force")[k]
+                     for ip in range(1, 7)]
+            np.testing.assert_allclose(np.asarray(slab.values)[-1][rows], truth,
+                                       **_RTOL, err_msg=comp)
     finally:
         res.close()

@@ -20,7 +20,9 @@ Two checks refuse that, so every ``.out`` reader slices by the same rule:
 :func:`require_line_stations` applies the second when no model is bound. A
 model-proven slice skips the order check: a legal rule
 can place its stations out of order (HingeRadau with ``lp_i = lp_j = 0.15``
-on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``).
+on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``). A slice a
+live pairing proves is checked against the live section locations instead
+(:func:`require_live_stations`), which fixes the order too.
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ from numpy import ndarray
 from ...opensees import OpenSeesModel
 from ...opensees._element_capabilities import _FORCE_DISP_BEAMS
 from ...opensees._recorder_translate import LiveDomainFacts
+from ...opensees._response_catalog import normalise_integration_points
 from ..spec._emit import element_tag_map
 
 if TYPE_CHECKING:
@@ -133,10 +136,13 @@ def line_station_count(
         counts = np.array([model.station_count(int(e))
                            for e in rec.element_ids], dtype=np.int64)
     elif not isinstance(model, OpenSeesModel):
-        raise TypeError(
+        # ValueError, as the fibre reader refuses the same condition.
+        raise ValueError(
             f"Record {rec.name!r} ({rec.category}): its stations are counted "
-            f"from the bridge's model archive or a live pairing's sections; "
-            f"a {type(model).__name__} carries neither.")
+            f"from each element's beamIntegration in the bridge's model "
+            f"archive, or from the sections a live pairing read before the "
+            f"run; a {type(model).__name__} carries neither. Record it through "
+            f"the bridge's model archive (ops.h5(...)) or emit_default.")
     else:
         source = "model="
         counts = model_station_counts(rec, model, fem_snapshot_id)
@@ -190,16 +196,57 @@ def require_ordered_stations(
             f"counts prove the slicing.")
 
 
+def require_live_stations(
+    rec: "ResolvedRecorderRecord", facts: LiveDomainFacts, xi_natural: ndarray,
+    lengths: "ndarray | list[float]", path: "str | Path",
+) -> None:
+    """Raise, naming the FEM element, unless each row of ``xi_natural`` (one
+    element's file stations, natural) is that element's live section
+    locations, to the slack a ``-precision 6`` file needs.
+
+    The live pairing read the locations before the run
+    (:meth:`LiveDomainFacts.record_line_stations`), so a match places each
+    station at the section that wrote it, in whatever order its rule gives
+    (a long-hinge HingeRadau writes them out of order, legally).
+    """
+    assert rec.element_ids is not None
+    for i, e in enumerate(rec.element_ids):
+        live = normalise_integration_points(
+            np.asarray(facts.station_locations(int(e)), dtype=np.float64),
+            float(lengths[i]))
+        if live.shape != xi_natural[i].shape or not (
+                np.abs(live - xi_natural[i]) <= STATION_RANGE_TOL).all():
+            raise ValueError(
+                f"{path}: FEM element {int(e)} of record {rec.name!r} "
+                f"({rec.category}) has stations "
+                f"{np.round(xi_natural[i], 6).tolist()} in the file, but its "
+                f"live sections are at {np.round(live, 6).tolist()} (natural "
+                f"coordinates). The file does not match the live domain.")
+
+
 def require_line_stations(
     rec: "ResolvedRecorderRecord", xi_natural: ndarray, path: "str | Path",
     model_h5_src: "Path | None", fem_snapshot_id: str,
+    pairing: object = None, lengths: "ndarray | list[float] | None" = None,
 ) -> None:
     """Check an equal-slice ``(E, n_IP)`` read of ``rec``'s stations.
 
     With ``model_h5_src`` the model's counts proved the slicing already
     (:func:`line_station_count` gave ``n_IP``), so there is nothing left to
-    check; without one (a transcode called with no model), the station order
-    must hold.
+    check. Over a live pairing (:class:`LiveDomainFacts`, with the
+    elements' ``lengths``) the file stations must be the live section
+    locations (:func:`require_live_stations`), which proves the slice and
+    its order. Without either (a transcode called with no model), the
+    station order must hold.
     """
-    if model_h5_src is None:
-        require_ordered_stations(rec, xi_natural, path)
+    if model_h5_src is not None:
+        return
+    if isinstance(pairing, LiveDomainFacts):
+        if lengths is None:
+            raise ValueError(
+                f"Record {rec.name!r} ({rec.category}): a live pairing's "
+                f"stations are checked against the element lengths, and none "
+                f"were given.")
+        require_live_stations(rec, pairing, xi_natural, lengths, path)
+        return
+    require_ordered_stations(rec, xi_natural, path)
