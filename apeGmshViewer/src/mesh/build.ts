@@ -239,8 +239,8 @@ export class IdLookup<V = number> implements Map<number, V> {
     return "IdLookup";
   }
 
-  set(key: number): this {
-    throw new TypeError(`IdLookup is read-only: set(${key}) refused`);
+  set(key: number, value: V): this {
+    throw new TypeError(`IdLookup is read-only: set(${key}, ${String(value)}) refused`);
   }
 
   delete(key: number): boolean {

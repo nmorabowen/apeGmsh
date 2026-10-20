@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
 import { resolveChain, walk, type ElementRef } from "../src/chain/resolve.ts";
-import { buildMesh, colourGroups } from "../src/mesh/build.ts";
+import { buildMesh, colourGroups, IdLookup } from "../src/mesh/build.ts";
 import { openModel } from "../src/reader/node.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/shoebuckle.h5", import.meta.url));
@@ -90,6 +90,53 @@ test("physical groups and the most-specific colour group", () => {
     mesh.legend.map((l) => [l.name, l.elements]),
     [["Arch", N_ARCH - 1], ["LeftColumn", N_COL - 1], ["RightColumn", N_COL - 1]],
   );
+});
+
+/** The Map that #2359 replaced, built as the old code built it: the oracle IdLookup must answer like. */
+function referenceMap(keys: ArrayLike<number>, repeated: "first" | "last"): Map<number, number> {
+  const m = new Map<number, number>();
+  for (let i = 0; i < keys.length; i++) if (repeated === "last" || !m.has(keys[i]!)) m.set(keys[i]!, 10 * i + 1);
+  return m;
+}
+
+test("#2359: IdLookup answers as the Map it replaced: get, has, size and first-listed iteration, NaN and -0 included", () => {
+  const lists = [
+    [],
+    [3, 5, 9],
+    [9, 3, 5, 3, 9, 1],
+    [NaN, 2, -0, 0, NaN, 2, -1e300, 4e15],
+    [7, 7, 7],
+    Array.from(model.nodeIds).reverse(),
+    Array.from({ length: 300 }, (_, i) => (i * 37) % 101),
+  ];
+  for (const keys of lists) {
+    for (const repeated of ["first", "last"] as const) {
+      const ref = referenceMap(keys, repeated);
+      const got = IdLookup.of(keys, (i) => 10 * i + 1, repeated);
+      const what = `${repeated} of [${keys.slice(0, 8).join(", ")}]`;
+      assert.equal(got.size, ref.size, what);
+      assert.deepEqual([...got.entries()], [...ref.entries()], `${what}: entries in first-listed order`);
+      assert.deepEqual([...got.keys()], [...ref.keys()], what);
+      assert.deepEqual([...got.values()], [...ref.values()], what);
+      for (const k of [...keys, NaN, -0, 0, 4, 1e9, -1]) {
+        assert.equal(got.get(k), ref.get(k), `${what}: get(${k})`);
+        assert.equal(got.has(k), ref.has(k), `${what}: has(${k})`);
+      }
+    }
+  }
+  const ro = IdLookup.of([1], (i) => i, "first");
+  assert.throws(() => ro.set(1, 2), TypeError);
+  assert.throws(() => ro.delete(1), TypeError);
+  assert.throws(() => ro.clear(), TypeError);
+});
+
+test("#2359: colourGroups on the fixture equals the Map it replaced, entry for entry and in order", () => {
+  const { byElement, order } = colourGroups(model);
+  const groups = model.physicalGroups.filter((g) => g.elementIds.length > 0).sort((a, b) => a.elementIds.length - b.elementIds.length || a.name.localeCompare(b.name));
+  assert.deepEqual(order, groups.map((g) => g.name));
+  const ref = new Map<number, number>();
+  groups.forEach((g, gi) => g.elementIds.forEach((e) => ref.has(e) || ref.set(e, gi)));
+  assert.deepEqual([...byElement.entries()], [...ref.entries()]);
 });
 
 function archElementRef(): ElementRef {

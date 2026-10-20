@@ -88,6 +88,23 @@ test("per-vertex values and colours at a chosen step equal the closed form: the 
   h.effects.dispose();
 });
 
+test("#2359: columnOf on every stage of both fixtures answers as the first-wins Map it replaced", async () => {
+  for (const [model, results] of [[STAGED, undefined], [NODATA, NODATA_RESULTS]] as const) {
+    const h = await opened(model, results);
+    const s = h.store.get();
+    for (const st of s.results!.stages) {
+      if (!st.nodeIds) continue;
+      const ids = h.blobs.get(st.nodeIds) as Float64Array;
+      const ref = new Map<number, number>();
+      ids.forEach((id, j) => ref.has(id) || ref.set(id, j));
+      const column = columnOf(ids);
+      assert.deepEqual([...column.entries()], [...ref.entries()], `${model} ${st.id}`);
+      for (const id of [...(h.blobs.get(s.mesh!.vertexNodes.tri) as Float64Array), -1, 0.5]) assert.equal(column.get(id), ref.get(id));
+    }
+    h.effects.dispose();
+  }
+});
+
 test("the history range equals the closed form's min and max over every node and step (magnitude and a component)", async () => {
   const h = await opened();
   const coords = [...(await coordsOf(STAGED)).values()];
