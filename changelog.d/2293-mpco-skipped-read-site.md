@@ -18,6 +18,10 @@ follows the same rule. The message text is unchanged, and the warning
 points at the read's caller; the material-state read used to point inside
 `read_gauss`.
 
+The Gauss composite's derived scalars (von Mises, principal, shell) and
+censuses list the stored components before they read. Under a filter
+that listing no longer names skipped buckets; the filtered read does.
+
 `discover_*_buckets` keep their two-value return and still name every
 skipped bucket, for a caller with no element filter.
 
