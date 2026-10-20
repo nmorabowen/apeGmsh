@@ -32,6 +32,13 @@ The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
 it raises or returns no tag, no recorder was made, a file the probe created
 is deleted, and the classic recorders open one stage over the whole block.
+A spec with a Truss ``axial_force`` gauss component is not probed: MPCO
+writes that bucket with no ``GAUSS_IDS``, so it takes the classic recorders,
+which record it (#2290). The record's class (or, when it names none, every
+live ``eleType`` of its elements) must be one the catalog decodes
+``axial_force`` for, the Truss family. Its other records must still pass
+every MPCO refusal (:func:`~apeGmsh.results.spec._emit.collect_mpco_tokens`),
+as on any stock run: only the Truss axial force is rerouted.
 
 ``model_h5`` is the bridge's archive or a FEMData archive (``fem.to_h5``,
 no ``/opensees`` zone). On the classic-recorder route a FEMData archive's
@@ -41,19 +48,25 @@ domain (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`,
 (Gauss points, line stations, nodal forces) pair each FEM element with
 the live element of its id, proved by ``eleNodes`` against the FEM
 connectivity and typed by ``eleType`` (#2269); the read carries that
-pairing.
+pairing, per-Gauss-point material records included (#2290).
 
 Modal records have no default route and refuse at ``__enter__``.
 """
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import h5py
 
 from ...opensees._recorder_translate import LiveDomainFacts, live_ndm
+from ...opensees._response_catalog import (
+    RESPONSE_CATALOG,
+    catalog_token_for_keyword,
+    gauss_keyword_for_canonical,
+)
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
@@ -68,7 +81,7 @@ from ..readers._ladruno_live import (
     stamp_fork_file,
 )
 from ..Results import Results
-from ..spec._emit import mpco_ops_args
+from ..spec._emit import collect_mpco_tokens, element_tag_map, mpco_ops_args
 from ._recorders import LiveRecorders
 
 if TYPE_CHECKING:
@@ -167,8 +180,9 @@ class LiveDefault:
         each FEM element with the live element of its own id only when
         that element's ``eleNodes`` is the FEM connectivity in order and
         its class is known; any other id refuses, naming it (#2269).
-        ``fibers`` and per-Gauss-point material records refuse by name:
-        they need the bridge's archive.
+        A per-Gauss-point material record reads through that pairing
+        (#2290); a ``fibers`` record refuses by name: it needs the
+        bridge's archive.
     ops
         The OpenSees module, or a stand-in for testing. Defaults to the
         module the bridge drives.
@@ -273,18 +287,48 @@ class LiveDefault:
             )
         self._route, self._target, self._tag = "fork", target, int(tag)
 
+    def _live_classes(self, element_ids: Any) -> "set[str] | None":
+        """The live ``eleType`` of the FEM elements ``element_ids``; their
+        tags are the bridge archive's pairing, or the FEM ids over a
+        FEMData archive (proved by ``eleNodes`` later). ``None`` when one
+        has no live element."""
+        tags = (element_tag_map(OpenSeesModel.from_h5(self._model_h5),
+                                fem_snapshot_id=self._spec.fem_snapshot_id)
+                if _has_bridge_zone(self._model_h5) else None)
+        live = {int(t) for t in self._ops.getEleTags()}
+        classes: "set[str]" = set()
+        for e in (int(v) for v in element_ids):
+            tag = e if tags is None else tags.get(e)
+            if tag is None or tag not in live:
+                return None
+            classes.add(str(self._ops.eleType(tag)))
+        return classes
+
     def _enter_stock(self) -> None:
         target = self._path.with_suffix(_MPCO_SUFFIX)
         existed = target.exists()
         out_dir = "" if str(target.parent) == "." else str(target.parent)
-        args = mpco_ops_args(
-            self._spec.records, output_dir=out_dir, filename=target.name,
-        )
-        reason = ""
-        try:
-            tag = self._ops.recorder(*args)
-        except Exception as exc:
-            tag, reason = None, f"{type(exc).__name__}: {exc}"
+        lead, reason, tag = "this OpenSees build has no MPCO recorder", "", None
+        kept, rerouted = _split_truss_axial(self._spec.records,
+                                            self._live_classes)
+        if rerouted:
+            # Every other MPCO refusal stands; no probe, so no file, and
+            # no MPCO line-stations warning for a recorder never made.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message=r"MPCO line-stations record ")
+                collect_mpco_tokens(kept)
+            lead = "MPCO cannot write the Truss axial force"
+            reason = (f"records {rerouted} record its axialForce bucket "
+                      "with no GAUSS_IDS, which the MPCO reader refuses")
+        else:
+            args = mpco_ops_args(
+                self._spec.records, output_dir=out_dir, filename=target.name,
+            )
+            try:
+                tag = self._ops.recorder(*args)
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"
         if tag is not None and not _is_tag(tag):
             # No recorder tag, so no recorder to remove: the call failed.
             reason = f"ops.recorder('mpco', ...) returned {tag!r}, not a tag"
@@ -312,8 +356,8 @@ class LiveDefault:
         dropped = (f" Not recorded on this route: {skipped}."
                    if skipped else "")
         warnings.warn(DefaultRouteWarning(
-            f"emit_default: this OpenSees build has no MPCO recorder "
-            f"({reason}); recording classic recorder files in {out} instead, "
+            f"emit_default: {lead} ({reason}); recording classic recorder "
+            f"files in {out} instead, "
             f"one stage over the whole block.{dropped}"), stacklevel=3)
         self._model = OpenSeesModel.from_h5(self._model_h5)
         deck_model: Any = self._model
@@ -449,27 +493,60 @@ def _has_bridge_zone(model_h5: Path) -> bool:
         return "opensees" in f
 
 
+#: The classes the catalog decodes the gauss ``axial_force`` for: the
+#: Truss family.
+_TRUSS_AXIAL_CLASSES = frozenset(
+    c for (c, _rule, token) in RESPONSE_CATALOG
+    if token == catalog_token_for_keyword("axialForce"))
+
+
+def _split_truss_axial(
+    records: "tuple[ResolvedRecorderRecord, ...]",
+    live_classes: "Callable[[Any], set[str] | None]",
+) -> "tuple[list[ResolvedRecorderRecord], dict[str, list[str]]]":
+    """``(kept, rerouted)``: the records without their Truss axial-force
+    gauss components (``axialForce``, which MPCO writes with no
+    ``GAUSS_IDS``), a record left with none dropped; and ``{record name:
+    those components}``. Only these move a stock run off MPCO.
+
+    A record's ``axialForce`` components move only when its class is in
+    the Truss family (:data:`_TRUSS_AXIAL_CLASSES`): the record's own, or,
+    when it names none, every live class of its elements
+    (``live_classes``). Any other stays, and MPCO refuses it by name."""
+    kept: "list[ResolvedRecorderRecord]" = []
+    rerouted: "dict[str, list[str]]" = {}
+    for r in records:
+        axial = [c for c in r.components if r.category == "gauss"
+                 and gauss_keyword_for_canonical(c) == "axialForce"]
+        if axial:
+            classes = ({r.element_class_name} if r.element_class_name
+                       is not None else live_classes(
+                           r.element_ids if r.element_ids is not None else ()))
+            if not classes or not classes <= _TRUSS_AXIAL_CLASSES:
+                axial = []
+        if axial:
+            rerouted[r.name] = axial
+        comps = tuple(c for c in r.components if c not in axial)
+        if comps:
+            kept.append(dataclasses.replace(r, components=comps)
+                        if axial else r)
+    return kept, rerouted
+
+
 def _refuse_unpairable_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
     """Refuse, by name, the element records a FEMData archive cannot read
-    even with the live pairing: a ``fibers`` record and a per-Gauss-point
-    material record (``material <gp> ...``) take each element's
-    ``beamIntegration`` or the bridge's own pairing from the model archive,
-    which a FEMData archive does not hold."""
-    from ..writers._cache import quiet_emit_logical
-
-    with warnings.catch_warnings():
-        # The test translation only; the emit warns once, as it does.
-        warnings.simplefilter("ignore")
-        named = [r.name for r in spec.records if r.category == "fibers" or (
-            r.category == "gauss" and any(
-                lr.response_tokens[:1] == ("material",)
-                for lr in quiet_emit_logical(r, output_dir="", file_format="out")))]
+    even with the live pairing: a ``fibers`` record counts its stations
+    from each element's ``beamIntegration``, which only the bridge's model
+    archive holds. A per-Gauss-point material record (``material <gp>
+    ...``) reads through the live pairing (#2290): its layout is the
+    record's class's, which the pairing proves by ``eleType``."""
+    named = [r.name for r in spec.records if r.category == "fibers"]
     if named:
         raise ValueError(
             f"emit_default: records {named} read each element's integration "
-            f"rule or material points through the bridge's model archive, "
-            f"and {model_h5} is a FEMData archive (no /opensees zone). "
-            "Record them through the bridge's model archive (ops.h5(...))."
+            f"rule through the bridge's model archive, and {model_h5} is a "
+            "FEMData archive (no /opensees zone). Record them through the "
+            "bridge's model archive (ops.h5(...))."
         )
 
 

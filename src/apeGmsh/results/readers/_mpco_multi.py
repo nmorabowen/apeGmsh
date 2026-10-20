@@ -52,7 +52,9 @@ from .._slabs import (
     SpringSlab,
 )
 from . import _mpco_nodal_io as _mnodal
-from ._mpco import MPCOReader
+from ._gauss_refusals import refuse_mixed_gauss_dims
+from ._mpco import MPCOGaussDimensionMixed, MPCOReader
+from ._mpco_refusals import MPCOElementInTwoBuckets
 from ._mpco_translation import (
     PARTITION_REDUCTION_NONE,
     PARTITION_REDUCTION_SUM,
@@ -252,6 +254,11 @@ class MPCOMultiPartitionReader:
     def time_vector(self, stage_id: str) -> ndarray:
         return self._readers[0].time_vector(stage_id)
 
+    def _part_names(self) -> list[str]:
+        """Each part's file name, in ``self._readers`` order: the labels
+        a stitch refusal names."""
+        return [p.name for p in self._paths]
+
     def partitions(self, stage_id: str) -> list[str]:
         return [f"partition_{i}" for i in range(len(self._readers))]
 
@@ -333,7 +340,7 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _concat_element_slabs(slabs, component)
+        return _concat_element_slabs(slabs, component, self._part_names())
 
     def read_line_stations(
         self,
@@ -350,7 +357,7 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _concat_line_station_slabs(slabs, component)
+        return _concat_line_station_slabs(slabs, component, self._part_names())
 
     def read_gauss(
         self,
@@ -367,7 +374,10 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _concat_gauss_slabs(slabs, component)
+        return _concat_gauss_slabs(
+            slabs, component, self._part_names(),
+            reader="MPCO", mixed_error=MPCOGaussDimensionMixed,
+        )
 
     def read_fibers(
         self,
@@ -387,7 +397,7 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _concat_fiber_slabs(slabs, component)
+        return _concat_fiber_slabs(slabs, component, self._part_names())
 
     def read_layers(
         self,
@@ -409,7 +419,7 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _concat_layer_slabs(slabs, component)
+        return _concat_layer_slabs(slabs, component, self._part_names())
 
     def read_springs(
         self,
@@ -427,7 +437,7 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _concat_spring_slabs(slabs, component)
+        return _concat_spring_slabs(slabs, component, self._part_names())
 
 
 # =====================================================================
@@ -545,11 +555,62 @@ def _merge_node_slabs(
     )
 
 
+def _refuse_element_in_two_partitions(
+    ids_per_part: Sequence[ndarray], sources: Sequence[str], *, what: str,
+) -> None:
+    """Raise :class:`MPCOElementInTwoBuckets` when an element id comes
+    back from two partitions.
+
+    Each element lives on exactly one rank, so the stitch concatenates
+    without dedupe; an id in two parts would read twice (#2221). Within
+    one part an id repeats legitimately (one row per Gauss point, station
+    or fiber), and the part's own reader refuses a repeat inside one
+    file. Nodes are not checked here: boundary nodes are shared by
+    design, and :func:`_merge_node_slabs` merges them.
+    """
+    if len(ids_per_part) != len(sources):
+        raise ValueError(
+            f"{len(ids_per_part)} partition slabs but {len(sources)} "
+            f"partition names; the stitch cannot name a part."
+        )
+    uniq = [np.unique(np.asarray(i, dtype=np.int64)) for i in ids_per_part]
+    if sum(1 for u in uniq if u.size) < 2:
+        return
+    all_ids = np.concatenate(uniq)
+    owners = np.repeat(np.arange(len(uniq)), [u.size for u in uniq])
+    order = np.argsort(all_ids, kind="stable")
+    sorted_ids = all_ids[order]
+    repeat = np.flatnonzero(sorted_ids[1:] == sorted_ids[:-1])
+    if repeat.size == 0:
+        return
+    j = int(repeat[0])
+    eid = int(sorted_ids[j])
+    first = sources[int(owners[order[j]])]
+    second = sources[int(owners[order[j + 1]])]
+    n_ids = np.unique(sorted_ids[repeat]).size
+    more = (
+        f" {n_ids - 1} more element id(s) the read returns repeat too."
+        if n_ids > 1 else ""
+    )
+    raise MPCOElementInTwoBuckets(
+        f"Partitioned {what}: element {eid} comes back from two partition "
+        f"files, {first} and {second}. Each element lives on exactly one "
+        f"rank, so the part files are corrupt or not from one run; the "
+        f"read refuses rather than return element {eid} twice.{more}"
+    )
+
+
 def _concat_element_slabs(
-    slabs: list[ElementSlab], component: str,
+    slabs: list[ElementSlab], component: str, sources: Sequence[str],
 ) -> ElementSlab:
-    """Concatenate element slabs along the element axis (disjoint by partition)."""
+    """Concatenate element slabs along the element axis (disjoint by
+    partition: an element in two parts refuses, see
+    :func:`_refuse_element_in_two_partitions`)."""
     time = _first_nonempty_time(slabs)
+    _refuse_element_in_two_partitions(
+        [s.element_ids for s in slabs], sources,
+        what=f"element read of {component!r}",
+    )
     nonempty = [s for s in slabs if s.element_ids.size]
     if not nonempty:
         return ElementSlab(
@@ -567,9 +628,13 @@ def _concat_element_slabs(
 
 
 def _concat_line_station_slabs(
-    slabs: list[LineStationSlab], component: str,
+    slabs: list[LineStationSlab], component: str, sources: Sequence[str],
 ) -> LineStationSlab:
     time = _first_nonempty_time(slabs)
+    _refuse_element_in_two_partitions(
+        [s.element_index for s in slabs], sources,
+        what=f"line-station read of {component!r}",
+    )
     nonempty = [s for s in slabs if s.element_index.size]
     if not nonempty:
         return LineStationSlab(
@@ -605,10 +670,31 @@ def _concat_line_station_slabs(
 
 
 def _concat_gauss_slabs(
-    slabs: list[GaussSlab], component: str,
+    slabs: list[GaussSlab],
+    component: str,
+    sources: Sequence[str],
+    *,
+    reader: str,
+    mixed_error: type[ValueError],
 ) -> GaussSlab:
+    """Concatenate Gauss slabs along the GP axis.
+
+    An element in two parts refuses
+    (:func:`_refuse_element_in_two_partitions`). So do parts whose
+    natural coordinates differ in width (a 2-D-parent shell part beside a
+    3-D-parent solid part): ``mixed_error`` names a part of each width,
+    as the single-file read does (#2221). A part whose points have no
+    natural coordinates at all (width 0) is padded with NaN to the others'
+    width, as before.
+    """
     time = _first_nonempty_time(slabs)
-    nonempty = [s for s in slabs if s.element_index.size]
+    _refuse_element_in_two_partitions(
+        [s.element_index for s in slabs], sources,
+        what=f"gauss read of {component!r}",
+    )
+    pairs = [(s, src) for s, src in zip(slabs, sources, strict=True)
+             if s.element_index.size]
+    nonempty = [s for s, _ in pairs]
     if not nonempty:
         return GaussSlab(
             component=component,
@@ -618,41 +704,36 @@ def _concat_gauss_slabs(
             local_axes_quaternion=None,
             time=time,
         )
-    # natural_coords may have different last-axis sizes if shells +
-    # solids both contribute (2D vs 3D parent domains). Pad narrower
-    # rows to the widest dimension so the column-stack works. Pad with
-    # NaN, not 0: a 2D-parent shell GP has no third natural coordinate,
-    # and the consumers (compute_global_coords / gauss extrapolation)
-    # trim natural_coords to the per-element parent dim by type code, so
-    # the padded columns are never read in arithmetic. NaN keeps a
-    # caller that inspects natural_coords directly from mistaking a
-    # fabricated 0 for a real coordinate.
+    refuse_mixed_gauss_dims(
+        [(f"{src} (element {int(s.element_index[0])})",
+          int(s.natural_coords.shape[1])) for s, src in pairs],
+        component=component, reader=reader,
+        source=f"the {len(sources)} partition files", error=mixed_error,
+    )
     max_dim = max(s.natural_coords.shape[1] for s in nonempty)
-    padded_coords: list[ndarray] = []
-    for s in nonempty:
-        if s.natural_coords.shape[1] == max_dim:
-            padded_coords.append(s.natural_coords)
-        else:
-            pad_cols = max_dim - s.natural_coords.shape[1]
-            padded_coords.append(np.hstack([
-                s.natural_coords,
-                np.full((s.natural_coords.shape[0], pad_cols), np.nan,
-                        dtype=np.float64),
-            ]))
+    coords = [
+        s.natural_coords if s.natural_coords.shape[1] == max_dim
+        else np.full((s.natural_coords.shape[0], max_dim), np.nan)
+        for s in nonempty
+    ]
     return GaussSlab(
         component=component,
         values=np.concatenate([s.values for s in nonempty], axis=1),
         element_index=np.concatenate([s.element_index for s in nonempty]),
-        natural_coords=np.concatenate(padded_coords, axis=0),
+        natural_coords=np.concatenate(coords, axis=0),
         local_axes_quaternion=None,
         time=time,
     )
 
 
 def _concat_fiber_slabs(
-    slabs: list[FiberSlab], component: str,
+    slabs: list[FiberSlab], component: str, sources: Sequence[str],
 ) -> FiberSlab:
     time = _first_nonempty_time(slabs)
+    _refuse_element_in_two_partitions(
+        [s.element_index for s in slabs], sources,
+        what=f"fiber read of {component!r}",
+    )
     nonempty = [s for s in slabs if s.element_index.size]
     if not nonempty:
         return FiberSlab(
@@ -692,9 +773,13 @@ def _concat_fiber_slabs(
 
 
 def _concat_layer_slabs(
-    slabs: list[LayerSlab], component: str,
+    slabs: list[LayerSlab], component: str, sources: Sequence[str],
 ) -> LayerSlab:
     time = _first_nonempty_time(slabs)
+    _refuse_element_in_two_partitions(
+        [s.element_index for s in slabs], sources,
+        what=f"layer read of {component!r}",
+    )
     nonempty = [s for s in slabs if s.element_index.size]
     if not nonempty:
         return LayerSlab(
@@ -724,9 +809,13 @@ def _concat_layer_slabs(
 
 
 def _concat_spring_slabs(
-    slabs: list[SpringSlab], component: str,
+    slabs: list[SpringSlab], component: str, sources: Sequence[str],
 ) -> SpringSlab:
     time = _first_nonempty_time(slabs)
+    _refuse_element_in_two_partitions(
+        [s.element_index for s in slabs], sources,
+        what=f"spring read of {component!r}",
+    )
     nonempty = [s for s in slabs if s.element_index.size]
     if not nonempty:
         return SpringSlab(

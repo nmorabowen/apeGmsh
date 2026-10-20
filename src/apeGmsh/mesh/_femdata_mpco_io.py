@@ -18,11 +18,12 @@ refuse such mismatches loudly.
 """
 from __future__ import annotations
 
+import functools
 import re
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy import ndarray
 
 if TYPE_CHECKING:
     import h5py
@@ -66,6 +67,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
     # Per-class element groups
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
+    guessed: dict[str, int] = {}
     elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for ds_name in elements_grp:
@@ -79,13 +81,16 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
             ids = data[:, 0].copy()
             connectivity = data[:, 1:].copy()
             npe = connectivity.shape[1]
+            dim, known = element_dim(class_name, npe, ndm)
+            if not known:
+                guessed[class_name] = dim
 
             # Synthetic ElementTypeInfo — code is negated class_tag
             # so it never collides with Gmsh-numbered types.
             info = make_type_info(
                 code=-class_tag,
                 gmsh_name=class_name,
-                dim=_guess_dim_from_class(class_name, npe, ndm),
+                dim=dim,
                 order=1,           # MPCO doesn't expose order; assume linear
                 npe=npe,
                 count=ids.size,
@@ -94,6 +99,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
             element_groups[info.code] = ElementGroup(
                 element_type=info, ids=ids, connectivity=connectivity,
             )
+    warn_unknown_dims(guessed, source="MPCO MODEL")
 
     # Physical groups from MPCO regions (MODEL/SETS/SET_<tag>).
     # STKO selection sets live in the .cdata sidecar (not parsed here).
@@ -197,6 +203,89 @@ _DIM_BY_CLASS_TOKEN: tuple[tuple[str, int], ...] = (
     ("link",        1),
     ("twonodelink", 1),
 )
+
+
+class ElementDimUnknownWarning(UserWarning):
+    """A results file names an element class whose topological dim is
+    neither in the response catalog nor declared by the file, so the
+    FEMData-from-file ``dim`` of that group is a class-name guess."""
+
+
+@functools.lru_cache(maxsize=1)
+def _catalog_parent_dims() -> "dict[str, int]":
+    """Element class -> parent (topological) dim, from the response catalog.
+
+    A gauss-level class's dim is the width of its catalogued
+    ``natural_coords`` (the parent domain the element integrates over);
+    the line-station, closed-form-force and fiber catalogs hold line
+    elements (1), the layered-shell catalog surfaces (2), and the
+    zero-length catalog classes MPCO files under ``Line_GL_1`` (1). A
+    class the catalogs give two dims raises: that is a catalog bug,
+    and guessing between them would hide it.
+    """
+    from ..opensees import _response_catalog as rc
+
+    dims: dict[str, set[int]] = {}
+    for (cls, _rule, _token), layout in rc.RESPONSE_CATALOG.items():
+        dims.setdefault(cls, set()).add(int(layout.natural_coords.shape[1]))
+    for catalog, dim in (
+        (rc.CUSTOM_RULE_CATALOG, 1),
+        (rc.NODAL_FORCE_CATALOG, 1),
+        (rc.FIBER_CATALOG, 1),
+        (rc.ZEROLENGTH_CATALOG, 1),
+        (rc.LAYER_CATALOG, 2),
+    ):
+        for cls, _token in catalog:
+            dims.setdefault(cls, set()).add(dim)
+    conflicting = {c: sorted(d) for c, d in dims.items() if len(d) != 1}
+    if conflicting:
+        raise RuntimeError(
+            f"response catalog gives these element classes more than one "
+            f"parent dimension: {conflicting}"
+        )
+    return {cls: next(iter(d)) for cls, d in dims.items()}
+
+
+def element_dim(
+    class_name: str, npe: int, ndm: int, *, declared: "int | None" = None,
+) -> "tuple[int, bool]":
+    """Topological dim of one results-file element group.
+
+    Returns ``(dim, known)``. A catalogued class takes its catalog
+    parent dimension; otherwise the file's own declaration
+    (``declared``, the ``.ladruno`` BASIS ``TOPOLOGY``); otherwise the
+    class-name guess, with ``known=False`` so the caller names the
+    class in an :class:`ElementDimUnknownWarning`. A declaration that
+    contradicts the catalog is warned and the catalog wins.
+    """
+    catalogued = _catalog_parent_dims().get(class_name)
+    if catalogued is not None:
+        if declared is not None and declared != catalogued:
+            warnings.warn(
+                f"element class {class_name!r}: the file declares "
+                f"topological dim {declared}, the response catalog gives "
+                f"{catalogued}; using the catalog's.",
+                ElementDimUnknownWarning,
+                stacklevel=3,
+            )
+        return catalogued, True
+    if declared is not None:
+        return declared, True
+    return _guess_dim_from_class(class_name, npe, ndm), False
+
+
+def warn_unknown_dims(guessed: "dict[str, int]", *, source: str) -> None:
+    """One :class:`ElementDimUnknownWarning` naming every guessed class."""
+    if not guessed:
+        return
+    listing = ", ".join(f"{c} (dim={d})" for c, d in sorted(guessed.items()))
+    warnings.warn(
+        f"{source}: element class(es) not in the response catalog and "
+        f"with no declared topology, so their dim is a class-name guess: "
+        f"{listing}. Selection by dim and drawing follow that guess.",
+        ElementDimUnknownWarning,
+        stacklevel=3,
+    )
 
 
 def _guess_dim_from_class(
