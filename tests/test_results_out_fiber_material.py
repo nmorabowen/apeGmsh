@@ -453,10 +453,13 @@ def test_fibre_decode_refuses_a_repeated_station(
     assert f"FEM element {int(beam['ids'][1])} has" in str(exc.value)
 
 
+@pytest.mark.parametrize("x_end", [1.5, 1.0001])
 def test_fibre_decode_refuses_a_station_outside_the_range(
-    beam: dict[str, Any], tmp_path: Path,
+    beam: dict[str, Any], tmp_path: Path, x_end: float,
 ) -> None:
-    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, 1.5])
+    """``x_end = 1.0001`` on a unit element is ``xi = 1 + 2e-4``: past the
+    shared slack (1e-4), so it pins the slack's top (#2256)."""
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, x_end])
     spec = _spec(beam["fem"], _fibres(beam["ids"]))
     with pytest.raises(ValueError, match="outside the element's natural range") as exc:
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
@@ -469,20 +472,22 @@ def test_fibre_decode_refuses_a_station_outside_the_range(
 def test_fibre_decode_refuses_a_count_the_model_contradicts(
     beam: dict[str, Any], tmp_path: Path,
 ) -> None:
-    """Both elements are Lobatto 3; a file of 2 stations each is refused."""
+    """Both elements are Lobatto 3; a file of 2 stations each is refused
+    (the message is the shared ``.out`` check's, #2256)."""
     _uniform_files(beam, tmp_path, [0.0, 1.0, 0.0, 1.0])
     spec = _spec(beam["fem"], _fibres(beam["ids"]))
-    with pytest.raises(ValueError, match="the model gives 3"):
+    with pytest.raises(ValueError, match="model= gives its elements 3"):
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
 
 
-def _two_beams(tmp: Path, name: str, *, ndm: int, elements: tuple) -> dict[str, Any]:
-    """Two unit-length one-element beams, ``B1`` and ``B2``, on one fibre
+def _two_beams(tmp: Path, name: str, *, ndm: int, elements: tuple,
+               length: float = 1.0) -> dict[str, Any]:
+    """Two one-element beams of ``length``, ``B1`` and ``B2``, on one fibre
     section. ``elements`` is ``((pg, element method, rule builder), ...)``,
     each builder taking ``(ops, section)``."""
     with apeGmsh(model_name=name, verbose=False) as g:
         geo = g.model.geometry
-        a, b, c = (geo.add_point(x, 0.0, 0.0) for x in (0.0, 1.0, 2.0))
+        a, b, c = (geo.add_point(x, 0.0, 0.0) for x in (0.0, length, 2.0 * length))
         lines = [geo.add_line(a, b), geo.add_line(b, c)]
         g.model.sync()
         for line, pg in zip(lines, ("B1", "B2")):
@@ -580,8 +585,74 @@ def test_hinge_rule_mixed_with_another_count_refuses(tmp_path: Path) -> None:
         ("B2", "forceBeamColumn", _lobatto(6))))
     _uniform_files(m, tmp_path, _STATIONS[4] + _STATIONS[6])
     spec = _spec(m["fem"], _fibres(m["ids"]))
-    with pytest.raises(ValueError, match=r"counts \[4, 6\]"):
+    with pytest.raises(ValueError, match=r"integration-point counts .*"
+                       rf"4 points: FEM elements \[{m['ids'][0]}\]; "
+                       rf"6 points: FEM elements \[{m['ids'][1]}\]"):
         _transcode(m, spec, tmp_path, tmp_path / "r.h5")
+
+
+def test_mixed_counts_whose_columns_do_not_divide_name_the_counts(
+    tmp_path: Path,
+) -> None:
+    """Lobatto 3 beside Lobatto 4: 7 stations do not divide by 2 elements.
+    The model refuses the mix before the file is read, so the message names
+    the counts, not the column layout (#2256)."""
+    m = _two_beams(tmp_path, "out_fib_3_4", ndm=3, elements=(
+        ("B1", "forceBeamColumn", _lobatto(3)), ("B2", "forceBeamColumn", _lobatto(4))))
+    _uniform_files(m, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.3, 0.7, 1.0])
+    spec = _spec(m["fem"], _fibres(m["ids"]))
+    with pytest.raises(ValueError, match=r"different integration-point counts .*"
+                       rf"3 points: FEM elements \[{m['ids'][0]}\]; "
+                       rf"4 points: FEM elements \[{m['ids'][1]}\]") as exc:
+        _transcode(m, spec, tmp_path, tmp_path / "r.h5")
+    assert "section layout" not in str(exc.value)
+
+
+def test_a_precision_6_file_reads_its_end_stations(tmp_path: Path) -> None:
+    """OpenSees's default ``-precision 6`` rounds the end station
+    ``x = L = 2.123456789`` to 2.12346, so ``xi = 2x/L - 1`` reads
+    ``1 + 3.0e-6``: inside the shared slack (1e-4), and read, not refused
+    as outside [-1, 1] (#2256 (a); the 1e-12 slack refused it)."""
+    length = 2.123456789
+    m = _two_beams(tmp_path, "out_fib_prec6", ndm=3, length=length,
+                   elements=(("B1", "forceBeamColumn", _lobatto(3)),
+                             ("B2", "forceBeamColumn", _lobatto(3))))
+    _uniform_files(m, tmp_path, [0.0, length / 2, length] * 2)
+    gpx = emit_logical(_fibres(m["ids"]), output_dir=str(tmp_path))[1].file_path
+    body = np.loadtxt(gpx, ndmin=2)
+    np.savetxt(gpx, body, fmt="%.6g")                        # the -precision 6 file
+    xi_end = 2.0 * float(np.loadtxt(gpx, ndmin=2)[0, 3]) / length - 1.0
+    assert 1.0 + 1e-12 < xi_end < 1.0 + 1e-4                 # the case the card names
+    target = _transcode(m, _spec(m["fem"], _fibres(m["ids"])), tmp_path,
+                        tmp_path / "r.h5")
+    with Results.from_native(target, fem=m["fem"],
+                             model=OpenSeesModel.from_h5(m["model_h5"])) as r:
+        xi = np.asarray(r.elements.fibers.get(component="fiber_stress")
+                        .station_natural_coord)
+    np.testing.assert_allclose(xi, np.tile(np.repeat(LOBATTO_3, len(FIBRES)), 2),
+                               atol=1e-5)
+
+
+def test_a_shared_rule_of_unknown_count_refuses_as_the_line_reader_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both elements on one rule whose point count the shared table does not
+    know (Lobatto, taken out of it here: every bridge rule is in it) are
+    refused, with the line-station reader's own message (#2256 (b)); the
+    fibre reader once read a shared unknown rule unchecked."""
+    from apeGmsh.results.readers import _out_station_slicing as slicing
+    m = _two_beams(tmp_path, "out_fib_unknown_rule", ndm=3, elements=(
+        ("B1", "forceBeamColumn", _lobatto(4)), ("B2", "forceBeamColumn", _lobatto(4))))
+    _uniform_files(m, tmp_path, _STATIONS[4] * 2)
+    rec = _fibres(m["ids"])
+    monkeypatch.setattr(slicing, "UNIFORM_RULE_TOKENS",
+                        slicing.UNIFORM_RULE_TOKENS - {"Lobatto"})
+    with pytest.raises(ValueError, match="'Lobatto', whose point count") as line:
+        slicing.model_station_counts(rec, OpenSeesModel.from_h5(m["model_h5"]),
+                                     m["fem"].snapshot_id)
+    with pytest.raises(ValueError) as fibre:
+        _transcode(m, _spec(m["fem"], rec), tmp_path, tmp_path / "r.h5")
+    assert str(fibre.value) == str(line.value)
 
 
 def test_a_record_mixing_element_classes_refuses(tmp_path: Path) -> None:

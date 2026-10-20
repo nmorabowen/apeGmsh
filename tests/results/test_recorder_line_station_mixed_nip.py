@@ -37,7 +37,7 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.results import Results
-from apeGmsh.results.readers._out_fiber_io import model_integration_points
+from apeGmsh.results.spec._emit import emit_logical
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,
@@ -186,27 +186,33 @@ LOBATTO_4 = np.array([-1.0, -np.sqrt(0.2), np.sqrt(0.2), 1.0])
 def test_lobatto_3_and_4_refused_for_its_counts_with_model(tmp_path: Path) -> None:
     """#2267: a bound model's counts are checked before the columns divide,
     so a 3 + 4 record (7 columns over 2 elements) is refused for its counts,
-    not as "not divisible". The fibre reader refuses the same elements for
-    their counts too (``_out_fiber_io.model_integration_points``: "its
-    elements use beamIntegration rules [...], with integration-point counts
-    [3, 4]"), pinned here on the same model."""
+    not as "not divisible". A fibres record over the same elements, whose
+    reader uses the same ``line_station_count`` (#2256), is refused with
+    the same message, pinned here on the same model."""
     lengths = (3.0, 5.0)
     fem, eids = _two_beams("mix34_model", lengths)
     model_h5 = _model_h5(tmp_path, fem, (_lobatto(3), _lobatto(4)))
     _write_files(tmp_path, lengths, (LOBATTO[3], LOBATTO_4))
-    with pytest.raises(
-        ValueError,
-        match=(rf"different integration-point counts in model= \(3 points: "
-               rf"FEM elements \[{eids[0]}\]; 4 points: FEM elements "
-               rf"\[{eids[1]}\]\)")):
+    counts = (rf"different integration-point counts in model= \(3 points: "
+              rf"FEM elements \[{eids[0]}\]; 4 points: FEM elements "
+              rf"\[{eids[1]}\]\)")
+    with pytest.raises(ValueError, match=counts):
         _transcode(tmp_path, fem, eids, model_h5)
     fibres = ResolvedRecorderRecord(
         category="fibers", name="beam", components=("fiber_stress",), dt=None,
         n_steps=None, element_ids=np.asarray(eids, dtype=np.int64),
         element_class_name="ForceBeamColumn2d")
-    with pytest.raises(ValueError,
-                       match=r"with integration-point counts \[3, 4\]"):
-        model_integration_points(fibres, OpenSeesModel.from_h5(model_h5))
+    fib_lr, gpx_lr = emit_logical(fibres, output_dir=str(tmp_path))
+    gpx = np.concatenate([(x + 1.0) * 0.5 * L
+                          for x, L in zip((LOBATTO[3], LOBATTO_4), lengths)])
+    np.savetxt(gpx_lr.file_path, np.column_stack([TIMES, np.tile(gpx, (TIMES.size, 1))]))
+    np.savetxt(fib_lr.file_path, np.column_stack([TIMES, np.ones((TIMES.size, 7 * 6))]))
+    with pytest.raises(ValueError, match=counts) as exc:
+        RecorderTranscoder(
+            ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(fibres,)),
+            output_dir=tmp_path, target_path=tmp_path / "fib.h5", fem=fem,
+            stage_name="s", stage_kind="static", model_h5_src=model_h5).run()
+    assert "section layout" not in str(exc.value)
 
 
 def test_lobatto_3_and_4_without_model_is_not_divisible(tmp_path: Path) -> None:
