@@ -762,6 +762,15 @@ class NativeReader:
                 eidx = np.asarray(
                     grp[_native.DSET_ELEMENT_INDEX][...], dtype=np.int64,
                 )
+                if eid_filter is None:
+                    elem_sel = np.arange(eidx.size)
+                else:
+                    mask = np.isin(eidx, eid_filter)
+                    if not mask.any():
+                        continue
+                    elem_sel = np.where(mask)[0]
+
+                # After the filter: only a group this read returns may warn.
                 nc = self._gauss_natural_coords(
                     grp,
                     np.asarray(
@@ -770,14 +779,6 @@ class NativeReader:
                     ),
                 )
                 n_gp = nc.shape[0]
-
-                if eid_filter is None:
-                    elem_sel = np.arange(eidx.size)
-                else:
-                    mask = np.isin(eidx, eid_filter)
-                    if not mask.any():
-                        continue
-                    elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
                 full = grp[component][...]                  # (T, E_g, n_gp)
