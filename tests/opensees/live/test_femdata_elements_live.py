@@ -17,6 +17,11 @@ itself) and on a build that has MPCO.
   1e-12.
 - A deck whose element connectivity is not the FEM's refuses by id, and
   an element class with no bridge token refuses by name.
+- A ``Brick`` of ``ASDConcrete3D`` pulled off a fixed base: its
+  per-Gauss-point ``damage`` record reads through the live pairing and
+  equals the live ``material <gp> damage`` at rtol 1e-12; the base points
+  damage more than the top ones, which the catalog's point order places
+  (#2290 A).
 - A statically determinate truss: its Gauss ``axial_force`` record, which
   MPCO cannot write, takes the classic recorders on any stock build and
   equals the live ``axialForce`` at rtol 1e-12 and the joint equilibrium
@@ -509,5 +514,85 @@ def test_truss_gauss_axial_force_skips_mpco_and_is_the_live_response(
         n3 = (PX * r13 / 2 + PY * r13 / 3) / 2
         np.testing.assert_allclose(got[-1], [-2 * n2 / r13, n2, n3], rtol=1e-9)
         np.testing.assert_allclose(got[0], got[-1] / _STEPS, rtol=1e-9)
+    finally:
+        res.close()
+
+
+# ---------------------------------------------------------------------------
+# A Brick pulled off a fixed base: per-Gauss-point damage (#2290 A)
+# ---------------------------------------------------------------------------
+
+_HEX = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+        (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))
+_DAMAGE = ("damage_tension", "damage_compression")
+
+
+def test_brick_per_material_damage_is_the_live_response(opspy, tmp_path) -> None:
+    """The base face (nodes 1-4) is fixed and the top face is pulled up
+    uniformly. The field is symmetric about the element's two vertical
+    mid-planes, so a point's damage depends on its height alone. The base
+    points are held against lateral contraction, so they carry the larger
+    tensile stress and damage more. The catalog's natural coordinates must
+    put that split on the third coordinate."""
+    coords = np.array(_HEX, dtype=float)
+    hexa = make_type_info(code=5, gmsh_name="Hexahedron 8", dim=3, order=1,
+                          npe=8, count=1)
+    group = ElementGroup(element_type=hexa, ids=np.array([7], dtype=np.int64),
+                         connectivity=np.arange(1, 9, dtype=np.int64)[None, :])
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 9, dtype=np.int64),
+                            node_coords=coords, physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={5: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=8, n_elems=1, bandwidth=8, types=[hexa]),
+        model_name="femdata_elements_brick")
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 3, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        opspy.node(int(nid), *(float(v) for v in xyz))
+    for n in (1, 2, 3, 4):
+        opspy.fix(n, 1, 1, 1)
+    opspy.nDMaterial("ASDConcrete3D", 1, 30.0e9, 0.2,
+                     "-Te", 0.0, 1e-4, 2e-4, 1e-2, "-Ts", 0.0, 3e6, 1e6, 1e5,
+                     "-Td", 0.0, 0.0, 0.5, 0.9,
+                     "-Ce", 0.0, 1e-3, 2e-3, 1e-2, "-Cs", 0.0, 30e6, 20e6, 5e6,
+                     "-Cd", 0.0, 0.0, 0.3, 0.8)
+    opspy.element("stdBrick", 7, *range(1, 9), 1)
+    assert opspy.eleType(7) == "Brick"
+    opspy.timeSeries("Linear", 1)
+    opspy.pattern("Plain", 1, 1)
+    for n in (5, 6, 7, 8):
+        opspy.sp(n, 3, 3.0e-4)
+    for cmd, args in (("constraints", ("Transformation",)),
+                      ("numberer", ("RCM",)), ("system", ("FullGeneral",)),
+                      ("test", ("NormDispIncr", 1.0e-10, 50)),
+                      ("algorithm", ("Newton",)),
+                      ("integrator", ("LoadControl", 1.0 / _STEPS)),
+                      ("analysis", ("Static",))):
+        getattr(opspy, cmd)(*args)
+    ids = np.array([7], dtype=np.int64)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("gauss", "dmg", _DAMAGE, ids, "Brick"),))
+    res = _emit(spec, tmp_path, model_h5, opspy, _STEPS)
+    try:
+        truth = np.array([opspy.eleResponse(7, "material", gp, "damage")
+                          for gp in range(1, 9)])          # (8 GP, 2)
+        assert truth[:, 0].max() > 0.1                     # tension damage
+        for k, comp in enumerate(_DAMAGE):
+            slab = res.elements.gauss.get(component=comp, ids=ids)
+            assert [int(i) for i in np.asarray(slab.element_index)] == [7] * 8
+            np.testing.assert_allclose(np.asarray(slab.values)[-1],
+                                       truth[:, k], **_RTOL, err_msg=comp)
+        slab = res.elements.gauss.get(component="damage_tension", ids=ids)
+        zeta = np.asarray(slab.natural_coords)[:, 2]
+        d = np.asarray(slab.values)[-1]
+        base, top = d[zeta < 0], d[zeta > 0]
+        assert base.size == top.size == 4
+        np.testing.assert_allclose(base, base[0], rtol=1e-9)
+        np.testing.assert_allclose(top, top[0], rtol=1e-9)
+        assert base[0] > top[0]
     finally:
         res.close()

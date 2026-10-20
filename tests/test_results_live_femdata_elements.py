@@ -22,7 +22,10 @@ The oracles:
 * each unproved id refuses by id, an unmapped class by name, and nothing
   reaches the domain then;
 * the pairing's type token gates an elastic beam's ``localForce``
-  stations as the bridge model's does.
+  stations as the bridge model's does;
+* a per-Gauss-point material record reads through the pairing, file
+  ``gp`` at catalog point ``gp - 1``; a fibres record still refuses by
+  name (#2290).
 """
 from __future__ import annotations
 
@@ -297,25 +300,125 @@ def test_an_id_the_femdata_lacks_refuses_by_id(tets, tmp_path) -> None:
         _run(_spec(fem, _gauss([1, 9])), tmp_path / "run", model_h5, _ops())
 
 
-@pytest.mark.parametrize("category, comps, cls", [
-    ("fibers", ("fiber_stress",), "ForceBeamColumn3d"),
-    ("gauss", ("damage_tension", "damage_compression"), "Brick"),
-], ids=["fibers", "per-material-gauss"])
-def test_a_record_that_needs_the_bridge_archive_refuses_by_name(
-    tets, tmp_path, category, comps, cls,
-) -> None:
+def test_a_fibres_record_refuses_by_name(tets, tmp_path) -> None:
     """A fibres record takes each element's ``beamIntegration`` from the
-    model archive, a per-Gauss-point material record its pairing: a
-    FEMData archive holds neither."""
+    model archive, which a FEMData archive does not hold."""
     fem, model_h5 = tets
     ops = _ops()
     rec = ResolvedRecorderRecord(
-        category=category, name="need", components=comps, dt=None,
-        n_steps=None, element_ids=np.array([1]), element_class_name=cls)
+        category="fibers", name="need", components=("fiber_stress",), dt=None,
+        n_steps=None, element_ids=np.array([1]),
+        element_class_name="ForceBeamColumn3d")
     with pytest.raises(ValueError, match=r"records \['need'\] read each "
                                          r"element's integration rule"):
         _run(_spec(fem, rec), tmp_path / "run", model_h5, ops)
     assert "eleNodes" not in ops.asked and ops.recorder_calls[1:] == []
+
+
+# ---------------------------------------------------------------------------
+# A per-Gauss-point material record reads through the pairing (#2290 A)
+# ---------------------------------------------------------------------------
+
+_HEX_XYZ = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (1.0, 1.0, 0.0),
+            4: (0.0, 1.0, 0.0), 5: (0.0, 0.0, 1.0), 6: (1.0, 0.0, 1.0),
+            7: (1.0, 1.0, 1.0), 8: (0.0, 1.0, 1.0)}
+_DAMAGE = ("damage_tension", "damage_compression")
+
+
+class DamageOps(ElementOps):
+    """``ElementOps`` whose ``material <gp> damage`` files hold two columns
+    per element, valued by their point: column ``k`` of point ``gp`` is
+    ``_value(step, e, 10 * gp + k)``."""
+
+    def remove(self, what: str, tag: int) -> None:
+        args = list(self._live[tag])
+        if args[0] != "Element" or "material" not in args:
+            return super().remove(what, tag)
+        del self._live[tag]
+        gp = int(args[args.index("material") + 1])
+        k = args.index("-ele") + 1
+        eles: list[int] = []
+        while isinstance(args[k], int):
+            eles.append(args[k])
+            k += 1
+        rows = [[float(s)] + [_value(s, e, 10 * gp + c) for e in eles
+                              for c in range(2)]
+                for s in range(1, _STEPS + 1)]
+        np.savetxt(Path(args[args.index("-file") + 1]), np.asarray(rows))
+
+
+def _hex_fem(tmp: Path) -> "tuple[FEMData, Path]":
+    hexa = make_type_info(code=5, gmsh_name="Hexahedron 8", dim=3, order=1,
+                          npe=8, count=1)
+    group = ElementGroup(element_type=hexa, ids=np.array([7], dtype=np.int64),
+                         connectivity=np.array([list(_HEX_XYZ)], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 9, dtype=np.int64),
+                            node_coords=np.array(list(_HEX_XYZ.values())),
+                            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={5: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=8, n_elems=1, bandwidth=8, types=[hexa]),
+        model_name="femdata_elements_hex")
+    path = tmp / "fem.h5"
+    fem.to_h5(str(path))
+    return fem, path
+
+
+def _damage_rec(cls: str = "Brick") -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="gauss", name="dmg", components=_DAMAGE, dt=None,
+        n_steps=None, element_ids=np.array([7]), element_class_name=cls)
+
+
+def _damage_ops() -> DamageOps:
+    return DamageOps(ndm=3, ndf={n: 3 for n in _HEX_XYZ},
+                     elements={7: ("Brick", tuple(_HEX_XYZ))},
+                     coords=dict(_HEX_XYZ))
+
+
+def test_a_per_material_damage_record_reads_through_the_pairing(tmp_path) -> None:
+    """Eight ``material <gp> damage`` files of a live ``Brick`` read under
+    its FEM id, file ``gp`` at the catalog's point ``gp - 1`` (Brick.cpp's
+    order, ``k`` fastest)."""
+    fem, model_h5 = _hex_fem(tmp_path)
+    ops = _damage_ops()
+    run = _run(_spec(fem, _damage_rec()), tmp_path / "run", model_h5, ops)
+    calls = _element_calls(ops)
+    assert [c[c.index("material") + 1] for c in calls] == [
+        str(g) for g in range(1, 9)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        s = 1.0 / np.sqrt(3.0)
+        for k, comp in enumerate(_DAMAGE):
+            slab = res.elements.gauss.get(component=comp, ids=np.array([7]))
+            assert [int(i) for i in np.asarray(slab.element_index)] == [7] * 8
+            np.testing.assert_allclose(
+                np.asarray(slab.natural_coords),
+                [((-s, s)[g // 4], (-s, s)[(g // 2) % 2], (-s, s)[g % 2])
+                 for g in range(8)], atol=1e-15)
+            np.testing.assert_array_equal(
+                np.asarray(slab.values),
+                [[_value(st, 7, 10 * gp + k) for gp in range(1, 9)]
+                 for st in range(1, _STEPS + 1)], err_msg=comp)
+    finally:
+        res.close()
+
+
+def test_a_per_material_record_of_another_class_refuses(tmp_path) -> None:
+    """The layout is the record's class's, so the live class gates it."""
+    fem, model_h5 = _hex_fem(tmp_path)
+    ops = _damage_ops()
+    with pytest.raises(ValueError, match=r"record 'dmg' names element class "
+                                         r"'LadrunoBrick', but the live "
+                                         r"domain has FEM elements 7 as "
+                                         r"'Brick'"):
+        _run(_spec(fem, _damage_rec("LadrunoBrick")), tmp_path / "run",
+             model_h5, ops)
+    assert _element_calls(ops) == []
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +454,22 @@ def test_the_pairing_type_token_gates_elastic_local_force(tets, tmp_path) -> Non
                             pairing=_Pairing(fem, {1: "forceBeamColumn"}))
     with pytest.raises(ValueError, match=r"FEM element\(s\) \[1\] are "
                                          r"\['forceBeamColumn'\] in model="):
+        tr.run()
+
+
+def test_a_fibres_record_over_a_pairing_refuses_by_name(tets, tmp_path) -> None:
+    """A pairing carries no ``beamIntegration``, so a fibres record handed
+    to the transcoder with one refuses by name, not on a missing method."""
+    fem, _ = tets
+    rec = ResolvedRecorderRecord(
+        category="fibers", name="fib", components=("fiber_stress",), dt=None,
+        n_steps=None, element_ids=np.array([1]),
+        element_class_name="ForceBeamColumn3d")
+    tr = RecorderTranscoder(_spec(fem, rec), tmp_path, tmp_path / "r.h5", fem,
+                            pairing=_Pairing(fem, {1: "forceBeamColumn"}))
+    with pytest.raises(ValueError, match=r"Record 'fib' \(category=fibers\): "
+                                         r"its stations are counted from each "
+                                         r"element's beamIntegration"):
         tr.run()
 
 

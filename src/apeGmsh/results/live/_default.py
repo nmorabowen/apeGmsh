@@ -44,7 +44,7 @@ domain (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`,
 (Gauss points, line stations, nodal forces) pair each FEM element with
 the live element of its id, proved by ``eleNodes`` against the FEM
 connectivity and typed by ``eleType`` (#2269); the read carries that
-pairing.
+pairing, per-Gauss-point material records included (#2290).
 
 Modal records have no default route and refuse at ``__enter__``.
 """
@@ -170,8 +170,9 @@ class LiveDefault:
         each FEM element with the live element of its own id only when
         that element's ``eleNodes`` is the FEM connectivity in order and
         its class is known; any other id refuses, naming it (#2269).
-        ``fibers`` and per-Gauss-point material records refuse by name:
-        they need the bridge's archive.
+        A per-Gauss-point material record reads through that pairing
+        (#2290); a ``fibers`` record refuses by name: it needs the
+        bridge's archive.
     ops
         The OpenSees module, or a stand-in for testing. Defaults to the
         module the bridge drives.
@@ -460,25 +461,18 @@ def _has_bridge_zone(model_h5: Path) -> bool:
 
 def _refuse_unpairable_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
     """Refuse, by name, the element records a FEMData archive cannot read
-    even with the live pairing: a ``fibers`` record and a per-Gauss-point
-    material record (``material <gp> ...``) take each element's
-    ``beamIntegration`` or the bridge's own pairing from the model archive,
-    which a FEMData archive does not hold."""
-    from ..writers._cache import quiet_emit_logical
-
-    with warnings.catch_warnings():
-        # The test translation only; the emit warns once, as it does.
-        warnings.simplefilter("ignore")
-        named = [r.name for r in spec.records if r.category == "fibers" or (
-            r.category == "gauss" and any(
-                lr.response_tokens[:1] == ("material",)
-                for lr in quiet_emit_logical(r, output_dir="", file_format="out")))]
+    even with the live pairing: a ``fibers`` record counts its stations
+    from each element's ``beamIntegration``, which only the bridge's model
+    archive holds. A per-Gauss-point material record (``material <gp>
+    ...``) reads through the live pairing (#2290): its layout is the
+    record's class's, which the pairing proves by ``eleType``."""
+    named = [r.name for r in spec.records if r.category == "fibers"]
     if named:
         raise ValueError(
             f"emit_default: records {named} read each element's integration "
-            f"rule or material points through the bridge's model archive, "
-            f"and {model_h5} is a FEMData archive (no /opensees zone). "
-            "Record them through the bridge's model archive (ops.h5(...))."
+            f"rule through the bridge's model archive, and {model_h5} is a "
+            "FEMData archive (no /opensees zone). Record them through the "
+            "bridge's model archive (ops.h5(...))."
         )
 
 
