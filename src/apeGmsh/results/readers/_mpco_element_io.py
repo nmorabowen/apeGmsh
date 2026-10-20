@@ -29,6 +29,10 @@ and this reader does not yet check ``GP_X``.
 A bucket whose class has no catalog row for the token is left unread
 too, and named the same way (#2160): the catalog is what places its
 Gauss points, so without a row its values cannot be returned.
+
+Discovery only records a skipped bucket (:class:`SkippedBucket`); the
+read names it, and only when the bucket holds an element the read asked
+for (:func:`warn_skipped_buckets`, #2165).
 """
 from __future__ import annotations
 
@@ -105,6 +109,138 @@ class _Bucket:
 
 
 # =====================================================================
+# Skipped buckets — named by the read that asked for their elements
+# =====================================================================
+
+@dataclass(frozen=True)
+class SkippedBucket:
+    """One bucket discovery leaves unread: its group, the discovery that
+    left it (``what``) and why (``reason``).
+
+    Discovery only records it. The read names it with
+    :func:`warn_skipped_buckets`, and only when the bucket holds an
+    element the read asked for (#2165): a read narrowed to other
+    elements loses nothing to it.
+    """
+    group: "h5py.Group"
+    what: str
+    reason: str
+
+
+def holds_requested_element(
+    bucket_grp: "h5py.Group", element_ids: ndarray | None,
+) -> bool:
+    """Whether ``bucket_grp`` holds an element of ``element_ids``.
+
+    ``element_ids`` is ``None`` for an unfiltered read, which asks for
+    every element. A bucket whose ``ID`` cannot be read cannot be ruled
+    out, so it counts as holding one: it is named, never dropped.
+    """
+    if element_ids is None:
+        return True
+    try:
+        ids = np.asarray(bucket_grp["ID"][...]).ravel().astype(np.int64)
+    except (KeyError, OSError, TypeError, ValueError):
+        return True
+    return bool(np.isin(ids, np.asarray(element_ids, dtype=np.int64)).any())
+
+
+def warn_skipped_buckets(
+    skipped: "list[SkippedBucket]",
+    *,
+    element_ids: ndarray | None,
+    stacklevel: int,
+) -> None:
+    """One ``MPCOBucketSkippedWarning`` per skipped bucket the read asked for.
+
+    A bucket is named when it holds an element of ``element_ids``
+    (:func:`holds_requested_element`; every bucket when ``None``), and at
+    most once, however many entries name its path. ``stacklevel`` counts
+    from the caller of this function: ``1`` is the caller itself, ``2``
+    the caller's caller.
+    """
+    from ._mpco import MPCOBucketSkippedWarning
+    named: set[str] = set()
+    for skip in skipped:
+        grp = skip.group
+        if grp.name in named or not holds_requested_element(grp, element_ids):
+            continue
+        named.add(grp.name)
+        warnings.warn(
+            f"MPCO {skip.what} in {Path(grp.file.filename).name} left 1 "
+            f"bucket(s) unread, so their elements return no values: "
+            f"{grp.name}: {skip.reason}.",
+            MPCOBucketSkippedWarning, stacklevel=stacklevel + 1,
+        )
+
+
+def custom_rule_skip(
+    bucket_grp: "h5py.Group",
+    elem_key: MPCOElementKey,
+    *,
+    what: str,
+) -> SkippedBucket:
+    """A bucket with a nonzero custom-rule index, by path and class.
+
+    MPCO opens a new custom-rule index for each distinct set of
+    Gauss-point positions (``GP_X``), so RESPONSE_CATALOG's fixed
+    coordinates cannot be trusted for it, and the bucket is left unread;
+    the other buckets still read.
+    """
+    return SkippedBucket(
+        bucket_grp,
+        what=what,
+        reason=(
+            f"class {elem_key.class_name!r} carries custom integration "
+            f"rule {elem_key.custom_rule_idx} (bracket rule "
+            f"{elem_key.int_rule}). MPCO numbers a custom rule per set of "
+            f"Gauss-point positions (GP_X), which this reader does not "
+            f"verify, so the catalog's Gauss points cannot be assumed"
+        ),
+    )
+
+
+def uncatalogued_skip(
+    bucket_grp: "h5py.Group",
+    elem_key: MPCOElementKey,
+    catalog_token: str,
+    *,
+    what: str,
+) -> SkippedBucket:
+    """A standard-rule bucket whose class has no catalog row.
+
+    RESPONSE_CATALOG is what gives a bucket its Gauss points and column
+    layout, so a ``(class, rule, token)`` it lacks is left unread; the
+    other buckets still read, and a catalog row for the class makes the
+    same file read.
+    """
+    return SkippedBucket(
+        bucket_grp,
+        what=what,
+        reason=(
+            f"class {elem_key.class_name!r} at integration rule "
+            f"{elem_key.int_rule} has no RESPONSE_CATALOG row for token "
+            f"{catalog_token!r}, which is what places its Gauss points"
+        ),
+    )
+
+
+def unparseable_skip(
+    bucket_grp: "h5py.Group", exc: ValueError, *, what: str,
+) -> SkippedBucket:
+    """A bucket whose bracket key does not parse (#2165).
+
+    Without a parsed key the reader has no class, rule or header to look
+    the bucket up by, so it is left unread; the other buckets still read.
+    """
+    return SkippedBucket(
+        bucket_grp,
+        what=what,
+        reason=f"its bracket key does not parse ({exc})",
+    )
+
+
+# =====================================================================
 # Bucket discovery
 # =====================================================================
 
@@ -113,7 +249,27 @@ def discover_gauss_buckets(
     *,
     canonical_component: str,
 ) -> tuple[str | None, list[_Bucket]]:
-    """Walk ``ON_ELEMENTS/<mpco_group>`` and return catalogued GP buckets.
+    """:func:`scan_gauss_buckets`, naming every bucket it leaves unread.
+
+    For a caller with no element filter: each skipped bucket is named in
+    one ``MPCOBucketSkippedWarning`` pointing at this function's caller.
+    A read calls the scan itself and names only the skipped buckets that
+    hold an element it asked for.
+    """
+    token, buckets, skipped = scan_gauss_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    warn_skipped_buckets(skipped, element_ids=None, stacklevel=2)
+    return (token, buckets)
+
+
+def scan_gauss_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_Bucket], list[SkippedBucket]]:
+    """Walk ``ON_ELEMENTS/<mpco_group>`` and return catalogued GP buckets,
+    with every bucket it leaves unread, without warning.
 
     The MPCO recorder may write continuum stress / strain / damage /
     plastic-strain under more than one group name across builds —
@@ -130,17 +286,19 @@ def discover_gauss_buckets(
 
     Returns
     -------
-    (mpco_group_name, buckets)
+    (mpco_group_name, buckets, skipped)
         ``mpco_group_name`` is the ON_ELEMENTS child name we found
         the first non-empty bucket under (the primary keyword if it
         had data, otherwise the first alias that did). Returns the
         primary keyword + empty list when no group has any buckets,
-        or ``(None, [])`` if the canonical component has no
-        gauss-token mapping at all.
+        or ``(None, [], [])`` if the canonical component has no
+        gauss-token mapping at all. ``skipped`` holds every bucket
+        left unread (an unparseable key, a nonzero custom-rule index,
+        no catalog row), each key once across the alias groups.
     """
     mapping = canonical_to_gauss_token(canonical_component)
     if mapping is None:
-        return (None, [])
+        return (None, [], [])
     mpco_group_name, catalog_token = mapping
     candidate_names = mpco_gauss_group_aliases(mpco_group_name)
     # The ON_ELEMENTS group is named by the keyword the deck asked for,
@@ -149,8 +307,10 @@ def discover_gauss_buckets(
         candidate_names = candidate_names + (catalog_token,)
 
     out: list[_Bucket] = []
+    skipped: list[SkippedBucket] = []
     seen_keys: set[str] = set()
     found_name: str | None = None
+    what = f"gauss discovery of {canonical_component!r}"
     for name in candidate_names:
         if name not in on_elements_grp:
             continue
@@ -158,29 +318,28 @@ def discover_gauss_buckets(
         for bracket_key in token_grp:
             if bracket_key in seen_keys:
                 continue
-            what = f"gauss discovery of {canonical_component!r}"
             try:
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError as exc:
-                warn_unparseable_bucket_key(
+                skipped.append(unparseable_skip(
                     token_grp[bracket_key], exc, what=what,
-                )
+                ))
                 seen_keys.add(bracket_key)
                 continue
             if elem_key.custom_rule_idx != 0:
-                warn_unread_custom_rule_bucket(
+                skipped.append(custom_rule_skip(
                     token_grp[bracket_key], elem_key, what=what,
-                )
+                ))
                 seen_keys.add(bracket_key)
                 continue
             found = catalog_layout(
                 elem_key, catalog_token, where=f"{name}/{bracket_key}",
             )
             if found is None:
-                warn_uncatalogued_bucket(
+                skipped.append(uncatalogued_skip(
                     token_grp[bracket_key], elem_key, catalog_token,
                     what=what,
-                )
+                ))
                 seen_keys.add(bracket_key)
                 continue
             layout = _maybe_extend_plane_layout(found, token_grp[bracket_key])
@@ -196,93 +355,7 @@ def discover_gauss_buckets(
             seen_keys.add(bracket_key)
             if found_name is None:
                 found_name = name
-    return (found_name or mpco_group_name, out)
-
-
-def warn_unread_custom_rule_bucket(
-    bucket_grp: "h5py.Group",
-    elem_key: MPCOElementKey,
-    *,
-    what: str,
-) -> None:
-    """Name a bucket with a nonzero custom-rule index, by path and class.
-
-    MPCO opens a new custom-rule index for each distinct set of
-    Gauss-point positions (``GP_X``), so RESPONSE_CATALOG's fixed
-    coordinates cannot be trusted for it, and the bucket is left unread.
-    One ``MPCOBucketSkippedWarning`` per bucket; the other buckets still
-    read.
-    """
-    warn_unread_bucket(
-        bucket_grp,
-        what=what,
-        reason=(
-            f"class {elem_key.class_name!r} carries custom integration "
-            f"rule {elem_key.custom_rule_idx} (bracket rule "
-            f"{elem_key.int_rule}). MPCO numbers a custom rule per set of "
-            f"Gauss-point positions (GP_X), which this reader does not "
-            f"verify, so the catalog's Gauss points cannot be assumed"
-        ),
-    )
-
-
-def warn_uncatalogued_bucket(
-    bucket_grp: "h5py.Group",
-    elem_key: MPCOElementKey,
-    catalog_token: str,
-    *,
-    what: str,
-) -> None:
-    """Name a standard-rule bucket whose class has no catalog row.
-
-    RESPONSE_CATALOG is what gives a bucket its Gauss points and column
-    layout, so a ``(class, rule, token)`` it lacks is left unread. One
-    ``MPCOBucketSkippedWarning`` per bucket; the other buckets still
-    read, and a catalog row for the class makes the same file read.
-    """
-    warn_unread_bucket(
-        bucket_grp,
-        what=what,
-        reason=(
-            f"class {elem_key.class_name!r} at integration rule "
-            f"{elem_key.int_rule} has no RESPONSE_CATALOG row for token "
-            f"{catalog_token!r}, which is what places its Gauss points"
-        ),
-    )
-
-
-def warn_unparseable_bucket_key(
-    bucket_grp: "h5py.Group", exc: ValueError, *, what: str,
-) -> None:
-    """Name a bucket whose bracket key does not parse (#2165).
-
-    Without a parsed key the reader has no class, rule or header to look
-    the bucket up by, so it is left unread. One
-    ``MPCOBucketSkippedWarning`` per key; the other buckets still read.
-    """
-    warn_unread_bucket(
-        bucket_grp,
-        what=what,
-        reason=f"its bracket key does not parse ({exc})",
-    )
-
-
-def warn_unread_bucket(
-    bucket_grp: "h5py.Group", *, what: str, reason: str,
-) -> None:
-    """One ``MPCOBucketSkippedWarning`` naming one bucket (path, reason, file).
-
-    Called through one reason-specific wrapper from a discovery function:
-    ``stacklevel`` points past this helper, the wrapper and the discovery
-    function, at the reader method's caller.
-    """
-    from ._mpco import MPCOBucketSkippedWarning
-    warnings.warn(
-        f"MPCO {what} in {Path(bucket_grp.file.filename).name} left 1 "
-        f"bucket(s) unread, so their elements return no values: "
-        f"{bucket_grp.name}: {reason}.",
-        MPCOBucketSkippedWarning, stacklevel=5,
-    )
+    return (found_name or mpco_group_name, out, skipped)
 
 
 # The fork's MPCO recorder writes the bracket rule as 0
@@ -730,7 +803,9 @@ def read_bucket_slab(
                 where=f"{bucket.mpco_group_name}/{bucket.bracket_key}",
             )
         except ValueError as exc:
-            _warn_unnamed_columns(bucket_grp, canonical_component, exc)
+            # Named only when the read asked for one of its elements.
+            if holds_requested_element(bucket_grp, element_ids):
+                _warn_unnamed_columns(bucket_grp, canonical_component, exc)
             return None
 
     # Element IDs in row order.

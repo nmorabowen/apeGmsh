@@ -1,10 +1,11 @@
-// One `.ladruno` nodal step, read one hyperslab per dataset (#2202).
+// `.ladruno` nodal reads, one hyperslab per dataset: one step (#2202) and a
+// range of steps, the history scan (#2270).
 //
 // A nodal result is one `DATA` of shape (T, N, C) (a mode stage's is (N, C)),
 // chunked over whole steps (fork schema §7.0), and each component is one column
 // of it. Slicing one column at a time inflates the same chunk once per
 // component. `readColumnsBySlab` groups the requested columns by dataset, reads
-// the step's columns c0..c1 of each dataset in one slice, and splits them in
+// the steps' columns c0..c1 of each dataset in one slice, and splits them in
 // memory. A column's values are the same bits as its own one-column slice: the
 // same float64 values, or the same float32 values each widened once.
 //

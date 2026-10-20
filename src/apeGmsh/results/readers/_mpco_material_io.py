@@ -60,11 +60,13 @@ from ...opensees._response_catalog import (
     parse_mpco_element_key,
 )
 from ._mpco_element_io import (
+    SkippedBucket,
     _attr_scalar,
     catalog_layout,
-    warn_uncatalogued_bucket,
-    warn_unparseable_bucket_key,
-    warn_unread_custom_rule_bucket,
+    custom_rule_skip,
+    uncatalogued_skip,
+    unparseable_skip,
+    warn_skipped_buckets,
 )
 
 if TYPE_CHECKING:
@@ -328,7 +330,27 @@ def discover_material_state_buckets(
     *,
     canonical_component: str,
 ) -> tuple[str | None, list[_MaterialBucket]]:
-    """Walk MPCO group(s) for the parent token and return matching buckets.
+    """:func:`scan_material_state_buckets`, naming every bucket it skips.
+
+    For a caller with no element filter: each skipped bucket is named in
+    one ``MPCOBucketSkippedWarning`` pointing at this function's caller.
+    A read calls the scan itself and names only the skipped buckets that
+    hold an element it asked for (#2165).
+    """
+    token, buckets, skipped = scan_material_state_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    warn_skipped_buckets(skipped, element_ids=None, stacklevel=2)
+    return (token, buckets)
+
+
+def scan_material_state_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_MaterialBucket], list[SkippedBucket]]:
+    """Walk MPCO group(s) for the parent token and return matching
+    buckets, with every bucket left unread, without warning.
 
     Aliases (``damage`` + ``material.damage``, etc.) are walked in
     order; duplicate bracket keys across alias groups dedup. Each
@@ -337,8 +359,8 @@ def discover_material_state_buckets(
 
     A bucket is included only if its (class, int_rule) is in the
     stress catalog (gives us the GP coordinates); one that is not is
-    left unread and named in an ``MPCOBucketSkippedWarning`` (#2160). A
-    bucket with a nonzero ``custom_rule_idx`` is left unread and named
+    left unread and returned in ``skipped`` (#2160). A
+    bucket with a nonzero ``custom_rule_idx`` is left unread and returned
     the same way: MPCO opens a custom-rule index per set of Gauss-point
     positions, which the catalog cannot vouch for. Every header index
     is included (``:0``, ``:1``, ...): MPCO opens a new header when a
@@ -349,13 +371,15 @@ def discover_material_state_buckets(
     """
     parent = parent_token_for_canonical(canonical_component)
     if parent is None:
-        return (None, [])
+        return (None, [], [])
     primary = _PARENT_TOKEN_TO_MPCO_GROUP[parent]
     candidate_names = mpco_gauss_group_aliases(primary)
 
     out: list[_MaterialBucket] = []
+    skipped: list[SkippedBucket] = []
     seen_keys: set[str] = set()
     found_name: str | None = None
+    what = f"gauss material-state discovery of {canonical_component!r}"
     for name in candidate_names:
         if name not in on_elements_grp:
             continue
@@ -363,30 +387,27 @@ def discover_material_state_buckets(
         for bracket_key in token_grp:
             if bracket_key in seen_keys:
                 continue
-            what = (
-                f"gauss material-state discovery of {canonical_component!r}"
-            )
             try:
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError as exc:
-                warn_unparseable_bucket_key(
+                skipped.append(unparseable_skip(
                     token_grp[bracket_key], exc, what=what,
-                )
+                ))
                 seen_keys.add(bracket_key)
                 continue
             if elem_key.custom_rule_idx != 0:
-                warn_unread_custom_rule_bucket(
+                skipped.append(custom_rule_skip(
                     token_grp[bracket_key], elem_key, what=what,
-                )
+                ))
                 seen_keys.add(bracket_key)
                 continue
             gp_layout = _stress_gp_layout_for(
                 elem_key, where=f"{name}/{bracket_key}",
             )
             if gp_layout is None:
-                warn_uncatalogued_bucket(
+                skipped.append(uncatalogued_skip(
                     token_grp[bracket_key], elem_key, "stress", what=what,
-                )
+                ))
                 seen_keys.add(bracket_key)
                 continue
             out.append(_MaterialBucket(
@@ -399,7 +420,7 @@ def discover_material_state_buckets(
             seen_keys.add(bracket_key)
             if found_name is None:
                 found_name = name
-    return (found_name or primary, out)
+    return (found_name or primary, out, skipped)
 
 
 # =====================================================================

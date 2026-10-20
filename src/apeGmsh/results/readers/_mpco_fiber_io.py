@@ -50,7 +50,12 @@ from ...opensees._response_catalog import (
     lookup_fiber,
     parse_mpco_element_key,
 )
-from ._mpco_element_io import _attr_scalar, warn_unparseable_bucket_key
+from ._mpco_element_io import (
+    SkippedBucket,
+    _attr_scalar,
+    unparseable_skip,
+    warn_skipped_buckets,
+)
 from ._mpco_line_io import read_gp_x_from_connectivity
 
 if TYPE_CHECKING:
@@ -98,36 +103,58 @@ def discover_fiber_buckets(
     *,
     canonical_component: str,
 ) -> tuple[str | None, list[_FiberBucket]]:
-    """Walk ``ON_ELEMENTS/section.fiber.<X>/`` and return catalogued buckets.
+    """:func:`scan_fiber_buckets`, naming every bucket it leaves unread.
+
+    For a caller with no element filter: each skipped bucket is named in
+    one ``MPCOBucketSkippedWarning`` pointing at this function's caller.
+    A read calls the scan itself and names only the skipped buckets that
+    hold an element it asked for (#2165).
+    """
+    token, buckets, skipped = scan_fiber_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    warn_skipped_buckets(skipped, element_ids=None, stacklevel=2)
+    return (token, buckets)
+
+
+def scan_fiber_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_FiberBucket], list[SkippedBucket]]:
+    """Walk ``ON_ELEMENTS/section.fiber.<X>/`` and return catalogued
+    buckets, with every bucket left unread, without warning.
 
     Returns
     -------
-    (mpco_group_name, buckets)
+    (mpco_group_name, buckets, skipped)
         ``mpco_group_name`` is the ON_ELEMENTS child name we looked
         under (``"section.fiber.stress"`` / ``"section.fiber.strain"``)
         or ``None`` if the canonical has no fibers-topology routing.
         ``buckets`` keeps the entries with ``int_rule == Custom`` and a
         ``(class_name, token)`` in
         :data:`apeGmsh.opensees._response_catalog.FIBER_CATALOG`, at
-        every header index.
+        every header index. ``skipped`` holds every bucket whose key
+        does not parse.
     """
     mapping = canonical_to_fiber_token(canonical_component)
     if mapping is None:
-        return (None, [])
+        return (None, [], [])
     mpco_group_name, catalog_token = mapping
     if mpco_group_name not in on_elements_grp:
-        return (mpco_group_name, [])
+        return (mpco_group_name, [], [])
 
     token_grp = on_elements_grp[mpco_group_name]
     out: list[_FiberBucket] = []
+    skipped: list[SkippedBucket] = []
     for bracket_key in token_grp:
         try:
             elem_key = parse_mpco_element_key(bracket_key)
         except ValueError as exc:
-            warn_unparseable_bucket_key(
+            skipped.append(unparseable_skip(
                 token_grp[bracket_key], exc,
                 what=f"fiber discovery of {canonical_component!r}",
-            )
+            ))
             continue
         if not elem_key.is_custom_rule:
             # Beam fiber-section buckets always use the custom rule.
@@ -140,7 +167,7 @@ def discover_fiber_buckets(
             elem_key=elem_key,
             fiber_layout=fiber_layout,
         ))
-    return (mpco_group_name, out)
+    return (mpco_group_name, out, skipped)
 
 
 # =====================================================================

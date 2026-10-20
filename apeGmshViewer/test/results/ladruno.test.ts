@@ -987,13 +987,18 @@ test("#2205: INFO@SPATIAL_DIM outside an integral 1, 2 or 3 is refused by name, 
 
 /** Before #2202: `[step, :, col]` of the component's DATA (a mode's `[:, col]`), one slice per component. */
 function perComponentStep(f: h5wasm.File, r: LadrunoFile, stageId: string, comp: string, step: number): Float64Array {
+  return perComponentRows(f, r, stageId, comp, step, step + 1);
+}
+
+/** Before #2202 and #2270: `[k0:k1, :, col]` of the component's DATA (a mode's `[:, col]`), one slice per component. */
+function perComponentRows(f: h5wasm.File, r: LadrunoFile, stageId: string, comp: string, k0: number, k1: number): Float64Array {
   const s = r.stage(stageId);
   const result = comp.slice(0, comp.lastIndexOf("/"));
   const col = s.nodes!.components.filter((c) => c.slice(0, c.lastIndexOf("/")) === result).indexOf(comp);
   assert.ok(col >= 0, `${comp} in ${stageId}`);
   const mode = r.mode(stageId);
   const ds = f.get(mode ? `${s.nodes!.path}/${result}/DATA/${mode.stepKey}/${mode.modeKey}` : `${s.nodes!.path}/${result}/DATA`) as h5wasm.Dataset;
-  const v = mode ? ds.slice([[], [col, col + 1]]) : ds.slice([[step, step + 1], [], [col, col + 1]]);
+  const v = mode ? ds.slice([[], [col, col + 1]]) : ds.slice([[k0, k1], [], [col, col + 1]]);
   if (v instanceof Float32Array) return Float64Array.from(v);
   assert.ok(v instanceof Float64Array, `${ds.path}: ${Object.prototype.toString.call(v)}`);
   return v;
@@ -1023,6 +1028,44 @@ function slabMatchesPerComponent(path: string): number {
           });
         }
         const twice = r.readNodalStep(s.id, [comps[0]!, comps[0]!], k);
+        assert.notEqual(twice[0], twice[1], "a component asked for twice gets its own array");
+        assert.ok(sameBits(twice[0]!, want[0]!) && sameBits(twice[1]!, want[0]!));
+      }
+    }
+  } finally {
+    f.close();
+    r.close();
+  }
+  return checked;
+}
+
+/** The ranges a stage's history scan can ask for: the whole history, each single step, and an inner range. */
+function rangesOf(nSteps: number): [number, number][] {
+  const out: [number, number][] = [[0, nSteps]];
+  for (let k = 0; k < nSteps; k++) out.push([k, k + 1]);
+  if (nSteps >= 3) out.push([1, nSteps - 1]);
+  return out;
+}
+
+/** readNodalRows over every range of every stage, in three selections and one twice, against the one-column reference (#2270). */
+function rowsMatchPerComponent(path: string): number {
+  const r = openLadruno(H5, path, { part: /\.part-\d+\.ladruno$/.test(path) });
+  const f = new h5wasm.File(path, "r");
+  let checked = 0;
+  try {
+    for (const s of r.index.stages) {
+      const comps = s.nodes?.components ?? [];
+      if (comps.length === 0) continue;
+      for (const [k0, k1] of rangesOf(s.nSteps)) {
+        const want = comps.map((c) => perComponentRows(f, r, s.id, c, k0, k1));
+        for (const order of [comps, [...comps].reverse(), comps.slice(1)]) {
+          const got = r.readNodalRows(s.id, order, k0, k1);
+          order.forEach((c, i) => {
+            assert.ok(sameBits(got[i]!, want[comps.indexOf(c)]!), `${path} ${s.id} steps ${k0}..${k1} ${c}`);
+            checked++;
+          });
+        }
+        const twice = r.readNodalRows(s.id, [comps[0]!, comps[0]!], k0, k1);
         assert.notEqual(twice[0], twice[1], "a component asked for twice gets its own array");
         assert.ok(sameBits(twice[0]!, want[0]!) && sameBits(twice[1]!, want[0]!));
       }
@@ -1064,6 +1107,37 @@ test("one step of six components in two DATA is two hyperslabs, not six", () => 
   }
 });
 
+test("readNodalRows' slab read returns the per-component bits, for every component over every range of every committed .ladruno (#2270)", () => {
+  const dir = fileURLToPath(new URL("../../fixtures/", import.meta.url));
+  const files = readdirSync(dir).filter((n) => n.endsWith(".ladruno")).sort();
+  assert.ok(files.length >= 10, `committed .ladruno fixtures: ${files.join(", ")}`);
+  for (const name of files) assert.ok(rowsMatchPerComponent(join(dir, name)) > 0, `${name} has nodal results`);
+});
+
+test("a range of steps of six components in two DATA is two hyperslabs, not six (#2270)", () => {
+  const proto = h5wasm.Dataset.prototype;
+  const slice = proto.slice;
+  const seen: string[] = [];
+  proto.slice = function (this: h5wasm.Dataset, ranges: Parameters<typeof slice>[0]) {
+    seen.push(`${this.path} ${JSON.stringify(ranges)}`);
+    return slice.call(this, ranges);
+  };
+  try {
+    withFile(fixture("ladruno_frame3d.ladruno"), (r) => {
+      const comps = ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "DISPLACEMENT/Uz", "ROTATION/Rx", "ROTATION/Ry", "ROTATION/Rz"];
+      const T = r.index.stages[0]!.nSteps;
+      seen.length = 0;
+      assert.equal(r.readNodalRows("stage_0", comps, 0, T).length, 6);
+      assert.deepEqual(seen, [`${DISP}/DATA [[0,${T}],[],[0,3]]`, `/MODEL_STAGE[1]/RESULTS/ON_NODES/ROTATION/DATA [[0,${T}],[],[0,3]]`]);
+      seen.length = 0;
+      r.readNodalRows("stage_0", ["DISPLACEMENT/Uz", "DISPLACEMENT/Uy"], 1, 3);
+      assert.deepEqual(seen, [`${DISP}/DATA [[1,3],[],[1,3]]`]);
+    });
+  } finally {
+    proto.slice = slice;
+  }
+});
+
 test("a float32 DATA widens to the per-component bits through the slab read", () => {
   const p = edited(TRUSS, (f) => {
     const g = f.create_group("MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY");
@@ -1081,6 +1155,8 @@ test("a float32 DATA widens to the per-component bits through the slab read", ()
     assert.deepEqual(Array.from(vz!), [11, 14, 17].map((i) => Math.fround(i / 3)));
   });
   assert.equal(slabMatchesPerComponent(p), 4 * (5 + 5 + 4));
+  // the whole history, four single steps and 1..3: six ranges
+  assert.equal(rowsMatchPerComponent(p), 6 * (5 + 5 + 4));
 });
 
 test("readColumnsBySlab reads each dataset once, over the asked columns only, and refuses a slab that is not whole rows", () => {
