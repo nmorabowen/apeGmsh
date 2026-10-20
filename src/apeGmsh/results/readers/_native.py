@@ -745,7 +745,7 @@ class NativeReader:
         )
 
         chunks_v, chunks_eidx, chunks_nc = [], [], []
-        # (group label, natural-coordinate width) per group read (#2221).
+        # (group label, natural-coordinate width) per group read.
         widths: list[tuple[str, int]] = []
         chunks_quat: list[ndarray] = []
         any_quat = False
