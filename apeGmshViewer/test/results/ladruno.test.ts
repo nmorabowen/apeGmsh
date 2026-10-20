@@ -1685,7 +1685,9 @@ test("#2324 review: a variable-length ASCII INFO@SPATIAL_DIM led by a UTF-8 BOM 
     });
     const f = new h5wasm.File(p, "r");
     try {
-      const m = (f.get("INFO") as h5wasm.Group).attrs.SPATIAL_DIM.metadata;
+      const attr = (f.get("INFO") as h5wasm.Group).attrs.SPATIAL_DIM;
+      assert.ok(attr !== undefined);
+      const m = attr.metadata;
       assert.deepEqual([m.type, m.vlen, m.cset], [3, true, 0], "a variable-length ASCII string");
     } finally {
       f.close();
