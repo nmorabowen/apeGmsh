@@ -181,12 +181,23 @@ with `build("tcl", flat=True)`, which leaves out the partitioned
 numberer/system auto-chain a partitioned archive records (#1832). The
 replay writes its declarations, commands and analysis chain in the order
 the archive's `/opensees/program` records (#2193), so no row is class B;
-a partitioned archive, whose program records the partitioned emit, keeps
-the fixed category order. Each replayed slot keeps the int/float type its
-declaration emits, recovered from `/opensees/decl_params` (#2194), so no
-row is class A either. The one oracle row that reaches a
-corpus model (`test_h5_decl_params::_broad_partitioned`, through
-`build_model`) stays a class-S row for that reason.
+a partitioned archive, whose program records the partitioned emit, sorts
+by the flat deck's section first and emit index second (#2277). Each
+replayed slot keeps the int/float type its declaration emits, recovered
+from `/opensees/decl_params` (#2194), so no row is class A either.
+
+One cell has a replayable twin instead of a row. The oracle's last row was
+class S: `test_h5_decl_params::_broad_partitioned` called `build_model`
+for `two_column_frame_partitioned / staged_partitioned / recording`, so its
+archive was bridge-only. That builder now rebuilds the same model (the
+geometry, the two-rank split, both stages and the recorders) on a real
+`FEMData`, so the oracle replays it and the ledger is empty (#2195).
+`test_roundtrip_oracle.py` holds the twin to this cell: its non-flat deck
+equals `staged_partitioned/recording.golden` byte for byte, except for the
+`# apeGmsh <VERSION>; backend stock` line. The cell pins
+`OpenSeesTarget(mode="stock")` and the twin pins no target, because the
+archive does not carry the target mode (#2278). The cell itself stays on
+`FEMStub`, so the goldens are unchanged.
 
 ## Determinism: normalised and masked fields
 
