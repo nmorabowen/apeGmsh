@@ -1827,9 +1827,9 @@ class SpatialDimInvalid(SpatialDimUnknown):
 
 # One ASCII decimal literal, ``_`` only between digits, inside the whitespace
 # ``float()`` itself skips (no U+FEFF, no U+001C..U+001F). The viewer's
-# ``reader/ladrunoInfo.ts`` PY_FLOAT, character for character (#2205, #2244).
+# ``reader/ladrunoInfo.ts`` PY_FLOAT, character for character.
 _SPATIAL_DIM_SPACE = (
-    "[\t\n\v\f\r \x85\xa0  -     　]*"
+    "[\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*"
 )
 _SPATIAL_DIM_DIGITS = "[0-9](?:_?[0-9])*"
 _SPATIAL_DIM_LITERAL = re.compile(

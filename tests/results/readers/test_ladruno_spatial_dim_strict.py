@@ -63,7 +63,7 @@ _VIEWER_REFUSED = [
     ("2.9", np.array([2.9])),
     ("'abc'", "abc"),
     ("[3, 2]", np.array([3, 2], np.int32)),
-    ("U+FEFF then 2", "﻿2"),
+    ("U+FEFF then 2", "\ufeff2"),
     ("U+001C then 2", "\x1c2"),
     ("fullwidth 2", "２"),
 ]
@@ -77,7 +77,7 @@ _VIEWER_READ = [
     ("'2'", "2", 2),
     ("' 2 '", " 2 ", 2),
     ("U+0085 around 2", "\x852\x85", 2),
-    ("U+3000 then 2", "　2", 2),
+    ("U+3000 then 2", "\u30002", 2),
 ]
 
 
@@ -135,7 +135,7 @@ def test_every_non_ascii_digit_is_refused() -> None:
 
 
 def test_non_ascii_digit_through_a_file_is_refused(tmp_path: Path) -> None:
-    for d in ("２", "٢", "\U0001d7d0", "२"):
+    for d in ("２", "\u0662", "\U0001d7d0", "\u0968"):
         with pytest.raises(SpatialDimInvalid):
             _dim_of(tmp_path, d)
 
