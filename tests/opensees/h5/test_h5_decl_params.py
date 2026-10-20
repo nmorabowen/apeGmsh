@@ -57,7 +57,7 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
-from apeGmsh.opensees import OpenSeesModel, OpenSeesTarget, apeSees
+from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees._internal.lineage import (
     MODEL_HASH_EXCLUDED_CHILDREN,
     compute_model_hash,
@@ -664,6 +664,7 @@ def _two_column_frame_partitioned(
     partitions: "Mapping[int, Mapping[str, list[int]]]" = _FRAME_PARTITIONS,
     stages: tuple[tuple[str, float, int], ...] = (
         ("gravity", 10.0, 2), ("push", -5.0, 1)),
+    mass: bool = False,
 ) -> apeSees:
     """The golden corpus's ``build_model("two_column_frame_partitioned",
     "staged_partitioned", "recording")`` recipe, on the real
@@ -671,16 +672,25 @@ def _two_column_frame_partitioned(
     ``"Base"``, the node, element and MPCO recorders, and one stage per
     ``(name, load on "Top", increments)``, each with its own pattern and
     the parallel static chain. ``partitions`` and ``stages`` exist for the
-    mutation proof; the corpus twin is :func:`_broad_partitioned`."""
-    ops = apeSees(
-        _two_column_frame_fem(partitions),
-        opensees=OpenSeesTarget(mode="stock"))
+    mutation proof; the corpus twin is :func:`_broad_partitioned`.
+
+    No ``OpenSeesTarget`` (T ruling on #2195): the golden pins
+    ``mode="stock"``, whose deck stamp is a provenance comment the archive
+    does not carry (#2278), so this twin's decks are stamp-free and the
+    golden-equality test compares them modulo that one line.
+
+    ``mass=True`` adds a lumped mass on ``"Top"`` (the S3b review, #2277):
+    a partitioned deck with both ``fix`` and ``mass`` lines, so a replay
+    that swaps those two flat sections differs from the bridge."""
+    ops = apeSees(_two_column_frame_fem(partitions))
     ops.model(ndm=3, ndf=6)
     transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
     ops.element.elasticBeamColumn(
         pg="Cols", transf=transf,
         A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
     ops.fix(pg="Base", dofs=(1,) * 6)
+    if mass:
+        ops.mass(pg="Top", values=(2.0, 2.0, 2.0, 0.0, 0.0, 0.0))
     ops.recorder.Node(
         file="out/node_disp.out", response="disp", pg="Top", dofs=(1, 2))
     ops.recorder.Element(
