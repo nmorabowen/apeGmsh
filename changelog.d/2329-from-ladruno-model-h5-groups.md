@@ -11,5 +11,11 @@ physical groups and labels. A `model_h5` from another model or another mesh
 warns `ModelFemMismatchWarning`, names the archive, and binds the file's
 `MODEL` group instead. Without `model_h5=` nothing changes.
 
+A FEMData-only archive (`fem.to_h5`, the raw-deck route) records no `ndm`.
+The coordinate check then compares over the file's own spatial dimension,
+taken from `INFO/SPATIAL_DIM` or the coordinate width. A file that gives no
+dimension refuses with `SpatialDimUnknown`, naming the file and the archive.
+`from_mpco` is unchanged.
+
 On a fork run of the two-node truss, the `pg=` and `label=` reads equal the
 same reads from the stock route's `.mpco` at `rtol=1e-12`.
