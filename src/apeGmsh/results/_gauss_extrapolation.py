@@ -59,7 +59,7 @@ A gmsh-built FEMData keys each element group by its gmsh type code. A
 FEMData read from a result file's own ``MODEL`` group (``.ladruno``,
 MPCO) keys it by ``-class_tag``, which names no topology, so each such
 element is resolved from its node count and the parent dimension its
-Gauss points live in (#2240). An element whose GP positions cannot be
+Gauss points live in. An element whose GP positions cannot be
 used (no shape functions for its topology, or rows that carry no
 natural coordinates) is averaged to its element mean, and one
 :class:`WarnGaussExtrapolationDegraded` per call names its class.
@@ -134,7 +134,7 @@ _LINEAR_COUNTERPART: dict[int, int] = {
 # "custom"`` class, and it calls the 6-node LadrunoLST triangle 3-D. Every
 # OpenSees / Ladruno class of these shapes numbers its corners first, in
 # the gmsh corner order its gmsh natural coordinates are written against
-# (#2228). Wedges and pyramids are left out: no fork class with a verified
+# (the GaussSlab contract). Wedges and pyramids are left out: no fork class with a verified
 # corner convention, so they warn rather than guess.
 _GMSH_CODE_BY_PARENT_DIM_NPE: dict[tuple[int, int], int] = {
     (1, 2): 1,     # Line2
