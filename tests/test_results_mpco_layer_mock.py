@@ -354,7 +354,8 @@ def _element_coords(class_name: str, u: np.ndarray, v: np.ndarray) -> np.ndarray
     """Corner nodes in connectivity order: a 2 x 1 quad, a 2 x 1 right
     triangle, or a quad's 9 nodes, off the origin."""
     o = np.array([3.0, -1.0, 2.0])
-    if LAYER_CATALOG[(class_name, "fiber_stress")].coord_system == "barycentric_tri":
+    if LAYER_CATALOG[(class_name, "fiber_stress")].coord_system.startswith(
+            "simplex_tri"):
         return np.array([o, o + 2 * u, o + v])
     corners = [o, o + 2 * u, o + 2 * u + v, o + v]
     if class_name == "ShellMITC9":
