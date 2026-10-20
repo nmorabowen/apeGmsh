@@ -30,6 +30,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
+import { openH5, type H5Openable } from "../reader/h5open.ts";
 import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { fileFromArgv, pairSet } from "./pairing.ts";
@@ -334,7 +335,7 @@ function timeRead(path: string, open: (h5: ResultsH5, path: string) => ResultsFi
 
 /** `chunks [a, b, c], deflate` or `contiguous`, of one dataset (read after the timed handle is closed). */
 function layoutOf(path: string, dataset: string): string {
-  const f = new h5wasm.File(path, "r");
+  const f = openH5(h5wasm as unknown as H5Openable<h5wasm.File>, path);
   try {
     if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path}`);
     const ds = f.get(dataset);
@@ -530,7 +531,7 @@ async function measureMpco(path: string, dataset: string) {
   let f: h5wasm.File | null = null;
   const t = performance.now();
   try {
-    f = new h5wasm.File(path, "r");
+    f = openH5(h5wasm as unknown as H5Openable<h5wasm.File>, path);
     // h5wasm returns a negative id instead of throwing when HDF5 refuses the file.
     if (Number(f.file_id) < 0) throw new Error("HDF5 could not open the file (truncated, or not HDF5)");
   } catch (err) {

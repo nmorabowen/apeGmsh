@@ -52,6 +52,14 @@ TA = (5 + 3 * np.sqrt(5.0)) / 20       # 4-point tet rule (a, b, b)
 TB = (5 - np.sqrt(5.0)) / 20
 
 
+def _node0_to_gmsh(rows: "list[list[float]]") -> np.ndarray:
+    """An element's node-0-first barycentric rows (column k = node k's
+    weight) in gmsh reference coordinates, the weights of nodes 1..d: the
+    frame every reader hands simplex GPs over in (#2228)."""
+    a = np.asarray(rows, dtype=np.float64)
+    return np.hstack([a, 1.0 - a.sum(axis=1, keepdims=True)])[:, 1:]
+
+
 def _hex27() -> np.ndarray:
     """LadrunoBrick20's 27 GPs in the element's own order (live
     ``integrationPoints``): corners, edge midpoints, faces, centroid."""
@@ -82,11 +90,13 @@ class Family:
 
 FAMILIES = [
     # BezierTri6 and BezierTet10: the live ``integrationPoints`` order.
+    # BezierTri6 writes gmsh (u, v) already; BezierTet10 writes its
+    # points node-0-first (BezierTet10.cpp GP4_L, N0 = L1^2).
     Family("BezierTri6", 33000, 3, STRESS_2D, False,
            np.array([[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]])),
     Family("BezierTet10", 33001, 4, STRESS_3D, False,
-           np.array([[TA, TB, TB], [TB, TA, TB], [TB, TB, TA],
-                     [TB, TB, TB]])),
+           _node0_to_gmsh([[TA, TB, TB], [TB, TA, TB], [TB, TB, TA],
+                           [TB, TB, TB]])),
     # LadrunoBrick.cpp:649-652: i, j, k over sg = {-1/sqrt3, +1/sqrt3},
     # x slowest.
     Family("LadrunoBrick", 33002, 8, STRESS_3D, False,
@@ -98,13 +108,14 @@ FAMILIES = [
     Family("LadrunoCST", 33008, 1, STRESS_2D, True,
            np.array([[1 / 3, 1 / 3]])),
     # LadrunoLST answers no integrationPoints; its order is the fork
-    # source's (LadrunoLST.cpp, the SixNodeTri anchors).
+    # source's (LadrunoLST.cpp, the SixNodeTri anchors), node-0-first.
     Family("LadrunoLST", 33016, 3, STRESS_2D, True,
-           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])),
+           _node0_to_gmsh([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])),
     Family("LadrunoBrick20", 33018, 27, STRESS_3D, False, _hex27()),
-    # SixNodeTri answers no integrationPoints either: SixNodeTri.cpp:127-132.
+    # SixNodeTri answers no integrationPoints either: SixNodeTri.cpp:127-132,
+    # node-0-first (SixNodeTri.cpp:1333: N0 = s(2s - 1)).
     Family("SixNodeTri", 209, 3, STRESS_2D, False,
-           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])),
+           _node0_to_gmsh([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])),
     # EightNodeQuad.cpp:127-144: corners counter-clockwise, then the
     # edge midpoints, then the centre.
     Family("EightNodeQuad", 208, 9, STRESS_2D, False,

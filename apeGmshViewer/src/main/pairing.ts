@@ -9,18 +9,27 @@
 // A set has one results slot (#2127; the T ruling of 2026-10-16): when both
 // results files sit beside the model, the file the user opened wins if it is
 // one of them; otherwise the `.ladruno` does. The other one is never read;
-// `unopenedSibling` names it so the banner can say so. A
-// `<stem>.part-<N>.ladruno` is refused by name: part sets are ADR 0122 slice 8.
+// `unopenedSibling` names it so the banner can say so.
+//
+// A partitioned run (ADR 0122 slice 8, #2188) leaves `<stem>.part-<N>.ladruno`
+// beside the model. Opening any part opens the set under the stem; the results
+// slot keeps the opened part's path, and main reads the whole part set from it
+// (reader/ladrunoParts.ts, which refuses an incomplete set by name). Opened from
+// the model, the slot is `<stem>.ladruno`, else the part set (part 0, or the
+// lowest-indexed part when part 0 is missing, so the set reader names it), else
+// `<stem>.results.h5`.
 //
 // The suffix is matched case-insensitively. The opened file keeps its own
 // spelling in the set; the siblings are probed under the conventional
 // (lower-case) suffixes the writers use. Paths compare case-insensitively
 // where the file system does (Windows, macOS): `samePath`.
 //
-// Pure apart from the `exists` probe, which the caller passes in, so the
-// rules are tested without a disk. No Electron import: the tests run in Node.
+// Pure apart from the `exists` probe and the directory `list` (default: the
+// disk's), which a caller can pass in, so the rules are tested without a disk.
+// No Electron import: the tests run in Node.
 
-import { isAbsolute, resolve } from "node:path";
+import { readdirSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 export type Kind = "model" | "geometry" | "results";
 
@@ -51,17 +60,15 @@ export function samePath(a: string | null, b: string | null, fold: boolean = FOL
   return fold ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-/** A partitioned run's part file (fork schema "File identity"); the same rule as reader/ladruno.ts. */
+/** A partitioned run's part file (fork schema "File identity"); the same rule as reader/ladrunoParts.ts. */
 const PART_FILE = /\.part-(\d+)\.ladruno$/i;
 
-/** The path's kind and stem; throws on a file the app does not open. */
+/** The path's kind and stem; throws on a file the app does not open. A part file is the results of its stem. */
 export function classify(path: string): { kind: Kind; stem: string } {
   const low = path.toLowerCase();
   const part = PART_FILE.exec(path);
-  if (part) {
-    throw new Error(
-      `${path} is part ${part[1]} of a partitioned .ladruno run; apeGmshViewer opens one <stem>.ladruno, and part-<N> sets arrive with ADR 0122 slice 8`,
-    );
+  if (part && part.index > 0 && !/[\\/]$/.test(path.slice(0, part.index))) {
+    return { kind: "results", stem: path.slice(0, part.index) };
   }
   for (const [suffix, kind] of SUFFIXES) {
     if (low.endsWith(suffix) && low.length > suffix.length) {
@@ -88,46 +95,77 @@ export function candidates(opened: string): Candidates {
   return c;
 }
 
-/** The other results file of a results path's stem: `.ladruno` beside `.results.h5`, and the reverse. */
-function otherResults(results: string): string {
-  const low = results.toLowerCase();
-  if (low.endsWith(".ladruno")) return `${results.slice(0, -".ladruno".length)}.results.h5`;
-  if (low.endsWith(".results.h5")) return `${results.slice(0, -".results.h5".length)}.ladruno`;
-  throw new Error(`not a results file: ${results}`);
+/** The names in a directory; none when it cannot be read. The default `list` of the functions below. */
+export function listDir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The path that stands for the stem's part set in the results slot: part 0
+ * when it exists, else the lowest-indexed part the directory holds (so a set
+ * that lost part 0 is still opened, and the set reader refuses it, naming
+ * index 0), else the part-0 name (absent).
+ */
+function partSlot(stem: string, exists: (p: string) => boolean, list: (dir: string) => readonly string[]): string {
+  const part0 = `${stem}.part-0.ladruno`;
+  if (exists(part0)) return part0;
+  const dir = dirname(stem);
+  const base = basename(stem);
+  let best: { index: number; path: string } | null = null;
+  for (const name of list(dir)) {
+    const m = PART_FILE.exec(name);
+    if (!m || !samePath(name.slice(0, m.index), base)) continue;
+    const p = join(dir, name);
+    if (exists(p) && (best === null || Number(m[1]) < best.index)) best = { index: Number(m[1]), path: p };
+  }
+  return best?.path ?? part0;
+}
+
+/** The stem's results files other than `results`, in slot order: `.ladruno`, the part set, `.results.h5`. */
+function otherResults(results: string, exists: (p: string) => boolean, list: (dir: string) => readonly string[]): string[] {
+  // A part file stands for its whole set: the set's other parts are not "other results".
+  const own = PART_FILE.test(results) ? 1 : /\.ladruno$/i.test(results) ? 0 : /\.results\.h5$/i.test(results) ? 2 : -1;
+  if (own < 0) throw new Error(`not a results file: ${results}`);
+  const { stem } = classify(results);
+  return [`${stem}.ladruno`, own === 1 ? "" : partSlot(stem, exists, list), `${stem}.results.h5`].filter((_, i) => i !== own);
 }
 
 /**
  * The set as the disk holds it now: each candidate that exists, and one
  * results file. An opened results file wins while it exists; otherwise the
- * `.ladruno` (ADR 0122 D1), else the `.results.h5`.
+ * `.ladruno` (ADR 0122 D1), else the part set (`partSlot`), else the `.results.h5`.
  */
-export function stemSet(c: Candidates, exists: (p: string) => boolean): OpenSet {
+export function stemSet(c: Candidates, exists: (p: string) => boolean, list: (dir: string) => readonly string[] = listDir): OpenSet {
   const kind = openedKind.get(c);
   if (kind === undefined) throw new Error("stemSet needs the Candidates that candidates() made");
   const has = (p: string) => (exists(p) ? p : null);
-  const other = otherResults(c.results);
-  // Opened from the model or geometry, `c.results` is `<stem>.results.h5`, so `other` is the `.ladruno`.
-  const results = kind === "results" ? (has(c.results) ?? has(other)) : (has(other) ?? has(c.results));
+  // Opened from the model or geometry, `c.results` is `<stem>.results.h5`, so the others are the `.ladruno` and the part set.
+  const first = (ps: string[]) => ps.map(has).find((p) => p !== null) ?? null;
+  const others = otherResults(c.results, exists, list);
+  const results = kind === "results" ? first([c.results, ...others]) : first([...others, c.results]);
   return { model: has(c.model), geometry: has(c.geometry), results };
 }
 
 /**
- * The stem's other results file when it exists beside `results`: the set
- * reads one results file, so this one is not opened (the banner names it).
+ * The stem's first other results file when it exists beside `results`: the set
+ * reads one results file (or one part set), so this one is not opened (the banner names it).
  */
-export function unopenedSibling(results: string, exists: (p: string) => boolean): string | null {
+export function unopenedSibling(results: string, exists: (p: string) => boolean, list: (dir: string) => readonly string[] = listDir): string | null {
   // A file read as results under another name (a fixture, `--mode=measure-results`) has no stem pair.
   if (!/\.(ladruno|results\.h5)$/i.test(results)) return null;
-  const other = otherResults(results);
-  return exists(other) ? other : null;
+  return otherResults(results, exists, list).find((p) => exists(p)) ?? null;
 }
 
 /** The set that opening `path` opens. The opened file must exist. */
-export function pairSet(path: string, exists: (p: string) => boolean): OpenSet {
+export function pairSet(path: string, exists: (p: string) => boolean, list: (dir: string) => readonly string[] = listDir): OpenSet {
   if (!isAbsolute(path)) throw new Error(`pairSet needs an absolute path; got ${path}`);
   const c = candidates(path);
   if (!exists(path)) throw new Error(`no such file: ${path}`);
-  return stemSet(c, exists);
+  return stemSet(c, exists, list);
 }
 
 export function sameSet(a: OpenSet | null, b: OpenSet | null, fold: boolean = FOLD_CASE): boolean {

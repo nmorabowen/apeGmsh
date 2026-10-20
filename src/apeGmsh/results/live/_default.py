@@ -33,6 +33,12 @@ recorder when it works, and it works when it returns a recorder tag. When
 it raises or returns no tag, no recorder was made, a file the probe created
 is deleted, and the classic recorders open one stage over the whole block.
 
+``model_h5`` is the bridge's archive or a FEMData archive (``fem.to_h5``,
+no ``/opensees`` zone). On the classic-recorder route a FEMData archive's
+missing facts (ndm, per-node ndf, element classes) are read from the live
+domain (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`,
+#2251), and the read embeds no ``/opensees`` zone.
+
 Modal records have no default route and refuse at ``__enter__``.
 """
 from __future__ import annotations
@@ -41,6 +47,9 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+import h5py
+
+from ...opensees._recorder_translate import LiveDomainFacts, live_ndm
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
@@ -144,8 +153,13 @@ class LiveDefault:
         the fork's suffix), so ``"run"`` records ``run.mpco`` on a stock
         build.
     model_h5
-        The bridge-written model archive (``ops.h5``) the live domain was
-        built from. Required: every route's read pairs with it.
+        The model archive the live domain was built from: the bridge's
+        (``ops.h5``) or a FEMData archive (``fem.to_h5``). Required: every
+        route's read pairs with it. A FEMData archive declares no ndm and
+        archives no per-node ndf or element classes, so the
+        classic-recorder route reads them from the live domain
+        (``getNDM``, ``getNDF``, ``eleType``; #2251) and records node
+        records only: it pairs no FEM element id with an OpenSees tag.
     ops
         The OpenSees module, or a stand-in for testing. Defaults to the
         module the bridge drives.
@@ -175,6 +189,9 @@ class LiveDefault:
         self._tag: Optional[int] = None
         self._live: Optional[LiveRecorders] = None
         self._model: Optional[OpenSeesModel] = None
+        #: The classic-recorder route over a FEMData archive (no
+        #: ``/opensees`` zone): read with no bridge zone embedded.
+        self._neutral = False
         self._build = "unknown"
 
     # ------------------------------------------------------------------
@@ -287,7 +304,17 @@ class LiveDefault:
             f"({reason}); recording classic recorder files in {out} instead, "
             f"one stage over the whole block.{dropped}"), stacklevel=3)
         self._model = OpenSeesModel.from_h5(self._model_h5)
-        live = LiveRecorders(self._spec, out, ops=self._ops, model=self._model)
+        deck_model: Any = self._model
+        if not _has_bridge_zone(self._model_h5):
+            # A FEMData archive: ndm, per-node ndf and element
+            # classes are read from the live domain. With no ops.model
+            # declared there is nothing to read, and the archive's own
+            # refusal ("declares no ndm") stands.
+            self._neutral = True
+            if live_ndm(self._ops) >= 1:
+                _refuse_element_records(self._spec, self._model_h5)
+                deck_model = LiveDomainFacts(self._ops, self._model)
+        live = LiveRecorders(self._spec, out, ops=self._ops, model=deck_model)
         live.__enter__()
         self._live = live
         try:
@@ -347,6 +374,11 @@ class LiveDefault:
             return Results.from_mpco(str(target), model_h5=str(self._model_h5))
         if self._route == "recorders":
             assert self._live is not None and self._model is not None
+            if self._neutral:
+                return _read_neutral_recorders(
+                    self._spec, target, self._model, self._live.stages,
+                    cache_root=cache_root,
+                )
             return Results.from_recorders(
                 self._spec, target, fem=self._model.fem,
                 cache_root=cache_root, model=self._model,
@@ -388,6 +420,68 @@ def _begin_quietly(live: LiveRecorders) -> None:
                 f"category={c!r}" in text for c in _UNRECORDED):
             continue
         warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+
+
+#: Categories whose records name elements by FEM id: the emit translates
+#: them through the model's ``(fem_eid, tag)`` pairing.
+_ELEMENT_CATEGORIES = ("elements", "gauss", "line_stations", "fibers")
+
+
+def _has_bridge_zone(model_h5: Path) -> bool:
+    """``model_h5`` holds the bridge's ``/opensees`` zone (``ops.h5``), not
+    only the neutral FEMData zones (``fem.to_h5``)."""
+    with h5py.File(str(model_h5), "r") as f:
+        return "opensees" in f
+
+
+def _refuse_element_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
+    """Refuse, by name, the records a FEMData archive cannot pair: it holds
+    no ``(fem_eid, tag)`` pairing, and identity is never assumed."""
+    named = [r.name for r in spec.records if r.category in _ELEMENT_CATEGORIES]
+    if named:
+        raise ValueError(
+            f"emit_default: records {named} name elements by FEM id, and "
+            f"{model_h5} is a FEMData archive (no /opensees zone), which "
+            "pairs no FEM id with an OpenSees element tag. Record nodes "
+            "only, or pass the bridge's model archive (ops.h5(...))."
+        )
+
+
+def _read_neutral_recorders(
+    spec: "ResolvedRecorderSpec",
+    out_dir: Path,
+    model: OpenSeesModel,
+    stages: "tuple[Any, ...]",
+    *,
+    cache_root: "str | Path | None",
+) -> Results:
+    """Read a FEMData-archive run's classic recorder files.
+
+    The transcode embeds no ``/opensees`` zone (the archive has none, and
+    :meth:`OpenSeesModel.to_h5` would refuse to write one), so the file
+    holds ``/meta`` and ``/model`` only; it is cached like
+    :meth:`Results.from_recorders` caches, keyed apart from every
+    model-bearing transcode. The emit refused every rotation the read
+    could not keep as written, so no read mask is owed.
+    """
+    from ..schema._versions import PARSER_VERSION
+    from ..transcoders import RecorderTranscoder
+    from ..writers import _cache
+
+    fem = model.fem
+    plan = RecorderTranscoder.stage_plan(stages)
+    source_files = [
+        f for *_, prefix in plan
+        for f in _cache.list_source_files(spec, out_dir, stage_id=prefix)
+    ]
+    key = _cache.compute_cache_key(
+        source_files, parser_version=PARSER_VERSION,
+        fem_snapshot_id=fem.snapshot_id, model_token=None, stages=plan,
+    )
+    cached_h5, _ = _cache.cache_paths(_cache.resolve_cache_root(cache_root), key)
+    if not cached_h5.exists():
+        RecorderTranscoder(spec, out_dir, cached_h5, fem, stages=stages).run()
+    return Results.from_native(cached_h5, fem=fem, model=model)
 
 
 def _is_tag(tag: object) -> bool:

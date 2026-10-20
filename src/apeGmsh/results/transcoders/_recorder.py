@@ -56,6 +56,7 @@ from ...opensees._response_catalog import (
     unflatten_nodal,
 )
 from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
+from ..readers._out_station_slicing import line_station_count, require_line_stations
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..readers._out_fiber_io import read_fiber_record, read_per_material_gauss, write_fiber_records
 from ..spec._emit import (
@@ -480,14 +481,9 @@ class RecorderTranscoder:
             )
         n_elements = len(rec.element_ids)
         gpx_data_cols = first_gpx_row.size - 1   # subtract -time column
-        if gpx_data_cols % n_elements != 0:
-            raise ValueError(
-                f"{gpx_lr.file_path}: {gpx_data_cols} data columns is "
-                f"not divisible by {n_elements} elements. The integration"
-                f"Points file should be element-major with n_IP "
-                f"columns per element."
-            )
-        n_ip = gpx_data_cols // n_elements
+        # A bound model's per-element counts are checked before the columns divide.
+        n_ip = line_station_count(rec, gpx_data_cols, gpx_lr.file_path, self._model_h5_src,
+                                  self._spec.fem_snapshot_id)
         # Reshape to (E, n_IP) of physical xi*L.
         xi_phys = first_gpx_row[1:].reshape(n_elements, n_ip)
 
@@ -500,6 +496,7 @@ class RecorderTranscoder:
         xi_natural = np.empty_like(xi_phys)
         for i, L in enumerate(element_lengths):
             xi_natural[i] = normalise_integration_points(xi_phys[i], L)
+        require_line_stations(rec, xi_natural, gpx_lr.file_path, self._model_h5_src, self._spec.fem_snapshot_id)
 
         # ── Read the section.force file: total cols = 1 + E*n_IP*K ──
         first_section_row = np.loadtxt(

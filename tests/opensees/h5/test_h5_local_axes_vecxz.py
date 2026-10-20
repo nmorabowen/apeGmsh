@@ -36,8 +36,11 @@ def test_transf_arg_tail_index_vocabulary() -> None:
     # after connectivity → args-tail index 0 (not in the registry).
     assert "forceBeamColumn" in _FORCE_DISP_BEAMS
     assert "dispBeamColumn" in _FORCE_DISP_BEAMS
+    assert "LadrunoDispBeamColumn" in _FORCE_DISP_BEAMS
     assert _transf_arg_tail_index("forceBeamColumn", 3, R) == 0
     assert _transf_arg_tail_index("dispBeamColumn", 2, R) == 0
+    assert _transf_arg_tail_index("LadrunoDispBeamColumn", 3, R) == 0
+    assert _transf_arg_tail_index("LadrunoDispBeamColumn", 2, R) == 0
 
     # elasticBeamColumn: slots_3d drops the leading "nodes" prefix, so
     # the tail index is slots.index("transfTag") - 1.
@@ -45,6 +48,10 @@ def test_transf_arg_tail_index_vocabulary() -> None:
     #   2d = (nodes, A, E, Iz, transfTag)            → 3
     assert _transf_arg_tail_index("elasticBeamColumn", 3, R) == 6
     assert _transf_arg_tail_index("elasticBeamColumn", 2, R) == 3
+
+    # LadrunoIMKBeam: same inline section property prefix as elasticBeamColumn
+    assert _transf_arg_tail_index("LadrunoIMKBeam", 3, R) == 6
+    assert _transf_arg_tail_index("LadrunoIMKBeam", 2, R) == 3
 
     # ElasticTimoshenkoBeam:
     #   3d = (nodes, E, G, A, Jx, Iy, Iz, Avy, Avz, transfTag) → 8

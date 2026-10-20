@@ -2189,14 +2189,15 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
     OpenSees command (Ladruno fork, ``MAT_TAG`` **33003**)::
 
         uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf \
-            [-penalty K] [-penaltyRatio r] [-exp | -linear]
+            [-penalty K] [-penaltyRatio r] [-exp | -linear] \
+            [-pm P0 [alpha]] [-implex]
 
     The discrete cohesive rotation-jump law ``M([[theta]])`` that carries a
     fracture energy ``Gf`` per hinge, used as the embedded strong-discontinuity
-    hinge of ``LadrunoDispBeamColumn`` (``-hinge``). A rigid pre-peak penalty
-    (guarded so it never falls below the snapback floor ``Mc^2/(2 Gf)``)
-    followed by an exponential (default) or linear softening envelope
-    calibrated so ``∫ M d[[theta]] == Gf``.
+    hinge of ``LadrunoDispBeamColumn`` (``-hinge*``) or ``LadrunoIMKBeam``. A
+    rigid pre-peak penalty (guarded so it never falls below the snapback floor
+    ``Mc^2/(2 Gf)``) followed by an exponential (default) or linear softening
+    envelope calibrated so ``∫ M d[[theta]] == Gf``.
 
     .. note::
        Fork-only. Emission produces a deck line on any build; the material is
@@ -2219,6 +2220,11 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
     softening
         Softening envelope shape: ``"exponential"`` (default, ``-exp``) or
         ``"linear"`` (``-linear``).
+    pm
+        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
+        (``-pm P0 [alpha]``, ``P0 > 0``).
+    implex
+        If ``True``, append ``-implex`` for IMPLEX integration.
     """
 
     _SOFTENING: ClassVar[frozenset[str]] = frozenset({"exponential", "linear"})
@@ -2228,6 +2234,8 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
     penalty: float | None = None
     penalty_ratio: float = 1000.0
     softening: str = "exponential"
+    pm: float | tuple[float, float] | None = None
+    implex: bool = False
 
     def __post_init__(self) -> None:
         if self.Mc <= 0:
@@ -2249,6 +2257,38 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
                 "LadrunoCohesiveHinge: softening must be one of "
                 f"{sorted(self._SOFTENING)}, got {self.softening!r}"
             )
+        if self.pm is not None:
+            if isinstance(self.pm, tuple):
+                if len(self.pm) != 2:
+                    raise ValueError(
+                        "LadrunoCohesiveHinge: pm tuple must have length 2 "
+                        f"(P0, alpha), got {self.pm!r}"
+                    )
+                p0, alpha = self.pm
+                if isinstance(p0, bool) or not (p0 > 0) or p0 == float("inf"):
+                    raise ValueError(
+                        "LadrunoCohesiveHinge: pm P0 must be finite and > 0, "
+                        f"got {p0!r}"
+                    )
+                if (
+                    isinstance(alpha, bool)
+                    or not (alpha == alpha)
+                    or alpha in (float("inf"), float("-inf"))
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHinge: pm alpha must be finite, "
+                        f"got {alpha!r}"
+                    )
+            else:
+                if (
+                    isinstance(self.pm, bool)
+                    or not (self.pm > 0)
+                    or self.pm == float("inf")
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHinge: pm P0 must be finite and > 0, "
+                        f"got {self.pm!r}"
+                    )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | str] = [self.Mc, self.Gf]
@@ -2258,6 +2298,13 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
             args += ["-penaltyRatio", self.penalty_ratio]
         if self.softening == "linear":
             args.append("-linear")
+        if self.pm is not None:
+            if isinstance(self.pm, tuple):
+                args += ["-pm", float(self.pm[0]), float(self.pm[1])]
+            else:
+                args += ["-pm", float(self.pm)]
+        if self.implex:
+            args.append("-implex")
         emitter.uniaxialMaterial("LadrunoCohesiveHinge", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:

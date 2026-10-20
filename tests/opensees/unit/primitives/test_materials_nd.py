@@ -1200,11 +1200,29 @@ class TestLadrunoCohesiveHingeBiaxial:
         LadrunoCohesiveHingeBiaxial(
             Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0,
             softening="linear", penalty_ratio=500.0, bk_eta=2.0,
+            pm=(2.5e6, 1.5), implex=True,
         )._emit(rec, tag=2)
         assert rec.calls[0][1] == (
             "LadrunoCohesiveHingeBiaxial", 2, 5e5, 1200.0, 3e5, 900.0,
             "-linear", "-penaltyRatio", 500.0, "-bk", 2.0,
+            "-pm", 2.5e6, 1.5, "-implex",
         )
+
+    def test_emit_with_scalar_pm(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0, pm=2.0e6,
+        )._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            "LadrunoCohesiveHingeBiaxial", 3, 5e5, 1200.0, 3e5, 900.0,
+            "-pm", 2.0e6,
+        )
+
+    @pytest.mark.parametrize("bad_pm", [0.0, -1.0, (0.0, 1.0), (1e6, float("nan"))])
+    def test_rejects_bad_pm(self, bad_pm: float | tuple[float, float]) -> None:
+        with pytest.raises(ValueError, match="pm"):
+            LadrunoCohesiveHingeBiaxial(
+                Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0, pm=bad_pm)
 
     def test_dependencies_is_empty(self) -> None:
         assert LadrunoCohesiveHingeBiaxial(
@@ -1224,6 +1242,7 @@ class TestLadrunoCohesiveHingeBiaxial:
         with pytest.raises(ValueError, match="bk_eta must be > 0"):
             LadrunoCohesiveHingeBiaxial(
                 Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0, bk_eta=0.0)
+
 
 
 # ---------------------------------------------------------------------------

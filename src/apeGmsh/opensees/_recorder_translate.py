@@ -22,7 +22,7 @@ through these tables.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ._element_capabilities import (
     SIGMA_ZZ_ELEMENT_CLASSES,
@@ -340,7 +340,12 @@ def model_node_deck_dofs(
     """:func:`node_record_deck_dofs` over a built ``OpenSeesModel``: its
     ``ndm``, ``nodes_ndf`` and, for a rotational slot, the rotation roles
     of its elements (:func:`~apeGmsh.opensees._readback.rotation_roles_from_tokens`),
-    the table the ``recorder.declare`` emit and ``.read`` use."""
+    the table the ``recorder.declare`` emit and ``.read`` use.
+
+    A :class:`LiveDomainFacts` (a FEMData archive beside a live domain)
+    answers from the live domain instead (#2251)."""
+    if isinstance(model, LiveDomainFacts):
+        return model.node_deck_dofs(slot_dofs, node_ids, where=where)
     ndm = int(model.ndm)  # type: ignore[attr-defined]
     if ndm < 1:
         raise ValueError(
@@ -431,6 +436,416 @@ def model_h5_rotation_roles(
         OpenSeesModel.from_h5(model_h5),
         tuple(int(n) for n in node_ids), where=where,
     )
+
+
+#: ``ops.eleType`` class name -> the ``element`` token of the bridge class
+#: whose family it is (:data:`~._readback._CLASS_FOR_TOKEN`), so a live
+#: domain the bridge did not build classifies its rotational DOF slots by
+#: the same family tables. Each name is what stock openseespy
+#: 3.7.1 answers for an element that token makes; a class not listed is
+#: unknown, and blocks the rotational slots of the nodes it touches and
+#: of element-less nodes, as an unknown token does.
+_TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
+    "ElasticBeam2d": "elasticBeamColumn",
+    "ElasticBeam3d": "elasticBeamColumn",
+    "ForceBeamColumn2d": "forceBeamColumn",
+    "ForceBeamColumn3d": "forceBeamColumn",
+    "DispBeamColumn2d": "dispBeamColumn",
+    "DispBeamColumn3d": "dispBeamColumn",
+    "ElasticTimoshenkoBeam2d": "ElasticTimoshenkoBeam",
+    "ElasticTimoshenkoBeam3d": "ElasticTimoshenkoBeam",
+    "ShellMITC4": "ShellMITC4",
+    "ShellDKGQ": "ShellDKGQ",
+    "ASDShellQ4": "ASDShellQ4",
+    "ASDShellT3": "ASDShellT3",
+    "ZeroLength": "zeroLength",
+    "ZeroLengthSection": "zeroLengthSection",
+    "CoupledZeroLength": "CoupledZeroLength",
+    "TwoNodeLink": "twoNodeLink",
+    "Truss": "Truss",
+    "CorotTruss": "CorotTruss",
+    "InertiaTruss": "InertiaTruss",
+    "FourNodeQuad": "quad",
+    "Tri31": "tri31",
+    "SixNodeTri": "tri6n",
+    "FourNodeTetrahedron": "FourNodeTetrahedron",
+    "TenNodeTetrahedron": "TenNodeTetrahedron",
+    "Brick": "stdBrick",
+}
+
+
+def _live_int(value: object, query: str) -> int:
+    """The one integer an ``ops`` query answers (openseespy returns it as a
+    one-element list); anything else raises, naming the query."""
+    if isinstance(value, (list, tuple)) and len(value) == 1:
+        value = value[0]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"ops.{query} answered {value!r}, not one integer; the live "
+            "domain's DOF facts cannot be read from this module.")
+    return value
+
+
+def live_ndm(ops: object) -> int:
+    """``ops.getNDM()``: the live domain's spatial dimension, ``0`` when no
+    ``ops.model`` has been declared."""
+    return _live_int(ops.getNDM(), "getNDM()")  # type: ignore[attr-defined]
+
+
+def _same_position(coords: "ndarray") -> float:
+    """The distance under which two FEM nodes share one position:
+    ``1e-9`` of the coordinate scale."""
+    import numpy as np
+
+    return 1e-9 * max(float(np.abs(coords).max(initial=0.0)), 1.0)
+
+
+#: Candidate pairs :func:`_near_points` forms at once (about 8 arrays of
+#: this length are alive per chunk).
+_PAIR_BUDGET = 4_000_000
+
+
+def _near_points(
+    coords: "ndarray", rows: "ndarray", h: float, same: float,
+) -> "tuple[ndarray, ndarray]":
+    """For each point ``coords[rows]``: the nearest other point farther
+    than ``same`` among the ``3**d`` grid cells of side ``h`` around it
+    (``inf`` when there is none), and whether another point lies within
+    ``same`` of it.
+
+    Every point within ``h`` of a query lies in those cells, so a nearest
+    distance at most ``h`` is exact. NumPy only: cells are matched by
+    ``np.unique`` over integer cell tuples, so no cell index can overflow.
+    The query rows are taken in chunks of at most :data:`_PAIR_BUDGET`
+    candidate pairs (a single row may exceed it alone), so a dense cluster
+    bounds the memory, not the square of its cell's population.
+    """
+    import itertools
+
+    import numpy as np
+
+    n, d = coords.shape
+    cell = np.floor((coords - coords.min(axis=0)) / h).astype(np.int64)
+    offs = np.array(list(itertools.product((-1, 0, 1), repeat=d)),
+                    dtype=np.int64)
+    k = len(offs)
+    probe = (cell[rows][:, None, :] + offs[None, :, :]).reshape(-1, d)
+    inv = np.unique(np.vstack([cell, probe]), axis=0,
+                    return_inverse=True)[1].ravel()
+    order = np.argsort(inv[:n], kind="stable")
+    sorted_cells = inv[:n][order]
+    lo = np.searchsorted(sorted_cells, inv[n:], "left")
+    cnt = np.searchsorted(sorted_cells, inv[n:], "right") - lo
+    per_row = np.cumsum(cnt.reshape(len(rows), k).sum(axis=1))
+    shared = np.zeros(len(rows), dtype=bool)
+    best = np.full(len(rows), np.inf)
+    start = 0
+    while start < len(rows):
+        done = int(per_row[start - 1]) if start else 0
+        stop = max(start + 1, int(np.searchsorted(
+            per_row, done + _PAIR_BUDGET, "right")))
+        c = cnt[start * k:stop * k]
+        owner = start + np.repeat(np.arange((stop - start) * k) // k, c)
+        first = np.repeat(lo[start * k:stop * k], c)
+        step = np.arange(int(c.sum())) - np.repeat(np.cumsum(c) - c, c)
+        cand = order[first + step]
+        dist = np.linalg.norm(coords[cand] - coords[rows[owner]], axis=1)
+        other = cand != rows[owner]
+        shared[owner[other & (dist <= same)]] = True
+        far = other & (dist > same)
+        np.minimum.at(best, owner[far], dist[far])
+        start = stop
+    return best, shared
+
+
+def _identity_tolerances(coords: "ndarray", rows: "ndarray") -> "ndarray":
+    """A quarter of each ``coords[rows]`` point's distance to the nearest
+    point of ``coords`` at another position.
+
+    Within that radius a point is nearer its own node than any other
+    node at another position. Points closer than :func:`_same_position`
+    share one position (coincident constraint nodes): coordinates cannot
+    tell them apart, so they do not shrink each other's radius, and
+    :meth:`LiveDomainFacts._check_shared_positions` tells them apart by
+    element instead. A point with no other position gets the
+    :func:`_same_position` floor.
+
+    The search bins the points on a grid near the mean spacing and grows
+    the cells fourfold for the points whose nearest neighbour lies
+    farther than one cell, so a graded mesh costs a few passes, not a
+    quadratic search.
+    """
+    import numpy as np
+
+    same = _same_position(coords)
+    nearest = np.full(len(rows), np.inf)
+    spans = np.ptp(coords, axis=0)
+    live = spans > same
+    if live.any() and len(coords) > 1:
+        h = max(float(np.prod(spans[live]) / len(coords))
+                ** (1.0 / int(live.sum())), 2.0 * same)
+        diag = float(np.linalg.norm(spans))
+        todo = np.arange(len(rows))
+        while todo.size:
+            best, _ = _near_points(coords, rows[todo], h, same)
+            done = (best <= h) | (h > diag)
+            nearest[todo[done]] = best[done]
+            todo = todo[~done]
+            h *= 4.0
+    out = 0.25 * nearest
+    out[~np.isfinite(out)] = same
+    return np.asarray(np.maximum(out, same))
+
+
+class LiveDomainFacts:
+    """The node DOF facts of the live domain ``ops`` holds, standing in for
+    the model on the emit side when the model archive is a FEMData archive
+    (``fem.to_h5``: no ``/opensees`` zone, no declared ndm; #2251).
+
+    Each fact is read from the live domain, never inferred from the
+    FEMData: ``getNDM()``, ``getNDF(node)`` for each node a record names,
+    and ``eleType`` / ``eleNodes`` of every element for the rotation
+    roles (:data:`_TOKEN_FOR_LIVE_CLASS`). Each recorded node's
+    ``nodeCoord`` must be the FEM node's first ``ndm`` coordinates, so the
+    tag names the same node in both. ``lineage`` and ``elements()``
+    are the archive's, so the snapshot check and the element pairing
+    (none, in a FEMData archive) are the archive's own.
+
+    A rotation is recorded only where it reads back as written: a FEMData
+    archive holds no ``/opensees/nodes_ndf``, so the read side cannot mask
+    a padded column (:func:`mask_absent_rotations`). A rotational slot a
+    recorded node's layout lacks, or that its elements do not establish,
+    refuses by name.
+    """
+
+    def __init__(self, ops: object, archive: object) -> None:
+        ndm = live_ndm(ops)
+        if ndm < 1:
+            raise ValueError(
+                "LiveDomainFacts: the live domain declares no ndm "
+                f"(getNDM() = {ndm}); build the model with ops.model(...) "
+                "before recording it.")
+        self._ops = ops
+        self._archive = archive
+        self._ndm = ndm
+        #: The FEM's first ``ndm`` coordinates and its ``{node: row}``,
+        #: built on first use, and the nodes already shown to be the FEM's.
+        self._coords: "ndarray | None" = None
+        self._row: "dict[int, int]" = {}
+        self._verified: "set[int]" = set()
+
+    @property
+    def ndm(self) -> int:
+        """``ops.getNDM()`` of the live domain."""
+        return self._ndm
+
+    @property
+    def lineage(self) -> object:
+        """The archive's lineage (its ``fem_hash`` is the FEMData's)."""
+        return self._archive.lineage  # type: ignore[attr-defined]
+
+    def elements(self) -> "tuple[Any, ...]":
+        """The archive's element records: its ``(fem_eid, tag)`` pairing."""
+        return tuple(self._archive.elements())  # type: ignore[attr-defined]
+
+    def nodes_ndf(self, node_ids: "Iterable[int]", *, where: str) -> "dict[int, int]":
+        """``{node: ops.getNDF(node)}`` over ``node_ids``; a node the live
+        domain does not hold raises, naming it."""
+        ops = self._ops
+        built = {int(n) for n in ops.getNodeTags()}  # type: ignore[attr-defined]
+        wanted = [int(n) for n in node_ids]
+        missing = [n for n in wanted if n not in built]
+        if missing:
+            raise ValueError(
+                f"{where}: nodes {missing[:10]} are not in the live domain, "
+                "so the DOFs each records cannot be read from it. Record "
+                "the nodes the deck built.")
+        self._check_coords(list(dict.fromkeys(wanted)), where=where)
+        return {n: _live_int(ops.getNDF(n), f"getNDF({n})")  # type: ignore[attr-defined]
+                for n in dict.fromkeys(wanted)}
+
+    def _check_coords(self, nodes: "list[int]", *, where: str) -> None:
+        """Refuse, by node id, a recorded node the live domain does not
+        show to be the FEM node of that tag.
+
+        A tag match alone does not make the live node the FEM node: a deck
+        built from another FEMData shares tags, and a planar deck of a
+        column along global Z maps (x, z) to (x, y), so its
+        ``displacement_y`` would be the FEM's z motion. So the live
+        ``nodeCoord`` must be the FEM node's first ``ndm`` coordinates:
+        exactly, or within the node's own tolerance
+        (:func:`_identity_tolerances`), which a deck's rounding (6
+        significant digits, float32, millimetre decimals) on a mesh coarser
+        than the rounding stays inside. Coordinates cannot tell apart nodes
+        at one position, so those are checked by element
+        (:meth:`_check_shared_positions`).
+        """
+        import numpy as np
+
+        nodes = [n for n in nodes if n not in self._verified]
+        if not nodes:
+            return
+        if self._coords is None:
+            fem_nodes = self._archive.fem.nodes  # type: ignore[attr-defined]
+            self._row = {int(n): i for i, n in enumerate(
+                np.asarray(fem_nodes.ids, dtype=np.int64))}
+            self._coords = np.asarray(
+                fem_nodes.coords, dtype=np.float64)[:, :self._ndm]
+        coords, row = self._coords, self._row
+        absent = [n for n in nodes if n not in row]
+        if absent:
+            raise ValueError(
+                f"{where}: nodes {absent[:10]} are not in the FEMData the "
+                "archive holds, so whether the live node is the FEM node "
+                "cannot be checked.")
+        moved: "list[tuple[int, list[float], list[float]]]" = []
+        inexact: "list[tuple[int, ndarray]]" = []
+        for n in nodes:
+            xyz = self._ops.nodeCoord(n)  # type: ignore[attr-defined]
+            live = np.asarray(xyz, dtype=np.float64)
+            fem = coords[row[n]]
+            if live.shape != fem.shape:
+                moved.append((n, live.tolist(), fem.tolist()))
+            elif not np.array_equal(live, fem):
+                inexact.append((n, live))
+        if inexact:
+            tols = _identity_tolerances(
+                coords, np.array([row[n] for n, _ in inexact]))
+            moved.extend(
+                (n, live.tolist(), coords[row[n]].tolist())
+                for (n, live), tol in zip(inexact, tols.tolist())
+                if float(np.linalg.norm(live - coords[row[n]])) > tol)
+        if moved:
+            moved.sort()
+            listed = "; ".join(f"node {n}: live {lv}, FEM {fv}"
+                               for n, lv, fv in moved[:3])
+            more = len(moved) - min(len(moved), 3)
+            raise ValueError(
+                f"{where}: the live domain's node coordinates are not the "
+                f"FEMData's first {self._ndm} at {listed}"
+                + (f"; and {more} more node(s)" if more else "")
+                + ". The deck was not built from this FEMData (or maps its "
+                "axes), so its DOFs would record another node's or another "
+                "axis's motion. Pass the FEMData archive the deck was built "
+                "from, with the deck's node coordinates.")
+        self._check_shared_positions(nodes, where=where)
+        self._verified.update(nodes)
+
+    def _check_shared_positions(self, nodes: "list[int]", *, where: str) -> None:
+        """Refuse a recorded node that shares its position with another FEM
+        node unless the live elements pin its tag.
+
+        Two nodes at one position (a zero-length spring's ends, an
+        ``equalDOF`` or rigid-link pair) match any coordinate check, so a
+        deck that swaps their tags would record each one's motion under
+        the other. Each FEM element touching such a node must exist live
+        under its FEM id with ``eleNodes`` equal to its FEM connectivity,
+        in order; a shared-position node no FEM element touches refuses
+        by name, since nothing tells its tag from the other node's.
+        """
+        import numpy as np
+
+        coords, row = self._coords, self._row
+        assert coords is not None
+        same = _same_position(coords)
+        _, shared = _near_points(
+            coords, np.array([row[n] for n in nodes]), 2.0 * same, same)
+        at = [n for n, s in zip(nodes, shared.tolist()) if s]
+        if not at:
+            return
+        wanted = np.array(at, dtype=np.int64)
+        touching: "dict[int, list[tuple[int, list[int]]]]" = {n: [] for n in at}
+        for group in self._archive.fem.elements:  # type: ignore[attr-defined]
+            conn = np.asarray(group.connectivity, dtype=np.int64)
+            hit = np.isin(conn, wanted)
+            for i in np.flatnonzero(hit.any(axis=1)):
+                nodes_i = [int(v) for v in conn[i]]
+                for v in conn[i][hit[i]]:
+                    touching[int(v)].append((int(group.ids[i]), nodes_i))
+        lone = [n for n in at if not touching[n]]
+        if lone:
+            raise ValueError(
+                f"{where}: nodes {lone[:10]} share their position with "
+                "another FEM node, and no FEM element touches them, so "
+                "neither coordinates nor elements tell their live tags from "
+                "the other node's. Drop them from the record, or record "
+                "them through the bridge's model archive (ops.h5(...)).")
+        ops = self._ops
+        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+        bad: "list[str]" = []
+        for n in at:
+            for eid, conn_i in touching[n]:
+                live = ([int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
+                        if eid in live_tags else None)
+                if live != conn_i:
+                    bad.append(
+                        f"node {n}: FEM element {eid} has nodes {conn_i}, "
+                        + ("no live element has that tag" if live is None
+                           else f"the live element {eid} has {live}"))
+                    break
+        if bad:
+            raise ValueError(
+                f"{where}: nodes that share their position with another FEM "
+                "node are not pinned by their elements: "
+                + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". The deck may have swapped the tags of coincident nodes, "
+                "which would record each one's motion under the other.")
+
+    def rotation_roles(self, node_ids: "Iterable[int]") -> "RotationRoles":
+        """The rotation roles of ``node_ids`` under the live domain's
+        element classes, by the family tables the bridge path uses."""
+        import numpy as np
+
+        from ._readback import _CLASS_FOR_TOKEN, _roles_from_rows
+
+        ops = self._ops
+        by_class: "dict[str, list[int]]" = {}
+        for tag in ops.getEleTags():  # type: ignore[attr-defined]
+            name = str(ops.eleType(int(tag)))  # type: ignore[attr-defined]
+            by_class.setdefault(name, []).extend(
+                int(n) for n in ops.eleNodes(int(tag)))  # type: ignore[attr-defined]
+        rows = []
+        for name, nodes in by_class.items():
+            token = _TOKEN_FOR_LIVE_CLASS.get(name)
+            cls = None if token is None else _CLASS_FOR_TOKEN[token]
+            rows.append((cls, name, np.unique(np.asarray(nodes, dtype=np.int64))))
+        return _roles_from_rows(rows, node_ids)
+
+    def node_deck_dofs(
+        self, slot_dofs: tuple[int, ...], node_ids: tuple[int, ...], *,
+        where: str,
+    ) -> tuple[int, ...]:
+        """:func:`node_record_deck_dofs` from the live domain's facts."""
+        from ._internal.build.recorders import _node_layout
+
+        ndf = self.nodes_ndf(node_ids, where=where)
+        names = ("x", "y", "z", "rx", "ry", "rz")
+        for d in slot_dofs:
+            slot = int(d) - 1
+            if not 3 <= slot < 6:
+                continue
+            lacking = [n for n, k in ndf.items()
+                       if slot not in _node_layout(k, self._ndm)]
+            if lacking:
+                raise ValueError(
+                    f"{where}: nodes {lacking[:10]} carry no {names[slot]!r} "
+                    f"DOF in the live domain (ndm={self._ndm}, ndf "
+                    f"{ndf[lacking[0]]}). A FEMData archive holds no per-node "
+                    "ndf to mask their padded column on read; record them in "
+                    "a separate record without that component."
+                )
+        roles: "list[RotationRoles]" = []
+
+        def refusal(node: int) -> "str | None":
+            if not roles:
+                roles.append(self.rotation_roles(node_ids))
+            return roles[0].refusal(int(node))
+
+        return node_record_deck_dofs(
+            slot_dofs, node_ids, ndf, self._ndm,
+            rotation_refusal=refusal, where=where,
+        )
 
 
 def mask_absent_rotations(

@@ -314,9 +314,9 @@ class TestLayerCatalog:
         ("ASDShellQ4",  "isoparametric"),
         ("ShellMITC4",  "isoparametric"),
         ("ShellMITC9",  "isoparametric"),
-        ("ASDShellT3",  "barycentric_tri"),
-        ("ShellDKGT",   "barycentric_tri"),
-        ("ShellNLDKGT", "barycentric_tri"),
+        ("ASDShellT3",  "simplex_tri_gmsh"),
+        ("ShellDKGT",   "simplex_tri_node0"),
+        ("ShellNLDKGT", "simplex_tri_node0"),
     ])
     def test_coord_system_per_class(
         self, class_name: str, expected_cs: str,
