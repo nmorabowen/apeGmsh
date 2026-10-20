@@ -113,7 +113,20 @@ Recorder wiring used during a live OpenSees analysis.
 
 ::: apeGmsh.results.live._mpco.LiveMPCO
 
-### `DomainCapture`
+### `LiveDefault`
+
+The default route, returned by `ResolvedRecorderSpec.emit_default`.
+
+::: apeGmsh.results.live._default.LiveDefault
+
+### `read_deck_mpco`
+
+::: apeGmsh.results.live._default.read_deck_mpco
+
+### `DomainCapture` (legacy)
+
+The older in-process capture route. The guides teach `LiveDefault`
+instead; this class stays until its removal lands.
 
 ::: apeGmsh.results.capture._domain.DomainCapture
 
