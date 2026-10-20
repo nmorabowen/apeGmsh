@@ -607,9 +607,16 @@ class LiveDomainFacts:
     and ``eleType`` / ``eleNodes`` of every element for the rotation
     roles (:data:`_TOKEN_FOR_LIVE_CLASS`). Each recorded node's
     ``nodeCoord`` must be the FEM node's first ``ndm`` coordinates, so the
-    tag names the same node in both. ``lineage`` and ``elements()``
-    are the archive's, so the snapshot check and the element pairing
-    (none, in a FEMData archive) are the archive's own.
+    tag names the same node in both. ``lineage`` is the archive's, so the
+    snapshot check is the archive's own.
+
+    ``elements()`` is the element pairing :meth:`pair_elements` proved
+    from the live domain (#2269): a FEM element pairs with the live
+    element of its own id only when that element's ``eleNodes`` is the
+    FEM connectivity, in order, and its nodes pass the node identity
+    check. Its type token is the live ``eleType`` through
+    :data:`_TOKEN_FOR_LIVE_CLASS`. Nothing is paired until it is proved,
+    so an unproved id is refused by every consumer of the pairing.
 
     A rotation is recorded only where it reads back as written: a FEMData
     archive holds no ``/opensees/nodes_ndf``, so the read side cannot mask
@@ -633,6 +640,10 @@ class LiveDomainFacts:
         self._coords: "ndarray | None" = None
         self._row: "dict[int, int]" = {}
         self._verified: "set[int]" = set()
+        #: ``{fem_eid: ElementRecord}`` of the elements proved live.
+        self._paired: "dict[int, Any]" = {}
+        #: ``{fem_eid: live eleType}`` of the same elements.
+        self._live_class: "dict[int, str]" = {}
 
     @property
     def ndm(self) -> int:
@@ -645,8 +656,92 @@ class LiveDomainFacts:
         return self._archive.lineage  # type: ignore[attr-defined]
 
     def elements(self) -> "tuple[Any, ...]":
-        """The archive's element records: its ``(fem_eid, tag)`` pairing."""
-        return tuple(self._archive.elements())  # type: ignore[attr-defined]
+        """The element records :meth:`pair_elements` proved: one per paired
+        FEM element, its ``tag`` the FEM id and its ``type_token`` the live
+        class's. Read from the proof, never from the live domain, so it
+        holds after the domain is wiped."""
+        return tuple(self._paired[e] for e in sorted(self._paired))
+
+    def live_class(self, fem_eid: int) -> str:
+        """The live ``eleType`` of a paired FEM element."""
+        return self._live_class[int(fem_eid)]
+
+    def pair_elements(self, element_ids: "Iterable[int]", *, where: str) -> None:
+        """Prove that each FEM element of ``element_ids`` is the live
+        element of its own id, and pair it.
+
+        The FEMData pairs no FEM id with an OpenSees tag and identity is
+        never assumed, so each one is shown by fact: the live domain holds
+        an element of that tag, its ``eleNodes`` is the FEM connectivity in
+        order, its nodes are the FEM's nodes (the node identity check of
+        :meth:`nodes_ndf`), and its ``eleType`` has a bridge token
+        (:data:`_TOKEN_FOR_LIVE_CLASS`). A FEM id that fails any of these
+        refuses, naming it; nothing is paired then.
+        """
+        import numpy as np
+
+        from ._internal.typed_records import ElementRecord
+
+        wanted = [e for e in dict.fromkeys(int(v) for v in element_ids)
+                  if e not in self._paired]
+        if not wanted:
+            return
+        conn_of: "dict[int, list[int]]" = {}
+        ask = np.asarray(wanted, dtype=np.int64)
+        for group in self._archive.fem.elements:  # type: ignore[attr-defined]
+            ids = np.asarray(group.ids, dtype=np.int64)
+            conn = np.asarray(group.connectivity, dtype=np.int64)
+            for i in np.flatnonzero(np.isin(ids, ask)):
+                conn_of[int(ids[i])] = [int(v) for v in conn[i]]
+        absent = [e for e in wanted if e not in conn_of]
+        if absent:
+            raise ValueError(
+                f"{where}: FEM elements {absent[:10]} are not in the FEMData "
+                "the archive holds, so no live element can be shown to be "
+                "them. Record the FEM elements the deck was built from.")
+        ops = self._ops
+        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+        bad: "list[str]" = []
+        live_nodes: "dict[int, list[int]]" = {}
+        for e in wanted:
+            if e not in live_tags:
+                bad.append(f"FEM element {e} has nodes {conn_of[e]}, no live "
+                           "element has that tag")
+                continue
+            live = [int(v) for v in ops.eleNodes(e)]  # type: ignore[attr-defined]
+            if live != conn_of[e]:
+                bad.append(f"FEM element {e} has nodes {conn_of[e]}, the live "
+                           f"element {e} has {live}")
+            live_nodes[e] = live
+        if bad:
+            raise ValueError(
+                f"{where}: the live elements are not the FEMData's: "
+                + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". The deck did not build these elements under their FEM "
+                "ids from this FEMData, so each one's results would be "
+                "another element's. Tag each element by its FEM id, with its "
+                "FEM connectivity in order.")
+        classes = {e: str(ops.eleType(e)) for e in wanted}  # type: ignore[attr-defined]
+        unmapped: "dict[str, list[int]]" = {}
+        for e, cls in classes.items():
+            if cls not in _TOKEN_FOR_LIVE_CLASS:
+                unmapped.setdefault(cls, []).append(e)
+        if unmapped:
+            listed = "; ".join(f"{cls!r}: FEM elements {ids[:10]}"
+                               for cls, ids in sorted(unmapped.items()))
+            raise ValueError(
+                f"{where}: live element classes with no bridge element "
+                f"token ({listed}), so their responses cannot be typed. "
+                f"Known classes: {sorted(_TOKEN_FOR_LIVE_CLASS)}.")
+        self._check_coords(
+            list(dict.fromkeys(n for e in wanted for n in live_nodes[e])),
+            where=where)
+        for e in wanted:
+            self._paired[e] = ElementRecord(
+                type_token=_TOKEN_FOR_LIVE_CLASS[classes[e]], tag=e, args=(),
+                connectivity=tuple(live_nodes[e]), fem_eid=e)
+            self._live_class[e] = classes[e]
 
     def nodes_ndf(self, node_ids: "Iterable[int]", *, where: str) -> "dict[int, int]":
         """``{node: ops.getNDF(node)}`` over ``node_ids``; a node the live
