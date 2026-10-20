@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Iterable, Optional
 import numpy as np
 from numpy import ndarray
 
+from ..._vocabulary import expand_shorthand, is_canonical, is_shorthand
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -45,6 +47,53 @@ ALL_CATEGORIES: tuple[str, ...] = (
     "layers",
     "modal",
 )
+
+
+#: Family shorthands a resolved record records as written, by category:
+#: the emit asks for the family's whole response and the read decodes it
+#: under the canonical names, so each reads back what its explicit
+#: components do (``section_force`` on the ``.out`` route; MPCO and the
+#: fork's file refuse it by name). Any other non-canonical component
+#: records nothing in its category and is refused by
+#: :class:`ResolvedRecorderRecord`.
+_RECORDED_SHORTHANDS: dict[str, frozenset[str]] = {
+    "gauss": frozenset({"stress", "strain", "plastic_strain"}),
+    "line_stations": frozenset({"section_force"}),
+}
+
+
+def _refuse_unrecorded_components(
+    category: str, name: str, components: tuple[str, ...],
+) -> None:
+    """Refuse a component of record ``name`` that records nothing.
+
+    A resolved record carries canonical names: no route expands a
+    shorthand here (the record holds no ``ndm`` / ``ndf`` to clip it
+    to), so ``"displacement"`` on a node record would write no recorder
+    and read back empty with no warning.
+    """
+    kept = _RECORDED_SHORTHANDS.get(category, frozenset())
+    for comp in components:
+        if comp in kept or is_canonical(comp):
+            continue
+        if is_shorthand(comp):
+            full = ", ".join(expand_shorthand(comp))
+            raise ValueError(
+                f"ResolvedRecorderRecord {name!r} (category={category!r}): "
+                f"component {comp!r} is a shorthand, and a resolved record "
+                f"takes canonical names only; as written it records "
+                f"nothing. Write its expansion, "
+                f"expand_shorthand({comp!r}, ndm=..., ndf=...) — "
+                f"({full}) for ndm=3, ndf=6, clipped to the model's ndm "
+                f"and ndf — or declare it on ops.recorder.declare(...), "
+                f"which expands it."
+            )
+        raise ValueError(
+            f"ResolvedRecorderRecord {name!r} (category={category!r}): "
+            f"component {comp!r} is not a canonical apeGmsh component "
+            f"name, so it records nothing. See apeGmsh._vocabulary."
+            f"ALL_CANONICAL."
+        )
 
 
 # =====================================================================
@@ -180,6 +229,10 @@ class ResolvedRecorderRecord:
     source: Optional[RecorderRecord] = None
 
     def __post_init__(self) -> None:
+        if self.category != "modal":
+            _refuse_unrecorded_components(
+                self.category, self.name, tuple(self.components),
+            )
         # Accept any sequence of IDs (e.g. ``fem.nodes.select(...).ids``,
         # a list); every consumer reads ``.size`` / ndarray semantics.
         for attr in ("node_ids", "element_ids"):
