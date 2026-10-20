@@ -725,6 +725,14 @@ class Results:
           for composed models AND for any sparsely-renumbered mesh, e.g.
           a gmsh solid whose 2-D boundary elements consumed the low ids).
 
+        FEMData with ``model_h5=`` (#2329): as in :meth:`from_mpco`,
+        ``fem=`` wins when given; otherwise the FEMData archived in
+        ``model_h5`` is bound, with its physical groups and labels, so
+        ``pg=`` and ``label=`` reads work. An archive of another model or
+        another mesh warns ``ModelFemMismatchWarning`` and the file's own
+        ``MODEL`` group (no physical groups) is bound instead. Without
+        ``model_h5=`` the file's ``MODEL`` group is bound, as before.
+
         Stage names with ``model_h5=`` (ADR 0122 design point 9, #2101):
         as in :meth:`from_mpco`, the ``ops.stage(name=...)`` names and
         each stage's ``analysis`` kind from ``/opensees/stages`` replace
@@ -782,11 +790,37 @@ class Results:
         # A step after the open that raises closes the reader
         # first (the file is free again on Windows), then re-raises.
         try:
-            bound_fem = _resolve_fem(reader, fem)
             bound_model: "Optional[OpenSeesModel]"
             if model_h5 is not None:
                 from ..opensees.opensees_model import OpenSeesModel
                 bound_model = OpenSeesModel.from_h5(model_h5)
+                # A FEMData-only archive (fem.to_h5) records no ndm, so the
+                # coordinate check takes the file's: the reader's minimal
+                # broker reads INFO/SPATIAL_DIM or the coordinate width
+                # (the parts of a set agree, or the reader refused them).
+                spatial_dim: "Optional[int]" = None
+                if fem is None and int(bound_model.ndm) < 1:
+                    from .readers._ladruno_element_io import SpatialDimUnknown
+                    try:
+                        file_model = reader.opensees_model()
+                    except SpatialDimUnknown as e:
+                        raise type(e)(
+                            f"{anchor}: model_h5={str(model_h5)!r} is a "
+                            f"FEMData archive that records no ndm, and the "
+                            f"file gives no spatial dimension ({e}), so the "
+                            f"archive cannot be checked against the file. "
+                            f"Pass fem= to bind a FEMData explicitly, or "
+                            f"write the archive with ops.h5(...)."
+                        ) from e
+                    if file_model is not None:
+                        spatial_dim = int(file_model.ndm)
+                # As in from_mpco: the archive's FEMData carries
+                # the physical groups and labels the file's MODEL group
+                # lacks; a model of another mesh warns and binds the file's.
+                bound_fem = _resolve_fem_via_model(
+                    reader, fem, bound_model, model_path=model_h5,
+                    spatial_dim=spatial_dim,
+                )
                 # The program's stage names and kinds, as in from_mpco.
                 _bind_stage_names(reader, bound_model, model_path=model_h5)
                 # Attach the fem_eid↔ops-tag translator whenever the
@@ -805,6 +839,7 @@ class Results:
                 model_path: "Optional[Path]" = Path(model_h5)
             else:
                 # Self-sufficient path — minimal broker from the file.
+                bound_fem = _resolve_fem(reader, fem)
                 bound_model = resolve_bound_model(reader, None)
                 model_path = None
             if bound_model is None:

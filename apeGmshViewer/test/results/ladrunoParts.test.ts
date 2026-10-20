@@ -508,6 +508,21 @@ test("an absent PARTITION_REDUCTION is refused, never assumed NONE; UNSUPPORTED 
   }
 });
 
+test("#2299: a part whose node ID lists node 2 twice refuses the set at open, by name, rather than summing its two rows into node 2", () => {
+  // Part 1's ids 2, 3 -> 2, 2 in both results. Unrefused, the union is 1, 2 and REACTION_FORCE (SUM)
+  // adds part 0's row of node 2 to both rows of part 1: node 2's reaction counted twice, node 3's folded in.
+  const repeat = (f: h5wasm.File) => {
+    for (const r of ["DISPLACEMENT", "REACTION_FORCE"]) (f.get(`${ON_NODES}/${r}/ID`) as h5wasm.Dataset).write_slice([[1, 2], [0, 1]], new Int32Array([2]));
+  };
+  const { dir, part } = scratchSet(PART, { 1: repeat });
+  withSet(PART[0]!, (s) => assert.ok(s.index.stages[0]!.nodes!.components.includes("REACTION_FORCE/RFx"), "the committed set sums REACTION_FORCE"));
+  const named = new RegExp(`^${part(1).replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}: ${ON_NODES.replace(/[[\]]/g, "\\$&")}/DISPLACEMENT/ID lists node id\\(s\\) more than once \\(id 2 at rows 0, 1\\)`);
+  for (const opened of [part(0), part(1)]) refuses(opened, named);
+  // The part alone is refused at its own open too: the set never sees it.
+  assert.throws(() => openLadruno(H5, part(1), { part: true }), (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && named.test(e.message));
+  rmSync(dir, { recursive: true });
+});
+
 // -- pairing ------------------------------------------------------------------------
 
 const MODEL = { lineage: { modelHash: MODEL_HASH, femHash: "fedcba9876543210fedcba9876543210", resultsHash: null }, openseesVersion: null, programDecl: null };

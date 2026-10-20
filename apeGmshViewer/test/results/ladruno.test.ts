@@ -23,6 +23,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
 import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
@@ -285,6 +286,45 @@ test("a COMPONENTS label repeated refuses that result by name", () => {
     assert.equal(n.refused[0]!.component, "DISPLACEMENT");
     assert.match(n.refused[0]!.reason, /COMPONENTS = "Ux,Ux" repeats a label/);
   });
+});
+
+test("#2299: a node ID list that holds an id twice refuses the whole file at open, naming the file, the dataset, the id and its rows", () => {
+  const escaped = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  // DISPLACEMENT/ID 1, 2, 3 -> 1, 3, 3: unrefused, node 3's history reads row 2 and node 2's row 1 draws as node 3.
+  const disp = edited(TRUSS, (f) => (f.get(`${DISP}/ID`) as h5wasm.Dataset).write_slice([[1, 2], [0, 1]], new Int32Array([3])));
+  refuses(disp, "layout", new RegExp(`^${escaped(disp)}: ${escaped(DISP)}/ID lists node id\\(s\\) more than once \\(id 3 at rows 1, 2\\); .*PARTITION_REDUCTION=SUM`));
+  // A second result with a repeated id refuses the file, not only that result.
+  const vel = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([2, 1, 2]), shape: [3, 1] });
+    g.create_dataset({ name: "DATA", data: new Float64Array(4 * 3 * 2), shape: [4, 3, 2] });
+  });
+  refuses(vel, "layout", /ON_NODES\/VELOCITY\/ID lists node id\(s\) more than once \(id 2 at rows 0, 2\)/);
+  // A modal group's ID (read by the mode stages, not the host's results).
+  const modal = edited(MODES, (f) => (f.get("/MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/ID") as h5wasm.Dataset).write_slice([[0, 1], [0, 1]], new Int32Array([2])));
+  refuses(modal, "layout", /ON_NODES\/MODES_OF_VIBRATION\(U\)\/ID lists node id\(s\) more than once \(id 2 at rows 0, 1\)/);
+  // The unedited files open: the refusals above are the edits, not the fixtures.
+  for (const p of [TRUSS, MODES]) withFile(p, (r) => assert.ok(r.index.stages.length > 0));
+});
+
+test("#2299: uniqueNodeIds names repeats in file order, caps at 10, and passes 2^24 + 1 unique ids (past V8's Set limit)", () => {
+  const err = (m: string) => new LadrunoError("layout", m);
+  const message = (ids: number[]) => {
+    try {
+      uniqueNodeIds(Float64Array.from(ids), "f.ladruno", "/ID", err);
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return "accepted";
+  };
+  assert.match(message([5, 1, 5, 1, 7, 1]), /^f\.ladruno: \/ID lists node id\(s\) more than once \(id 5 at rows 0, 2; id 1 at rows 1, 3, 5\); /);
+  const twelve = Array.from({ length: 12 }, (_, i) => 100 - i);
+  assert.match(message([...twelve, ...twelve]), /\(id 100 at rows 0, 12; .*; id 91 at rows 9, 21; and 2 more\)/);
+  assert.equal(message([3, 1, 2]), "accepted");
+  const big = new Float64Array(2 ** 24 + 1).map((_, i) => 2 ** 24 + 1 - i);
+  const t0 = performance.now();
+  assert.equal(uniqueNodeIds(big, "f.ladruno", "/ID", err), big, "the ids are returned as given");
+  const ms = performance.now() - t0;
+  assert.ok(ms < 5000, `2^24 + 1 unique ids took ${ms.toFixed(0)} ms`);
 });
 
 test("stages sort by their integer id; one with no ON_NODES has no nodal block", () => {

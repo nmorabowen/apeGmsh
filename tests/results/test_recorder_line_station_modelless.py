@@ -129,5 +129,5 @@ def test_refused_before_any_file_is_read(tmp_path: Path) -> None:
 def test_line_station_count_refuses_no_model_by_type() -> None:
     """The shared slicer has no model-less branch left to divide by."""
     rec = _record([1, 2])
-    with pytest.raises(TypeError, match="NoneType carries neither"):
+    with pytest.raises(ValueError, match="a NoneType carries neither"):
         line_station_count(rec, 6, "beam_line_stations_gpx.out", None, "sid")

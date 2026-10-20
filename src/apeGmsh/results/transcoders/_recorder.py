@@ -503,7 +503,8 @@ class RecorderTranscoder:
         xi_natural = np.empty_like(xi_phys)
         for i, L in enumerate(element_lengths):
             xi_natural[i] = normalise_integration_points(xi_phys[i], L)
-        require_line_stations(rec, xi_natural, gpx_lr.file_path, self._model_h5_src, self._spec.fem_snapshot_id)
+        require_line_stations(rec, xi_natural, gpx_lr.file_path, self._model_h5_src, self._spec.fem_snapshot_id,
+                              self._pairing, element_lengths)
 
         # ── Read the section.force file: total cols = 1 + E*n_IP*K ──
         first_section_row = np.loadtxt(

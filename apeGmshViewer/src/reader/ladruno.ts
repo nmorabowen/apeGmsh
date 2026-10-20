@@ -21,6 +21,7 @@
 // - a nodal result whose datasets disagree (DATA's step axis against TIME and
 //   STEP, its node axis against ID, its component axis against COMPONENTS) is
 //   refused by name in `NodalInfo.refused`, with the reason, never read;
+// - a node ID list that repeats an id refuses the file at open (reader/ladrunoChecks.ts, #2299);
 // - Gauss-point element buckets are read by reader/ladrunoElements.ts (#2187); other
 //   element results, envelopes, the domain and region buckets are listed in `unread`;
 // - `KIND=eigen` is not a mode (Python `_ladruno.py::_KIND_MAP`): the fork labels
@@ -39,6 +40,7 @@
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
+import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
@@ -101,6 +103,7 @@ interface LDataset extends LNode {
 }
 interface LFile extends LGroup {
   file_id: bigint | number;
+  filename: string;
   close(): unknown;
 }
 
@@ -893,6 +896,7 @@ export class LadrunoFile {
     const idShape = idDs!.shape ?? [];
     if (!(idShape.length === 1 || (idShape.length === 2 && idShape[1] === 1))) return { reason: `${idDs!.path} has shape (${idShape.join(", ")}); expected (n, 1)` };
     if (idDs!.metadata.type !== H5T_INTEGER) return { reason: `${idDs!.path} is not an integer dataset` };
+    const ids = uniqueNodeIds(intsAsNumbers(idDs!), this.f.filename, idDs!.path, (m) => new LadrunoError("layout", m));
     const shape = dataDs!.shape ?? [];
     if (shape.length !== 3) return { reason: `${dataDs!.path} has shape (${shape.join(", ")}); expected (T, n, components)` };
     if (dataDs!.metadata.type !== H5T_FLOAT) return { reason: `${dataDs!.path} is not a floating-point dataset (HDF5 class ${dataDs!.metadata.type})` };
@@ -906,7 +910,7 @@ export class LadrunoFile {
     }
     if (n !== idShape[0]) return { reason: `${dataDs!.path} has ${n} node rows and ${idDs!.path} ${idShape[0]} node ids (a partial write)` };
     if (c !== labels.length) return { reason: `${dataDs!.path} has ${c} component columns and COMPONENTS names ${labels.length} (${labels.join(",")})` };
-    return { group: grp, labels, ids: intsAsNumbers(idDs!), time: toFloat64(timeDs!.value, timeDs!.path) };
+    return { group: grp, labels, ids, time: toFloat64(timeDs!.value, timeDs!.path) };
   }
 
   /** The time axis of a stage with no readable nodal result: the first TIME under another bucket (Python `_time_for_group`). */
@@ -1026,7 +1030,7 @@ export class LadrunoFile {
         refused.push({ component: group, reason: `${ds.path} has shape (${shape.join(", ")}); ID has ${idShape[0]} nodes and COMPONENTS names ${labels.length} (a partial write)` });
         continue;
       }
-      const these = intsAsNumbers(idDs);
+      const these = uniqueNodeIds(intsAsNumbers(idDs), this.f.filename, idDs.path, (m) => new LadrunoError("layout", m));
       if (ids === null) {
         ids = these;
         firstPath = idDs.path;

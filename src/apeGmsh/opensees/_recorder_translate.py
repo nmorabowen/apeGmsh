@@ -492,6 +492,9 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "ShellNLDKGQ": "ShellDKGQ",
     "ShellNLDKGT": "ShellDKGQ",
     "ForceBeamColumnCBDI2d": "forceBeamColumn",
+    "Truss2": "Truss",
+    "CorotTruss2": "CorotTruss",
+    "ModElasticBeam2d": "elasticBeamColumn",
 }
 
 #: Live class -> the slot of the FEM (Gmsh) connectivity each of its
@@ -798,8 +801,10 @@ class LiveDomainFacts:
                 + (f"; and {len(twins) - 3} more" if len(twins) > 3 else "")
                 + ". eleNodes cannot tell those elements apart, so a deck "
                 "that swapped their tags would record each one's response "
-                "under the other's id. Drop them from the record, or record "
-                "them through the bridge's model archive (ops.h5(...)).")
+                "under the other's id. Drop them from the record, name the "
+                "record's element class where each twin is a live element of "
+                "another class, or record them through the bridge's model "
+                "archive (ops.h5(...)).")
         bad: "list[str]" = []
         live_nodes: "dict[int, list[int]]" = {}
         classes: "dict[int, str]" = {}
@@ -1152,16 +1157,21 @@ class LiveDomainFacts:
                 + ". Its stations cannot be counted; record force or "
                 "displacement beams, or an elastic beam under its own class.")
 
-    def station_count(self, fem_eid: int) -> int:
-        """The section count of a FEM element :meth:`record_line_stations`
-        or :meth:`record_fiber_sections` read; any other id refuses, naming
-        it. Read from the record, never from the live domain."""
+    def station_locations(self, fem_eid: int) -> "tuple[float, ...]":
+        """The section locations (along the element, in section order) of a
+        FEM element :meth:`record_line_stations` or
+        :meth:`record_fiber_sections` read; any other id refuses, naming it.
+        Read from the record, never from the live domain."""
         e = int(fem_eid)
         if e not in self._stations:
             raise ValueError(
                 f"FEM element {e}: its sections were not read from the live "
                 "domain before the run, so its stations cannot be counted.")
-        return len(self._stations[e])
+        return self._stations[e]
+
+    def station_count(self, fem_eid: int) -> int:
+        """The section count of :meth:`station_locations`."""
+        return len(self.station_locations(fem_eid))
 
 
 #: Values per fibre of a ``section fiberData2`` response: ``[y, z, area,
