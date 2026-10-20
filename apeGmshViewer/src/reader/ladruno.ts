@@ -733,12 +733,12 @@ export class LadrunoFile {
 
     // 2. Per-step RESULTS/ON_ELEMENTS/LOCAL_AXES (only when `options?.step !== undefined`; wins over MODEL/LOCAL_AXES).
     //    A malformed bucket is refused by name, never replaced by the reference frame (#2349).
+    //    A step that is not an integer inside the host stage is refused, not read as a step-less one.
     const step = options?.step;
     if (step !== undefined) {
+      checkStep(hostStage, step);
       const stepLa = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS", "LOCAL_AXES"]);
-      if (stepLa && step >= 0 && step < hostStage.nSteps) {
-        groups.push(...collectStepLocalAxes(stepLa, step, hostStage.nSteps, this.localAxesReads(options?.warningsOut)));
-      }
+      if (stepLa) groups.push(...collectStepLocalAxes(stepLa, step, hostStage.nSteps, this.localAxesReads(options?.warningsOut)));
     }
     return resolveLocalAxes(groups, options?.elementIds);
   }

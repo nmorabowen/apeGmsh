@@ -16,7 +16,15 @@ message names the file, the bucket and the step. The refusal covers:
 - a step count that is not the stage's;
 - a row count that is not the `ID`'s;
 - rows that are not 3, 4 or 9 wide;
-- an empty `ID` beside rows.
+- an empty `ID` beside rows;
+- a row that is not a frame, such as a value that is not finite or an all-zero
+  quaternion (HDF5's fill value for an unwritten chunk). This message also
+  names the element and its row.
+
+A `step` that is not an integer inside the stage is now refused by
+`readLocalAxes` as a `LadrunoError` of kind `argument`. Before, a step out of
+range quietly read the reference frames, and a fractional step threw a raw
+`TypeError`.
 
 Unlike `MODEL/LOCAL_AXES` (#2336), nothing falls back with a warning, because
 at a step the stored frame is the answer. A step-less read does not touch

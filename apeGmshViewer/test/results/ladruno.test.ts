@@ -1035,6 +1035,9 @@ test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in
     ["a DATA and no ID", (la) => stepBucket(la, B, null, [3, 3, 4]), PORTAL_BUCKET, "holds a DATA but no ID"],
     ["a flat DATA and no ID", (la) => la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }), STEP_LA, "holds a DATA but no ID"],
     ["an ID that is a group", (la) => { stepBucket(la, B, null, [3, 3, 4]); (la.get(B) as h5wasm.Group).create_group("ID"); }, PORTAL_BUCKET, "holds an ID that is not a dataset"],
+    // The literal §5 layout, DATA as a group of per-step datasets, is not the layout this reader takes.
+    ["a DATA that is a group", (la) => { stepBucket(la, B, [1, 2, 3], null); (la.get(B) as h5wasm.Group).create_group("DATA").create_dataset({ name: "STEP_0", data: quarterTurns([3, 4]), shape: [3, 4] }); }, PORTAL_BUCKET, "holds a DATA that is not a dataset (a step bucket is one ID[nE] dataset and one DATA[steps, nE, 3|4|9] dataset"],
+    ["neither an ID nor a DATA", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_group("COLUMN_MAP"); }, `${STEP_LA}/COLUMN_MAP`, "holds neither an ID nor a DATA (a step bucket is"],
   ];
   for (const [label, edit, at, what] of cases) {
     test(`#2349: a step LOCAL_AXES bucket with ${label} refuses the step read and the line-station step read by name`, () => {
@@ -1052,6 +1055,45 @@ test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in
     });
   }
 }
+
+// A bucket of the right shape can still hold a row that is not a frame: an all-zero
+// quaternion (HDF5's fill value for an unwritten chunk) or a NaN z. resolveLocalAxes
+// keeps the last row that decodes, so that element took the MODEL frame. Here element 2
+// at step 1 holds the bad row; steps 0 and 2 read the stored quarter turn.
+for (const [label, w, bad] of [["an all-zero quaternion", 4, [0, 0, 0, 0]], ["a NaN z", 3, [Number.NaN, 1, 0]]] as const) {
+  test(`#2349: a step LOCAL_AXES row holding ${label} refuses that step by name, naming the element and the row`, () => {
+    const p = withStepLa((la) => {
+      const b = la.create_group("74-ForceBeamColumn3d[1000:1:0]");
+      b.create_dataset({ name: "ID", data: Int32Array.from([1, 2, 3]), shape: [3] });
+      const data = quarterTurns([3, 3, w]);
+      data.set(bad, (1 * 3 + 1) * w);
+      b.create_dataset({ name: "DATA", data, shape: [3, 3, w] });
+    });
+    withFile(p, (r) => {
+      const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(PORTAL_BUCKET)} holds at step 1 a DATA row that is not a frame \\(element 2 at row 1: \\[${escapedRe(bad.join(", "))}\\]\\); .*the local axes at step 1 are not read$`);
+      refusesStep(() => r.readLocalAxes("stage_0", { step: 1 }), named);
+      refusesStep(() => r.readLocalAxes("stage_0", { step: 1, elementIds: [1] }), named);
+      refusesStep(() => r.readLineStationStep("stage_0", "N", 1), named);
+      for (const step of [0, 2]) assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step }).zRec), [0, 1, 0, 0, 1, 0, 0, 1, 0]);
+    });
+  });
+}
+
+test("#2349: readLocalAxes refuses a step that is not an integer inside the stage, with or without a step bucket", () => {
+  const p = withStepLa((la) => stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [1, 2, 3], [3, 3, 4]));
+  for (const path of [p, PORTAL3D]) {
+    withFile(path, (r) => {
+      for (const step of [-1, 3, 0.5, Number.NaN]) {
+        assert.throws(
+          () => r.readLocalAxes("stage_0", { step }),
+          (e: unknown) => e instanceof LadrunoError && e.kind === "argument" && new RegExp(`^step ${step} is outside stage stage_0 \\(0\\.\\.2\\)$`).test(e.message),
+          `step ${step}`,
+        );
+      }
+      for (const step of [0, 1, 2]) assert.equal(r.readLocalAxes("stage_0", { step }).elementIds.length, 3);
+    });
+  }
+});
 
 test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-based, out-of-bounds, negative), 2D section alias gating on 3D, and LOCAL_AXES shape guard", () => {
   const timeArr = new Float64Array([0.25, 0.5, 0.75, 1.0]);

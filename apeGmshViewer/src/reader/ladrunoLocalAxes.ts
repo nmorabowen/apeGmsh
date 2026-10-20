@@ -32,8 +32,8 @@
 // co-rotational element, warned or not. So a bucket that cannot be paired with its
 // ids, or with the stage's steps, is refused by name (the file, the bucket, the step):
 // ID or DATA missing or not a dataset, a DATA that is not (steps, elements, 3|4|9),
-// a step or row count that is not the stage's or the ID's, or an empty ID beside
-// rows. (An id twice in the step's buckets is refused at open, as in any ON_ELEMENTS
+// a step or row count that is not the stage's or the ID's, an empty ID beside rows,
+// or a row that does not decode (not finite, or a zero quaternion). (An id twice in the step's buckets is refused at open, as in any ON_ELEMENTS
 // token, by reader/ladrunoElements.ts.) A step-less read does not read them.
 //
 // The frames are resolved with sorted typed arrays, never a Set or Map sized by the
@@ -171,8 +171,9 @@ export function warnModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesRead
  * The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` (`stepLa`) at `step`, one entry
  * per bucket read; `nSteps` is the stage's step count. A bucket is `{ID[nE],
  * DATA[nSteps, nE, 3|4|9]}`, on `stepLa` itself or one per class group. Any other
- * bucket is refused by name (the file, the bucket, the step). An id listed twice in
- * the step's buckets is refused at open, by reader/ladrunoElements.ts.
+ * bucket is refused by name (the file, the bucket, the step), as is a row that does
+ * not decode to a frame (naming its element and row). An id listed twice in the
+ * step's buckets is refused at open, by reader/ladrunoElements.ts.
  */
 export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nSteps: number, reads: LocalAxesReads): FrameRows[] {
   const read: FrameRows[] = [];
@@ -181,10 +182,11 @@ export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nStep
       reads.fail(`${reads.file}: ${b.path} ${what}; a step's frame is read only as stored, and the reference frame in its place would be the wrong frame, so the local axes at step ${step} are not read`);
     const hasId = b.keys().includes("ID");
     const hasData = b.keys().includes("DATA");
-    if (!hasId || !hasData) throw refuse(hasId ? "holds an ID but no DATA" : hasData ? "holds a DATA but no ID" : "holds neither an ID nor a DATA");
+    const layout = "a step bucket is one ID[nE] dataset and one DATA[steps, nE, 3|4|9] dataset, on LOCAL_AXES itself or on each of its groups";
+    if (!hasId || !hasData) throw refuse(`${hasId ? "holds an ID but no DATA" : hasData ? "holds a DATA but no ID" : "holds neither an ID nor a DATA"} (${layout})`);
     const idDs = reads.optionalDataset(b, "ID");
     const dataDs = reads.optionalDataset(b, "DATA");
-    if (!idDs || !dataDs) throw refuse(`holds ${idDs ? "a DATA" : "an ID"} that is not a dataset`);
+    if (!idDs || !dataDs) throw refuse(`holds ${idDs ? "a DATA" : "an ID"} that is not a dataset (${layout})`);
     const shape = dataDs.shape ?? [];
     if (shape.length !== 3) throw refuse(`has DATA of shape (${shape.join(", ")}), not (steps, elements, components)`);
     if (shape[0] !== nSteps) throw refuse(`has DATA for ${shape[0]} step(s), but the stage has ${nSteps}`);
@@ -199,6 +201,12 @@ export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nStep
     if (!FRAME_WIDTHS.includes(cols)) throw refuse(`has DATA rows ${cols} wide, not 3 (the local z axis), 4 (a quaternion) or 9 (a rotation matrix)`);
     const slice = reads.stepSlice(dataDs, step);
     if (slice.length !== nE * cols) throw refuse(`read ${slice.length} value(s) from DATA at step ${step}, not ${nE} row(s) ${cols} wide`);
+    // A row that does not decode would leave its element the reference frame (resolveLocalAxes keeps the last row that does).
+    for (let i = 0; i < nE; i++) {
+      if (decodeLocalAxesRow(slice, i * cols, cols)) continue;
+      const row = Array.from(slice.subarray(i * cols, (i + 1) * cols)).join(", ");
+      throw refuse(`holds at step ${step} a DATA row that is not a frame (element ${ids[i]} at row ${i}: [${row}]); a frame row is finite, and a quaternion is not zero`);
+    }
     read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
   };
   if (stepLa.keys().includes("ID") || stepLa.keys().includes("DATA")) {
