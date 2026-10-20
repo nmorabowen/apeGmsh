@@ -834,6 +834,37 @@ def _write_archived_flips(
 _BUILDER_SCOPED_UNITS: "frozenset[str]" = frozenset(
     {"geomTransf", "beamIntegration", "timeSeries", "damping"})
 
+#: The section of ``BuiltModel._emit_flat`` that writes each replay unit
+#: kind, in deck order (K R1b-S3b, #2277). A partitioned archive's program
+#: records the ADR 0027 emit (declarations above the partition blocks
+#: that hold the nodes, elements, fixes and patterns), so its replay sorts
+#: by ``(section, emit index)`` to write the flat deck. Two kinds have no
+#: single section: a ``"chain"`` unit is a user declaration (4a) when the
+#: program wrote it above the first partition block, else the auto-emitted
+#: handler (7c, :data:`_AUTO_CHAIN_SECTION`); a ``"region"`` unit whose
+#: declaration is a recorder (an MPCO filter region) sits with its
+#: recorder (:meth:`_ReplayOrder.tagged`).
+_FLAT_SECTIONS: "dict[str, int]" = {
+    "nodes": 0,  # 1a
+    "uniaxialMaterial": 1, "nDMaterial": 1, "section": 1,  # 4a
+    "gated_elements": 2,  # 5a
+    "timeSeries": 3, "beamIntegration": 3, "damping": 3,  # 5b
+    "geomTransf": 4,  # 6
+    "elements": 5,  # 6b
+    "fixes": 6, "masses": 7,  # 7
+    "region": 8, "command": 8,  # 7: regions, rayleigh, attaches, modal
+    "equation_constraints": 9,  # 7b
+    "reinforce_ties": 10,  # 7b'
+    "rebar_cells": 11,  # 7b''
+    "initial_stress": 13,  # 7d
+    "pattern": 14, "recorder": 14,  # 8
+    "analyze": 15,
+}
+#: 4a, where ``_emit_flat`` writes a user's analysis-chain declarations.
+_USER_CHAIN_SECTION = 1
+#: 7c, where ``_emit_flat`` writes the auto-emitted constraint handler.
+_AUTO_CHAIN_SECTION = 12
+
 
 class _ReplayOrder:
     """The bridge's emit order for one archive, read from
@@ -863,9 +894,17 @@ class _ReplayOrder:
     keeps such a unit in its category place, right after the unit before
     it. An analysis-chain component always has a call, so a missing one
     raises (:func:`chain`).
+
+    A partitioned archive (a ``partition_open`` call in its program)
+    records the ADR 0027 emit, not the flat deck the replay writes, so
+    its units sort by ``(flat section, emit index)`` instead
+    (:meth:`section`, :data:`_FLAT_SECTIONS`; K R1b-S3b, #2277). Every
+    other archive sorts by the emit index alone (section 0).
     """
 
-    __slots__ = ("_program", "_tag_runs", "_first", "_joined")
+    __slots__ = (
+        "_program", "_decls", "_tag_runs", "_first", "_joined",
+        "_partition_at", "_recorder_keys")
 
     def __init__(self, program: "Sequence[Any]", declarations: Any) -> None:
         from ..emitter.h5_reader import records_program_decl
@@ -876,6 +915,7 @@ class _ReplayOrder:
                 "declaration joins (/opensees/decls@program_decl is not "
                 "'complete'); replay it in the fixed category order.")
         self._program = tuple(program)
+        self._decls = tuple(declarations.decls)
         # kind -> decl -> [(first tag, count), ...] in table order.
         self._tag_runs: "dict[str, dict[int, list[tuple[int, int]]]]" = {}
         for kind, first, count, decl in declarations.tags:
@@ -886,6 +926,50 @@ class _ReplayOrder:
             self._first.setdefault(
                 (str(run.method), int(run.stage)), int(run.first))
         self._joined: "dict[tuple[str, frozenset[str]], dict[int, int]]" = {}
+        # The emit index of the first global partition block; ``None`` for
+        # an archive with no partition block, which sorts by emit index.
+        self._partition_at: "int | None" = None
+        self._recorder_keys: "frozenset[int]" = frozenset()
+        if any(run.method == "partition_open" for run in self._program):
+            self._partition_at = self.first("partition_open")
+            if self._partition_at is None:
+                raise ValueError(
+                    "_ReplayOrder: the program opens partition blocks only "
+                    "inside stages; a partitioned emit opens one per rank "
+                    "in the global pass, so this is not a bridge emit.")
+            self._recorder_keys = frozenset(
+                first + i
+                for _decl, first, count in self._fresh_calls(
+                    frozenset({"recorder"}))
+                for i in range(count))
+
+    @property
+    def partitioned(self) -> bool:
+        """Whether the program records a partitioned (ADR 0027) emit."""
+        return self._partition_at is not None
+
+    def section(self, kind: str, key: "int | None") -> int:
+        """The ``_emit_flat`` section of a replay unit of ``kind`` keyed
+        ``key`` (its emit index, ``None`` when no call wrote it): 0 for
+        every unit of an archive that is not partitioned, so those sort
+        by emit index alone. Raises :class:`ValueError` on a kind the
+        table does not place."""
+        if self._partition_at is None:
+            return 0
+        if kind == "chain":
+            if key is None:
+                raise ValueError(
+                    "replay: an analysis-chain unit has no emit index.")
+            return (_USER_CHAIN_SECTION if key < self._partition_at
+                    else _AUTO_CHAIN_SECTION)
+        if kind == "region" and key in self._recorder_keys:
+            return _FLAT_SECTIONS["recorder"]
+        section = _FLAT_SECTIONS.get(kind)
+        if section is None:
+            raise ValueError(
+                f"replay: no _emit_flat section places a {kind!r} unit; "
+                "a partitioned archive cannot be replayed flat without one.")
+        return section
 
     def first(self, method: str, stage: int = -1) -> "int | None":
         """The emit index of the first ``method`` call in ``stage``;
@@ -936,7 +1020,14 @@ class _ReplayOrder:
 
     def tagged(self, kind: str, methods: "frozenset[str]") -> "dict[int, int]":
         """``{tag: emit index}`` for the tags of allocator ``kind`` that a
-        global ``methods`` call declared (the first call wins)."""
+        global ``methods`` call declared (the first call wins).
+
+        In a partitioned archive a ``region`` tag whose declaration is a
+        recorder (an MPCO filter region, which ADR 0027 writes once per
+        rank, above the recorders) takes that recorder's emit index, as
+        ``_emit_flat`` writes the region just above its recorder (#2277).
+        Raises :class:`LookupError` when the program holds no global call
+        of that recorder."""
         cache_key = (kind, methods)
         found = self._joined.get(cache_key)
         if found is not None:
@@ -955,6 +1046,23 @@ class _ReplayOrder:
                 if tag is None:
                     break
                 out.setdefault(tag, first + i)
+        if kind == "region" and self.partitioned:
+            recorder_at: "dict[int, int]" = {}
+            for decl, first, _count in self._fresh_calls(
+                    frozenset({"recorder"})):
+                recorder_at.setdefault(decl, first)
+            for decl, runs in tag_runs.items():
+                if decl < 0 or self._decls[decl].family != "recorder":
+                    continue
+                if decl not in recorder_at:
+                    raise LookupError(
+                        f"replay: region declaration "
+                        f"{self._decls[decl].key!r} belongs to a recorder "
+                        "that no global 'recorder' call in "
+                        "/opensees/program wrote.")
+                for first, count in runs:
+                    for tag in range(first, first + count):
+                        out[tag] = recorder_at[decl]
         self._joined[cache_key] = out
         return out
 
@@ -983,7 +1091,8 @@ def _run_units(
     """Run each ``(key, kind, thunk)`` unit: in list order (the fixed
     category order) when ``order`` is ``None``, else stably sorted by
     emit index, a keyless unit keeping its place after the unit before
-    it (K R1b-S1, #2193).
+    it (K R1b-S1, #2193). A partitioned ``order`` sorts by its
+    ``_emit_flat`` section first (:meth:`_ReplayOrder.section`, #2277).
 
     Fails closed on ADR 0099 INV-1: a builder-scoped declaration sorted
     above the gated-element bracket would be purged by it, so an archive
@@ -993,12 +1102,12 @@ def _run_units(
         for _key, _kind, thunk in units:
             thunk()
         return
-    keyed: "list[tuple[int, int, str, Any]]" = []
+    keyed: "list[tuple[tuple[int, int], int, str, Any]]" = []
     last = 0
     for seq, (key, kind, thunk) in enumerate(units):
         if key is not None:
             last = key
-        keyed.append((last, seq, kind, thunk))
+        keyed.append(((order.section(kind, key), last), seq, kind, thunk))
     keyed.sort(key=lambda u: (u[0], u[1]))
     gated_at = next(
         (i for i, u in enumerate(keyed) if u[2] == "gated_elements"), None)
@@ -1178,7 +1287,10 @@ def _replay_into(
         between two materials, a ``geomTransf`` after the integrations,
         ``system`` above the declarations, ``rayleigh`` between two
         regions). A unit with no recorded call keeps its category place
-        after the unit before it (:func:`_run_units`). ``order=None``
+        after the unit before it (:func:`_run_units`). A partitioned
+        archive's ``order`` sorts by the ``_emit_flat`` section of each
+        unit first, then by emit index, since its program records the
+        ADR 0027 emit rather than this flat deck (#2277). ``order=None``
         (a legacy archive, a ``to_h5`` rewrite of one, the H5 target)
         keeps the category order, unchanged. ``order`` needs
         ``deck_ordering=True``: the H5 rewrite keeps its store order.
