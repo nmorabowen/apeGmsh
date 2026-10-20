@@ -1672,6 +1672,28 @@ test("#2324: a one-member compound INFO@SPATIAL_DIM refuses the open, by name", 
   refuses(p, "layout", /: INFO@SPATIAL_DIM is a compound \(HDF5 type class 6\), not a number or a string; the spatial dimension must be an integral 1, 2 or 3$/);
 });
 
+test("#2324 review: a variable-length ASCII INFO@SPATIAL_DIM led by a UTF-8 BOM is refused, as in Python", () => {
+  // h5wasm's dtype "A" is a variable-length ASCII-cset string holding the UTF-8
+  // bytes of the JS string, so "﻿2" is b'\xef\xbb\xbf2'. h5py decodes it to
+  // "﻿2" and float() refuses U+FEFF; a TextDecoder without ignoreBOM dropped
+  // the BOM and read 2.
+  for (const text of ["﻿2", `﻿${" ".repeat(16)}2`]) {
+    const p = edited(TRUSS, (f) => {
+      const info = f.get("INFO") as h5wasm.Group;
+      info.delete_attribute("SPATIAL_DIM");
+      info.create_attribute("SPATIAL_DIM", text, null, "A");
+    });
+    const f = new h5wasm.File(p, "r");
+    try {
+      const m = (f.get("INFO") as h5wasm.Group).attrs.SPATIAL_DIM.metadata;
+      assert.deepEqual([m.type, m.vlen, m.cset], [3, true, 0], "a variable-length ASCII string");
+    } finally {
+      f.close();
+    }
+    refuses(p, "layout", new RegExp(`: INFO@SPATIAL_DIM is ${JSON.stringify(text).replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}; the spatial dimension must be an integral 1, 2 or 3$`));
+  }
+});
+
 // -- one step, one hyperslab per DATA (#2202) ------------------------------------
 //
 // Oracle: the per-component read readNodalStep made before #2202, kept here as a

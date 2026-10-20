@@ -23,6 +23,8 @@ and the reason, as a `layout` refusal at open. The viewer refuses:
   shows no byte past it (a NULLTERM string ends at its NUL, as in Python);
 - a variable-length ASCII string whose bytes are not UTF-8. h5py decodes these
   bytes as UTF-8, and the viewer now does the same, so `b'\xc2\xa02'` reads as 2.
+  A leading UTF-8 BOM is kept, as h5py keeps it, so `b'\xef\xbb\xbf2'` is
+  refused.
 
 If h5wasm's metadata lacks a field the rule needs, the open is refused the same
 way, naming the file.

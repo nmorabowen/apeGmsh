@@ -121,7 +121,8 @@ function fixedStringRefusal(s: string, need: Need): string | null {
   return null;
 }
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true });
+// ignoreBOM: h5py keeps a leading U+FEFF, which float() refuses; the default drops it.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /**
  * The text h5py reads from a variable-length string of ASCII cset, or null when
