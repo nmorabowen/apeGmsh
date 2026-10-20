@@ -963,6 +963,96 @@ test("#2336: resolveLocalAxes and stationLocalAxes take 2^24 + 1 framed elements
   assert.ok(Number.isNaN(stations.localAxesZRec![6]!));
 });
 
+// #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (schema §5; the fork at
+// FORK_PIN does not write it) that could not be paired with its ids or the stage's
+// steps used to be dropped with no word, so a step read drew the MODEL (reference)
+// frame in its place. Every such bucket is now refused by name, with no fallback. The
+// probe: scratch copies of portal3d (elements 1..3, 3 steps; MODEL z_local [1,0,0],
+// [0,0,1], [1,0,0]) get a step bucket holding a quarter turn about x, z_local [0,1,0].
+const PORTAL3D = fixture("ladruno_portal3d.ladruno");
+const STEP_LA = "/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/LOCAL_AXES";
+const PORTAL_BUCKET = `${STEP_LA}/74-ForceBeamColumn3d[1000:1:0]`;
+const PORTAL_MODEL_Z = [1, 0, 0, 0, 0, 1, 1, 0, 0];
+const QUARTER_X: Record<number, number[]> = { 3: [0, 1, 0], 4: [Math.SQRT1_2, Math.SQRT1_2, 0, 0], 9: [1, 0, 0, 0, 0, -1, 0, 1, 0] };
+/** `DATA` of `shape` (steps, rows, width), each row the quarter turn in that width (zeros when the width has none). */
+const quarterTurns = (shape: number[]) => {
+  const w = shape[shape.length - 1] ?? 0;
+  const n = shape.reduce((a, b) => a * b, 1);
+  return Float64Array.from({ length: n }, (_, i) => QUARTER_X[w]?.[i % w] ?? 0);
+};
+/** A portal3d copy with the step bucket `edit` builds under RESULTS/ON_ELEMENTS/LOCAL_AXES. */
+const withStepLa = (edit: (la: h5wasm.Group) => void) =>
+  edited(PORTAL3D, (f) => edit((f.get("MODEL_STAGE[1]/RESULTS/ON_ELEMENTS") as h5wasm.Group).create_group("LOCAL_AXES")));
+/** A bucket named `name` with ID `ids` and DATA of `shape`, either left out with null. */
+const stepBucket = (la: h5wasm.Group, name: string, ids: number[] | null, shape: number[] | null) => {
+  const b = la.create_group(name);
+  if (ids) b.create_dataset({ name: "ID", data: Int32Array.from(ids), shape: [ids.length] });
+  if (shape) b.create_dataset({ name: "DATA", data: quarterTurns(shape), shape });
+};
+const zOf = (z: Float64Array | null) => Array.from(z ?? []).map((v) => +v.toFixed(12) + 0);
+const refusesStep = (read: () => unknown, pattern: RegExp) =>
+  assert.throws(read, (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message), "a malformed step LOCAL_AXES bucket is refused by name");
+
+test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in each width, and a step-less read the MODEL frame (the control)", () => {
+  for (const w of [3, 4, 9]) {
+    const p = withStepLa((la) => stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [1, 2, 3], [3, 3, w]));
+    withFile(p, (r) => {
+      for (const step of [0, 2]) {
+        const warnings: string[] = [];
+        const axes = r.readLocalAxes("stage_0", { step, warningsOut: warnings });
+        assert.deepEqual(Array.from(axes.elementIds), [1, 2, 3]);
+        assert.deepEqual(zOf(axes.zRec), [0, 1, 0, 0, 1, 0, 0, 1, 0], `width ${w}, step ${step}: the stored step frame`);
+        assert.deepEqual(axes.sources, ["step_local_axes", "step_local_axes", "step_local_axes"]);
+        assert.deepEqual(warnings, []);
+        const ls = r.readLineStationStep("stage_0", "N", step);
+        assert.ok(ls.elementIndex.length > 0);
+        for (let i = 0; i < ls.elementIndex.length; i++) assert.deepEqual(zOf(ls.localAxesZRec!.subarray(i * 3, i * 3 + 3)), [0, 1, 0]);
+        assert.ok(ls.localAxesSources!.every((s) => s === "step_local_axes"));
+      }
+      assert.deepEqual(zOf(r.readLocalAxes("stage_0").zRec), PORTAL_MODEL_Z, "a step-less read keeps the MODEL frame");
+    });
+  }
+  // Empty ID beside empty DATA holds no frame for anyone: the step reads the MODEL frames, silently.
+  const empty = withStepLa((la) => stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [], [3, 0, 4]));
+  withFile(empty, (r) => assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step: 1 }).zRec), PORTAL_MODEL_Z));
+  // The unedited fixture has no step bucket: a step read is the MODEL frame.
+  withFile(PORTAL3D, (r) => assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step: 1 }).zRec), PORTAL_MODEL_Z));
+});
+
+// Each malformed bucket refuses the step read and the line-station step read by name: the file, the bucket and the step.
+{
+  const B = "74-ForceBeamColumn3d[1000:1:0]";
+  const cases: [string, (la: h5wasm.Group) => void, string, string][] = [
+    ["fewer rows than ids", (la) => stepBucket(la, B, [1, 2, 3], [3, 2, 4]), PORTAL_BUCKET, "has DATA holding 2 row(s) per step for the 3 id(s) of its ID"],
+    ["more rows than ids", (la) => stepBucket(la, B, [1, 2], [3, 3, 4]), PORTAL_BUCKET, "has DATA holding 3 row(s) per step for the 2 id(s) of its ID"],
+    ["an empty ID beside rows", (la) => stepBucket(la, B, [], [3, 3, 4]), PORTAL_BUCKET, "has an empty ID, but its DATA holds 3 row(s) per step"],
+    ["rows 5 wide", (la) => stepBucket(la, B, [1, 2, 3], [3, 3, 5]), PORTAL_BUCKET, "has DATA rows 5 wide, not 3 (the local z axis), 4 (a quaternion) or 9 (a rotation matrix)"],
+    ["rows 2 wide", (la) => stepBucket(la, B, [1, 2, 3], [3, 3, 2]), PORTAL_BUCKET, "has DATA rows 2 wide"],
+    ["rows 6 wide", (la) => stepBucket(la, B, [1, 2, 3], [3, 3, 6]), PORTAL_BUCKET, "has DATA rows 6 wide"],
+    ["a step count that is not the stage's", (la) => stepBucket(la, B, [1, 2, 3], [2, 3, 4]), PORTAL_BUCKET, "has DATA for 2 step(s), but the stage has 3"],
+    ["a DATA that is not 3-D", (la) => stepBucket(la, B, [1, 2, 3], [3, 12]), PORTAL_BUCKET, "has DATA of shape (3, 12), not (steps, elements, components)"],
+    ["an ID and no DATA", (la) => stepBucket(la, B, [1, 2, 3], null), PORTAL_BUCKET, "holds an ID but no DATA"],
+    ["a DATA and no ID", (la) => stepBucket(la, B, null, [3, 3, 4]), PORTAL_BUCKET, "holds a DATA but no ID"],
+    ["a flat DATA and no ID", (la) => la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }), STEP_LA, "holds a DATA but no ID"],
+    ["an ID that is a group", (la) => { stepBucket(la, B, null, [3, 3, 4]); (la.get(B) as h5wasm.Group).create_group("ID"); }, PORTAL_BUCKET, "holds an ID that is not a dataset"],
+  ];
+  for (const [label, edit, at, what] of cases) {
+    test(`#2349: a step LOCAL_AXES bucket with ${label} refuses the step read and the line-station step read by name`, () => {
+      const p = withStepLa(edit);
+      withFile(p, (r) => {
+        for (const step of [0, 2]) {
+          const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(at)} ${escapedRe(what)}.*; a step's frame is read only as stored, .*so the local axes at step ${step} are not read$`);
+          refusesStep(() => r.readLocalAxes("stage_0", { step }), named);
+          refusesStep(() => r.readLocalAxes("stage_0", { step, elementIds: [1] }), named);
+          refusesStep(() => r.readLineStationStep("stage_0", "N", step), named);
+        }
+        // A step-less read does not read the step buckets: the MODEL frames, as before.
+        assert.deepEqual(zOf(r.readLocalAxes("stage_0").zRec), PORTAL_MODEL_Z, label);
+      });
+    });
+  }
+}
+
 test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-based, out-of-bounds, negative), 2D section alias gating on 3D, and LOCAL_AXES shape guard", () => {
   const timeArr = new Float64Array([0.25, 0.5, 0.75, 1.0]);
   const stepArr = new Int32Array([0, 1, 2, 3]);
