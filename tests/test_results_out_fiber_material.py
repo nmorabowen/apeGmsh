@@ -434,8 +434,36 @@ def test_fibre_decode_refuses_stations_out_of_order(
     """The second guard: within an element, stations increase strictly."""
     _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
     spec = _spec(beam["fem"], _fibres(beam["ids"]))
-    with pytest.raises(ValueError, match="strictly increasing"):
+    with pytest.raises(ValueError, match="strictly increasing") as exc:
         _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+    msg = str(exc.value)
+    assert "repeated or out of order" in msg and "HingeRadau" in msg
+    assert f"FEM element {int(beam['ids'][1])} has" in msg
+    assert "do not split" not in msg
+
+
+def test_fibre_decode_refuses_a_repeated_station(
+    beam: dict[str, Any], tmp_path: Path,
+) -> None:
+    """The short-HingeRadau fault: a station repeated inside one element."""
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, 0.5])
+    spec = _spec(beam["fem"], _fibres(beam["ids"]))
+    with pytest.raises(ValueError, match="repeated or out of order") as exc:
+        _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+    assert f"FEM element {int(beam['ids'][1])} has" in str(exc.value)
+
+
+def test_fibre_decode_refuses_a_station_outside_the_range(
+    beam: dict[str, Any], tmp_path: Path,
+) -> None:
+    _uniform_files(beam, tmp_path, [0.0, 0.5, 1.0, 0.0, 0.5, 1.5])
+    spec = _spec(beam["fem"], _fibres(beam["ids"]))
+    with pytest.raises(ValueError, match="outside the element's natural range") as exc:
+        _transcode(beam, spec, tmp_path, tmp_path / "r.h5")
+    msg = str(exc.value)
+    assert f"FEM element {int(beam['ids'][1])} has" in msg
+    assert "length or integration-point count" in msg
+    assert "repeated or out of order" not in msg
 
 
 def test_fibre_decode_refuses_a_count_the_model_contradicts(
@@ -501,6 +529,22 @@ def _reads(m: dict[str, Any], tmp: Path, cls: str, n_ip: int) -> Any:
     with Results.from_native(target, fem=m["fem"], model=model) as r:
         slab = r.elements.fibers.get(component="fiber_stress")
         return np.asarray(slab.gp_index).copy()
+
+
+@pytest.mark.parametrize("row", [[math.nan, math.nan], [0.5, math.nan]])
+def test_fibre_decode_refuses_a_nan_station(row: list, tmp_path: Path) -> None:
+    """A NaN station fails every comparison; a 1-point element has no
+    ``diff`` to catch it, so the range guard must."""
+    m = _two_beams(tmp_path, "out_fib_nan", ndm=2, elements=(
+        ("B1", "forceBeamColumn",
+         lambda ops, sec: ops.beamIntegration.Legendre(section=sec, n_ip=1)),
+        ("B2", "forceBeamColumn",
+         lambda ops, sec: ops.beamIntegration.Legendre(section=sec, n_ip=1))))
+    m["cls"] = "ForceBeamColumn2d"
+    _uniform_files(m, tmp_path, row)
+    spec = _spec(m["fem"], _fibres(m["ids"], cls="ForceBeamColumn2d"))
+    with pytest.raises(ValueError, match="outside the element's natural range"):
+        _transcode(m, spec, tmp_path, tmp_path / "r.h5")
 
 
 def test_fork_disp_beam_fibres_read(tmp_path: Path) -> None:
