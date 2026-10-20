@@ -52,18 +52,10 @@ from typing import TYPE_CHECKING
 from typing import Iterable
 
 from .._vocabulary import (
-    DERIVED_SCALARS,
-    FIBER,
-    LINE_DIAGRAMS,
-    MATERIAL_STATE,
-    NODAL_FORCES,
-    NODAL_KINEMATICS,
-    PER_ELEMENT_NODAL_FORCES,
-    PLASTIC_STRAIN,
-    STRAIN,
-    STRESS,
     expand_many,
+    in_category,
     is_canonical,
+    wrong_category_reason,
 )
 from ._internal.types import Primitive, Recorder
 
@@ -1409,18 +1401,11 @@ ALL_RECORDER_CATEGORIES: tuple[str, ...] = (
     "modal",
 )
 
-# Per-category canonical component sets. Components outside the
-# category's allowed set fail validation unless supplied via ``raw=``
-# (the escape hatch for non-catalogued OpenSees tokens).
-_CATEGORY_CANONICALS: dict[str, frozenset[str]] = {
-    "nodes":         frozenset(NODAL_KINEMATICS + NODAL_FORCES),
-    "elements":      frozenset(PER_ELEMENT_NODAL_FORCES),
-    "line_stations": frozenset(LINE_DIAGRAMS),
-    "gauss":         frozenset(STRESS + STRAIN + PLASTIC_STRAIN + DERIVED_SCALARS + MATERIAL_STATE),
-    "fibers":        frozenset(FIBER + MATERIAL_STATE),
-    "layers":        frozenset(FIBER + MATERIAL_STATE),
-    "modal":         frozenset(),  # no per-component vocabulary; n_modes only
-}
+# Which category records each component is
+# ``apeGmsh._vocabulary.CATEGORY_COMPONENTS`` (#2344), the one table the
+# resolved record and DomainCapture read too. A component outside its
+# category fails validation unless supplied via ``raw=`` (the escape
+# hatch for non-catalogued OpenSees tokens).
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1439,10 +1424,11 @@ class RecorderRecord:
     category
         One of :data:`ALL_RECORDER_CATEGORIES`.
     components
-        Tuple of canonical component names. Validated against
-        :data:`_CATEGORY_CANONICALS` per category, plus indexed
-        canonicals (``state_variable_<n>``, ``fiber_stress_<n>``,
-        ``spring_force_<n>``) recognized via :func:`is_canonical`.
+        Tuple of canonical component names, each one the category
+        records (:func:`apeGmsh._vocabulary.in_category`: the
+        ``CATEGORY_COMPONENTS`` table plus its indexed canonicals,
+        ``state_variable_<n>``, ``fiber_stress_<n>``,
+        ``spring_force_<n>``). A bare string is one component.
     raw
         Escape hatch for non-canonical OpenSees tokens (e.g. a
         custom recorder response). Bypasses canonical validation.
@@ -1488,23 +1474,27 @@ class RecorderRecord:
                 f"Allowed: {ALL_RECORDER_CATEGORIES}."
             )
 
-        # Components — must be canonical and category-allowed (or
-        # match an indexed-canonical pattern). Raw tokens bypass
-        # validation.
-        allowed = _CATEGORY_CANONICALS.get(self.category, frozenset())
+        # Components — each canonical and recorded by this category
+        # (``in_category``, #2344): a canonical any element category
+        # accepted recorded nothing, or another response under its
+        # name. Raw tokens bypass validation. A bare string is one
+        # component, not its characters.
+        if isinstance(self.components, str):
+            object.__setattr__(self, "components", (self.components,))
         for comp in self.components:
-            if comp in allowed:
+            if is_canonical(comp) and in_category(self.category, comp):
                 continue
-            # Allow indexed canonicals (state_variable_N, fiber_stress_N,
-            # spring_force_N etc.) in element-level categories.
-            if is_canonical(comp) and self.category in (
-                "elements", "line_stations", "gauss", "fibers", "layers",
-            ):
-                continue
-            raise ValueError(
+            head = (
                 f"RecorderRecord(category={self.category!r}): component "
                 f"{comp!r} not in canonical vocabulary or category-allowed "
-                f"set. Use raw= for non-canonical OpenSees tokens."
+                f"set"
+            )
+            if is_canonical(comp):
+                raise ValueError(
+                    f"{head}: {wrong_category_reason(self.category, comp)}"
+                )
+            raise ValueError(
+                f"{head}. Use raw= for non-canonical OpenSees tokens."
             )
 
         # Cadence: at most one of dt / n_steps
