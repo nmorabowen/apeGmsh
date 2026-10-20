@@ -39,6 +39,12 @@ __all__ = ["capture_live_modes"]
 
 _WHERE = "capture_live_modes"
 
+#: The ``ops.eigen`` solver flags ``solver=`` forwards: the ones stock
+#: openseespy accepts that solve the generalised problem ``K x = λ M x``.
+#: openseespy ignores a flag it does not know and solves with its default,
+#: so any other value refuses by name instead of being passed on.
+_SOLVERS = ("-genBandArpack", "-fullGenLapack")
+
 
 def capture_live_modes(
     model_h5_or_fem: "str | os.PathLike[str] | FEMData",
@@ -46,6 +52,7 @@ def capture_live_modes(
     path: "str | os.PathLike[str]",
     *,
     ops: Optional[Any] = None,
+    solver: Optional[str] = None,
 ) -> Path:
     """Solve ``ops.eigen(n_modes)`` on the live domain and write the modes
     as ``kind="mode"`` stages of a native results file; return its path.
@@ -67,14 +74,17 @@ def capture_live_modes(
         p = capture_live_modes("model.h5", 3, "modes.h5", ops=ops)
         r = Results.from_native(p, model=OpenSeesModel.from_h5("model.h5"))
 
-    The capture trusts the eigenvalues ``ops.eigen`` returns. On an
-    indefinite stiffness (a negative spring, a softened member) the stock
-    default eigen solver can return plausible positive eigenvalues without
-    raising: a -10 spring under ``ops.eigen(3)`` gave 0.02 three times,
-    where ``-fullGenLapack`` or a ``system BandGeneral`` deck gives the true
-    -0.2. No cheap check tells them apart, so declare ``ops.system
-    ("BandGeneral")`` (or check with ``ops.eigen("-fullGenLapack", n)``)
-    when the stiffness may be indefinite. ``DomainCapture.capture_modes``
+    The capture trusts the eigenvalues its own ``ops.eigen`` call returns.
+    On an indefinite stiffness (a negative spring, a softened member) the
+    stock default eigen solver can return plausible positive eigenvalues
+    without raising: a -10 spring under ``ops.eigen(3)`` gave 0.02 three
+    times, where ``-fullGenLapack`` or a ``system BandGeneral`` deck gives
+    the true -0.2. No cheap check tells them apart, and a solve made
+    outside the capture does not guard the capture's own solve. When the
+    stiffness may be indefinite, declare ``ops.system("BandGeneral")``
+    before capturing, or pass ``solver="-fullGenLapack"`` (a dense, O(n³)
+    solve, for small models only). ``ops.wipeAnalysis()`` drops the
+    system too, so declare it again after one. ``DomainCapture.capture_modes``
     had the same exposure.
 
     Parameters
@@ -90,16 +100,27 @@ def capture_live_modes(
     ops
         The OpenSees module holding the deck. ``None`` takes the one the
         bridge resolves (:func:`~apeGmsh.opensees.emitter.live.get_ops`).
+    solver
+        The eigen solver flag the capture's solve passes,
+        ``ops.eigen(solver, n_modes)``: ``"-genBandArpack"`` or
+        ``"-fullGenLapack"``. ``None`` solves with the module's default.
 
     Raises
     ------
     ValueError
-        ``n_modes`` is not a positive integer; the live domain declares no
+        ``n_modes`` is not a positive integer; ``solver`` is not one of
+        the flags above; the live domain declares no
         ndm; a fem node is not in the live domain, or its live coordinates
         are not the FEM node's; a node's eigenvector length is not its
-        live ndf; ``ops.eigen`` raised (a second default solve on stock
-        openseespy with no analysis defined: call ``ops.wipeAnalysis()``
-        first); or the solve returned another number of modes, or a
+        live ndf; ``ops.eigen`` raised (on stock openseespy, a second
+        eigen solve in a domain with no analysis, even with a ``system``
+        declared: call ``ops.wipeAnalysis()``, then
+        ``ops.system("BandGeneral")`` again, before ``capture_live_modes``,
+        since ``wipeAnalysis()`` also drops the system that guards against
+        the wrong positive eigenvalues above; or, to keep your own system,
+        define ``ops.analysis(...)`` with it before the first eigen); or
+        the solve returned
+        another number of modes, or a
         non-positive or non-finite eigenvalue (a mechanism or an
         unconverged solve). Nothing is written.
     FileNotFoundError
@@ -108,12 +129,18 @@ def capture_live_modes(
     if isinstance(n_modes, bool) or not isinstance(n_modes, int) or n_modes < 1:
         raise ValueError(
             f"{_WHERE}: n_modes must be a positive integer, got {n_modes!r}.")
+    if solver is not None and solver not in _SOLVERS:
+        raise ValueError(
+            f"{_WHERE}: solver={solver!r} is not an eigen solver flag this "
+            f"capture forwards; pass one of {list(_SOLVERS)}, or None for the "
+            "default. openseespy ignores a flag it does not know, so it is "
+            "refused here rather than passed on.")
     out_path = Path(os.fspath(path))
     if ops is None:
         ops = get_ops()
     with tempfile.TemporaryDirectory(prefix="apegmsh_live_modes_") as tmp:
         archive = _archive(model_h5_or_fem, out_path, Path(tmp))
-        return _capture(archive, n_modes, out_path, ops)
+        return _capture(archive, n_modes, out_path, ops, solver)
 
 
 def _archive(
@@ -141,6 +168,7 @@ def _archive(
 
 def _capture(
     archive: OpenSeesModel, n_modes: int, out_path: Path, ops: Any,
+    solver: Optional[str],
 ) -> Path:
     fem = archive.fem
     facts = LiveDomainFacts(ops, archive)
@@ -149,20 +177,27 @@ def _capture(
     # Every fem node is in the live domain, at the FEM coordinates.
     ndf_of = facts.nodes_ndf(node_ids, where=_WHERE)
 
+    call = ("" if solver is None else f"{solver!r}, ") + str(n_modes)
     try:
-        solved = ops.eigen(n_modes)
+        solved = (ops.eigen(n_modes) if solver is None
+                  else ops.eigen(solver, n_modes))
     except Exception as exc:  # the module's own error class (OpenSeesError)
         raise ValueError(
-            f"{_WHERE}: ops.eigen({n_modes}) failed ({exc!r}; the solver's "
-            "own message is on stderr). On stock openseespy a second default "
-            "eigen solve in a domain with no analysis fails with 'no EigenSOE "
-            "has been set': call ops.wipeAnalysis() before capture_live_modes, "
-            "or define the analysis (ops.analysis(...)) before the first "
-            "eigen. Nothing was written.") from exc
+            f"{_WHERE}: ops.eigen({call}) failed ({exc!r}; the solver's "
+            "own message is on stderr). On stock openseespy a second eigen "
+            "solve in a domain with no analysis fails with 'no EigenSOE has "
+            "been set', even with a system declared: call ops.wipeAnalysis(), "
+            "then ops.system(\"BandGeneral\") again, before "
+            "capture_live_modes; or, to keep your own system, define "
+            "ops.analysis(...) with it before the first eigen. "
+            "wipeAnalysis() also drops the system, and "
+            "without BandGeneral the stock default solver can return wrong "
+            "positive eigenvalues on an indefinite stiffness. Nothing was "
+            "written.") from exc
     eigenvalues = np.asarray(solved, dtype=np.float64).ravel()
     if eigenvalues.size != n_modes:
         raise ValueError(
-            f"{_WHERE}: ops.eigen({n_modes}) returned {eigenvalues.size} "
+            f"{_WHERE}: ops.eigen({call}) returned {eigenvalues.size} "
             "eigenvalue(s); nothing was written.")
     bad = [(k, float(lam)) for k, lam in enumerate(eigenvalues, start=1)
            if not (np.isfinite(lam) and lam > 0.0)]
