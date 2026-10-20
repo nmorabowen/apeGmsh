@@ -99,6 +99,29 @@ def test_disagreement_outside_the_requested_slice_still_refuses(
             )
 
 
+@pytest.mark.parametrize("node_ids", [[6], [1, 6, 9], [1]])
+def test_one_disagreeing_node_refuses_every_filtered_read(
+    tmp_path: Path, node_ids: list[int],
+) -> None:
+    # Node 5's copies (3.0, 4.0) show the component is partial per rank,
+    # so node 6's equal copies (2.0, 2.0) are partial too: true value 4.0,
+    # not 2.0. No filter may read around the disagreement, including one
+    # that selects no shared node.
+    path = tmp_path / "run.h5"
+    _write(path, {
+        "partition_0": ([1, 5, 6], {"reaction_force_x": [[1.0, 3.0, 2.0]] * 2}),
+        "partition_1": ([5, 6, 9], {"reaction_force_x": [[4.0, 2.0, 7.0]] * 2}),
+    })
+    with NativeReader(path) as r:
+        for _ in range(2):          # the memoised verdict refuses again
+            with pytest.raises(NativePartitionCopiesDisagree) as info:
+                r.read_nodes(
+                    "stage_0", "reaction_force_x",
+                    node_ids=np.array(node_ids), time_slice=1,
+                )
+            assert info.value.copies == {5: ["partition_0", "partition_1"]}
+
+
 def test_agreeing_boundary_copies_read_first_wins(tmp_path: Path) -> None:
     # Guard against over-refusal: replicated copies that agree bit for
     # bit (NaN included) read as one column, as before.

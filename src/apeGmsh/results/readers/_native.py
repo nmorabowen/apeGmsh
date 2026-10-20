@@ -102,10 +102,12 @@ class NativePartitionCopiesDisagree(ValueError):
     Native files carry no partition-reduction rule (MPCO and ``.ladruno``
     have ``PARTITION_REDUCTION``), so the reader cannot tell a partial
     per-partition value (a reaction or unbalanced load, which would have
-    to be summed) from a replicated one (a displacement). A node's copies
-    are read only when every partition holds the same value, so keeping
-    the first is exact; any other copy set refuses rather than return one
-    partition's share as the whole.
+    to be summed) from a replicated one (a displacement). A component is
+    read only when every shared node's copies are equal, so keeping the
+    first is exact. One node whose copies differ shows the component holds
+    partial values, so its agreeing copies may be partial too: the
+    component then refuses on every read, whatever the node filter or
+    time slice, rather than return one partition's share as the whole.
 
     ``copies`` maps each disagreeing node id to the partitions that hold it.
     """
@@ -128,8 +130,9 @@ class NativePartitionCopiesDisagree(ValueError):
             f"id(s) held by several partitions have copies that differ "
             f"(id: partitions {shown}{more}). Native results files carry no "
             f"partition-reduction rule, so partial per-partition values "
-            f"(reactions, unbalanced loads) cannot be summed, and a copy is "
-            f"read only when every partition holds the same value."
+            f"(reactions, unbalanced loads) cannot be summed. The component "
+            f"is read only when every shared node's copies are equal, "
+            f"whatever the node filter or time slice."
         )
 
 
@@ -252,6 +255,11 @@ class NativeReader:
         self._unavailable: dict[str, str] = {}
         # class_tags already warned about by ``_gauss_natural_coords``.
         self._simplex_warned: set[int] = set()
+        # (stage, component, n_steps) -> the shared nodes whose
+        # partition copies differ ({} when they all agree).
+        self._copy_verdicts: dict[
+            tuple[str, str, int], dict[int, list[str]],
+        ] = {}
         # ADR 0023 — validate per-zone schema versions for every
         # embedded zone (results envelope, neutral, opensees). Failure
         # raises SchemaVersionError before any read API is offered.
@@ -774,8 +782,12 @@ class NativeReader:
             else np.asarray(node_ids, dtype=np.int64)
         )
 
-        # The partitions holding ``component``, with the rows they select.
-        selected: list[tuple[str, "h5py.Group", "slice | ndarray", ndarray]] = []
+        # Refuses when the partitions' copies of a shared node differ
+        # anywhere in this component, whatever the filter or slice.
+        self._check_partition_copies(stage_id, component)
+
+        chunks_values: list[ndarray] = []
+        chunks_ids: list[ndarray] = []
         for pid in self.partitions(stage_id):
             nodes_path = _native.nodes_path(stage_id, pid)[1:]
             if nodes_path not in self._h5:
@@ -788,7 +800,7 @@ class NativeReader:
             )
 
             if node_ids_filter is None:
-                sel: "slice | ndarray" = slice(None)
+                sel = slice(None)
                 sel_ids = all_ids
             else:
                 mask = np.isin(all_ids, node_ids_filter)
@@ -796,42 +808,14 @@ class NativeReader:
                     continue
                 sel = np.where(mask)[0]
                 sel_ids = all_ids[sel]
-            selected.append((pid, nodes_grp, sel, sel_ids))
 
-        # Node ids held by more than one partition (a repeat within one
-        # partition is refused at open, so a repeat here is a copy).
-        shared = np.array([], dtype=np.int64)
-        if len(selected) > 1:
-            uniq, counts = np.unique(
-                np.concatenate([s[3] for s in selected]), return_counts=True,
-            )
-            shared = uniq[counts > 1]
-
-        chunks_values: list[ndarray] = []
-        chunks_ids: list[ndarray] = []
-        copy_vals: list[ndarray] = []
-        copy_ids: list[ndarray] = []
-        copy_pids: list[str] = []
-        for pid, nodes_grp, sel, sel_ids in selected:
             full = nodes_grp[component][...]                 # (T, N)
+            values = full[t_idx]
             if not isinstance(sel, slice):
-                full = full[:, sel]
-            if shared.size:
-                is_copy = np.isin(sel_ids, shared)
-                if is_copy.any():
-                    copy_vals.append(full[:, is_copy])
-                    copy_ids.append(sel_ids[is_copy])
-                    copy_pids.extend([pid] * int(is_copy.sum()))
-            chunks_values.append(full[t_idx])
-            chunks_ids.append(sel_ids)
+                values = values[:, sel]
 
-        if copy_ids:
-            self._refuse_disagreeing_copies(
-                stage_id, component,
-                np.concatenate(copy_ids),
-                np.concatenate(copy_vals, axis=1),
-                np.array(copy_pids),
-            )
+            chunks_values.append(values)
+            chunks_ids.append(sel_ids)
 
         values = (
             np.concatenate(chunks_values, axis=1) if chunks_values
@@ -843,10 +827,10 @@ class NativeReader:
         )
         # Boundary nodes are replicated across partition domains. Dedup
         # by id (first occurrence wins) so a shared node yields one
-        # column, not one per partition; the copies were checked equal
-        # above, so the first is every copy. Only reorders when
-        # duplicates exist, so disjoint-owner files are byte-identical to
-        # the plain concatenation.
+        # column, not one per partition; ``_check_partition_copies``
+        # proved the copies equal, so the first is every copy. Only
+        # reorders when duplicates exist, so disjoint-owner files are
+        # byte-identical to the plain concatenation.
         if ids_out.size:
             uniq, first_idx = np.unique(ids_out, return_index=True)
             if uniq.size != ids_out.size:
@@ -857,36 +841,93 @@ class NativeReader:
             node_ids=ids_out, time=time[t_idx],
         )
 
-    def _refuse_disagreeing_copies(
-        self, stage_id: str, component: str,
-        ids: ndarray, values: ndarray, pids: ndarray,
-    ) -> None:
-        """Raise :class:`NativePartitionCopiesDisagree` unless every copy
-        of each node in ``ids`` is bit-for-bit equal to its first copy,
-        over every step of the stage (not only the requested slice).
+    def _check_partition_copies(self, stage_id: str, component: str) -> None:
+        """Raise :class:`NativePartitionCopiesDisagree` unless every node
+        held by several partitions has bit-for-bit equal copies of
+        ``component`` over every step of ``stage_id`` (#2360).
 
-        ``ids`` lists one node id per column of ``values`` (``(T, M)``),
-        and ``pids`` the partition each column came from, in read order.
-        The comparison is on the bytes, so NaN copies agree and ``0.0``
-        and ``-0.0`` do not.
+        The verdict is per (stage, component), over **all** shared nodes,
+        never only the ones a read selects: one disagreeing node shows the
+        component holds partial per-partition values, so its agreeing
+        copies may be partial too, and no filter or time slice may read
+        them. The verdict is memoised (keyed with the step count, so a
+        stage that grows is checked again); a refusal is raised again on
+        every read. The comparison is on the bytes, so NaN copies agree
+        and ``0.0`` and ``-0.0`` do not.
         """
-        _, first, inverse = np.unique(
-            ids, return_index=True, return_inverse=True,
+        n_steps = int(self._h5[_native.stage_time_path(stage_id)].shape[0])
+        key = (stage_id, component, n_steps)
+        if key not in self._copy_verdicts:
+            self._copy_verdicts[key] = self._disagreeing_copies(
+                stage_id, component,
+            )
+        copies = self._copy_verdicts[key]
+        if copies:
+            raise NativePartitionCopiesDisagree(
+                self._path, stage_id, component, copies,
+            )
+
+    def _disagreeing_copies(
+        self, stage_id: str, component: str,
+    ) -> "dict[int, list[str]]":
+        """Each shared node whose copies of ``component`` differ, mapped to
+        the partitions holding it; ``{}`` when every copy agrees."""
+        held: list[tuple[str, "h5py.Group", ndarray]] = []
+        for pid in self.partitions(stage_id):
+            nodes_path = _native.nodes_path(stage_id, pid)[1:]
+            if nodes_path not in self._h5:
+                continue
+            nodes_grp = self._h5[nodes_path]
+            if component not in nodes_grp:
+                continue
+            held.append((pid, nodes_grp, np.asarray(
+                nodes_grp[_native.DSET_IDS][...], dtype=np.int64,
+            )))
+        if len(held) < 2:
+            return {}
+        # A repeat within one partition is refused at open, so an id
+        # counted twice here is held by two partitions.
+        uniq, counts = np.unique(
+            np.concatenate([ids for _, _, ids in held]), return_counts=True,
         )
-        cells = np.ascontiguousarray(values)
+        shared = uniq[counts > 1]
+        if not shared.size:
+            return {}
+
+        copy_vals: list[ndarray] = []
+        copy_ids: list[ndarray] = []
+        copy_pids: list[str] = []
+        for pid, nodes_grp, ids in held:
+            is_copy = np.isin(ids, shared)
+            if not is_copy.any():
+                continue
+            copy_vals.append(nodes_grp[component][...][:, is_copy])
+            copy_ids.append(ids[is_copy])
+            copy_pids.extend([pid] * int(is_copy.sum()))
+        ids_all = np.concatenate(copy_ids)
+        pids = np.array(copy_pids)
+        cells = np.ascontiguousarray(np.concatenate(copy_vals, axis=1))
+        _, first, inverse = np.unique(
+            ids_all, return_index=True, return_inverse=True,
+        )
         n_steps, n_cols = cells.shape
         raw = cells.view(np.uint8).reshape(
             n_steps, n_cols, cells.dtype.itemsize,
         )
         differs = (raw != raw[:, first[inverse], :]).any(axis=(0, 2))
         if not differs.any():
-            return
-        copies: dict[int, list[str]] = {}
-        for nid in np.unique(ids[differs]).tolist():
-            copies[int(nid)] = pids[ids == nid].tolist()
-        raise NativePartitionCopiesDisagree(
-            self._path, stage_id, component, copies,
-        )
+            return {}
+        # Every copy of each disagreeing node, grouped by one stable sort
+        # (partitions stay in read order within a node).
+        bad = np.isin(ids_all, ids_all[differs])
+        bad_ids, bad_pids = ids_all[bad], pids[bad]
+        order = np.argsort(bad_ids, kind="stable")
+        bad_ids, bad_pids = bad_ids[order], bad_pids[order]
+        nids, starts = np.unique(bad_ids, return_index=True)
+        return {
+            int(nid): group.tolist()
+            for nid, group in zip(nids, np.split(bad_pids, starts[1:]))
+        }
 
     # ------------------------------------------------------------------
     # Slab reads — Gauss points
