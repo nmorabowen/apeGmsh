@@ -27,7 +27,7 @@ from typing import (
     cast,
 )
 
-from ._internal.artifact_write import BridgeArtifactWriter
+from ._internal.artifact_write import BridgeArtifactWriter, emit_deck_tail
 from ._internal.build.errors import BridgeError, TagPlanMiss
 from ._internal.build.records import (
     DampingAttachRecord,
@@ -10183,16 +10183,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             # partition_open/partition_close.
             emitter.stream_to(path, per_rank=per_rank)
         try:
-            bm.emit(emitter)
-            for _verb, _vargs in pre_prof:
-                emitter.profiler(_verb, *_vargs)
-            if analyze_steps is not None:
-                emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
-            for _verb, _vargs in post_prof:
-                emitter.profiler(_verb, *_vargs)
-            if analyze_steps is not None:  # the run record, last; it reuses
-                self._artifacts.after_emit(self)  # this model.h5's lineage
-                emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self, path)
+            emit_deck_tail(self, emitter, bm, pre_prof, post_prof,
+                           analyze_steps, analyze_dt, path)
             if stream and per_rank and (
                 emitter.stream_fragment_count() == 0
             ):
@@ -10742,16 +10734,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         emitter._emit_progress = bool(progress)
         emitter._run_record = analyze_steps is not None
         pre_prof, post_prof = self._split_profiler_records()
-        bm.emit(emitter)
-        for _verb, _vargs in pre_prof:
-            emitter.profiler(_verb, *_vargs)
-        if analyze_steps is not None:
-            emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
-        for _verb, _vargs in post_prof:
-            emitter.profiler(_verb, *_vargs)
-        if analyze_steps is not None:  # the run record, last; it reuses
-            self._artifacts.after_emit(self)  # this model.h5's lineage
-            emitter._deck_run_record(lambda p: self._write_h5(p, bm), int(analyze_steps), analyze_dt, self, path)
+        emit_deck_tail(self, emitter, bm, pre_prof, post_prof,
+                       analyze_steps, analyze_dt, path)
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)
         self._artifacts.after_emit(self)

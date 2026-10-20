@@ -59,7 +59,7 @@ import pickle
 import uuid
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # The bridge, as the procedure mixins and ``apeSees`` itself see it:
@@ -175,6 +175,29 @@ def remember_lineage(bridge: "_ProcedureHost", archive: object) -> None:
         fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
     if model_hash is not None:
         _LINEAGE_BY_DIGEST[key] = (model_hash, fem_hash or "")
+
+
+def emit_deck_tail(
+    bridge: Any, emitter: Any, bm: Any, pre_prof: Any, post_prof: Any,
+    analyze_steps: "int | None", analyze_dt: Any, path: Any,
+) -> None:
+    """Emit ``bm`` into ``emitter``, then the deck's tail: the profiler
+    records, the ``analyze`` line and, last, the run record (#2210; it
+    reuses the automatic ``model.h5``'s lineage).  ``apeSees.py`` and
+    ``apeSees.tcl`` share it (#2289)."""
+    bm.emit(emitter)
+    for _verb, _vargs in pre_prof:
+        emitter.profiler(_verb, *_vargs)
+    if analyze_steps is not None:
+        emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+    for _verb, _vargs in post_prof:
+        emitter.profiler(_verb, *_vargs)
+    if analyze_steps is not None:
+        bridge._artifacts.after_emit(bridge)
+        emitter._deck_run_record(
+            lambda p: bridge._write_h5(p, bm), int(analyze_steps),
+            analyze_dt, bridge, path,
+        )
 
 
 class BridgeArtifactWriter:
