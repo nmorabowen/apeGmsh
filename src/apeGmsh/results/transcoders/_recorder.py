@@ -486,10 +486,9 @@ class RecorderTranscoder:
             )
         n_elements = len(rec.element_ids)
         gpx_data_cols = first_gpx_row.size - 1   # subtract -time column
-        # A bound model's per-element counts are checked before the columns divide.
+        # A bound model's (or a live pairing's) per-element counts are checked before the columns divide.
         n_ip = line_station_count(rec, gpx_data_cols, gpx_lr.file_path,
-                                  None if self._model_h5_src is None else self._model_or_pairing(),
-                                  self._spec.fem_snapshot_id)
+                                  self._model_or_pairing(), self._spec.fem_snapshot_id)
         # Reshape to (E, n_IP) of physical xi*L.
         xi_phys = first_gpx_row[1:].reshape(n_elements, n_ip)
 

@@ -112,9 +112,12 @@ def line_station_count(
     refuses them (#2267), before the columns are divided. Equal counts that
     do not fill ``n_columns`` mean the file is not from this model. A live
     pairing over a FEMData archive (:class:`LiveDomainFacts`) gives each
-    element's count from the sections it read before the run (#2290), by
-    the same rule. Without a model, the columns must divide evenly by
-    element.
+    element's count from the sections it read before the run (#2290 for
+    fibres, #2328 for line stations), by the same rule. Any other
+    ``model`` refuses by type. Without a model, the columns must divide
+    evenly by element; a mixed record whose columns divide can then pass
+    the order check (interior stations, unequal lengths), so a read that
+    has a model or pairing must pass it.
     """
     assert rec.element_ids is not None
     n_elements = len(rec.element_ids)
@@ -127,8 +130,13 @@ def line_station_count(
         return n_columns // n_elements
     if isinstance(model, LiveDomainFacts):
         source = "the live domain"
-        counts = np.array([len(model.fiber_sections(int(e))[0])
+        counts = np.array([model.station_count(int(e))
                            for e in rec.element_ids], dtype=np.int64)
+    elif not isinstance(model, OpenSeesModel):
+        raise TypeError(
+            f"Record {rec.name!r} ({rec.category}): its stations are counted "
+            f"from the bridge's model archive or a live pairing's sections; "
+            f"a {type(model).__name__} carries neither.")
     else:
         source = "model="
         counts = model_station_counts(rec, model, fem_snapshot_id)
