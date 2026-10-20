@@ -317,11 +317,13 @@ class LadrunoReader:
         """Raise :class:`LadrunoRepeatedNodeId` if ``dataset`` repeats an id.
 
         The fork writes ids ascending, so a strictly increasing list (one
-        ``np.diff``) is accepted without sorting; any other list is checked
-        with ``np.unique``, so an unsorted list of distinct ids still opens.
+        pairwise comparison) is accepted without sorting; any other list is
+        checked with ``np.unique``, so an unsorted list of distinct ids
+        still opens. The comparison never subtracts: ``np.diff`` wraps in
+        int64, so ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
         """
         ids = np.asarray(dataset[...], dtype=np.int64).ravel()
-        if ids.size < 2 or bool((np.diff(ids) > 0).all()):
+        if ids.size < 2 or bool((ids[1:] > ids[:-1]).all()):
             return
         uniq, counts = np.unique(ids, return_counts=True)
         if uniq.size == ids.size:

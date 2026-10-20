@@ -12,7 +12,8 @@ repeated id with its rows. `Results.from_ladruno` refuses a single file and a
 part set alike; a node held by two part files is still legal.
 
 The check also costs less at open: a strictly increasing id list, which is
-what the fork writes, is accepted after one `np.diff`, and only any other
-list is sorted. On a synthetic 2M-node file with 6 results and 4 stages the
-check went from 0.97 s to 0.25 s, most of it reading the ids. The refusals
-are unchanged.
+what the fork writes, is accepted after one pairwise comparison of
+neighbouring ids, and only any other list is sorted. The comparison never
+subtracts, so ids near the int64 limits cannot wrap into a false "increasing".
+On a synthetic 2M-node file with 6 results and 4 stages the check went from
+1.0 s to 0.18 s, most of it reading the ids. The refusals are unchanged.

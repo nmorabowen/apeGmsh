@@ -276,6 +276,53 @@ def test_result_id_check_still_names_a_result(tmp_path: Path) -> None:
     assert "two columns" in str(info.value)
 
 
+# A list a subtracting fast path (``np.diff(ids) > 0``) reads as strictly
+# increasing: 2**63 - 1 - 0 > 0, -2 - (2**63 - 1) wraps to 2**63 - 1 > 0,
+# and 0 - (-2) = 2 > 0. Id 0 repeats at rows 0 and 3. The uint64 form
+# reads as the same int64 list.
+_B = 2**63 - 1
+_WRAP_CASES = {
+    "int64": np.array([0, _B, -2, 0], dtype=np.int64),
+    "uint64": np.array([0, _B, 2**64 - 2, 0], dtype=np.uint64),
+}
+
+
+def _replace_id(path: Path, dataset: str, ids: np.ndarray) -> None:
+    with h5py.File(path, "a") as f:
+        shape = (ids.size, 1) if f[dataset].ndim == 2 else (ids.size,)
+        del f[dataset]
+        f.create_dataset(dataset, data=ids.reshape(shape))
+
+
+@pytest.mark.parametrize("dtype", sorted(_WRAP_CASES))
+def test_wrapping_result_ids_refuse(tmp_path: Path, dtype: str) -> None:
+    path = _file(
+        tmp_path / "run.ladruno", reaction=_REACTION_PART0,
+        disp=[(n, (0.0, 0.0)) for n in (1, 2, 3, 4)],
+    )
+    dataset = "/MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/ID"
+    _replace_id(path, dataset, _WRAP_CASES[dtype])
+    with pytest.raises(LadrunoRepeatedNodeId) as info:
+        LadrunoReader(path)
+    assert info.value.model is False
+    assert info.value.dataset == dataset
+    assert info.value.repeated == {0: [0, 3]}
+    _assert_closed(path)
+
+
+@pytest.mark.parametrize("dtype", sorted(_WRAP_CASES))
+def test_wrapping_model_ids_refuse(tmp_path: Path, dtype: str) -> None:
+    path = _quad2d_with_model_ids(tmp_path, [1, 2, 3, 4])
+    dataset = "/MODEL_STAGE[1]/MODEL/NODES/ID"
+    _replace_id(path, dataset, _WRAP_CASES[dtype])
+    with pytest.raises(LadrunoRepeatedNodeId) as info:
+        LadrunoReader(path)
+    assert info.value.model is True
+    assert info.value.dataset == dataset
+    assert info.value.repeated == {0: [0, 3]}
+    _assert_closed(path)
+
+
 # ---------------------------------------------------------------------
 # A part set
 # ---------------------------------------------------------------------
