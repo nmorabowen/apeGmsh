@@ -64,6 +64,46 @@ def _listing_gates_read(*, filtered: bool) -> Iterator[list[str]]:
             )
 
 
+class ComponentNotRecorded(ValueError):
+    """A read named a component the stage does not record at that level.
+
+    Every reader answers an unknown name with an EMPTY slab, which reads
+    as "no data here" when the data was recorded under another name: a
+    family shorthand (``"displacement"`` for ``displacement_x/_y/_z``), a
+    typo, or a level that holds no such quantity (#2343). The composites
+    raise this instead. A known name on an empty selection stays empty.
+    """
+
+
+def _refuse_if_unrecorded(slab, component: str, sid: str, level: ResultLevel,
+                          reader):
+    """Return ``slab``, or refuse when it is empty for an unrecorded name.
+
+    The listing is asked only when the read came back empty (no entity
+    columns), so a read that returns data never pays for it, and a name
+    a reader accepts beyond its listing (a raw token) keeps working.
+    The listing is the one for ``sid``, the stage just read. Its
+    ``MPCOBucketSkippedWarning`` s are held back: the read already named
+    the skipped buckets it touched (#2293, #2305).
+    """
+    if np.asarray(slab.values).shape[1] != 0:
+        return slab
+    with _listing_gates_read(filtered=True):
+        available = list(reader.available_components(sid, level))
+    if component in available:
+        return slab
+    family = sorted(c for c in available if c.startswith(f"{component}_"))
+    hint = (
+        f" {component!r} is a family name: read its components one at a "
+        f"time ({', '.join(family)})."
+        if family else ""
+    )
+    raise ComponentNotRecorded(
+        f"{component!r} is not recorded at the {level.value} level of "
+        f"stage {sid!r}.{hint} Available: {sorted(available)}."
+    )
+
+
 # =====================================================================
 # Geometric helpers — coordinate / box queries against the bound FEM
 # =====================================================================
@@ -929,8 +969,11 @@ class NodeResultsComposite(_CustomScalarMixin, _SelectionMixin):
         node_ids = self._resolve_node_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_nodes(
-            sid, component, node_ids=node_ids, time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_nodes(
+                sid, component, node_ids=node_ids, time_slice=time,
+            ),
+            component, sid, ResultLevel.NODES, self._r._reader,
         )
 
     def _reader_components(self, *, stage: str | None = None) -> list[str]:
@@ -1168,8 +1211,11 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_elements(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_elements(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.ELEMENTS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1260,8 +1306,11 @@ class GaussResultsComposite(
             return self._compute_derived(
                 component, sid, eids, time, plane=plane, nu=nu,
             )
-        return self._r._reader.read_gauss(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_gauss(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.GAUSS, self._r._reader,
         )
 
     def _compute_shell_derived(
@@ -1555,9 +1604,12 @@ class FibersResultsComposite(_SelectionMixin, _ElementGeometryMixin):
             None if gp_indices is None
             else np.asarray(list(gp_indices), dtype=np.int64)
         )
-        return self._r._reader.read_fibers(
-            sid, component,
-            element_ids=eids, gp_indices=gpi, time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_fibers(
+                sid, component,
+                element_ids=eids, gp_indices=gpi, time_slice=time,
+            ),
+            component, sid, ResultLevel.FIBERS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1600,10 +1652,13 @@ class LayersResultsComposite(_SelectionMixin, _ElementGeometryMixin):
             None if layer_indices is None
             else np.asarray(list(layer_indices), dtype=np.int64)
         )
-        return self._r._reader.read_layers(
-            sid, component,
-            element_ids=eids, gp_indices=gpi, layer_indices=lyr,
-            time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_layers(
+                sid, component,
+                element_ids=eids, gp_indices=gpi, layer_indices=lyr,
+                time_slice=time,
+            ),
+            component, sid, ResultLevel.LAYERS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1636,8 +1691,11 @@ class LineStationsResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_line_stations(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_line_stations(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.LINE_STATIONS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1683,8 +1741,11 @@ class SpringsResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_springs(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            self._r._reader.read_springs(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.SPRINGS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
