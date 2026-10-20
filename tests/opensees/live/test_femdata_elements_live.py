@@ -489,7 +489,8 @@ def test_truss_gauss_axial_force_skips_mpco_and_is_the_live_response(
     assert run.route == "recorders" and "mpco" not in view.asked
     (w,) = caught
     assert w.category is DefaultRouteWarning
-    assert "a record cannot go through MPCO" in str(w.message)
+    assert ("MPCO cannot write the Truss axial force (records {'axial': "
+            "['axial_force']}") in str(w.message)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         res = run.results(cache_root=tmp_path / "cache")

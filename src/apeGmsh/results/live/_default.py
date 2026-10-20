@@ -32,9 +32,11 @@ The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
 it raises or returns no tag, no recorder was made, a file the probe created
 is deleted, and the classic recorders open one stage over the whole block.
-A spec MPCO cannot write (``mpco_ops_args`` refuses a record, as it refuses
-the Truss ``axial_force``) is not probed: it takes the classic recorders,
-which record it or refuse it by name (#2290).
+A spec with a Truss ``axial_force`` gauss component is not probed: MPCO
+writes that bucket with no ``GAUSS_IDS``, so it takes the classic recorders,
+which record it (#2290). Its other records must still pass every MPCO
+refusal (:func:`~apeGmsh.results.spec._emit.collect_mpco_tokens`), as on
+any stock run: only the Truss axial force is rerouted.
 
 ``model_h5`` is the bridge's archive or a FEMData archive (``fem.to_h5``,
 no ``/opensees`` zone). On the classic-recorder route a FEMData archive's
@@ -50,6 +52,7 @@ Modal records have no default route and refuse at ``__enter__``.
 """
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -57,6 +60,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import h5py
 
 from ...opensees._recorder_translate import LiveDomainFacts, live_ndm
+from ...opensees._response_catalog import gauss_keyword_for_canonical
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
@@ -71,7 +75,7 @@ from ..readers._ladruno_live import (
     stamp_fork_file,
 )
 from ..Results import Results
-from ..spec._emit import mpco_ops_args
+from ..spec._emit import collect_mpco_tokens, mpco_ops_args
 from ._recorders import LiveRecorders
 
 if TYPE_CHECKING:
@@ -282,15 +286,17 @@ class LiveDefault:
         existed = target.exists()
         out_dir = "" if str(target.parent) == "." else str(target.parent)
         lead, reason, tag = "this OpenSees build has no MPCO recorder", "", None
-        try:
+        kept, rerouted = _split_truss_axial(self._spec.records)
+        if rerouted:
+            # Every other MPCO refusal stands; no probe, so no file.
+            collect_mpco_tokens(kept)
+            lead = "MPCO cannot write the Truss axial force"
+            reason = (f"records {rerouted} record its axialForce bucket "
+                      "with no GAUSS_IDS, which the MPCO reader refuses")
+        else:
             args = mpco_ops_args(
                 self._spec.records, output_dir=out_dir, filename=target.name,
             )
-        except ValueError as exc:
-            # A record MPCO cannot write (the Truss axial_force): no probe,
-            # so no file; the classic recorders record it or refuse it.
-            lead, reason = "a record cannot go through MPCO", str(exc)
-        else:
             try:
                 tag = self._ops.recorder(*args)
             except Exception as exc:
@@ -457,6 +463,27 @@ def _has_bridge_zone(model_h5: Path) -> bool:
     only the neutral FEMData zones (``fem.to_h5``)."""
     with h5py.File(str(model_h5), "r") as f:
         return "opensees" in f
+
+
+def _split_truss_axial(
+    records: "tuple[ResolvedRecorderRecord, ...]",
+) -> "tuple[list[ResolvedRecorderRecord], dict[str, list[str]]]":
+    """``(kept, rerouted)``: the records without their Truss axial-force
+    gauss components (``axialForce``, which MPCO writes with no
+    ``GAUSS_IDS``), a record left with none dropped; and ``{record name:
+    those components}``. Only these move a stock run off MPCO."""
+    kept: "list[ResolvedRecorderRecord]" = []
+    rerouted: "dict[str, list[str]]" = {}
+    for r in records:
+        axial = [c for c in r.components if r.category == "gauss"
+                 and gauss_keyword_for_canonical(c) == "axialForce"]
+        if axial:
+            rerouted[r.name] = axial
+        comps = tuple(c for c in r.components if c not in axial)
+        if comps:
+            kept.append(dataclasses.replace(r, components=comps)
+                        if axial else r)
+    return kept, rerouted
 
 
 def _refuse_unpairable_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
