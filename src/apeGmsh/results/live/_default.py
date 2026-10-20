@@ -32,6 +32,9 @@ The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
 it raises or returns no tag, no recorder was made, a file the probe created
 is deleted, and the classic recorders open one stage over the whole block.
+A spec MPCO cannot write (``mpco_ops_args`` refuses a record, as it refuses
+the Truss ``axial_force``) is not probed: it takes the classic recorders,
+which record it or refuse it by name (#2290).
 
 ``model_h5`` is the bridge's archive or a FEMData archive (``fem.to_h5``,
 no ``/opensees`` zone). On the classic-recorder route a FEMData archive's
@@ -277,14 +280,20 @@ class LiveDefault:
         target = self._path.with_suffix(_MPCO_SUFFIX)
         existed = target.exists()
         out_dir = "" if str(target.parent) == "." else str(target.parent)
-        args = mpco_ops_args(
-            self._spec.records, output_dir=out_dir, filename=target.name,
-        )
-        reason = ""
+        lead, reason, tag = "this OpenSees build has no MPCO recorder", "", None
         try:
-            tag = self._ops.recorder(*args)
-        except Exception as exc:
-            tag, reason = None, f"{type(exc).__name__}: {exc}"
+            args = mpco_ops_args(
+                self._spec.records, output_dir=out_dir, filename=target.name,
+            )
+        except ValueError as exc:
+            # A record MPCO cannot write (the Truss axial_force): no probe,
+            # so no file; the classic recorders record it or refuse it.
+            lead, reason = "a record cannot go through MPCO", str(exc)
+        else:
+            try:
+                tag = self._ops.recorder(*args)
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"
         if tag is not None and not _is_tag(tag):
             # No recorder tag, so no recorder to remove: the call failed.
             reason = f"ops.recorder('mpco', ...) returned {tag!r}, not a tag"
@@ -312,8 +321,8 @@ class LiveDefault:
         dropped = (f" Not recorded on this route: {skipped}."
                    if skipped else "")
         warnings.warn(DefaultRouteWarning(
-            f"emit_default: this OpenSees build has no MPCO recorder "
-            f"({reason}); recording classic recorder files in {out} instead, "
+            f"emit_default: {lead} ({reason}); recording classic recorder "
+            f"files in {out} instead, "
             f"one stage over the whole block.{dropped}"), stacklevel=3)
         self._model = OpenSeesModel.from_h5(self._model_h5)
         deck_model: Any = self._model
