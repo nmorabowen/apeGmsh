@@ -523,6 +523,61 @@ test("#2299: a part whose node ID lists node 2 twice refuses the set at open, by
   rmSync(dir, { recursive: true });
 });
 
+/**
+ * Give a part a one-Gauss-point quad stress bucket over `elements`: `ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]`
+ * on the part's own TIME, and the MODEL/ELEMENTS group that places its point, so the part reads it as a Gauss group.
+ */
+const quadStress = (elements: number[]) => (f: h5wasm.File) => {
+  const stage = "/MODEL_STAGE[1]";
+  const time = (f.get(`${ON_NODES}/DISPLACEMENT/TIME`) as h5wasm.Dataset).value as Float64Array;
+  const T = time.length;
+  const n = elements.length;
+  const model = (f.get(`${stage}/MODEL/ELEMENTS`) as h5wasm.Group).create_group("31-FourNodeQuad[201:0]");
+  model.create_attribute("PARAM_DOMAIN", "[-1,1]");
+  model.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: new Float64Array([0, 0]), shape: [1, 2] });
+  const b = (f.get(`${stage}/RESULTS/ON_ELEMENTS`) as h5wasm.Group).create_group("stress").create_group("31-FourNodeQuad[201:0:0]");
+  b.create_dataset({ name: "ID", data: new Int32Array(elements), shape: [n, 1] });
+  b.create_dataset({ name: "TIME", data: time });
+  b.create_dataset({ name: "STEP", data: Int32Array.from({ length: T }, (_, k) => k) });
+  b.create_dataset({ name: "DATA", data: new Float64Array(T * n), shape: [T, n, 1] });
+  b.create_attribute("NUM_COLUMNS", 1);
+  const cm = b.create_group("COLUMN_MAP");
+  cm.create_attribute("COMP_NAMES", "sigma11");
+  cm.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0]), shape: [1, 1] });
+  cm.create_dataset({ name: "NUM_COMP", data: new Int32Array([1]), shape: [1, 1] });
+};
+
+test("#2316: element 7 in the stress buckets of both parts refuses the set at open, naming both parts; disjoint elements open, and node 2 stays shared", () => {
+  const GROUP = "stress/31-FourNodeQuad[201:0:0]";
+  const BUCKET = "/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]";
+  // Control: elements 7 and 8 on part 0, 9 on part 1. Each part reads its bucket as a Gauss group; the set lists it unread.
+  const ok = scratchSet(PART, { 0: quadStress([7, 8]), 1: quadStress([9]) });
+  for (const k of [0, 1]) {
+    const one = openLadruno(H5, ok.part(k), { part: true });
+    try {
+      assert.deepEqual(one.index.stages[0]!.gauss.map((g) => [g.id, g.nElements, g.refused]), [[GROUP, k === 0 ? 2 : 1, []]]);
+    } finally {
+      one.close();
+    }
+  }
+  withSet(ok.part(0), (s) => {
+    const st = s.index.stages[0]!;
+    assert.deepEqual(Array.from(st.nodes!.ids), [1, 2, 3], "node 2, in both parts, is one node of the set: a shared node is not an element repeat");
+    assert.ok(st.unread.includes(`${GROUP} (${PART_SET_ELEMENTS_UNREAD})`), st.unread.join("; "));
+  });
+  rmSync(ok.dir, { recursive: true });
+  // Element 7 on both parts (row 0 of part 0, row 1 of part 1): one element on two ranks.
+  const bad = scratchSet(PART, { 0: quadStress([7, 8]), 1: quadStress([9, 7]) });
+  const named = new RegExp(
+    `^run\\.part-<N>\\.ladruno: ${BUCKET.slice(0, BUCKET.lastIndexOf("/")).replace(/[[\]]/g, "\\$&")} lists element id\\(s\\) more than once ` +
+      `\\(id 7 at run\\.part-0\\.ladruno ${BUCKET.replace(/[[\]]/g, "\\$&")}/ID row 0 and run\\.part-1\\.ladruno ${BUCKET.replace(/[[\]]/g, "\\$&")}/ID row 1\\); each element lives on one rank`,
+  );
+  for (const opened of [bad.part(0), bad.part(1)]) refuses(opened, named);
+  // Each part alone is a well-formed file: the repeat is the set's.
+  for (const k of [0, 1]) openLadruno(H5, bad.part(k), { part: true }).close();
+  rmSync(bad.dir, { recursive: true });
+});
+
 // -- pairing ------------------------------------------------------------------------
 
 const MODEL = { lineage: { modelHash: MODEL_HASH, femHash: "fedcba9876543210fedcba9876543210", resultsHash: null }, openseesVersion: null, programDecl: null };
