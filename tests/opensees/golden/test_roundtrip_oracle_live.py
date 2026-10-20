@@ -83,7 +83,10 @@ _STAND_IN_ID = ("test_h5_decl_params::_two_column_frame_partitioned"
 #: MPCO recorder and a lumped mass;
 #: :func:`test_a_stand_in_is_its_model_but_for_solver_and_mass` pins that,
 #: and that the twin's own bridge deck aborts on one of those commands.
-_STAND_INS: dict[str, str] = {_TWIN_ID: _STAND_IN_ID}
+#: The twin's solve stamp says ``requires=()``, ``solve_mode="partitioned"``
+#: although its deck aborts on stock: the #2220 class. The stand-in retires
+#: when #2220 makes such a stamp name what its deck needs.
+_STAND_INS: dict[str, str] = {_TWIN_ID: _STAND_IN_ID}  # #2220
 #: Every model whose replay deck must run: the corpus but its S rows (not
 #: replayable; ``from_h5`` refuses them by name) and the models a stand-in
 #: runs for, in corpus order.
@@ -231,10 +234,35 @@ _STAND_IN_ADDS = [
     "ops.mass(4, 2.0, 2.0, 2.0, 0.0, 0.0, 0.0)",
     *["ops.numberer('RCM')", "ops.system('UmfPack')"] * 2,
 ]
-#: The commands a single-process stock openseespy refuses in the twin's
-#: deck, as its error log names them; the stand-in drops each of them.
-_STOCK_REFUSES = ("recorder type mpco is unknown", "unknown system type Mumps",
-                  "Numberer")
+#: The fatal refusals a single-process build logs for the twin's deck, each
+#: naming a command the stand-in drops: stock openseespy has no ``recorder
+#: mpco``, and neither stock nor the fork's desktop build has serial
+#: ``system Mumps``. ``numberer ParallelRCM`` is absent: stock accepts the
+#: call, and its later "no Numberer specified" is a warning a deck can run
+#: past, so it would pass an unrelated abort.
+_STOCK_REFUSES = ("recorder type mpco is unknown", "unknown system type Mumps")
+
+
+def _aborts_on_a_dropped_command(log: str) -> bool:
+    """Whether a deck's log names one of :data:`_STOCK_REFUSES`."""
+    return any(r in log for r in _STOCK_REFUSES)
+
+
+def test_an_unrelated_abort_is_not_a_dropped_command(tmp_path: Path) -> None:
+    """The reason check on a reproducer (the #2195 re-review): the twin's
+    deck without its numberer, system and MPCO lines, ending in an
+    unrelated ``SystemExit``, aborts but names none of the refusals, so
+    the check rejects it."""
+    twin = next(m for m in CORPUS if m.id == _TWIN_ID)
+    bridge, _replay, _req = _decks(twin, tmp_path)
+    lines = [ln for ln in bridge.read_text(encoding="utf-8").splitlines()
+             if not ln.strip().startswith(("ops.numberer(", "ops.system("))
+             and "'mpco'" not in ln]
+    bridge.write_text("\n".join([*lines, "raise SystemExit('unrelated')"]),
+                      encoding="utf-8")
+    ran, log = _run(bridge)
+    assert not ran and "unrelated" in log, log
+    assert not _aborts_on_a_dropped_command(log), log
 
 
 @pytest.mark.parametrize("twin_id", list(_STAND_INS))
@@ -255,7 +283,7 @@ def test_a_stand_in_is_its_model_but_for_solver_and_mass(
                          s_bridge.read_text(encoding="utf-8").splitlines())
     assert (gone, new) == (_STAND_IN_DROPS, _STAND_IN_ADDS)
     ran, log = _run(t_bridge)
-    assert not ran and any(r in log for r in _STOCK_REFUSES), (
+    assert not ran and _aborts_on_a_dropped_command(log), (
         f"{twin_id}: the twin's bridge deck no longer aborts on a command "
         f"its stand-in drops; drop the stand-in:\n{log}")
 
