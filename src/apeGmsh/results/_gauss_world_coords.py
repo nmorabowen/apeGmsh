@@ -46,10 +46,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from numpy import ndarray
 
-from ..fem._shape_functions import (
-    SHAPE_FUNCTIONS_BY_GMSH_CODE,
-    get_shape_functions,
-)
+from ..fem._shape_functions import get_shape_functions
 from ._gauss_extrapolation import (
     _GMSH_CODE_BY_PARENT_DIM_NPE,
     _PARENT_DIM,
