@@ -22,9 +22,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { ResultsHost } from "../../src/main/results.ts";
+import { firstListing, LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
-import { resolveLocalAxes, stationLocalAxes } from "../../src/reader/ladrunoLocalAxes.ts";
+import { resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes } from "../../src/reader/ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
@@ -961,6 +962,69 @@ test("#2336: resolveLocalAxes and stationLocalAxes take 2^24 + 1 framed elements
   const stations = stationLocalAxes(got, Float64Array.from([n, 1, n + 1]));
   assert.deepEqual(Array.from(stations.localAxesZRec!.subarray(0, 6)), [0, 0, 1, 0, 0, 1]);
   assert.ok(Number.isNaN(stations.localAxesZRec![6]!));
+});
+
+// #2348: the app reads a stage's line diagram one step at a time (main/results.ts
+// readStep), and passes no warningsOut: a MODEL/LOCAL_AXES group a read does not take
+// is said at open, once, by the stage's line-station listing (metaOf), so the step
+// reads would only repeat it. Here it is, in the app's own open answer, once.
+test("#2348: a MODEL/LOCAL_AXES group whose frames are not read reaches the app's open answer once, and its step line diagrams draw", async () => {
+  const p = withClass([11, 12], Float64Array.from({ length: 12 }, (_, i) => (i % 4 === 0 ? 1 : 0)), [3, 4]);
+  const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/FRAME holds 3 row\\(s\\) for the 2 id\\(s\\) of ${escapedRe(EB_LA)}/ID; its frames are not read`);
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const opened = await host.open(p);
+    assert.ok(opened.ok, opened.ok ? "" : opened.error);
+    assert.equal(opened.warnings.filter((w) => named.test(w)).length, 1, "said once, for the one stage whose MODEL/LOCAL_AXES holds it");
+    const stage = opened.meta.stages[0]!;
+    assert.ok(stage.lineStations.includes("N"));
+    for (const step of [0, stage.time.length - 1]) {
+      const ans = host.readStep({ path: p, stage: stage.id, step, seq: step, lineDiagram: "N" });
+      assert.ok(ans.ok && ans.lineDiagram, ans.ok ? "no line diagram" : ans.error);
+      assert.ok(!("warnings" in ans), "a step answer carries no warnings: they were said at open");
+      // ForceBeamColumn3d's elements 1..10 keep their recorded frames; the unread group frames none.
+      const ids = [...new Set(Array.from(ans.lineDiagram.elementIndex))];
+      assert.deepEqual(ids, TEN);
+      assert.ok(ans.lineDiagram.localAxesSources!.every((s) => s === "model_local_axes"));
+    }
+  } finally {
+    host.close();
+  }
+  // The unedited fixture opens with no LOCAL_AXES warning.
+  const quiet = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const opened = await quiet.open(FRAME3D);
+    assert.ok(opened.ok);
+    assert.deepEqual(opened.warnings.filter((w) => w.includes("LOCAL_AXES")), []);
+  } finally {
+    quiet.close();
+  }
+});
+
+// #2348: readLineStations looks ids up (the elements asked for, those a section bucket
+// serves, those an earlier bucket already took) in sorted typed arrays; the Sets it
+// used throw "RangeError: Set maximum size exceeded" past 2^24 ids. A file that size is
+// gigabytes, so this is the read's own lookup and precedence, on typed arrays.
+test("#2348: firstListing takes each element once, from the first list that holds it", () => {
+  const take = firstListing([Float64Array.from([3, 1]), Float64Array.from([1, 2, 2]), new Float64Array(0), Float64Array.from([5, 3])]);
+  assert.deepEqual(take.map((t) => Array.from(t)), [[1, 1], [0, 1, 0], [], [1, 0]]);
+  assert.deepEqual(firstListing([]), []);
+});
+
+test("#2348: readLineStations' id lookups and bucket precedence take 2^24 + 1 elements, past V8's Set cap", () => {
+  const n = 2 ** 24 + 1;
+  const ids = new Float64Array(n);
+  for (let i = 0; i < n; i++) ids[i] = n - i; // descending, so the lookup must sort
+  const sorted = sortedUniqueIds(ids);
+  assert.equal(sorted.length, n);
+  assert.equal(sorted[0], 1);
+  assert.equal(rowOf(sorted, n), n - 1);
+  assert.equal(rowOf(sorted, n + 1), -1);
+  // Two buckets holding every element: the first takes them all, the second none.
+  const [first, second] = firstListing([ids, ids]);
+  assert.equal(first!.length, n);
+  assert.ok(first!.every((t) => t === 1));
+  assert.ok(second!.every((t) => t === 0));
 });
 
 // #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (schema §5; the fork at
