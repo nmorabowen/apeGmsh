@@ -24,7 +24,8 @@ aggregated :class:`WarnGaussCoordsApproximate` per call names each
 class that took the bbox approximation and why, and the GPs that could
 not be placed at all. An unplaced GP is NaN in every column, whatever the
 cause (an element missing from the FEMData, connectivity naming unknown
-nodes, a FEMData with no nodes, a row without natural coordinates): never
+or negative node ids, a FEMData with no nodes, a non-finite node
+coordinate, a row without natural coordinates): never
 the origin, which is a plausible coordinate that a pick or a box-select
 would take for a real point.
 
@@ -391,6 +392,7 @@ def compute_global_coords(
     — typically the deformed substrate points from
     :class:`FEMSceneData.grid` after a Geometry's deformation has been
     applied. Useful for visualizing GP markers on the deformed shape.
+    An override of any other length raises :class:`ValueError`.
     """
     return compute_global_coords_from_arrays(
         np.asarray(slab.element_index, dtype=np.int64),
@@ -431,20 +433,33 @@ def compute_global_coords_from_arrays(
         else np.asarray(fem.nodes.coords, dtype=np.float64)
     )
     if coords_arr.shape[0] != node_ids_arr.shape[0]:
-        # Override length must match fem.nodes.ids — silently fall
-        # back to the embedded fem coords.
-        coords_arr = np.asarray(fem.nodes.coords, dtype=np.float64)
-    # A FEMData with no nodes resolves no element: every GP is then
-    # counted unresolved below and named in the warning.
-    max_nid = int(node_ids_arr.max()) if node_ids_arr.size else -1
+        # Row-aligned with fem.nodes.ids is the override's contract; a
+        # mismatch is a caller bug, and falling back to the undeformed
+        # coords would draw the GPs where the model no longer is.
+        which = (
+            "node_coords_override" if node_coords_override is not None
+            else "fem.nodes.coords"
+        )
+        raise ValueError(
+            f"{which} has {coords_arr.shape[0]} row(s) but fem.nodes.ids "
+            f"has {node_ids_arr.shape[0]}; it must be row-aligned with "
+            f"fem.nodes.ids."
+        )
+    # A negative id would index the lookup from its end and hand its
+    # coordinates to another id: such a node is unknown, and named.
+    bad_node_ids = node_ids_arr[node_ids_arr < 0]
+    good_rows = np.flatnonzero(node_ids_arr >= 0)
+    good_ids = node_ids_arr[good_rows]
+    # A FEMData with no (valid) nodes resolves no element: every GP is
+    # then counted unresolved below and named in the warning.
+    max_nid = int(good_ids.max()) if good_ids.size else -1
     nid_to_idx = np.full(max_nid + 2, -1, dtype=np.int64)
-    nid_to_idx[node_ids_arr] = np.arange(
-        node_ids_arr.size, dtype=np.int64,
-    )
+    nid_to_idx[good_ids] = good_rows
 
     # ── Per-element info: the group's type + the element's nodes ──
     needed = set(int(e) for e in np.unique(eids))
     eid_info: dict[int, _ElementInfo] = {}
+    nonfinite_eids: set[int] = set()
     for group in fem.elements:
         et = group.element_type
         code = int(et.code)
@@ -465,8 +480,15 @@ def compute_global_coords_from_arrays(
             idxs = nid_to_idx[row]
             if not (idxs >= 0).all():
                 continue
+            node_xyz = coords_arr[idxs]
+            if not np.isfinite(node_xyz).all():
+                # A NaN node would leave rows partly finite.
+                if eid not in eid_info:
+                    nonfinite_eids.add(eid)
+                continue
+            nonfinite_eids.discard(eid)
             eid_info[eid] = _ElementInfo(
-                code, coords_arr[idxs], label, dim, bezier,
+                code, node_xyz, label, dim, bezier,
             )
 
     # ── Per element: resolve its shape once, place all its GPs ─────
@@ -481,9 +503,10 @@ def compute_global_coords_from_arrays(
         eid = int(eids[rows[0]])
         info = eid_info.get(eid)
         if info is None:
-            # No parent element / unknown nodes — the rows stay NaN
-            # (not placed). Counted loud.
-            unresolved_eids.add(eid)
+            # No parent element / unknown nodes / non-finite node
+            # coords — the rows stay NaN (not placed). Counted loud.
+            if eid not in nonfinite_eids:
+                unresolved_eids.add(eid)
             continue
         placed = _place_element(info, nat[rows])
         out[rows] = placed.world
@@ -496,7 +519,10 @@ def compute_global_coords_from_arrays(
             bbox[key] = bbox.get(key, 0) + rows.size - placed.n_unplaced
             bbox_codes.add(info.code)
 
-    if bbox or unplaced or unresolved_eids:
+    # Invariant: a row is all finite or all NaN, never partly finite.
+    out[~np.isfinite(out).all(axis=1)] = np.nan
+
+    if bbox or unplaced or unresolved_eids or nonfinite_eids or bad_node_ids.size:
         parts: list[str] = []
         if bbox:
             listing = "; ".join(
@@ -528,6 +554,27 @@ def compute_global_coords_from_arrays(
                 f"resolved against the FEMData (missing element or "
                 f"unknown nodes) — their GPs are NaN (not placed); "
                 f"eids: {sample}{more}"
+            )
+        if nonfinite_eids:
+            sample = sorted(nonfinite_eids)[:5]
+            more = (
+                f", ... ({len(nonfinite_eids) - 5} more)"
+                if len(nonfinite_eids) > 5 else ""
+            )
+            parts.append(
+                f"{len(nonfinite_eids)} element(s) have a non-finite "
+                f"node coordinate — their GPs are NaN (not placed); "
+                f"eids: {sample}{more}"
+            )
+        if bad_node_ids.size:
+            sample = sorted(int(n) for n in bad_node_ids)[:5]
+            more = (
+                f", ... ({bad_node_ids.size - 5} more)"
+                if bad_node_ids.size > 5 else ""
+            )
+            parts.append(
+                f"{bad_node_ids.size} FEMData node id(s) are negative "
+                f"and were treated as unknown; node ids: {sample}{more}"
             )
         warnings.warn(
             "GP world-coordinate reconstruction degraded: "

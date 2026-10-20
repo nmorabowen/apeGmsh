@@ -124,3 +124,47 @@ def test_no_unplaced_row_is_finite():
     np.testing.assert_array_equal(finite, [True, False, False, False, True])
     assert not (np.abs(out[finite]).sum(axis=1) == 0.0).any()
     np.testing.assert_allclose(out[finite], _quad_world(nat[finite]))
+
+
+# --- #2327 review: three pre-existing silent-wrong paths -----------------
+
+
+def test_negative_fem_node_id_does_not_wrap_onto_another_node():
+    """A negative id in ``fem.nodes.ids`` used to be written at the end of
+    the lookup, so connectivity naming node 3 read the -2 node's coords."""
+    fem = _fem(
+        node_ids=[1, 2, 3, -2],
+        coords=[[1, 1, 0], [3, 1, 0], [3, 3, 0], [100, 100, 100]],
+        conn=((1, 2, 3, 3),),
+    )
+    with pytest.warns(
+        WarnGaussCoordsApproximate, match=r"negative.*node ids: \[-2\]",
+    ):
+        out = compute_global_coords_from_arrays(
+            np.array([10]), np.array([[0.0, 0.0]]), fem,
+        )
+    # Degenerate quad 1-2-3-3 at its centre: the mean of its four rows.
+    np.testing.assert_allclose(out, [[2.5, 2.0, 0.0]])
+
+
+def test_override_length_mismatch_raises_by_name():
+    """It used to fall back silently to the undeformed coords."""
+    with pytest.raises(ValueError, match=r"node_coords_override has 3 row"):
+        compute_global_coords_from_arrays(
+            np.array([10]), np.array([[0.0, 0.0]]), _fem(),
+            node_coords_override=np.zeros((3, 3)),
+        )
+
+
+def test_nan_node_coordinate_makes_the_whole_row_nan_and_warns():
+    """A NaN z on one node used to give a row with finite x, y, NaN z and
+    no warning."""
+    coords = np.array(_COORDS, dtype=np.float64)
+    coords[2, 2] = np.nan
+    with pytest.warns(
+        WarnGaussCoordsApproximate, match=r"non-finite node.*\[10\]",
+    ):
+        out = compute_global_coords_from_arrays(
+            np.array([10]), np.array([[0.0, 0.0]]), _fem(coords=coords),
+        )
+    assert np.isnan(out).all()
