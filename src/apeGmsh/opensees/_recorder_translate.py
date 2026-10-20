@@ -677,6 +677,13 @@ class LiveDomainFacts:
         :meth:`nodes_ndf`), and its ``eleType`` has a bridge token
         (:data:`_TOKEN_FOR_LIVE_CLASS`). A FEM id that fails any of these
         refuses, naming it; nothing is paired then.
+
+        Two FEM elements with the same ordered connectivity (a stacked
+        quad pair, a doubled spring) match any ``eleNodes`` check, so a
+        deck that swapped their tags (and so their materials) would record
+        each one's response under the other's id. A recorded element whose
+        ordered connectivity another FEM element shares refuses, naming
+        both, as a coincident node does (:meth:`_check_shared_positions`).
         """
         import numpy as np
 
@@ -688,9 +695,11 @@ class LiveDomainFacts:
             return
         conn_of: "dict[int, list[int]]" = {}
         ask = np.asarray(wanted, dtype=np.int64)
+        by_width: "dict[int, list[tuple[ndarray, ndarray]]]" = {}
         for group in self._archive.fem.elements:  # type: ignore[attr-defined]
             ids = np.asarray(group.ids, dtype=np.int64)
             conn = np.asarray(group.connectivity, dtype=np.int64)
+            by_width.setdefault(conn.shape[1], []).append((ids, conn))
             for i in np.flatnonzero(np.isin(ids, ask)):
                 conn_of[int(ids[i])] = [int(v) for v in conn[i]]
         absent = [e for e in wanted if e not in conn_of]
@@ -699,6 +708,25 @@ class LiveDomainFacts:
                 f"{where}: FEM elements {absent[:10]} are not in the FEMData "
                 "the archive holds, so no live element can be shown to be "
                 "them. Record the FEM elements the deck was built from.")
+        twins: "list[str]" = []
+        for parts in by_width.values():
+            ids = np.concatenate([p[0] for p in parts])
+            conn = np.concatenate([p[1] for p in parts])
+            _, inv, counts = np.unique(conn, axis=0, return_inverse=True,
+                                       return_counts=True)
+            inv = inv.ravel()
+            for i in np.flatnonzero(np.isin(ids, ask) & (counts[inv] > 1)):
+                others = [int(e) for e in ids[inv == inv[i]] if e != ids[i]]
+                twins.append(f"FEM element {int(ids[i])} shares nodes "
+                             f"{conn_of[int(ids[i])]} with {others[:5]}")
+        if twins:
+            raise ValueError(
+                f"{where}: " + "; ".join(sorted(twins)[:3])
+                + (f"; and {len(twins) - 3} more" if len(twins) > 3 else "")
+                + ". eleNodes cannot tell those elements apart, so a deck "
+                "that swapped their tags would record each one's response "
+                "under the other's id. Drop them from the record, or record "
+                "them through the bridge's model archive (ops.h5(...)).")
         ops = self._ops
         live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
         bad: "list[str]" = []

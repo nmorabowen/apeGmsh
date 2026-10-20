@@ -274,6 +274,116 @@ def test_a_deck_whose_connectivity_is_not_the_fem_refuses_by_id(
              r"\[3, 2\]")
 
 
+def _quad_fem(ids: "list[int]") -> FEMData:
+    """Quads ``ids``, all on nodes 1-4 (a stacked pair when two)."""
+    coords = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0],
+                       [0.0, 1.0, 0.0]])
+    quad = make_type_info(code=3, gmsh_name="Quadrilateral 4", dim=2,
+                          order=1, npe=4, count=len(ids))
+    group = ElementGroup(element_type=quad, ids=np.array(ids, dtype=np.int64),
+                         connectivity=np.array([[1, 2, 3, 4]] * len(ids),
+                                               dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 5, dtype=np.int64),
+                            node_coords=coords, physical=pg,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={3: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=4, n_elems=len(ids), bandwidth=4, types=[quad]),
+        model_name=f"femdata_elements_quads_{len(ids)}",
+    )
+
+
+def _build_quads(ops: Any, mats: "dict[int, int]") -> None:
+    """Quads tagged by ``mats`` keys on nodes 1-4, each with its material:
+    a soft (1) and a stiff (2) one."""
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for n, xy in zip((1, 2, 3, 4), ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0),
+                                    (0.0, 1.0))):
+        ops.node(n, *xy)
+    ops.fix(1, 1, 1)
+    ops.fix(4, 1, 1)
+    ops.nDMaterial("ElasticIsotropic", 1, 2.0e5, 0.25)
+    ops.nDMaterial("ElasticIsotropic", 2, 2.0e7, 0.25)
+    for eid, mat in mats.items():
+        ops.element("quad", eid, 1, 2, 3, 4, 1.0, "PlaneStress", mat)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 1.0e3, 0.0)
+    ops.load(3, 1.0e3, 0.0)
+    for cmd, args in (("constraints", ("Plain",)), ("numberer", ("RCM",)),
+                      ("system", ("BandGeneral",)),
+                      ("test", ("NormDispIncr", 1.0e-12, 10)),
+                      ("algorithm", ("Linear",)),
+                      ("integrator", ("LoadControl", 1.0 / _STEPS)),
+                      ("analysis", ("Static",))):
+        getattr(ops, cmd)(*args)
+
+
+_QUAD_STRESS = ("stress_xx", "stress_yy", "stress_xy")
+
+
+def test_stacked_quads_on_the_same_nodes_refuse_naming_both(opspy, tmp_path) -> None:
+    """The review's swap deck: quads 5 and 6 on nodes [1, 2, 3, 4] with
+    their materials swapped. eleNodes matches both ways, so the pairing
+    would attach each one's stress to the other's id."""
+    fem = _quad_fem([5, 6])
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_quads(opspy, {5: 2, 6: 1})
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("gauss", "s", _QUAD_STRESS, np.array([5, 6]),
+                         "FourNodeQuad"),))
+    _refuses(spec, tmp_path, model_h5, opspy,
+             r"FEM element 5 shares nodes \[1, 2, 3, 4\] with \[6\].*"
+             r"eleNodes cannot tell those elements apart")
+
+
+def test_a_single_quad_records_its_gauss_stress(opspy, tmp_path) -> None:
+    fem = _quad_fem([5])
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_quads(opspy, {5: 2})
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("gauss", "s", _QUAD_STRESS, np.array([5]),
+                         "FourNodeQuad"),))
+    res = _emit(spec, tmp_path, model_h5, opspy, _STEPS)
+    try:
+        truth = np.asarray(opspy.eleResponse(5, "stresses"))   # 4 GPs x 3
+        assert np.abs(truth).max() > 0
+        for k, comp in enumerate(_QUAD_STRESS):
+            slab = res.elements.gauss.get(component=comp, ids=np.array([5]))
+            assert [int(i) for i in np.asarray(slab.element_index)] == [5] * 4
+            np.testing.assert_allclose(np.asarray(slab.values)[-1],
+                                       truth[k::3], **_RTOL, err_msg=comp)
+    finally:
+        res.close()
+
+
+def test_a_zero_length_nodal_force_record_refuses_before_the_run(
+    opspy, tmp_path,
+) -> None:
+    """A ZeroLength has no global_force nodal-force layout: refused at
+    entry, not when the run is read."""
+    fem = _portal_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    opspy.model("basic", "-ndm", 2, "-ndf", 3)
+    opspy.node(2, 0.0, H)
+    opspy.node(3, W, H)
+    opspy.uniaxialMaterial("Elastic", 9, 1.0e3)
+    opspy.element("zeroLength", 3, 2, 3, "-mat", 9, "-dir", 1)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("elements", "nf", ("nodal_resisting_force_x",),
+                         np.array([3]), "ZeroLength"),))
+    _refuses(spec, tmp_path, model_h5, opspy,
+             r"no nodal-force layout \[\('ZeroLength', 'global_force'\)\]")
+
+
 def test_an_unmapped_live_class_refuses_by_name(opspy, tmp_path) -> None:
     """``ModElasticBeam2d`` is an elastic beam the live-class table does not
     hold: its type token is unknown, so it refuses by its class name."""

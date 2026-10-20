@@ -208,6 +208,73 @@ def test_an_unproved_element_refuses_and_records_nothing(
     assert ops.recorder_calls[1:] == []                # only the MPCO probe
 
 
+def _twin_fem() -> FEMData:
+    """Tets 1 and 3 on the same ordered nodes, tet 2 apart."""
+    fem = _tets_fem()
+    group = next(iter(fem.elements))
+    tet = group.element_type
+    twin = ElementGroup(element_type=tet,
+                        ids=np.array([1, 2, 3], dtype=np.int64),
+                        connectivity=np.array([_CONN[1], _CONN[2], _CONN[1]],
+                                              dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    return FEMData(nodes=fem.nodes,
+                   elements=ElementComposite(groups={4: twin}, physical=pg,
+                                             labels=LabelSet({})),
+                   info=MeshInfo(n_nodes=5, n_elems=3, bandwidth=4, types=[tet]),
+                   model_name="femdata_elements_twins")
+
+
+@pytest.mark.parametrize("ids, first, other", [([1], 1, 3), ([2, 3], 3, 1)],
+                         ids=["first", "second"])
+def test_elements_sharing_ordered_nodes_refuse_naming_both(
+    tmp_path, ids, first, other,
+) -> None:
+    """eleNodes cannot tell tets 1 and 3 apart: a deck that swapped their
+    tags (and materials) would record each under the other's id."""
+    fem = _twin_fem()
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = _ops({1: ("FourNodeTetrahedron", _CONN[1]),
+                2: ("FourNodeTetrahedron", _CONN[2]),
+                3: ("FourNodeTetrahedron", _CONN[1])})
+    with pytest.raises(ValueError, match=(
+            rf"FEM element {first} shares nodes \[1, 2, 3, 4\] with "
+            rf"\[{other}\].*eleNodes cannot tell those elements apart")):
+        _run(_spec(fem, _gauss(ids)), tmp_path / "run", model_h5, ops)
+    assert ops.recorder_calls[1:] == [] and "eleNodes" not in ops.asked
+
+
+def test_a_lone_element_beside_twins_records(tmp_path) -> None:
+    fem = _twin_fem()
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = _ops({1: ("FourNodeTetrahedron", _CONN[1]),
+                2: ("FourNodeTetrahedron", _CONN[2]),
+                3: ("FourNodeTetrahedron", _CONN[1])})
+    _run(_spec(fem, _gauss([2])), tmp_path / "run", model_h5, ops)
+    assert len(_element_calls(ops)) == 1
+
+
+@pytest.mark.parametrize("cls, match", [
+    (None, r"elements record 'nf' names no element class"),
+    ("FourNodeTetrahedron",
+     r"no nodal-force layout \[\('FourNodeTetrahedron', 'global_force'\)\]"),
+], ids=["no-class", "uncatalogued-class"])
+def test_an_undecodable_nodal_force_record_refuses_before_the_run(
+    tets, tmp_path, cls, match,
+) -> None:
+    fem, model_h5 = tets
+    ops = _ops()
+    rec = ResolvedRecorderRecord(
+        category="elements", name="nf",
+        components=("nodal_resisting_force_x",), dt=None, n_steps=None,
+        element_ids=np.array([1]), element_class_name=cls)
+    with pytest.raises(ValueError, match=match):
+        _run(_spec(fem, rec), tmp_path / "run", model_h5, ops)
+    assert _element_calls(ops) == []
+
+
 def test_a_record_class_that_is_not_the_live_class_refuses(tets, tmp_path) -> None:
     fem, model_h5 = tets
     ops = _ops()

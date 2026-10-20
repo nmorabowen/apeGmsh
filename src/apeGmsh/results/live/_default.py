@@ -72,7 +72,7 @@ from ..spec._emit import mpco_ops_args
 from ._recorders import LiveRecorders
 
 if TYPE_CHECKING:
-    from ..spec._resolved import ResolvedRecorderSpec
+    from ..spec._resolved import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 __all__ = ["DefaultRouteWarning", "LiveDefault", "read_deck_mpco"]
 
@@ -510,7 +510,40 @@ def _pair_live_elements(
                 + ", ".join(f"{e} as {c!r}" for c, e in other[:10])
                 + ". Its results would be decoded as another class's; name "
                 "the live class, or split the record by class.")
+    for r in records:
+        if r.category == "elements":
+            _refuse_uncatalogued_nodal_forces(r, facts)
     return facts
+
+
+def _refuse_uncatalogued_nodal_forces(
+    rec: "ResolvedRecorderRecord", facts: LiveDomainFacts,
+) -> None:
+    """Refuse, before the run, an ``elements`` record the read could not
+    decode: one that names no class (a ``.out`` file carries none), or
+    whose elements' live class has no nodal-force layout for its frame."""
+    from ...opensees._response_catalog import (
+        gauss_routing_for_canonical,
+        is_nodal_force_catalogued,
+    )
+
+    if rec.element_class_name is None:
+        raise ValueError(
+            f"emit_default: elements record {rec.name!r} names no element "
+            "class, and a .out file carries none, so its nodal forces "
+            "cannot be decoded. Name the live element class.")
+    tokens = sorted({routing[1] for c in rec.components if (
+        routing := gauss_routing_for_canonical(c, topology="nodal_forces"))})
+    classes = sorted({facts.live_class(int(e)) for e in (
+        rec.element_ids if rec.element_ids is not None else ())})
+    missing = [(cls, t) for cls in classes for t in tokens
+               if not is_nodal_force_catalogued(cls, t)]
+    if missing:
+        raise ValueError(
+            f"emit_default: elements record {rec.name!r} records nodal "
+            f"forces of live classes with no nodal-force layout {missing}, "
+            "so the read could not decode them. Record a catalogued class, "
+            "or its response as another category.")
 
 
 def _read_neutral_recorders(
