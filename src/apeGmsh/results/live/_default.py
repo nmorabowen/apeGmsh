@@ -244,8 +244,9 @@ class LiveDefault:
         if modal:
             raise ValueError(
                 f"emit_default has no route for modal records {modal}; "
-                "capture modes with spec.emit_mpco(...) or "
-                "ops.domain_capture(...) instead."
+                "capture modes with capture_live_modes(model_h5, n_modes, "
+                "path, ops=ops) from apeGmsh.results.live (any build), or "
+                "spec.emit_mpco(...) instead."
             )
         if self._path.suffix not in ("", _MPCO_SUFFIX, FORK_SUFFIX):
             raise ValueError(
