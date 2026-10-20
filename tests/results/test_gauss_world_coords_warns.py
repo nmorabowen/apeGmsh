@@ -2,8 +2,9 @@
 
 ``compute_global_coords_from_arrays`` has two locked, reasonable
 degradations: the centroid+bbox approximation for element types with
-no shape-function coverage, and origin-parked GPs for elements it
-cannot resolve against the FEMData. Both used to be silent — a
+no shape-function coverage, and NaN rows for elements it cannot resolve
+against the FEMData (#2317; they were parked at the origin, a plausible
+coordinate). Both used to be silent — a
 mis-placed marker cloud indistinguishable from a correct one (the
 ADR 0056 INV-6 bug class). These tests pin the aggregated warning
 and that the supported paths stay silent.
@@ -89,12 +90,13 @@ def test_unresolved_element_warns_and_names_eids():
         eids=[10], conn=[[1, 2, 3, 4]],
     )
     with pytest.warns(
-        WarnGaussCoordsApproximate, match=r"ORIGIN.*\[99\]",
+        WarnGaussCoordsApproximate, match=r"NaN \(not placed\).*\[99\]",
     ):
         out = compute_global_coords_from_arrays(
             np.array([99]), np.array([[0.0, 0.0]]), fem,
         )
-    np.testing.assert_allclose(out, np.zeros((1, 3)))
+    assert out.shape == (1, 3)
+    assert np.isnan(out).all()
 
 
 def test_supported_types_stay_silent():
