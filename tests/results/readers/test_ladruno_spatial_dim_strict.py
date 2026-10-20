@@ -116,19 +116,23 @@ def test_complex_is_refused_by_name(tmp_path: Path, value) -> None:
 
 def _non_ascii_digits() -> list[str]:
     return [chr(c) for c in range(0x80, sys.maxunicode + 1)
-            if unicodedata.decimal(chr(c), None) in (1, 2, 3)]
+            if unicodedata.digit(chr(c), None) in (1, 2, 3)]
 
 
 def test_every_non_ascii_digit_is_refused() -> None:
-    """Every Unicode decimal digit 1, 2 or 3 outside ASCII (#2244).
+    """Every Unicode digit 1, 2 or 3 outside ASCII (#2244).
 
-    ``float()`` reads each as its value; the rule refuses each, alone and
+    The set comes from this Python's own Unicode database, so its size
+    follows the Unicode version. ``float()`` reads each decimal digit
+    among them as its value; the rule refuses every one, alone and
     beside an ASCII digit.
     """
     digits = _non_ascii_digits()
-    assert len(digits) >= 3 * 67  # every digit script, at Unicode 14 or later
+    for value in (1, 2, 3):  # every value has a non-ASCII decimal digit
+        assert any(unicodedata.decimal(d, None) == value for d in digits)
     for d in digits:
-        assert float(d) in (1.0, 2.0, 3.0), repr(d)  # what float() did
+        if unicodedata.decimal(d, None) is not None:
+            assert float(d) == unicodedata.decimal(d), repr(d)  # float() did
         assert _reads(d) is None, f"U+{ord(d):04X}"
         assert _reads(f" {d} ") is None, f"U+{ord(d):04X}"
         assert _reads(f"0{d}") is None, f"U+{ord(d):04X}"
