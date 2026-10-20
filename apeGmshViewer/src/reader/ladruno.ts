@@ -21,8 +21,7 @@
 // - a nodal result whose datasets disagree (DATA's step axis against TIME and
 //   STEP, its node axis against ID, its component axis against COMPONENTS) is
 //   refused by name in `NodalInfo.refused`, with the reason, never read;
-// - a node ID list that holds an id twice refuses the file at open, naming the
-//   dataset, the id and its rows (#2299): a SUM part set would count it twice;
+// - a node ID list that repeats an id refuses the file at open (reader/ladrunoChecks.ts, #2299);
 // - Gauss-point element buckets are read by reader/ladrunoElements.ts (#2187); other
 //   element results, envelopes, the domain and region buckets are listed in `unread`;
 // - `KIND=eigen` is not a mode (Python `_ladruno.py::_KIND_MAP`): the fork labels
@@ -41,6 +40,7 @@
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
+import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
@@ -103,6 +103,7 @@ interface LDataset extends LNode {
 }
 interface LFile extends LGroup {
   file_id: bigint | number;
+  filename: string;
   close(): unknown;
 }
 
@@ -285,12 +286,10 @@ export class LadrunoFile {
   private readonly columns = new Map<string, Map<string, Column>>();
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   private readonly gauss: LadrunoGauss;
-  private readonly path: string;
 
   constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
     this.h5 = h5;
     this.f = f;
-    this.path = path;
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
     const info = this.gate(path);
@@ -897,7 +896,7 @@ export class LadrunoFile {
     const idShape = idDs!.shape ?? [];
     if (!(idShape.length === 1 || (idShape.length === 2 && idShape[1] === 1))) return { reason: `${idDs!.path} has shape (${idShape.join(", ")}); expected (n, 1)` };
     if (idDs!.metadata.type !== H5T_INTEGER) return { reason: `${idDs!.path} is not an integer dataset` };
-    const ids = nodeIdsOf(idDs!, this.path);
+    const ids = uniqueNodeIds(intsAsNumbers(idDs!), this.f.filename, idDs!.path, (m) => new LadrunoError("layout", m));
     const shape = dataDs!.shape ?? [];
     if (shape.length !== 3) return { reason: `${dataDs!.path} has shape (${shape.join(", ")}); expected (T, n, components)` };
     if (dataDs!.metadata.type !== H5T_FLOAT) return { reason: `${dataDs!.path} is not a floating-point dataset (HDF5 class ${dataDs!.metadata.type})` };
@@ -1031,7 +1030,7 @@ export class LadrunoFile {
         refused.push({ component: group, reason: `${ds.path} has shape (${shape.join(", ")}); ID has ${idShape[0]} nodes and COMPONENTS names ${labels.length} (a partial write)` });
         continue;
       }
-      const these = nodeIdsOf(idDs, this.path);
+      const these = uniqueNodeIds(intsAsNumbers(idDs), this.f.filename, idDs.path, (m) => new LadrunoError("layout", m));
       if (ids === null) {
         ids = these;
         firstPath = idDs.path;
@@ -1680,17 +1679,6 @@ function toFloat64(v: unknown, where: string): Float64Array {
   if (v instanceof Float64Array) return v;
   if (v instanceof Float32Array) return Float64Array.from(v);
   throw new LadrunoError("dtype", `${where}: read returned ${Object.prototype.toString.call(v)}, not float32 or float64`);
-}
-
-/** A node ID list; one holding an id twice is refused by name (#2299): it reads as two columns, and a SUM part set counts it twice. */
-function nodeIdsOf(ds: LDataset, file: string): Float64Array {
-  const ids = intsAsNumbers(ds);
-  if (new Set(ids).size === ids.length) return ids;
-  const rows = new Map<number, number[]>();
-  ids.forEach((n, i) => (rows.get(n) ?? rows.set(n, []).get(n)!).push(i));
-  const twice = [...rows].filter(([, r]) => r.length > 1).map(([n, r]) => `id ${n} at rows ${r.join(", ")}`);
-  const shown = twice.slice(0, 10).join("; ") + (twice.length > 10 ? `; and ${twice.length - 10} more` : "");
-  throw new LadrunoError("layout", `${file}: ${ds.path} lists node id(s) more than once (${shown}); a node is listed once per file, and a part set that sums partition copies (PARTITION_REDUCTION=SUM) would count it twice`);
 }
 
 function intsAsNumbers(ds: LDataset): Float64Array {
