@@ -397,15 +397,18 @@ class TestTenNodeTetStress:
             alpha = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
             beta = (5.0 - math.sqrt(5.0)) / 20.0
             # First 4 GPs (element 100) and next 4 (element 200) repeat
-            # the same alpha/beta arrangement.
+            # the same arrangement. TenNodeTetrahedron's rows are
+            # (alpha, beta, beta) .. (beta, beta, beta) node-0-first; in
+            # gmsh (u, v, w) GP 0 is (beta, beta, beta) and GP 3 is
+            # (beta, beta, alpha) (#2228).
             np.testing.assert_allclose(
-                slab.natural_coords[0], [alpha, beta, beta], atol=1e-14,
+                slab.natural_coords[0], [beta, beta, beta], atol=1e-14,
             )
             np.testing.assert_allclose(
-                slab.natural_coords[3], [beta, beta, beta], atol=1e-14,
+                slab.natural_coords[3], [beta, beta, alpha], atol=1e-14,
             )
             np.testing.assert_allclose(
-                slab.natural_coords[4], [alpha, beta, beta], atol=1e-14,
+                slab.natural_coords[4], [beta, beta, beta], atol=1e-14,
             )
 
     def test_gp_slowest_unflatten_ordering(self, tet2_mpco: Path) -> None:

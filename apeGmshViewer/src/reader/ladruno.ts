@@ -41,6 +41,7 @@ import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
+import { openH5 } from "./h5open.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
 export const LADRUNO_GENERATOR = "Ladruno";
@@ -263,7 +264,7 @@ export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean 
       `${path} is part ${part.groups!.idx} of the partitioned set ${part.groups!.stem}.part-<N>.ladruno; this reader reads one file, not a part set`,
     );
   }
-  const f = new h5.File(path, "r") as unknown as LFile;
+  const f = openH5(h5, path) as unknown as LFile;
   // h5wasm does not throw when HDF5 cannot open a file: it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new LadrunoError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {

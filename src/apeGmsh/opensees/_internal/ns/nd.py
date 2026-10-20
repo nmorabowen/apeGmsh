@@ -987,14 +987,17 @@ class _NDMaterialNS(_BridgeNamespace):
         softening: str = "exponential",
         penalty_ratio: float = 1000.0,
         bk_eta: float = 1.0,
+        pm: float | tuple[float, float] | None = None,
+        implex: bool = False,
         name: str | None = None,
     ) -> LadrunoCohesiveHingeBiaxial:
         """Register a :class:`LadrunoCohesiveHingeBiaxial` coupled hinge surface.
 
         Ladruno fork (``ND_TAG`` 33004); the coupled Mz–My cohesive
-        interaction surface for ``LadrunoDispBeamColumn -hingeBiaxial``. Each
+        interaction surface for ``LadrunoDispBeamColumn -hingeBiaxial*``. Each
         axis carries its own ``Mc``/``Gf``; ``bk_eta`` is the
-        Benzeggagh-Kenane mode-mix exponent. See
+        Benzeggagh-Kenane mode-mix exponent; ``pm`` enables parabolic P–M
+        scaling and ``implex`` enables IMPLEX integration. See
         :class:`LadrunoCohesiveHingeBiaxial`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
@@ -1003,7 +1006,8 @@ class _NDMaterialNS(_BridgeNamespace):
         return self._bridge._register(
             LadrunoCohesiveHingeBiaxial(
                 Mcz=Mcz, Gfz=Gfz, Mcy=Mcy, Gfy=Gfy, softening=softening,
-                penalty_ratio=penalty_ratio, bk_eta=bk_eta,
+                penalty_ratio=penalty_ratio, bk_eta=bk_eta, pm=pm,
+                implex=implex,
             ),
             name=name,
         )

@@ -164,7 +164,7 @@ class TestLayoutSniff:
             "stress", flat_size=24, class_hint="ASDShellT3",
         )
         assert cls == "ASDShellT3"
-        assert layout.coord_system == "barycentric_tri"
+        assert layout.coord_system == "simplex_tri_gmsh"
 
     def test_fortyeight_columns_picks_brick_or_bbarbrick(self) -> None:
         """Brick and BbarBrick are shape-equivalent twins; sniff picks one."""
@@ -241,9 +241,11 @@ class TestPlaneStrainLayoutSniff:
 
     @pytest.mark.parametrize(
         ("class_hint", "first_gp"),
-        # The two 3-GP candidates differ in GP ORDER, which is exactly
-        # why the 12-column sniff must not pick one silently.
-        [("LadrunoLST", (2.0 / 3.0, 1.0 / 6.0)),
+        # The two 3-GP candidates are two classes whose rules are written
+        # in different frames (node-0-first vs gmsh), so the 12-column
+        # sniff must not pick one silently. In gmsh (u, v) both put GP 0
+        # nearest node 0 (#2228).
+        [("LadrunoLST", (1.0 / 6.0, 1.0 / 6.0)),
          ("BezierTri6", (1.0 / 6.0, 1.0 / 6.0))],
     )
     def test_twelve_columns_resolve_with_a_class_hint(

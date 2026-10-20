@@ -133,7 +133,11 @@ class LiveRecorders:
         list, and its ``ndm`` and per-node ndf map every node record's
         ``-dof`` list to the DOFs the nodes carry (a 2-D frame's
         ``rotation_z`` is DOF 3). Required whenever the spec holds a node
-        or element record.
+        or element record. A
+        :class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`
+        (what ``emit_default`` passes for a FEMData archive) maps the
+        ``-dof`` lists from the live domain's ndm, per-node ndf and
+        element classes instead, and pairs elements as its archive does.
 
     Raises
     ------
