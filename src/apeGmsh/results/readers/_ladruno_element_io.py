@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -53,6 +54,7 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
 )
 from .._shell_geometry import shell_quaternion
+from ._gauss_refusals import GaussDimensionMixed, refuse_mixed_gauss_dims
 from ._ladruno_provenance import _CONVERTED_MARK
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco_layer_io import (
@@ -60,6 +62,7 @@ from ._mpco_layer_io import (
     ShellFrameUnavailableWarning,
 )
 from ._mpco_local_force_io import is_non_beam_class
+from ._mpco_refusals import MPCOElementInTwoBuckets
 
 if TYPE_CHECKING:
     import h5py
@@ -1434,11 +1437,15 @@ def read_gauss_slab(
     Stitches every bucket whose blocks expose ``component`` at a Gauss
     point. ``None`` if nothing matches. Two tokens can cover the same
     (element, GP) with the same component — see
-    :func:`_dedupe_gauss_columns`, which resolves that overlap.
+    :func:`_dedupe_gauss_columns`, which resolves that overlap. Buckets
+    the read returns whose natural coordinates differ in width (a 2-D
+    quad beside a 3-D tet) refuse with :class:`GaussDimensionMixed`
+    (#2221); a bucket with no coordinates at all (width 0) reads NaN.
     """
     values_parts: list[ndarray] = []
     eidx_parts: list[ndarray] = []
     coord_parts: list[ndarray] = []
+    label_parts: list[str] = []
     gid_parts: list[ndarray] = []
     named_parts: list[ndarray] = []
 
@@ -1514,11 +1521,27 @@ def read_gauss_slab(
                 else:
                     nat = np.zeros((sel_ids.size, 0), dtype=np.float64)
                 coord_parts.append(nat)
+                label_parts.append(f"{_class_name(key)} ({bucket.name})")
 
     if not values_parts:
         return None
     values = np.concatenate(values_parts, axis=1)
     element_index = np.concatenate(eidx_parts)
+    keep = _dedupe_gauss_columns(
+        values, element_index,
+        np.concatenate(gid_parts), np.concatenate(named_parts),
+        component=component,
+    )
+    # Refuse on the parts the read returns: a bucket the dedupe drops
+    # whole is not joined.
+    sizes = [c.shape[0] for c in coord_parts]
+    row_part = np.repeat(np.arange(len(coord_parts)), sizes)
+    kept_parts = np.unique(row_part if keep is None else row_part[keep])
+    refuse_mixed_gauss_dims(
+        [(label_parts[i], coord_parts[i].shape[1]) for i in kept_parts],
+        component=component, reader=".ladruno",
+        source=_file_name(on_elements), error=GaussDimensionMixed,
+    )
     max_dim = max((c.shape[1] for c in coord_parts), default=0)
     coords = (
         np.concatenate(
@@ -1527,11 +1550,6 @@ def read_gauss_slab(
             axis=0,
         )
         if max_dim else np.zeros((element_index.size, 0), dtype=np.float64)
-    )
-    keep = _dedupe_gauss_columns(
-        values, element_index,
-        np.concatenate(gid_parts), np.concatenate(named_parts),
-        component=component,
     )
     if keep is None:
         return values, element_index, coords
@@ -2341,6 +2359,7 @@ def read_element_slab(
     ncol_ref: "Optional[int]" = None
     ncol_key: "Optional[str]" = None
     dropped: list[tuple[str, int, ndarray]] = []
+    bucket_paths: list[str] = []
 
     for key in token_grp:
         bucket = token_grp[key]
@@ -2361,6 +2380,7 @@ def read_element_slab(
         block = read_hyperslab(bucket["DATA"], t_idx, rows)
         values_parts.append(block)
         eid_parts.append(sel_ids)
+        bucket_paths.append(bucket.name)
 
     if dropped:
         lost = np.concatenate([ids for _, _, ids in dropped])
@@ -2381,9 +2401,59 @@ def read_element_slab(
         )
     if not values_parts:
         return None
+    _refuse_repeated_element(
+        bucket_paths, eid_parts, token=token, file=_file_name(on_elements),
+    )
     return (
         np.concatenate(values_parts, axis=1),
         np.concatenate(eid_parts),
+    )
+
+
+def _file_name(group: "h5py.Group") -> str:
+    """The base name of the file ``group`` sits in, for refusal text."""
+    return Path(str(group.file.filename)).name
+
+
+def _refuse_repeated_element(
+    paths: list[str], ids: list[ndarray], *, token: str, file: str,
+) -> None:
+    """Raise :class:`MPCOElementInTwoBuckets` when an element id the
+    element read returns sits in two buckets of ``token``, or twice in
+    one (#2221).
+
+    The fork writes each element once per token, so a repeat is a
+    corrupt or merged file, and the stitch would return the element
+    twice. The error names the smallest such id, the bucket path(s) and
+    the file.
+    """
+    all_ids = np.concatenate(ids)
+    if all_ids.size < 2:
+        return
+    owners = np.repeat(np.arange(len(ids)), [i.size for i in ids])
+    order = np.argsort(all_ids, kind="stable")
+    sorted_ids = all_ids[order]
+    repeat = np.flatnonzero(sorted_ids[1:] == sorted_ids[:-1])
+    if repeat.size == 0:
+        return
+    j = int(repeat[0])
+    eid = int(sorted_ids[j])
+    first = paths[int(owners[order[j]])]
+    second = paths[int(owners[order[j + 1]])]
+    where = (
+        f"twice in the .ladruno bucket {first}" if first == second
+        else f"in two .ladruno buckets: {first} and {second}"
+    )
+    n_ids = np.unique(sorted_ids[repeat]).size
+    more = (
+        f" {n_ids - 1} more element id(s) the read returns repeat too."
+        if n_ids > 1 else ""
+    )
+    raise MPCOElementInTwoBuckets(
+        f"{file}: element read of token {token!r}: element {eid} appears "
+        f"{where}. The recorder writes each element once per token, so "
+        f"the file is corrupt; the read refuses rather than return "
+        f"element {eid} twice.{more}"
     )
 
 

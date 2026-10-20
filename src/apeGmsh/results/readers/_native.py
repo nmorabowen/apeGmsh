@@ -34,6 +34,7 @@ from .._slabs import (
 )
 from .._time import resolve_time_slice
 from ..schema import _native
+from ._gauss_refusals import GaussDimensionMixed, refuse_mixed_gauss_dims
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -744,6 +745,8 @@ class NativeReader:
         )
 
         chunks_v, chunks_eidx, chunks_nc = [], [], []
+        # (group label, natural-coordinate width) per group read (#2221).
+        widths: list[tuple[str, int]] = []
         chunks_quat: list[ndarray] = []
         any_quat = False
 
@@ -794,6 +797,11 @@ class NativeReader:
                 chunks_v.append(flat)
                 chunks_eidx.append(row_eidx)
                 chunks_nc.append(row_nc)
+                widths.append((
+                    f"class_tag {int(grp.attrs[_native.ATTR_CLASS_TAG])} "
+                    f"({grp.name})",
+                    int(nc.shape[1]),
+                ))
 
                 if _native.DSET_LOCAL_AXES_QUATERNION in grp:
                     any_quat = True
@@ -803,6 +811,13 @@ class NativeReader:
                     )
                     chunks_quat.append(np.repeat(quat[elem_sel], n_gp, axis=0))
 
+        # One slab holds one natural_coords width: a 2-D-parent group
+        # beside a 3-D-parent group refuses by name, as MPCO and .ladruno
+        # do, rather than fail in np.concatenate.
+        refuse_mixed_gauss_dims(
+            widths, component=component, reader="native",
+            source=self._path.name, error=GaussDimensionMixed,
+        )
         values = (
             np.concatenate(chunks_v, axis=1) if chunks_v
             else np.zeros((t_idx.size, 0), dtype=np.float64)
