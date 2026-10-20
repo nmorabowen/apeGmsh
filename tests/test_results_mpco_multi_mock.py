@@ -397,11 +397,13 @@ class TestExplicitList:
         r._reader.close()
 
 
-def test_concat_gauss_slabs_pads_lower_dim_with_nan() -> None:
-    # Mixed shell (2D parent) + solid (3D parent) gauss results merge
-    # into one slab. The narrower (shell) rows must be padded with NaN,
-    # not a fabricated 0 — a 2D-parent GP has no third natural coord.
+def test_concat_gauss_slabs_refuses_mixed_dims() -> None:
+    # Mixed shell (2D parent) + solid (3D parent) gauss results from two
+    # partitions have no faithful (sum_GP, dim) natural_coords: padding
+    # the shell rows (formerly with NaN) misplaces Gauss points. The
+    # stitch refuses by name, naming a part of each width (#2221).
     from apeGmsh.results._slabs import GaussSlab
+    from apeGmsh.results.readers._mpco import MPCOGaussDimensionMixed
     from apeGmsh.results.readers._mpco_multi import _concat_gauss_slabs
 
     time = np.array([0.0, 1.0])
@@ -422,10 +424,11 @@ def test_concat_gauss_slabs_pads_lower_dim_with_nan() -> None:
         time=time,
     )
 
-    merged = _concat_gauss_slabs([solid, shell], "stress_xx")
-    assert merged.natural_coords.shape == (3, 3)
-    # Solid rows intact.
-    np.testing.assert_allclose(merged.natural_coords[:2], solid.natural_coords)
-    # Shell row: real coords preserved, padded 3rd column is NaN.
-    np.testing.assert_allclose(merged.natural_coords[2, :2], [0.1, 0.2])
-    assert np.isnan(merged.natural_coords[2, 2])
+    with pytest.raises(MPCOGaussDimensionMixed) as info:
+        _concat_gauss_slabs(
+            [solid, shell], "stress_xx", ["R.part-0.mpco", "R.part-1.mpco"],
+            reader="MPCO", mixed_error=MPCOGaussDimensionMixed,
+        )
+    msg = str(info.value)
+    assert "2-D natural coordinates in R.part-1.mpco (element 20)" in msg
+    assert "3-D natural coordinates in R.part-0.mpco (element 10)" in msg
