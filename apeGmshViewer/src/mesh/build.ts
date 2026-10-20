@@ -73,77 +73,103 @@ export interface MeshBuffers {
 /** Which value a repeated key keeps: its first (`if (!m.has(k)) m.set(k, v)`) or its last (`m.set(k, v)` every time). */
 export type RepeatedKey = "first" | "last";
 
+/** The earliest second listing of any key in an `IdLookup`'s list (`again`), and where that key was first listed (`first`). */
+export interface RepeatedListing {
+  first: number;
+  again: number;
+}
+
 /**
- * A read-only number -> number lookup with a Map's reading API (`get`, `has`,
- * `size`, iteration), held in sorted typed arrays (#2359). V8 caps a `Map`
- * and a `Set` at 2^24 entries (a RangeError past 16,777,216), and a stage or
- * a model can hold more nodes or elements than that; a binary search over a
- * sorted copy has no such cap.
+ * A read-only lookup from a number (an id) to a value, with a Map's reading
+ * API (`get`, `has`, `size`, iteration), held in sorted typed arrays (#2359).
+ * V8 caps a `Map` and a `Set` at 2^24 entries (a RangeError past 16,777,216),
+ * and a stage or a model can hold more nodes or elements than that; a binary
+ * search over a sorted copy has no such cap.
  *
  * It answers what the Map it replaces answered: keys compare as a Map's do
  * (SameValueZero: NaN equals NaN, -0 equals 0 and is stored as 0), a repeated
  * key keeps the value `repeated` names, and iteration runs in the order each
  * key was first listed. It is read-only: `set`, `delete` and `clear` throw.
+ * `value(i)` is called on each `get`, with `i` the position of the listing
+ * the key keeps.
  */
-export class IdLookup implements Map<number, number> {
+export class IdLookup<V = number> implements Map<number, V> {
   /** the distinct keys, ascending, NaN excluded */
   readonly #keys: Float64Array;
-  /** the value of each key of `#keys` */
-  readonly #values: Float64Array;
+  /** the position of the listing each key of `#keys` keeps */
+  readonly #at: Float64Array;
   /** where each key of `#keys` was first listed: the iteration order */
   readonly #first: Float64Array;
-  /** NaN's value and first position, when a NaN key was listed */
-  readonly #nan: { value: number; first: number } | null;
+  /** NaN's kept and first positions, when a NaN key was listed */
+  readonly #nan: { at: number; first: number } | null;
+  readonly #value: (i: number) => V;
+  /** The earliest second listing of a key, or null when every key is listed once. */
+  readonly repeat: RepeatedListing | null;
   /** rows of `#keys` in first-listed order, built on the first iteration */
   #order: Uint32Array | null = null;
 
-  private constructor(keys: Float64Array, values: Float64Array, first: Float64Array, nan: { value: number; first: number } | null) {
+  private constructor(
+    keys: Float64Array,
+    at: Float64Array,
+    first: Float64Array,
+    nan: { at: number; first: number } | null,
+    value: (i: number) => V,
+    repeat: RepeatedListing | null,
+  ) {
     this.#keys = keys;
-    this.#values = values;
+    this.#at = at;
     this.#first = first;
     this.#nan = nan;
+    this.#value = value;
+    this.repeat = repeat;
   }
 
-  /** The lookup `keys[i] -> value(i)`, where a repeated key keeps its `repeated` value. */
-  static of(keys: ArrayLike<number>, value: (i: number) => number, repeated: RepeatedKey): IdLookup {
+  /** The lookup `keys[i] -> value(i)`, where a repeated key keeps its `repeated` listing. */
+  static of<V>(keys: ArrayLike<number>, value: (i: number) => V, repeated: RepeatedKey): IdLookup<V> {
     const n = keys.length;
     let ascending = true;
     for (let i = 0; i < n && ascending; i++) ascending = !Number.isNaN(keys[i]!) && (i === 0 || keys[i]! > keys[i - 1]!);
     if (ascending) {
-      const lookup = new IdLookup(
-        Float64Array.from({ length: n }, (_, i) => (keys[i] === 0 ? 0 : keys[i]!)),
-        Float64Array.from({ length: n }, (_, i) => value(i)),
-        Float64Array.from({ length: n }, (_, i) => i),
-        null,
-      );
+      const at = Float64Array.from({ length: n }, (_, i) => i);
+      const lookup = new IdLookup(Float64Array.from({ length: n }, (_, i) => (keys[i] === 0 ? 0 : keys[i]!)), at, at, null, value, null);
       lookup.#order = Uint32Array.from({ length: n }, (_, i) => i);
       return lookup;
     }
     // The positions of the non-NaN keys, sorted by key and then by position:
     // each run of one key starts at its first listing and ends at its last.
-    let nan: { value: number; first: number } | null = null;
+    let nan: { at: number; first: number } | null = null;
+    let repeat: RepeatedListing | null = null;
+    const repeatAt = (first: number, again: number) => {
+      if (repeat === null || again < repeat.again) repeat = { first, again };
+    };
     let m = 0;
     for (let i = 0; i < n; i++) {
       if (!Number.isNaN(keys[i]!)) m++;
-      else if (nan === null) nan = { value: value(i), first: i };
-      else if (repeated === "last") nan.value = value(i);
+      else if (nan === null) nan = { at: i, first: i };
+      else {
+        if (nan.at === nan.first) repeatAt(nan.first, i);
+        if (repeated === "last") nan.at = i;
+      }
     }
     const perm = new Uint32Array(m);
     for (let i = 0, j = 0; i < n; i++) if (!Number.isNaN(keys[i]!)) perm[j++] = i;
     perm.sort((a, b) => keys[a]! - keys[b]! || a - b);
     let u = 0;
     for (let r = 0; r < m; r++) if (r === 0 || keys[perm[r]!] !== keys[perm[r - 1]!]) u++;
-    const k = new Float64Array(u), v = new Float64Array(u), first = new Float64Array(u);
+    const k = new Float64Array(u), at = new Float64Array(u), first = new Float64Array(u);
     for (let r = 0, w = -1; r < m; r++) {
       const i = perm[r]!;
       if (r === 0 || keys[i] !== keys[perm[r - 1]!]) {
         w++;
         k[w] = keys[i] === 0 ? 0 : keys[i]!;
         first[w] = i;
-        v[w] = value(i);
-      } else if (repeated === "last") v[w] = value(i);
+        at[w] = i;
+        continue;
+      }
+      if (perm[r - 1] === first[w]) repeatAt(first[w]!, i);
+      if (repeated === "last") at[w] = i;
     }
-    return new IdLookup(k, v, first, nan);
+    return new IdLookup(k, at, first, nan, value, repeat);
   }
 
   /** The row of `key` in `#keys`, or -1 (a binary search). */
@@ -160,10 +186,10 @@ export class IdLookup implements Map<number, number> {
     return -1;
   }
 
-  get(key: number): number | undefined {
-    if (Number.isNaN(key)) return this.#nan?.value;
+  get(key: number): V | undefined {
+    if (Number.isNaN(key)) return this.#nan === null ? undefined : this.#value(this.#nan.at);
     const r = this.#row(key);
-    return r < 0 ? undefined : this.#values[r];
+    return r < 0 ? undefined : this.#value(this.#at[r]!);
   }
 
   has(key: number): boolean {
@@ -174,7 +200,7 @@ export class IdLookup implements Map<number, number> {
     return this.#keys.length + (this.#nan === null ? 0 : 1);
   }
 
-  *entries(): MapIterator<[number, number]> {
+  *entries(): MapIterator<[number, V]> {
     if (this.#order === null) {
       const first = this.#first;
       this.#order = Uint32Array.from({ length: first.length }, (_, i) => i).sort((a, b) => first[a]! - first[b]!);
@@ -186,26 +212,26 @@ export class IdLookup implements Map<number, number> {
       const r = order[i]!;
       if (nanDue && nan!.first < this.#first[r]!) {
         nanDue = false;
-        yield [NaN, nan!.value];
+        yield [NaN, this.#value(nan!.at)];
       }
-      yield [this.#keys[r]!, this.#values[r]!];
+      yield [this.#keys[r]!, this.#value(this.#at[r]!)];
     }
-    if (nanDue) yield [NaN, nan!.value];
+    if (nanDue) yield [NaN, this.#value(nan!.at)];
   }
 
   *keys(): MapIterator<number> {
     for (const [k] of this.entries()) yield k;
   }
 
-  *values(): MapIterator<number> {
+  *values(): MapIterator<V> {
     for (const [, v] of this.entries()) yield v;
   }
 
-  [Symbol.iterator](): MapIterator<[number, number]> {
+  [Symbol.iterator](): MapIterator<[number, V]> {
     return this.entries();
   }
 
-  forEach(callbackfn: (value: number, key: number, map: Map<number, number>) => void, thisArg?: unknown): void {
+  forEach(callbackfn: (value: V, key: number, map: Map<number, V>) => void, thisArg?: unknown): void {
     for (const [k, v] of this.entries()) callbackfn.call(thisArg, v, k, this);
   }
 

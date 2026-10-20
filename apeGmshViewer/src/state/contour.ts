@@ -817,26 +817,34 @@ export type ElementJoin =
  * group or two), refuses the join.
  */
 export function joinElements(decls: Readonly<Record<DeclPath, Decl>>, groups: readonly { id: string; eids: Float64Array }[]): ElementJoin {
-  const at = new Map<number, { group: number; row: number }>();
+  // The rows whose id the model has a cell for, in group then row order, kept
+  // in typed arrays and joined through a sorted lookup, not a Map (#2359).
+  let rows = 0;
+  for (const g of groups) rows += g.eids.length;
+  const ids = new Float64Array(rows), rowGroup = new Uint32Array(rows), rowIndex = new Float64Array(rows);
+  let known = 0;
   const unknown: number[] = [];
   let nUnknown = 0;
-  let rows = 0;
   for (let gi = 0; gi < groups.length; gi++) {
     const g = groups[gi]!;
     for (let e = 0; e < g.eids.length; e++) {
       const id = g.eids[e]!;
-      rows++;
       if (decls[cellDecl(id)]?.element?.femId !== id) {
         nUnknown++;
         if (unknown.length < 5) unknown.push(id);
         continue;
       }
-      const prev = at.get(id);
-      if (prev) {
-        return { ok: false, code: "duplicate-id", reason: `element ${id} has two rows (group ${groups[prev.group]!.id} row ${prev.row}, group ${g.id} row ${e}): its value would be a guess` };
-      }
-      at.set(id, { group: gi, row: e });
+      ids[known] = id;
+      rowGroup[known] = gi;
+      rowIndex[known++] = e;
     }
+  }
+  const at = IdLookup.of(ids.subarray(0, known), (i) => ({ group: rowGroup[i]!, row: rowIndex[i]! }), "first");
+  // The first id listed twice, at its second row (what a scan in row order meets first).
+  if (at.repeat !== null) {
+    const { first, again } = at.repeat;
+    const [g1, g2] = [groups[rowGroup[first]!]!, groups[rowGroup[again]!]!];
+    return { ok: false, code: "duplicate-id", reason: `element ${ids[again]} has two rows (group ${g1.id} row ${rowIndex[first]}, group ${g2.id} row ${rowIndex[again]}): its value would be a guess` };
   }
   if (nUnknown) {
     const more = nUnknown > unknown.length ? ", ..." : "";
