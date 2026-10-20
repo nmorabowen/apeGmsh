@@ -456,6 +456,19 @@ class RecorderTranscoder:
                 f"Class {class_name!r} is in neither CUSTOM_RULE_CATALOG "
                 f"(section force) nor the localForce synthesis (an elastic "
                 f"beam in NODAL_FORCE_CATALOG); add a catalog entry.")
+        if self._model_or_pairing() is None:
+            # The .out pair carries no per-element count, and no other input
+            # names one: a mixed record whose columns divide (Legendre 2 + 4
+            # on L 1 and 13, 3 + 3 columns) passes the order check (#2331).
+            raise ValueError(
+                f"Line-stations record {rec.name!r} ({class_name}) is "
+                f"transcoded with no model: pass model_h5_src= (the bridge's "
+                f"model.h5) or pairing= (a live pairing), which give each "
+                f"element's integration-point count. A .out record carries "
+                f"no per-element count, so without one a record whose "
+                f"elements have different counts can be sliced across "
+                f"element boundaries without error. "
+                f"Results.from_recorders(model=) passes it.")
 
         logicals = list(quiet_emit_logical(
             rec, output_dir=str(self._output_dir),
