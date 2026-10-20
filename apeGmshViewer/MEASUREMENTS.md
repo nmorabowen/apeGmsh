@@ -893,3 +893,54 @@ runs:
 - Runs 1 and 3 also printed the contour scrub rows for the `.ladruno`: 203.0
   and 115.3 steps/s plain, 158.5 and 90.4 steps/s deformed. Every rate is
   above the 30 steps/s floor of the D5 revisit trigger.
+
+### One `.ladruno` step in one hyperslab (#2202)
+
+`LadrunoFile.readNodalStep` now reads columns `c0..c1` of each `DATA` the
+step needs in one slice, `[step, :, c0:c1]`, and splits the columns in
+memory (`reader/ladrunoNodal.ts`). Before, it sliced `[step, :, col]` once per
+component, so the three displacement components inflated the same 2-step
+chunk three times. The values are bit-identical (`test/results/ladruno.test.ts`).
+
+The method is V4L-c's: `npm run measure -- block.h5`, the same columns, the
+same machine. The V4L-c files were not kept, so the run was rebuilt from the
+recipe in the V4L-c section: the same cube, mesh, 500 LoadControl steps,
+recorder and `DomainCapture`, on the same fork build (`79e0623670`). It
+wrote the same layout (`DATA` (500, 4096, 3) float64, chunks [2, 4096, 3],
+shuffle, deflate). Only the load differs, so the `.ladruno` is 24.72 MB, not
+24.78. The **before** rows run the reader at the head of #2205, the code
+V4L-c measured, and they reproduce V4L-c run 1 (1.84 / 1.68 ms against
+1.85 / 1.69). The **after** rows run #2202. The six runs alternated on the
+same files, in the order after 1, before 1, after 2, before 2, after 3,
+before 3, on 2026-10-19.
+
+| run | reader | file | index (ms) | one step cold / warm (ms) | scrub plain / deformed (steps/s) |
+|---|---|---|---|---|---|
+| 1 | after (#2202) | `block.ladruno` | 4.1 | 0.78 / 0.63 | 178.0 / 129.3 |
+| 1 | after (#2202) | `block.results.h5` | 13.9 | 1.24 / 0.41 | |
+| 1 | before (#2205) | `block.ladruno` | 1.8 | 1.84 / 1.68 | 204.4 / 163.0 |
+| 1 | before (#2205) | `block.results.h5` | 3.9 | 0.51 / 0.31 | |
+| 2 | after (#2202) | `block.ladruno` | 1.9 | 0.73 / 0.62 | 265.0 / 186.5 |
+| 2 | after (#2202) | `block.results.h5` | 4.4 | 0.75 / 0.36 | |
+| 2 | before (#2205) | `block.ladruno` | 1.8 | 1.82 / 1.81 | 204.8 / 155.4 |
+| 2 | before (#2205) | `block.results.h5` | 4.7 | 0.56 / 0.38 | |
+| 3 | after (#2202) | `block.ladruno` | 1.9 | 0.76 / 0.65 | 243.5 / 184.7 |
+| 3 | after (#2202) | `block.results.h5` | 4.1 | 0.61 / 0.36 | |
+| 3 | before (#2205) | `block.ladruno` | 1.9 | 2.78 / 1.80 | 194.5 / 150.9 |
+| 3 | before (#2205) | `block.results.h5` | 4.2 | 0.55 / 0.36 | |
+
+Other sessions held the machine during after 1 (93 to 97 % CPU before and
+during its scrub, against 25 to 49 % in the other runs), so its native read
+and its scrub rates read high and low.
+
+- **One warm `.ladruno` step drops from 1.68 to 1.81 ms to 0.62 to 0.65 ms**,
+  2.7 to 2.9 times less run by run. One cold step drops from 1.82 to 2.78 ms to 0.73 to
+  0.78 ms. The native read does not change (its reader is not touched).
+- **One warm step now costs the `.ladruno` 1.54 to 1.81 times the native
+  read** (0.63, 0.62 and 0.65 ms against 0.41, 0.36 and 0.36 ms), down from
+  4.76 to 5.42 times in the before rows. These runs do not split what
+  remains between the one inflate per step and the rest of the read.
+- **The plain scrub rises from 194.5 to 204.8 steps/s to 243.5 to 265.0**
+  in runs 2 and 3, and the deformed one from 150.9 to 163.0 to 184.7 to
+  186.5. A scrub step is more than the read (the contour and the render), so
+  it gains less than the read.
