@@ -60,9 +60,10 @@ from ...opensees._response_catalog import (
     parse_mpco_element_key,
 )
 from ._mpco_element_io import (
+    SkippedBucket,
     _attr_scalar,
-    warn_unparseable_bucket_key,
-    warn_unread_bucket,
+    unparseable_skip,
+    warn_skipped_buckets,
 )
 
 if TYPE_CHECKING:
@@ -231,40 +232,59 @@ def discover_spring_buckets(
         entry per catalogued ZeroLength bucket in that group.
 
     Each bucket :func:`scan_spring_buckets` leaves unread is named in one
-    ``MPCOBucketSkippedWarning``: a custom-rule ZeroLength bucket (#2160)
-    and a key that does not parse (#2165).
+    ``MPCOBucketSkippedWarning`` pointing at this function's caller: a
+    custom-rule ZeroLength bucket (#2160) and a key that does not parse
+    (#2165). A read takes :func:`skipped_spring_buckets` itself and names
+    only the skipped buckets that hold an element it asked for.
     """
     scan = scan_spring_buckets(
         on_elements_grp, canonical_component=canonical_component,
     )
-    what = f"spring discovery of {canonical_component!r}"
-    if scan.custom_rule or scan.unparseable:
-        token_grp = on_elements_grp[scan.mpco_group_name]
-        for bracket_key, exc in scan.unparseable:
-            warn_unparseable_bucket_key(
-                token_grp[bracket_key], exc, what=what,
-            )
-        for bracket_key, elem_key in scan.custom_rule:
-            _warn_unread_custom_rule_spring(
-                token_grp[bracket_key], elem_key, what=what,
-            )
+    warn_skipped_buckets(
+        skipped_spring_buckets(
+            on_elements_grp, scan, canonical_component=canonical_component,
+        ),
+        element_ids=None, stacklevel=2,
+    )
     return (scan.mpco_group_name, scan.buckets)
 
 
-def _warn_unread_custom_rule_spring(
+def skipped_spring_buckets(
+    on_elements_grp: "h5py.Group",
+    scan: _SpringScan,
+    *,
+    canonical_component: str,
+) -> list[SkippedBucket]:
+    """Every bucket ``scan`` leaves unread, as :class:`SkippedBucket`
+    records: each key that does not parse, then each custom-rule
+    ZeroLength bucket.
+    """
+    if not (scan.custom_rule or scan.unparseable):
+        return []
+    what = f"spring discovery of {canonical_component!r}"
+    token_grp = on_elements_grp[scan.mpco_group_name]
+    return [
+        unparseable_skip(token_grp[bracket_key], exc, what=what)
+        for bracket_key, exc in scan.unparseable
+    ] + [
+        _custom_rule_spring_skip(token_grp[bracket_key], elem_key, what=what)
+        for bracket_key, elem_key in scan.custom_rule
+    ]
+
+
+def _custom_rule_spring_skip(
     bucket_grp: "h5py.Group",
     elem_key: MPCOElementKey,
     *,
     what: str,
-) -> None:
-    """Name a ZeroLength bucket with a nonzero custom-rule index (#2160).
+) -> SkippedBucket:
+    """A ZeroLength bucket with a nonzero custom-rule index (#2160).
 
     Every ZeroLength-family bucket this reader knows is on rule 1 with
     custom index 0; a nonzero index is outside that layout, so the bucket
-    is left unread. One ``MPCOBucketSkippedWarning`` per bucket, the
-    contract the Gauss level set (#2159).
+    is left unread, the contract the Gauss level set (#2159).
     """
-    warn_unread_bucket(
+    return SkippedBucket(
         bucket_grp,
         what=what,
         reason=(
