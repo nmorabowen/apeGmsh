@@ -434,6 +434,21 @@ def test_partitioned_snapshot_warns_once_and_writes_nothing(
     assert list(artifact_dir.glob("*.h5")) == []
 
 
+@pytest.mark.parametrize("dialect", ["py", "tcl"])
+def test_the_partitioned_warning_points_at_the_export_call_with_analyze_steps(
+    artifact_dir, tmp_path, h5_calls, dialect,
+):
+    """#2289: the run-record tail adds a frame between ``ops.py()`` /
+    ``ops.tcl()`` and ``after_emit``; the warning still names this file."""
+    ops = _bridge(_box_fem("parts", partitions=2))
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        getattr(ops, dialect)(str(tmp_path / f"d.{dialect}"), analyze_steps=2)
+    ours = [w for w in rec if w.category is BridgeArtifactWarning]
+    assert len(ours) == 1
+    assert Path(ours[0].filename) == Path(__file__)
+
+
 def test_a_failing_write_warns_once_and_keeps_the_return_value(
     artifact_dir, tmp_path, monkeypatch,
 ):
