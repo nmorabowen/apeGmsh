@@ -491,8 +491,6 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "ShellDKGT": "ShellDKGQ",
     "ShellNLDKGQ": "ShellDKGQ",
     "ShellNLDKGT": "ShellDKGQ",
-    "ElasticForceBeamColumn2d": "forceBeamColumn",
-    "ElasticForceBeamColumn3d": "forceBeamColumn",
     "ForceBeamColumnCBDI2d": "forceBeamColumn",
 }
 
