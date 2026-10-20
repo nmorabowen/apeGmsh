@@ -287,6 +287,24 @@ test("a COMPONENTS label repeated refuses that result by name", () => {
   });
 });
 
+test("#2299: a node ID list that holds an id twice refuses the whole file at open, naming the file, the dataset, the id and its rows", () => {
+  const escaped = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  // DISPLACEMENT/ID 1, 2, 3 -> 1, 3, 3: unrefused, node 3's history reads row 2 and node 2's row 1 draws as node 3.
+  const disp = edited(TRUSS, (f) => (f.get(`${DISP}/ID`) as h5wasm.Dataset).write_slice([[1, 2], [0, 1]], new Int32Array([3])));
+  refuses(disp, "layout", new RegExp(`^${escaped(disp)}: ${escaped(DISP)}/ID lists node id\\(s\\) more than once \\(id 3 at rows 1, 2\\); .*PARTITION_REDUCTION=SUM`));
+  // A second result with a repeated id refuses the file, not only that result.
+  const vel = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([2, 1, 2]), shape: [3, 1] });
+    g.create_dataset({ name: "DATA", data: new Float64Array(4 * 3 * 2), shape: [4, 3, 2] });
+  });
+  refuses(vel, "layout", /ON_NODES\/VELOCITY\/ID lists node id\(s\) more than once \(id 2 at rows 0, 2\)/);
+  // A modal group's ID (read by the mode stages, not the host's results).
+  const modal = edited(MODES, (f) => (f.get("/MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/ID") as h5wasm.Dataset).write_slice([[0, 1], [0, 1]], new Int32Array([2])));
+  refuses(modal, "layout", /ON_NODES\/MODES_OF_VIBRATION\(U\)\/ID lists node id\(s\) more than once \(id 2 at rows 0, 1\)/);
+  // The unedited files open: the refusals above are the edits, not the fixtures.
+  for (const p of [TRUSS, MODES]) withFile(p, (r) => assert.ok(r.index.stages.length > 0));
+});
+
 test("stages sort by their integer id; one with no ON_NODES has no nodal block", () => {
   const p = edited(TRUSS, (f) => {
     const ten = f.create_group("MODEL_STAGE[10]");
