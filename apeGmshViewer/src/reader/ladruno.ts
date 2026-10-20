@@ -42,7 +42,7 @@ import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
-import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
+import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
@@ -566,7 +566,8 @@ export class LadrunoFile {
     }
     const modelElements = this.optionalSubgroup(hostGrp, ["MODEL", "ELEMENTS"]);
     const ndm = this.inferSpatialDim();
-    const filterSet = options?.elementIds ? new Set<number>(Array.from(options.elementIds, Number)) : null;
+    // The id lookups below are sorted typed arrays, never a Set sized by the element count (V8 caps one at 2^24 entries).
+    const filterIds = options?.elementIds ? sortedUniqueIds(Array.from(options.elementIds, Number)) : null;
 
     interface BucketPart {
       rank: 0 | 1 | 2 | 3;
@@ -579,7 +580,7 @@ export class LadrunoFile {
     const nStepsRead = step !== undefined ? 1 : nStepsTotal;
 
     // Pass 1: Rank 0 (section.*, LEVELS == 2) buckets that actually resolve `canon`.
-    const sectionServed = new Set<number>();
+    const sectionIds: Float64Array[] = [];
     for (const token of onElements.keys()) {
       const baseRank = tokenRank(token);
       if (baseRank !== 0) continue;
@@ -593,11 +594,13 @@ export class LadrunoFile {
         if (!parsed.blocks.some((b) => b.level === 2 && b.multiplicity > 0 && b.compNames.some((n) => sectionComponentOf(n, token, ndm) === canon))) {
           continue;
         }
-        for (const eid of parsed.ids) sectionServed.add(eid);
-        const part = this.readSectionBucketStations(parsed, canon, key, token, ndm, modelElements, filterSet, step, nStepsTotal);
+        sectionIds.push(parsed.ids);
+        const part = this.readSectionBucketStations(parsed, canon, key, token, ndm, modelElements, filterIds, step, nStepsTotal);
         if (part) found.push({ rank: 0, perElement: part, nStepsRead });
       }
     }
+
+    const sectionServed = sortedUniqueIds(concatIds(sectionIds));
 
     // Pass 2: Rank 1..3 (localForce, basicForce, axialForce) buckets.
     for (const token of onElements.keys()) {
@@ -619,7 +622,7 @@ export class LadrunoFile {
             token,
             baseRank as 1 | 2 | 3,
             ndm,
-            filterSet,
+            filterIds,
             sectionServed,
             step,
             nStepsTotal,
@@ -630,21 +633,10 @@ export class LadrunoFile {
       }
     }
 
-    // Per-element rank precedence: rank 0 > rank 1 > rank 2 > rank 3.
-    const covered = new Set<number>();
-    const chosen: { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] = [];
-    for (const rank of [0, 1, 2, 3] as const) {
-      const servedInRank = new Set<number>();
-      for (const part of found) {
-        if (part.rank !== rank) continue;
-        for (const elem of part.perElement) {
-          if (covered.has(elem.eid) || servedInRank.has(elem.eid)) continue;
-          chosen.push(elem);
-          servedInRank.add(elem.eid);
-        }
-      }
-      for (const eid of servedInRank) covered.add(eid);
-    }
+    // Per-element rank precedence: rank 0 > rank 1 > rank 2 > rank 3; in one rank, the first bucket that holds the element.
+    const ordered = ([0, 1, 2, 3] as const).flatMap((rank) => found.filter((part) => part.rank === rank));
+    const taken = firstListing(ordered.map((part) => Float64Array.from(part.perElement, (e) => e.eid)));
+    const chosen = ordered.flatMap((part, k) => part.perElement.filter((_, i) => taken[k]![i] === 1));
 
     const timeSlice = step !== undefined ? new Float64Array([s.time[step] ?? 0]) : s.time;
     if (chosen.length === 0) {
@@ -1250,7 +1242,7 @@ export class LadrunoFile {
     token: string,
     ndm: number | null,
     modelElements: LGroup | null,
-    filterSet: ReadonlySet<number> | null,
+    filterIds: Float64Array | null,
     step: number | undefined,
     nStepsTotal: number,
   ): { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] | null {
@@ -1286,7 +1278,7 @@ export class LadrunoFile {
     const selectedRows: { row: number; eid: number }[] = [];
     for (let row = 0; row < parsed.ids.length; row++) {
       const eid = parsed.ids[row]!;
-      if (!filterSet || filterSet.has(eid)) selectedRows.push({ row, eid });
+      if (!filterIds || rowOf(filterIds, eid) >= 0) selectedRows.push({ row, eid });
     }
     if (selectedRows.length === 0) return null;
 
@@ -1334,8 +1326,8 @@ export class LadrunoFile {
     token: string,
     rank: 1 | 2 | 3,
     ndm: number | null,
-    filterSet: ReadonlySet<number> | null,
-    sectionServed: ReadonlySet<number>,
+    filterIds: Float64Array | null,
+    sectionServed: Float64Array,
     step: number | undefined,
     nStepsTotal: number,
     warningsOut?: string[],
@@ -1343,12 +1335,12 @@ export class LadrunoFile {
     const selectedRows: { row: number; eid: number }[] = [];
     for (let row = 0; row < parsed.ids.length; row++) {
       const eid = parsed.ids[row]!;
-      if (!filterSet || filterSet.has(eid)) selectedRows.push({ row, eid });
+      if (!filterIds || rowOf(filterIds, eid) >= 0) selectedRows.push({ row, eid });
     }
     const gate = localForce2dGate(bucketKey, parsed.blocks, parsed.width, token, ndm);
     if (!gate.ok) {
       if (selectedRows.length > 0) {
-        const bare = selectedRows.map((r) => r.eid).filter((eid) => !sectionServed.has(eid));
+        const bare = selectedRows.map((r) => r.eid).filter((eid) => rowOf(sectionServed, eid) < 0);
         if (bare.length > 0) {
           throw new LadrunoError(
             "layout",
@@ -1781,6 +1773,38 @@ function basicForceRefusal(bucketKey: string, component: LineStationComponent, s
     `basicForce bucket ${JSON.stringify(bucketKey)} (element class ${JSON.stringify(cls)}) names ${JSON.stringify(component)} at stations [${stations.join(", ")}]; ` +
     `only the end moments ["My", "Mz"] at stations [1, 2] map to the section convention. Its ${JSON.stringify(component)} line stations are left out.`
   );
+}
+
+/** `lists` end to end, in one typed array. */
+function concatIds(lists: readonly Float64Array[]): Float64Array {
+  const all = new Float64Array(lists.reduce((n, l) => n + l.length, 0));
+  let o = 0;
+  for (const l of lists) {
+    all.set(l, o);
+    o += l.length;
+  }
+  return all;
+}
+
+/**
+ * Which row of each of `lists` a line-station read takes (1) and which it drops (0):
+ * the lists in precedence order, each element taken once, from the first list that
+ * holds it. One byte per row and the sorted ids, never a Set or Map sized by the
+ * element count (V8 caps one at 2^24 entries).
+ */
+export function firstListing(lists: readonly Float64Array[]): Uint8Array[] {
+  const ids = sortedUniqueIds(concatIds(lists));
+  const seen = new Uint8Array(ids.length);
+  return lists.map((l) => {
+    const take = new Uint8Array(l.length);
+    for (let i = 0; i < l.length; i++) {
+      const k = rowOf(ids, l[i]!);
+      if (seen[k]) continue;
+      seen[k] = 1;
+      take[i] = 1;
+    }
+    return take;
+  });
 }
 
 function stationXi(nStations: number): Float64Array {
