@@ -156,6 +156,79 @@ test("reads outside the file are refused by name", () => {
   }
 });
 
+// -- #2358: a node's history column past V8's 2^24 Map cap ---------------------
+
+/**
+ * `body` with every Map and Set it builds capped at `cap` number keys, as V8 caps them
+ * at 2^24 entries: a stage of more than 2^24 nodes, at a fixture's scale. Only number
+ * keys count (node ids are numbers; stage paths and component names are strings). The
+ * real Map and Set are restored however `body` ends.
+ */
+function underIdCap<T>(cap: number, body: () => T): T {
+  const [RealMap, RealSet] = [globalThis.Map, globalThis.Set];
+  const full = () => new RangeError(`Map maximum size exceeded (stub: ${cap} number keys)`);
+  class CappedMap<K, V> extends RealMap<K, V> {
+    override set(k: K, v: V): this {
+      if (typeof k === "number" && !this.has(k) && this.size >= cap) throw full();
+      return super.set(k, v);
+    }
+  }
+  class CappedSet<V> extends RealSet<V> {
+    override add(v: V): this {
+      if (typeof v === "number" && !this.has(v) && this.size >= cap) throw full();
+      return super.add(v);
+    }
+  }
+  globalThis.Map = CappedMap as unknown as MapConstructor;
+  globalThis.Set = CappedSet as unknown as SetConstructor;
+  try {
+    return body();
+  } finally {
+    globalThis.Map = RealMap;
+    globalThis.Set = RealSet;
+  }
+}
+
+const NODE_IDS = `/stages/${STAGE}/partitions/partition_0/nodes/_ids`;
+
+/** results_small.h5 with `_ids` rewritten to `ids` and every value column untouched. */
+const withNodeIds = (ids: number[]) => edited((f) => (f.get(NODE_IDS) as h5wasm.Dataset).write_slice([[0, ids.length]], BigInt64Array.from(ids, BigInt)));
+
+test("#2358: readNodeHistory finds a node's column with no Map of node ids, so a stage past 2^24 nodes reads (a Map capped at 2 ids stands in)", () => {
+  // _ids 1..18 as committed, and reversed to 18..1 with the values untouched: column j
+  // holds the closed form of node j + 1, so node n then reads the closed form of 19 - n.
+  const ids = Array.from({ length: 18 }, (_, j) => j + 1);
+  for (const [path, nodeOfColumn] of [[FIXTURE, (n: number) => n], [withNodeIds([...ids].reverse()), (n: number) => 19 - n]] as const) {
+    const r = openResults(H5, path);
+    try {
+      underIdCap(2, () => {
+        for (const n of ids) {
+          const h = r.readNodeHistory(STAGE, "displacement_z", n);
+          assert.equal(h.length, T);
+          for (let k = 0; k < T; k++) assert.ok(close(h[k]!, nodeOfColumn(n) + 0.003 * k), `${path} node ${n} history[${k}]`);
+        }
+        assert.throws(() => r.readNodeHistory(STAGE, "displacement_z", 19), (e: unknown) => e instanceof ResultsError && e.kind === "argument" && /stage stage_0 records no node 19/.test(e.message));
+      });
+    } finally {
+      r.close();
+    }
+  }
+  // The stand-in bites: the capped Map refuses a third id, as V8's refuses the 2^24 + 1st.
+  assert.throws(() => underIdCap(2, () => new Map([1, 2, 3].map((n) => [n, n]))), RangeError);
+});
+
+test("#2358: a node id listed twice in _ids is refused by name on readNodeHistory, not answered with one of its columns", () => {
+  const r = openResults(H5, withNodeIds([...Array.from({ length: 17 }, (_, j) => j + 1), 1]));
+  try {
+    assert.throws(
+      () => r.readNodeHistory(STAGE, "displacement_z", 1),
+      (e: unknown) => e instanceof ResultsError && e.kind === "layout" && /nodes\/_ids: the node ID list holds id 1 at rows 0 and 17/.test(e.message),
+    );
+  } finally {
+    r.close();
+  }
+});
+
 // -- #1768: the element mapping is stamp-only ------------------------------------
 
 /** Open `path`, read group_0's mapping, and check it is "unverified" with no `ids` to join on. */

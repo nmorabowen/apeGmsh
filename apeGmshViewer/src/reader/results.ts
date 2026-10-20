@@ -27,6 +27,13 @@
 //   another field name so a caller cannot join them to /model/elements by
 //   accident.
 //
+// A node's history column is found by binary search over `_ids`
+// (ladrunoNodal.ts::nodeColumnLookup, #2358), not a Map from id to column: V8
+// caps a Map at 2^24 entries, so a stage of more nodes threw an unnamed
+// RangeError on its first node-history read. No Map or Set here is sized by the
+// node or element count; the ones left hold fixed vocabularies, stage paths or
+// class tags.
+//
 // One partition only: every writer in src/ writes `partition_0`; a file with
 // several is refused ("unsupported"), not merged (the doc's union rule is a
 // follow-up for the real reader).
@@ -38,6 +45,7 @@ import type { ProgramDecls } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 import { openH5, type H5FS } from "./h5open.ts";
 import { gmshSimplexRows } from "./legacySimplex.ts";
+import { nodeColumnLookup } from "./ladrunoNodal.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
 export const RESULTS_TARGET = { major: 1, minor: 2 } as const;
@@ -293,7 +301,7 @@ export class ResultsFile {
   readonly index: ResultsIndex;
   private readonly h5: ResultsH5;
   private readonly f: RFile;
-  private readonly nodeColumn = new Map<string, Map<number, number>>();
+  private readonly nodeColumn = new Map<string, (nodeId: number) => number>(); // per nodal block: sized by the stage count, the lookup by typed arrays (#2358)
   /** Whether `_element_index` holds FEM ids, from the root stamp alone (#1768). */
   private readonly elementSpace: { verified: true } | { verified: false; reason: string };
   /** The path the file opened from, named in the index's warnings; and the class tags already warned about (#2274). */
@@ -455,14 +463,13 @@ export class ResultsFile {
   readNodeHistory(stageId: string, component: string, nodeId: number): Float64Array {
     const s = this.stage(stageId);
     const nodes = this.requireNodes(s);
-    let col = this.nodeColumn.get(nodes.path);
-    if (!col) {
-      col = new Map();
-      nodes.ids.forEach((id, j) => col!.set(id, j));
-      this.nodeColumn.set(nodes.path, col);
+    let columnOf = this.nodeColumn.get(nodes.path);
+    if (!columnOf) {
+      columnOf = nodeColumnLookup(nodes.ids, (m) => new ResultsError("layout", `${nodes.path}/_ids: ${m}`));
+      this.nodeColumn.set(nodes.path, columnOf);
     }
-    const j = col.get(nodeId);
-    if (j === undefined) throw new ResultsError("argument", `stage ${stageId} records no node ${nodeId}`);
+    const j = columnOf(nodeId);
+    if (j < 0) throw new ResultsError("argument", `stage ${stageId} records no node ${nodeId}`);
     const ds = this.component(nodes.path, nodes.components, component);
     return toFloat64(ds.slice([[], [j, j + 1]]), ds.path);
   }

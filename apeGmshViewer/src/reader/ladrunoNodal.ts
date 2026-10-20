@@ -13,7 +13,8 @@
 // (`nodeColumnLookup`, #2354), not a Map from id to column: V8 caps a Map at 2^24
 // entries, so a stage of more nodes threw an unnamed RangeError on the first
 // node-history read. An ascending list (what the fork writes) is searched in place;
-// any other order is searched through a sorted copy and its permutation.
+// any other order is searched through a sorted copy and its permutation. The
+// native reader (reader/results.ts) finds its `_ids` columns the same way (#2358).
 //
 // Browser-safe: no Node import. The caller passes its own read and error
 // factory, as reader/ladrunoInfo.ts does, so this module imports nothing from
