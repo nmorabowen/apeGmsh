@@ -376,17 +376,16 @@ export class LadrunoFile {
     }, (m) => new LadrunoError("layout", m));
   }
 
-  /** Steps `k0` to `k1` (exclusive) of each entry of `components`: ((k1 - k0) * N,), step-major. */
+  /** Steps `k0` to `k1` (exclusive) of each entry of `components`: ((k1 - k0) * N,), step-major. One hyperslab per DATA (#2270). */
   readNodalRows(stageId: string, components: readonly string[], k0: number, k1: number): Float64Array[] {
     const s = this.stage(stageId);
     if (!Number.isInteger(k0) || !Number.isInteger(k1) || k0 < 0 || k1 > s.nSteps || k0 >= k1) {
       throw new LadrunoError("argument", `steps ${k0}..${k1} are not a range inside stage ${s.id} (0..${s.nSteps})`);
     }
-    return components.map((c) => {
-      const col = this.column(s, c);
+    return readColumnsBySlab(components.map((c) => this.column(s, c)), (col, c0, c1) => {
       const ds = this.datasetAt(col.path);
-      return toFloat64(col.modal ? ds.slice([[], [col.col, col.col + 1]]) : ds.slice([[k0, k1], [], [col.col, col.col + 1]]), ds.path);
-    });
+      return toFloat64(col.modal ? ds.slice([[], [c0, c1]]) : ds.slice([[k0, k1], [], [c0, c1]]), ds.path);
+    }, (m) => new LadrunoError("layout", m));
   }
 
   /** Node `nodeId`'s whole history of one component: (T,); a mode stage's is its one value. */
