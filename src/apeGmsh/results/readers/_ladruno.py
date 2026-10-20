@@ -129,6 +129,46 @@ def warn_stage_kind_conflicts(conflicts: "Sequence[str]") -> None:
     )
 
 
+class LadrunoRepeatedNodeId(ValueError):
+    """A ``.ladruno`` node-result ``ID`` lists one node id more than once.
+
+    Raised when the file is opened. A repeated id reads as two columns of
+    one node, and a part set that sums partition copies
+    (``PARTITION_REDUCTION=SUM``) would count that node twice. A node in
+    two *part files* is legal: that is the copy the sum combines.
+
+    ``file`` is the file path, ``dataset`` the HDF5 path of the ``ID``
+    dataset, and ``repeated`` maps each repeated id to the rows it sits at.
+    """
+
+    def __init__(
+        self, file: Path, dataset: str, repeated: "dict[int, list[int]]",
+    ) -> None:
+        self.file = file
+        self.dataset = dataset
+        self.repeated = repeated
+        shown = dict(list(repeated.items())[:_REPEATED_SHOWN])
+        more = (
+            f" and {len(repeated) - _REPEATED_SHOWN} more"
+            if len(repeated) > _REPEATED_SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: {dataset} lists node id(s) more than once "
+            f"(id: rows {shown}{more}). Each node is listed once per file; "
+            "a repeated id would read as two columns, and a part set that "
+            "sums partition copies (PARTITION_REDUCTION=SUM) would count it "
+            "twice. The file is malformed."
+        )
+
+
+#: How many repeated ids a :class:`LadrunoRepeatedNodeId` message names.
+_REPEATED_SHOWN = 10
+
+#: Stage subgroups whose result groups carry a node ``ID`` list: the time
+#: series (with the modal groups) and the ``-envelope`` extremes.
+_NODE_ID_GROUPS = ("RESULTS/ON_NODES", "RESULTS/ENVELOPES/ON_NODES")
+
+
 class NodeEnvelope(NamedTuple):
     """Per-node time-reduced extremes for one component (recorder
     ``-envelope``). All arrays are aligned by ``node_ids``; ``arg_step`` is
@@ -190,6 +230,7 @@ class LadrunoReader:
         # propagates, so it stays unlocked while the traceback lives.
         try:
             self._validate_identity()
+            self._refuse_repeated_node_ids()
             self._stage_cache: Optional[list[StageInfo]] = None
             self._stage_to_grp: dict[str, str] = {}
             # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
@@ -227,6 +268,39 @@ class LadrunoReader:
                 "Update apeGmsh, or the file was written by a newer/older "
                 "Ladruno format."
             )
+
+    def _refuse_repeated_node_ids(self) -> None:
+        """Raise :class:`LadrunoRepeatedNodeId` if a node ``ID`` repeats.
+
+        Checks the ``ID`` of every result group under each stage's
+        ``RESULTS/ON_NODES`` (modal groups included) and
+        ``RESULTS/ENVELOPES/ON_NODES``: every node list the reader reads.
+        """
+        import h5py
+
+        for stage in sorted(
+            (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
+            key=_stage_sort_key,
+        ):
+            for base in _NODE_ID_GROUPS:
+                group = _child(self._h5[stage], base)
+                if group is None:
+                    continue
+                for res_name in group:
+                    res = group[res_name]
+                    # A child that holds no ID lists no node, so it
+                    # cannot repeat one; a read that needs its ID
+                    # fails on that read.
+                    if not isinstance(res, h5py.Group) or "ID" not in res:
+                        continue
+                    ids = np.asarray(res["ID"][...], dtype=np.int64).ravel()
+                    uniq, counts = np.unique(ids, return_counts=True)
+                    if uniq.size == ids.size:
+                        continue
+                    raise LadrunoRepeatedNodeId(self._path, f"{res.name}/ID", {
+                        int(n): np.flatnonzero(ids == n).tolist()
+                        for n in uniq[counts > 1]
+                    })
 
     def close(self) -> None:
         try:
