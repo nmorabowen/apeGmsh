@@ -977,7 +977,7 @@ test("#2348: a MODEL/LOCAL_AXES group whose frames are not read reaches the app'
     assert.ok(opened.ok, opened.ok ? "" : opened.error);
     assert.equal(opened.warnings.filter((w) => named.test(w)).length, 1, "said once, for the one stage whose MODEL/LOCAL_AXES holds it");
     const stage = opened.meta.stages[0]!;
-    assert.ok(stage.lineStations.includes("N"));
+    assert.ok(stage.lineStations?.includes("N"));
     for (const step of [0, stage.time.length - 1]) {
       const ans = host.readStep({ path: p, stage: stage.id, step, seq: step, lineDiagram: "N" });
       assert.ok(ans.ok && ans.lineDiagram, ans.ok ? "no line diagram" : ans.error);
