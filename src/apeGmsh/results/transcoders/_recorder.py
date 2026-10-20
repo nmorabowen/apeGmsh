@@ -98,7 +98,10 @@ class RecorderTranscoder:
         stage_id: str | None = None,
         model_h5_src: str | Path | None = None,
         stages: "Iterable[Any] | None" = None,
+        pairing: Any = None,
     ) -> None:
+        if pairing is not None and model_h5_src is not None:
+            raise TypeError("pass model_h5_src= or pairing=, not both.")
         self._spec = spec
         self._output_dir = Path(output_dir)
         self._target_path = Path(target_path)
@@ -107,9 +110,10 @@ class RecorderTranscoder:
         # (name, kind, file prefix) per stage; run() sets _stage_id to each prefix.
         self._plan = self.stage_plan(stages, stage_name, stage_kind, stage_id)
         self._stage_id = stage_id
-        # A sibling model.h5 whose /opensees/ zone is composed in (ADR 0020); None
-        # writes /meta + /model only, and refuses elastic-beam line stations.
+        # A sibling model.h5 whose /opensees/ zone is composed in (ADR 0020); None writes /meta + /model
+        # only. Without one, pairing= (lineage + typed elements()) stands in for its element pairing only.
         self._model_h5_src = None if model_h5_src is None else Path(model_h5_src)
+        self._pairing = pairing
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -224,7 +228,7 @@ class RecorderTranscoder:
         which emit wrote them. So the proof uses only what is in hand,
         whatever the emit era:
 
-        - no model (``model_h5_src`` absent): no proof;
+        - no model (no ``model_h5_src``, no ``pairing=``): no proof;
         - the model's ``lineage.fem_hash`` differs from the spec's
           ``fem_snapshot_id``: no proof;
         - no element-scoped record that yields rows: proven (node rows
@@ -237,11 +241,8 @@ class RecorderTranscoder:
         cannot show that the files came from a deck built from that
         model, nor that the deck honoured the spec.
         """
-        if self._model_h5_src is None:
+        if (model := self._model_or_pairing()) is None:
             return False
-        from ...opensees import OpenSeesModel
-
-        model = OpenSeesModel.from_h5(self._model_h5_src)
         if model.lineage.fem_hash != self._spec.fem_snapshot_id:
             return False
         recorded: set[int] = set()
@@ -258,6 +259,10 @@ class RecorderTranscoder:
             model, fem_snapshot_id=self._spec.fem_snapshot_id,
         )
         return all(tags.get(e) == e for e in recorded)
+
+    def _model_or_pairing(self) -> Any:
+        from ...opensees import OpenSeesModel
+        return self._pairing if self._model_h5_src is None else OpenSeesModel.from_h5(self._model_h5_src)
 
     # ------------------------------------------------------------------
     # Per-record parsing
@@ -571,16 +576,11 @@ class RecorderTranscoder:
         self, rec: "ResolvedRecorderRecord",
     ) -> "_LineStationRecordPayload":
         """Stations xi = -1, +1 from one ``localForce`` file, signed as every route signs them
-        (local_force_station_signs). Every element must be an elastic beam: a model is required."""
-        if self._model_h5_src is None:
-            raise ValueError(
-                f"Line-stations record {rec.name!r} names elastic-beam class "
-                f"{rec.element_class_name!r}: pass model= (model_h5_src=) so every "
-                f"element is checked to be an elastic beam; without one it is refused.")
-        from ...opensees import OpenSeesModel
-        refuse_non_elastic_local_force(
-            rec, OpenSeesModel.from_h5(self._model_h5_src),
-            fem_snapshot_id=self._spec.fem_snapshot_id)
+        (local_force_station_signs). Every element must be an elastic beam: a model or pairing= is required."""
+        if (model := self._model_or_pairing()) is None:
+            raise ValueError(f"Line-stations record {rec.name!r} names elastic-beam class {rec.element_class_name!r}: pass model= "
+                             f"(model_h5_src=) or pairing= so every element is checked to be an elastic beam; without one it is refused.")
+        refuse_non_elastic_local_force(rec, model, fem_snapshot_id=self._spec.fem_snapshot_id)
         cls = rec.element_class_name
         layout = synthesize_line_station_layout_for_elastic_beam(cls or "")
         assert layout is not None    # line_stations_from_local_force(rec)
