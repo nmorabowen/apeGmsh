@@ -423,3 +423,79 @@ def test_a_shell_derived_listing_before_a_filtered_read_is_quiet(
     finally:
         r._reader.close()
     assert _skips(record) == [], [str(w.message) for w in _skips(record)]
+
+
+# =====================================================================
+# Through the composite: a refusal before the read still says why
+# =====================================================================
+
+@pytest.fixture
+def only_skipped_stress_file(tmp_path: Path) -> Path:
+    """The file's one stress bucket is skipped (custom rule), holding
+    element 2: no stress component is listed, so the composite refuses."""
+    path = tmp_path / "only_skipped.mpco"
+    f, stage = _skeleton(path)
+    try:
+        _add_tet_stress(f[stage], _CUSTOM, 2)
+        # An element the stub model does not know, outside every Gauss
+        # token: the stub archive then does not describe the file, so ids
+        # pass through untranslated, as in the other composite fixtures.
+        f[stage]["RESULTS/ON_ELEMENTS"].require_group("globalForce") \
+            .create_group("5-ElasticBeam3d[1:0:0]") \
+            .create_dataset("ID", data=np.array([[999]], dtype=np.int32))
+    finally:
+        f.close()
+    return path
+
+
+def _shell_component() -> str:
+    from apeGmsh._vocabulary import DERIVED_SHELL_SCALARS
+    return sorted(DERIVED_SHELL_SCALARS)[0]
+
+
+_REFUSING_CALLS = {
+    "derived": (
+        lambda g, ids: g.get(component="von_mises_stress", ids=ids),
+        "none of the required raw tensor components",
+    ),
+    "shell": (
+        lambda g, ids: g.get(component=_shell_component(), ids=ids),
+        "missing shell resultants",
+    ),
+    "census": (
+        lambda g, ids: g.tension_census(ids=ids),
+        "Cannot take this census",
+    ),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_REFUSING_CALLS))
+@pytest.mark.parametrize(("ids", "named"), [
+    ([2], True), ([7], False),
+], ids=["requested-in-skipped", "requested-elsewhere"])
+def test_a_composite_refusal_names_the_requested_skipped_bucket(
+    only_skipped_stress_file: Path, call: str, ids, named: bool,
+) -> None:
+    """Every requested element sits in a skipped bucket, so the listing
+    finds nothing and the composite refuses before any read runs. The
+    refusal is preceded by the naming of that bucket, as the read would
+    have done; a filter that asks for none of its elements names none."""
+    fn, refusal = _REFUSING_CALLS[call]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")   # the stub model's mismatch notice
+        r = Results.from_mpco(
+            str(only_skipped_stress_file), model_h5=_stub_model_h5_path(),
+        )
+    try:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            with pytest.raises(ValueError, match=refusal):
+                fn(r.elements.gauss, ids)
+    finally:
+        r._reader.close()
+    skips = _skips(record)
+    if not named:
+        assert skips == [], [str(w.message) for w in skips]
+        return
+    assert len(skips) == 1, [str(w.message) for w in skips]
+    assert _named_keys(skips, [_CUSTOM]) == [_CUSTOM]

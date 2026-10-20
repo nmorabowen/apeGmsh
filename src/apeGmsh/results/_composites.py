@@ -34,23 +34,34 @@ if TYPE_CHECKING:
 
 
 @contextlib.contextmanager
-def _listing_gates_read(*, filtered: bool) -> Iterator[None]:
+def _listing_gates_read(*, filtered: bool) -> Iterator[list[str]]:
     """Around a Gauss listing that only gates the read that follows it.
 
     A filtered MPCO read names each skipped bucket that holds an element
     it asked for, itself (#2293); the listing would name every skipped
-    bucket in the file. Under a filter its ``MPCOBucketSkippedWarning``
-    is muted, so the read that follows does the naming. Unfiltered, the
-    listing names every one, as a listing does.
+    bucket in the file. Under a filter the listing's
+    ``MPCOBucketSkippedWarning`` s are held back, and their messages are
+    yielded: a caller that refuses before its read runs must first let
+    the read name what it asked for (:meth:`GaussResultsComposite.
+    _name_requested_skips`). Every other warning passes through as raised.
+    Unfiltered, the listing names every skipped bucket, as a listing does.
     """
+    held: list[str] = []
     if not filtered:
-        yield
+        yield held
         return
     from .readers._mpco import MPCOBucketSkippedWarning
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", MPCOBucketSkippedWarning)
-        yield
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield held
+    for w in caught:
+        if issubclass(w.category, MPCOBucketSkippedWarning):
+            held.append(str(w.message))
+        else:
+            warnings.warn_explicit(
+                w.message, w.category, w.filename, w.lineno, source=w.source,
+            )
 
 
 # =====================================================================
@@ -1266,12 +1277,13 @@ class GaussResultsComposite(
         cannot read.
         """
         base = _derived.shell_base_components(component)
-        with _listing_gates_read(filtered=eids is not None):
+        with _listing_gates_read(filtered=eids is not None) as held:
             stored = set(
                 self._r._reader.available_components(sid, ResultLevel.GAUSS)
             )
         missing = [b for b in base if b not in stored]
         if missing:
+            self._name_requested_skips(held, sid, base[0], eids, time)
             raise ValueError(
                 f"Cannot compute '{component}': missing shell resultants "
                 f"{missing} (available: {sorted(stored)}). Record the shell "
@@ -1312,12 +1324,13 @@ class GaussResultsComposite(
         * ``None`` — leave the out-of-plane component at zero.
         """
         base = _derived.base_components_for(component, ndm=3)
-        with _listing_gates_read(filtered=eids is not None):
+        with _listing_gates_read(filtered=eids is not None) as held:
             stored = set(
                 self._r._reader.available_components(sid, ResultLevel.GAUSS)
             )
         present = [b for b in base if b in stored]
         if not present:
+            self._name_requested_skips(held, sid, base[0], eids, time)
             raise ValueError(
                 f"Cannot compute '{component}': none of the required raw "
                 f"tensor components {list(base)} are stored in this results "
@@ -1353,6 +1366,19 @@ class GaussResultsComposite(
             base_slabs[present[0]], component=component, values=values,
         )
 
+    def _name_requested_skips(
+        self, held: list[str], sid, component: str, eids, time: TimeSlice,
+    ) -> None:
+        """Before refusing a filtered read whose listing was held back
+        (:func:`_listing_gates_read`): run the read of ``component`` for
+        ``eids``, so it names each skipped bucket holding a requested
+        element. Without it, a read whose every requested element sits
+        in a skipped bucket would refuse with no word on why."""
+        if held:
+            self._r._reader.read_gauss(
+                sid, component, element_ids=eids, time_slice=time,
+            )
+
     def _reader_components(self, *, stage: str | None = None) -> list[str]:
         sid = self._r._resolve_stage(stage)
         stored = list(
@@ -1380,9 +1406,23 @@ class GaussResultsComposite(
         second one is what a pre-``61b3efa04`` engine produces.
         """
         filtered = any(x is not None for x in (pg, label, selection, ids))
-        with _listing_gates_read(filtered=filtered):
+        with _listing_gates_read(filtered=filtered) as held:
             available = self.available_components(stage=stage)
         if component not in available:
+            if held:
+                if _derived.is_shell_derived(component):
+                    read_as = _derived.shell_base_components(component)[0]
+                elif _derived.is_derived(component):
+                    read_as = _derived.base_components_for(component, ndm=3)[0]
+                else:
+                    read_as = component
+                self._name_requested_skips(
+                    held, self._r._resolve_stage(stage), read_as,
+                    self._resolve_element_ids(
+                        pg=pg, label=label, selection=selection, ids=ids,
+                    ),
+                    time,
+                )
             raise ValueError(
                 f"Cannot take this census: {component!r} is not in these "
                 f"results (available: {sorted(available)}). "
