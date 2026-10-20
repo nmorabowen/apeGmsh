@@ -6,7 +6,8 @@
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
@@ -589,15 +590,47 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "tri.ladruno": "-",
 };
 
+/** The repository root, and the directories the golden below scans for `.ladruno` files. */
+const REPO_ROOT = new URL("../../../", import.meta.url);
+const CONTOUR_GOLDEN_DIRS: readonly URL[] = [
+  new URL("apeGmshViewer/fixtures/", REPO_ROOT),
+  new URL("tests/fixtures/ladruno/", REPO_ROOT),
+  new URL("tests/fixtures/simplex_gp/", REPO_ROOT),
+];
+
+/** `git ls-files '*.ladruno'` at the repo root (sorted, `/`-separated), or the reason git could not answer. */
+function trackedLadruno(): { files: string[] } | { skip: string } {
+  let out: string;
+  try {
+    out = execFileSync("git", ["ls-files", "-z", "--", "*.ladruno"], { cwd: fileURLToPath(REPO_ROOT), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    return { skip: `git ls-files is unavailable here (${e instanceof Error ? e.message.split("\n")[0] : String(e)}); CI runs this check` };
+  }
+  return { files: out.split("\0").filter((x) => x.length > 0).sort() };
+}
+
+const TRACKED_LADRUNO = trackedLadruno();
+
+test(
+  "#2287: the contour golden scans every .ladruno git tracks (a fixture in a new directory needs a golden row)",
+  "skip" in TRACKED_LADRUNO ? { skip: TRACKED_LADRUNO.skip } : {},
+  () => {
+    assert.ok("files" in TRACKED_LADRUNO);
+    const root = fileURLToPath(REPO_ROOT);
+    const scanned = CONTOUR_GOLDEN_DIRS.flatMap((dir) =>
+      readdirSync(dir)
+        .filter((x) => x.endsWith(".ladruno"))
+        .map((name) => relative(root, fileURLToPath(new URL(name, dir))).split(sep).join("/")),
+    ).sort();
+    assert.deepEqual(scanned, TRACKED_LADRUNO.files, "add the new directory to CONTOUR_GOLDEN_DIRS and its files' rows to CONTOUR_GOLDEN");
+  },
+);
+
 test("#2214: every committed .ladruno contours as before (magnitude and axis grouping unchanged)", async () => {
   await h5wasm.ready;
   const H5 = h5wasm as unknown as ResultsH5;
   const got: Record<string, string> = {};
-  for (const dir of [
-    new URL("../../fixtures/", import.meta.url),
-    new URL("../../../tests/fixtures/ladruno/", import.meta.url),
-    new URL("../../../tests/fixtures/simplex_gp/", import.meta.url),
-  ]) {
+  for (const dir of CONTOUR_GOLDEN_DIRS) {
     for (const name of readdirSync(dir).filter((x) => x.endsWith(".ladruno"))) {
       let r: ReturnType<typeof openLadruno>;
       try {
