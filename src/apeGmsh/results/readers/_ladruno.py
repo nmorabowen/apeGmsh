@@ -1033,7 +1033,7 @@ class LadrunoReader:
         env = _child(grp, "RESULTS/ENVELOPES/ON_NODES")
         if env is None:
             raise ValueError(
-                f"This .ladruno has no RESULTS/ENVELOPES/ON_NODES — it was "
+                "This .ladruno has no RESULTS/ENVELOPES/ON_NODES — it was "
                 "not recorded with the '-envelope' flag (the time-series "
                 "ON_NODES path carries the data; use read_nodes instead)."
             )
