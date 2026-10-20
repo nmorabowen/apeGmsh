@@ -710,6 +710,32 @@ def test_single_gp_file_coded_element_is_exact_and_silent() -> None:
     np.testing.assert_allclose(per.values[0][0], 4.2)
 
 
+_HEX_GL2 = np.array([[a, b, c] for c in (-_INV_SQRT3, _INV_SQRT3)
+                     for b in (-_INV_SQRT3, _INV_SQRT3)
+                     for a in (-_INV_SQRT3, _INV_SQRT3)])
+
+
+@pytest.mark.parametrize("npe", [4, 8], ids=["quad4-as-tet4",
+                                              "quad8-as-hex8"])
+def test_file_coded_rows_wider_than_the_group_dim_warn_by_name(
+    npe: int,
+) -> None:
+    """A 2-D group with 3-wide Gauss rows contradicts itself. Read by the
+    rows alone, a 4-node quad becomes a Tet4 and an 8-node quad a Hex8, and
+    the corners came back wrong (``[1, 2, 1, 1]`` for ``x = [0, 2, 2, 0]``),
+    silently. The shape cannot be told, so it warns by name instead."""
+    fem = _file_coded_fem("SomeQuad", -777, npe, dim=2)
+    fem.nodes.coords[:4, 0] = [0.0, 2.0, 2.0, 0.0]
+    gp_x = 1.0 + _HEX_GL2[:, 0]       # bilinear in x, the quad's own field
+    slab = _make_gauss_slab("x", gp_x[None, :], np.full(8, 7), _HEX_GL2)
+    with pytest.warns(WarnGaussExtrapolationDegraded,
+                      match=r"SomeQuad \(code -777\).*3-D Gauss rows "
+                            r"contradict its group's dim=2"):
+        extrapolate_gauss_slab_per_element(slab, fem)
+    with pytest.warns(WarnGaussExtrapolationDegraded, match="SomeQuad"):
+        GaussToNodeAccumulator(slab.element_index, slab.natural_coords, fem)
+
+
 def test_file_coded_p2_tri_resolves_by_its_gauss_width_not_group_dim() -> None:
     """The group says dim=3 (the class-name guess LadrunoLST gets from a
     ``TOPOLOGY "custom"`` file); its Gauss rows are 2-D, so it is a Tri6,

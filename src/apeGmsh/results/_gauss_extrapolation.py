@@ -166,6 +166,7 @@ class _ElementEntry(NamedTuple):
     code: int            # gmsh code, or -class_tag for a file-coded FEMData
     nodes: ndarray       # the full connectivity row
     label: str           # names the class in a degradation warning
+    dim: Optional[int]   # the group's dim; read for file-coded groups only
 
 
 class _ElementPlan(NamedTuple):
@@ -202,9 +203,17 @@ def _plan_element(
     n_gp = nat_e.shape[0]
     pdim = _gp_parent_dim(nat_e)
     code = int(entry.code)
+    too_wide = (
+        code < 0 and pdim is not None and entry.dim is not None
+        and pdim > entry.dim
+    )
     if code >= 0:
         gmsh_code: Optional[int] = code
-    elif pdim is None:
+    elif pdim is None or too_wide:
+        # Rows wider than the group's dim contradict it (a 2-D quad read
+        # with 3-wide rows would be taken for a Tet4): the shape cannot
+        # be told, so it is not guessed. Narrower rows are trusted, since
+        # the group's dim is a class-name guess for a "custom" topology.
         gmsh_code = None
     else:
         gmsh_code = _GMSH_CODE_BY_PARENT_DIM_NPE.get(
@@ -224,11 +233,18 @@ def _plan_element(
         # are needed to broadcast it.
         return _ElementPlan(None, corner_nids, None)
     if gmsh_code is None:
-        reason = (
-            "its Gauss rows carry no natural coordinates" if pdim is None
-            else f"no shape functions for a {entry.nodes.size}-node "
-                 f"element with {pdim}-D Gauss points"
-        )
+        if pdim is None:
+            reason = "its Gauss rows carry no natural coordinates"
+        elif too_wide:
+            reason = (
+                f"its {pdim}-D Gauss rows contradict its group's "
+                f"dim={entry.dim}"
+            )
+        else:
+            reason = (
+                f"no shape functions for a {entry.nodes.size}-node "
+                f"element with {pdim}-D Gauss points"
+            )
         return _ElementPlan(None, corner_nids, reason)
     need = _PARENT_DIM.get(gmsh_code)
     if need is not None and (pdim is None or pdim < need):
@@ -328,14 +344,15 @@ def _build_element_index(fem: "FEMData") -> dict[int, _ElementEntry]:
     for group in fem.elements:
         et = group.element_type
         type_code = int(et.code)
-        label = (
-            f"gmsh element type {type_code}" if type_code >= 0
-            else f"{et.gmsh_name} (code {type_code})"
-        )
+        if type_code >= 0:
+            label, dim = f"gmsh element type {type_code}", None
+        else:
+            label = f"{et.gmsh_name} (code {type_code})"
+            dim = int(et.dim)
         ids = np.asarray(group.ids, dtype=np.int64)
         conn = np.asarray(group.connectivity, dtype=np.int64)
         for k in range(len(group)):
-            out[int(ids[k])] = _ElementEntry(type_code, conn[k], label)
+            out[int(ids[k])] = _ElementEntry(type_code, conn[k], label, dim)
     return out
 
 
