@@ -22,16 +22,18 @@ through these tables.
 from __future__ import annotations
 
 import warnings
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Optional
 
 from ._element_capabilities import (
+    GMSH_HEX20_TO_SERENDIPITY,
     SIGMA_ZZ_ELEMENT_CLASSES,
     SIGMA_ZZ_MATERIAL_CLASSES,
     STRESS_PLANE_STRAIN_RESPONSE,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Collection, Iterable, Mapping
     from pathlib import Path
 
     from ._readback import RotationRoles
@@ -445,6 +447,15 @@ def model_h5_rotation_roles(
 #: 3.7.1 answers for an element that token makes; a class not listed is
 #: unknown, and blocks the rotational slots of the nodes it touches and
 #: of element-less nodes, as an unknown token does.
+#:
+#: The second block holds catalogued classes the bridge builds no element
+#: of (#2290). Each takes the token of its family's bridge class, so the
+#: token types the rotation family and the token gates only (an elastic
+#: beam's ``localForce``, a fibre beam's family): a force beam variant is
+#: ``forceBeamColumn``, never an elastic beam. The response layout is the
+#: catalog's entry for the live class, which the record must name. Each
+#: one has a stock live oracle in
+#: ``tests/opensees/live/test_live_unmapped_classes_live.py``.
 _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "ElasticBeam2d": "elasticBeamColumn",
     "ElasticBeam3d": "elasticBeamColumn",
@@ -471,7 +482,34 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "FourNodeTetrahedron": "FourNodeTetrahedron",
     "TenNodeTetrahedron": "TenNodeTetrahedron",
     "Brick": "stdBrick",
+    # Catalogued classes with no bridge element: their family's token.
+    "BbarBrick": "stdBrick",
+    "SSPbrick": "stdBrick",
+    "Twenty_Node_Brick": "stdBrick",
+    "SSPquad": "quad",
+    "EightNodeQuad": "quad",
+    "ShellDKGT": "ShellDKGQ",
+    "ShellNLDKGQ": "ShellDKGQ",
+    "ShellNLDKGT": "ShellDKGQ",
+    "ElasticForceBeamColumn2d": "forceBeamColumn",
+    "ElasticForceBeamColumn3d": "forceBeamColumn",
+    "ForceBeamColumnCBDI2d": "forceBeamColumn",
 }
+
+#: Live class -> the slot of the FEM (Gmsh) connectivity each of its
+#: ``eleNodes`` holds, for a class whose node order is not Gmsh's. The
+#: pairing compares ``eleNodes`` against the FEM connectivity in this
+#: order. ``Twenty_Node_Brick`` takes the serendipity order of
+#: :data:`~._element_capabilities.GMSH_HEX20_TO_SERENDIPITY` (the memo there
+#: is upstream's ``shap3dv`` order). Every other mapped class takes the
+#: Gmsh order.
+_NODE_ORDER_FOR_LIVE_CLASS: "dict[str, tuple[int, ...]]" = {
+    "Twenty_Node_Brick": GMSH_HEX20_TO_SERENDIPITY,
+}
+
+#: :meth:`LiveDomainFacts.pair_elements` with no record classes in hand:
+#: every recorded element with a twin refuses.
+_NAMES_NO_CLASS: "Mapping[int, Collection[str | None]]" = MappingProxyType({})
 
 
 def _live_int(value: object, query: str) -> int:
@@ -666,24 +704,35 @@ class LiveDomainFacts:
         """The live ``eleType`` of a paired FEM element."""
         return self._live_class[int(fem_eid)]
 
-    def pair_elements(self, element_ids: "Iterable[int]", *, where: str) -> None:
+    def pair_elements(
+        self, element_ids: "Iterable[int]", *, where: str,
+        named_classes: "Mapping[int, Collection[str | None]]" = _NAMES_NO_CLASS,
+    ) -> None:
         """Prove that each FEM element of ``element_ids`` is the live
         element of its own id, and pair it.
 
         The FEMData pairs no FEM id with an OpenSees tag and identity is
         never assumed, so each one is shown by fact: the live domain holds
         an element of that tag, its ``eleNodes`` is the FEM connectivity in
-        order, its nodes are the FEM's nodes (the node identity check of
-        :meth:`nodes_ndf`), and its ``eleType`` has a bridge token
-        (:data:`_TOKEN_FOR_LIVE_CLASS`). A FEM id that fails any of these
-        refuses, naming it; nothing is paired then.
+        order (in its class's node order,
+        :data:`_NODE_ORDER_FOR_LIVE_CLASS`), its nodes are the FEM's nodes
+        (the node identity check of :meth:`nodes_ndf`), and its ``eleType``
+        has a bridge token (:data:`_TOKEN_FOR_LIVE_CLASS`). A FEM id that
+        fails any of these refuses, naming it; nothing is paired then.
 
         Two FEM elements with the same ordered connectivity (a stacked
         quad pair, a doubled spring) match any ``eleNodes`` check, so a
         deck that swapped their tags (and so their materials) would record
         each one's response under the other's id. A recorded element whose
         ordered connectivity another FEM element shares refuses, naming
-        both, as a coincident node does (:meth:`_check_shared_positions`).
+        both, as a coincident node does (:meth:`_check_shared_positions`),
+        unless the classes tell them apart. ``named_classes`` maps a FEM id
+        to the element classes its records name (``None`` for a record
+        that names none); a recorded element with twins is accepted only
+        when every record of it names a class, every twin is a live
+        element, and no twin's live ``eleType`` is a class its records
+        name. The caller's class gate (each named class must be the live
+        class of every element its record holds) then refuses a swap.
         """
         import numpy as np
 
@@ -708,7 +757,7 @@ class LiveDomainFacts:
                 f"{where}: FEM elements {absent[:10]} are not in the FEMData "
                 "the archive holds, so no live element can be shown to be "
                 "them. Record the FEM elements the deck was built from.")
-        twins: "list[str]" = []
+        twins_of: "dict[int, list[int]]" = {}
         for parts in by_width.values():
             ids = np.concatenate([p[0] for p in parts])
             conn = np.concatenate([p[1] for p in parts])
@@ -716,30 +765,48 @@ class LiveDomainFacts:
                                        return_counts=True)
             inv = inv.ravel()
             for i in np.flatnonzero(np.isin(ids, ask) & (counts[inv] > 1)):
-                others = [int(e) for e in ids[inv == inv[i]] if e != ids[i]]
-                twins.append(f"FEM element {int(ids[i])} shares nodes "
-                             f"{conn_of[int(ids[i])]} with {others[:5]}")
+                twins_of[int(ids[i])] = [int(e) for e in ids[inv == inv[i]]
+                                         if e != ids[i]]
+        ops = self._ops
+        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+        twins: "list[str]" = []
+        for e, others in twins_of.items():
+            named = named_classes.get(e, ())
+            if named and None not in named and all(
+                    t in live_tags
+                    and str(ops.eleType(t)) not in named  # type: ignore[attr-defined]
+                    for t in others):
+                continue      # each twin is live, and of an unnamed class
+            twins.append(f"FEM element {e} shares nodes {conn_of[e]} with "
+                         f"{others[:5]}")
         if twins:
             raise ValueError(
                 f"{where}: " + "; ".join(sorted(twins)[:3])
                 + (f"; and {len(twins) - 3} more" if len(twins) > 3 else "")
                 + ". eleNodes cannot tell those elements apart, so a deck "
                 "that swapped their tags would record each one's response "
-                "under the other's id. Drop them from the record, or record "
-                "them through the bridge's model archive (ops.h5(...)).")
-        ops = self._ops
-        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+                "under the other's id. Drop them from the record, name the "
+                "record's element class where each twin is a live element of "
+                "another class, or record them through the bridge's model "
+                "archive (ops.h5(...)).")
         bad: "list[str]" = []
         live_nodes: "dict[int, list[int]]" = {}
+        classes: "dict[int, str]" = {}
         for e in wanted:
             if e not in live_tags:
                 bad.append(f"FEM element {e} has nodes {conn_of[e]}, no live "
                            "element has that tag")
                 continue
+            cls = classes[e] = str(ops.eleType(e))  # type: ignore[attr-defined]
+            order = _NODE_ORDER_FOR_LIVE_CLASS.get(cls)
+            fem = conn_of[e]
+            expect = (fem if order is None or len(order) != len(fem)
+                      else [fem[i] for i in order])
             live = [int(v) for v in ops.eleNodes(e)]  # type: ignore[attr-defined]
-            if live != conn_of[e]:
-                bad.append(f"FEM element {e} has nodes {conn_of[e]}, the live "
-                           f"element {e} has {live}")
+            if live != expect:
+                as_order = "" if expect is fem else f" ({cls} order {expect})"
+                bad.append(f"FEM element {e} has nodes {fem}{as_order}, the "
+                           f"live element {e} has {live}")
             live_nodes[e] = live
         if bad:
             raise ValueError(
@@ -750,7 +817,6 @@ class LiveDomainFacts:
                 "ids from this FEMData, so each one's results would be "
                 "another element's. Tag each element by its FEM id, with its "
                 "FEM connectivity in order.")
-        classes = {e: str(ops.eleType(e)) for e in wanted}  # type: ignore[attr-defined]
         unmapped: "dict[str, list[int]]" = {}
         for e, cls in classes.items():
             if cls not in _TOKEN_FOR_LIVE_CLASS:
