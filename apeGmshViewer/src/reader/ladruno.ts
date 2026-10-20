@@ -42,7 +42,7 @@ import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
-import { collectModelLocalAxes, resolveLocalAxes, stationLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
+import { collectModelLocalAxes, resolveLocalAxes, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
@@ -525,6 +525,9 @@ export class LadrunoFile {
         }
       }
     }
+    // A stage with line stations attaches MODEL/LOCAL_AXES to them: a group a read would not take warns here, at open (#2336).
+    const modelLa = found.size > 0 ? this.optionalSubgroup(hostGrp, ["MODEL", "LOCAL_AXES"]) : null;
+    if (modelLa) warnModelLocalAxes(modelLa, this.localAxesReads(warningsOut));
     return LINE_STATION_COMPONENTS.filter((c) => found.has(c));
   }
 
