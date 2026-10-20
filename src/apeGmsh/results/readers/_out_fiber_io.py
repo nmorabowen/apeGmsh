@@ -232,7 +232,7 @@ def read_fiber_record(
             f"must be strictly increasing within [-1, 1]). A HingeRadau rule "
             f"with lp_i + lp_j >= L/4 writes stations like this (its interior "
             f"weight is not positive), so the fibres cannot be placed along "
-            f"the fibres cannot be placed along the element.")
+            f"the element.")
     live_fib = (_require_live_fibers(rec, model, xi, lengths_of(ids),
                                      gpx_lr.file_path)
                 if isinstance(model, LiveDomainFacts) else None)

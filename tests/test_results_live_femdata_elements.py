@@ -530,6 +530,25 @@ def test_file_stations_that_are_not_the_live_sections_refuse(tmp_path) -> None:
                   r"the file, but its live sections are at \[-1\.0, 0\.0, 1\.0\]")
 
 
+def test_stations_out_of_order_refuse_with_the_hinge_message(tmp_path) -> None:
+    """Live sections out of order (a short HingeRadau rule writes them so)
+    reach the shared order check, the bridge route's: its message names the
+    rule and ends on the element, once."""
+    frac = (0.0, 0.1, 0.3, 0.2, 0.9, 1.0)
+    ops = _lobatto(locations={e: tuple(f * L for f in frac)
+                              for e, L in _BEAM_L.items()},
+                   fibres={1: (2,) * 6, 2: (2,) * 6})
+    fem, model_h5 = _beam_fem(tmp_path)
+    run = _run(_spec(fem, _fibres_rec()), tmp_path / "run", model_h5, ops)
+    with pytest.raises(ValueError, match=r"repeated or out of order") as err:
+        run.results(cache_root=tmp_path / "cache")
+    msg = str(err.value)
+    assert "A HingeRadau rule with lp_i + lp_j >= L/4" in msg
+    assert msg.endswith("(its interior weight is not positive), so the fibres "
+                        "cannot be placed along the element.")
+    assert msg.count("cannot be placed") == 1
+
+
 def test_a_file_fibre_count_that_is_not_the_live_one_refuses(tmp_path) -> None:
     ops = _lobatto(file_fibres={1: (3, 3, 3), 2: (3, 3, 3)})
     _read_refuses(tmp_path, ops,
