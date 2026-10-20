@@ -35,7 +35,7 @@ folder.
 | Method | When |
 |---|---|
 | `ResolvedRecorderSpec.emit_default` (recommended) | Record an in-process OpenSees run on the route the build supports: `run.ladruno` on the Ladruno fork, `run.mpco` on a stock build with MPCO, classic `.out` files in `run_out/` on pip openseespy. Read it back with `run.results()`. |
-| `EigenResult.results()` | Open the modes of an `ops.eigen(n)` solve as a `Results`, one stage per mode (`to_native(path)` keeps the file). |
+| `EigenResult.results()` | Open the modes of a bridge eigen solve as a `Results`, one stage per mode (`to_native(path)` keeps the file). An `EigenResult` comes only from `apeSees.eigen(n)` on a model built through the bridge; a plain `openseespy` `ops.eigen(n)` returns bare eigenvalues and has no route yet (#2342). |
 | `Results.from_recorders` | Run OpenSees with disk-backed `.out` recorders, then read them back. |
 | `Results.from_native` | Open an existing apeGmsh native HDF5 file (e.g. the modes file `to_native` wrote). |
 
