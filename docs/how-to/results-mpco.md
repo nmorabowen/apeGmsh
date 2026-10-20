@@ -95,12 +95,13 @@ data came from MPCO.
   Closing the file collides with the sync client and aborts the kernel (leaving
   a stale open-for-write flag). Write to a local temp path; copy afterward if
   you must.
-- **MPCO needs an STKO-built openseespy.** Vanilla `openseespy` distributions
-  don't ship the MPCO recorder; `emit_mpco.__enter__` raises a `RuntimeError`
-  with a remediation pointer. If you don't have STKO's bundled Python, use
-  native domain **capture** (`ops_bridge.domain_capture(...)` →
-  `Results.from_native`) for the same fibers/layers/modal coverage without
-  MPCO.
+- **MPCO needs a build that has it.** Vanilla `openseespy` distributions
+  don't ship the MPCO recorder (STKO's bundled Python and the Ladruno fork
+  do); `emit_mpco.__enter__` raises a `RuntimeError` with a remediation
+  pointer. Without one, record with `spec.emit_default(...)`: on pip
+  openseespy it falls back to classic `.out` recorders, which cover nodes,
+  element forces, gauss points, line stations and fibres, but not layers.
+  Modes come from `ops.eigen(n).results()` on any build.
 - **Loads are opt-in.** `g.loads.*` cases do not auto-emit; import each into a
   pattern with `p.from_model("<case>")`. Because nothing auto-emits, there is no
   double-count trap.
@@ -110,10 +111,10 @@ data came from MPCO.
   keep one copy, and reactions and unbalanced forces are summed, because
   each rank stores only its own elements' share.
   Pass `merge_partitions=False` to read only the named partition.
-- **MPCO vs native capture:** use MPCO for STKO interoperability and parallel
-  runs; use `ops_bridge.domain_capture(...)` when you control a plain
-  openseespy build and want apeGmsh's native HDF5 (same read API, broadest
-  coverage, no STKO build).
+- **MPCO vs the default route:** use MPCO for STKO interoperability and
+  parallel runs; use `spec.emit_default(...)` when one in-process script
+  should run on whatever build it finds: the fork's `.ladruno`, a stock
+  `.mpco`, or pip's `.out` files, all read with the same API.
 
 ## See also
 
