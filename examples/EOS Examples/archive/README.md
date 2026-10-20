@@ -10,9 +10,9 @@ in PR (this branch). Each falls into one of three categories:
 | `example_column_nodeToSurface_v6.ipynb` | Uses the removed `Results(node_coords=..., cells=..., cell_types=...)` direct constructor for an unstructured-grid augmented visualization. Needs a port to current `NativeWriter` + custom mesh writing. |
 | `example_LTB_shell.ipynb` | Spawns a long-running OpenSees subprocess (>120 s); the cp1252 encoding bug is fixed in this branch but the subprocess timeout remains. |
 | `example_plate_pyGmsh.ipynb` | `fem.elements.connectivity` on a mixed-element-type mesh now raises (was permissive in the old broker). Needs `.resolve(element_type='tri3')` adoption throughout. |
-| `example_plate_viewer_v2.ipynb` | Deeply chained on `Results.to_vtu` / `.to_pvd` / `.to_mesh_data` / `ProbeEngine` — all removed. Model build + DomainCapture wiring works; legacy post-processing chain needs a tutorial rewrite. |
+| `plate_viewer_v2/plate_viewer_v2.ipynb` | Ported (#2234, #2247): it records with `ResolvedRecorderSpec.emit_default` on the fork, exports to ParaView with `write_vtu` and probes with pyvista. Kept here until it is reviewed back into the examples. |
 
-## Structurally incompatible with single-FEM DomainCapture
+## Built outside the one-FEMData recording pattern
 
 | Notebook | Reason |
 |---|---|
