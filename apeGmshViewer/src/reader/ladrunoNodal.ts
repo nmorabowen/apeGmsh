@@ -9,9 +9,17 @@
 // memory. A column's values are the same bits as its own one-column slice: the
 // same float64 values, or the same float32 values each widened once.
 //
+// A node's column is found by binary search over the stage's ID list
+// (`nodeColumnLookup`, #2354), not a Map from id to column: V8 caps a Map at 2^24
+// entries, so a stage of more nodes threw an unnamed RangeError on the first
+// node-history read. An ascending list (what the fork writes) is searched in place;
+// any other order is searched through a sorted copy and its permutation.
+//
 // Browser-safe: no Node import. The caller passes its own read and error
 // factory, as reader/ladrunoInfo.ts does, so this module imports nothing from
 // ladruno.ts.
+
+import { rowOf } from "./ladrunoLocalAxes.ts";
 
 /** One component's place: column `col` of the dataset at `path`. */
 export interface NodalColumnRef {
@@ -58,4 +66,28 @@ export function readColumnsBySlab<C extends NodalColumnRef>(
     }
   }
   return out;
+}
+
+/**
+ * The column of each node id in `ids` (a stage's node ID list): the returned
+ * function gives `ids.indexOf(n)`, or -1 for an id the list does not hold. Sized
+ * by typed arrays only, so it holds past V8's 2^24 Map cap. A list that holds an
+ * id twice (refused at open, reader/ladrunoChecks.ts) is refused here too, through
+ * `error`, rather than answering one of its columns.
+ */
+export function nodeColumnLookup(ids: Float64Array, error: (message: string) => Error): (n: number) => number {
+  let ascending = true;
+  for (let i = 1; i < ids.length && ascending; i++) ascending = ids[i]! > ids[i - 1]!;
+  if (ascending) return (n) => rowOf(ids, n);
+  const perm = new Uint32Array(ids.length);
+  for (let i = 0; i < perm.length; i++) perm[i] = i;
+  perm.sort((a, b) => ids[a]! - ids[b]! || a - b);
+  const sorted = Float64Array.from(perm, (j) => ids[j]!);
+  for (let k = 1; k < sorted.length; k++) {
+    if (sorted[k] === sorted[k - 1]) throw error(`the node ID list holds id ${sorted[k]} at rows ${perm[k - 1]} and ${perm[k]}; a node is listed once per file`);
+  }
+  return (n) => {
+    const k = rowOf(sorted, n);
+    return k < 0 ? -1 : perm[k]!;
+  };
 }

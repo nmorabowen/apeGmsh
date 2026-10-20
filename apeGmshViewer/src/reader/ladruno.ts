@@ -43,7 +43,7 @@ import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, pa
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
-import { readColumnsBySlab } from "./ladrunoNodal.ts";
+import { nodeColumnLookup, readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
 
@@ -285,7 +285,7 @@ export class LadrunoFile {
   private readonly h5: ResultsH5;
   private readonly f: LFile;
   private readonly columns = new Map<string, Map<string, Column>>();
-  private readonly nodeColumn = new Map<string, Map<number, number>>();
+  private readonly nodeColumn = new Map<string, (nodeId: number) => number>(); // per stage: sized by the stage count, the lookup by typed arrays (#2354)
   private readonly gauss: LadrunoGauss;
 
   constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
@@ -397,14 +397,13 @@ export class LadrunoFile {
     const s = this.stage(stageId);
     const nodes = s.nodes;
     if (!nodes) throw new LadrunoError("argument", `stage ${stageId} has no nodal results`);
-    let map = this.nodeColumn.get(s.id);
-    if (!map) {
-      map = new Map();
-      nodes.ids.forEach((id, j) => map!.set(id, j));
-      this.nodeColumn.set(s.id, map);
+    let columnOf = this.nodeColumn.get(s.id);
+    if (!columnOf) {
+      columnOf = nodeColumnLookup(nodes.ids, (m) => new LadrunoError("layout", `${nodes.path}: ${m}`));
+      this.nodeColumn.set(s.id, columnOf);
     }
-    const j = map.get(nodeId);
-    if (j === undefined) throw new LadrunoError("argument", `stage ${stageId} records no node ${nodeId}`);
+    const j = columnOf(nodeId);
+    if (j < 0) throw new LadrunoError("argument", `stage ${stageId} records no node ${nodeId}`);
     const col = this.column(s, component);
     const ds = this.datasetAt(col.path);
     return toFloat64(col.modal ? ds.slice([[j, j + 1], [col.col, col.col + 1]]) : ds.slice([[], [j, j + 1], [col.col, col.col + 1]]), ds.path);

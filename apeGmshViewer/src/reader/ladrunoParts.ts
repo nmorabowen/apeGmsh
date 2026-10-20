@@ -41,6 +41,7 @@
 
 import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
 import type { ElementIndexVerdict } from "./ladrunoElements.ts";
+import { rowOf, sortedUniqueIds } from "./ladrunoLocalAxes.ts";
 import { LadrunoError, openLadruno, type LadrunoFile, type LadrunoIndex, type LadrunoLineage, type LadrunoLineStationSlab, type LadrunoLineStationStep, type LadrunoMode, type LineStationComponent } from "./ladruno.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 
@@ -412,9 +413,10 @@ export class LadrunoPartSet {
         stitches.set(c, { reduction: verdict });
       }
     }
-    const union = [...new Set(per.flatMap((s) => Array.from(s.nodes?.ids ?? [])))].sort((a, b) => a - b);
-    const at = new Map(union.map((n, i) => [n, i]));
-    const pos = per.map((s) => Int32Array.from(s.nodes?.ids ?? [], (n) => at.get(n)!));
+    // The union is a sorted typed array searched by rowOf, never a Set or Map of node ids:
+    // V8 caps those at 2^24 entries, and a set of more nodes would throw an unnamed RangeError (#2354).
+    const union = sortedUniqueIds(concatNodeIds(per));
+    const pos = per.map((s) => Int32Array.from(s.nodes?.ids ?? [], (n) => rowOf(union, n)));
     // The copy NONE keeps: the lowest part holding the node, and in it the node's last row
     // (what writing the parts last to first, rows in order, leaves; a repeated id is not refused here).
     const keepPart = new Int32Array(union.length);
@@ -427,7 +429,7 @@ export class LadrunoPartSet {
     }
     const first = pos.map((p, j) => Uint8Array.from(p, (u, i) => (keepPart[u] === j && keepRow[u] === i ? 1 : 0)));
     this.maps.set(id, { pos, first, n: union.length });
-    const nodes: NodalInfo = { path: r.nodes?.path ?? per.find((s) => s.nodes)!.nodes!.path, ids: Float64Array.from(union), components, refused };
+    const nodes: NodalInfo = { path: r.nodes?.path ?? per.find((s) => s.nodes)!.nodes!.path, ids: union, components, refused };
     return { ...r, nodes, gauss: [], unread };
   }
 
@@ -470,4 +472,18 @@ export class LadrunoPartSet {
     }
     return { lineage: { ...ls[0]! }, reason: null };
   }
+}
+
+/** Every part's node ids of one stage, part after part, in one typed array. */
+function concatNodeIds(per: readonly StageInfo[]): Float64Array {
+  let n = 0;
+  for (const s of per) n += s.nodes?.ids.length ?? 0;
+  const all = new Float64Array(n);
+  let o = 0;
+  for (const s of per) {
+    if (!s.nodes) continue;
+    all.set(s.nodes.ids, o);
+    o += s.nodes.ids.length;
+  }
+  return all;
 }
