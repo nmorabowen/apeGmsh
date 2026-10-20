@@ -8,9 +8,10 @@
 # in another order, once numbers are normalised, and the replay still declares every
 # tag before a line uses it (K2c, #1816). Class C: a semantic difference, cited to the
 # open issue that tracks it as #NNNN (#1814 for a reorder that uses a tag before
-# declaring it). No row is class A, B or C today: #2193 replays the bridge's
-# order and #2194 each slot's int/float type. The oracle derives the class and
-# fails a wrong label; there is no override.
+# declaring it). The ledger has no rows today: #2193 replays the bridge's
+# order, #2194 each slot's int/float type, and #2195 replaced the last S row's
+# FEMStub model with a real-FEMData twin that replays exactly. The oracle derives
+# the class and fails a wrong label; there is no override.
 # For A, B and C, <pin> is the sha256[:16] of the exact normalised unified diff.
 # Class S: the model is built on FEMStub and archives no neutral zone, so it is not
 # replayable (#1797); <pin> names the error replay must raise.
@@ -29,6 +30,8 @@
 #
 # Not in this oracle: the golden emit corpus (tests/opensees/golden/cells, 86 cells).
 # It is built on FEMStub, so its archives are bridge-only and not replayable,
-# by design (#1797; golden/README.md, "Bridge-only by design").
-N_WAIVED_ORACLE = 1
-test_h5_decl_params::_broad_partitioned S BridgeOnlyArchiveError:no-neutral-zone  # #1797: golden-corpus model (build_model), bridge-only by design
+# by design (#1797; golden/README.md, "Bridge-only by design"). Its staged,
+# partitioned, recording cell has a real-FEMData twin in the corpus
+# (test_h5_decl_params::_broad_partitioned, #2195): its deck is the golden's
+# but for the backend stamp line.
+N_WAIVED_ORACLE = 0

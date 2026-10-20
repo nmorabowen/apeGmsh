@@ -26,6 +26,12 @@ itself) and on a build that has MPCO.
   MPCO cannot write, takes the classic recorders on any stock build and
   equals the live ``axialForce`` at rtol 1e-12 and the joint equilibrium
   closed form (#2290 D).
+- Two fibre-section cantilevers (a force beam, a displacement beam): each
+  fibre's stress and strain equals the live ``fiberData2`` at rtol 1e-12,
+  the section locations and fibre counts having been read from the live
+  domain at ``__enter__``; each station's summed section forces are the
+  closed form ``N = -PN``, ``|M| = PL (H - x)``, which checks the station
+  order physically. A beam of elastic sections refuses by name (#2290 B).
 """
 from __future__ import annotations
 
@@ -618,3 +624,144 @@ def test_brick_per_material_damage_is_the_live_response(opspy, tmp_path) -> None
         assert base[0] > top[0]
     finally:
         res.close()
+
+
+# ---------------------------------------------------------------------------
+# Fibres through the live section facts (#2290 B)
+# ---------------------------------------------------------------------------
+
+#: Two vertical cantilevers of height H, loaded at the tip by a lateral
+#: PL and an axial -PN: a force beam (Lobatto 5, 4 fibres) on nodes 1-2
+#: and a displacement beam (Legendre 3, 6 fibres) on nodes 3-4.
+PL, PN = 2.0e3, 5.0e4
+_FIBRE_STRESS = ("fiber_stress", "fiber_strain")
+_LOBATTO_5 = (-1.0, -np.sqrt(3.0 / 7.0), 0.0, np.sqrt(3.0 / 7.0), 1.0)
+_LEGENDRE_3 = (-np.sqrt(0.6), 0.0, np.sqrt(0.6))
+
+
+def _cantilevers_fem() -> FEMData:
+    coords = np.array([[0.0, 0.0, 0.0], [0.0, H, 0.0], [W, 0.0, 0.0],
+                       [W, H, 0.0]])
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=2)
+    group = ElementGroup(
+        element_type=line, ids=np.array([1, 2], dtype=np.int64),
+        connectivity=np.array([[1, 2], [3, 4]], dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=NodeComposite(node_ids=np.arange(1, 5, dtype=np.int64),
+                            node_coords=coords, physical=pg,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=4, n_elems=2, bandwidth=2, types=[line]),
+        model_name="femdata_elements_fibre_cantilevers",
+    )
+
+
+def _build_cantilevers(ops: Any, fem: FEMData, *, elastic: bool = False) -> None:
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        ops.node(int(nid), float(xyz[0]), float(xyz[1]))
+    ops.fix(1, 1, 1, 1)
+    ops.fix(3, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, E)
+    ops.section("Fiber", 1)
+    ops.patch("rect", 1, 4, 1, -0.1, -0.05, 0.1, 0.05)
+    ops.section("Fiber", 2)
+    ops.patch("rect", 1, 6, 1, -0.15, -0.05, 0.15, 0.05)
+    ops.section("Elastic", 3, E, A, IZ)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 3 if elastic else 1, 5)
+    ops.beamIntegration("Legendre", 2, 2, 3)
+    ops.element("forceBeamColumn", 1, 1, 2, 1, 1)
+    ops.element("dispBeamColumn", 2, 3, 4, 1, 2)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tip in (2, 4):
+        ops.load(tip, PL, -PN, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("BandGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 10)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / _STEPS)
+    ops.analysis("Static")
+
+
+def test_fibres_over_femdata_are_the_live_fiber_data(opspy, tmp_path) -> None:
+    """Each recorded fibre's stress and strain is the live ``fiberData2``
+    at rtol 1e-12, station by station. The order is checked physically:
+    each station's section forces, summed from the recorded fibres, are
+    the cantilever's closed form ``N = -PN``, ``|M| = PL (H - x)``, with
+    ``x`` placed by the station's natural coordinate, so the base station
+    carries the largest moment and the tip none."""
+    fem = _cantilevers_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_cantilevers(opspy, fem)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(
+            _record("fibers", "fib_force", _FIBRE_STRESS, np.array([1]),
+                    "ForceBeamColumn2d"),
+            _record("fibers", "fib_disp", _FIBRE_STRESS, np.array([2]),
+                    "DispBeamColumn2d"),
+        ))
+    res = _emit(spec, tmp_path, model_h5, opspy, _STEPS)
+    try:
+        for e, n_fib, stations in ((1, 4, _LOBATTO_5), (2, 6, _LEGENDRE_3)):
+            n_ip = len(stations)
+            truth = np.array([opspy.eleResponse(e, "section", k, "fiberData2")
+                              for k in range(1, n_ip + 1)]).reshape(n_ip, n_fib, 6)
+            for c, comp in ((4, "fiber_stress"), (5, "fiber_strain")):
+                slab = res.elements.fibers.get(component=comp, ids=np.array([e]))
+                rows = _by_element(slab, e)
+                assert len(rows) == n_ip * n_fib
+                np.testing.assert_array_equal(
+                    np.asarray(slab.gp_index)[rows],
+                    np.repeat(np.arange(n_ip), n_fib))
+                np.testing.assert_allclose(
+                    np.asarray(slab.station_natural_coord)[rows],
+                    np.repeat(stations, n_fib), rtol=0, atol=1e-12)
+                np.testing.assert_allclose(
+                    np.asarray(slab.y)[rows], truth[:, :, 0].ravel(), **_RTOL)
+                np.testing.assert_allclose(
+                    np.asarray(slab.values)[-1][rows], truth[:, :, c].ravel(),
+                    **_RTOL, err_msg=f"{comp} of element {e}")
+            slab = res.elements.fibers.get(component="fiber_stress",
+                                           ids=np.array([e]))
+            rows = _by_element(slab, e)
+            sigma = np.asarray(slab.values)[-1][rows].reshape(n_ip, n_fib)
+            y = np.asarray(slab.y)[rows].reshape(n_ip, n_fib)
+            area = np.asarray(slab.area)[rows].reshape(n_ip, n_fib)
+            xi = np.asarray(slab.station_natural_coord)[rows].reshape(
+                n_ip, n_fib)[:, 0]
+            x = 0.5 * (xi + 1.0) * H
+            np.testing.assert_allclose((sigma * area).sum(axis=1), -PN,
+                                       rtol=1e-9)
+            moment = np.abs((sigma * area * y).sum(axis=1))
+            np.testing.assert_allclose(moment, PL * (H - x), rtol=1e-8,
+                                       atol=1e-8 * PL * H)
+            assert np.argmax(moment) == 0
+    finally:
+        res.close()
+
+
+def test_a_fibres_record_over_an_elastic_section_refuses_by_name(
+    opspy, tmp_path,
+) -> None:
+    """A force beam whose sections are elastic answers no ``fiberData2``:
+    its fibres could not be placed, so the live facts refuse it by FEM id
+    at ``__enter__``, before the run."""
+    fem = _cantilevers_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_cantilevers(opspy, fem, elastic=True)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("fibers", "fib", _FIBRE_STRESS, np.array([1]),
+                         "ForceBeamColumn2d"),))
+    _refuses(spec, tmp_path, model_h5, opspy,
+             r"fibres record 'fib': FEM element 1 answers fiberData2 of 0 "
+             r"values at section 1, not whole fibres of 6")
