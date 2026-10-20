@@ -7,8 +7,11 @@ populated file. T's ruling (option C, on #2343):
 
 * a family prefix of the stage's listed names raises
   :class:`ComponentNotRecorded`, naming the members;
-* any other unrecorded name (a typo) still returns empty, with one
-  :class:`ComponentNotRecordedWarning`;
+* a canonical name the stage does not record (``displacement_z`` on a
+  2-D model) stays silent and empty: the library's own x/y/z loops ask
+  for it on purpose;
+* any other unrecorded name (a typo, outside ``apeGmsh._vocabulary``)
+  still returns empty, with one :class:`ComponentNotRecordedWarning`;
 * a recorded name on an empty selection, and a read that leaves a
   recorded bucket unread, stay silent and empty.
 
@@ -115,7 +118,8 @@ def test_native_typo_warns_once_and_stays_empty(native) -> None:
     ))
     assert slab.values.shape == (3, 0)
     assert len(texts) == 1
-    assert "'displacment_x' is not recorded at the nodes level" in texts[0]
+    assert "'displacment_x' is not an apeGmsh component name" in texts[0]
+    assert "the nodes level" in texts[0]
     assert "displacement_x" in texts[0]
 
 
@@ -134,12 +138,11 @@ def test_native_listing_is_the_stage_being_read(native) -> None:
     assert native.nodes.get(
         component="displacement_y", stage="full",
     ).values.shape == (3, 3)
-    slab, texts = _warned(lambda: native.nodes.get(
-        component="displacement_y", stage="x_only",
-    ))
+    # displacement_y is canonical, so its absence is silent and empty.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        slab = native.nodes.get(component="displacement_y", stage="x_only")
     assert slab.values.shape == (3, 0)
-    assert len(texts) == 1
-    assert "['displacement_x']" in texts[0]
 
 
 def test_native_mode_stage(native) -> None:
@@ -234,6 +237,32 @@ def test_ladruno_known_name_on_empty_selection_stays_empty() -> None:
         warnings.simplefilter("error")
         slab = r.nodes.get(component="displacement_x", ids=[999_999])
     assert slab.values.shape[1] == 0
+
+
+def test_two_d_vector_field_loop_is_silent() -> None:
+    """A 2-D model's x/y/z loop (the viewers' ``read_nodal_vector_field``)
+    asks for ``displacement_z``, which the stage does not record. That
+    canonical absence is silent: no ComponentNotRecordedWarning (#2357
+    review F1), and the x/y columns are the explicit reads."""
+    from types import SimpleNamespace
+
+    from apeGmsh.viewers._pump_set import read_nodal_vector_field
+
+    r = Results.from_ladruno(LADRUNO / "truss2d.ladruno")
+    assert "displacement_z" not in r.nodes.available_components()
+    step = r.nodes.get(component="displacement_x").values.shape[0] - 1
+    sx = r.nodes.get(component="displacement_x", time=[step])
+    sy = r.nodes.get(component="displacement_y", time=[step])
+    assert np.abs(sx.values).max() > 0.0       # a loaded step, not zeros
+    scene = SimpleNamespace(node_ids=sx.node_ids)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ComponentNotRecordedWarning)
+        field = read_nodal_vector_field(r, scene, "displacement", step)
+        z = r.nodes.get(component="displacement_z")
+    assert z.values.shape[1] == 0
+    np.testing.assert_allclose(field[:, 0], sx.values[0], rtol=1e-12)
+    np.testing.assert_allclose(field[:, 1], sy.values[0], rtol=1e-12)
+    np.testing.assert_array_equal(field[:, 2], 0.0)
 
 
 def test_ladruno_typo_warns_once_and_stays_empty() -> None:

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 import numpy as np
 from numpy import ndarray
 
+from .._vocabulary import is_canonical
 from . import _derived, _expr, _shell_thickness
 from ._slabs import (
     ElementSlab,
@@ -75,11 +76,12 @@ class ComponentNotRecorded(ValueError):
 
 
 class ComponentNotRecordedWarning(UserWarning):
-    """A read named a component the stage does not record at that level.
+    """A read named a component that is not in apeGmsh's vocabulary.
 
-    A typo or a name from another level: the read still returns its
-    empty slab, as it always has, and says so once per call (#2343).
-    A recorded name on an empty selection does not warn.
+    A typo: the read still returns its empty slab, as it always has,
+    and says so once per call (#2343). A canonical name the stage does
+    not record (``displacement_z`` on a 2-D model) stays silent: the
+    library's own x/y/z loops ask for it on purpose.
     """
 
 
@@ -113,7 +115,10 @@ def _refuse_if_unrecorded(read, component: str, sid: str, level: ResultLevel,
       the read already named that bucket (#2293, #2305).
     * A family prefix of listed names: :class:`ComponentNotRecorded`,
       naming the members.
-    * Any other name: the empty slab, with one
+    * A canonical name (:func:`apeGmsh._vocabulary.is_canonical`) the
+      stage does not record, such as ``displacement_z`` on a 2-D model:
+      the slab, silently.
+    * Any other name (a typo): the empty slab, with one
       :class:`ComponentNotRecordedWarning`.
 
     The listing is asked only when the read came back empty (no entity
@@ -144,9 +149,12 @@ def _refuse_if_unrecorded(read, component: str, sid: str, level: ResultLevel,
             f"level of stage {sid!r}, not a component: read its members "
             f"one at a time ({', '.join(family)})."
         )
+    if is_canonical(component):
+        return slab
     warnings.warn(
-        f"{component!r} is not recorded at the {level.value} level of "
-        f"stage {sid!r}; the read is empty. Available: {sorted(available)}.",
+        f"{component!r} is not an apeGmsh component name, and is not "
+        f"recorded at the {level.value} level of stage {sid!r}; the read "
+        f"is empty. Available: {sorted(available)}.",
         ComponentNotRecordedWarning,
         stacklevel=3,
     )
