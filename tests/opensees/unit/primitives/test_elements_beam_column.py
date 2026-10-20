@@ -810,7 +810,7 @@ class TestLadrunoDispBeamColumn:
         spec._emit(rec, tag=2)
         assert rec.calls[0][1] == (
             "LadrunoDispBeamColumn", 2, 10, 20, 2, 7,
-            "-mass", 3.0, "-cMass", "-lch", 0.25, "-nl",
+            "-mass", 3.0, "-cMass", "-lch", "0.25", "-nl",
         )
 
     def test_emit_lch_element_keyword(self) -> None:
