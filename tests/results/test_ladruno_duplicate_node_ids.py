@@ -10,6 +10,10 @@ node twice. Now :class:`LadrunoReader` raises
 so a part set refuses through the part that repeats the id, and a node in
 *two part files* (the copy SUM exists for) still opens and sums.
 
+The model's own node list, ``MODEL/NODES/ID``, is checked the same way
+(#2307): a repeated id there gives one node two coordinates, and the
+FEMData built from the file two nodes with one id.
+
 The oracle numbers are the fork's reproduction (nmorabowen/OpenSees#861),
 as in ``tests/results/readers/test_partition_reduction.py``: support node
 1 is shared by two ranks, part-0 holds reaction ``(0, 10)``, part-1 holds
@@ -20,6 +24,7 @@ The files are synthetic, written with ``h5py``.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Sequence
 
@@ -187,6 +192,90 @@ def test_repeated_id_in_modal_group_refuses(tmp_path: Path) -> None:
     assert info.value.repeated == {2: [1, 2]}
 
 
+def test_unsorted_distinct_ids_still_open(tmp_path: Path) -> None:
+    """Ids out of order are not repeats: the sorted fast path falls back
+    to a full check and the file opens."""
+    path = _file(
+        tmp_path / "run.ladruno",
+        reaction=[(3, (0.0, 1.0)), (1, (0.0, 2.0)), (2, (0.0, 3.0))],
+        disp=[(2, (0.0, 0.0)), (1, (0.0, 0.0))],
+    )
+    with LadrunoReader(path) as r:
+        ry = r.read_nodes("stage_0", "reaction_force_y")
+    assert ry.node_ids.tolist() == [3, 1, 2]
+    np.testing.assert_allclose(ry.values[-1], [1.0, 2.0, 3.0])
+
+
+# ---------------------------------------------------------------------
+# The model's node list, MODEL/NODES/ID (#2307)
+# ---------------------------------------------------------------------
+
+_QUAD2D = _REPO / "tests/fixtures/ladruno/quad2d.ladruno"
+
+
+def _quad2d_with_model_ids(tmp_path: Path, ids: Sequence[int]) -> Path:
+    """A copy of ``quad2d.ladruno`` (4 nodes) with ``MODEL/NODES/ID``
+    rewritten; its coordinates and results are untouched."""
+    path = tmp_path / "quad2d.ladruno"
+    shutil.copy(_QUAD2D, path)
+    with h5py.File(path, "a") as f:
+        node_id = f["MODEL_STAGE[1]/MODEL/NODES/ID"]
+        assert node_id[...].ravel().tolist() == [1, 2, 3, 4]
+        node_id[...] = np.asarray(ids, dtype=node_id.dtype).reshape(
+            node_id.shape,
+        )
+    return path
+
+
+def test_repeated_model_node_id_refuses_at_open(tmp_path: Path) -> None:
+    """4 nodes, 3 unique ids: node 1 is listed at rows 0 and 3. Without
+    the refusal the FEMData read from the file holds id 1 twice, at
+    (0, 0) and (0, 1), and no node 4 for the quad that names it."""
+    path = _quad2d_with_model_ids(tmp_path, [1, 2, 3, 1])
+    with pytest.raises(LadrunoRepeatedNodeId) as info:
+        LadrunoReader(path)
+    err = info.value
+    assert err.model is True
+    assert err.file == path
+    assert err.dataset == "/MODEL_STAGE[1]/MODEL/NODES/ID"
+    assert err.repeated == {1: [0, 3]}
+    msg = str(err)
+    assert "/MODEL_STAGE[1]/MODEL/NODES/ID" in msg
+    assert "{1: [0, 3]}" in msg
+    assert "two coordinates" in msg
+    _assert_closed(path)
+
+
+def test_repeated_model_node_id_refuses_through_public_entry(
+    tmp_path: Path,
+) -> None:
+    path = _quad2d_with_model_ids(tmp_path, [1, 2, 3, 1])
+    with pytest.raises(LadrunoRepeatedNodeId, match="MODEL/NODES/ID"):
+        Results.from_ladruno(path)
+    _assert_closed(path)
+
+
+def test_unsorted_distinct_model_ids_still_open(tmp_path: Path) -> None:
+    path = _quad2d_with_model_ids(tmp_path, [4, 2, 3, 1])
+    with LadrunoReader(path) as r:
+        fem = r.fem()
+    assert fem is not None
+    assert sorted(int(n) for n in fem.nodes.ids) == [1, 2, 3, 4]
+
+
+def test_result_id_check_still_names_a_result(tmp_path: Path) -> None:
+    """A result repeat is not reported as a model repeat."""
+    path = _file(
+        tmp_path / "run.ladruno",
+        reaction=_REACTION_PART0,
+        disp=[(1, (0.0, 0.0)), (1, (0.0, 0.0))],
+    )
+    with pytest.raises(LadrunoRepeatedNodeId) as info:
+        LadrunoReader(path)
+    assert info.value.model is False
+    assert "two columns" in str(info.value)
+
+
 # ---------------------------------------------------------------------
 # A part set
 # ---------------------------------------------------------------------
@@ -208,6 +297,29 @@ def test_part_set_where_one_part_repeats_a_node_refuses(tmp_path: Path) -> None:
         "/MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/ID"
     )
     assert info.value.repeated == {1: [0, 2]}
+    _assert_closed(p0)
+    _assert_closed(p1)
+
+
+def test_part_set_where_a_later_part_repeats_closes_earlier_parts(
+    tmp_path: Path,
+) -> None:
+    """The bad part opens second, so part-0 is already open when part-1
+    refuses: the façade closes it before the error propagates."""
+    p0 = _file(
+        tmp_path / "run.part-0.ladruno", part=0,
+        reaction=_REACTION_PART0, disp=_DISP_PART0,
+    )
+    p1 = _file(
+        tmp_path / "run.part-1.ladruno", part=1,
+        reaction=[*_REACTION_PART1, (3, (0.0, 15.0))], disp=_DISP_PART1,
+    )
+    with pytest.raises(LadrunoRepeatedNodeId) as info:
+        LadrunoMultiPartitionReader([p0, p1])
+    assert info.value.file == p1
+    assert info.value.repeated == {3: [1, 2]}
+    # ``info`` holds the traceback, and with it the façade and its open
+    # part-0 reader; only the close-on-error path unlocks part-0 here.
     _assert_closed(p0)
     _assert_closed(p1)
 

@@ -130,34 +130,46 @@ def warn_stage_kind_conflicts(conflicts: "Sequence[str]") -> None:
 
 
 class LadrunoRepeatedNodeId(ValueError):
-    """A ``.ladruno`` node-result ``ID`` lists one node id more than once.
+    """A ``.ladruno`` node ``ID`` list names one node id more than once.
 
-    Raised when the file is opened. A repeated id reads as two columns of
-    one node, and a part set that sums partition copies
+    Raised when the file is opened, for the model's node list
+    (``MODEL/NODES/ID``) and for every node-result ``ID``. A repeated
+    model id gives one node two coordinates, and the FEMData built from
+    the file two nodes with one id. A repeated result id reads as two
+    columns of one node, and a part set that sums partition copies
     (``PARTITION_REDUCTION=SUM``) would count that node twice. A node in
     two *part files* is legal: that is the copy the sum combines.
 
     ``file`` is the file path, ``dataset`` the HDF5 path of the ``ID``
     dataset, and ``repeated`` maps each repeated id to the rows it sits at.
+    ``model`` is true when the dataset is the model's node list.
     """
 
     def __init__(
         self, file: Path, dataset: str, repeated: "dict[int, list[int]]",
+        *, model: bool = False,
     ) -> None:
         self.file = file
         self.dataset = dataset
         self.repeated = repeated
+        self.model = model
         shown = dict(list(repeated.items())[:_REPEATED_SHOWN])
         more = (
             f" and {len(repeated) - _REPEATED_SHOWN} more"
             if len(repeated) > _REPEATED_SHOWN else ""
         )
+        why = (
+            "a repeated id would give one node two coordinates, and the "
+            "FEMData built from the file two nodes with one id."
+            if model else
+            "a repeated id would read as two columns, and a part set that "
+            "sums partition copies (PARTITION_REDUCTION=SUM) would count it "
+            "twice."
+        )
         super().__init__(
             f"{file}: {dataset} lists node id(s) more than once "
             f"(id: rows {shown}{more}). Each node is listed once per file; "
-            "a repeated id would read as two columns, and a part set that "
-            "sums partition copies (PARTITION_REDUCTION=SUM) would count it "
-            "twice. The file is malformed."
+            f"{why} The file is malformed."
         )
 
 
@@ -272,9 +284,10 @@ class LadrunoReader:
     def _refuse_repeated_node_ids(self) -> None:
         """Raise :class:`LadrunoRepeatedNodeId` if a node ``ID`` repeats.
 
-        Checks the ``ID`` of every result group under each stage's
-        ``RESULTS/ON_NODES`` (modal groups included) and
-        ``RESULTS/ENVELOPES/ON_NODES``: every node list the reader reads.
+        Checks, per stage, the model's node list ``MODEL/NODES/ID`` and the
+        ``ID`` of every result group under ``RESULTS/ON_NODES`` (modal
+        groups included) and ``RESULTS/ENVELOPES/ON_NODES``: every node
+        list the reader reads.
         """
         import h5py
 
@@ -282,6 +295,11 @@ class LadrunoReader:
             (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
             key=_stage_sort_key,
         ):
+            nodes = _child(self._h5[stage], "MODEL/NODES")
+            # A MODEL/NODES without an ID lists no node; the FEMData read
+            # that needs it fails on that read.
+            if isinstance(nodes, h5py.Group) and "ID" in nodes:
+                self._refuse_repeated_ids(nodes["ID"], model=True)
             for base in _NODE_ID_GROUPS:
                 group = _child(self._h5[stage], base)
                 if group is None:
@@ -293,14 +311,25 @@ class LadrunoReader:
                     # fails on that read.
                     if not isinstance(res, h5py.Group) or "ID" not in res:
                         continue
-                    ids = np.asarray(res["ID"][...], dtype=np.int64).ravel()
-                    uniq, counts = np.unique(ids, return_counts=True)
-                    if uniq.size == ids.size:
-                        continue
-                    raise LadrunoRepeatedNodeId(self._path, f"{res.name}/ID", {
-                        int(n): np.flatnonzero(ids == n).tolist()
-                        for n in uniq[counts > 1]
-                    })
+                    self._refuse_repeated_ids(res["ID"], model=False)
+
+    def _refuse_repeated_ids(self, dataset, *, model: bool) -> None:
+        """Raise :class:`LadrunoRepeatedNodeId` if ``dataset`` repeats an id.
+
+        The fork writes ids ascending, so a strictly increasing list (one
+        ``np.diff``) is accepted without sorting; any other list is checked
+        with ``np.unique``, so an unsorted list of distinct ids still opens.
+        """
+        ids = np.asarray(dataset[...], dtype=np.int64).ravel()
+        if ids.size < 2 or bool((np.diff(ids) > 0).all()):
+            return
+        uniq, counts = np.unique(ids, return_counts=True)
+        if uniq.size == ids.size:
+            return
+        raise LadrunoRepeatedNodeId(self._path, dataset.name, {
+            int(n): np.flatnonzero(ids == n).tolist()
+            for n in uniq[counts > 1]
+        }, model=model)
 
     def close(self) -> None:
         try:
