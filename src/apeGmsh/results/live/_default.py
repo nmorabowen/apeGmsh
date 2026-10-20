@@ -457,10 +457,13 @@ def _refuse_unpairable_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> 
     which a FEMData archive does not hold."""
     from ..writers._cache import quiet_emit_logical
 
-    named = [r.name for r in spec.records if r.category == "fibers" or (
-        r.category == "gauss" and any(
-            lr.response_tokens[:1] == ("material",)
-            for lr in quiet_emit_logical(r, output_dir="", file_format="out")))]
+    with warnings.catch_warnings():
+        # The test translation only; the emit warns once, as it does.
+        warnings.simplefilter("ignore")
+        named = [r.name for r in spec.records if r.category == "fibers" or (
+            r.category == "gauss" and any(
+                lr.response_tokens[:1] == ("material",)
+                for lr in quiet_emit_logical(r, output_dir="", file_format="out")))]
     if named:
         raise ValueError(
             f"emit_default: records {named} read each element's integration "

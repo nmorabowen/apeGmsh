@@ -227,17 +227,25 @@ def test_an_id_the_femdata_lacks_refuses_by_id(tets, tmp_path) -> None:
         _run(_spec(fem, _gauss([1, 9])), tmp_path / "run", model_h5, _ops())
 
 
-def test_a_fibres_record_refuses_by_name(tets, tmp_path) -> None:
+@pytest.mark.parametrize("category, comps, cls", [
+    ("fibers", ("fiber_stress",), "ForceBeamColumn3d"),
+    ("gauss", ("damage_tension", "damage_compression"), "Brick"),
+], ids=["fibers", "per-material-gauss"])
+def test_a_record_that_needs_the_bridge_archive_refuses_by_name(
+    tets, tmp_path, category, comps, cls,
+) -> None:
+    """A fibres record takes each element's ``beamIntegration`` from the
+    model archive, a per-Gauss-point material record its pairing: a
+    FEMData archive holds neither."""
     fem, model_h5 = tets
     ops = _ops()
     rec = ResolvedRecorderRecord(
-        category="fibers", name="fib", components=("fiber_stress",), dt=None,
-        n_steps=None, element_ids=np.array([1]),
-        element_class_name="ForceBeamColumn3d")
-    with pytest.raises(ValueError, match=r"records \['fib'\] read each "
+        category=category, name="need", components=comps, dt=None,
+        n_steps=None, element_ids=np.array([1]), element_class_name=cls)
+    with pytest.raises(ValueError, match=r"records \['need'\] read each "
                                          r"element's integration rule"):
         _run(_spec(fem, rec), tmp_path / "run", model_h5, ops)
-    assert "eleNodes" not in ops.asked
+    assert "eleNodes" not in ops.asked and ops.recorder_calls[1:] == []
 
 
 # ---------------------------------------------------------------------------
