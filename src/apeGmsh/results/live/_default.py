@@ -582,9 +582,11 @@ def _pair_live_elements(
     for r in records:
         if r.category == "elements":
             _refuse_uncatalogued_nodal_forces(r, facts)
-        elif r.category == "fibers" and r.element_ids is not None:
+        elif r.category == "fibers":
+            # No ids: the emit records nothing, as the pairing pairs none.
             facts.record_fiber_sections(
-                (int(e) for e in r.element_ids),
+                (int(e) for e in (r.element_ids if r.element_ids is not None
+                                  else ())),
                 where=f"emit_default: fibres record {r.name!r}")
     return facts
 
