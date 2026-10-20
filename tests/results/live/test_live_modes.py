@@ -266,6 +266,10 @@ def test_a_failed_solve_refuses_with_the_cause(tmp_path: Path) -> None:
         capture_live_modes(fem, 2, out, ops=ops)
     assert isinstance(err.value.__cause__, _SolverError)
     assert not out.exists()
+    # The remedy re-declares the system wipeAnalysis() drops (#2365), in
+    # the words notebook 17 uses.
+    assert ('call ops.wipeAnalysis(), then ops.system("BandGeneral") again, '
+            "before capture_live_modes") in str(err.value)
 
 
 def test_a_short_solve_refuses(tmp_path: Path) -> None:

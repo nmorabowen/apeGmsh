@@ -27,7 +27,9 @@ naming its cause and writing nothing.
 """
 from __future__ import annotations
 
+import ast
 import math
+import re
 import warnings
 from pathlib import Path
 from typing import Any
@@ -352,3 +354,57 @@ def test_a_second_default_solve_refuses_with_the_remedy(opspy: Any, tmp_path: Pa
         ops.wipeAnalysis()
     capture_live_modes(_line_fem(xy), 2, out, ops=ops)
     assert out.exists()
+
+
+def _springs(ops: Any) -> FEMData:
+    """Three grounded springs, k = 100, 200 and -10 on unit masses: the
+    eigenvalues nearest zero are -10 and 100. The anchors (nodes 11-13,
+    at the free nodes' positions) are not FEM nodes."""
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for i, k in enumerate((100.0, 200.0, -10.0)):
+        ops.node(i + 1, float(i), 0.0)
+        ops.node(i + 11, float(i), 0.0)
+        ops.fix(i + 11, 1, 1)
+        ops.fix(i + 1, 0, 1)
+        ops.uniaxialMaterial("Elastic", i + 1, k)
+        ops.element("zeroLength", i + 1, i + 11, i + 1, "-mat", i + 1, "-dir", 1)
+        ops.mass(i + 1, 1.0, 1.0)
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
+    return _fem(xy, {15: ("Point", 0, [[1], [2], [3]], [1, 2, 3])}, "live_modes_springs")
+
+
+#: The remedy calls a refusal may name, run in the order it names them.
+_REMEDY = re.compile(r"ops\.(wipeAnalysis|system)\(([^)]*)\)")
+
+
+def _follow(ops: Any, message: str) -> None:
+    calls = _REMEDY.findall(message)
+    assert calls, message
+    for name, args in calls:
+        getattr(ops, name)(*ast.literal_eval(f"({args},)") if args else ())
+
+
+def test_the_documented_remedy_keeps_the_bandgeneral_guard(opspy: Any, tmp_path: Path) -> None:
+    """#2365: on stock openseespy a second eigen solve refuses, and the
+    remedy its message names, run as written, must keep the
+    ``system BandGeneral`` guard: the next solve is the true [-10, 100]
+    (``wipeAnalysis()`` alone gives a plausible [1, 1]), and the capture
+    then refuses the -10 by name. The fork solves twice, so there the
+    capture refuses the -10 at once."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    ops = opspy
+    fem = _springs(ops)
+    ops.system("BandGeneral")
+    np.testing.assert_allclose(ops.eigen(2), [-10.0, 100.0], rtol=1e-12)
+    out = tmp_path / "modes.h5"
+    if get_backend_info().kind == "stock":
+        with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed") as err:
+            capture_live_modes(fem, 2, out, ops=ops)
+        remedy = str(err.value)
+        _follow(ops, remedy)
+        np.testing.assert_allclose(ops.eigen(2), [-10.0, 100.0], rtol=1e-12)
+        _follow(ops, remedy)
+    with pytest.raises(ValueError, match=r"mode 1 has a non-positive or non-finite eigenvalue \(-10\)"):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()

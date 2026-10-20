@@ -74,7 +74,8 @@ def capture_live_modes(
     where ``-fullGenLapack`` or a ``system BandGeneral`` deck gives the true
     -0.2. No cheap check tells them apart, so declare ``ops.system
     ("BandGeneral")`` (or check with ``ops.eigen("-fullGenLapack", n)``)
-    when the stiffness may be indefinite. ``DomainCapture.capture_modes``
+    when the stiffness may be indefinite. ``ops.wipeAnalysis()`` drops that
+    system too, so declare it again after one. ``DomainCapture.capture_modes``
     had the same exposure.
 
     Parameters
@@ -97,9 +98,13 @@ def capture_live_modes(
         ``n_modes`` is not a positive integer; the live domain declares no
         ndm; a fem node is not in the live domain, or its live coordinates
         are not the FEM node's; a node's eigenvector length is not its
-        live ndf; ``ops.eigen`` raised (a second default solve on stock
-        openseespy with no analysis defined: call ``ops.wipeAnalysis()``
-        first); or the solve returned another number of modes, or a
+        live ndf; ``ops.eigen`` raised (on stock openseespy, a second
+        eigen solve in a domain with no analysis, even with a ``system``
+        declared: call ``ops.wipeAnalysis()``, then
+        ``ops.system("BandGeneral")`` again, before ``capture_live_modes``,
+        since ``wipeAnalysis()`` also drops the system that guards against
+        the wrong positive eigenvalues above); or the solve returned
+        another number of modes, or a
         non-positive or non-finite eigenvalue (a mechanism or an
         unconverged solve). Nothing is written.
     FileNotFoundError
@@ -154,11 +159,14 @@ def _capture(
     except Exception as exc:  # the module's own error class (OpenSeesError)
         raise ValueError(
             f"{_WHERE}: ops.eigen({n_modes}) failed ({exc!r}; the solver's "
-            "own message is on stderr). On stock openseespy a second default "
-            "eigen solve in a domain with no analysis fails with 'no EigenSOE "
-            "has been set': call ops.wipeAnalysis() before capture_live_modes, "
-            "or define the analysis (ops.analysis(...)) before the first "
-            "eigen. Nothing was written.") from exc
+            "own message is on stderr). On stock openseespy a second eigen "
+            "solve in a domain with no analysis fails with 'no EigenSOE has "
+            "been set', even with a system declared: call ops.wipeAnalysis(), "
+            "then ops.system(\"BandGeneral\") again, before "
+            "capture_live_modes. wipeAnalysis() also drops the system, and "
+            "without BandGeneral the stock default solver can return wrong "
+            "positive eigenvalues on an indefinite stiffness. Nothing was "
+            "written.") from exc
     eigenvalues = np.asarray(solved, dtype=np.float64).ravel()
     if eigenvalues.size != n_modes:
         raise ValueError(
