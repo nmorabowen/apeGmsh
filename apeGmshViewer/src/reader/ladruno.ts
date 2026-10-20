@@ -1500,7 +1500,7 @@ export class LadrunoFile {
 
   /** The group, dataset and dtype reads reader/ladrunoLocalAxes.ts takes from this file. */
   private localAxesReads(): LocalAxesReads {
-    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), ints: intsAsNumbers, floats: toFloat64 };
+    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), ints: intsAsNumbers, floats: toFloat64, file: this.f.filename, fail: (m) => new LadrunoError("layout", m) };
   }
 
   private collectStepLocalAxes(
