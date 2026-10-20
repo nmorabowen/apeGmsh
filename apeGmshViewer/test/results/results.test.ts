@@ -217,16 +217,11 @@ test("#2358: readNodeHistory finds a node's column with no Map of node ids, so a
   assert.throws(() => underIdCap(2, () => new Map([1, 2, 3].map((n) => [n, n]))), RangeError);
 });
 
-test("#2358: a node id listed twice in _ids is refused by name on readNodeHistory, not answered with one of its columns", () => {
-  const r = openResults(H5, withNodeIds([...Array.from({ length: 17 }, (_, j) => j + 1), 1]));
-  try {
-    assert.throws(
-      () => r.readNodeHistory(STAGE, "displacement_z", 1),
-      (e: unknown) => e instanceof ResultsError && e.kind === "layout" && /nodes\/_ids: the node ID list holds id 1 at rows 0 and 17/.test(e.message),
-    );
-  } finally {
-    r.close();
-  }
+test("#2358: a node id listed twice in _ids is refused at open, by name (file, dataset, id and rows), not read as two columns", () => {
+  // Row 17 of _ids set to 1: node 1 at rows 0 and 17. Opened, a step read would return
+  // both columns, a contour keep the first and a node history the other.
+  const p = withNodeIds([...Array.from({ length: 17 }, (_, j) => j + 1), 1]);
+  refuses(p, "layout", new RegExp(`^${p.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}: ${NODE_IDS} lists node id\\(s\\) more than once \\(id 1 at rows 0, 17\\)`));
 });
 
 // -- #1768: the element mapping is stamp-only ------------------------------------

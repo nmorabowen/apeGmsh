@@ -45,6 +45,7 @@ import type { ProgramDecls } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 import { openH5, type H5FS } from "./h5open.ts";
 import { gmshSimplexRows } from "./legacySimplex.ts";
+import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { nodeColumnLookup } from "./ladrunoNodal.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
@@ -708,7 +709,10 @@ export class ResultsFile {
   }
 
   private readNodes(g: RGroup, T: number): NodalInfo {
-    const ids = intsAsNumbers(this.dataset(g, "_ids"));
+    // A node listed twice is refused at open, by name (#2358): readNodalStep would
+    // return both columns, a contour keep the first and a history the other.
+    const idDs = this.dataset(g, "_ids");
+    const ids = uniqueNodeIds(intsAsNumbers(idDs), this.path, idDs.path, (m) => new ResultsError("layout", m));
     const components: string[] = [];
     const refused: { component: string; reason: string }[] = [];
     for (const k of g.keys()) {
