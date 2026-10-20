@@ -273,8 +273,8 @@ export class LadrunoPartSet {
    * coordinate width). The set takes part 0's index, so parts that disagree are refused,
    * naming each part's value and where it came from. An unknown dimension beside a known
    * one is a disagreement too: every conforming part carries INFO@SPATIAL_DIM, so the
-   * mix is never read as the known value. Python's `_validate_part_set` does not check
-   * this yet.
+   * mix is never read as the known value. Python's `_validate_part_set` keeps the same
+   * rule (#2267).
    */
   private checkSpatialDim(stem: string): void {
     const dims = this.parts.map((p) => p.inferSpatialDim());
