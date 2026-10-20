@@ -20,6 +20,9 @@ Two oracles per class, at rtol 1e-12 against the live domain:
   curvature grows with ``x``, so the read-back points sort by ``x`` as the
   live moments do. ``ForceBeamColumnCBDI2d``: a cantilever's section
   moments are the closed form ``V (L - x)`` at the read-back stations.
+  ``Truss2`` / ``CorotTruss2``: a bar's axial force is the statics
+  ``N = PT``. ``ModElasticBeam2d``: a cantilever's ``localForce`` stations
+  are ``N = PT`` and ``|Mz| = |VY| L`` at the base, 0 at the tip.
 
 The classes stock openseespy cannot record stay unmapped and refuse by
 name. A ``Twenty_Node_Brick`` built in Gmsh node order is not tested here:
@@ -482,6 +485,126 @@ def test_a_cbdi_force_beam_records_its_live_section_forces(opspy, tmp_path) -> N
 
 
 # ---------------------------------------------------------------------------
+# Truss2 and CorotTruss2: the Gauss axial force, a statically fixed bar
+# ---------------------------------------------------------------------------
+
+#: The bar 1-2 along x (length 1), its two auxiliary nodes 3 and 4 above;
+#: node 1 pinned, node 2 on a roller in y and pulled by PT along x.
+_TRUSS2_XYZ = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+PT = 4.0e3
+
+
+@pytest.mark.parametrize("cls, tcl", [("Truss2", "Truss2"),
+                                      ("CorotTruss2", "CorotTruss2")])
+def test_a_truss2_records_its_live_axial_force(cls, tcl, opspy, tmp_path) -> None:
+    """Its one Gauss point's ``axial_force`` is the live ``axialForce`` at
+    rtol 1e-12, and the statics of the bar: ``N = PT``. ``eleNodes`` holds
+    the bar's two nodes only, so it pairs with the FEM line 1-2."""
+    fem = _fem(1, "Line 2", 1, 1, _TRUSS2_XYZ, [[1, 2]], [EID])
+    opspy.model("basic", "-ndm", 2, "-ndf", 2)
+    for k, c in enumerate(_TRUSS2_XYZ, 1):
+        opspy.node(k, *(float(v) for v in c))
+    for node, fix in ((1, (1, 1)), (2, (0, 1)), (3, (1, 1)), (4, (1, 1))):
+        opspy.fix(node, *fix)
+    opspy.uniaxialMaterial("Elastic", 1, E)
+    opspy.element(tcl, EID, 1, 2, 3, 4, A_, 1)
+    opspy.timeSeries("Linear", 1)
+    opspy.pattern("Plain", 1, 1)
+    opspy.load(2, PT, 0.0)
+    _analysis(opspy)
+    assert opspy.eleType(EID) == cls
+    res = _emit(fem, _record("gauss", ("axial_force",), cls, [EID]), tmp_path,
+                opspy)
+    try:
+        slab = res.elements.gauss.get(component="axial_force",
+                                      ids=np.array([EID]))
+        assert np.asarray(slab.element_index).tolist() == [EID]
+        np.testing.assert_array_equal(np.asarray(slab.natural_coords), [[0.0]])
+        got = np.asarray(slab.values)[-1]
+        np.testing.assert_allclose(got, opspy.eleResponse(EID, "axialForce"),
+                                   **_RTOL)
+        np.testing.assert_allclose(got, [PT], rtol=1e-9)
+    finally:
+        res.close()
+
+
+# ---------------------------------------------------------------------------
+# ModElasticBeam2d: an elastic beam's localForce stations and nodal forces
+# ---------------------------------------------------------------------------
+
+
+def test_a_mod_elastic_beam_records_its_live_local_and_global_force(
+    opspy, tmp_path,
+) -> None:
+    """A cantilever under a transverse tip load VY and an axial PT: its two
+    line stations are its live ``localForce`` in the force-beam section
+    convention every route signs it with (#2009), and its nodal forces the
+    live ``globalForce``, at rtol 1e-12. The stations are the statics:
+    ``N = PT`` at both ends, ``Mz = -VY L`` at the base and 0 at the tip."""
+    cls = "ModElasticBeam2d"
+    xyz = np.array([[0.0, 0.0], [L, 0.0]])
+    fem = _fem(1, "Line 2", 1, 1, xyz, [[1, 2]], [EID])
+    opspy.model("basic", "-ndm", 2, "-ndf", 3)
+    for k, c in enumerate(xyz, 1):
+        opspy.node(k, *(float(v) for v in c))
+    opspy.fix(1, 1, 1, 1)
+    opspy.geomTransf("Linear", 1)
+    # K11, K33, K44 = 4, 4, 2: the unmodified 4EI/L, 4EI/L, 2EI/L rows.
+    opspy.element("ModElasticBeam2d", EID, 1, 2, A_, E, IZ, 4.0, 4.0, 2.0, 1)
+    opspy.timeSeries("Linear", 1)
+    opspy.pattern("Plain", 1, 1)
+    opspy.load(2, PT, VY, 0.0)
+    _analysis(opspy)
+    assert opspy.eleType(EID) == cls
+    comps = ("axial_force", "shear_y", "bending_moment_z")
+    nodal = ("nodal_resisting_force_x", "nodal_resisting_force_y",
+             "nodal_resisting_moment_z")
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        ResolvedRecorderRecord(category="line_stations", name="ls",
+                               components=comps, dt=None, n_steps=None,
+                               element_ids=np.array([EID]),
+                               element_class_name=cls),
+        ResolvedRecorderRecord(category="elements", name="nf",
+                               components=nodal, dt=None, n_steps=None,
+                               element_ids=np.array([EID]),
+                               element_class_name=cls)))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with spec.emit_default(tmp_path / "run", model_h5=model_h5,
+                               ops=NoMPCO(opspy)) as run:
+            assert opspy.analyze(1) == 0
+    assert run.route == "recorders"
+    assert [w.category for w in caught] == [DefaultRouteWarning]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        lf = np.asarray(opspy.eleResponse(EID, "localForce"))
+        sign = np.array([-1.0, 1.0, -1.0])
+        stations = np.stack([sign * lf[0:3], -sign * lf[3:6]])
+        for k, comp in enumerate(comps):
+            slab = res.elements.line_stations.get(component=comp,
+                                                  ids=np.array([EID]))
+            np.testing.assert_array_equal(
+                np.asarray(slab.station_natural_coord), [-1.0, 1.0])
+            np.testing.assert_allclose(np.asarray(slab.values)[-1],
+                                       stations[:, k], **_RTOL, err_msg=comp)
+        np.testing.assert_allclose(stations[:, 0], [PT, PT], rtol=1e-9)
+        np.testing.assert_allclose(np.abs(stations[:, 2]),
+                                   [abs(VY) * L, 0.0], rtol=1e-9,
+                                   atol=1e-9 * abs(VY) * L)
+        gf = np.asarray(opspy.eleResponse(EID, "globalForce"))
+        for k, comp in enumerate(nodal):
+            slab = res.elements.get(component=comp, ids=np.array([EID]))
+            np.testing.assert_allclose(np.asarray(slab.values)[-1][0],
+                                       gf[[k, k + 3]], **_RTOL, err_msg=comp)
+    finally:
+        res.close()
+
+
+# ---------------------------------------------------------------------------
 # What stock cannot record stays unmapped, refused by name
 # ---------------------------------------------------------------------------
 
@@ -532,46 +655,15 @@ def _elastic_force_beam(ndm: int) -> "Callable[[Any], tuple[FEMData, ResolvedRec
     return build
 
 
-def _truss2(tcl: str) -> "Callable[[Any], tuple[FEMData, ResolvedRecorderRecord]]":
-    def build(ops: Any) -> "tuple[FEMData, ResolvedRecorderRecord]":
-        xyz = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
-        ops.model("basic", "-ndm", 2, "-ndf", 2)
-        ops.uniaxialMaterial("Elastic", 1, E)
-        for k, c in enumerate(xyz, 1):
-            ops.node(k, *c)
-        ops.element(tcl, EID, 1, 2, 3, 4, A_, 1)
-        return (_fem(1, "Line 2", 1, 1, xyz, [[1, 2]], [EID]),
-                _record("elements", ("nodal_resisting_force_x",),
-                        ops.eleType(EID), [EID]))
-    return build
-
-
-def _mod_elastic(ops: Any) -> "tuple[FEMData, ResolvedRecorderRecord]":
-    xyz = np.array([[0.0, 0.0], [L, 0.0]])
-    ops.model("basic", "-ndm", 2, "-ndf", 3)
-    for k, c in enumerate(xyz, 1):
-        ops.node(k, *c)
-    ops.geomTransf("Linear", 1)
-    ops.element("ModElasticBeam2d", EID, 1, 2, A_, E, IZ, 1.0, 1.0, 1.0, 1)
-    return (_fem(1, "Line 2", 1, 1, xyz, [[1, 2]], [EID]),
-            _record("elements", ("nodal_resisting_force_x",),
-                    "ModElasticBeam2d", [EID]))
-
-
 #: Built by stock, but not recordable on its classic route yet: ShellMITC9
 #: answers 84 values for its 72 (ShellMITC9.cpp:518);
 #: ElasticForceBeamColumn2d/3d write an empty ``section force`` file (no
 #: nodal-force layout either); ForceBeamColumnWarping2d has no stock
-#: section it can invert ("could not invert flexibility"); Truss2 and
-#: CorotTruss2 record only their axial force, whose classic route is #2290
-#: (D); ModElasticBeam2d is held by the #2288 refusal case.
+#: section it can invert ("could not invert flexibility").
 UNMAPPED = {"ShellMITC9": _shell_mitc9,
             "ElasticForceBeamColumn2d": _elastic_force_beam(2),
             "ElasticForceBeamColumn3d": _elastic_force_beam(3),
-            "ForceBeamColumnWarping2d": _warping,
-            "Truss2": _truss2("Truss2"),
-            "CorotTruss2": _truss2("CorotTruss2"),
-            "ModElasticBeam2d": _mod_elastic}
+            "ForceBeamColumnWarping2d": _warping}
 
 
 @pytest.mark.parametrize("cls", list(UNMAPPED))

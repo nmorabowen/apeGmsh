@@ -66,6 +66,9 @@ SERVED = {
     "ShellNLDKGQ": ("ShellDKGQ", True),
     "ShellNLDKGT": ("ShellDKGQ", True),
     "ForceBeamColumnCBDI2d": ("forceBeamColumn", True),
+    "Truss2": ("Truss", False),
+    "CorotTruss2": ("CorotTruss", False),
+    "ModElasticBeam2d": ("elasticBeamColumn", True),
 }
 
 #: Catalogued classes the pairing still refuses, each with why: stock
@@ -73,8 +76,7 @@ SERVED = {
 #: classic route reads yet (see the live file's UNMAPPED table).
 REFUSED = ("BezierTri6", "BezierTet10", "ShellMITC9",
            "ElasticForceBeamColumn2d", "ElasticForceBeamColumn3d",
-           "ForceBeamColumnWarping2d", "Truss2", "CorotTruss2",
-           "ModElasticBeam2d")
+           "ForceBeamColumnWarping2d")
 
 
 @pytest.mark.parametrize("cls", list(SERVED))
@@ -287,14 +289,15 @@ def test_a_twin_recorded_without_a_class_refuses_its_partner_does_not(
 
 
 def test_no_record_classes_keeps_the_strict_refusal(tmp_path) -> None:
-    """The call without ``named_classes`` (today's emit route) refuses as
-    before, asking nothing of the twins."""
+    """The call without ``named_classes`` refuses strictly, asking nothing
+    of the twins; its message names each remedy."""
     facts, ops = _twin_facts(tmp_path, {5: _BEAM, 6: _TRUSS})
     with pytest.raises(ValueError, match=(
             r"FEM element 5 shares nodes \[1, 2\] with \[6\]\. eleNodes "
             r"cannot tell those elements apart, .* Drop them from the record, "
-            r"or record them through the bridge's model archive "
-            r"\(ops\.h5\(\.\.\.\)\)\.$")):
+            r"name the record's element class where each twin is a live "
+            r"element of another class, or record them through the bridge's "
+            r"model archive \(ops\.h5\(\.\.\.\)\)\.$")):
         facts.pair_elements([5], where="t")
     assert "eleType" not in ops.asked and "eleNodes" not in ops.asked
 

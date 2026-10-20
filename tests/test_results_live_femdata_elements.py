@@ -34,6 +34,7 @@ The oracles:
 """
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,7 @@ from apeGmsh.mesh.FEMData import (
 )
 from apeGmsh.opensees._internal.typed_records import ElementRecord
 from apeGmsh.results.live import DefaultRouteWarning
+from apeGmsh.results.spec._emit import emit_logical
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,
@@ -253,6 +255,63 @@ def test_elements_sharing_ordered_nodes_refuse_naming_both(
             rf"FEM element {first} shares nodes \[1, 2, 3, 4\] with "
             rf"\[{other}\].*eleNodes cannot tell those elements apart")):
         _run(_spec(fem, _gauss(ids)), tmp_path / "run", model_h5, ops)
+    assert ops.recorder_calls[1:] == [] and "eleNodes" not in ops.asked
+
+
+def _twin_ops(twin: "tuple[str, tuple[int, ...]] | None") -> ElementOps:
+    """Tets 1 and 2 live; FEM tet 3 (tet 1's twin) live as ``twin``."""
+    live = {1: ("FourNodeTetrahedron", _CONN[1]),
+            2: ("FourNodeTetrahedron", _CONN[2])}
+    if twin is not None:
+        live[3] = twin
+    return _ops(live)
+
+
+def test_a_twin_of_another_live_class_records_under_its_named_class(
+    tmp_path,
+) -> None:
+    """The emit route passes each element's record classes to the pairing:
+    tet 1's record names ``FourNodeTetrahedron`` and its twin 3 is live as
+    another class, so 1 is told apart by class and reads under its id."""
+    fem = _twin_fem()
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = _twin_ops(("TenNodeTetrahedron", _CONN[1]))
+    run = _run(_spec(fem, _gauss([1])), tmp_path / "run", model_h5, ops)
+    assert len(_element_calls(ops)) == 1
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        slab = res.elements.gauss.get(component="stress_xx")
+        assert np.asarray(slab.element_index).tolist() == [1]
+        np.testing.assert_allclose(np.asarray(slab.values)[:, 0],
+                                   [_value(s, 1, 0) for s in range(1, _STEPS + 1)],
+                                   rtol=1e-15, atol=0)
+    finally:
+        res.close()
+
+
+@pytest.mark.parametrize("twin, records", [
+    (("FourNodeTetrahedron", _CONN[1]), lambda: (_gauss([1]),)),
+    (("TenNodeTetrahedron", _CONN[1]), lambda: (_gauss([1], cls=None),)),
+    (("TenNodeTetrahedron", _CONN[1]),
+     lambda: (_gauss([1]), dataclasses.replace(_gauss([1], cls=None),
+                                               name="bare"))),
+    (None, lambda: (_gauss([1]),)),
+], ids=["equal-class", "no-class", "one-record-names-none", "twin-not-live"])
+def test_twins_the_record_classes_cannot_tell_apart_refuse(
+    tmp_path, twin, records,
+) -> None:
+    fem = _twin_fem()
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = _twin_ops(twin)
+    with pytest.raises(ValueError, match=(
+            r"FEM element 1 shares nodes \[1, 2, 3, 4\] with \[3\].*eleNodes "
+            r"cannot tell those elements apart.* name the record's element "
+            r"class where each twin is a live element of another class")):
+        _run(_spec(fem, *records()), tmp_path / "run", model_h5, ops)
     assert ops.recorder_calls[1:] == [] and "eleNodes" not in ops.asked
 
 
@@ -628,6 +687,76 @@ def test_a_line_stations_element_with_no_sections_refuses_before_the_run(
     assert _element_calls(ops) == []
 
 
+#: Section locations as fractions of L, out of order as a long-hinge
+#: HingeRadau writes them (lp_i + lp_j >= L/4).
+_HINGE_FRAC = (0.0, 0.1, 0.3, 0.2, 0.9, 1.0)
+
+
+def test_line_stations_out_of_order_read_when_they_are_the_live_sections(
+    tmp_path,
+) -> None:
+    """The live section locations prove the slice and its order, as a
+    bridge model does: stations a legal rule writes out of order read as
+    written, with no "Pass model=" refusal a FEMData user could not follow."""
+    fem, model_h5 = _beam_fem(tmp_path)
+    loc = {e: tuple(f * L for f in _HINGE_FRAC) for e, L in _BEAM_L.items()}
+    ops = _stations_ops(loc)
+    ops.columns = 2 * len(_HINGE_FRAC)        # (P, Mz) at each section
+    run = _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        slab = res.elements.line_stations.get(component="axial_force")
+        np.testing.assert_array_equal(slab.element_index, np.repeat([1, 2], 6))
+        np.testing.assert_allclose(slab.station_natural_coord,
+                                   np.tile(2.0 * np.array(_HINGE_FRAC) - 1.0, 2),
+                                   rtol=0, atol=1e-12)
+    finally:
+        res.close()
+
+
+def test_line_stations_that_are_not_the_live_sections_refuse_by_id(
+    tmp_path,
+) -> None:
+    """A file whose stations are not the sections the live domain gave
+    (element 2's at Lobatto points of another length) refuses by FEM id."""
+    fem, model_h5 = _beam_fem(tmp_path)
+    loc = {e: tuple(f * L for f in _LOBATTO_3) for e, L in _BEAM_L.items()}
+    ops = FiberOps(locations=loc, fibres={1: (), 2: ()},
+                   written={1: loc[1], 2: (0.0, 1.0, 3.0)},
+                   cls="ForceBeamColumn2d")
+    run = _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
+    with pytest.raises(ValueError, match=(
+            r"FEM element 2 of record 'ls' \(line_stations\) has stations "
+            r"\[-1\.0, -0\.333333, 1\.0\] in the file, but its live sections "
+            r"are at \[-1\.0, 0\.0, 1\.0\]")):
+        run.results(cache_root=tmp_path / "cache")
+
+
+@pytest.mark.parametrize("written, shown", [
+    # Element 2's middle station 1e-3 off in natural coordinates (L = 3):
+    # ten times the -precision 6 slack, so the file is another rule's.
+    ((0.0, 1.5 + 1.5e-3, 3.0), r"\[-1\.0, 0\.001, 1\.0\]"),
+    # The right stations, its last two swapped: only their order is wrong,
+    # and the live order is what places each section.
+    ((0.0, 3.0, 1.5), r"\[-1\.0, 1\.0, 0\.0\]"),
+], ids=["near-miss", "swapped-pair"])
+def test_line_stations_near_the_live_sections_still_refuse_by_id(
+    tmp_path, written, shown,
+) -> None:
+    fem, model_h5 = _beam_fem(tmp_path)
+    loc = {e: tuple(f * L for f in _LOBATTO_3) for e, L in _BEAM_L.items()}
+    ops = FiberOps(locations=loc, fibres={1: (), 2: ()},
+                   written={1: loc[1], 2: written}, cls="ForceBeamColumn2d")
+    run = _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
+    with pytest.raises(ValueError, match=(
+            rf"FEM element 2 of record 'ls' \(line_stations\) has stations "
+            rf"{shown} in the file, but its live sections are at "
+            rf"\[-1\.0, 0\.0, 1\.0\]")):
+        run.results(cache_root=tmp_path / "cache")
+
+
 # ---------------------------------------------------------------------------
 # A per-Gauss-point material record reads through the pairing (#2290 A)
 # ---------------------------------------------------------------------------
@@ -783,6 +912,28 @@ def test_a_fibres_record_over_a_pairing_refuses_by_name(tets, tmp_path) -> None:
                             pairing=_Pairing(fem, {1: "forceBeamColumn"}))
     with pytest.raises(ValueError, match=r"Record 'fib' \(category=fibers\): "
                                          r"its stations are counted .* a "
+                                         r"_Pairing carries neither"):
+        tr.run()
+
+
+def test_a_line_stations_record_over_a_pairing_refuses_as_fibres_do(
+    tets, tmp_path,
+) -> None:
+    """The same condition as the fibres case above, on the line-stations
+    read: one exception class (``ValueError``) and one message for both."""
+    fem, _ = tets
+    rec = ResolvedRecorderRecord(
+        category="line_stations", name="ls",
+        components=("axial_force", "bending_moment_z"), dt=None, n_steps=None,
+        element_ids=np.array([1]), element_class_name="ForceBeamColumn3d")
+    sec_lr, gpx_lr = emit_logical(rec, output_dir=str(tmp_path))
+    np.savetxt(gpx_lr.file_path, [[1.0, 0.0, 1.0]])
+    np.savetxt(sec_lr.file_path, [[1.0, 1.0, 2.0, 3.0, 4.0]])
+    tr = RecorderTranscoder(_spec(fem, rec), tmp_path, tmp_path / "r.h5", fem,
+                            stage_name="s", stage_kind="static",
+                            pairing=_Pairing(fem, {1: "forceBeamColumn"}))
+    with pytest.raises(ValueError, match=r"Record 'ls' \(line_stations\): its "
+                                         r"stations are counted .* a "
                                          r"_Pairing carries neither"):
         tr.run()
 

@@ -570,10 +570,13 @@ def _pair_live_elements(
              f"elements by FEM id, and {model_h5} is a FEMData archive (no "
              "/opensees zone), so each element is paired from the live "
              "domain")
-    facts.pair_elements(
-        (int(e) for r in records for e in (r.element_ids if r.element_ids
-                                           is not None else ())),
-        where=where)
+    # Each recorded element's record classes (None for a record that names
+    # none): the pairing tells twins on the same ordered nodes apart by them.
+    named: "dict[int, set[str | None]]" = {}
+    for r in records:
+        for e in (r.element_ids if r.element_ids is not None else ()):
+            named.setdefault(int(e), set()).add(r.element_class_name)
+    facts.pair_elements(named, where=where, named_classes=named)
     for r in records:
         cls = r.element_class_name
         if cls is None or r.element_ids is None:
