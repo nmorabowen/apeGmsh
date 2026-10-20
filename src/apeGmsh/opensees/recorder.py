@@ -1402,7 +1402,7 @@ ALL_RECORDER_CATEGORIES: tuple[str, ...] = (
 )
 
 # Which category records each component is
-# ``apeGmsh._vocabulary.CATEGORY_COMPONENTS`` (#2344), the one table the
+# ``apeGmsh._vocabulary.CATEGORY_COMPONENTS``, the one table the
 # resolved record and DomainCapture read too. A component outside its
 # category fails validation unless supplied via ``raw=`` (the escape
 # hatch for non-catalogued OpenSees tokens).
@@ -1475,10 +1475,10 @@ class RecorderRecord:
             )
 
         # Components — each canonical and recorded by this category
-        # (``in_category``, #2344): a canonical any element category
-        # accepted recorded nothing, or another response under its
-        # name. Raw tokens bypass validation. A bare string is one
-        # component, not its characters.
+        # (``in_category``): a canonical of another category records
+        # nothing, or another response under its name. Raw tokens
+        # bypass validation. A bare string is one component, not its
+        # characters.
         if isinstance(self.components, str):
             object.__setattr__(self, "components", (self.components,))
         for comp in self.components:

@@ -286,7 +286,7 @@ ALL_CANONICAL: frozenset[str] = frozenset(
 # Recorder categories — which category records each component
 # =====================================================================
 #
-# The one table every recorder category check derives from (#2344): the
+# The one table every recorder category check derives from: the
 # declaration (``opensees.recorder.RecorderRecord``), the resolved record
 # (``results.spec.ResolvedRecorderRecord``) and DomainCapture (which
 # subtracts what it cannot capture in-process). A category answers which
@@ -300,9 +300,10 @@ ALL_CANONICAL: frozenset[str] = frozenset(
 #   level as continuum stress (one ``"stresses"`` / ``"strains"``
 #   response per element, decoded by the class's catalog layout), so
 #   they are ``gauss``.
-# - ``LINE_STATION_DEFORMATIONS`` are line-station quantities; every
-#   route refuses them by name at emit today (#2052), so they belong
-#   here rather than to the "wrong category" refusal.
+# - ``LINE_STATION_DEFORMATIONS`` are line-station quantities. The
+#   ``.out``, MPCO and fork-file routes refuse them by name at emit (none
+#   decodes ``section.deformation``); that is a route refusal, not a
+#   wrong category.
 # - ``SPRING`` (ZeroLength) records on ``elements``: MPCO and the fork
 #   write it under ``-E basicForce`` / ``deformation`` (Phase 11d).
 CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {

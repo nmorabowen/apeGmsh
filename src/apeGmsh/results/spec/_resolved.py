@@ -97,7 +97,7 @@ def _refuse_unrecorded_components(
             if in_category(category, comp):
                 continue
             # A canonical of another category writes no recorder, or one
-            # whose response the read decodes under its name (#2344).
+            # whose response the read decodes under its name.
             raise ValueError(
                 f"ResolvedRecorderRecord {name!r} (category={category!r}): "
                 f"{wrong_category_reason(category, comp)}"

@@ -116,7 +116,7 @@ _CAPTURE_UNSUPPORTED: frozenset[str] = (
 )
 
 # Per-category sets of allowed canonical components: the recorder
-# categories' one table (``_vocabulary.CATEGORY_COMPONENTS``, #2344)
+# categories' one table (``_vocabulary.CATEGORY_COMPONENTS``)
 # less what capture cannot read. ``modal`` has its own path.
 _CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
     category: comps - _CAPTURE_UNSUPPORTED
