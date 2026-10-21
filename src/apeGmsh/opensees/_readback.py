@@ -130,6 +130,7 @@ class LiveTranslationalRole:
     :meth:`~._recorder_translate.LiveDomainFacts.rotation_roles`, for an
     ``ASDEmbeddedNodeElement`` whose nodes cannot carry a pressure DOF."""
 
+
 #: u-p families: their pressure DOF sits in a slot an element-less node's
 #: layout calls a rotation, so a constraint could tie the two. A model
 #: holding one refuses rotations on element-less nodes.

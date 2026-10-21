@@ -1060,12 +1060,14 @@ class LiveDomainFacts:
         whose nodes all have that ndf stays unknown and blocks."""
         import numpy as np
 
-        from ._readback import _CLASS_FOR_TOKEN, _roles_from_rows
-
-        from ._readback import LiveTranslationalRole
+        from ._readback import (
+            _CLASS_FOR_TOKEN,
+            LiveTranslationalRole,
+            _roles_from_rows,
+        )
 
         ops = self._ops
-        ndf: "dict[int, int]" = {}
+        ndf:"dict[int, int]" = {}
         # Keyed by (eleType, translational): an embedded-node element
         # splits by what its nodes' ndf allows (_EMBEDDED_NODE_CLASS).
         by_class: "dict[tuple[str, bool], list[int]]" = {}
