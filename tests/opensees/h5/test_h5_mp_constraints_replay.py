@@ -55,8 +55,7 @@ _PARTITIONS: dict[int, dict[str, list[int]]] = {
 
 
 def _fem(*, partitioned: bool, node_constraints: "list[Any]" = (),
-         surface_constraints: "list[Any]" = (),
-         interfaces: "list[Any]" = ()) -> FEMData:
+         surface_constraints: "list[Any]" = ()) -> FEMData:
     """Two columns at x = 0 and 1 rising along z (PG ``"Cols"``), fixed at
     ``"Base"`` (1, 3), with the given constraint streams. A partitioned
     model puts each column on its own rank, so a constraint between the two
@@ -86,7 +85,7 @@ def _fem(*, partitioned: bool, node_constraints: "list[Any]" = (),
         **({"partitions": parts} if parts else {}))
     elements = ElementComposite(
         groups={1: lines}, physical=groups, labels=LabelSet({}),
-        constraints=list(surface_constraints), interfaces=list(interfaces),
+        constraints=list(surface_constraints),
         **({"partitions": parts} if parts else {}))
     return FEMData(
         nodes=nodes, elements=elements,
@@ -250,7 +249,8 @@ def test_to_h5_rewrite_keeps_the_rows(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Phantom-node streams refuse (#2411): no stored phantom node, no replay
+# Streams the archive cannot replay refuse, by name: phantom-node ties
+# (#2411) and equation-route ties (#2416)
 # ---------------------------------------------------------------------------
 
 
@@ -267,47 +267,155 @@ def _node_to_surface(kind: str) -> Any:
         dofs=[1, 2, 3])
 
 
-def _mixed_ndf_interface() -> Any:
-    from apeGmsh._kernel.records._constraints import InterfaceRecord, NormalLaw
+def _mixed_ndf_interface_archive(tmp_path: Path) -> "tuple[str, Path]":
+    """A 2D model whose interface joins a 2-DOF truss node (4) to the
+    coincident 3-DOF beam node (2) through phantom node 200, the only
+    place a mixed-ndf interface mints a phantom (ADR 0093 D4)."""
+    from apeGmsh._kernel.records._constraints import (
+        InterfaceRecord, NormalLaw, TangentialLaw,
+    )
 
-    return InterfaceRecord(
-        kind="interface", master_node=2, slave_node=4, backing_element=1,
-        orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0), a_trib=0.5,
+    ids = lambda v: np.array(v, dtype=np.int64)  # noqa: E731
+    xyz = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+                    [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]])
+    line = make_type_info(
+        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=2)
+
+    def pg(name: str, nodes: "list[int]", elements: "list[int]") -> dict:
+        return {"name": name, "node_ids": ids(nodes),
+                "node_coords": xyz[[n - 1 for n in nodes]],
+                "element_ids": ids(elements)}
+
+    groups = PhysicalGroupSet({
+        (1, 100): pg("Beam", [1, 2], [1]), (1, 101): pg("Bar", [3, 4], [2]),
+        (0, 102): pg("Base", [1], []), (0, 103): pg("BarBase", [3], []),
+    })
+    iface = InterfaceRecord(
+        kind="interface", master_node=4, slave_node=2, backing_element=2,
+        orient=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0), a_trib=0.5,
         normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
-        phantom_node=200, phantom_coords=np.array([1.0, 0.0, 1.0]),
-        phantom_ndf=6, equal_dof_records=[NodePairRecord(
-            kind="equal_dof", master_node=4, slave_node=200, dofs=[1, 2, 3])])
+        tangential_law=TangentialLaw(kind="elastic", k_per_area=1.0e6),
+        phantom_node=200, phantom_coords=np.array([0.0, 1.0, 0.0]),
+        phantom_ndf=2, equal_dof_records=[NodePairRecord(
+            kind="equal_dof", master_node=2, slave_node=200, dofs=[1, 2])])
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=ids([1, 2, 3, 4]), node_coords=xyz,
+                            physical=groups, labels=LabelSet({})),
+        elements=ElementComposite(
+            groups={1: ElementGroup(element_type=line, ids=ids([1, 2]),
+                                    connectivity=ids([[1, 2], [3, 4]]))},
+            physical=groups, labels=LabelSet({}), interfaces=[iface]),
+        info=MeshInfo(n_nodes=4, n_elems=2, bandwidth=1, types=[line]),
+        model_name="mixed_ndf_interface")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = apeSees(fem)
+        ops.model(ndm=2, ndf=3)
+        ops.element.elasticBeamColumn(
+            pg="Beam", transf=ops.geomTransf.Linear(), A=0.01, E=200e9,
+            Iz=1e-4)
+        ops.element.Truss(pg="Bar", A=0.01,
+                          material=ops.uniaxialMaterial.ElasticMaterial(E=200e9))
+        ops.fix(pg="Base", dofs=(1, 1, 1))
+        ops.fix(pg="BarBase", dofs=(1, 1))
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True)
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return deck.read_text(encoding="utf-8"), path
 
 
-@pytest.mark.parametrize(("streams", "named"), [
-    ({"node_constraints": [_node_to_surface("node_to_surface")]},
-     "node_to_surface: 1"),
-    ({"node_constraints": [_node_to_surface("node_to_surface_spring")]},
-     "node_to_surface_spring: 1"),
-    ({"interfaces": [_mixed_ndf_interface()]}, "interface (mixed-ndf): 1"),
-], ids=["node_to_surface", "node_to_surface_spring", "mixed_ndf_interface"])
-def test_phantom_stream_replay_refuses_by_name(streams, named):
+def _equation_tie(kind: str) -> Any:
+    return InterpolationRecord(
+        kind=kind, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.0, 1.0, 0.0]), dofs=[1, 2, 3], enforce="equation")
+
+
+#: ``(streams, the line the bridge writes, the name the refusal gives,
+#: the issue it cites)`` for every stream the replay refuses. ``None``
+#: streams: the case builds its own archive (the 2D mixed-ndf interface).
+_REFUSED: "dict[str, tuple[dict[str, list[Any]] | None, str, str, str]]" = {
+    "node_to_surface": (
+        {"node_constraints": [_node_to_surface("node_to_surface")]},
+        "equalDOF", "node_to_surface: 1", "#2411"),
+    "node_to_surface_spring": (
+        {"node_constraints": [_node_to_surface("node_to_surface_spring")]},
+        "equalDOF", "node_to_surface_spring: 1", "#2411"),
+    "mixed_ndf_interface": (
+        None, "equalDOF", "interface (mixed-ndf): 1", "#2411"),
+    **{f"{k}_equation": (
+        {"surface_constraints": [_equation_tie(k)]},
+        "equationConstraint", f"{k} (enforce='equation'): 1", "#2416")
+       for k in ("tie", "distributing", "embedded")},
+}
+
+
+def _refused_archive(case: str, tmp_path: Path) -> Path:
+    """The archive of a refused case, after checking the bridge deck
+    really carries the lines the replay would leave out."""
+    streams, token, _named, _issue = _REFUSED[case]
+    fwd, path = (_mixed_ndf_interface_archive(tmp_path) if streams is None
+                 else _archive(_fem(partitioned=False, **streams), tmp_path))
+    assert any(ln.split()[:1] == [token] for ln in fwd.splitlines())
+    return path
+
+
+@pytest.mark.parametrize("case", sorted(_REFUSED))
+def test_replay_refuses_by_name(case, tmp_path):
     from apeGmsh.opensees._internal.build.errors import BridgeError
-    from apeGmsh.opensees._internal.compose import _replay_into
-    from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
-    emitter = RecordingEmitter()
-    with pytest.raises(BridgeError, match=r"#2411") as caught:
-        _replay_into(emitter, ndm=3, ndf=6,
-                     fem=_fem(partitioned=False, **streams))
-    assert named in str(caught.value)
-    assert emitter.calls == []  # refused before anything is emitted
-
-
-def test_phantom_stream_refuses_end_to_end(tmp_path):
-    # The bridge ties through its phantom node; the replay of the same
-    # archive refuses instead of leaving the coupling out.
-    from apeGmsh.opensees._internal.build.errors import BridgeError
-
-    fwd, path = _archive(_fem(
-        partitioned=False,
-        node_constraints=[_node_to_surface("node_to_surface")]), tmp_path)
-    assert "equalDOF 200 4 1 2 3" in _mp_lines(fwd)
+    _streams_, _token, named, issue = _REFUSED[case]
+    path = _refused_archive(case, tmp_path)
     for target in ("tcl", "py"):
-        with pytest.raises(BridgeError, match=r"node_to_surface: 1.*#2411"):
+        with pytest.raises(BridgeError) as caught:
             OpenSeesModel.from_h5(str(path)).build(target, flat=True)
+        assert named in str(caught.value)
+        assert issue in str(caught.value)
+
+
+def test_refusal_does_not_rest_on_the_skipped_stream_census(
+        tmp_path, monkeypatch):
+    # Stubbing out the warning must not stub out the refusal.
+    from apeGmsh.opensees._internal import compose
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    path = _refused_archive("mixed_ndf_interface", tmp_path)
+    monkeypatch.setattr(compose, "_warn_skipped_replay_streams",
+                        lambda *_a, **_k: None)
+    with pytest.raises(BridgeError, match=r"#2411"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+
+
+@pytest.mark.parametrize("case", ["mixed_ndf_interface", "tie_equation"])
+def test_live_refusal_comes_before_the_emitter(case, tmp_path, monkeypatch):
+    # LiveOpsEmitter(wipe=True) wipes the domain, so a refusal after it
+    # would destroy a model the caller still holds.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees.emitter import live
+
+    class _NoEmitter:
+        def __init__(self, *_a: Any, **_k: Any) -> None:
+            raise AssertionError("the live emitter was made before refusing")
+
+    monkeypatch.setattr(live, "LiveOpsEmitter", _NoEmitter)
+    path = _refused_archive(case, tmp_path)
+    with pytest.raises(BridgeError, match=_REFUSED[case][3]):
+        OpenSeesModel.from_h5(str(path)).build("live")
+
+
+@pytest.mark.live
+def test_refused_live_build_leaves_the_domain_untouched(tmp_path):
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    path = _refused_archive("node_to_surface", tmp_path)
+    ops = get_ops()
+    ops.wipe()
+    try:
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(901, 0.0, 0.0, 0.0)
+        with pytest.raises(BridgeError, match=r"#2411"):
+            OpenSeesModel.from_h5(str(path)).build("live")
+        assert [int(t) for t in ops.getNodeTags()] == [901]
+    finally:
+        ops.wipe()
