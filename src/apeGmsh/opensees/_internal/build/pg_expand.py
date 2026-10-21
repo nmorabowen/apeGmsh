@@ -467,7 +467,7 @@ def node_name_to_nodes(
             return None
         try:
             return tuple(int(n) for n in groups.node_ids(name))
-        except (KeyError, ValueError):
+        except KeyError:
             return None  # not a name of this namespace
 
     by_label = _lookup("labels")

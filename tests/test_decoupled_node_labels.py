@@ -167,9 +167,32 @@ def test_rbe2_master_after_a_first_snapshot_is_not_a_clash() -> None:
         return g.decouple_node(coords=(0.5, 0.5, 2.0), label="work_pt")
     g, _fem, h = _box(decl)
     try:
+        g.mesh.queries.get_fem_data()        # the default call caches g._fem
+        assert g._fem is not None and "work_pt" in g._fem.nodes.labels
         g.constraints.kinematic_coupling("work_pt", "Top", name="rbe2")
         fem2 = g.mesh.queries.get_fem_data(dim=3)
         assert h.tag in {int(n) for n in fem2.nodes.decoupled_ids}
+    finally:
+        g.end()
+
+
+def test_decoupled_label_that_is_also_a_pg_still_clashes_after_a_snapshot() -> None:
+    """A decoupled label shared with a physical group stays ambiguous for
+    an RBE2 role whether or not a first snapshot was taken."""
+    def decl(g):
+        g.model.select(dim=2).on_plane(
+            (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), tol=1e-3,
+        ).to_physical("ground")
+        g.model.select(dim=2).on_plane(
+            (0.0, 0.0, 1.0), (0.0, 0.0, 1.0), tol=1e-3,
+        ).to_physical("Top")
+        return g.decouple_node(coords=(0.5, 0.5, 2.0), label="ground")
+    g, _fem, _h = _box(decl)
+    try:
+        g.mesh.queries.get_fem_data()
+        assert g._fem is not None
+        with pytest.raises(ValueError, match="names both a decoupled node"):
+            g.constraints.kinematic_coupling("ground", "Top", name="bad")
     finally:
         g.end()
 
