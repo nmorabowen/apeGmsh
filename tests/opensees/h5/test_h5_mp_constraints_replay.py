@@ -419,3 +419,72 @@ def test_refused_live_build_leaves_the_domain_untouched(tmp_path):
         assert [int(t) for t in ops.getNodeTags()] == [901]
     finally:
         ops.wipe()
+
+
+# ---------------------------------------------------------------------------
+# The match is a multiset on the written host: one row excuses one record
+# ---------------------------------------------------------------------------
+
+
+def _staged_and_global_embedded(tmp_path: Path) -> "tuple[str, Path]":
+    """Two ``embedded`` records on constrained node 4, hosts (1, 2, 3) and
+    (3, 1, 2); a stage claims the second (``s.embedded(name="st")``)."""
+    from tests.opensees.h5.test_h5_stages_writer import _chain
+
+    glob = InterpolationRecord(
+        kind="embedded", slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.2, 0.5, 0.3]), dofs=[1, 2, 3])
+    staged = InterpolationRecord(
+        kind="embedded", name="st", slave_node=4, master_nodes=[3, 1, 2],
+        weights=np.array([0.3, 0.2, 0.5]), dofs=[1, 2, 3])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = _bridge(_fem(partitioned=False,
+                           surface_constraints=[glob, staged]))
+        with ops.stage(name="s0") as st:
+            st.embedded(name="st")
+            st.analysis(**_chain(ops))
+            st.run(n_increments=1, dt=1.0)
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True)
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return deck.read_text(encoding="utf-8"), path
+
+
+def _embedded_lines(deck: str) -> "list[str]":
+    return [ln for ln in deck.splitlines()
+            if ln.split()[:2] == ["element", "ASDEmbeddedNodeElement"]]
+
+
+def test_stage_row_does_not_excuse_a_missing_global_row(tmp_path):
+    fwd, path = _staged_and_global_embedded(tmp_path)
+    assert len(_embedded_lines(fwd)) == 2
+    # With both rows, the replay writes both lines and warns of nothing.
+    assert sorted(_embedded_lines(_replay(path))) == sorted(
+        _embedded_lines(fwd))
+    # Without the global row (an archive the rows never reached), the
+    # stage's row on the same constrained node must not cover for it.
+    with h5py.File(path, "r+") as f:
+        del f["opensees/constraints/embeddedNode"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warnings.simplefilter("always", ReplaySkippedStreamWarning)
+        with pytest.warns(ReplaySkippedStreamWarning,
+                          match=r"fem\.elements\.constraints \(embedded: 1\)"):
+            deck = OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    assert len(_embedded_lines(deck)) == 1
+
+
+def test_one_row_excuses_one_of_two_equal_records():
+    # Two equal equalDOF records need two archived lines (a multiset).
+    from collections import Counter
+
+    from apeGmsh.opensees._internal.compose import _skipped_replay_streams
+
+    rec = _KINDS["equal_dof"]["node_constraints"][0]
+    fem = _fem(partitioned=False, node_constraints=[rec, rec])
+    row = ("equal_dof", 2, 4, (1, 2, 3))
+    assert _skipped_replay_streams(fem, stage_mp_keys=Counter({row: 2})) == {}
+    assert _skipped_replay_streams(fem, stage_mp_keys=Counter({row: 1})) == {
+        "fem.nodes.constraints": Counter({"equal_dof": 1})}

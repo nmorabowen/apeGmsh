@@ -452,8 +452,9 @@ def _interpolation_replays_as_element(rec: Any, kind_cls: Any) -> bool:
     )
 
 
-def _stage_mp_keys(stages: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
-    """The keys of every MP line the stage blocks of ``stages`` re-emit.
+def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
+    """The keys of every MP line the stage blocks of ``stages`` re-emit,
+    counted: a multiset, so N equal records need N lines.
 
     A key is ``(bucket, *what it ties)`` over the four ``StageRecordRO``
     MP buckets; :func:`_constraint_stage_keys` builds the matching side.
@@ -462,39 +463,42 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
     ``name=None`` (only its parent is named), and a ``rigid_body`` group
     writes its name on its first ``rigidLink`` only.
     """
-    keys: "set[tuple[Any, ...]]" = set()
+    keys: "Counter[tuple[Any, ...]]" = Counter()
     for s in stages:
-        keys |= _mp_row_keys((*s.equal_dofs, *s.rigid_links,
+        keys += _mp_row_keys((*s.equal_dofs, *s.rigid_links,
                               *s.rigid_diaphragms, *s.embedded_nodes))
-    return frozenset(keys)
+    return keys
 
 
-def _mp_row_keys(rows: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
+def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     """The keys of archived MP rows (``EqualDOFRecord`` /
     ``RigidLinkRecord`` / ``RigidDiaphragmRecord`` /
-    ``EmbeddedNodeRecord``), shaped as :func:`_constraint_stage_keys`
-    builds them for the FEMData side. An unknown row type raises."""
+    ``EmbeddedNodeRecord``), counted, shaped as
+    :func:`_constraint_stage_keys` / :func:`_interpolation_stage_keys`
+    build them for the FEMData side. An unknown row type raises."""
     from .typed_records import (
         EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
         RigidLinkRecord,
     )
 
-    keys: "set[tuple[Any, ...]]" = set()
+    keys: "Counter[tuple[Any, ...]]" = Counter()
     for r in rows:
         if isinstance(r, EqualDOFRecord):
-            keys.add(("equal_dof", int(r.master), int(r.slave),
-                      tuple(int(d) for d in r.dofs)))
+            keys[("equal_dof", int(r.master), int(r.slave),
+                  tuple(int(d) for d in r.dofs))] += 1
         elif isinstance(r, RigidLinkRecord):
-            keys.add(("rigid_link", str(r.kind), int(r.master), int(r.slave)))
+            keys[("rigid_link", str(r.kind), int(r.master),
+                  int(r.slave))] += 1
         elif isinstance(r, RigidDiaphragmRecord):
-            keys.add(("rigid_diaphragm", int(r.master),
-                      tuple(sorted(int(n) for n in r.slaves))))
+            keys[("rigid_diaphragm", int(r.master),
+                  tuple(sorted(int(n) for n in r.slaves)))] += 1
         elif isinstance(r, EmbeddedNodeRecord):
-            keys.add(("embedded_node", int(r.cnode)))
+            keys[("embedded_node", int(r.cnode),
+                  tuple(int(n) for n in r.args))] += 1
         else:
             raise TypeError(
                 f"replay: {type(r).__name__} is no MP-constraint row.")
-    return frozenset(keys)
+    return keys
 
 
 def _emit_mp_row(emitter: Any, r: Any) -> None:
@@ -572,17 +576,19 @@ def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
     """Stage-bucket key of one non-element interpolation row: its
     ``embeddedNode`` line (none on the equation route, a ledger verb).
 
-    The key is the constrained node alone. The forward emit writes the
-    host corners that carry weight, so a quad host projected onto one of
-    its triangles goes out with three of the record's four master nodes;
-    the archived row is that line, and a constrained node takes one."""
+    The key carries the retained nodes the forward emit writes
+    (``_embedded_retained_nodes``): a quad tie goes out on the triangle of
+    its face that holds the point, three of the record's four corners."""
+    from .build.constraints import _embedded_retained_nodes
+
     if rec.enforce == "equation":
         return []
-    return [("embedded_node", int(rec.slave_node))]
+    return [("embedded_node", int(rec.slave_node),
+             tuple(int(n) for n in _embedded_retained_nodes(rec)))]
 
 
 def _skipped_replay_streams(
-    fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
+    fem: Any, *, stage_mp_keys: "Counter[tuple[Any, ...]] | frozenset[tuple[Any, ...]]",
 ) -> "dict[str, Counter[str]]":
     """Return ``{stream: Counter(kind -> count)}`` for every non-empty
     neutral-zone stream that :func:`_replay_into` does not re-emit.
@@ -591,15 +597,23 @@ def _skipped_replay_streams(
     staged archive's stage blocks re-emit.  A record counts as replayed
     there only when every line its fan-out writes is among them, matched
     on bucket and nodes, so a stage that claims the equalDOF named ``x``
-    does not also excuse a rigidDiaphragm named ``x``.
+    does not also excuse a rigidDiaphragm named ``x``. The keys are a
+    multiset: a matched record consumes its lines, so two equal records
+    need two lines, and one line never excuses a second record.
 
     The streams are read without defaults: a ``fem`` that lacks one fails
     here rather than passing for empty.
     """
     out: "dict[str, Counter[str]]" = {}
 
+    available: "Counter[tuple[Any, ...]]" = Counter(stage_mp_keys)
+
     def _staged(keys: "list[tuple[Any, ...]]") -> bool:
-        return bool(keys) and all(k in stage_mp_keys for k in keys)
+        need = Counter(keys)
+        if not need or any(available[k] < n for k, n in need.items()):
+            return False
+        available.subtract(need)
+        return True
 
     node_set = fem.nodes.constraints
     kind_cls = node_set.Kind
@@ -691,7 +705,7 @@ def refuse_unreplayable_streams(fem: Any) -> None:
 
 
 def _warn_skipped_replay_streams(
-    fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
+    fem: Any, *, stage_mp_keys: "Counter[tuple[Any, ...]] | frozenset[tuple[Any, ...]]",
 ) -> None:
     """Warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a
     stream that replay does not re-emit, naming each stream and count."""
@@ -1264,7 +1278,7 @@ def _replay_into(
     reinforce_name_to_tag: "dict[str, int] | None" = None,
     embedded_rebars: "Sequence[Any]" = (),
     deck_ordering: bool = True,
-    stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
+    stage_mp_keys: "Counter[tuple[Any, ...]] | frozenset[tuple[Any, ...]]" = frozenset(),
     commands: "Sequence[Any]" = (),
     equation_constraints: "Sequence[Any]" = (),
     mp_constraints: "Sequence[tuple[int | None, Any]]" = (),
@@ -1422,7 +1436,7 @@ def _replay_into(
     if fem is not None:
         # A record whose every line is an archived global row replays.
         _warn_skipped_replay_streams(
-            fem, stage_mp_keys=stage_mp_keys | _mp_row_keys(
+            fem, stage_mp_keys=Counter(stage_mp_keys) + _mp_row_keys(
                 tuple(row for _i, row in mp_constraints)))
 
     # Every step below appends ``(emit index | None, kind, thunk)`` units;
