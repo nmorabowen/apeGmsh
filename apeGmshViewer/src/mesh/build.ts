@@ -10,9 +10,13 @@
 //
 // No Map or Set here is sized by the node or element count (#2359): V8 caps
 // both at 2^24 entries. Ids resolve through `IdLookup` (sorted typed arrays),
-// and the solid-face and outline-edge deduplication sorts typed arrays.
+// and the solid-face and outline-edge deduplication sorts typed arrays. The
+// plain number[] buffers hold at most 2^27 entries: past TRIANGLE_LIMIT
+// triangles or EDGE_LIMIT outline edges the build is refused by name before
+// that buffer is filled (reader/ceiling.ts, #2362 ruling).
 
 import type { ElementRef } from "../chain/resolve.ts";
+import { assertWithinCeiling, EDGE_LIMIT, TRIANGLE_LIMIT } from "../reader/ceiling.ts";
 import type { ModelFile } from "../model/types.ts";
 
 type Shape = "point" | "line" | "tri" | "quad" | "tet" | "hex" | "prism" | "pyramid";
@@ -346,7 +350,19 @@ function distinctCount(values: Float64Array): number {
   return u;
 }
 
-export function buildMesh(model: ModelFile): MeshBuffers {
+/** The buffer ceilings buildMesh refuses past (reader/ceiling.ts); a test passes smaller ones. */
+export interface MeshLimits {
+  triangles: number;
+  edges: number;
+}
+export const MESH_LIMITS: Readonly<MeshLimits> = { triangles: TRIANGLE_LIMIT, edges: EDGE_LIMIT };
+
+/**
+ * The model's render buffers. A mesh with more triangles, or more outline edges,
+ * than a plain number[] holds (TRIANGLE_LIMIT, EDGE_LIMIT) is refused with a named
+ * CeilingError before that buffer is filled (#2373).
+ */
+export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_LIMITS): MeshBuffers {
   const warnings: string[] = [];
   // A node id listed twice resolves to its last row, as the Map this replaced did.
   const nodeIndex = IdLookup.of(model.nodeIds, (i) => i, "last");
@@ -385,14 +401,16 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     ln.push(model.nodeIds[a]!, model.nodeIds[b]!);
     lr.push(ref);
   };
+  // Every drawn face, in drawing order, and the cell it belongs to. Faces are
+  // triangulated only once all are known, so the triangle count is checked
+  // against the ceiling before a triangle buffer is filled (#2373).
   const polygons: number[][] = [];
+  const polygonRefs: ElementRef[] = [];
+  let nTriangles = 0;
   const pushFace = (ids: number[], ref: ElementRef) => {
     polygons.push(ids);
-    for (let k = 1; k + 1 < ids.length; k++) {
-      push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
-      tn.push(model.nodeIds[ids[0]!]!, model.nodeIds[ids[k]!]!, model.nodeIds[ids[k + 1]!]!);
-      tr.push(ref);
-    }
+    polygonRefs.push(ref);
+    nTriangles += Math.max(0, ids.length - 2);
   };
 
   // Solid boundary faces: a face seen once is on the boundary. Each solid
@@ -450,6 +468,14 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     for (let k = 0; k < 4; k++) if (faceCorners.data[4 * f + k]! >= 0) ids.push(faceCorners.data[4 * f + k]!);
     pushFace(ids, solidRefs[faceSolid.data[f]!]!);
   }
+  assertWithinCeiling(model.path, "the mesh", "triangles", nTriangles, limits.triangles);
+  polygons.forEach((ids, p) => {
+    for (let k = 1; k + 1 < ids.length; k++) {
+      push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
+      tn.push(model.nodeIds[ids[0]!]!, model.nodeIds[ids[k]!]!, model.nodeIds[ids[k + 1]!]!);
+      tr.push(polygonRefs[p]!);
+    }
+  });
 
   // OpenSees-only elements (no neutral-zone cell): drawn from inline connectivity.
   model.opensees?.elementMeta.forEach((meta, metaIndex) => {
@@ -479,6 +505,9 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     }
   }
   const firstSeen = firstOfEach(edgeLo.data, edgeHi.data, edgeLo.length);
+  let nEdges = 0;
+  for (let i = 0; i < edgeLo.length; i++) if (firstSeen[i]) nEdges++;
+  assertWithinCeiling(model.path, "the mesh", "outline edges", nEdges, limits.edges);
   const ep: number[] = [], en: number[] = [];
   let e = 0;
   for (const poly of polygons) {

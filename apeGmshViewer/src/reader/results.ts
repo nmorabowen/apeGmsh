@@ -32,7 +32,10 @@
 // caps a Map at 2^24 entries, so a stage of more nodes threw an unnamed
 // RangeError on its first node-history read. No Map or Set here is sized by the
 // node or element count; the ones left hold fixed vocabularies, stage paths or
-// class tags.
+// class tags. A stage past the supported scale (reader/ceiling.ts, #2362: more
+// than 2^24 `_ids`, or more than 2^24 elements in its gauss or its line-station
+// groups) is refused at open by name, from the dataset shapes, before any row is
+// read.
 //
 // One partition only: every writer in src/ writes `partition_0`; a file with
 // several is refused ("unsupported"), not merged (the doc's union rule is a
@@ -46,6 +49,7 @@ import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 import { openH5, type H5FS } from "./h5open.ts";
 import { gmshSimplexRows } from "./legacySimplex.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
+import { assertWithinCeiling, datasetRows, nativeStageElements } from "./ceiling.ts";
 import { nodeColumnLookup } from "./ladrunoNodal.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
@@ -683,7 +687,7 @@ export class ResultsFile {
     const lineStations: LineStationGroupInfo[] = [];
     const unread: string[] = [];
     for (const child of pg.keys()) {
-      if (child === "nodes") nodes = this.readNodes(this.group(pg, "nodes"), T);
+      if (child === "nodes") nodes = this.readNodes(this.group(pg, "nodes"), T, `stage "${name}"`);
       else if (child === "elements") {
         const eg = this.group(pg, "elements");
         for (const cat of eg.keys()) {
@@ -697,6 +701,8 @@ export class ResultsFile {
         }
       } else throw new ResultsError("layout", `${pg.path}/${child}: not a partition child this reader knows`);
     }
+    // The element groups are indexed from their shapes (no row read yet): past 2^24 the file is refused here (#2362).
+    assertWithinCeiling(this.path, `stage "${name}"`, "elements", nativeStageElements(gauss, lineStations));
     return {
       id,
       name,
@@ -711,7 +717,7 @@ export class ResultsFile {
     };
   }
 
-  private readNodes(g: RGroup, T: number): NodalInfo {
+  private readNodes(g: RGroup, T: number, stage: string): NodalInfo {
     // A node listed twice is refused at open, by name (#2358): readNodalStep would
     // return both columns, a contour keep the first and a history the other. This
     // reader reads exactly one partition (readStage refuses a stage with several), so
@@ -719,6 +725,8 @@ export class ResultsFile {
     // in Python. Boundary nodes copied across partitions, which Python's native
     // reader dedups first-wins, never reach this reader.
     const idDs = this.dataset(g, "_ids");
+    // The supported scale (reader/ceiling.ts, #2362), from the shape, before `_ids` is read.
+    assertWithinCeiling(this.path, stage, "nodes", datasetRows(idDs.shape));
     const ids = uniqueNodeIds(intsAsNumbers(idDs), this.path, idDs.path, (m) => new ResultsError("layout", m), NATIVE_NODE_ONCE);
     const components: string[] = [];
     const refused: { component: string; reason: string }[] = [];

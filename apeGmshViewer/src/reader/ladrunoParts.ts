@@ -35,10 +35,14 @@
 // - each element lives on one rank (#2316): an element id that the Gauss buckets of
 //   one result hold in two part files refuses the set, naming both parts. Each part
 //   already refused an id twice in one of its tokens at its own open
-//   (reader/ladrunoElements.ts). A node in two parts is legal (an interface node).
+//   (reader/ladrunoElements.ts). A node in two parts is legal (an interface node);
+// - the supported scale (reader/ceiling.ts, #2362) counts a stage's nodes across the
+//   parts: the union index, an interface node once. Past 2^24 the set is refused at
+//   open, by name, before the stitch maps are built.
 //
 // Browser-safe: no Node import. The directory listing is the caller's (`list`).
 
+import { assertWithinCeiling } from "./ceiling.ts";
 import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
 import type { ElementIndexVerdict } from "./ladrunoElements.ts";
 import { rowOf, sortedUniqueIds } from "./ladrunoLocalAxes.ts";
@@ -138,7 +142,7 @@ export class LadrunoPartSet {
     parts.forEach((p, j) => warnings.push(...p.index.warnings.map((w) => `${this.names[j]}: ${w}`)));
     this.checkStages();
     this.checkElementIds(stem);
-    const stages = p0.stages.map((s) => this.stitchStage(s.id));
+    const stages = p0.stages.map((s) => this.stitchStage(s.id, path));
     const { lineage, reason } = this.lineage();
     const units = parts.every((p) => p.index.units === p0.units) ? p0.units : null;
     if (units === null && parts.some((p) => p.index.units !== null)) {
@@ -378,7 +382,7 @@ export class LadrunoPartSet {
   }
 
   /** The set's stage `id`: the union node index, and each component the parts stitch. */
-  private stitchStage(id: string): StageInfo {
+  private stitchStage(id: string, path: string): StageInfo {
     const per = this.parts.map((p) => p.stage(id));
     const r = per[0]!;
     const unread = [...new Set(per.flatMap((s) => s.unread))];
@@ -416,6 +420,7 @@ export class LadrunoPartSet {
     // The union is a sorted typed array searched by rowOf, never a Set or Map of node ids:
     // V8 caps those at 2^24 entries, and a set of more nodes would throw an unnamed RangeError (#2354).
     const union = sortedUniqueIds(concatNodeIds(per));
+    assertWithinCeiling(path, `stage "${r.name}" (the union of ${per.length} parts)`, "nodes", union.length);
     const pos = per.map((s) => Int32Array.from(s.nodes?.ids ?? [], (n) => rowOf(union, n)));
     // The copy NONE keeps: the lowest part holding the node, and in it the node's last row
     // (what writing the parts last to first, rows in order, leaves; a repeated id is not refused here).

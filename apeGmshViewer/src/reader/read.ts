@@ -6,7 +6,10 @@
 //   opened is a broken file and raises;
 // - a required child that is missing raises;
 // - anything the reader does not recognise is a loud warning in
-//   `ModelFile.warnings`, never a silent skip.
+//   `ModelFile.warnings`, never a silent skip;
+// - a model past the supported scale (more than 2^24 nodes, or 2^24 elements
+//   over its /elements blocks; reader/ceiling.ts, #2362) is refused by name,
+//   from the dataset shapes, before any row is read.
 
 import type {
   AnalysisDef,
@@ -35,6 +38,7 @@ import type {
 } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 import { openH5, type H5FS } from "./h5open.ts";
+import { assertWithinCeiling, datasetRows } from "./ceiling.ts";
 
 /** The parts of the h5wasm module this reader uses. */
 export interface H5Module {
@@ -252,8 +256,11 @@ class Reader {
       ZONE_FLOOR.neutral,
     );
 
+    // The supported scale (reader/ceiling.ts, #2362), from the shapes, before a row is read.
     const nodes = this.group(root, "nodes");
-    const nodeIds = numbers(this.dataset(nodes, "ids"));
+    const idsDs = this.dataset(nodes, "ids");
+    assertWithinCeiling(path, "the model", "nodes", datasetRows(idsDs.shape));
+    const nodeIds = numbers(idsDs);
     const nodeCoords = numbers(this.dataset(nodes, "coords"));
     if (nodeCoords.length !== nodeIds.length * 3) {
       throw new SchemaError(
@@ -264,9 +271,10 @@ class Reader {
     const blocks: ElementBlock[] = [];
     if (has(root, "elements")) {
       const elements = this.group(root, "elements");
-      for (const alias of elements.keys()) {
-        blocks.push(this.readBlock(this.group(elements, alias), alias));
-      }
+      const groups = elements.keys().map((alias) => [alias, this.group(elements, alias)] as const);
+      const nElements = groups.reduce((n, [, g]) => n + datasetRows(this.dataset(g, "ids").shape), 0);
+      assertWithinCeiling(path, "the model", "elements", nElements);
+      for (const [alias, g] of groups) blocks.push(this.readBlock(g, alias));
     }
 
     const physicalGroups = has(root, "physical_groups")
