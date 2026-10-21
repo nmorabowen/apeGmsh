@@ -8,6 +8,7 @@ is the outcrop record delayed by the travel time.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -101,8 +102,10 @@ def test_matched_half_space_surface_is_the_delayed_outcrop(
     ops.numberer.RCM()
     ops.system.UmfPack()
     ops.analysis.Transient()
-    assert ops.analyze(steps=N_STEPS, dt=DT) == 0
-    ops.wipe()
+    # A subprocess: on stock openseespy equationConstraint rows survive
+    # wipe(), so an in-process run would poison every later live model.
+    ops.py(str(tmp_path / "deck.py"), run=True, analyze_steps=N_STEPS,
+           analyze_dt=DT, python=sys.executable)
 
     rec = np.loadtxt(out)
     t_out, v_top = rec[:, 0], rec[:, 1]
