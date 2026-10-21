@@ -1,17 +1,19 @@
 # E8 — Choosing a results strategy
 
-Every example so far recorded its run the same way: in-process **domain
-capture**, read back with `Results.from_native`. That's the right default,
-and the tutorials pick it on purpose so you reach an answer without a
-detour. But it isn't the only way OpenSees can hand you results, and sooner
-or later you'll have a reason to choose differently — a colleague wants the
+Every example so far recorded its run the same way: in-process, on the
+**default route**, `spec.emit_default(...)`, read back with `run.results()`.
+That's the right default, and the tutorials pick it on purpose so you reach
+an answer without a detour. It already chooses for you: the Ladruno fork
+records its own `.ladruno` file, a stock build with the MPCO recorder writes
+`.mpco`, and pip openseespy writes classic `.out` recorder files. But sooner
+or later you'll have a reason to choose yourself — a colleague wants the
 output in **STKO**, or you're driving a workflow built around classic
 `.out` **recorder files**.
 
 Here's the reassuring part, and the whole point of this page: **the way you
 *read* results never changes.** `results.nodes.get(pg="RoofL",
 component="displacement_x")` is the same call whether the numbers came from
-a native capture, an MPCO file, or a stack of recorder `.out` files. You
+a `.ladruno` file, an MPCO file, or a stack of recorder `.out` files. You
 pick a *recording* strategy; the *reading* code is identical. We'll prove it
 by solving one model — the [portal frame](portal-frame.md) from E1 — two
 different ways and watching the answers land on the same number to the last
@@ -21,17 +23,20 @@ digit.
 
 "Results strategy" is really **two independent choices**:
 
-| | `from_native` (capture) | `from_recorders` (classic) | `from_mpco` (STKO) |
+| | `from_ladruno` (the fork) | `from_recorders` (classic) | `from_mpco` (STKO) |
 |---|---|---|---|
-| **Run in-process** (`ops.analyze`) | ← the default | ✓ | ✓ |
+| **Run in-process** (`opspy.analyze`) | ✓ | ✓ | ✓ |
 | **Export a deck** (`ops.tcl` / `ops.py`) | ✓ | ✓ | ✓ |
+
+`emit_default` picks one cell of the in-process row for you, from the build
+it finds; `run.route` names the one it picked.
 
 - **How you run** — solve *in-process* through openseespy (what every
   example here does), or **export a runnable deck** (`ops.tcl("m.tcl")` /
   `ops.py("m.py")`) and run it elsewhere.
-- **How you record** — *domain capture* (→ `from_native`), classic
-  *recorders* writing `.out` files (→ `from_recorders`), or an *MPCO*
-  recorder for STKO (→ `from_mpco`).
+- **How you record** — the fork's own *Ladruno* recorder (→
+  `from_ladruno`), classic *recorders* writing `.out` files (→
+  `from_recorders`), or an *MPCO* recorder for STKO (→ `from_mpco`).
 
 The read side is the same across the whole grid. This example holds the
 *run* axis fixed (in-process) and varies the *record* axis, so you can see
@@ -55,8 +60,10 @@ import os, tempfile
 import numpy as np
 from apeGmsh import apeGmsh, Results
 from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
-import openseespy.opensees as opspy
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
+
+opspy = get_ops()                      # the OpenSees module the bridge drives
 
 # --- Portal data (consistent SI: m, N, Pa) — same model as Example E1 ---
 H, B, E = 5.0, 5.0, 200e9
@@ -96,17 +103,24 @@ def read_drift(results):
     dr = results.nodes.get(pg="RoofR", component="displacement_x")
     return 0.5 * (float(dl.values[-1, 0]) + float(dr.values[-1, 0]))
 
-# --- Strategy 1: in-process domain capture -> Results.from_native ---
-native = os.path.join(work, "run.h5")
+# --- Strategy 1: the default route -> run.results() ---
+default_h5 = os.path.join(work, "default_model.h5")
 ops = configure()
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="RoofL", components=["displacement"]); spec.nodes(pg="RoofR", components=["displacement"])
-with ops.domain_capture(spec, path=native) as cap:
-    cap.begin_stage("lateral", kind="static"); ops.analyze(steps=1); cap.step(t=1.0); cap.end_stage()
-with Results.from_native(native, model=OpenSeesModel.from_h5(native, fem_root="/model")) as r:
-    drift_native = read_drift(r)
+ops.h5(default_h5)
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="roof", components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None, node_ids=fem.nodes.select(pg=["RoofL", "RoofR"]).ids,
+    ),),
+)
+ops.run(wipe=False)
+with spec.emit_default(os.path.join(work, "default_run"), model_h5=default_h5) as run:
+    opspy.analyze(1)
+with run.results() as r:
+    drift_default = read_drift(r)
 
-opspy.wipe()   # clear the capture run before recording the MPCO run
+opspy.wipe()   # clear the first run before recording the MPCO run
 
 # --- Strategy 2: MPCO recorder (STKO) -> Results.from_mpco ---
 mpco = os.path.join(work, "run")              # OpenSees appends ".mpco"
@@ -118,22 +132,27 @@ ops.run(wipe=False); opspy.analyze(1); opspy.wipe()   # wipe flushes the .mpco
 with Results.from_mpco(mpco + ".mpco", fem=fem, model_h5=model_h5) as r:
     drift_mpco = read_drift(r)
 
-print(f"from_native  drift = {drift_native*1e3:.4f} mm")
+print(f"emit_default drift = {drift_default*1e3:.4f} mm")
 print(f"from_mpco    drift = {drift_mpco*1e3:.4f} mm")
-print(f"agree to     {abs(drift_native-drift_mpco)*1e3:.2e} mm")
+print(f"agree to     {abs(drift_default-drift_mpco)*1e3:.2e} mm")
 ```
 
 Run it. You should see:
 
 ```
-from_native  drift = 8.3883 mm
+emit_default drift = 8.3883 mm
 from_mpco    drift = 8.3883 mm
 agree to     0.00e+00 mm
 ```
 
+That run is on the Ladruno fork, where the default route wrote a `.ladruno`.
+Strategy 2 needs an OpenSees with the MPCO recorder (the fork, or STKO's
+bundled Python); pip openseespy has none, and `ops.run` stops at the
+`recorder mpco` line.
+
 **Identical — to the last digit, zero difference.** The portal swayed
 8.3883 mm (exactly the E1 answer), and it didn't matter whether we read it
-out of a native capture file or an MPCO file. `read_drift` never knew the
+out of the fork's `.ladruno` file or an MPCO file. `read_drift` never knew the
 difference: it called `results.nodes.get(pg="RoofL", ...)` both times.
 
 ## What actually changed
@@ -143,11 +162,10 @@ difference: it called `results.nodes.get(pg="RoofL", ...)` both times.
 
 Look at what differs between the two strategies — it's *only* the recording:
 
-**Native capture** declares a `DomainCaptureSpec`, opens an
-`ops.domain_capture(...)` block around the solve, and reads with
-`Results.from_native(path, model=OpenSeesModel.from_h5(path, fem_root="/model"))`.
-The model lives in the same file (the Composed-file pattern), and `model=`
-is required so the broker can turn `"RoofL"` back into a node.
+**The default route** declares a `ResolvedRecorderSpec`, writes the model
+archive with `ops.h5(...)`, opens a `spec.emit_default(...)` block around
+the solve, and reads with `run.results()`. The run is paired with the
+archive, so the broker can turn `"RoofL"` back into a node.
 
 **MPCO** declares `ops.recorder.MPCO(file=..., nodal_responses=("displacement",))`,
 writes a sibling structural model with `ops.h5(...)`, runs the analysis, and
@@ -191,16 +209,16 @@ the [read displacement & reactions](../how-to/read-results.md) how-to.
 ## What you just learned
 
 - **Recording and reading are independent.** You choose *how the run is
-  recorded* (native capture / MPCO / classic recorders) separately from *how
+  recorded* (the fork's `.ladruno` / MPCO / classic recorders) separately from *how
   you read it back* — and the read API (`results.nodes.get(pg=...,
   component=...)`) is identical across all three.
-- **The default is `from_native`** (in-process domain capture) — fewest
-  moving parts, broadest coverage, one Composed file.
+- **The default is `emit_default`** (in-process, the recorder your build
+  has) — fewest moving parts, and the same script on every build.
 - **`from_mpco`** gives you STKO-compatible output; it needs a sibling
   `model.h5` (`ops.h5`) + `fem=` to resolve names, and a local-disk path.
 - **`from_recorders`** reads classic `.out` files — the path for consuming
   decks run elsewhere.
-- **Proof, not promise:** native and MPCO read the *same* portal drift,
+- **Proof, not promise:** the default route and MPCO read the *same* portal drift,
   8.3883 mm, to a difference of exactly zero.
 
 ## Where next

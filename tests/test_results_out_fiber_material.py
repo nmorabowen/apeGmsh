@@ -160,7 +160,7 @@ def test_fibres_emit_fiberdata2_and_its_integration_points_pair() -> None:
 @pytest.mark.parametrize("rec, match", [
     (_fibres([1], cls=None), "names element class None"),
     (_fibres([1], cls="ElasticBeam3d"), "'ElasticBeam3d'"),
-    (_fibres([1], comps=("fiber_stress", "stress_xx")), "'stress_xx'"),
+    (_fibres([1], comps=("fiber_stress", "damage")), "'damage'"),
     (_fibres([1], comps=()), "not fibre responses"),
 ])
 def test_fibre_record_refuses_what_it_cannot_read_back(
@@ -168,6 +168,14 @@ def test_fibre_record_refuses_what_it_cannot_read_back(
 ) -> None:
     with pytest.raises(ValueError, match=match):
         emit_logical(rec)
+
+
+def test_fibre_record_refuses_another_categorys_component_when_built() -> None:
+    """``stress_xx`` is a gauss component: a fibres record of it refuses by
+    name at construction, before any emit (#2344)."""
+    with pytest.raises(ValueError, match=r"'stress_xx' belongs to category "
+                                         r"'gauss', not 'fibers'"):
+        _fibres([1], comps=("fiber_stress", "stress_xx"))
 
 
 @pytest.mark.parametrize("cls, n_gp", [("Brick", 8), ("FourNodeQuad", 4)])

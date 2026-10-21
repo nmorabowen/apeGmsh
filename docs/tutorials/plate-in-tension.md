@@ -64,9 +64,10 @@ load. We walk through each block right after.
 
 ```python
 import numpy as np
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (consistent SI: m, N, Pa) ---
 L     = 1.0       # plate side          [m]
@@ -141,18 +142,24 @@ ops.algorithm.Linear()
 ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
 
-# --- 3. Solve, capturing the nodal displacement field ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Right", components=["displacement"])
-spec.nodes(pg="Plate", components=["displacement"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("tension", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+# --- 3. Solve, recording the nodal displacement field ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="plate",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None,
+        node_ids=fem.nodes.select(pg="Plate").ids,
+    ),),
+)
+ops.h5("model.h5")
+ops.run()
+opspy = get_ops()
+with spec.emit_default("run", model_h5="model.h5") as run:
+    opspy.analyze(1)
 
 # --- 4. Read the field back by physical-group NAME ---
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 ux = results.nodes.get(pg="Right", component="displacement_x").values[-1, :]
 
 u_fem = float(ux.mean())
@@ -337,35 +344,43 @@ The remaining lines are the standard analysis chain, same recipe as the
 cantilever (`Linear` algorithm, `Static` analysis) — one linear step solves an
 elastic problem exactly.
 
-## Step 3 — Solve and capture the field
+## Step 3 — Solve and record the field
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Right", components=["displacement"])
-spec.nodes(pg="Plate", components=["displacement"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("tension", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="plate",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None,
+        node_ids=fem.nodes.select(pg="Plate").ids,
+    ),),
+)
+ops.h5("model.h5")
+ops.run()
+opspy = get_ops()
+with spec.emit_default("run", model_h5="model.h5") as run:
+    opspy.analyze(1)
 ```
 
-Same capture machinery as the cantilever, but now we record the displacement of
-a *whole surface* — every node in `"Plate"` — not just one tip. That's what lets
-us contour the field in a moment. The `"Right"` capture is the readout for our
-number check. `ops.analyze(steps=1)` runs the one static step in-process, and
-when the block exits `run.h5` holds the field plus a copy of the model.
+Same recording machinery as the cantilever, but now we record the displacement
+of a *whole surface*, every node in `"Plate"`, not just one tip. That's what
+lets us contour the field in a moment. The `"Right"` edge needs no record of
+its own: its nodes are part of `"Plate"`, and the read picks them out by name.
+`ops.run()` builds the domain, `opspy.analyze(1)` runs the one static step
+in-process, and `emit_default` records it on the route your OpenSees build
+supports.
 
 ## Step 4 — Read the field back, by name
 
 ```python
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 ux = results.nodes.get(pg="Right", component="displacement_x").values[-1, :]
 u_fem = float(ux.mean())
 ```
 
-Exactly the read path from the cantilever — `Results.from_native(...)` with the
-**required** `model=` broker — only now the component is `displacement_x` (the
+Exactly the read path from the cantilever, `run.results()`, only now the
+component is `displacement_x` (the
 direction we pulled) and we ask for the whole `"Right"` edge at once. The slab's
 `.values[-1, :]` is the last step, all right-edge nodes. They all come back at
 **5.000 µm** — the field is uniform along the edge, just as a constant-stress
