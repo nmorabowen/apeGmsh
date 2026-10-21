@@ -261,3 +261,74 @@ harvesting.
 3. Should `s.analysis` accept `strategy=` directly (chain-adjacent)
    instead of / in addition to `s.run`? Leaning `s.run` (it owns the
    loop).
+
+## Amendment 1 (2026-10-21) — the transient `Subdivide` rung (#2403)
+
+**Status:** Proposed. The maintainer ruled the direction on 2026-10-21
+(option (a) in #2403, relayed by T), and ratifies this text before any
+code.
+
+**Context.** Open question 2 left transient analyses out of v1. A staged
+transient deck cannot cut its time step on a failed increment: the ladder
+carries algorithm rungs, and `Substep` is a load-stage dλ policy that
+decks refuse (ADR 0104 D6). A 1-D site-response column, a 12 000-step
+shaking stage of multi-yield soil, aborts at step 1793 when every
+algorithm rung fails. The same model converges when the failed step is
+retried in pieces, as its original openseespy driver did
+(`analyze(4, dt/4)`, then `analyze(16, dt/16)`). With that retry the
+bridge model reproduces the original amplification to 1e-5 (measured on
+the YOO Guayaquil column, base760_nsmesh, 2475 y).
+
+**Decision.**
+
+1. **A new rung, `ops.strategy.Subdivide(n)`** (an integer `n >= 2`).
+   It is one entry in `Ladder(rungs=...)`, placed anywhere among the
+   algorithm rungs, and a ladder may hold several (`Subdivide(4)`,
+   `Subdivide(16)`).
+2. **Semantics: cover the rest of the failed increment in `n` equal
+   pieces.** When the loop reaches a `Subdivide(n)` rung, it re-issues
+   rung 0's algorithm and runs `analyze(1, h)` up to `n` times, where
+   `h = (t_target - getTime()) / n` and `t_target` is the time at which
+   the increment ends. A converged piece is committed. A failed piece
+   hands the *remaining* time to the next rung, which recomputes its own
+   `h` the same way. So the increment always ends exactly at
+   `t_target`: model time never drifts off the step grid, a recorder at
+   the stage's `dt` stays aligned, and a stage of `N` increments ends at
+   `N·dt`. A converged increment resets to rung 0, as in §2.
+3. **Scope: transient stages only.** A `Subdivide` rung in a static
+   (load or stress-injection) stage is refused when the stage closes;
+   `Substep` stays the static policy. A `Subdivide` rung in a ladder
+   attached to a flat live run (`ops.analyze(strategy=)`) is refused
+   until the live emitter learns the loop. `emitter/live.py` is
+   hub-locked, and a live runner that silently ignored the rung would
+   run a fixed-step solve.
+4. **Exhaustion stays fail-loud.** When every rung, `Subdivide` rungs
+   included, has failed, the stage aborts with the existing banner. No
+   rung skips a step or counts a failure and moves on. The original
+   driver did that, and it is the silent success §6 excludes.
+5. **Provenance (§5).** Each escalation to a `Subdivide` rung prints
+   the same one-line trace, with `n` and the number of pieces it
+   committed.
+6. **§6 is amended, not loosened.** Cutting the transient step changes
+   only the `dt` argument of `analyze`. The integrator's identity and
+   parameters, the test and its tolerance are untouched. Newmark-family
+   integrators commit a valid state at every converged piece, so a
+   subdivided increment is the same physics, integrated more finely.
+   No tolerance rung and no test swap are added.
+
+**Emission.** The py and tcl emitters gain the piece loop inside the
+existing #587 per-increment loop. `StrategySpec` encodes a `Subdivide`
+rung as a reserved non-algorithm tuple (`("__apegmsh_subdivide__", n)`):
+an emitter that does not know the tuple passes it to `ops.algorithm`,
+which fails loudly instead of silently running fixed-step.
+
+**Not changed.** No schema change: ladders are not archived (the H5
+stage writer drops `strategy`, `_h5_stages.py`). `model_hash` is
+unaffected. The `Substep` rung, the profiles and their orderings stay
+as they are; no profile gains a `Subdivide` rung.
+
+**Consequences.** A soil-dynamics deck declares, for example,
+`Ladder(rungs=(Newton(), Subdivide(4), Subdivide(16)))` on its shaking
+stage. A model that needs smaller steps throughout should still declare
+a smaller `dt`: the rung is a per-increment rescue, not a step-size
+policy.
