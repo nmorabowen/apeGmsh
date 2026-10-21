@@ -25,9 +25,11 @@ from apeGmsh import Results
 from apeGmsh.opensees import OpenSeesModel        # verified: tests/test_results_bind.py::test_lineage_propagates_from_model
 
 # Native apeGmsh HDF5 — model= is REQUIRED (Phase 8 / ADR 0020 INV-1).
-# Often the SAME path as the results file (Composed-file pattern).
-model = OpenSeesModel.from_h5("run.h5")
-results = Results.from_native("run.h5", model=model)
+# EigenResult.to_native writes one (modes); often the SAME path carries
+# the model too (Composed-file pattern). A recorded run is read with
+# run.results() / from_ladruno / from_mpco / from_recorders instead.
+model = OpenSeesModel.from_h5("modes.h5")
+results = Results.from_native("modes.h5", model=model)
 
 # STKO .mpco — model_h5= (sibling model archive) is REQUIRED.
 results = Results.from_mpco("run.mpco", model_h5="model.h5")

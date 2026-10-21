@@ -1,4 +1,4 @@
-"""Fork lane: frame-beam nodal forces on MPCO, DomainCapture and ``.out`` (#2072).
+"""Fork lane: frame-beam nodal forces on MPCO and ``.out`` (#2072).
 
 Before #2072 an MPCO read of ``nodal_resisting_*`` on a force-based beam
 returned an empty slab with no warning. The fork's MPCO recorder writes a
@@ -7,15 +7,15 @@ key (``74-ForceBeamColumn3d[1000:1:0]``, beside ``5-ElasticBeam3d[1:0:0]``)
 and the reader skipped every custom-rule bucket, then every class outside
 ``NODAL_FORCE_CATALOG``, which listed the elastic beams only.
 
-``NODAL_FORCE_CATALOG`` also gates DomainCapture and the ``.out``
-transcoder, so every frame-beam class it now lists is solved here once and
-read on all three routes:
+``NODAL_FORCE_CATALOG`` also gates the ``.out`` transcoder, so every
+frame-beam class it now lists is solved here once and read on both routes
+(an in-process capture route was the third until #2191 deleted it):
 
 * an L frame (a column up +Y, then a beam along +X, two elements each) of
   one class, fixed at the base, with a tip load on every DOF;
 * solved in two load steps through the bridge with sequential tags (FEM
-  ids are not OpenSees tags), recording MPCO, a DomainCapture and ``.out``
-  recorders in the same run.
+  ids are not OpenSees tags), recording MPCO and ``.out`` recorders in
+  the same run.
 
 The oracles: every row read back on every route equals
 ``eleResponse(tag, "globalForce" | "localForce")`` at ``rtol=1e-10``, in
@@ -37,7 +37,6 @@ from apeGmsh import apeGmsh
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
-from apeGmsh.results.capture.spec import DomainCaptureSpec
 
 pytestmark = pytest.mark.ladruno_fork
 
@@ -63,7 +62,7 @@ LOCAL = {
         "nodal_resisting_moment_local_y", "nodal_resisting_moment_local_z"),
 }
 FRAMES = {"globalForce": GLOBAL, "localForce": LOCAL}
-ROUTES = ("mpco", "capture", "out")
+ROUTES = ("mpco", "out")
 
 #: OpenSees class -> (bridge element token, ndm). One class per family the
 #: fork records, in 2-D and 3-D: every class #2072 adds to the catalog.
@@ -180,32 +179,23 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
     assert any(fem_to_ops[e] != e for e in eids)       # not vacuous
     assert {o.eleType(fem_to_ops[e]) for e in eids} == {cls}
 
-    cspec = DomainCaptureSpec(opensees=ops)
-    for kw, comps in FRAMES.items():
-        cspec.elements(pg="Frame", components=list(comps[ndm]),
-                       name=f"cap_{kw}")
     rspec = _recorder_spec(fem, eids, cls, ndm)
     model = OpenSeesModel.from_h5(model_h5)
-    cap_path = str(tmp / "capture.h5")
     out_dir = tmp / "out"
     base = int(ops.nodes.one(label="base").tag)
     live: dict[str, dict[int, list[np.ndarray]]] = {
         kw: {e: [] for e in eids} for kw in FRAMES}
     reaction: list[np.ndarray] = []
-    with ops.domain_capture(cspec, path=cap_path, ops=o) as cap, \
-            rspec.emit_recorders(str(out_dir), ops=o, model=model) as rec:
+    with rspec.emit_recorders(str(out_dir), ops=o, model=model) as rec:
         rec.begin_stage("s", kind="static")
-        cap.begin_stage("s", kind="static")
         for _ in LAMS:
             assert emitter.analyze(steps=1) == 0
-            cap.step(t=o.getTime())
             for kw in FRAMES:
                 for e in eids:
                     live[kw][e].append(np.asarray(
                         o.eleResponse(fem_to_ops[e], kw), dtype=float))
             o.reactions()
             reaction.append(np.asarray(o.nodeReaction(base), dtype=float))
-        cap.end_stage()
         rec.end_stage()
     o.remove("recorders")          # flush and close the MPCO file
 
@@ -213,7 +203,6 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
     root = [int(e) for grp in fem.elements
             for e, conn in zip(grp.ids, grp.connectivity) if base in conn]
     assert len(root) == 1, root
-    om = OpenSeesModel.from_h5(cap_path, fem_root="/model")
     return {
         "cls": cls, "ndm": ndm, "eids": eids, "root": root[0],
         "reaction": np.stack(reaction),
@@ -221,7 +210,6 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
                  for kw, per in live.items()},
         "results": {
             "mpco": Results.from_mpco(mpco, fem=fem, model_h5=model_h5),
-            "capture": Results.from_native(cap_path, model=om),
             "out": Results.from_recorders(rspec, out_dir, fem=fem,
                                           stage_id="s", model=model,
                                           cache_root=tmp / "cache"),

@@ -298,7 +298,6 @@ apeGmsh/opensees/apesees.py | BuiltModel._plan_partitioned_contacts | apeGmsh._k
 apeGmsh/opensees/apesees.py | _fem_has_handler_requiring_mp | apeGmsh._kernel.records._kinds
 apeGmsh/opensees/apesees.py | _records_have_equation_tie | apeGmsh._kernel.records._constraints
 apeGmsh/opensees/apesees.py | apeSees.__init__ | apeGmsh.units
-apeGmsh/opensees/apesees.py | apeSees.domain_capture | apeGmsh.results.capture._domain
 apeGmsh/opensees/apesees.py | apeSees.run_remote | apeGmsh.hpc
 apeGmsh/opensees/apesees.py | apeSees.run_remote | apeGmsh.hpc
 apeGmsh/opensees/apesees.py | apeSees.run_remote | apeGmsh.hpc
@@ -338,17 +337,6 @@ apeGmsh/results/_gauss_world_coords.py | _hex8_shape_functions | apeGmsh.fem._sh
 apeGmsh/results/_gauss_world_coords.py | _quad4_shape_functions | apeGmsh.fem._shape_functions
 apeGmsh/results/_gauss_world_coords.py | _world_via_basis | apeGmsh._basis
 apeGmsh/results/_open.py | open_results | apeGmsh.opensees
-apeGmsh/results/capture/_domain.py | DomainCapture.__enter__ | apeGmsh.opensees._target
-apeGmsh/results/capture/_domain.py | DomainCapture._lazy_ops | apeGmsh.opensees.emitter.live
-apeGmsh/results/capture/_domain.py | DomainCapture.from_h5 | apeGmsh.opensees.emitter
-apeGmsh/results/capture/_domain.py | _capture_pairing | apeGmsh.opensees.opensees_model
-apeGmsh/results/capture/spec.py | DomainCaptureSpec._lookup_class_hint_for_pgs | apeGmsh.opensees._element_capabilities
-apeGmsh/results/capture/spec.py | DomainCaptureSpec._lookup_sigma_zz_capable | apeGmsh.opensees._element_capabilities
-apeGmsh/results/capture/spec.py | DomainCaptureSpec._lookup_sigma_zz_capable | apeGmsh.opensees._internal.types
-apeGmsh/results/capture/spec.py | DomainCaptureSpec._resolve_layer_section_metadata | apeGmsh.opensees._internal.build.pg_expand
-apeGmsh/results/capture/spec.py | DomainCaptureSpec._resolve_layer_section_metadata | apeGmsh.opensees._internal.types
-apeGmsh/results/capture/spec.py | DomainCaptureSpec._resolve_layer_section_metadata | apeGmsh.opensees.section.plate
-apeGmsh/results/capture/spec.py | DomainCaptureSpec.shorthands_for | apeGmsh._vocabulary
 apeGmsh/results/demo.py | make_demo_results | apeGmsh.apeGmsh
 apeGmsh/results/demo.py | make_demo_results | apeGmsh.opensees
 apeGmsh/results/demo.py | make_demo_results | apeGmsh.opensees.section.fiber

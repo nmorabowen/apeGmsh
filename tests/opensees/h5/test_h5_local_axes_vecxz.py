@@ -37,10 +37,13 @@ def test_transf_arg_tail_index_vocabulary() -> None:
     assert "forceBeamColumn" in _FORCE_DISP_BEAMS
     assert "dispBeamColumn" in _FORCE_DISP_BEAMS
     assert "LadrunoDispBeamColumn" in _FORCE_DISP_BEAMS
+    assert "LadrunoForceBeamColumn" in _FORCE_DISP_BEAMS
     assert _transf_arg_tail_index("forceBeamColumn", 3, R) == 0
     assert _transf_arg_tail_index("dispBeamColumn", 2, R) == 0
     assert _transf_arg_tail_index("LadrunoDispBeamColumn", 3, R) == 0
     assert _transf_arg_tail_index("LadrunoDispBeamColumn", 2, R) == 0
+    assert _transf_arg_tail_index("LadrunoForceBeamColumn", 3, R) == 0
+    assert _transf_arg_tail_index("LadrunoForceBeamColumn", 2, R) == 0
 
     # elasticBeamColumn: slots_3d drops the leading "nodes" prefix, so
     # the tail index is slots.index("transfTag") - 1.

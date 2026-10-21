@@ -98,8 +98,8 @@ class WarnElementFilterUnread(UserWarning):
 class ElementTagTranslator:
     """Bidirectional ``fem_eid`` <-> ops-tag map for one result set.
 
-    ``to_ops`` / ``to_fem`` are all-or-nothing array maps (DomainCapture
-    uses them). Reader reads go through :meth:`read_translation`, which
+    ``to_ops`` / ``to_fem`` are all-or-nothing array maps. Reader reads
+    go through :meth:`read_translation`, which
     needs the result files' recorded ops tags, declared with
     :meth:`declare_recorded` (see the module docstring).
     """
@@ -134,7 +134,7 @@ class ElementTagTranslator:
         self._recorded: "Optional[ndarray]" = None
         self._described: "Optional[bool]" = None  # cache of describes_files
         # Sorted key/value arrays for the vectorised per-id maps, built
-        # on the first read (DomainCapture never needs them).
+        # on the first read.
         self._arrays: "Optional[tuple[ndarray, ...]]" = None
 
     @classmethod

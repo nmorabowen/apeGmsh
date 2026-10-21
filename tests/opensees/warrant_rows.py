@@ -57,6 +57,7 @@ class WarrantRow:
 
 _TET = "tests/opensees/live/test_tet10_volume_live.py::"
 _MEMBRANE = "tests/opensees/live/test_ladruno_membrane_live.py::"
+_FORCE_BEAM = "tests/opensees/live/test_ladruno_force_beam_column_live.py::"
 
 ROWS: tuple[WarrantRow, ...] = (
     # Refused exemplar. Stock TenNodeTetrahedron reads 1/6 of the true
@@ -84,6 +85,13 @@ ROWS: tuple[WarrantRow, ...] = (
         stock_test=_MEMBRANE + "test_live_emitter_refuses_ladruno_membrane_on_stock",
         fork_test=_MEMBRANE + "test_ladruno_membrane_distributes_pressure_to_supports_on_fork",
         roster="D10",
+    ),
+    WarrantRow(
+        member="LadrunoForceBeamColumn",
+        stock_state="refused",
+        stock_test=_FORCE_BEAM + "test_live_emitter_refuses_ladruno_force_beam_column_on_stock",
+        fork_test=_FORCE_BEAM + "test_ladruno_force_beam_column_cantilever_matches_closed_form_on_fork",
+        roster="D11",
     ),
 )
 

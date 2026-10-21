@@ -287,6 +287,18 @@ def test_partitioned_fan_out_regions_merge_per_tag(tmp_path: Path) -> None:
         _regions_zone(src)
 
 
+def test_partitioned_fan_out_stamp_names_mpco_and_mpi(tmp_path: Path) -> None:
+    """#2220/#2372: the fan-out model's deck carries ``recorder mpco`` (no
+    pip openseespy has it) and is rank-gated, so its stamp names both
+    value tokens, and a rewrite keeps them."""
+    src = _archive(_partitioned_staged_with_fan_out(), tmp_path)
+    stamp = OpenSeesModel.from_h5(str(src)).solve_stamp
+    assert stamp is not None and stamp.solve_mode == "partitioned"
+    assert stamp.requires == ("mpco", "mpi")
+    again = OpenSeesModel.from_h5(str(_rewrite(src, tmp_path / "rw.h5")))
+    assert again.solve_stamp == stamp
+
+
 def test_duplicate_tag_rows_not_node_form_raise(tmp_path: Path) -> None:
     src = _archive(_frame(rayleigh_on="Cols"), tmp_path)
     with h5py.File(str(src), "a") as f:
