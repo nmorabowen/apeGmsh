@@ -4,6 +4,31 @@ from __future__ import annotations
 from typing import Any
 
 # ---------------------------------------------------------------------------
+# The attribute size limit (#2404, opensees 2.34.0)
+# ---------------------------------------------------------------------------
+
+#: The largest array payload, in bytes, written as an HDF5 attribute.
+#: An attribute is one object-header message, and a message is capped at
+#: 65,535 bytes: about 8,183 float64 or int64 slots, or 4,091
+#: variable-length string slots (16-byte heap ids), measured on h5py 3.15
+#: and HDF5 1.14.6. The margin under the cap covers the attribute's
+#: name, datatype and dataspace. Every array that fitted before keeps the
+#: attribute form, so its bytes and ``model_hash`` do not change.
+ATTR_PAYLOAD_LIMIT: int = 64_000
+
+#: Header bytes per slot: a numeric slot is stored inline, and a
+#: variable-length string slot is stored as a global-heap id.
+_NUMERIC_SLOT_BYTES: int = 8
+_STRING_SLOT_BYTES: int = 16
+
+
+def _payload_bytes(n_slots: int, *, has_str: bool) -> int:
+    """Header bytes an ``n_slots`` attribute array takes."""
+    per = _STRING_SLOT_BYTES if has_str else _NUMERIC_SLOT_BYTES
+    return n_slots * per
+
+
+# ---------------------------------------------------------------------------
 # Low-level write helpers
 # ---------------------------------------------------------------------------
 
@@ -39,10 +64,27 @@ def _set_attr(target: Any, key: str, value: Any) -> None:
     * tuple/list of strings → 1-D variable-length string array
     * tuple/list mixing strings and numbers → 1-D variable-length string
       array of tokens (see :func:`_arg_token`)
+
+    A tuple/list whose payload exceeds :data:`ATTR_PAYLOAD_LIMIT` raises
+    :class:`ValueError` naming ``key`` and the group: HDF5 cannot hold it
+    as an attribute, and only the ``params`` pair
+    (:func:`_write_param_array`) and a recorder's ``ids``
+    (:func:`_set_attr_or_dataset`) have a dataset form a reader knows.
     """
     import h5py
     import numpy as np
 
+    if isinstance(value, (tuple, list)):
+        has_str = any(isinstance(v, str) for v in value)
+        size = _payload_bytes(len(value), has_str=has_str)
+        if size > ATTR_PAYLOAD_LIMIT:
+            raise ValueError(
+                f"H5Emitter: attribute {key!r} on {target.name} holds "
+                f"{len(value)} values ({size} bytes), past the "
+                f"{ATTR_PAYLOAD_LIMIT}-byte HDF5 attribute limit, and it "
+                "has no dataset form (opensees 2.34.0 gives one only to a "
+                "params pair and a recorder's ids)."
+            )
     if value is None:
         target.attrs[key] = ""
         return
@@ -129,6 +171,11 @@ def _write_param_array(
 
     Slot ``i`` of the original ``*args`` is reconstructible by reading
     whichever of the two arrays has a non-sentinel value.
+
+    A pair whose larger array exceeds :data:`ATTR_PAYLOAD_LIMIT` (opensees
+    2.34.0, #2404) is written as two uncompressed datasets of the same
+    names in ``target`` instead, like an element's ``args`` / ``args_str``.
+    The pair switches together, so a group holds one form or the other.
     """
     import h5py
     import numpy as np
@@ -146,9 +193,30 @@ def _write_param_array(
         else:
             nums[i] = float(v)
             strs.append("")
+    str_dtype = h5py.string_dtype(encoding="utf-8")
+    if _payload_bytes(len(params), has_str=has_str) > ATTR_PAYLOAD_LIMIT:
+        target.create_dataset(key, data=nums)
+        if has_str:
+            target.create_dataset(
+                f"{key}_str", data=np.asarray(strs, dtype=object),
+                dtype=str_dtype,
+            )
+        return
     target.attrs.create(key, nums)
     if has_str:
-        target.attrs.create(
-            f"{key}_str", strs,
-            dtype=h5py.string_dtype(encoding="utf-8"),
-        )
+        target.attrs.create(f"{key}_str", strs, dtype=str_dtype)
+
+
+def _set_attr_or_dataset(
+    target: Any, key: str, values: tuple[int, ...] | list[int],
+) -> None:
+    """Write an integer sequence as an int64 attribute, or, past
+    :data:`ATTR_PAYLOAD_LIMIT`, as an uncompressed int64 dataset of the
+    same name (opensees 2.34.0, #2404). A declared recorder's ``ids``
+    goes through here."""
+    import numpy as np
+
+    if _payload_bytes(len(values), has_str=False) > ATTR_PAYLOAD_LIMIT:
+        target.create_dataset(key, data=np.asarray(values, dtype=np.int64))
+        return
+    _set_attr(target, key, values)
