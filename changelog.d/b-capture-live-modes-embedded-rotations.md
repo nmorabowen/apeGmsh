@@ -17,9 +17,9 @@ The same refusal now covers any rotation slot the table cannot settle
 whose live value is non-zero in a mode. One example is a beam node of
 `mixedBeamColumn` (`MixedBeamColumn3d`), a class the live table does not
 map yet. A slot that is 0.0 in every mode keeps the warning. The stock
-u-p elements (`quadUP`, `SSPquadUP`, `9_4_QuadUP`, `brickUP`,
-`bbarBrickUP`, `SSPbrickUP`, `20_8_BrickUP`) now count as u-p on the
-live route. Their pressure slot holds no rotation, so neither a refusal
+u-p elements (`quadUP`, `bbarQuadUP`, `SSPquadUP`, `9_4_QuadUP`,
+`brickUP`, `bbarBrickUP`, `SSPbrickUP`, `20_8_BrickUP`) and the fork's
+`LadrunoUP` now count as u-p on the live route. Their pressure slot holds no rotation, so neither a refusal
 nor a warning fires.
 Bridge models are unaffected: `EigenResult.to_native` already wrote these
 rotations.
