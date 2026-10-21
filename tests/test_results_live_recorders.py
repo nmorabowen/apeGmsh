@@ -444,7 +444,7 @@ def test_emit_recorders_mixed_categories(tmp_path: Path) -> None:
         ),
         ResolvedRecorderRecord(
             category="line_stations", name="ls",
-            components=("bending_moment",),
+            components=("bending_moment_z",),
             dt=None, n_steps=None,
             element_ids=np.array([20]),
         ),
@@ -620,7 +620,7 @@ def test_resolved_record_coerces_list_ids_to_ndarray(tmp_path: Path) -> None:
 
     erec = ResolvedRecorderRecord(
         category="elements", name="beams",
-        components=("force_x",),
+        components=("nodal_resisting_force_x",),
         dt=None, n_steps=None,
         element_ids=(10, 11),
     )

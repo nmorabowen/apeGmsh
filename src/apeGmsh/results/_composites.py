@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 import numpy as np
 from numpy import ndarray
 
+from .._vocabulary import is_canonical
 from . import _derived, _expr, _shell_thickness
 from ._slabs import (
     ElementSlab,
@@ -62,6 +63,102 @@ def _listing_gates_read(*, filtered: bool) -> Iterator[list[str]]:
             warnings.warn_explicit(
                 w.message, w.category, w.filename, w.lineno, source=w.source,
             )
+
+
+class ComponentNotRecorded(ValueError):
+    """A read named a component FAMILY instead of one of its members.
+
+    Every reader answers an unknown name with an EMPTY slab. For a family
+    shorthand (``"displacement"`` on a stage that records
+    ``displacement_x/_y/_z``) that read "no data" on a populated file
+    (#2343). The composites raise this instead, naming the members.
+    """
+
+
+class ComponentNotRecordedWarning(UserWarning):
+    """A read named a component that is not in apeGmsh's vocabulary.
+
+    A typo: the read still returns its empty slab, as it always has,
+    and says so once per call (#2343). A canonical name the stage does
+    not record (``displacement_z`` on a 2-D model) stays silent: the
+    library's own x/y/z loops ask for it on purpose.
+    """
+
+
+def _unread_bucket_warnings() -> tuple[type[Warning], ...]:
+    """The warnings a read raises when it leaves a recorded bucket unread.
+
+    Such a read returns an empty slab for a name the file does record,
+    and names the bucket (#2293, #2305): the empty answer is spoken for,
+    so :func:`_refuse_if_unrecorded` neither refuses nor warns on it."""
+    from .readers._ladruno_element_io import LineStationBucketSkippedWarning
+    from .readers._mpco import MPCOBucketSkippedWarning
+    from .readers._mpco_layer_io import LayerBucketUnreadWarning
+    from .readers._mpco_nodal_io import NodalForceBucketSkippedWarning
+
+    return (
+        MPCOBucketSkippedWarning,
+        NodalForceBucketSkippedWarning,
+        LayerBucketUnreadWarning,
+        LineStationBucketSkippedWarning,
+    )
+
+
+def _refuse_if_unrecorded(read, component: str, sid: str, level: ResultLevel,
+                          reader):
+    """Run ``read()``, and answer an empty result for an unrecorded name.
+
+    * Data, or a name ``sid`` lists at ``level`` (an empty selection):
+      the slab, silently.
+    * A read that leaves a recorded bucket unread
+      (:func:`_unread_bucket_warnings`): the slab, silently here, since
+      the read already named that bucket (#2293, #2305).
+    * A family prefix of listed names: :class:`ComponentNotRecorded`,
+      naming the members.
+    * A canonical name (:func:`apeGmsh._vocabulary.is_canonical`) the
+      stage does not record, such as ``displacement_z`` on a 2-D model:
+      the slab, silently.
+    * Any other name (a typo): the empty slab, with one
+      :class:`ComponentNotRecordedWarning`.
+
+    The listing is asked only when the read came back empty (no entity
+    columns), so a read that returns data never pays for it, and a name
+    a reader accepts beyond its listing (a raw token) keeps working. The
+    listing is the one for ``sid``, the stage just read; its
+    ``MPCOBucketSkippedWarning`` s are held back, because the read
+    already named the skipped buckets it touched. The unread check
+    repeats the read with its warnings recorded, and swallowed.
+    """
+    slab = read()
+    if np.asarray(slab.values).shape[1] != 0:
+        return slab
+    with _listing_gates_read(filtered=True):
+        available = list(reader.available_components(sid, level))
+    if component in available:
+        return slab
+    with warnings.catch_warnings(record=True) as again:
+        warnings.simplefilter("always")
+        read()
+    unread = _unread_bucket_warnings()
+    if any(issubclass(w.category, unread) for w in again):
+        return slab
+    family = sorted(c for c in available if c.startswith(f"{component}_"))
+    if family:
+        raise ComponentNotRecorded(
+            f"{component!r} is a component family at the {level.value} "
+            f"level of stage {sid!r}, not a component: read its members "
+            f"one at a time ({', '.join(family)})."
+        )
+    if is_canonical(component):
+        return slab
+    warnings.warn(
+        f"{component!r} is not an apeGmsh component name, and is not "
+        f"recorded at the {level.value} level of stage {sid!r}; the read "
+        f"is empty. Available: {sorted(available)}.",
+        ComponentNotRecordedWarning,
+        stacklevel=3,
+    )
+    return slab
 
 
 # =====================================================================
@@ -929,8 +1026,11 @@ class NodeResultsComposite(_CustomScalarMixin, _SelectionMixin):
         node_ids = self._resolve_node_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_nodes(
-            sid, component, node_ids=node_ids, time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_nodes(
+                sid, component, node_ids=node_ids, time_slice=time,
+            ),
+            component, sid, ResultLevel.NODES, self._r._reader,
         )
 
     def _reader_components(self, *, stage: str | None = None) -> list[str]:
@@ -1168,8 +1268,11 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_elements(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_elements(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.ELEMENTS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1260,8 +1363,11 @@ class GaussResultsComposite(
             return self._compute_derived(
                 component, sid, eids, time, plane=plane, nu=nu,
             )
-        return self._r._reader.read_gauss(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_gauss(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.GAUSS, self._r._reader,
         )
 
     def _compute_shell_derived(
@@ -1555,9 +1661,12 @@ class FibersResultsComposite(_SelectionMixin, _ElementGeometryMixin):
             None if gp_indices is None
             else np.asarray(list(gp_indices), dtype=np.int64)
         )
-        return self._r._reader.read_fibers(
-            sid, component,
-            element_ids=eids, gp_indices=gpi, time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_fibers(
+                sid, component,
+                element_ids=eids, gp_indices=gpi, time_slice=time,
+            ),
+            component, sid, ResultLevel.FIBERS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1600,10 +1709,13 @@ class LayersResultsComposite(_SelectionMixin, _ElementGeometryMixin):
             None if layer_indices is None
             else np.asarray(list(layer_indices), dtype=np.int64)
         )
-        return self._r._reader.read_layers(
-            sid, component,
-            element_ids=eids, gp_indices=gpi, layer_indices=lyr,
-            time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_layers(
+                sid, component,
+                element_ids=eids, gp_indices=gpi, layer_indices=lyr,
+                time_slice=time,
+            ),
+            component, sid, ResultLevel.LAYERS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1636,8 +1748,11 @@ class LineStationsResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_line_stations(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_line_stations(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.LINE_STATIONS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:
@@ -1683,8 +1798,11 @@ class SpringsResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
-        return self._r._reader.read_springs(
-            sid, component, element_ids=eids, time_slice=time,
+        return _refuse_if_unrecorded(
+            lambda: self._r._reader.read_springs(
+                sid, component, element_ids=eids, time_slice=time,
+            ),
+            component, sid, ResultLevel.SPRINGS, self._r._reader,
         )
 
     def available_components(self, *, stage: str | None = None) -> list[str]:

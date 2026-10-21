@@ -23,7 +23,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
-import { openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { uniqueElementIds, type IdList } from "../../src/reader/ladrunoChecks.ts";
 import { gatherGauss } from "../../src/reader/ladrunoElements.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { applyPlan, buildPlan, extrapolationVerdict, shapeOf, type CellOf } from "../../src/state/extrapolation.ts";
@@ -352,7 +353,7 @@ test("seam partial writes: a DATA element axis that disagrees with ID is refused
   assert.match(refusalOf(p, `short_ids/${KEY}`)[0]!, /DATA has 6 element rows and .*\/ID 5 ids \(a partial write\)/);
 });
 
-/** A copy with a second quad element group `31-FourNodeQuad[201:1]` (GP_PARAM copied, GLOBAL_GP_COORDS `width` wide) and a stress bucket of it. */
+/** A copy with a second quad element group `31-FourNodeQuad[201:1]` (GP_PARAM copied, GLOBAL_GP_COORDS `width` wide) and a stress bucket of it, elements 7..12. */
 function secondGroup(width: number): string {
   // h5wasm cannot rewrite the fixture's model group, so the copy adds a second one and a bucket of it.
   return edited(QUAD, (f) => {
@@ -361,7 +362,8 @@ function secondGroup(width: number): string {
     grp.create_attribute("PARAM_DOMAIN", "[-1,1]");
     grp.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: src.value as Float64Array, shape: [4, 2] });
     grp.create_dataset({ name: "GLOBAL_GP_COORDS", data: new Float64Array(6 * width), shape: [6, width] });
-    addBucket(f, "stress", {}, "31-FourNodeQuad[201:1:0]");
+    // Other elements than the first bucket's 1..6: one element in two buckets of a token is refused (#2316).
+    addBucket(f, "stress", { ids: [7, 8, 9, 10, 11, 12] }, "31-FourNodeQuad[201:1:0]");
   });
 }
 
@@ -406,7 +408,7 @@ test("fibers, element-level rows and buckets with no structured column map stay 
     assert.deepEqual(s.unread, ["ON_ELEMENTS/fiber_mult", "ON_ELEMENTS/fiber_id", "ON_ELEMENTS/element_level"]);
   });
   // One result, two buckets: the read one leaves the result; the other stays, by its bucket name.
-  const q = edited(QUAD, (f) => addBucket(f, "stress", { gaussId: [-1, -1, -1, -1] }, "31-FourNodeQuad[201:0:1]"));
+  const q = edited(QUAD, (f) => addBucket(f, "stress", { gaussId: [-1, -1, -1, -1], ids: [7, 8, 9, 10, 11, 12] }, "31-FourNodeQuad[201:0:1]"));
   withFile(q, (r) => assert.deepEqual(r.index.stages[0]!.unread, ["ON_ELEMENTS/stress/31-FourNodeQuad[201:0:1]"]));
 });
 
@@ -423,6 +425,57 @@ test("beams keep their line-station path: a 1-D GP_PARAM is never a Gauss group 
     assert.deepEqual(r.index.stages[0]!.gauss, []);
     assert.deepEqual(r.index.stages[0]!.unread, ["ON_ELEMENTS/basicForce"]);
   });
+});
+
+// -- an element listed twice (#2316) ---------------------------------------------------
+
+const esc = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+/** Opening `path` throws a LadrunoError of kind layout whose message matches `named`. */
+function refusedAtOpen(path: string, named: RegExp): void {
+  assert.throws(() => openLadruno(H5, path), (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && named.test(e.message), `expected a refusal at open matching ${named}`);
+}
+
+test("#2316 uniqueElementIds: interleaved buckets with no repeat pass; ascending buckets that share an id, and an id twice in one, are named", () => {
+  const err = (m: string) => new Error(m);
+  const check = (lists: IdList[]) => uniqueElementIds(lists, "W", "Y", err);
+  // Each list ascends and the ranges overlap: the sort path, and nothing repeats.
+  check([{ at: "A", ids: [1, 3, 5] }, { at: "B", ids: [2, 4, 6] }]);
+  check([{ at: "A", ids: [5] }, { at: "B", ids: [1] }, { at: "C", ids: [] }, { at: "D", ids: [2, 3] }]);
+  assert.throws(() => check([{ at: "A", ids: [1, 3, 5] }, { at: "B", ids: [2, 5, 6] }]), /^Error: W lists element id\(s\) more than once \(id 5 at A row 2 and B row 1\); Y$/);
+  assert.throws(() => check([{ at: "A", ids: [4, 4, 1, 4] }]), /^Error: W lists element id\(s\) more than once \(id 4 at A rows 0, 1, 3\); Y$/);
+  // Past REPEATED_SHOWN repeated ids, the rest are counted, not listed.
+  const many = Array.from({ length: 12 }, (_, i) => i + 1);
+  assert.throws(() => check([{ at: "A", ids: many }, { at: "B", ids: many }]), /id 10 at A row 9 and B row 9; and 2 more\); Y$/);
+});
+
+test("#2316: a stress bucket whose ID lists element 2 twice refuses the file at open, by name, rather than reading element 3's Gauss rows as element 2", () => {
+  // ID 1..6 -> 1, 2, 2, 4, 5, 6. Unrefused, the group reads 6 rows over 5 elements: element 2 twice, element 3 gone.
+  const p = edited(QUAD, (f) => (f.get(`${ELEMS}/${STRESS}/ID`) as h5wasm.Dataset).write_slice([[2, 3], [0, 1]], new Int32Array([2])));
+  refusedAtOpen(p, new RegExp(`^${esc(p)}: ${esc(`${ELEMS}/stress`)} lists element id\\(s\\) more than once \\(id 2 at ${esc(`${ELEMS}/${STRESS}/ID`)} rows 1, 2\\); the recorder writes each element once per token`));
+});
+
+test("#2316: one element in two stress buckets refuses the file at open, naming both buckets; two tokens holding one element, and disjoint buckets, still open", () => {
+  const second = "31-FourNodeQuad[201:1:0]";
+  // The added bucket holds elements 7, 8, 3, 10, 11, 12: element 3 is also row 2 of the fixture's own bucket.
+  const p = edited(QUAD, (f) => addBucket(f, "stress", { ids: [7, 8, 3, 10, 11, 12] }, second));
+  refusedAtOpen(p, new RegExp(`^${esc(p)}: ${esc(`${ELEMS}/stress`)} lists element id\\(s\\) more than once \\(id 3 at ${esc(`${ELEMS}/${STRESS}/ID`)} row 2 and ${esc(`${ELEMS}/stress/${second}/ID`)} row 2\\)`));
+  // Controls: the same bucket over elements 7..12 opens, and stress and strain (one element in two tokens) are the fixture itself.
+  withFile(edited(QUAD, (f) => addBucket(f, "stress", { ids: [7, 8, 9, 10, 11, 12] }, second)), (r) => assert.ok(r.index.stages[0]!.gauss.some((g) => g.id === `stress/${second}`)));
+  withFile(QUAD, (r) => assert.deepEqual(r.index.stages[0]!.gauss.map((g) => g.nElements), [6, 6]));
+});
+
+test("#2316: a line-station bucket (not a Gauss one) whose ID lists an element twice refuses the file at open too (fork portal3d localForce)", () => {
+  const token = `${STAGE}/RESULTS/ON_ELEMENTS/localForce`;
+  let key = "";
+  const p = edited(PORTAL, (f) => {
+    key = (f.get(token) as h5wasm.Group).keys()[0]!;
+    const id = f.get(`${token}/${key}/ID`) as h5wasm.Dataset;
+    const ids = Array.from(id.value as Int32Array);
+    assert.equal(new Set(ids).size, 3, "the committed bucket lists its 3 elements once each");
+    id.write_slice([[1, 2], [0, 1]], new Int32Array([ids[0]!]));
+  });
+  withFile(PORTAL, (r) => assert.ok(r.availableLineStations("stage_0").includes("Mz"), "the committed portal opens and serves its line stations"));
+  refusedAtOpen(p, new RegExp(`^${esc(p)}: ${esc(token)} lists element id\\(s\\) more than once \\(id \\d+ at ${esc(`${token}/${key}/ID`)} rows 0, 1\\)`));
 });
 
 // -- main serves them -------------------------------------------------------------------

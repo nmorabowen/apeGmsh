@@ -137,6 +137,7 @@ def _fail_resolve_fem(monkeypatch: pytest.MonkeyPatch,
     def _raise(*_a: Any, **_k: Any) -> Any:
         raise exc
     monkeypatch.setattr(results_mod, "_resolve_fem", _raise)
+    monkeypatch.setattr(results_mod, "_resolve_fem_via_model", _raise)
 
 
 def _fail_bind_stage_names(monkeypatch: pytest.MonkeyPatch,

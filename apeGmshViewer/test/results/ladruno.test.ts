@@ -23,6 +23,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
 import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
@@ -285,6 +286,45 @@ test("a COMPONENTS label repeated refuses that result by name", () => {
     assert.equal(n.refused[0]!.component, "DISPLACEMENT");
     assert.match(n.refused[0]!.reason, /COMPONENTS = "Ux,Ux" repeats a label/);
   });
+});
+
+test("#2299: a node ID list that holds an id twice refuses the whole file at open, naming the file, the dataset, the id and its rows", () => {
+  const escaped = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  // DISPLACEMENT/ID 1, 2, 3 -> 1, 3, 3: unrefused, node 3's history reads row 2 and node 2's row 1 draws as node 3.
+  const disp = edited(TRUSS, (f) => (f.get(`${DISP}/ID`) as h5wasm.Dataset).write_slice([[1, 2], [0, 1]], new Int32Array([3])));
+  refuses(disp, "layout", new RegExp(`^${escaped(disp)}: ${escaped(DISP)}/ID lists node id\\(s\\) more than once \\(id 3 at rows 1, 2\\); .*PARTITION_REDUCTION=SUM`));
+  // A second result with a repeated id refuses the file, not only that result.
+  const vel = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([2, 1, 2]), shape: [3, 1] });
+    g.create_dataset({ name: "DATA", data: new Float64Array(4 * 3 * 2), shape: [4, 3, 2] });
+  });
+  refuses(vel, "layout", /ON_NODES\/VELOCITY\/ID lists node id\(s\) more than once \(id 2 at rows 0, 2\)/);
+  // A modal group's ID (read by the mode stages, not the host's results).
+  const modal = edited(MODES, (f) => (f.get("/MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/ID") as h5wasm.Dataset).write_slice([[0, 1], [0, 1]], new Int32Array([2])));
+  refuses(modal, "layout", /ON_NODES\/MODES_OF_VIBRATION\(U\)\/ID lists node id\(s\) more than once \(id 2 at rows 0, 1\)/);
+  // The unedited files open: the refusals above are the edits, not the fixtures.
+  for (const p of [TRUSS, MODES]) withFile(p, (r) => assert.ok(r.index.stages.length > 0));
+});
+
+test("#2299: uniqueNodeIds names repeats in file order, caps at 10, and passes 2^24 + 1 unique ids (past V8's Set limit)", () => {
+  const err = (m: string) => new LadrunoError("layout", m);
+  const message = (ids: number[]) => {
+    try {
+      uniqueNodeIds(Float64Array.from(ids), "f.ladruno", "/ID", err);
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return "accepted";
+  };
+  assert.match(message([5, 1, 5, 1, 7, 1]), /^f\.ladruno: \/ID lists node id\(s\) more than once \(id 5 at rows 0, 2; id 1 at rows 1, 3, 5\); /);
+  const twelve = Array.from({ length: 12 }, (_, i) => 100 - i);
+  assert.match(message([...twelve, ...twelve]), /\(id 100 at rows 0, 12; .*; id 91 at rows 9, 21; and 2 more\)/);
+  assert.equal(message([3, 1, 2]), "accepted");
+  const big = new Float64Array(2 ** 24 + 1).map((_, i) => 2 ** 24 + 1 - i);
+  const t0 = performance.now();
+  assert.equal(uniqueNodeIds(big, "f.ladruno", "/ID", err), big, "the ids are returned as given");
+  const ms = performance.now() - t0;
+  assert.ok(ms < 5000, `2^24 + 1 unique ids took ${ms.toFixed(0)} ms`);
 });
 
 test("stages sort by their integer id; one with no ON_NODES has no nodal block", () => {
@@ -734,6 +774,63 @@ test("readLocalAxes prioritises per-step RESULTS/ON_ELEMENTS/LOCAL_AXES over ref
     // V_1/M_1 are refused on a 3D file; only N (from basicForce/localForce) is available.
     assert.deepEqual(avail, ["N"]);
     assert.ok(warnings.some((w) => /2-D names/.test(w)));
+  });
+});
+
+// #2321: MODEL/LOCAL_AXES lists each element's reference frame once. A repeat used to
+// keep the last row written: the element took another row's frame, and the element
+// whose row it was had none. The refusal fires on readLocalAxes (and on a line-station
+// read, which attaches the frames), where the frames are collected; open does not
+// read MODEL/LOCAL_AXES, so the file still opens.
+const FRAME3D = fixture("ladruno_frame3d.ladruno");
+const MODEL_LA = "/MODEL_STAGE[1]/MODEL/LOCAL_AXES";
+const escapedRe = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+const refusesAxes = (read: () => unknown, pattern: RegExp) =>
+  assert.throws(read, (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message), "a repeated MODEL/LOCAL_AXES id is refused by name");
+
+test("#2321: an id twice in one class's MODEL/LOCAL_AXES ID refuses readLocalAxes by name: the file, the dataset, the id and its rows", () => {
+  // The #2316 reviewer's reproducer: ForceBeamColumn3d/ID 1, 2, 3, ... -> 1, 1, 3, ...
+  const p = edited(FRAME3D, (f) => (f.get(`${MODEL_LA}/ForceBeamColumn3d/ID`) as h5wasm.Dataset).write_slice([[1, 2]], new Int32Array([1])));
+  withFile(p, (r) => {
+    const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(MODEL_LA)} lists element id\\(s\\) more than once \\(id 1 at ${escapedRe(MODEL_LA)}/ForceBeamColumn3d/ID rows 0, 1\\); .*the local axes are not read$`);
+    refusesAxes(() => r.readLocalAxes("stage_0"), named);
+    refusesAxes(() => r.readLocalAxes("stage_0", { elementIds: [2], step: 0 }), named);
+    refusesAxes(() => r.readLineStations("stage_0", "N"), named);
+    // MODEL_STAGE[2] keeps its own MODEL/LOCAL_AXES, unedited: it still reads, all ten elements.
+    assert.deepEqual(Array.from(r.readLocalAxes("stage_1").elementIds), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+  // The unedited fixture reads all ten frames: the refusal is the edit.
+  withFile(FRAME3D, (r) => assert.deepEqual(Array.from(r.readLocalAxes("stage_0").hasRecorded), new Array(10).fill(1)));
+});
+
+test("#2321: an id in two classes' MODEL/LOCAL_AXES groups, or in the flat ID and a class group, refuses readLocalAxes naming every dataset", () => {
+  const frame = new Float64Array([1, 0, 0, 0]); // identity: z_local = global z
+  const twoClasses = edited(FRAME3D, (f) => {
+    const g = (f.get(MODEL_LA) as h5wasm.Group).create_group("ElasticBeam3d");
+    g.create_dataset({ name: "ID", data: new Int32Array([5]), shape: [1] });
+    g.create_dataset({ name: "FRAME", data: frame, shape: [1, 4] });
+  });
+  withFile(twoClasses, (r) =>
+    refusesAxes(() => r.readLocalAxes("stage_0"), new RegExp(`^${escapedRe(twoClasses)}: .*\\(id 5 at ${escapedRe(MODEL_LA)}/ElasticBeam3d/ID row 0 and ${escapedRe(MODEL_LA)}/ForceBeamColumn3d/ID row 4\\); `)),
+  );
+  const flatAndClass = edited(FRAME3D, (f) => {
+    const la = f.get(MODEL_LA) as h5wasm.Group;
+    la.create_dataset({ name: "ID", data: new Int32Array([7]), shape: [1] });
+    la.create_dataset({ name: "FRAME", data: frame, shape: [1, 4] });
+  });
+  withFile(flatAndClass, (r) =>
+    refusesAxes(() => r.readLocalAxes("stage_0"), new RegExp(`\\(id 7 at ${escapedRe(MODEL_LA)}/ID row 0 and ${escapedRe(MODEL_LA)}/ForceBeamColumn3d/ID row 6\\); `)),
+  );
+  // A class group whose ids are disjoint reads beside the fixture's: the check refuses repeats, not a second class.
+  const disjoint = edited(FRAME3D, (f) => {
+    const g = (f.get(MODEL_LA) as h5wasm.Group).create_group("ElasticBeam3d");
+    g.create_dataset({ name: "ID", data: new Int32Array([11]), shape: [1] });
+    g.create_dataset({ name: "FRAME", data: frame, shape: [1, 4] });
+  });
+  withFile(disjoint, (r) => {
+    const axes = r.readLocalAxes("stage_0");
+    assert.deepEqual(Array.from(axes.elementIds), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.deepEqual(Array.from(axes.zRec.subarray(30, 33)), [0, 0, 1]);
   });
 });
 

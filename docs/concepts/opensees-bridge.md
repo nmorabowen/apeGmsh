@@ -252,17 +252,29 @@ declares classic OpenSees recorders that emit with the deck. The `Node` and
 `Element` recorders take `precision=N`, the significant digits written per
 value (OpenSees writes 6 unless told otherwise); left out, no flag is emitted
 and the deck is unchanged, and anything but a positive `int` raises. For
-in-process runs, a capture spec names what to record — by physical group, of
-course — and writes results next to the model:
+in-process runs, a recorder spec names what to record, as node or element
+ids that a physical group resolves to, and `emit_default` records it on the
+route the OpenSees build supports: `.ladruno` on the Ladruno fork, `.mpco` on
+a stock build with the MPCO recorder, classic `.out` files on pip
+openseespy:
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Tip", components=["displacement"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("tip_load", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
+
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="tip",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Tip").ids,
+    ),),
+)
+ops.h5("model.h5")
+ops.run()                      # build the domain without analysing
+with spec.emit_default("run", model_h5="model.h5") as run:
+    get_ops().analyze(1)       # step the module the bridge built
+results = run.results()
 ```
 
 A live run keeps its recorder files open until something closes them. When the

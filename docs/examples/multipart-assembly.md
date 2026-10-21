@@ -53,9 +53,10 @@ addressing each stamped copy **by label** all the way through to `Results`.
 
 ```python
 import numpy as np
-from apeGmsh import apeGmsh, Part, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh, Part
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (mm, N, MPa) ---
 L = 3000.0                         # column height
@@ -111,22 +112,31 @@ ops.constraints.Plain(); ops.numberer.Plain(); ops.system.BandGeneral()
 ops.test.NormDispIncr(tol=1e-8, max_iter=10); ops.algorithm.Linear()
 ops.integrator.LoadControl(dlam=1.0); ops.analysis.Static()
 
-# --- 4. Capture each instance by label; read each back by label ---
-spec = DomainCaptureSpec(opensees=ops)
-for lbl in loads:
-    spec.nodes(label=lbl, components=["displacement_x"], name=f"u_{lbl}")
-with ops.domain_capture(spec, path="assembly.h5") as cap:
-    cap.begin_stage("push", kind="static"); ops.analyze(steps=1); cap.step(t=1.0); cap.end_stage()
+# --- 4. Record each instance by label; read each back by label ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=tuple(
+        ResolvedRecorderRecord(
+            category="nodes", name=f"u_{lbl}", components=("displacement_x",),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(label=lbl).ids,
+        )
+        for lbl in loads
+    ),
+)
+ops.h5("assembly.h5")
+ops.run()
+opspy = get_ops()
+with spec.emit_default("assembly_run", model_h5="assembly.h5") as run:
+    opspy.analyze(1)
 
-om = OpenSeesModel.from_h5("assembly.h5", fem_root="/model")
 print(f"square section a={a:.0f} mm,  I={I:.3e} mm^4")
-with Results.from_native("assembly.h5", model=om) as r:
-    for lbl, P in loads.items():
-        slab = r.nodes.get(label=lbl, component="displacement_x")
-        d_fem = float(np.max(np.abs(slab.values[-1, :])))
-        d_exact = P * L**3 / (3 * E * I)
-        print(f"{lbl}: P={P/1e3:5.0f} kN   tip_FEM={d_fem:7.3f} mm   PL3/3EI={d_exact:7.3f} mm"
-              f"   err={abs(d_fem-d_exact)/d_exact*100:.3f}%")
+r = run.results()                 # kept open: the plot below reads it too
+for lbl, P in loads.items():
+    slab = r.nodes.get(label=lbl, component="displacement_x")
+    d_fem = float(np.max(np.abs(slab.values[-1, :])))
+    d_exact = P * L**3 / (3 * E * I)
+    print(f"{lbl}: P={P/1e3:5.0f} kN   tip_FEM={d_fem:7.3f} mm   PL3/3EI={d_exact:7.3f} mm"
+          f"   err={abs(d_fem-d_exact)/d_exact*100:.3f}%")
 ```
 
 Run it. You should see:
@@ -226,20 +236,25 @@ all three bases at once and, in the pattern, push each tip with its own load.
 ## Step 4 — Read each copy back, by label
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-for lbl in loads:
-    spec.nodes(label=lbl, components=["displacement_x"], name=f"u_{lbl}")
+records=tuple(
+    ResolvedRecorderRecord(
+        category="nodes", name=f"u_{lbl}", components=("displacement_x",),
+        dt=None, n_steps=None, node_ids=fem.nodes.select(label=lbl).ids,
+    )
+    for lbl in loads
+),
 ...
 for lbl, P in loads.items():
     slab = r.nodes.get(label=lbl, component="displacement_x")
     d_fem = float(np.max(np.abs(slab.values[-1, :])))
 ```
 
-This is the payoff of stamping with labels. We declare one capture record
-**per label**, and read each one back the same way:
+This is the payoff of stamping with labels. We declare one recorder record
+**per label**, its nodes selected by that label, and read each one back the
+same way:
 `r.nodes.get(label="col_A", ...)` returns only `col_A`'s nodes, blind to the
 other two copies. The labels we stamped in Step 2 flowed all the way through
-meshing, solving, and capture — so on the read side each column is a
+meshing, solving, and recording — so on the read side each column is a
 first-class, independently addressable object. We take each one's max
 $|u_x|$ (the tip) and check it against $PL^3/3EI$.
 

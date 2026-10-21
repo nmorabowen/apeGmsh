@@ -56,10 +56,11 @@ name**.
 
 ```python
 import tempfile, os
-from apeGmsh import apeGmsh, Results
+from apeGmsh import apeGmsh
 from apeGmsh.assembly import Assembly
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (consistent SI: m, N, Pa) — the E1 portal ---
 H, B, E = 5.0, 5.0, 200e9
@@ -70,7 +71,7 @@ P, W = 60_000.0, 300_000.0                                   # lateral + gravity
 work     = tempfile.mkdtemp()
 module   = os.path.join(work, "portal_module.h5")   # the reusable part
 assembly = os.path.join(work, "two_bay.h5")         # the assembled model
-run_h5   = os.path.join(work, "run.h5")             # the solved results
+run_path = os.path.join(work, "run")                # the run (the route sets the suffix)
 
 # --- 1. Build the portal MODULE once: mesh, groups and elements ---
 with apeGmsh(model_name="portal_module") as g:
@@ -125,21 +126,32 @@ ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
 asm.h5(assembly)                  # the assembled model.h5 + /assembly
 
-# --- 4. Solve, capturing each bay's roof drift AND base reactions ---
-spec = DomainCaptureSpec(opensees=ops)
-for bay in ("bay1", "bay2"):
-    spec.nodes(pg=f"{bay}.RoofL", components=["displacement"])
-    spec.nodes(pg=f"{bay}.RoofR", components=["displacement"])
-    spec.nodes(pg=f"{bay}.Base",  components=["reaction_force"])
-with ops.domain_capture(spec, path=run_h5) as cap:
-    cap.begin_stage("lateral", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+# --- 4. Solve, recording each bay's roof drift AND base reactions ---
+fem = ops.fem                     # the assembled snapshot: both bays, prefixed names
+roofs = [f"{bay}.{pg}" for bay in ("bay1", "bay2") for pg in ("RoofL", "RoofR")]
+bases = ["bay1.Base", "bay2.Base"]
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="roofs",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg=roofs).ids,
+        ),
+        ResolvedRecorderRecord(
+            category="nodes", name="bases",
+            components=("reaction_force_x", "reaction_force_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg=bases).ids,
+        ),
+    ),
+)
+ops.run()
+opspy = get_ops()
+with spec.emit_default(run_path, model_h5=assembly) as run:
+    opspy.analyze(1)
 
 # --- 5. Read each bay's drift back, by name ---
-om = OpenSeesModel.from_h5(run_h5, fem_root="/model")
-results = Results.from_native(run_h5, model=om)
+results = run.results()
 
 def drift(bay):
     l = results.nodes.get(pg=f"{bay}.RoofL", component="displacement_x")
@@ -292,10 +304,11 @@ drift_bay2 = drift("bay2")
 ```
 
 The read side is the same `results.nodes.get(pg=..., component=...)` you've
-used since E1 — `Results.from_native(..., model=...)` with `model=`
-required, reading the model out of the same run file. The *only*
-difference is which name you ask for: the instance label in front of the
-group. One helper, two labels, two bays.
+used since E1: `run.results()` opens the run, paired with the assembled
+`model.h5` that `asm.h5(assembly)` wrote, which is why the record and the
+read can both name `"bay1.RoofL"`. The *only* difference is which name you
+ask for: the instance label in front of the group. One helper, two labels,
+two bays.
 
 ## See it
 

@@ -172,7 +172,10 @@ def test_measured_correct_forces_do_not_warn_on_linear_kinematics_shells(
     displacement: measured correct under Linear, so not a warning."""
     ops = _bridge("ShellMITC4")
     ops.recorder.Element(file="f.out", response=("globalForce",), pg="Wall")
-    ops.recorder.declare(elements="force", pg="Wall", name="nf")
+    ops.recorder.declare(
+        elements=("nodal_resisting_force_x", "nodal_resisting_force_y",
+                  "nodal_resisting_force_z"),
+        pg="Wall", name="nf")
     _chain(ops, "Linear")
     assert _emit(ops) == []
 

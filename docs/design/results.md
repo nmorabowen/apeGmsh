@@ -80,15 +80,26 @@ execution strategy**, and the strategies are just its consumers.
 - **Live MPCO** — `spec.emit_mpco(path)` issues one in-process
   `recorder mpco` call, with a build-gate at `__enter__` that raises
   with a remediation pointer when the active build lacks the recorder.
-- **Domain capture** — the native path. This one grew its own
-  declarative class, `DomainCaptureSpec`, resolved on the bridge:
+- **Default route** — `spec.emit_default(path, model_h5=...)` returns
+  a `LiveDefault` context manager that asks the bound module what it is
+  at `__enter__` and picks one of the three strategies above: the fork's
+  own `.ladruno` recorder (stamped with `model_h5`'s pairing, read with
+  `Results.from_ladruno`), a live MPCO recorder on a stock build that
+  has one (read with `Results.from_mpco`), or live classic recorders
+  over one stage (read with `Results.from_recorders`). The two stock
+  routes warn once with a `DefaultRouteWarning`; `run.results()` opens
+  whichever file the route wrote. Modal records have no default route:
+  modes come from `EigenResult.to_native()` / `.results()` on stock, and
+  from the fork's `.ladruno` on the fork.
+- **Domain capture (legacy)** — the older native path, which the
+  default route replaces. It has its own declarative class,
+  `DomainCaptureSpec`, resolved on the bridge:
   `ops.domain_capture(spec, path=...)` returns a `DomainCapture`
   context manager that queries the live domain (`ops.nodeDisp`,
   `ops.eleResponse`, …) on each `cap.step()`, buffers in RAM, and
-  flushes chunked writes through `NativeWriter` at stage end.
-  `capture_modes()` runs the eigen analysis and writes one stage per
-  mode. The bridge is forwarded through so the capture file gets its
-  `/opensees/` zone composed in — the Composed-file pattern again.
+  flushes chunked writes through `NativeWriter` at stage end. The
+  pages teach the default route; this one stays until its removal
+  slice lands.
 
 Text and live emission cannot drift apart because they share one core.
 `emit_logical()` turns a resolved record into `LogicalRecorder`
