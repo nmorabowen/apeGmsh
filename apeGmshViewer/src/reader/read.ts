@@ -148,11 +148,17 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * recorder, a Mumps system or partitions has a new model_hash, which the
  * results pairing shows as a plain mismatch.
  *
+ * opensees 2.34.0 (#2404, h5-schema.md "Large arrays as datasets"): a
+ * `params` / `params_str` pair, or a declared recorder's `ids`, past the
+ * HDF5 attribute limit is stored as same-named datasets in its group.
+ * `readDef` reads either form and refuses a group holding both; smaller
+ * arrays keep the attribute form and read as before.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 33 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 34 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
@@ -514,8 +520,26 @@ class Reader {
     for (const [k, v] of Object.entries(a)) {
       if (k !== "type" && k !== "tag" && k !== "params" && k !== "params_str") attrs[k] = v;
     }
+    // opensees 2.34.0 (#2404): an array past the attribute limit is a same-named dataset.
+    const keys = g.keys();
+    const large: Record<string, Param[]> = {};
+    for (const key of LARGE_ARRAY_KEYS) {
+      if (!keys.includes(key)) continue;
+      if (key in a) throw new SchemaError(`${joinPath(g.path, key)} is both an attribute and a dataset; the writer stores one form`);
+      const ds = this.dataset(g, key);
+      large[key] = key === "params_str" ? strings(ds) : Array.from(numbers(ds));
+    }
+    const pairInDatasets = "params" in large || "params_str" in large;
+    if (pairInDatasets && ("params" in a || "params_str" in a)) {
+      throw new SchemaError(`${g.path} holds its params pair in both forms; the writer stores one`);
+    }
+    if ("params_str" in large && !("params" in large)) {
+      throw new SchemaError(`${joinPath(g.path, "params_str")} is a dataset with no 'params' beside it`);
+    }
+    if (large["ids"] !== undefined) attrs["ids"] = large["ids"];
     const tables: Record<string, Table> = {};
-    for (const key of g.keys()) {
+    for (const key of keys) {
+      if (key in large) continue;
       const node = g.get(key);
       if (!(node instanceof this.h5.Dataset)) {
         this.warnings.push(`${g.path}/${key} is not a dataset; not shown`);
@@ -528,7 +552,7 @@ class Reader {
       groupName: g.path.slice(g.path.lastIndexOf("/") + 1),
       type,
       tag: typeof tag === "number" ? tag : null,
-      params: mergeParams(a["params"], a["params_str"]),
+      params: pairInDatasets ? mergeParams(large["params"], large["params_str"]) : mergeParams(a["params"], a["params_str"]),
       attrs,
       tables,
     };
@@ -1048,6 +1072,9 @@ function strings(ds: H5Dataset): string[] {
   if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v as string[];
   throw new SchemaError(`${ds.path} is not a string dataset`);
 }
+
+/** The keys a 2.34.0 writer stores as same-named datasets past the attribute limit (#2404). */
+const LARGE_ARRAY_KEYS = ["params", "params_str", "ids"] as const;
 
 function mergeParams(p: Param | Param[] | undefined, s: Param | Param[] | undefined): Param[] {
   const nums = p === undefined ? [] : Array.isArray(p) ? p : [p];

@@ -86,3 +86,196 @@ def test_path_series_model_hash_round_trips(n: int, tmp_path: Path) -> None:
     OpenSeesModel.from_h5(str(src)).to_h5(str(out))
 
     assert _hash(out) == _hash(src)
+
+
+# ---------------------------------------------------------------------------
+# The on-disk form: attribute below the limit, datasets above it
+# ---------------------------------------------------------------------------
+
+
+def _series_group(path: Path) -> tuple[set[str], set[str]]:
+    """``(attribute names, child names)`` of the one time series group."""
+    with h5py.File(str(path), "r") as f:
+        ts = f["opensees/time_series"]
+        (name,) = list(ts)
+        g = ts[name]
+        return set(g.attrs), set(g)
+
+
+def test_small_pair_keeps_the_attribute_form(tmp_path: Path) -> None:
+    src = tmp_path / "model.h5"
+    _frame_with_path(16).h5(str(src))
+
+    attrs, children = _series_group(src)
+
+    assert {"params", "params_str"} <= attrs
+    assert children == set()
+
+
+def test_large_pair_is_two_same_named_datasets(tmp_path: Path) -> None:
+    src = tmp_path / "model.h5"
+    _frame_with_path(16_384).h5(str(src))
+
+    attrs, children = _series_group(src)
+
+    assert children == {"params", "params_str"}
+    assert not {"params", "params_str"} & attrs
+
+
+def test_pair_switches_at_the_payload_limit() -> None:
+    """The threshold is by size: a pair with a string slot costs 16 bytes
+    a slot, a numeric pair 8, and the pair crosses at
+    :data:`ATTR_PAYLOAD_LIMIT` bytes. Every pair that stays an attribute
+    is one HDF5 can hold."""
+    import numpy as np
+
+    from apeGmsh.opensees.emitter._h5_write import (
+        ATTR_PAYLOAD_LIMIT,
+        _write_param_array,
+    )
+
+    cases: dict[str, tuple[float | str, ...]] = {
+        "num_fits": (0.5,) * (ATTR_PAYLOAD_LIMIT // 8),
+        "num_over": (0.5,) * (ATTR_PAYLOAD_LIMIT // 8 + 1),
+        "str_fits": ("-x",) + (0.5,) * (ATTR_PAYLOAD_LIMIT // 16 - 1),
+        "str_over": ("-x",) + (0.5,) * (ATTR_PAYLOAD_LIMIT // 16),
+    }
+    with h5py.File("pair.h5", "w", driver="core", backing_store=False) as f:
+        for name, params in cases.items():
+            _write_param_array(f.create_group(name), "params", params)
+        forms = {n: ("dataset" if "params" in f[n] else "attr") for n in cases}
+        assert np.isnan(f["str_over/params"][0])
+
+    assert forms == {"num_fits": "attr", "num_over": "dataset",
+                     "str_fits": "attr", "str_over": "dataset"}
+
+
+# ---------------------------------------------------------------------------
+# A declared recorder past the attribute limit
+# ---------------------------------------------------------------------------
+
+
+def _recorder_archive(path: Path, ids: tuple[int, ...]) -> None:
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    e = H5Emitter()
+    e.recorder_declaration_begin(
+        declaration_name="d", record_name="r", category="nodes",
+        components=("displacement_x",), ids=ids,
+    )
+    e.recorder("Node", "-file", "a.out", "-node", *ids, "-dof", 1, "disp")
+    e.recorder_declaration_end()
+    e.write(str(path))
+
+
+def test_recorder_with_more_than_8184_ids_round_trips(tmp_path: Path) -> None:
+    """8,184 int64 slots is the most one attribute holds; the ids and the
+    ``-node`` tail both go to datasets and read back slot for slot."""
+    from apeGmsh.opensees.emitter import h5_reader
+
+    ids = tuple(range(1, 9_001))
+    out = tmp_path / "rec.h5"
+    _recorder_archive(out, ids)
+
+    with h5py.File(str(out), "r") as f:
+        (g,) = list(f["opensees/recorders"].values())
+        assert {"ids", "params", "params_str"} <= set(g)
+    with h5_reader.open(str(out)) as model:
+        (rec,) = model.recorders()
+    assert rec.decl_context is not None
+    assert rec.decl_context.ids == ids
+    assert rec.args == ("-file", "a.out", "-node", *ids, "-dof", 1, "disp")
+
+
+# ---------------------------------------------------------------------------
+# Fail closed: refusals at the writer and the reader
+# ---------------------------------------------------------------------------
+
+
+def test_other_oversized_sequence_refuses_by_name(tmp_path: Path) -> None:
+    """A sequence attribute with no dataset form (here a declaration's
+    ``selection``) refuses, naming the key and the group, instead of the
+    bare HDF5 ``OSError``."""
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    e = H5Emitter()
+    e.recorder_declaration_begin(
+        declaration_name="d", record_name="r", category="nodes",
+        components=("displacement_x",),
+        selection=tuple(f"s{i}" for i in range(5_000)),
+    )
+    e.recorder("Node", "-file", "a.out", "-node", 1, "-dof", 1, "disp")
+    e.recorder_declaration_end()
+
+    with pytest.raises(
+        ValueError,
+        match=r"attribute 'selection' on /opensees/recorders/\S+ holds "
+              r"5000 values",
+    ):
+        e.write(str(tmp_path / "x.h5"))
+
+
+def _large_archive(tmp_path: Path) -> Path:
+    src = tmp_path / "model.h5"
+    _frame_with_path(16_384).h5(str(src))
+    return src
+
+
+def _series_path(f: h5py.File) -> str:
+    (name,) = list(f["opensees/time_series"])
+    return f"opensees/time_series/{name}"
+
+
+def test_both_forms_present_is_malformed(tmp_path: Path) -> None:
+    from apeGmsh.opensees.emitter import h5_reader
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    src = _large_archive(tmp_path)
+    with h5py.File(str(src), "r+") as f:
+        f[_series_path(f)].attrs["params"] = [1.0, 2.0]
+
+    with h5_reader.open(str(src)) as model:
+        with pytest.raises(MalformedH5Error, match="one form"):
+            model.time_series()
+
+
+def test_dataset_form_below_2_34_is_malformed(tmp_path: Path) -> None:
+    """No writer below 2.34.0 made a dataset form, so a file stamped
+    below it that holds one is corrupt, not an old archive."""
+    from apeGmsh.opensees.emitter import h5_reader
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+    from tests.fixtures.schema import OPENSEES_PRIOR_MINOR
+
+    src = _large_archive(tmp_path)
+    with h5py.File(str(src), "r+") as f:
+        meta = f["meta"].attrs
+        assert "opensees_schema_version" in meta
+        meta["opensees_schema_version"] = OPENSEES_PRIOR_MINOR
+
+    with h5_reader.open(str(src)) as model:
+        with pytest.raises(MalformedH5Error,
+                           match="is a dataset in an opensees"):
+            model.time_series()
+
+
+# ---------------------------------------------------------------------------
+# The assembly reader sees a dataset-form region
+# ---------------------------------------------------------------------------
+
+
+def test_region_params_reads_a_dataset_form_damp(tmp_path: Path) -> None:
+    """``refuse_region_dampings`` reads region rows with raw h5py; a long
+    region attaching a damping must still be refused (#2404)."""
+    from apeGmsh.assembly import AssemblyError
+    from apeGmsh.assembly._rehydrate import refuse_region_dampings
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    e = H5Emitter()
+    e.region(7, "-node", *range(1, 5_001), "-damp", 3)
+    out = tmp_path / "region.h5"
+    e.write(str(out))
+    with h5py.File(str(out), "r") as f:
+        assert "params" in f["opensees/regions/region_000"]
+
+    with pytest.raises(AssemblyError, match=r"damping tags \[3\]"):
+        refuse_region_dampings("p", out)
