@@ -343,6 +343,23 @@ const l3State: State = reduce(
 );
 const onlyCase = (name: string): State => reduce(l3State, { type: "setLoads", selectedPatterns: [`neutral:${name}`] });
 
+/** Node coordinates of an element decl, in connectivity order, from the model's node table. */
+function elementNodeCoords(d: { element?: { femId: number | null; inlineNodes?: readonly number[] | null } | null }): [number, number, number][] {
+  const femId = d.element!.femId;
+  let ids: number[] = [...(d.element!.inlineNodes ?? [])];
+  if (ids.length === 0) {
+    for (const blk of shoeModel.blocks) {
+      const row = Array.from(blk.ids).indexOf(femId!);
+      if (row >= 0) ids = Array.from(blk.connectivity.subarray(row * blk.npe, (row + 1) * blk.npe));
+    }
+  }
+  const tags = Array.from(shoeModel.nodeIds);
+  return ids.map((id) => {
+    const k = tags.indexOf(id);
+    return [shoeModel.nodeCoords[3 * k]!, shoeModel.nodeCoords[3 * k + 1]!, shoeModel.nodeCoords[3 * k + 2]!];
+  });
+}
+
 /** Unit directions of the drawn line segments (arrow shafts and comb profile bars), rounded, with their x range. */
 function segmentDirs(lp: Float32Array): Map<string, { n: number; xMin: number; xMax: number }> {
   const out = new Map<string, { n: number; xMin: number; xMax: number }>();
@@ -399,6 +416,13 @@ test("neutral surfacePressure is typed by load_type (p=7 into the slab, not a be
   const selfGeom = buildLoads3D(self, l3Blobs);
   assert.equal(selfGeom.elementLoadArrows, 0);
   assert.match(selfGeom.notice ?? "", /bodyForce in self/, "the drawing says what it left out");
+
+  // A traction (normal: false) is not a pressure: it is named, not drawn along the face normal.
+  const traction = onlyCase("wind_slab");
+  assert.match(loadsSummaryOf(traction).notice ?? "", new RegExp(`${nTri} surface traction/shear in wind_slab`));
+  const tractionGeom = buildLoads3D(traction, l3Blobs);
+  assert.equal(tractionGeom.elementLoadArrows, 0);
+  assert.equal(tractionGeom.surfacePressureCount, 0);
 });
 
 test("neutral nodal force and prescribed SP from the writer's node_id/force_xyz and node_id/dof/value columns", () => {
@@ -437,6 +461,86 @@ test("no double counting: with an OpenSees pattern present the neutral cases sta
   // Picking the neutral case alone still shows it.
   const neutralOnly = loadsSummaryOf(reduce(shoeState, { type: "setLoads", selectedPatterns: ["neutral:Pressure"] }));
   assert.equal(neutralOnly.counts.nodalForces, 124);
+});
+
+/**
+ * One OpenSees pattern holding `element_loads` rows as `_write_pattern_ele_loads`
+ * writes them: the record's args as strings (`repr` of the numbers), padded with "".
+ */
+function opsElementLoadsState(base: State, ndm: 2 | 3, args: readonly (string | number)[][]): State {
+  const width = Math.max(...args.map((a) => a.length));
+  const rows = args.map((a) => [...a.map((v) => (typeof v === "string" ? v : Number.isInteger(v) ? `${v}` : String(v))), ...Array(width - a.length).fill("")]);
+  return reduce(
+    {
+      ...base,
+      ndm: { ndm, source: "test" },
+      neutralLoads: null,
+      definitions: {
+        ...base.definitions!,
+        stages: [],
+        patterns: [
+          {
+            groupName: "Plain_1",
+            path: "/opensees/patterns/Plain_1",
+            type: "Plain",
+            tag: 1,
+            params: [1],
+            attrs: {},
+            tables: { element_loads: { path: "/opensees/patterns/Plain_1/element_loads", columns: rows[0]!.map((_, i) => `col_${i}`), rows } },
+          },
+        ],
+      },
+    },
+    { type: "setLoads", on: true },
+  );
+}
+
+test("OpenSees-pattern beamUniform: the emitter's aL/bL and end values are decoded, not read as wz/wx (#2385 review 2)", () => {
+  const decl = shoeState.decls[shoeState.mesh!.elements[0]!]!;
+  const tag = decl.element!.metas[0]!.tag;
+  // `_beam_uniform_args`, 2-D trapezoid: wy wx aL bL wy_b wx_b
+  const s2 = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0", "0.25", "0.75", "-20.0", "0.0"]]);
+  const sum2 = loadsSummaryOf(s2);
+  assert.equal(sum2.counts.beamUniform, 1);
+  assert.equal(sum2.peaks.beamUniform, 20, "the larger end, not |(-10, aL read as wx)|");
+  assert.equal(sum2.notice, null);
+  const g2 = buildLoads3D(s2, shoeBlobs);
+  assert.equal(g2.maxElementLoadMag, 20);
+
+  // The ticks sit on the element over x/L in [0.25, 0.75] only.
+  const nodes = elementNodeCoords(decl);
+  const [a, b] = [nodes[0]!, nodes[nodes.length - 1]!];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const us: number[] = [];
+  for (const buf of [g2.linePositions, g2.conePositions]) {
+    for (let i = 0; i < buf.length; i += 3) {
+      const r = [buf[i]! - a[0], buf[i + 1]! - a[1], buf[i + 2]! - a[2]];
+      const u = (r[0]! * (b[0] - a[0]) + r[1]! * (b[1] - a[1]) + r[2]! * (b[2] - a[2])) / (L * L);
+      const off = Math.hypot(r[0]! - u * (b[0] - a[0]), r[1]! - u * (b[1] - a[1]), r[2]! - u * (b[2] - a[2]));
+      if (off < 1e-6 * L) us.push(u);
+    }
+  }
+  assert.ok(us.length > 0, "the arrows touch the element");
+  assert.ok(Math.min(...us) > 0.25 - 1e-6 && Math.max(...us) < 0.75 + 1e-6, `tips in [0.25, 0.75], got [${Math.min(...us)}, ${Math.max(...us)}]`);
+
+  // 3-D trapezoid: wy wz wx aL bL wy_b wz_b wx_b (summary only: drawing a 3-D local load needs vecxz)
+  const s3 = opsElementLoadsState(shoeState, 3, [["-ele", tag, "-type", "-beamUniform", "-10.0", "-4.0", "1.0", "0.1", "0.9", "-20.0", "-8.0", "2.0"]]);
+  assert.ok(Math.abs(loadsSummaryOf(s3).peaks.beamUniform - Math.hypot(20, 8, 2)) < 1e-9);
+
+  // A count the emitter never writes is named, not guessed.
+  const bad = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0", "0.25"]]);
+  assert.match(loadsSummaryOf(bad).notice ?? "", /beamUniform with an unknown parameter count/);
+});
+
+test("OpenSees-pattern bare -surfaceLoad (the bridge's form) is listed with a notice, not dropped (#2385 review 2)", () => {
+  const tag = shoeState.decls[shoeState.mesh!.elements[0]!]!.element!.metas[0]!.tag;
+  const s = opsElementLoadsState(shoeState, 3, [["-ele", tag, "-type", "-surfaceLoad"]]);
+  const sum = loadsSummaryOf(s);
+  const pat = sum.patterns.find((p) => p.id === "/opensees/patterns/Plain_1")!;
+  assert.equal(pat.counts.elementLoads, 1);
+  assert.equal(pat.active, true);
+  assert.match(sum.notice ?? "", /1 surfaceLoad \(its pressure is on the SurfaceLoad element\) in Plain_1/);
+  assert.match(buildLoads3D(s, shoeBlobs).notice ?? "", /surfaceLoad/);
 });
 
 test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries on results steps", () => {
@@ -799,6 +903,11 @@ test("stage-ordered remove_sp: stage 1 remove_sp removes earlier stage SP but pr
     },
     { type: "setLoads", on: true },
   );
+
+  // No stage picked: the global pattern only, before any stage's remove_sp, so its SP is drawn.
+  const sum0 = loadsSummaryOf(sWithStagedReplace);
+  assert.equal(sum0.counts.sps, 1, "the global SP is drawn: stage 1's remove_sp has not run yet");
+  assert.ok(Math.abs(sum0.peaks.spTranslation - 0.01) < 1e-9);
 
   // On stage 1: Plain_Global's SP (-0.01 on [n0, 2]) was removed by stage 1's remove_sp,
   // while stage 1's own Plain_Stage1 SP (+0.035 on [n0, 2]) added after remove_sp remains active!

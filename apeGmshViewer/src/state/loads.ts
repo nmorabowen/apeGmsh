@@ -465,7 +465,9 @@ interface ParsedElementLoad {
   readonly globalVector: readonly [number, number, number] | null;
   /** Neutral trapezoid: the global vector at `span[1]` (`wx_end/wy_end/wz_end`); `null` when uniform. */
   readonly globalVectorEnd: readonly [number, number, number] | null;
-  /** Loaded part of the beam as `[aL, bL]` in `x/L` (neutral `aL/bL`); `[0, 1]` for a full span. */
+  /** OpenSees trapezoid: the LOCAL load `[wy, wz, wx]` at `span[1]`; absent or `null` when uniform. */
+  readonly localEnd?: readonly [number, number, number] | null;
+  /** Loaded part of the beam as `[aL, bL]` in `x/L`; `[0, 1]` for a full span. */
   readonly span: readonly [number, number];
 }
 
@@ -664,39 +666,49 @@ function decodeEleLoadParams(
   idSpace: "ops_tag" | "fem",
   pgName: string | null,
   is2D: boolean,
-): ParsedElementLoad | null {
+): ParsedElementLoad | string | null {
   const cleanKind = rawKind.replace(/^-/, "");
   if (cleanKind === "beamUniform" || cleanKind === "line_uniform" || cleanKind === "lineUniform") {
-    let wy = 0, wz = 0, wx = 0;
-    if (params.length === 1) {
-      wy = finiteOrZero(params[0]);
-    } else if (params.length === 2) {
-      if (is2D) {
-        wy = finiteOrZero(params[0]);
-        wx = finiteOrZero(params[1]);
-      } else {
-        wy = finiteOrZero(params[0]);
-        wz = finiteOrZero(params[1]);
-      }
-    } else if (params.length >= 3) {
-      wy = finiteOrZero(params[0]);
-      wz = finiteOrZero(params[1]);
-      wx = finiteOrZero(params[2]);
+    // The emitter's forms (`_beam_uniform_args`, opensees/pattern/pattern.py), in local axes:
+    //   2-D: wy wx | wy wx aL bL | wy wx aL bL wy_b wx_b
+    //   3-D: wy wz wx | wy wz wx aL bL | wy wz wx aL bL wy_b wz_b wx_b
+    // plus OpenSees' shorter `wy` and 3-D `wy wz`. Any other count is not guessed.
+    const v = params.map(finiteOrZero);
+    const n = v.length;
+    // [wy, wz, wx] at aL, at bL (a trapezoid), and the span.
+    let a: [number, number, number];
+    let b: [number, number, number] | null = null;
+    let span: [number, number] = [0, 1];
+    if (is2D) {
+      if (n === 1) a = [v[0]!, 0, 0];
+      else if (n === 2 || n === 4 || n === 6) a = [v[0]!, 0, v[1]!];
+      else return "beamUniform with an unknown parameter count";
+      if (n >= 4) span = [v[2]!, v[3]!];
+      if (n === 6) b = [v[4]!, 0, v[5]!];
+    } else {
+      if (n === 1) a = [v[0]!, 0, 0];
+      else if (n === 2) a = [v[0]!, v[1]!, 0];
+      else if (n === 3 || n === 5 || n === 8) a = [v[0]!, v[1]!, v[2]!];
+      else return "beamUniform with an unknown parameter count";
+      if (n >= 5) span = [v[3]!, v[4]!];
+      if (n === 8) b = [v[5]!, v[6]!, v[7]!];
     }
-    if (wy === 0 && wz === 0 && wx === 0) return null;
+    if (!(span[0] >= 0 && span[0] < span[1] && span[1] <= 1)) return "beamUniform with an invalid aL/bL";
+    if (Math.hypot(...a) === 0 && (b === null || Math.hypot(...b) === 0)) return null;
     return {
       elementIds,
       idSpace,
       pgName,
       kind: "beamUniform",
-      wy,
-      wz,
-      wx,
+      wy: a[0],
+      wz: a[1],
+      wx: a[2],
       xL: 0.5,
       pressure: 0,
       globalVector: null,
       globalVectorEnd: null,
-      span: [0, 1],
+      localEnd: b,
+      span,
     };
   }
   if (cleanKind === "beamPoint") {
@@ -731,6 +743,9 @@ function decodeEleLoadParams(
     };
   }
   if (cleanKind === "surfaceLoad" || cleanKind === "surfacePressure" || cleanKind === "surface_pressure") {
+    // The bridge writes a bare `-surfaceLoad`: the pressure is a parameter of the
+    // SurfaceLoad element, not of this row, so the row has nothing to draw.
+    if (params.length === 0) return "surfaceLoad (its pressure is on the SurfaceLoad element)";
     const p = finiteOrZero(params[0]);
     if (p === 0) return null;
     return {
@@ -768,12 +783,20 @@ function decodeEleLoadParams(
       span: [0, 1],
     };
   }
-  return null;
+  return cleanKind || "untyped";
 }
 
-function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): ParsedElementLoad[] {
-  if (!table || table.rows.length === 0) return [];
-  const out: ParsedElementLoad[] = [];
+/** An OpenSees pattern's element loads: the drawn ones, and the rest counted by kind (each reaches a notice). */
+function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): NeutralElementLoads {
+  const loads: ParsedElementLoad[] = [];
+  const undrawn = new Map<string, number>();
+  if (!table || table.rows.length === 0) return { loads, undrawn };
+  const out = {
+    push(parsed: ParsedElementLoad | string): void {
+      if (typeof parsed === "string") undrawn.set(parsed, (undrawn.get(parsed) ?? 0) + 1);
+      else loads.push(parsed);
+    },
+  };
   const cols = table.columns;
   const kindIdx = cols.indexOf("kind");
 
@@ -803,7 +826,7 @@ function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): P
       const parsed = decodeEleLoadParams(kind, pArr, eids, "ops_tag", pgName, is2D);
       if (parsed) out.push(parsed);
     }
-    return out;
+    return { loads, undrawn };
   }
 
   // Raw OpenSees token rows (`["-ele", "1", "2", "-type", "-beamUniform", "-10.0"]`)
@@ -874,7 +897,7 @@ function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): P
       if (parsed) out.push(parsed);
     }
   }
-  return out;
+  return { loads, undrawn };
 }
 
 /** A neutral case's element loads the viewer draws, and the ones it cannot, counted by kind. */
@@ -1024,7 +1047,9 @@ function collectResolvedPatterns(s: State): {
     const synth = d?.synth ?? role === "support_reaction";
 
     const nodalLoads = parseOpsPatternNodalLoads(s, pat.tables["loads"], is2D);
-    const elementLoads = parseOpsPatternElementLoads(pat.tables["element_loads"], is2D);
+    const { loads: elementLoads, undrawn } = parseOpsPatternElementLoads(pat.tables["element_loads"], is2D);
+    let undrawnCount = 0;
+    for (const n of undrawn.values()) undrawnCount += n;
     const spsRegular = parsePatternSps(s, pat.tables["sps"], removedSpStage, stageIndex, false);
     const spsHolds = parsePatternSps(s, pat.tables["sp_holds"], removedSpStage, stageIndex, true);
     const sps = s.loads.includeSupportReactions ? [...spsRegular, ...spsHolds] : spsRegular;
@@ -1046,7 +1071,7 @@ function collectResolvedPatterns(s: State): {
     }
     const spCount = spsRegular.length + (excitationDirection !== null ? 1 : 0);
     const spHoldsCount = spsHolds.length;
-    const elemCount = elementLoads.length;
+    const elemCount = elementLoads.length + undrawnCount;
     const total = nodalForcesCount + nodalMomentsCount + elemCount + spCount + (s.loads.includeSupportReactions ? spHoldsCount : 0);
 
     const isSupportReaction = role === "support_reaction" || (nodalForcesCount === 0 && nodalMomentsCount === 0 && elemCount === 0 && spCount === 0 && spHoldsCount > 0);
@@ -1092,7 +1117,7 @@ function collectResolvedPatterns(s: State): {
       elementLoads,
       sps,
       excitationDirection,
-      undrawn: new Map(),
+      undrawn,
     });
   };
 
@@ -1258,7 +1283,7 @@ export function loadsSummaryOf(s: State): LoadsSummary {
           beamUniform++;
           const rawMag = el.globalVector
             ? Math.max(Math.hypot(...el.globalVector), el.globalVectorEnd ? Math.hypot(...el.globalVectorEnd) : 0)
-            : Math.hypot(el.wy, el.wz, el.wx);
+            : Math.max(Math.hypot(el.wy, el.wz, el.wx), el.localEnd ? Math.hypot(...el.localEnd) : 0);
           const conv = rawMag * Math.abs(factor) * units.beamLoad.factor;
           if (conv > peakBeamUniform) peakBeamUniform = conv;
         } else if (el.kind === "beamPoint") {
@@ -1278,7 +1303,7 @@ export function loadsSummaryOf(s: State): LoadsSummary {
           !is2D &&
           (el.kind === "beamUniform" || el.kind === "beamPoint") &&
           !el.globalVector &&
-          (Math.abs(el.wy) > 0 || Math.abs(el.wz) > 0)
+          (Math.abs(el.wy) > 0 || Math.abs(el.wz) > 0 || (el.localEnd != null && (Math.abs(el.localEnd[0]) > 0 || Math.abs(el.localEnd[1]) > 0)))
         ) {
           const targetDecls: DeclPath[] = [];
           for (const eid of el.elementIds) {
@@ -1943,7 +1968,9 @@ export function buildLoads3D(
               const ge = elLoad.globalVectorEnd;
               if (ge) worldVecEnd = [ge[0] * factor * unitConv, ge[1] * factor * unitConv, ge[2] * factor * unitConv];
             } else {
-              const hasTransverse = Math.abs(elLoad.wy) > 0 || Math.abs(elLoad.wz) > 0;
+              const le = elLoad.localEnd ?? null;
+              const hasTransverse =
+                Math.abs(elLoad.wy) > 0 || Math.abs(elLoad.wz) > 0 || (le !== null && (Math.abs(le[0]) > 0 || Math.abs(le[1]) > 0));
               let yLocal: [number, number, number] = [0, 1, 0];
               let zLocal: [number, number, number] = [0, 0, 1];
               if (hasTransverse) {
@@ -1987,6 +2014,14 @@ export function buildLoads3D(
                 wx * xLocal[1] + wy * yLocal[1] + wz * zLocal[1],
                 wx * xLocal[2] + wy * yLocal[2] + wz * zLocal[2],
               ];
+              if (le) {
+                const [ey, ez, ex] = [le[0] * factor * unitConv, le[1] * factor * unitConv, le[2] * factor * unitConv];
+                worldVecEnd = [
+                  ex * xLocal[0] + ey * yLocal[0] + ez * zLocal[0],
+                  ex * xLocal[1] + ey * yLocal[1] + ez * zLocal[1],
+                  ex * xLocal[2] + ey * yLocal[2] + ez * zLocal[2],
+                ];
+              }
             }
 
             const mag = Math.hypot(worldVec[0], worldVec[1], worldVec[2]);

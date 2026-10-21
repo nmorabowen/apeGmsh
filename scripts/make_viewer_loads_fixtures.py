@@ -1,15 +1,19 @@
-"""Write ``loads3d.h5``: a 3-D frame + slab whose neutral ``/loads`` zone
-comes from apeGmsh's own resolver and writer.
+"""Write ``apeGmshViewer/fixtures/loads3d.h5``: a 3-D frame + slab whose
+neutral ``/loads`` zone comes from apeGmsh's own resolver and writer.
+
+This generator imports apeGmsh, so it lives here, outside ``apeGmshViewer/``:
+the app never imports or runs apeGmsh (ADR 0112 D4,
+``scripts/check_app_wall.py``). Run it from the repository root with the
+venv interpreter and the checkout's ``src``:
 
     $env:PYTHONPATH = "src"
-    python apeGmshViewer/fixtures/make_loads_fixtures.py
+    python scripts/make_viewer_loads_fixtures.py
 
-run from the repository root with an interpreter that has gmsh and apeGmsh.
-Unlike ``make_zone_fixtures.py`` this one imports apeGmsh on purpose: the
-point of the file is the writer's real layout (``element_id``,
+The point of the file is the writer's real layout (``element_id``,
 ``load_type``, ``params_json``; ``node_id``, ``force_xyz``), which a
-hand-written table had got wrong (#2385 review, finding 4). The app still
-never runs apeGmsh (ADR 0112 D4); only this generator does.
+hand-written table had got wrong (#2385 review, finding 4). The session
+writes the file at ``save_to`` as it closes, with a ``loads3d.geometry.h5``
+sibling the tests do not read; this script deletes the sibling.
 
 Geometry (metres, one element per line):
 
@@ -25,6 +29,8 @@ Cases, all ``target_form="element"`` except ``point``:
 * ``trap``: a trapezoid 10 -> 20 down the girder over x/L in [0.25, 0.75];
 * ``self``: gravity on the slab, a ``bodyForce`` record the viewer cannot
   draw (it must say so);
+* ``wind_slab``: a traction (2, 0, 0) on the slab, a ``surfacePressure``
+  with ``normal: false`` the viewer cannot draw either;
 * ``point``: a nodal force of 3 along +Y at the girder's far end, and a
   prescribed ``uz = -0.005`` there (``/loads/sp/point``).
 """
@@ -35,12 +41,12 @@ from pathlib import Path
 
 from apeGmsh import apeGmsh
 
-HERE = Path(__file__).resolve().parent
+FIXTURES = Path(__file__).resolve().parents[1] / "apeGmshViewer" / "fixtures"
 
 
 def main() -> None:
-    out = HERE / "loads3d.h5"
-    with apeGmsh(model_name="loads3d", verbose=False) as g:
+    out = FIXTURES / "loads3d.h5"
+    with apeGmsh(model_name="loads3d", save_to=out, verbose=False) as g:
         geo = g.model.geometry
         p0 = geo.add_point(0.0, 0.0, 0.0)
         p1 = geo.add_point(0.0, 0.0, 3.0)
@@ -63,13 +69,16 @@ def main() -> None:
                          span=(0.25, 0.75), target_form="element")
         with g.loads.case("self"):
             g.loads.gravity("Slab", g=(0.0, 0.0, -9.81), density=2.5, target_form="element")
+        with g.loads.case("wind_slab"):
+            g.loads.surface.traction("Slab", (2.0, 0.0, 0.0), target_form="element")
         with g.loads.case("point"):
             g.loads.point.force("Tip", force=(0.0, 3.0, 0.0))
         with g.displacements.case("point"):
             g.displacements.point("Tip", dofs=[0, 0, 1], values=[0.0, 0.0, -0.005])
         g.mesh.sizing.set_global_size(10.0)
         g.mesh.generation.generate(2)
-        g.mesh.queries.get_fem_data(dim=None).to_h5(str(out))
+    # The session writes ``out`` (and a geometry sibling) as it closes.
+    out.with_name("loads3d.geometry.h5").unlink(missing_ok=True)
     print(out)
 
 
