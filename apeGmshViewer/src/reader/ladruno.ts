@@ -24,8 +24,9 @@
 // - a node ID list that repeats an id refuses the file at open (reader/ladrunoChecks.ts, #2299);
 // - past the supported scale (reader/ceiling.ts, #2362) the file is refused at open by name:
 //   a node ID list longer than 2^24, checked from its shape before it is read, or a stage whose
-//   Gauss buckets hold more than 2^24 elements (one part of a set checks its nodes only: the set
-//   reads no element result, and checks its own union of nodes);
+//   Gauss and line-station buckets hold more than 2^24 elements in one result token (the
+//   line-station rows from their ID shapes). One part of a set checks its nodes only: the set
+//   reads no element result, and checks its own union of nodes;
 // - Gauss-point element buckets are read by reader/ladrunoElements.ts (#2187); other
 //   element results, envelopes, the domain and region buckets are listed in `unread`;
 // - `KIND=eigen` is not a mode (Python `_ladruno.py::_KIND_MAP`): the fork labels
@@ -320,7 +321,12 @@ export class LadrunoFile {
     }
     stageNames.sort((a, b) => Number(STAGE_NAME.exec(a)![1]) - Number(STAGE_NAME.exec(b)![1]));
     const hosts = stageNames.map((name, i) => this.readHost(this.group(f, name), `stage_${i}`, warnings));
-    if (!part) for (const h of hosts) assertWithinCeiling(path, `stage "${h.stage.name}"`, "elements", ladrunoStageElements(h.stage.gauss));
+    if (!part) {
+      for (const h of hosts) {
+        const rows = [...h.stage.gauss, ...this.lineStationRows(this.group(f, h.stage.name))];
+        assertWithinCeiling(path, `stage "${h.stage.name}"`, "elements", ladrunoStageElements(rows));
+      }
+    }
     const modes = this.layModes(hosts, warnings);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
@@ -1107,6 +1113,26 @@ export class LadrunoFile {
     if (!parent.keys().includes(name)) return null;
     const d = parent.get(name);
     return d instanceof this.h5.Dataset ? (d as unknown as LDataset) : null;
+  }
+
+  /**
+   * Each line-station bucket's element rows (`ON_ELEMENTS/<token>/<bucket>/ID`, the tokens
+   * `tokenRank` names), from the ID shape alone: no read, and no parse of the bucket. The
+   * scale check counts them with the Gauss buckets (reader/ceiling.ts, #2373).
+   */
+  private lineStationRows(stage: LGroup): { path: string; nElements: number }[] {
+    const onElements = this.optionalSubgroup(stage, ["RESULTS", "ON_ELEMENTS"]);
+    const out: { path: string; nElements: number }[] = [];
+    for (const token of onElements?.keys() ?? []) {
+      const tg = tokenRank(token) === null ? null : this.optionalGroup(onElements!, token);
+      for (const key of tg?.keys() ?? []) {
+        const bucket = this.optionalGroup(tg!, key);
+        const id = bucket ? this.optionalDataset(bucket, "ID") : null;
+        const shape = id?.shape ?? [];
+        if (shape.length === 1 || (shape.length === 2 && shape[1] === 1)) out.push({ path: bucket!.path, nElements: shape[0]! });
+      }
+    }
+    return out;
   }
 
   private optionalSubgroup(parent: LGroup, path: readonly string[]): LGroup | null {

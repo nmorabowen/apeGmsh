@@ -47,6 +47,7 @@ const fixture = (name: string) => fileURLToPath(new URL(`../../fixtures/${name}`
 const TRUSS = fixture("ladruno_truss2d.ladruno");
 const MODES = fixture("ladruno_modes.ladruno");
 const QUAD = fixture("ladruno_quad2d.ladruno");
+const FRAME = fixture("ladruno_frame3d.ladruno");
 const PART0 = fixture("ladruno_parts2d.part-0.ladruno");
 const SOLID_RESULTS = fixture("elem_solid.results.h5");
 const SOLID_MODEL = fixture("elem_solid.h5");
@@ -203,6 +204,8 @@ test("counts: a dataset's rows from its shape; a .ladruno stage holds its larges
   const quad = (token: string, bucket: string, n: number) => ({ path: `/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/${token}/${bucket}`, nElements: n });
   assert.equal(ladrunoStageElements([quad("stress", "31-a", 6), quad("stress", "31-b", 4), quad("strain", "31-a", 6), quad("strain", "31-b", 4)]), 10);
   assert.equal(ladrunoStageElements([]), 0);
+  // A bucket listed as a Gauss bucket and as a line-station bucket counts once.
+  assert.equal(ladrunoStageElements([quad("basicForce", "12-a", 5), quad("basicForce", "12-a", 5), quad("basicForce", "12-b", 2)]), 7);
   assert.equal(nativeStageElements([{ nElements: 3 }, { nElements: 4 }], [{ nElements: 5 }]), 7);
   assert.equal(nativeStageElements([], [{ nElements: 5 }, { nElements: 1 }]), 6);
 });
@@ -245,6 +248,16 @@ test(".ladruno elements: a token of 2^24 elements opens; 2^24 + 1 is refused by 
   assert.deepEqual(g.map((x) => [x.id, x.nElements]), [["stress/31-FourNodeQuad[201:0:0]", N], ["strain/31-FourNodeQuad[201:0:0]", 6]]);
   at.close();
   refused(() => openLadruno(asResults(stubH5(gaussRows(N + 1))), QUAD), elementsPast(QUAD, 'stage "MODEL_STAGE[1]"', "16,777,217"));
+});
+
+const SECTION_FORCE = "/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/20-ForceBeamColumn3d[0]";
+/** The frame's one section.force bucket (its 10 beams) holds `n` elements: counted from the ID shape, never read at open. */
+const lineRows = (n: number): Overrides => (_file, path) =>
+  path === `${SECTION_FORCE}/ID` ? { shape: () => [n] } : path === `${SECTION_FORCE}/DATA` ? { shape: (r) => [r[0]!, n, r[2]!] } : undefined;
+
+test(".ladruno line stations: a section.force token of 2^24 beams opens; 2^24 + 1 is refused by name, from the ID shape", () => {
+  openLadruno(asResults(stubH5(lineRows(N))), FRAME).close();
+  refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), FRAME), elementsPast(FRAME, 'stage "MODEL_STAGE[1]"', "16,777,217"));
 });
 
 /** Each part of the 2-part set lists half the nodes, sharing one interface node: `total` in the union. */
@@ -397,6 +410,7 @@ test("with Map and Set stubbed to throw, every over-ceiling open is the named Ce
   underStubbedCollections(() => {
     refused(() => openLadruno(asResults(stubH5(nodalRows(TRUSS_DISP, N + 1))), TRUSS), nodesPast(TRUSS, 'stage "MODEL_STAGE[1]"', "16,777,217"));
     refused(() => openLadruno(asResults(stubH5(gaussRows(N + 1))), QUAD), elementsPast(QUAD, 'stage "MODEL_STAGE[1]"', "16,777,217"));
+    refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), FRAME), elementsPast(FRAME, 'stage "MODEL_STAGE[1]"', "16,777,217"));
     refused(() => openLadrunoSet(asResults(stubH5(partRows(N + 1))), PART0, list), nodesPast(PART0, 'stage "MODEL_STAGE[1]" (the union of 2 parts)', "16,777,217"));
     refused(() => openResults(asResults(stubH5(nativeNodes(N + 1))), SOLID_RESULTS), nodesPast(SOLID_RESULTS, solidStage, "16,777,217"));
     refused(() => openResults(asResults(stubH5(nativeElements(N + 1))), SOLID_RESULTS), elementsPast(SOLID_RESULTS, solidStage, "16,777,217"));

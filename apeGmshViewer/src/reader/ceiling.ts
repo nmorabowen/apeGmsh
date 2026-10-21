@@ -78,13 +78,17 @@ export function datasetRows(shape: readonly number[] | null): number {
  * A `.ladruno` stage's element count: each result token (`ON_ELEMENTS/<token>`)
  * lists the elements it records once across its buckets, and two tokens (stress and
  * strain) list the same elements, so the stage holds the largest token's sum, never
- * the sum over tokens. A bucket's token is its path's parent.
+ * the sum over tokens. A bucket's token is its path's parent. `groups` takes the
+ * Gauss buckets and the line-station buckets together; a bucket listed in both
+ * counts once.
  */
 export function ladrunoStageElements(groups: readonly { path: string; nElements: number }[]): number {
+  const byBucket = new Map<string, number>(); // keyed by bucket path: sized by the bucket count
+  for (const g of groups) byBucket.set(g.path, Math.max(byBucket.get(g.path) ?? 0, g.nElements));
   const byToken = new Map<string, number>(); // keyed by token: sized by the token count
-  for (const g of groups) {
-    const token = g.path.slice(0, g.path.lastIndexOf("/"));
-    byToken.set(token, (byToken.get(token) ?? 0) + g.nElements);
+  for (const [path, n] of byBucket) {
+    const token = path.slice(0, path.lastIndexOf("/"));
+    byToken.set(token, (byToken.get(token) ?? 0) + n);
   }
   return Math.max(0, ...byToken.values());
 }
