@@ -490,8 +490,7 @@ def _mp_row_keys(rows: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
             keys.add(("rigid_diaphragm", int(r.master),
                       tuple(sorted(int(n) for n in r.slaves))))
         elif isinstance(r, EmbeddedNodeRecord):
-            keys.add(("embedded_node", int(r.cnode),
-                      tuple(int(n) for n in r.args)))
+            keys.add(("embedded_node", int(r.cnode)))
         else:
             raise TypeError(
                 f"replay: {type(r).__name__} is no MP-constraint row.")
@@ -571,11 +570,15 @@ def _constraint_stage_keys(
 
 def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
     """Stage-bucket key of one non-element interpolation row: its
-    ``embeddedNode`` line (none on the equation route, a ledger verb)."""
+    ``embeddedNode`` line (none on the equation route, a ledger verb).
+
+    The key is the constrained node alone. The forward emit writes the
+    host corners that carry weight, so a quad host projected onto one of
+    its triangles goes out with three of the record's four master nodes;
+    the archived row is that line, and a constrained node takes one."""
     if rec.enforce == "equation":
         return []
-    return [("embedded_node", int(rec.slave_node),
-             tuple(int(n) for n in rec.master_nodes))]
+    return [("embedded_node", int(rec.slave_node))]
 
 
 def _skipped_replay_streams(
