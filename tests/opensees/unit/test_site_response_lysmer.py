@@ -129,7 +129,7 @@ def test_ground_must_be_a_node_set_over_the_base(strip) -> None:
         lysmer_base(_ops(fem), "Base", 7, rho=2.0, vs=300.0)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="is not a node label"):
         lysmer_base(_ops(fem), "Base", "nowhere", rho=2.0, vs=300.0)
-    with pytest.raises(ValueError, match="names no label or physical group"):
+    with pytest.raises(ValueError, match="not straight"):  # a surface
         lysmer_base(_ops(fem), "Soil", gnd, rho=2.0, vs=300.0)
 
 
