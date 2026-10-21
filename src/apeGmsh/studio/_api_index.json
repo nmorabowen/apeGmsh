@@ -4328,7 +4328,7 @@
     },
     "ops.strategy.Ladder": {
       "doc": "Declare a bespoke escalation ladder.",
-      "signature": "Ladder(*, rungs: 'Sequence[SolutionAlgorithm | _Substep]', name: 'str' = 'custom') -> '_Ladder'",
+      "signature": "Ladder(*, rungs: 'Sequence[SolutionAlgorithm | _Substep | _Subdivide]', name: 'str' = 'custom') -> '_Ladder'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.strategy.Ladder"
     },
@@ -4337,6 +4337,12 @@
       "signature": "OpenSeesPyDriver(ops_module: 'Any', *, node: 'int', dof: 'int', sign: 'float' = -1.0) -> '_OpenSeesPyDriver'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.strategy.OpenSeesPyDriver"
+    },
+    "ops.strategy.Subdivide": {
+      "doc": "Declare a transient rung that retries a failed increment in",
+      "signature": "Subdivide(n: 'int') -> '_Subdivide'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.strategy.Subdivide"
     },
     "ops.strategy.Substep": {
       "doc": "Declare the adaptive step-size rung (ADR 0104).",

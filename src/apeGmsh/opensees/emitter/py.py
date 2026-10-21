@@ -28,6 +28,7 @@ import re
 from typing import Any, Callable, Literal, Sequence
 
 from .caps import TargetCaps
+from .base import SUBDIVIDE_TOKEN
 from .base import (
     NUMPY_VALUE_TYPES,
     DroppedAxisGuard,
@@ -1125,6 +1126,10 @@ class PyEmitter:
                 f"analyze strategy {strategy.name!r} rung {k}", bad, exc.value,
             ) from None
         sname = stage_marker_name(strategy.name)
+        if any(r and r[0] == SUBDIVIDE_TOKEN for r in strategy.rungs):
+            return self._analyze_subdivided(
+                n=n, dt=dt, where=where, sname=sname,
+                rungs_literal=rungs_literal, n_rungs=len(strategy.rungs))
         self._lines.append(f"_apesees_rungs = {rungs_literal}")
         self._lines.append(f"for _apesees_i in range({n}):")
         prev_indent = self._lines.indent
@@ -1177,6 +1182,96 @@ class PyEmitter:
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_after_step()")
         self._lines.indent = prev_indent
+        return 0
+
+    def _analyze_subdivided(
+        self, *, n: int, dt: float | None, where: str, sname: str,
+        rungs_literal: str, n_rungs: int,
+    ) -> int:
+        """The ladder loop with :class:`Subdivide` rungs (ADR 0057
+        Amendment 1): each increment ends at ``t_target = t + dt``; an
+        algorithm rung retries the remaining time, a ``Subdivide(n)`` rung
+        re-issues rung 0's algorithm and covers it in ``n`` pieces."""
+        if dt is None:
+            raise BridgeError(
+                f"analyze strategy '{sname}'{where}: a Subdivide rung cuts "
+                "the time step, so it needs a transient stage with dt "
+                "(s.run(n_increments=..., dt=...)); a static stage uses "
+                "Substep (ADR 0057 Amendment 1)."
+            )
+        add = self._lines.append
+        add(f"_apesees_rungs = {rungs_literal}")
+        add(f"for _apesees_i in range({n}):")
+        prev = self._lines.indent
+
+        def ind(k: int) -> str:
+            return prev + "    " * k
+
+        self._lines.indent = ind(1)
+        if self._step_hooks_registered:
+            add("_apesees_call_before_step()")
+        add(f"_apesees_t1 = ops.getTime() + {_fmt_value(float(dt))}")
+        add("for _apesees_r in range(len(_apesees_rungs)):")
+        self._lines.indent = ind(2)
+        add("_apesees_g = _apesees_rungs[_apesees_r]")
+        add("if _apesees_r:")
+        self._lines.indent = ind(3)
+        add(
+            f'print("apeGmsh strategy \'{sname}\': increment '
+            f'%d/{n}{where} -> rung %d %r" % '
+            "(_apesees_i + 1, _apesees_r, _apesees_g))"
+        )
+        self._lines.indent = ind(2)
+        add(f"if _apesees_g[0] == {SUBDIVIDE_TOKEN!r}:")
+        self._lines.indent = ind(3)
+        add("ops.algorithm(*_apesees_rungs[0])")
+        add("_apesees_h = (_apesees_t1 - ops.getTime()) / _apesees_g[1]")
+        add("_apesees_rc = 0")
+        add("for _apesees_k in range(_apesees_g[1]):")
+        self._lines.indent = ind(4)
+        add("_apesees_rc = ops.analyze(1, _apesees_h)")
+        add("if _apesees_rc != 0:")
+        self._lines.indent = ind(5)
+        add("break")
+        self._lines.indent = ind(2)
+        add("else:")
+        self._lines.indent = ind(3)
+        add("if _apesees_r:")
+        self._lines.indent = ind(4)
+        add("ops.algorithm(*_apesees_g)")
+        self._lines.indent = ind(3)
+        add("_apesees_rc = ops.analyze(1, _apesees_t1 - ops.getTime())")
+        self._lines.indent = ind(2)
+        add("if _apesees_rc == 0:")
+        self._lines.indent = ind(3)
+        add("break")
+        self._lines.indent = ind(2)
+        add(f"if _apesees_rc == {COMMIT_ABORT_RC}:")
+        self._lines.indent = ind(3)
+        add(
+            'raise RuntimeError("apeGmsh: analyze aborted at increment '
+            f'%d/{n}{where} (pseudo-time %g) -- {COMMIT_ABORT_MESSAGE}" '
+            "% (_apesees_i + 1, ops.getTime()))"
+        )
+        self._lines.indent = ind(1)
+        add("else:")
+        self._lines.indent = ind(2)
+        add(
+            'raise SystemExit("apeGmsh: analyze FAILED at increment '
+            f'%d/{n}{where} (pseudo-time %g) -- aborting after '
+            f"exhausting strategy ladder '{sname}' "
+            f'({n_rungs} rungs); the remaining deck would '
+            'run on a partial state" % (_apesees_i + 1, ops.getTime()))'
+        )
+        self._lines.indent = ind(1)
+        add("if _apesees_r:")
+        self._lines.indent = ind(2)
+        add("ops.algorithm(*_apesees_rungs[0])")
+        self._lines.indent = ind(1)
+        self._emit_progress_marker(n, prev)
+        if self._step_hooks_registered:
+            add("_apesees_call_after_step()")
+        self._lines.indent = prev
         return 0
 
     def _emit_progress_marker(self, n: int, prev_indent: str) -> None:

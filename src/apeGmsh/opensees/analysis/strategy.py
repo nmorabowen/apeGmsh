@@ -42,7 +42,7 @@ from typing import Any, Literal, Protocol
 
 from .._internal.analyze_rc import check_analyze_rc
 from .._internal.types import SolutionAlgorithm
-from ..emitter.base import StrategySpec
+from ..emitter.base import SUBDIVIDE_TOKEN, StrategySpec
 from .algorithm import (
     BFGS,
     KrylovNewton,
@@ -54,6 +54,8 @@ from .algorithm import (
 __all__ = [
     "Ladder",
     "OpenSeesPyDriver",
+    "Subdivide",
+    "SUBDIVIDE_TOKEN",
     "Substep",
     "SubstepDriver",
     "SubstepResult",
@@ -530,6 +532,28 @@ class Substep:
 _MAX_RUNGS = 8
 
 
+@dataclass(frozen=True, slots=True)
+class Subdivide:
+    """Retry a failed transient increment in ``n`` pieces (ADR 0057
+    Amendment 1).
+
+    On reaching this rung the emitted loop re-issues rung 0's algorithm
+    and runs ``analyze(1, h)`` up to ``n`` times with
+    ``h = (t_target - getTime()) / n``, ``t_target`` being the time the
+    increment ends. A failed piece hands the remaining time to the next
+    rung, so the increment always ends exactly at ``t_target`` and model
+    time never drifts off the step grid. Transient stages only; a static
+    stage keeps :class:`Substep`.
+    """
+
+    n: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.n, bool) or not isinstance(self.n, int)                 or self.n < 2:
+            raise ValueError(
+                f"Subdivide: n must be an int >= 2, got {self.n!r}.")
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Ladder:
     """An ordered escalation of solution algorithms (ADR 0057 §1–§2).
@@ -560,7 +584,7 @@ class Ladder:
     analyses.
     """
 
-    rungs: tuple[SolutionAlgorithm | Substep, ...]
+    rungs: tuple[SolutionAlgorithm | Substep | Subdivide, ...]
     name: str = "custom"
 
     def __post_init__(self) -> None:
@@ -573,10 +597,11 @@ class Ladder:
                 "modeling problem, not a solver problem."
             )
         for r in self.rungs:
-            if not isinstance(r, (SolutionAlgorithm, Substep)):
+            if not isinstance(r, (SolutionAlgorithm, Substep, Subdivide)):
                 raise TypeError(
                     "Ladder rungs must be solution-algorithm primitives "
-                    f"(ops.algorithm.*) or one ops.strategy.Substep; got "
+                    "(ops.algorithm.*), ops.strategy.Subdivide rungs or one "
+                    f"ops.strategy.Substep; got "
                     f"{type(r).__name__!r}. Tolerance/test/integrator "
                     "changes are excluded by design (ADR 0057 §6)."
                 )
@@ -620,15 +645,28 @@ class Ladder:
                 "step-size policy and run a fixed-step deck. Drive it "
                 "in-process with Substep.drive(driver) instead."
             )
-        rung_args = [
-            _rung_args(r) for r in self.rungs
-            if isinstance(r, SolutionAlgorithm)
+        rung_args: list[tuple[int | float | str, ...]] = [
+            (SUBDIVIDE_TOKEN, int(r.n)) if isinstance(r, Subdivide)
+            else _rung_args(r)
+            for r in self.rungs
+            if isinstance(r, (SolutionAlgorithm, Subdivide))
         ]
         if base is not None:
             base_args = _rung_args(base)
             if not rung_args or rung_args[0] != base_args:
                 rung_args.insert(0, base_args)
+        if rung_args and rung_args[0][0] == SUBDIVIDE_TOKEN:
+            raise ValueError(
+                f"Ladder {self.name!r}: a Subdivide rung re-issues rung 0's "
+                "algorithm, so rung 0 must be an algorithm: declare the "
+                "stage's analysis chain, or put an ops.algorithm rung first."
+            )
         return StrategySpec(name=self.name, rungs=tuple(rung_args))
+
+    @property
+    def subdivides(self) -> bool:
+        """True when the ladder holds a :class:`Subdivide` rung."""
+        return any(isinstance(r, Subdivide) for r in self.rungs)
 
 
 # ---------------------------------------------------------------------------

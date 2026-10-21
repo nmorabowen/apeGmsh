@@ -2115,6 +2115,12 @@ class _StageBuilder:
                 f"Stage {self._name!r}.run: n_increments must be >= 1, "
                 f"got {n_increments}."
             )
+        if strategy is not None and getattr(strategy, "subdivides", False)                 and dt is None:
+            raise ValueError(
+                f"Stage {self._name!r}.run: a Subdivide rung cuts the time "
+                "step, so it needs a transient stage run with dt=; a static "
+                "stage uses Substep (ADR 0057 Amendment 1)."
+            )
         self._n_increments = int(n_increments)
         self._dt = None if dt is None else float(dt)
         self._strategy = strategy
