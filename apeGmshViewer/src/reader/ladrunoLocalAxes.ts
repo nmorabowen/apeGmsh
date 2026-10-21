@@ -26,6 +26,16 @@
 // the file gives no frame. Python and MPCO do the same (#2090). An empty ID beside
 // FRAME rows is refused by name: those frames belong to no element.
 //
+// A per-step bucket (`RESULTS/ON_ELEMENTS/LOCAL_AXES`, schema §5, which the fork at
+// FORK_PIN does not write) has no such fallback (#2349): at a step the stored frame
+// is the answer, and the reference frame in its place is a wrong frame for a
+// co-rotational element, warned or not. So a bucket that cannot be paired with its
+// ids, or with the stage's steps, is refused by name (the file, the bucket, the step):
+// ID or DATA missing or not a dataset, a DATA that is not (steps, elements, 3|4|9),
+// a step or row count that is not the stage's or the ID's, an empty ID beside rows,
+// or a row that does not decode (not finite, or a zero quaternion). (An id twice in the step's buckets is refused at open, as in any ON_ELEMENTS
+// token, by reader/ladrunoElements.ts.) A step-less read does not read them.
+//
 // The frames are resolved with sorted typed arrays, never a Set or Map sized by the
 // element count, which V8 caps at 2^24 entries (as reader/ladrunoChecks.ts does).
 //
@@ -55,6 +65,10 @@ export interface LocalAxesDataset {
 export interface LocalAxesReads {
   optionalGroup(parent: LocalAxesGroup, name: string): LocalAxesGroup | null;
   dataset(parent: LocalAxesGroup, name: string): LocalAxesDataset;
+  /** A child dataset, or null when absent or not a dataset. */
+  optionalDataset(parent: LocalAxesGroup, name: string): LocalAxesDataset | null;
+  /** One step of a `(steps, elements, components)` dataset, as float64. */
+  stepSlice(ds: LocalAxesDataset, step: number): Float64Array;
   ints(ds: LocalAxesDataset): Float64Array;
   floats(v: unknown, where: string): Float64Array;
   /** The file's name, for a refusal or a warning. */
@@ -151,6 +165,58 @@ export function warnModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesRead
     const fault = frameFault(nE, frameRowsOf(frameDs.shape), count(frameDs.shape), idDs);
     if (fault !== null) reads.warn(notRead(reads, frameDs, fault));
   });
+}
+
+/**
+ * The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` (`stepLa`) at `step`, one entry
+ * per bucket read; `nSteps` is the stage's step count. A bucket is `{ID[nE],
+ * DATA[nSteps, nE, 3|4|9]}`, on `stepLa` itself or one per class group. Any other
+ * bucket is refused by name (the file, the bucket, the step), as is a row that does
+ * not decode to a frame (naming its element and row). An id listed twice in the
+ * step's buckets is refused at open, by reader/ladrunoElements.ts.
+ */
+export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nSteps: number, reads: LocalAxesReads): FrameRows[] {
+  const read: FrameRows[] = [];
+  const readBucket = (b: LocalAxesGroup) => {
+    const refuse = (what: string) =>
+      reads.fail(`${reads.file}: ${b.path} ${what}; a step's frame is read only as stored, and the reference frame in its place would be the wrong frame, so the local axes at step ${step} are not read`);
+    const hasId = b.keys().includes("ID");
+    const hasData = b.keys().includes("DATA");
+    const layout = "a step bucket is one ID[nE] dataset and one DATA[steps, nE, 3|4|9] dataset, on LOCAL_AXES itself or on each of its groups";
+    if (!hasId || !hasData) throw refuse(`${hasId ? "holds an ID but no DATA" : hasData ? "holds a DATA but no ID" : "holds neither an ID nor a DATA"} (${layout})`);
+    const idDs = reads.optionalDataset(b, "ID");
+    const dataDs = reads.optionalDataset(b, "DATA");
+    if (!idDs || !dataDs) throw refuse(`holds ${idDs ? "a DATA" : "an ID"} that is not a dataset (${layout})`);
+    const shape = dataDs.shape ?? [];
+    if (shape.length !== 3) throw refuse(`has DATA of shape (${shape.join(", ")}), not (steps, elements, components)`);
+    if (shape[0] !== nSteps) throw refuse(`has DATA for ${shape[0]} step(s), but the stage has ${nSteps}`);
+    const ids = reads.ints(idDs);
+    const nE = ids.length;
+    if (nE === 0) {
+      if (shape[1] === 0) return;
+      throw refuse(`has an empty ID, but its DATA holds ${shape[1]} row(s) per step; a frame row belongs to the element its ID row names, so these belong to no element`);
+    }
+    if (shape[1] !== nE) throw refuse(`has DATA holding ${shape[1]} row(s) per step for the ${nE} id(s) of its ID`);
+    const cols = shape[2]!;
+    if (!FRAME_WIDTHS.includes(cols)) throw refuse(`has DATA rows ${cols} wide, not 3 (the local z axis), 4 (a quaternion) or 9 (a rotation matrix)`);
+    const slice = reads.stepSlice(dataDs, step);
+    if (slice.length !== nE * cols) throw refuse(`read ${slice.length} value(s) from DATA at step ${step}, not ${nE} row(s) ${cols} wide`);
+    // A row that does not decode would leave its element the reference frame (resolveLocalAxes keeps the last row that does).
+    for (let i = 0; i < nE; i++) {
+      if (decodeLocalAxesRow(slice, i * cols, cols)) continue;
+      const row = Array.from(slice.subarray(i * cols, (i + 1) * cols)).join(", ");
+      throw refuse(`holds at step ${step} a DATA row that is not a frame (element ${ids[i]} at row ${i}: [${row}]); a frame row is finite, and a quaternion is not zero`);
+    }
+    read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
+  };
+  if (stepLa.keys().includes("ID") || stepLa.keys().includes("DATA")) {
+    readBucket(stepLa);
+  }
+  for (const k of stepLa.keys()) {
+    const sub = reads.optionalGroup(stepLa, k);
+    if (sub) readBucket(sub);
+  }
+  return read;
 }
 
 /** Per-element frames, as reader/ladruno.ts `LadrunoLocalAxes` documents them. */
