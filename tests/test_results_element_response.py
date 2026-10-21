@@ -604,15 +604,19 @@ class TestDamageLookup:
             assert catalog_token_for_keyword("damage") == "damage"
 
     def test_damage_is_read_per_material_on_every_host(self) -> None:
+        """The recorder emit (``spec/_emit.py``) reads these two facts."""
         from apeGmsh.opensees._response_catalog import (
-            needs_per_material_query,
+            PER_MATERIAL_TOKENS,
+            needs_per_material_strain,
         )
-        for cls in ("Brick", "LadrunoBrick", "FourNodeQuad", "LadrunoQuad"):
-            assert needs_per_material_query(cls, "damage")
-            # The element-level tokens stay element-level.
-            assert not needs_per_material_query(cls, "stress")
+        assert "damage" in PER_MATERIAL_TOKENS
+        # The element-level tokens stay element-level.
+        assert "stress" not in PER_MATERIAL_TOKENS
+        assert "strain" not in PER_MATERIAL_TOKENS
         # The Tri31 strain case is still covered.
-        assert needs_per_material_query("Tri31", "strain")
+        assert needs_per_material_strain("Tri31", "strain")
+        for cls in ("Brick", "LadrunoBrick", "FourNodeQuad", "LadrunoQuad"):
+            assert not needs_per_material_strain(cls, "strain")
 
     def test_ladruno_material_damage_bucket_maps_by_position(self) -> None:
         from apeGmsh.results.readers._ladruno_element_io import (
@@ -686,8 +690,9 @@ def test_catalog_coverage_v1() -> None:
         ("Twenty_Node_Brick", IntRule.Hex_GL_3, "stress"),
         ("Twenty_Node_Brick", IntRule.Hex_GL_3, "strain"),
         # LadrunoBrick20 (Ladruno fork) — H20 std = Hex_GL_3 / 27 GP.
-        # uri (8 GP) is intentionally NOT catalogued (would break
-        # _class_int_rule); DomainCapture refuses loud on size mismatch.
+        # uri (8 GP) is intentionally NOT catalogued: a second
+        # non-Custom rule for one class would make the class's layout
+        # ambiguous. The .ladruno recorder serves uri Gauss points.
         ("LadrunoBrick20", IntRule.Hex_GL_3, "stress"),
         ("LadrunoBrick20", IntRule.Hex_GL_3, "strain"),
         # 2D solids
@@ -709,8 +714,8 @@ def test_catalog_coverage_v1() -> None:
         ("LadrunoLST", IntRule.Triangle_GL_2, "stress"),
         ("LadrunoLST", IntRule.Triangle_GL_2, "strain"),
         # SixNodeTri (6-node quadratic triangle, 3 GPs) — registered
-        # under BOTH the canonical Triangle_GL_2 rule (used by live
-        # capture / .out transcoder) AND IntRule.Custom (used by MPCO
+        # under BOTH the canonical Triangle_GL_2 rule (used by the
+        # .out transcoder) AND IntRule.Custom (used by MPCO
         # bracket-key lookups; upstream MPCORecorder.cpp falls
         # through to CustomIntegrationRule for unregistered class
         # tags). Remove the Custom mirror entries if/when upstream

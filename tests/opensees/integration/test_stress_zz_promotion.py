@@ -49,7 +49,7 @@ from apeGmsh.opensees.material.nd import (
     LadrunoJ2,
     LadrunoJ2Finite,
 )
-from apeGmsh.results.capture._domain import _gauss_record_tokens
+from apeGmsh.results.spec._emit import _gauss_record_ops_keyword
 from apeGmsh.results.transcoders._recorder import _record_catalog_token
 
 from tests.opensees.h5.test_h5_stages_reader import build_two_quad_fem
@@ -185,8 +185,8 @@ class TestResponseTokenPromotion:
 
 
 class TestEveryRouteAgreesOnTheToken:
-    """The bridge, the live-capture and the ``.out`` routes each resolve
-    the gauss token separately.  If they ever disagree the recorder
+    """The bridge, the recorder-spec emit and the ``.out`` routes each
+    resolve the gauss token separately.  If they ever disagree the recorder
     writes one shape and the reader decodes another, so they all go
     through the one shared decision.
     """
@@ -198,16 +198,16 @@ class TestEveryRouteAgreesOnTheToken:
         )
 
     @pytest.mark.parametrize("capable, expected", [
-        (True, ("stress_plane_strain", STRESS_PLANE_STRAIN_RESPONSE)),
-        (None, ("stress", "stresses")),
+        (True, STRESS_PLANE_STRAIN_RESPONSE),
+        (None, "stresses"),
     ])
-    def test_capture_tokens(self, capable, expected) -> None:
-        assert _gauss_record_tokens(self._record(capable)) == expected
+    def test_spec_emit_keyword(self, capable, expected) -> None:
+        assert _gauss_record_ops_keyword(self._record(capable)) == expected
 
-    def test_capture_warns_when_incapable(self) -> None:
+    def test_spec_emit_warns_when_incapable(self) -> None:
         with pytest.warns(StressZZNotRecordedWarning):
-            tokens = _gauss_record_tokens(self._record(False))
-        assert tokens == ("stress", "stresses")
+            keyword = _gauss_record_ops_keyword(self._record(False))
+        assert keyword == "stresses"
 
     @pytest.mark.parametrize("capable, expected", [
         (True, "stress_plane_strain"),
@@ -232,7 +232,7 @@ class TestEveryRouteAgreesOnTheToken:
         rec = SimpleNamespace(
             name="body", components=IN_PLANE, sigma_zz_capable=True,
         )
-        assert _gauss_record_tokens(rec) == ("stress", "stresses")
+        assert _gauss_record_ops_keyword(rec) == "stresses"
         assert _record_catalog_token(rec) == "stress"
 
 
@@ -346,36 +346,6 @@ class TestDeclareEmitPromotion:
             warnings.simplefilter("error", StressZZNotRecordedWarning)
             args = _recorder_args(ops)
         assert args[-1] == "stresses"
-
-    def test_capture_spec_resolves_capability_from_the_bridge(self) -> None:
-        """The live-capture route reads the same gate off the bridge's
-        typed element primitives."""
-        from apeGmsh.results.capture.spec import DomainCaptureSpec
-
-        ops = _bridge(WITH_ZZ)
-        cs = DomainCaptureSpec(opensees=ops)
-        cs.gauss(components=WITH_ZZ, pg="Rock", name="rock")
-        assert cs.resolve(ops.fem).records[0].sigma_zz_capable is True
-
-    def test_capture_spec_capability_false_for_incapable_material(
-        self,
-    ) -> None:
-        from apeGmsh.results.capture.spec import DomainCaptureSpec
-
-        ops = _bridge(WITH_ZZ, material="j2finite")
-        cs = DomainCaptureSpec(opensees=ops)
-        cs.gauss(components=WITH_ZZ, pg="Rock", name="rock")
-        assert cs.resolve(ops.fem).records[0].sigma_zz_capable is False
-
-    def test_capture_spec_capability_unknown_without_pg(self) -> None:
-        """``ids=`` names no PG, so no ``Element`` primitive can be
-        matched — unknown, not incapable."""
-        from apeGmsh.results.capture.spec import DomainCaptureSpec
-
-        ops = _bridge(WITH_ZZ)
-        cs = DomainCaptureSpec(opensees=ops)
-        cs.gauss(components=WITH_ZZ, ids=[1], name="byid")
-        assert cs.resolve(ops.fem).records[0].sigma_zz_capable is None
 
     def test_promotion_changes_exactly_one_deck_line(self) -> None:
         """Record-level: promoting ``stress_zz`` swaps the response token

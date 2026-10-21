@@ -84,8 +84,7 @@ def capture_live_modes(
     stiffness may be indefinite, declare ``ops.system("BandGeneral")``
     before capturing, or pass ``solver="-fullGenLapack"`` (a dense, O(n³)
     solve, for small models only). ``ops.wipeAnalysis()`` drops the
-    system too, so declare it again after one. ``DomainCapture.capture_modes``
-    had the same exposure.
+    system too, so declare it again after one.
 
     Parameters
     ----------
