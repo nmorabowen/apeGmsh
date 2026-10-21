@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
+import { withNodes } from "../src/effects.ts";
 import { renderLoads } from "../src/panels/loads.ts";
 import { view as patternsView } from "../src/panels/windows/patterns.ts";
 import { openModel } from "../src/reader/node.ts";
@@ -30,16 +31,16 @@ const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures")
 
 const shoeModel = await openModel(join(fixtures, "shoebuckle.h5"));
 const shoeBlobs = new BlobStore();
-const shoeLoad = loadModel(shoeModel, shoeBlobs);
+const shoeLoad = withNodes(loadModel(shoeModel, shoeBlobs), shoeModel, shoeBlobs);
 const shoeState: State = reduce(initialState, { type: "fileLoaded", artifact: "model", load: shoeLoad });
 
 const defModel = await openModel(join(fixtures, "definitions.h5"));
 const defBlobs = new BlobStore();
-const defLoad = loadModel(defModel, defBlobs);
+const defLoad = withNodes(loadModel(defModel, defBlobs), defModel, defBlobs);
 const defState: State = reduce(initialState, { type: "fileLoaded", artifact: "model", load: defLoad });
 
-test("mesh.nodes is populated on loadModel and buildLoads3D builds 3-D force arrows on shoebuckle.h5 and definitions.h5", () => {
-  assert.ok(shoeState.mesh?.nodes, "mesh.nodes is populated by loadModel");
+test("mesh.nodes (withNodes) feeds buildLoads3D, which builds 3-D force arrows on shoebuckle.h5 and definitions.h5", () => {
+  assert.ok(shoeState.mesh?.nodes, "mesh.nodes is populated by withNodes, as the app loads a model");
   assert.ok(shoeBlobs.has(shoeState.mesh!.nodes!.ids));
   assert.ok(shoeBlobs.has(shoeState.mesh!.nodes!.xyz));
 
@@ -55,7 +56,7 @@ test("mesh.nodes is populated on loadModel and buildLoads3D builds 3-D force arr
   assert.ok(geom.maxForceMag > 0);
 });
 
-test("stage activation on definitions.h5: sequence stage 0 activates global + gravity, stage 1 adds push", () => {
+test("stage activation on definitions.h5: no stage shows the global pattern only, stage 0 adds gravity, stage 1 adds push; the neutral case stays off (#2385 F3)", () => {
   const defWithSeq: State = {
     ...defState,
     sequence: {
@@ -74,20 +75,22 @@ test("stage activation on definitions.h5: sequence stage 0 activates global + gr
     },
   };
 
-  // On mesh phase (no stage selected), all patterns are active (including neutral /loads/element/Pressure)
+  // No stage selected: the global pattern only. Every stage at once, plus the neutral
+  // case the bridge turned into #1, would count the same loads twice.
   const meshSummary = loadsSummaryOf(defWithSeq);
   assert.equal(meshSummary.hasLoads, true);
+  assert.equal(meshSummary.activeStageLabel, "global patterns");
   assert.deepEqual(
     meshSummary.patterns.map((p) => [p.title, p.stageIndex, p.active]),
     [
       ["#1", -1, true],
-      ["gravity", 0, true],
-      ["push", 1, true],
-      ["Pressure", -1, true],
+      ["gravity", 0, false],
+      ["push", 1, false],
+      ["Pressure", -1, false],
     ],
   );
 
-  // Select stage 0 (`gravity`): global (#1), stage 0 (gravity), and neutral (Pressure) are active; stage 1 (push) is inactive
+  // Select stage 0 (`gravity`): global (#1) and stage 0 (gravity) are active; push and the neutral case are not
   const stage0State = reduce(defWithSeq, { type: "selectStage", index: 0 });
   const sum0 = loadsSummaryOf(stage0State);
   assert.deepEqual(
@@ -96,11 +99,11 @@ test("stage activation on definitions.h5: sequence stage 0 activates global + gr
       ["#1", true],
       ["gravity", true],
       ["push", false],
-      ["Pressure", true],
+      ["Pressure", false],
     ],
   );
 
-  // Select stage 1 (`push`): global (#1), stage 0 (gravity), stage 1 (push), and neutral (Pressure) are all active
+  // Select stage 1 (`push`): global (#1), stage 0 (gravity) and stage 1 (push) are active; the neutral case stays off
   const stage1State = reduce(defWithSeq, { type: "selectStage", index: 1 });
   const sum1 = loadsSummaryOf(stage1State);
   assert.deepEqual(
@@ -109,7 +112,7 @@ test("stage activation on definitions.h5: sequence stage 0 activates global + gr
       ["#1", true],
       ["gravity", true],
       ["push", true],
-      ["Pressure", true],
+      ["Pressure", false],
     ],
   );
 });
@@ -329,108 +332,111 @@ test("distributed element loads: beamUniform (2D and 3D with vecxz vs fail-close
   assert.equal(geom3dValid.notice, null);
 });
 
-test("neutral /loads/{nodal,element,sp} tables and surfacePressure outward normal arrows", () => {
-  // Add a triangle surface cell to test surfacePressure normal arrows and neutral load cases
-  const triPos = shoeBlobs.put("test/triPos", new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0]), [1, 9]);
-  const triGrp = shoeBlobs.put("test/triGrp", new Int32Array([0]), [1]);
-  const triElem = shoeBlobs.put("test/triElem", new Int32Array([0]), [1]);
-  const vTri = shoeBlobs.put("test/vTri", new Float64Array([1, 2, 3]), [3]);
+// `fixtures/loads3d.h5` is written by apeGmsh's own resolver and `to_h5`
+// (`fixtures/make_loads_fixtures.py`), so these cases read the writer's real
+// layout: `element_id/load_type/params_json`, `node_id/force_xyz`, `node_id/dof/value`.
+const l3Model = await openModel(join(fixtures, "loads3d.h5"));
+const l3Blobs = new BlobStore();
+const l3State: State = reduce(
+  reduce(initialState, { type: "fileLoaded", artifact: "model", load: withNodes(loadModel(l3Model, l3Blobs), l3Model, l3Blobs) }),
+  { type: "setLoads", on: true },
+);
+const onlyCase = (name: string): State => reduce(l3State, { type: "setLoads", selectedPatterns: [`neutral:${name}`] });
 
-  const surfPath = "mesh/cell/999";
-  const n1 = Number(shoeModel.nodeIds[0]!);
-  const neutralLoads: NeutralLoads = {
-    nodal: {
-      dead: {
-        path: "/loads/nodal/dead",
-        columns: ["target_kind", "target", "payload_kind", "fx", "fy", "fz", "mx", "my", "mz"],
-        rows: [["node", String(n1), "nodal", 0, -50, 0, 0, 0, 15]],
-      },
-    },
-    element: {
-      dead: {
-        path: "/loads/element/dead",
-        columns: ["target_kind", "target", "payload_kind", "p"],
-        rows: [["physical_group", "Slab", "surfacePressure", -12]],
-      },
-    },
-    sp: {
-      dead: {
-        path: "/loads/sp/dead",
-        columns: ["target_kind", "target", "payload_kind", "dof", "value"],
-        rows: [["node", String(n1), "sp", 2, -0.005]],
-      },
-    },
-  };
+/** Unit directions of the drawn line segments (arrow shafts and comb profile bars), rounded, with their x range. */
+function segmentDirs(lp: Float32Array): Map<string, { n: number; xMin: number; xMax: number }> {
+  const out = new Map<string, { n: number; xMin: number; xMax: number }>();
+  for (let i = 0; i < lp.length; i += 6) {
+    const d = [lp[i + 3]! - lp[i]!, lp[i + 4]! - lp[i + 1]!, lp[i + 5]! - lp[i + 2]!];
+    const n = Math.hypot(d[0]!, d[1]!, d[2]!) || 1;
+    const key = d.map((v) => (Math.abs(v / n) < 1e-6 ? 0 : Math.round((v / n) * 100) / 100)).join(",");
+    const cur = out.get(key) ?? { n: 0, xMin: Infinity, xMax: -Infinity };
+    out.set(key, { n: cur.n + 1, xMin: Math.min(cur.xMin, lp[i]!), xMax: Math.max(cur.xMax, lp[i]!) });
+  }
+  return out;
+}
 
-  const sNeutral: State = reduce(
-    {
-      ...shoeState,
-      definitions: null,
-      neutralLoads,
-      mesh: {
-        ...shoeState.mesh!,
-        elements: [surfPath],
-        triPositions: triPos,
-        triGroup: triGrp,
-        triElement: triElem,
-        vertexNodes: { ...shoeState.mesh!.vertexNodes, tri: vTri },
-      },
-      decls: {
-        ...shoeState.decls,
-        "mesh/physical_group/Slab": {
-          path: "mesh/physical_group/Slab",
-          kind: "physical_group",
-          name: "Slab",
-          nameSource: "test",
-          type: "physical_group",
-          tag: 10,
-          h5: "/physical_groups/Slab",
-          params: [2, 10],
-          refs: {},
-          links: {},
-          fields: [],
-          problems: [],
-        },
-        [surfPath]: {
-          path: surfPath,
-          kind: "element",
-          name: "cell 999",
-          nameSource: "test",
-          type: "tri3",
-          tag: 999,
-          h5: "/elements/tri3",
-          params: [],
-          refs: {},
-          links: {},
-          fields: [],
-          problems: [],
-          element: {
-            femId: 999,
-            cell: null,
-            inlineNodes: [1, 2, 3],
-            groups: ["mesh/physical_group/Slab"],
-            metas: [],
-          },
-        },
-      },
-    },
-    { type: "setLoads", on: true },
+test("neutral beamUniform wx/wy/wz are GLOBAL: gravity on the X girder points -Z, wind on the Z column points +X (#2385 F1)", () => {
+  const dead = buildLoads3D(reduce(onlyCase("dead"), { type: "setLoads", showElementLoads: true }), l3Blobs);
+  const deadDirs = segmentDirs(dead.linePositions);
+  assert.ok((deadDirs.get("0,0,-1")?.n ?? 0) >= 5, "the girder's comb arrows point -Z");
+  assert.equal(deadDirs.has("0,-1,0"), false, "nothing is drawn along -Y (the local [wy,wz,wx] decode drew wz=-10 there)");
+  assert.deepEqual([...deadDirs.keys()].sort(), ["0,0,-1", "1,0,0"], "only -Z arrows and the +X profile bar along the girder");
+  assert.equal(dead.notice, null, "a global neutral load needs no vecxz");
+
+  const wind = buildLoads3D(onlyCase("wind"), l3Blobs);
+  const windDirs = segmentDirs(wind.linePositions);
+  assert.ok((windDirs.get("1,0,0")?.n ?? 0) >= 5, "the column's comb arrows point +X, across the column");
+  assert.deepEqual([...windDirs.keys()].sort(), ["0,0,1", "1,0,0"], "only +X arrows and the +Z profile bar along the column");
+  assert.equal(loadsSummaryOf(onlyCase("wind")).peaks.beamUniform, 5);
+});
+
+test("neutral beamUniform trapezoid: wx_end/aL/bL are drawn over [aL, bL] with the end magnitude (#2385 F1)", () => {
+  const s = onlyCase("trap");
+  assert.equal(loadsSummaryOf(s).peaks.beamUniform, 20, "the peak is the trapezoid's larger end, 20");
+  const arrows = segmentDirs(buildLoads3D(s, l3Blobs).linePositions).get("0,0,-1");
+  assert.ok(arrows && arrows.n > 0, "the trapezoid points -Z");
+  // The resolver gives every girder element the span x/L in [0.25, 0.75]: no tick sits on the girder's ends.
+  assert.ok(arrows.xMin > 1e-6 && arrows.xMax < 4 - 1e-6, `ticks inside the span, got x in [${arrows.xMin}, ${arrows.xMax}]`);
+});
+
+test("neutral surfacePressure is typed by load_type (p=7 into the slab, not a beamUniform of 1), bodyForce gets a notice (#2385 F2)", () => {
+  const tri = l3Model.blocks.find((b) => b.alias === "tri3");
+  assert.ok(tri);
+  const nTri = tri.ids.length;
+  const dead = onlyCase("dead");
+  const sum = loadsSummaryOf(dead);
+  assert.equal(sum.counts.surfacePressure, nTri, "one surfacePressure per slab triangle");
+  assert.equal(sum.peaks.surfacePressure, 7);
+  assert.equal(sum.peaks.beamUniform, 10, "the pressure's direction key no longer turns it into a unit beamUniform");
+  assert.equal(sum.counts.beamUniform + sum.counts.surfacePressure, sum.counts.elementLoads);
+  assert.equal(buildLoads3D(dead, l3Blobs).surfacePressureCount, nTri);
+
+  const self = onlyCase("self");
+  const selfSum = loadsSummaryOf(self);
+  assert.equal(selfSum.patterns.find((p) => p.id === "neutral:self")!.counts.elementLoads, nTri, "the case is listed with its records");
+  assert.match(selfSum.notice ?? "", new RegExp(`${nTri} bodyForce in self`));
+  const selfGeom = buildLoads3D(self, l3Blobs);
+  assert.equal(selfGeom.elementLoadArrows, 0);
+  assert.match(selfGeom.notice ?? "", /bodyForce in self/, "the drawing says what it left out");
+});
+
+test("neutral nodal force and prescribed SP from the writer's node_id/force_xyz and node_id/dof/value columns", () => {
+  const s = onlyCase("point");
+  const sum = loadsSummaryOf(s);
+  assert.equal(sum.counts.nodalForces, 1);
+  assert.equal(sum.peaks.nodalForce, 3);
+  assert.equal(sum.counts.sps, 1);
+  assert.equal(sum.counts.spTranslations, 1);
+  assert.equal(sum.peaks.spTranslation, 0.005);
+  const g = buildLoads3D(s, l3Blobs);
+  assert.equal(g.nodalForceArrows, 1);
+  assert.equal(g.spArrows, 1);
+});
+
+test("no double counting: with an OpenSees pattern present the neutral cases start off; shoebuckle peaks at 625 on node 102 (#2385 F3)", () => {
+  const sum = loadsSummaryOf(shoeState);
+  assert.deepEqual(
+    sum.patterns.map((p) => [p.id, p.active]),
+    [
+      ["/opensees/patterns/Plain_1", true],
+      ["neutral:Pressure", false],
+    ],
   );
+  assert.equal(sum.counts.nodalForces, 124, "Plain_1's 124 forces, not 248");
+  assert.ok(Math.abs(sum.peaks.nodalForce - 625) < 1e-9, `peak ${sum.peaks.nodalForce}, not 1250`);
 
-  const summary = loadsSummaryOf(sNeutral);
-  assert.equal(summary.hasLoads, true);
-  assert.equal(summary.patterns.length, 1);
-  assert.equal(summary.patterns[0]!.id, "neutral:dead");
-  assert.equal(summary.counts.nodalForces, 1);
-  assert.equal(summary.counts.nodalMoments, 1);
-  assert.equal(summary.counts.elementLoads, 1);
-  assert.equal(summary.counts.sps, 1);
+  // The 625 is node 102's force in the archive, and no node carries more.
+  const t = shoeModel.loads!.nodal["Pressure"]!;
+  const fOf = (r: readonly unknown[]): number => Math.hypot(...(r[t.columns.indexOf("force_xyz")] as number[]));
+  const row102 = t.rows.find((r) => r[t.columns.indexOf("node_id")] === 102);
+  assert.ok(row102);
+  assert.ok(Math.abs(fOf(row102) - 625) < 1e-9);
+  assert.ok(t.rows.every((r) => fOf(r) <= 625 + 1e-9));
 
-  const geom = buildLoads3D(sNeutral, shoeBlobs);
-  assert.equal(geom.nodalForceArrows, 1);
-  assert.equal(geom.nodalMomentArrows, 1);
-  assert.equal(geom.spArrows, 1);
-  assert.equal(geom.elementLoadArrows, 1, "surfacePressure on Slab triangle produces 1 face-normal arrow");
+  // Picking the neutral case alone still shows it.
+  const neutralOnly = loadsSummaryOf(reduce(shoeState, { type: "setLoads", selectedPatterns: ["neutral:Pressure"] }));
+  assert.equal(neutralOnly.counts.nodalForces, 124);
 });
 
 test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries on results steps", () => {

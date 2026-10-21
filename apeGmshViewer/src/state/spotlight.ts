@@ -570,13 +570,14 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
     });
   }
 
+  // Not results-only: the 3-D loads convert through the same target units, and they draw on the mesh.
   if (hasMesh || s.phase.axis.some((k) => k.kind === "results")) {
     out.push({
       item: drillDownItem(
         "cmd:contour-units",
-        "units",
-        `Set Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
-        "Convert load and contour values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
+        "contour",
+        `Set Contour Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
+        "Convert contour and load values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
         "contourUnits",
       ),
       keywords: "set contour loads units baseunits kn tf kgf mm kip mpa kpa",

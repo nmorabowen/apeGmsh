@@ -457,3 +457,28 @@ difference; run as a script, it rewrites the file:
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/test_app_legacy_simplex_drift.py
 ```
+
+## `loads3d.h5` (#2385)
+
+A 3-D frame and slab whose neutral `/loads` zone is apeGmsh's own output: the
+`g.loads` / `g.displacements` declarations go through the real resolver
+(`_load_resolver.py`) and `FEMData.to_h5` (`_write_element_loads`,
+`_write_nodal_loads`, `_write_sp_loads`). A column along +Z and a girder along
++X meet at (0, 0, 3); a triangulated slab lies at z = 3. Its cases are global
+`beamUniform` loads (`dead`: `wz = -10` on the girder, `wind`: `wx = 5` on the
+column), a trapezoid (`trap`: 10 -> 20 over x/L in [0.25, 0.75]), a
+`surfacePressure` of 7 (`dead`), a `bodyForce` (`self`), and a nodal force with
+a prescribed displacement (`point`). `test/loads.test.ts` checks the drawn
+directions and magnitudes against these declarations. The #2385 review found
+that a hand-written table (invented columns) let wrong directions pass.
+
+`make_loads_fixtures.py` writes it, on the #2385 branch (main at `257a7174c`), with the
+worktree's `src` on `PYTHONPATH`. It imports apeGmsh, which the app never does
+(ADR 0112 D4). `to_h5` also writes a `loads3d.geometry.h5` sidecar, which the
+tests do not read, so the file is deleted:
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_loads_fixtures.py
+Remove-Item apeGmshViewer/fixtures/loads3d.geometry.h5
+```

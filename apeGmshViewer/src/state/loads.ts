@@ -400,38 +400,14 @@ function resolveActiveStage(s: State): { index: number | null; label: string; ti
     if (s.stage !== null) {
       return { index: s.stage, label: `stage ${s.stage}`, time };
     }
-    return { index: null, label: resSt ? `results · ${resSt.name || resSt.id}` : "all stages", time };
+    return { index: null, label: resSt ? `results · ${resSt.name || resSt.id}` : "global patterns", time };
   }
   if (s.stage !== null) {
     const defSt = s.definitions?.stages.find((st) => st.index === s.stage);
     const label = defSt ? `stage ${defSt.index} · ${defSt.name}` : `stage ${s.stage}`;
     return { index: s.stage, label, time: null };
   }
-  return { index: null, label: "all stages", time: null };
-}
-
-function removedPatternTagsUpTo(s: State, maxStage: number | null): Set<number> {
-  const out = new Set<number>();
-  if (s.sequence.status !== "ready") return out;
-  const cols = s.sequence.changes.columns;
-  const stIdx = cols.indexOf("stage");
-  const opIdx = cols.indexOf("op");
-  const whatIdx = cols.indexOf("what");
-  const idIdx = cols.indexOf("id");
-  const tagIdx = cols.indexOf("tag");
-  if (opIdx < 0 || whatIdx < 0) return out;
-  for (const row of s.sequence.changes.rows) {
-    const st = stIdx >= 0 && typeof row[stIdx] === "number" ? (row[stIdx] as number) : 0;
-    if (maxStage !== null && st > maxStage) continue;
-    const op = String(row[opIdx] ?? "");
-    const what = String(row[whatIdx] ?? "");
-    if (op === "remove" && what === "pattern") {
-      const rawTag = tagIdx >= 0 ? row[tagIdx] : idIdx >= 0 ? row[idIdx] : undefined;
-      const t = Number(rawTag);
-      if (Number.isInteger(t)) out.add(t);
-    }
-  }
-  return out;
+  return { index: null, label: "global patterns", time: null };
 }
 
 function removedSpStageMapUpTo(s: State, maxStage: number | null): Map<string, number> {
@@ -485,8 +461,12 @@ interface ParsedElementLoad {
   readonly xL: number;
   /** Surface pressure scalar (positive along face normal). */
   readonly pressure: number;
-  /** Optional global unit/scaled direction vector `[dx, dy, dz]` (from neutral `line_uniform`). */
+  /** Global load vector `[qx, qy, qz]`: neutral `beamUniform` (the resolver writes magnitude × direction) and body forces. */
   readonly globalVector: readonly [number, number, number] | null;
+  /** Neutral trapezoid: the global vector at `span[1]` (`wx_end/wy_end/wz_end`); `null` when uniform. */
+  readonly globalVectorEnd: readonly [number, number, number] | null;
+  /** Loaded part of the beam as `[aL, bL]` in `x/L` (neutral `aL/bL`); `[0, 1]` for a full span. */
+  readonly span: readonly [number, number];
 }
 
 function finiteOrZero(v: unknown): number {
@@ -715,6 +695,8 @@ function decodeEleLoadParams(
       xL: 0.5,
       pressure: 0,
       globalVector: null,
+      globalVectorEnd: null,
+      span: [0, 1],
     };
   }
   if (cleanKind === "beamPoint") {
@@ -744,6 +726,8 @@ function decodeEleLoadParams(
       xL: Math.min(1, Math.max(0, xL)),
       pressure: 0,
       globalVector: null,
+      globalVectorEnd: null,
+      span: [0, 1],
     };
   }
   if (cleanKind === "surfaceLoad" || cleanKind === "surfacePressure" || cleanKind === "surface_pressure") {
@@ -760,6 +744,8 @@ function decodeEleLoadParams(
       xL: 0.5,
       pressure: p,
       globalVector: null,
+      globalVectorEnd: null,
+      span: [0, 1],
     };
   }
   if (cleanKind === "brickW" || cleanKind === "selfWeight") {
@@ -778,6 +764,8 @@ function decodeEleLoadParams(
       xL: 0.5,
       pressure: 0,
       globalVector: [bx, by, bz],
+      globalVectorEnd: null,
+      span: [0, 1],
     };
   }
   return null;
@@ -889,106 +877,112 @@ function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): P
   return out;
 }
 
-function parseNeutralElementLoads(table: Table | undefined, is2D: boolean): ParsedElementLoad[] {
-  if (!table || table.rows.length === 0) return [];
-  const out: ParsedElementLoad[] = [];
+/** A neutral case's element loads the viewer draws, and the ones it cannot, counted by kind. */
+interface NeutralElementLoads {
+  readonly loads: ParsedElementLoad[];
+  /** `kind -> count` of records not drawn; each one reaches the user as a notice, never a silent drop. */
+  readonly undrawn: Map<string, number>;
+}
+
+function vec3Of(rec: Record<string, unknown>, x: string, y: string, z: string): [number, number, number] {
+  return [finiteOrZero(rec[x]), finiteOrZero(rec[y]), finiteOrZero(rec[z])];
+}
+
+/**
+ * `/loads/element/<case>` as `_write_element_loads` writes it: one row per
+ * `ElementLoadRecord`, `element_id` (a FEM id), `load_type` and the record's
+ * `params` as `params_json`. The keys are the resolver's (`_load_resolver.py`):
+ *
+ * - `beamUniform`: `wx/wy/wz` are GLOBAL (magnitude × direction; the bridge
+ *   projects them onto the local axes at emit time), plus `wx_end/wy_end/wz_end`
+ *   and `aL/bL` for a trapezoid or a partial span;
+ * - `surfacePressure`: `p` with `normal: true` is a pressure, positive INTO the
+ *   face (the nodal form is `f = -p·A·n`); `normal: false` is a traction or an
+ *   in-plane shear the record cannot tell apart, so it is not drawn;
+ * - `bodyForce` (`g`/`density` or `bf`), and any other kind, is not drawn.
+ *
+ * `load_type` is read before any parameter, so no key of one kind (the
+ * pressure's `direction`) can turn a record into another kind.
+ */
+function parseNeutralElementLoads(table: Table | undefined): NeutralElementLoads {
+  const loads: ParsedElementLoad[] = [];
+  const undrawn = new Map<string, number>();
+  if (!table || table.rows.length === 0) return { loads, undrawn };
+  const skip = (kind: string): void => {
+    undrawn.set(kind, (undrawn.get(kind) ?? 0) + 1);
+  };
   const cols = table.columns;
   const eidIdx = cols.indexOf("element_id");
-  const tkIdx = cols.indexOf("target_kind");
-  const tIdx = cols.indexOf("target");
-  const pkIdx = cols.indexOf("payload_kind");
   const ltIdx = cols.indexOf("load_type");
   const pjIdx = cols.indexOf("params_json");
-  const payloadIdx = cols.indexOf("payload");
 
   for (const row of table.rows) {
-    let eid = eidIdx >= 0 ? Number(row[eidIdx]) : Number.NaN;
-    const tk = tkIdx >= 0 ? String(row[tkIdx] ?? "") : "";
-    const targetStr = tIdx >= 0 ? String(row[tIdx] ?? "") : "";
-    let loadType = ltIdx >= 0 ? String(row[ltIdx] ?? "") : pkIdx >= 0 ? String(row[pkIdx] ?? "") : "";
-    let paramsObj: Record<string, unknown> = {};
-
-    const rawJson = pjIdx >= 0 ? row[pjIdx] : payloadIdx >= 0 ? row[payloadIdx] : undefined;
-    if (typeof rawJson === "string" && rawJson.trim().startsWith("{")) {
+    const loadType = ltIdx >= 0 ? String(row[ltIdx] ?? "") : "";
+    const eid = eidIdx >= 0 ? Number(row[eidIdx]) : Number.NaN;
+    let params: Record<string, unknown> | null = null;
+    const raw = pjIdx >= 0 ? row[pjIdx] : undefined;
+    if (typeof raw === "string") {
       try {
-        paramsObj = JSON.parse(rawJson) as Record<string, unknown>;
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) params = parsed as Record<string, unknown>;
       } catch {
-        paramsObj = {};
-      }
-    } else if (rawJson && typeof rawJson === "object" && !Array.isArray(rawJson)) {
-      paramsObj = { ...(rawJson as Record<string, unknown>) };
-    }
-    for (let c = 0; c < cols.length; c++) {
-      const col = cols[c]!;
-      if (paramsObj[col] === undefined && row[c] !== undefined) {
-        paramsObj[col] = row[c];
+        params = null;
       }
     }
-
-    if (!Number.isInteger(eid) && paramsObj["element_id"] !== undefined) {
-      eid = Number(paramsObj["element_id"]);
+    if (!Number.isInteger(eid) || params === null) {
+      skip(loadType || "unreadable row");
+      continue;
     }
-    if (!Number.isInteger(eid) && (tk === "element" || tk === "")) {
-      const n = Number(targetStr);
-      if (Number.isInteger(n)) eid = n;
-    }
-    if (!loadType && typeof paramsObj["load_type"] === "string") {
-      loadType = paramsObj["load_type"] as string;
-    }
+    const base = { elementIds: [eid], idSpace: "fem" as const, pgName: null, wy: 0, wz: 0, wx: 0, xL: 0.5 };
 
-    const eids = Number.isInteger(eid) ? [eid] : [];
-    const pgName = tk === "pg" || tk === "group" || tk === "physical_group" ? targetStr : null;
-    if (eids.length === 0 && !pgName) continue;
-
-    const cleanKind = loadType.replace(/^-/, "");
-    // Check if neutral record provides an explicit global direction + magnitude (`line_uniform` or `direction`)
-    if (Array.isArray(paramsObj["direction"])) {
-      const dir = (paramsObj["direction"] as unknown[]).map(finiteOrZero);
-      const mag = paramsObj["magnitude"] !== undefined ? finiteOrZero(paramsObj["magnitude"]) : 1;
-      const gx = (dir[0] ?? 0) * mag;
-      const gy = (dir[1] ?? 0) * mag;
-      const gz = (dir[2] ?? 0) * mag;
-      if (Math.hypot(gx, gy, gz) > 0) {
-        out.push({
-          elementIds: eids,
-          idSpace: "fem",
-          pgName,
-          kind: "beamUniform",
-          wy: 0,
-          wz: 0,
-          wx: 0,
-          xL: 0.5,
-          pressure: 0,
-          globalVector: [gx, gy, gz],
-        });
+    if (loadType === "beamUniform") {
+      const q1 = vec3Of(params, "wx", "wy", "wz");
+      const trapezoid = params["aL"] !== undefined || params["wx_end"] !== undefined;
+      const q2 = trapezoid ? vec3Of(params, "wx_end", "wy_end", "wz_end") : null;
+      const aL = trapezoid ? finiteOrZero(params["aL"]) : 0;
+      const bL = trapezoid && params["bL"] !== undefined ? finiteOrZero(params["bL"]) : 1;
+      if (!(aL >= 0 && aL < bL && bL <= 1)) {
+        skip("beamUniform with an invalid aL/bL");
         continue;
       }
-    }
-
-    if (cleanKind === "beamUniform" || cleanKind === "line_uniform" || cleanKind === "lineUniform") {
-      const wy = finiteOrZero(paramsObj["wy"] ?? (Array.isArray(paramsObj["values"]) ? paramsObj["values"][0] : 0));
-      const wz = finiteOrZero(paramsObj["wz"] ?? (Array.isArray(paramsObj["values"]) ? paramsObj["values"][1] : 0));
-      const wx = finiteOrZero(paramsObj["wx"] ?? (Array.isArray(paramsObj["values"]) ? paramsObj["values"][2] : 0));
-      const parsed = decodeEleLoadParams("beamUniform", [wy, wz, wx], eids, "fem", pgName, is2D);
-      if (parsed) out.push(parsed);
-    } else if (cleanKind === "beamPoint") {
-      const Py = finiteOrZero(paramsObj["Py"] ?? paramsObj["py"] ?? 0);
-      const Pz = finiteOrZero(paramsObj["Pz"] ?? paramsObj["pz"] ?? 0);
-      const Px = finiteOrZero(paramsObj["Px"] ?? paramsObj["px"] ?? 0);
-      const xL = paramsObj["xL"] !== undefined ? finiteOrZero(paramsObj["xL"]) : paramsObj["x"] !== undefined ? finiteOrZero(paramsObj["x"]) : 0.5;
-      const parsed = decodeEleLoadParams("beamPoint", [Py, Pz, xL, Px], eids, "fem", pgName, is2D);
-      if (parsed) out.push(parsed);
-    } else if (
-      cleanKind === "surfacePressure" ||
-      cleanKind === "surface_pressure" ||
-      cleanKind === "surfaceLoad"
-    ) {
-      const p = finiteOrZero(paramsObj["pressure"] ?? paramsObj["p"] ?? paramsObj["value"] ?? paramsObj["magnitude"] ?? 0);
-      const parsed = decodeEleLoadParams("surfacePressure", [p], eids, "fem", pgName, is2D);
-      if (parsed) out.push(parsed);
+      if (Math.hypot(...q1) === 0 && (q2 === null || Math.hypot(...q2) === 0)) continue;
+      loads.push({ ...base, kind: "beamUniform", pressure: 0, globalVector: q1, globalVectorEnd: q2, span: [aL, bL] });
+    } else if (loadType === "surfacePressure") {
+      if (params["normal"] !== true) {
+        skip("surface traction/shear");
+        continue;
+      }
+      const p = finiteOrZero(params["p"]);
+      if (p === 0) continue;
+      // Positive p pushes into the face: drawn along -n, as the resolver applies it.
+      loads.push({ ...base, kind: "surfacePressure", pressure: -p, globalVector: null, globalVectorEnd: null, span: [0, 1] });
+    } else {
+      skip(loadType || "untyped");
     }
   }
-  return out;
+  return { loads, undrawn };
+}
+
+function skippedBeamNotice(n: number): string | null {
+  return n > 0
+    ? `${n} 3-D beam${n === 1 ? "" : "s"} skipped in 3-D loads: missing geomTransf vecxz (transverse beam loads require a valid non-parallel vecxz; never guessed in 3-D).`
+    : null;
+}
+
+function joinNotices(...parts: (string | null)[]): string | null {
+  const kept = parts.filter((p): p is string => p !== null);
+  return kept.length > 0 ? kept.join(" ") : null;
+}
+
+/** The notice for neutral element loads the viewer does not draw, over the active cases; `null` when none. */
+function undrawnNotice(patterns: readonly ResolvedPatternData[]): string | null {
+  const parts: string[] = [];
+  for (const p of patterns) {
+    for (const [kind, n] of p.undrawn) parts.push(`${n} ${kind} in ${p.entry.title}`);
+  }
+  return parts.length > 0
+    ? `Element loads not drawn (only beamUniform, beamPoint and surfacePressure are): ${parts.join(", ")}.`
+    : null;
 }
 
 // ---- Pattern / Case Summary Selector (`loadsSummaryOf`) ---------------------
@@ -1000,6 +994,8 @@ interface ResolvedPatternData {
   readonly sps: readonly ParsedSp[];
   /** For UniformExcitation: 1-based global direction (1=X, 2=Y, 3=Z) */
   readonly excitationDirection: number | null;
+  /** Neutral element loads not drawn, `kind -> count` (empty for OpenSees patterns). */
+  readonly undrawn: ReadonlyMap<string, number>;
 }
 
 function collectResolvedPatterns(s: State): {
@@ -1011,20 +1007,17 @@ function collectResolvedPatterns(s: State): {
 } {
   const units = loadsUnitsOf(s);
   const { index: activeStageIndex, label: activeStageLabel, time } = resolveActiveStage(s);
-  const removedPatterns = removedPatternTagsUpTo(s, activeStageIndex);
-  const removedSpStage = removedSpStageMapUpTo(s, activeStageIndex);
+  // No stage picked shows the global patterns, before any stage's remove_sp.
+  const removedSpStage = removedSpStageMapUpTo(s, activeStageIndex ?? -1);
   const is2D = s.ndm.ndm === 2;
   const defs = s.definitions;
   const selected = s.loads.selectedPatterns ? new Set(s.loads.selectedPatterns) : null;
 
   const out: ResolvedPatternData[] = [];
-  const opsNames = new Set<string>();
 
   const addOpsPattern = (pat: DefObject, stageLabel: string, stageIndex: number) => {
     const d = defs ? declOfTag(defs, "pattern", pat.tag) : null;
     const title = d ? d.name || d.key.split("/").slice(2).join("/") || d.key : pat.groupName;
-    if (d?.name) opsNames.add(d.name);
-    opsNames.add(pat.groupName);
 
     const roleAttr = pat.attrs["role"];
     const role = typeof roleAttr === "string" ? roleAttr : null;
@@ -1064,10 +1057,12 @@ function collectResolvedPatterns(s: State): {
     if (selected !== null) {
       active = selected.has(pat.path);
     } else {
-      const inStage = activeStageIndex === null || stageIndex <= activeStageIndex;
-      const isRemoved = pat.tag !== null && removedPatterns.has(pat.tag);
+      // Stages accumulate (no change kind removes a pattern), so stage k shows the
+      // global patterns and those of stages 0..k. With no stage picked only the
+      // global patterns are on: every stage at once is no state the model is in.
+      const inStage = activeStageIndex === null ? stageIndex === -1 : stageIndex <= activeStageIndex;
       const allowedRole = !isSupportReaction || s.loads.includeSupportReactions;
-      active = inStage && !isRemoved && allowedRole && total > 0;
+      active = inStage && allowedRole && total > 0;
     }
 
     out.push({
@@ -1097,6 +1092,7 @@ function collectResolvedPatterns(s: State): {
       elementLoads,
       sps,
       excitationDirection,
+      undrawn: new Map(),
     });
   };
 
@@ -1108,7 +1104,11 @@ function collectResolvedPatterns(s: State): {
     }
   }
 
-  // Neutral `/loads/{nodal,element,sp}/{case}`
+  // Neutral `/loads/{nodal,element,sp}/{case}`. The bridge turns these cases into
+  // the OpenSees patterns above under its own names (`Plain_<tag>`), so no name
+  // match can pair them: with any OpenSees pattern present the neutral cases
+  // start off, or every load would be counted twice.
+  const hasOps = out.length > 0;
   const nl = s.neutralLoads;
   if (nl) {
     const cases = new Set<string>([
@@ -1119,7 +1119,9 @@ function collectResolvedPatterns(s: State): {
     for (const caseName of [...cases].sort()) {
       const id = `neutral:${caseName}`;
       const nodalLoads = parseNeutralNodalLoads(s, nl.nodal[caseName]);
-      const elementLoads = parseNeutralElementLoads(nl.element[caseName], is2D);
+      const { loads: elementLoads, undrawn } = parseNeutralElementLoads(nl.element[caseName]);
+      let undrawnCount = 0;
+      for (const n of undrawn.values()) undrawnCount += n;
       const sps = parsePatternSps(s, nl.sp[caseName], removedSpStage, -1, false);
       let nodalForcesCount = 0;
       let nodalMomentsCount = 0;
@@ -1127,11 +1129,10 @@ function collectResolvedPatterns(s: State): {
         if (Math.hypot(n.force[0], n.force[1], n.force[2]) > 0) nodalForcesCount++;
         if (Math.hypot(n.moment[0], n.moment[1], n.moment[2]) > 0) nodalMomentsCount++;
       }
-      const total = nodalForcesCount + nodalMomentsCount + elementLoads.length + sps.length;
+      const total = nodalForcesCount + nodalMomentsCount + elementLoads.length + undrawnCount + sps.length;
       if (total === 0) continue;
 
-      const duplicatedInOps = opsNames.has(caseName);
-      const active = selected !== null ? selected.has(id) : !duplicatedInOps;
+      const active = selected !== null ? selected.has(id) : !hasOps;
       out.push({
         entry: {
           id,
@@ -1149,7 +1150,7 @@ function collectResolvedPatterns(s: State): {
           counts: {
             nodalForces: nodalForcesCount,
             nodalMoments: nodalMomentsCount,
-            elementLoads: elementLoads.length,
+            elementLoads: elementLoads.length + undrawnCount,
             sps: sps.length,
             spHolds: 0,
             total,
@@ -1159,6 +1160,7 @@ function collectResolvedPatterns(s: State): {
         elementLoads,
         sps,
         excitationDirection: null,
+        undrawn,
       });
     }
   }
@@ -1255,7 +1257,7 @@ export function loadsSummaryOf(s: State): LoadsSummary {
         if (el.kind === "beamUniform") {
           beamUniform++;
           const rawMag = el.globalVector
-            ? Math.hypot(el.globalVector[0], el.globalVector[1], el.globalVector[2])
+            ? Math.max(Math.hypot(...el.globalVector), el.globalVectorEnd ? Math.hypot(...el.globalVectorEnd) : 0)
             : Math.hypot(el.wy, el.wz, el.wx);
           const conv = rawMag * Math.abs(factor) * units.beamLoad.factor;
           if (conv > peakBeamUniform) peakBeamUniform = conv;
@@ -1344,10 +1346,7 @@ export function loadsSummaryOf(s: State): LoadsSummary {
   }
 
   const skippedCount = skippedBeamSet.size;
-  const notice =
-    skippedCount > 0
-      ? `${skippedCount} 3-D beam${skippedCount === 1 ? "" : "s"} skipped in 3-D loads: missing geomTransf vecxz (transverse beam loads require a valid non-parallel vecxz; never guessed in 3-D).`
-      : null;
+  const notice = joinNotices(skippedBeamNotice(skippedCount), s.loads.showElementLoads ? undrawnNotice(activeResolved) : null);
 
   const hasLoads = entries.some((e) => e.counts.total > 0);
   return {
@@ -1867,6 +1866,9 @@ export function buildLoads3D(
     readonly pEnd: [number, number, number];
     readonly worldVec: [number, number, number];
     readonly mag: number;
+    /** The load at `span[1]` (a trapezoid); equal to `worldVec` when uniform. */
+    readonly worldVecEnd: [number, number, number];
+    readonly span: readonly [number, number];
     readonly xL: number;
   }
   interface ResolvedSurfaceLoadItem {
@@ -1933,13 +1935,13 @@ export function buildLoads3D(
 
             const unitConv = elLoad.kind === "beamPoint" ? units.force.factor : units.beamLoad.factor;
             let worldVec: [number, number, number];
+            let worldVecEnd: [number, number, number] | null = null;
 
             if (elLoad.globalVector) {
-              worldVec = [
-                elLoad.globalVector[0] * factor * unitConv,
-                elLoad.globalVector[1] * factor * unitConv,
-                elLoad.globalVector[2] * factor * unitConv,
-              ];
+              const g = elLoad.globalVector;
+              worldVec = [g[0] * factor * unitConv, g[1] * factor * unitConv, g[2] * factor * unitConv];
+              const ge = elLoad.globalVectorEnd;
+              if (ge) worldVecEnd = [ge[0] * factor * unitConv, ge[1] * factor * unitConv, ge[2] * factor * unitConv];
             } else {
               const hasTransverse = Math.abs(elLoad.wy) > 0 || Math.abs(elLoad.wz) > 0;
               let yLocal: [number, number, number] = [0, 1, 0];
@@ -1988,11 +1990,12 @@ export function buildLoads3D(
             }
 
             const mag = Math.hypot(worldVec[0], worldVec[1], worldVec[2]);
-            if (mag <= 1e-30) continue;
+            const magEnd = worldVecEnd ? Math.hypot(...worldVecEnd) : mag;
+            if (Math.max(mag, magEnd) <= 1e-30) continue;
             if (elLoad.kind === "beamPoint") {
               if (mag > maxBeamPointMag) maxBeamPointMag = mag;
             } else {
-              if (mag > maxBeamUniformMag) maxBeamUniformMag = mag;
+              maxBeamUniformMag = Math.max(maxBeamUniformMag, mag, magEnd);
             }
             beamItems.push({
               decl,
@@ -2001,6 +2004,8 @@ export function buildLoads3D(
               pEnd,
               worldVec,
               mag,
+              worldVecEnd: worldVecEnd ?? worldVec,
+              span: elLoad.span,
               xL: elLoad.xL,
             });
           } else if (elLoad.kind === "surfacePressure" || elLoad.kind === "bodyForce") {
@@ -2075,14 +2080,14 @@ export function buildLoads3D(
 
     // Emit 3-D primitives for beam loads
     for (const item of beamItems) {
-      const dir: [number, number, number] = [
-        item.worldVec[0] / item.mag,
-        item.worldVec[1] / item.mag,
-        item.worldVec[2] / item.mag,
-      ];
       const kindMax = item.kind === "beamPoint" ? maxBeamPointMag : maxBeamUniformMag;
-      const len = baseLen * 0.75 * (0.35 + 0.65 * (item.mag / (kindMax || 1)));
       if (item.kind === "beamPoint") {
+        const dir: [number, number, number] = [
+          item.worldVec[0] / item.mag,
+          item.worldVec[1] / item.mag,
+          item.worldVec[2] / item.mag,
+        ];
+        const len = baseLen * 0.75 * (0.35 + 0.65 * (item.mag / (kindMax || 1)));
         const pt: [number, number, number] = [
           item.pStart[0] + item.xL * (item.pEnd[0] - item.pStart[0]),
           item.pStart[1] + item.xL * (item.pEnd[1] - item.pStart[1]),
@@ -2091,15 +2096,31 @@ export function buildLoads3D(
         pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.elementLoad, false, false);
         beamPointCount++;
       } else {
+        // Five ticks over the loaded span [aL, bL], each the load interpolated
+        // linearly between its ends (a trapezoid; constant when uniform).
         const nTicks = 5;
+        const [aL, bL] = item.span;
         const tails: [number, number, number][] = [];
         for (let i = 0; i < nTicks; i++) {
-          const u = i / (nTicks - 1);
+          const w = i / (nTicks - 1);
+          const u = aL + w * (bL - aL);
+          const q: [number, number, number] = [
+            item.worldVec[0] + w * (item.worldVecEnd[0] - item.worldVec[0]),
+            item.worldVec[1] + w * (item.worldVecEnd[1] - item.worldVec[1]),
+            item.worldVec[2] + w * (item.worldVecEnd[2] - item.worldVec[2]),
+          ];
+          const qMag = Math.hypot(q[0], q[1], q[2]);
           const pt: [number, number, number] = [
             item.pStart[0] + u * (item.pEnd[0] - item.pStart[0]),
             item.pStart[1] + u * (item.pEnd[1] - item.pStart[1]),
             item.pStart[2] + u * (item.pEnd[2] - item.pStart[2]),
           ];
+          if (qMag <= 1e-30) {
+            tails.push(pt);
+            continue;
+          }
+          const dir: [number, number, number] = [q[0] / qMag, q[1] / qMag, q[2] / qMag];
+          const len = baseLen * 0.75 * (0.35 + 0.65 * (qMag / (kindMax || 1)));
           const tail: [number, number, number] = [
             pt[0] - dir[0] * len,
             pt[1] - dir[1] * len,
@@ -2129,10 +2150,7 @@ export function buildLoads3D(
   const maxElementLoadMag = Math.max(maxBeamUniformMag, maxBeamPointMag, maxSurfacePressureMag);
   const skippedBeamDecls = [...skippedBeamSet];
   const skippedCount = skippedBeamDecls.length;
-  const notice =
-    skippedCount > 0
-      ? `${skippedCount} 3-D beam${skippedCount === 1 ? "" : "s"} skipped in 3-D loads: missing geomTransf vecxz (transverse beam loads require a valid non-parallel vecxz; never guessed in 3-D).`
-      : null;
+  const notice = joinNotices(skippedBeamNotice(skippedCount), s.loads.showElementLoads ? undrawnNotice(activePatterns) : null);
 
   const linePositions = new Float32Array(linePos);
   const lineColors = new Float32Array(lineCol);
