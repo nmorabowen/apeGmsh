@@ -1666,7 +1666,7 @@ def _replay_into(
         lambda rec: emitter.region(int(rec.tag), *rec.args),
     )
 
-    # 9b'. The global MP rows (#2405), at the bridge's slot 7b: after the
+    # 9b'. The global MP rows, at the bridge's slot 7b: after the
     # regions, before the equation constraints. One unit, keyed by its
     # first row's emit index; the caller passes the rows in bridge order.
     if mp_constraints:

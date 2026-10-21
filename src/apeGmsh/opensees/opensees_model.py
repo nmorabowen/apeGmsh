@@ -445,7 +445,7 @@ class OpenSeesModel:
     _embedded_rebars: "tuple[Any, ...]" = field(default_factory=tuple)
     #: The global ``/opensees/constraints`` MP rows (schema 2.7.0) as
     #: ``(emit index | None, row)`` pairs in the bridge's emit order
-    #: (:func:`_mp_rows_in_bridge_order`, #2405). The deck targets replay
+    #: (:func:`_mp_rows_in_bridge_order`). The deck targets replay
     #: them at the bridge's slot 7b and ``to_h5`` writes them back.
     _mp_constraints: "tuple[tuple[int | None, Any], ...]" = field(
         default_factory=tuple)
@@ -781,7 +781,7 @@ class OpenSeesModel:
             _initial_stress=tuple(emitter._initial_stress_records),
             # K2b: the ties the buffers stored (a 2.29.0 archive's rows).
             _embedded_rebars=tuple(emitter._embedded_rebars),
-            # #2405: the global MP rows, in the fixed kind order (no program).
+            # The global MP rows, in the fixed kind order (no program).
             _mp_constraints=_mp_rows_in_bridge_order(
                 (emitter._equal_dofs, emitter._rigid_links,
                  emitter._rigid_diaphragms, emitter._embedded_nodes), ()),
@@ -1852,7 +1852,7 @@ class OpenSeesModel:
             # deck replay re-derives (:meth:`_echo_embedded_rebars`).
             embedded_rebars=(self._embedded_rebars if embedded_rebars is None
                              else tuple(embedded_rebars)),
-            # #2405: the rewrite keeps the global MP rows.
+            # The rewrite keeps the global MP rows.
             mp_constraints=self._mp_constraints,
             # ADR 0099: no deck here — ``H5Emitter.model`` only stores
             # ndm/ndf, so a builder-ndf bracket is never persisted as a
