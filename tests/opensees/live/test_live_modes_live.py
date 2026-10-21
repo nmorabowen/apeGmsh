@@ -383,12 +383,51 @@ def test_an_embedded_node_that_may_carry_a_pressure_refuses(
         ops.mass(n, M, M, JM)
     out = tmp_path / "modes.h5"
     with pytest.raises(ValueError, match=(
-            r"capture_live_modes: the rotation slots of 4 node\(s\) an "
-            r"ASDEmbeddedNodeElement touches \(\[1, 2, 3, 4\]\) are not "
-            r"settled by their elements: for node 1, a ASDEmbeddedNodeElement "
-            r"touches it.*Nothing was written")):
+            r"capture_live_modes: the rotation slots of 4 node\(s\) "
+            r"\(\[1, 2, 3, 4\]\) are not settled by their elements and may "
+            r"hold a rotation: for node 1, a ASDEmbeddedNodeElement touches "
+            r"it.*Every node of that ASDEmbeddedNodeElement has ndf ndm \+ 1"
+            r".*Nothing was written")):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
+
+
+def test_an_unmapped_beam_class_over_live_rotations_refuses(
+        opspy: Any, tmp_path: Path) -> None:
+    """A 3-D cantilever: an ``elasticBeamColumn`` (1-2) and a
+    ``mixedBeamColumn`` (2-3), whose live class ``MixedBeamColumn3d`` the
+    live class table does not map. Nodes 2 and 3 rotate (the live vectors
+    say so), so writing 0.0 there would replace a real rotation: the
+    capture refuses, naming the class, and writes nothing."""
+    ops = opspy
+    xyz = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])},
+               "live_modes_mixed_beam")
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n, p in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in p])
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.element("elasticBeamColumn", 1, 1, 2, A, E, G, J, I_Y, I_Z, 1)
+    ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("mixedBeamColumn", 2, 2, 3, 1, 1)
+    for n in (2, 3):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    assert ops.eleType(2) == "MixedBeamColumn3d"
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=(
+            r"capture_live_modes: the rotation slots of 2 node\(s\) "
+            r"\(\[2, 3\]\).*for node 2, a MixedBeamColumn3d touches it.*"
+            r"MixedBeamColumn3d is not in the live class table.*Nothing was "
+            r"written")):
+        capture_live_modes(fem, 4, out, ops=ops)
+    assert not out.exists()
+    # The refusal guards real rotations: both nodes rotate in some mode.
+    for n in (2, 3):
+        peak = max(np.abs(np.asarray(ops.nodeEigenvector(n, k))[3:]).max()
+                   for k in range(1, 5))
+        assert peak > 1e-3
 
 
 # ---------------------------------------------------------------------------

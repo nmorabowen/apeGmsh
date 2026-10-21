@@ -8,8 +8,9 @@ so the expected file is known entry by entry:
 * every written shape is the raw ``nodeEigenvector`` of its node and mode
   (no scaling), and every eigenvalue is the solve's, bit for bit;
 * a rotation slot holds the rotation only where a beam touches the node;
-  a 3-D solid node writes 0.0 there, and a node under an unknown class
-  writes 0.0 with one ``RotationSlotUnresolvedWarning``;
+  a 3-D solid node writes 0.0 there; a node under an unknown class
+  refuses by name where its slot is non-zero in a mode, and writes 0.0
+  with one ``RotationSlotUnresolvedWarning`` where it is 0.0 in every mode;
 * an ``ASDEmbeddedNodeElement`` that cannot carry a pressure (a node of
   its with ndf other than ``ndm + 1``) leaves a beam node's rotation
   written; an embedded node whose rotation slot no element settles, or
@@ -215,8 +216,29 @@ def test_solid_and_frame_rotations_only_on_beam_nodes(tmp_path: Path) -> None:
                 assert comps[f"rotation_{a}"][n] == want
 
 
-def test_an_unknown_class_writes_zero_rotations_with_one_warning(tmp_path: Path) -> None:
+def test_an_unknown_class_over_live_rotations_refuses(tmp_path: Path) -> None:
+    """The beam nodes' rotation slots are non-zero, and the class touching
+    them is not in the live table, so a 0.0 could replace a real rotation:
+    the capture refuses, naming the class (#2407)."""
     fem, ops = _solid_and_frame(beam_class="SomeUnknownBeam")
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=(
+            r"capture_live_modes: the rotation slots of 3 node\(s\) "
+            r"\(\[9, 10, 11\]\).*for node 9, a SomeUnknownBeam touches it.*"
+            r"Its live value there reaches .*SomeUnknownBeam is not in the "
+            r"live class table.*Nothing was written")):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
+
+
+def test_an_unknown_class_over_zero_rotations_writes_zero_with_one_warning(
+        tmp_path: Path) -> None:
+    """Where the unsettled slots are 0.0 in every mode, 0.0 is their live
+    value: they are written with one warning."""
+    fem, ops = _solid_and_frame(beam_class="SomeUnknownBeam")
+    for (n, k), v in ops.vectors.items():
+        if n >= 9:
+            v[3:] = 0.0
     with pytest.warns(RotationSlotUnresolvedWarning, match=r"capture_live_modes") as rec:
         p = capture_live_modes(fem, 2, tmp_path / "modes.h5", ops=ops)
     assert len(rec) == 1
@@ -267,9 +289,10 @@ def test_an_embedded_node_no_beam_touches_refuses(tmp_path: Path) -> None:
     del ops.elements[3]
     out = tmp_path / "modes.h5"
     with pytest.raises(ValueError, match=(
-            r"capture_live_modes: the rotation slots of 1 node\(s\) an "
-            r"ASDEmbeddedNodeElement touches \(\[11\]\).*for node 11, no "
-            r"beam-column or shell.*Nothing was written")):
+            r"capture_live_modes: the rotation slots of 1 node\(s\) "
+            r"\(\[11\]\).*for node 11, no beam-column or shell.*An "
+            r"ASDEmbeddedNodeElement touches it and may tie the slot to the "
+            r"host's rotation \(-rot\).*Nothing was written")):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
 
@@ -287,9 +310,9 @@ def test_an_embedded_node_that_may_carry_a_pressure_refuses(tmp_path: Path) -> N
                {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])})
     out = tmp_path / "modes.h5"
     with pytest.raises(ValueError, match=(
-            r"capture_live_modes: the rotation slots of 4 node\(s\) an "
-            r"ASDEmbeddedNodeElement touches \(\[1, 2, 3, 4\]\).*for node 1, "
-            r"a ASDEmbeddedNodeElement touches it")):
+            r"capture_live_modes: the rotation slots of 4 node\(s\) "
+            r"\(\[1, 2, 3, 4\]\).*for node 1, a ASDEmbeddedNodeElement touches "
+            r"it.*Every node of that ASDEmbeddedNodeElement has ndf ndm \+ 1")):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
 

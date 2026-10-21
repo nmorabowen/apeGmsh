@@ -64,12 +64,15 @@ def capture_live_modes(
     laid onto ``ux..rz`` by its own live ndf: ``displacement_*`` holds the
     first ``min(3, ndm)`` slots. A rotation slot holds the rotation only
     where the live elements' DOF roles say so (a beam, shell or
-    zero-length element touches the node); a slot they cannot settle is
-    written as 0.0 with one ``RotationSlotUnresolvedWarning``, except at a
-    node an ``ASDEmbeddedNodeElement`` touches, where it refuses. That
-    element counts as translational-only unless every node it names has
-    ndf ``ndm + 1`` (a possible ``-p`` pressure), so a beam node embedded
-    in a solid keeps the beam's rotation.
+    zero-length element touches the node). A slot they cannot settle
+    refuses when its live value is non-zero in any mode (a class the live
+    table does not map, such as ``MixedBeamColumn3d``, may carry a
+    rotation there) or when an ``ASDEmbeddedNodeElement`` touches the
+    node; one that is 0.0 in every mode is written as 0.0 with one
+    ``RotationSlotUnresolvedWarning``. ``ASDEmbeddedNodeElement`` counts as
+    translational-only unless every node it names has ndf ``ndm + 1`` (a
+    possible ``-p`` pressure), so a beam node embedded in a solid keeps
+    the beam's rotation.
 
     The file embeds the FEMData as ``/model`` and no ``/opensees`` zone
     (the deck is not the bridge's). Read it with the FEMData archive as
@@ -129,9 +132,9 @@ def capture_live_modes(
         the solve returned
         another number of modes, or a
         non-positive or non-finite eigenvalue (a mechanism or an
-        unconverged solve); or a node an ``ASDEmbeddedNodeElement``
-        touches keeps a rotation slot its elements do not settle. Nothing
-        is written.
+        unconverged solve); or a rotation slot its elements do not settle
+        is non-zero in a mode, or is at a node an
+        ``ASDEmbeddedNodeElement`` touches. Nothing is written.
     FileNotFoundError
         ``model_h5_or_fem`` names no file.
     """
@@ -237,7 +240,7 @@ def _capture(
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
     if unresolved:
-        _refuse_embedded(facts, unresolved)
+        _refuse_unsettled(facts, node_ids, vectors, layouts, unresolved)
     spatial, rotation_slots = _native_fields(vectors, layouts, rotations, ndm)
     _warn_unresolved(_WHERE, unresolved, 3)
     info = backend_info_of(ops)
@@ -259,24 +262,49 @@ def _capture(
     return out_path
 
 
-def _refuse_embedded(
-    facts: LiveDomainFacts, unresolved: "list[tuple[int, str]]",
+def _refuse_unsettled(
+    facts: LiveDomainFacts, node_ids: "np.ndarray",
+    vectors: "list[list[np.ndarray]]", layouts: "list[tuple[int, ...]]",
+    unresolved: "list[tuple[int, str]]",
 ) -> None:
-    """Raise when an unsettled rotation slot is at a node an
-    ``ASDEmbeddedNodeElement`` touches (#2407): there it may hold a
-    rotation the element ties to the host (``-rot``), which a 0.0 would
-    replace, or a pore pressure (``-p``), and the live domain does not say
-    which flags the element was given."""
+    """Raise when an unsettled rotation slot may hold a value a 0.0 would
+    replace (#2407): its live ``nodeEigenvector`` entry is non-zero in a
+    captured mode (an unmapped beam class, such as ``MixedBeamColumn3d``,
+    or an unknown u-p class), or an ``ASDEmbeddedNodeElement`` touches the
+    node. An unsettled slot that is 0.0 in every mode, at a node no
+    embedded element touches, keeps the warning: 0.0 is its live value."""
     embedded = facts.embedded_nodes()
-    hit = [(n, why) for n, why in unresolved if n in embedded]
+    row = {int(n): i for i, n in enumerate(node_ids)}
+    hit: "list[tuple[int, str, float]]" = []
+    for n, why in unresolved:
+        i = row[n]
+        dofs = [d for d, slot in enumerate(layouts[i]) if slot >= 3]
+        peak = max(float(np.abs(mode[i][dofs]).max()) for mode in vectors)
+        if peak != 0.0 or n in embedded:
+            hit.append((n, why, peak))
     if not hit:
         return
-    node, why = hit[0]
+    node, why, peak = hit[0]
+    blocker = facts.rotation_roles([node]).blocked.get(node)
+    if blocker == "ASDEmbeddedNodeElement":
+        cause = (
+            "Every node of that ASDEmbeddedNodeElement has ndf ndm + 1, so "
+            "it may tie the slot to a pore pressure (-p) or to the host's "
+            "rotation (-rot), and the live domain does not say which.")
+    elif node in embedded and blocker is None:
+        cause = (
+            "An ASDEmbeddedNodeElement touches it and may tie the slot to "
+            "the host's rotation (-rot), which the live domain does not "
+            "show.")
+    else:
+        cause = (
+            f"Its live value there reaches {peak:.6g}"
+            + (f", and {blocker} is not in the live class table, so what "
+               "the slot holds is unknown" if blocker is not None else "")
+            + ".")
     raise ValueError(
-        f"{_WHERE}: the rotation slots of {len(hit)} node(s) an "
-        f"ASDEmbeddedNodeElement touches ({[n for n, _ in hit[:10]]}) are "
-        f"not settled by their elements: for node {node}, {why}. That "
-        "element may tie the slot to the host's rotation (-rot) or to a "
-        "pore pressure (-p), and the live domain does not say which, so "
-        "the capture refuses rather than write 0.0 there. Nothing was "
-        "written.")
+        f"{_WHERE}: the rotation slots of {len(hit)} node(s) "
+        f"({[n for n, _, _ in hit[:10]]}) are not settled by their elements "
+        f"and may hold a rotation: for node {node}, {why}. {cause} Writing "
+        "0.0 there could replace a real rotation, so the capture refuses. "
+        "Nothing was written.")
