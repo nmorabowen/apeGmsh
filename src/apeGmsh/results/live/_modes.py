@@ -65,7 +65,11 @@ def capture_live_modes(
     first ``min(3, ndm)`` slots. A rotation slot holds the rotation only
     where the live elements' DOF roles say so (a beam, shell or
     zero-length element touches the node); a slot they cannot settle is
-    written as 0.0 with one ``RotationSlotUnresolvedWarning``.
+    written as 0.0 with one ``RotationSlotUnresolvedWarning``, except at a
+    node an ``ASDEmbeddedNodeElement`` touches, where it refuses. That
+    element counts as translational-only unless every node it names has
+    ndf ``ndm + 1`` (a possible ``-p`` pressure), so a beam node embedded
+    in a solid keeps the beam's rotation.
 
     The file embeds the FEMData as ``/model`` and no ``/opensees`` zone
     (the deck is not the bridge's). Read it with the FEMData archive as
@@ -125,7 +129,9 @@ def capture_live_modes(
         the solve returned
         another number of modes, or a
         non-positive or non-finite eigenvalue (a mechanism or an
-        unconverged solve). Nothing is written.
+        unconverged solve); or a node an ``ASDEmbeddedNodeElement``
+        touches keeps a rotation slot its elements do not settle. Nothing
+        is written.
     FileNotFoundError
         ``model_h5_or_fem`` names no file.
     """
@@ -230,6 +236,8 @@ def _capture(
             "laid out. Nothing was written.")
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
+    if unresolved:
+        _refuse_embedded(facts, unresolved)
     spatial, rotation_slots = _native_fields(vectors, layouts, rotations, ndm)
     _warn_unresolved(_WHERE, unresolved, 3)
     info = backend_info_of(ops)
@@ -249,3 +257,26 @@ def _capture(
     finally:
         writer.close()
     return out_path
+
+
+def _refuse_embedded(
+    facts: LiveDomainFacts, unresolved: "list[tuple[int, str]]",
+) -> None:
+    """Raise when an unsettled rotation slot is at a node an
+    ``ASDEmbeddedNodeElement`` touches (#2407): there it may hold a
+    rotation the element ties to the host (``-rot``), which a 0.0 would
+    replace, or a pore pressure (``-p``), and the live domain does not say
+    which flags the element was given."""
+    embedded = facts.embedded_nodes()
+    hit = [(n, why) for n, why in unresolved if n in embedded]
+    if not hit:
+        return
+    node, why = hit[0]
+    raise ValueError(
+        f"{_WHERE}: the rotation slots of {len(hit)} node(s) an "
+        f"ASDEmbeddedNodeElement touches ({[n for n, _ in hit[:10]]}) are "
+        f"not settled by their elements: for node {node}, {why}. That "
+        "element may tie the slot to the host's rotation (-rot) or to a "
+        "pore pressure (-p), and the live domain does not say which, so "
+        "the capture refuses rather than write 0.0 there. Nothing was "
+        "written.")

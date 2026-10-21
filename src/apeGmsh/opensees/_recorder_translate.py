@@ -503,6 +503,22 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "ModElasticBeam2d": "elasticBeamColumn",
 }
 
+#: The ``eleType`` of upstream's ``ASDEmbeddedNodeElement``, the penalty
+#: element ``g.constraints.embedded`` emits; the bridge builds no
+#: ``Element`` class of it, so it is not in the map above. Its
+#: ``setDomain`` couples the translations of every node it names; the
+#: rotations of its constrained (first) node only under ``-rot``, which
+#: ties them to the host's rotation, so they stay rotations; and a
+#: pressure DOF only under ``-p``, which needs every node to have ndf
+#: ``ndm + 1`` (3 in 2-D, 4 in 3-D). The live domain does not say which
+#: flags were given. So an element with a node of any other ndf neither
+#: gives nor takes away a rotation meaning (its slots mean what the
+#: node's other elements say: a beam's rotation), and an element whose
+#: nodes all have ndf ``ndm + 1`` may tie a slot the 2-D layout calls
+#: ``rz`` to a pore pressure, and blocks as an unknown class does
+#: (:meth:`LiveDomainFacts.rotation_roles`, #2407).
+_EMBEDDED_NODE_CLASS = "ASDEmbeddedNodeElement"
+
 #: Live class -> the slot of the FEM (Gmsh) connectivity each of its
 #: ``eleNodes`` holds, for a class whose node order is not Gmsh's. The
 #: pairing compares ``eleNodes`` against the FEM connectivity in this
@@ -1036,23 +1052,51 @@ class LiveDomainFacts:
 
     def rotation_roles(self, node_ids: "Iterable[int]") -> "RotationRoles":
         """The rotation roles of ``node_ids`` under the live domain's
-        element classes, by the family tables the bridge path uses."""
+        element classes, by the family tables the bridge path uses.
+
+        An :data:`_EMBEDDED_NODE_CLASS` element is classed by its nodes'
+        live ndf: one with a node whose ndf is not ``ndm + 1`` cannot
+        carry a pressure DOF, so it counts as translational-only; one
+        whose nodes all have that ndf stays unknown and blocks."""
         import numpy as np
 
         from ._readback import _CLASS_FOR_TOKEN, _roles_from_rows
 
+        from ._readback import LiveTranslationalRole
+
         ops = self._ops
-        by_class: "dict[str, list[int]]" = {}
+        ndf: "dict[int, int]" = {}
+        # Keyed by (eleType, translational): an embedded-node element
+        # splits by what its nodes' ndf allows (_EMBEDDED_NODE_CLASS).
+        by_class: "dict[tuple[str, bool], list[int]]" = {}
         for tag in ops.getEleTags():  # type: ignore[attr-defined]
             name = str(ops.eleType(int(tag)))  # type: ignore[attr-defined]
-            by_class.setdefault(name, []).extend(
-                int(n) for n in ops.eleNodes(int(tag)))  # type: ignore[attr-defined]
+            nodes = [int(n) for n in ops.eleNodes(int(tag))]  # type: ignore[attr-defined]
+            translational = False
+            if name == _EMBEDDED_NODE_CLASS:
+                for n in nodes:
+                    if n not in ndf:
+                        ndf[n] = _live_int(
+                            ops.getNDF(n), f"getNDF({n})")  # type: ignore[attr-defined]
+                translational = any(ndf[n] != self._ndm + 1 for n in nodes)
+            by_class.setdefault((name, translational), []).extend(nodes)
         rows = []
-        for name, nodes in by_class.items():
+        for (name, translational), nodes in by_class.items():
             token = _TOKEN_FOR_LIVE_CLASS.get(name)
-            cls = None if token is None else _CLASS_FOR_TOKEN[token]
+            cls: "type | None" = (
+                LiveTranslationalRole if translational
+                else None if token is None else _CLASS_FOR_TOKEN[token])
             rows.append((cls, name, np.unique(np.asarray(nodes, dtype=np.int64))))
         return _roles_from_rows(rows, node_ids)
+
+    def embedded_nodes(self) -> "frozenset[int]":
+        """The nodes the live :data:`_EMBEDDED_NODE_CLASS` elements touch."""
+        ops = self._ops
+        return frozenset(
+            int(n)
+            for tag in ops.getEleTags()  # type: ignore[attr-defined]
+            if str(ops.eleType(int(tag))) == _EMBEDDED_NODE_CLASS  # type: ignore[attr-defined]
+            for n in ops.eleNodes(int(tag)))  # type: ignore[attr-defined]
 
     def node_deck_dofs(
         self, slot_dofs: tuple[int, ...], node_ids: tuple[int, ...], *,

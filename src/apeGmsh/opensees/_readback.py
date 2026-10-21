@@ -121,6 +121,15 @@ _TRANSLATIONAL_ONLY: tuple[type, ...] = (
 # element (``LadrunoUP``) carries pore pressure at DOF ``ndm + 1``, and a
 # class this table does not name is not guessed.
 
+
+class LiveTranslationalRole:
+    """The row class :func:`_roles_from_rows` takes for a live element that
+    no bridge ``Element`` class names but whose DOF use, read from the live
+    domain, neither gives nor takes away a meaning for a rotational slot:
+    it counts as :data:`_TRANSLATIONAL_ONLY`. Its one user is
+    :meth:`~._recorder_translate.LiveDomainFacts.rotation_roles`, for an
+    ``ASDEmbeddedNodeElement`` whose nodes cannot carry a pressure DOF."""
+
 #: u-p families: their pressure DOF sits in a slot an element-less node's
 #: layout calls a rotation, so a constraint could tie the two. A model
 #: holding one refuses rotations on element-less nodes.
@@ -219,7 +228,8 @@ def _roles_from_rows(
     unknown = False
     for cls, name, flat in rows:
         is_rot = cls is not None and issubclass(cls, _ROTATIONAL_FAMILIES)
-        is_trans = cls is not None and issubclass(cls, _TRANSLATIONAL_ONLY)
+        is_trans = cls is not None and issubclass(
+            cls, _TRANSLATIONAL_ONLY + (LiveTranslationalRole,))
         if model_blocker is None and (
                 cls is None or issubclass(cls, _UP_FAMILIES)):
             model_blocker, unknown = name, cls is None
