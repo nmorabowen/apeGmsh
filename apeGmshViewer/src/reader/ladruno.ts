@@ -23,10 +23,10 @@
 //   refused by name in `NodalInfo.refused`, with the reason, never read;
 // - a node ID list that repeats an id refuses the file at open (reader/ladrunoChecks.ts, #2299);
 // - past the supported scale (reader/ceiling.ts, #2362) the file is refused at open by name:
-//   a node ID list longer than 2^24, checked from its shape before it is read, or a stage whose
-//   Gauss and line-station buckets hold more than 2^24 elements in one result token (the
-//   line-station rows from their ID shapes). One part of a set checks its nodes only: the set
-//   reads no element result, and checks its own union of nodes;
+//   a stage whose node set (its first readable nodal result's IDs) has more than 2^24 nodes,
+//   or whose Gauss buckets, with its line-station buckets in a verified file (their rows from
+//   the ID shapes), hold more than 2^24 elements in one result token. One part of a set checks
+//   its nodes only: the set reads no element result, and checks its own union of nodes;
 // - Gauss-point element buckets are read by reader/ladrunoElements.ts (#2187); other
 //   element results, envelopes, the domain and region buckets are listed in `unread`;
 // - `KIND=eigen` is not a mode (Python `_ladruno.py::_KIND_MAP`): the fork labels
@@ -321,12 +321,6 @@ export class LadrunoFile {
     }
     stageNames.sort((a, b) => Number(STAGE_NAME.exec(a)![1]) - Number(STAGE_NAME.exec(b)![1]));
     const hosts = stageNames.map((name, i) => this.readHost(this.group(f, name), `stage_${i}`, warnings));
-    if (!part) {
-      for (const h of hosts) {
-        const rows = [...h.stage.gauss, ...this.lineStationRows(this.group(f, h.stage.name))];
-        assertWithinCeiling(path, `stage "${h.stage.name}"`, "elements", ladrunoStageElements(rows));
-      }
-    }
     const modes = this.layModes(hosts, warnings);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
@@ -334,6 +328,14 @@ export class LadrunoFile {
       for (const m of modes.stages) if (m.host === h.stage.id) stages.push(m.stage);
     }
     const provenance = this.readProvenance(info);
+    if (!part) {
+      // Line stations reach the app only from a verified file (main/results.ts), as native results.ts reads them.
+      const verified = elementIndexVerdictOf(provenance.state === "present" ? provenance.attrs.element_index_space : null).verified;
+      for (const h of hosts) {
+        const rows = verified ? [...h.stage.gauss, ...this.lineStationRows(this.group(f, h.stage.name))] : h.stage.gauss;
+        assertWithinCeiling(path, `stage "${h.stage.name}"`, "elements", ladrunoStageElements(rows));
+      }
+    }
     const { lineage, reason } = lineageOf(provenance);
     this.index = {
       path,
@@ -807,6 +809,8 @@ export class LadrunoFile {
     const first = accepted[0];
     const time = first ? first.time : this.otherTime(results);
     const ids = first ? first.ids : new Float64Array(0);
+    // The stage's node set is its first readable result's (#2373): a refused result never counts.
+    assertWithinCeiling(this.f.filename, `stage "${g.path.slice(1)}"`, "nodes", ids.length);
     const cols = new Map<string, Column>();
     const components: string[] = [];
     for (const a of accepted) {
@@ -860,7 +864,6 @@ export class LadrunoFile {
     const idShape = idDs!.shape ?? [];
     if (!(idShape.length === 1 || (idShape.length === 2 && idShape[1] === 1))) return { reason: `${idDs!.path} has shape (${idShape.join(", ")}); expected (n, 1)` };
     if (idDs!.metadata.type !== H5T_INTEGER) return { reason: `${idDs!.path} is not an integer dataset` };
-    assertWithinCeiling(this.f.filename, `stage "${onNodes.path.split("/")[1]}"`, "nodes", idShape[0]!);
     const ids = uniqueNodeIds(intsAsNumbers(idDs!), this.f.filename, idDs!.path, (m) => new LadrunoError("layout", m));
     const shape = dataDs!.shape ?? [];
     if (shape.length !== 3) return { reason: `${dataDs!.path} has shape (${shape.join(", ")}); expected (T, n, components)` };
@@ -995,7 +998,6 @@ export class LadrunoFile {
         refused.push({ component: group, reason: `${ds.path} has shape (${shape.join(", ")}); ID has ${idShape[0]} nodes and COMPONENTS names ${labels.length} (a partial write)` });
         continue;
       }
-      assertWithinCeiling(this.f.filename, `stage "${name}"`, "nodes", idShape[0]!);
       const these = uniqueNodeIds(intsAsNumbers(idDs), this.f.filename, idDs.path, (m) => new LadrunoError("layout", m));
       if (ids === null) {
         ids = these;
@@ -1010,6 +1012,7 @@ export class LadrunoFile {
         cols.set(comp, { path: ds.path, col: c, modal: true });
       });
     }
+    assertWithinCeiling(this.f.filename, `stage "${name}"`, "nodes", ids?.length ?? 0); // the accepted node set (#2373)
     this.columns.set(id, cols);
     return {
       id,

@@ -11,12 +11,13 @@
 // No Map or Set here is sized by the node or element count (#2359): V8 caps
 // both at 2^24 entries. Ids resolve through `IdLookup` (sorted typed arrays),
 // and the solid-face and outline-edge deduplication sorts typed arrays. The
-// plain number[] buffers hold at most 2^27 entries: past TRIANGLE_LIMIT
-// triangles or EDGE_LIMIT outline edges the build is refused by name before
-// that buffer is filled (reader/ceiling.ts, #2362 ruling).
+// plain number[] buffers hold at most 2^27 entries: past SEGMENT_LIMIT line
+// segments, TRIANGLE_LIMIT triangles or EDGE_LIMIT outline edges, or past
+// ELEMENT_LIMIT drawn cells, the build is refused by name before a buffer is
+// filled (reader/ceiling.ts, #2362 ruling).
 
 import type { ElementRef } from "../chain/resolve.ts";
-import { assertWithinCeiling, EDGE_LIMIT, TRIANGLE_LIMIT } from "../reader/ceiling.ts";
+import { assertWithinCeiling, EDGE_LIMIT, ELEMENT_LIMIT, SEGMENT_LIMIT, TRIANGLE_LIMIT } from "../reader/ceiling.ts";
 import type { ModelFile } from "../model/types.ts";
 
 type Shape = "point" | "line" | "tri" | "quad" | "tet" | "hex" | "prism" | "pyramid";
@@ -352,15 +353,18 @@ function distinctCount(values: Float64Array): number {
 
 /** The buffer ceilings buildMesh refuses past (reader/ceiling.ts); a test passes smaller ones. */
 export interface MeshLimits {
+  elements: number;
+  segments: number;
   triangles: number;
   edges: number;
 }
-export const MESH_LIMITS: Readonly<MeshLimits> = { triangles: TRIANGLE_LIMIT, edges: EDGE_LIMIT };
+export const MESH_LIMITS: Readonly<MeshLimits> = { elements: ELEMENT_LIMIT, segments: SEGMENT_LIMIT, triangles: TRIANGLE_LIMIT, edges: EDGE_LIMIT };
 
 /**
- * The model's render buffers. A mesh with more triangles, or more outline edges,
- * than a plain number[] holds (TRIANGLE_LIMIT, EDGE_LIMIT) is refused with a named
- * CeilingError before that buffer is filled (#2373).
+ * The model's render buffers. A mesh that draws more cells than ELEMENT_LIMIT
+ * (OpenSees-only rows included), or more line segments, triangles or outline
+ * edges than a plain number[] holds (SEGMENT_LIMIT, TRIANGLE_LIMIT, EDGE_LIMIT),
+ * is refused with a named CeilingError before a buffer is filled (#2373).
  */
 export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_LIMITS): MeshBuffers {
   const warnings: string[] = [];
@@ -396,14 +400,16 @@ export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_
   // same node index the position is read from (never matched by position).
   const ln: number[] = [], tn: number[] = [];
   const push3 = (arr: number[], i: number) => arr.push(xyz[3 * i]!, xyz[3 * i + 1]!, xyz[3 * i + 2]!);
+  // Every drawn segment and face, in drawing order, and the cell it belongs to.
+  // They reach the buffers only once all are known, so the cell, segment and
+  // triangle counts are checked against the ceiling before a buffer is filled (#2373).
+  const segA = new F64List(), segB = new F64List();
+  const segRefs: ElementRef[] = [];
   const pushSeg = (a: number, b: number, ref: ElementRef) => {
-    push3(lp, a); push3(lp, b);
-    ln.push(model.nodeIds[a]!, model.nodeIds[b]!);
-    lr.push(ref);
+    segA.push(a);
+    segB.push(b);
+    segRefs.push(ref);
   };
-  // Every drawn face, in drawing order, and the cell it belongs to. Faces are
-  // triangulated only once all are known, so the triangle count is checked
-  // against the ceiling before a triangle buffer is filled (#2373).
   const polygons: number[][] = [];
   const polygonRefs: ElementRef[] = [];
   let nTriangles = 0;
@@ -468,14 +474,6 @@ export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_
     for (let k = 0; k < 4; k++) if (faceCorners.data[4 * f + k]! >= 0) ids.push(faceCorners.data[4 * f + k]!);
     pushFace(ids, solidRefs[faceSolid.data[f]!]!);
   }
-  assertWithinCeiling(model.path, "the mesh", "triangles", nTriangles, limits.triangles);
-  polygons.forEach((ids, p) => {
-    for (let k = 1; k + 1 < ids.length; k++) {
-      push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
-      tn.push(model.nodeIds[ids[0]!]!, model.nodeIds[ids[k]!]!, model.nodeIds[ids[k + 1]!]!);
-      tr.push(polygonRefs[p]!);
-    }
-  });
 
   // OpenSees-only elements (no neutral-zone cell): drawn from inline connectivity.
   model.opensees?.elementMeta.forEach((meta, metaIndex) => {
@@ -488,6 +486,25 @@ export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_
       for (let k = 0; k + 1 < idx.length; k++) pushSeg(idx[k]!, idx[k + 1]!, { kind: "ops", metaIndex, row });
     });
   });
+
+  // The drawn cells key state/load.ts's element index; the buffers are plain arrays (reader/ceiling.ts).
+  const cells = counts.lineCells + counts.faceCells + counts.solidCells + counts.opsOnly;
+  assertWithinCeiling(model.path, "the mesh", "elements", cells, limits.elements);
+  assertWithinCeiling(model.path, "the mesh", "line segments", segRefs.length, limits.segments);
+  assertWithinCeiling(model.path, "the mesh", "triangles", nTriangles, limits.triangles);
+  polygons.forEach((ids, p) => {
+    for (let k = 1; k + 1 < ids.length; k++) {
+      push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
+      tn.push(model.nodeIds[ids[0]!]!, model.nodeIds[ids[k]!]!, model.nodeIds[ids[k + 1]!]!);
+      tr.push(polygonRefs[p]!);
+    }
+  });
+  for (let s = 0; s < segRefs.length; s++) {
+    const [a, b] = [segA.data[s]!, segB.data[s]!];
+    push3(lp, a); push3(lp, b);
+    ln.push(model.nodeIds[a]!, model.nodeIds[b]!);
+    lr.push(segRefs[s]!);
+  }
 
   const missing = distinctCount(missingNodes.data.subarray(0, missingNodes.length));
   if (missing) {

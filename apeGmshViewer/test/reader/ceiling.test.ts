@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { Effects, type Bridge } from "../../src/effects.ts";
 import { ResultsHost } from "../../src/main/results.ts";
-import { buildMesh } from "../../src/mesh/build.ts";
+import { buildMesh, MESH_LIMITS } from "../../src/mesh/build.ts";
 import type { ModelFile } from "../../src/model/types.ts";
 import {
   assertWithinCeiling,
@@ -32,6 +32,8 @@ import {
   ladrunoStageElements,
   nativeStageElements,
   NODE_LIMIT,
+  opsOnlyRows,
+  SEGMENT_LIMIT,
   TRIANGLE_LIMIT,
 } from "../../src/reader/ceiling.ts";
 import { openLadruno } from "../../src/reader/ladruno.ts";
@@ -48,9 +50,11 @@ const TRUSS = fixture("ladruno_truss2d.ladruno");
 const MODES = fixture("ladruno_modes.ladruno");
 const QUAD = fixture("ladruno_quad2d.ladruno");
 const FRAME = fixture("ladruno_frame3d.ladruno");
+const TRUSS_STAMPED = fixture("ladruno_truss2d.stamped.ladruno");
 const PART0 = fixture("ladruno_parts2d.part-0.ladruno");
 const SOLID_RESULTS = fixture("elem_solid.results.h5");
 const SOLID_MODEL = fixture("elem_solid.h5");
+const REINFORCED = fixture("reinforced.h5");
 
 const N = 2 ** 24; // the ruling's limit, written out
 const RULING = "ruling on #2362";
@@ -179,6 +183,7 @@ test("the limits are the ruling's: 2^24 nodes and elements per stage; triangles 
   assert.equal(TRIANGLE_LIMIT, 14_913_080);
   assert.ok(9 * TRIANGLE_LIMIT <= JS_ARRAY_LIMIT && 9 * (TRIANGLE_LIMIT + 1) > JS_ARRAY_LIMIT);
   assert.equal(EDGE_LIMIT, 22_369_621);
+  assert.equal(SEGMENT_LIMIT, 22_369_621);
   assert.ok(6 * EDGE_LIMIT <= JS_ARRAY_LIMIT && 6 * (EDGE_LIMIT + 1) > JS_ARRAY_LIMIT);
 });
 
@@ -213,23 +218,53 @@ test("counts: a dataset's rows from its shape; a .ladruno stage holds its larges
 // ---- .ladruno ----------------------------------------------------------------
 
 const TRUSS_DISP = "/MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT";
-const nodalRows = (group: string, n: number): Overrides => (_file, path) =>
-  path === `${group}/ID` ? { shape: () => [n, 1] } : path === `${group}/DATA` ? { shape: (r) => [r[0]!, n, r[2]!] } : undefined;
+/** `group` lists `n` nodes: its ID shape and rows, and its DATA's node axis. The stage's node set is the rows read. */
+const nodalRows = (group: string, n: number): Overrides => {
+  let rows: Int32Array | null = null;
+  return (_file, path) =>
+    path === `${group}/ID` ? { shape: () => [n, 1], value: () => (rows ??= ids32(n)) } : path === `${group}/DATA` ? { shape: (r) => [r[0]!, n, r[2]!] } : undefined;
+};
 
-test(".ladruno nodes: a stage of 2^24 nodes opens; 2^24 + 1 is refused by name, from the ID shape", () => {
+test(".ladruno nodes: a stage of 2^24 nodes opens; 2^24 + 1 is refused by name, on the stage's node set", () => {
   const at = openLadruno(asResults(stubH5(nodalRows(TRUSS_DISP, N))), TRUSS);
-  assert.deepEqual(at.index.stages.map((s) => s.id), ["stage_0"]);
+  assert.equal(at.index.stages[0]!.nodes!.ids.length, N);
   at.close();
   refused(() => openLadruno(asResults(stubH5(nodalRows(TRUSS_DISP, N + 1))), TRUSS), nodesPast(TRUSS, 'stage "MODEL_STAGE[1]"', "16,777,217"));
 });
 
+const FRAME_ROT = "/MODEL_STAGE[1]/RESULTS/ON_NODES/ROTATION";
+
+test(".ladruno nodes: a refused result past 2^24 does not refuse the file (a partial write, or another node set)", () => {
+  // The review's reproducer: ROTATION/ID says 2^24 + 1 rows over a DATA of 15, a partial write.
+  const partial = openLadruno(asResults(stubH5((_f, path) => (path === `${FRAME_ROT}/ID` ? { shape: () => [N + 1, 1] } : undefined))), FRAME);
+  const s0 = partial.index.stages[0]!.nodes!;
+  assert.equal(s0.ids.length, 15);
+  assert.deepEqual(s0.refused.map((r) => r.component), ["ROTATION"]);
+  assert.match(s0.refused[0]!.reason, /16777217 node ids \(a partial write\)/);
+  partial.close();
+  // ROTATION consistent with itself but over 2^24 + 1 other nodes: refused against DISPLACEMENT's node set.
+  const other = openLadruno(asResults(stubH5(nodalRows(FRAME_ROT, N + 1))), FRAME);
+  const s1 = other.index.stages[0]!.nodes!;
+  assert.equal(s1.ids.length, 15);
+  assert.deepEqual(s1.refused.map((r) => r.component), ["ROTATION"]);
+  assert.match(s1.refused[0]!.reason, /is not the node set of .*\(16777217 and 15 nodes\)/);
+  other.close();
+});
+
 const MODES_U = "/MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)";
-const modeRows = (n: number): Overrides => (_file, path) =>
-  path === `${MODES_U}/ID` ? { shape: () => [n, 1] } : path.startsWith(`${MODES_U}/DATA/STEP_0/MODE_`) ? { shape: (r) => [n, r[1]!] } : undefined;
+const modeRows = (n: number): Overrides => {
+  let rows: Int32Array | null = null;
+  return (_file, path) =>
+    path === `${MODES_U}/ID`
+      ? { shape: () => [n, 1], value: () => (rows ??= ids32(n)) }
+      : path.startsWith(`${MODES_U}/DATA/STEP_0/MODE_`)
+        ? { shape: (r) => [n, r[1]!] }
+        : undefined;
+};
 
 test(".ladruno mode stage: a mode of 2^24 nodes opens; 2^24 + 1 is refused by name, naming the mode stage", () => {
   const at = openLadruno(asResults(stubH5(modeRows(N))), MODES);
-  assert.deepEqual(at.index.stages.map((s) => s.kind), ["static", "mode", "mode"]);
+  assert.deepEqual(at.index.stages.map((s) => [s.kind, s.nodes!.ids.length]), [["static", 3], ["mode", N], ["mode", N]]);
   at.close();
   refused(() => openLadruno(asResults(stubH5(modeRows(N + 1))), MODES), nodesPast(MODES, 'stage "mode_1"', "16,777,217"));
 });
@@ -250,14 +285,16 @@ test(".ladruno elements: a token of 2^24 elements opens; 2^24 + 1 is refused by 
   refused(() => openLadruno(asResults(stubH5(gaussRows(N + 1))), QUAD), elementsPast(QUAD, 'stage "MODEL_STAGE[1]"', "16,777,217"));
 });
 
-const SECTION_FORCE = "/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/20-ForceBeamColumn3d[0]";
-/** The frame's one section.force bucket (its 10 beams) holds `n` elements: counted from the ID shape, never read at open. */
+const BASIC_FORCE = "/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/basicForce/12-Truss[1:0:0]";
+/** The truss's one basicForce bucket (its 2 bars) holds `n` elements: counted from the ID shape, never read at open. */
 const lineRows = (n: number): Overrides => (_file, path) =>
-  path === `${SECTION_FORCE}/ID` ? { shape: () => [n] } : path === `${SECTION_FORCE}/DATA` ? { shape: (r) => [r[0]!, n, r[2]!] } : undefined;
+  path === `${BASIC_FORCE}/ID` ? { shape: () => [n, 1] } : path === `${BASIC_FORCE}/DATA` ? { shape: (r) => [r[0]!, n, r[2]!] } : undefined;
 
-test(".ladruno line stations: a section.force token of 2^24 beams opens; 2^24 + 1 is refused by name, from the ID shape", () => {
-  openLadruno(asResults(stubH5(lineRows(N))), FRAME).close();
-  refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), FRAME), elementsPast(FRAME, 'stage "MODEL_STAGE[1]"', "16,777,217"));
+test(".ladruno line stations: in a verified file, a basicForce token of 2^24 bars opens and 2^24 + 1 is refused; an unverified file reads none, so counts none", () => {
+  openLadruno(asResults(stubH5(lineRows(N))), TRUSS_STAMPED).close();
+  refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), TRUSS_STAMPED), elementsPast(TRUSS_STAMPED, 'stage "MODEL_STAGE[1]"', "16,777,217"));
+  // As native results.ts: line stations of an unverified file never leave main (main/results.ts metaOf).
+  openLadruno(asResults(stubH5(lineRows(N + 1))), TRUSS).close();
 });
 
 /** Each part of the 2-part set lists half the nodes, sharing one interface node: `total` in the union. */
@@ -311,6 +348,14 @@ test("native results elements: a stage of 2^24 gauss elements opens; 2^24 + 1 is
 
 const modelRows = (dataset: string, n: number): Overrides => (_file, path) => (path === dataset ? { shape: () => [n] } : undefined);
 
+test("native model: OpenSees-only element_meta rows count with the cells (2^24 opens, 2^24 + 1 is refused by name)", () => {
+  // reinforced.h5: 91 + 14 + 324 cells besides tet4, and 9 CorotTruss rows with fem_eid < 0 (drawn and indexed by the load).
+  const others = 91 + 14 + 324;
+  const tets = (total: number) => modelRows("/elements/tet4/ids", total - 9 - others);
+  readModel(asModel(stubH5(tets(N))), REINFORCED, 0);
+  refused(() => readModel(asModel(stubH5(tets(N + 1))), REINFORCED, 0), elementsPast(REINFORCED, "the model", "16,777,217"));
+});
+
 test("native model: 2^24 nodes and 2^24 elements open; 2^24 + 1 of either is refused by name, from the shapes", () => {
   readModel(asModel(stubH5(modelRows("/nodes/ids", N))), SOLID_MODEL, 0);
   readModel(asModel(stubH5(modelRows("/elements/hex8/ids", N))), SOLID_MODEL, 0);
@@ -361,14 +406,36 @@ test("buildMesh: a mesh of exactly the triangle (or edge) limit builds; one past
   const full = buildMesh(model);
   assert.equal(full.triRefs.length, tris);
   assert.equal(full.edgePositions.length, 6 * edges);
-  assert.deepEqual(buildMesh(model, { triangles: tris, edges }), full, "at both limits: the same buffers");
+  const lim = { ...MESH_LIMITS, triangles: tris, edges };
+  assert.deepEqual(buildMesh(model, lim), full, "at both limits: the same buffers");
   refused(
-    () => buildMesh(model, { triangles: tris - 1, edges }),
+    () => buildMesh(model, { ...lim, triangles: tris - 1 }),
     `box.h5: the mesh has ${tris} triangles; the viewer supports at most ${tris - 1} triangles (JavaScript array limit of 2^27 entries, 9 per triangle, ${RULING})`,
   );
   refused(
-    () => buildMesh(model, { triangles: tris, edges: edges - 1 }),
+    () => buildMesh(model, { ...lim, edges: edges - 1 }),
     `box.h5: the mesh has ${edges} outline edges; the viewer supports at most ${edges - 1} outline edges (JavaScript array limit of 2^27 entries, 6 per edge, ${RULING})`,
+  );
+});
+
+test("buildMesh: drawn cells, OpenSees-only rows included, and line segments are refused by name one past their limit", () => {
+  // reinforced.h5: 91 line2, 324 tri3 and 412 tet4 cells (14 point1 cells are not drawn), and 9
+  // CorotTruss rows with fem_eid < 0 drawn from their 2-node inline connectivity: 836 cells, 91 + 9 segments.
+  const model = readModel(h5wasm as unknown as H5Module, REINFORCED, 0);
+  const byCode = (code: number) => model.blocks.filter((b) => b.code === code).reduce((n, b) => n + b.ids.length, 0);
+  const opsOnly = opsOnlyRows(model.opensees!.elementMeta.map((m) => m.femEids));
+  const [cells, segments] = [byCode(1) + byCode(2) + byCode(4) + opsOnly, byCode(1) + opsOnly];
+  assert.deepEqual([cells, segments, opsOnly], [836, 100, 9]);
+  const full = buildMesh(model);
+  assert.equal(full.lineRefs.length, segments);
+  assert.deepEqual(buildMesh(model, { ...MESH_LIMITS, elements: cells, segments }), full, "at both limits: the same buffers");
+  refused(
+    () => buildMesh(model, { ...MESH_LIMITS, elements: cells - 1 }),
+    `${REINFORCED}: the mesh has 836 elements; the viewer supports at most 835 elements per stage (JavaScript Map/Set limit, ${RULING})`,
+  );
+  refused(
+    () => buildMesh(model, { ...MESH_LIMITS, segments: segments - 1 }),
+    `${REINFORCED}: the mesh has 100 line segments; the viewer supports at most 99 line segments (JavaScript array limit of 2^27 entries, 6 per segment, ${RULING})`,
   );
 });
 
@@ -410,7 +477,7 @@ test("with Map and Set stubbed to throw, every over-ceiling open is the named Ce
   underStubbedCollections(() => {
     refused(() => openLadruno(asResults(stubH5(nodalRows(TRUSS_DISP, N + 1))), TRUSS), nodesPast(TRUSS, 'stage "MODEL_STAGE[1]"', "16,777,217"));
     refused(() => openLadruno(asResults(stubH5(gaussRows(N + 1))), QUAD), elementsPast(QUAD, 'stage "MODEL_STAGE[1]"', "16,777,217"));
-    refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), FRAME), elementsPast(FRAME, 'stage "MODEL_STAGE[1]"', "16,777,217"));
+    refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), TRUSS_STAMPED), elementsPast(TRUSS_STAMPED, 'stage "MODEL_STAGE[1]"', "16,777,217"));
     refused(() => openLadrunoSet(asResults(stubH5(partRows(N + 1))), PART0, list), nodesPast(PART0, 'stage "MODEL_STAGE[1]" (the union of 2 parts)', "16,777,217"));
     refused(() => openResults(asResults(stubH5(nativeNodes(N + 1))), SOLID_RESULTS), nodesPast(SOLID_RESULTS, solidStage, "16,777,217"));
     refused(() => openResults(asResults(stubH5(nativeElements(N + 1))), SOLID_RESULTS), elementsPast(SOLID_RESULTS, solidStage, "16,777,217"));

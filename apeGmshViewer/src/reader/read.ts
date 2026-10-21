@@ -7,9 +7,11 @@
 // - a required child that is missing raises;
 // - anything the reader does not recognise is a loud warning in
 //   `ModelFile.warnings`, never a silent skip;
-// - a model past the supported scale (more than 2^24 nodes, or 2^24 elements
-//   over its /elements blocks; reader/ceiling.ts, #2362) is refused by name,
-//   from the dataset shapes, before any row is read.
+// - a model past the supported scale (more than 2^24 nodes, or 2^24 elements:
+//   its /elements cells and its OpenSees-only element_meta rows; reader/ceiling.ts,
+//   #2362) is refused by name. Nodes and cells are counted from the dataset
+//   shapes before any row is read; OpenSees-only rows from `fem_eids` < 0, read
+//   before the rows' args.
 
 import type {
   AnalysisDef,
@@ -38,7 +40,7 @@ import type {
 } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 import { openH5, type H5FS } from "./h5open.ts";
-import { assertWithinCeiling, datasetRows } from "./ceiling.ts";
+import { assertWithinCeiling, datasetRows, opsOnlyRows } from "./ceiling.ts";
 
 /** The parts of the h5wasm module this reader uses. */
 export interface H5Module {
@@ -269,11 +271,12 @@ class Reader {
     }
 
     const blocks: ElementBlock[] = [];
+    let cells = 0;
     if (has(root, "elements")) {
       const elements = this.group(root, "elements");
       const groups = elements.keys().map((alias) => [alias, this.group(elements, alias)] as const);
-      const nElements = groups.reduce((n, [, g]) => n + datasetRows(this.dataset(g, "ids").shape), 0);
-      assertWithinCeiling(path, "the model", "elements", nElements);
+      cells = groups.reduce((n, [, g]) => n + datasetRows(this.dataset(g, "ids").shape), 0);
+      assertWithinCeiling(path, "the model", "elements", cells);
       for (const [alias, g] of groups) blocks.push(this.readBlock(g, alias));
     }
 
@@ -292,7 +295,7 @@ class Reader {
         OPENSEES_TARGET,
         ZONE_FLOOR.opensees,
       );
-      opensees = this.readOpenSees(this.group(root, "opensees"), v);
+      opensees = this.readOpenSees(this.group(root, "opensees"), v, { path, cells });
     }
     const sequence = this.readSequence(root, metaAttrs);
 
@@ -363,7 +366,7 @@ class Reader {
     return out;
   }
 
-  private readOpenSees(g: H5Group, version: string): OpenSeesZone {
+  private readOpenSees(g: H5Group, version: string, model: { path: string; cells: number }): OpenSeesZone {
     const objects: OpsObject[] = [];
     const families: [string, OpsFamily][] = [
       ["sections", "section"],
@@ -394,7 +397,12 @@ class Reader {
     const elementMeta: ElementMeta[] = [];
     if (has(g, "element_meta")) {
       const em = this.group(g, "element_meta");
-      for (const type of em.keys()) elementMeta.push(this.readElementMeta(this.group(em, type), type));
+      const types = em.keys().map((type) => [type, this.group(em, type)] as const);
+      // An OpenSees-only row (fem_eid < 0) is drawn and indexed beside the cells, so it counts
+      // toward the model's elements; its sign is in the values, read here before the rows' args (#2373).
+      const femEids = types.map(([, tg]) => numbers(this.dataset(tg, "fem_eids")));
+      assertWithinCeiling(model.path, "the model", "elements", model.cells + opsOnlyRows(femEids));
+      types.forEach(([type, tg], i) => elementMeta.push(this.readElementMeta(tg, type, femEids[i]!)));
     }
 
     const names: NameAlias[] = [];
@@ -826,9 +834,8 @@ class Reader {
     };
   }
 
-  private readElementMeta(g: H5Group, type: string): ElementMeta {
+  private readElementMeta(g: H5Group, type: string, femEids: Float64Array): ElementMeta {
     const ids = numbers(this.dataset(g, "ids"));
-    const femEids = numbers(this.dataset(g, "fem_eids"));
     if (femEids.length !== ids.length) {
       throw new SchemaError(`${g.path}: fem_eids and ids lengths differ`);
     }

@@ -28,12 +28,15 @@ export const JS_ARRAY_LIMIT = 2 ** 27;
 export const TRIANGLE_LIMIT = Math.floor(JS_ARRAY_LIMIT / 9);
 /** ... and 6 floats per outline edge (two xyz endpoints) into another. */
 export const EDGE_LIMIT = Math.floor(JS_ARRAY_LIMIT / 6);
+/** ... and 6 floats per line segment (a line cell, or one span of an OpenSees-only element) into a third. */
+export const SEGMENT_LIMIT = Math.floor(JS_ARRAY_LIMIT / 6);
 
-export type CeilingKind = "nodes" | "elements" | "triangles" | "outline edges";
+export type CeilingKind = "nodes" | "elements" | "line segments" | "triangles" | "outline edges";
 
 const RULE: Readonly<Record<CeilingKind, { limit: number; shown: (limit: number) => string; cause: string }>> = {
-  nodes: { limit: NODE_LIMIT, shown: (l) => `${fmt(l)} (2^24) nodes per stage`, cause: "JavaScript Map/Set limit" },
-  elements: { limit: ELEMENT_LIMIT, shown: (l) => `${fmt(l)} (2^24) elements per stage`, cause: "JavaScript Map/Set limit" },
+  nodes: { limit: NODE_LIMIT, shown: (l) => `${fmt(l)}${l === NODE_LIMIT ? " (2^24)" : ""} nodes per stage`, cause: "JavaScript Map/Set limit" },
+  elements: { limit: ELEMENT_LIMIT, shown: (l) => `${fmt(l)}${l === ELEMENT_LIMIT ? " (2^24)" : ""} elements per stage`, cause: "JavaScript Map/Set limit" },
+  "line segments": { limit: SEGMENT_LIMIT, shown: (l) => `${fmt(l)} line segments`, cause: "JavaScript array limit of 2^27 entries, 6 per segment" },
   triangles: { limit: TRIANGLE_LIMIT, shown: (l) => `${fmt(l)} triangles`, cause: "JavaScript array limit of 2^27 entries, 9 per triangle" },
   "outline edges": { limit: EDGE_LIMIT, shown: (l) => `${fmt(l)} outline edges`, cause: "JavaScript array limit of 2^27 entries, 6 per edge" },
 };
@@ -91,6 +94,17 @@ export function ladrunoStageElements(groups: readonly { path: string; nElements:
     byToken.set(token, (byToken.get(token) ?? 0) + n);
   }
   return Math.max(0, ...byToken.values());
+}
+
+/**
+ * A model's OpenSees-only element rows: each `/opensees/element_meta/<type>/fem_eids`
+ * entry below 0 is an element with no /elements cell, which the mesh draws and the load
+ * indexes beside the cells. The sign is in the values, so this counts read rows.
+ */
+export function opsOnlyRows(femEids: readonly ArrayLike<number>[]): number {
+  let n = 0;
+  for (const f of femEids) for (let i = 0; i < f.length; i++) if (f[i]! < 0) n++;
+  return n;
 }
 
 /**
