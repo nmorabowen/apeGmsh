@@ -55,7 +55,8 @@ _PARTITIONS: dict[int, dict[str, list[int]]] = {
 
 
 def _fem(*, partitioned: bool, node_constraints: "list[Any]" = (),
-         surface_constraints: "list[Any]" = ()) -> FEMData:
+         surface_constraints: "list[Any]" = (),
+         interfaces: "list[Any]" = ()) -> FEMData:
     """Two columns at x = 0 and 1 rising along z (PG ``"Cols"``), fixed at
     ``"Base"`` (1, 3), with the given constraint streams. A partitioned
     model puts each column on its own rank, so a constraint between the two
@@ -85,7 +86,7 @@ def _fem(*, partitioned: bool, node_constraints: "list[Any]" = (),
         **({"partitions": parts} if parts else {}))
     elements = ElementComposite(
         groups={1: lines}, physical=groups, labels=LabelSet({}),
-        constraints=list(surface_constraints),
+        constraints=list(surface_constraints), interfaces=list(interfaces),
         **({"partitions": parts} if parts else {}))
     return FEMData(
         nodes=nodes, elements=elements,
@@ -215,3 +216,81 @@ def test_archive_without_the_rows_warns_by_name(tmp_path):
                           match=r"fem\.nodes\.constraints \(equal_dof: 1\)"):
             deck = OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
     assert _mp_lines(deck) == []
+
+
+def test_to_h5_rewrite_keeps_the_rows(tmp_path):
+    # The rewrite writes the global rows back, so its own replay is tied.
+    fwd, path = _archive(_fem(partitioned=False, **_KINDS["rigid_body"]),
+                         tmp_path)
+    rewrite = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        OpenSeesModel.from_h5(str(path)).to_h5(str(rewrite))
+    with h5py.File(path, "r") as a, h5py.File(rewrite, "r") as b:
+        assert (a["opensees/constraints/rigidLink"][()].tolist()
+                == b["opensees/constraints/rigidLink"][()].tolist())
+    assert _mp_lines(_replay(rewrite)) == _mp_lines(fwd)
+
+
+# ---------------------------------------------------------------------------
+# Phantom-node streams refuse (#2411): no stored phantom node, no replay
+# ---------------------------------------------------------------------------
+
+
+def _node_to_surface(kind: str) -> Any:
+    from apeGmsh._kernel.records._constraints import NodeToSurfaceRecord
+
+    return NodeToSurfaceRecord(
+        kind=kind, master_node=2, slave_nodes=[4], phantom_nodes=[200],
+        phantom_coords=np.array([[1.0, 0.0, 1.0]]),
+        rigid_link_records=[NodePairRecord(
+            kind="rigid_beam", master_node=2, slave_node=200)],
+        equal_dof_records=[NodePairRecord(
+            kind="equal_dof", master_node=200, slave_node=4, dofs=[1, 2, 3])],
+        dofs=[1, 2, 3])
+
+
+def _mixed_ndf_interface() -> Any:
+    from apeGmsh._kernel.records._constraints import InterfaceRecord, NormalLaw
+
+    return InterfaceRecord(
+        kind="interface", master_node=2, slave_node=4, backing_element=1,
+        orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0), a_trib=0.5,
+        normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
+        phantom_node=200, phantom_coords=np.array([1.0, 0.0, 1.0]),
+        phantom_ndf=6, equal_dof_records=[NodePairRecord(
+            kind="equal_dof", master_node=4, slave_node=200, dofs=[1, 2, 3])])
+
+
+@pytest.mark.parametrize(("streams", "named"), [
+    ({"node_constraints": [_node_to_surface("node_to_surface")]},
+     "node_to_surface: 1"),
+    ({"node_constraints": [_node_to_surface("node_to_surface_spring")]},
+     "node_to_surface_spring: 1"),
+    ({"interfaces": [_mixed_ndf_interface()]}, "interface (mixed-ndf): 1"),
+], ids=["node_to_surface", "node_to_surface_spring", "mixed_ndf_interface"])
+def test_phantom_stream_replay_refuses_by_name(streams, named):
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees._internal.compose import _replay_into
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    emitter = RecordingEmitter()
+    with pytest.raises(BridgeError, match=r"#2411") as caught:
+        _replay_into(emitter, ndm=3, ndf=6,
+                     fem=_fem(partitioned=False, **streams))
+    assert named in str(caught.value)
+    assert emitter.calls == []  # refused before anything is emitted
+
+
+def test_phantom_stream_refuses_end_to_end(tmp_path):
+    # The bridge ties through its phantom node; the replay of the same
+    # archive refuses instead of leaving the coupling out.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    fwd, path = _archive(_fem(
+        partitioned=False,
+        node_constraints=[_node_to_surface("node_to_surface")]), tmp_path)
+    assert "equalDOF 200 4 1 2 3" in _mp_lines(fwd)
+    for target in ("tcl", "py"):
+        with pytest.raises(BridgeError, match=r"node_to_surface: 1.*#2411"):
+            OpenSeesModel.from_h5(str(path)).build(target, flat=True)
