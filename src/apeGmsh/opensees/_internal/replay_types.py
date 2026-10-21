@@ -18,6 +18,19 @@ int. Each ``$decl`` reference is a stub of the referenced class (an
 instance with no fields set), resolved to a placeholder tag: a tag slot is
 an int whatever its value.
 
+A :class:`~apeGmsh.opensees.section.computed.ComputedSection` holds its
+``SectionProperties`` analyzer, which the archive records by class name
+only (:class:`~apeGmsh.opensees.emitter.h5_reader.DeclOpaque`), so it
+cannot be rebuilt. Its slot types do not need the analyzer: its lowering
+emits a plain section, and every number the analyzer computes there is a
+float. :data:`_LOWERED_WITHOUT` dry runs that plain section with ``1.0``
+for each computed number and the archived value of each field the user
+set (``E``, ``G``, ``ndm``, ``GJ``), so an integral ``E=210000`` stays an
+int and the computed ``A`` is a float. A modulus the lowering defaults
+from the analyzer's material (``E`` or ``G`` left ``None``) replays as a
+float: ``SectionMaterial`` declares them ``float``, and the material is
+not archived. Any other field archived by name only still warns.
+
 Nothing changes, and the reader's by-value recovery stands, when the
 archive has no ``decl_params`` (every file below 2.26.0, a rewrite of
 one), when no declaration owns the tag, or when the recorded call's
@@ -33,7 +46,7 @@ import dataclasses
 import sys
 import warnings
 from collections.abc import Mapping
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from .. import damping as _damping  # noqa: F401  (registers the classes)
 from .. import element as _element  # noqa: F401
@@ -47,6 +60,9 @@ from ..emitter.h5_reader import (
     DeclarationTable, DeclOpaque, DeclRef, DeclStruct,
 )
 from ..emitter.recording import RecordingEmitter
+from ..section.beam import ElasticSection
+from ..section.computed import ComputedSection
+from ..section.fiber import Fiber, FiberPoint
 from .tag_resolution import set_element_nodes, set_tag_resolver
 from .types import (
     BeamIntegration, Damping, Element, GeomTransf, NDMaterial, Pattern,
@@ -140,6 +156,41 @@ def _stub(cls: type[Primitive]) -> Primitive:
     lookup may use it."""
     stub: Primitive = object.__new__(cls)
     return stub
+
+
+def _computed_section(fields: Mapping[str, Any]) -> Primitive:
+    """The plain section a :class:`ComputedSection` lowers to, with ``1.0``
+    for each number its analyzer computes (see the module docstring)."""
+    from apeGmsh.sections._lowering import ElasticLoweringParams
+
+    kind = fields["kind"]
+    if kind == "elastic":
+        e, g = fields["E"], fields["G"]
+        params = ElasticLoweringParams(
+            E=1.0 if e is None else e, A=1.0, Iz=1.0, Iy=1.0,
+            G=1.0 if g is None else g, J=1.0, alphaY=1.0, alphaZ=1.0)
+        return ElasticSection(**params.section_kwargs(fields["ndm"]))
+    if kind == "fiber":
+        materials = fields["fibers"]
+        if not materials:
+            raise _Unrecoverable("the fiber lowering holds no fibers")
+        gj = fields["GJ"]
+        point = FiberPoint(material=next(iter(materials.values())),
+                           y=0.0, z=0.0, area=1.0)
+        return Fiber(fibers=(point,), GJ=1.0 if gj is None else gj)
+    raise _Unrecoverable(f"the ComputedSection kind {kind!r} is unknown")
+
+
+#: A class one of whose fields the archive records by name only (a
+#: ``DeclOpaque`` of the named type) but whose slot types do not depend on
+#: it: that field, the type it holds, and the stand-in built from the
+#: other fields.
+_LOWERED_WITHOUT: dict[
+    type[Primitive],
+    tuple[str, str, Callable[[Mapping[str, Any]], Primitive]],
+] = {
+    ComputedSection: ("analysis", "SectionProperties", _computed_section),
+}
 
 
 class SlotTypes:
@@ -266,8 +317,17 @@ class SlotTypes:
         assert table is not None
         (entry,) = table.params[decl]
         cls = self._class(table.decls[decl].family, entry.type)
-        kwargs = self._fields(cls, entry.params, cls.__module__)
-        return cls(**kwargs)
+        lowered = _LOWERED_WITHOUT.get(cls)
+        if lowered is None:
+            return cls(**self._fields(cls, entry.params, cls.__module__))
+        field, held_type, stand_in = lowered
+        held = entry.params.get(field)
+        if not (isinstance(held, DeclOpaque) and held.type == held_type):
+            raise _Unrecoverable(
+                f"the field {field!r} holds {held!r}, not a {held_type} "
+                "archived by name")
+        rest = {k: v for k, v in entry.params.items() if k != field}
+        return stand_in(self._fields(cls, rest, cls.__module__))
 
     def _fields(
         self, cls: type, params: Mapping[str, Any], module: str,

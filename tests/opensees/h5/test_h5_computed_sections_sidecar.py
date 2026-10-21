@@ -11,8 +11,9 @@ round-tripped by ``OpenSeesModel``.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import h5py
 import pytest
@@ -163,7 +164,12 @@ def test_provenance_excluded_from_model_hash(g, tmp_path: Path) -> None:
 # OpenSeesModel surface + round-trip
 # --------------------------------------------------------------------- #
 
+@pytest.mark.filterwarnings(
+    "error::apeGmsh.opensees._internal.replay_types.ReplaySlotTypeWarning")
 def test_opensees_model_surfaces_and_round_trips(g, tmp_path: Path) -> None:
+    """The round-trip recovers the section's slot types without a
+    ``ReplaySlotTypeWarning`` (#2374): the analyzer is archived by name
+    only, and the slot types do not need it."""
     sec = _analyzer(g)
     src = tmp_path / "src.h5"
     dst = tmp_path / "dst.h5"
@@ -177,6 +183,103 @@ def test_opensees_model_surfaces_and_round_trips(g, tmp_path: Path) -> None:
     assert read_computed_sections(str(dst)) == read_computed_sections(str(src))
     # round-trip is hash-stable
     assert _model_hash(dst) == _model_hash(src)
+
+
+# --------------------------------------------------------------------- #
+# Replay slot types (#2374): the replayed section line is the bridge's
+# --------------------------------------------------------------------- #
+
+def _fiber_on(ops, sec, **kw):
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=200e3)
+    return ops.section.ComputedSection(
+        analysis=sec, kind="fiber", fibers={"bar": mat}, **kw)
+
+
+_REPLAY_CASES = {
+    # E defaults from the analyzer's float material: 200000.0, not 200000
+    "elastic": lambda ops, sec: ops.section.ComputedSection(analysis=sec),
+    # an int E the user set stays an int; an integral float G stays a float
+    "elastic-2d-set-moduli": lambda ops, sec: ops.section.ComputedSection(
+        analysis=sec, ndm=2, E=210000, G=80000.0),
+    "fiber": lambda ops, sec: _fiber_on(ops, sec),
+    "fiber-int-gj": lambda ops, sec: _fiber_on(ops, sec, GJ=5),
+}
+
+
+def _section_lines(deck: str) -> list[str]:
+    return [ln for ln in deck.splitlines() if ln.startswith("section ")]
+
+
+@pytest.mark.parametrize("case", sorted(_REPLAY_CASES))
+def test_replay_writes_the_bridge_section_line(
+        g, tmp_path: Path, case: str) -> None:
+    """The oracle is the bridge's own deck: the replay from the archive
+    writes the same ``section`` line, literal for literal, and warns
+    no ``ReplaySlotTypeWarning``."""
+    from apeGmsh.opensees._internal.replay_types import ReplaySlotTypeWarning
+
+    sec = _analyzer(g)
+    ops = _frame(lambda o: _REPLAY_CASES[case](o, sec))
+    deck = tmp_path / "bridge.tcl"
+    archive = tmp_path / "model.h5"
+    ops.tcl(str(deck), progress=False, flat=True)
+    ops.h5(str(archive))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ReplaySlotTypeWarning)
+        replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=True)
+    assert isinstance(replay, str)
+    bridge = _section_lines(deck.read_text(encoding="utf-8"))
+    assert len(bridge) == 1
+    assert _section_lines(replay) == bridge
+    if case == "elastic":
+        assert bridge[0].startswith("section Elastic 1 200000.0 ")
+
+
+def _computed_table(path: Path) -> "tuple[Any, int]":
+    from apeGmsh.opensees.emitter import h5_reader
+
+    with h5_reader.open(str(path)) as m:
+        table = m.declarations()
+    assert table is not None
+    row = next(i for i, ent in table.params.items()
+               if ent[0].type == "ComputedSection")
+    return table, row
+
+
+@pytest.mark.parametrize("field, value, match", [
+    ("analysis", "DeclOpaque:Frobnicator", "not a SectionProperties"),
+    ("kind", "plastic", "kind 'plastic' is unknown"),
+])
+def test_an_unexpected_computed_section_field_still_warns(
+        g, tmp_path: Path, field: str, value: str, match: str) -> None:
+    """Fail closed: the stand-in covers exactly a ``SectionProperties``
+    archived by name and the two lowerings; anything else warns and
+    keeps the by-value recovery."""
+    import dataclasses
+    from types import MappingProxyType
+
+    from apeGmsh.opensees._internal.replay_types import (
+        ReplaySlotTypeWarning, SlotTypes,
+    )
+    from apeGmsh.opensees.emitter.h5_reader import DeclOpaque
+
+    sec = _analyzer(g)
+    archive = tmp_path / "model.h5"
+    _frame(lambda ops: ops.section.ComputedSection(analysis=sec)).h5(
+        str(archive))
+    table, row = _computed_table(archive)
+    (entry,) = table.params[row]
+    held: object = (DeclOpaque(type=value.split(":", 1)[1])
+                    if value.startswith("DeclOpaque:") else value)
+    bad = dataclasses.replace(
+        entry, params=MappingProxyType({**entry.params, field: held}))
+    params = dict(table.params)
+    params[row] = (bad,)
+    st = SlotTypes(dataclasses.replace(table, params=MappingProxyType(params)))
+    with pytest.warns(ReplaySlotTypeWarning, match=match):
+        out = st.recover("section", 1, "Elastic", (200000, 8.5))
+    assert out == (200000, 8.5)
+    assert type(out[0]) is int
 
 
 def test_reader_tolerates_absence(tmp_path: Path) -> None:
