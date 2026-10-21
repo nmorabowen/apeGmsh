@@ -240,7 +240,10 @@ with ops.pattern.Plain(series=vel) as p:                     # or s.pattern(...)
 ```
 
 `add_input(p, motion="incident")` doubles the force for an incident-wave
-velocity. With tied sides (`g.constraints.periodic`) the base pair's master
+velocity. Declare the side ties (`g.constraints.periodic`, #2388, or
+`ops.equation_constraint` rows) BEFORE `lysmer_base`: it leaves a tied
+vertical DOF unfixed, and a tie added later meets a fixed DOF (a singular
+solve). With tied sides the base pair's master
 ends up fixed vertically while tied horizontally: OpenSees' `Transformation`
 handler (the bridge default for `equalDOF`) silently drops that tie every step
 (#2396, `PartlyFixedTieWarning`), so declare `ops.constraints.Lagrange()`. Put the input pattern in the shaking stage of a staged model, so the

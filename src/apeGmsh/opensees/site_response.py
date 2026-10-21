@@ -280,7 +280,7 @@ def lysmer_base(
     ``C_p = rho Vp A_i`` on the vertical one (2 in 2-D, 3 in 3-D). It
     fixes every ground node, sizes their ``ndf``, and, with no ``vp``,
     fixes the vertical DOF of every base node — except a DOF a tie
-    already constrains (``g.constraints.periodic`` / ``equal_dof`` or an
+    already constrains (``g.constraints.periodic`` (#2388) / ``equal_dof`` or an
     ``ops.equation_constraint`` row declared before this call), which
     the tie carries from its fixed master. That leaves the master partly
     fixed, which OpenSees' Transformation handler mishandles (#2396): it
