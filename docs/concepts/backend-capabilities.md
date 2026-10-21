@@ -107,9 +107,9 @@ in them is fork-only. See [Stock engine defects](#stock-engine-defects).
 <!-- capability-map:elements -->
 `BezierTet10`, `BezierTri6`, `LadrunoBrick`, `LadrunoBrick20`,
 `LadrunoCST`, `LadrunoDispBeamColumn`, `LadrunoDistributingCoupling`,
-`LadrunoEmbeddedNode`, `LadrunoEmbeddedRebar`, `LadrunoIMKBeam`,
-`LadrunoKinematicCoupling`, `LadrunoLST`, `LadrunoMembrane`, `LadrunoQuad`,
-`LadrunoRigidBody`, `LadrunoUP`
+`LadrunoEmbeddedNode`, `LadrunoEmbeddedRebar`, `LadrunoForceBeamColumn`,
+`LadrunoIMKBeam`, `LadrunoKinematicCoupling`, `LadrunoLST`,
+`LadrunoMembrane`, `LadrunoQuad`, `LadrunoRigidBody`, `LadrunoUP`
 <!-- /capability-map:elements -->
 
 Reached through `ops.element.*`, and also indirectly:

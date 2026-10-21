@@ -132,8 +132,9 @@ LINE_STATION_CLASSES = (
     "ForceBeamColumnCBDI2d", "ForceBeamColumnWarping2d",
     "ElasticForceBeamColumn2d", "ElasticForceBeamColumn3d",
     "DispBeamColumn2d", "DispBeamColumn3d",
-    # #727 Ladruno displacement beam-column cluster.
+    # #727 / WP-200 Ladruno disp/force beam-column cluster.
     "LadrunoDispBeamColumn2d", "LadrunoDispBeamColumn3d",
+    "LadrunoForceBeamColumn2d", "LadrunoForceBeamColumn3d",
 )
 
 
