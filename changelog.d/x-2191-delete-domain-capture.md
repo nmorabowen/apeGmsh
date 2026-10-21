@@ -17,3 +17,9 @@ Files it wrote stay readable with `Results.from_native`: the
 The two catalog helpers only it called, `has_dead_gauss_probe` and
 `needs_per_material_query`, are removed with it; the bridge emit still warns on
 a stale upstream-shell probe (`StaleShellProbeWarning`).
+
+The `ssi_frame_wall` viewer bench now has two result sources (maintainer
+ruling (A), 2026-10-21): the recorder set (`gravity` + `dynamic`, through
+`emit_recorders`, transcoded on open) and `modes.h5` (`capture_live_modes`),
+both opened by `build.open_results`, which `check_slots.py` and
+`open_viewer.py` use.

@@ -1,12 +1,19 @@
 # ssi_frame_wall — model source
 
 Two scripts, which are the **driver / verify pair** the habitat case
-runner expects:
+runner expects, plus `open_viewer.py`:
 
 | Script | Role | Writes / reads |
 |---|---|---|
-| `build.py` | driver — builds, solves, captures | writes `model.h5` + `run.h5` into **cwd** |
-| `check_slots.py` | verify — the acceptance gate | reads `model.h5` + `run.h5` from **cwd**, writes `slots/*.png` |
+| `build.py` | driver — builds, solves, records | writes `model.h5`, the recorder set (`out/`), `modes.h5`, `bench.json` and the transcode cache (`cache/`) into **cwd** |
+| `check_slots.py` | verify — the acceptance gate | opens both result sources from **cwd** through `build.open_results`, writes `slots/*.png` |
+| `open_viewer.py` | a ready-made viewer session | opens both result sources of a case through `build.open_results` |
+
+The run has two result sources: the recorder set (stages `gravity` and
+`dynamic`), transcoded on open, and `modes.h5` (six mode shapes, from
+`capture_live_modes`). `build.open_results(results_dir)` returns
+`(run, modes)`; every consumer opens the run that way, so none depends on
+where the transcode cache puts its file.
 
 Both default to the current directory rather than a path beside
 themselves, because `scripts/run_case.py` runs each with **no arguments**
@@ -39,8 +46,9 @@ which is where it belongs, instead of a flag nobody can see in `run.json`.
 
 The canonical ADR 0098 Results-viewer fixture: a soil block with a raft
 cast into its surface, carrying a three-storey frame, a shear wall and
-floor slabs — three element families, nine physical groups, three stages,
-and every one of the seven result slots fed with real data.
+floor slabs — three element families, nine physical groups, two result
+sources (gravity + dynamic, and the modes), and every one of the seven
+result slots fed with real data.
 
 The full rationale (why `forceBeamColumn` and not `elasticBeamColumn`,
 why the structure is tied into the raft rather than sharing nodes, why
