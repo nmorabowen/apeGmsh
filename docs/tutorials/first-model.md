@@ -69,9 +69,10 @@ but it's short enough to read top to bottom first, so do that. Under 40 lines
 of real work takes you from an empty session to a verified deflection.
 
 ```python
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (consistent SI: m, N, Pa) ---
 L  = 3.0          # length        [m]
@@ -117,17 +118,24 @@ ops.algorithm.Linear()
 ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
 
-# --- 3. Solve, capturing the tip displacement ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Tip", components=["displacement"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("tip_load", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+# --- 3. Solve, recording the tip displacement ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="tip",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None,
+        node_ids=fem.nodes.select(pg="Tip").ids,
+    ),),
+)
+ops.h5("model.h5")                            # the model archive the read pairs with
+ops.run()                                     # build the domain; no analysis yet
+opspy = get_ops()                             # the OpenSees module the bridge drove
+with spec.emit_default("run", model_h5="model.h5") as run:
+    opspy.analyze(1)                          # one static load step
 
 # --- 4. Read the result back by physical-group NAME ---
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 slab = results.nodes.get(pg="Tip", component="displacement_y")
 
 delta_fem = abs(float(slab.values[-1, 0]))
@@ -279,37 +287,60 @@ explain when you'd reach for something other than `Linear`/`Static`.
     you'll apply it twice. **Masses and supports** are always set on `ops`
     (`ops.mass`, `ops.fix`), so the runnable deck is explicit about them.
 
-## Step 3 — Solve and capture
+## Step 3 — Solve and record
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Tip", components=["displacement"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("tip_load", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="tip",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None,
+        node_ids=fem.nodes.select(pg="Tip").ids,
+    ),),
+)
+ops.h5("model.h5")                            # the model archive the read pairs with
+ops.run()                                     # build the domain; no analysis yet
+opspy = get_ops()                             # the OpenSees module the bridge drove
+with spec.emit_default("run", model_h5="model.h5") as run:
+    opspy.analyze(1)                          # one static load step
 ```
 
-We want the tip displacement, so we declare a **capture spec**: record the
-`displacement` of every node in `"Tip"`. Again — by name.
+We want the tip displacement, so we declare a **recorder spec**: one record
+of the `displacement_x` and `displacement_y` of the nodes in `"Tip"`. The
+spec holds node IDs rather than names, so `fem.nodes.select(pg="Tip").ids`
+turns the name into IDs once, here; every read afterwards goes back to names.
 
-`ops.domain_capture(...)` opens an in-process recorder writing to `run.h5`.
-Inside the `with`, we open a stage, run `ops.analyze(steps=1)` (one static
-load step — the solve happens here, in-process, through openseespy), snapshot
-the state with `cap.step(t=1.0)`, and close the stage. When the block exits,
-`run.h5` holds both the result *and* a copy of the model, in one file.
+`ops.h5("model.h5")` writes the model archive, the file the read uses to
+turn IDs back into your physical groups. `ops.run()` builds the model and
+its analysis chain into OpenSees without analysing, and `get_ops()` hands
+you that same OpenSees module, so the loop steps the domain the bridge just
+built.
+
+`spec.emit_default(...)` opens the recorder that suits your OpenSees build
+and closes it when the block exits. Inside the `with`, `opspy.analyze(1)`
+runs one static load step; the solve happens here, in your Python process.
+On pip openseespy the route records classic recorder files in `run_out/`
+and says so with one `DefaultRouteWarning`. On a build with the MPCO
+recorder it writes `run.mpco`, and on the Ladruno fork `run.ladruno`.
+`run.route` tells you which one ran.
+
+!!! warning "Step with `opspy.analyze`, not `ops.analyze`"
+    The bridge's own `ops.analyze(steps=1)` rebuilds the domain from
+    scratch, and the recorder the `with` block opened goes with it. After
+    `ops.run()`, always step the module that `get_ops()` returns.
 
 !!! note "This is one path of several — on purpose"
     We did two things here that have alternatives, and this tutorial picks one
     of each so you reach a result without a detour:
 
-    - **How you run** — we solved *in-process* with `ops.analyze`. You can
+    - **How you run** — we solved *in-process* with `opspy.analyze`. You can
       instead **export a runnable deck** with `ops.tcl("model.tcl")` or
       `ops.py("model.py")` and run it elsewhere (great for sharing or
       version-controlling the OpenSees model).
-    - **How you record** — we used *domain capture* (→ `Results.from_native`).
-      You can also use classic recorders (→ `Results.from_recorders`) or an
+    - **How you record** — we used the *default route*, `emit_default`,
+      which picks the recorder from your build. You can also choose one
+      yourself: classic recorders (→ `Results.from_recorders`) or an
       **MPCO** recorder for STKO (→ `Results.from_mpco`).
 
     The read-side API is identical whichever you choose. When you're ready to
@@ -319,15 +350,16 @@ the state with `cap.step(t=1.0)`, and close the stage. When the block exits,
 ## Step 4 — Read it back, by name
 
 ```python
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 slab = results.nodes.get(pg="Tip", component="displacement_y")
 delta_fem = abs(float(slab.values[-1, 0]))
 ```
 
-`Results.from_native(...)` opens the run file. **The `model=` argument is
-required** — `Results` needs a model broker to translate physical-group names
-back into nodes and elements. Here the model lives in the same file (the
-Composed-file pattern), so we point `OpenSeesModel.from_h5` at the same path.
+`run.results()` opens what the run recorded, with the reader that matches
+the route: `Results.from_recorders`, `Results.from_mpco` or
+`Results.from_ladruno`. It pairs the file with `model.h5`, which is how
+`Results` turns physical-group names back into nodes and elements. Call it
+after the `with` block has closed.
 
 Then the moment of truth: `results.nodes.get(pg="Tip", component="displacement_y")`.
 You ask for the vertical displacement of the `"Tip"` group — *the same name you
@@ -369,9 +401,9 @@ In one short script you ran the entire apeGmsh spine:
 - **The typed bridge.** `apeSees(fem)` drives OpenSees through typed
   primitives — `ops.geomTransf.Linear`, `ops.element.elasticBeamColumn`,
   `ops.fix(pg=...)`, `ops.pattern.Plain` — never raw command strings.
-- **Capture → `Results` → read by name.** `ops.domain_capture` records the
-  solve; `Results.from_native(..., model=...)` reads it back; `results.nodes.get(pg=...)`
-  pulls displacements out by physical-group name.
+- **Record → `Results` → read by name.** `spec.emit_default(...)` records
+  the solve on the route your build supports; `run.results()` reads it back;
+  `results.nodes.get(pg=...)` pulls displacements out by physical-group name.
 - **`show_web()` for the picture**, and it's the kernel-safe choice in
   notebooks.
 

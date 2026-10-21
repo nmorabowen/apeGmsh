@@ -48,7 +48,11 @@ domain (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`,
 (Gauss points, line stations, nodal forces) pair each FEM element with
 the live element of its id, proved by ``eleNodes`` against the FEM
 connectivity and typed by ``eleType`` (#2269); the read carries that
-pairing, per-Gauss-point material records included (#2290).
+pairing, per-Gauss-point material records included (#2290). A FEMData
+archive holds no ``beamIntegration``, so a fibres record's section
+locations and fibre counts are read from the live domain at
+``__enter__`` (``sectionLocation``, ``fiberData2``), and its read slices
+the files by them (#2290).
 
 Modal records have no default route and refuse at ``__enter__``.
 """
@@ -66,6 +70,8 @@ from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
     gauss_keyword_for_canonical,
+    gauss_routing_for_canonical,
+    is_nodal_force_catalogued,
 )
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
@@ -81,7 +87,12 @@ from ..readers._ladruno_live import (
     stamp_fork_file,
 )
 from ..Results import Results
-from ..spec._emit import collect_mpco_tokens, element_tag_map, mpco_ops_args
+from ..spec._emit import (
+    collect_mpco_tokens,
+    element_tag_map,
+    line_stations_from_local_force,
+    mpco_ops_args,
+)
 from ._recorders import LiveRecorders
 
 if TYPE_CHECKING:
@@ -181,8 +192,9 @@ class LiveDefault:
         that element's ``eleNodes`` is the FEM connectivity in order and
         its class is known; any other id refuses, naming it (#2269).
         A per-Gauss-point material record reads through that pairing
-        (#2290); a ``fibers`` record refuses by name: it needs the
-        bridge's archive.
+        (#2290), and so does a ``fibers`` record: its elements' section
+        locations and fibre counts are read from the live domain at
+        ``__enter__``, in place of a ``beamIntegration``.
     ops
         The OpenSees module, or a stand-in for testing. Defaults to the
         module the bridge drives.
@@ -232,8 +244,9 @@ class LiveDefault:
         if modal:
             raise ValueError(
                 f"emit_default has no route for modal records {modal}; "
-                "capture modes with spec.emit_mpco(...) or "
-                "ops.domain_capture(...) instead."
+                "capture modes with capture_live_modes(model_h5, n_modes, "
+                "path, ops=ops) from apeGmsh.results.live (any build), or "
+                "spec.emit_mpco(...) instead."
             )
         if self._path.suffix not in ("", _MPCO_SUFFIX, FORK_SUFFIX):
             raise ValueError(
@@ -368,7 +381,6 @@ class LiveDefault:
             # refusal ("declares no ndm") stands.
             self._neutral = True
             if live_ndm(self._ops) >= 1:
-                _refuse_unpairable_records(self._spec, self._model_h5)
                 self._facts = _pair_live_elements(
                     self._spec, LiveDomainFacts(self._ops, self._model),
                     self._model_h5)
@@ -533,23 +545,6 @@ def _split_truss_axial(
     return kept, rerouted
 
 
-def _refuse_unpairable_records(spec: "ResolvedRecorderSpec", model_h5: Path) -> None:
-    """Refuse, by name, the element records a FEMData archive cannot read
-    even with the live pairing: a ``fibers`` record counts its stations
-    from each element's ``beamIntegration``, which only the bridge's model
-    archive holds. A per-Gauss-point material record (``material <gp>
-    ...``) reads through the live pairing (#2290): its layout is the
-    record's class's, which the pairing proves by ``eleType``."""
-    named = [r.name for r in spec.records if r.category == "fibers"]
-    if named:
-        raise ValueError(
-            f"emit_default: records {named} read each element's integration "
-            f"rule through the bridge's model archive, and {model_h5} is a "
-            "FEMData archive (no /opensees zone). Record them through the "
-            "bridge's model archive (ops.h5(...))."
-        )
-
-
 def _pair_live_elements(
     spec: "ResolvedRecorderSpec", facts: LiveDomainFacts, model_h5: Path,
 ) -> LiveDomainFacts:
@@ -561,7 +556,13 @@ def _pair_live_elements(
     is never assumed: each element is proved to be the live one, or the
     run refuses, naming it. A record that names its element class (the
     response catalog's key on read) must name the live ``eleType`` of
-    every element it records.
+    every element it records. A ``fibers`` record's elements then have
+    their section locations and fibre counts read from the live domain
+    (:meth:`LiveDomainFacts.record_fiber_sections`): a FEMData archive
+    holds no ``beamIntegration`` to count them from. A ``line_stations``
+    record read from ``section force`` has its elements' section locations
+    read the same way (:meth:`LiveDomainFacts.record_line_stations`), so
+    the read slices its ``.out`` pair by their counts (#2328).
     """
     records = [r for r in spec.records if r.category in _ELEMENT_CATEGORIES]
     if not records:
@@ -570,10 +571,13 @@ def _pair_live_elements(
              f"elements by FEM id, and {model_h5} is a FEMData archive (no "
              "/opensees zone), so each element is paired from the live "
              "domain")
-    facts.pair_elements(
-        (int(e) for r in records for e in (r.element_ids if r.element_ids
-                                           is not None else ())),
-        where=where)
+    # Each recorded element's record classes (None for a record that names
+    # none): the pairing tells twins on the same ordered nodes apart by them.
+    named: "dict[int, set[str | None]]" = {}
+    for r in records:
+        for e in (r.element_ids if r.element_ids is not None else ()):
+            named.setdefault(int(e), set()).add(r.element_class_name)
+    facts.pair_elements(named, where=where, named_classes=named)
     for r in records:
         cls = r.element_class_name
         if cls is None or r.element_ids is None:
@@ -590,6 +594,21 @@ def _pair_live_elements(
     for r in records:
         if r.category == "elements":
             _refuse_uncatalogued_nodal_forces(r, facts)
+        elif r.category == "fibers":
+            # No ids: the emit records nothing, as the pairing pairs none.
+            facts.record_fiber_sections(
+                (int(e) for e in (r.element_ids if r.element_ids is not None
+                                  else ())),
+                where=f"emit_default: fibres record {r.name!r}")
+        elif (r.category == "line_stations" and r.element_class_name
+              is not None and not line_stations_from_local_force(r)):
+            # The .out pair carries no per-element count: the read slices
+            # it by these. A class-less record is refused on read,
+            # before any count is asked for.
+            facts.record_line_stations(
+                (int(e) for e in (r.element_ids if r.element_ids is not None
+                                  else ())),
+                where=f"emit_default: line-stations record {r.name!r}")
     return facts
 
 
@@ -597,20 +616,24 @@ def _refuse_uncatalogued_nodal_forces(
     rec: "ResolvedRecorderRecord", facts: LiveDomainFacts,
 ) -> None:
     """Refuse, before the run, an ``elements`` record the read could not
-    decode: one that names no class (a ``.out`` file carries none), or
-    whose elements' live class has no nodal-force layout for its frame."""
-    from ...opensees._response_catalog import (
-        gauss_routing_for_canonical,
-        is_nodal_force_catalogued,
-    )
-
+    decode: one with no ``nodal_resisting_*`` component (the read decodes
+    nodal forces only), one that names no class (a ``.out`` file carries
+    none), or whose elements' live class has no nodal-force layout for its
+    frame."""
+    tokens = sorted({routing[1] for c in rec.components if (
+        routing := gauss_routing_for_canonical(c, topology="nodal_forces"))})
+    if not tokens:
+        raise ValueError(
+            f"emit_default: elements record {rec.name!r} has no "
+            f"nodal_resisting_* component ({list(rec.components)}), and an "
+            "elements record is read as nodal forces only, so nothing it "
+            "records could be decoded. Record nodal_resisting_* components, "
+            "or the response as another category.")
     if rec.element_class_name is None:
         raise ValueError(
             f"emit_default: elements record {rec.name!r} names no element "
             "class, and a .out file carries none, so its nodal forces "
             "cannot be decoded. Name the live element class.")
-    tokens = sorted({routing[1] for c in rec.components if (
-        routing := gauss_routing_for_canonical(c, topology="nodal_forces"))})
     classes = sorted({facts.live_class(int(e)) for e in (
         rec.element_ids if rec.element_ids is not None else ())})
     missing = [(cls, t) for cls in classes for t in tokens

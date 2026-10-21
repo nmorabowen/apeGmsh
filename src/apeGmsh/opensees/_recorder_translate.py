@@ -22,16 +22,18 @@ through these tables.
 from __future__ import annotations
 
 import warnings
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Optional
 
 from ._element_capabilities import (
+    GMSH_HEX20_TO_SERENDIPITY,
     SIGMA_ZZ_ELEMENT_CLASSES,
     SIGMA_ZZ_MATERIAL_CLASSES,
     STRESS_PLANE_STRAIN_RESPONSE,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Collection, Iterable, Mapping
     from pathlib import Path
 
     from ._readback import RotationRoles
@@ -445,6 +447,15 @@ def model_h5_rotation_roles(
 #: 3.7.1 answers for an element that token makes; a class not listed is
 #: unknown, and blocks the rotational slots of the nodes it touches and
 #: of element-less nodes, as an unknown token does.
+#:
+#: The second block holds catalogued classes the bridge builds no element
+#: of. Each takes the token of its family's bridge class, so the token
+#: types the rotation family and the token gates only (an elastic beam's
+#: ``localForce``, a fibre beam's family): a force beam variant is
+#: ``forceBeamColumn``, never an elastic beam. The read decodes the
+#: response by the catalog entry of the class the record names. Each one
+#: has a stock live oracle in
+#: ``tests/opensees/live/test_live_unmapped_classes_live.py``.
 _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "ElasticBeam2d": "elasticBeamColumn",
     "ElasticBeam3d": "elasticBeamColumn",
@@ -471,7 +482,35 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "FourNodeTetrahedron": "FourNodeTetrahedron",
     "TenNodeTetrahedron": "TenNodeTetrahedron",
     "Brick": "stdBrick",
+    # Catalogued classes with no bridge element: their family's token.
+    "BbarBrick": "stdBrick",
+    "SSPbrick": "stdBrick",
+    "Twenty_Node_Brick": "stdBrick",
+    "SSPquad": "quad",
+    "EightNodeQuad": "quad",
+    "ShellDKGT": "ShellDKGQ",
+    "ShellNLDKGQ": "ShellDKGQ",
+    "ShellNLDKGT": "ShellDKGQ",
+    "ForceBeamColumnCBDI2d": "forceBeamColumn",
+    "Truss2": "Truss",
+    "CorotTruss2": "CorotTruss",
+    "ModElasticBeam2d": "elasticBeamColumn",
 }
+
+#: Live class -> the slot of the FEM (Gmsh) connectivity each of its
+#: ``eleNodes`` holds, for a class whose node order is not Gmsh's. The
+#: pairing compares ``eleNodes`` against the FEM connectivity in this
+#: order. ``Twenty_Node_Brick`` takes the serendipity order of
+#: :data:`~._element_capabilities.GMSH_HEX20_TO_SERENDIPITY` (the memo there
+#: is upstream's ``shap3dv`` order). Every other mapped class takes the
+#: Gmsh order.
+_NODE_ORDER_FOR_LIVE_CLASS: "dict[str, tuple[int, ...]]" = {
+    "Twenty_Node_Brick": GMSH_HEX20_TO_SERENDIPITY,
+}
+
+#: :meth:`LiveDomainFacts.pair_elements` with no record classes in hand:
+#: every recorded element with a twin refuses.
+_NAMES_NO_CLASS: "Mapping[int, Collection[str | None]]" = MappingProxyType({})
 
 
 def _live_int(value: object, query: str) -> int:
@@ -623,6 +662,15 @@ class LiveDomainFacts:
     a padded column (:func:`mask_absent_rotations`). A rotational slot a
     recorded node's layout lacks, or that its elements do not establish,
     refuses by name.
+
+    A FEMData archive holds no ``beamIntegration`` either, so a fibres
+    record's section facts are read from the live domain before the run
+    (:meth:`record_fiber_sections`, #2290): each section's location
+    (``sectionLocation``) and fibre count (``fiberData2``). The read
+    slices the ``.out`` fibre file by them (:meth:`fiber_sections`). A
+    line-stations record's section locations are read the same way
+    (:meth:`record_line_stations`, #2328), and the read slices its
+    ``.out`` pair by their counts (:meth:`station_count`).
     """
 
     def __init__(self, ops: object, archive: object) -> None:
@@ -644,6 +692,12 @@ class LiveDomainFacts:
         self._paired: "dict[int, Any]" = {}
         #: ``{fem_eid: live eleType}`` of the same elements.
         self._live_class: "dict[int, str]" = {}
+        #: ``{fem_eid: (section locations, fibre counts)}`` of the paired
+        #: fibre beams :meth:`record_fiber_sections` read.
+        self._sections: "dict[int, tuple[tuple[float, ...], tuple[int, ...]]]" = {}
+        #: ``{fem_eid: section locations}`` of the paired beams
+        #: :meth:`record_line_stations` or :meth:`record_fiber_sections` read.
+        self._stations: "dict[int, tuple[float, ...]]" = {}
 
     @property
     def ndm(self) -> int:
@@ -666,24 +720,35 @@ class LiveDomainFacts:
         """The live ``eleType`` of a paired FEM element."""
         return self._live_class[int(fem_eid)]
 
-    def pair_elements(self, element_ids: "Iterable[int]", *, where: str) -> None:
+    def pair_elements(
+        self, element_ids: "Iterable[int]", *, where: str,
+        named_classes: "Mapping[int, Collection[str | None]]" = _NAMES_NO_CLASS,
+    ) -> None:
         """Prove that each FEM element of ``element_ids`` is the live
         element of its own id, and pair it.
 
         The FEMData pairs no FEM id with an OpenSees tag and identity is
         never assumed, so each one is shown by fact: the live domain holds
         an element of that tag, its ``eleNodes`` is the FEM connectivity in
-        order, its nodes are the FEM's nodes (the node identity check of
-        :meth:`nodes_ndf`), and its ``eleType`` has a bridge token
-        (:data:`_TOKEN_FOR_LIVE_CLASS`). A FEM id that fails any of these
-        refuses, naming it; nothing is paired then.
+        order (in its class's node order,
+        :data:`_NODE_ORDER_FOR_LIVE_CLASS`), its nodes are the FEM's nodes
+        (the node identity check of :meth:`nodes_ndf`), and its ``eleType``
+        has a bridge token (:data:`_TOKEN_FOR_LIVE_CLASS`). A FEM id that
+        fails any of these refuses, naming it; nothing is paired then.
 
         Two FEM elements with the same ordered connectivity (a stacked
         quad pair, a doubled spring) match any ``eleNodes`` check, so a
         deck that swapped their tags (and so their materials) would record
         each one's response under the other's id. A recorded element whose
         ordered connectivity another FEM element shares refuses, naming
-        both, as a coincident node does (:meth:`_check_shared_positions`).
+        both, as a coincident node does (:meth:`_check_shared_positions`),
+        unless the classes tell them apart. ``named_classes`` maps a FEM id
+        to the element classes its records name (``None`` for a record
+        that names none); a recorded element with twins is accepted only
+        when every record of it names a class, every twin is a live
+        element, and no twin's live ``eleType`` is a class its records
+        name. The caller's class gate (each named class must be the live
+        class of every element its record holds) then refuses a swap.
         """
         import numpy as np
 
@@ -708,7 +773,7 @@ class LiveDomainFacts:
                 f"{where}: FEM elements {absent[:10]} are not in the FEMData "
                 "the archive holds, so no live element can be shown to be "
                 "them. Record the FEM elements the deck was built from.")
-        twins: "list[str]" = []
+        twins_of: "dict[int, list[int]]" = {}
         for parts in by_width.values():
             ids = np.concatenate([p[0] for p in parts])
             conn = np.concatenate([p[1] for p in parts])
@@ -716,30 +781,48 @@ class LiveDomainFacts:
                                        return_counts=True)
             inv = inv.ravel()
             for i in np.flatnonzero(np.isin(ids, ask) & (counts[inv] > 1)):
-                others = [int(e) for e in ids[inv == inv[i]] if e != ids[i]]
-                twins.append(f"FEM element {int(ids[i])} shares nodes "
-                             f"{conn_of[int(ids[i])]} with {others[:5]}")
+                twins_of[int(ids[i])] = [int(e) for e in ids[inv == inv[i]]
+                                         if e != ids[i]]
+        ops = self._ops
+        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+        twins: "list[str]" = []
+        for e, others in twins_of.items():
+            named = named_classes.get(e, ())
+            if named and None not in named and all(
+                    t in live_tags
+                    and str(ops.eleType(t)) not in named  # type: ignore[attr-defined]
+                    for t in others):
+                continue      # each twin is live, and of an unnamed class
+            twins.append(f"FEM element {e} shares nodes {conn_of[e]} with "
+                         f"{others[:5]}")
         if twins:
             raise ValueError(
                 f"{where}: " + "; ".join(sorted(twins)[:3])
                 + (f"; and {len(twins) - 3} more" if len(twins) > 3 else "")
                 + ". eleNodes cannot tell those elements apart, so a deck "
                 "that swapped their tags would record each one's response "
-                "under the other's id. Drop them from the record, or record "
-                "them through the bridge's model archive (ops.h5(...)).")
-        ops = self._ops
-        live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
+                "under the other's id. Drop them from the record, name the "
+                "record's element class where each twin is a live element of "
+                "another class, or record them through the bridge's model "
+                "archive (ops.h5(...)).")
         bad: "list[str]" = []
         live_nodes: "dict[int, list[int]]" = {}
+        classes: "dict[int, str]" = {}
         for e in wanted:
             if e not in live_tags:
                 bad.append(f"FEM element {e} has nodes {conn_of[e]}, no live "
                            "element has that tag")
                 continue
+            cls = classes[e] = str(ops.eleType(e))  # type: ignore[attr-defined]
+            order = _NODE_ORDER_FOR_LIVE_CLASS.get(cls)
+            fem = conn_of[e]
+            expect = (fem if order is None or len(order) != len(fem)
+                      else [fem[i] for i in order])
             live = [int(v) for v in ops.eleNodes(e)]  # type: ignore[attr-defined]
-            if live != conn_of[e]:
-                bad.append(f"FEM element {e} has nodes {conn_of[e]}, the live "
-                           f"element {e} has {live}")
+            if live != expect:
+                as_order = "" if expect is fem else f" ({cls} order {expect})"
+                bad.append(f"FEM element {e} has nodes {fem}{as_order}, the "
+                           f"live element {e} has {live}")
             live_nodes[e] = live
         if bad:
             raise ValueError(
@@ -750,7 +833,6 @@ class LiveDomainFacts:
                 "ids from this FEMData, so each one's results would be "
                 "another element's. Tag each element by its FEM id, with its "
                 "FEM connectivity in order.")
-        classes = {e: str(ops.eleType(e)) for e in wanted}  # type: ignore[attr-defined]
         unmapped: "dict[str, list[int]]" = {}
         for e, cls in classes.items():
             if cls not in _TOKEN_FOR_LIVE_CLASS:
@@ -861,10 +943,21 @@ class LiveDomainFacts:
         Two nodes at one position (a zero-length spring's ends, an
         ``equalDOF`` or rigid-link pair) match any coordinate check, so a
         deck that swaps their tags would record each one's motion under
-        the other. Each FEM element touching such a node must exist live
-        under its FEM id with ``eleNodes`` equal to its FEM connectivity,
-        in order; a shared-position node no FEM element touches refuses
-        by name, since nothing tells its tag from the other node's.
+        the other. Each FEM element touching such a node that the deck
+        built (a live element of its FEM id) must have ``eleNodes`` equal
+        to its FEM connectivity, in order: in its live class's node order
+        (:data:`_NODE_ORDER_FOR_LIVE_CLASS`, read from its ``eleType``), as
+        :meth:`pair_elements` compares it. A FEM element the deck did not
+        build is passed over only when its nodes are all nodes of one of
+        those built elements: a point, edge or face of it (what
+        ``get_fem_data()`` holds beside a deck of beams or solids, #2342),
+        which that element already pins. Any other unbuilt element refuses,
+        since a deck may have built it under another tag with the
+        coincident nodes swapped. A shared-position node no FEM element
+        touches refuses by name, since nothing tells its tag from the other
+        node's. An extra element the deck built on FEM nodes under a tag no
+        FEM element at the node holds is not detected here: it is a
+        difference between the deck and the FEMData, not a swap of tags.
         """
         import numpy as np
 
@@ -897,15 +990,35 @@ class LiveDomainFacts:
         live_tags = {int(t) for t in ops.getEleTags()}  # type: ignore[attr-defined]
         bad: "list[str]" = []
         for n in at:
+            pinned: "list[set[int]]" = []
+            why = ""
             for eid, conn_i in touching[n]:
-                live = ([int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
-                        if eid in live_tags else None)
-                if live != conn_i:
-                    bad.append(
-                        f"node {n}: FEM element {eid} has nodes {conn_i}, "
-                        + ("no live element has that tag" if live is None
-                           else f"the live element {eid} has {live}"))
+                if eid not in live_tags:
+                    continue
+                cls = str(ops.eleType(eid))  # type: ignore[attr-defined]
+                order = _NODE_ORDER_FOR_LIVE_CLASS.get(cls)
+                expect = (conn_i if order is None or len(order) != len(conn_i)
+                          else [conn_i[i] for i in order])
+                live = [int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
+                if live != expect:
+                    as_order = ("" if expect is conn_i
+                                else f" ({cls} order {expect})")
+                    why = (f"FEM element {eid} has nodes {conn_i}{as_order}, "
+                           f"the live element {eid} has {live}")
                     break
+                pinned.append(set(conn_i))
+            if not why:
+                # An unbuilt point, edge or face of a built element is
+                # pinned by it; any other unbuilt element is not.
+                why = next((
+                    f"FEM element {eid} has nodes {conn_i}, no live element "
+                    "has that tag, and no built element at the node holds "
+                    "its nodes"
+                    for eid, conn_i in touching[n]
+                    if eid not in live_tags
+                    and not any(set(conn_i) <= p for p in pinned)), "")
+            if why:
+                bad.append(f"node {n}: {why}")
         if bad:
             raise ValueError(
                 f"{where}: nodes that share their position with another FEM "
@@ -969,6 +1082,132 @@ class LiveDomainFacts:
             slot_dofs, node_ids, ndf, self._ndm,
             rotation_refusal=refusal, where=where,
         )
+
+    def record_fiber_sections(
+        self, element_ids: "Iterable[int]", *, where: str,
+    ) -> None:
+        """Read the section facts of each paired FEM element of
+        ``element_ids`` from the live domain, for the fibre read.
+
+        ``sectionLocation(e)`` gives the element's section locations along
+        its length, in section order, and section ``k`` (1-based) carries
+        ``len(eleResponse(e, 'section', k, 'fiberData2')) / 6`` fibres:
+        ``fiberData2`` answers ``[y, z, area, matTag, stress, strain]``
+        per fibre. They are read before the run, while the domain holds
+        the element. An element :meth:`pair_elements` has not proved, one
+        with no sections, or a section whose ``fiberData2`` holds no whole
+        fibre (no fibre section, or a short answer), refuses by FEM id:
+        its fibres could not be placed.
+        """
+        ops = self._ops
+        bad: "list[str]" = []
+        for e in dict.fromkeys(int(v) for v in element_ids):
+            if e not in self._paired:
+                raise ValueError(
+                    f"{where}: FEM element {e} is not paired with a live "
+                    "element, so its sections cannot be read from the live "
+                    "domain.")
+            if e in self._sections:
+                continue
+            raw = ops.sectionLocation(e)  # type: ignore[attr-defined]
+            locations = tuple(float(x) for x in (raw or ()))
+            if not locations:
+                bad.append(f"FEM element {e} ({self._live_class[e]!r}) has "
+                           f"no sections (sectionLocation answered {raw!r})")
+                continue
+            sizes = [len(ops.eleResponse(  # type: ignore[attr-defined]
+                e, "section", k, "fiberData2"))
+                for k in range(1, len(locations) + 1)]
+            short = [(k, n) for k, n in enumerate(sizes, start=1)
+                     if n == 0 or n % _FIBER_DATA2_WIDTH]
+            if short:
+                bad.append(f"FEM element {e} answers fiberData2 of "
+                           f"{short[0][1]} values at section {short[0][0]}, "
+                           f"not whole fibres of {_FIBER_DATA2_WIDTH}")
+                continue
+            self._sections[e] = (
+                locations, tuple(n // _FIBER_DATA2_WIDTH for n in sizes))
+            self._stations[e] = locations
+        if bad:
+            raise ValueError(
+                f"{where}: " + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". Its fibres cannot be placed along the element; record "
+                "fibre-section force or displacement beams only.")
+
+    def fiber_sections(
+        self, fem_eid: int,
+    ) -> "tuple[tuple[float, ...], tuple[int, ...]]":
+        """``(section locations, fibre count per section)`` of a FEM
+        element :meth:`record_fiber_sections` read; any other id refuses,
+        naming it. Read from the record, never from the live domain, so it
+        holds after the domain is wiped."""
+        e = int(fem_eid)
+        if e not in self._sections:
+            raise ValueError(
+                f"FEM element {e}: its sections were not read from the live "
+                "domain before the run, so its fibres cannot be placed.")
+        return self._sections[e]
+
+    def record_line_stations(
+        self, element_ids: "Iterable[int]", *, where: str,
+    ) -> None:
+        """Read the section locations of each paired FEM element of
+        ``element_ids`` from the live domain (``sectionLocation(e)``), for
+        the line-stations read (#2328).
+
+        A ``.out`` line-stations pair carries no per-element point count,
+        so the read slices its columns by these counts
+        (:func:`~apeGmsh.results.readers._out_station_slicing.line_station_count`):
+        a FEMData archive holds no ``beamIntegration`` to count them from.
+        They are read before the run, while the domain holds the element.
+        An element :meth:`pair_elements` has not proved, or one with no
+        sections, refuses by FEM id.
+        """
+        ops = self._ops
+        bad: "list[str]" = []
+        for e in dict.fromkeys(int(v) for v in element_ids):
+            if e not in self._paired:
+                raise ValueError(
+                    f"{where}: FEM element {e} is not paired with a live "
+                    "element, so its sections cannot be read from the live "
+                    "domain.")
+            if e in self._stations:
+                continue
+            raw = ops.sectionLocation(e)  # type: ignore[attr-defined]
+            locations = tuple(float(x) for x in (raw or ()))
+            if not locations:
+                bad.append(f"FEM element {e} ({self._live_class[e]!r}) has "
+                           f"no sections (sectionLocation answered {raw!r})")
+                continue
+            self._stations[e] = locations
+        if bad:
+            raise ValueError(
+                f"{where}: " + "; ".join(bad[:3])
+                + (f"; and {len(bad) - 3} more" if len(bad) > 3 else "")
+                + ". Its stations cannot be counted; record force or "
+                "displacement beams, or an elastic beam under its own class.")
+
+    def station_locations(self, fem_eid: int) -> "tuple[float, ...]":
+        """The section locations (along the element, in section order) of a
+        FEM element :meth:`record_line_stations` or
+        :meth:`record_fiber_sections` read; any other id refuses, naming it.
+        Read from the record, never from the live domain."""
+        e = int(fem_eid)
+        if e not in self._stations:
+            raise ValueError(
+                f"FEM element {e}: its sections were not read from the live "
+                "domain before the run, so its stations cannot be counted.")
+        return self._stations[e]
+
+    def station_count(self, fem_eid: int) -> int:
+        """The section count of :meth:`station_locations`."""
+        return len(self.station_locations(fem_eid))
+
+
+#: Values per fibre of a ``section fiberData2`` response: ``[y, z, area,
+#: matTag, stress, strain]`` (ForceBeamColumn / DispBeamColumn).
+_FIBER_DATA2_WIDTH = 6
 
 
 def mask_absent_rotations(

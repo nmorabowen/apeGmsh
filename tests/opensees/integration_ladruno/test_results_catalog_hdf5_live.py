@@ -126,10 +126,11 @@ def _run(case: Case, route: str, tmp_path: Path, stub_model_h5: Path):
         assert ops.analyze(1) == 0
         truth = capture_truth(ops, case, built)
         ops.remove("recorders")
-    # The stub model.h5 is another model's archive: the MPCO factory says
-    # so and binds the FEMData it synthesizes from the file instead.
+    # The stub model.h5 is another model's archive: each factory says so
+    # and binds the FEMData it synthesizes from the file instead.
     if route == "Ladruno":
-        r = Results.from_ladruno(str(path), model_h5=stub_model_h5)
+        with pytest.warns(ModelFemMismatchWarning):
+            r = Results.from_ladruno(str(path), model_h5=stub_model_h5)
     else:
         with pytest.warns(ModelFemMismatchWarning):
             r = Results.from_mpco(str(path), model_h5=stub_model_h5)
@@ -208,7 +209,8 @@ def test_ladruno_matches_mpco_on_the_same_solve(
     ops.recorder("ladruno", str(lad), "-N", "displacement", "-E", token)
     assert ops.analyze(1) == 0
     ops.remove("recorders")
-    r_lad = Results.from_ladruno(str(lad), model_h5=stub_model_h5)
+    with pytest.warns(ModelFemMismatchWarning):
+        r_lad = Results.from_ladruno(str(lad), model_h5=stub_model_h5)
     with pytest.warns(ModelFemMismatchWarning):
         r_mpco = Results.from_mpco(str(mpco), model_h5=stub_model_h5)
     if comps == SHELL_STRAINS:

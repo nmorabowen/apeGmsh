@@ -198,6 +198,7 @@ def _resolve_fem_via_model(
     model: "OpenSeesModel",
     *,
     model_path: "str | Path",
+    spatial_dim: "Optional[int]" = None,
 ) -> "Optional[FEMData]":
     """Pick the FEMData for a third-party capture opened beside ``model_h5``.
 
@@ -219,6 +220,11 @@ def _resolve_fem_via_model(
        ``MODEL/`` ones, relative to the bounding box.  Either failure
        warns :class:`ModelFemMismatchWarning` and falls through.
     3. The reader's own synthesized FEMData (may be ``None``).
+
+    An archive that records no ``ndm`` (``fem.to_h5``) is compared over
+    the capture's own dimension: ``spatial_dim`` when the caller gives
+    it (a ``.ladruno`` reader has no ``spatial_dim()``), else
+    ``reader.spatial_dim()`` (the MPCO readers).
     """
     if candidate is not None:
         return candidate
@@ -242,7 +248,12 @@ def _resolve_fem_via_model(
         # no ``ops.model`` call): the capture's own column count is the
         # model's ndm then (a 2-D recorder stores two columns; the
         # synthesis pads the third with 0, which is not the mesh's z).
-        ndm = int(model.ndm) if int(model.ndm) >= 1 else int(reader.spatial_dim())
+        if int(model.ndm) >= 1:
+            ndm = int(model.ndm)
+        elif spatial_dim is not None:
+            ndm = int(spatial_dim)
+        else:
+            ndm = int(reader.spatial_dim())
         max_diff, tol = _coords_mismatch(
             capture_ids, embedded.nodes.coords,
             archive_ids, model_fem.nodes.coords, ndm=ndm,

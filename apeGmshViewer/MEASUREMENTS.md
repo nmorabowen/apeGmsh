@@ -990,3 +990,23 @@ median 157 ms (154 to 167).
   under load) for the same `readNodalRows` that the before rows here run at
   988 to 1093 ms. These runs do not explain the gap; the comparison above
   is between readers alternated in one session.
+
+### A partitioned `.ladruno` set read once per part (#2297): no timed row
+
+`LadrunoPartSet.readNodalRows` now reads each part once for every requested
+component, and scatters each part's columns into the set's node index in
+memory. Before, it read each part once per component. That is the
+partitioned case of #2202 and #2270: N components of one `DATA` on P parts
+were N x P slices of it, and are now P. The values are bit-identical to the
+per-component stitch (`test/results/ladrunoParts.test.ts`, "#2297").
+
+This section has no timed row, because no partitioned measure set exists.
+The kept measure files, `block.h5` and `block.ladruno`, are single files.
+The only `.part-N.ladruno` set is the committed fixture
+`fixtures/ladruno_parts2d.part-{0,1}.ladruno`: 3 nodes and 2 steps, too
+small to time. The evidence is the slice count instead. On that set,
+`test/results/ladrunoParts.test.ts` counts the slices of each `DATA` for a
+four-component read. The count is 2 for its 2 parts and 3 for a scratch
+3-part copy. With the per-component loop restored, the count is 4 for
+`DISPLACEMENT`'s two components on 2 parts. A timed row needs a partitioned
+run as large as V4L-c's `block.ladruno`.

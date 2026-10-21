@@ -23,17 +23,23 @@
 //   (§7.1) says how its copies combine: NONE keeps the first part's copy, SUM adds
 //   the copies in part order. A result with no PARTITION_REDUCTION, a value outside
 //   the §7.1 table, UNSUPPORTED, parts that disagree, or a result some part does not
-//   record, is refused by name in `NodalInfo.refused`, never assumed NONE;
+//   record, is refused by name in `NodalInfo.refused`, never assumed NONE. A read
+//   reads each part once for all the asked components and stitches in memory (#2297);
 // - pairing: the set's lineage is the parts' PROVENANCE `model_hash` and `fem_hash`
 //   only when every part carries the same both (§7b.1 "Partitioned sets"); an
 //   unstamped part, or parts that disagree, leave the set unpaired, with the part
 //   indices named;
 // - element results (Gauss points, line stations) are not stitched by this slice:
 //   they are listed in `unread`, and the element-id verdict is unverified, so no
-//   element row of a part set leaves main.
+//   element row of a part set leaves main;
+// - each element lives on one rank (#2316): an element id that the Gauss buckets of
+//   one result hold in two part files refuses the set, naming both parts. Each part
+//   already refused an id twice in one of its tokens at its own open
+//   (reader/ladrunoElements.ts). A node in two parts is legal (an interface node).
 //
 // Browser-safe: no Node import. The directory listing is the caller's (`list`).
 
+import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
 import type { ElementIndexVerdict } from "./ladrunoElements.ts";
 import { LadrunoError, openLadruno, type LadrunoFile, type LadrunoIndex, type LadrunoLineage, type LadrunoLineStationSlab, type LadrunoLineStationStep, type LadrunoMode, type LineStationComponent } from "./ladruno.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
@@ -106,6 +112,8 @@ interface Stitch {
 interface StageMap {
   /** for part j, the union column of its i-th node */
   pos: Int32Array[];
+  /** for part j, 1 where its i-th row is the copy a NONE stitch keeps (the node is in no earlier part) */
+  first: Uint8Array[];
   n: number;
 }
 
@@ -128,6 +136,7 @@ export class LadrunoPartSet {
     const warnings: string[] = [];
     parts.forEach((p, j) => warnings.push(...p.index.warnings.map((w) => `${this.names[j]}: ${w}`)));
     this.checkStages();
+    this.checkElementIds(stem);
     const stages = p0.stages.map((s) => this.stitchStage(s.id));
     const { lineage, reason } = this.lineage();
     const units = parts.every((p) => p.index.units === p0.units) ? p0.units : null;
@@ -174,33 +183,47 @@ export class LadrunoPartSet {
     return this.readNodalRows(stageId, components, step, step + 1);
   }
 
-  /** Steps `k0` to `k1` (exclusive) of each entry of `components`: ((k1 - k0) * N,), step-major, over the set's node index. */
+  /**
+   * Steps `k0` to `k1` (exclusive) of each entry of `components`: ((k1 - k0) * N,), step-major,
+   * over the set's node index. Every component is checked before any read. Then each part is
+   * read once for all of `components` (one hyperslab per DATA, #2270), in part order, and its
+   * columns are scattered here (#2297): NONE keeps the first part's copy of an interface node,
+   * SUM adds the copies in part order, starting from 0.
+   */
   readNodalRows(stageId: string, components: readonly string[], k0: number, k1: number): Float64Array[] {
     const s = this.stage(stageId);
     if (!Number.isInteger(k0) || !Number.isInteger(k1) || k0 < 0 || k1 > s.nSteps || k0 >= k1) {
       throw new LadrunoError("argument", `steps ${k0}..${k1} are not a range inside stage ${s.id} (0..${s.nSteps})`);
     }
     const map = this.maps.get(s.id)!;
-    const T = k1 - k0;
-    return components.map((c) => {
+    const sums = components.map((c) => {
       const st = this.stitches.get(s.id)?.get(c);
       if (!st) throw new LadrunoError("argument", `stage ${s.id} of the part set has no component ${JSON.stringify(c)}; it has ${s.nodes?.components.join(", ") || "none"}`);
-      const out = new Float64Array(T * map.n);
-      // NONE: the first part's copy wins, so the parts are written last to first. SUM: added in part order.
-      const order = st.reduction === "SUM" ? this.parts.map((_, j) => j) : this.parts.map((_, j) => this.parts.length - 1 - j);
-      for (const j of order) {
-        const rows = this.parts[j]!.readNodalRows(s.id, [c], k0, k1)[0]!;
-        const pos = map.pos[j]!;
-        const nj = pos.length;
+      return st.reduction === "SUM";
+    });
+    const T = k1 - k0;
+    const out = components.map(() => new Float64Array(T * map.n));
+    if (components.length === 0) return out;
+    this.parts.forEach((part, j) => {
+      const rows = part.readNodalRows(s.id, components, k0, k1);
+      const pos = map.pos[j]!;
+      const first = map.first[j]!;
+      const nj = pos.length;
+      rows.forEach((r, c) => {
+        if (r.length !== T * nj) {
+          throw new LadrunoError("layout", `${this.names[j]}: stage ${s.id} ${components[c]} steps ${k0}..${k1} read ${r.length} values, not ${T} step(s) of ${nj} node(s)`);
+        }
+        const o = out[c]!;
         for (let k = 0; k < T; k++) {
           for (let i = 0; i < nj; i++) {
             const at = k * map.n + pos[i]!;
-            out[at] = st.reduction === "SUM" ? out[at]! + rows[k * nj + i]! : rows[k * nj + i]!;
+            if (sums[c]) o[at] = o[at]! + r[k * nj + i]!;
+            else if (first[i]) o[at] = r[k * nj + i]!;
           }
         }
-      }
-      return out;
+      });
     });
+    return out;
   }
 
   elementIndexVerdict(): ElementIndexVerdict {
@@ -208,14 +231,17 @@ export class LadrunoPartSet {
   }
 
   elementIds(stageId: string, groupId: string): ElementIds {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
   readGaussStep(stageId: string, groupId: string): Float64Array {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
   readGaussRows(stageId: string, groupId: string): Float64Array {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
@@ -225,10 +251,12 @@ export class LadrunoPartSet {
   }
 
   readLineStations(stageId: string, component: string): LadrunoLineStationSlab {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, line stations ${component}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
   readLineStationStep(stageId: string, component: string): LadrunoLineStationStep {
+    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, line stations ${component}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
@@ -317,6 +345,37 @@ export class LadrunoPartSet {
     });
   }
 
+  /**
+   * One rank per element (#2316): per stage, the element ids of each result's Gauss buckets
+   * over every part, any id two parts hold refused by name (Python's
+   * `_mpco_multi._refuse_element_in_two_partitions`, #2310). Line-station buckets are not
+   * reached from here: a part's LadrunoFile serves their element ids only with a full read.
+   *
+   * Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
+   */
+  private checkElementIds(stem: string): void {
+    for (const s of this.parts[0]!.index.stages) {
+      const byToken = new Map<string, IdList[]>();
+      this.parts.forEach((p, j) => {
+        for (const g of p.stage(s.id).gauss) {
+          const token = g.path.slice(0, g.path.lastIndexOf("/"));
+          const e = p.elementIds(s.id, g.id);
+          const lists = byToken.get(token) ?? [];
+          lists.push({ at: `${this.names[j]} ${g.path}/ID`, ids: e.mapping === "fem_eid" ? e.ids : e.rawIndex });
+          byToken.set(token, lists);
+        }
+      });
+      for (const [token, lists] of byToken) {
+        uniqueElementIds(
+          lists,
+          `${stem}.part-<N>.ladruno: ${token}`,
+          "each element lives on one rank, so the set would read it twice; the set is not read",
+          (m) => new LadrunoError("layout", m),
+        );
+      }
+    }
+  }
+
   /** The set's stage `id`: the union node index, and each component the parts stitch. */
   private stitchStage(id: string): StageInfo {
     const per = this.parts.map((p) => p.stage(id));
@@ -328,7 +387,7 @@ export class LadrunoPartSet {
     const stitches = new Map<string, Stitch>();
     this.stitches.set(id, stitches);
     if (per.every((s) => s.nodes === null)) {
-      this.maps.set(id, { pos: per.map(() => new Int32Array(0)), n: 0 });
+      this.maps.set(id, { pos: per.map(() => new Int32Array(0)), first: per.map(() => new Uint8Array(0)), n: 0 });
       return { ...r, nodes: null, gauss: [], unread };
     }
     const refused: NodalInfo["refused"] = [];
@@ -355,7 +414,19 @@ export class LadrunoPartSet {
     }
     const union = [...new Set(per.flatMap((s) => Array.from(s.nodes?.ids ?? [])))].sort((a, b) => a - b);
     const at = new Map(union.map((n, i) => [n, i]));
-    this.maps.set(id, { pos: per.map((s) => Int32Array.from(s.nodes?.ids ?? [], (n) => at.get(n)!)), n: union.length });
+    const pos = per.map((s) => Int32Array.from(s.nodes?.ids ?? [], (n) => at.get(n)!));
+    // The copy NONE keeps: the lowest part holding the node, and in it the node's last row
+    // (what writing the parts last to first, rows in order, leaves; a repeated id is not refused here).
+    const keepPart = new Int32Array(union.length);
+    const keepRow = new Int32Array(union.length);
+    for (let j = pos.length - 1; j >= 0; j--) {
+      pos[j]!.forEach((u, i) => {
+        keepPart[u] = j;
+        keepRow[u] = i;
+      });
+    }
+    const first = pos.map((p, j) => Uint8Array.from(p, (u, i) => (keepPart[u] === j && keepRow[u] === i ? 1 : 0)));
+    this.maps.set(id, { pos, first, n: union.length });
     const nodes: NodalInfo = { path: r.nodes?.path ?? per.find((s) => s.nodes)!.nodes!.path, ids: Float64Array.from(union), components, refused };
     return { ...r, nodes, gauss: [], unread };
   }

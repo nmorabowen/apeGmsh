@@ -74,9 +74,10 @@ Here is the entire script. Read it top to bottom first — the new idea is the
 `g.loads` block in the middle, and it's only two lines.
 
 ```python
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 import numpy as np
 
 # --- Problem data (consistent SI: m, N, Pa) ---
@@ -142,19 +143,31 @@ ops.algorithm.Linear()
 ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
 
-# --- 3. Solve, capturing midspan displacement + support reactions ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Span",   components=["displacement"])
-spec.nodes(pg="Pin",    components=["reaction_force_y"])
-spec.nodes(pg="Roller", components=["reaction_force_y"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("udl", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+# --- 3. Solve, recording midspan displacement + support reactions ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="span",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Span").ids,
+        ),
+        ResolvedRecorderRecord(
+            category="nodes", name="supports",
+            components=("reaction_force_y",),
+            dt=None, n_steps=None,
+            node_ids=fem.nodes.select(pg=["Pin", "Roller"]).ids,
+        ),
+    ),
+)
+ops.h5("model.h5")
+ops.run()
+opspy = get_ops()
+with spec.emit_default("run", model_h5="model.h5") as run:
+    opspy.analyze(1)
 
 # --- 4. Read it back by physical-group NAME ---
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 
 span_uy = results.nodes.get(pg="Span", component="displacement_y")
 col = list(span_uy.node_ids).index(mid_nid)
@@ -167,7 +180,7 @@ Rpin = float(np.sum(pin_ry.values[-1, :]))
 Rrol = float(np.sum(rol_ry.values[-1, :]))
 R_exact = w * L / 2.0
 
-# Midspan moment, derived from the FEM-captured reaction by statics:
+# Midspan moment, derived from the FEM-recorded reaction by statics:
 #   M_mid = R*(L/2) - w*(L/2)*(L/4)
 M_fem   = Rpin * (L / 2.0) - w * (L / 2.0) * (L / 4.0)
 M_exact = w * L**2 / 8.0
@@ -178,7 +191,7 @@ print(f"delta error = {abs(delta_fem-delta_exact)/delta_exact*100:.4f} %")
 print(f"R_pin       = {Rpin/1e3:.4f} kN")
 print(f"R_roller    = {Rrol/1e3:.4f} kN")
 print(f"R_exact     = {R_exact/1e3:.4f} kN  (wL/2 each)")
-print(f"M_mid_FEM   = {M_fem/1e3:.4f} kN.m  (from captured R)")
+print(f"M_mid_FEM   = {M_fem/1e3:.4f} kN.m  (from recorded R)")
 print(f"M_mid_exact = {M_exact/1e3:.4f} kN.m  (wL^2/8)")
 ```
 
@@ -193,7 +206,7 @@ delta error = 0.2000 %
 R_pin       = 36.0000 kN
 R_roller    = 36.0000 kN
 R_exact     = 36.0000 kN  (wL/2 each)
-M_mid_FEM   = 54.0000 kN.m  (from captured R)
+M_mid_FEM   = 54.0000 kN.m  (from recorded R)
 M_mid_exact = 54.0000 kN.m  (wL^2/8)
 ```
 
@@ -364,22 +377,38 @@ you imported the case (loads are **opt-in**, ADR 0051).
 The rest — `constraints` through `analysis` — is the standard linear-static
 solver chain, unchanged from the cantilever.
 
-## Step 3 — Capture displacement *and* reactions
+## Step 3 — Record displacement *and* reactions
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Span",   components=["displacement"])
-spec.nodes(pg="Pin",    components=["reaction_force_y"])
-spec.nodes(pg="Roller", components=["reaction_force_y"])
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="span",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Span").ids,
+        ),
+        ResolvedRecorderRecord(
+            category="nodes", name="supports",
+            components=("reaction_force_y",),
+            dt=None, n_steps=None,
+            node_ids=fem.nodes.select(pg=["Pin", "Roller"]).ids,
+        ),
+    ),
+)
 ```
 
-We want three things back, so we declare three capture records — all by name.
-`"displacement"` on the whole span (we'll pick out the midspan node);
-`"reaction_force_y"` on each support. Asking for a reaction component is enough
-— apeGmsh calls `ops.reactions()` for you each step so the values are fresh.
+We want three things back, from two records. The first takes the
+displacement of the whole span (we'll pick out the midspan node). The
+second takes `reaction_force_y` at both supports: `select(pg=[...])` takes
+a list of names and returns the union of their nodes. Asking for a reaction
+component is enough, because the OpenSees recorder updates the reactions
+itself before it writes each step.
 
-The capture block itself is the same in-process pattern as before:
-`begin_stage` → `analyze` → `step` → `end_stage`, writing `run.h5`.
+The recording block itself is the same in-process pattern as before:
+`ops.h5` → `ops.run()` → `emit_default` around `opspy.analyze(1)`, read
+back with `run.results()`. The read still asks for `"Pin"` and `"Roller"`
+by name, one support at a time.
 
 ## Step 4 — Read the three checks back
 
@@ -405,7 +434,7 @@ support reaction directly — **36.0 kN** at each end, exactly $wL/2$.
 M_fem = Rpin * (L / 2.0) - w * (L / 2.0) * (L / 4.0)
 ```
 
-The midspan moment we get from statics on the **FEM-captured reaction**: take
+The midspan moment we get from statics on the **FEM-recorded reaction**: take
 the left reaction's moment about midspan, subtract the moment of the load on the
 left half. With $R = 36\ \text{kN}$ that's
 $36 \cdot 3 - 12 \cdot 3 \cdot 1.5 = 54\ \text{kN·m}$ — exactly $wL^2/8$. Because
@@ -439,7 +468,7 @@ higher-order elements.)
 ## The deflected shape
 
 The figure at the top of the page overlays the FEM deflection on the exact
-elastic curve. Here's the code that draws it — we read the captured `Span`
+elastic curve. Here's the code that draws it — we read the recorded `Span`
 slab and plot it node-by-node against the closed-form curve
 $w(x) = \dfrac{w\,x}{24EI}\,(L^3 - 2Lx^2 + x^3)$:
 
@@ -477,7 +506,7 @@ results.show_web()
 
 `results.show_web()` launches the **notebook-safe** web viewer — an interactive
 deformed-shape view right in your Jupyter cell. (The static figure above is plain
-matplotlib over the captured slab — the right tool in scripts and CI; `show_web()`
+matplotlib over the recorded slab — the right tool in scripts and CI; `show_web()`
 is the interactive one for notebooks.)
 
 !!! warning "Don't pass `blocking=True` in a notebook"
