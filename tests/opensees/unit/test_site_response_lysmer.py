@@ -180,3 +180,19 @@ def test_ground_label_pairs_by_position_after_a_reload(strip, tmp_path) -> None:
     by_handle = lysmer_base(_ops(fem), "Base", gnd, rho=2.0, vs=300.0)
     assert by_label.ground == by_handle.ground
     assert by_label.c_s == pytest.approx(by_handle.c_s)
+
+
+def test_partly_fixed_tie_warns() -> None:
+    from apeGmsh.opensees.site_response import _warn_partly_fixed_ties, PartlyFixedTieWarning
+
+    recs = [SimpleNamespace(kind="equal_dof", master_node=1, slave_node=2,
+                            dofs=[1, 2])]
+    fem = SimpleNamespace(nodes=SimpleNamespace(constraints=recs))
+    with pytest.warns(PartlyFixedTieWarning, match="#2396"):
+        _warn_partly_fixed_ties(fem, {1}, 2)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _warn_partly_fixed_ties(fem, {3}, 2)   # master not fixed: silent
+        recs[0].dofs = [2]
+        _warn_partly_fixed_ties(fem, {1}, 2)   # only the fixed DOF: fine

@@ -240,7 +240,10 @@ with ops.pattern.Plain(series=vel) as p:                     # or s.pattern(...)
 ```
 
 `add_input(p, motion="incident")` doubles the force for an incident-wave
-velocity. Put the input pattern in the shaking stage of a staged model, so the
+velocity. With tied sides (`g.constraints.periodic`) the base pair's master
+ends up fixed vertically while tied horizontally: OpenSees' `Transformation`
+handler (the bridge default for `equalDOF`) silently drops that tie every step
+(#2396, `PartlyFixedTieWarning`), so declare `ops.constraints.Lagrange()`. Put the input pattern in the shaking stage of a staged model, so the
 gravity stages never see it.
 <!-- verified: tests/opensees/unit/test_site_response_lysmer.py, tests/opensees/live/test_lysmer_base_live.py -->
 

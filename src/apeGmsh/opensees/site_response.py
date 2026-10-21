@@ -16,6 +16,7 @@ The ground nodes come from the session, one per base node:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -29,7 +30,16 @@ if TYPE_CHECKING:
     from .pattern.pattern import Plain
 
 
-__all__ = ["LysmerBase", "lysmer_base", "base_tributary_area"]
+__all__ = [
+    "LysmerBase", "PartlyFixedTieWarning", "lysmer_base", "base_tributary_area",
+]
+
+
+class PartlyFixedTieWarning(UserWarning):
+    """A tie's retained node is fixed on some of the DOFs it maps and free
+    on others. OpenSees' Transformation handler then resets the tied free
+    DOF of the constrained node every step (``TransformationDOF_Group::
+    enforceSPs``, #2396); Lagrange and Penalty are correct."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -195,6 +205,27 @@ def _coincident_ground(
     return out
 
 
+def _warn_partly_fixed_ties(fem: Any, fixed: set[int], dof: int) -> None:
+    """Warn when an ``equal_dof`` tie retains a node this helper fixed on
+    ``dof`` and also maps another, free DOF (#2396)."""
+    hits = sorted({
+        (int(r.master_node), int(r.slave_node))
+        for r in getattr(fem.nodes, "constraints", None) or ()
+        if getattr(r, "kind", None) == "equal_dof"
+        and int(r.master_node) in fixed and dof in r.dofs
+        and any(d != dof for d in r.dofs)
+    })
+    if hits:
+        warnings.warn(
+            f"lysmer_base fixed DOF {dof} on the retained node of the ties "
+            f"{hits[:3]} (master, slave), which also tie a free DOF. Under "
+            f"constraints Transformation (the bridge default for equalDOF) "
+            f"OpenSees then drops the tie on the free DOF every step "
+            f"(#2396); declare ops.constraints.Lagrange() or Penalty(...).",
+            PartlyFixedTieWarning, stacklevel=3,
+        )
+
+
 def _tied_slave_dofs(fem: Any) -> set[tuple[int, int]]:
     """``(node, dof)`` of every slave DOF an ``equal_dof`` record ties."""
     out: set[tuple[int, int]] = set()
@@ -225,7 +256,10 @@ def lysmer_base(
     fixes every ground node, sizes their ``ndf``, and, with no ``vp``,
     fixes the vertical DOF of every base node — except a DOF a
     ``g.constraints.periodic`` / ``equal_dof`` tie already slaves to a
-    fixed master, which the tie carries. Add the input motion with
+    fixed master, which the tie carries. That leaves the master partly
+    fixed, which OpenSees' Transformation handler mishandles (#2396): it
+    warns :class:`PartlyFixedTieWarning`, and such a model needs
+    ``ops.constraints.Lagrange()`` or ``Penalty``. Add the input motion with
     :meth:`LysmerBase.add_input` on the shaking pattern.
 
     Parameters
@@ -313,6 +347,7 @@ def lysmer_base(
         free = [n for n in nodes if (n, vertical) not in tied]
         mask = tuple(1 if d == vertical else 0 for d in range(1, ndf + 1))
         ops.fix(nodes=free, dofs=mask)
+        _warn_partly_fixed_ties(fem, set(free), vertical)
     return LysmerBase(
         nodes=nodes, ground=gtags, area=tuple(float(v) for v in a),
         c_s=tuple(float(v) for v in c_s),
