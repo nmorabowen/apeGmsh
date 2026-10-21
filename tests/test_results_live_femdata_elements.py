@@ -638,32 +638,54 @@ def test_out_of_order_live_sections_read_as_written(tmp_path) -> None:
         res.close()
 
 
-@pytest.mark.parametrize("ops, shown, live", [
+#: The file stations of each element when they are its live sections.
+_LOBATTO_AT = {e: tuple(f * L for f in _LOBATTO_3) for e, L in _BEAM_L.items()}
+
+
+@pytest.mark.parametrize("ops, eid, shown, live", [
     # Element 2's middle station 1e-3 off in natural coordinates (L = 3):
     # ten times the -precision 6 slack, so the file is another rule's.
-    (lambda: _lobatto(written={1: (0.0, 1.0, 2.0),
+    (lambda: _lobatto(written={1: _LOBATTO_AT[1],
                                2: (0.0, 1.5 + 1.5e-3, 3.0)}),
-     r"\[-1\.0, 0\.001, 1\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+     2, r"\[-1\.0, 0\.001, 1\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
     # The right stations, its last two swapped: only their order is wrong,
     # and the live order is what places each section.
-    (lambda: _lobatto(written={1: (0.0, 1.0, 2.0), 2: (0.0, 3.0, 1.5)}),
-     r"\[-1\.0, 1\.0, 0\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    (lambda: _lobatto(written={1: _LOBATTO_AT[1], 2: (0.0, 3.0, 1.5)}),
+     2, r"\[-1\.0, 1\.0, 0\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    # The same two defects on element 1 (L = 2), the record's second
+    # element: every element is checked, not the first alone.
+    (lambda: _lobatto(written={1: (0.0, 1.0 + 1.0e-3, 2.0),
+                               2: _LOBATTO_AT[2]}),
+     1, r"\[-1\.0, 0\.001, 1\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    (lambda: _lobatto(written={1: (0.0, 2.0, 1.0), 2: _LOBATTO_AT[2]}),
+     1, r"\[-1\.0, 1\.0, 0\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    # An end station 1e-3 off, inside the range check's [-1, 1]: the ends
+    # are compared too (element 2's first, element 1's last).
+    (lambda: _lobatto(written={1: _LOBATTO_AT[1],
+                               2: (1.5e-3, 1.5, 3.0)}),
+     2, r"\[-0\.999, 0\.0, 1\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    (lambda: _lobatto(written={1: (0.0, 1.0, 2.0 - 1.0e-3),
+                               2: _LOBATTO_AT[2]}),
+     1, r"\[-1\.0, 0\.0, 0\.999\]", r"\[-1\.0, 0\.0, 1\.0\]"),
     # Live sections out of order, the file's sorted: the order check would
     # pass it, and only the live locations show its middle pair swapped.
     (lambda: _hinge_ops(written={
         1: tuple(f * 2.0 for f in _HINGE_FRAC),
         2: tuple(f * 3.0 for f in sorted(_HINGE_FRAC))}),
-     r"\[-1\.0, -0\.8, -0\.6, -0\.4, 0\.8, 1\.0\]",
+     2, r"\[-1\.0, -0\.8, -0\.6, -0\.4, 0\.8, 1\.0\]",
      r"\[-1\.0, -0\.8, -0\.4, -0\.6, 0\.8, 1\.0\]"),
-], ids=["near-miss", "swapped-pair", "hinge-sorted"])
+], ids=["near-miss", "swapped-pair", "near-miss-second-element",
+        "swapped-pair-second-element", "first-station-off",
+        "last-station-off-second-element", "hinge-sorted"])
 def test_fibre_stations_near_the_live_sections_still_refuse_by_id(
-    tmp_path, ops, shown, live,
+    tmp_path, ops, eid, shown, live,
 ) -> None:
     """Stations close to the live sections, but not them, refuse naming the
-    FEM element: the file's and the live locations side by side."""
+    FEM element: the file's and the live locations side by side. The record
+    lists element 2 before element 1."""
     _read_refuses(tmp_path, ops(),
-                  rf"FEM element 2 has stations {shown} in the file, but its "
-                  rf"live sections are at {live} \(natural coordinates\)\. "
+                  rf"FEM element {eid} has stations {shown} in the file, but "
+                  rf"its live sections are at {live} \(natural coordinates\)\. "
                   rf"The file does not match the live domain\.")
 
 

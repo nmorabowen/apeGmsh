@@ -175,10 +175,11 @@ def read_fiber_record(
     model must confirm by the rule both ``.out`` readers share
     (:func:`._out_station_slicing.line_station_count`, which checks the
     counts before the columns divide and refuses a rule of unknown count),
-    and each element's stations must
-    increase strictly within ``[-1, 1]``, to the shared slack a file written
-    at ``-precision 6`` needs. So a record mixing counts is refused, never
-    split evenly into wrong sections. The fibre file gives
+    and each element's stations must lie within ``[-1, 1]``, to the shared
+    slack a file written at ``-precision 6`` needs. Through the bridge's
+    model they must also increase strictly; over a live pairing they must
+    instead be the live section locations (below). So a record mixing
+    counts is refused, never split evenly into wrong sections. The fibre file gives
     ``n_sections * n_fibres * 6`` columns per element, element-major,
     section-mid, fibre-fast: the MPCO fibre-slab order. No response gives a
     section's fibre count, so every (element, section) must carry one fibre
