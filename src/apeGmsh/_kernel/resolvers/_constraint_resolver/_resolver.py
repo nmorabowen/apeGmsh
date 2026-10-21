@@ -252,6 +252,69 @@ class ConstraintResolver:
 
         return pairs
 
+    def _match_periodic_pairs(
+        self,
+        master_tags: set[int],
+        slave_tags: set[int],
+        tolerance: float,
+        axis: int,
+        *,
+        where: str,
+    ) -> list[tuple[int, int]]:
+        """Pair every master node with the one slave node whose
+        coordinates off ``axis`` match within ``tolerance``.
+
+        The pairing must be one-to-one and complete: a node of either
+        side with no partner, two partners, or a partner already taken
+        raises, naming the first offenders, so a periodic boundary never
+        ties only part of a face.
+        """
+        if set(master_tags) & set(slave_tags):
+            shared = sorted(set(master_tags) & set(slave_tags))
+            raise ValueError(
+                f"periodic {where!r}: nodes {shared[:5]} are on both "
+                f"sides; the two sides must be disjoint."
+            )
+        keep = [i for i in range(3) if i != axis]
+        masters = sorted(master_tags)
+        slaves = sorted(slave_tags)
+        if not masters or not slaves:
+            raise ValueError(
+                f"periodic {where!r}: the {'master' if not masters else 'slave'}"
+                f" side has no nodes."
+            )
+        m_xyz = np.array([self._coords_of(t) for t in masters])[:, keep]
+        s_xyz = np.array([self._coords_of(t) for t in slaves])[:, keep]
+        tree = _SpatialIndex(np.column_stack(
+            [m_xyz, np.zeros(len(masters))]))
+        pairs: list[tuple[int, int]] = []
+        taken: dict[int, int] = {}
+        unmatched: list[tuple[int, tuple[float, ...]]] = []
+        for st, xy in zip(slaves, s_xyz):
+            dist, idx = tree.query(np.array([xy[0], xy[1], 0.0]))
+            if dist > tolerance:
+                unmatched.append((st, tuple(round(float(v), 9) for v in xy)))
+                continue
+            mt = masters[int(idx)]
+            if mt in taken:
+                raise ValueError(
+                    f"periodic {where!r}: master node {mt} matches slave "
+                    f"nodes {taken[mt]} and {st} within tolerance="
+                    f"{tolerance}; tighten the tolerance."
+                )
+            taken[mt] = st
+            pairs.append((mt, st))
+        lonely = [t for t in masters if t not in taken]
+        if unmatched or lonely:
+            raise ValueError(
+                f"periodic {where!r}: the two sides do not pair node for "
+                f"node off axis {'xyz'[axis]} within tolerance={tolerance}"
+                f" — slave nodes with no master: {unmatched[:5]}; master "
+                f"nodes with no slave: {lonely[:5]}. Mesh both sides "
+                f"alike (e.g. transfinite with the same node counts)."
+            )
+        return pairs
+
     # ------------------------------------------------------------------
     # Resolve methods — one per constraint level
     # ------------------------------------------------------------------
@@ -273,9 +336,15 @@ class ConstraintResolver:
         slave_nodes : set[int]
             Node tags belonging to the slave instance.
         """
-        pairs = self._match_node_pairs(
-            master_nodes, slave_nodes, defn.tolerance,
-        )
+        if getattr(defn, "axis", None) is None:
+            pairs = self._match_node_pairs(
+                master_nodes, slave_nodes, defn.tolerance,
+            )
+        else:
+            pairs = self._match_periodic_pairs(
+                master_nodes, slave_nodes, defn.tolerance, int(defn.axis),
+                where=defn.name or f"{defn.master_label}->{defn.slave_label}",
+            )
         dofs = defn.dofs or [1, 2, 3, 4, 5, 6]
         return [
             NodePairRecord(

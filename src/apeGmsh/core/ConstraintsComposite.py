@@ -2365,6 +2365,70 @@ class ConstraintsComposite(_DeclarationsMixin):
             master_entities=master_entities, slave_entities=slave_entities,
             dofs=dofs, tolerance=tolerance, name=name))
 
+    def periodic(self, master_label, slave_label, *, axis, dofs=None,
+                 tolerance=1e-6, master_entities=None, slave_entities=None,
+                 name=None) -> EqualDOFDef:
+        """Tie two opposite boundaries node for node, along ``axis``.
+
+        The periodic (tied-side) boundary of a soil column or a unit
+        cell: the master and slave sides are separated along ``axis``
+        and meshed alike. At resolution each slave node pairs with the
+        master node whose coordinates *off* ``axis`` match within
+        ``tolerance`` — the left and right nodes at the same elevation
+        of a column (``axis="x"``), or the nodes of two opposite faces of
+        a 3-D box. Each pair becomes ``equalDOF master slave *dofs``, as
+        for :meth:`equal_dof`, so the slave side moves with the master
+        side on those DOFs.
+
+        Fails loud: every node of both sides must pair one-to-one, so a
+        node with no partner (a side meshed differently), two partners,
+        or a node on both sides raises ``ValueError`` at
+        ``get_fem_data``, naming the first offenders.
+
+        A slave DOF that is also fixed is over-constrained (``equalDOF``
+        and ``fix`` on one DOF): fix that DOF on the master node only,
+        and the tie carries it.
+
+        Parameters
+        ----------
+        master_label, slave_label : str
+            Label, physical-group or part name of each side (a curve in
+            2-D, a surface in 3-D).
+        axis : {"x", "y", "z"}
+            The direction the sides are separated along; that
+            coordinate is ignored when pairing.
+        dofs : list[int], optional
+            1-based DOFs to tie; ``None`` ties every DOF of the node.
+        tolerance : float, default 1e-6
+            Distance, off ``axis``, within which two nodes pair.
+            Unit-sensitive.
+        master_entities, slave_entities : list of (dim, tag), optional
+            Restrict each side to these entities.
+        name : str, optional
+            Friendly name, shown in summaries and named in errors.
+
+        Examples
+        --------
+        The tied sides of a 1-D site-response column::
+
+            g.constraints.periodic("Left", "Right", axis="x", dofs=[1, 2])
+        """
+        axes = {"x": 0, "y": 1, "z": 2}
+        if axis not in axes:
+            raise ValueError(
+                f"g.constraints.periodic: axis must be 'x', 'y' or 'z', "
+                f"got {axis!r}."
+            )
+        if not (tolerance > 0):
+            raise ValueError(
+                f"g.constraints.periodic: tolerance must be > 0, got "
+                f"{tolerance!r}."
+            )
+        return self._add_def(EqualDOFDef(
+            master_label=master_label, slave_label=slave_label,
+            master_entities=master_entities, slave_entities=slave_entities,
+            dofs=dofs, tolerance=tolerance, name=name, axis=axes[axis]))
+
     def equal_dof_mixed(self, master_label, slave_label, *, dof_pairs,
                         master_entities=None, slave_entities=None,
                         tolerance=1e-6, name=None) -> EqualDOFMixedDef:
