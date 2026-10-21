@@ -278,6 +278,10 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
       // V4d: the node tag of every outline-edge vertex, what the deformed shape moves the edges through.
       edge: blobs.put("model/mesh/edgeNodes", mesh.edgeNodes),
     },
+    nodes: {
+      ids: blobs.put("model/nodes/ids", model.nodeIds),
+      xyz: blobs.put("model/nodes/xyz", model.nodeCoords, [model.nodeIds.length, 3]),
+    },
     elements,
     legend,
     adjacency,
@@ -412,6 +416,7 @@ export function loadModel(
     provenance: provenance ? provenanceEntries(provenance) : [],
     provenanceOrigin: provenance?.originColumn ?? false,
     definitions: model.opensees ? model.opensees.definitions : null,
+    ...(model.loads ? { neutralLoads: model.loads } : {}),
     sequence: model.sequence,
     lineage: results.lineage,
     stageElements: results.stageElements,

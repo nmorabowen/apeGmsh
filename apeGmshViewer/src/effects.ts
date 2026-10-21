@@ -159,6 +159,7 @@ export function blobRefsOf(s: State): BlobRef[] {
 export function withNodes<L extends ReturnType<typeof loadModel>>(load: L, model: ModelFile, blobs: BlobStore): L {
   const n = model.nodeIds.length;
   if (model.nodeCoords.length !== 3 * n) throw new RangeError(`model: ${model.nodeCoords.length} coordinates for ${n} nodes`);
+  if (load.mesh.nodes) return load;
   const nodes = { ids: blobs.put("model/nodes/ids", model.nodeIds), xyz: blobs.put("model/nodes/xyz", model.nodeCoords, [n, 3]) };
   return { ...load, mesh: { ...load.mesh, nodes } };
 }
