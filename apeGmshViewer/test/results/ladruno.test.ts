@@ -777,6 +777,63 @@ test("readLocalAxes prioritises per-step RESULTS/ON_ELEMENTS/LOCAL_AXES over ref
   });
 });
 
+// #2321: MODEL/LOCAL_AXES lists each element's reference frame once. A repeat used to
+// keep the last row written: the element took another row's frame, and the element
+// whose row it was had none. The refusal fires on readLocalAxes (and on a line-station
+// read, which attaches the frames), where the frames are collected; open does not
+// read MODEL/LOCAL_AXES, so the file still opens.
+const FRAME3D = fixture("ladruno_frame3d.ladruno");
+const MODEL_LA = "/MODEL_STAGE[1]/MODEL/LOCAL_AXES";
+const escapedRe = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+const refusesAxes = (read: () => unknown, pattern: RegExp) =>
+  assert.throws(read, (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message), "a repeated MODEL/LOCAL_AXES id is refused by name");
+
+test("#2321: an id twice in one class's MODEL/LOCAL_AXES ID refuses readLocalAxes by name: the file, the dataset, the id and its rows", () => {
+  // The #2316 reviewer's reproducer: ForceBeamColumn3d/ID 1, 2, 3, ... -> 1, 1, 3, ...
+  const p = edited(FRAME3D, (f) => (f.get(`${MODEL_LA}/ForceBeamColumn3d/ID`) as h5wasm.Dataset).write_slice([[1, 2]], new Int32Array([1])));
+  withFile(p, (r) => {
+    const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(MODEL_LA)} lists element id\\(s\\) more than once \\(id 1 at ${escapedRe(MODEL_LA)}/ForceBeamColumn3d/ID rows 0, 1\\); .*the local axes are not read$`);
+    refusesAxes(() => r.readLocalAxes("stage_0"), named);
+    refusesAxes(() => r.readLocalAxes("stage_0", { elementIds: [2], step: 0 }), named);
+    refusesAxes(() => r.readLineStations("stage_0", "N"), named);
+    // MODEL_STAGE[2] keeps its own MODEL/LOCAL_AXES, unedited: it still reads, all ten elements.
+    assert.deepEqual(Array.from(r.readLocalAxes("stage_1").elementIds), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+  // The unedited fixture reads all ten frames: the refusal is the edit.
+  withFile(FRAME3D, (r) => assert.deepEqual(Array.from(r.readLocalAxes("stage_0").hasRecorded), new Array(10).fill(1)));
+});
+
+test("#2321: an id in two classes' MODEL/LOCAL_AXES groups, or in the flat ID and a class group, refuses readLocalAxes naming every dataset", () => {
+  const frame = new Float64Array([1, 0, 0, 0]); // identity: z_local = global z
+  const twoClasses = edited(FRAME3D, (f) => {
+    const g = (f.get(MODEL_LA) as h5wasm.Group).create_group("ElasticBeam3d");
+    g.create_dataset({ name: "ID", data: new Int32Array([5]), shape: [1] });
+    g.create_dataset({ name: "FRAME", data: frame, shape: [1, 4] });
+  });
+  withFile(twoClasses, (r) =>
+    refusesAxes(() => r.readLocalAxes("stage_0"), new RegExp(`^${escapedRe(twoClasses)}: .*\\(id 5 at ${escapedRe(MODEL_LA)}/ElasticBeam3d/ID row 0 and ${escapedRe(MODEL_LA)}/ForceBeamColumn3d/ID row 4\\); `)),
+  );
+  const flatAndClass = edited(FRAME3D, (f) => {
+    const la = f.get(MODEL_LA) as h5wasm.Group;
+    la.create_dataset({ name: "ID", data: new Int32Array([7]), shape: [1] });
+    la.create_dataset({ name: "FRAME", data: frame, shape: [1, 4] });
+  });
+  withFile(flatAndClass, (r) =>
+    refusesAxes(() => r.readLocalAxes("stage_0"), new RegExp(`\\(id 7 at ${escapedRe(MODEL_LA)}/ID row 0 and ${escapedRe(MODEL_LA)}/ForceBeamColumn3d/ID row 6\\); `)),
+  );
+  // A class group whose ids are disjoint reads beside the fixture's: the check refuses repeats, not a second class.
+  const disjoint = edited(FRAME3D, (f) => {
+    const g = (f.get(MODEL_LA) as h5wasm.Group).create_group("ElasticBeam3d");
+    g.create_dataset({ name: "ID", data: new Int32Array([11]), shape: [1] });
+    g.create_dataset({ name: "FRAME", data: frame, shape: [1, 4] });
+  });
+  withFile(disjoint, (r) => {
+    const axes = r.readLocalAxes("stage_0");
+    assert.deepEqual(Array.from(axes.elementIds), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.deepEqual(Array.from(axes.zRec.subarray(30, 33)), [0, 0, 1]);
+  });
+});
+
 test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-based, out-of-bounds, negative), 2D section alias gating on 3D, and LOCAL_AXES shape guard", () => {
   const timeArr = new Float64Array([0.25, 0.5, 0.75, 1.0]);
   const stepArr = new Int32Array([0, 1, 2, 3]);

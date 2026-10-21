@@ -103,6 +103,9 @@ def capture_live_modes(
         The eigen solver flag the capture's solve passes,
         ``ops.eigen(solver, n_modes)``: ``"-genBandArpack"`` or
         ``"-fullGenLapack"``. ``None`` solves with the module's default.
+        ``"-genBandArpack"`` is the stock default, so it does not guard on
+        its own: on an indefinite stiffness, declare
+        ``ops.system("BandGeneral")`` or pass ``"-fullGenLapack"``.
 
     Raises
     ------

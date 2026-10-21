@@ -42,9 +42,12 @@ import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
+import { collectModelLocalAxes, decodeLocalAxesRow, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
+
+export { quaternionToZRec, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
 export const LADRUNO_GENERATOR = "Ladruno";
@@ -192,8 +195,6 @@ export const LINE_STATION_COMPONENTS = [
 ] as const;
 
 export type LineStationComponent = (typeof LINE_STATION_COMPONENTS)[number];
-
-export type LocalAxesSource = "step_local_axes" | "model_local_axes";
 
 /** One stage's multi-step (or single-step) line-station slab from `.ladruno`. */
 export interface LadrunoLineStationSlab {
@@ -730,7 +731,7 @@ export class LadrunoFile {
     // 1. Reference MODEL/LOCAL_AXES
     const modelLa = this.optionalSubgroup(hostGrp, ["MODEL", "LOCAL_AXES"]);
     if (modelLa) {
-      this.collectModelLocalAxes(modelLa, idToQuat, idToZRec, idToSource);
+      collectModelLocalAxes(modelLa, this.localAxesReads(), idToQuat, idToZRec, idToSource);
     }
 
     // 2. Per-step RESULTS/ON_ELEMENTS/LOCAL_AXES (only when `options?.step !== undefined`; wins over MODEL/LOCAL_AXES)
@@ -1497,42 +1498,9 @@ export class LadrunoFile {
     return { localAxesQuaternion: quats, localAxesZRec: zRec, localAxesSources: sources };
   }
 
-  private collectModelLocalAxes(
-    modelLa: LGroup,
-    idToQuat: Map<number, [number, number, number, number]>,
-    idToZRec: Map<number, [number, number, number]>,
-    idToSource: Map<number, LocalAxesSource>,
-  ): void {
-    const readSub = (sub: LGroup) => {
-      const frameName = sub.keys().includes("FRAME") ? "FRAME" : sub.keys().includes("LOCAL_AXES") ? "LOCAL_AXES" : null;
-      if (!sub.keys().includes("ID") || !frameName) return;
-      const idDs = this.dataset(sub, "ID");
-      const frameDs = this.dataset(sub, frameName);
-      const ids = intsAsNumbers(idDs);
-      const raw = toFloat64(frameDs.value, frameDs.path);
-      const nE = ids.length;
-      const frameShape = frameDs.shape ?? [];
-      if (frameShape.length >= 2 && frameShape[0] !== nE) return;
-      if (nE <= 0 || raw.length === 0 || raw.length % nE !== 0) return;
-      const cols = raw.length / nE;
-      for (let i = 0; i < nE; i++) {
-        const eid = ids[i]!;
-        const decoded = decodeLocalAxesRow(raw, i * cols, cols);
-        if (decoded) {
-          if (decoded.quat) idToQuat.set(eid, decoded.quat);
-          else idToQuat.delete(eid);
-          idToZRec.set(eid, decoded.zRec);
-          idToSource.set(eid, "model_local_axes");
-        }
-      }
-    };
-    if (modelLa.keys().includes("ID")) {
-      readSub(modelLa);
-    }
-    for (const k of modelLa.keys()) {
-      const sub = this.optionalGroup(modelLa, k);
-      if (sub) readSub(sub);
-    }
+  /** The group, dataset and dtype reads reader/ladrunoLocalAxes.ts takes from this file. */
+  private localAxesReads(): LocalAxesReads {
+    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), ints: intsAsNumbers, floats: toFloat64, file: this.f.filename, fail: (m) => new LadrunoError("layout", m) };
   }
 
   private collectStepLocalAxes(
@@ -1753,59 +1721,6 @@ const CANONICAL_COMPONENT_ALIASES: Readonly<Record<string, LineStationComponent>
 /** Normalize a short (`"Mz"`) or canonical (`"bending_moment_z"`) line-station component name. */
 export function normalizeLineStationComponent(raw: string): LineStationComponent | null {
   return CANONICAL_COMPONENT_ALIASES[raw.trim()] ?? null;
-}
-
-/**
- * Convert a scalar-first unit quaternion `(w, x, y, z)` (global -> local,
- * schema §5, where rows `(0, 1, 2)` of the 3x3 matrix are `(x_local, y_local, z_local)`)
- * into row 2 (`z_local` in global coords), matching Python `LocalAxes.matrices`
- * (`src/apeGmsh/results/_slabs.py`) and `axes_from_quaternion` (`_beam_geometry.py`).
- */
-export function quaternionToZRec(w: number, x: number, y: number, z: number): [number, number, number] {
-  const norm = Math.hypot(w, x, y, z);
-  if (!Number.isFinite(norm) || norm < 1e-15) return [Number.NaN, Number.NaN, Number.NaN];
-  const wn = w / norm;
-  const xn = x / norm;
-  const yn = y / norm;
-  const zn = z / norm;
-  return [
-    2 * (xn * zn - yn * wn),
-    2 * (yn * zn + xn * wn),
-    1 - 2 * (xn * xn + yn * yn),
-  ];
-}
-
-function decodeLocalAxesRow(
-  raw: Float64Array,
-  offset: number,
-  cols: number,
-): { quat: [number, number, number, number] | null; zRec: [number, number, number] } | null {
-  if (cols === 4) {
-    const w = raw[offset]!;
-    const x = raw[offset + 1]!;
-    const y = raw[offset + 2]!;
-    const z = raw[offset + 3]!;
-    if (!Number.isFinite(w) || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-    const zRec = quaternionToZRec(w, x, y, z);
-    if (!Number.isFinite(zRec[0])) return null;
-    return { quat: [w, x, y, z], zRec };
-  }
-  if (cols === 9) {
-    // 3x3 row-major rotation matrix [x_local(3), y_local(3), z_local(3)]: row 2 is cols 6..8.
-    const zx = raw[offset + 6]!;
-    const zy = raw[offset + 7]!;
-    const zz = raw[offset + 8]!;
-    if (!Number.isFinite(zx) || !Number.isFinite(zy) || !Number.isFinite(zz)) return null;
-    return { quat: null, zRec: [zx, zy, zz] };
-  }
-  if (cols === 3) {
-    const zx = raw[offset]!;
-    const zy = raw[offset + 1]!;
-    const zz = raw[offset + 2]!;
-    if (!Number.isFinite(zx) || !Number.isFinite(zy) || !Number.isFinite(zz)) return null;
-    return { quat: null, zRec: [zx, zy, zz] };
-  }
-  return null;
 }
 
 /**
