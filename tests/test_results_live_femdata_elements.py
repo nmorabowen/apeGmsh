@@ -27,7 +27,9 @@ The oracles:
   ``gp`` at catalog point ``gp - 1`` (#2290 A);
 * a fibres record reads through the section locations and fibre counts
   the live domain gave at ``__enter__``, each fibre table at its section;
-  missing or inconsistent facts refuse by name (#2290 B);
+  missing or inconsistent facts refuse by name (#2290 B); stations a
+  long-hinge rule writes out of order read when they are the live
+  sections, and a near miss or a swapped pair refuses by id (#2370);
 * an ``elements`` record with no ``nodal_resisting_*`` component refuses
   at ``__enter__``.
 
@@ -589,23 +591,80 @@ def test_file_stations_that_are_not_the_live_sections_refuse(tmp_path) -> None:
                   r"the file, but its live sections are at \[-1\.0, 0\.0, 1\.0\]")
 
 
-def test_stations_out_of_order_refuse_with_the_hinge_message(tmp_path) -> None:
-    """Live sections out of order (a short HingeRadau rule writes them so)
-    reach the shared order check, the bridge route's: its message names the
-    rule and ends on the element, once."""
-    frac = (0.0, 0.1, 0.3, 0.2, 0.9, 1.0)
-    ops = _lobatto(locations={e: tuple(f * L for f in frac)
-                              for e, L in _BEAM_L.items()},
-                   fibres={1: (2,) * 6, 2: (2,) * 6})
+#: Section locations as fractions of L, out of order as a long-hinge
+#: HingeRadau writes them (lp_i + lp_j >= L/4).
+_HINGE_FRAC = (0.0, 0.1, 0.3, 0.2, 0.9, 1.0)
+
+
+def _hinge_ops(**kw: Any) -> FiberOps:
+    return _lobatto(locations={e: tuple(f * L for f in _HINGE_FRAC)
+                               for e, L in _BEAM_L.items()},
+                    fibres={1: (2,) * 6, 2: (2,) * 6}, **kw)
+
+
+def test_out_of_order_live_sections_read_as_written(tmp_path) -> None:
+    """Live sections out of order (a long-hinge HingeRadau rule writes them
+    so) are the file's stations: the live locations place each one, as
+    they do a line-stations record (#2332), so each fibre table reads at
+    the section that wrote it, under its station, with the closed form
+    (#2370). The bridge route, which has no live locations, still refuses
+    them with the HingeRadau message
+    (``tests/test_results_out_fiber_material.py``)."""
     fem, model_h5 = _beam_fem(tmp_path)
-    run = _run(_spec(fem, _fibres_rec()), tmp_path / "run", model_h5, ops)
-    with pytest.raises(ValueError, match=r"repeated or out of order") as err:
-        run.results(cache_root=tmp_path / "cache")
-    msg = str(err.value)
-    assert "A HingeRadau rule with lp_i + lp_j >= L/4" in msg
-    assert msg.endswith("(its interior weight is not positive), so the fibres "
-                        "cannot be placed along the element.")
-    assert msg.count("cannot be placed") == 1
+    run = _run(_spec(fem, _fibres_rec()), tmp_path / "run", model_h5,
+               _hinge_ops())
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = run.results(cache_root=tmp_path / "cache")
+    try:
+        for c, comp in enumerate(("fiber_stress", "fiber_strain")):
+            slab = res.elements.fibers.get(component=comp)
+            eids = np.asarray(slab.element_index)
+            gps = np.asarray(slab.gp_index)
+            np.testing.assert_array_equal(eids, np.repeat([2, 1], 12))
+            np.testing.assert_array_equal(
+                gps, np.tile(np.repeat(np.arange(6), 2), 2))
+            np.testing.assert_allclose(
+                slab.station_natural_coord,
+                np.tile(np.repeat(2.0 * np.array(_HINGE_FRAC) - 1.0, 2), 2),
+                rtol=0, atol=1e-12)
+            j = np.tile([0, 1], 12)
+            want = [[_fib(s, int(e), int(g) + 1, int(jj)) / (1e4 if c else 1.0)
+                     for e, g, jj in zip(eids, gps, j)]
+                    for s in range(1, _STEPS + 1)]
+            np.testing.assert_allclose(np.asarray(slab.values), want,
+                                       rtol=1e-15, atol=0)
+    finally:
+        res.close()
+
+
+@pytest.mark.parametrize("ops, shown, live", [
+    # Element 2's middle station 1e-3 off in natural coordinates (L = 3):
+    # ten times the -precision 6 slack, so the file is another rule's.
+    (lambda: _lobatto(written={1: (0.0, 1.0, 2.0),
+                               2: (0.0, 1.5 + 1.5e-3, 3.0)}),
+     r"\[-1\.0, 0\.001, 1\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    # The right stations, its last two swapped: only their order is wrong,
+    # and the live order is what places each section.
+    (lambda: _lobatto(written={1: (0.0, 1.0, 2.0), 2: (0.0, 3.0, 1.5)}),
+     r"\[-1\.0, 1\.0, 0\.0\]", r"\[-1\.0, 0\.0, 1\.0\]"),
+    # Live sections out of order, the file's sorted: the order check would
+    # pass it, and only the live locations show its middle pair swapped.
+    (lambda: _hinge_ops(written={
+        1: tuple(f * 2.0 for f in _HINGE_FRAC),
+        2: tuple(f * 3.0 for f in sorted(_HINGE_FRAC))}),
+     r"\[-1\.0, -0\.8, -0\.6, -0\.4, 0\.8, 1\.0\]",
+     r"\[-1\.0, -0\.8, -0\.4, -0\.6, 0\.8, 1\.0\]"),
+], ids=["near-miss", "swapped-pair", "hinge-sorted"])
+def test_fibre_stations_near_the_live_sections_still_refuse_by_id(
+    tmp_path, ops, shown, live,
+) -> None:
+    """Stations close to the live sections, but not them, refuse naming the
+    FEM element: the file's and the live locations side by side."""
+    _read_refuses(tmp_path, ops(),
+                  rf"FEM element 2 has stations {shown} in the file, but its "
+                  rf"live sections are at {live} \(natural coordinates\)\. "
+                  rf"The file does not match the live domain\.")
 
 
 def test_a_file_fibre_count_that_is_not_the_live_one_refuses(tmp_path) -> None:
@@ -685,11 +744,6 @@ def test_a_line_stations_element_with_no_sections_refuses_before_the_run(
                              r"\(sectionLocation answered None\)"):
         _run(_spec(fem, _stations_rec()), tmp_path / "run", model_h5, ops)
     assert _element_calls(ops) == []
-
-
-#: Section locations as fractions of L, out of order as a long-hinge
-#: HingeRadau writes them (lp_i + lp_j >= L/4).
-_HINGE_FRAC = (0.0, 0.1, 0.3, 0.2, 0.9, 1.0)
 
 
 def test_line_stations_out_of_order_read_when_they_are_the_live_sections(
