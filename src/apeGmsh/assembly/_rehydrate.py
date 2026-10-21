@@ -172,8 +172,8 @@ def _sec_elastic(p: tuple[Any, ...], name: "str | None", what: str) -> _Make:
 
 #: Material families of ``/opensees/materials`` -> ``names()`` kind. The
 #: model reader raises ``MalformedH5Error`` naming any other family before
-#: an ``OpenSeesModel`` exists, and a test holds this table to the reader's
-#: (#2374), so every family a model can carry is planned here.
+#: an ``OpenSeesModel`` exists, and a test holds this table to the reader's,
+#: so every family a model can carry is planned here.
 _MATERIAL_FAMILIES: tuple[tuple[str, str], ...] = (
     ("uniaxial", "uniaxialMaterial"),
     ("nd", "nDMaterial"),
