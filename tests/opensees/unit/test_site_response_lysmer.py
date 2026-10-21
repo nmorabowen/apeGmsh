@@ -126,7 +126,9 @@ def test_bad_values_raise(strip, kw, err, match) -> None:
 def test_ground_must_be_a_node_set_over_the_base(strip) -> None:
     fem, gnd = strip
     with pytest.raises(TypeError, match="decouple_node_set"):
-        lysmer_base(_ops(fem), "Base", "base_ground", rho=2.0, vs=300.0)  # type: ignore[arg-type]
+        lysmer_base(_ops(fem), "Base", 7, rho=2.0, vs=300.0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="is not a node label"):
+        lysmer_base(_ops(fem), "Base", "nowhere", rho=2.0, vs=300.0)
     with pytest.raises(ValueError, match="names no label or physical group"):
         lysmer_base(_ops(fem), "Soil", gnd, rho=2.0, vs=300.0)
 
@@ -159,3 +161,22 @@ def test_3d_base_face_gets_two_horizontal_dashpots(tmp_path: Path) -> None:
           if ln.strip().startswith("element zeroLength ")]
     assert len(zl) == len(base.nodes)
     assert all("-dir 1 2 3" in ln for ln in zl)
+
+
+def test_ground_label_pairs_by_position_after_a_reload(strip, tmp_path) -> None:
+    """A model reloaded from model.h5 has the set's label, not its handle.
+    The label is a node label of the snapshot once decoupled-node labels
+    reach it (#2389); without that the label is unknown and this skips."""
+    from apeGmsh.mesh.FEMData import FEMData
+
+    fem, gnd = strip
+    path = tmp_path / "model.h5"
+    fem.to_h5(str(path))
+    back = FEMData.from_h5(str(path))
+    if "base_ground" not in back.nodes.labels:
+        pytest.skip("decoupled-node labels are not on the snapshot (#2389)")
+    by_label = lysmer_base(_ops(back), "Base", "base_ground", rho=2.0,
+                           vs=300.0)
+    by_handle = lysmer_base(_ops(fem), "Base", gnd, rho=2.0, vs=300.0)
+    assert by_label.ground == by_handle.ground
+    assert by_label.c_s == pytest.approx(by_handle.c_s)

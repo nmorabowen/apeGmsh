@@ -122,6 +122,39 @@ def base_tributary_area(
     return area
 
 
+def _coincident_ground(
+    fem: Any, label: str, nodes: "tuple[int, ...]", tol: float = 1e-9,
+) -> dict[int, int]:
+    """``{base node: ground node}`` for a ground-set *label*, matching
+    each base node to the decoupled node at its position (a model
+    reloaded from ``model.h5`` has no set handle, only its label)."""
+    labels = getattr(fem.nodes, "labels", None)
+    try:
+        gids = [int(n) for n in labels.node_ids(label)]
+    except (AttributeError, KeyError, ValueError):
+        raise ValueError(
+            f"lysmer_base: ground={label!r} is not a node label of the FEM "
+            f"snapshot; pass the g.decouple_node_set(...) handle, or its "
+            f"label."
+        ) from None
+    decoupled = {int(n) for n in fem.nodes.decoupled_ids}
+    if not set(gids) <= decoupled:
+        raise ValueError(
+            f"lysmer_base: ground={label!r} holds mesh nodes; it must name "
+            f"a g.decouple_node_set(...) of ground nodes."
+        )
+    row = {int(n): i for i, n in enumerate(fem.nodes.ids)}
+    xyz = np.asarray(fem.nodes.coords, dtype=float)
+    g_xyz = xyz[[row[g] for g in gids]]
+    out: dict[int, int] = {}
+    for n in nodes:
+        d = np.linalg.norm(g_xyz - xyz[row[n]], axis=1)
+        k = int(np.argmin(d))
+        if d[k] <= tol:
+            out[n] = gids[k]
+    return out
+
+
 def _tied_slave_dofs(fem: Any) -> set[tuple[int, int]]:
     """``(node, dof)`` of every slave DOF an ``equal_dof`` record ties."""
     out: set[tuple[int, int]] = set()
@@ -135,7 +168,7 @@ def _tied_slave_dofs(fem: Any) -> set[tuple[int, int]]:
 def lysmer_base(
     ops: "apeSees",
     base: str,
-    ground: DecoupledNodeSetDef,
+    ground: "DecoupledNodeSetDef | str",
     *,
     rho: float,
     vs: float,
@@ -162,8 +195,10 @@ def lysmer_base(
     base
         Label or physical group of the base boundary.
     ground
-        The ``g.decouple_node_set(base, ...)`` handle: one ground node
-        per base node (the source must be ``base``).
+        The ``g.decouple_node_set(base, ...)`` handle (one ground node
+        per base node), or its ``label=``: on a model reloaded from
+        ``model.h5`` the label pairs each base node with the decoupled
+        node at its position (zero offset).
     rho, vs, vp
         Mass density, shear- and compression-wave velocities of the
         underlying half-space, in the model's units.
@@ -183,20 +218,25 @@ def lysmer_base(
     if vp is not None and not (np.isfinite(vp) and vp > vs):
         raise ValueError(
             f"lysmer_base: vp must exceed vs ({vs!r}), got {vp!r}.")
-    if not isinstance(ground, DecoupledNodeSetDef):
-        raise TypeError(
-            f"lysmer_base: ground= must be a g.decouple_node_set(...) "
-            f"handle, got {type(ground).__name__}."
-        )
-    pairs = ground.pairs()
     fem = ops.fem
     area = base_tributary_area(fem, base, ndm=ndm, thickness=thickness)
     nodes = tuple(sorted(area))
+    if isinstance(ground, DecoupledNodeSetDef):
+        pairs = ground.pairs()
+        set_name = ground.label or ground.source
+    elif isinstance(ground, str):
+        pairs = _coincident_ground(fem, ground, nodes)
+        set_name = ground
+    else:
+        raise TypeError(
+            f"lysmer_base: ground= must be a g.decouple_node_set(...) "
+            f"handle or its label, got {type(ground).__name__}."
+        )
     missing = [n for n in nodes if n not in pairs]
     if missing:
         raise ValueError(
             f"lysmer_base: base nodes {missing[:5]} have no ground node in "
-            f"the set {ground.label or ground.source!r}; declare it with "
+            f"the set {set_name!r}; declare it with "
             f"g.decouple_node_set({base!r}, ...)."
         )
     horizontal: tuple[int, ...] = (1,) if ndm == 2 else (1, 2)
