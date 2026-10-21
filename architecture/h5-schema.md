@@ -1894,11 +1894,13 @@ This section describes the layout those modules write at results zone
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
 
-Five writers produce the file. `source_type` names the writer, but it is a stamp, not proof of origin:
+Six writers produce the file, and files from a seventh, deleted writer stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
-| `domain_capture` | `DomainCapture` (`ops.domain_capture`) | yes | yes when the bridge archives a `model.h5` sidecar; otherwise absent, with a warning, and an element-scoped capture then refuses (#1764) | the user's `begin_stage` calls, then one `mode` stage per mode from `capture_modes` |
+| `eigen` | `EigenResult.to_native` (`ops.eigen(n)`, `opensees/analysis/eigen.py`) | yes | yes: the bridge's zone | one `mode` stage per mode |
+| `eigen` | `capture_live_modes` (`results/live/_modes.py`), a plain openseespy deck | yes | no: the deck is not the bridge's | one `mode` stage per mode |
+| `domain_capture` (legacy) | the in-process `DomainCapture`, deleted in #2191; its files stay readable until the native format retires | yes | yes when the bridge archived a `model.h5` sidecar, else absent | the user's `begin_stage` calls, then one `mode` stage per mode |
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
 | `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
@@ -2033,11 +2035,12 @@ Who writes it:
 | Writer (`source_type`) | Writes `element_index_space`? |
 |---|---|
 | recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
-| `DomainCapture` (`domain_capture`) | `"fem"` on every capture that runs, from #1764 on. An element-scoped capture refuses unless a `{fem_eid: ops_tag}` pairing covers every recorded id ([Domain capture eras](#domain-capture-eras)) |
+| `DomainCapture` (`domain_capture`, legacy files; the writer was deleted in #2191) | `"fem"` on every capture from #1764 on. An element-scoped capture refused unless a `{fem_eid: ops_tag}` pairing covered every recorded id ([Domain capture eras](#domain-capture-eras)) |
+| `EigenResult.to_native`, `capture_live_modes` (`eigen`) | never: they write nodal rows only |
 | `make_demo_results` (`domain_capture`) | `"fem"`, from #1764 on. It writes nodal rows only, in every version |
 | `ParallelModalResult` (`parallel_modal`) | never: absent |
 | `FootfallResult` (`footfall_walking`) | never: absent |
-| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder, `DomainCapture` and `make_demo_results` are the callers in `src/` |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder and `make_demo_results` are the callers in `src/` |
 | MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
 
 The transcoder labels element rows with the recorder spec's FEM ids. Those

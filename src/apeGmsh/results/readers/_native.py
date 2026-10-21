@@ -147,7 +147,8 @@ class LegacySimplexGaussCoordsWarning(UserWarning):
 # Simplex Gauss coordinates written by older apeGmsh versions
 # ---------------------------------------------------------------------------
 #
-# The native writers (DomainCapture and the recorder transcoder) copy the
+# The native writers (the recorder transcoder, the modes writers and,
+# in older files, an in-process capture) copy the
 # response catalog's ``natural_coords`` into ``_natural_coords``. The
 # catalog holds every simplex rule in gmsh reference coordinates (``1 - Σ``
 # on node 0), which is what every consumer of ``GaussSlab.natural_coords``
@@ -458,7 +459,7 @@ class NativeReader:
         ``ELEMENT_INDEX_SPACES`` read as unverified. That is not a
         refusal: the file still reads. Neither the version number nor
         ``source_type`` ever makes a file verified: the rule is the same
-        for every writer, ``domain_capture`` included. The stamp must be
+        for every writer, legacy writers included. The stamp must be
         a scalar variable-length UTF-8 string; any other dtype reads as
         unverified, whatever its text.
         """

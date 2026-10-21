@@ -153,8 +153,8 @@ class EigenResult:
 
         One stage per eigenvalue (``mode_<k>``, ``mode_index`` 1..n, at
         ``time = [0.0]``) with ``eigenvalue``, ``frequency_hz = ω/2π`` and
-        ``period_s = 2π/ω`` (``ω = √λ``), the layout
-        ``DomainCapture.capture_modes`` writes. A non-positive eigenvalue
+        ``period_s = 2π/ω`` (``ω = √λ``), the mode-stage layout every
+        native modes writer shares. A non-positive eigenvalue
         writes 0 for both and raises one ``UserWarning`` naming the mode.
 
         Each fem node's vector is read once per mode with
@@ -402,8 +402,8 @@ class EigenResult:
             out_path = Path(os.fspath(path))
 
         with tempfile.TemporaryDirectory(prefix="apegmsh_modes_") as tmp:
-            # Named as DomainCapture names its sidecar, so /model/meta
-            # carries the same model_name ("<stem>.model").
+            # Named "<stem>.model.h5", so /model/meta carries the
+            # model_name "<stem>.model".
             sidecar = Path(tmp) / out_path.with_suffix(".model.h5").name
             bridge.h5(str(sidecar))
             roles_h5 = sidecar if model_h5 is None else Path(os.fspath(model_h5))

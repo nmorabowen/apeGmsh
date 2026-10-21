@@ -32,8 +32,7 @@ import numpy as np
 import pyvista as pv
 
 from apeGmsh import apeGmsh, FEMData, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh.opensees import apeSees
 
 REPO = Path(__file__).resolve().parents[2]
 OUT_DIR = REPO / "docs" / "assets" / "tut"
@@ -145,16 +144,35 @@ def _wipe() -> None:
     opspy.wipe()
 
 
-def _capture_all_displacements(ops: apeSees, path: str, *, steps: int = 1,
-                               stage: str = "static") -> None:
-    """One static run recording every node's displacement -> ``path``."""
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(components=["displacement"])          # no selector -> all nodes
-    with ops.domain_capture(spec, path=path) as cap:
-        cap.begin_stage(stage, kind="static")
-        ops.analyze(steps=steps)
-        cap.step(t=1.0)
-        cap.end_stage()
+def _record_all_displacements(ops: apeSees, stem: Path, *, ndm: int,
+                              steps: int = 1) -> Results:
+    """One static run on the default recorder route, every node's
+    displacement recorded at ``stem``; returns the run's ``Results``."""
+    from apeGmsh.opensees.emitter.live import get_ops
+    from apeGmsh.results.spec import (
+        ResolvedRecorderRecord,
+        ResolvedRecorderSpec,
+    )
+
+    fem = ops.fem
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedRecorderRecord(
+            category="nodes", name="u",
+            components=tuple(f"displacement_{a}" for a in "xyz"[:ndm]),
+            dt=None, n_steps=None, node_ids=np.asarray(fem.nodes.ids),
+        ),),
+    )
+    model_h5 = f"{stem}.model.h5"
+    ops.h5(model_h5)
+    ops.run()                       # build + analysis chain, no analysis
+    opspy = get_ops()
+    with spec.emit_default(str(stem), model_h5=model_h5) as run:
+        for k in range(steps):
+            if opspy.analyze(1) != 0:
+                raise RuntimeError(f"non-convergence at step {k}")
+    _wipe()                         # flush the recorders
+    return run.results()
 
 
 # =====================================================================
@@ -195,14 +213,10 @@ def still_first_model(work: Path) -> Path:
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    run = str(work / "t1_run.h5")
-    _capture_all_displacements(ops, run, stage="tip_load")
-    _wipe()
+    run = _record_all_displacements(ops, work / "t1_run", ndm=2)
 
     out = OUT_DIR / "first-model-contour.png"
-    with Results.from_native(
-        run, model=OpenSeesModel.from_h5(run, fem_root="/model"),
-    ) as results:
+    with run as results:
         tip = abs(float(results.nodes.get(
             pg="Tip", component="displacement_y",
         ).values[-1, 0]))
@@ -261,14 +275,10 @@ def still_save_reload(work: Path) -> Path:
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    run = str(work / "ssbeam_run.h5")
-    _capture_all_displacements(ops, run, stage="midspan_load")
-    _wipe()
+    run = _record_all_displacements(ops, work / "ssbeam_run", ndm=2)
 
     out = OUT_DIR / "save-reload-deflection.png"
-    with Results.from_native(
-        run, model=OpenSeesModel.from_h5(run, fem_root="/model"),
-    ) as results:
+    with run as results:
         mid = abs(float(results.nodes.get(
             pg="Mid", component="displacement_y",
         ).values[-1, 0]))
@@ -328,14 +338,10 @@ def still_portal(work: Path) -> Path:
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    run = str(work / "portal_run.h5")
-    _capture_all_displacements(ops, run, stage="lateral")
-    _wipe()
+    run = _record_all_displacements(ops, work / "portal_run", ndm=2)
 
     out = OUT_DIR / "results-strategies-portal.png"
-    with Results.from_native(
-        run, model=OpenSeesModel.from_h5(run, fem_root="/model"),
-    ) as results:
+    with run as results:
         dl = results.nodes.get(pg="RoofL", component="displacement_x")
         dr = results.nodes.get(pg="RoofR", component="displacement_x")
         drift = 0.5 * (float(dl.values[-1, 0]) + float(dr.values[-1, 0]))
@@ -389,14 +395,10 @@ def still_staged_ssi(work: Path) -> Path:
     ops.integrator.LoadControl(dlam=0.1)
     ops.analysis.Static()
 
-    run = str(work / "grav_ssi_run.h5")
-    _capture_all_displacements(ops, run, steps=10, stage="gravity")
-    _wipe()
+    run = _record_all_displacements(ops, work / "grav_ssi_run", ndm=3, steps=10)
 
     out = OUT_DIR / "staged-ssi-settlement.png"
-    with Results.from_native(
-        run, model=OpenSeesModel.from_h5(run, fem_root="/model"),
-    ) as results:
+    with run as results:
         surf = results.nodes.get(
             pg=res.free_surface_pg, component="displacement_z",
         )

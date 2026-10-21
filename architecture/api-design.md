@@ -110,7 +110,6 @@ ops.py(path, *, run=False,
        analyze_steps=None, analyze_dt=None)
 ops.run(*, wipe=True)
 ops.h5(path, *, model_name=None, cuts=(), sweeps=())
-ops.domain_capture(spec, *, path, ops=None) -> DomainCapture
 
 # SSI helpers (Phase SSI-1 / SSI-3) — declarative wrappers that fan
 # out at build time. See "## Initial-stress injection" and

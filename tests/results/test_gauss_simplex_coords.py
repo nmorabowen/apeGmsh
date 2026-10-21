@@ -409,7 +409,7 @@ def test_bezier_world_coords_on_the_files_own_fem(
 
 
 # ---------------------------------------------------------------------------
-# The native paths: the recorder transcoder and DomainCapture
+# The native path: the recorder transcoder
 # ---------------------------------------------------------------------------
 
 
@@ -488,100 +488,6 @@ def test_recorder_transcoder_places_gauss_points(
     comps = tuple(f"strain_{a}" for a in _AXES[stem])
     world, recorded = _native_world(target, fem, comps, corners, stem)
     np.testing.assert_allclose(world, recorded, rtol=0, atol=TOL,
-                               err_msg=cls)
-
-
-#: The penalty-imposed field is exact to ~1e-15 relative; the rotated
-#: frame this guards against is off by order 1.
-CAPTURE_TOL = 1e-9
-
-_CAPTURE_MODEL = {
-    # cls: (ndm, Tcl name, corners, mid-edges, trailing element args)
-    "SixNodeTri": (2, "tri6n",
-                   np.array([[0.1, 0.2], [2.3, 0.4], [0.6, 1.8]]),
-                   [(0, 1), (1, 2), (2, 0)], (1.0, "PlaneStress", 1)),
-    "TenNodeTetrahedron": (3, "TenNodeTetrahedron",
-                           np.array([[0.1, 0.2, 0.0], [2.3, 0.1, 0.4],
-                                     [0.5, 1.7, 0.2], [0.3, 0.4, 1.9]]),
-                           [(0, 1), (1, 2), (2, 0), (0, 3), (2, 3), (1, 3)],
-                           (1,)),
-}
-
-
-@pytest.mark.live
-@pytest.mark.parametrize("cls", [
-    "SixNodeTri",
-    # TenNodeTetrahedron returns 24 strain values only on the fork build
-    # (``732ab316d``); older engines return 6 and the capture refuses.
-    pytest.param("TenNodeTetrahedron", marks=pytest.mark.ladruno_fork),
-])
-def test_domain_capture_places_gauss_points(tmp_path: Path, cls: str) -> None:
-    """DomainCapture under the quadratic field: the captured strain at
-    each GP is its position, and the native file's GP coords must map
-    there."""
-    from apeGmsh.opensees.emitter.live import get_ops
-    from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.capture.spec import (
-        ResolvedDomainCaptureRecord,
-        ResolvedDomainCaptureSpec,
-    )
-
-    from tests.fixtures.capture_tags import identity_tags
-
-    ops = get_ops()
-    ndm, tcl, corners, edges, extra = _CAPTURE_MODEL[cls]
-    points = np.vstack([corners] + [(corners[a] + corners[b]) / 2.0
-                                    for a, b in edges])
-    ops.wipe()
-    ops.model("basic", "-ndm", ndm, "-ndf", ndm)
-    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
-    node_ids = list(range(1, len(points) + 1))
-    for n, p in zip(node_ids, points):
-        ops.node(n, *map(float, p))
-    ops.element(tcl, 1, *node_ids, *extra)
-    ops.timeSeries("Linear", 1)
-    ops.pattern("Plain", 1, 1)
-    for n, p in zip(node_ids, points):
-        for d in range(ndm):
-            ops.sp(n, d + 1, float(0.5 * p[d] ** 2))
-    # Penalty, not Transformation: every DOF is prescribed, so the
-    # Transformation handler leaves a zero-equation system, the likely
-    # reason stock openseespy hard-exited the live-stock lane here (exit
-    # 255). The penalty error is about K / alpha ~ 1e-15, far inside
-    # CAPTURE_TOL.
-    ops.constraints("Penalty", 1.0e18, 1.0e18)
-    ops.numberer("Plain")
-    ops.system("FullGeneral")
-    ops.integrator("LoadControl", 1.0)
-    ops.algorithm("Linear")
-    ops.analysis("Static")
-    assert ops.analyze(1) == 0
-    assert ops.eleType(1) == cls
-
-    rule = IntRule.Triangle_GL_2 if ndm == 2 else IntRule.Tet_GL_2
-    layout = lookup(cls, rule, "strain")
-    fem = _MinimalFem(node_ids, points)
-    spec = ResolvedDomainCaptureSpec(
-        fem_snapshot_id=fem.snapshot_id,
-        records=(ResolvedDomainCaptureRecord(
-            category="gauss", name="rec",
-            components=tuple(layout.component_layout),
-            dt=None, n_steps=None, element_ids=np.array([1]),
-        ),),
-    )
-    target = tmp_path / "cap.h5"
-    try:
-        with DomainCapture(spec, target, fem, ops=ops,
-                           tag_map=identity_tags(spec)) as cap:
-            cap.begin_stage("static", kind="static")
-            cap.step(t=ops.getTime())
-            cap.end_stage()
-    finally:
-        ops.wipe()
-    stem = "tri" if ndm == 2 else "tet"
-    comps = tuple(f"strain_{a}" for a in _AXES[stem])
-    world, recorded = _native_world(target, fem, comps, corners, stem)
-    np.testing.assert_allclose(world, recorded, rtol=0, atol=CAPTURE_TOL,
                                err_msg=cls)
 
 

@@ -1,10 +1,11 @@
-"""Three readers that took the raw ``/meta/ndm`` stamp now take the shim (#1368).
+"""The readers that took the raw ``/meta/ndm`` stamp now take the shim (#1368).
 
 Before neutral 2.34.0 ``/meta/ndm`` was the *mesh* dimension: a 2-D
 frame of lines read ``1``, a 3-D frame with a shell slab read ``2``.
 :func:`~apeGmsh.opensees.emitter.h5_reader.read_spatial_ndm` salvages the
 ``ops.model`` ndm from such a file or refuses (#1300, #1358).  These
-tests pin the three readers that bypassed it, each on a committed corpus
+tests pin the readers that bypassed it (a third, the in-process
+capture's ``from_h5``, was deleted in #2191), each on a committed corpus
 file whose declared ndm is known:
 
 * ``opensees_2.20_frame2d.h5`` declared ``ops.model(ndm=2, ndf=3)`` and
@@ -23,10 +24,8 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.mesh.FEMData import FEMData
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.model_data import ModelData
-from apeGmsh.results.capture import DomainCapture, DomainCaptureSpec
 
 CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "schema_corpus"
 FRAME2D = CORPUS / "opensees_2.20_frame2d.h5"
@@ -69,29 +68,6 @@ def test_model_data_from_h5_reads_the_declared_ndm(
     resolves the declared ndm."""
     md = ModelData.from_h5(str(path))
     assert md.ndm == declared
-
-
-# ---------------------------------------------------------------------------
-# DomainCapture.from_h5
-# ---------------------------------------------------------------------------
-
-
-def test_domain_capture_from_h5_resolves_a_2d_frame_in_2d(
-    tmp_path: Path,
-) -> None:
-    """The raw stamp resolved the spec in one dimension, so the shorthand
-    ``displacement`` expanded to x only and y was never captured."""
-    fem = FEMData.from_h5(str(FRAME2D))
-    spec = DomainCaptureSpec()
-    spec.nodes(components=["displacement"], ids=[int(fem.nodes.ids[0])])
-    cap = DomainCapture.from_h5(
-        FRAME2D, spec=spec, fem=fem, output=tmp_path / "run.h5",
-        ops=object(),
-    )
-    assert cap._spec.ndm == FRAME2D_DECLARED_NDM
-    assert cap._spec.records[0].components == (
-        "displacement_x", "displacement_y",
-    )
 
 
 # ---------------------------------------------------------------------------

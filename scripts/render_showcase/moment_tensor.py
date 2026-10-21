@@ -5,7 +5,7 @@ box (stdBrick, 16^3 structured hexes) with a vertical strike-slip
 double-couple embedded at its centre via ``p.moment_tensor`` — the moment
 tensor becomes consistent nodal forces M_ij dN_a/dx_j S(t), a pure
 right-hand-side load. A Newmark transient radiates the source; the nodal
-velocity field is captured every step through ``ops.domain_capture``.
+velocity field is recorded every step through ``spec.emit_default``.
 
 Physics on show: the textbook four-lobe double-couple radiation pattern —
 |v| lobes in the horizontal source plane with nodal planes along x and y,
@@ -33,10 +33,10 @@ import numpy as np
 import pyvista as pv
 
 from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.opensees.material.nd import ElasticIsotropic
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 from apeGmsh.viewers.animation import export_animation
 from apeGmsh.viewers.backends import PyVistaQtBackend
 from apeGmsh.viewers.diagrams import (
@@ -51,8 +51,8 @@ DT, T_TOTAL = 5e-4, 0.12                   # through the direct P arrival
 OUT = Path(__file__).resolve().parents[2] / "docs" / "assets" / "anim" / "moment-tensor.mp4"
 
 
-def solve(run_h5: Path) -> None:
-    """Build the box, embed the double-couple, run the transient, capture v."""
+def solve(stem: Path) -> Results:
+    """Build the box, embed the double-couple, run the transient, record v."""
     g = apeGmsh(model_name="mt_showcase", verbose=False)
     g.begin()
     try:
@@ -88,28 +88,34 @@ def solve(run_h5: Path) -> None:
     ops.integrator.Newmark(gamma=0.5, beta=0.25)
     ops.analysis.Transient()
 
+    model_h5 = f"{stem}.model.h5"
+    ops.h5(model_h5)
     emitter = LiveOpsEmitter(wipe=True)
     ops.build().emit(emitter)
     o = emitter.ops
 
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(components="velocity")
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedRecorderRecord(
+            category="nodes", name="v",
+            components=("velocity_x", "velocity_y", "velocity_z"),
+            dt=None, n_steps=None, node_ids=np.asarray(fem.nodes.ids),
+        ),),
+    )
     n_steps = int(round(T_TOTAL / DT))
     t0 = time.perf_counter()
-    with ops.domain_capture(spec, path=run_h5, ops=o) as cap:
-        cap.begin_stage("radiation", kind="transient")
+    with spec.emit_default(str(stem), model_h5=model_h5, ops=o) as run:
         for k in range(n_steps):
             rc = emitter.analyze(steps=1, dt=DT)
             if rc != 0:
                 raise RuntimeError(f"analyze failed at step {k} (rc={rc})")
-            cap.step(t=o.getTime())
-        cap.end_stage()
+    o.wipe()                        # flush the recorders
     print(f"solve: {n_steps} steps in {time.perf_counter() - t0:.1f} s")
+    return run.results()
 
 
-def render(run_h5: Path) -> None:
+def render(results: Results) -> None:
     """Contour |v| on the lower half-block and export the mp4."""
-    results = Results.from_native(run_h5, model=OpenSeesModel.from_h5(run_h5))
     results.nodes.define(
         "velocity_magnitude", "mag(velocity)", label="|v|", units="m/s",
     )
@@ -160,6 +166,4 @@ def render(run_h5: Path) -> None:
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="mt_showcase_") as td:
-        run_h5 = Path(td) / "run.h5"
-        solve(run_h5)
-        render(run_h5)
+        render(solve(Path(td) / "run"))

@@ -7,7 +7,7 @@ H = 3.5 m) whose columns carry an apeSteel ``W14X90`` fiber section
 distributed-plasticity elements (5 Lobatto points), a near-rigid elastic
 beam forcing the clean four-hinge column-sway mechanism (Vp = 4Mp/H ~
 1013 kN), pushed under displacement control to 2.5 % roof drift. The
-full nodal displacement field is captured every step, then rendered
+full nodal displacement field is recorded every step, then rendered
 with a pure off-screen PyVista plotter (no Qt window — the desktop
 viewer cannot host VTK on Windows' offscreen platform): a displacement-
 magnitude ``ContourDiagram`` on tube-styled frame lines over a gray
@@ -31,11 +31,11 @@ from pathlib import Path
 import numpy as np
 
 import apeSteel
-import openseespy.opensees as opspy
 from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
 from apeGmsh.opensees.section.fiber import RectPatch
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "docs" / "assets" / "anim" / "pushover-frame.mp4"
@@ -51,8 +51,9 @@ DRIFT = 0.025 * H                    # push to 2.5 % drift = 87.5 mm
 DEFORM_SCALE = 8.0                   # x8 warp so the sway reads on screen
 
 
-def solve(run_h5: str) -> float:
-    """E10 fiber-frame pushover -> run.h5 with the full displacement field."""
+def solve(stem: Path) -> tuple[Results, float]:
+    """E10 fiber-frame pushover recorded at ``stem`` on the default route:
+    the full displacement field plus the base reactions."""
     props = apeSteel.AISCv16Catalog().get_section_properties("W14X90")
     d, bf = props.overall_depth_d, props.flange_width_bf
     tf, tw = props.flange_thickness_tf, props.web_thickness_tw
@@ -115,22 +116,36 @@ def solve(run_h5: str) -> float:
 
     # Every node's displacement each step (the animation), plus base
     # reactions so the mechanism plateau can be sanity-checked below.
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(components="displacement", ids=fem.nodes.ids)
-    spec.nodes(pg="Base", components="reaction_force")
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(
+            ResolvedRecorderRecord(
+                category="nodes", name="u",
+                components=("displacement_x", "displacement_y"),
+                dt=None, n_steps=None, node_ids=np.asarray(fem.nodes.ids),
+            ),
+            ResolvedRecorderRecord(
+                category="nodes", name="base",
+                components=("reaction_force_x", "reaction_force_y"),
+                dt=None, n_steps=None,
+                node_ids=np.asarray(fem.nodes.select(pg="Base").ids),
+            ),
+        ),
+    )
 
+    model_h5 = f"{stem}.model.h5"
+    ops.h5(model_h5)
     ops.run(wipe=False)
-    with ops.domain_capture(spec, path=run_h5) as cap:
-        cap.begin_stage("pushover", kind="static")
+    o = get_ops()                   # the module the bridge drives
+    with spec.emit_default(str(stem), model_h5=model_h5) as run:
         for k in range(N_STEPS):
-            if opspy.analyze(1) != 0:
+            if o.analyze(1) != 0:
                 raise RuntimeError(f"non-convergence at step {k}")
-            cap.step(t=(k + 1) * dU)
-        cap.end_stage()
-    return Vp_hand
+    o.wipe()                        # flush the recorders
+    return run.results(), Vp_hand
 
 
-def render(run_h5: str, Vp_hand: float) -> None:
+def render(results: Results, Vp_hand: float) -> None:
     """Pure off-screen plotter: |u| contour on the x8-warped swaying frame."""
     import pyvista as pv
     from apeGmsh.viewers.animation import export_animation
@@ -141,8 +156,7 @@ def render(run_h5: str, Vp_hand: float) -> None:
     )
     from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
-    with Results.from_native(run_h5,
-                             model=OpenSeesModel.from_h5(run_h5)) as r:
+    with results as r:
         r.nodes.define("disp_mag", "mag(displacement)",
                        label="|u|", units="mm")
 
@@ -222,12 +236,11 @@ def render(run_h5: str, Vp_hand: float) -> None:
 
 def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        run_h5 = str(Path(tmp) / "pushover.h5")
         t0 = time.perf_counter()
-        Vp_hand = solve(run_h5)
+        results, Vp_hand = solve(Path(tmp) / "pushover")
         print(f"solved {N_STEPS} pushover steps in "
               f"{time.perf_counter() - t0:.1f} s")
-        render(run_h5, Vp_hand)
+        render(results, Vp_hand)
     print(f"wrote {OUT} ({OUT.stat().st_size / 1e6:.2f} MB)")
 
 

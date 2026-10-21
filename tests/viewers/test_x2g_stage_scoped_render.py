@@ -52,10 +52,8 @@ def _build(g, tmp_path, monkeypatch, reactions_in=None):
     that stage carries a reaction field."""
     from apeGmsh.opensees.apesees import apeSees
     from apeGmsh.results import Results
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
 
-    from tests.conftest import _open_model_from_h5
-    from tests.test_results_domain_capture import _FakeOps
+    from tests.conftest import _open_model_from_h5, _write_composed_run
 
     monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
     _stub_imageio(monkeypatch)
@@ -99,26 +97,25 @@ def _build(g, tmp_path, monkeypatch, reactions_in=None):
 
     ids = [int(i) for i in fem.nodes.ids]
     z = {int(n): float(c[2]) for n, c in zip(fem.nodes.ids, fem.nodes.coords)}
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(
-        ids=ids,
-        components=["displacement_x", "displacement_y", "displacement_z"],
-        name="all",
+    zcol = np.array([1.0 + z[n] for n in ids])
+    zeros = np.zeros((2, len(ids)))
+    stages = []
+    for i, name in enumerate(_STAGES):
+        comps = {
+            "displacement_x": zeros,
+            "displacement_y": zeros,
+            "displacement_z": np.stack([
+                _AMP[name] * (k + 1) * zcol for k in range(2)
+            ]),
+        }
+        if reactions_in is not None:
+            comps["reaction_force_z"] = np.stack([zcol, zcol])
+        stages.append(
+            (name, [float(i + 1) + 0.5 * k for k in range(2)], comps),
+        )
+    out = _write_composed_run(
+        ops, fem, tmp_path / "staged_disp.h5", ids, stages,
     )
-    if reactions_in is not None:
-        spec.nodes(ids=ids, components=["reaction_force_z"], name="rxn")
-    out = tmp_path / "staged_disp.h5"
-    fake = _FakeOps()
-    with ops.domain_capture(spec, path=str(out), ops=fake) as cap:
-        for i, name in enumerate(_STAGES):
-            cap.begin_stage(name, kind="static")
-            for k in range(2):
-                fake.disp_table = {
-                    (n, 3): _AMP[name] * (k + 1) * (1.0 + z[n]) for n in ids
-                }
-                fake.reaction_table = {(n, 3): 1.0 + z[n] for n in ids}
-                cap.step(t=float(i + 1) + 0.5 * k)
-            cap.end_stage()
     if reactions_in is not None:
         _strip_reactions(out, keep=reactions_in)
     return Results.from_native(out, model=_open_model_from_h5(out))

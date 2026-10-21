@@ -97,7 +97,7 @@ class EigenMode:
         """Angular frequency ``omega = sqrt(eigenvalue)`` in rad/s.
 
         Returns ``0.0`` for non-positive (rigid-body or numerical
-        zero) eigenvalues — matches ``capture_modes``' behaviour.
+        zero) eigenvalues — the mode-stage writers' convention.
         """
         if self.eigenvalue <= 0.0:
             return 0.0

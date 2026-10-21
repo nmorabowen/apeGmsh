@@ -95,9 +95,11 @@ def forward(params):
 ```
 
 > Response read: `Results` is the apeGmsh-idiomatic path (label/PG selectors, not
-> raw tags). For a tight FD loop an in-process `ops.domain_capture(spec, path=)`
-> avoids file round-trips — see `guide_obtaining_results.md` /
-> `guide_recorders_reference.md` for the exact recorder/capture signatures.
+> raw tags). For a tight FD loop, read the live domain directly with
+> `ops.nodeDisp(...)` / `ops.eleResponse(...)` on the module the bridge drives
+> (maintainer ruling G15 on #1767): no file round-trip. See
+> `guide_obtaining_results.md` / `guide_recorders_reference.md` for the
+> recorder signatures.
 
 ## 4. Driving it — the FD helper
 

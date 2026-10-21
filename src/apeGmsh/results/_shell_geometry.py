@@ -1,7 +1,8 @@
 """Shell-element local-axes + quaternion utilities.
 
-Layered-shell DomainCapture needs per-element local-axes quaternions
-to populate the :class:`~apeGmsh.results._slabs.LayerSlab` schema.
+The layered-shell readers (MPCO, ``.ladruno``) need per-element
+local-axes quaternions to populate the
+:class:`~apeGmsh.results._slabs.LayerSlab` schema.
 The convention follows OpenSees' shell-element formulation
 (``ASDShellQ4``, ``ShellMITC4``, etc.):
 

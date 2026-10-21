@@ -11,7 +11,7 @@ The short version:
 | Tier | Needs | What it covers |
 |---|---|---|
 | **0** | nothing beyond the install extras | Geometry, meshing, parts, the FEM broker, `model.h5`, loads / masses / constraints, **deck emission**, results, viewers, sections, Studio |
-| **1** | stock `openseespy` | In-process solving: `ops.run()`, `ops.analyze()`, `ops.eigen()`, domain capture |
+| **1** | stock `openseespy` | In-process solving: `ops.run()`, `ops.analyze()`, `ops.eigen()`, recording a run with `emit_default` |
 | **2** | the **Ladruno fork** build | The primitives listed under [The fork-only surface](#the-fork-only-surface) |
 
 !!! tip "Deck emission is never gated"

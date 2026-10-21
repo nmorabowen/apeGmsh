@@ -3396,12 +3396,6 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.damping.urd_beta"
     },
-    "ops.domain_capture": {
-      "doc": "Open a :class:`DomainCapture` for in-process recording.",
-      "signature": "domain_capture(spec: \"'DomainCaptureSpec'\", *, path: \"'str | Path'\", ops: 'Any' = None) -> \"'DomainCapture'\"",
-      "skill": "references/opensees-bridge.md",
-      "symbol": "ops.domain_capture"
-    },
     "ops.eigen": {
       "doc": "Build + emit + run a one-shot ``eigen`` solve via the live emitter.",
       "signature": "eigen(num_modes: 'int', *, solver: 'str' = '-genBandArpack') -> \"'EigenResult'\"",

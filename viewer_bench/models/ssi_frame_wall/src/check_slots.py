@@ -3,7 +3,9 @@
 The model is only canonical if none of the seven slots comes up empty and
 every pose the ADR names has data behind it. This opens the run, prints
 what the broker found, then fills each slot on its own pane and renders a
-still off it. A refusal here is a bench defect, not a viewer bug.
+still off it. A refusal here is a bench defect, not a viewer bug. The run
+has two result sources, both opened through ``build.open_results``: the
+recorder set (gravity and dynamic, transcoded on open) and ``modes.h5``.
 
 Run::
 
@@ -18,8 +20,8 @@ from pathlib import Path
 os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from apeGmsh import Results
-from apeGmsh.opensees import OpenSeesModel
+from build import open_results
+
 from apeGmsh.results.session import (
     Contour, Deform, Gauss, Instant, Line, Loads, PlotSeries, PlotSource,
     Reactions, Sand, Scope, Vector,
@@ -61,15 +63,13 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path.cwd())
     args = ap.parse_args()
 
-    run_h5, model_h5 = args.out / "run.h5", args.out / "model.h5"
     shots = args.out / "slots"
     shots.mkdir(parents=True, exist_ok=True)
 
-    results = Results.from_native(str(run_h5),
-                                  model=OpenSeesModel.from_h5(str(model_h5)))
+    results, modes = open_results(args.out)
 
     print("--- broker ---")
-    for st in results.stages:
+    for st in (*results.stages, *modes.stages):
         extra = ""
         if st.kind == "mode":
             extra = f"  T = {st.period_s:.4f} s"
@@ -124,16 +124,17 @@ def main() -> None:
             print(f"FAIL slot {name} — {type(exc).__name__}: {exc}")
 
     print("--- poses ---")
-    for label, deform, instant in (
-        ("displacement", Deform("displacement", 40.0), last),
-        ("velocity", Deform("velocity", 40.0), last),
-        ("acceleration", Deform("acceleration", 40.0), last),
+    for label, source, deform, instant in (
+        ("displacement", results, Deform("displacement", 40.0), last),
+        ("velocity", results, Deform("velocity", 40.0), last),
+        ("acceleration", results, Deform("acceleration", 40.0), last),
         # scale=None is auto-fit: an eigenvector is normalised, so a fixed
         # scale that suits a 5 mm dynamic step turns a mode into confetti.
-        ("mode 1", Deform("displacement", None, mode=1), None),
-        ("mode 3", Deform("displacement", None, mode=3), None),
+        # The modes are their own result source (modes.h5).
+        ("mode 1", modes, Deform("displacement", None, mode=1), None),
+        ("mode 3", modes, Deform("displacement", None, mode=3), None),
     ):
-        session = results.session()
+        session = source.session()
         view = session.panes[0]
         view.deform = deform
         if instant is not None:

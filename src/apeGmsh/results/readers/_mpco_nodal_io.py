@@ -770,7 +770,7 @@ def mode_stage_layout(
 # frame) the recorder writes 0.0 into the rotation columns of a node
 # that has no rotational DOF, and a viewer draws that 0.0 as a field.
 # With the model's ``/opensees/nodes_ndf`` attached, the reader writes
-# NaN there, as DomainCapture does. Without it the reader warns once
+# NaN there. Without it the reader warns once
 # when the stage holds a continuum element, until the fork records
 # per-node ndf in the file.
 

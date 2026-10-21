@@ -113,11 +113,9 @@ def _stub_imageio(monkeypatch: pytest.MonkeyPatch) -> None:
 def staged(g, tmp_path, monkeypatch):
     from apeGmsh.opensees.apesees import apeSees
     from apeGmsh.results import Results
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
     from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
-    from tests.conftest import _open_model_from_h5
-    from tests.test_results_domain_capture import _FakeOps
+    from tests.conftest import _open_model_from_h5, _write_composed_run
 
     monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
     _stub_imageio(monkeypatch)
@@ -159,19 +157,16 @@ def staged(g, tmp_path, monkeypatch):
         s.analysis(**chain())
         s.run(n_increments=1)
 
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(
-        ids=[int(i) for i in fem.nodes.ids],
-        components=["displacement_x", "displacement_y", "displacement_z"],
-        name="all",
+    ids = [int(i) for i in fem.nodes.ids]
+    zeros = np.zeros((2, len(ids)))
+    out = _write_composed_run(
+        ops, fem, tmp_path / "staged_run.h5", ids,
+        [
+            (name, [float(i + 1), float(i + 1) + 0.5],
+             {f"displacement_{a}": zeros for a in "xyz"})
+            for i, name in enumerate(["g", "construction", "excavate"])
+        ],
     )
-    out = tmp_path / "staged_run.h5"
-    with ops.domain_capture(spec, path=str(out), ops=_FakeOps()) as cap:
-        for i, name in enumerate(["g", "construction", "excavate"]):
-            cap.begin_stage(name, kind="static")
-            cap.step(t=float(i + 1))
-            cap.step(t=float(i + 1) + 0.5)
-            cap.end_stage()
     results = Results.from_native(out, model=_open_model_from_h5(out))
     n_total = int(build_fem_scene(results.fem).grid.n_cells)
     try:

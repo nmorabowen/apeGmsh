@@ -364,9 +364,13 @@ These are not gaps, because a replacement exists. Step 3 breaks without them:
 - `tests/test_results_domain_capture.py` exports `_MockFem` and `_FakeOps` to
   `test_parallel_modal_to_native.py` and the three viewer tests. Move them before
   deleting the module.
-- The orphans are `_shell_geometry.py` (and its test,
-  `tests/test_results_shell_geometry.py`, which the grep does not list), plus the
-  three catalog helpers named in the `_response_catalog.py` row of Appendix A.
+- The orphans are only `_response_catalog.has_dead_gauss_probe` and
+  `needs_per_material_query`. This list was stale: `_shell_geometry.py` is a live
+  dependency of the MPCO and `.ladruno` layer readers, and
+  `synthesize_line_station_layout_for_elastic_beam` of the `.out` transcoder, so
+  both stay. (Corrected by #2191, which removed the two helpers. It also left
+  `_element_capabilities.cpp_class_name_for_pgs` and
+  `ElementTagTranslator.to_ops` / `to_fem` used only by tests: follow-ups.)
 
 ## 7. Verification
 

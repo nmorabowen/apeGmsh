@@ -1,16 +1,18 @@
-"""Fork-only — dual concrete damage read back live and from ``.ladruno``.
+"""Fork-only — dual concrete damage read back from ``.ladruno``.
 
 One ``LadrunoBrick`` (unit cube) of ``LadrunoConcrete3D`` pulled in uniaxial
 tension past its peak by a prescribed top-face displacement. The material's
 ``damage`` response is ``[omega_t, omega_c]``; it has no element-level
-branch, so the live capture reads it per Gauss point through
-``eleResponse(eid, "material", gp, "damage")`` and lands it on the
-``damage_tension`` / ``damage_compression`` canonicals. The same run writes
-a ``.ladruno`` file with ``material.damage``, whose ``C1, C2`` columns the
-reader maps by position onto the same two names.
+branch, so it is read per Gauss point through
+``eleResponse(eid, "material", gp, "damage")``. The run writes a
+``.ladruno`` file with ``material.damage``, whose ``C1, C2`` columns the
+reader maps by position onto the ``damage_tension`` /
+``damage_compression`` canonicals. (An in-process capture leg read the same
+values until #2191 deleted that route; the MPCO per-material route is
+``test_mpco_per_material_live.py``.)
 
 Authority for the values: ``eleResponse`` on the live domain after the last
-step, independent of both readers under test.
+step, independent of the reader under test.
 """
 from __future__ import annotations
 
@@ -19,10 +21,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
-from apeGmsh.results.capture.spec import DomainCaptureSpec
 
 pytestmark = [pytest.mark.ladruno_fork, pytest.mark.live]
 
@@ -46,7 +47,7 @@ def _cube(g):
     return g.mesh.queries.get_fem_data(dim=3)
 
 
-def test_ladruno_brick_tension_damage_capture_and_ladruno_read(
+def test_ladruno_brick_tension_damage_ladruno_read(
     g, tmp_path: Path,
 ) -> None:
     fem = _cube(g)
@@ -77,16 +78,8 @@ def test_ladruno_brick_tension_damage_capture_and_ladruno_read(
     ops.build().emit(emitter)
     live = emitter.ops
 
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.gauss(pg="Body", components=("damage_tension", "damage_compression"),
-               name="dmg")
-    path = str(tmp_path / "pull.h5")
-    with ops.domain_capture(spec, path=path, ops=live) as cap:
-        cap.begin_stage("pull", kind="static")
-        for _ in range(N_STEPS):
-            assert emitter.analyze(steps=1) == 0
-            cap.step(t=live.getTime())
-        cap.end_stage()
+    for _ in range(N_STEPS):
+        assert emitter.analyze(steps=1) == 0
     (ops_tag,) = live.getEleTags()          # not the fem_eid
     truth = np.array([
         list(live.eleResponse(ops_tag, "material", str(gp), "damage"))
@@ -97,21 +90,15 @@ def test_ladruno_brick_tension_damage_capture_and_ladruno_read(
     assert truth[:, 0].min() > 0.1          # well past the peak: cracked
     assert np.allclose(truth[:, 1], 0.0)    # no compression damage
 
-    om = OpenSeesModel.from_h5(path, fem_root="/model")
-    with Results.from_native(path, model=om) as r:
-        dt = r.elements.gauss.get(component="damage_tension")
-        dc = r.elements.gauss.get(component="damage_compression")
-    assert dt.values.shape == (N_STEPS, 8)
-    assert set(int(e) for e in dt.element_index) == {eid}
-    np.testing.assert_allclose(dt.values[-1], truth[:, 0], rtol=1e-12)
-    np.testing.assert_allclose(dc.values[-1], truth[:, 1], atol=1e-14)
-    # Zero before the peak, then monotone (no healing).
-    first_step = 0                      # u = U_MAX / N_STEPS = 0.2 U_PEAK
-    assert np.all(dt.values[first_step] == 0.0)
-    assert np.all(np.diff(dt.values, axis=0) >= -1e-14)
-
     with Results.from_ladruno(ladruno) as rl:
         comps = rl.elements.gauss.available_components()
         assert {"damage_tension", "damage_compression"} <= set(comps)
         lt = rl.elements.gauss.get(component="damage_tension")
+        lc = rl.elements.gauss.get(component="damage_compression")
+    assert lt.values.shape[1] == 8
     np.testing.assert_allclose(lt.values[-1], truth[:, 0], rtol=1e-12)
+    np.testing.assert_allclose(lc.values[-1], truth[:, 1], atol=1e-14)
+    # Zero before the peak (step 1 is u = 0.2 U_PEAK), then monotone
+    # (no healing).
+    assert np.all(lt.values[0] == 0.0)
+    assert np.all(np.diff(lt.values, axis=0) >= -1e-14)

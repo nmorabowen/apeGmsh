@@ -14,8 +14,7 @@ every element takes its two ``localForce`` stations. Each station is checked
 at ``rtol=1e-10`` against the live domain: ``eleResponse(tag,
 "localForce")`` in the force-beam ``section force`` convention every route
 shares (#2009): N and M are ``[-end_i, +end_j]``, V is ``[end_i, -end_j]``,
-for elastic, force and disp beams alike. For the elastic girders the
-same stations are also checked against a DomainCapture of the same steps.
+for elastic, force and disp beams alike.
 """
 from __future__ import annotations
 
@@ -26,10 +25,9 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
-from apeGmsh.results.capture.spec import DomainCaptureSpec
 
 from tests.test_results_recorder_tag_parity import _portal_fem
 
@@ -52,18 +50,18 @@ def _sectioned(make: str) -> Callable[[apeSees, Any], Any]:
     return build
 
 
-#: girder class -> (bridge builder, its DomainCapture stations are localForce)
-FAMILIES: dict[str, tuple[Callable[[apeSees, Any], Any], bool]] = {
+#: girder class -> bridge builder
+FAMILIES: dict[str, Callable[[apeSees, Any], Any]] = {
     "ElasticBeam2d": (
         lambda ops, tr: ops.element.elasticBeamColumn(
-            pg="Beam", transf=tr, A=0.02, E=2.0e11, Iz=3.0e-4), True),
+            pg="Beam", transf=tr, A=0.02, E=2.0e11, Iz=3.0e-4)),
     "ElasticTimoshenkoBeam2d": (
         lambda ops, tr: ops.element.ElasticTimoshenkoBeam(
             pg="Beam", transf=tr, E=2.0e11, G=8.0e10, A=0.02, Iz=3.0e-4,
-            Avy=0.015), True),
-    "ForceBeamColumn2d": (_sectioned("forceBeamColumn"), False),
-    "DispBeamColumn2d": (_sectioned("dispBeamColumn"), False),
-    "LadrunoDispBeamColumn2d": (_sectioned("LadrunoDispBeamColumn"), False),
+            Avy=0.015)),
+    "ForceBeamColumn2d": _sectioned("forceBeamColumn"),
+    "DispBeamColumn2d": _sectioned("dispBeamColumn"),
+    "LadrunoDispBeamColumn2d": _sectioned("LadrunoDispBeamColumn"),
 }
 
 
@@ -79,7 +77,7 @@ def _fem_to_ops(model_h5: str) -> dict[int, int]:
 
 
 def _solve(tmp: Path, family: str) -> dict[str, Any]:
-    build_girder, captured = FAMILIES[family]
+    build_girder = FAMILIES[family]
     fem = _portal_fem()
     ops = apeSees(fem, default_orientation=None)       # sequential tags
     ops.model(ndm=2, ndf=3)
@@ -113,34 +111,19 @@ def _solve(tmp: Path, family: str) -> dict[str, Any]:
     beam = [int(e) for e in fem.elements.select(pg="Beam").ids]
     assert any(fem_to_ops[e] != e for e in cols + beam)   # not vacuous
 
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.line_stations(pg="Beam", components=list(COMPS), name="girder")
-    cap_path = str(tmp / "capture.h5")
     live: dict[int, list[np.ndarray]] = {e: [] for e in cols + beam}
-    with ops.domain_capture(spec, path=cap_path, ops=emitter.ops) as cap:
-        cap.begin_stage("load", kind="static")
-        for _ in range(2):
-            assert emitter.analyze(steps=1) == 0
-            cap.step(t=emitter.ops.getTime())
-            for e in live:         # (2, 3): force-beam section convention
-                lf = np.asarray(
-                    emitter.ops.eleResponse(fem_to_ops[e], "localForce"))
-                assert lf.shape == (6,), (family, e, lf)
-                live[e].append(np.stack([SIGN * lf[0:3], -SIGN * lf[3:6]]))
-        cap.end_stage()
+    for _ in range(2):
+        assert emitter.analyze(steps=1) == 0
+        for e in live:             # (2, 3): force-beam section convention
+            lf = np.asarray(
+                emitter.ops.eleResponse(fem_to_ops[e], "localForce"))
+            assert lf.shape == (6,), (family, e, lf)
+            live[e].append(np.stack([SIGN * lf[0:3], -SIGN * lf[3:6]]))
     emitter.ops.remove("recorders")
 
-    capture = None
-    if captured:
-        om = OpenSeesModel.from_h5(cap_path, fem_root="/model")
-        with Results.from_native(cap_path, model=om) as rc:
-            capture = {
-                c: rc.elements.line_stations.get(component=c, ids=beam)
-                for c in COMPS
-            }
     return {
         "results": Results.from_mpco(mpco, fem=fem, model_h5=model_h5),
-        "cols": cols, "beam": beam, "capture": capture,
+        "cols": cols, "beam": beam,
         "live": {e: np.stack(v) for e, v in live.items()},
     }
 
@@ -186,25 +169,6 @@ def test_stations_are_the_local_force_ends(
             err_msg=f"{comp} of {portal['family']} element {eid}",
         )
 
-
-@pytest.mark.parametrize("comp", COMPS)
-def test_elastic_girder_matches_domain_capture(
-    portal: dict[str, Any], comp: str,
-) -> None:
-    if portal["capture"] is None:
-        pytest.skip(f"{portal['family']}: DomainCapture reads its sections, "
-                    f"not localForce")
-    mpco = portal["results"].elements.line_stations.get(
-        component=comp, ids=portal["beam"],
-    )
-    cap = portal["capture"][comp]
-    for eid in portal["beam"]:
-        np.testing.assert_allclose(
-            np.asarray(mpco.values)[:, _rows(mpco, eid)],
-            np.asarray(cap.values)[:, _rows(cap, eid)],
-            rtol=RTOL, atol=ATOL,
-            err_msg=f"{comp} of {portal['family']} girder {eid}",
-        )
 
 # ---------------------------------------------------------------------------
 # A refused bucket blocks only its own elements (#2020 review F1)

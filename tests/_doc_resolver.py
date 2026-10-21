@@ -85,17 +85,14 @@ _FILE_SUFFIXES = frozenset({
 })
 
 # Prose names these receivers by convention without always binding them in
-# a fence: `ops` is the bridge and `spec` is either recorder spec. The
+# a fence: `ops` is the bridge and `spec` is the recorder spec. The
 # incident's grid wrote `spec.capture(...)` and `ops.tcl(..., recorders=)`
 # on a page whose fences bound neither. Consulted for inline spans only,
 # and only when the fences never bound the name; with two candidates, an
 # attribute passes if either class has it.
 _CONVENTIONAL: dict[str, tuple[tuple[str, str], ...]] = {
     "ops": (("apeGmsh.opensees", "apeSees"),),
-    "spec": (
-        ("apeGmsh.results.capture", "DomainCaptureSpec"),
-        ("apeGmsh.results.spec", "ResolvedRecorderSpec"),
-    ),
+    "spec": (("apeGmsh.results.spec", "ResolvedRecorderSpec"),),
 }
 
 

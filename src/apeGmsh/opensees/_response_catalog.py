@@ -11,9 +11,9 @@ forces) into per-component arrays:
 - ``results.transcoders._recorder.RecorderTranscoder`` — parses
   OpenSees ``.out`` files. There is no META; the catalog is the only
   source of truth for column ordering.
-- ``results.capture._domain.DomainCapture`` — calls
-  ``ops.eleResponse(eid, *tokens)`` and gets a flat list of doubles.
-  Same: catalog is the only authority on what each entry means.
+- ``results.live`` — calls ``ops.eleResponse(eid, *tokens)`` on a
+  live domain and gets a flat list of doubles. Same: catalog is the
+  only authority on what each entry means.
 
 This module is the single shared keystone. v1 covers the few
 ``_ELEM_REGISTRY`` classes whose response shape is fixed by their
@@ -292,7 +292,7 @@ class CustomRuleLayout:
     match the section's response codes — is built at runtime via
     :func:`resolve_layout_from_gp_x` from the per-element ``GP_X``
     array (MPCO) or ``ops.eleResponse(eid, "integrationPoints")``
-    output (DomainCapture) plus the section's response code vector.
+    output (a live domain) plus the section's response code vector.
 
     Parameters
     ----------
@@ -779,9 +779,8 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # ``SRC/element/tetrahedron/TenNodeTetrahedron.cpp:1857``, now
     # ``static Vector stresses(6 * NumGaussPoints)``; regression test
     # ``tests/test_tet10_response_size.py``). On OLDER engines the
-    # DomainCapture and .out-transcoder paths still see only 6 values —
-    # the capture path refuses that mismatch loudly rather than
-    # mis-decoding it (see ``results/capture/_domain.py``).
+    # .out-transcoder path still sees only 6 values and refuses that
+    # mismatch loudly rather than mis-decoding it.
     ("TenNodeTetrahedron", IntRule.Tet_GL_2, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
         coord_system="simplex_tet_node0",
@@ -867,7 +866,7 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # ``ops.eleResponse(eid, "stresses")`` returns zeros even after a
     # converged analysis (the resisting forces and ``"strains"`` paths
     # are correct). MPCO probes materials directly and works around
-    # this; DomainCapture and the .out transcoder hit the broken path.
+    # this; the .out transcoder hits the broken path.
     # Catalog entry retained for MPCO read support.
     ("BbarBrick", IntRule.Hex_GL_2, "stress"): _continuum_layout(
         n_gp=8, natural_coords=_HEX_GL_2_COORDS,
@@ -1205,16 +1204,16 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # corner-edge-face-centroid walk in LadrunoHex20Shape.h GP27[],
     # bit-identical to ``_HEX_GL_3_COORDS`` (live-probed: max |Δ|=0).
     # Unlike LadrunoBrick, ``formulation="uri"`` does NOT mirror onto 27
-    # slots: it returns a genuine Vector(48) = 8×6 Hex_GL_2. DomainCapture
-    # keys only on eleType, so a second non-Custom Hex_GL_2 row would make
-    # ``_class_int_rule`` return None and drop *all* LadrunoBrick20
-    # elements (std included). Catalog std only; uri fails loud at
-    # ``_GaussCapturer.step`` (48 vs 162) — use the .ladruno recorder
-    # (which re-routes per-element via basisInfo) for uri gauss. MPCO
+    # slots: it returns a genuine Vector(48) = 8×6 Hex_GL_2. A reader that
+    # keys only on eleType would find a second non-Custom Hex_GL_2 row
+    # ambiguous and drop *all* LadrunoBrick20 elements (std included).
+    # Catalog std only; a uri read against this entry fails loud on the
+    # size (48 vs 162) — use the .ladruno recorder (which re-routes
+    # per-element via basisInfo) for uri gauss. MPCO
     # writes bracket rule 0 (NoIntegrationRule) for every Ladruno-band
     # tag including 33018 — same unreachable gap as LadrunoBrick today;
-    # no Custom/NoIntegrationRule mirror here (would also break
-    # ``_class_int_rule``).
+    # no Custom/NoIntegrationRule mirror here (it would make the
+    # class's rule ambiguous too).
     ("LadrunoBrick20", IntRule.Hex_GL_3, "stress"): _continuum_layout(
         n_gp=27, natural_coords=_HEX_GL_3_COORDS,
         coord_system="isoparametric",
@@ -1272,7 +1271,7 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # fine, displacements and ``"forces"`` are correct, only the
     # per-GP probe is broken). MPCO works around this via direct
     # section probing. Catalog entries retained for MPCO support.
-    # ASDShellQ4 is correct via DomainCapture as well.
+    # ASDShellQ4 is correct on every route.
     ("ShellMITC4", IntRule.Quad_GL_2, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
         coord_system="isoparametric",
@@ -1329,8 +1328,8 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # the loop fills only 9*8 = 72 entries — ``ops.eleResponse(eid,
     # "stresses")`` returns 84 values (the last 12 are uninitialized).
     # The catalog reflects the *correct* 72-component layout that
-    # MPCO writes; DomainCapture against this element rejects the
-    # 84-value return. Catalog correct for MPCO.
+    # MPCO writes; a live probe of this element sees the 84-value
+    # return, which the size check rejects. Catalog correct for MPCO.
     ("ShellMITC9", IntRule.Quad_GL_3, "stress"): _continuum_layout(
         n_gp=9, natural_coords=_QUAD_GL_3_COORDS_MITC9,
         coord_system="isoparametric",
@@ -1350,7 +1349,7 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     # NOTE: same broken-eleResponse pattern as the older quad shells
     # above — ``ops.eleResponse(eid, "stresses")`` returns zeros.
     # Catalog correct for MPCO. Use ASDShellT3 if you need
-    # DomainCapture support on triangles.
+    # every route on triangles.
     ("ShellDKGT", IntRule.Triangle_GL_2C, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
         coord_system="simplex_tri_node0",
@@ -1492,8 +1491,8 @@ del _cls, _rule, _coords, _tag
 # force table.
 #
 # Notes on disp-based beam-columns: ``DispBeamColumn{2d,3d}`` does not
-# expose ``ops.eleResponse(eid, "integrationPoints")`` — DomainCapture
-# v1 cannot drive these directly. MPCO writes their ``GP_X`` to disk,
+# expose ``ops.eleResponse(eid, "integrationPoints")`` — a live probe
+# cannot drive these directly. MPCO writes their ``GP_X`` to disk,
 # so the read path works fine. See
 # :doc:`internal_docs/plan_phase_11b_line_stations` §"Custom-rule
 # complexity" for the Tier 1/2/3 discovery story.
@@ -2069,7 +2068,7 @@ def is_nodal_force_catalogued(class_name: str, token: str) -> bool:
 #                       My → bending_moment_y, Mz → bending_moment_z
 #
 # OpenSees's ``localForce`` returns *joint-on-element* resisting
-# forces. Every route (DomainCapture, MPCO, ``.ladruno``, ``.out``)
+# forces. Every route (MPCO, ``.ladruno``, ``.out``)
 # maps them to the force-beam ``section force`` convention with
 # :func:`local_force_station_signs`, so adjacent force and elastic
 # beams agree at a shared node.
@@ -2143,7 +2142,7 @@ def local_force_station_signs(components: "tuple[str, ...] | list[str]") -> ndar
     xi = +1). ``values * signs`` over an ``[end_i | end_j]`` layout
     gives the force-beam ``section force`` convention, so N, V and M
     are continuous across a force/elastic junction. The one sign
-    table for DomainCapture, MPCO, ``.ladruno`` and ``.out``.
+    table for MPCO, ``.ladruno`` and ``.out``.
 
     Raises ``ValueError`` for a component outside the six beam
     resultants: an unknown one has no measured sign.
@@ -2251,10 +2250,9 @@ def is_zerolength_catalogued(class_name: str, token: str) -> bool:
 # ---------------------------------------------------------------------
 #
 # These helpers serve every Phase 11b consumer that has to decode
-# line-station data without a META block — i.e. DomainCapture (which
-# probes ops live) and the .out transcoder (which reads text recorder
-# files). MPCO read does not use them: META/COMPONENTS carries the
-# section codes verbatim.
+# line-station data without a META block — i.e. the .out transcoder
+# (which reads text recorder files). MPCO read does not use them:
+# META/COMPONENTS carries the section codes verbatim.
 
 # Inferred section codes by ``(dimension, n_components)`` under
 # canonical aggregation order. Codes match
@@ -2645,8 +2643,8 @@ _MPCO_LAYER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
 # "strains")`` returns an empty vector even though every Gauss point
 # has a valid ``getStrain()`` on its NDMaterial. The
 # ``"material"`` / ``"integrPoint"`` branch (which delegates to the
-# material's own ``setResponse``) does work, so live capture and
-# recorders can fall back to per-Gauss-point queries via
+# material's own ``setResponse``) does work, so recorders can fall
+# back to per-Gauss-point queries via
 # ``ops.eleResponse(eid, "material", "<gp>", "strain")`` — the same
 # path MPCO uses internally (see MPCORecorder.cpp:6123–6126, 6276–
 # 6278). Stress is unaffected because Tri31 does have a working
@@ -2697,30 +2695,6 @@ ZERO_GAUSS_PROBE_CLASSES: frozenset[str] = frozenset({
 })
 
 
-def has_dead_gauss_probe(class_name: str, *, algorithm: str | None) -> bool:
-    """Whether a probe of this class can read stale section state.
-
-    ``algorithm`` is the OpenSees name of the solution algorithm the
-    domain solves with (``"Linear"``, ``"Newton"``, ...), or ``None``
-    when the caller does not know it.
-
-    True for a class in :data:`ZERO_GAUSS_PROBE_CLASSES` under
-    ``Linear`` (measured stale, see the set's note), under an unknown
-    algorithm (``None``) and under any name this predicate does not
-    classify (a newer or forked algorithm): those fail closed, and the
-    caller skips the element with a reason rather than crash the run.
-    False for every other class, and for a listed class under one of the
-    bridge's iterating algorithms, which re-form the residual and leave
-    the sections at the converged state.
-    """
-    if class_name not in ZERO_GAUSS_PROBE_CLASSES:
-        return False
-    return algorithm not in {
-        "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
-        "BFGS", "Broyden",
-    }
-
-
 #: Catalog tokens that are MATERIAL responses with no element-level
 #: branch on any catalogued host: ``ops.eleResponse(eid, "damage")`` answers
 #: nothing on Brick / LadrunoBrick / FourNodeQuad / LadrunoQuad, while
@@ -2731,21 +2705,8 @@ def has_dead_gauss_probe(class_name: str, *, algorithm: str | None) -> bool:
 PER_MATERIAL_TOKENS: frozenset[str] = frozenset({"damage"})
 
 
-def needs_per_material_query(class_name: str, catalog_token: str) -> bool:
-    """Whether live capture must read ``catalog_token`` per Gauss point.
-
-    True for a material-only token (:data:`PER_MATERIAL_TOKENS`) on any
-    class, and for the Tri31 strain case :func:`needs_per_material_strain`
-    covers.
-    """
-    return (
-        catalog_token in PER_MATERIAL_TOKENS
-        or needs_per_material_strain(class_name, catalog_token)
-    )
-
-
 def needs_per_material_strain(class_name: str, catalog_token: str) -> bool:
-    """Whether DomainCapture / recorder emit must use per-Gauss-point queries.
+    """Whether recorder emit must use per-Gauss-point queries.
 
     Returns True when the element class is in
     :data:`PER_MATERIAL_STRAIN_CLASSES` *and* the catalog token is the

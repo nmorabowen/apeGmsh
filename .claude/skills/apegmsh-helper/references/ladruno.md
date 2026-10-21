@@ -478,9 +478,8 @@ answers `False` for the wrong reason). The reader names the eight columns
 response — the one the fork's campaign actually leaned on. Both return a
 `GaussCensus` (count, `examined`, values, `element_index`, `natural_coords`,
 `global_coords(fem)`) at one instant. A per-Gauss-point census at every station
-multiplies wall time ~5–8×: sample at stations, not steps. The legacy
-in-process `DomainCapture` route never adopted these responses (ADR 0108 D5
-names the seam); read them from a recorder file.
+multiplies wall time ~5–8×: sample at stations, not steps. Read these
+responses from a recorder file (the `.ladruno` material channel).
 
 ## LadrunoBrick (unified 8-node hex)
 

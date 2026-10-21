@@ -472,7 +472,7 @@ def _write_mode_stages(
     """Write one ``kind="mode"`` stage per eigenvalue into an open
     :class:`~apeGmsh.results.writers._native.NativeWriter`.
 
-    The layout ``DomainCapture.capture_modes`` writes, shared by
+    The mode-stage layout, shared by
     :meth:`ParallelModalResult.to_native` and
     :meth:`~apeGmsh.opensees.analysis.eigen.EigenResult.to_native`:
     stage ``mode_<k>`` at ``time = [0.0]`` with the
@@ -1094,7 +1094,7 @@ class ParallelModalResult:
         """Write the harvested modes as mode-kind stages in a native
         results H5 (ADR 0077 P4 viewer binding).
 
-        Produces the layout ``DomainCapture.capture_modes`` writes: one
+        Produces the mode-stage layout of :func:`_write_mode_stages`: one
         stage per mode (``name="mode_<k>"``, ``kind="mode"``, with
         ``eigenvalue`` / ``frequency_hz`` / ``period_s`` /
         ``mode_index``) at a single ``time = [0.0]`` station, carrying
@@ -1158,7 +1158,7 @@ class ParallelModalResult:
         ``fem`` must be the same FEM snapshot the deck was emitted from
         (the recorder column order is the sorted mesh node tags).
         A non-positive eigenvalue warns and writes ``frequency_hz =
-        period_s = 0`` (the ``capture_modes`` convention). Requires the
+        period_s = 0`` (the mode-stage convention). Requires the
         P3 shape harvest; a run dir without the sidecar fails loud.
 
         Raises

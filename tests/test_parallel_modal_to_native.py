@@ -1,11 +1,11 @@
 """ADR 0077 P4 — ``ParallelModalResult.to_native`` viewer binding.
 
 Writes harvested distributed-FEAST mode shapes as mode-kind stages in a
-native results H5 — the exact ``DomainCapture.capture_modes`` layout —
-so ``Results.from_native`` / ``r.modes`` / the stage-aware viewer
-consume the distributed run with zero new viewer code. Reuses the
-capture suite's ``_MockFem`` (the writer needs a real neutral zone for
-the bind-contract round trip).
+native results H5 — the mode-stage layout ``EigenResult.to_native``
+shares — so ``Results.from_native`` / ``r.modes`` / the stage-aware
+viewer consume the distributed run with zero new viewer code. Uses the
+suite's ``_MockFem`` (the writer needs a real neutral zone for the
+bind-contract round trip).
 """
 from __future__ import annotations
 
@@ -22,8 +22,7 @@ from apeGmsh.opensees.analysis.modal import (
     RotationRolesUnavailableWarning,
 )
 
-from tests.conftest import _open_model_from_h5
-from tests.test_results_domain_capture import _MockFem
+from tests.conftest import _MockFem, _open_model_from_h5
 
 
 class _Cells(list):  # type: ignore[type-arg]
@@ -82,7 +81,7 @@ def _write_job(
 
 def test_to_native_round_trips_through_results_modes(tmp_path: Path) -> None:
     """ndf=6 harvest → mode-kind stages with displacement_* + rotation_*
-    readable via ``Results.from_native(...).modes`` (the capture_modes
+    readable via ``Results.from_native(...).modes`` (the mode-stage
     surface). Every node's own ndf is 6 in 3-D (``fem`` says so), so
     DOFs 4-6 are rotations without ``model_h5`` (#2203)."""
     job = _write_job(
@@ -255,7 +254,7 @@ def test_to_native_round_trips_a_MERGED_partitioned_harvest(
 
 
 def test_to_native_nonpositive_eigenvalue_warns(tmp_path: Path) -> None:
-    """Mirror of the capture_modes contract: a spurious mode is written
+    """The mode-stage contract: a spurious mode is written
     (eigenvalue preserved) with frequency/period zeroed, loudly."""
     job = _write_job(
         tmp_path,

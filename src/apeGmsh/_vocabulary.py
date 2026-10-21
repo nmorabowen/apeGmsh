@@ -216,8 +216,8 @@ DERIVED_SHELL_SCALARS: tuple[str, ...] = (
 # grouping, so keep it in the back-compat union below.
 _MATERIAL_DERIVED_SCALARS: tuple[str, ...] = ("equivalent_plastic_strain",)
 
-# Back-compat union alias. Recorder allow-lists (``opensees/recorder.py``,
-# ``results/capture/spec.py``) and older imports reference ``DERIVED_SCALARS``
+# Back-compat union alias. Recorder allow-lists (``opensees/recorder.py``)
+# and older imports reference ``DERIVED_SCALARS``
 # directly; keep it as the full set so those keep resolving.
 DERIVED_SCALARS: tuple[str, ...] = (
     DERIVED_STRESS_SCALARS + DERIVED_STRAIN_SCALARS
@@ -288,8 +288,7 @@ ALL_CANONICAL: frozenset[str] = frozenset(
 #
 # The one table every recorder category check derives from: the
 # declaration (``opensees.recorder.RecorderRecord``), the resolved record
-# (``results.spec.ResolvedRecorderRecord``) and DomainCapture (which
-# subtracts what it cannot capture in-process). A category answers which
+# (``results.spec.ResolvedRecorderRecord``). A category answers which
 # topology level a component lives at; whether a given route (``.out``,
 # MPCO, the fork's file) records it is that route's own refusal.
 #

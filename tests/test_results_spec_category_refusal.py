@@ -11,8 +11,8 @@ accepted and recorded nothing, or another response under its name:
 The declaration (``opensees.recorder.RecorderRecord``) let any canonical
 through in the element categories, and two hand-kept category tables
 disagreed on 20 components. Now one table,
-``apeGmsh._vocabulary.CATEGORY_COMPONENTS``, is what the declaration, the
-resolved record and DomainCapture (less what it cannot capture) read, and a
+``apeGmsh._vocabulary.CATEGORY_COMPONENTS``, is what the declaration and the
+resolved record read, and a
 wrong-category component refuses at construction, naming its category.
 
 Oracles:
@@ -40,7 +40,6 @@ import pytest
 
 from apeGmsh import _vocabulary as voc
 from apeGmsh.opensees import recorder as decl
-from apeGmsh.results.capture import spec as capture
 from apeGmsh.results.readers._ladruno_live import fork_recorder_args
 from apeGmsh.results.spec import _emit
 from apeGmsh.results.spec import _resolved
@@ -184,7 +183,6 @@ def test_categories_agree_everywhere() -> None:
     assert cats == tuple(voc.CATEGORY_INDEXED_STEMS)
     assert _resolved.ALL_CATEGORIES == cats
     assert decl.ALL_RECORDER_CATEGORIES == cats
-    assert capture.ALL_CATEGORIES == cats
 
 
 def test_table_holds_canonical_names_and_covers_every_canonical() -> None:
@@ -195,29 +193,15 @@ def test_table_holds_canonical_names_and_covers_every_canonical() -> None:
             assert voc.is_canonical(stem + "0"), stem
 
 
-def test_capture_table_is_the_table_less_capture_exclusions() -> None:
-    for category, comps in voc.CATEGORY_COMPONENTS.items():
-        if category == "modal":
-            assert category not in capture._CATEGORY_COMPONENTS
-            continue
-        assert capture._CATEGORY_COMPONENTS[category] == (
-            comps - capture._CAPTURE_UNSUPPORTED)
-
-
 @pytest.mark.parametrize("component", _every_candidate())
 def test_every_component_agrees_on_every_path(component: str) -> None:
-    """Declaration, resolved record and the table answer alike, and
-    DomainCapture never accepts what the table refuses."""
+    """Declaration, resolved record and the table answer alike."""
     for category in voc.CATEGORY_COMPONENTS:
         want = voc.in_category(category, component)
         assert _accepts(lambda: _resolved_record(category, (component,))) \
             is want, (category, component)
         assert _accepts(lambda: _decl_record(category, (component,))) \
             is want, (category, component)
-        if category != "modal":
-            got = _accepts(lambda: capture._validate_components_for_category(
-                category, (component,)))
-            assert not (got and not want), (category, component)
     assert voc.categories_of(component) == tuple(
         c for c in voc.CATEGORY_COMPONENTS if voc.in_category(c, component))
 

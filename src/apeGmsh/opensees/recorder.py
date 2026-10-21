@@ -1403,7 +1403,7 @@ ALL_RECORDER_CATEGORIES: tuple[str, ...] = (
 
 # Which category records each component is
 # ``apeGmsh._vocabulary.CATEGORY_COMPONENTS``, the one table the
-# resolved record and DomainCapture read too. A component outside its
+# resolved record reads too. A component outside its
 # category fails validation unless supplied via ``raw=`` (the escape
 # hatch for non-catalogued OpenSees tokens).
 

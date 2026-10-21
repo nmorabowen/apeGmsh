@@ -1,8 +1,7 @@
 """The shell stress resultants are reachable from a declarative spec.
 
 ADR 0098 A6.6 R2. ``_vocabulary.SHELL_STRESS_RESULTANTS`` named all
-eight and ``_domain._gauss_record_tokens`` was written for them, but
-they were never wired into ``ALL_CANONICAL`` — so
+eight, but they were never wired into ``ALL_CANONICAL`` — so
 ``spec.gauss(components=["membrane_force_xx", ...])`` was accepted at
 declaration and died at resolve with ``Unknown component
 'membrane_force_xx'``. Shells could not be contoured at all.
@@ -17,30 +16,30 @@ Two halves, both gated here:
   ``ops.eleResponse(eid, "stresses")`` with a correctly sized vector of
   ZEROS (or, from the second step on, the previous step's state), so
   making the vocabulary reachable would have made a flat contour the
-  default shell picture. DomainCapture skips those classes with a
-  reason instead. Under Newton the same probes are correct (#1992),
+  default shell picture. The bridge emit warns on those classes
+  instead (#2001). Under Newton the same probes are correct (#1992),
   which the ``live`` cases at the end of this file measure.
 
-The live-ops cases carry the load: a unit test that only asks
-``is_canonical`` would pass against a vocabulary wired to nothing.
+The in-process capture route these cases once drove was deleted in
+#2191; the recorder routes (``.out``, MPCO, ``.ladruno``) are measured
+below and in ``tests/test_results_catalog_out_real.py``.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from apeGmsh._vocabulary import (
+    CATEGORY_COMPONENTS,
     SHELL_GENERALIZED_STRAINS,
     SHELL_STRESS_RESULTANTS,
     expand_shorthand,
+    in_category,
     is_canonical,
 )
-from apeGmsh.results.capture.spec import DomainCaptureSpec
 from tests.conftest import _open_model_from_h5
-from tests.fixtures.capture_tags import identity_tags
 
 
 class _LazyOps:
@@ -97,126 +96,57 @@ def test_shell_shorthands_do_not_clip_with_ndm() -> None:
     "name", SHELL_STRESS_RESULTANTS + SHELL_GENERALIZED_STRAINS,
 )
 def test_shell_component_belongs_to_gauss(name: str) -> None:
-    assert DomainCaptureSpec.where_does(name) == ("gauss",)
+    assert [c for c in CATEGORY_COMPONENTS if in_category(c, name)] == [
+        "gauss",
+    ]
 
 
 def test_gauss_shorthands_advertise_the_shell_pair() -> None:
-    """What ``shorthands_for`` offers is what the spec will accept."""
-    offered = DomainCaptureSpec.shorthands_for("gauss")
-    assert offered.get("shell_resultant") == SHELL_STRESS_RESULTANTS
-    assert offered.get("shell_deformation") == SHELL_GENERALIZED_STRAINS
+    """The recorder declaration accepts the shell pair under ``gauss``."""
+    from apeGmsh.opensees.recorder import build_recorder_declaration
+
+    for shorthand, expanded in (
+        ("shell_resultant", SHELL_STRESS_RESULTANTS),
+        ("shell_deformation", SHELL_GENERALIZED_STRAINS),
+    ):
+        decl = build_recorder_declaration(
+            ndm=3, ndf=6, pg="Wall", gauss=shorthand,
+        )
+        assert decl.records[0].components == expanded, shorthand
 
 
 def test_resultants_and_generalized_strains_cannot_share_a_record() -> None:
     """They are work-conjugates under different ``eleResponse`` keywords."""
-    from apeGmsh.results.capture._domain import _gauss_record_tokens
-    from apeGmsh.results.capture.spec import ResolvedDomainCaptureRecord
+    from apeGmsh.results.spec._emit import _gauss_record_ops_keyword
+    from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
 
-    ok = ResolvedDomainCaptureRecord(
+    ok = ResolvedRecorderRecord(
         category="gauss", name="r", components=SHELL_STRESS_RESULTANTS,
         dt=None, n_steps=None, element_ids=np.array([1], dtype=np.int64),
     )
-    assert _gauss_record_tokens(ok) == ("stress", "stresses")
+    assert _gauss_record_ops_keyword(ok) == "stresses"
 
-    mixed = ResolvedDomainCaptureRecord(
+    mixed = ResolvedRecorderRecord(
         category="gauss", name="r",
         components=("membrane_force_xx", "curvature_xx"),
         dt=None, n_steps=None, element_ids=np.array([1], dtype=np.int64),
     )
     with pytest.raises(ValueError, match="work-conjugate"):
-        _gauss_record_tokens(mixed)
+        _gauss_record_ops_keyword(mixed)
 
 
 # =====================================================================
-# Live ops — the end-to-end path the declaration boundary guards
+# G4 — the picker offers the resultants only where a shell is drawn
 # =====================================================================
-
-class _MinimalFem:
-    """Only what DomainCapture reads: node ids/coords and a hash."""
-
-    def __init__(self, node_ids: np.ndarray, coords: np.ndarray) -> None:
-        self.nodes = SimpleNamespace(ids=node_ids, coords=coords)
-        self.elements = []
-
-    @property
-    def snapshot_id(self) -> str:
-        from apeGmsh.mesh._femdata_hash import compute_snapshot_id
-        return compute_snapshot_id(self)
-
-    def to_native_h5(self, group) -> None:
-        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
-        write_neutral_zone_into_group(self, group, ndf=6)
-
 
 _SHELL_COORDS = np.array([
     [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
 ], dtype=np.float64)
 
-# A free-standing brick, 10 m away so it shares no node with the shell.
-_BRICK_COORDS = np.array([
-    [10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [11.0, 1.0, 0.0], [10.0, 1.0, 0.0],
-    [10.0, 0.0, 1.0], [11.0, 0.0, 1.0], [11.0, 1.0, 1.0], [10.0, 1.0, 1.0],
-], dtype=np.float64)
-
 _SHELL_EID = 1
 _BRICK_EID = 2
-
-
-def _build_model(shell_class: str, *, with_brick: bool) -> _MinimalFem:
-    """One loaded shell (+ optionally one loaded brick) in one domain."""
-    ops.wipe()
-    ops.model("basic", "-ndm", 3, "-ndf", 6)
-
-    for nid, xyz in enumerate(_SHELL_COORDS, start=1):
-        ops.node(nid, *(float(v) for v in xyz))
-    for nid in (1, 4):
-        ops.fix(nid, 1, 1, 1, 1, 1, 1)
-    ops.section("ElasticMembranePlateSection", 1, 2.0e10, 0.2, 0.2, 2400.0)
-    ops.element(shell_class, _SHELL_EID, 1, 2, 3, 4, 1)
-
-    node_ids = list(range(1, 5))
-    coords = _SHELL_COORDS
-    if with_brick:
-        for k, xyz in enumerate(_BRICK_COORDS, start=11):
-            ops.node(k, *(float(v) for v in xyz), "-ndf", 3)
-        for k in (11, 12, 13, 14):
-            ops.fix(k, 1, 1, 1)
-        ops.nDMaterial("ElasticIsotropic", 2, 2.0e7, 0.25)
-        ops.element("stdBrick", _BRICK_EID, *range(11, 19), 2)
-        node_ids += list(range(11, 19))
-        coords = np.vstack([coords, _BRICK_COORDS])
-
-    ops.timeSeries("Linear", 1)
-    ops.pattern("Plain", 1, 1)
-    for nid in (2, 3):
-        ops.load(nid, 0.0, 0.0, -1.0e4, 0.0, 0.0, 0.0)
-    if with_brick:
-        for k in (15, 16, 17, 18):
-            ops.load(k, 0.0, 0.0, -1.0e3)
-
-    ops.system("FullGeneral")
-    ops.numberer("Plain")
-    ops.constraints("Plain")
-    ops.test("NormDispIncr", 1e-8, 10)
-    ops.algorithm("Linear")
-    ops.integrator("LoadControl", 1.0)
-    ops.analysis("Static")
-    assert ops.analyze(1) == 0
-    return _MinimalFem(np.array(node_ids, dtype=np.int64), coords)
-
-
-def _capture(
-    spec: DomainCaptureSpec, fem: _MinimalFem, path: Path,
-    *, algorithm: str | None,
-) -> None:
-    from apeGmsh.results.capture._domain import DomainCapture
-
-    resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
-    with DomainCapture(resolved, path, fem, algorithm=algorithm,
-                       tag_map=identity_tags(resolved)) as cap:
-        cap.begin_stage("static_load", kind="static")
-        cap.step(t=ops.getTime())
-        cap.end_stage()
+_STRESS = ("stress_xx", "stress_yy", "stress_zz",
+           "stress_xy", "stress_yz", "stress_xz")
 
 
 def _gauss_level():
@@ -224,108 +154,55 @@ def _gauss_level():
     return ResultLevel.GAUSS
 
 
-@pytest.mark.live
-def test_declared_shell_record_captures_real_resultants(
-    tmp_path: Path,
-) -> None:
-    """The whole point: declaration -> resolve -> capture -> read.
+def _two_family_file(tmp_path: Path) -> Path:
+    """One stage, two gauss groups: a shell's resultants, a brick's stress.
 
-    This is the case that raised ``Unknown component
-    'membrane_force_xx'`` before the wiring, and it asserts the values
-    are non-zero because a slab of zeros is what the upstream shells
-    return and is indistinguishable from success at every other layer.
+    Written with :class:`NativeWriter`, the writer every native route
+    shares. The values are placeholders: the picker law asks which
+    components a scope offers, not what they read.
     """
-    fem = _build_model("ASDShellQ4", with_brick=False)
-    spec = DomainCaptureSpec()
-    spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
+    from apeGmsh.results.writers import NativeWriter
 
-    path = tmp_path / "cap.h5"
-    _capture(spec, fem, path, algorithm="Linear")
-
-    from apeGmsh.results import Results
-    with Results.from_native(
-        path, fem=fem, model=_open_model_from_h5(path),
-    ) as r:
-        stage = r.stage(r.stages[0].id)
-        peak = {}
-        for name in SHELL_STRESS_RESULTANTS:
-            slab = stage.elements.gauss.get(component=name)
-            assert slab.values.shape == (1, 4), name
-            peak[name] = float(np.abs(slab.values).max())
-
-    assert max(peak.values()) > 0.0, (
-        f"every shell resultant came back zero: {peak}. A correctly "
-        f"sized slab of zeros is exactly what the upstream shells "
-        f"return, so this is the assertion that distinguishes a real "
-        f"capture from a dead per-Gauss-point probe."
-    )
-    # Transverse tip load on a cantilever strip — bending dominates.
-    assert peak["bending_moment_xx"] > peak["membrane_force_xx"]
-
-
-@pytest.mark.live
-def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
-    tmp_path: Path,
-) -> None:
-    """Under ``algorithm Linear``, ``ShellMITC4`` records nothing, loudly.
-
-    ``_build_model`` solves with ``algorithm Linear``, which never
-    re-forms the residual after its solve, so the sections never see
-    the converged displacement: the element solves correctly (the
-    assertion on tip displacement below holds) and the probe still
-    answers zeros. Recording that would contour ``wall`` one flat
-    colour and read as "unstressed". Under Newton the probe is correct
-    and this skip discards real data; see
-    ``test_domain_capture_keeps_listed_shell_under_newton``.
-    """
-    fem = _build_model("ShellMITC4", with_brick=False)
-    assert abs(ops.nodeDisp(3, 3)) > 0.0, "the element itself must solve"
-    assert max(abs(v) for v in ops.eleResponse(_SHELL_EID, "stresses")) == 0.0
-
-    spec = DomainCaptureSpec()
-    spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
-
-    path = tmp_path / "cap.h5"
-    with pytest.warns(UserWarning, match="stale section state"):
-        _capture(spec, fem, path, algorithm="Linear")
-
-    from apeGmsh.results import Results
-    with Results.from_native(
-        path, fem=fem, model=_open_model_from_h5(path),
-    ) as r:
-        stage_id = r.stages[0].id
-        assert r._reader.available_components(
-            stage_id, _gauss_level(),
-        ) == [], "a skipped class must leave no slab behind"
+    path = tmp_path / "two_family.h5"
+    with NativeWriter(path) as w:
+        w.open()
+        sid = w.begin_stage(
+            name="static_load", kind="static", time=np.array([1.0]),
+        )
+        w.write_gauss_group(
+            sid, "partition_0", "shell",
+            class_tag=203, int_rule=0,
+            element_index=np.array([_SHELL_EID], dtype=np.int64),
+            natural_coords=np.zeros((4, 2)),
+            components={
+                c: np.ones((1, 1, 4)) for c in SHELL_STRESS_RESULTANTS
+            },
+        )
+        w.write_gauss_group(
+            sid, "partition_0", "solid",
+            class_tag=56, int_rule=0,
+            element_index=np.array([_BRICK_EID], dtype=np.int64),
+            natural_coords=np.zeros((8, 3)),
+            components={c: np.ones((1, 1, 8)) for c in _STRESS},
+        )
+        w.end_stage()
+    return path
 
 
-# =====================================================================
-# G4 — the picker offers the resultants only where a shell is drawn
-# =====================================================================
-
-@pytest.mark.live
 def test_scoped_components_separate_shell_from_solid(tmp_path: Path) -> None:
     """The A6.6 picker law, on the two-family case it exists for.
 
-    One file, two gauss records: a brick carrying ``stress_*`` and a
+    One file, two gauss groups: a brick carrying ``stress_*`` and a
     shell carrying the resultants. A pane scoped to the shell must be
     offered the resultants and NOT ``stress_zz``; a pane scoped to the
     brick, the reverse. This is the synthetic fixture A6.6 asked for —
     the bench is too expensive to be a gate.
     """
-    fem = _build_model("ASDShellQ4", with_brick=True)
-    spec = DomainCaptureSpec()
-    spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
-    spec.gauss(components="stress", ids=[_BRICK_EID], name="solid")
-
-    path = tmp_path / "cap.h5"
-    _capture(spec, fem, path, algorithm="Linear")
+    path = _two_family_file(tmp_path)
 
     from apeGmsh.results import Results
     from apeGmsh.viewers.session._realize import _components_in_scope
-    with Results.from_native(
-        path, fem=fem, model=_open_model_from_h5(path),
-    ) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         stage_id = r.stages[0].id
         # Asked through the SAME helper the inspector's pickers use,
         # not the reader directly — a reader that answers correctly
@@ -384,8 +261,7 @@ def _build_uniaxial(
 ) -> dict[str, list[float]]:
     """Solve the uniaxial-tension square; return N11 per step per probe.
 
-    The domain is left built (not wiped) so a caller can capture it; a
-    caller reading ``out_file`` must ``ops.wipe()`` first to flush it.
+    A caller reading ``out_file`` must ``ops.wipe()`` first to flush it.
     """
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 6)
@@ -487,182 +363,6 @@ def test_listed_shell_is_stale_under_linear_on_every_route(
             got, stale, rtol=1e-9, atol=0.0,
             err_msg=f"{shell_class} under Linear, route {route}",
         )
-
-
-# =====================================================================
-# #2001 — DomainCapture skips by algorithm, not by class alone
-# =====================================================================
-
-_ITERATING = (
-    "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
-    "BFGS", "Broyden",
-)
-
-
-@pytest.mark.parametrize("shell_class", _MEASURED)
-def test_predicate_is_stale_only_under_linear_or_unknown(
-    shell_class: str,
-) -> None:
-    from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
-    assert has_dead_gauss_probe(shell_class, algorithm="Linear")
-    assert has_dead_gauss_probe(shell_class, algorithm=None)
-    for name in _ITERATING:
-        assert not has_dead_gauss_probe(shell_class, algorithm=name), name
-
-
-def test_predicate_ignores_unlisted_classes_and_fails_closed_on_unknown_names(
-) -> None:
-    """An unclassified name (a typo, a forked algorithm) skips: it must
-    not crash the run, and it must not trust the probe."""
-    from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
-    assert not has_dead_gauss_probe("ASDShellQ4", algorithm="Linear")
-    assert not has_dead_gauss_probe("ASDShellQ4", algorithm=None)
-    assert has_dead_gauss_probe("ShellMITC4", algorithm="linear")
-    assert has_dead_gauss_probe("ShellMITC4", algorithm="LadrunoNewton")
-
-
-def test_iterating_set_is_every_bridge_algorithm_but_linear() -> None:
-    """A new bridge algorithm must be classified in the predicate."""
-    from apeGmsh.opensees.analysis import algorithm as algo_mod
-    from apeGmsh.opensees.analysis.algorithm import SolutionAlgorithm
-    bridge = {
-        name for name in algo_mod.__all__
-        if isinstance(getattr(algo_mod, name), type)
-        and issubclass(getattr(algo_mod, name), SolutionAlgorithm)
-        and getattr(algo_mod, name) is not SolutionAlgorithm
-    }
-    assert bridge == {"Linear", *_ITERATING}
-
-
-@pytest.mark.parametrize(
-    ("flat", "stages", "rungs", "expected"),
-    [
-        ((), (), (), None),
-        (("Newton",), (), (), "Newton"),
-        (("Linear",), (), (), "Linear"),
-        (("Newton",), ("Linear",), (), "Linear"),
-        ((), ("KrylovNewton", "Newton"), (), "KrylovNewton"),
-        ((), ("Newton",), ("Linear",), "Linear"),
-        ((), ("Newton",), ("BFGS",), "BFGS"),
-    ],
-)
-def test_bridge_domain_capture_passes_the_declared_algorithm(
-    flat: tuple[str, ...], stages: tuple[str, ...], rungs: tuple[str, ...],
-    expected: str | None, tmp_path: Path,
-) -> None:
-    """``ops.domain_capture`` hands the capture the declared algorithm:
-    any Linear wins (a stage's ladder rung included), nothing declared is
-    unknown (None). ``rungs`` is a ladder on the last stage."""
-    from apeGmsh.opensees import apesees
-    from apeGmsh.opensees.analysis import algorithm as algo_mod
-
-    resolved = SimpleNamespace(ndm=3, ndf=6, records=())
-    spec = SimpleNamespace(
-        _resolve_with_explicit_ndm_ndf=lambda fem, ndm, ndf: resolved,
-    )
-    bridge = SimpleNamespace(
-        _ndm=3, _ndf=6, _fem=object(),
-        _primitives=[getattr(algo_mod, n)() for n in flat],
-        _stage_records=[
-            SimpleNamespace(algorithm=getattr(algo_mod, n)(), strategy=None)
-            for n in stages
-        ] + [SimpleNamespace(
-            algorithm=None,
-            strategy=SimpleNamespace(
-                rungs=tuple(getattr(algo_mod, n)() for n in rungs),
-            ) if rungs else None,
-        )],
-    )
-    cap = apesees.apeSees.domain_capture(
-        bridge, spec, path=tmp_path / "cap.h5",  # type: ignore[arg-type]
-    )
-    assert cap._algorithm == expected
-
-
-def _capture_two_steps(
-    shell_class: str, solve_with: str, declared: str | None, path: Path,
-) -> None:
-    """Capture N11 at λ = 1 and λ = 2 from a domain solved ``solve_with``."""
-    from apeGmsh.results.capture._domain import DomainCapture
-
-    _build_uniaxial(shell_class, solve_with, 1)
-    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
-    spec = DomainCaptureSpec()
-    spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
-    resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
-    with DomainCapture(resolved, path, fem, algorithm=declared,
-                       tag_map=identity_tags(resolved)) as cap:
-        cap.begin_stage("tension", kind="static")
-        cap.step(t=ops.getTime())
-        assert ops.analyze(1) == 0
-        cap.step(t=ops.getTime())
-        cap.end_stage()
-    ops.wipe()
-
-
-def _gauss_components(path: Path, fem: _MinimalFem) -> list[str]:
-    from apeGmsh.results import Results
-    with Results.from_native(
-        path, fem=fem, model=_open_model_from_h5(path),
-    ) as r:
-        return list(r._reader.available_components(
-            r.stages[0].id, _gauss_level(),
-        ))
-
-
-@pytest.mark.live
-@pytest.mark.parametrize("shell_class", _MEASURED)
-def test_domain_capture_keeps_listed_shell_under_newton(
-    shell_class: str, tmp_path: Path,
-) -> None:
-    """Under Newton DomainCapture records N11 = 2·P·λ at every step."""
-    path = tmp_path / "cap.h5"
-    _capture_two_steps(shell_class, "Newton", "Newton", path)
-
-    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
-    from apeGmsh.results import Results
-    with Results.from_native(
-        path, fem=fem, model=_open_model_from_h5(path),
-    ) as r:
-        stage_id = r.stages[0].id
-        assert "membrane_force_xx" in r._reader.available_components(
-            stage_id, _gauss_level(),
-        ), f"DomainCapture skipped {shell_class}, whose probe is correct"
-        values = r.stage(stage_id).elements.gauss.get(
-            component="membrane_force_xx",
-        ).values
-    expected = np.array([1.0, 2.0])[:, None] * _N11_FULL
-    np.testing.assert_allclose(
-        values, np.broadcast_to(expected, values.shape),
-        rtol=_RTOL[shell_class], atol=0.0,
-    )
-
-
-@pytest.mark.live
-@pytest.mark.parametrize("shell_class", _MEASURED)
-@pytest.mark.parametrize(
-    ("declared", "named"),
-    [("Linear", "algorithm Linear"), (None, "an unknown algorithm")],
-)
-def test_domain_capture_skips_listed_shell_under_linear_or_unknown(
-    shell_class: str, declared: str | None, named: str, tmp_path: Path,
-) -> None:
-    """Under Linear, or when the capture is not told, the shell is skipped
-    loudly. The unknown case solves with Newton: the skip is the capture
-    failing closed, not a measurement of this domain."""
-    path = tmp_path / "cap.h5"
-    solve_with = "Linear" if declared == "Linear" else "Newton"
-    with pytest.warns(UserWarning, match="stale section state") as rec:
-        _capture_two_steps(shell_class, solve_with, declared, path)
-    text = "\n".join(str(w.message) for w in rec)
-    assert f"class {shell_class!r}" in text and named in text
-    assert "Solve with Newton" in text
-    assert "MPCO, which probes sections directly and is correct" not in text
-
-    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
-    assert _gauss_components(path, fem) == [], (
-        "a skipped class must leave no slab behind"
-    )
 
 
 # =====================================================================

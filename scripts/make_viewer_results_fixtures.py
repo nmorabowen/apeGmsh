@@ -20,7 +20,9 @@ them without this script (``test/results/results.test.ts``):
 
 with ``c`` the component's position in the lists below. Every file is a
 ``domain_capture`` file with ``/model`` embedded and one partition,
-``partition_0``, which is what ``DomainCapture`` writes today.
+``partition_0``: the legacy ``source_type`` the in-process capture wrote
+until #2191 deleted it, kept so the committed fixtures stay byte-stable
+(the value stays readable until slice 10).
 
 Files:
 

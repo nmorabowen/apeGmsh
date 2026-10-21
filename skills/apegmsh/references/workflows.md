@@ -431,9 +431,11 @@ spine here uses the two common ones:
 from apeGmsh import Results
 from apeGmsh.opensees import OpenSeesModel
 
-# Native apeGmsh two-zone HDF5 (model+results often in one file)
-model = OpenSeesModel.from_h5("run.h5")          # model= is REQUIRED
-results = Results.from_native("run.h5", model=model)
+# Native apeGmsh two-zone HDF5 (model+results often in one file), e.g.
+# the modes file EigenResult.to_native writes; a recorded run is read
+# with run.results() after spec.emit_default(...)
+model = OpenSeesModel.from_h5("modes.h5")        # model= is REQUIRED
+results = Results.from_native("modes.h5", model=model)
 # verified: tests/test_results_bind.py::test_from_native_without_model_raises_typeerror
 
 # STKO .mpco: model_h5= (sibling model archive) is REQUIRED

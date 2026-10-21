@@ -31,7 +31,7 @@ keeps bulk case data out while tracking each `run.json`.
 
 | Bench | What it stresses |
 |---|---|
-| [`ssi_frame_wall`](models/ssi_frame_wall/src/) | The canonical ADR 0098 fixture — all seven result slots, three element families, three stages, mixed DOF |
+| [`ssi_frame_wall`](models/ssi_frame_wall/src/) | The canonical ADR 0098 fixture — all seven result slots, three element families, two result sources (gravity + dynamic, and the modes), mixed DOF |
 
 ## ssi_frame_wall
 
@@ -89,11 +89,18 @@ forces — volume gravity on the raft, surface traction on slabs and wall,
 line load on the frame. That is what puts glyphs in the `loads` slot; a
 `body_force=` on the solid elements would show nothing.
 
-**Three stages, one file.** `gravity` (static), six `mode_*` stages, and
-`dynamic` (150 captured instants under a generated three-frequency pulse
+**Two result sources.** The recorder set holds `gravity` (static) and
+`dynamic` (150 recorded instants under a generated three-frequency pulse
 at 0.30 g, Rayleigh damping fitted to the *computed* modes 1 and 3, not
-to guessed frequencies). The dynamic stage is what makes the scrubber,
-plot cursors and the §7 time link testable at all.
+to guessed frequencies); it is the recorder set, transcoded on open, not
+a native file. `modes.h5` holds the six `mode_*` stages, written by the
+bridge's `ops.eigen(6).to_native(...)` before `ops.run()` (the model is
+linear, so its modes do not depend on the gravity state; the in-run
+`eigen` that fits Rayleigh still runs after gravity). `build.open_results`
+opens both, and every bench consumer goes through it. (Until #2191 one
+in-process capture wrote all three into a single `run.h5`; maintainer
+ruling (A), 2026-10-21, split it.) The dynamic stage is what makes the
+scrubber, plot cursors and the §7 time link testable at all.
 
 **The soil box's support faces are named groups even though nothing is
 declared on them.** Meshing a volume also meshes its boundary surfaces,
@@ -121,8 +128,8 @@ already zero.
 | `sand` | any colour-mapped field over the solids |
 | `loads` | the `dead` pattern, imported with `p.from_model("dead")` |
 | `reactions` | `reaction_force` on every supported soil-box node |
-| deform poses | displacement, velocity, acceleration (dynamic) + 6 mode shapes |
-| time link, scrubber, plots | 150 captured instants in the `dynamic` stage |
+| deform poses | displacement, velocity, acceleration (dynamic) + 6 mode shapes (`modes.h5`) |
+| time link, scrubber, plots | 150 recorded instants in the `dynamic` stage |
 | scope: physical groups | `soil` `raft` `columns` `beams` `grade_beams` `slabs` `wall` `soil_base` `soil_sides` |
 | scope: element types | `tet4` `quad4` `line2`, plus the `tri3` boundary skin |
 | clip / section planes | a solid block worth cutting into, with a raft inside it |
@@ -137,7 +144,8 @@ python scripts/run_case.py --model ssi_frame_wall --case c002_something --script
 ```
 
 That writes `models/ssi_frame_wall/cases/<case>/` with `results/`
-(the `model.h5` + `run.h5` pair and the slot stills), `logs/run.log` and
+(`model.h5`, the recorder set in `out/`, `modes.h5`, the transcode cache,
+`bench.json` and the slot stills), `logs/run.log` and
 `logs/verify.log`, a `deck/` disclosure note, and `run.json` carrying the
 git provenance and the PASS/FAIL tally. Run records are immutable: a case
 id that already has `run.json` is refused rather than overwritten.
@@ -156,12 +164,17 @@ model is only canonical while every slot has something real behind it.
 Then open it:
 
 ```python
-from apeGmsh import Results
-from apeGmsh.opensees import OpenSeesModel
+# from models/ssi_frame_wall/src, or with it on sys.path
+from pathlib import Path
+from build import open_results
 
-r = Results.from_native("run.h5", model=OpenSeesModel.from_h5("model.h5"))
-r.viewer()
+run, modes = open_results(Path("/some/dir"))   # recorder set + modes.h5
+run.viewer()        # gravity and dynamic
+modes.viewer()      # the six mode shapes
 ```
+
+or `python models/ssi_frame_wall/src/open_viewer.py --results /some/dir`
+(`--modes` for the mode shapes).
 
 ### Sizes
 
@@ -173,7 +186,15 @@ scrubber smoothness — without changing anything about what it contains.
 |---|---|---|
 | shell / frame division | 0.75 m | 0.40 m |
 | soil size field | 1.2 → 4.0 m | 0.6 → 2.0 m |
-| dynamic capture stride | every 4th step | every 10th step |
+| dynamic recording stride (`dt=`) | every 4th step | every 10th step |
+
+The recorders sample on OpenSees' `-dT` grid, which starts at the first
+step: at `small` the dynamic instants are 0.01, 0.05, …, 5.97 s. The
+in-process capture before #2191 sampled every 4th step from the 4th, at
+0.04, 0.08, …, 6.00 s. Same stride, same 150 instants, shifted by three
+steps, so a sampled peak moves a little: the roof's max |ux| over the
+recorded instants is 12.98 mm now against 13.57 mm before. The solve is
+unchanged (gravity and the six modes match to float noise).
 
 ### Findings so far
 
@@ -202,11 +223,14 @@ mixed ndf and 6× fewer solver calls besides.
 > against the code — a green document is not a green test. And the
 > reason nothing else caught it: the fix shipped with no regression
 > test, so there was nothing to notice its absence. The test now
-> exists (`tests/test_results_domain_capture.py`,
+> existed (`tests/test_results_domain_capture.py`,
 > `test_capture_modes_reads_a_mixed_dof_model`), and it needed the
 > `_FakeOps` double to be made **strict** first — the double answered
 > `0.0` for a DOF the node does not have, where real openseespy
-> raises, so a lenient double would have passed the buggy code.
+> raises, so a lenient double would have passed the buggy code. Both
+> went with the capture in #2191; the bench's modes now come from
+> `EigenResult.to_native`, which lays each node's eigenvector out by
+> that node's own ndf and DOF roles, rotations included.
 
 **Fixed by ADR 0098 Amendment 3 — the pane host was never the central
 widget, and making it one crashed the window.** These were one finding,

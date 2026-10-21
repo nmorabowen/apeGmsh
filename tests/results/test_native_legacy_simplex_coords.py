@@ -10,8 +10,9 @@ extrapolated corner values came back rotated by one node, silently.
 
 The fixtures in ``tests/fixtures/native_legacy_simplex/`` were written by
 the writers as they stood before the change (``generate.py`` there says
-how), through both native paths: ``DomainCapture`` of a live solve and the
-recorder transcoder on the engine's own ``.out`` strains. Every element is
+how), through both native paths of the time: the in-process capture of a
+live solve (deleted from main in #2191; the legacy files stay readable) and
+the recorder transcoder on the engine's own ``.out`` strains. Every element is
 loaded with ``u_i = x_i^2 / 2``, so the strain it records at a Gauss point
 IS that point's world position.
 

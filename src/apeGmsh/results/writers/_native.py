@@ -1,15 +1,15 @@
 """NativeWriter — produces apeGmsh native HDF5 result files.
 
 Bulk-write API. The user typically calls higher-level entry points
-(``Results.from_recorders`` in Phase 6, ``DomainCapture`` in Phase 7),
-which use this writer internally.
+(``Results.from_recorders``, ``EigenResult.to_native``,
+``ParallelModalResult.to_native``), which use this writer internally.
 
 Usage
 -----
 ::
 
     with NativeWriter(path) as w:
-        w.open(fem=fem, source_type="domain_capture")
+        w.open(fem=fem, source_type="tcl_recorders")
 
         # Stage 1 — transient
         sid = w.begin_stage(name="gravity", kind="transient",
@@ -45,7 +45,7 @@ is materially worse when the bulk lands during the close fsync, and
 the resulting layout is ``/meta`` → ``/model`` (neutral) →
 ``/opensees/`` → ``/stages/...`` (results data appended during the
 run). The caller (typically :meth:`Results.from_recorders` with
-``model=`` or :class:`DomainCapture` with ``bridge=``) is responsible
+``model=``) is responsible
 for materialising the source model file; ``NativeWriter`` does not
 import :mod:`apeGmsh.opensees` and stays purely h5py-side.
 
