@@ -696,10 +696,10 @@ lad = ops.strategy.Ladder(rungs=(ops.strategy.Subdivide(4), ops.strategy.Subdivi
 s.run(n_increments=n, dt=dt, strategy=lad)      # transient only; static uses Substep
 ```
 
-A static stage (`s.run` without `dt`) refuses it. A flat live
-`ops.analyze(strategy=)` cannot run it yet (OpenSees rejects the rung's
-`__apegmsh_subdivide__` token). A recorder writes a row at every committed
-piece, so read rows by time.
+A stage that is not `Transient` with a `dt` refuses it at close. Do not use
+it on a flat live `ops.analyze(strategy=)`: that path fails at the first rescue
+(OpenSees rejects the rung's `__apegmsh_subdivide__` token). A recorder writes
+a row at every committed piece, so read rows by time.
 <!-- verified: tests/opensees/unit/test_strategy_subdivide.py -->
 
 **The stage clock restarts at 0.** Every stage closes with

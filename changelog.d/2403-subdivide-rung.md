@@ -14,10 +14,14 @@ drifts. Exhausting every rung still aborts the deck: no step is skipped.
 
 - The py and tcl emitters write the loop. Decks without the rung are
   byte-identical to before.
-- A static stage refuses the rung at `s.run`.
-- A flat live `ops.analyze(strategy=)` cannot run it yet: the live
-  emitter does not know the loop, and OpenSees rejects the rung's
-  reserved token loudly.
+- A stage refuses the rung at close unless it runs a `Transient` analysis
+  with a `dt`. Under `Static`, OpenSees ignores `analyze`'s `dt`, so each
+  piece would be a full step.
+- Each rescue prints how many pieces it committed.
+- A flat live `ops.analyze(strategy=)` with the rung is not refused by
+  name yet. The live emitter does not know the loop, so it fails at the
+  first rescue: OpenSees rejects the rung's reserved token. A refusal at
+  the call needs `apesees.py` (hub-locked) and follows.
 - Ladders are not archived, so there is no schema change.
 - A recorder writes one row per committed piece. Read by time when the
   rung fires.

@@ -549,7 +549,8 @@ class Subdivide:
     n: int
 
     def __post_init__(self) -> None:
-        if isinstance(self.n, bool) or not isinstance(self.n, int)                 or self.n < 2:
+        if (isinstance(self.n, bool) or not isinstance(self.n, int)
+                or self.n < 2):
             raise ValueError(
                 f"Subdivide: n must be an int >= 2, got {self.n!r}.")
 

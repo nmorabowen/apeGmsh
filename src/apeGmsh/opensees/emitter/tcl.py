@@ -1300,6 +1300,10 @@ class TclEmitter:
         add("if {$_apesees_rc != 0} { break }")
         self._lines.indent = ind(3)
         add("}")
+        add("set _apesees_done $_apesees_k")
+        add(f'puts "apeGmsh strategy \'{sname}\': increment '
+            f"[expr {{$_apesees_i + 1}}]/{n}{where} Subdivide($_apesees_m) "
+            'committed $_apesees_done/$_apesees_m pieces"')
         self._lines.indent = ind(2)
         add("} else {")
         self._lines.indent = ind(3)

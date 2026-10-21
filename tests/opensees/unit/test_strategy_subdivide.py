@@ -119,3 +119,81 @@ def test_the_py_deck_ends_on_the_grid_or_aborts(column, tol, ok,
         out = r.stdout + r.stderr
         assert out.count("-> rung") == 2                 # both Subdivide rungs
         assert "exhausting strategy ladder" in out
+
+
+def _rescue_model(fem: Any) -> apeSees:
+    """A loading that a one-iteration Newton cannot always carry: the
+    Subdivide rungs rescue increments (and the deck still finishes)."""
+    import math
+
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    m = ops.nDMaterial.ElasticIsotropic(E=1e5, nu=0.3, rho=2.0)
+    ops.element.FourNodeQuad(pg="S", thickness=1.0, material=m)
+    ops.fix(pg="Base", dofs=(1, 1))
+    top = int(fem.nodes.select(pg="Top").ids[0])
+    lad = ops.strategy.Ladder(rungs=(
+        ops.algorithm.Newton(), ops.strategy.Subdivide(4),
+        ops.algorithm.ModifiedNewton(), ops.strategy.Subdivide(16)))
+    rec = ops.recorder.Node(file="t.out", response="disp", nodes=(top,),
+                            dofs=(1,), time_format="dt")
+    n = 50
+    with ops.stage(name="shake") as s:
+        series = ops.timeSeries.Path(dt=DT, values=tuple(
+            math.sin(0.37 * i) * (1 + i % 5) for i in range(n + 5)))
+        with s.pattern(series=series) as p:
+            p.load(node=top, forces=(1.0, 0.0))
+        s.recorder(rec)
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-3, max_iter=1),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.Newmark(gamma=0.5, beta=0.25),
+            constraints=ops.constraints.Plain(), numberer=ops.numberer.RCM(),
+            system=ops.system.UmfPack(), analysis=ops.analysis.Transient())
+        s.run(n_increments=n, dt=DT, strategy=lad)
+    return ops
+
+
+def test_a_static_stage_with_dt_refuses_the_rung(column) -> None:
+    ops = apeSees(column)
+    ops.model(ndm=2, ndf=2)
+    lad = ops.strategy.Ladder(rungs=(ops.algorithm.Newton(),
+                                     ops.strategy.Subdivide(4)))
+    with pytest.raises(ValueError, match="under Static"):
+        with ops.stage(name="st") as s:
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-8, max_iter=5),
+                algorithm=ops.algorithm.Newton(),
+                integrator=ops.integrator.LoadControl(dlam=DT),
+                constraints=ops.constraints.Plain(),
+                numberer=ops.numberer.RCM(), system=ops.system.UmfPack(),
+                analysis=ops.analysis.Static())
+            s.run(n_increments=5, dt=DT, strategy=lad)
+
+
+@pytest.mark.live
+def test_rescued_increments_land_on_the_grid_in_py_and_tcl(
+        column, tmp_path: Path) -> None:
+    pytest.importorskip("openseespy.opensees")
+    import shutil
+
+    ops = _rescue_model(column)
+    (tmp_path / "py").mkdir()
+    ops.py(str(tmp_path / "py" / "deck.py"))
+    r = subprocess.run([sys.executable, "deck.py"], cwd=str(tmp_path / "py"),
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    assert "Subdivide(4) committed 4/4 pieces" in r.stdout
+    rows = np.loadtxt(tmp_path / "py" / "t.out")
+    assert len(rows) > 50                        # pieces record too ...
+    assert rows[-1, 0] == pytest.approx(50 * DT, abs=1e-9)   # ... on the grid
+    exe = shutil.which("OpenSees") or shutil.which("OpenSees.exe")
+    if exe is None:
+        return
+    (tmp_path / "tcl").mkdir()
+    ops.tcl(str(tmp_path / "tcl" / "deck.tcl"))
+    subprocess.run([exe, "deck.tcl"], cwd=str(tmp_path / "tcl"),
+                   capture_output=True, text=True)
+    rows_tcl = np.loadtxt(tmp_path / "tcl" / "t.out")
+    assert rows_tcl.shape == rows.shape
+    assert np.allclose(rows_tcl, rows, rtol=1e-6, atol=1e-12)

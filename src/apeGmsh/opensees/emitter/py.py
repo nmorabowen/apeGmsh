@@ -1233,6 +1233,13 @@ class PyEmitter:
         add("if _apesees_rc != 0:")
         self._lines.indent = ind(5)
         add("break")
+        self._lines.indent = ind(3)
+        add(
+            f'print("apeGmsh strategy \'{sname}\': increment '
+            f'%d/{n}{where} Subdivide(%d) committed %d/%d pieces" % '
+            "(_apesees_i + 1, _apesees_g[1], _apesees_k + (_apesees_rc == 0),"
+            " _apesees_g[1]))"
+        )
         self._lines.indent = ind(2)
         add("else:")
         self._lines.indent = ind(3)

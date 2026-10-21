@@ -363,6 +363,8 @@ class _StageBuilder:
 
         * A test omitted for ``Linear`` stays required when a strategy
           ladder is attached: the ladder's rungs iterate.
+        * A ``Subdivide`` rung needs a ``Transient`` analysis (ADR 0057
+          Amendment 1 §3).
         * D1 (R3, #1785; extended R3-S1b, #1822): under ``Static``
           OpenSees ignores ``analyze``'s ``dt``; the integrator sets the
           step.  A given ``dt`` never acts, so it warns
@@ -378,6 +380,16 @@ class _StageBuilder:
                 f"Stage {self._name!r}: a strategy ladder needs a "
                 "convergence test, because its rungs iterate; pass "
                 "test= to s.analysis (or drop s.run(strategy=))."
+            )
+        if (self._strategy is not None
+                and getattr(self._strategy, "subdivides", False)
+                and isinstance(self._analysis, Static)):
+            raise ValueError(
+                f"Stage {self._name!r}: a Subdivide rung cuts the time "
+                "step, and under Static OpenSees ignores analyze's dt (the "
+                "integrator sets the step), so each piece would be a full "
+                "step. Use it in a Transient stage; a static stage uses "
+                "Substep (ADR 0057 Amendment 1)."
             )
         if self._dt is None or not isinstance(self._analysis, Static):
             return
@@ -2115,7 +2127,8 @@ class _StageBuilder:
                 f"Stage {self._name!r}.run: n_increments must be >= 1, "
                 f"got {n_increments}."
             )
-        if strategy is not None and getattr(strategy, "subdivides", False)                 and dt is None:
+        if (strategy is not None and getattr(strategy, "subdivides", False)
+                and dt is None):
             raise ValueError(
                 f"Stage {self._name!r}.run: a Subdivide rung cuts the time "
                 "step, so it needs a transient stage run with dt=; a static "
