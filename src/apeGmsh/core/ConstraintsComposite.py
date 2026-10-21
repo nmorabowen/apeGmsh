@@ -2385,9 +2385,21 @@ class ConstraintsComposite(_DeclarationsMixin):
         or a node on both sides raises ``ValueError`` at
         ``get_fem_data``, naming the first offenders.
 
-        A slave DOF that is also fixed is over-constrained (``equalDOF``
-        and ``fix`` on one DOF): fix that DOF on the master node only,
-        and the tie carries it.
+        Several periodic directions (the x and y sides of a square, the
+        faces of a box) meet at corner and edge nodes. Their pairs are
+        merged so each group of nodes that must move together has one
+        master and every other node is its slave (``equalDOF`` cannot
+        constrain a node twice); the directions must then tie the same
+        ``dofs``. Declare every periodic tie before the first
+        ``get_fem_data``: one added afterwards that shares a node with an
+        earlier tie raises.
+
+        Fixing a DOF of a tied pair needs care. Under the Transformation
+        handler (the bridge default for ``equalDOF``) a tie whose master
+        is fixed on some of the tied DOFs and free on others loses the
+        free tie every step (an OpenSees defect, #2396): fix that DOF on
+        both nodes and leave it out of ``dofs``, or use the Lagrange or
+        Penalty handler.
 
         Parameters
         ----------
@@ -2419,9 +2431,12 @@ class ConstraintsComposite(_DeclarationsMixin):
                 f"g.constraints.periodic: axis must be 'x', 'y' or 'z', "
                 f"got {axis!r}."
             )
-        if not (tolerance > 0):
+        if isinstance(tolerance, bool) or not isinstance(
+                tolerance, (int, float)) or not (
+                math.isfinite(tolerance) and tolerance > 0):
             raise ValueError(
-                f"g.constraints.periodic: tolerance must be > 0, got "
+                f"g.constraints.periodic: tolerance must be a finite "
+                f"number > 0, got "
                 f"{tolerance!r}."
             )
         return self._add_def(EqualDOFDef(
@@ -3663,6 +3678,7 @@ class ConstraintsComposite(_DeclarationsMixin):
             elem_tags=elem_tags, connectivity=connectivity)
         all_nodes = set(int(t) for t in node_tags)
         records: list[ConstraintRecord] = []
+        periodic: list = []
 
         for defn in self.constraint_defs:
             dispatch = _DISPATCH.get(type(defn))
@@ -3675,10 +3691,17 @@ class ConstraintsComposite(_DeclarationsMixin):
                 )
             result = getattr(self, dispatch)(
                 resolver, defn, node_map or {}, face_map or {}, all_nodes)
-            if isinstance(result, list):
+            if isinstance(defn, EqualDOFDef) and defn.axis is not None:
+                periodic.extend(result)
+            elif isinstance(result, list):
                 records.extend(result)
             elif result is not None:
                 records.append(result)
+        if periodic:
+            from apeGmsh._kernel.resolvers._constraint_resolver import (
+                collapse_periodic_pairs,
+            )
+            records.extend(collapse_periodic_pairs(periodic))
 
         # Publish the MP lane's phantom-tag high-water mark so the
         # interface resolver (a different code path, same tag space —

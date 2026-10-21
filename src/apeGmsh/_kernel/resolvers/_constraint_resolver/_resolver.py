@@ -293,7 +293,8 @@ class ConstraintResolver:
         for st, xy in zip(slaves, s_xyz):
             dist, idx = tree.query(np.array([xy[0], xy[1], 0.0]))
             if dist > tolerance:
-                unmatched.append((st, tuple(round(float(v), 9) for v in xy)))
+                unmatched.append((st, ", ".join(
+                    f"{'xyz'[i]}={float(v):.9g}" for i, v in zip(keep, xy))))
                 continue
             mt = masters[int(idx)]
             if mt in taken:
@@ -1319,4 +1320,71 @@ class ConstraintResolver:
         )
 
 
-__all__ = ["ConstraintResolver"]
+def collapse_periodic_pairs(
+    records: "Sequence[NodePairRecord]",
+) -> list[NodePairRecord]:
+    """Merge periodic pairs that share nodes onto one master per group.
+
+    Two periodic directions (x and y sides of a square, faces of a box)
+    pair a corner or edge node twice, or chain a slave on to another
+    slave. ``equalDOF`` cannot express that: under the Transformation
+    handler a node constrained twice, or a constrained retained node,
+    solves the whole model wrong without a warning. Within one DOF set the
+    pairs form groups of nodes that must move together; each group gets
+    the one node no pair slaves as master and every other node as its
+    slave. A group with no such node (a cycle) or two, or a node tied on
+    two different DOF sets, raises.
+    """
+    by_dofs: dict[tuple[int, ...], list[NodePairRecord]] = {}
+    for rec in records:
+        by_dofs.setdefault(tuple(int(d) for d in rec.dofs), []).append(rec)
+    owner: dict[int, tuple[int, ...]] = {}
+    for dofs, recs in by_dofs.items():
+        for rec in recs:
+            for n in (int(rec.master_node), int(rec.slave_node)):
+                if owner.setdefault(n, dofs) != dofs:
+                    raise ValueError(
+                        f"periodic ties on DOFs {owner[n]} and {dofs} share "
+                        f"node {n}; give every periodic tie that meets at a "
+                        f"node the same dofs."
+                    )
+    out: list[NodePairRecord] = []
+    for dofs, recs in by_dofs.items():
+        parent: dict[int, int] = {}
+
+        def find(n: int) -> int:
+            parent.setdefault(n, n)
+            while parent[n] != n:
+                parent[n] = parent[parent[n]]
+                n = parent[n]
+            return n
+
+        name_of: dict[int, "str | None"] = {}
+        slaves: set[int] = set()
+        for rec in recs:
+            m, sl = int(rec.master_node), int(rec.slave_node)
+            parent[find(m)] = find(sl)
+            slaves.add(sl)
+            name_of.setdefault(sl, rec.name)
+        groups: dict[int, list[int]] = {}
+        for n in list(parent):
+            groups.setdefault(find(n), []).append(n)
+        for members in groups.values():
+            roots = [n for n in members if n not in slaves]
+            if len(roots) != 1:
+                raise ValueError(
+                    f"periodic ties over nodes {sorted(members)[:8]} have "
+                    f"{len(roots)} free masters {roots[:4]}; each group of "
+                    f"tied nodes needs exactly one (a cycle of ties, or a "
+                    f"group pinned twice, cannot be written as equalDOF)."
+                )
+            root = roots[0]
+            for n in sorted(members):
+                if n != root:
+                    out.append(NodePairRecord(
+                        kind=ConstraintKind.EQUAL_DOF, name=name_of.get(n),
+                        master_node=root, slave_node=n, dofs=list(dofs)))
+    return out
+
+
+__all__ = ["ConstraintResolver", "collapse_periodic_pairs"]

@@ -132,7 +132,7 @@ def test_box_faces_pair_in_3d() -> None:
 
 @pytest.mark.parametrize("kw, match", [
     ({"axis": "w"}, "axis must be"),
-    ({"axis": "x", "tolerance": 0.0}, "tolerance must be > 0"),
+    ({"axis": "x", "tolerance": 0.0}, "tolerance must be a finite"),
 ])
 def test_bad_arguments_raise_at_the_call(kw, match) -> None:
     g = apeGmsh(model_name="periodic_bad", verbose=False)
@@ -141,5 +141,63 @@ def test_bad_arguments_raise_at_the_call(kw, match) -> None:
         g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="sq")
         with pytest.raises(ValueError, match=match):
             g.constraints.periodic("sq", "sq", **kw)
+    finally:
+        g.end()
+
+
+def _square(n=4):
+    g = apeGmsh(model_name="periodic_sq", verbose=False)
+    g.begin()
+    g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="sq")
+    g.physical.add_surface("sq", name="Sq")
+    for pt, nrm, name in (((0, 0, 0), (1, 0, 0), "L"), ((1, 0, 0), (1, 0, 0), "R"),
+                          ((0, 0, 0), (0, 1, 0), "B"), ((0, 1, 0), (0, 1, 0), "T")):
+        g.model.select(None, dim=1).on_plane(pt, nrm, tol=1e-6).to_physical(name)
+    g.mesh.sizing.set_global_size(1.0 / n)
+    g.mesh.structured.set_transfinite_automatic()
+    return g
+
+
+def test_two_periodic_directions_merge_the_corners() -> None:
+    g = _square()
+    try:
+        g.constraints.periodic("L", "R", axis="x", dofs=[1, 2])
+        g.constraints.periodic("B", "T", axis="y", dofs=[1, 2])
+        g.mesh.generation.generate(dim=2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        recs = [c for c in fem.nodes.constraints if c.kind == "equal_dof"]
+        slaves = [int(r.slave_node) for r in recs]
+        masters = {int(r.master_node) for r in recs}
+        assert len(slaves) == len(set(slaves))       # nobody tied twice
+        assert not masters & set(slaves)             # no chains
+        xyz = {int(n): c for n, c in zip(fem.nodes.ids, fem.nodes.coords)}
+        corners = [n for n, c in xyz.items()
+                   if c[0] in (0.0, 1.0) and c[1] in (0.0, 1.0)]
+        roots = {int(r.master_node) for r in recs if int(r.slave_node) in corners}
+        assert len(roots) == 1 and roots <= set(corners)
+    finally:
+        g.end()
+
+
+def test_meeting_ties_on_different_dofs_raise() -> None:
+    g = _square()
+    try:
+        g.constraints.periodic("L", "R", axis="x", dofs=[1, 2])
+        g.constraints.periodic("B", "T", axis="y", dofs=[1])
+        g.mesh.generation.generate(dim=2)
+        with pytest.raises(ValueError, match="share node"):
+            g.mesh.queries.get_fem_data(dim=2)
+    finally:
+        g.end()
+
+
+@pytest.mark.parametrize("tol", [float("inf"), "1e-6", True])
+def test_tolerance_must_be_finite_and_positive(tol) -> None:
+    g = apeGmsh(model_name="periodic_tol", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="sq")
+        with pytest.raises(ValueError, match="finite"):
+            g.constraints.periodic("sq", "sq", axis="x", tolerance=tol)
     finally:
         g.end()

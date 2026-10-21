@@ -13,3 +13,12 @@ opposite faces of a 3-D box.
 The pairing must be complete and one-to-one. A node of either side with
 no partner (sides meshed differently), a master matched twice, or a node
 on both sides raises at `get_fem_data` and names the first offenders.
+
+Ties along two directions (the sides of a square, the faces of a box)
+meet at corner and edge nodes. They are merged so that each group of tied
+nodes gets one master; a corner is never constrained twice, and a slave is
+never chained to another slave. Under the Transformation handler either
+of those would solve the whole model wrong without a warning. A cycle,
+or ties on different DOF sets that meet, raises. A periodic tie added
+after the first `get_fem_data` that shares a node with an earlier tie
+also raises.

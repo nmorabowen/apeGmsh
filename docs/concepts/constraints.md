@@ -105,9 +105,16 @@ g.constraints.periodic("Left", "Right", axis="x", dofs=[1, 2])
 ```
 
 Mesh the two sides alike. A node of either side with no partner raises at
-`get_fem_data`, so a boundary is never half tied. Fix an over-constrained DOF
-on the master side only (a base node that is both tied and fixed), and the tie
-carries it to the slave.
+`get_fem_data`, so a boundary is never half tied. Two periodic directions
+(the sides of a square, the faces of a box) meet at corner and edge nodes. Their
+pairs merge so each corner has a single master. Declare all of them before the
+first snapshot, with the same `dofs`.
+
+Take care where a tied pair is also fixed, as at the base of a soil column.
+Under the `Transformation` handler (the bridge default for `equalDOF`), a tie
+whose master is fixed on one tied DOF and free on another loses the free tie
+at every step (an OpenSees defect, #2396). Either fix that DOF on both nodes
+and leave it out of the tie, or declare `ops.constraints.Lagrange()`.
 
 `rigid_link` adds kinematics: each slave follows the master through a rigid
 offset arm, so a rotation at the master produces translations at the slaves.
