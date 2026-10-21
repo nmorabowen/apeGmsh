@@ -2085,7 +2085,8 @@ class ConstraintsComposite(_DeclarationsMixin):
                 for lbl in (defn.master_label, defn.slave_label):
                     is_decoupled = lbl in decoupled_ok
                     ok = src.has_target(lbl) if isinstance(lbl, str) else False
-                    if is_decoupled and ok and not _names_a_pg(head, lbl)                             and _label_is_decoupled_def(
+                    if is_decoupled and ok and not _names_a_pg(head, lbl) \
+                            and _label_is_decoupled_def(
                                 head, lbl, self._decoupled_def_for(lbl)):
                         # The snapshot label the decoupled node's own
                         # ``label=`` registered, not a clash.
@@ -2094,8 +2095,10 @@ class ConstraintsComposite(_DeclarationsMixin):
                         raise ValueError(
                             f"Constraint label {lbl!r} names both a "
                             f"decoupled node and a label / physical group "
-                            f"in the FEMData chain head — rename one so "
-                            f"the constraint role is unambiguous."
+                            f"(or another decoupled node or node set of "
+                            f"that label) in the FEMData chain head — "
+                            f"rename one so the constraint role is "
+                            f"unambiguous."
                         )
                     if is_decoupled and type(defn) not in _DECOUPLED_ROLE_TYPES:
                         raise ValueError(
