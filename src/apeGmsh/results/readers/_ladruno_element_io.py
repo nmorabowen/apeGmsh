@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -53,6 +54,7 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
 )
 from .._shell_geometry import shell_quaternion
+from ._gauss_refusals import GaussDimensionMixed, refuse_mixed_gauss_dims
 from ._ladruno_provenance import _CONVERTED_MARK
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco_layer_io import (
@@ -60,6 +62,7 @@ from ._mpco_layer_io import (
     ShellFrameUnavailableWarning,
 )
 from ._mpco_local_force_io import is_non_beam_class
+from ._mpco_refusals import MPCOElementInTwoBuckets
 
 if TYPE_CHECKING:
     import h5py
@@ -1434,11 +1437,15 @@ def read_gauss_slab(
     Stitches every bucket whose blocks expose ``component`` at a Gauss
     point. ``None`` if nothing matches. Two tokens can cover the same
     (element, GP) with the same component — see
-    :func:`_dedupe_gauss_columns`, which resolves that overlap.
+    :func:`_dedupe_gauss_columns`, which resolves that overlap. Buckets
+    the read returns whose natural coordinates differ in width (a 2-D
+    quad beside a 3-D tet) refuse with :class:`GaussDimensionMixed`
+    (#2221); a bucket with no coordinates at all (width 0) reads NaN.
     """
     values_parts: list[ndarray] = []
     eidx_parts: list[ndarray] = []
     coord_parts: list[ndarray] = []
+    label_parts: list[str] = []
     gid_parts: list[ndarray] = []
     named_parts: list[ndarray] = []
 
@@ -1514,11 +1521,27 @@ def read_gauss_slab(
                 else:
                     nat = np.zeros((sel_ids.size, 0), dtype=np.float64)
                 coord_parts.append(nat)
+                label_parts.append(f"{_class_name(key)} ({bucket.name})")
 
     if not values_parts:
         return None
     values = np.concatenate(values_parts, axis=1)
     element_index = np.concatenate(eidx_parts)
+    keep = _dedupe_gauss_columns(
+        values, element_index,
+        np.concatenate(gid_parts), np.concatenate(named_parts),
+        component=component,
+    )
+    # Refuse on the parts the read returns: a bucket the dedupe drops
+    # whole is not joined.
+    sizes = [c.shape[0] for c in coord_parts]
+    row_part = np.repeat(np.arange(len(coord_parts)), sizes)
+    kept_parts = np.unique(row_part if keep is None else row_part[keep])
+    refuse_mixed_gauss_dims(
+        [(label_parts[i], coord_parts[i].shape[1]) for i in kept_parts],
+        component=component, reader=".ladruno",
+        source=_file_name(on_elements), error=GaussDimensionMixed,
+    )
     max_dim = max((c.shape[1] for c in coord_parts), default=0)
     coords = (
         np.concatenate(
@@ -1527,11 +1550,6 @@ def read_gauss_slab(
             axis=0,
         )
         if max_dim else np.zeros((element_index.size, 0), dtype=np.float64)
-    )
-    keep = _dedupe_gauss_columns(
-        values, element_index,
-        np.concatenate(gid_parts), np.concatenate(named_parts),
-        component=component,
     )
     if keep is None:
         return values, element_index, coords
@@ -1807,14 +1825,56 @@ class SpatialDimInvalid(SpatialDimUnknown):
     """
 
 
+# One ASCII decimal literal, ``_`` only between digits, inside the whitespace
+# ``float()`` itself skips (no U+FEFF, no U+001C..U+001F). The viewer's
+# ``reader/ladrunoInfo.ts`` PY_FLOAT, character for character.
+_SPATIAL_DIM_SPACE = (
+    "[\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*"
+)
+_SPATIAL_DIM_DIGITS = "[0-9](?:_?[0-9])*"
+_SPATIAL_DIM_LITERAL = re.compile(
+    f"{_SPATIAL_DIM_SPACE}([+-]?(?:{_SPATIAL_DIM_DIGITS}"
+    f"(?:\\.(?:{_SPATIAL_DIM_DIGITS})?)?|\\.{_SPATIAL_DIM_DIGITS})"
+    f"(?:[eE][+-]?{_SPATIAL_DIM_DIGITS})?){_SPATIAL_DIM_SPACE}"
+)
+
+
+def _spatial_dim_number(value: object) -> Optional[float]:
+    """One ``SPATIAL_DIM`` value as a number, or ``None`` if it is none.
+
+    A real integer, float or bool reads as itself. A string reads only as
+    an ASCII decimal literal (``_SPATIAL_DIM_LITERAL``, full match), so a
+    non-ASCII digit (``'２'``, ``'٢'``) that ``float()`` would accept is
+    none; bytes read as that string when they are ASCII. A complex value,
+    a compound, a reference or anything else is none: ``float()`` would
+    keep the real part of ``2+5j`` with only a ``ComplexWarning`` (#2244).
+    """
+    if isinstance(value, bytes):  # np.bytes_ too
+        try:
+            value = value.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(value, str):  # np.str_ too
+        match = _SPATIAL_DIM_LITERAL.fullmatch(value)
+        return None if match is None else float(match.group(1))
+    if isinstance(value, (bool, np.bool_, int, np.integer)):
+        integer = int(value)  # an unbounded int never reaches float()
+        return float(integer) if integer in (1, 2, 3) else None
+    if isinstance(value, (float, np.floating)):
+        return float(value)
+    return None
+
+
 def _spatial_dim_attr(raw: ndarray, filename: str) -> int:
-    """``INFO/SPATIAL_DIM`` as 1, 2 or 3, or :class:`SpatialDimInvalid`."""
+    """``INFO/SPATIAL_DIM`` as 1, 2 or 3, or :class:`SpatialDimInvalid`.
+
+    The value must be one real number or one ASCII decimal string equal
+    to 1, 2 or 3 (:func:`_spatial_dim_number`): the viewer's
+    ``spatialDimOf`` refuses the same values (#2244).
+    """
     number: Optional[float] = None
     if raw.size == 1:
-        try:
-            number = float(raw.reshape(-1)[0])
-        except (TypeError, ValueError):
-            number = None
+        number = _spatial_dim_number(raw.reshape(-1)[0])
     if number is None or number not in (1.0, 2.0, 3.0):
         raise SpatialDimInvalid(
             f"{filename}: INFO/SPATIAL_DIM is {raw.tolist()!r}; the spatial "
@@ -1828,8 +1888,9 @@ def _file_spatial_dim(node: "h5py.Group | h5py.Dataset") -> Optional[int]:
 
     ``node`` is the file itself or any group or dataset inside it; the
     answer is the file's. ``INFO/SPATIAL_DIM`` when the file carries it;
-    a value that is not an integral 1, 2 or 3 (one value; ``2.0`` reads
-    as 2) raises :class:`SpatialDimInvalid` naming the file. Otherwise
+    a value that is not an integral 1, 2 or 3 (one real value, or one
+    ASCII decimal string; ``2.0`` reads as 2, ``2+5j`` and ``'２'`` do not)
+    raises :class:`SpatialDimInvalid` naming the file. Otherwise
     the width of ``MODEL/NODES/COORDINATES``, which the writer sizes by
     the spatial dimension, when every stage that has one agrees on a
     width of 1, 2 or 3. Otherwise ``None``: a read that depends on the
@@ -2341,6 +2402,7 @@ def read_element_slab(
     ncol_ref: "Optional[int]" = None
     ncol_key: "Optional[str]" = None
     dropped: list[tuple[str, int, ndarray]] = []
+    bucket_paths: list[str] = []
 
     for key in token_grp:
         bucket = token_grp[key]
@@ -2361,6 +2423,7 @@ def read_element_slab(
         block = read_hyperslab(bucket["DATA"], t_idx, rows)
         values_parts.append(block)
         eid_parts.append(sel_ids)
+        bucket_paths.append(bucket.name)
 
     if dropped:
         lost = np.concatenate([ids for _, _, ids in dropped])
@@ -2381,9 +2444,60 @@ def read_element_slab(
         )
     if not values_parts:
         return None
+    _refuse_repeated_element(
+        bucket_paths, eid_parts, what=f"element read of token {token!r}",
+        file=_file_name(on_elements),
+    )
     return (
         np.concatenate(values_parts, axis=1),
         np.concatenate(eid_parts),
+    )
+
+
+def _file_name(group: "h5py.Group") -> str:
+    """The base name of the file ``group`` sits in, for refusal text."""
+    return Path(str(group.file.filename)).name
+
+
+def _refuse_repeated_element(
+    paths: list[str], ids: list[ndarray], *, what: str, file: str,
+) -> None:
+    """Raise :class:`MPCOElementInTwoBuckets` when an element id an
+    element read (``what``) returns sits in two buckets of its token, or
+    twice in one (#2221).
+
+    The fork writes each element once per token, so a repeat is a
+    corrupt or merged file, and the stitch would return the element
+    twice. The error names the smallest such id, the bucket path(s) and
+    the file.
+    """
+    all_ids = np.concatenate(ids)
+    if all_ids.size < 2:
+        return
+    owners = np.repeat(np.arange(len(ids)), [i.size for i in ids])
+    order = np.argsort(all_ids, kind="stable")
+    sorted_ids = all_ids[order]
+    repeat = np.flatnonzero(sorted_ids[1:] == sorted_ids[:-1])
+    if repeat.size == 0:
+        return
+    j = int(repeat[0])
+    eid = int(sorted_ids[j])
+    first = paths[int(owners[order[j]])]
+    second = paths[int(owners[order[j + 1]])]
+    where = (
+        f"twice in the .ladruno bucket {first}" if first == second
+        else f"in two .ladruno buckets: {first} and {second}"
+    )
+    n_ids = np.unique(sorted_ids[repeat]).size
+    more = (
+        f" {n_ids - 1} more element id(s) the read returns repeat too."
+        if n_ids > 1 else ""
+    )
+    raise MPCOElementInTwoBuckets(
+        f"{file}: {what}: element {eid} appears "
+        f"{where}. The recorder writes each element once per token, so "
+        f"the file is corrupt; the read refuses rather than return "
+        f"element {eid} twice.{more}"
     )
 
 
@@ -2779,6 +2893,7 @@ def read_nodal_force_slab(
     n_ref: "Optional[int]" = None
     key_ref: "Optional[str]" = None
     dropped: list[tuple[str, int, ndarray]] = []
+    bucket_paths: list[str] = []
 
     for key in token_grp:
         bucket = token_grp[key]
@@ -2812,6 +2927,7 @@ def read_nodal_force_slab(
             continue
         values_parts.append(read_hyperslab(bucket["DATA"], t_idx, rows, cols))
         eid_parts.append(sel_ids)
+        bucket_paths.append(bucket.name)
 
     if skipped:
         detail = "; ".join(f"{k!r}: {why}" for k, why in skipped)
@@ -2849,6 +2965,11 @@ def read_nodal_force_slab(
         )
     if not values_parts:
         return None
+    _refuse_repeated_element(
+        bucket_paths, eid_parts,
+        what=f"element read of {canonical!r} (token {token!r})",
+        file=_file_name(on_elements),
+    )
     return (
         np.concatenate(values_parts, axis=1),
         np.concatenate(eid_parts),
@@ -3233,7 +3354,7 @@ def _shell_frames(
     A frame the file stores (``MODEL/LOCAL_AXES/<classTag>-<Class>``)
     wins; every other element's frame is computed from the file's
     connectivity and node coordinates with :func:`shell_quaternion`, the
-    convention the MPCO reader and DomainCapture use. A row with neither
+    convention the MPCO reader uses. A row with neither
     is NaN, and one :class:`ShellFrameUnavailableWarning` names its
     elements and why. A stored group without the ``ID`` + ``FRAME`` pair,
     or whose ``FRAME`` size is not four per ``ID``, is ignored with a

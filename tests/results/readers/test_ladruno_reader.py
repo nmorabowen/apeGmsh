@@ -2692,6 +2692,14 @@ _SPATIAL_DIM_TABLE = [
     ("invalid: two values [3, 2]",
      lambda h: (_sd_info(h, np.array([3, 2])), _sd_stage(h, 1, (4, 2))),
      SpatialDimInvalid),
+    # float() read these as 2 (#2244): a complex keeps its real part with
+    # only a ComplexWarning, and a non-ASCII digit is read as its value.
+    ("invalid: complex 2+5j",
+     lambda h: (_sd_info(h, np.complex128(2 + 5j)), _sd_stage(h, 1, (4, 2))),
+     SpatialDimInvalid),
+    ("invalid: fullwidth digit '２'",
+     lambda h: (_sd_info(h, "２"), _sd_stage(h, 1, (4, 2))),
+     SpatialDimInvalid),
     # The inference is unchanged: a malformed file without the attribute
     # still fails as it did before the merge.
     ("absent, COORDINATES is a group, not a dataset",

@@ -14,7 +14,9 @@ current one, so this script runs against an old checkout::
 on ``sys.path``. ``tests/fixtures/simplex_gp`` supplies the engine's own
 strains for the recorder transcoder (one solve, fork build 79e062367).
 The capture files need openseespy with the Ladruno fork build
-(TenNodeTetrahedron returns its 24 strain values only there).
+(TenNodeTetrahedron returns its 24 strain values only there), and they
+need the old checkout for a second reason: the in-process capture that
+wrote them was deleted from main in #2191.
 
 Both paths load each element with the quadratic field ``u_i = x_i^2 / 2``,
 so the strain an element records at a Gauss point IS that point's world

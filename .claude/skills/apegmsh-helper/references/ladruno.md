@@ -311,15 +311,18 @@ bucket, the unmapped column labels, and the element class — instead of
 vanishing silently.
 
 **Beam-column elements** (`element/beam_column.py`, `ops.element.<Type>`):
-`LadrunoDispBeamColumn` (:661, displacement-based + crack-band `lch`, optional
+`LadrunoDispBeamColumn` (displacement-based + crack-band `lch`, optional
 `-nl` bowing strain, single-hinge `-hinge`/`-hingeY`/`-hingeBiaxial` or
 dual-end `-hingeI`/`-hingeJ`/`-hingeIJ`, `-hingeYI`/`-hingeYJ`/`-hingeYIJ`,
-`-hingeBiaxialI`/`-hingeBiaxialJ`/`-hingeBiaxialIJ` + `-hingeLoc xiI xiJ`,
-`-pm` P-M coupling, `-implex`) and `LadrunoIMKBeam` (:807,
-concentrated-plasticity IMK with `ends="both"|"i"|"j"|"none"`, `-shear`,
-`-endZones dI dJ`, `-cMass`, `-pm`, `-implex`). Both take `pg=` + `transf=`
-like any beam; `LadrunoCohesiveHinge` (`uniaxial.py`) also accepts `pm=` and
-`implex=`.
+`-hingeBiaxialI`/`-hingeBiaxialJ`/`-hingeBiaxialIJ` + `-hingeLoc xiI [xiJ]`,
+`-pm` P-M coupling, `-implex`), `LadrunoForceBeamColumn` (force-based +
+crack-band `lch`, `-subdivide maxSubLevels [subdivideFactor]`, `-shear`,
+and the same single/dual-end hinge + `-hingeLoc xiI [xiJ]` + `-pm` + `-implex`
+options), and `LadrunoIMKBeam` (concentrated-plasticity IMK with
+`ends="both"|"i"|"j"|"none"`, `-shear`, `-shearHinge`/`-shearHingeY`/`-shearHingeZ`
+— one shear hinge per axis, `-endZones dI dJ`, `-cMass`, `-pm`, `-implex`).
+All take `pg=` + `transf=` like any beam; `LadrunoCohesiveHinge` (`uniaxial.py`)
+also accepts `pm=` and `implex=`.
 
 **`LadrunoMembrane` (slab tributary load distribution & in-plane membrane, tag 33022, WP-098)** (`element/shell.py`, `ops.element.LadrunoMembrane`):
 Distributes a uniform surface pressure or self-weight onto supporting 1-D frame elements (`frames=`, emitting sub-segment trapezoidal `Beam3dPartialUniformLoad` objects internally) and/or point supports (`support_nodes=`), with optional in-plane CST membrane stiffness (`section=`, `mat=` + `thickness=`, or `E=`/`nu=`/`thickness=`). Accepts either a 2-D surface `pg=` (automatically extracting the CCW outer boundary node loop and CW interior hole loops from the mesh) or an explicit `nodes=` boundary loop + `holes=`.
@@ -475,8 +478,8 @@ answers `False` for the wrong reason). The reader names the eight columns
 response — the one the fork's campaign actually leaned on. Both return a
 `GaussCensus` (count, `examined`, values, `element_index`, `natural_coords`,
 `global_coords(fem)`) at one instant. A per-Gauss-point census at every station
-multiplies wall time ~5–8×: sample at stations, not steps. The live
-`DomainCapture` path is still not adopted (ADR 0108 D5 names the seam).
+multiplies wall time ~5–8×: sample at stations, not steps. Read these
+responses from a recorder file (the `.ladruno` material channel).
 
 ## LadrunoBrick (unified 8-node hex)
 

@@ -10,7 +10,12 @@ result; nothing here opens a writer.
 
 Each record's rows are labelled with the spec's FEM ids, so each reader
 first proves the model's ``(fem_eid, tag)`` pairing holds every one of them
-(:func:`require_translated`): the emit translated through it.
+(:func:`require_translated`): the emit translated through it. The caller
+loads that model once and passes it: the bridge's ``OpenSeesModel``, or the
+live pairing a FEMData archive's run proved (#2269), which a per-material
+gauss record reads through (#2290). A fibres record reads through it too: the
+pairing read each element's section locations and fibre counts from the live
+domain before the run, in place of the bridge archive's ``beamIntegration``.
 """
 from __future__ import annotations
 
@@ -20,6 +25,8 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 import numpy as np
 from numpy import ndarray
 
+from ...opensees import OpenSeesModel
+from ...opensees._recorder_translate import LiveDomainFacts
 from ...opensees._response_catalog import ResponseLayout, normalise_integration_points
 from ..spec._emit import (
     FIBER_OUT_COLUMNS,
@@ -39,31 +46,29 @@ if TYPE_CHECKING:
 
 
 def require_translated(
-    rec: "ResolvedRecorderRecord", model_h5_src: "Path | None",
-    fem_snapshot_id: str,
-) -> Any:
-    """Refuse a fibre or per-material record whose ids no model pairs, and
-    return that model (an ``OpenSeesModel``).
+    rec: "ResolvedRecorderRecord", model: Any, fem_snapshot_id: str,
+) -> None:
+    """Refuse a fibre or per-material record whose ids no model pairs.
 
     Its rows are labelled with the spec's FEM ids, which the emit
-    translated through the model's ``(fem_eid, tag)`` pairing; without
-    that model, or with ids it does not hold, the labels are unproven.
+    translated through the ``(fem_eid, tag)`` pairing of ``model``: the
+    bridge's ``OpenSeesModel``, or a live pairing
+    (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`, its
+    lineage and proved ``elements()``). Without one, or with ids it does
+    not hold, the labels are unproven.
     """
-    from ...opensees import OpenSeesModel
-    if model_h5_src is None:
+    if model is None:
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): its .out rows name "
             f"elements by OpenSees tag, translated from FEM ids through the "
             f"model's pairing. Pass the model (model_h5_src=, or "
             f"Results.from_recorders(..., model=)).")
-    model = OpenSeesModel.from_h5(model_h5_src)
     tags = element_tag_map(model, fem_snapshot_id=fem_snapshot_id)
     missing = [int(e) for e in np.asarray(rec.element_ids) if int(e) not in tags]
     if missing:
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): FEM element ids "
             f"{missing[:10]} have no OpenSees element in the model.")
-    return model
 
 
 #: Element-family suffixes of the beams a fibres record reads:
@@ -113,16 +118,20 @@ def _read_rows(lr: "LogicalRecorder", n_elements: int, unit: int,
 
 def read_per_material_gauss(
     rec: "ResolvedRecorderRecord", logicals: Sequence["LogicalRecorder"],
-    model_h5_src: "Path | None", fem_snapshot_id: str,
+    model: Any, fem_snapshot_id: str,
 ) -> tuple[str, int, ResponseLayout, ndarray, ndarray]:
     """``(class_name, int_rule, layout, time, flat)`` of a gauss record's
     ``material <gp> <token>`` files, one per Gauss point.
 
-    ``flat`` is ``(T, E, n_GP * K)``, GP-slow: the ``unflatten`` order, with
-    file ``gp`` at catalog point ``gp - 1``. A material whose response
-    width is not the catalog's ``K`` fails the column check.
+    ``model`` is the bridge's model or a live pairing
+    (:func:`require_translated`); the layout is the record's class's in
+    the catalog either way, and a live pairing has proved that class by
+    ``eleType``. ``flat`` is ``(T, E, n_GP * K)``, GP-slow: the
+    ``unflatten`` order, with file ``gp`` at catalog point ``gp - 1``. A
+    material whose response width is not the catalog's ``K`` fails the
+    column check.
     """
-    require_translated(rec, model_h5_src, fem_snapshot_id)
+    require_translated(rec, model, fem_snapshot_id)
     layout, class_name, int_rule = per_material_gauss_layout(rec)
     k = layout.n_components_per_gp
     if len(logicals) != layout.n_gauss_points:
@@ -155,7 +164,7 @@ class FiberRecordPayload:
 
 def read_fiber_record(
     rec: "ResolvedRecorderRecord", logicals: Sequence["LogicalRecorder"],
-    lengths_of: Callable[[ndarray], ndarray], model_h5_src: "Path | None",
+    lengths_of: Callable[[ndarray], ndarray], model: Any,
     fem_snapshot_id: str,
 ) -> "FiberRecordPayload | None":
     """A ``section fiberData2`` file and its ``integrationPoints`` pair.
@@ -166,28 +175,46 @@ def read_fiber_record(
     model must confirm by the rule both ``.out`` readers share
     (:func:`._out_station_slicing.line_station_count`, which checks the
     counts before the columns divide and refuses a rule of unknown count),
-    and each element's stations must
-    increase strictly within ``[-1, 1]``, to the shared slack a file written
-    at ``-precision 6`` needs. So a record mixing counts is refused, never
-    split evenly into wrong sections. The fibre file gives
+    and each element's stations must lie within ``[-1, 1]``, to the shared
+    slack a file written at ``-precision 6`` needs. Through the bridge's
+    model they must also increase strictly; over a live pairing they must
+    instead be the live section locations (below). So a record mixing
+    counts is refused, never split evenly into wrong sections. The fibre file gives
     ``n_sections * n_fibres * 6`` columns per element, element-major,
     section-mid, fibre-fast: the MPCO fibre-slab order. No response gives a
     section's fibre count, so every (element, section) must carry one fibre
     table (``y, z, area, matTag``) on every row: a record whose elements
     carry different fibre counts, which the column count alone can hide,
     then reads as unequal tables and is refused.
+
+    Over a live pairing (:class:`LiveDomainFacts`, a FEMData archive's run)
+    the counts are the live domain's, read before the run: each element's
+    ``sectionLocation`` count stands in for its ``beamIntegration`` by the
+    same rule, every section must carry one ``fiberData2`` fibre count that
+    the file's columns then confirm, and the file's stations must be the
+    live section locations (:func:`_require_live_fibers`). That match places
+    each station and so stands in for the order check: a legal rule can
+    write its stations out of order (a long-hinge HingeRadau), and the
+    line-stations read accepts them on the same proof (#2332).
     """
     class_name = fiber_record_class(rec)
     if not logicals:
         return None
-    model = require_translated(rec, model_h5_src, fem_snapshot_id)
+    require_translated(rec, model, fem_snapshot_id)
+    if not isinstance(model, (OpenSeesModel, LiveDomainFacts)):
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers): its stations are counted "
+            f"from each element's beamIntegration in the bridge's model "
+            f"archive, or from the sections a live pairing read before the "
+            f"run; a {type(model).__name__} carries neither. Record it through "
+            f"the bridge's model archive (ops.h5(...)) or emit_default.")
     require_record_class(rec, model)
     fib_lr, gpx_lr = logicals
     ids = np.asarray(rec.element_ids, dtype=np.int64)
     # The whole row as one block; the model's counts then divide it, checked
     # before the columns are, since a mix need not divide by the elements.
     _t, row, n_columns = _read_rows(gpx_lr, 1, 1)
-    n_ip = line_station_count(rec, n_columns, gpx_lr.file_path, model_h5_src,
+    n_ip = line_station_count(rec, n_columns, gpx_lr.file_path, model,
                               fem_snapshot_id)
     gpx = row.reshape(row.shape[0], ids.size, n_ip)
     xi = np.stack([normalise_integration_points(gpx[0, i], float(length))
@@ -200,17 +227,30 @@ def read_fiber_record(
             f"{np.round(xi[out[0]], 6).tolist()}); the likely cause is an "
             f"element length or integration-point count that does not match "
             f"the file.")
-    bad = np.flatnonzero(~(np.diff(xi, axis=1) > 0.0).all(axis=1))
-    if bad.size:
-        raise ValueError(
-            f"{gpx_lr.file_path}: FEM element {int(ids[bad[0]])} has a station "
-            f"repeated or out of order (stations "
-            f"{np.round(xi[bad[0]], 6).tolist()} in natural coordinates; they "
-            f"must be strictly increasing within [-1, 1]). A HingeRadau rule "
-            f"with lp_i + lp_j >= L/4 writes stations like this (its interior "
-            f"weight is not positive), so the fibres cannot be placed along "
-            f"the element.")
+    if isinstance(model, LiveDomainFacts):
+        # The live section locations place each station, in whatever order
+        # its rule gives (a long-hinge HingeRadau writes them out of order,
+        # legally), as the line-stations read does.
+        live_fib: "int | None" = _require_live_fibers(
+            rec, model, xi, lengths_of(ids), gpx_lr.file_path)
+    else:
+        live_fib = None
+        bad = np.flatnonzero(~(np.diff(xi, axis=1) > 0.0).all(axis=1))
+        if bad.size:
+            raise ValueError(
+                f"{gpx_lr.file_path}: FEM element {int(ids[bad[0]])} has a "
+                f"station repeated or out of order (stations "
+                f"{np.round(xi[bad[0]], 6).tolist()} in natural coordinates; "
+                f"they must be strictly increasing within [-1, 1]). A "
+                f"HingeRadau rule with lp_i + lp_j >= L/4 writes stations like "
+                f"this (its interior weight is not positive), so the fibres "
+                f"cannot be placed along the element.")
     time, body, n_fib = _read_rows(fib_lr, ids.size, n_ip * FIBER_OUT_WIDTH)
+    if live_fib is not None and n_fib != live_fib:
+        raise ValueError(
+            f"{fib_lr.file_path}: {n_fib} fibres per section in the file, but "
+            f"the live domain gave each section {live_fib} before the run. "
+            f"The file does not match the live domain.")
     rows = body.reshape(time.size, -1, FIBER_OUT_WIDTH)
     geom = rows[0, :, :4]
     if not np.array_equal(rows[:, :, :4].reshape(-1, n_fib, 4), np.broadcast_to(
@@ -233,6 +273,47 @@ def read_fiber_record(
         components={c: np.ascontiguousarray(rows[:, :, FIBER_OUT_COLUMNS[c]])
                     for c in rec.components},
     )
+
+
+def _require_live_fibers(
+    rec: "ResolvedRecorderRecord", facts: LiveDomainFacts, xi: ndarray,
+    lengths: ndarray, path: "str | Path",
+) -> int:
+    """The one fibre count of every section of ``rec``'s elements, from
+    the sections the live pairing read before the run, or raise.
+
+    Each element's file stations ``xi`` (natural, ``(E, n_IP)``) must be
+    its live section locations, to the slack a ``-precision 6`` file needs,
+    so each fibre table is placed at the section that wrote it. A record
+    whose sections carry different fibre counts is refused naming them: a
+    ``.out`` row carries no per-section count, so it cannot be split.
+    """
+    ids = np.asarray(rec.element_ids, dtype=np.int64)
+    by_count: dict[int, list[str]] = {}
+    for i, e in enumerate(ids.tolist()):
+        locations, fibres = facts.fiber_sections(e)
+        live = normalise_integration_points(
+            np.asarray(locations, dtype=np.float64), float(lengths[i]))
+        off = np.abs(live - xi[i])
+        if not (off <= STATION_RANGE_TOL).all():
+            raise ValueError(
+                f"{path}: FEM element {e} has stations "
+                f"{np.round(xi[i], 6).tolist()} in the file, but its live "
+                f"sections are at {np.round(live, 6).tolist()} (natural "
+                f"coordinates). The file does not match the live domain.")
+        for k, n in enumerate(fibres, start=1):
+            by_count.setdefault(int(n), []).append(f"{e}:{k}")
+    if len(by_count) > 1:
+        listing = "; ".join(
+            f"{n} fibres: sections {where[:6]}{' ...' if len(where) > 6 else ''}"
+            for n, where in sorted(by_count.items()))
+        raise ValueError(
+            f"Record {rec.name!r} (category=fibers): its sections carry "
+            f"different fibre counts in the live domain ({listing}; FEM "
+            f"element:section). A .out row carries no per-section fibre count, "
+            f"so it cannot be split into fibres reliably. Split the record so "
+            f"that each holds one fibre section.")
+    return next(iter(by_count))
 
 
 def write_fiber_records(writer: Any, stage_id: str,

@@ -160,7 +160,7 @@ def test_fibres_emit_fiberdata2_and_its_integration_points_pair() -> None:
 @pytest.mark.parametrize("rec, match", [
     (_fibres([1], cls=None), "names element class None"),
     (_fibres([1], cls="ElasticBeam3d"), "'ElasticBeam3d'"),
-    (_fibres([1], comps=("fiber_stress", "stress_xx")), "'stress_xx'"),
+    (_fibres([1], comps=("fiber_stress", "damage")), "'damage'"),
     (_fibres([1], comps=()), "not fibre responses"),
 ])
 def test_fibre_record_refuses_what_it_cannot_read_back(
@@ -168,6 +168,14 @@ def test_fibre_record_refuses_what_it_cannot_read_back(
 ) -> None:
     with pytest.raises(ValueError, match=match):
         emit_logical(rec)
+
+
+def test_fibre_record_refuses_another_categorys_component_when_built() -> None:
+    """``stress_xx`` is a gauss component: a fibres record of it refuses by
+    name at construction, before any emit (#2344)."""
+    with pytest.raises(ValueError, match=r"'stress_xx' belongs to category "
+                                         r"'gauss', not 'fibers'"):
+        _fibres([1], comps=("fiber_stress", "stress_xx"))
 
 
 @pytest.mark.parametrize("cls, n_gp", [("Brick", 8), ("FourNodeQuad", 4)])
@@ -595,7 +603,7 @@ def test_mixed_counts_whose_columns_do_not_divide_name_the_counts(
     tmp_path: Path,
 ) -> None:
     """Lobatto 3 beside Lobatto 4: 7 stations do not divide by 2 elements.
-    The model refuses the mix before the file is read, so the message names
+    The model refuses the mix before the columns divide, so the message names
     the counts, not the column layout (#2256)."""
     m = _two_beams(tmp_path, "out_fib_3_4", ndm=3, elements=(
         ("B1", "forceBeamColumn", _lobatto(3)), ("B2", "forceBeamColumn", _lobatto(4))))

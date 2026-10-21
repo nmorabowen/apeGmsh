@@ -216,8 +216,8 @@ DERIVED_SHELL_SCALARS: tuple[str, ...] = (
 # grouping, so keep it in the back-compat union below.
 _MATERIAL_DERIVED_SCALARS: tuple[str, ...] = ("equivalent_plastic_strain",)
 
-# Back-compat union alias. Recorder allow-lists (``opensees/recorder.py``,
-# ``results/capture/spec.py``) and older imports reference ``DERIVED_SCALARS``
+# Back-compat union alias. Recorder allow-lists (``opensees/recorder.py``)
+# and older imports reference ``DERIVED_SCALARS``
 # directly; keep it as the full set so those keep resolving.
 DERIVED_SCALARS: tuple[str, ...] = (
     DERIVED_STRESS_SCALARS + DERIVED_STRAIN_SCALARS
@@ -280,6 +280,56 @@ ALL_CANONICAL: frozenset[str] = frozenset(
     + SPRING
     + MATERIAL_STATE
 )
+
+
+# =====================================================================
+# Recorder categories — which category records each component
+# =====================================================================
+#
+# The one table every recorder category check derives from: the
+# declaration (``opensees.recorder.RecorderRecord``), the resolved record
+# (``results.spec.ResolvedRecorderRecord``). A category answers which
+# topology level a component lives at; whether a given route (``.out``,
+# MPCO, the fork's file) records it is that route's own refusal.
+#
+# - ``axial_force`` is in two: a beam section force (``line_stations``)
+#   and the Truss scalar (``eleResponse(eid, "axialForce")``) at its one
+#   Line_GL_1 point (``gauss``).
+# - Shell resultants and generalized strains sit at the same topology
+#   level as continuum stress (one ``"stresses"`` / ``"strains"``
+#   response per element, decoded by the class's catalog layout), so
+#   they are ``gauss``.
+# - ``LINE_STATION_DEFORMATIONS`` are line-station quantities. The
+#   ``.out``, MPCO and fork-file routes refuse them by name at emit (none
+#   decodes ``section.deformation``); that is a route refusal, not a
+#   wrong category.
+# - ``SPRING`` (ZeroLength) records on ``elements``: MPCO and the fork
+#   write it under ``-E basicForce`` / ``deformation`` (Phase 11d).
+CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
+    "nodes": frozenset(NODAL_KINEMATICS + NODAL_FORCES),
+    "elements": frozenset(PER_ELEMENT_NODAL_FORCES + SPRING),
+    "line_stations": frozenset(LINE_DIAGRAMS + LINE_STATION_DEFORMATIONS),
+    "gauss": frozenset(
+        STRESS + STRAIN + PLASTIC_STRAIN
+        + SHELL_STRESS_RESULTANTS + SHELL_GENERALIZED_STRAINS
+        + DERIVED_SCALARS + MATERIAL_STATE + ("axial_force",)
+    ),
+    "fibers": frozenset(FIBER + MATERIAL_STATE),
+    "layers": frozenset(FIBER + MATERIAL_STATE),
+    "modal": frozenset(),  # no per-component vocabulary; n_modes only
+}
+
+#: Indexed canonicals (``<stem><n>``, see :func:`is_canonical`) by the
+#: categories that record them.
+CATEGORY_INDEXED_STEMS: dict[str, tuple[str, ...]] = {
+    "nodes": (),
+    "elements": ("spring_force_", "spring_deformation_"),
+    "line_stations": (),
+    "gauss": ("state_variable_",),
+    "fibers": ("state_variable_", "fiber_stress_", "fiber_strain_"),
+    "layers": ("state_variable_", "fiber_stress_", "fiber_strain_"),
+    "modal": (),
+}
 
 
 # =====================================================================
@@ -409,6 +459,48 @@ def is_canonical(name: str) -> bool:
             if suffix.isdigit():
                 return True
     return False
+
+
+def in_category(category: str, name: str) -> bool:
+    """True if recorder ``category`` records canonical component ``name``.
+
+    Raises ``ValueError`` for a category :data:`CATEGORY_COMPONENTS`
+    does not know.
+    """
+    if category not in CATEGORY_COMPONENTS:
+        raise ValueError(
+            f"unknown recorder category {category!r}; the categories are "
+            f"{tuple(CATEGORY_COMPONENTS)}."
+        )
+    if name in CATEGORY_COMPONENTS[category]:
+        return True
+    return any(
+        name.startswith(stem) and name[len(stem):].isdigit()
+        for stem in CATEGORY_INDEXED_STEMS[category]
+    )
+
+
+def categories_of(name: str) -> tuple[str, ...]:
+    """The recorder categories that record ``name``, in table order."""
+    return tuple(c for c in CATEGORY_COMPONENTS if in_category(c, name))
+
+
+def wrong_category_reason(category: str, name: str) -> str:
+    """Why canonical ``name`` cannot ride a ``category`` record, naming
+    the categories that record it."""
+    right = categories_of(name)
+    if not right:
+        return (
+            f"component {name!r} is recorded by no recorder category, so "
+            f"a {category!r} record of it records nothing."
+        )
+    where = " or ".join(repr(c) for c in right)
+    return (
+        f"component {name!r} belongs to category {where}, not "
+        f"{category!r}: a {category!r} record of it records nothing, or "
+        f"another response under its name. Declare it in a {right[0]!r} "
+        f"record."
+    )
 
 
 def is_shorthand(name: str) -> bool:

@@ -9,8 +9,13 @@ a partial FEMData without an element-class table. This mirrors
 * ``MODEL/ELEMENTS/<classTag>-<ClassName>[..]`` is a **group** carrying a
   ``CONNECTIVITY`` dataset (rows ``(elemTag, c1..cK)``) plus the BASIS
   descriptor as attributes — *not* a flat dataset like MPCO.
-* element topological dim/order come from the BASIS ``TOPOLOGY``/``ORDER``
-  attrs when present (falling back to the MPCO class-name heuristic).
+* element order comes from the BASIS ``ORDER`` attr; the topological dim
+  is the response catalog's parent dimension for a catalogued class, else
+  the BASIS ``TOPOLOGY``, else a class-name guess that is warned
+  (:func:`apeGmsh.mesh._femdata_mpco_io.element_dim`). A ``TOPOLOGY``
+  that contradicts the catalog is named in its own
+  ``ElementDimContradictionWarning``; each warning names a class once
+  per session.
 
 Like the MPCO synthesizer this is a *partial* FEMData (no apeGmsh labels,
 no pre-mesh declarations); element type codes are negated class tags so
@@ -34,8 +39,8 @@ _ELEM_NAME_RE = re.compile(
     r"^(?P<tag>\d+)-(?P<class>[^\[]+)(?:\[(?P<suffix>[^\]]*)\])?$"
 )
 
-# Ladruno BASIS ``TOPOLOGY`` → topological dimension. Falls back to the
-# class-name heuristic when TOPOLOGY is absent or "custom".
+# Ladruno BASIS ``TOPOLOGY`` → topological dimension. "custom" (LadrunoLST,
+# SixNodeTri) and an absent attr declare nothing.
 _DIM_BY_TOPOLOGY: dict[str, int] = {
     "line": 1,
     "tri": 2,
@@ -71,8 +76,16 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             [coords, np.zeros((coords.shape[0], 1), dtype=np.float64)]
         )
 
+    from ._femdata_mpco_io import (
+        element_dim,
+        warn_dim_contradictions,
+        warn_unknown_dims,
+    )
+
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
+    guessed: set[tuple[str, int]] = set()
+    contradicted: set[tuple[str, int, int]] = set()
     elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for grp_name in elements_grp:
@@ -90,7 +103,12 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             connectivity = data[:, 1:].copy()
             npe = connectivity.shape[1]
 
-            dim = _dim_from_basis(elem_grp, class_name, npe, ndm)
+            declared = _declared_dim(elem_grp)
+            dim, known = element_dim(class_name, npe, ndm, declared=declared)
+            if not known:
+                guessed.add((class_name, dim))
+            elif declared is not None and dim != declared:
+                contradicted.add((class_name, declared, dim))
             order = _attr_int(elem_grp, "ORDER", default=1)
 
             info = make_type_info(
@@ -105,6 +123,8 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             element_groups[info.code] = ElementGroup(
                 element_type=info, ids=ids, connectivity=connectivity,
             )
+    warn_unknown_dims(guessed, source="fork-recorder MODEL")
+    warn_dim_contradictions(contradicted, source="fork-recorder MODEL")
 
     # Physical groups from ladruno SETS (MODEL/SETS/SET_<tag>).
     pg_dict: dict[tuple[int, int], dict] = {}
@@ -186,15 +206,13 @@ def _attr_int(grp, name: str, *, default: int) -> int:
     return int(v)
 
 
-def _dim_from_basis(elem_grp, class_name: str, npe: int, ndm: int) -> int:
-    """Prefer the self-declared ``TOPOLOGY`` attr; fall back to the
-    MPCO class-name + npe/ndm heuristic."""
-    if "TOPOLOGY" in elem_grp.attrs:
-        topo = _decode_attr(elem_grp.attrs["TOPOLOGY"]).lower()
-        if topo in _DIM_BY_TOPOLOGY:
-            return _DIM_BY_TOPOLOGY[topo]
-    from ._femdata_mpco_io import _guess_dim_from_class
-    return _guess_dim_from_class(class_name, npe, ndm)
+def _declared_dim(elem_grp) -> int | None:
+    """The dim the BASIS ``TOPOLOGY`` attr declares, or ``None`` when it is
+    absent, "custom", or a name outside :data:`_DIM_BY_TOPOLOGY`."""
+    if "TOPOLOGY" not in elem_grp.attrs:
+        return None
+    topo = _decode_attr(elem_grp.attrs["TOPOLOGY"]).lower()
+    return _DIM_BY_TOPOLOGY.get(topo)
 
 
 def _is_set_group(obj) -> bool:

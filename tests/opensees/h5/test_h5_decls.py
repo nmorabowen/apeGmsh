@@ -615,11 +615,16 @@ def test_every_registry_verb_is_classified() -> None:
 
 def _param_stage_model() -> apeSees:
     """A stage with two ``s.update_parameter`` and two ``s.zero_velocities``
-    records (opensees 2.27.0, K1-8): side-channel stores with rows columns."""
+    records (opensees 2.27.0, K1-8): side-channel stores with rows columns.
+
+    Both quads are declared, so nodes 5 and 6 are not orphans and the
+    stage's ``analyze`` solves on stock (#2372: with the Fill quad
+    undeclared the system was singular, the #2220 abort)."""
     ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
     ops.fix(pg="Base", dofs=(1, 1))
     with ops.stage(name="params") as s:
         s.update_parameter("xPerm", 1e-5, pg="Rock")

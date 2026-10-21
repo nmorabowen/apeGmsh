@@ -981,8 +981,24 @@ not co-presence.
 2. **`ops.recorder.declare(...)`** — canonical fan-out, per-category
    kwargs (`nodes=` / `elements=` / `line_stations=` / `gauss=`) plus
    a `raw=` escape hatch.
-3. **`DomainCaptureSpec`** (`apeGmsh.results.capture.spec`) for
-   in-process capture: `ops.domain_capture(spec, path=)`.
+3. **`ResolvedRecorderSpec.emit_default(path, model_h5=)`**
+   (`apeGmsh.results.spec`) for an in-process run: build a spec of
+   `ResolvedRecorderRecord`s (node / element ids, e.g.
+   `fem.nodes.select(pg="Tip").ids`; components spelled canonically,
+   `displacement_x`, not the `displacement` shorthand), then
+   `ops.h5("model.h5"); ops.run()` and step `get_ops().analyze(1)`
+   (`apeGmsh.opensees.emitter.live`) inside the `with` block. The
+   single read-back is `run.results()` after the block closes. The route
+   follows the build (`run.route`): the fork records `.ladruno`
+   (`Results.from_ladruno`), a stock build with MPCO records `.mpco`
+   (`Results.from_mpco`), and pip openseespy records classic `.out`
+   files (`Results.from_recorders`); the two stock routes warn once
+   with `DefaultRouteWarning`. Modal records refuse there: modes come
+   from `ops.eigen(n)`, whose `EigenResult.results()` /
+   `.to_native(path)` / `.to_ladruno(path)` write and open them; a
+   plain openseespy deck's modes come from
+   `apeGmsh.results.live.capture_live_modes`. The old in-process
+   capture route was deleted (#2191).
 
 The canonical component vocabulary is the neutral top-level
 `apeGmsh._vocabulary` (`expand_shorthand` / `expand_many`). The old
@@ -995,11 +1011,13 @@ The canonical component vocabulary is the neutral top-level
 > (`GENERATOR="Ladruno"`, `FORMAT_VERSION=1`). It is self-describing (elements
 > declare basis/quadrature) and — unlike `.mpco` — **writes `MODEL/LOCAL_AXES`**
 > (per-class quaternion `FRAME`) for beams, so beam `line_force`/section diagrams
-> can be oriented straight from the file. apeGmsh can emit it via `ops.tcl/py`
-> (`recorder ladruno`); a typed `ops.recorder.Ladruno` and a `Results.from_ladruno`
-> reader are the **recommended** apeGmsh-side additions (not yet shipped). Full
-> emit/read contract: `Ladruno_implementation/ladruno_apegmsh_contract.md` in the
-> fork. The fork is opt-in; stock `openseespy` (no `.ladruno`) stays first-class.
+> can be oriented straight from the file. apeGmsh declares it with the typed
+> `ops.recorder.Ladruno(...)` (it emits `recorder ladruno` into `ops.run()` and
+> every deck) and reads it with `Results.from_ladruno(path, model_h5=)`, which
+> binds the archive's physical groups and labels; `spec.emit_default(...)`
+> records it on the fork with no declaration at all. Full emit/read contract:
+> `Ladruno_implementation/ladruno_apegmsh_contract.md` in the fork. The fork is
+> opt-in; stock `openseespy` (no `.ladruno`) stays first-class.
 
 ## Native model.h5 — two zones + schema constants
 

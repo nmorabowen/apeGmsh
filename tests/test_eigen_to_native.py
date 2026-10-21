@@ -1,18 +1,18 @@
 """``EigenResult.to_native`` / ``EigenResult.results`` (#1972, brief #1961 r2).
 
-The modes route for pip ``openseespy`` once ``DomainCapture`` is deleted.
-Every case here runs the real bridge (``apeSees.eigen`` and
+The modes route for pip ``openseespy`` (the in-process capture route it
+replaced was deleted in #2191). Every case here runs the real bridge (``apeSees.eigen`` and
 ``LiveOpsEmitter``) against a fake OpenSees module, so it needs no
 backend: emit calls are no-ops, ``eigen`` and ``nodeEigenvector`` answer
 from a table the test sets, and ``ladrunoBuild`` exists only on the fake
-fork. The fem is a real one, meshed with gmsh in this module, never the
-``_MockFem`` of the capture suite that the deletion removes.
+fork. The fem is a real one, meshed with gmsh in this module.
 
 Oracles (brief §6): the vectors written equal the fake's table (atol 0);
 mixed ndf (vectors of length 3, 4 and 6 under an envelope of 6) never
-raises and zero-fills; a dataset-by-dataset h5 walk against
-``DomainCapture.capture_modes`` on the same fake; one ``UserWarning`` for
-λ < 0 and none otherwise; staleness through ``domain_epoch()``.
+raises and zero-fills; one ``UserWarning`` for λ < 0 and none otherwise;
+staleness through ``domain_epoch()``. Invariant 4, a dataset-by-dataset
+parity walk against the deleted in-process capture, held until #2191
+removed that route; invariants 1-3 still pin every value written.
 The live solve is ``tests/opensees/live/test_eigen_to_native_live.py``.
 """
 from __future__ import annotations
@@ -208,6 +208,39 @@ def test_one_mode_stage_per_eigenvalue_with_exact_attrs(
         assert f.attrs["source_type"] == "eigen"
 
 
+def test_the_file_carries_the_bridges_opensees_zone(
+    fem3: Any, bind: Any, tmp_path: Path,
+) -> None:
+    """The modes file is Composed: its ``/opensees`` zone is the bridge's.
+
+    Oracle: the bridge's own archive, ``ops.h5(...)``, written separately.
+    The zone must hold the same groups and datasets, and the file must
+    reopen as a model with the bridge's envelope ndf. Without the zone a
+    reader sees ``ndf=0`` and the viewer loses the element pairing.
+    """
+    ids = _node_ids(fem3)
+    bind(_FakeOps([4.0, 37.5], _vectors(ids, 2, {int(n): 6 for n in ids})))
+    ops = _frame(fem3)
+    out = ops.eigen(2).to_native(tmp_path / "modes.h5")
+    ref = tmp_path / "ref.model.h5"
+    ops.h5(str(ref))
+
+    def tree(f: Any) -> list[str]:
+        names: list[str] = []
+        f["opensees"].visit(names.append)
+        return sorted(names)
+
+    with h5py.File(out, "r") as f, h5py.File(ref, "r") as g:
+        assert "opensees" in f, "the modes file lost the bridge zone"
+        assert tree(f) == tree(g)
+        for name in tree(g):
+            if isinstance(g["opensees"][name], h5py.Dataset):
+                np.testing.assert_array_equal(
+                    f["opensees"][name][()], g["opensees"][name][()],
+                    err_msg=name)
+    assert OpenSeesModel.from_h5(out, fem_root="/model").ndf == 6
+
+
 def test_vectors_are_the_domain_vectors_read_once_per_node(
     fem3: Any, bind: Any, tmp_path: Path,
 ) -> None:
@@ -319,63 +352,6 @@ def test_a_vector_shorter_than_ndm_zero_fills_translations(
     assert _component(out, stage, "displacement_z")[0][col] == 0.0
     for comp in ("rotation_x", "rotation_y", "rotation_z"):
         assert _component(out, stage, comp)[0][col] == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Invariant 4: parity with DomainCapture.capture_modes
-# ---------------------------------------------------------------------------
-
-def _walk(path: Path, root: str) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    with h5py.File(path, "r") as f:
-        def visit(name: str, obj: Any) -> None:
-            key = f"{root}/{name}"
-            for a in obj.attrs:
-                out[f"{key}@{a}"] = np.asarray(obj.attrs[a]).tolist()
-            if isinstance(obj, h5py.Dataset):
-                out[key] = (obj.dtype.str, np.asarray(obj[()]).tolist())
-        grp = f[root]
-        for a in grp.attrs:
-            out[f"{root}@{a}"] = np.asarray(grp.attrs[a]).tolist()
-        grp.visititems(visit)
-    return out
-
-
-def test_stages_match_capture_modes_dataset_by_dataset(
-    fem3: Any, bind: Any, tmp_path: Path,
-) -> None:
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
-
-    ids = _node_ids(fem3)
-    lengths = {int(n): 6 for n in ids}
-    lengths[int(ids[0])] = 3
-    fake = bind(_FakeOps([4.0, 37.5, 1234.5678],
-                         _vectors(ids, 3, lengths)))
-    ops = _frame(fem3)
-    r = ops.eigen(3)
-    # Same file name in two directories: the sidecar's model_name
-    # ("<stem>.model") then matches too.
-    ours = r.to_native(tmp_path / "a" / "modes.h5")
-
-    theirs = tmp_path / "b" / "modes.h5"
-    theirs.parent.mkdir()
-    with ops.domain_capture(
-        DomainCaptureSpec(opensees=ops), path=theirs, ops=fake,
-    ) as cap:
-        cap.capture_modes(3)
-
-    a, b = _walk(ours, "stages"), _walk(theirs, "stages")
-    assert sum("@" not in k for k in a) == 3 * (6 + 2)   # data + _ids + time
-    assert a.keys() == b.keys()
-    assert {k for k in a if a[k] != b[k]} == set()
-    for zone, volatile in (("opensees", set()),
-                           ("model", {"model/meta@created_iso"})):
-        a, b = _walk(ours, zone), _walk(theirs, zone)
-        assert a.keys() == b.keys()
-        assert {k for k in a if repr(a[k]) != repr(b[k])} == volatile
-    with h5py.File(ours, "r") as f, h5py.File(theirs, "r") as g:
-        assert f.attrs["source_type"] == "eigen"
-        assert g.attrs["source_type"] == "domain_capture"
 
 
 # ---------------------------------------------------------------------------

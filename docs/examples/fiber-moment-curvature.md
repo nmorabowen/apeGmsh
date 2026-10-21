@@ -327,10 +327,10 @@ with `opspy.analyze(1)` and read state back between steps. Each step,
 (after `reactions()` recomputes them). That's one (κ, M) point per step,
 the whole curve in a loop.
 
-!!! note "Live domain vs. the capture pipeline"
-    Elsewhere we record with `DomainCaptureSpec` →
-    `Results.from_native` — the right tool when you want a results file,
-    a viewer, and `results.plot.*`. Here a parametric sweep that pulls two
+!!! note "Live domain vs. the recording pipeline"
+    Elsewhere we record with `spec.emit_default(...)` → `run.results()`,
+    the right tool when you want a results file, a viewer, and
+    `results.plot.*`. Here a parametric sweep that pulls two
     scalars per step, the **`ops.run(wipe=False)` live-domain fast path**
     is the documented, lighter-weight choice. Same OpenSees underneath;
     just a more direct read.

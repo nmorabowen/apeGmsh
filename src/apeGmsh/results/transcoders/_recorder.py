@@ -9,7 +9,7 @@ and column layouts (so transcoder ↔ emitter stay in lockstep).
 Scope
 -----
 - ``nodes`` records — full TXT support, multi-record merge with
-  NaN fill (matches DomainCapture semantics).
+  NaN fill.
 - ``gauss`` records (Phase 11a) — continuum stress/strain at GPs,
   for catalogued element classes. Class identity is sniffed from the
   file's column count via the response catalog; v1 requires
@@ -56,7 +56,8 @@ from ...opensees._response_catalog import (
     unflatten_nodal,
 )
 from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
-from ..readers._out_station_slicing import line_station_count, require_line_stations
+from ..readers._out_station_slicing import (
+    line_station_count, require_line_stations, require_station_source)
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..readers._out_fiber_io import read_fiber_record, read_per_material_gauss, write_fiber_records
 from ..spec._emit import (
@@ -184,7 +185,7 @@ class RecorderTranscoder:
                  "fibers": lambda rec: read_fiber_record(rec, quiet_emit_logical(
                      rec, output_dir=str(self._output_dir), file_format=self._file_format,
                      stage_id=self._stage_id), lambda ids: _resolve_element_lengths(self._fem, ids),
-                     self._model_h5_src, self._spec.fem_snapshot_id)}
+                     self._model_or_pairing(), self._spec.fem_snapshot_id)}
         payloads: dict[str, list] = {category: [] for category in parse}
         self.unsupported = []
         for rec in self._spec.records:
@@ -346,7 +347,7 @@ class RecorderTranscoder:
             return None
         if logicals[0].response_tokens[0] == "material":   # _out_fiber_io
             return _GaussRecordPayload(rec.name, np.asarray(rec.element_ids), *read_per_material_gauss(
-                rec, logicals, self._model_h5_src, self._spec.fem_snapshot_id))
+                rec, logicals, self._model_or_pairing(), self._spec.fem_snapshot_id))
         if len(logicals) > 1:
             raise ValueError(
                 f"Gauss record {rec.name!r} unexpectedly emitted "
@@ -456,6 +457,7 @@ class RecorderTranscoder:
                 f"Class {class_name!r} is in neither CUSTOM_RULE_CATALOG "
                 f"(section force) nor the localForce synthesis (an elastic "
                 f"beam in NODAL_FORCE_CATALOG); add a catalog entry.")
+        require_station_source(rec, self._model_h5_src, self._pairing)
 
         logicals = list(quiet_emit_logical(
             rec, output_dir=str(self._output_dir),
@@ -486,9 +488,9 @@ class RecorderTranscoder:
             )
         n_elements = len(rec.element_ids)
         gpx_data_cols = first_gpx_row.size - 1   # subtract -time column
-        # A bound model's per-element counts are checked before the columns divide.
-        n_ip = line_station_count(rec, gpx_data_cols, gpx_lr.file_path, self._model_h5_src,
-                                  self._spec.fem_snapshot_id)
+        # A bound model's (or a live pairing's) per-element counts are checked before the columns divide.
+        n_ip = line_station_count(rec, gpx_data_cols, gpx_lr.file_path,
+                                  self._model_or_pairing(), self._spec.fem_snapshot_id)
         # Reshape to (E, n_IP) of physical xi*L.
         xi_phys = first_gpx_row[1:].reshape(n_elements, n_ip)
 
@@ -501,7 +503,8 @@ class RecorderTranscoder:
         xi_natural = np.empty_like(xi_phys)
         for i, L in enumerate(element_lengths):
             xi_natural[i] = normalise_integration_points(xi_phys[i], L)
-        require_line_stations(rec, xi_natural, gpx_lr.file_path, self._model_h5_src, self._spec.fem_snapshot_id)
+        require_line_stations(rec, xi_natural, gpx_lr.file_path, self._model_h5_src, self._spec.fem_snapshot_id,
+                              self._pairing, element_lengths)
 
         # ── Read the section.force file: total cols = 1 + E*n_IP*K ──
         first_section_row = np.loadtxt(
@@ -738,7 +741,7 @@ class RecorderTranscoder:
             )
 
     # ------------------------------------------------------------------
-    # Merge logic (mirror of DomainCapture._flush_nodes_merged)
+    # Merge logic
     # ------------------------------------------------------------------
 
     def _write_merged_nodes(
@@ -945,8 +948,8 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
 def _record_catalog_token(rec: "ResolvedRecorderRecord") -> str | None:
     """Return ``"stress"`` / ``"strain"`` for a gauss record (or None).
 
-    Mixed work-conjugate families raise — same contract as
-    DomainCapture and the spec emit. Records with no Gauss-level
+    Mixed work-conjugate families raise — same contract as the spec
+    emit. Records with no Gauss-level
     components return ``None`` (the caller should skip).
 
     Recognises both continuum prefixes (``stress`` / ``strain``) and

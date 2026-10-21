@@ -34,6 +34,8 @@ from .._slabs import (
 )
 from .._time import resolve_time_slice
 from ..schema import _native
+from ._gauss_refusals import GaussDimensionMixed, refuse_mixed_gauss_dims
+from ._ladruno import _repeated_rows
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -57,6 +59,83 @@ _ELEMENT_CATEGORY = {
 }
 
 
+#: How many repeated ids a refusal message names before "and N more".
+_SHOWN = 5
+
+
+class NativeRepeatedNodeId(ValueError):
+    """A native results file lists one node id twice in one partition's
+    ``nodes/_ids``.
+
+    Raised when the file is opened. A repeated id would read as two
+    columns of one node, and the reader's per-node dedup would keep the
+    first copy silently. A node in two *partitions* is a different case:
+    see :class:`NativePartitionCopiesDisagree`.
+
+    ``file`` is the file path, ``dataset`` the HDF5 path of the ``_ids``
+    dataset, and ``repeated`` maps each repeated id to the rows it sits at.
+    """
+
+    def __init__(
+        self, file: Path, dataset: str, repeated: "dict[int, list[int]]",
+    ) -> None:
+        self.file = file
+        self.dataset = dataset
+        self.repeated = repeated
+        shown = dict(list(repeated.items())[:_SHOWN])
+        more = (
+            f" and {len(repeated) - _SHOWN} more"
+            if len(repeated) > _SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: {dataset} lists node id(s) more than once "
+            f"(id: rows {shown}{more}). Each node is listed once per "
+            f"partition; a repeated id would read as two columns of one "
+            f"node, and only the first would be kept. The file is malformed."
+        )
+
+
+class NativePartitionCopiesDisagree(ValueError):
+    """A node held by several partitions has copies of one component that
+    are not bit-for-bit equal.
+
+    Native files carry no partition-reduction rule (MPCO and ``.ladruno``
+    have ``PARTITION_REDUCTION``), so the reader cannot tell a partial
+    per-partition value (a reaction or unbalanced load, which would have
+    to be summed) from a replicated one (a displacement). A component is
+    read only when every shared node's copies are equal, so keeping the
+    first is exact. One node whose copies differ shows the component holds
+    partial values, so its agreeing copies may be partial too: the
+    component then refuses on every read, whatever the node filter or
+    time slice, rather than return one partition's share as the whole.
+
+    ``copies`` maps each disagreeing node id to the partitions that hold it.
+    """
+
+    def __init__(
+        self, file: Path, stage_id: str, component: str,
+        copies: "dict[int, list[str]]",
+    ) -> None:
+        self.file = file
+        self.stage_id = stage_id
+        self.component = component
+        self.copies = copies
+        shown = dict(list(copies.items())[:_SHOWN])
+        more = (
+            f" and {len(copies) - _SHOWN} more"
+            if len(copies) > _SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: stage {stage_id!r} component {component!r}: node "
+            f"id(s) held by several partitions have copies that differ "
+            f"(id: partitions {shown}{more}). Native results files carry no "
+            f"partition-reduction rule, so partial per-partition values "
+            f"(reactions, unbalanced loads) cannot be summed. The component "
+            f"is read only when every shared node's copies are equal, "
+            f"whatever the node filter or time slice."
+        )
+
+
 class LegacySimplexGaussCoordsWarning(UserWarning):
     """A simplex Gauss group's stored ``_natural_coords`` match neither the
     rows older writers stored nor the current gmsh table, so the reader
@@ -68,7 +147,8 @@ class LegacySimplexGaussCoordsWarning(UserWarning):
 # Simplex Gauss coordinates written by older apeGmsh versions
 # ---------------------------------------------------------------------------
 #
-# The native writers (DomainCapture and the recorder transcoder) copy the
+# The native writers (the recorder transcoder, the modes writers and,
+# in older files, an in-process capture) copy the
 # response catalog's ``natural_coords`` into ``_natural_coords``. The
 # catalog holds every simplex rule in gmsh reference coordinates (``1 - Σ``
 # on node 0), which is what every consumer of ``GaussSlab.natural_coords``
@@ -176,17 +256,51 @@ class NativeReader:
         self._unavailable: dict[str, str] = {}
         # class_tags already warned about by ``_gauss_natural_coords``.
         self._simplex_warned: set[int] = set()
+        # (stage, component, n_steps) -> the shared nodes whose
+        # partition copies differ ({} when they all agree).
+        self._copy_verdicts: dict[
+            tuple[str, str, int], dict[int, list[str]],
+        ] = {}
         # ADR 0023 — validate per-zone schema versions for every
         # embedded zone (results envelope, neutral, opensees). Failure
         # raises SchemaVersionError before any read API is offered.
         try:
             self._validate_per_zone_versions()
+            self._refuse_repeated_node_ids()
         except Exception:
             try:
                 self._h5.close()
             except Exception:
                 pass
             raise
+
+    def _refuse_repeated_node_ids(self) -> None:
+        """Raise :class:`NativeRepeatedNodeId` if one partition's
+        ``nodes/_ids`` lists a node id twice (#2360).
+
+        Checked per partition, so a boundary node replicated across
+        partitions is not refused here; ``read_nodes`` checks its copies.
+        A partition with no ``nodes`` group or no ``_ids`` lists no node.
+        """
+        stages_root = _native.STAGES_GROUP[1:]
+        if stages_root not in self._h5:
+            return
+        for sid in self._h5[stages_root]:
+            for pid in self.partitions(sid):
+                nodes_path = _native.nodes_path(sid, pid)[1:]
+                if nodes_path not in self._h5:
+                    continue
+                nodes_grp = self._h5[nodes_path]
+                if _native.DSET_IDS not in nodes_grp:
+                    continue
+                dataset = nodes_grp[_native.DSET_IDS]
+                repeated = _repeated_rows(
+                    np.asarray(dataset[...], dtype=np.int64).ravel(),
+                )
+                if repeated:
+                    raise NativeRepeatedNodeId(
+                        self._path, dataset.name, repeated,
+                    )
 
     def _validate_per_zone_versions(self) -> None:
         """Apply the floor check (ADR 0113 (#1303)) to every zone present.
@@ -345,7 +459,7 @@ class NativeReader:
         ``ELEMENT_INDEX_SPACES`` read as unverified. That is not a
         refusal: the file still reads. Neither the version number nor
         ``source_type`` ever makes a file verified: the rule is the same
-        for every writer, ``domain_capture`` included. The stamp must be
+        for every writer, legacy writers included. The stamp must be
         a scalar variable-length UTF-8 string; any other dtype reads as
         unverified, whatever its text.
         """
@@ -669,6 +783,10 @@ class NativeReader:
             else np.asarray(node_ids, dtype=np.int64)
         )
 
+        # Refuses when the partitions' copies of a shared node differ
+        # anywhere in this component, whatever the filter or slice.
+        self._check_partition_copies(stage_id, component)
+
         chunks_values: list[ndarray] = []
         chunks_ids: list[ndarray] = []
         for pid in self.partitions(stage_id):
@@ -709,8 +827,9 @@ class NativeReader:
             else np.array([], dtype=np.int64)
         )
         # Boundary nodes are replicated across partition domains. Dedup
-        # by id (first occurrence wins, matching the MPCO multi-reader)
-        # so a shared node yields one column, not one per partition. Only
+        # by id (first occurrence wins) so a shared node yields one
+        # column, not one per partition; ``_check_partition_copies``
+        # proved the copies equal, so the first is every copy. Only
         # reorders when duplicates exist, so disjoint-owner files are
         # byte-identical to the plain concatenation.
         if ids_out.size:
@@ -722,6 +841,94 @@ class NativeReader:
             component=component, values=values,
             node_ids=ids_out, time=time[t_idx],
         )
+
+    def _check_partition_copies(self, stage_id: str, component: str) -> None:
+        """Raise :class:`NativePartitionCopiesDisagree` unless every node
+        held by several partitions has bit-for-bit equal copies of
+        ``component`` over every step of ``stage_id`` (#2360).
+
+        The verdict is per (stage, component), over **all** shared nodes,
+        never only the ones a read selects: one disagreeing node shows the
+        component holds partial per-partition values, so its agreeing
+        copies may be partial too, and no filter or time slice may read
+        them. The verdict is memoised (keyed with the step count, so a
+        stage that grows is checked again); a refusal is raised again on
+        every read. The comparison is on the bytes, so NaN copies agree
+        and ``0.0`` and ``-0.0`` do not.
+        """
+        n_steps = int(self._h5[_native.stage_time_path(stage_id)].shape[0])
+        key = (stage_id, component, n_steps)
+        if key not in self._copy_verdicts:
+            self._copy_verdicts[key] = self._disagreeing_copies(
+                stage_id, component,
+            )
+        copies = self._copy_verdicts[key]
+        if copies:
+            raise NativePartitionCopiesDisagree(
+                self._path, stage_id, component, copies,
+            )
+
+    def _disagreeing_copies(
+        self, stage_id: str, component: str,
+    ) -> "dict[int, list[str]]":
+        """Each shared node whose copies of ``component`` differ, mapped to
+        the partitions holding it; ``{}`` when every copy agrees."""
+        held: list[tuple[str, "h5py.Group", ndarray]] = []
+        for pid in self.partitions(stage_id):
+            nodes_path = _native.nodes_path(stage_id, pid)[1:]
+            if nodes_path not in self._h5:
+                continue
+            nodes_grp = self._h5[nodes_path]
+            if component not in nodes_grp:
+                continue
+            held.append((pid, nodes_grp, np.asarray(
+                nodes_grp[_native.DSET_IDS][...], dtype=np.int64,
+            )))
+        if len(held) < 2:
+            return {}
+        # A repeat within one partition is refused at open, so an id
+        # counted twice here is held by two partitions.
+        uniq, counts = np.unique(
+            np.concatenate([ids for _, _, ids in held]), return_counts=True,
+        )
+        shared = uniq[counts > 1]
+        if not shared.size:
+            return {}
+
+        copy_vals: list[ndarray] = []
+        copy_ids: list[ndarray] = []
+        copy_pids: list[str] = []
+        for pid, nodes_grp, ids in held:
+            is_copy = np.isin(ids, shared)
+            if not is_copy.any():
+                continue
+            copy_vals.append(nodes_grp[component][...][:, is_copy])
+            copy_ids.append(ids[is_copy])
+            copy_pids.extend([pid] * int(is_copy.sum()))
+        ids_all = np.concatenate(copy_ids)
+        pids = np.array(copy_pids)
+        cells = np.ascontiguousarray(np.concatenate(copy_vals, axis=1))
+        _, first, inverse = np.unique(
+            ids_all, return_index=True, return_inverse=True,
+        )
+        n_steps, n_cols = cells.shape
+        raw = cells.view(np.uint8).reshape(
+            n_steps, n_cols, cells.dtype.itemsize,
+        )
+        differs = (raw != raw[:, first[inverse], :]).any(axis=(0, 2))
+        if not differs.any():
+            return {}
+        # Every copy of each disagreeing node, grouped by one stable sort
+        # (partitions stay in read order within a node).
+        bad = np.isin(ids_all, ids_all[differs])
+        bad_ids, bad_pids = ids_all[bad], pids[bad]
+        order = np.argsort(bad_ids, kind="stable")
+        bad_ids, bad_pids = bad_ids[order], bad_pids[order]
+        nids, starts = np.unique(bad_ids, return_index=True)
+        return {
+            int(nid): group.tolist()
+            for nid, group in zip(nids, np.split(bad_pids, starts[1:]))
+        }
 
     # ------------------------------------------------------------------
     # Slab reads — Gauss points
@@ -744,6 +951,8 @@ class NativeReader:
         )
 
         chunks_v, chunks_eidx, chunks_nc = [], [], []
+        # (group label, natural-coordinate width) per group read.
+        widths: list[tuple[str, int]] = []
         chunks_quat: list[ndarray] = []
         any_quat = False
 
@@ -762,6 +971,15 @@ class NativeReader:
                 eidx = np.asarray(
                     grp[_native.DSET_ELEMENT_INDEX][...], dtype=np.int64,
                 )
+                if eid_filter is None:
+                    elem_sel = np.arange(eidx.size)
+                else:
+                    mask = np.isin(eidx, eid_filter)
+                    if not mask.any():
+                        continue
+                    elem_sel = np.where(mask)[0]
+
+                # After the filter: only a group this read returns may warn.
                 nc = self._gauss_natural_coords(
                     grp,
                     np.asarray(
@@ -770,14 +988,6 @@ class NativeReader:
                     ),
                 )
                 n_gp = nc.shape[0]
-
-                if eid_filter is None:
-                    elem_sel = np.arange(eidx.size)
-                else:
-                    mask = np.isin(eidx, eid_filter)
-                    if not mask.any():
-                        continue
-                    elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
                 full = grp[component][...]                  # (T, E_g, n_gp)
@@ -793,6 +1003,11 @@ class NativeReader:
                 chunks_v.append(flat)
                 chunks_eidx.append(row_eidx)
                 chunks_nc.append(row_nc)
+                widths.append((
+                    f"class_tag {int(grp.attrs[_native.ATTR_CLASS_TAG])} "
+                    f"({grp.name})",
+                    int(nc.shape[1]),
+                ))
 
                 if _native.DSET_LOCAL_AXES_QUATERNION in grp:
                     any_quat = True
@@ -802,6 +1017,13 @@ class NativeReader:
                     )
                     chunks_quat.append(np.repeat(quat[elem_sel], n_gp, axis=0))
 
+        # One slab holds one natural_coords width: a 2-D-parent group
+        # beside a 3-D-parent group refuses by name, as MPCO and .ladruno
+        # do, rather than fail in np.concatenate.
+        refuse_mixed_gauss_dims(
+            widths, component=component, reader="native",
+            source=self._path.name, error=GaussDimensionMixed,
+        )
         values = (
             np.concatenate(chunks_v, axis=1) if chunks_v
             else np.zeros((t_idx.size, 0), dtype=np.float64)

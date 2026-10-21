@@ -326,7 +326,7 @@ def test_element_records_refuse_by_name(frame, tmp_path) -> None:
     fem, model_h5 = frame
     ops = LiveOps(**_MIXED_3D)  # type: ignore[arg-type]
     spec = _spec(fem, ("nodes", "all", _DISP3, [1, 2]),
-                 ("elements", "beam", ("axial_force",), [1]))
+                 ("elements", "beam", ("nodal_resisting_force_x",), [1]))
     with pytest.raises(ValueError, match=r"records \['beam'\] name elements by "
                                          r"FEM id.*FEMData archive"):
         _run(spec, tmp_path / "run", model_h5, ops)
@@ -341,7 +341,7 @@ def test_no_live_domain_keeps_the_archive_refusal(frame, tmp_path) -> None:
     ops = LiveOps(ndm=0, ndf={}, elements={})
     with pytest.raises(ValueError, match=r"model= declares no ndm \(ndm=0\)"):
         _run(_spec(fem, ("nodes", "all", _DISP3, [1, 2]),
-                   ("elements", "beam", ("axial_force",), [1])),
+                   ("elements", "beam", ("nodal_resisting_force_x",), [1])),
              tmp_path / "run", model_h5, ops)
 
 
@@ -505,6 +505,107 @@ def test_coincident_nodes_are_told_apart_by_their_elements(
         with pytest.raises(ValueError, match=match):
             _run(spec, tmp_path / "run", model_h5, ops)
         assert _node_calls(ops) == []
+
+
+def _with_point_elements(fem: FEMData, nodes: "list[int]") -> FEMData:
+    """``fem`` with a Gmsh point element (ids from 10) on each of
+    ``nodes``, ahead of its other groups, as ``get_fem_data()`` holds the
+    meshed points beside the elements a deck builds."""
+    point = make_type_info(code=15, gmsh_name="Point", dim=0, order=1,
+                           npe=1, count=len(nodes))
+    groups = {15: ElementGroup(
+        element_type=point,
+        ids=np.arange(10, 10 + len(nodes), dtype=np.int64),
+        connectivity=np.asarray(nodes, dtype=np.int64).reshape(-1, 1))}
+    groups.update({g.element_type.code: g for g in fem.elements})
+    pg = PhysicalGroupSet({})
+    return FEMData(
+        nodes=fem.nodes,
+        elements=ElementComposite(groups=groups, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=fem.info.n_nodes,
+                      n_elems=fem.info.n_elems + len(nodes), bandwidth=2,
+                      types=[point, *fem.info.types]),
+        model_name=f"{fem.model_name}_points",
+    )
+
+
+@pytest.mark.parametrize("with_spring, beam, spring, match", [
+    (True, (1, 2), (4, 3), None),
+    (True, (1, 3), (4, 2),
+     r"node 2: FEM element 1 has nodes \[1, 2\], the live element 1 has "
+     r"\[1, 3\]"),
+    (False, (1, 2), (4, 3),
+     r"node 3: FEM element 11 has nodes \[3\], no live element has that "
+     r"tag, and no built element at the node holds its nodes"),
+], ids=["pinned", "tags-2-3-swapped", "no-built-element"])
+def test_unbuilt_points_of_built_elements_are_pinned_by_them(
+    tmp_path, with_spring, beam, spring, match,
+) -> None:
+    """#2342: the point elements a deck did not build (FEM ids 10-12) are
+    pinned by the built elements that hold their nodes. The live elements
+    still refuse a swap, and a node only an unbuilt element touches
+    refuses by name."""
+    fem = _with_point_elements(_coincident_fem(with_spring), [2, 3, 4])
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = LiveOps(ndm=2, ndf={n: 3 for n in _AT_TIP},
+                  elements={1: ("ElasticBeam2d", beam),
+                            2: ("ZeroLength", spring)},
+                  coords=dict(_AT_TIP))
+    spec = _spec(fem, ("nodes", "u", ("displacement_y",), [2, 3]))
+    if match is None:
+        _run(spec, tmp_path / "run", model_h5, ops)
+        assert [_dofs(c) for c in _node_calls(ops)] == [[2]]
+    else:
+        with pytest.raises(ValueError, match=match):
+            _run(spec, tmp_path / "run", model_h5, ops)
+        assert _node_calls(ops) == []
+
+
+#: Nodes 2 and 3 share (2, 0); 4, 5 and 6 sit apart.
+_PARTIAL_XYZ = {1: (0.0, 0.0), 2: (2.0, 0.0), 3: (2.0, 0.0), 4: (4.0, 0.0),
+                5: (2.0, 2.0), 6: (2.0, -2.0)}
+
+
+def test_a_partial_swap_under_other_tags_refuses(tmp_path) -> None:
+    """#2351 review F1: beams 1 = [1, 2] and 3 = [3, 5] are built under
+    their FEM ids and match, but beams 2 = [2, 4] and 4 = [3, 6] are built
+    under tags 901 = [3, 4] and 902 = [2, 6], the coincident nodes
+    swapped. An unbuilt FEM element that is no point, edge or face of a
+    built one pins nothing, so node 2 would record the 6-side motion."""
+    line = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2,
+                          count=4)
+    group = ElementGroup(
+        element_type=line, ids=np.array([1, 2, 3, 4], dtype=np.int64),
+        connectivity=np.array([[1, 2], [2, 4], [3, 5], [3, 6]],
+                              dtype=np.int64))
+    pg = PhysicalGroupSet({})
+    fem = FEMData(
+        nodes=NodeComposite(
+            node_ids=np.arange(1, 7, dtype=np.int64),
+            node_coords=np.array([(*_PARTIAL_XYZ[n], 0.0) for n in range(1, 7)]),
+            physical=pg, labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=6, n_elems=4, bandwidth=2, types=[line]),
+        model_name="femdata_archive_partial_swap",
+    )
+    model_h5 = tmp_path / "fem.h5"
+    fem.to_h5(str(model_h5))
+    ops = LiveOps(ndm=2, ndf={n: 3 for n in _PARTIAL_XYZ},
+                  elements={1: ("ElasticBeam2d", (1, 2)),
+                            3: ("ElasticBeam2d", (3, 5)),
+                            901: ("ElasticBeam2d", (3, 4)),
+                            902: ("ElasticBeam2d", (2, 6))},
+                  coords=dict(_PARTIAL_XYZ))
+    spec = _spec(fem, ("nodes", "u", ("displacement_y",), [2, 3]))
+    with pytest.raises(ValueError, match=(
+            r"node 2: FEM element 2 has nodes \[2, 4\], no live element has "
+            r"that tag.*node 3: FEM element 4 has nodes \[3, 6\], no live "
+            r"element has that tag")):
+        _run(spec, tmp_path / "run", model_h5, ops)
+    assert _node_calls(ops) == []
 
 
 def test_coordinates_within_the_tolerance_record(frame, tmp_path) -> None:

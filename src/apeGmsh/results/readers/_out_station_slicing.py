@@ -13,14 +13,17 @@ Two checks refuse that, so every ``.out`` reader slices by the same rule:
   from the model's ``beamIntegration``, must be the same and must fill the
   file's columns. It runs before the columns are divided, so a 3 + 4 record
   is refused for its counts, as the fibre reader refuses it, and never as
-  "not divisible" (#2267). Without a model it only divides the columns;
+  "not divisible" (#2267). A live pairing's counts follow the same rule.
+  Without either, nothing names a count, and the read is refused (#2331);
 * :func:`require_ordered_stations`: each element's natural stations must
-  increase strictly within [-1, 1]. This is the check without a model.
+  increase strictly within [-1, 1].
 
-:func:`require_line_stations` applies the second when no model is bound. A
-model-proven slice skips the order check: a legal rule
+:func:`require_line_stations` applies the second to a slice that neither a
+model nor a pairing proves. A model-proven slice skips the order check: a legal rule
 can place its stations out of order (HingeRadau with ``lp_i = lp_j = 0.15``
-on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``).
+on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``). A slice a
+live pairing proves is checked against the live section locations instead
+(:func:`require_live_stations`), which fixes the order too.
 """
 from __future__ import annotations
 
@@ -32,6 +35,8 @@ from numpy import ndarray
 
 from ...opensees import OpenSeesModel
 from ...opensees._element_capabilities import _FORCE_DISP_BEAMS
+from ...opensees._recorder_translate import LiveDomainFacts
+from ...opensees._response_catalog import normalise_integration_points
 from ..spec._emit import element_tag_map
 
 if TYPE_CHECKING:
@@ -100,28 +105,42 @@ def model_station_counts(
 
 def line_station_count(
     rec: "ResolvedRecorderRecord", n_columns: int, path: "str | Path",
-    model_h5_src: "Path | None", fem_snapshot_id: str,
+    model: "OpenSeesModel | LiveDomainFacts | None", fem_snapshot_id: str,
 ) -> int:
     """The integration-point count of every element of ``rec``, whose
     ``integrationPoints`` file at ``path`` has ``n_columns`` data columns.
 
-    With ``model_h5_src`` the model's counts decide, and they are checked
-    first: unequal counts are refused naming the elements by count, as the
-    fibre reader refuses them (#2267), before the columns are divided. Equal
-    counts that do not fill ``n_columns`` mean the file is not from this
-    model. Without a model, the columns must divide evenly by element.
+    With ``model`` (loaded by the caller, which reads it once for all its
+    checks) the model's counts decide, and they are checked first: unequal
+    counts are refused naming the elements by count, as the fibre reader
+    refuses them (#2267), before the columns are divided. Equal counts that
+    do not fill ``n_columns`` mean the file is not from this model. A live
+    pairing over a FEMData archive (:class:`LiveDomainFacts`) gives each
+    element's count from the sections it read before the run (#2290 for
+    fibres, #2328 for line stations), by the same rule. Any other
+    ``model`` refuses by type, ``None`` included: dividing the columns
+    evenly by element proves nothing, because a mixed record whose columns
+    divide passes the order check (interior stations, unequal lengths:
+    Legendre 2 + 4 on L 1 and 13), so the transcoder refuses a model-less
+    read by name before it gets here (#2331).
     """
     assert rec.element_ids is not None
     n_elements = len(rec.element_ids)
-    if model_h5_src is None:
-        if n_columns % n_elements != 0:
-            raise ValueError(
-                f"{path}: {n_columns} data columns is not divisible by "
-                f"{n_elements} elements. The integrationPoints file should be "
-                f"element-major with n_IP columns per element.")
-        return n_columns // n_elements
-    counts = model_station_counts(
-        rec, OpenSeesModel.from_h5(model_h5_src), fem_snapshot_id)
+    if isinstance(model, LiveDomainFacts):
+        source = "the live domain"
+        counts = np.array([model.station_count(int(e))
+                           for e in rec.element_ids], dtype=np.int64)
+    elif not isinstance(model, OpenSeesModel):
+        # ValueError, as the fibre reader refuses the same condition.
+        raise ValueError(
+            f"Record {rec.name!r} ({rec.category}): its stations are counted "
+            f"from each element's beamIntegration in the bridge's model "
+            f"archive, or from the sections a live pairing read before the "
+            f"run; a {type(model).__name__} carries neither. Record it through "
+            f"the bridge's model archive (ops.h5(...)) or emit_default.")
+    else:
+        source = "model="
+        counts = model_station_counts(rec, model, fem_snapshot_id)
     if np.unique(counts).size > 1:
         by_count: dict[int, list[int]] = {}
         for e, c in zip(rec.element_ids, counts):
@@ -131,7 +150,7 @@ def line_station_count(
             for c, ids in sorted(by_count.items()))
         raise ValueError(
             f"Record {rec.name!r} ({rec.category}): its elements have "
-            f"different integration-point counts in model= ({listing}). A .out "
+            f"different integration-point counts in {source} ({listing}). A .out "
             f"record carries no per-element count, so it cannot be sliced into "
             f"elements reliably. Split the record so that each holds one "
             f"point count.")
@@ -139,9 +158,31 @@ def line_station_count(
     if n_columns != n_elements * n_ip:
         raise ValueError(
             f"{path}: {n_columns} data columns over {n_elements} elements, but "
-            f"model= gives its elements {n_ip} integration points each. The "
+            f"{source} gives its elements {n_ip} integration points each. The "
             f"file does not match the model.")
     return n_ip
+
+
+def require_station_source(
+    rec: "ResolvedRecorderRecord", model_h5_src: "Path | None", pairing: object,
+) -> None:
+    """Refuse ``rec`` by name when neither a model archive nor a pairing is
+    bound, before any file is read.
+
+    The ``.out`` pair carries no per-element count, and no other input names
+    one. Dividing the columns evenly proves nothing: a mixed record whose
+    columns divide (Legendre 2 + 4 on L 1 and 13, 3 + 3 columns) passes the
+    order check. Equal counts are refused too, since nothing proves them equal.
+    """
+    if model_h5_src is None and pairing is None:
+        raise ValueError(
+            f"Line-stations record {rec.name!r} ({rec.element_class_name}) is "
+            f"transcoded with no model: pass model_h5_src= (the bridge's "
+            f"model.h5) or pairing= (a live pairing), which give each "
+            f"element's integration-point count. A .out record carries no "
+            f"per-element count, so without one a record whose elements have "
+            f"different counts can be sliced across element boundaries "
+            f"without error. Results.from_recorders(model=) passes it.")
 
 
 def require_ordered_stations(
@@ -172,16 +213,58 @@ def require_ordered_stations(
             f"counts prove the slicing.")
 
 
+def require_live_stations(
+    rec: "ResolvedRecorderRecord", facts: LiveDomainFacts, xi_natural: ndarray,
+    lengths: "ndarray | list[float]", path: "str | Path",
+) -> None:
+    """Raise, naming the FEM element, unless each row of ``xi_natural`` (one
+    element's file stations, natural) is that element's live section
+    locations, to the slack a ``-precision 6`` file needs.
+
+    The live pairing read the locations before the run
+    (:meth:`LiveDomainFacts.record_line_stations`), so a match places each
+    station at the section that wrote it, in whatever order its rule gives
+    (a long-hinge HingeRadau writes them out of order, legally).
+    """
+    assert rec.element_ids is not None
+    for i, e in enumerate(rec.element_ids):
+        live = normalise_integration_points(
+            np.asarray(facts.station_locations(int(e)), dtype=np.float64),
+            float(lengths[i]))
+        if live.shape != xi_natural[i].shape or not (
+                np.abs(live - xi_natural[i]) <= STATION_RANGE_TOL).all():
+            raise ValueError(
+                f"{path}: FEM element {int(e)} of record {rec.name!r} "
+                f"({rec.category}) has stations "
+                f"{np.round(xi_natural[i], 6).tolist()} in the file, but its "
+                f"live sections are at {np.round(live, 6).tolist()} (natural "
+                f"coordinates). The file does not match the live domain.")
+
+
 def require_line_stations(
     rec: "ResolvedRecorderRecord", xi_natural: ndarray, path: "str | Path",
     model_h5_src: "Path | None", fem_snapshot_id: str,
+    pairing: object = None, lengths: "ndarray | list[float] | None" = None,
 ) -> None:
     """Check an equal-slice ``(E, n_IP)`` read of ``rec``'s stations.
 
     With ``model_h5_src`` the model's counts proved the slicing already
     (:func:`line_station_count` gave ``n_IP``), so there is nothing left to
-    check; without one (a transcode called with no model), the station order
-    must hold.
+    check. Over a live pairing (:class:`LiveDomainFacts`, with the
+    elements' ``lengths``) the file stations must be the live section
+    locations (:func:`require_live_stations`), which proves the slice and
+    its order. Without either, the transcoder refuses the record before the
+    slice (:func:`require_station_source`); for any other caller, the
+    station order must hold.
     """
-    if model_h5_src is None:
-        require_ordered_stations(rec, xi_natural, path)
+    if model_h5_src is not None:
+        return
+    if isinstance(pairing, LiveDomainFacts):
+        if lengths is None:
+            raise ValueError(
+                f"Record {rec.name!r} ({rec.category}): a live pairing's "
+                f"stations are checked against the element lengths, and none "
+                f"were given.")
+        require_live_stations(rec, pairing, xi_natural, lengths, path)
+        return
+    require_ordered_stations(rec, xi_natural, path)

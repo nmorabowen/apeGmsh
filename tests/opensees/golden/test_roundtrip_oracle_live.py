@@ -21,29 +21,40 @@ the marker is what proves the deck reached its end.
   same deck with ``Parallel 3`` moved above ``Steel01 1`` (the reorder #1814
   fixed, now synthetic) does not, so a C-class reorder really aborts.
 
-A model whose bridge deck does not run on this backend must be one the
-archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
-build it, so there the test asserts only that the bridge deck did not run,
-the static check is its only net, and the test skips by name so ``-rs``
-shows it.
-:data:`_KNOWN_STOCK_FAILURES` names the models whose bridge deck aborts on
-stock openseespy although their solve stamp claims ``requires=()``, each
-with its reason: #2220 (``Parameter::addComponent`` finds no object for the
-parameter; a partitioned stamp that does not name its multi-rank run), or
-the fixture fact (``_frame[modal=True]`` declares no supports, so its
-``eigen`` cannot run). They are handled like the fork rows: the test asserts
-the bridge deck does not run, then skips citing the reason. Once a deck
-runs the assertion fails, and the entry must be removed.
-Any other bridge deck that does not run fails.
+The archive's solve stamp says what a backend needs (``/opensees@requires``,
+:data:`~apeGmsh.opensees.emitter.caps.REQUIRES_TOKENS`), and the net reads
+it the way ``build('live')`` does (:func:`unmet_requires`, #2372):
+
+- ``"fork"`` or ``"mpco"`` unmet (stock openseespy: no fork commands, no
+  MPCO recorder): the bridge deck must abort, an ``"mpco"`` one at the
+  MPCO recorder; then the test skips by name, citing the tokens.
+- ``"mpi"`` unmet (always, in one process; a partitioned archive, or a
+  Mumps-family or ``Parallel*`` ``system``): a rank-gated bridge deck run
+  in one process proves nothing either way, so it is not judged. The flat
+  replay re-derives its own need (:meth:`OpenSeesModel.replay_requires`):
+  when a partitioned mode was the only reason, the replay must run;
+  otherwise the test skips by name, citing the token.
+- Nothing unmet: the stamp claims this backend solves the model, so a
+  bridge deck that aborts **fails** (#2220).
+
+:data:`_KNOWN_STOCK_FAILURES` names the models whose bridge deck aborts
+although the stamp claims nothing is unmet, each with the fixture fact that
+makes it unsolvable on every build. Not a waiver: the net asserts the
+bridge deck does not run, and that the replay fails the same way (at the
+same stage and increment for an ``analyze`` failure, at the same command
+otherwise), then skips citing the reason. Once a deck runs the assertion
+fails, and the entry must be removed.
 
 openseespy is never imported into the pytest process: the decks run in
-subprocesses, so the gate is ``importlib.util.find_spec`` (#1836).
+subprocesses, so the gate is ``importlib.util.find_spec`` (#1836), and the
+backend kind is asked of a subprocess too.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import warnings
@@ -52,6 +63,7 @@ from pathlib import Path
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel
+from apeGmsh.opensees.opensees_model import unmet_requires
 from tests.opensees.golden.test_roundtrip_oracle import (
     CORPUS,
     Model,
@@ -63,31 +75,37 @@ pytestmark = pytest.mark.live
 
 _MARKER = "APEGMSH_K2C_DECK_COMPLETE"
 
-
 #: Every model whose replay deck must run: the corpus but its S rows (not
 #: replayable; ``from_h5`` refuses them by name), in corpus order.
 _RUN_ROWS = [m for m in CORPUS
              if m.id not in _waivers() or _waivers()[m.id].klass != "S"]
-#: Models whose bridge deck aborts on stock openseespy while the solve stamp
-#: claims ``requires=()``, each with its reason: the issue that tracks it, or
-#: the fixture fact that makes it unsolvable. Not a waiver: the net asserts
-#: the bridge deck does not run, so a fix fails it until removed.
+#: Models whose bridge deck aborts on every build while the solve stamp
+#: claims nothing a backend lacks, each with the fixture fact that makes it
+#: unsolvable (the #2220 diagnosis: a stock and a fork run both abort
+#: there). Not a waiver: the net asserts the bridge deck does not run and
+#: that the replay fails the same way, so a fix fails it until removed.
+#: Shrink-only.
 _FIXTURE_UNSOLVABLE = ("fixture has no supports; eigen cannot run "
                        "(fixture-unsolvable, not a replay fault)")
+_KITCHEN_SINK_SINGULAR = (
+    "fixture removes the Rock quad and the base x-fix, so the Fill quad "
+    "is singular on stock and fork alike (fixture-unsolvable, not a "
+    "replay fault; the fixture fix is #2376)")
 _KNOWN_STOCK_FAILURES: dict[str, str] = {
-    "test_h5_decls::_param_stage_model": "#2220",
-    "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
     "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
         _FIXTURE_UNSOLVABLE,
     "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
         _FIXTURE_UNSOLVABLE,
-    # The stamp says solve_mode="partitioned" but requires=(): it does not
-    # name the multi-rank run its rank-gated deck needs (the #2220 class).
-    # In one process rank 1's stage elements are never declared: singular.
-    "test_h5_regions_round_trip::_partitioned_staged_with_fan_out": "#2220",
+    "test_h5_stages_reader::_real_kitchen_sink_bridge":
+        _KITCHEN_SINK_SINGULAR,
 }
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
+#: What a build without the MPCO recorder logs when a deck declares one.
+_MPCO_REFUSAL = "recorder type mpco is unknown"
+#: The bridge's own abort line when an ``analyze`` fails (``stage_emit``).
+_ANALYZE_FAILED = re.compile(
+    r"apeGmsh: analyze FAILED at increment \d+/\d+ of stage '[^']*'")
 
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
@@ -96,6 +114,16 @@ def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
     sits in its own directory, its working directory when it runs: the two
     decks write the same output files (a profiler report refuses a run id
     its file already holds)."""
+    bridge, replay, requires, _flat = _decks_and_replay_needs(model, tmp)
+    return bridge, replay, requires
+
+
+def _decks_and_replay_needs(
+    model: Model, tmp: Path,
+) -> tuple[Path, Path, tuple[str, ...], tuple[str, ...]]:
+    """:func:`_decks`, and what the flat replay deck needs
+    (:meth:`OpenSeesModel.replay_requires`: a partitioned mode's ``"mpi"``
+    does not apply to it)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops = model.build()
@@ -110,7 +138,7 @@ def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
         model_h5.build("py", out=str(replay))
     stamp = model_h5.solve_stamp
     assert stamp is not None, f"{model.id}: the archive carries no solve stamp"
-    return bridge, replay, tuple(stamp.requires)
+    return bridge, replay, tuple(stamp.requires), model_h5.replay_requires()
 
 
 def _run(deck: Path) -> tuple[bool, str]:
@@ -127,6 +155,20 @@ def _run(deck: Path) -> tuple[bool, str]:
                  f"stderr:\n{proc.stderr[-1500:]}")
 
 
+def _failure(log: str) -> str:
+    """Where a deck that did not run stopped: the bridge's ``analyze
+    FAILED`` line (stage and increment), else the statement the traceback
+    names and the exception it raised, else the log's last line."""
+    hit = _ANALYZE_FAILED.search(log)
+    if hit:
+        return hit.group(0)
+    lines = [ln.strip() for ln in log.splitlines() if ln.strip()]
+    for i in range(len(lines) - 1, 0, -1):
+        if lines[i - 1].startswith("File ") and ", line " in lines[i - 1]:
+            return f"{lines[i]} -> {lines[-1]}"
+    return lines[-1] if lines else ""
+
+
 def _openseespy_or_skip() -> None:
     """Skip unless openseespy is installed, without importing it here."""
     if importlib.util.find_spec("openseespy") is None:
@@ -139,39 +181,100 @@ def _openseespy() -> None:
     _openseespy_or_skip()
 
 
-def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
-    """Whether the bridge deck runs; one that does not must need the fork."""
+_KIND_PROBE = """import openseespy.opensees as o
+try:
+    b = o.ladrunoBuild()
+except Exception:
+    b = None
+print("fork" if isinstance(b, str) and b else "stock")
+"""
+
+
+@pytest.fixture(scope="module")
+def backend_kind() -> str:
+    """The kind of openseespy the decks run with (``"fork"`` when
+    ``ladrunoBuild()`` answers a sha, as ``get_backend_info`` reads it),
+    asked of a subprocess so this process never imports it."""
+    _openseespy_or_skip()
+    proc = subprocess.run([sys.executable, "-c", _KIND_PROBE],
+                          capture_output=True, text=True, timeout=120)
+    out = proc.stdout.strip().splitlines()
+    assert proc.returncode == 0 and out and out[-1] in ("fork", "stock"), (
+        f"backend probe failed: rc={proc.returncode}\n{proc.stdout[-800:]}\n"
+        f"{proc.stderr[-800:]}")
+    return out[-1]
+
+
+def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...],
+                 kind: str) -> bool:
+    """Whether the net judges ``model`` here: ``False`` (the caller skips)
+    when the stamp names a token this backend does not meet, after
+    asserting the bridge deck aborts where the token says it must; else
+    the bridge deck must run, since the stamp claims it does (#2220)."""
+    unmet = unmet_requires(requires, kind)
+    if unmet:
+        if "mpi" in unmet and "mpco" not in unmet:
+            return False  # one process cannot judge a multi-rank deck
+        ran, log = _run(bridge)
+        assert not ran, (
+            f"{model.id}: the bridge deck runs on this {kind} build although "
+            f"its stamp requires {unmet!r}, which it lacks: the stamp "
+            f"over-claims\n{log}")
+        if "mpco" in unmet:
+            assert _MPCO_REFUSAL in log, (
+                f"{model.id}: the stamp requires 'mpco', but the bridge deck "
+                f"did not abort at its MPCO recorder:\n{log}")
+        return False
     ran, log = _run(bridge)
-    assert ran or "fork" in requires, (
-        f"{model.id}: the bridge deck does not run, and its solve stamp "
-        f"requires {requires}:\n{log}")
-    return ran
+    assert ran, (
+        f"{model.id}: the bridge deck does not run on this {kind} build, and "
+        f"its solve stamp requires {requires!r}, nothing it lacks: the stamp "
+        f"claims a solve this backend cannot do (#2220):\n{log}")
+    return True
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """The table is exactly these five rows, each a row the net runs, each
-    citing #2220 or the fixture fact: it can only shrink as a deck is
-    fixed, never grow."""
+    """The table is exactly these three rows, each a row the net runs,
+    each citing its fixture fact: it can only shrink as a fixture is
+    fixed, never grow. #2372 removed the #2220 rows: two now stamp what
+    their deck needs, one fixture was fixed, and the kitchen sink names
+    its fixture fact (its fix is #2376)."""
     assert _KNOWN_STOCK_FAILURES == {
-        "test_h5_decls::_param_stage_model": "#2220",
-        "test_h5_stages_reader::_real_kitchen_sink_bridge": "#2220",
         "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
             _FIXTURE_UNSOLVABLE,
         "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
             _FIXTURE_UNSOLVABLE,
-        "test_h5_regions_round_trip::_partitioned_staged_with_fan_out":
-            "#2220",
+        "test_h5_stages_reader::_real_kitchen_sink_bridge":
+            _KITCHEN_SINK_SINGULAR,
     }
     assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
+    assert not any("#2220" in r for r in _KNOWN_STOCK_FAILURES.values())
 
 
 def test_the_net_runs_some_stock_row() -> None:
     assert _RUN_ROWS and _FATAL_CASES, (
         "the live net would run nothing: no replayable corpus model, or no "
         "fatal-reorder case")
-    # Every corpus model but the S rows: none drops out silently.
+    # Every corpus model but the S rows: none drops out silently. The
+    # ledger has no S row since #2195.
     s_rows = {w.model for w in _waivers().values() if w.klass == "S"}
     assert {m.id for m in _RUN_ROWS} == {m.id for m in CORPUS} - s_rows
+    assert not s_rows
+
+
+def test_the_failure_reads_stage_and_increment_or_the_command() -> None:
+    """:func:`_failure` on the two log shapes the net compares."""
+    analyze = ("WARNING ...\nOpenSees > analyze failed\napeGmsh: analyze "
+               "FAILED at increment 1/2 of stage 'mutate' (pseudo-time 0) -- "
+               "aborting")
+    assert _failure(analyze) == (
+        "apeGmsh: analyze FAILED at increment 1/2 of stage 'mutate'")
+    command = ('Traceback (most recent call last):\n  File "x.py", line 10, '
+               "in <module>\n    ops.eigen('-genBandArpack', 2)\n"
+               "opensees.OpenSeesError: See stderr output\n")
+    assert _failure(command) == ("ops.eigen('-genBandArpack', 2) -> "
+                                 "opensees.OpenSeesError: See stderr output")
+    assert _failure(analyze.replace("1/2", "2/2")) != _failure(analyze)
 
 
 _PROBE_PLUGIN = """import json, os, sys
@@ -231,25 +334,46 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("model", _RUN_ROWS, ids=[m.id for m in _RUN_ROWS])
 def test_a_replay_runs_where_the_bridge_deck_runs(
-        model: Model, tmp_path: Path) -> None:
-    bridge, replay, requires = _decks(model, tmp_path)
+        model: Model, tmp_path: Path, backend_kind: str) -> None:
+    bridge, replay, requires, flat = _decks_and_replay_needs(model, tmp_path)
     reason = _KNOWN_STOCK_FAILURES.get(model.id)
     if reason is not None:
+        assert not unmet_requires(requires, backend_kind), (
+            f"{model.id}: a known failure must be one the stamp says this "
+            f"backend solves; it requires {requires!r}")
         ran, log = _run(bridge)
         assert not ran, (
             f"{model.id}: the bridge deck now runs ({reason} is fixed), so "
             f"remove its _KNOWN_STOCK_FAILURES entry:\n{log}")
-        pytest.skip(f"{model.id}: known stock failure: {reason} (the bridge "
-                    "deck aborts though the stamp requires nothing); "
-                    "asserted that the bridge deck did not run here")
-    if not _bridge_runs(model, bridge, requires):
-        pytest.skip(f"{model.id}: fork-only (solve stamp requires={requires!r}); "
-                    "asserted only that the bridge deck did not run here")
+        ran_r, log_r = _run(replay)
+        assert not ran_r and _failure(log_r) == _failure(log), (
+            f"{model.id}: the bridge deck fails at {_failure(log)!r} but the "
+            f"replay {'runs' if ran_r else f'fails at {_failure(log_r)!r}'}: "
+            f"a semantic difference the static oracle missed:\n{log_r}")
+        pytest.skip(f"{model.id}: known failure: {reason}; asserted that the "
+                    "bridge deck did not run and that the replay fails at "
+                    f"the same place ({_failure(log)})")
+    judged = _bridge_runs(model, bridge, requires, backend_kind)
+    unmet_flat = unmet_requires(flat, backend_kind)
+    if not judged and unmet_flat:
+        unmet = unmet_requires(requires, backend_kind)
+        pytest.skip(f"{model.id}: the solve stamp requires {unmet!r}, which "
+                    f"this {backend_kind} build in one process lacks "
+                    f"(requires={requires!r}, flat replay {flat!r}); "
+                    + ("a rank-gated deck is not judged in one process"
+                       if unmet == ("mpi",) else
+                       "asserted only that the bridge deck did not run here"))
+    # The bridge deck ran, or only its partitioned mode's "mpi" kept it
+    # from being judged: the flat replay needs nothing this backend lacks,
+    # so it must run (#2372 F3).
     ran, log = _run(replay)
     assert ran, (
-        f"{model.id}: the bridge deck runs but the replay deck does not: a "
-        "semantic difference the static oracle missed; track it in an "
-        f"issue:\n{log}")
+        f"{model.id}: the "
+        + ("bridge deck runs" if judged else
+           f"stamp requires {requires!r} but the flat replay {flat!r}, "
+           "nothing this backend lacks,")
+        + " but the replay deck does not run: a semantic difference the "
+        f"static oracle missed; track it in an issue:\n{log}")
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])

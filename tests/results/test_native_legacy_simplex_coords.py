@@ -10,8 +10,9 @@ extrapolated corner values came back rotated by one node, silently.
 
 The fixtures in ``tests/fixtures/native_legacy_simplex/`` were written by
 the writers as they stood before the change (``generate.py`` there says
-how), through both native paths: ``DomainCapture`` of a live solve and the
-recorder transcoder on the engine's own ``.out`` strains. Every element is
+how), through both native paths of the time: the in-process capture of a
+live solve (deleted from main in #2191; the legacy files stay readable) and
+the recorder transcoder on the engine's own ``.out`` strains. Every element is
 loaded with ``u_i = x_i^2 / 2``, so the strain it records at a Gauss point
 IS that point's world position.
 
@@ -278,6 +279,36 @@ def test_other_classes_read_their_rows_unchanged(tmp_path: Path) -> None:
     np.testing.assert_array_equal(slab.natural_coords, legacy)
 
 
+def test_a_gmsh_frame_class_is_never_mapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``coord_system`` gate, not a coincidence of values, keeps a
+    gmsh-frame class unmapped. Give BezierTri6 (``simplex_tri_gmsh``) a
+    catalog table equal to an older table's frame change: the very shape
+    a node-0-first class is mapped by. Its stored older-looking rows are
+    still its own, and read as they are."""
+    from apeGmsh.results.readers import _native
+
+    current = _native._node0_rows_to_gmsh(_native._LEGACY_TRI_GL_2)
+    key = ("BezierTri6", IntRule.Triangle_GL_2, "strain")
+    layout = _native.RESPONSE_CATALOG[key]
+    assert layout.coord_system == "simplex_tri_gmsh"
+    catalog = dict(_native.RESPONSE_CATALOG)
+    catalog[key] = replace(layout, natural_coords=current)
+    monkeypatch.setattr(_native, "RESPONSE_CATALOG", catalog)
+    rows = _native._simplex_gp_rows()
+    assert ELE_TAG_BezierTri6 not in rows
+    monkeypatch.setattr(_native, "_SIMPLEX_GP_ROWS", rows)
+
+    legacy = _native._LEGACY_TRI_GL_2
+    path = _rewrite_rows(tmp_path, "capture_tri.h5", "SixNodeTri", legacy,
+                         class_tag=ELE_TAG_BezierTri6)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        slab = _read(path, "strain_xx", 2)
+    np.testing.assert_array_equal(slab.natural_coords, legacy)
+
+
 def test_triangle_shell_legacy_rows_map_by_the_frame_change(
     tmp_path: Path,
 ) -> None:
@@ -327,3 +358,26 @@ def test_unrecognised_rows_warn_once_and_read_unchanged(
     assert "Re-capture" in msg and "re-transcode" in msg
     for slab in slabs:
         np.testing.assert_array_equal(slab.natural_coords, odd)
+
+
+def test_a_group_the_read_filters_out_never_warns(tmp_path: Path) -> None:
+    """The warning is about the Gauss points a read returns. A read whose
+    ``element_ids`` exclude the unplaceable TenNodeTetrahedron group is
+    silent, and leaves the once-per-class warning for the read that does
+    return it."""
+    from apeGmsh.results.readers._native import (
+        LegacySimplexGaussCoordsWarning,
+    )
+
+    name, cls = "capture_tet.h5", "TenNodeTetrahedron"
+    with h5py.File(LEGACY / name, "r") as f:
+        stored = np.asarray(_group(f, cls)["_natural_coords"])
+    path = _rewrite_rows(tmp_path, name, cls, stored[::-1].copy())
+    with NativeReader(path) as r:
+        sid = r.stages()[0].id
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", LegacySimplexGaussCoordsWarning)
+            other = r.read_gauss(sid, "strain_xx", element_ids=np.array([1]))
+        assert set(other.element_index.tolist()) == {1}
+        with pytest.warns(LegacySimplexGaussCoordsWarning, match=cls):
+            r.read_gauss(sid, "strain_xx", element_ids=np.array([2]))

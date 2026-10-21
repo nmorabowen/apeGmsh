@@ -49,6 +49,14 @@ import h5py
 import numpy as np
 import pytest
 
+from apeGmsh.mesh._element_types import ElementGroup, make_type_info
+from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
+from apeGmsh.mesh.FEMData import (
+    ElementComposite,
+    FEMData,
+    MeshInfo,
+    NodeComposite,
+)
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees._internal.lineage import (
     MODEL_HASH_EXCLUDED_CHILDREN,
@@ -599,11 +607,141 @@ def _broad_frame() -> apeSees:
     return ops
 
 
+#: The golden corpus's frame split, as real Gmsh partitions (1-based ids;
+#: the runtime rank is the index, not ``id - 1``): column A on rank 0,
+#: column B on rank 1, nothing shared.
+_FRAME_PARTITIONS: dict[int, dict[str, list[int]]] = {
+    1: {"node_ids": [1, 2], "element_ids": [1]},
+    2: {"node_ids": [3, 4], "element_ids": [2]},
+}
+
+
+def _two_column_frame_fem(
+    partitions: "Mapping[int, Mapping[str, list[int]]]" = _FRAME_PARTITIONS,
+) -> FEMData:
+    """``fem_stub.make_two_column_frame_partitioned`` as a real
+    :class:`FEMData`: columns A (nodes 1-2, element 1) and B (nodes 3-4,
+    element 2) at x = 0 and 1, rising along z, in the PG ``"Cols"``, with
+    the node sets ``"Base"`` (1, 3) and ``"Top"`` (2, 4), split by
+    ``partitions``. Its archive carries a neutral zone, so it replays."""
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    node_coords = np.array(
+        [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [1.0, 0.0, 1.0]],
+        dtype=np.float64)
+    line_info = make_type_info(
+        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=2)
+    lines = ElementGroup(
+        element_type=line_info, ids=np.array([1, 2], dtype=np.int64),
+        connectivity=np.array([[1, 2], [3, 4]], dtype=np.int64))
+
+    def ids(values: "list[int]") -> np.ndarray:
+        return np.array(values, dtype=np.int64)
+
+    def pg(name: str, nodes: "list[int]", elements: "list[int]") -> dict[str, Any]:
+        return {"name": name, "node_ids": ids(nodes),
+                "node_coords": node_coords[[n - 1 for n in nodes]],
+                "element_ids": ids(elements)}
+
+    groups = PhysicalGroupSet({
+        (1, 100): pg("Cols", [1, 2, 3, 4], [1, 2]),
+        (0, 101): pg("Base", [1, 3], []),
+        (0, 102): pg("Top", [2, 4], []),
+    })
+    parts = {int(pid): {k: ids(list(v)) for k, v in p.items()}
+             for pid, p in partitions.items()}
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords, physical=groups,
+        labels=LabelSet({}), partitions=parts)
+    elements = ElementComposite(
+        groups={1: lines}, physical=groups, labels=LabelSet({}),
+        partitions=parts)
+    info = MeshInfo(n_nodes=4, n_elems=2, bandwidth=1, types=[line_info])
+    return FEMData(nodes=nodes, elements=elements, info=info,
+                   model_name="two_column_frame_partitioned")
+
+
+def _two_column_frame_partitioned(
+    partitions: "Mapping[int, Mapping[str, list[int]]]" = _FRAME_PARTITIONS,
+    stages: tuple[tuple[str, float, int], ...] = (
+        ("gravity", 10.0, 2), ("push", -5.0, 1)),
+    mass: bool = False,
+    stock: bool = False,
+) -> apeSees:
+    """The golden corpus's ``build_model("two_column_frame_partitioned",
+    "staged_partitioned", "recording")`` recipe, on the real
+    :func:`_two_column_frame_fem`: an elastic column pair fixed at
+    ``"Base"``, the node, element and MPCO recorders, and one stage per
+    ``(name, load on "Top", increments)``, each with its own pattern and
+    the parallel static chain. ``partitions`` and ``stages`` exist for the
+    mutation proof; the corpus twin is :func:`_broad_partitioned`.
+
+    No ``OpenSeesTarget`` (T ruling on #2195): the golden pins
+    ``mode="stock"``, whose deck stamp is a provenance comment the archive
+    does not carry (#2278), so this twin's decks are stamp-free and the
+    golden-equality test compares them modulo that one line.
+
+    ``mass=True`` adds a lumped mass on ``"Top"`` (the S3b review, #2277):
+    a partitioned deck with both ``fix`` and ``mass`` lines, so a replay
+    that swaps those two flat sections differs from the bridge.
+
+    ``stock=True`` keeps to what a single-process stock openseespy has: it
+    declares ``RCM`` / ``UmfPack`` in place of the golden's ``ParallelRCM``
+    / ``Mumps``, and no MPCO recorder (stock has no ``recorder mpco``). It
+    is the live net's stand-in for the golden-bound twin
+    (``test_roundtrip_oracle_live._STAND_INS``, T ruling on #2195)."""
+    ops = apeSees(_two_column_frame_fem(partitions))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    ops.fix(pg="Base", dofs=(1,) * 6)
+    if mass:
+        ops.mass(pg="Top", values=(2.0, 2.0, 2.0, 0.0, 0.0, 0.0))
+    ops.recorder.Node(
+        file="out/node_disp.out", response="disp", pg="Top", dofs=(1, 2))
+    ops.recorder.Element(
+        file="out/ele_force.out", response=("globalForce",), pg="Cols")
+    if not stock:
+        ops.recorder.MPCO(
+            file="out/run.mpco", nodal_responses=("displacement",),
+            elem_responses=("force",), nodes_pg="Top", elements_pg="Cols")
+    for name, force, n in stages:
+        with ops.stage(name=name) as s:
+            series = ops.timeSeries.Linear()
+            with s.pattern(series=series) as p:
+                p.load(pg="Top", forces=(force, 0.0, 0.0, 0.0, 0.0, 0.0))
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-6, max_iter=10),
+                algorithm=ops.algorithm.Newton(),
+                integrator=ops.integrator.LoadControl(dlam=0.5),
+                constraints=ops.constraints.Plain(),
+                numberer=(ops.numberer.RCM() if stock
+                          else ops.numberer.ParallelRCM()),
+                system=(ops.system.UmfPack() if stock
+                        else ops.system.Mumps()),
+                analysis=ops.analysis.Static())
+            s.run(n_increments=n)
+    return ops
+
+
 def _broad_partitioned() -> apeSees:
+    """The golden corpus's staged, partitioned, recording frame on a real
+    :class:`FEMData` (#2195): the replayable twin of
+    :func:`_broad_partitioned_stub`. Its bridge deck is that cell's golden
+    deck but for the backend stamp line (``test_roundtrip_oracle.py`` pins
+    it), and its archive replays exactly, so the oracle ledger has no row."""
+    return _two_column_frame_partitioned()
+
+
+def _broad_partitioned_stub() -> apeSees:
+    """The golden-corpus model itself, on ``FEMStub``: bridge-only by
+    design (#1797), so not in the oracle corpus."""
     return build_model("two_column_frame_partitioned", "staged_partitioned", "recording")
 
 
-@pytest.mark.parametrize("build", [_broad_staged, _broad_frame, _broad_partitioned])
+@pytest.mark.parametrize("build", [
+    _broad_staged, _broad_frame, _broad_partitioned, _broad_partitioned_stub])
 def test_every_key_has_exactly_one_row(
     tmp_path: Path, build: Callable[[], apeSees],
 ) -> None:
@@ -773,14 +911,15 @@ def test_multi_owner_region_rewrite_echoes_every_entry(tmp_path: Path) -> None:
     assert len(entries) == 2
 
 
-@pytest.mark.parametrize("build", [_broad_staged, _broad_frame, _broad_partitioned])
+@pytest.mark.parametrize("build", [
+    _broad_staged, _broad_frame, _broad_partitioned, _broad_partitioned_stub])
 def test_every_owner_of_every_key_is_represented(
     tmp_path: Path, build: Callable[[], apeSees],
 ) -> None:
     """Entry for entry: a key's entries are its owners' fields, in the
     order the owners were declared; nothing dropped, nothing added."""
     ops = build()
-    if build is not _broad_partitioned:
+    if build not in (_broad_partitioned, _broad_partitioned_stub):
         ops.region(name="twice", nodes=[1])
         ops.region(name="twice", nodes=[2])
     p = tmp_path / "m.h5"

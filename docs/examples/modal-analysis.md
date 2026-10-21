@@ -68,9 +68,8 @@ the static tutorial, with three new moves (mass, eigen, modes) called out in the
 walkthrough below.
 
 ```python
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
 import numpy as np
 
 # --- Problem data (consistent SI: m, N, Pa, kg) ---
@@ -108,25 +107,11 @@ ops.element.elasticBeamColumn(
 )
 ops.fix(pg="Fixed", dofs=(1, 1, 1))           # clamp ux, uy, thetaz
 
-# standard analysis chain — assembles K and M into the live domain
-ops.constraints.Plain()
-ops.numberer.RCM()
-ops.system.BandGeneral()
-ops.test.NormDispIncr(tol=1e-10, max_iter=10)
-ops.algorithm.Linear()
-ops.integrator.LoadControl(dlam=1.0)
-ops.analysis.Static()
-
-# --- 3. Build the domain, then capture the first 3 modes ---
-ops.analyze(steps=1)                          # assemble K + M (no load = no motion)
-
-spec = DomainCaptureSpec(opensees=ops)
-spec.modal(n_modes=3)                         # declare a modal record
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.capture_modes()                       # runs ops.eigen, writes one stage per mode
+# --- 3. Solve the eigenproblem for the first 3 modes ---
+eig = ops.eigen(3)                            # builds the domain, solves K phi = w^2 M phi
 
 # --- 4. Read frequencies back, by mode ---
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = eig.results()                       # one kind="mode" stage per mode
 modes = sorted(results.eigen_modes, key=lambda m: m.mode_index)
 
 betaL    = np.array([1.875104, 4.694091, 7.854757])
@@ -218,67 +203,49 @@ model**: the `mass=` and `c_mass=` arguments on the element.
     "whole beam" of mass on every element) and drop every frequency by
     $\sqrt{20}$.
 
-The rest — `constraints`, `numberer`, `system`, … `analysis.Static()` — is the
-familiar analysis chain. For an eigen solve we don't strictly need a *load*
-recipe, but building the chain and running one trivial step is the simplest way
-to get the stiffness and mass matrices assembled into the live domain, which is
-exactly what the eigensolver reads.
+There is no analysis chain this time: no `constraints`, no `integrator`, no
+`analysis.Static()`. The eigen solve below reads the assembled stiffness and
+mass matrices and nothing else.
 
-## Step 3 — The eigen path: assemble, then capture modes
+## Step 3 — The eigen path: one call
 
 ```python
-ops.analyze(steps=1)                          # assemble K + M
-
-spec = DomainCaptureSpec(opensees=ops)
-spec.modal(n_modes=3)
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.capture_modes()
+eig = ops.eigen(3)
 ```
 
-This is the heart of the page, and it has two parts.
+This is the heart of the page. `ops.eigen(3)` builds the model into the live
+OpenSees domain, which **assembles the global stiffness `K` and mass `M`**,
+then issues OpenSees' generalized eigen solve ($K\phi = \omega^2 M\phi$)
+for the first three modes. It returns an `EigenResult`: `eig.freq`,
+`eig.omega` and `eig.periods` are the numbers straight away, one per mode.
 
-`ops.analyze(steps=1)` runs a single static step with **no load applied**. The
-beam doesn't move (zero load → zero displacement), but the act of analyzing
-**assembles the global stiffness `K` and mass `M`** into the live OpenSees
-domain. The eigensolver needs both matrices in place; this one line puts them
-there.
-
-Then the **modal capture**. Instead of declaring node records as we did for the
-static deflection, we declare a `spec.modal(n_modes=3)` record — "I want the
-first three modes." Inside the capture block, `cap.capture_modes()` does the
-real work: it issues OpenSees' generalized eigen solve
-($K\phi = \omega^2 M\phi$), reads each eigenvalue and eigenvector back, and
-writes **one stage per mode** into `run.h5` — each tagged `kind="mode"` and
-stamped with its mode index, eigenvalue, frequency, and period. When the block
-exits, `run.h5` holds three mode stages plus a copy of the model.
-
-!!! note "Why `eigen` skips the analysis chain"
+!!! note "Why `eigen` needs no analysis chain"
     `eigen` is the one OpenSees analysis that *doesn't* march through the
-    constraints/integrator/algorithm machinery — it solves a matrix
-    eigenproblem directly from the assembled `K` and `M`. So `capture_modes()`
-    needs no `LoadControl`, no `algorithm`, no time-stepping. All it needs is
-    the two matrices, which the `analyze(steps=1)` above guaranteed are
-    assembled.
-
-!!! tip "Same capture path as the static tutorial"
-    We deliberately stayed on the **in-process domain-capture** path from
-    [your first model](../tutorials/first-model.md) — `DomainCaptureSpec` →
-    `ops.domain_capture` → `Results.from_native`. The only thing that changed is
-    *what* we declared on the spec (`spec.modal(...)` instead of
-    `spec.nodes(...)`). The export-and-run-elsewhere and MPCO alternatives are
-    covered in the how-to recipes; you don't need them here.
+    constraints/integrator/algorithm machinery: it solves a matrix
+    eigenproblem directly from the assembled `K` and `M`. So it needs no
+    `LoadControl`, no `algorithm`, no time-stepping, and the bridge's
+    `ops.eigen` assembles the two matrices itself.
 
 ## Step 4 — Read frequencies back, by mode
 
 ```python
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = eig.results()
 modes = sorted(results.eigen_modes, key=lambda m: m.mode_index)
 ```
 
-`Results.from_native(...)` opens the run file — and as always **`model=` is
-required**, so the broker can translate physical-group names back into nodes.
-The model lives in the same file, so we point `OpenSeesModel.from_h5` at the
-same path (the Composed-file pattern).
+`eig.results()` writes the modes to a results file, **one stage per mode**,
+each tagged `kind="mode"` and stamped with its mode index, eigenvalue,
+frequency and period, and opens it as a `Results`. The file embeds the
+bridge's model, so the broker can translate physical-group names back into
+nodes with no other file. `eig.to_native(path)` writes the same file where
+you choose and returns its path. On the Ladruno fork, `eig.to_ladruno(path)`
+writes the modes as a `.ladruno` instead, beside a `model.h5` archive, and
+`Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))` reads it the same
+way.
+
+Call `eig.results()` before you analyse or solve again: the eigenvectors live
+in the OpenSees domain, and any later build replaces them, so it refuses
+after one.
 
 `results.eigen_modes` is the new accessor: a list of lightweight `EigenMode`
 snapshots, one per mode, each carrying `mode_index`, `eigenvalue`,
@@ -364,12 +331,10 @@ You ran the full apeGmsh dynamics spine on a beam you can check by hand:
 - **Mass makes it dynamic.** `ops.element.elasticBeamColumn(..., mass=mbar,
   c_mass=True)` puts distributed, consistent mass on the member. No mass, no
   frequencies — inertia is what the stiffness vibrates against.
-- **`analyze(steps=1)` assembles `K` and `M`.** The eigensolver reads the
-  assembled matrices; one trivial (load-free) step puts them in the live domain.
-- **The eigen path is `spec.modal` → `capture_modes`.** Declare how many modes
-  you want on the capture spec; `cap.capture_modes()` runs the OpenSees eigen
-  solve and writes one `kind="mode"` stage per mode — same in-process capture
-  path as the static tutorial, different record type.
+- **The eigen path is `ops.eigen(n)` → `eig.results()`.** `ops.eigen`
+  assembles `K` and `M` and runs the OpenSees eigen solve, with no analysis
+  chain; `eig.results()` writes one `kind="mode"` stage per mode and opens
+  them as a `Results`.
 - **Two ways to read modes back.** `results.eigen_modes` for the **numbers**
   (frequencies, periods — lightweight, keepable); `results.modes` for the
   **shapes** (scoped `Results`, read the eigenvector by physical-group name with
