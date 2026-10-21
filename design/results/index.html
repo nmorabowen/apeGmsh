@@ -3802,15 +3802,6 @@ execution strategy</strong>, and the strategies are just its consumers.</p>
   whichever file the route wrote. Modal records have no default route:
   modes come from <code>EigenResult.to_native()</code> / <code>.results()</code> on stock, and
   from the fork's <code>.ladruno</code> on the fork.</li>
-<li><strong>Domain capture (legacy)</strong> — the older native path, which the
-  default route replaces. It has its own declarative class,
-  <code>DomainCaptureSpec</code>, resolved on the bridge:
-  <code>ops.domain_capture(spec, path=...)</code> returns a <code>DomainCapture</code>
-  context manager that queries the live domain (<code>ops.nodeDisp</code>,
-  <code>ops.eleResponse</code>, …) on each <code>cap.step()</code>, buffers in RAM, and
-  flushes chunked writes through <code>NativeWriter</code> at stage end. The
-  pages teach the default route; this one stays until its removal
-  slice lands.</li>
 </ul>
 <p>Text and live emission cannot drift apart because they share one core.
 <code>emit_logical()</code> turns a resolved record into <code>LogicalRecorder</code>
