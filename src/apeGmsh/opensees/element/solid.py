@@ -201,6 +201,8 @@ def _check_soil_dimension(
         return
     want = 3 if plane_type is None else 2
     nd = getattr(material, "nd", None)
+    if nd is None:
+        return  # a field-less stand-in (the H5 replay's slot-type probe)
     if nd != want:
         raise ValueError(
             f"{who}: {name}(nd={nd}) on a {want}-D element; OpenSees exits "

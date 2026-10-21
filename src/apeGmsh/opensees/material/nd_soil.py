@@ -63,7 +63,8 @@ MULTI_YIELD_SOIL_CLASSES: frozenset[str] = frozenset({
 #: ..., material=mat)`` appends). Read from the fork's ``setParameter``
 #: bodies: ``PressureIndependMultiYield.cpp:626``, ``PressureDependMultiYield.cpp:978``,
 #: ``PressureDependMultiYield02.cpp:1008``, ``UWmaterials/PM4Sand.cpp:726``,
-#: ``UWmaterials/PM4Silt.cpp:721``. A per-class catalogue that a refusal of an
+#: ``UWmaterials/PM4Silt.cpp:721`` (live code; PDMY02 keeps an older,
+#: commented-out 3-name block). A per-class catalogue that a refusal of an
 #: unidentified ``update_parameter`` name can consume.
 SET_PARAMETER_NAMES: dict[str, frozenset[str]] = {
     "PressureIndependMultiYield": frozenset({
@@ -72,14 +73,16 @@ SET_PARAMETER_NAMES: dict[str, frozenset[str]] = {
     "PressureDependMultiYield": frozenset({
         "updateMaterialStage", "shearModulus", "bulkModulus"}),
     "PressureDependMultiYield02": frozenset({
-        "updateMaterialStage", "shearModulus", "bulkModulus"}),
+        "updateMaterialStage", "shearModulus", "bulkModulus",
+        "frictionAngle", "cohesion"}),
     "PM4Sand": frozenset({
         "updateMaterialStage", "materialState", "IntegrationScheme",
         "refShearModulus", "ShearModulus", "poissonRatio", "FirstCall",
         "voidRatio", "PostShake"}),
     "PM4Silt": frozenset({
         "updateMaterialStage", "materialState", "IntegrationScheme",
-        "refShearModulus", "ShearModulus", "poissonRatio", "FirstCall"}),
+        "refShearModulus", "ShearModulus", "poissonRatio", "FirstCall",
+        "voidRatio", "PostShake", "Su_factor"}),
 }
 
 Backbone = tuple[tuple[float, float], ...]

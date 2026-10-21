@@ -296,3 +296,38 @@ def test_stage_must_be_an_int() -> None:
                 s.update_material_stage(materials=[mat], stage=bad)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
+
+
+def test_replay_stand_in_with_no_nd_passes_the_element_check() -> None:
+    """The H5 replay probes slot types with a field-less material stand-in
+    (``nd`` unset); the dimension check must not refuse it."""
+    from apeGmsh.opensees.element.solid import FourNodeQuad
+
+    stub = object.__new__(PressureIndependMultiYield)
+    FourNodeQuad(pg="P", thickness=1.0, material=stub)
+
+
+def test_ladruno_up_region_dimension_is_checked_at_build() -> None:
+    for nd, ok in ((3, False), (2, True)):
+        ops = apeSees(_make_two_pg_fem(), default_orientation=None)
+        ops.model(ndm=2, ndf=3)
+        m = ops.nDMaterial.PressureDependMultiYield(**{**_PDMY, "nd": nd})
+        ops.element.LadrunoUP(pg="rock", material=m, Kf=2.2e6, poro=0.4,
+                              rhoF=1.0, perm=(1e-5, 1e-5), thick=1.0)
+        ops.fix(nodes=[1], dofs=(0, 0, 1))      # a drained node (u-p gate)
+        _full_chain(ops)
+        if ok:
+            ops.build().emit(RecordingEmitter())
+        else:
+            with pytest.raises(BridgeError, match=r"nd=3\) in a 2-D region"):
+                ops.build().emit(RecordingEmitter())
+
+
+def test_numpy_integer_stage_is_accepted() -> None:
+    import numpy as np
+
+    ops, mat = _soil_ops()
+    with ops.stage(name="s") as s:
+        s.update_material_stage(materials=[mat], stage=np.int64(1))
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)

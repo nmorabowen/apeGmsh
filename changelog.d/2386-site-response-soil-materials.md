@@ -24,7 +24,8 @@ modulus-reduction curve, `backbone=((shear strain, G/Gmax), ...)`.
   The checked cases are a bare multi-yield `nd=3` on a quad or triangle,
   `nd=2` on a solid, a plane-stress view of one, and PM4Sand / PM4Silt on
   a solid. An `nd=3` material behind `ops.nDMaterial.PlaneStrain` stays
-  valid.
+  valid. A `LadrunoUP` region, which takes its dimension from its cells,
+  is checked at build.
 - A multi-yield soil solved with `algorithm Linear` is refused at build,
   in a flat chain, a stage or a strategy rung. These materials compute
   their stress only in `getStress()`, and a Linear step commits before it

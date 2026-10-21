@@ -186,8 +186,12 @@ def warn_stale_shell_probe_under_linear(
     multi-yield soil material under a Linear step raises
     (:func:`~.soil.refuse_multi_yield_soil_under_linear`).
     """
-    from .soil import refuse_multi_yield_soil_under_linear
+    from .soil import (
+        refuse_multi_yield_soil_under_linear,
+        refuse_up_soil_dimension,
+    )
 
+    refuse_up_soil_dimension(fem, element_plan)
     refuse_multi_yield_soil_under_linear(
         (spec for spec, _rows in element_plan), staged=staged,
         flat_algorithms=flat_algorithms, stage_chain=stage_chain)

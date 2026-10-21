@@ -8,6 +8,7 @@ body changed.  The class is private, so there is no facade in
 from __future__ import annotations
 
 import math
+import numbers
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
@@ -1496,7 +1497,7 @@ class _StageBuilder:
             If a handle was never registered on this bridge, or its
             class does not honour ``updateMaterialStage``.
         """
-        if isinstance(stage, bool) or not isinstance(stage, int):
+        if isinstance(stage, bool) or not isinstance(stage, numbers.Integral):
             raise ValueError(
                 f"Stage {self._name!r}.update_material_stage: stage= must "
                 f"be an int (0, 1 or 2), got {stage!r}."
