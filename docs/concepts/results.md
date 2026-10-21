@@ -29,12 +29,13 @@ from apeGmsh.opensees import OpenSeesModel
 
 # All three REQUIRE the model broker — omitting it raises TypeError.
 model   = OpenSeesModel.from_h5("model.h5")
-results = Results.from_native("run.h5",  fem=fem, model=model)          # domain capture
+results = Results.from_native("modes.h5", fem=fem, model=model)        # apeGmsh native
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)    # classic .out files
 results = Results.from_mpco("run.mpco", model_h5="model.h5")            # STKO MPCO
 ```
 
-`from_native` opens apeGmsh's own HDF5, written by domain capture.
+`from_native` opens apeGmsh's own HDF5, written by `EigenResult.to_native`
+and the other modes writers (and by the recorder transcoder's cache).
 `from_recorders` parses classic OpenSees `.out`/`.xml` files against the
 recorder spec that declared them, transcodes them once into a cached native
 file, and opens that — re-reads with unchanged inputs hit the cache.

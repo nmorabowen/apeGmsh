@@ -8,9 +8,9 @@ the bridge:
   declaration entry point. It produces a typed
   :class:`apeGmsh.opensees.recorder.RecorderDeclaration` that drives
   the file-emit path through the bridge build pipeline.
-- :class:`apeGmsh.results.capture.DomainCaptureSpec` (Phase 9
-  commit 5) is the in-process capture counterpart, paired with
-  ``ops.domain_capture(...)`` / ``DomainCapture.from_h5(...)``.
+- The in-process capture counterpart (Phase 9 commit 5) was deleted in
+  #2191; modes come from ``ops.eigen(...)`` (``EigenResult``) and
+  plain-openseespy decks from ``results.live.capture_live_modes``.
 
 What lives in this sub-package post commit 5:
 
@@ -26,8 +26,7 @@ What lives in this sub-package post commit 5:
 The Phase 9 commit 4 ``Recorders`` fluent helper relocation was
 reverted in commit 5: the transitional helper was deleted entirely
 because the canonical Phase 9 path
-(:func:`ops.recorder.declare`) plus the new
-:class:`DomainCaptureSpec` cover the same surface without an
+(:func:`ops.recorder.declare`) covers the same surface without an
 opensees → results layering inversion.
 """
 from __future__ import annotations

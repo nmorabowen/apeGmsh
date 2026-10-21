@@ -3,13 +3,17 @@
 `results.viewer()` boots one empty grey mesh view, which is a fair default
 and a poor demo. This builds a three-pane session instead — a clipped
 stress contour through the soil, the frame's moment diagram, and a roof
-history plot — and shows that.
+history plot — and shows that. The bench has two result sources, both
+opened through ``build.open_results``: the recorder set (gravity and
+dynamic, transcoded on open) and ``modes.h5``; ``--modes`` shows a
+mode-shape session instead of the dynamic one.
 
 Run::
 
     python open_viewer.py                       # the canonical case
     python open_viewer.py --case c002_something
     python open_viewer.py --results /some/dir   # any results/ folder
+    python open_viewer.py --modes               # the mode shapes
 """
 from __future__ import annotations
 
@@ -19,8 +23,8 @@ from pathlib import Path
 
 os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
 
-from apeGmsh import Results
-from apeGmsh.opensees import OpenSeesModel
+from build import META, open_results
+
 from apeGmsh.results.session import (
     Contour, Deform, Instant, Line, PlotSeries, PlotSource, Scope,
 )
@@ -36,26 +40,34 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--case", default=CANONICAL_CASE)
     ap.add_argument("--results", type=Path, default=None,
-                    help="a results/ folder holding model.h5 + run.h5")
+                    help="a results/ folder that build.py wrote")
     ap.add_argument("--render", type=Path, default=None,
                     help="render the mesh panes to this folder instead of "
                          "opening a window (ADR 0098 §10: same session, "
                          "different client)")
+    ap.add_argument("--modes", action="store_true",
+                    help="show the mode shapes (modes.h5) instead")
     args = ap.parse_args()
 
     results_dir = args.results or (
         Path(__file__).resolve().parents[1] / "cases" / args.case / "results")
-    run_h5, model_h5 = results_dir / "run.h5", results_dir / "model.h5"
-    if not run_h5.is_file():
+    if not (results_dir / META).is_file():
         raise SystemExit(
-            f"no run.h5 under {results_dir} — run the case first:\n"
+            f"no bench run under {results_dir} — run the case first:\n"
             f"  python scripts/run_case.py --model ssi_frame_wall "
             f"--case {args.case} "
             f"--script models/ssi_frame_wall/src/build.py "
             f"--verify models/ssi_frame_wall/src/check_slots.py")
 
-    results = Results.from_native(str(run_h5),
-                                  model=OpenSeesModel.from_h5(str(model_h5)))
+    results, modes = open_results(results_dir)
+    for st in modes.stages:
+        print(f"[viewer] {st.name}: f = {st.frequency_hz:.3f} Hz", flush=True)
+    if args.modes:
+        session = modes.session()
+        session.panes[0].deform = Deform("displacement", None, mode=1)
+        print("[viewer] close the window to return", flush=True)
+        session.show()
+        return
     dyn = next(s for s in results.stages if s.kind == "transient")
     peak = Instant(dyn.id, dyn.n_steps // 2)      # mid-shake, not the quiet end
 
@@ -84,7 +96,7 @@ def main() -> None:
     session.add_plot(kind="history", name="roof drift", series=(
         PlotSeries(PlotSource("node", roof), "displacement_x"),))
 
-    print(f"[viewer] {run_h5}", flush=True)
+    print(f"[viewer] {results_dir} (recorder set + modes.h5)", flush=True)
     print(f"[viewer] {len(session.panes)} panes, linked at {peak}", flush=True)
     if args.render is not None:
         args.render.mkdir(parents=True, exist_ok=True)
@@ -92,6 +104,12 @@ def main() -> None:
             out = args.render / f"{name}.png"
             session.render(str(out), pane.id, window_size=(1600, 900))
             print(f"[viewer] rendered {out}", flush=True)
+        msession = modes.session()
+        mview = msession.panes[0]
+        mview.deform = Deform("displacement", None, mode=1)
+        out = args.render / "mode1.png"
+        msession.render(str(out), mview.id, window_size=(1600, 900))
+        print(f"[viewer] rendered {out}", flush=True)
         return
     print("[viewer] close the window to return", flush=True)
     session.show()

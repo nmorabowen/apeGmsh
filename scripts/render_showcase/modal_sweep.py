@@ -29,7 +29,6 @@ import pyvista as pv
 
 from apeGmsh import apeGmsh, Results
 from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
 from apeGmsh.results.writers import NativeWriter
 from apeGmsh.viewers.animation import export_animation
 from apeGmsh.viewers.diagrams._director import ResultsDirector
@@ -73,19 +72,9 @@ def solve_modes(run_h5: str) -> None:
     )
     ops.fix(pg="Fixed", dofs=(1, 1, 1))
 
-    ops.constraints.Plain()
-    ops.numberer.RCM()
-    ops.system.BandGeneral()
-    ops.test.NormDispIncr(tol=1e-10, max_iter=10)
-    ops.algorithm.Linear()
-    ops.integrator.LoadControl(dlam=1.0)
-    ops.analysis.Static()
-    ops.analyze(steps=1)                     # assemble K + M
-
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.modal(n_modes=3)
-    with ops.domain_capture(spec, path=run_h5) as cap:
-        cap.capture_modes()
+    # ops.eigen builds the domain and solves; to_native writes the mode
+    # stages with the bridge's /opensees zone composed in.
+    ops.eigen(3).to_native(run_h5)
 
 
 def synthesize_sweep(run_h5: str, anim_h5: str) -> list[float]:

@@ -9,7 +9,7 @@ and column layouts (so transcoder ↔ emitter stay in lockstep).
 Scope
 -----
 - ``nodes`` records — full TXT support, multi-record merge with
-  NaN fill (matches DomainCapture semantics).
+  NaN fill.
 - ``gauss`` records (Phase 11a) — continuum stress/strain at GPs,
   for catalogued element classes. Class identity is sniffed from the
   file's column count via the response catalog; v1 requires
@@ -741,7 +741,7 @@ class RecorderTranscoder:
             )
 
     # ------------------------------------------------------------------
-    # Merge logic (mirror of DomainCapture._flush_nodes_merged)
+    # Merge logic
     # ------------------------------------------------------------------
 
     def _write_merged_nodes(
@@ -948,8 +948,8 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
 def _record_catalog_token(rec: "ResolvedRecorderRecord") -> str | None:
     """Return ``"stress"`` / ``"strain"`` for a gauss record (or None).
 
-    Mixed work-conjugate families raise — same contract as
-    DomainCapture and the spec emit. Records with no Gauss-level
+    Mixed work-conjugate families raise — same contract as the spec
+    emit. Records with no Gauss-level
     components return ``None`` (the caller should skip).
 
     Recognises both continuum prefixes (``stress`` / ``strain``) and
