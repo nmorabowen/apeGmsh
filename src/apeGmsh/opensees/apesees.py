@@ -104,6 +104,7 @@ from ._internal.build.constraints import (
     emit_embed_ties,
     emit_rebar_elements,
     emit_stage_mp_constraints,
+    fixed_dof_map,
 )
 from ._internal.build.constraints_ranked import (
     emit_mp_constraints_partitioned,
@@ -2387,6 +2388,7 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+            fixed_dofs=fixed_dof_map(self, inferred_ndf),
         )
         emit_equation_constraints(
             emitter, self.fem, self.equation_constraint_records,
