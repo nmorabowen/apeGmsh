@@ -823,6 +823,10 @@ function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): N
       const pgName = tk === "pg" || tk === "group" ? targetStr : null;
       const rawParams = paramsIdx >= 0 ? row[paramsIdx] : [];
       const pArr = Array.isArray(rawParams) ? rawParams.map(Number) : [Number(rawParams)];
+      if (eids.length === 0 && !pgName) {
+        out.push("element load with no element id");
+        continue;
+      }
       const parsed = decodeEleLoadParams(kind, pArr, eids, "ops_tag", pgName, is2D);
       if (parsed) out.push(parsed);
     }
@@ -854,6 +858,8 @@ function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): N
       if (kind && eids.length > 0) {
         const parsed = decodeEleLoadParams(kind, params, eids, "ops_tag", null, is2D);
         if (parsed) out.push(parsed);
+      } else {
+        out.push("element load with no element id");
       }
       continue;
     }
@@ -895,6 +901,8 @@ function parseOpsPatternElementLoads(table: Table | undefined, is2D: boolean): N
     if (kind && eids.length > 0) {
       const parsed = decodeEleLoadParams(kind, params, eids, "ops_tag", null, is2D);
       if (parsed) out.push(parsed);
+    } else {
+      out.push(kind ? "element load with no element id" : "element load row without -type");
     }
   }
   return { loads, undrawn };
@@ -986,6 +994,14 @@ function parseNeutralElementLoads(table: Table | undefined): NeutralElementLoads
   return { loads, undrawn };
 }
 
+/** Nodes of an element decl, from its inline nodes or its block's `npe` (no blob read). */
+function nodesPerElement(s: State, path: DeclPath): number {
+  const e = s.decls[path]?.element;
+  if (!e) return 0;
+  if (e.inlineNodes.length > 0) return e.inlineNodes.length;
+  return e.cell ? (s.blocks[e.cell.block]?.npe ?? 0) : 0;
+}
+
 function skippedBeamNotice(n: number): string | null {
   return n > 0
     ? `${n} 3-D beam${n === 1 ? "" : "s"} skipped in 3-D loads: missing geomTransf vecxz (transverse beam loads require a valid non-parallel vecxz; never guessed in 3-D).`
@@ -998,11 +1014,12 @@ function joinNotices(...parts: (string | null)[]): string | null {
 }
 
 /** The notice for neutral element loads the viewer does not draw, over the active cases; `null` when none. */
-function undrawnNotice(patterns: readonly ResolvedPatternData[]): string | null {
+function undrawnNotice(patterns: readonly ResolvedPatternData[], extra: readonly string[] = []): string | null {
   const parts: string[] = [];
   for (const p of patterns) {
     for (const [kind, n] of p.undrawn) parts.push(`${n} ${kind} in ${p.entry.title}`);
   }
+  parts.push(...extra);
   return parts.length > 0
     ? `Element loads not drawn (only beamUniform, beamPoint and surfacePressure are): ${parts.join(", ")}.`
     : null;
@@ -1225,12 +1242,17 @@ export function loadsSummaryOf(s: State): LoadsSummary {
   let peakSurfacePressure = 0;
   let peakBaseExcitation = 0;
   const skippedBeamSet = new Set<DeclPath>();
+  const targetSkips = new Map<string, number>();
+  const skipTarget = (title: string, kind: string): void => {
+    const key = `${kind} in ${title}`;
+    targetSkips.set(key, (targetSkips.get(key) ?? 0) + 1);
+  };
 
-  // Element lookup maps for 3-D beam vecxz check in summary
+  // Element lookup maps: where each element load lands, and the 3-D beam vecxz check
   const byOpsTag = new Map<number, DeclPath>();
   const byFemId = new Map<number, DeclPath>();
   const byPgName = new Map<string, DeclPath[]>();
-  if (!is2D && s.loads.showElementLoads) {
+  if (s.loads.showElementLoads) {
     for (const [path, d] of Object.entries(s.decls)) {
       if (d.kind !== "element" || !d.element) continue;
       if (d.element.femId !== null) byFemId.set(d.element.femId, path);
@@ -1299,23 +1321,29 @@ export function loadsSummaryOf(s: State): LoadsSummary {
           const conv = rawMag * Math.abs(factor) * units.surfacePressure.factor;
           if (conv > peakSurfacePressure) peakSurfacePressure = conv;
         }
+        const targetDecls: DeclPath[] = [];
+        for (const eid of el.elementIds) {
+          const decl =
+            el.idSpace === "ops_tag"
+              ? (byOpsTag.get(eid) ?? byFemId.get(eid))
+              : (byFemId.get(eid) ?? byOpsTag.get(eid));
+          if (decl) targetDecls.push(decl);
+        }
+        if (targetDecls.length === 0 && el.pgName) {
+          targetDecls.push(...(byPgName.get(el.pgName) ?? []));
+        }
+        // What the drawing cannot place is named here, the notice the panel shows.
+        if (targetDecls.length === 0) {
+          skipTarget(p.title, "element load on no element in the mesh");
+        } else if (el.kind === "bodyForce" && targetDecls.some((dp) => nodesPerElement(s, dp) < 3)) {
+          skipTarget(p.title, "bodyForce on a line element");
+        }
         if (
           !is2D &&
           (el.kind === "beamUniform" || el.kind === "beamPoint") &&
           !el.globalVector &&
           (Math.abs(el.wy) > 0 || Math.abs(el.wz) > 0 || (el.localEnd != null && (Math.abs(el.localEnd[0]) > 0 || Math.abs(el.localEnd[1]) > 0)))
         ) {
-          const targetDecls: DeclPath[] = [];
-          for (const eid of el.elementIds) {
-            const decl =
-              el.idSpace === "ops_tag"
-                ? (byOpsTag.get(eid) ?? byFemId.get(eid))
-                : (byFemId.get(eid) ?? byOpsTag.get(eid));
-            if (decl) targetDecls.push(decl);
-          }
-          if (targetDecls.length === 0 && el.pgName) {
-            targetDecls.push(...(byPgName.get(el.pgName) ?? []));
-          }
           for (const decl of targetDecls) {
             const d = s.decls[decl];
             if (!d) continue;
@@ -1371,7 +1399,10 @@ export function loadsSummaryOf(s: State): LoadsSummary {
   }
 
   const skippedCount = skippedBeamSet.size;
-  const notice = joinNotices(skippedBeamNotice(skippedCount), s.loads.showElementLoads ? undrawnNotice(activeResolved) : null);
+  const notice = joinNotices(
+    skippedBeamNotice(skippedCount),
+    s.loads.showElementLoads ? undrawnNotice(activeResolved, [...targetSkips].map(([k, n]) => `${n} ${k}`)) : null,
+  );
 
   const hasLoads = entries.some((e) => e.counts.total > 0);
   return {

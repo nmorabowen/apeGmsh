@@ -343,6 +343,51 @@ const l3State: State = reduce(
 );
 const onlyCase = (name: string): State => reduce(l3State, { type: "setLoads", selectedPatterns: [`neutral:${name}`] });
 
+/** Every drawn vertex lying on the element's chord sits at x/L in [lo, hi]. */
+function assertTipsWithin(g: { linePositions: Float32Array; conePositions: Float32Array }, decl: Parameters<typeof elementNodeCoords>[0], lo: number, hi: number): void {
+  const nodes = elementNodeCoords(decl);
+  const [a, b] = [nodes[0]!, nodes[nodes.length - 1]!];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const us: number[] = [];
+  for (const buf of [g.linePositions, g.conePositions]) {
+    for (let i = 0; i < buf.length; i += 3) {
+      const r = [buf[i]! - a[0], buf[i + 1]! - a[1], buf[i + 2]! - a[2]];
+      const u = (r[0]! * (b[0] - a[0]) + r[1]! * (b[1] - a[1]) + r[2]! * (b[2] - a[2])) / (L * L);
+      const off = Math.hypot(r[0]! - u * (b[0] - a[0]), r[1]! - u * (b[1] - a[1]), r[2]! - u * (b[2] - a[2]));
+      if (off < 1e-6 * L) us.push(u);
+    }
+  }
+  assert.ok(us.length > 0, "the arrows touch the element");
+  assert.ok(Math.min(...us) > lo - 1e-6 && Math.max(...us) < hi + 1e-6, `tips in [${lo}, ${hi}], got [${Math.min(...us)}, ${Math.max(...us)}]`);
+}
+
+/** `s` with a geomTransf (vecxz (0, 0, 1)) on shoebuckle's first element. */
+function withVecxz(s: State): State {
+  const path = s.mesh!.elements[0]!;
+  const d = s.decls[path]!;
+  return {
+    ...s,
+    decls: {
+      ...s.decls,
+      "opensees/geomTransf/1": {
+        path: "opensees/geomTransf/1",
+        kind: "geomTransf",
+        name: "gt1",
+        nameSource: "test",
+        type: "Linear",
+        tag: 1,
+        h5: "/opensees/geomTransf/Linear_1",
+        params: [0, 0, 1],
+        refs: {},
+        links: {},
+        fields: [{ label: "vecxz", value: "[0, 0, 1]", source: "test", interpreted: false }],
+        problems: [],
+      },
+      [path]: { ...d, refs: { ...d.refs, transfTag: "opensees/geomTransf/1" } },
+    },
+  };
+}
+
 /** Node coordinates of an element decl, in connectivity order, from the model's node table. */
 function elementNodeCoords(d: { element?: { femId: number | null; inlineNodes?: readonly number[] | null } | null }): [number, number, number][] {
   const femId = d.element!.femId;
@@ -508,28 +553,41 @@ test("OpenSees-pattern beamUniform: the emitter's aL/bL and end values are decod
   assert.equal(g2.maxElementLoadMag, 20);
 
   // The ticks sit on the element over x/L in [0.25, 0.75] only.
-  const nodes = elementNodeCoords(decl);
-  const [a, b] = [nodes[0]!, nodes[nodes.length - 1]!];
-  const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  const us: number[] = [];
-  for (const buf of [g2.linePositions, g2.conePositions]) {
-    for (let i = 0; i < buf.length; i += 3) {
-      const r = [buf[i]! - a[0], buf[i + 1]! - a[1], buf[i + 2]! - a[2]];
-      const u = (r[0]! * (b[0] - a[0]) + r[1]! * (b[1] - a[1]) + r[2]! * (b[2] - a[2])) / (L * L);
-      const off = Math.hypot(r[0]! - u * (b[0] - a[0]), r[1]! - u * (b[1] - a[1]), r[2]! - u * (b[2] - a[2]));
-      if (off < 1e-6 * L) us.push(u);
-    }
-  }
-  assert.ok(us.length > 0, "the arrows touch the element");
-  assert.ok(Math.min(...us) > 0.25 - 1e-6 && Math.max(...us) < 0.75 + 1e-6, `tips in [0.25, 0.75], got [${Math.min(...us)}, ${Math.max(...us)}]`);
+  assertTipsWithin(g2, decl, 0.25, 0.75);
 
-  // 3-D trapezoid: wy wz wx aL bL wy_b wz_b wx_b (summary only: drawing a 3-D local load needs vecxz)
+  // 3-D trapezoid: wy wz wx aL bL wy_b wz_b wx_b
   const s3 = opsElementLoadsState(shoeState, 3, [["-ele", tag, "-type", "-beamUniform", "-10.0", "-4.0", "1.0", "0.1", "0.9", "-20.0", "-8.0", "2.0"]]);
   assert.ok(Math.abs(loadsSummaryOf(s3).peaks.beamUniform - Math.hypot(20, 8, 2)) < 1e-9);
+
+  // 3-D partial span (wy wz wx aL bL) on a beam with a vecxz: drawn over [0.2, 0.8] only.
+  const s3span = withVecxz(opsElementLoadsState(shoeState, 3, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0", "0.0", "0.2", "0.8"]]));
+  const g3 = buildLoads3D(s3span, shoeBlobs);
+  assert.equal(g3.notice, null);
+  assertTipsWithin(g3, decl, 0.2, 0.8);
+
+  // A transverse load only at the trapezoid's end still needs the vecxz, and says so without one.
+  const endOnly = opsElementLoadsState(shoeState, 3, [["-ele", tag, "-type", "-beamUniform", "0.0", "0.0", "1.0", "0.0", "1.0", "-5.0", "0.0", "1.0"]]);
+  assert.match(loadsSummaryOf(endOnly).notice ?? "", /missing geomTransf vecxz/);
 
   // A count the emitter never writes is named, not guessed.
   const bad = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0", "0.25"]]);
   assert.match(loadsSummaryOf(bad).notice ?? "", /beamUniform with an unknown parameter count/);
+});
+
+test("OpenSees-pattern element loads the drawing cannot place are named: selfWeight on a beam, an element not in the mesh, an unknown -type (#2385 review 3)", () => {
+  const tag = shoeState.decls[shoeState.mesh!.elements[0]!]!.element!.metas[0]!.tag;
+  // The bridge's row for `p.self_weight(...)` on beams.
+  const sw = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-selfWeight", "0.0", "-1.0", "0.0"]]);
+  assert.match(loadsSummaryOf(sw).notice ?? "", /1 bodyForce on a line element in Plain_1/);
+  assert.equal(buildLoads3D(sw, shoeBlobs).linePositions.length, 0);
+
+  const missing = opsElementLoadsState(shoeState, 2, [["-ele", 987654321, "-type", "-beamUniform", "-10.0", "0.0"]]);
+  assert.match(loadsSummaryOf(missing).notice ?? "", /1 element load on no element in the mesh in Plain_1/);
+
+  const unknown = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-beamThermal", "1.0", "2.0"]]);
+  const uSum = loadsSummaryOf(unknown);
+  assert.match(uSum.notice ?? "", /1 beamThermal in Plain_1/);
+  assert.equal(uSum.patterns[0]!.counts.elementLoads, 1);
 });
 
 test("OpenSees-pattern bare -surfaceLoad (the bridge's form) is listed with a notice, not dropped (#2385 review 2)", () => {
