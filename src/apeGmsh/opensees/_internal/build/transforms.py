@@ -11,6 +11,7 @@ from ...transform import Corotational, Linear, PDelta
 from ...element.beam_column import (
     ElasticTimoshenkoBeam,
     LadrunoDispBeamColumn,
+    LadrunoForceBeamColumn,
     LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
@@ -123,6 +124,7 @@ def _element_transf(spec: Element) -> GeomTransf | None:
             dispBeamColumn,
             ElasticTimoshenkoBeam,
             LadrunoDispBeamColumn,
+            LadrunoForceBeamColumn,
             LadrunoIMKBeam,
         ),
     ):
