@@ -69,8 +69,8 @@ class LegacySimplexGaussCoordsWarning(UserWarning):
 # Simplex Gauss coordinates written by older apeGmsh versions
 # ---------------------------------------------------------------------------
 #
-# The native writers (the recorder transcoder, and the in-process capture
-# deleted in #2191 whose files stay readable) copy the
+# The native writers (the recorder transcoder, the modes writers and,
+# in older files, an in-process capture) copy the
 # response catalog's ``natural_coords`` into ``_natural_coords``. The
 # catalog holds every simplex rule in gmsh reference coordinates (``1 - Σ``
 # on node 0), which is what every consumer of ``GaussSlab.natural_coords``
