@@ -923,6 +923,11 @@ class OpenSeesModel:
             # which would refuse; a deck or domain built from it would
             # carry the solve those gates exist to stop.
             self._refuse_stored_solve_refusals(target)
+            # A stream the replay cannot write refuses here, before any
+            # emitter exists: the live one wipes the domain on creation.
+            from ._internal.compose import refuse_unreplayable_streams
+
+            refuse_unreplayable_streams(self._fem)
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":

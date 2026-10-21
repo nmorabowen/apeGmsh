@@ -44,7 +44,8 @@ class ReplaySkippedStreamWarning(UserWarning):
     ties and contacts, nor for an MP constraint whose rows the archive
     lacks. A replayed deck that leaves any of them out differs from the
     forward ``apeSees`` deck, so the replay warns and names each one. A
-    phantom-node stream refuses instead (:func:`_refuse_phantom_streams`).
+    stream it cannot write at all refuses instead
+    (:func:`refuse_unreplayable_streams`).
     """
 
 
@@ -640,37 +641,57 @@ def _skipped_replay_streams(
     return out
 
 
-def _refuse_phantom_streams(fem: Any) -> None:
-    """Raise :class:`BridgeError` iff ``fem`` carries a stream whose deck
-    lines need a phantom node (#2411): a ``node_to_surface`` coupling or a
-    mixed-ndf interface. The archive keeps no phantom-node coordinates, so
-    a replay could only leave those ties out and run untied."""
+def refuse_unreplayable_streams(fem: Any) -> None:
+    """Raise :class:`BridgeError` iff ``fem`` carries a stream the deck
+    replay cannot write, so it would run untied. Each kind is named, with
+    its count and the issue that tracks it:
+
+    - a ``node_to_surface`` / ``node_to_surface_spring`` coupling or a
+      mixed-ndf interface, whose lines tie through phantom nodes the
+      archive does not store (#2411);
+    - an interpolation on the ``enforce="equation"`` route, whose
+      ``equationConstraint`` lines the archive does not store (#2416).
+
+    :meth:`OpenSeesModel.build` calls it for the ``tcl`` / ``py`` /
+    ``live`` targets before any emitter is made, so a refused live build
+    leaves the domain as it was.
+    """
     from .build.errors import BridgeError
 
     kind_cls = fem.nodes.constraints.Kind
     phantom_kinds = (kind_cls.NODE_TO_SURFACE, kind_cls.NODE_TO_SURFACE_SPRING)
-    found: "Counter[str]" = Counter(
+    phantom: "Counter[str]" = Counter(
         str(rec.kind) for rec in fem.nodes.constraints
         if rec.kind in phantom_kinds)
-    found.update(
+    phantom.update(
         f"{rec.kind} (mixed-ndf)" for rec in fem.elements.interfaces
         if rec.phantom_node is not None)
-    if found:
-        detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
+    equation: "Counter[str]" = Counter(
+        f"{rec.kind} (enforce='equation')"
+        for rec in fem.elements.constraints.interpolations()
+        if rec.enforce == "equation")
+    parts = []
+    for found, why in (
+        (phantom, "tie through phantom nodes the archive does not store "
+                  "(#2411)"),
+        (equation, "are equationConstraint lines the archive does not "
+                   "store (#2416)"),
+    ):
+        if found:
+            detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
+            parts.append(f"{detail}, whose deck lines {why}")
+    if parts:
         raise BridgeError(
-            f"Deck replay refuses this archive: it carries {detail}, whose "
-            "deck lines tie through phantom nodes the archive does not store "
-            "(#2411), so the replay would run untied. Load "
+            "Deck replay refuses this archive: it carries "
+            + "; and ".join(parts) + ". The replay would run untied. Load "
             "FEMData.from_h5(path) and emit it through apeSees(fem).")
 
 
 def _warn_skipped_replay_streams(
     fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
 ) -> None:
-    """Refuse a phantom-node stream (:func:`_refuse_phantom_streams`), then
-    warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a stream
-    that replay does not re-emit, naming each stream and count."""
-    _refuse_phantom_streams(fem)
+    """Warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a
+    stream that replay does not re-emit, naming each stream and count."""
     skipped = _skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
     if not skipped:
         return
