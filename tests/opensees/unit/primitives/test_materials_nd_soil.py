@@ -248,3 +248,12 @@ def test_newton_and_pm4sand_under_linear_pass() -> None:
     ops2, _sand = _soil_ops("PM4Sand", _PM4SAND)
     _linear_chain(ops2)
     ops2.build().emit(RecordingEmitter())
+
+
+def test_set_parameter_catalogue_covers_every_soil_class() -> None:
+    from apeGmsh.opensees.material.nd_soil import SET_PARAMETER_NAMES
+
+    for cls in (PressureIndependMultiYield, PressureDependMultiYield,
+                PressureDependMultiYield02, PM4Sand, PM4Silt):
+        assert "updateMaterialStage" in SET_PARAMETER_NAMES[cls.__name__]
+    assert {"FirstCall", "PostShake"} <= SET_PARAMETER_NAMES["PM4Sand"]

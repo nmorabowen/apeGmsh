@@ -44,6 +44,7 @@ __all__ = [
     "PM4Sand",
     "PM4Silt",
     "MULTI_YIELD_SOIL_CLASSES",
+    "SET_PARAMETER_NAMES",
 ]
 
 #: The classes whose ``commitState`` commits the stress cached by the last
@@ -56,6 +57,30 @@ MULTI_YIELD_SOIL_CLASSES: frozenset[str] = frozenset({
     "PressureDependMultiYield",
     "PressureDependMultiYield02",
 })
+
+#: The parameter names each class's ``setParameter`` identifies (each
+#: matches only when ``argv[1]`` is its own tag, which ``s.update_parameter(
+#: ..., material=mat)`` appends). Read from the fork's ``setParameter``
+#: bodies: ``PressureIndependMultiYield.cpp:626``, ``PressureDependMultiYield.cpp:978``,
+#: ``PressureDependMultiYield02.cpp:1008``, ``UWmaterials/PM4Sand.cpp:726``,
+#: ``UWmaterials/PM4Silt.cpp:721``. A per-class catalogue that a refusal of an
+#: unidentified ``update_parameter`` name can consume.
+SET_PARAMETER_NAMES: dict[str, frozenset[str]] = {
+    "PressureIndependMultiYield": frozenset({
+        "updateMaterialStage", "shearModulus", "bulkModulus",
+        "frictionAngle", "cohesion"}),
+    "PressureDependMultiYield": frozenset({
+        "updateMaterialStage", "shearModulus", "bulkModulus"}),
+    "PressureDependMultiYield02": frozenset({
+        "updateMaterialStage", "shearModulus", "bulkModulus"}),
+    "PM4Sand": frozenset({
+        "updateMaterialStage", "materialState", "IntegrationScheme",
+        "refShearModulus", "ShearModulus", "poissonRatio", "FirstCall",
+        "voidRatio", "PostShake"}),
+    "PM4Silt": frozenset({
+        "updateMaterialStage", "materialState", "IntegrationScheme",
+        "refShearModulus", "ShearModulus", "poissonRatio", "FirstCall"}),
+}
 
 Backbone = tuple[tuple[float, float], ...]
 
