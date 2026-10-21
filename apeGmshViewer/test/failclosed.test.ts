@@ -226,7 +226,7 @@ function seriesFile(name: string, build: (g: h5wasm.Group) => void): string {
   const f = new h5wasm.File(path, "a");
   const g = (f.get("opensees") as h5wasm.Group).create_group("time_series").create_group("Path_1");
   g.create_attribute("type", "Path");
-  g.create_attribute("tag", 1n);
+  g.create_attribute("tag", 1);
   build(g);
   f.close();
   return path;
