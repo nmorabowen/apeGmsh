@@ -106,8 +106,10 @@ class PartlyFixedTieWarning(UserWarning):
 class FixedDofs:
     """The homogeneous fixity the global ``fix`` pass emits, for the
     ``equalDOF`` rewrite (#2396): ``fixed[node]`` holds the 1-based DOFs
-    fixed from the first step on, ``staged`` the ``(node, dof)`` pairs a
-    stage fixes or releases, and ``ndf`` each fixed node's DOF count."""
+    fixed from the first step on, ``staged`` every other ``(node, dof)``
+    an SP ever acts on (a stage ``s.fix`` / ``s.support`` / ``s.remove_sp``,
+    a pattern ``p.sp``), which a static rewrite cannot reproduce, and
+    ``ndf`` each node's DOF count."""
 
     fixed: "Mapping[int, frozenset[int]]"
     staged: "frozenset[tuple[int, int]]"
@@ -118,6 +120,9 @@ class FixedDofs:
     #: master fix's declaration.
     owner: "Mapping[int, object]"
     decl_cursor: "Callable[[Emitter], Any] | None" = None
+    #: Nodes that retain, and nodes that are constrained by, some tie.
+    retained: "frozenset[int]" = frozenset()
+    constrained: "frozenset[int]" = frozenset()
 
 
 def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> FixedDofs:
@@ -138,18 +143,35 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
             fixed.setdefault(n, set()).update(
                 i + 1 for i, m in enumerate(mask) if int(m))
     staged: set[tuple[int, int]] = set()
+
+    def _pattern_sps(patterns: "Iterable[Any]") -> None:
+        for pat in patterns:
+            for sp in getattr(pat, "sps", ()) or ():
+                nodes = ([int(sp.target)] if sp.target_kind == "node"
+                         else built._resolve_node_target(sp.target, None))
+                staged.update((int(n), int(sp.dof)) for n in nodes)
+
     for stage in getattr(built, "stage_records", ()) or ():
-        for rec in stage.fix_records:
+        for rec in (*stage.fix_records, *stage.support_records):
             for node in built._resolve_node_target(rec.pg, rec.nodes):
                 staged.update((int(node), i + 1)
                               for i, m in enumerate(rec.dofs) if int(m))
         for rem in stage.remove_sp_records:
             for node in built._resolve_node_target(rem.pg, rem.nodes):
                 staged.update((int(node), int(d)) for d in rem.dofs)
+        _pattern_sps(stage.pattern_specs)
+    _pattern_sps(p for p in built.primitives if hasattr(p, "sps"))
+    retained: set[int] = set()
+    constrained: set[int] = set()
+    for rec in getattr(built.fem.nodes, "constraints", None) or ():
+        if getattr(rec, "kind", None) in ("equal_dof", "equal_dof_mixed"):
+            retained.add(int(rec.master_node))
+            constrained.add(int(rec.slave_node))
     return FixedDofs(
         fixed={n: frozenset(d) for n, d in fixed.items()},
         staged=frozenset(staged), ndf=eff, default_ndf=default,
-        owner=owner, decl_cursor=getattr(built, "_decl_cursor", None))
+        owner=owner, decl_cursor=getattr(built, "_decl_cursor", None),
+        retained=frozenset(retained), constrained=frozenset(constrained))
 
 
 def _split_partly_fixed_tie(
@@ -169,13 +191,25 @@ def _split_partly_fixed_tie(
         return dofs, ()
     held = fixed.fixed.get(master, frozenset())
     on = tuple(d for d in dofs if d in held)
-    if not on or len(on) == len(dofs):
-        staged_hit = [d for d in dofs if (master, d) in fixed.staged]
-        if staged_hit and len(staged_hit) < len(dofs):
-            _warn_partly_fixed(master, slave, name, staged=True)
+    varying = [d for d in dofs if (master, d) in fixed.staged]
+    if len(on) == len(dofs):
+        return dofs, ()            # fully held: Transformation is exact
+    if not on:
+        if varying and len(set(varying)) < len(dofs):
+            _warn_partly_fixed(master, slave, name,
+                               why="a stage or a pattern SP acts on")
         return dofs, ()
-    if any((master, d) in fixed.staged for d in dofs):
-        _warn_partly_fixed(master, slave, name, staged=True)
+    if varying:
+        _warn_partly_fixed(master, slave, name,
+                           why="a stage or a pattern SP acts on")
+        return dofs, ()
+    if any((slave, d) in fixed.staged for d in on):
+        _warn_partly_fixed(master, slave, name,
+                           why="a stage fixes the slave on")
+        return dofs, ()
+    if slave in fixed.retained or master in fixed.constrained:
+        _warn_partly_fixed(master, slave, name,
+                           why="the tie is part of a chain of ties through")
         return dofs, ()
     free = tuple(d for d in dofs if d not in held)
     already = fixed.fixed.get(slave, frozenset())
@@ -183,14 +217,15 @@ def _split_partly_fixed_tie(
 
 
 def _warn_partly_fixed(master: int, slave: int, name: "str | None", *,
-                       staged: bool) -> None:
+                       why: str) -> None:
     warnings.warn(
         f"equalDOF {master} -> {slave}"
         + (f" ({name})" if name else "")
-        + ": a stage fixes or releases a tied DOF of the retained node, so "
-        "the tie cannot be rewritten for the Transformation handler, which "
-        "then drops the tie on the free DOF at every step (#2396). Use "
-        "ops.constraints.Lagrange() or Penalty(...).",
+        + f": its retained node is (or becomes) fixed on only some tied "
+        f"DOFs, and {why} a tied DOF, so the tie cannot be rewritten for "
+        "the Transformation handler, which then drops the tie on the free "
+        "DOF at every step (#2396). Use ops.constraints.Lagrange() or "
+        "Penalty(...).",
         PartlyFixedTieWarning, stacklevel=4,
     )
 

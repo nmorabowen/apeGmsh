@@ -135,3 +135,42 @@ def test_the_archive_writes_the_rewritten_fix(squares, tmp_path) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", BridgeArtifactWarning)
         ops.h5(str(tmp_path / "arch.h5"))
+
+
+def _staged(squares, verb: str) -> apeSees:
+    """One static stage carrying the load and a ``verb`` on the bottom pair."""
+    fem, base_a, master, slave, corner, top_right = squares
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e5, nu=0.3)
+    ops.element.FourNodeQuad(pg="SA", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="SB", thickness=1.0, material=mat)
+    ops.fix(nodes=base_a, dofs=(0, 1))
+    ops.fix(nodes=[corner], dofs=(1, 0))
+    chain = dict(
+        test=ops.test.NormDispIncr(tol=1e-10, max_iter=5),
+        algorithm=ops.algorithm.Newton(),
+        integrator=ops.integrator.LoadControl(dlam=1.0),
+        constraints=ops.constraints.Lagrange(),
+        numberer=ops.numberer.RCM(), system=ops.system.UmfPack(),
+        analysis=ops.analysis.Static())
+    with ops.stage(name="s") as s:
+        if verb == "fix_slave":
+            s.fix(nodes=[slave], dofs=(0, 1))
+        with s.pattern(series=ops.timeSeries.Linear()) as p:
+            p.load(node=top_right, forces=(1.0, 0.0))
+            if verb == "sp_master":
+                p.sp(node=master, dof=1, value=1e-5)
+        s.analysis(**chain)
+        s.run(n_increments=1)
+    return ops
+
+
+@pytest.mark.parametrize("verb", ["fix_slave", "sp_master"])
+def test_a_varying_sp_on_the_pair_keeps_the_tie_and_warns(
+        squares, verb, tmp_path: Path) -> None:
+    _fem, _b, m, s, _c, _t = squares
+    with pytest.warns(PartlyFixedTieWarning, match="#2396"):
+        lines = _lines(_staged(squares, verb), tmp_path / "m.tcl")
+    assert f"equalDOF {m} {s} 1 2" in lines
+    assert lines.count(f"fix {s} 0 1") <= 1      # never a duplicate SP

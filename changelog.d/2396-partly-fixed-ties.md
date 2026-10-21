@@ -18,8 +18,15 @@ free DOFs)` + `fix(s, fixed DOFs)`. It is the same constraint set under
 every handler, and Transformation now matches Lagrange to round-off. The
 added `fix` is archived under the master's fix declaration.
 
-A tie whose retained node a stage fixes or releases (`s.fix`,
-`s.remove_sp`) cannot be rewritten statically. It keeps its declared
-form and warns `PartlyFixedTieWarning`, naming Lagrange / Penalty as the
-safe handlers. Stage-claimed and partitioned `equalDOF`s are not
-rewritten yet.
+Some ties cannot be rewritten statically. Each keeps its declared form
+and warns `PartlyFixedTieWarning`, naming Lagrange / Penalty as the safe
+handlers:
+
+- the retained node's tied DOFs carry an SP that varies, either a stage
+  `s.fix` / `s.support` / `s.remove_sp` or a pattern `p.sp`;
+- a stage fixes the slave on a DOF the rewrite would fix;
+- the tie is part of a chain, where its slave retains another tie.
+
+Stage-claimed (`s.equal_dof`) and partitioned `equalDOF`s, `rigidLink`
+(which has the same upstream defect) and the H5 replay are not covered
+yet.
