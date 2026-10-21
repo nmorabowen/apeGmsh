@@ -2063,9 +2063,17 @@ class ConstraintsComposite(_DeclarationsMixin):
                 from apeGmsh._kernel.resolvers._source import FEMDataSource
 
                 src = FEMDataSource(self._parent._fem)
+                decoupled_ids = {
+                    int(t) for t in self._parent._fem.nodes.decoupled_ids}
                 for lbl in (defn.master_label, defn.slave_label):
                     is_decoupled = lbl in decoupled_ok
                     ok = src.has_target(lbl) if isinstance(lbl, str) else False
+                    if is_decoupled and ok and {
+                        int(t) for t in src.nodes_for(lbl)
+                    } <= decoupled_ids:
+                        # The snapshot label the decoupled node's own
+                        # ``label=`` registered, not a clash.
+                        ok = False
                     if is_decoupled and ok:
                         raise ValueError(
                             f"Constraint label {lbl!r} names both a "

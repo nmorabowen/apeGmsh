@@ -312,6 +312,10 @@ def _from_gmsh(
         # pool (orphan filtering rebuilds node_ids from node_tags).
         node_tags = node_ids
         node_coords = node_coords_all
+    # A decoupled node's ``label=`` names it on the snapshot, so it
+    # resolves wherever a node label does.
+    labels = _with_decoupled_labels(
+        session, labels, node_ids, node_coords_all)
 
     # ── 2. Resolve BCs ────────────────────────────────────────
     node_constraints: list = []
@@ -736,6 +740,56 @@ def _resolve_decoupled_node_sets(
                     dofs=list(defn.tie_dofs),
                 ))
     return tags, coords, ties
+
+
+def _with_decoupled_labels(
+    session, labels: LabelSet, node_ids, node_coords,
+) -> LabelSet:
+    """``labels`` plus one dim-0 label per decoupled-node ``label=``.
+
+    A ``g.decouple_node(..., label=...)`` or ``g.decouple_node_set(...,
+    label=...)`` name becomes a node label of the snapshot holding the
+    decoupled node(s) it declared; declarations that share a name share
+    one label. So ``fem.nodes.select(label="ground")``, a node-pair
+    ``ZeroLength(nodes=("ground", n))`` and ``ops.fix(label="ground")``
+    all reach it, and ``model.h5`` keeps it like any other label.
+
+    The keys are synthetic ``(0, tag)`` pairs above every dim-0 label
+    key; a snapshot label never goes back to Gmsh by its key. A name
+    that is already a geometry label raises: merging the two would add
+    the decoupled node to every existing use of that label.
+    """
+    comp = getattr(session, "decoupled_nodes", None) if session else None
+    if comp is None:
+        return labels
+    named: dict[str, list[int]] = {}
+    for defn in getattr(comp, "node_defs", None) or ():
+        if defn.label and defn.tag is not None:
+            named.setdefault(defn.label, []).append(int(defn.tag))
+    for sdef in getattr(comp, "node_set_defs", None) or ():
+        if sdef.label and sdef.tags is not None:
+            named.setdefault(sdef.label, []).extend(int(t) for t in sdef.tags)
+    if not named:
+        return labels
+    clash = sorted(n for n in named if n in labels)
+    if clash:
+        raise ValueError(
+            f"g.decouple_node label(s) {clash} are already geometry labels "
+            f"of this model; a decoupled node's label names it on the FEM "
+            f"snapshot, so it must be unique. Rename the decoupled node."
+        )
+    row_of = {int(t): i for i, t in enumerate(np.asarray(node_ids))}
+    xyz = np.asarray(node_coords, dtype=float).reshape(-1, 3)
+    groups = dict(labels._groups)
+    next_tag = 1 + max((t for (d, t) in groups if d == 0), default=0)
+    for name, tags in named.items():
+        groups[(0, next_tag)] = {
+            'name': name,
+            'node_ids': np.array(tags, dtype=np.int64),
+            'node_coords': xyz[[row_of[t] for t in tags]],
+        }
+        next_tag += 1
+    return LabelSet(groups)
 
 
 def _decoupled_set_source(defn, physical, labels) -> list[int]:
