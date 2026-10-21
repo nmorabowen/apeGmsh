@@ -83,7 +83,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from ._internal.lineage import Lineage
-from .emitter.caps import SolveStamp
+from .emitter.caps import REQUIRES_TOKENS, SolveStamp
 from ._internal.typed_records import (
     BeamIntegrationRecord,
     DampingObjectRecord,
@@ -2037,8 +2037,10 @@ class OpenSeesModel:
         # bridge emitted.
         emitter_fresh.restore_program(self._program, self._commands)
         # ADR 0114 D6: echo the solve stamp. ``@requires`` regenerates
-        # from the echoed program's methods, so it equals the source's; a
-        # source without a stamp (below 2.24.0) stays without one.
+        # from the echoed program's methods and the rewritten stores, so
+        # it equals a current source's; a source below 2.33.0 gains the
+        # value tokens its model implies ("mpco", "mpi"). A source
+        # without a stamp (below 2.24.0) stays without one.
         if self._solve_stamp is not None:
             emitter_fresh.set_solve_stamp(
                 will_solve=self._solve_stamp.will_solve,
@@ -2116,8 +2118,9 @@ class OpenSeesModel:
             )
         from .emitter.live import LiveOpsEmitter, get_backend_info
 
-        # ADR 0114 D6: a model whose verbs need the fork cannot be built
-        # into a stock domain; refuse before the wipe, naming the gap.
+        # ADR 0114 D6: a model that needs the fork, an MPCO build or an
+        # MPI run cannot be built into this domain; refuse before the
+        # wipe, naming the gap.
         refuse_live_requires(self._solve_stamp, get_backend_info())
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
@@ -2128,33 +2131,56 @@ def refuse_live_requires(
 ) -> None:
     """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
 
-    ``"fork"`` is the one token ``VERBS`` rows carry today; it is met by
-    a ``BackendInfo`` of kind ``"fork"`` (``ladrunoBuild()`` answered a
-    sha). Any other token is unknown to this bridge and refuses too: an
-    archive from a newer bridge must not be solved on a guess.
+    The tokens are :data:`~apeGmsh.opensees.emitter.caps.REQUIRES_TOKENS`.
+    ``"fork"`` and ``"mpco"`` are met by a ``BackendInfo`` of kind
+    ``"fork"`` (``ladrunoBuild()`` answered a sha; the fork builds the
+    MPCO recorder, pip openseespy does not). ``"mpi"`` is never met: the
+    live target is one in-process domain, not a multi-rank MPI run. Any
+    other token is unknown to this bridge and refuses too: an archive
+    from a newer bridge must not be solved on a guess.
     """
     if stamp is None or not stamp.requires:
         return
     from ._internal.build.errors import BridgeError
 
-    missing = [
-        t for t in stamp.requires
-        if not (t == "fork" and backend.kind == "fork")
-    ]
+    missing = unmet_requires(stamp.requires, backend.kind)
     if not missing:
         return
+    known = [t for t in missing if t in REQUIRES_TOKENS]
+    unknown = [t for t in missing if t not in REQUIRES_TOKENS]
+    hints: list[str] = []
+    if any(t in ("fork", "mpco") for t in known):
+        hints.append(
+            "Run it with the Ladruno fork on PYTHONPATH (or "
+            "APEGMSH_OPENSEES_BIN), or build('tcl') / build('py') and run "
+            "the deck with a fork binary.")
+    if "mpi" in known:
+        hints.append(
+            "'mpi' (a partitioned archive or a Mumps-family system) needs "
+            "a multi-rank run: build('tcl') / build('py') and run the deck "
+            "under mpiexec with an MPI build.")
+    if unknown:
+        hints.append(
+            "This bridge knows no backend that provides "
+            + ", ".join(repr(t) for t in unknown)
+            + "; the archive was written by a newer bridge.")
     raise BridgeError(
         "OpenSeesModel.build('live'): the archive's verbs require "
         + ", ".join(repr(t) for t in missing)
         + f" (/opensees@requires), but the bound openseespy is a "
-        f"{backend.kind} build ({backend.source}). "
-        + ("Run it with the Ladruno fork on PYTHONPATH (or "
-           "APEGMSH_OPENSEES_BIN), or build('tcl') / build('py') and run "
-           "the deck with a fork binary."
-           if missing == ["fork"] else
-           "This bridge knows no backend that provides it; the archive "
-           "was written by a newer bridge.")
+        f"{backend.kind} build ({backend.source}). " + " ".join(hints)
     )
+
+
+def unmet_requires(
+    requires: "Sequence[str]", backend_kind: str,
+) -> tuple[str, ...]:
+    """The tokens of ``requires`` an in-process backend of kind
+    ``backend_kind`` (``"fork"`` or ``"stock"``) does not meet: ``"fork"``
+    and ``"mpco"`` unless it is the fork, ``"mpi"`` always (one process is
+    not an MPI run), and every token this bridge does not know."""
+    met = {"fork", "mpco"} if backend_kind == "fork" else set()
+    return tuple(t for t in requires if t not in met)
 
 
 # ---------------------------------------------------------------------------

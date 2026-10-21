@@ -73,6 +73,7 @@ the dependency into import time for users who never call ``ops.h5()``.
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -81,7 +82,7 @@ from datetime import datetime, timezone
 from typing import Any, NamedTuple, NoReturn, Sequence
 
 from .base import DroppedAxisGuard
-from .caps import TargetCaps
+from .caps import SolveStamp, TargetCaps, value_requires
 from .verbs import VERBS, Verb
 from .._internal.typed_records import (
     BeamIntegrationRecord as _BeamIntegrationRecord,
@@ -649,7 +650,17 @@ class H5RefusedVerb(NotImplementedError):
 #:     hashes differently once at this minor; any other archive is
 #:     unchanged. A 2.32 reader opens 2.12 through 2.32; a 2.31.x reader
 #:     REFUSES a 2.32.x file.
-SCHEMA_VERSION: str = "2.32.0"
+#:   * 2.33.0 — K #2372 (maintainer ruling on #2220): additive — two
+#:     new ``/opensees@requires`` tokens, derived from argument values by
+#:     the stamp writer (``H5Emitter.solve_stamp``): ``"mpco"`` (any
+#:     ``recorder mpco``) and ``"mpi"`` (a Mumps-family ``system``, or a
+#:     partitioned ``@solve_mode``). No path or dtype changes. Below this
+#:     minor ``@requires`` names verb tokens only, and keeps that meaning
+#:     on read. ``@requires`` is hashed, so an archive with an MPCO
+#:     recorder, a Mumps system or partitions hashes differently once at
+#:     this minor; any other archive is unchanged. A 2.33 reader opens
+#:     2.12 through 2.33; a 2.32.x reader REFUSES a 2.33.x file.
+SCHEMA_VERSION: str = "2.33.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1324,6 +1335,37 @@ class H5Emitter(
         ``/opensees`` does not carry (:class:`H5LedgerWarning`).
         """
         return MappingProxyType(dict(self._ledger_counts))
+
+    def solve_stamp(self) -> "SolveStamp | None":
+        """The stamp :meth:`write` puts on ``/opensees``: the verbs' tokens
+        (:meth:`_H5DeclsMixin.solve_stamp`) joined with the ones the
+        stored argument values imply (opensees 2.33.0,
+        :func:`~apeGmsh.opensees.emitter.caps.value_requires`): ``"mpco"``
+        for a ``recorder mpco`` and ``"mpi"`` for a Mumps-family ``system``
+        or a partitioned ``solve_mode``, global and staged stores alike.
+
+        The stores are the source's on an H5 -> H5 rewrite too (the
+        recorders and the analysis chain replay into them, the stages are
+        restored), so a rewrite of an older archive states what its model
+        needs under today's tokens.
+        """
+        stamp = super().solve_stamp()
+        if stamp is None:
+            return None
+        blocks = self._stage_blocks
+        kinds = tuple(r.kind for r in self._recorders) + tuple(
+            r.kind for blk in blocks for r in blk.recorders)
+        systems = tuple(
+            str(attrs["system"])
+            for attrs in (self._analysis_attrs,
+                          *(blk.chain_attrs for blk in blocks))
+            if "system" in attrs)
+        extra = value_requires(recorder_kinds=kinds, systems=systems,
+                               solve_mode=stamp.solve_mode)
+        if extra <= set(stamp.requires):
+            return stamp
+        return dataclasses.replace(
+            stamp, requires=tuple(sorted(set(stamp.requires) | extra)))
 
     # The three counters tests read, derived from the ledger so the two
     # cannot drift.

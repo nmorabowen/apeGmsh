@@ -76,6 +76,42 @@ class TargetCaps:
 #: every replay target emits today.
 SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 
+#: The capability tokens this bridge writes into ``/opensees@requires``.
+#: ``"fork"`` comes from the ``VERBS`` rows (the Ladruno build). The other
+#: two depend on argument values (opensees 2.33.0), so the stamp writer
+#: derives them, not ``VERBS`` (:func:`value_requires`):
+#: ``"mpco"``, any ``recorder mpco`` (pip openseespy ships no MPCO
+#: recorder); ``"mpi"``, a Mumps-family ``system`` or a partitioned
+#: ``solve_mode`` (the deck needs a multi-rank MPI run). A reader accepts
+#: any token; a solving target that does not know one refuses it.
+REQUIRES_TOKENS: tuple[str, ...] = ("fork", "mpco", "mpi")
+
+
+def is_mpi_system(s_type: str) -> bool:
+    """Whether ``system <s_type>`` is a Mumps-family solver: the one family
+    that needs an MPI build (``Mumps``, ``MumpsParallel``, any case)."""
+    return s_type.casefold().startswith("mumps")
+
+
+def value_requires(
+    *, recorder_kinds: "tuple[str, ...]", systems: "tuple[str, ...]",
+    solve_mode: str,
+) -> frozenset[str]:
+    """The requirement tokens a model's argument values imply: ``"mpco"``
+    for a ``recorder mpco``, ``"mpi"`` for a Mumps-family ``system`` or a
+    partitioned ``solve_mode`` (see :data:`REQUIRES_TOKENS`)."""
+    if solve_mode not in SOLVE_MODES:
+        raise ValueError(
+            f"value_requires: solve_mode must be one of {SOLVE_MODES}, got "
+            f"{solve_mode!r}"
+        )
+    out: set[str] = set()
+    if any(k.casefold() == "mpco" for k in recorder_kinds):
+        out.add("mpco")
+    if solve_mode == "partitioned" or any(is_mpi_system(s) for s in systems):
+        out.add("mpi")
+    return frozenset(out)
+
 
 @dataclass(frozen=True, slots=True)
 class SolveStamp:
@@ -92,9 +128,13 @@ class SolveStamp:
     ``requires``
         The sorted union of the capability tokens the ``VERBS`` rows of
         every emitted verb require (``"fork"``: the Ladruno build),
-        ledger rows included, so ``build('live')`` can refuse on a
+        ledger rows included, and, from opensees 2.33.0, the tokens the
+        emitted argument values imply (``"mpco"``, ``"mpi"``:
+        :func:`value_requires`), so ``build('live')`` can refuse on a
         backend that lacks one. The writer derives it from its own
-        program (``/opensees/program@methods``).
+        program (``/opensees/program@methods``) and stores. An archive
+        below 2.33.0 never names the value tokens: its ``requires`` keeps
+        the meaning it was written with (verbs only).
     ``solve_mode``
         The partition mode ``solve_refusals`` was judged under: one of
         :data:`SOLVE_MODES`.
@@ -166,4 +206,7 @@ class SolveStamp:
         )
 
 
-__all__ = ["SOLVE_MODES", "SolveStamp", "TargetCaps"]
+__all__ = [
+    "REQUIRES_TOKENS", "SOLVE_MODES", "SolveStamp", "TargetCaps",
+    "is_mpi_system", "value_requires",
+]
