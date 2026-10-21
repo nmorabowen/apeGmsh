@@ -1496,6 +1496,11 @@ class _StageBuilder:
             If a handle was never registered on this bridge, or its
             class does not honour ``updateMaterialStage``.
         """
+        if isinstance(stage, bool) or not isinstance(stage, int):
+            raise ValueError(
+                f"Stage {self._name!r}.update_material_stage: stage= must "
+                f"be an int (0, 1 or 2), got {stage!r}."
+            )
         stage_i = int(stage)
         if stage_i not in (0, 1, 2):
             raise ValueError(

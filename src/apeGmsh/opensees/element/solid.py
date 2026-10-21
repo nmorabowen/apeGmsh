@@ -174,6 +174,46 @@ def _check_plane_geom(
             "zero stress without the F-interface); use geom='finite'."
         )
 
+def _check_soil_dimension(
+    who: str, material: NDMaterial, *, plane_type: str | None,
+) -> None:
+    """Refuse a soil material whose dimension does not fit the element.
+
+    A bare multi-yield material declared with ``nd=3`` on a plane element
+    (or ``nd=2`` on a solid) makes OpenSees ``exit(-1)`` at the first
+    ``setTrialStrain`` ("Material dimension is: 3 / But strain vector size
+    is: 3"), killing the interpreter; a plane-stress view of one, and a
+    PM4Sand / PM4Silt (plane strain only) on a solid, fail the same way.
+    Behind a ``PlaneStrain`` wrapper an ``nd=3`` material is valid and the
+    wrapper, not this check, is what the element holds.
+    """
+    from ..material.nd_soil import MULTI_YIELD_SOIL_CLASSES
+
+    name = type(material).__name__
+    if name in ("PM4Sand", "PM4Silt"):
+        if plane_type is None:
+            raise ValueError(
+                f"{who}: {name} is a plane-strain (2-D) material; use it on "
+                f"a quad or triangle, not a solid element."
+            )
+        return
+    if name not in MULTI_YIELD_SOIL_CLASSES:
+        return
+    want = 3 if plane_type is None else 2
+    nd = getattr(material, "nd", None)
+    if nd != want:
+        raise ValueError(
+            f"{who}: {name}(nd={nd}) on a {want}-D element; OpenSees exits "
+            f"the process on that mismatch. Declare it with nd={want}"
+            + (", or wrap an nd=3 one in ops.nDMaterial.PlaneStrain."
+               if want == 2 else ".")
+        )
+    if plane_type is not None and not plane_type.startswith("PlaneStrain"):
+        raise ValueError(
+            f"{who}: {name} has no plane-stress form; use "
+            f"plane_type='PlaneStrain' (got {plane_type!r})."
+        )
+
 # LadrunoBrick formulations that support ``-geom corot|finite`` and ``-damp``
 # (OPS_LadrunoBrick.cpp parse guards): only std and bbar.
 _BRICK_GEOM_FORMULATIONS: frozenset[str] = frozenset({"std", "bbar"})
@@ -277,6 +317,9 @@ class FourNodeTetrahedron(Element):
     material: NDMaterial
     body_force: tuple[float, float, float] | None = None
 
+    def __post_init__(self) -> None:
+        _check_soil_dimension('FourNodeTetrahedron', self.material, plane_type=None)
+
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
 
@@ -318,6 +361,9 @@ class TenNodeTetrahedron(Element):
     pg: str
     material: NDMaterial
     body_force: tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        _check_soil_dimension('TenNodeTetrahedron', self.material, plane_type=None)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
@@ -362,6 +408,9 @@ class stdBrick(Element):  # noqa: N801 — class name mirrors the OpenSees Tcl t
     material: NDMaterial
     body_force: tuple[float, float, float] | None = None
     damp: Damping | None = None
+
+    def __post_init__(self) -> None:
+        _check_soil_dimension('stdBrick', self.material, plane_type=None)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         if self.damp is not None:
@@ -454,6 +503,7 @@ class FourNodeQuad(Element):
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('FourNodeQuad', self.material, plane_type=self.plane_type)
         if self.thickness <= 0:
             raise ValueError(
                 f"FourNodeQuad: thickness must be > 0, got "
@@ -543,6 +593,7 @@ class Tri31(Element):
     body_force: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('Tri31', self.material, plane_type=self.plane_type)
         if self.thickness <= 0:
             raise ValueError(
                 f"Tri31: thickness must be > 0, got {self.thickness!r}."
@@ -633,6 +684,7 @@ class SixNodeTri(Element):
     body_force: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('SixNodeTri', self.material, plane_type=self.plane_type)
         if self.thickness <= 0:
             raise ValueError(
                 f"SixNodeTri: thickness must be > 0, got {self.thickness!r}."
@@ -728,6 +780,7 @@ class BezierTri6(Element):
     body_force: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('BezierTri6', self.material, plane_type=self.plane_type)
         if self.thickness <= 0:
             raise ValueError(
                 f"BezierTri6: thickness must be > 0, got {self.thickness!r}."
@@ -855,6 +908,7 @@ class BezierTet10(Element):
     fbar: str = "centroid"
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('BezierTet10', self.material, plane_type=None)
         if self.rho is not None and self.rho < 0:
             raise ValueError(
                 f"BezierTet10: rho must be >= 0 if supplied, got {self.rho!r}."
@@ -994,6 +1048,7 @@ class LadrunoBrick(Element):
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('LadrunoBrick', self.material, plane_type=None)
         if self.formulation not in _BRICK_FORMULATIONS:
             raise ValueError(
                 f"LadrunoBrick: formulation must be one of "
@@ -1158,6 +1213,7 @@ class LadrunoBrick20(Element):
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('LadrunoBrick20', self.material, plane_type=None)
         if self.formulation not in _BRICK20_FORMULATIONS:
             raise ValueError(
                 f"LadrunoBrick20: formulation must be one of "
@@ -1271,6 +1327,7 @@ class LadrunoQuad(Element):
     body_force: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('LadrunoQuad', self.material, plane_type=self.plane_type)
         if self.thickness <= 0:
             raise ValueError(
                 f"LadrunoQuad: thickness must be > 0, got {self.thickness!r}."
@@ -1410,6 +1467,7 @@ class LadrunoCST(Element):
     body_force: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('LadrunoCST', self.material, plane_type=self.plane_type)
         if self.thickness <= 0:
             raise ValueError(
                 f"LadrunoCST: thickness must be > 0, got {self.thickness!r}."
@@ -1519,6 +1577,7 @@ class LadrunoLST(Element):
     body_force: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_soil_dimension('LadrunoLST', self.material, plane_type=self.plane_type)
         if self.plane_type not in _PLANE_TYPES:
             raise ValueError(
                 f"LadrunoLST: plane_type must be one of {_PLANE_TYPES}, "

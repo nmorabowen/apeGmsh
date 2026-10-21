@@ -14,6 +14,12 @@ answered about 2 % of the Newton surface acceleration, under every
 constraint handler, solver and Rayleigh variant. Newton-type algorithms
 form the residual again after the update and are correct. The bridge
 refuses the pairing rather than emit a deck that runs to a wrong answer.
+
+Scope: the gate runs on every solving emit (Tcl, py, live). It does not
+run on an archival ``ops.h5`` write, so a replay of an archive declared
+with Linear is not gated; and it scans every element of the model, so a
+Linear stage that runs before the stage activating the soil elements is
+refused too (split the model, or use Newton there).
 """
 from __future__ import annotations
 

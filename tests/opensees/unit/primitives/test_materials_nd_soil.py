@@ -257,3 +257,42 @@ def test_set_parameter_catalogue_covers_every_soil_class() -> None:
                 PressureDependMultiYield02, PM4Sand, PM4Silt):
         assert "updateMaterialStage" in SET_PARAMETER_NAMES[cls.__name__]
     assert {"FirstCall", "PostShake"} <= SET_PARAMETER_NAMES["PM4Sand"]
+
+
+# ---------------------------------------------------------------------------
+# Element dimension: OpenSees exits the process on a mismatch
+# ---------------------------------------------------------------------------
+
+def test_nd3_multi_yield_on_a_quad_is_refused_at_the_call() -> None:
+    from apeGmsh.opensees.element.solid import FourNodeQuad, stdBrick
+
+    with pytest.raises(ValueError, match=r"nd=3\) on a 2-D element"):
+        FourNodeQuad(pg="P", thickness=1.0, material=PressureIndependMultiYield(
+            **{**_PIMY, "nd": 3}))
+    with pytest.raises(ValueError, match=r"nd=2\) on a 3-D element"):
+        stdBrick(pg="P", material=PressureDependMultiYield(**_PDMY))
+    with pytest.raises(ValueError, match="no plane-stress form"):
+        FourNodeQuad(pg="P", thickness=1.0, plane_type="PlaneStress",
+                     material=PressureIndependMultiYield(**_PIMY))
+    with pytest.raises(ValueError, match="plane-strain"):
+        stdBrick(pg="P", material=PM4Sand(**_PM4SAND))
+    FourNodeQuad(pg="P", thickness=1.0, material=PressureIndependMultiYield(**_PIMY))
+    stdBrick(pg="P", material=PressureIndependMultiYield(**{**_PIMY, "nd": 3}))
+
+
+def test_nd3_behind_a_plane_strain_wrapper_is_valid() -> None:
+    from apeGmsh.opensees.element.solid import FourNodeQuad
+    from apeGmsh.opensees.material.nd import PlaneStrain
+
+    inner = PressureIndependMultiYield(**{**_PIMY, "nd": 3})
+    FourNodeQuad(pg="P", thickness=1.0, material=PlaneStrain(base=inner))
+
+
+def test_stage_must_be_an_int() -> None:
+    ops, mat = _soil_ops()
+    with ops.stage(name="s") as s:
+        for bad in (1.7, True):
+            with pytest.raises(ValueError, match="must be an int"):
+                s.update_material_stage(materials=[mat], stage=bad)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)

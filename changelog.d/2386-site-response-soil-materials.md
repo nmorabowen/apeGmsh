@@ -19,6 +19,12 @@ modulus-reduction curve, `backbone=((shear strain, G/Gmax), ...)`.
   `shearModulus` updates go through `s.update_parameter(...,
   material=mat)`. Both verbs were already archived in `model.h5`; the
   schema does not change.
+- A soil material that does not fit its element raises at the element
+  call. Without this, OpenSees calls `exit(-1)` and the interpreter dies.
+  The checked cases are a bare multi-yield `nd=3` on a quad or triangle,
+  `nd=2` on a solid, a plane-stress view of one, and PM4Sand / PM4Silt on
+  a solid. An `nd=3` material behind `ops.nDMaterial.PlaneStrain` stays
+  valid.
 - A multi-yield soil solved with `algorithm Linear` is refused at build,
   in a flat chain, a stage or a strategy rung. These materials compute
   their stress only in `getStress()`, and a Linear step commits before it
