@@ -7,7 +7,10 @@ fork checks the same file there. Each deck is tagged by FEM id:
 * a 2-D, ndf 3 cantilever of two ``elasticBeamColumn`` elements;
 * a 3-D, ndf 6 L-frame (a column and a beam, lumped rotary inertia);
 * a ``stdBrick`` cube (ndf 3) whose top corner drives a 3-D column
-  (ndf 6) through ``equalDOF`` on the translations.
+  (ndf 6) through ``equalDOF`` on the translations;
+* a column whose base node is embedded in a soft solid by an
+  ``ASDEmbeddedNodeElement -rot``, in 3-D (``stdBrick``) and 2-D
+  (``quad``), as the ssi_frame_wall bench embeds its grade beams (#2407).
 
 Oracles, read back through ``Results.from_native``:
 
@@ -22,8 +25,9 @@ Oracles, read back through ``Results.from_native``:
 
 Refusals on the live domain: a deck node off its FEM coordinates, a FEM
 node the deck never built, a non-positive eigenvalue (a negative
-spring), and a second default solve that stock openseespy refuses, each
-naming its cause and writing nothing.
+spring), a second default solve that stock openseespy refuses, and an
+embedded node whose element may carry a pressure (2-D, every node ndf 3),
+each naming its cause and writing nothing.
 """
 from __future__ import annotations
 
@@ -267,6 +271,124 @@ def test_solid_and_frame_modes_equal_the_live_vectors(opspy: Any, tmp_path: Path
     v = np.array([ops.nodeEigenvector(n, 1) for n in range(5, 9)])
     assert np.abs(v).max() > 0.0
     np.testing.assert_allclose(lam, _full_lapack(ops, 4), rtol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# A beam node embedded in a solid (ASDEmbeddedNodeElement, #2407)
+# ---------------------------------------------------------------------------
+
+
+def _embedded_column_3d(ops: Any) -> FEMData:
+    """A soft ``stdBrick`` cube (ndf 3) and a 3-D column (ndf 6) whose base
+    node 9 is embedded, with ``-rot``, in the cube's tet (5, 6, 8, 1), as
+    the ssi_frame_wall bench embeds its grade beams in the raft."""
+    cube = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+            [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    col = [[0.2, 0.2, 0.8], [0.2, 0.2, 1.8], [0.2, 0.2, 2.8]]
+    xyz = np.array(cube + col, dtype=float)
+    fem = _fem(xyz, {5: ("Hexahedron 8", 3, [list(range(1, 9))], [1]),
+                     1: ("Line 2", 1, [[9, 10], [10, 11]], [2, 3])},
+               "live_modes_embedded")
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for n in range(1, 9):
+        ops.node(n, *[float(v) for v in xyz[n - 1]])
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1)
+    for n in range(5, 9):
+        ops.mass(n, M, M, M)
+    ops.nDMaterial("ElasticIsotropic", 1, 2.0e6, 0.25)
+    ops.element("stdBrick", 1, *range(1, 9), 1)
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n in (9, 10, 11):
+        ops.node(n, *[float(v) for v in xyz[n - 1]])
+    ops.geomTransf("Linear", 1, 1.0, 0.0, 0.0)
+    for eid, (i, j) in ((2, (9, 10)), (3, (10, 11))):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, G, J, I_Y, I_Z, 1)
+    # Element 4 is not a FEM element: the embedment, as the bridge emits it.
+    ops.element("ASDEmbeddedNodeElement", 4, 9, 5, 6, 8, 1, "-rot")
+    for n in (10, 11):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    return fem
+
+
+def _embedded_column_2d(ops: Any) -> FEMData:
+    """A soft ``quad`` (ndf 2) and a 2-D column (ndf 3) whose base node 5
+    is embedded, with ``-rot``, in the quad's triangle (1, 3, 4)."""
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+                   [0.3, 0.6], [0.3, 1.6], [0.3, 2.6]])
+    fem = _fem(xy, {3: ("Quadrilateral 4", 2, [[1, 2, 3, 4]], [1]),
+                    1: ("Line 2", 1, [[5, 6], [6, 7]], [2, 3])},
+               "live_modes_embedded_2d")
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for n in range(1, 5):
+        ops.node(n, *[float(v) for v in xy[n - 1]])
+    for n in (1, 2):
+        ops.fix(n, 1, 1)
+    for n in (3, 4):
+        ops.mass(n, M, M)
+    ops.nDMaterial("ElasticIsotropic", 1, 2.0e6, 0.25)
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for n in (5, 6, 7):
+        ops.node(n, *[float(v) for v in xy[n - 1]])
+    ops.geomTransf("Linear", 1)
+    for eid, (i, j) in ((2, (5, 6)), (3, (6, 7))):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, I_Z, 1)
+    ops.element("ASDEmbeddedNodeElement", 4, 5, 1, 3, 4, "-rot")
+    for n in (6, 7):
+        ops.mass(n, M, M, JM)
+    return fem
+
+
+@pytest.mark.parametrize("ndm", [3, 2])
+def test_an_embedded_beam_node_writes_its_live_rotation(
+        opspy: Any, tmp_path: Path, ndm: int) -> None:
+    """The embedded base node's rotation is written as the live
+    ``nodeEigenvector`` (rtol 1e-12, no warning), not 0.0: the element
+    cannot carry a pressure there (the solid's nodes have ndf ``ndm``),
+    so the beam's rotation stands."""
+    ops = opspy
+    fem = (_embedded_column_3d if ndm == 3 else _embedded_column_2d)(ops)
+    base, beam = (9, {9, 10, 11}) if ndm == 3 else (5, {5, 6, 7})
+    p, archive, spy = _capture(fem, ops, 4, tmp_path)
+    _check_file(p, archive, spy, ops, 4, rotation_nodes=beam, ndm=ndm)
+    # The base node really rotates (the solid is soft), so a 0.0 there
+    # could not pass the check above.
+    rot = slice(3, 6) if ndm == 3 else slice(2, 3)
+    peak = max(np.abs(np.asarray(ops.nodeEigenvector(base, k))[rot]).max()
+               for k in range(1, 5))
+    assert peak > 1e-3
+
+
+def test_an_embedded_node_that_may_carry_a_pressure_refuses(
+        opspy: Any, tmp_path: Path) -> None:
+    """2-D, every node ndf 3: the element may tie node 4's third DOF to a
+    pore pressure (``-p``) as well as to the host's rotation (``-rot``),
+    and the live domain does not say which, so the capture refuses by
+    name instead of writing 0.0 or the beam's value."""
+    ops = opspy
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.2, 0.3], [0.2, 1.3]])
+    fem = _fem(xy, {1: ("Line 2", 1, [[1, 2], [2, 3], [3, 1], [4, 5]],
+                        [1, 2, 3, 4])}, "live_modes_embedded_p")
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for n, (x, y) in enumerate(xy, start=1):
+        ops.node(n, float(x), float(y))
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    for eid, (i, j) in enumerate(((1, 2), (2, 3), (3, 1), (4, 5)), start=1):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, I_Z, 1)
+    ops.element("ASDEmbeddedNodeElement", 5, 4, 1, 2, 3, "-rot")
+    for n in (3, 5):
+        ops.mass(n, M, M, JM)
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=(
+            r"capture_live_modes: the rotation slots of 4 node\(s\) an "
+            r"ASDEmbeddedNodeElement touches \(\[1, 2, 3, 4\]\) are not "
+            r"settled by their elements: for node 1, a ASDEmbeddedNodeElement "
+            r"touches it.*Nothing was written")):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
 
 
 # ---------------------------------------------------------------------------
