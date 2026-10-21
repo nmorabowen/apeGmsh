@@ -8,7 +8,7 @@ reactions have to add back up to what you pushed with.
 
 You already met the typed bridge on the
 [cantilever](../tutorials/first-model.md). Everything here is the same
-spine — session → physical groups → `apeSees(fem)` → capture → read by
+spine — session → physical groups → `apeSees(fem)` → record → read by
 name — but now you'll wire **two element groups** (columns and beam, with
 *different* sections), combine a **gravity** load with a **lateral**
 load, and pull two different answers back out: **roof drift** and **base
@@ -71,9 +71,10 @@ Read it once, then we'll walk it.
 
 ```python
 import numpy as np
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (consistent SI: m, N, Pa) ---
 H = 5.0                       # storey height   [m]
@@ -136,19 +137,31 @@ ops.algorithm.Linear()
 ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
 
-# --- 3. Solve, capturing roof displacement AND base reactions ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="RoofL", components=["displacement"])
-spec.nodes(pg="RoofR", components=["displacement"])
-spec.nodes(pg="Base",  components=["reaction_force"])
-with ops.domain_capture(spec, path="run.h5") as cap:
-    cap.begin_stage("lateral", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
+# --- 3. Solve, recording roof displacement AND base reactions ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="roof",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None,
+            node_ids=fem.nodes.select(pg=["RoofL", "RoofR"]).ids,
+        ),
+        ResolvedRecorderRecord(
+            category="nodes", name="base",
+            components=("reaction_force_x", "reaction_force_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Base").ids,
+        ),
+    ),
+)
+ops.h5("model.h5")
+ops.run()
+opspy = get_ops()
+with spec.emit_default("run", model_h5="model.h5") as run:
+    opspy.analyze(1)
 
 # --- 4. Read it back, by physical-group NAME ---
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 
 dl = results.nodes.get(pg="RoofL", component="displacement_x")
 dr = results.nodes.get(pg="RoofR", component="displacement_x")
@@ -259,28 +272,41 @@ trick; for one combined check this is all you need.
 The rest — `constraints` through `analysis` — is the standard linear-static
 analysis chain, identical to the cantilever.
 
-## Step 3 — Capture two different answers
+## Step 3 — Record two different answers
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="RoofL", components=["displacement"])
-spec.nodes(pg="RoofR", components=["displacement"])
-spec.nodes(pg="Base",  components=["reaction_force"])
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="roof",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None,
+            node_ids=fem.nodes.select(pg=["RoofL", "RoofR"]).ids,
+        ),
+        ResolvedRecorderRecord(
+            category="nodes", name="base",
+            components=("reaction_force_x", "reaction_force_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Base").ids,
+        ),
+    ),
+)
 ```
 
-We want two distinct quantities, so we declare two kinds of capture.
-**Displacement** on the roof joints gives us drift. **`reaction_force`**
-on the base gives us the support reactions — the bridge calls
-`ops.reactions()` for you each step so the numbers are live. Three
-`spec.nodes(...)` calls, all targeted by name.
+We want two distinct quantities, so we declare two records.
+**Displacement** on the roof joints gives us drift; `select(pg=[...])`
+takes both roof groups at once. **Reaction force** on the base gives us
+the support reactions; the OpenSees recorder updates the reactions itself
+before it writes each step, so the numbers are live. Both records start
+from a physical-group name.
 
-The solve block is unchanged from the cantilever: open a stage, run one
-static step in-process, snapshot, close.
+The solve block is unchanged from the cantilever: `ops.h5` and `ops.run()`,
+then one static step with `opspy.analyze(1)` inside `emit_default`.
 
 ## Step 4 — Drift and base shear, by name
 
 ```python
-results = Results.from_native("run.h5", model=OpenSeesModel.from_h5("run.h5"))
+results = run.results()
 
 dl = results.nodes.get(pg="RoofL", component="displacement_x")
 dr = results.nodes.get(pg="RoofR", component="displacement_x")
@@ -290,8 +316,7 @@ rx = results.nodes.get(pg="Base", component="reaction_force_x")
 base_shear = float(rx.values[-1, :].sum())
 ```
 
-`Results.from_native(..., model=...)` opens the run file (model in the
-same file — the Composed-file pattern, `model=` required). Then we read
+`run.results()` opens the run, paired with `model.h5`. Then we read
 back by the *same names we loaded*: `displacement_x` on the two roof
 joints (we average them — in a symmetric sway they're equal anyway), and
 `reaction_force_x` on the base group.

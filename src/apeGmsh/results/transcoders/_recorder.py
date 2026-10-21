@@ -56,7 +56,8 @@ from ...opensees._response_catalog import (
     unflatten_nodal,
 )
 from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
-from ..readers._out_station_slicing import line_station_count, require_line_stations
+from ..readers._out_station_slicing import (
+    line_station_count, require_line_stations, require_station_source)
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..readers._out_fiber_io import read_fiber_record, read_per_material_gauss, write_fiber_records
 from ..spec._emit import (
@@ -456,6 +457,7 @@ class RecorderTranscoder:
                 f"Class {class_name!r} is in neither CUSTOM_RULE_CATALOG "
                 f"(section force) nor the localForce synthesis (an elastic "
                 f"beam in NODAL_FORCE_CATALOG); add a catalog entry.")
+        require_station_source(rec, self._model_h5_src, self._pairing)
 
         logicals = list(quiet_emit_logical(
             rec, output_dir=str(self._output_dir),

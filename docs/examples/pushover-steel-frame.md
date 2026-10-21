@@ -30,7 +30,7 @@ anything:
 - **Elastic stiffness** $K$ — the initial slope of the $V\!-\!\Delta$ curve.
 - **Plastic base shear** $V_p$ — the plateau the curve flattens onto.
 
-We state both up front, run the pushover, and check the captured curve
+We state both up front, run the pushover, and check the recorded curve
 against them at the end. Spoiler from the verified run: the slope lands
 within **2.7 %** and the mechanism plateau within **1.9 %** — and the
 small residuals are physics we can name, not noise.
@@ -114,11 +114,11 @@ walked out over many steps. Read it once; the walkthrough follows.
 ```python
 import numpy as np
 import apeSteel
-from apeGmsh import apeGmsh, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
 from apeGmsh.opensees.section.fiber import RectPatch
-import openseespy.opensees as opspy
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (N-mm-MPa, apeSteel native base) ---
 H = 3500.0          # storey height [mm]
@@ -212,24 +212,34 @@ dU = drift_target / n_steps
 ops.integrator.DisplacementControl(node=roof_id, dof=1, dU=dU)
 ops.analysis.Static()
 
-# --- 3. Push step by step, capturing base shear + roof drift each step ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Roof", components="displacement")       # roof drift
-spec.nodes(pg="Base", components="reaction_force")     # base reactions
+# --- 3. Push step by step, recording base shear + roof drift each step ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(                        # roof drift
+            category="nodes", name="roof",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Roof").ids,
+        ),
+        ResolvedRecorderRecord(                        # base reactions
+            category="nodes", name="base",
+            components=("reaction_force_x", "reaction_force_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Base").ids,
+        ),
+    ),
+)
 
+ops.h5("pushover_model.h5")                            # the model archive
 ops.run(wipe=False)                                    # build, leave domain live
-with ops.domain_capture(spec, path="pushover.h5") as cap:
-    cap.begin_stage("pushover", kind="static")
+opspy = get_ops()                                      # the module the bridge built
+with spec.emit_default("pushover", model_h5="pushover_model.h5") as run:
     for k in range(n_steps):
         if opspy.analyze(1) != 0:
             print(f"non-convergence at step {k}")
             break
-        cap.step(t=(k + 1) * dU)
-    cap.end_stage()
 
 # --- 4. Read the capacity curve back, by name ---
-om = OpenSeesModel.from_h5("pushover.h5", fem_root="/model")
-with Results.from_native("pushover.h5", model=om) as r:
+with run.results() as r:
     dx = r.nodes.get(pg="Roof", component="displacement_x")
     rx = r.nodes.get(pg="Base", component="reaction_force_x")
     drift = np.asarray(dx.values)[:, 0]                # roof drift, every step
@@ -266,7 +276,7 @@ V@2.5%   =  1089.6 kN    gap = +7.53 %
 
 Both targets land where the mechanics says they should:
 
-- **Elastic slope: −2.69 %.** The captured initial stiffness is
+- **Elastic slope: −2.69 %.** The recorded initial stiffness is
   45,321 N/mm against the hand value of 46,573 N/mm — the FEM is a hair
   *softer*, for two reasons we unpack below.
 - **Mechanism plateau: +1.92 %.** At 1 % drift, just as the fourth hinge
@@ -356,61 +366,71 @@ The controlled node is resolved by **name** — `fem.nodes.select(pg="Roof")`
 returns the mesh node in the `"Roof"` physical group, and `.ids[0]` is its
 tag. We never type a raw integer; the tag comes from the group.
 
-## Step 3 — Capture the whole curve, step by step
+## Step 3 — Record the whole curve, step by step
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Roof", components="displacement")
-spec.nodes(pg="Base", components="reaction_force")
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(
+        ResolvedRecorderRecord(                        # roof drift
+            category="nodes", name="roof",
+            components=("displacement_x", "displacement_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Roof").ids,
+        ),
+        ResolvedRecorderRecord(                        # base reactions
+            category="nodes", name="base",
+            components=("reaction_force_x", "reaction_force_y"),
+            dt=None, n_steps=None, node_ids=fem.nodes.select(pg="Base").ids,
+        ),
+    ),
+)
 
+ops.h5("pushover_model.h5")                            # the model archive
 ops.run(wipe=False)                                    # build, leave domain live
-with ops.domain_capture(spec, path="pushover.h5") as cap:
-    cap.begin_stage("pushover", kind="static")
+opspy = get_ops()                                      # the module the bridge built
+with spec.emit_default("pushover", model_h5="pushover_model.h5") as run:
     for k in range(n_steps):
         if opspy.analyze(1) != 0:
             print(f"non-convergence at step {k}")
             break
-        cap.step(t=(k + 1) * dU)
-    cap.end_stage()
 ```
 
-The capture spec is the **portal frame's exactly** — `displacement` on the
-roof for drift, `reaction_force` on the base for shear, both **node-only**.
-The only difference is that we now drive **many** steps and snapshot after
-each one: `opspy.analyze(1)` advances one displacement increment, then
-`cap.step(t=...)` writes one chunk. A hundred and twenty steps → 120 rows
-in the slab → the whole capacity curve.
+The recorder spec is the **portal frame's exactly** — displacement on the
+roof for drift, reaction force on the base for shear, both **node-only**.
+The only difference is that we now drive **many** steps: each
+`opspy.analyze(1)` advances one displacement increment, and the recorder
+writes one row for every step that converges. A hundred and twenty steps →
+120 rows in the slab → the whole capacity curve.
 
 Two practical notes:
 
 - **`ops.run(wipe=False)` then step the live domain.** As on the
   moment–curvature sweep, when we want a value out of *every* increment we
   build the model once with `ops.run(wipe=False)` (which leaves the
-  OpenSees domain open) and then step it directly with `opspy.analyze(1)`.
-  The capture writes a chunk per converged step.
+  OpenSees domain open) and then step it directly with `opspy.analyze(1)`,
+  where `opspy = get_ops()` is the module the bridge built into. The
+  recorder writes a row per converged step.
 
-!!! note "Node capture only — by design"
-    We capture **`reaction_force` on `Base`** and **`displacement` on
+!!! note "Node records only — by design"
+    We record **`reaction_force` on `Base`** and **`displacement` on
     `Roof`** — both nodal. Base shear is the sum of nodal base reactions;
     roof drift is a nodal displacement. There's no need to record
     element or section quantities for the capacity curve, and the
-    node-only path is the simplest, most robust capture there is. (It's
+    node-only path is the simplest, most robust record there is. (It's
     the same path as the portal frame, just iterated.)
 
 ## Step 4 — Base shear vs roof drift, by name
 
 ```python
-om = OpenSeesModel.from_h5("pushover.h5", fem_root="/model")
-with Results.from_native("pushover.h5", model=om) as r:
+with run.results() as r:
     dx = r.nodes.get(pg="Roof", component="displacement_x")
     rx = r.nodes.get(pg="Base", component="reaction_force_x")
     drift = np.asarray(dx.values)[:, 0]
     V = -np.asarray(rx.values).sum(axis=1)
 ```
 
-`Results.from_native(..., model=...)` opens the run file with its model
-(the Composed-file pattern — `model=` is required, and the model lives in
-the same file at `fem_root="/model"`). We read back by the **same names we
+`run.results()` opens the run with the reader its route recorded for,
+paired with `pushover_model.h5`. We read back by the **same names we
 pushed and clamped**: `displacement_x` on `Roof` is the drift history,
 `reaction_force_x` on `Base` is the per-base horizontal reaction at every
 step. `.sum(axis=1)` adds the two bases each step; the sign flip makes
@@ -522,9 +542,9 @@ You braided the fibre section into a frame and pushed it to collapse:
   sets the direction; `DisplacementControl` on the roof DOF drives the
   drift and solves for the load — the only way to trace a flattening
   capacity curve without the solver diverging.
-- **Node-only capture, many steps.** `reaction_force` on the base +
-  `displacement` on the roof, snapshotted each step, *is* the
-  $V\!-\!\Delta$ curve — the portal-frame capture, iterated.
+- **Node-only records, many steps.** `reaction_force` on the base +
+  `displacement` on the roof, recorded each step, *is* the
+  $V\!-\!\Delta$ curve — the portal-frame recording, iterated.
 - **Both closed forms check out, and the residuals are physics:** the
   elastic slope is 2.7 % soft (fibre $I$ minus fillets + real flexibility),
   and the plateau lands within 1.9 % of $4M_p/H$ at mechanism, climbing to
@@ -536,7 +556,7 @@ You braided the fibre section into a frame and pushed it to collapse:
   section-scale companion: the *same* `W14×90` fibres, driven to $M_p$ on
   a single `ZeroLengthSection`.
 - **[Portal frame (2D)](portal-frame.md)** — the elastic ancestor of this
-  model: the same geometry and capture, before plasticity entered.
+  model: the same geometry and recording, before plasticity entered.
 - **[The OpenSees bridge guide](../concepts/opensees-bridge.md)** — the
   full catalogue of typed materials, sections, elements, and integrators.
 

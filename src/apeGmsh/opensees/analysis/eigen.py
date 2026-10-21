@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -31,6 +31,8 @@ from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
     from ...results.Results import Results
+    from .._readback import RotationRoles
+    from .._recorder_translate import LiveDomainFacts
     from ..apesees import apeSees
     from ..emitter.live import LiveOpsEmitter
     from ..node import Node
@@ -467,13 +469,37 @@ def _ladruno_slots(
     cannot tell a 2-D frame node (ux, uy, rz) from a 2-D u-p node (ux, uy,
     p); the roles do, so a pore pressure is never written as a rotation.
     """
+    from .._recorder_translate import model_h5_rotation_roles
+
+    return _slots_from_roles(
+        node_ids, ndf_of, ndm,
+        lambda ids: model_h5_rotation_roles(model_h5, ids, where=where))
+
+
+def _live_slots(
+    facts: "LiveDomainFacts", node_ids: "Any", ndf_of: "Mapping[int, int]",
+    ndm: int,
+) -> "tuple[list[tuple[int, ...]], np.ndarray, list[tuple[int, str]]]":
+    """:func:`_ladruno_slots` with the DOF roles read from the live domain
+    (:meth:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts.rotation_roles`:
+    each live element's ``eleType`` through the same family tables) rather
+    than from a model archive, for a deck the bridge did not build."""
+    return _slots_from_roles(node_ids, ndf_of, ndm, facts.rotation_roles)
+
+
+def _slots_from_roles(
+    node_ids: "Any", ndf_of: "Mapping[int, int]", ndm: int,
+    roles_of: "Callable[[list[int]], RotationRoles]",
+) -> "tuple[list[tuple[int, ...]], np.ndarray, list[tuple[int, str]]]":
+    """The body of :func:`_ladruno_slots` and :func:`_live_slots`:
+    ``roles_of(ids)`` gives the DOF roles of the nodes once their layouts
+    are known."""
     from .._internal.build.recorders import _node_layout
     from .._readback import _UP_FAMILIES
-    from .._recorder_translate import model_h5_rotation_roles
 
     ids = [int(n) for n in node_ids]
     layouts = [_node_layout(int(ndf_of[n]), ndm) for n in ids]
-    roles = model_h5_rotation_roles(model_h5, ids, where=where)
+    roles = roles_of(ids)
     up = {cls.__name__ for cls in _UP_FAMILIES}
     rotations = np.zeros(len(ids), dtype=bool)
     unresolved: list[tuple[int, str]] = []

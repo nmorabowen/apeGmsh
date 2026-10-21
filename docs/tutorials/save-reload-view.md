@@ -68,9 +68,10 @@ persistence ones (`save_to=`, `FEMData.from_h5`); everything else you've
 seen in T1 and T3. We walk through it block by block right after.
 
 ```python
-from apeGmsh import apeGmsh, FEMData, Results
-from apeGmsh.opensees import apeSees, OpenSeesModel
-from apeGmsh.results.capture.spec import DomainCaptureSpec
+from apeGmsh import apeGmsh, FEMData
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import get_ops
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --- Problem data (consistent SI: m, N, Pa) ---
 L  = 4.0          # span           [m]
@@ -129,18 +130,22 @@ ops.algorithm.Linear()
 ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
 
-# --- 4. Capture, read back by name, and CHECK against T3 ---
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Mid", components=["displacement"])
-with ops.domain_capture(spec, path="ssbeam_run.h5") as cap:
-    cap.begin_stage("midspan_load", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
-
-results = Results.from_native(
-    "ssbeam_run.h5", model=OpenSeesModel.from_h5("ssbeam_run.h5"),
+# --- 4. Record, read back by name, and CHECK against T3 ---
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem2.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="mid",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None, node_ids=fem2.nodes.select(pg="Mid").ids,
+    ),),
 )
+ops.h5("ssbeam_model.h5")              # the bridge's model archive
+ops.run()
+opspy = get_ops()
+with spec.emit_default("ssbeam_run", model_h5="ssbeam_model.h5") as run:
+    opspy.analyze(1)
+
+results = run.results()
 slab = results.nodes.get(pg="Mid", component="displacement_y")
 
 delta_reload = abs(float(slab.values[-1, 0]))
@@ -300,38 +305,45 @@ they're textbook simply-supported: the `"Pin"` holds `ux` and `uy`
 (`dofs=(0, 1, 0)`). The load, pattern, and analysis chain are the same
 shape you saw in T1.
 
-## Step 4 — Capture, read by name, and the viewer that won't crash
+## Step 4 — Record, read by name, and the viewer that won't crash
 
 ![The reloaded beam solved again — midspan deflection reproduced from the .h5 round-trip](../assets/tut/save-reload-deflection.png)
 
 
 ```python
-spec = DomainCaptureSpec(opensees=ops)
-spec.nodes(pg="Mid", components=["displacement"])
-with ops.domain_capture(spec, path="ssbeam_run.h5") as cap:
-    cap.begin_stage("midspan_load", kind="static")
-    ops.analyze(steps=1)
-    cap.step(t=1.0)
-    cap.end_stage()
-
-results = Results.from_native(
-    "ssbeam_run.h5", model=OpenSeesModel.from_h5("ssbeam_run.h5"),
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem2.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="mid",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None, node_ids=fem2.nodes.select(pg="Mid").ids,
+    ),),
 )
+ops.h5("ssbeam_model.h5")              # the bridge's model archive
+ops.run()
+opspy = get_ops()
+with spec.emit_default("ssbeam_run", model_h5="ssbeam_model.h5") as run:
+    opspy.analyze(1)
+
+results = run.results()
 slab = results.nodes.get(pg="Mid", component="displacement_y")
 ```
 
-Same one capture-and-read path as T1: declare a `DomainCaptureSpec` for the
-`"Mid"` displacement, run one static step in-process, and the run file
-`ssbeam_run.h5` ends up holding both the result *and* a copy of the model.
+Same record-and-read path as T1: a recorder spec for the `"Mid"`
+displacement, built from the reloaded `fem2`, one static step in-process,
+and `emit_default` recording it on the route your OpenSees build supports.
 
-`Results.from_native(...)` opens it — and **the `model=` argument is
-required.** This trips people up, so it's worth saying plainly: `Results`
-stores numbers against raw node and element ids. To let you ask for
-`"Mid"` instead of a tag, it needs a **model broker** to translate names
-into ids. That broker is `OpenSeesModel`. Here the model rides inside the
-same run file (the Composed-file pattern), so we point
-`OpenSeesModel.from_h5` at the same path. Omit `model=` and you get a
-`TypeError` — it's not optional, by design.
+Note the two files. `ssbeam.h5` is the **neutral** model the session saved:
+geometry, mesh and names, no OpenSees. `ssbeam_model.h5` is the **bridge's**
+archive, which `ops.h5(...)` writes: the same model plus everything the
+bridge declared (elements, supports, loads, the analysis chain).
+
+`run.results()` opens the run, and it pairs it with `ssbeam_model.h5`. This
+trips people up, so it's worth saying plainly: `Results` stores numbers
+against raw node and element ids. To let you ask for `"Mid"` instead of a
+tag, it needs a **model broker** to translate names into ids. That broker
+is `OpenSeesModel`, read from the model archive. That is why
+`emit_default` takes `model_h5=` and refuses to start without the file.
 
 Then the payoff: `results.nodes.get(pg="Mid", component="displacement_y")`
 hands back the vertical displacement at the `"Mid"` group — *the same name
@@ -375,8 +387,9 @@ reloaded model reproduced the answer *exactly*:
 - **Names survive the round-trip.** `"Beam"`, `"Pin"`, `"Mid"` all resolve
   on the reloaded snapshot exactly as on the live one — which is why
   `apeSees(fem2)` is identical to building from the original.
-- **`Results` needs `model=`.** The model broker is what turns stored ids
-  back into your physical-group names; it's a required argument, not a
+- **`Results` needs the model.** The model broker is what turns stored ids
+  back into your physical-group names. `emit_default` requires `model_h5=`,
+  and every `Results.from_*` reader takes the model too; it is not a
   convenience.
 - **`show_web()` for the picture in a notebook** — and never the blocking
   `results.viewer()`, which crashes the kernel.
