@@ -1825,14 +1825,56 @@ class SpatialDimInvalid(SpatialDimUnknown):
     """
 
 
+# One ASCII decimal literal, ``_`` only between digits, inside the whitespace
+# ``float()`` itself skips (no U+FEFF, no U+001C..U+001F). The viewer's
+# ``reader/ladrunoInfo.ts`` PY_FLOAT, character for character.
+_SPATIAL_DIM_SPACE = (
+    "[\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*"
+)
+_SPATIAL_DIM_DIGITS = "[0-9](?:_?[0-9])*"
+_SPATIAL_DIM_LITERAL = re.compile(
+    f"{_SPATIAL_DIM_SPACE}([+-]?(?:{_SPATIAL_DIM_DIGITS}"
+    f"(?:\\.(?:{_SPATIAL_DIM_DIGITS})?)?|\\.{_SPATIAL_DIM_DIGITS})"
+    f"(?:[eE][+-]?{_SPATIAL_DIM_DIGITS})?){_SPATIAL_DIM_SPACE}"
+)
+
+
+def _spatial_dim_number(value: object) -> Optional[float]:
+    """One ``SPATIAL_DIM`` value as a number, or ``None`` if it is none.
+
+    A real integer, float or bool reads as itself. A string reads only as
+    an ASCII decimal literal (``_SPATIAL_DIM_LITERAL``, full match), so a
+    non-ASCII digit (``'２'``, ``'٢'``) that ``float()`` would accept is
+    none; bytes read as that string when they are ASCII. A complex value,
+    a compound, a reference or anything else is none: ``float()`` would
+    keep the real part of ``2+5j`` with only a ``ComplexWarning`` (#2244).
+    """
+    if isinstance(value, bytes):  # np.bytes_ too
+        try:
+            value = value.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(value, str):  # np.str_ too
+        match = _SPATIAL_DIM_LITERAL.fullmatch(value)
+        return None if match is None else float(match.group(1))
+    if isinstance(value, (bool, np.bool_, int, np.integer)):
+        integer = int(value)  # an unbounded int never reaches float()
+        return float(integer) if integer in (1, 2, 3) else None
+    if isinstance(value, (float, np.floating)):
+        return float(value)
+    return None
+
+
 def _spatial_dim_attr(raw: ndarray, filename: str) -> int:
-    """``INFO/SPATIAL_DIM`` as 1, 2 or 3, or :class:`SpatialDimInvalid`."""
+    """``INFO/SPATIAL_DIM`` as 1, 2 or 3, or :class:`SpatialDimInvalid`.
+
+    The value must be one real number or one ASCII decimal string equal
+    to 1, 2 or 3 (:func:`_spatial_dim_number`): the viewer's
+    ``spatialDimOf`` refuses the same values (#2244).
+    """
     number: Optional[float] = None
     if raw.size == 1:
-        try:
-            number = float(raw.reshape(-1)[0])
-        except (TypeError, ValueError):
-            number = None
+        number = _spatial_dim_number(raw.reshape(-1)[0])
     if number is None or number not in (1.0, 2.0, 3.0):
         raise SpatialDimInvalid(
             f"{filename}: INFO/SPATIAL_DIM is {raw.tolist()!r}; the spatial "
@@ -1846,8 +1888,9 @@ def _file_spatial_dim(node: "h5py.Group | h5py.Dataset") -> Optional[int]:
 
     ``node`` is the file itself or any group or dataset inside it; the
     answer is the file's. ``INFO/SPATIAL_DIM`` when the file carries it;
-    a value that is not an integral 1, 2 or 3 (one value; ``2.0`` reads
-    as 2) raises :class:`SpatialDimInvalid` naming the file. Otherwise
+    a value that is not an integral 1, 2 or 3 (one real value, or one
+    ASCII decimal string; ``2.0`` reads as 2, ``2+5j`` and ``'２'`` do not)
+    raises :class:`SpatialDimInvalid` naming the file. Otherwise
     the width of ``MODEL/NODES/COORDINATES``, which the writer sizes by
     the spatial dimension, when every stage that has one agrees on a
     width of 1, 2 or 3. Otherwise ``None``: a read that depends on the
