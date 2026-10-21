@@ -667,8 +667,10 @@ def _refuse_phantom_streams(fem: Any) -> None:
 def _warn_skipped_replay_streams(
     fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
 ) -> None:
-    """Warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a
-    stream that replay does not re-emit, naming each stream and count."""
+    """Refuse a phantom-node stream (:func:`_refuse_phantom_streams`), then
+    warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a stream
+    that replay does not re-emit, naming each stream and count."""
+    _refuse_phantom_streams(fem)
     skipped = _skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
     if not skipped:
         return
@@ -1394,7 +1396,6 @@ def _replay_into(
             "deck_ordering=True; the H5 rewrite keeps its store order.")
 
     if fem is not None:
-        _refuse_phantom_streams(fem)
         # A record whose every line is an archived global row replays.
         _warn_skipped_replay_streams(
             fem, stage_mp_keys=stage_mp_keys | _mp_row_keys(
