@@ -82,7 +82,7 @@ from datetime import datetime, timezone
 from typing import Any, NamedTuple, NoReturn, Sequence
 
 from .base import DroppedAxisGuard
-from .caps import SolveStamp, TargetCaps, value_requires
+from .caps import SolveStamp, TargetCaps, binding_systems, value_requires
 from .verbs import VERBS, Verb
 from .._internal.typed_records import (
     BeamIntegrationRecord as _BeamIntegrationRecord,
@@ -653,8 +653,9 @@ class H5RefusedVerb(NotImplementedError):
 #:   * 2.33.0 — value requirement tokens: additive — two
 #:     new ``/opensees@requires`` tokens, derived from argument values by
 #:     the stamp writer (``H5Emitter.solve_stamp``): ``"mpco"`` (any
-#:     ``recorder mpco``) and ``"mpi"`` (a Mumps-family ``system``, or a
-#:     partitioned ``@solve_mode``). No path or dtype changes. Below this
+#:     ``recorder mpco``) and ``"mpi"`` (a Mumps-family or ``Parallel*``
+#:     ``system`` without a runtime fallback, or a partitioned
+#:     ``@solve_mode``). No path or dtype changes. Below this
 #:     minor ``@requires`` names verb tokens only, and keeps that meaning
 #:     on read. ``@requires`` is hashed, so an archive with an MPCO
 #:     recorder, a Mumps system or partitions hashes differently once at
@@ -1341,8 +1342,10 @@ class H5Emitter(
         (:meth:`_H5DeclsMixin.solve_stamp`) joined with the ones the
         stored argument values imply (opensees 2.33.0,
         :func:`~apeGmsh.opensees.emitter.caps.value_requires`): ``"mpco"``
-        for a ``recorder mpco`` and ``"mpi"`` for a Mumps-family ``system``
-        or a partitioned ``solve_mode``, global and staged stores alike.
+        for a ``recorder mpco`` and ``"mpi"`` for a Mumps-family or
+        ``Parallel*`` ``system`` without a runtime fallback
+        (:func:`~apeGmsh.opensees.emitter.caps.binding_systems`) or a
+        partitioned ``solve_mode``, global and staged stores alike.
 
         The stores are the source's on an H5 -> H5 rewrite too (the
         recorders and the analysis chain replay into them, the stages are
@@ -1355,11 +1358,8 @@ class H5Emitter(
         blocks = self._stage_blocks
         kinds = tuple(r.kind for r in self._recorders) + tuple(
             r.kind for blk in blocks for r in blk.recorders)
-        systems = tuple(
-            str(attrs["system"])
-            for attrs in (self._analysis_attrs,
-                          *(blk.chain_attrs for blk in blocks))
-            if "system" in attrs)
+        systems = binding_systems(
+            (self._analysis_attrs, *(blk.chain_attrs for blk in blocks)))
         extra = value_requires(recorder_kinds=kinds, systems=systems,
                                solve_mode=stamp.solve_mode)
         if extra <= set(stamp.requires):

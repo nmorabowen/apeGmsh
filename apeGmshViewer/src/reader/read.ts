@@ -142,7 +142,7 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  *
  * opensees 2.33.0 (#2372, h5-schema.md "Solve stamp"): `/opensees@requires`
  * may name the value tokens `"mpco"` (a `recorder mpco`) and `"mpi"` (a
- * Mumps-family `system` or a partitioned `@solve_mode`). No path or dtype
+ * Mumps-family or `Parallel*` `system` or a partitioned `@solve_mode`). No path or dtype
  * change, and this app does not read the solve stamp, so nothing here reads
  * differently. `@requires` is hashed: a 2.33 re-emit of a model with an MPCO
  * recorder, a Mumps system or partitions has a new model_hash, which the

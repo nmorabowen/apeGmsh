@@ -83,7 +83,13 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from ._internal.lineage import Lineage
-from .emitter.caps import REQUIRES_TOKENS, SolveStamp
+from .emitter.caps import (
+    REQUIRES_TOKENS,
+    SolveStamp,
+    binding_systems,
+    flat_requires,
+    is_mpi_system,
+)
 from ._internal.typed_records import (
     BeamIntegrationRecord,
     DampingObjectRecord,
@@ -1111,6 +1117,28 @@ class OpenSeesModel:
     #: stored verdict it answers to is the flat one.
     _REPLAY_SOLVE_MODE = "flat"
 
+    def _archived_systems(self) -> tuple[str, ...]:
+        """The ``system`` types the archive's analysis chains bind a replay
+        to, the global chain first, then each stage's
+        (:func:`~apeGmsh.opensees.emitter.caps.binding_systems`)."""
+        return binding_systems(
+            (self._analysis_attrs,
+             *(stage.chain_attrs for stage in self._stages)))
+
+    def replay_requires(self) -> tuple[str, ...]:
+        """The ``/opensees@requires`` tokens a replay of this archive needs.
+
+        Every replay target emits flat, so a ``"mpi"`` the stamp derived
+        from a partitioned ``solve_mode`` does not apply; ``"mpi"`` stays
+        only when the archived chain declares a Mumps-family or
+        ``Parallel*`` system (:func:`~apeGmsh.opensees.emitter.caps.flat_requires`).
+        Empty for an archive without a stamp (below 2.24.0).
+        """
+        stamp = self._solve_stamp
+        if stamp is None:
+            return ()
+        return flat_requires(stamp.requires, systems=self._archived_systems())
+
     def _refuse_stored_solve_refusals(self, target: str) -> None:
         stamp = self._solve_stamp
         if stamp is None:
@@ -2118,16 +2146,24 @@ class OpenSeesModel:
             )
         from .emitter.live import LiveOpsEmitter, get_backend_info
 
-        # ADR 0114 D6: a model that needs the fork, an MPCO build or an
-        # MPI run cannot be built into this domain; refuse before the
-        # wipe, naming the gap.
-        refuse_live_requires(self._solve_stamp, get_backend_info())
+        # ADR 0114 D6: a model whose flat replay needs the fork, an MPCO
+        # build or an MPI system cannot be built into this domain; refuse
+        # before the wipe, naming the gap. The flat replay's own need, not
+        # the archive's partitioned deck's (``replay_requires``).
+        stamp = self._solve_stamp
+        if stamp is not None:
+            stamp = replace(stamp, requires=self.replay_requires())
+        refuse_live_requires(
+            stamp, get_backend_info(),
+            mpi_systems=tuple(
+                s for s in self._archived_systems() if is_mpi_system(s)))
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
 
 
 def refuse_live_requires(
-    stamp: "SolveStamp | None", backend: "BackendInfo",
+    stamp: "SolveStamp | None", backend: "BackendInfo", *,
+    mpi_systems: "Sequence[str]" = (),
 ) -> None:
     """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
 
@@ -2137,7 +2173,10 @@ def refuse_live_requires(
     MPCO recorder, pip openseespy does not). ``"mpi"`` is never met: the
     live target is one in-process domain, not a multi-rank MPI run. Any
     other token is unknown to this bridge and refuses too: an archive
-    from a newer bridge must not be solved on a guess.
+    from a newer bridge must not be solved on a guess. ``build('live')``
+    hands in the flat replay's tokens
+    (:meth:`OpenSeesModel.replay_requires`) and the MPI systems its chain
+    declares (``mpi_systems``), which the message names.
     """
     if stamp is None or not stamp.requires:
         return
@@ -2154,11 +2193,18 @@ def refuse_live_requires(
             "Run it with the Ladruno fork on PYTHONPATH (or "
             "APEGMSH_OPENSEES_BIN), or build('tcl') / build('py') and run "
             "the deck with a fork binary.")
-    if "mpi" in known:
+    if "mpi" in known and mpi_systems:
         hints.append(
-            "'mpi' (a partitioned archive or a Mumps-family system) needs "
-            "a multi-rank run: build('tcl') / build('py') and run the deck "
-            "under mpiexec with an MPI build.")
+            "'mpi': this replay declares system "
+            + ", ".join(repr(s) for s in mpi_systems)
+            + ", which needs an MPI run that one in-process domain is "
+            "not. Declare a serial system (UmfPack, ProfileSPD, ...) and "
+            "archive the model again.")
+    elif "mpi" in known:
+        hints.append(
+            "'mpi' needs a multi-rank MPI run, which one in-process domain "
+            "is not; a partitioned model's own deck (apeSees.tcl() / .py()) "
+            "runs under mpiexec.")
     if unknown:
         hints.append(
             "This bridge knows no backend that provides "

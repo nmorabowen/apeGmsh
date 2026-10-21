@@ -28,9 +28,12 @@ it the way ``build('live')`` does (:func:`unmet_requires`, #2372):
 - ``"fork"`` or ``"mpco"`` unmet (stock openseespy: no fork commands, no
   MPCO recorder): the bridge deck must abort, an ``"mpco"`` one at the
   MPCO recorder; then the test skips by name, citing the tokens.
-- ``"mpi"`` unmet (always, in one process; a partitioned archive or a
-  Mumps-family ``system``): a rank-gated deck run in one process proves
-  nothing either way, so the test skips by name, citing the token.
+- ``"mpi"`` unmet (always, in one process; a partitioned archive, or a
+  Mumps-family or ``Parallel*`` ``system``): a rank-gated bridge deck run
+  in one process proves nothing either way, so it is not judged. The flat
+  replay re-derives its own need (:meth:`OpenSeesModel.replay_requires`):
+  when a partitioned mode was the only reason, the replay must run;
+  otherwise the test skips by name, citing the token.
 - Nothing unmet: the stamp claims this backend solves the model, so a
   bridge deck that aborts **fails** (#2220).
 
@@ -111,6 +114,16 @@ def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
     sits in its own directory, its working directory when it runs: the two
     decks write the same output files (a profiler report refuses a run id
     its file already holds)."""
+    bridge, replay, requires, _flat = _decks_and_replay_needs(model, tmp)
+    return bridge, replay, requires
+
+
+def _decks_and_replay_needs(
+    model: Model, tmp: Path,
+) -> tuple[Path, Path, tuple[str, ...], tuple[str, ...]]:
+    """:func:`_decks`, and what the flat replay deck needs
+    (:meth:`OpenSeesModel.replay_requires`: a partitioned mode's ``"mpi"``
+    does not apply to it)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops = model.build()
@@ -125,7 +138,7 @@ def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
         model_h5.build("py", out=str(replay))
     stamp = model_h5.solve_stamp
     assert stamp is not None, f"{model.id}: the archive carries no solve stamp"
-    return bridge, replay, tuple(stamp.requires)
+    return bridge, replay, tuple(stamp.requires), model_h5.replay_requires()
 
 
 def _run(deck: Path) -> tuple[bool, str]:
@@ -322,7 +335,7 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
 @pytest.mark.parametrize("model", _RUN_ROWS, ids=[m.id for m in _RUN_ROWS])
 def test_a_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path, backend_kind: str) -> None:
-    bridge, replay, requires = _decks(model, tmp_path)
+    bridge, replay, requires, flat = _decks_and_replay_needs(model, tmp_path)
     reason = _KNOWN_STOCK_FAILURES.get(model.id)
     if reason is not None:
         assert not unmet_requires(requires, backend_kind), (
@@ -340,19 +353,27 @@ def test_a_replay_runs_where_the_bridge_deck_runs(
         pytest.skip(f"{model.id}: known failure: {reason}; asserted that the "
                     "bridge deck did not run and that the replay fails at "
                     f"the same place ({_failure(log)})")
-    if not _bridge_runs(model, bridge, requires, backend_kind):
+    judged = _bridge_runs(model, bridge, requires, backend_kind)
+    unmet_flat = unmet_requires(flat, backend_kind)
+    if not judged and unmet_flat:
         unmet = unmet_requires(requires, backend_kind)
         pytest.skip(f"{model.id}: the solve stamp requires {unmet!r}, which "
                     f"this {backend_kind} build in one process lacks "
-                    f"(requires={requires!r}); "
+                    f"(requires={requires!r}, flat replay {flat!r}); "
                     + ("a rank-gated deck is not judged in one process"
                        if unmet == ("mpi",) else
                        "asserted only that the bridge deck did not run here"))
+    # The bridge deck ran, or only its partitioned mode's "mpi" kept it
+    # from being judged: the flat replay needs nothing this backend lacks,
+    # so it must run (#2372 F3).
     ran, log = _run(replay)
     assert ran, (
-        f"{model.id}: the bridge deck runs but the replay deck does not: a "
-        "semantic difference the static oracle missed; track it in an "
-        f"issue:\n{log}")
+        f"{model.id}: the "
+        + ("bridge deck runs" if judged else
+           f"stamp requires {requires!r} but the flat replay {flat!r}, "
+           "nothing this backend lacks,")
+        + " but the replay deck does not run: a semantic difference the "
+        f"static oracle missed; track it in an issue:\n{log}")
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])

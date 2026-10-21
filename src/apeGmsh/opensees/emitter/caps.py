@@ -17,7 +17,9 @@ Data only: this module imports nothing from apeGmsh.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,16 +83,49 @@ SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 #: two depend on argument values (opensees 2.33.0), so the stamp writer
 #: derives them, not ``VERBS`` (:func:`value_requires`):
 #: ``"mpco"``, any ``recorder mpco`` (pip openseespy ships no MPCO
-#: recorder); ``"mpi"``, a Mumps-family ``system`` or a partitioned
-#: ``solve_mode`` (the deck needs a multi-rank MPI run). A reader accepts
+#: recorder); ``"mpi"``, a Mumps-family or ``Parallel*`` ``system``
+#: (:func:`is_mpi_system`) or a partitioned ``solve_mode`` (the deck
+#: needs a multi-rank MPI run; a flat replay re-derives its own need,
+#: :func:`flat_requires`). A reader accepts
 #: any token; a solving target that does not know one refuses it.
 REQUIRES_TOKENS: tuple[str, ...] = ("fork", "mpco", "mpi")
 
 
 def is_mpi_system(s_type: str) -> bool:
-    """Whether ``system <s_type>`` is a Mumps-family solver: the one family
-    that needs an MPI build (``Mumps``, ``MumpsParallel``, any case)."""
-    return s_type.casefold().startswith("mumps")
+    """Whether ``system <s_type>`` needs an MPI run: the Mumps family
+    (``Mumps``, ``MumpsParallel``) and the ``Parallel*`` solvers
+    (``ParallelProfileSPD``), any case. Neither stock openseespy nor the
+    fork's serial build declares them in one process. ``MPIDiagonal`` is
+    not one: both builds fall back to the serial diagonal solver."""
+    folded = s_type.casefold()
+    return folded.startswith("mumps") or folded.startswith("parallel")
+
+
+def binding_systems(chains: "Iterable[Mapping[str, Any]]") -> tuple[str, ...]:
+    """The ``system`` types analysis chains (the archive's ``analysis``
+    attrs, global and staged) bind a deck to: every declared ``system``
+    but one carrying a ``system_runtime_fallback`` (the ADR 0027
+    auto-emitted ``Mumps`` with an ``UmfPack`` fallback runs in one process
+    too, so it binds the deck to nothing)."""
+    return tuple(str(c["system"]) for c in chains
+                 if "system" in c and "system_runtime_fallback" not in c)
+
+
+def flat_requires(
+    requires: "tuple[str, ...]", *, systems: "tuple[str, ...]",
+) -> tuple[str, ...]:
+    """The tokens of a stamp's ``requires`` that a **flat** replay needs.
+
+    ``"mpi"`` holds for the archive's own deck when it was derived from a
+    partitioned ``solve_mode``, but every replay target emits flat, so a
+    flat replay needs it only when its own analysis chain declares an MPI
+    system (:func:`is_mpi_system`); ``systems`` are the ``system`` types the
+    archive stores, global and staged. Every other token passes through.
+    Tokens are only dropped, never added: a file below 2.33.0 keeps the
+    ``requires`` it was written with."""
+    if "mpi" not in requires or any(is_mpi_system(s) for s in systems):
+        return requires
+    return tuple(t for t in requires if t != "mpi")
 
 
 def value_requires(
@@ -98,8 +133,9 @@ def value_requires(
     solve_mode: str,
 ) -> frozenset[str]:
     """The requirement tokens a model's argument values imply: ``"mpco"``
-    for a ``recorder mpco``, ``"mpi"`` for a Mumps-family ``system`` or a
-    partitioned ``solve_mode`` (see :data:`REQUIRES_TOKENS`)."""
+    for a ``recorder mpco``, ``"mpi"`` for an MPI ``system``
+    (:func:`is_mpi_system`; pass :func:`binding_systems`) or a partitioned
+    ``solve_mode`` (see :data:`REQUIRES_TOKENS`)."""
     if solve_mode not in SOLVE_MODES:
         raise ValueError(
             f"value_requires: solve_mode must be one of {SOLVE_MODES}, got "
@@ -208,5 +244,5 @@ class SolveStamp:
 
 __all__ = [
     "REQUIRES_TOKENS", "SOLVE_MODES", "SolveStamp", "TargetCaps",
-    "is_mpi_system", "value_requires",
+    "binding_systems", "flat_requires", "is_mpi_system", "value_requires",
 ]

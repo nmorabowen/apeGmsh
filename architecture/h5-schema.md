@@ -1219,11 +1219,20 @@ The `@requires` tokens (`REQUIRES_TOKENS` in `emitter/caps.py`):
 |---|---|---|---|
 | `fork` | 2.24.0 | an emitted verb's `VERBS` row requires it | a Ladruno build (`ladrunoBuild()` answers a sha) |
 | `mpco` | 2.33.0 | any `recorder mpco`, global or staged | a Ladruno build: pip openseespy ships no MPCO recorder |
-| `mpi` | 2.33.0 | a Mumps-family `system` (global or staged), or `@solve_mode` `partitioned` | never in process: the deck needs a multi-rank MPI run |
+| `mpi` | 2.33.0 | a Mumps-family or `Parallel*` `system` (global or staged) that has no runtime fallback, or `@solve_mode` `partitioned` | never in process: the deck needs a multi-rank MPI run |
 
 `mpco` and `mpi` depend on argument values, so `VERBS` rows do not
 carry them; the stamp writer derives them from its own stores
-(`H5Emitter.solve_stamp`, `caps.value_requires`). A file below 2.33.0
+(`H5Emitter.solve_stamp`, `caps.value_requires`). The MPI systems are
+`Mumps` and `ParallelProfileSPD` (`caps.is_mpi_system`; neither stock
+openseespy nor the fork's serial build declares them). `MPIDiagonal` falls
+back to the serial diagonal solver on both, so it needs nothing, and
+neither does the ADR 0027 auto-emitted `Mumps`, which carries an `UmfPack`
+runtime fallback (`caps.binding_systems`). `@requires` describes the
+archive's own deck. A flat replay re-derives its need from the archived
+chains (`OpenSeesModel.replay_requires`, `caps.flat_requires`): it keeps
+`mpi` only when a chain declares an MPI system, so a partitioned mode
+alone does not bind a flat replay. A file below 2.33.0
 never names them, and its `@requires` keeps the meaning it was written
 with (verb tokens only). A reader accepts any non-empty token, known or
 not; a solving target refuses a token it does not know.
@@ -1251,7 +1260,8 @@ array that is not sorted and unique raises `MalformedH5Error`.
 is partition-blind), so it fails closed on a non-empty
 `@solve_refusals_flat`, naming the archive's own verdict beside it;
 `build('live')` refuses on a backend that lacks a token in `@requires`
-(`fork` and `mpco` need a Ladruno build, `mpi` always refuses in
+of its flat replay (`replay_requires`: `fork` and `mpco` need a
+Ladruno build, `mpi` (an MPI system in the chain) always refuses in
 process, and so does an unknown token);
 `to_h5` echoes the stamp, and `@requires` regenerates from the echoed
 program and the rewritten stores (a rewrite of a file below 2.33.0
@@ -2842,7 +2852,9 @@ detail lives in the `SCHEMA_VERSION` docstring in
 - `2.33.0` — #2372 (chain K; the maintainer's ruling of 2026-10-21 on
   #2220): `/opensees@requires` gains two value tokens the stamp writer
   derives from argument values: `mpco` (any `recorder mpco`) and `mpi`
-  (a Mumps-family `system`, or `@solve_mode` `partitioned`); see
+  (a Mumps-family or `Parallel*` `system` without a runtime fallback, or
+  `@solve_mode` `partitioned`; a flat replay keeps `mpi` only for the
+  system); see
   [the solve stamp](#opensees-attributes-the-solve-stamp-optional-opensees-2240).
   No path or dtype changes; below this minor `@requires` names verb
   tokens only and keeps that meaning on read. `@requires` is hashed, so

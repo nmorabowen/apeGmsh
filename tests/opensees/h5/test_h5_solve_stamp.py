@@ -39,6 +39,9 @@ from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.caps import (
     REQUIRES_TOKENS,
     SolveStamp,
+    binding_systems,
+    flat_requires,
+    is_mpi_system,
     value_requires,
 )
 from apeGmsh.opensees.emitter.h5 import H5Emitter
@@ -636,7 +639,7 @@ def test_build_live_refuses_per_token(
     with pytest.raises(BridgeError, match=pattern) as info:
         refuse_live_requires(stamp, _backend(kind))
     if "mpi" in missing:
-        assert "multi-rank run" in str(info.value)
+        assert "multi-rank MPI run" in str(info.value)
 
 
 @pytest.mark.parametrize("mpco, changes", [(True, True), (False, False)],
@@ -665,3 +668,160 @@ def test_the_value_tokens_change_model_hash_only_where_they_appear(
     before = emit("before.h5")
     assert today is not None and before is not None
     assert (today != before) is changes
+
+
+# -- F1: every LinearSystem member pins its token (#2372 review) ------------
+
+#: The ``requires`` a flat solving frame stamps with each ``system`` of the
+#: bridge's LinearSystem family (``analysis/system.py``), audited on stock
+#: openseespywin 3.7.1.2 and the fork 79e06 (one-process truss solve):
+#: ``Mumps`` and ``ParallelProfileSPD`` abort on both builds ("unknown
+#: system type"), so they need an MPI run; ``MPIDiagonal`` falls back to
+#: the serial diagonal solver on both, so it needs nothing. Every member is
+#: listed, so a new one fails until it is classified here.
+_SYSTEM_TOKENS: dict[str, tuple[str, ...]] = {
+    "BandGeneral": (), "BandSPD": (), "ProfileSPD": (), "SProfileSPD": (),
+    "UmfPack": (), "Pardiso": (), "Mumps": ("mpi",), "SparseGeneral": (),
+    "SparseSYM": (), "FullGeneral": (), "Diagonal": (), "MPIDiagonal": (),
+    "ParallelProfileSPD": ("mpi",),
+}
+
+
+def test_the_system_token_table_lists_the_family() -> None:
+    from apeGmsh.opensees.analysis import system as system_mod
+
+    assert set(_SYSTEM_TOKENS) == set(system_mod.__all__)
+
+
+def _system_frame(name: str, *, staged: bool) -> apeSees:
+    from tests.opensees.h5.test_h5_decls import _chain
+
+    ops = _frame_bridge(analysis=False)
+    system = getattr(ops.system, name)()
+    if staged:
+        with ops.stage(name="solve") as s:
+            s.analysis(**{**_chain(ops), "system": system})
+            s.run(n_increments=1)
+    else:
+        ops.analysis.Static()
+    return ops
+
+
+@pytest.mark.parametrize("staged", [False, True], ids=["global", "staged"])
+@pytest.mark.parametrize("name", sorted(_SYSTEM_TOKENS))
+def test_each_system_pins_its_token(
+    tmp_path: Path, name: str, staged: bool,
+) -> None:
+    """A flat archive whose chain declares ``system <name>``, globally or in
+    a stage, stamps the table's tokens, and the flat replay needs the
+    same (:meth:`OpenSeesModel.replay_requires`)."""
+    out = tmp_path / "m.h5"
+    _system_frame(name, staged=staged).h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp is not None and model.solve_stamp.solve_mode == "flat"
+    assert model.solve_stamp.requires == _SYSTEM_TOKENS[name]
+    assert model.replay_requires() == _SYSTEM_TOKENS[name]
+    assert is_mpi_system(name) == ("mpi" in _SYSTEM_TOKENS[name])
+
+
+# -- F2: a flat replay re-derives its own "mpi" (T ruling (a), #2372) --------
+
+
+@pytest.mark.parametrize("requires, systems, want", [
+    (("mpi",), (), ()),
+    (("mpi",), ("UmfPack",), ()),
+    (("mpi",), ("MPIDiagonal",), ()),
+    (("mpi",), ("Mumps",), ("mpi",)),
+    (("mpi",), ("UmfPack", "ParallelProfileSPD"), ("mpi",)),
+    (("fork", "mpco", "mpi"), ("BandGeneral",), ("fork", "mpco")),
+    (("fork",), ("Mumps",), ("fork",)),
+    ((), ("Mumps",), ()),
+], ids=["mode-only", "serial", "mpidiagonal", "mumps", "parallel-staged",
+        "keeps-others", "never-adds", "pre-2.33-keeps-meaning"])
+def test_flat_requires_closed_form(
+    requires: tuple, systems: tuple, want: tuple,
+) -> None:
+    assert flat_requires(requires, systems=systems) == want
+
+
+class _FakeLive:
+    constructed: list[object] = []
+
+    def __init__(self, *, wipe: bool = True) -> None:
+        type(self).constructed.append(self)
+        raise _Reached
+
+
+class _Reached(Exception):
+    """The live emitter was constructed: no refusal stopped the build."""
+
+
+def _partitions_bridge_archive(tmp_path: Path) -> Path:
+    from tests.opensees.h5.test_h5_partitions_roundtrip import _build_bridge
+
+    out = tmp_path / "p.h5"
+    _build_bridge().h5(str(out))
+    return out
+
+
+@pytest.mark.parametrize("kind", ["stock", "fork"])
+def test_build_live_of_a_partitioned_archive_without_mpi_system_proceeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    """``"mpi"`` stays on the stamp (true for the bridge's rank-gated deck),
+    but the flat live replay declares no MPI system, so ``build('live')``
+    goes on to the live emitter exactly as on main. On 58a9252cb it
+    refused with "require 'mpi'"."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    model = OpenSeesModel.from_h5(_partitions_bridge_archive(tmp_path))
+    assert model.solve_stamp is not None
+    assert model.solve_stamp.solve_mode == "partitioned"
+    assert "mpi" in model.solve_stamp.requires
+    assert "mpi" not in model.replay_requires()
+    _FakeLive.constructed = []
+    monkeypatch.setattr(live_mod, "LiveOpsEmitter", _FakeLive)
+    monkeypatch.setattr(live_mod, "get_backend_info", lambda: _backend(kind))
+    with pytest.raises(_Reached):
+        model.build("live")
+    assert len(_FakeLive.constructed) == 1
+
+
+@pytest.mark.live
+def test_build_live_of_a_partitioned_archive_runs(tmp_path: Path) -> None:
+    """The same archive, built into the real in-process domain: it builds
+    (the flat degrade), as it does on main."""
+    pytest.importorskip("openseespy")
+    model = OpenSeesModel.from_h5(_partitions_bridge_archive(tmp_path))
+    model.build("live")
+
+
+def test_build_live_names_the_mpi_system_of_a_flat_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flat replay that declares ``ParallelProfileSPD`` refuses, naming
+    the system and pointing at a serial one, not at mpiexec."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    out = tmp_path / "m.h5"
+    _system_frame("ParallelProfileSPD", staged=False).h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    monkeypatch.setattr(live_mod, "LiveOpsEmitter", _FakeLive)
+    monkeypatch.setattr(live_mod, "get_backend_info", lambda: _backend("fork"))
+    with pytest.raises(BridgeError, match="require 'mpi'") as info:
+        model.build("live")
+    msg = str(info.value)
+    assert "'ParallelProfileSPD'" in msg and "serial system" in msg
+    assert "mpiexec" not in msg
+
+
+def test_binding_systems_skip_a_runtime_fallback() -> None:
+    """The ADR 0027 auto-emitted ``Mumps`` carries an ``UmfPack`` fallback,
+    so it runs in one process and binds the deck to no MPI run."""
+    chains = (
+        {"system": "Mumps", "system_runtime_fallback": "UmfPack"},
+        {"numberer": "RCM"},
+        {"system": "ParallelProfileSPD"},
+        {"system": "UmfPack"},
+    )
+    assert binding_systems(chains) == ("ParallelProfileSPD", "UmfPack")
