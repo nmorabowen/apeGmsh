@@ -191,7 +191,10 @@ def read_fiber_record(
     ``sectionLocation`` count stands in for its ``beamIntegration`` by the
     same rule, every section must carry one ``fiberData2`` fibre count that
     the file's columns then confirm, and the file's stations must be the
-    live section locations (:func:`_require_live_fibers`).
+    live section locations (:func:`_require_live_fibers`). That match places
+    each station and so stands in for the order check: a legal rule can
+    write its stations out of order (a long-hinge HingeRadau), and the
+    line-stations read accepts them on the same proof (#2332).
     """
     class_name = fiber_record_class(rec)
     if not logicals:
@@ -223,19 +226,24 @@ def read_fiber_record(
             f"{np.round(xi[out[0]], 6).tolist()}); the likely cause is an "
             f"element length or integration-point count that does not match "
             f"the file.")
-    bad = np.flatnonzero(~(np.diff(xi, axis=1) > 0.0).all(axis=1))
-    if bad.size:
-        raise ValueError(
-            f"{gpx_lr.file_path}: FEM element {int(ids[bad[0]])} has a station "
-            f"repeated or out of order (stations "
-            f"{np.round(xi[bad[0]], 6).tolist()} in natural coordinates; they "
-            f"must be strictly increasing within [-1, 1]). A HingeRadau rule "
-            f"with lp_i + lp_j >= L/4 writes stations like this (its interior "
-            f"weight is not positive), so the fibres cannot be placed along "
-            f"the element.")
-    live_fib = (_require_live_fibers(rec, model, xi, lengths_of(ids),
-                                     gpx_lr.file_path)
-                if isinstance(model, LiveDomainFacts) else None)
+    if isinstance(model, LiveDomainFacts):
+        # The live section locations place each station, in whatever order
+        # its rule gives (a long-hinge HingeRadau writes them out of order,
+        # legally), as the line-stations read does (#2332).
+        live_fib: "int | None" = _require_live_fibers(
+            rec, model, xi, lengths_of(ids), gpx_lr.file_path)
+    else:
+        live_fib = None
+        bad = np.flatnonzero(~(np.diff(xi, axis=1) > 0.0).all(axis=1))
+        if bad.size:
+            raise ValueError(
+                f"{gpx_lr.file_path}: FEM element {int(ids[bad[0]])} has a "
+                f"station repeated or out of order (stations "
+                f"{np.round(xi[bad[0]], 6).tolist()} in natural coordinates; "
+                f"they must be strictly increasing within [-1, 1]). A "
+                f"HingeRadau rule with lp_i + lp_j >= L/4 writes stations like "
+                f"this (its interior weight is not positive), so the fibres "
+                f"cannot be placed along the element.")
     time, body, n_fib = _read_rows(fib_lr, ids.size, n_ip * FIBER_OUT_WIDTH)
     if live_fib is not None and n_fib != live_fib:
         raise ValueError(

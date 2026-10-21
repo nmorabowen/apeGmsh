@@ -32,6 +32,10 @@ itself) and on a build that has MPCO.
   domain at ``__enter__``; each station's summed section forces are the
   closed form ``N = -PN``, ``|M| = PL (H - x)``, which checks the station
   order physically. A beam of elastic sections refuses by name (#2290 B).
+- A long-hinge HingeRadau force beam (``lp = 4`` on ``L = 13``) writes its
+  stations out of order, legally: its line stations equal the live
+  ``section force`` (#2328) and its fibres the live ``fiberData2`` (#2370)
+  at rtol 1e-12, each placed at the live section that wrote it.
 """
 from __future__ import annotations
 
@@ -1031,6 +1035,37 @@ def test_mixed_line_stations_split_by_count_are_the_live_section_force(
         res.close()
 
 
+def _build_long_hinge(ops: Any, fem: FEMData, lp: float, *,
+                      fibre: bool) -> None:
+    """Element 2 of :func:`_mixed_fem` alone (nodes 3-4, L = 13): a force
+    beam of HingeRadau ``lp_i = lp_j = lp`` over a fibre section (4
+    fibres) or an elastic one, tip-loaded by ``(PL, -PN)``."""
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        ops.node(int(nid), float(xyz[0]), float(xyz[1]))
+    for node in (1, 2, 3):     # 1 and 2 carry no element here
+        ops.fix(node, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    if fibre:
+        ops.uniaxialMaterial("Elastic", 1, E)
+        ops.section("Fiber", 1)
+        ops.patch("rect", 1, 4, 1, -0.1, -0.05, 0.1, 0.05)
+    else:
+        ops.section("Elastic", 1, E, A, IZ)
+    ops.beamIntegration("HingeRadau", 1, 1, lp, 1, lp, 1)
+    ops.element("forceBeamColumn", 2, 3, 4, 1, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(4, PL, -PN, 0.0)
+    for cmd, args in (("constraints", ("Plain",)), ("numberer", ("RCM",)),
+                      ("system", ("BandGeneral",)),
+                      ("test", ("NormDispIncr", 1.0e-12, 10)),
+                      ("algorithm", ("Newton",)),
+                      ("integrator", ("LoadControl", 1.0 / _STEPS)),
+                      ("analysis", ("Static",))):
+        getattr(ops, cmd)(*args)
+
+
 def test_a_long_hinge_beam_reads_its_live_out_of_order_stations(
     opspy, tmp_path,
 ) -> None:
@@ -1043,25 +1078,7 @@ def test_a_long_hinge_beam_reads_its_live_out_of_order_stations(
     fem = _mixed_fem()
     model_h5 = tmp_path / "model.h5"
     fem.to_h5(str(model_h5))
-    opspy.model("basic", "-ndm", 2, "-ndf", 3)
-    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
-        opspy.node(int(nid), float(xyz[0]), float(xyz[1]))
-    for node in (1, 2, 3):     # 1 and 2 carry no element here
-        opspy.fix(node, 1, 1, 1)
-    opspy.geomTransf("Linear", 1)
-    opspy.section("Elastic", 1, E, A, IZ)
-    opspy.beamIntegration("HingeRadau", 1, 1, lp, 1, lp, 1)
-    opspy.element("forceBeamColumn", 2, 3, 4, 1, 1)
-    opspy.timeSeries("Linear", 1)
-    opspy.pattern("Plain", 1, 1)
-    opspy.load(4, PL, -PN, 0.0)
-    for cmd, args in (("constraints", ("Plain",)), ("numberer", ("RCM",)),
-                      ("system", ("BandGeneral",)),
-                      ("test", ("NormDispIncr", 1.0e-12, 10)),
-                      ("algorithm", ("Newton",)),
-                      ("integrator", ("LoadControl", 1.0 / _STEPS)),
-                      ("analysis", ("Static",))):
-        getattr(opspy, cmd)(*args)
+    _build_long_hinge(opspy, fem, lp, fibre=False)
     xi_live = 2.0 * np.asarray(opspy.sectionLocation(2)) / length - 1.0
     assert xi_live.size == 6 and not np.all(np.diff(xi_live) > 0)
     spec = ResolvedRecorderSpec(
@@ -1081,5 +1098,61 @@ def test_a_long_hinge_beam_reads_its_live_out_of_order_stations(
                      for ip in range(1, 7)]
             np.testing.assert_allclose(np.asarray(slab.values)[-1][rows], truth,
                                        **_RTOL, err_msg=comp)
+    finally:
+        res.close()
+
+
+def test_a_long_hinge_beam_reads_its_live_out_of_order_fibres(
+    opspy, tmp_path,
+) -> None:
+    """The fibre sibling of the line-stations case above (#2370): one force
+    beam of HingeRadau with ``lp = 4`` on ``L = 13`` over a 4-fibre
+    section writes its six stations out of order, legally. They are the
+    live section locations read at ``__enter__``, so each fibre table is
+    placed at the section that wrote it: each fibre's stress and strain
+    equals the live ``fiberData2`` at rtol 1e-12, and each station's
+    fibres sum to the closed form ``N = -PN``, ``|M| = PL (L - x)`` at the
+    station's own ``x``, which checks the placement physically."""
+    length, n_fib = _MIXED_L[1], 4
+    fem = _mixed_fem()
+    model_h5 = tmp_path / "model.h5"
+    fem.to_h5(str(model_h5))
+    _build_long_hinge(opspy, fem, 4.0, fibre=True)
+    xi_live = 2.0 * np.asarray(opspy.sectionLocation(2)) / length - 1.0
+    assert xi_live.size == 6 and not np.all(np.diff(xi_live) > 0)
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(_record("fibers", "hinge_fib", _FIBRE_STRESS, np.array([2]),
+                         "ForceBeamColumn2d"),))
+    res = _emit(spec, tmp_path, model_h5, opspy, _STEPS)
+    try:
+        n_ip = xi_live.size
+        truth = np.array([opspy.eleResponse(2, "section", k, "fiberData2")
+                          for k in range(1, n_ip + 1)]).reshape(n_ip, n_fib, 6)
+        for c, comp in ((4, "fiber_stress"), (5, "fiber_strain")):
+            slab = res.elements.fibers.get(component=comp, ids=np.array([2]))
+            rows = _by_element(slab, 2)
+            assert len(rows) == n_ip * n_fib
+            np.testing.assert_array_equal(np.asarray(slab.gp_index)[rows],
+                                          np.repeat(np.arange(n_ip), n_fib))
+            np.testing.assert_allclose(
+                np.asarray(slab.station_natural_coord)[rows],
+                np.repeat(xi_live, n_fib), rtol=0, atol=1e-12)
+            np.testing.assert_allclose(np.asarray(slab.y)[rows],
+                                       truth[:, :, 0].ravel(), **_RTOL)
+            np.testing.assert_allclose(
+                np.asarray(slab.values)[-1][rows], truth[:, :, c].ravel(),
+                **_RTOL, err_msg=comp)
+        slab = res.elements.fibers.get(component="fiber_stress",
+                                       ids=np.array([2]))
+        rows = _by_element(slab, 2)
+        sigma = np.asarray(slab.values)[-1][rows].reshape(n_ip, n_fib)
+        y = np.asarray(slab.y)[rows].reshape(n_ip, n_fib)
+        area = np.asarray(slab.area)[rows].reshape(n_ip, n_fib)
+        x = 0.5 * (xi_live + 1.0) * length
+        np.testing.assert_allclose((sigma * area).sum(axis=1), -PN, rtol=1e-9)
+        np.testing.assert_allclose(np.abs((sigma * area * y).sum(axis=1)),
+                                   PL * (length - x), rtol=1e-8,
+                                   atol=1e-8 * PL * length)
     finally:
         res.close()
