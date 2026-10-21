@@ -20,6 +20,6 @@ a stale upstream-shell probe (`StaleShellProbeWarning`).
 
 The `ssi_frame_wall` viewer bench now has two result sources (maintainer
 ruling (A), 2026-10-21): the recorder set (`gravity` + `dynamic`, through
-`emit_recorders`, transcoded on open) and `modes.h5` (`capture_live_modes`),
+`emit_recorders`, transcoded on open) and `modes.h5` (`ops.eigen(6).to_native`),
 both opened by `build.open_results`, which `check_slots.py` and
 `open_viewer.py` use.

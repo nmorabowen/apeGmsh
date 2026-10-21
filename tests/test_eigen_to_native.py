@@ -208,6 +208,39 @@ def test_one_mode_stage_per_eigenvalue_with_exact_attrs(
         assert f.attrs["source_type"] == "eigen"
 
 
+def test_the_file_carries_the_bridges_opensees_zone(
+    fem3: Any, bind: Any, tmp_path: Path,
+) -> None:
+    """The modes file is Composed: its ``/opensees`` zone is the bridge's.
+
+    Oracle: the bridge's own archive, ``ops.h5(...)``, written separately.
+    The zone must hold the same groups and datasets, and the file must
+    reopen as a model with the bridge's envelope ndf. Without the zone a
+    reader sees ``ndf=0`` and the viewer loses the element pairing.
+    """
+    ids = _node_ids(fem3)
+    bind(_FakeOps([4.0, 37.5], _vectors(ids, 2, {int(n): 6 for n in ids})))
+    ops = _frame(fem3)
+    out = ops.eigen(2).to_native(tmp_path / "modes.h5")
+    ref = tmp_path / "ref.model.h5"
+    ops.h5(str(ref))
+
+    def tree(f: Any) -> list[str]:
+        names: list[str] = []
+        f["opensees"].visit(names.append)
+        return sorted(names)
+
+    with h5py.File(out, "r") as f, h5py.File(ref, "r") as g:
+        assert "opensees" in f, "the modes file lost the bridge zone"
+        assert tree(f) == tree(g)
+        for name in tree(g):
+            if isinstance(g["opensees"][name], h5py.Dataset):
+                np.testing.assert_array_equal(
+                    f["opensees"][name][()], g["opensees"][name][()],
+                    err_msg=name)
+    assert OpenSeesModel.from_h5(out, fem_root="/model").ndf == 6
+
+
 def test_vectors_are_the_domain_vectors_read_once_per_node(
     fem3: Any, bind: Any, tmp_path: Path,
 ) -> None:

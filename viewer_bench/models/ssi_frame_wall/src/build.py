@@ -11,7 +11,7 @@ every part of the ADR 0098 ``ResultsSession`` surface real data:
 Three element families, two materials, nine physical groups, and records
 for every slot in the §4 catalog, in two result sources: the recorder set
 (stages gravity / dynamic, transcoded on open) and ``modes.h5`` (the
-modes, from ``capture_live_modes``). See ``../README.md`` for the
+modes, from the bridge's ``ops.eigen(n).to_native``). See ``../README.md`` for the
 slot-by-slot map.
 
 Units are kN, m, s, t — so E is kPa, density t/m³, mass tonnes.
@@ -45,7 +45,6 @@ import openseespy.opensees as opspy
 from apeGmsh import Results, apeGmsh
 from apeGmsh._vocabulary import expand_shorthand
 from apeGmsh.opensees import OpenSeesModel, apeSees
-from apeGmsh.results.live import capture_live_modes
 from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
 
 # --------------------------------------------------------------- geometry
@@ -396,8 +395,15 @@ def open_results(results_dir: Path) -> tuple[Results, Results]:
 
 
 def solve(ops, fem, results_dir: Path, cfg: dict) -> None:
-    """Gravity → modes → dynamic: the stages on recorders, the modes on
-    ``capture_live_modes``, then one warm transcode."""
+    """Modes, then gravity → dynamic: the modes through the bridge's own
+    route, the stages on recorders, then one warm transcode."""
+    # The modes, on the bridge's route (EigenResult.to_native carries the
+    # /opensees zone and every node's own DOF roles). ops.eigen builds and
+    # wipes its own domain, so it runs BEFORE ops.run() pushes the model
+    # the loop below analyses. The model is linear: its modes do not
+    # depend on the gravity state the in-run eigen for Rayleigh sees.
+    ops.eigen(N_MODES).to_native(str(results_dir / MODES_H5))
+
     ops.run()                                   # push the model into openseespy
 
     model_h5 = results_dir / "model.h5"
@@ -439,11 +445,6 @@ def solve(ops, fem, results_dir: Path, cfg: dict) -> None:
         opspy.rayleigh(a0, 0.0, 0.0, a1)
         print(f"[bench] periods: {', '.join(f'{2 * np.pi / x:.3f}' for x in w)} s")
         print(f"[bench] rayleigh a0={a0:.5f} a1={a1:.6f}")
-
-        # The modes, into their own file, before wipeAnalysis drops the
-        # system the eigen solve ran on.
-        capture_live_modes(str(model_h5), N_MODES,
-                           str(results_dir / MODES_H5), ops=opspy)
 
         opspy.wipeAnalysis()
         opspy.constraints("Transformation")

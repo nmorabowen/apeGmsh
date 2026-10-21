@@ -93,8 +93,10 @@ line load on the frame. That is what puts glyphs in the `loads` slot; a
 `dynamic` (150 recorded instants under a generated three-frequency pulse
 at 0.30 g, Rayleigh damping fitted to the *computed* modes 1 and 3, not
 to guessed frequencies); it is the recorder set, transcoded on open, not
-a native file. `modes.h5` holds the six `mode_*` stages, written by
-`capture_live_modes` right after the eigen solve. `build.open_results`
+a native file. `modes.h5` holds the six `mode_*` stages, written by the
+bridge's `ops.eigen(6).to_native(...)` before `ops.run()` (the model is
+linear, so its modes do not depend on the gravity state; the in-run
+`eigen` that fits Rayleigh still runs after gravity). `build.open_results`
 opens both, and every bench consumer goes through it. (Until #2191 one
 in-process capture wrote all three into a single `run.h5`; maintainer
 ruling (A), 2026-10-21, split it.) The dynamic stage is what makes the
@@ -186,6 +188,14 @@ scrubber smoothness — without changing anything about what it contains.
 | soil size field | 1.2 → 4.0 m | 0.6 → 2.0 m |
 | dynamic recording stride (`dt=`) | every 4th step | every 10th step |
 
+The recorders sample on OpenSees' `-dT` grid, which starts at the first
+step: at `small` the dynamic instants are 0.01, 0.05, …, 5.97 s. The
+in-process capture before #2191 sampled every 4th step from the 4th, at
+0.04, 0.08, …, 6.00 s. Same stride, same 150 instants, shifted by three
+steps, so a sampled peak moves a little: the roof's max |ux| over the
+recorded instants is 12.98 mm now against 13.57 mm before. The solve is
+unchanged (gravity and the six modes match to float noise).
+
 ### Findings so far
 
 What the bench has already turned up, in the order it turned up.
@@ -219,8 +229,8 @@ mixed ndf and 6× fewer solver calls besides.
 > `0.0` for a DOF the node does not have, where real openseespy
 > raises, so a lenient double would have passed the buggy code. Both
 > went with the capture in #2191; the bench's modes now come from
-> `capture_live_modes`, which lays each node's eigenvector out by that
-> node's own live ndf.
+> `EigenResult.to_native`, which lays each node's eigenvector out by
+> that node's own ndf and DOF roles, rotations included.
 
 **Fixed by ADR 0098 Amendment 3 — the pane host was never the central
 widget, and making it one crashed the window.** These were one finding,

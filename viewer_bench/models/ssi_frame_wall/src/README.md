@@ -11,7 +11,7 @@ runner expects, plus `open_viewer.py`:
 
 The run has two result sources: the recorder set (stages `gravity` and
 `dynamic`), transcoded on open, and `modes.h5` (six mode shapes, from
-`capture_live_modes`). `build.open_results(results_dir)` returns
+the bridge's `ops.eigen(6).to_native`). `build.open_results(results_dir)` returns
 `(run, modes)`; every consumer opens the run that way, so none depends on
 where the transcode cache puts its file.
 
