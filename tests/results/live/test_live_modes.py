@@ -231,7 +231,8 @@ def test_an_unknown_class_over_live_rotations_refuses(tmp_path: Path) -> None:
     assert not out.exists()
 
 
-@pytest.mark.parametrize("cls", ["FourNodeQuadUP", "SSPquadUP"])
+@pytest.mark.parametrize("cls", ["FourNodeQuadUP", "BBarFourNodeQuadUP",
+                                 "SSPquadUP", "NineFourNodeQuadUP", "LadrunoUP"])
 def test_a_stock_up_class_slot_is_a_pressure_not_a_rotation(
         tmp_path: Path, cls: str) -> None:
     """2-D, ndf 3 under a stock u-p class: the third DOF is a pore

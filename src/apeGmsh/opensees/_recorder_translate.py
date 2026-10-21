@@ -519,15 +519,19 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
 #: (:meth:`LiveDomainFacts.rotation_roles`).
 _EMBEDDED_NODE_CLASS = "ASDEmbeddedNodeElement"
 
-#: The ``eleType`` of each stock u-p element (``quadUP``, ``SSPquadUP``,
-#: ``9_4_QuadUP``, ``brickUP``, ``bbarBrickUP``, ``SSPbrickUP``,
-#: ``20_8_BrickUP``), as stock openseespy 3.7.1 answers it. Each carries a
-#: pore pressure at DOF ``ndm + 1`` of its corner nodes, so the rotation
-#: roles count it as a u-p family (:class:`~._readback.LiveUPRole`). It
-#: stays out of :data:`_TOKEN_FOR_LIVE_CLASS`: no bridge class shares its
-#: responses, so element pairing keeps refusing it.
+#: The ``eleType`` (``getClassType``) of every u-p element: the stock ones
+#: (``quadUP``, ``bbarQuadUP``, ``SSPquadUP``, ``9_4_QuadUP``,
+#: ``brickUP``, ``bbarBrickUP``, ``SSPbrickUP``, ``20_8_BrickUP``), as
+#: stock openseespy 3.7.1 answers it, and the fork's ``LadrunoUP``. Each
+#: carries a pore pressure at DOF ``ndm + 1`` of its corner nodes, so the
+#: rotation roles count it as a u-p family
+#: (:class:`~._readback.LiveUPRole`). It stays out of
+#: :data:`_TOKEN_FOR_LIVE_CLASS`, which gates element pairing and response
+#: tokens; this set types the rotation roles only.
 _UP_LIVE_CLASSES: "frozenset[str]" = frozenset({
     "FourNodeQuadUP",
+    "BBarFourNodeQuadUP",
+    "LadrunoUP",
     "SSPquadUP",
     "NineFourNodeQuadUP",
     "BrickUP",

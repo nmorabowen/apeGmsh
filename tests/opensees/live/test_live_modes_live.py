@@ -396,9 +396,11 @@ def test_an_embedded_node_that_may_carry_a_pressure_refuses(
     assert not out.exists()
 
 
-def test_a_quadup_pressure_is_not_a_rotation(opspy: Any, tmp_path: Path) -> None:
-    """Two stock ``quadUP`` elements (live class ``FourNodeQuadUP``, ndf
-    3): the third DOF is a pore pressure, non-zero in the modes. The
+@pytest.mark.parametrize("token, live_class", [
+    ("quadUP", "FourNodeQuadUP"), ("bbarQuadUP", "BBarFourNodeQuadUP")])
+def test_a_quadup_pressure_is_not_a_rotation(
+        opspy: Any, tmp_path: Path, token: str, live_class: str) -> None:
+    """Two stock ``quadUP`` (or ``bbarQuadUP``) elements, ndf 3: the third DOF is a pore pressure, non-zero in the modes. The
     capture writes the translations, no rotation component (so no
     pressure lands in ``rotation_z``), and neither refuses nor warns."""
     ops = opspy
@@ -415,8 +417,8 @@ def test_a_quadup_pressure_is_not_a_rotation(opspy: Any, tmp_path: Path) -> None
         ops.fix(n, 0, 0, 1)               # drained top
     ops.nDMaterial("ElasticIsotropic", 1, 1.0e5, 0.3, 2.0)
     for eid, conn in ((1, (1, 2, 5, 4)), (2, (2, 3, 6, 5))):
-        ops.element("quadUP", eid, *conn, 1.0, 1, 2.2e6, 1.0, 1.0e-4, 1.0e-4)
-    assert ops.eleType(1) == "FourNodeQuadUP"
+        ops.element(token, eid, *conn, 1.0, 1, 2.2e6, 1.0, 1.0e-4, 1.0e-4)
+    assert ops.eleType(1) == live_class
     p, archive, spy = _capture(fem, ops, 2, tmp_path)
     _check_file(p, archive, spy, ops, 2, rotation_nodes=set(), ndm=2,
                 rotations_written=False)
