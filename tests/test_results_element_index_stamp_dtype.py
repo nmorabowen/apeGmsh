@@ -15,11 +15,9 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.results.capture._domain import DomainCapture
 from apeGmsh.results.readers._native import NativeReader
 from apeGmsh.results.schema import _native
 
-from tests.test_results_domain_capture import _FakeOps, _make_spec, _MockFem
 from tests.test_results_element_index_stamp import (  # noqa: F401 (fixture)
     _node_record,
     _transcode,
@@ -40,23 +38,9 @@ def _assert_vlen_utf8(path: Path) -> None:
         assert f.attrs[ATTR] == "fem"
 
 
-def _capture_file(tmp_path: Path) -> Path:
-    from apeGmsh.results.capture.spec import ResolvedDomainCaptureRecord
-
-    fem = _MockFem([1])
-    spec = _make_spec(
-        ResolvedDomainCaptureRecord(
-            category="nodes", name="d", components=("displacement_x",),
-            dt=None, n_steps=None, node_ids=np.array([1], dtype=np.int64),
-        ),
-        snapshot_id=fem.snapshot_id,
-    )
-    path = tmp_path / "capture.h5"
-    with DomainCapture(spec, path, fem, ops=_FakeOps()) as cap:
-        cap.begin_stage("s", kind="static")
-        cap.step(t=1.0)
-        cap.end_stage()
-    return path
+def _stamped_file(tmp_path: Path, portal: dict) -> Path:
+    """A transcoder-written native file carrying the writer's own stamp."""
+    return _transcode(tmp_path, portal, _node_record(), build="sequential")
 
 
 # ---------------------------------------------------------------------------
@@ -67,12 +51,7 @@ def _capture_file(tmp_path: Path) -> Path:
 def test_transcoder_stamp_is_vlen_utf8(
     tmp_path: Path, portal: dict,  # noqa: F811 (the imported fixture)
 ) -> None:
-    path = _transcode(tmp_path, portal, _node_record(), build="sequential")
-    _assert_vlen_utf8(path)
-
-
-def test_domain_capture_stamp_is_vlen_utf8(tmp_path: Path) -> None:
-    _assert_vlen_utf8(_capture_file(tmp_path))
+    _assert_vlen_utf8(_stamped_file(tmp_path, portal))
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +71,10 @@ def _verified(path: Path) -> bool:
         return r.element_index_verified
 
 
-def test_vlen_utf8_fem_is_verified(tmp_path: Path) -> None:
-    path = _capture_file(tmp_path)
+def test_vlen_utf8_fem_is_verified(
+    tmp_path: Path, portal: dict,  # noqa: F811 (the imported fixture)
+) -> None:
+    path = _stamped_file(tmp_path, portal)
     _restamp(path, "fem", h5py.string_dtype("utf-8"))
     assert _verified(path)
 
@@ -111,8 +92,9 @@ def test_vlen_utf8_fem_is_verified(tmp_path: Path) -> None:
 ], ids=["fixed_utf8", "fixed_ascii", "nul_padded", "numpy_bytes",
         "vlen_bytes", "vlen_ascii", "array", "int", "float"])
 def test_other_forms_read_unverified(
-    tmp_path: Path, value: Any, dtype: Any,
+    tmp_path: Path, portal: dict,  # noqa: F811 (the imported fixture)
+    value: Any, dtype: Any,
 ) -> None:
-    path = _capture_file(tmp_path)
+    path = _stamped_file(tmp_path, portal)
     _restamp(path, value, dtype)
     assert not _verified(path)
