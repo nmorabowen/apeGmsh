@@ -403,12 +403,16 @@ export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_
   // Every drawn segment and face, in drawing order, and the cell it belongs to.
   // They reach the buffers only once all are known, so the cell, segment and
   // triangle counts are checked against the ceiling before a buffer is filled (#2373).
+  // A segment is held in typed lists (its ends, and its cell as kind 0 fem / 1 ops, block or
+  // meta index, row) until the count is checked; its ElementRef is made when the buffers fill.
   const segA = new F64List(), segB = new F64List();
-  const segRefs: ElementRef[] = [];
+  const segKind = new F64List(), segIndex = new F64List(), segRow = new F64List();
   const pushSeg = (a: number, b: number, ref: ElementRef) => {
     segA.push(a);
     segB.push(b);
-    segRefs.push(ref);
+    segKind.push(ref.kind === "fem" ? 0 : 1);
+    segIndex.push(ref.kind === "fem" ? ref.blockIndex : ref.metaIndex);
+    segRow.push(ref.row);
   };
   const polygons: number[][] = [];
   const polygonRefs: ElementRef[] = [];
@@ -490,7 +494,7 @@ export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_
   // The drawn cells key state/load.ts's element index; the buffers are plain arrays (reader/ceiling.ts).
   const cells = counts.lineCells + counts.faceCells + counts.solidCells + counts.opsOnly;
   assertWithinCeiling(model.path, "the mesh", "elements", cells, limits.elements);
-  assertWithinCeiling(model.path, "the mesh", "line segments", segRefs.length, limits.segments);
+  assertWithinCeiling(model.path, "the mesh", "line segments", segA.length, limits.segments);
   assertWithinCeiling(model.path, "the mesh", "triangles", nTriangles, limits.triangles);
   polygons.forEach((ids, p) => {
     for (let k = 1; k + 1 < ids.length; k++) {
@@ -499,11 +503,12 @@ export function buildMesh(model: ModelFile, limits: Readonly<MeshLimits> = MESH_
       tr.push(polygonRefs[p]!);
     }
   });
-  for (let s = 0; s < segRefs.length; s++) {
+  for (let s = 0; s < segA.length; s++) {
     const [a, b] = [segA.data[s]!, segB.data[s]!];
     push3(lp, a); push3(lp, b);
     ln.push(model.nodeIds[a]!, model.nodeIds[b]!);
-    lr.push(segRefs[s]!);
+    const [index, row] = [segIndex.data[s]!, segRow.data[s]!];
+    lr.push(segKind.data[s] === 0 ? { kind: "fem", blockIndex: index, row } : { kind: "ops", metaIndex: index, row });
   }
 
   const missing = distinctCount(missingNodes.data.subarray(0, missingNodes.length));

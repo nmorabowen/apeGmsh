@@ -12,8 +12,8 @@ message that names the file, the count, the limit and the cause, for example
 
 The routes are a `.ladruno`, a partitioned `.ladruno` set, a native
 `results.h5` and a `model.h5`. A `.ladruno` stage's nodes are its readable node
-set, and a refused result does not count. Its elements are the Gauss buckets,
-plus the line-station buckets in a verified file, counted per result token. A
+set, and a refused result does not count. Its elements are the Gauss and
+line-station buckets, counted per result token. A
 set counts its nodes across the parts, with an interface node once. A
 `model.h5` counts its OpenSees-only elements beside its cells. The mesh build
 counts its drawn cells, line segments, triangles and outline edges before it

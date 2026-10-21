@@ -24,8 +24,8 @@
 // - a node ID list that repeats an id refuses the file at open (reader/ladrunoChecks.ts, #2299);
 // - past the supported scale (reader/ceiling.ts, #2362) the file is refused at open by name:
 //   a stage whose node set (its first readable nodal result's IDs) has more than 2^24 nodes,
-//   or whose Gauss buckets, with its line-station buckets in a verified file (their rows from
-//   the ID shapes), hold more than 2^24 elements in one result token. One part of a set checks
+//   or whose Gauss and line-station buckets (the line-station rows from their ID shapes,
+//   verified or not) hold more than 2^24 elements in one result token. One part of a set checks
 //   its nodes only: the set reads no element result, and checks its own union of nodes;
 // - Gauss-point element buckets are read by reader/ladrunoElements.ts (#2187); other
 //   element results, envelopes, the domain and region buckets are listed in `unread`;
@@ -329,10 +329,10 @@ export class LadrunoFile {
     }
     const provenance = this.readProvenance(info);
     if (!part) {
-      // Line stations reach the app only from a verified file (main/results.ts), as native results.ts reads them.
-      const verified = elementIndexVerdictOf(provenance.state === "present" ? provenance.attrs.element_index_space : null).verified;
+      // main/results.ts lists and serves a .ladruno's line stations whether or not its element
+      // index is verified (unlike a native file's), so they count either way.
       for (const h of hosts) {
-        const rows = verified ? [...h.stage.gauss, ...this.lineStationRows(this.group(f, h.stage.name))] : h.stage.gauss;
+        const rows = [...h.stage.gauss, ...this.lineStationRows(this.group(f, h.stage.name))];
         assertWithinCeiling(path, `stage "${h.stage.name}"`, "elements", ladrunoStageElements(rows));
       }
     }

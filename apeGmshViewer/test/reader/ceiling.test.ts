@@ -290,11 +290,12 @@ const BASIC_FORCE = "/MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/basicForce/12-Truss[1:0
 const lineRows = (n: number): Overrides => (_file, path) =>
   path === `${BASIC_FORCE}/ID` ? { shape: () => [n, 1] } : path === `${BASIC_FORCE}/DATA` ? { shape: (r) => [r[0]!, n, r[2]!] } : undefined;
 
-test(".ladruno line stations: in a verified file, a basicForce token of 2^24 bars opens and 2^24 + 1 is refused; an unverified file reads none, so counts none", () => {
-  openLadruno(asResults(stubH5(lineRows(N))), TRUSS_STAMPED).close();
-  refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), TRUSS_STAMPED), elementsPast(TRUSS_STAMPED, 'stage "MODEL_STAGE[1]"', "16,777,217"));
-  // As native results.ts: line stations of an unverified file never leave main (main/results.ts metaOf).
-  openLadruno(asResults(stubH5(lineRows(N + 1))), TRUSS).close();
+test(".ladruno line stations: a basicForce token of 2^24 bars opens and 2^24 + 1 is refused by name, verified or not", () => {
+  // main/results.ts lists and serves a .ladruno's line stations without the element-index verdict.
+  for (const file of [TRUSS_STAMPED, TRUSS]) {
+    openLadruno(asResults(stubH5(lineRows(N))), file).close();
+    refused(() => openLadruno(asResults(stubH5(lineRows(N + 1))), file), elementsPast(file, 'stage "MODEL_STAGE[1]"', "16,777,217"));
+  }
 });
 
 /** Each part of the 2-part set lists half the nodes, sharing one interface node: `total` in the union. */
