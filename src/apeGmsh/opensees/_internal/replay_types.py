@@ -163,7 +163,7 @@ def _stub(cls: type[Primitive]) -> Primitive:
 
 
 def _number(payload: Mapping[str, Any], key: str) -> int | float:
-    value = payload[key]
+    value: object = payload[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise _Unrecoverable(
             f"its computed_sections row holds {key}={value!r}, not a number")
