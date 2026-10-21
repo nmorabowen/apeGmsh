@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# The attribute size limit (#2404, opensees 2.34.0)
+# The attribute size limit (opensees 2.34.0)
 # ---------------------------------------------------------------------------
 
 #: The largest array payload, in bytes, written as an HDF5 attribute.

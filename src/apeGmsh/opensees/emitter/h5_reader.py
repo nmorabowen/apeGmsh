@@ -3342,7 +3342,7 @@ def _parse_repr(s: str) -> int | float | str:
 
 
 #: First opensees-zone version whose writer stores an array past the HDF5
-#: attribute limit as a dataset of the same name (#2404): a ``params`` /
+#: attribute limit as a dataset of the same name: a ``params`` /
 #: ``params_str`` pair and a declared recorder's ``ids``. No file below it
 #: holds one, so the reader refuses a dataset form there.
 LARGE_ARRAY_DATASETS_FROM: tuple[int, int, int] = (2, 34, 0)

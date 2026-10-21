@@ -890,7 +890,7 @@ class _H5WriteModelMixin(_H5Host):
             _set_attr(g, "selection", ctx.selection)
             if ctx.ids is not None:
                 # Past the attribute limit, an int64 dataset of the
-                # same name (opensees 2.34.0, #2404).
+                # same name (opensees 2.34.0).
                 _set_attr_or_dataset(g, "ids", ctx.ids)
             _set_attr(g, "dt", ctx.dt)
             _set_attr(g, "n_steps", ctx.n_steps)
