@@ -38,9 +38,9 @@ def _assert_vlen_utf8(path: Path) -> None:
         assert f.attrs[ATTR] == "fem"
 
 
-def _stamped_file(tmp_path: Path, portal: dict) -> Path:
+def _stamped_file(tmp_path: Path, model: dict) -> Path:
     """A transcoder-written native file carrying the writer's own stamp."""
-    return _transcode(tmp_path, portal, _node_record(), build="sequential")
+    return _transcode(tmp_path, model, _node_record(), build="sequential")
 
 
 # ---------------------------------------------------------------------------
