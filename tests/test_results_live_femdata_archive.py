@@ -326,7 +326,7 @@ def test_element_records_refuse_by_name(frame, tmp_path) -> None:
     fem, model_h5 = frame
     ops = LiveOps(**_MIXED_3D)  # type: ignore[arg-type]
     spec = _spec(fem, ("nodes", "all", _DISP3, [1, 2]),
-                 ("elements", "beam", ("axial_force",), [1]))
+                 ("elements", "beam", ("nodal_resisting_force_x",), [1]))
     with pytest.raises(ValueError, match=r"records \['beam'\] name elements by "
                                          r"FEM id.*FEMData archive"):
         _run(spec, tmp_path / "run", model_h5, ops)
@@ -341,7 +341,7 @@ def test_no_live_domain_keeps_the_archive_refusal(frame, tmp_path) -> None:
     ops = LiveOps(ndm=0, ndf={}, elements={})
     with pytest.raises(ValueError, match=r"model= declares no ndm \(ndm=0\)"):
         _run(_spec(fem, ("nodes", "all", _DISP3, [1, 2]),
-                   ("elements", "beam", ("axial_force",), [1])),
+                   ("elements", "beam", ("nodal_resisting_force_x",), [1])),
              tmp_path / "run", model_h5, ops)
 
 

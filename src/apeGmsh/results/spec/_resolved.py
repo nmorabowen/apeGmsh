@@ -26,7 +26,13 @@ from typing import TYPE_CHECKING, Iterable, Optional
 import numpy as np
 from numpy import ndarray
 
-from ..._vocabulary import expand_shorthand, is_canonical, is_shorthand
+from ..._vocabulary import (
+    expand_shorthand,
+    in_category,
+    is_canonical,
+    is_shorthand,
+    wrong_category_reason,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,15 +73,35 @@ def _refuse_unrecorded_components(
 ) -> None:
     """Refuse a component of record ``name`` that records nothing.
 
+    A canonical name must be one ``category`` records
+    (:func:`apeGmsh._vocabulary.in_category`): ``displacement_x`` on a
+    gauss record writes no recorder, and ``stress_xx`` on an elements
+    record writes ``globalForce``, read back under the stress name.
+    ``modal`` records no component, so it takes none.
+
     A resolved record carries canonical names: no route expands a
     shorthand here (the record holds no ``ndm`` / ``ndf`` to clip it
     to), so ``"displacement"`` on a node record would write no recorder
     and read back empty with no warning.
     """
+    if category not in ALL_CATEGORIES:
+        raise ValueError(
+            f"ResolvedRecorderRecord {name!r}: unknown category "
+            f"{category!r}; the categories are {ALL_CATEGORIES}."
+        )
     kept = _RECORDED_SHORTHANDS.get(category, frozenset())
     for comp in components:
-        if comp in kept or is_canonical(comp):
+        if comp in kept:
             continue
+        if is_canonical(comp):
+            if in_category(category, comp):
+                continue
+            # A canonical of another category writes no recorder, or one
+            # whose response the read decodes under its name.
+            raise ValueError(
+                f"ResolvedRecorderRecord {name!r} (category={category!r}): "
+                f"{wrong_category_reason(category, comp)}"
+            )
         if is_shorthand(comp):
             full = ", ".join(expand_shorthand(comp))
             raise ValueError(
@@ -229,10 +255,12 @@ class ResolvedRecorderRecord:
     source: Optional[RecorderRecord] = None
 
     def __post_init__(self) -> None:
-        if self.category != "modal":
-            _refuse_unrecorded_components(
-                self.category, self.name, tuple(self.components),
-            )
+        # A bare string is one component, not its characters.
+        if isinstance(self.components, str):
+            object.__setattr__(self, "components", (self.components,))
+        _refuse_unrecorded_components(
+            self.category, self.name, tuple(self.components),
+        )
         # Accept any sequence of IDs (e.g. ``fem.nodes.select(...).ids``,
         # a list); every consumer reads ``.size`` / ndarray semantics.
         for attr in ("node_ids", "element_ids"):

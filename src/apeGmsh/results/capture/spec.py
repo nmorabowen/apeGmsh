@@ -62,18 +62,10 @@ import numpy as np
 from numpy import ndarray
 
 from ..._vocabulary import (
-    DERIVED_SCALARS,
-    FIBER,
-    LINE_DIAGRAMS,
-    MATERIAL_STATE,
-    NODAL_FORCES,
-    NODAL_KINEMATICS,
-    PER_ELEMENT_NODAL_FORCES,
-    PLASTIC_STRAIN,
-    SHELL_GENERALIZED_STRAINS,
-    SHELL_STRESS_RESULTANTS,
-    STRAIN,
-    STRESS,
+    CATEGORY_COMPONENTS,
+    CATEGORY_INDEXED_STEMS,
+    LINE_STATION_DEFORMATIONS,
+    SPRING,
     expand_many,
     is_canonical,
 )
@@ -112,31 +104,32 @@ _CAPTURE_UNSUPPORTED_NODE: frozenset[str] = frozenset((
     "displacement_increment_z",
 ))
 
+# Components a recorder category records that in-process capture does
+# not: the node increments above; section deformations (the
+# line-stations capture reads ``eleResponse(eid, "section", ip,
+# "force")`` only); ZeroLength springs (no capture reads
+# ``basicForce`` / ``deformation``).
+_CAPTURE_UNSUPPORTED: frozenset[str] = (
+    _CAPTURE_UNSUPPORTED_NODE
+    | frozenset(LINE_STATION_DEFORMATIONS)
+    | frozenset(SPRING)
+)
 
-# Per-category sets of allowed canonical components. ``state_variable_*``
-# is allowed in any element-level category; checked separately.
+# Per-category sets of allowed canonical components: the recorder
+# categories' one table (``_vocabulary.CATEGORY_COMPONENTS``)
+# less what capture cannot read. ``modal`` has its own path.
 _CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
-    "nodes": frozenset(NODAL_KINEMATICS + NODAL_FORCES) - _CAPTURE_UNSUPPORTED_NODE,
-    "elements": frozenset(PER_ELEMENT_NODAL_FORCES),
-    "line_stations": frozenset(LINE_DIAGRAMS),
-    # Shell resultants / generalized strains sit at the same topology
-    # level as continuum stress — one ``ops.eleResponse(eid,
-    # "stresses"/"strains")`` per element, decoded by the class's
-    # catalog layout — so they belong to ``gauss``, not a category of
-    # their own. ``von_mises_shell`` rides in via ``DERIVED_SCALARS``.
-    # ``axial_force`` is the truss scalar: the Truss family answers
-    # ``ops.eleResponse(eid, "axialForce")`` with one value at its single
-    # Line_GL_1 point (``RESPONSE_CATALOG``), so it is a gauss read too —
-    # the ``line_stations`` route only knows beam-column sections and
-    # drops a truss with a "no line-stations capture path" warning.
-    "gauss": frozenset(
-        STRESS + STRAIN + PLASTIC_STRAIN
-        + SHELL_STRESS_RESULTANTS + SHELL_GENERALIZED_STRAINS
-        + DERIVED_SCALARS + MATERIAL_STATE + ("axial_force",)
-    ),
-    "fibers": frozenset(FIBER + MATERIAL_STATE),
-    "layers": frozenset(FIBER + MATERIAL_STATE),
+    category: comps - _CAPTURE_UNSUPPORTED
+    for category, comps in CATEGORY_COMPONENTS.items()
+    if category != "modal"
 }
+
+#: Categories that accept ``state_variable_<n>``, from the same table
+#: (the one indexed canonical capture reads: no indexed fibre or spring).
+_STATE_VARIABLE_CATEGORIES: tuple[str, ...] = tuple(
+    category for category, stems in CATEGORY_INDEXED_STEMS.items()
+    if "state_variable_" in stems
+)
 
 
 # =====================================================================
@@ -582,7 +575,7 @@ class DomainCaptureSpec:
         Examples
         --------
         >>> DomainCaptureSpec.where_does("axial_force")
-        ('line_stations',)
+        ('gauss', 'line_stations')
         >>> DomainCaptureSpec.where_does("displacement_x")
         ('nodes',)
         >>> DomainCaptureSpec.where_does("state_variable_42")
@@ -595,7 +588,7 @@ class DomainCaptureSpec:
             if component in allowed
         }
         if component.startswith("state_variable_"):
-            matches |= {"gauss", "fibers", "layers"}
+            matches |= set(_STATE_VARIABLE_CATEGORIES)
         return tuple(sorted(matches))
 
     # ------------------------------------------------------------------
@@ -1034,9 +1027,8 @@ def _validate_components_for_category(
                 f"(ops.recorder.declare(...)), or capture 'displacement' "
                 f"and difference it post hoc."
             )
-        if comp.startswith("state_variable_") and category in (
-            "gauss", "fibers", "layers",
-        ):
+        if (comp.startswith("state_variable_")
+                and category in _STATE_VARIABLE_CATEGORIES):
             continue
         if comp not in allowed:
             raise ValueError(

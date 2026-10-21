@@ -643,6 +643,9 @@ def test_mpco_line_station_mixed_record_raises_not_partial(emit) -> None:
 
 
 def test_mpco_line_station_unrouted_component_raises() -> None:
+    """A component with no line-stations routing never reaches the MPCO
+    emit: the record refuses it by name when it is built (#2344)."""
     assert canonical_to_line_station_token("stress_xx") is None
-    with pytest.raises(ValueError, match=r"'beam'.*'stress_xx'.*no line-stations"):
-        collect_mpco_tokens([_line(("axial_force", "stress_xx"))])
+    with pytest.raises(ValueError, match=r"'beam'.*'stress_xx' belongs to "
+                                         r"category 'gauss', not 'line_stations'"):
+        _line(("axial_force", "stress_xx"))
