@@ -29,17 +29,15 @@ from tests.fixtures.schema import OPENSEES_CURRENT
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 
-def _analyzer(g, *, name="PG24"):
+def _analyzer(g, *, name="PG24", material=None):
     g.sections.rect_face(2.0, 4.0, label="bar")
     g.mesh.sizing.set_global_size(0.4)
     g.mesh.generation.generate(dim=2)
     g.mesh.generation.set_order(2)
     fem = g.mesh.queries.get_fem_data(dim=2)
-    return SectionProperties(
-        fem,
-        materials={"bar": SectionMaterial(E=200e3, nu=0.3, fy=345.0)},
-        name=name,
-    )
+    if material is None:
+        material = SectionMaterial(E=200e3, nu=0.3, fy=345.0)
+    return SectionProperties(fem, materials={"bar": material}, name=name)
 
 
 def _frame(section_factory) -> apeSees:
@@ -195,19 +193,54 @@ def _fiber_on(ops, sec, **kw):
         analysis=sec, kind="fiber", fibers={"bar": mat}, **kw)
 
 
+def _elastic(**kw):
+    return lambda ops, sec: ops.section.ComputedSection(analysis=sec, **kw)
+
+
+#: case -> (analyzer material, section factory, {token index: the bridge's
+#: literal}). The literals pin the bridge side of the oracle: the 3-D line
+#: is ``section Elastic tag E A Iz Iy G J alphaY alphaZ`` (E at 3, G at 7),
+#: the 2-D one ``section Elastic tag E A Iz G alphaY`` (G at 6).
 _REPLAY_CASES = {
-    # E defaults from the analyzer's float material: 200000.0, not 200000
-    "elastic": lambda ops, sec: ops.section.ComputedSection(analysis=sec),
-    # an int E the user set stays an int; an integral float G stays a float
-    "elastic-2d-set-moduli": lambda ops, sec: ops.section.ComputedSection(
-        analysis=sec, ndm=2, E=210000, G=80000.0),
-    "fiber": lambda ops, sec: _fiber_on(ops, sec),
-    "fiber-int-gj": lambda ops, sec: _fiber_on(ops, sec, GJ=5),
+    # E and G default from a float material: 200000.0, not 200000
+    "elastic-float-E": (None, _elastic(), {3: "200000.0"}),
+    "elastic-float-E-G": (SectionMaterial(E=200e3, nu=0.3, G=80e3),
+                          _elastic(), {3: "200000.0", 7: "80000.0"}),
+    # an int material modulus stays an int; the computed G is a float
+    "elastic-int-E-nu": (SectionMaterial(E=200000, nu=0.3), _elastic(),
+                         {3: "200000"}),
+    "elastic-int-E-int-G": (SectionMaterial(E=200000, nu=0.3, G=80000),
+                            _elastic(), {3: "200000", 7: "80000"}),
+    # moduli the user set: an int stays an int, an integral float a float
+    "elastic-2d-set-moduli": (None, _elastic(ndm=2, E=210000, G=80000.0),
+                              {3: "210000", 6: "80000.0"}),
+    "fiber": (None, lambda ops, sec: _fiber_on(ops, sec), {}),
+    "fiber-int-gj": (None, lambda ops, sec: _fiber_on(ops, sec, GJ=5),
+                     {4: "5"}),
 }
 
 
 def _section_lines(deck: str) -> list[str]:
     return [ln for ln in deck.splitlines() if ln.startswith("section ")]
+
+
+def _bridge_and_replay(
+        g, tmp_path: Path, case: str, *, drop_sidecar: bool = False,
+) -> tuple[list[str], list[str]]:
+    material, factory, _literals = _REPLAY_CASES[case]
+    sec = _analyzer(g, material=material)
+    ops = _frame(lambda o: factory(o, sec))
+    deck = tmp_path / "bridge.tcl"
+    archive = tmp_path / "model.h5"
+    ops.tcl(str(deck), progress=False, flat=True)
+    ops.h5(str(archive))
+    if drop_sidecar:
+        with h5py.File(str(archive), "r+") as f:
+            del f["opensees/computed_sections"]
+    replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=True)
+    assert isinstance(replay, str)
+    return (_section_lines(deck.read_text(encoding="utf-8")),
+            _section_lines(replay))
 
 
 @pytest.mark.parametrize("case", sorted(_REPLAY_CASES))
@@ -218,21 +251,29 @@ def test_replay_writes_the_bridge_section_line(
     no ``ReplaySlotTypeWarning``."""
     from apeGmsh.opensees._internal.replay_types import ReplaySlotTypeWarning
 
-    sec = _analyzer(g)
-    ops = _frame(lambda o: _REPLAY_CASES[case](o, sec))
-    deck = tmp_path / "bridge.tcl"
-    archive = tmp_path / "model.h5"
-    ops.tcl(str(deck), progress=False, flat=True)
-    ops.h5(str(archive))
     with warnings.catch_warnings():
         warnings.simplefilter("error", ReplaySlotTypeWarning)
-        replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=True)
-    assert isinstance(replay, str)
-    bridge = _section_lines(deck.read_text(encoding="utf-8"))
+        bridge, replay = _bridge_and_replay(g, tmp_path, case)
     assert len(bridge) == 1
-    assert _section_lines(replay) == bridge
-    if case == "elastic":
-        assert bridge[0].startswith("section Elastic 1 200000.0 ")
+    tokens = bridge[0].split()
+    for at, literal in _REPLAY_CASES[case][2].items():
+        assert tokens[at] == literal
+    assert replay == bridge
+
+
+def test_a_missing_sidecar_row_warns_and_recovers_by_value(
+        g, tmp_path: Path) -> None:
+    """Fail closed: without its ``/opensees/computed_sections`` row a
+    computed section's moduli are unknown, so the replay warns and keeps
+    the by-value recovery (an integral float replays as an int)."""
+    from apeGmsh.opensees._internal.replay_types import ReplaySlotTypeWarning
+
+    with pytest.warns(ReplaySlotTypeWarning,
+                      match="0 /opensees/computed_sections rows"):
+        bridge, replay = _bridge_and_replay(
+            g, tmp_path, "elastic-float-E", drop_sidecar=True)
+    assert bridge[0].split()[3] == "200000.0"
+    assert replay[0].split()[3] == "200000"
 
 
 def _computed_table(path: Path) -> "tuple[Any, int]":
@@ -275,11 +316,50 @@ def test_an_unexpected_computed_section_field_still_warns(
         entry, params=MappingProxyType({**entry.params, field: held}))
     params = dict(table.params)
     params[row] = (bad,)
-    st = SlotTypes(dataclasses.replace(table, params=MappingProxyType(params)))
+    st = SlotTypes(dataclasses.replace(table, params=MappingProxyType(params)),
+                   computed=_computed_rows(archive))
     with pytest.warns(ReplaySlotTypeWarning, match=match):
         out = st.recover("section", 1, "Elastic", (200000, 8.5))
     assert out == (200000, 8.5)
     assert type(out[0]) is int
+
+
+def _computed_rows(path: Path) -> list[tuple[int, str]]:
+    return [(tag, payload) for tag, _name, payload
+            in read_computed_sections(str(path))]
+
+
+@pytest.mark.parametrize("fault, match", [
+    ("duplicate", "2 /opensees/computed_sections rows"),
+    ("kind", "not a 'elastic' lowering"),
+    ("E_ref", "E_ref='x', not a number"),
+    ("G_ref", "G_ref=True, not a number"),
+])
+def test_a_faulty_sidecar_row_warns(
+        g, tmp_path: Path, fault: str, match: str) -> None:
+    """Fail closed: the moduli come from exactly one well-formed row of
+    the section's tag; any other row set warns and keeps the by-value
+    recovery."""
+    from apeGmsh.opensees._internal.replay_types import (
+        ReplaySlotTypeWarning, SlotTypes,
+    )
+
+    sec = _analyzer(g)
+    archive = tmp_path / "model.h5"
+    _frame(lambda ops: ops.section.ComputedSection(analysis=sec)).h5(
+        str(archive))
+    table, _row = _computed_table(archive)
+    ((tag, payload),) = _computed_rows(archive)
+    if fault == "duplicate":
+        rows = [(tag, payload), (tag, payload)]
+    else:
+        blob = json.loads(payload)
+        blob[fault] = {"kind": "fiber", "E_ref": "x", "G_ref": True}[fault]
+        rows = [(tag, json.dumps(blob))]
+    st = SlotTypes(table, computed=rows)
+    with pytest.warns(ReplaySlotTypeWarning, match=match):
+        out = st.recover("section", tag, "Elastic", (200000, 8.5))
+    assert out == (200000, 8.5)
 
 
 def test_reader_tolerates_absence(tmp_path: Path) -> None:

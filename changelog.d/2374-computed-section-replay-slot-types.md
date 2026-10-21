@@ -9,18 +9,22 @@ integral float `G=80000.0` came back as `80000`.
 
 The slot types do not depend on the analyzer, so the recovery no longer
 rebuilds it. It dry runs the plain section the lowering emits (`section
-Elastic` in the 2-D or 3-D form, or `section Fiber` with its `-GJ` flag),
-with `1.0` for each number the analyzer computes and the archived value of
-each field the user set. A replayed computed section now writes the
-bridge's line, literal for literal, and does not warn:
+Elastic` in the 2-D or 3-D form, or `section Fiber` with its `-GJ` flag).
+The numbers the analyzer computes by division (`A`, `Iz`, `J`, the shear
+factors) are always floats. The moduli `E` and `G`, and the fiber `GJ`,
+take the values that the section's `/opensees/computed_sections` row
+records (`E_ref`, `G_ref`, `GJ`). That row's JSON keeps each value's
+int/float type. A replayed computed section now writes the bridge's line,
+literal for literal, and does not warn:
 
-- `E` and `G` the user set keep their type: `E=210000` stays `210000`.
-- An `E` or `G` that the lowering takes from the analyzer's material
-  replays as a float. `SectionMaterial` declares both as `float`, and the
-  archive does not record the material. A material written with an int
-  modulus (`SectionMaterial(E=200000, ...)`) therefore replays as
-  `200000.0` where the bridge wrote `200000`. The two values are equal.
-- Any other field the archive records by name only still warns.
+- `SectionMaterial(E=200e3, nu=0.3)` replays `200000.0`, and
+  `SectionMaterial(E=200000, nu=0.3, G=80000)` replays `200000` and
+  `80000`, as the bridge wrote them.
+- `E` and `G` the user set on the section keep their type: `E=210000`
+  stays `210000`.
+- A computed section whose tag has no single well-formed row in that table
+  warns and recovers by value, as before. So does any other field the
+  archive records by name only.
 
 In `apeGmsh.assembly`, the rehydrator's `AssemblyError` for an unknown
 material family is deleted, because it could never fire. The model reader

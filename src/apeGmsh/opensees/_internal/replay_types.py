@@ -22,14 +22,17 @@ A :class:`~apeGmsh.opensees.section.computed.ComputedSection` holds its
 ``SectionProperties`` analyzer, which the archive records by class name
 only (:class:`~apeGmsh.opensees.emitter.h5_reader.DeclOpaque`), so it
 cannot be rebuilt. Its slot types do not need the analyzer: its lowering
-emits a plain section, and every number the analyzer computes there is a
-float. :data:`_LOWERED_WITHOUT` dry runs that plain section with ``1.0``
-for each computed number and the archived value of each field the user
-set (``E``, ``G``, ``ndm``, ``GJ``), so an integral ``E=210000`` stays an
-int and the computed ``A`` is a float. A modulus the lowering defaults
-from the analyzer's material (``E`` or ``G`` left ``None``) replays as a
-float: ``SectionMaterial`` declares them ``float``, and the material is
-not archived. Any other field archived by name only still warns.
+emits a plain section. :data:`_LOWERED_WITHOUT` dry runs that plain
+section with ``1.0`` for each number the analyzer computes by division
+(``A``, ``Iz``, ``J``, the shear factors: always floats). The slots whose
+value can be a literal passed through, the moduli ``E`` and ``G`` and the
+fiber ``GJ``, take the value of the section's ``/opensees/computed_sections``
+row (``E_ref``, ``G_ref``, ``GJ``: the values the bridge emitted, which the
+row's JSON records with their int/float type). So ``E=210000`` and a
+``SectionMaterial(E=200000)`` replay as ``200000``-style ints, and
+``200e3`` as ``200000.0``. A computed section whose tag has no single row
+in that table, or whose row does not match it, warns, as does any other
+field archived by name only.
 
 Nothing changes, and the reader's by-value recovery stands, when the
 archive has no ``decl_params`` (every file below 2.26.0, a rewrite of
@@ -43,6 +46,7 @@ from __future__ import annotations
 
 import bisect
 import dataclasses
+import json
 import sys
 import warnings
 from collections.abc import Mapping
@@ -158,36 +162,54 @@ def _stub(cls: type[Primitive]) -> Primitive:
     return stub
 
 
-def _computed_section(fields: Mapping[str, Any]) -> Primitive:
-    """The plain section a :class:`ComputedSection` lowers to, with ``1.0``
-    for each number its analyzer computes (see the module docstring)."""
+def _number(payload: Mapping[str, Any], key: str) -> int | float:
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _Unrecoverable(
+            f"its computed_sections row holds {key}={value!r}, not a number")
+    return value
+
+
+def _computed_section(
+    fields: Mapping[str, Any], rows: "Sequence[str]",
+) -> Primitive:
+    """The plain section a :class:`ComputedSection` lowers to: ``1.0`` for
+    each number its analyzer computes by division, and the moduli / ``GJ``
+    of its one ``/opensees/computed_sections`` row (``rows``, that table's
+    JSON payloads for the section's tag; see the module docstring)."""
     from apeGmsh.sections._lowering import ElasticLoweringParams
 
     kind = fields["kind"]
+    if kind not in ("elastic", "fiber"):
+        raise _Unrecoverable(f"the ComputedSection kind {kind!r} is unknown")
+    if len(rows) != 1:
+        raise _Unrecoverable(
+            f"{len(rows)} /opensees/computed_sections rows hold its tag")
+    payload = json.loads(rows[0])
+    if not isinstance(payload, dict) or payload.get("kind") != kind:
+        raise _Unrecoverable(
+            f"its computed_sections row is not a {kind!r} lowering")
     if kind == "elastic":
-        e, g = fields["E"], fields["G"]
         params = ElasticLoweringParams(
-            E=1.0 if e is None else e, A=1.0, Iz=1.0, Iy=1.0,
-            G=1.0 if g is None else g, J=1.0, alphaY=1.0, alphaZ=1.0)
+            E=_number(payload, "E_ref"), A=1.0, Iz=1.0, Iy=1.0,
+            G=_number(payload, "G_ref"), J=1.0, alphaY=1.0, alphaZ=1.0)
         return ElasticSection(**params.section_kwargs(fields["ndm"]))
-    if kind == "fiber":
-        materials = fields["fibers"]
-        if not materials:
-            raise _Unrecoverable("the fiber lowering holds no fibers")
-        gj = fields["GJ"]
-        point = FiberPoint(material=next(iter(materials.values())),
-                           y=0.0, z=0.0, area=1.0)
-        return Fiber(fibers=(point,), GJ=1.0 if gj is None else gj)
-    raise _Unrecoverable(f"the ComputedSection kind {kind!r} is unknown")
+    materials = fields["fibers"]
+    if not materials:
+        raise _Unrecoverable("the fiber lowering holds no fibers")
+    point = FiberPoint(material=next(iter(materials.values())),
+                       y=0.0, z=0.0, area=1.0)
+    return Fiber(fibers=(point,), GJ=_number(payload, "GJ"))
 
 
 #: A class one of whose fields the archive records by name only (a
 #: ``DeclOpaque`` of the named type) but whose slot types do not depend on
 #: it: that field, the type it holds, and the stand-in built from the
-#: other fields.
+#: other fields and the tag's ``/opensees/computed_sections`` payloads.
 _LOWERED_WITHOUT: dict[
     type[Primitive],
-    tuple[str, str, Callable[[Mapping[str, Any]], Primitive]],
+    tuple[str, str,
+          Callable[[Mapping[str, Any], "Sequence[str]"], Primitive]],
 ] = {
     ComputedSection: ("analysis", "SectionProperties", _computed_section),
 }
@@ -198,12 +220,19 @@ class SlotTypes:
     ``/opensees/decl_params`` (see the module docstring).
 
     ``table`` is the archive's :meth:`H5Model.declarations`; ``None`` (an
-    archive without ``decls``) recovers nothing. One instance serves one
-    archive and caches each declaration's dry run.
+    archive without ``decls``) recovers nothing. ``computed`` holds the
+    ``(tag, payload_json)`` rows of ``/opensees/computed_sections``. One
+    instance serves one archive and caches each declaration's dry run.
     """
 
-    def __init__(self, table: "DeclarationTable | None") -> None:
+    def __init__(
+        self, table: "DeclarationTable | None", *,
+        computed: "Sequence[tuple[int, str]]" = (),
+    ) -> None:
         self._table = table
+        self._computed: dict[int, list[str]] = {}
+        for ctag, payload in computed:
+            self._computed.setdefault(int(ctag), []).append(payload)
         self._row_of_key: dict[str, int] = {}
         self._runs: dict[str, tuple[list[int], list[tuple[int, int]]]] = {}
         if table is not None and table.params:
@@ -279,7 +308,7 @@ class SlotTypes:
             return None
         where = f"{table.decls[decl].key!r} ({entries[0].type})"
         try:
-            prim = self._rebuild(decl)
+            prim = self._rebuild(decl, tag)
             rec = RecordingEmitter()
             set_tag_resolver(rec, lambda _p: _STUB_TAG)
             if kind == "element":
@@ -310,9 +339,9 @@ class SlotTypes:
                 f"this build has no {family} class {type_name!r}")
         return cls
 
-    def _rebuild(self, decl: int) -> Primitive:
+    def _rebuild(self, decl: int, tag: int) -> Primitive:
         """The primitive declaration ``decl`` archived, its references
-        stubbed."""
+        stubbed; ``tag`` is the tag being replayed."""
         table = self._table
         assert table is not None
         (entry,) = table.params[decl]
@@ -327,7 +356,8 @@ class SlotTypes:
                 f"the field {field!r} holds {held!r}, not a {held_type} "
                 "archived by name")
         rest = {k: v for k, v in entry.params.items() if k != field}
-        return stand_in(self._fields(cls, rest, cls.__module__))
+        return stand_in(self._fields(cls, rest, cls.__module__),
+                        tuple(self._computed.get(tag, ())))
 
     def _fields(
         self, cls: type, params: Mapping[str, Any], module: str,
