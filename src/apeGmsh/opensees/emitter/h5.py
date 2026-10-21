@@ -650,7 +650,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     hashes differently once at this minor; any other archive is
 #:     unchanged. A 2.32 reader opens 2.12 through 2.32; a 2.31.x reader
 #:     REFUSES a 2.32.x file.
-#:   * 2.33.0 — K #2372 (maintainer ruling on #2220): additive — two
+#:   * 2.33.0 — value requirement tokens: additive — two
 #:     new ``/opensees@requires`` tokens, derived from argument values by
 #:     the stamp writer (``H5Emitter.solve_stamp``): ``"mpco"`` (any
 #:     ``recorder mpco``) and ``"mpi"`` (a Mumps-family ``system``, or a
