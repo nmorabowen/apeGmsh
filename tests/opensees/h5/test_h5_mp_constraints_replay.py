@@ -94,18 +94,24 @@ def _fem(*, partitioned: bool, node_constraints: "list[Any]" = (),
         model_name="mp_replay")
 
 
+def _bridge(fem: FEMData) -> apeSees:
+    """The elastic column pair on ``fem``, fixed at ``"Base"``."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    ops.fix(pg="Base", dofs=(1,) * 6)
+    return ops
+
+
 def _archive(fem: FEMData, tmp_path: Path) -> "tuple[str, Path]":
     """The bridge's flat Tcl deck and the ``model.h5`` of the same model."""
     with warnings.catch_warnings():
         # The auto-emitted handler and partition chain advisories.
         warnings.simplefilter("ignore")
-        ops = apeSees(fem)
-        ops.model(ndm=3, ndf=6)
-        transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
-        ops.element.elasticBeamColumn(
-            pg="Cols", transf=transf,
-            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
-        ops.fix(pg="Base", dofs=(1,) * 6)
+        ops = _bridge(fem)
         deck = tmp_path / "bridge.tcl"
         ops.tcl(str(deck), flat=True)
         path = tmp_path / "model.h5"
@@ -158,6 +164,21 @@ _KINDS: "dict[str, dict[str, list[Any]]]" = {
 }
 
 
+def _streams(kinds: str) -> "dict[str, list[Any]]":
+    """The :data:`_KINDS` streams of the comma-separated ``kinds``."""
+    out: "dict[str, list[Any]]" = {}
+    for k in kinds.split(","):
+        for stream, recs in _KINDS[k].items():
+            out.setdefault(stream, []).extend(recs)
+    return out
+
+
+def _mp_bridge(kinds: str = "equal_dof", partitioned: bool = False) -> apeSees:
+    """The bridge on :func:`_fem` carrying the comma-separated ``kinds``:
+    the R1b round-trip oracle's MP-constraint corpus rows (#2405)."""
+    return _bridge(_fem(partitioned=partitioned, **_streams(kinds)))
+
+
 @pytest.mark.parametrize("partitioned", [False, True],
                          ids=["flat", "partitioned"])
 @pytest.mark.parametrize("kind", sorted(_KINDS))
@@ -185,11 +206,7 @@ def test_named_constraint_keeps_its_comment(tmp_path):
                          ids=["flat", "partitioned"])
 def test_replay_deck_equals_bridge_deck(partitioned, tmp_path):
     # Every kind at once: the replay is the bridge's deck, line for line.
-    streams: "dict[str, list[Any]]" = {
-        "node_constraints": [], "surface_constraints": []}
-    for k in ("equal_dof", "rigid_beam", "rigid_diaphragm", "embedded"):
-        for stream, recs in _KINDS[k].items():
-            streams[stream] += recs
+    streams = _streams("equal_dof,rigid_beam,rigid_diaphragm,embedded")
     fwd, path = _archive(_fem(partitioned=partitioned, **streams), tmp_path)
     assert _mp_lines(_replay(path)) == _mp_lines(fwd)
     assert len(_mp_lines(fwd)) == 4

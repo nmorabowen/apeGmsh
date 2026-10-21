@@ -9,6 +9,12 @@ no deck record, so the replayed deck silently left them out.  Replay now
 raises :class:`ReplaySkippedStreamWarning`, naming each stream and its
 count, iff the model carries one; a model without any stays silent.
 
+Since #2405 the global ``/opensees/constraints`` MP rows replay, so an
+equalDOF / rigidLink / rigidDiaphragm / embeddedNode the archive stores is
+no longer skipped; the stream tables below (``stage_mp_keys=frozenset()``,
+no archived row) still name each kind. Phantom-node streams refuse
+(#2411, ``test_h5_mp_constraints_replay.py``).
+
 The oracle is the forward deck: a stream is "skipped" when the forward
 ``apeSees`` deck carries its lines and the replayed deck does not.  The
 end-to-end tests check the warning against exactly that difference.
@@ -111,14 +117,25 @@ def test_clean_model_replays_silently(tmp_path, target):
     assert "forceBeamColumn" in deck
 
 
-def test_equal_dof_replay_warns_and_names_the_stream(tmp_path):
+def test_equal_dof_replays_and_stays_silent(tmp_path):
     fwd, path = _archive(_frame_fem(node_constraints=[_EQUAL_DOF]), tmp_path)
     # The oracle: the forward deck ties the nodes ...
     assert _lines(fwd, "equalDOF") == ["equalDOF 1 2 1 2 3"]
+    # ... and so does the replay, from the archived row (#2405), silently.
+    deck = _replay_silently(OpenSeesModel.from_h5(path), "tcl")
+    assert _lines(deck, "equalDOF") == ["equalDOF 1 2 1 2 3"]
+
+
+def test_equal_dof_without_its_row_warns_and_names_the_stream(tmp_path):
+    # An archive that lacks the row still warns by name, never silently.
+    import h5py
+
+    _fwd, path = _archive(_frame_fem(node_constraints=[_EQUAL_DOF]), tmp_path)
+    with h5py.File(path, "r+") as f:
+        del f["opensees/constraints/equalDOF"]
     om = OpenSeesModel.from_h5(path)
     with pytest.warns(ReplaySkippedStreamWarning) as caught:
         deck = om.build("tcl")
-    # ... and the replayed deck does not, which the warning says.
     assert _lines(deck, "equalDOF") == []
     msgs = [str(w.message) for w in caught
             if w.category is ReplaySkippedStreamWarning]
