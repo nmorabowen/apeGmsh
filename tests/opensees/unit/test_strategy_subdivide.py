@@ -197,3 +197,24 @@ def test_rescued_increments_land_on_the_grid_in_py_and_tcl(
     rows_tcl = np.loadtxt(tmp_path / "tcl" / "t.out")
     assert rows_tcl.shape == rows.shape
     assert np.allclose(rows_tcl, rows, rtol=1e-6, atol=1e-12)
+
+
+def test_a_flat_live_run_refuses_a_subdivide_ladder(column) -> None:
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    ops = apeSees(column)
+    ops.model(ndm=2, ndf=2)
+    m = ops.nDMaterial.ElasticIsotropic(E=1e5, nu=0.3, rho=2.0)
+    ops.element.FourNodeQuad(pg="S", thickness=1.0, material=m)
+    ops.fix(pg="Base", dofs=(1, 1))
+    ops.test.NormDispIncr(tol=1e-8, max_iter=5)
+    ops.algorithm.Newton()
+    ops.integrator.Newmark(gamma=0.5, beta=0.25)
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.UmfPack()
+    ops.analysis.Transient()
+    lad = ops.strategy.Ladder(rungs=(ops.algorithm.Newton(),
+                                     ops.strategy.Subdivide(4)))
+    with pytest.raises(BridgeError, match="decks only"):
+        ops.analyze(steps=2, dt=DT, strategy=lad)

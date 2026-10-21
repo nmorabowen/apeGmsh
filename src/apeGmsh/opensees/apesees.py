@@ -9894,6 +9894,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             )
         self._check_analysis_chain_for_analyze(
             strategy_attached=strategy is not None)
+        if strategy is not None:
+            strategy.check_live()
         self._check_explicit_solver_compat()
 
         # Local import — keeps openseespy out of import-time for users

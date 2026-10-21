@@ -55,6 +55,7 @@ __all__ = [
     "Ladder",
     "OpenSeesPyDriver",
     "Subdivide",
+    "LIVE_SUBDIVIDE_REFUSAL",
     "SUBDIVIDE_TOKEN",
     "Substep",
     "SubstepDriver",
@@ -532,6 +533,15 @@ class Substep:
 _MAX_RUNGS = 8
 
 
+#: Why a flat live ``ops.analyze(strategy=)`` refuses a Subdivide ladder.
+LIVE_SUBDIVIDE_REFUSAL = (
+    "apeSees.analyze: a Subdivide rung is emitted into py / tcl decks only; "
+    "the live runner does not know the piece loop yet (ADR 0057 Amendment 1 "
+    "§3). Run the stage through ops.py(path, run=True) or ops.tcl(path, "
+    "run=True), or drop the Subdivide rungs for a live run."
+)
+
+
 @dataclass(frozen=True, slots=True)
 class Subdivide:
     """Retry a failed transient increment in ``n`` pieces (ADR 0057
@@ -663,6 +673,15 @@ class Ladder:
                 "stage's analysis chain, or put an ops.algorithm rung first."
             )
         return StrategySpec(name=self.name, rungs=tuple(rung_args))
+
+    def check_live(self) -> None:
+        """Raise when this ladder cannot drive a flat live run: a
+        :class:`Subdivide` rung is emitted into decks only (ADR 0057
+        Amendment 1 §3)."""
+        if self.subdivides:
+            from .._internal.build.errors import BridgeError
+
+            raise BridgeError(LIVE_SUBDIVIDE_REFUSAL)
 
     @property
     def subdivides(self) -> bool:
