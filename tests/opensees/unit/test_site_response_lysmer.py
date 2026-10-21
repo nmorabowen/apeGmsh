@@ -196,3 +196,48 @@ def test_partly_fixed_tie_warns() -> None:
         _warn_partly_fixed_ties(fem, {3}, 2)   # master not fixed: silent
         recs[0].dofs = [2]
         _warn_partly_fixed_ties(fem, {1}, 2)   # only the fixed DOF: fine
+
+
+def test_quadratic_base_is_refused(tmp_path) -> None:
+    g = apeGmsh(model_name="lysmer_q", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_rectangle(0.0, 0.0, 0.0, W, 1.0, label="soil")
+        g.physical.add_surface("soil", name="Soil")
+        g.model.select(None, dim=1).on_plane(
+            (0, 0, 0), (0, 1, 0), tol=1e-6).to_physical("Base")
+        gnd = g.decouple_node_set("Base", label="base_ground")
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(dim=2)
+        g.mesh.generation.set_order(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    finally:
+        g.end()
+    with pytest.raises(ValueError, match="quadratic base"):
+        lysmer_base(_ops(fem), "Base", gnd, rho=2.0, vs=300.0)
+
+
+def test_ndf_override_for_soil_under_a_wider_model(strip, tmp_path) -> None:
+    fem, gnd = strip
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e5, nu=0.3, rho=2.0)
+    ops.element.FourNodeQuad(pg="Soil", thickness=1.0, material=mat)
+    base = lysmer_base(ops, "Base", gnd, rho=2.0, vs=300.0, ndf=2)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        base.add_input(p)
+    ops.tcl(str(tmp_path / "m.tcl"))
+    assert f"fix {base.ground[0]} 1 1" in (tmp_path / "m.tcl").read_text()
+
+
+def test_equation_rows_count_as_ties(strip, tmp_path) -> None:
+    fem, gnd = strip
+    ops = _ops(fem)
+    nodes = sorted(base_tributary_area(fem, "Base", ndm=2))
+    ops.equation_constraint(constrained=(nodes[1], 2),
+                            retained=[(nodes[0], 2, -1.0)])
+    base = lysmer_base(ops, "Base", gnd, rho=2.0, vs=300.0)
+    ops.tcl(str(tmp_path / "m.tcl"))
+    text = (tmp_path / "m.tcl").read_text()
+    assert f"fix {nodes[1]} 0 1" not in text
+    assert f"fix {nodes[0]} 0 1" in text and len(base.nodes) == len(nodes)

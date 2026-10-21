@@ -20,3 +20,15 @@ velocity, so the force is `2 rho Vs A_i v_inc(t)`; `motion="incident"`
 doubles it for an incident-wave velocity. A live test checks the result
 against a closed form: over a matched half-space, the surface velocity
 of a homogeneous column is the outcrop pulse delayed by `H / Vs`.
+
+Scope: linear base elements only (a quadratic base is refused). `ndf=`
+sizes the base when the soil's ndf differs from the model's. On a model
+reloaded from `model.h5`, `ground=` can be the node set's label, and a
+2-D base must be straight; a reloaded 3-D base is refused with a
+`lysmer_base` error. The vertical fixity skips any DOF a tie already
+constrains: an `equal_dof` / `periodic` record, or an
+`ops.equation_constraint` row declared before the call. A
+`PartlyFixedTieWarning` flags a tie whose master the helper fixed on
+some of the tied DOFs only. The `Transformation` handler mishandles such
+a tie (#2396); use `Lagrange`. A viscous base gives a static gravity
+stage no lateral restraint, so restrain the base there.

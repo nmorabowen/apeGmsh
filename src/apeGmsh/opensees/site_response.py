@@ -105,7 +105,16 @@ def base_tributary_area(
     """
     if ndm == 3:
         from ._internal.spring_bed import nodal_tributary_area
-        return nodal_tributary_area(fem, base)
+        try:
+            return nodal_tributary_area(fem, base)
+        except ValueError:
+            raise ValueError(
+                f"lysmer_base: base={base!r} names no label or physical "
+                f"group with face elements on the FEM snapshot. A 3-D base "
+                f"needs its faces, which a model reloaded from model.h5 "
+                f"does not carry: build the bridge from the session's own "
+                f"snapshot."
+            ) from None
     conn: Any = None
     for groups in (fem.nodes.labels, fem.nodes.physical):
         if groups is not None and base in groups:
@@ -226,13 +235,28 @@ def _warn_partly_fixed_ties(fem: Any, fixed: set[int], dof: int) -> None:
         )
 
 
-def _tied_slave_dofs(fem: Any) -> set[tuple[int, int]]:
-    """``(node, dof)`` of every slave DOF an ``equal_dof`` record ties."""
+def _group_node_ids(fem: Any, name: str) -> list[int]:
+    for groups in (fem.nodes.labels, fem.nodes.physical):
+        try:
+            ids = [int(n) for n in groups.node_ids(name)]
+        except (AttributeError, KeyError, ValueError):
+            continue  # not a name of this namespace
+        if ids:
+            return ids
+    return []
+
+
+def _tied_slave_dofs(fem: Any, ops: Any = None) -> set[tuple[int, int]]:
+    """``(node, dof)`` of every DOF a tie constrains: the slave side of an
+    ``equal_dof`` / ``equal_dof_mixed`` record, and the constrained
+    ``(node, dof)`` of a bridge ``ops.equation_constraint`` row."""
     out: set[tuple[int, int]] = set()
     for rec in getattr(fem.nodes, "constraints", None) or ():
-        if getattr(rec, "kind", None) == "equal_dof":
+        if getattr(rec, "kind", None) in ("equal_dof", "equal_dof_mixed"):
             for d in rec.dofs:
                 out.add((int(rec.slave_node), int(d)))
+    for row in getattr(ops, "_equation_constraint_records", None) or ():
+        out.add((int(row.cnode), int(row.cdof)))
     return out
 
 
@@ -245,6 +269,7 @@ def lysmer_base(
     vs: float,
     vp: float | None = None,
     thickness: float = 1.0,
+    ndf: int | None = None,
 ) -> LysmerBase:
     """Build a Lysmer–Kuhlemeyer viscous base under ``base``.
 
@@ -254,9 +279,10 @@ def lysmer_base(
     DOF (1 in 2-D; 1 and 2 in 3-D) and, when ``vp`` is given,
     ``C_p = rho Vp A_i`` on the vertical one (2 in 2-D, 3 in 3-D). It
     fixes every ground node, sizes their ``ndf``, and, with no ``vp``,
-    fixes the vertical DOF of every base node — except a DOF a
-    ``g.constraints.periodic`` / ``equal_dof`` tie already slaves to a
-    fixed master, which the tie carries. That leaves the master partly
+    fixes the vertical DOF of every base node — except a DOF a tie
+    already constrains (``g.constraints.periodic`` / ``equal_dof`` or an
+    ``ops.equation_constraint`` row declared before this call), which
+    the tie carries from its fixed master. That leaves the master partly
     fixed, which OpenSees' Transformation handler mishandles (#2396): it
     warns :class:`PartlyFixedTieWarning`, and such a model needs
     ``ops.constraints.Lagrange()`` or ``Penalty``. Add the input motion with
@@ -279,11 +305,25 @@ def lysmer_base(
     thickness
         Out-of-plane thickness of a 2-D model (the base area per unit
         length); ignored in 3-D.
+    ndf
+        The DOF count of the base nodes, which the ground nodes, the
+        fixity masks and the input forces take; default the model's
+        ``ndf``. Set it when the soil's ndf differs from the model's (a
+        2-D frame at ``ndf=3`` on ``ndf=2`` soil: ``ndf=2``).
+
+    Scope: linear base elements only (a quadratic base is refused: its
+    midside nodes would get no dashpot). On a model reloaded from
+    ``model.h5`` the 2-D base must be straight (its line elements are not
+    archived, so the nodes are ordered along it) and a 3-D base is not
+    supported. A static gravity stage gets no horizontal restraint from a
+    viscous base: restrain the base laterally there (``s.fix``, released
+    with ``s.remove_sp`` before shaking).
     """
     if ops._ndm is None or ops._ndf is None:
         raise ValueError(
             "lysmer_base: call ops.model(ndm=, ndf=) before building the base.")
-    ndm, ndf = int(ops._ndm), int(ops._ndf)
+    ndm = int(ops._ndm)
+    ndf = int(ops._ndf) if ndf is None else int(ndf)
     if ndm not in (2, 3):
         raise ValueError(f"lysmer_base: ndm must be 2 or 3, got {ndm}.")
     for what, value in (("rho", rho), ("vs", vs), ("thickness", thickness)):
@@ -295,6 +335,14 @@ def lysmer_base(
     fem = ops.fem
     area = base_tributary_area(fem, base, ndm=ndm, thickness=thickness)
     nodes = tuple(sorted(area))
+    on_base = _group_node_ids(fem, base)
+    midside = sorted(set(on_base) - set(area))
+    if midside:
+        raise ValueError(
+            f"lysmer_base: base={base!r} has nodes with no corner share "
+            f"{midside[:5]} (a quadratic base); only linear base elements "
+            f"are supported, each midside node would get no dashpot."
+        )
     if isinstance(ground, DecoupledNodeSetDef):
         pairs = ground.pairs()
         set_name = ground.label or ground.source
@@ -343,7 +391,7 @@ def lysmer_base(
     for gtag in gtags:
         ops.ndf(gtag, ndf=ndf)
     if c_p is None:
-        tied = _tied_slave_dofs(fem)
+        tied = _tied_slave_dofs(fem, ops)
         free = [n for n in nodes if (n, vertical) not in tied]
         mask = tuple(1 if d == vertical else 0 for d in range(1, ndf + 1))
         ops.fix(nodes=free, dofs=mask)

@@ -76,17 +76,17 @@ def test_matched_half_space_surface_is_the_delayed_outcrop(
     soil = ops.nDMaterial.ElasticIsotropic(
         E=2.0 * G_mod * (1.0 + NU), nu=NU, rho=RHO)
     ops.element.FourNodeQuad(pg="Soil", thickness=1.0, material=soil)
-    base = lysmer_base(ops, "Base", gnd, rho=RHO, vs=VS)
-    assert sum(base.c_s) == pytest.approx(RHO * VS * W)
     # Tie the two sides at every elevation: a 1-D shear column.
     left = sorted(fem.nodes.select(pg="Left").ids,
                   key=lambda n: fem.nodes.coords[list(fem.nodes.ids).index(n)][1])
     right = sorted(fem.nodes.select(pg="Right").ids,
                    key=lambda n: fem.nodes.coords[list(fem.nodes.ids).index(n)][1])
     for k, (nl, nr) in enumerate(zip(left, right)):
-        for d in ((1,) if k == 0 else (1, 2)):
+        for d in (1, 2):
             ops.equation_constraint(constrained=(int(nr), d),
                                     retained=[(int(nl), d, -1.0)])
+    base = lysmer_base(ops, "Base", gnd, rho=RHO, vs=VS)
+    assert sum(base.c_s) == pytest.approx(RHO * VS * W)
     series = ops.timeSeries.Path(dt=DT, values=tuple(v_in.tolist()))
     with ops.pattern.Plain(series=series) as p:
         base.add_input(p)
