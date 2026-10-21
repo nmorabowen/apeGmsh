@@ -516,7 +516,7 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
 #: node's other elements say: a beam's rotation), and an element whose
 #: nodes all have ndf ``ndm + 1`` may tie a slot the 2-D layout calls
 #: ``rz`` to a pore pressure, and blocks as an unknown class does
-#: (:meth:`LiveDomainFacts.rotation_roles`, #2407).
+#: (:meth:`LiveDomainFacts.rotation_roles`).
 _EMBEDDED_NODE_CLASS = "ASDEmbeddedNodeElement"
 
 #: Live class -> the slot of the FEM (Gmsh) connectivity each of its
