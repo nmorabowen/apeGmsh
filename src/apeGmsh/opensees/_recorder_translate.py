@@ -945,7 +945,9 @@ class LiveDomainFacts:
         deck that swaps their tags would record each one's motion under
         the other. Each FEM element touching such a node that the deck
         built (a live element of its FEM id) must have ``eleNodes`` equal
-        to its FEM connectivity, in order. A FEM element the deck did not
+        to its FEM connectivity, in order: in its live class's node order
+        (:data:`_NODE_ORDER_FOR_LIVE_CLASS`, read from its ``eleType``), as
+        :meth:`pair_elements` compares it. A FEM element the deck did not
         build is passed over only when its nodes are all nodes of one of
         those built elements: a point, edge or face of it (what
         ``get_fem_data()`` holds beside a deck of beams or solids, #2342),
@@ -953,7 +955,9 @@ class LiveDomainFacts:
         since a deck may have built it under another tag with the
         coincident nodes swapped. A shared-position node no FEM element
         touches refuses by name, since nothing tells its tag from the other
-        node's.
+        node's. An extra element the deck built on FEM nodes under a tag no
+        FEM element at the node holds is not detected here: it is a
+        difference between the deck and the FEMData, not a swap of tags.
         """
         import numpy as np
 
@@ -991,10 +995,16 @@ class LiveDomainFacts:
             for eid, conn_i in touching[n]:
                 if eid not in live_tags:
                     continue
+                cls = str(ops.eleType(eid))  # type: ignore[attr-defined]
+                order = _NODE_ORDER_FOR_LIVE_CLASS.get(cls)
+                expect = (conn_i if order is None or len(order) != len(conn_i)
+                          else [conn_i[i] for i in order])
                 live = [int(v) for v in ops.eleNodes(eid)]  # type: ignore[attr-defined]
-                if live != conn_i:
-                    why = (f"FEM element {eid} has nodes {conn_i}, the live "
-                           f"element {eid} has {live}")
+                if live != expect:
+                    as_order = ("" if expect is conn_i
+                                else f" ({cls} order {expect})")
+                    why = (f"FEM element {eid} has nodes {conn_i}{as_order}, "
+                           f"the live element {eid} has {live}")
                     break
                 pinned.append(set(conn_i))
             if not why:
