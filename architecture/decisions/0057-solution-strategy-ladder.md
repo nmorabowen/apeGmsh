@@ -264,9 +264,9 @@ harvesting.
 
 ## Amendment 1 (2026-10-21) — the transient `Subdivide` rung (#2403)
 
-**Status:** Proposed. The maintainer ruled the direction on 2026-10-21
-(option (a) in #2403, relayed by T), and ratifies this text before any
-code.
+**Status:** Accepted (2026-10-21). The maintainer ruled the direction
+(option (a) in #2403) and ratified this text the same day, recorded on
+#2408 and #2403 and relayed by T.
 
 **Context.** Open question 2 left transient analyses out of v1. A staged
 transient deck cannot cut its time step on a failed increment: the ladder
