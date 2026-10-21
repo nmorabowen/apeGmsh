@@ -164,10 +164,12 @@ ELE_TAG_ElasticForceBeamColumn3d = 76
 ELE_TAG_ForceBeamColumnCBDI2d = 77
 ELE_TAG_ElasticTimoshenkoBeam2d = 145
 ELE_TAG_ElasticTimoshenkoBeam3d = 146
-# Ladruno-fork disp-based beam (live from ladruno:SRC/classTags.h). Distributed
+# Ladruno-fork disp/force beams (live from ladruno:SRC/classTags.h). Distributed
 # plasticity with a beamIntegration rule => line-stations topology.
 ELE_TAG_LadrunoDispBeamColumn2d = 33013
 ELE_TAG_LadrunoDispBeamColumn3d = 33014
+ELE_TAG_LadrunoForceBeamColumn2d = 33024
+ELE_TAG_LadrunoForceBeamColumn3d = 33025
 # Ladruno-fork IMK concentrated-plasticity beam (live from ladruno:SRC/classTags.h).
 # Closed-form elastic interior + rotational end springs (no sections) =>
 # nodal-forces + localForce line-station synthesis.
@@ -1518,6 +1520,8 @@ _LINE_STATION_CLASSES: tuple[tuple[str, int], ...] = (
     ("DispBeamColumn3d",         ELE_TAG_DispBeamColumn3d),
     ("LadrunoDispBeamColumn2d",  ELE_TAG_LadrunoDispBeamColumn2d),
     ("LadrunoDispBeamColumn3d",  ELE_TAG_LadrunoDispBeamColumn3d),
+    ("LadrunoForceBeamColumn2d", ELE_TAG_LadrunoForceBeamColumn2d),
+    ("LadrunoForceBeamColumn3d", ELE_TAG_LadrunoForceBeamColumn3d),
 )
 
 
@@ -1649,12 +1653,14 @@ _ELASTIC_BEAM_NODAL_CLASSES: frozenset[str] = frozenset(
 # the same single-block META (GAUSS_IDS = [-1], 12 columns in 3-D).
 _FRAME_BEAM_NODAL_CLASSES: tuple[tuple[str, int, int], ...] = (
     # (class_name, class_tag, ndm)
-    ("ForceBeamColumn2d",       ELE_TAG_ForceBeamColumn2d,       2),
-    ("ForceBeamColumn3d",       ELE_TAG_ForceBeamColumn3d,       3),
-    ("DispBeamColumn2d",        ELE_TAG_DispBeamColumn2d,        2),
-    ("DispBeamColumn3d",        ELE_TAG_DispBeamColumn3d,        3),
-    ("LadrunoDispBeamColumn2d", ELE_TAG_LadrunoDispBeamColumn2d, 2),
-    ("LadrunoDispBeamColumn3d", ELE_TAG_LadrunoDispBeamColumn3d, 3),
+    ("ForceBeamColumn2d",        ELE_TAG_ForceBeamColumn2d,        2),
+    ("ForceBeamColumn3d",        ELE_TAG_ForceBeamColumn3d,        3),
+    ("DispBeamColumn2d",         ELE_TAG_DispBeamColumn2d,         2),
+    ("DispBeamColumn3d",         ELE_TAG_DispBeamColumn3d,         3),
+    ("LadrunoDispBeamColumn2d",  ELE_TAG_LadrunoDispBeamColumn2d,  2),
+    ("LadrunoDispBeamColumn3d",  ELE_TAG_LadrunoDispBeamColumn3d,  3),
+    ("LadrunoForceBeamColumn2d", ELE_TAG_LadrunoForceBeamColumn2d, 2),
+    ("LadrunoForceBeamColumn3d", ELE_TAG_LadrunoForceBeamColumn3d, 3),
 )
 
 NODAL_FORCE_CATALOG.update({

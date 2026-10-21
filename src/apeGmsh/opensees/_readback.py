@@ -50,6 +50,7 @@ from .element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from .element.beam_column import (
     ElasticTimoshenkoBeam,
     LadrunoDispBeamColumn,
+    LadrunoForceBeamColumn,
     LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
@@ -99,7 +100,8 @@ from .element.zero_length import (
 #: acts on those slots).
 _ROTATIONAL_FAMILIES: tuple[type, ...] = (
     elasticBeamColumn, forceBeamColumn, dispBeamColumn,
-    ElasticTimoshenkoBeam, LadrunoDispBeamColumn, LadrunoIMKBeam,
+    ElasticTimoshenkoBeam, LadrunoDispBeamColumn, LadrunoForceBeamColumn,
+    LadrunoIMKBeam,
     ShellMITC4, ShellDKGQ, ASDShellQ4, ASDShellT3, LadrunoMembrane,
     ZeroLength, ZeroLengthSection, CoupledZeroLength, TwoNodeLink,
 )
@@ -272,6 +274,7 @@ _CLASS_FOR_TOKEN: "dict[str, type]" = _TokenTable({
     "dispBeamColumn": dispBeamColumn,
     "ElasticTimoshenkoBeam": ElasticTimoshenkoBeam,
     "LadrunoDispBeamColumn": LadrunoDispBeamColumn,
+    "LadrunoForceBeamColumn": LadrunoForceBeamColumn,
     "LadrunoIMKBeam": LadrunoIMKBeam,
     "ShellMITC4": ShellMITC4,
     "ShellDKGQ": ShellDKGQ,

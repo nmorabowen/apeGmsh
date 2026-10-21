@@ -73,6 +73,10 @@ EXPECTED_CUSTOM_RULE_KEYS: tuple[tuple[str, str], ...] = (
     ("LadrunoDispBeamColumn3d", "section_force"),
     ("LadrunoDispBeamColumn2d", "section_deformation"),
     ("LadrunoDispBeamColumn3d", "section_deformation"),
+    ("LadrunoForceBeamColumn2d", "section_force"),
+    ("LadrunoForceBeamColumn3d", "section_force"),
+    ("LadrunoForceBeamColumn2d", "section_deformation"),
+    ("LadrunoForceBeamColumn3d", "section_deformation"),
 )
 
 
@@ -313,6 +317,10 @@ EXPECTED_NODAL_FORCE_KEYS: tuple[tuple[str, str], ...] = (
     ("LadrunoDispBeamColumn2d", "local_force"),
     ("LadrunoDispBeamColumn3d", "global_force"),
     ("LadrunoDispBeamColumn3d", "local_force"),
+    ("LadrunoForceBeamColumn2d", "global_force"),
+    ("LadrunoForceBeamColumn2d", "local_force"),
+    ("LadrunoForceBeamColumn3d", "global_force"),
+    ("LadrunoForceBeamColumn3d", "local_force"),
 )
 
 

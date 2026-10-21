@@ -66,6 +66,10 @@ EXTRAS_ONLY: dict[str, str] = {
         "Ladruno fork beam, ndm-dispatched like dispBeamColumn; ndf carried "
         "by _EXTRA_CLASS_NDF_OK"
     ),
+    "LadrunoForceBeamColumn": (
+        "Ladruno fork beam, ndm-dispatched like forceBeamColumn; ndf carried "
+        "by _EXTRA_CLASS_NDF_OK"
+    ),
     "InertiaTruss": (
         "no material or section dependency (mass only), no slot grammar; "
         "ndf carried by _EXTRA_CLASS_NDF_OK"
@@ -103,7 +107,7 @@ EXTRAS_ONLY_BASELINE: frozenset[str] = frozenset({
     "forceBeamColumn",
     "dispBeamColumn",
     "LadrunoDispBeamColumn",
-    "LadrunoIMKBeam",
+    "LadrunoForceBeamColumn",
     "InertiaTruss",
     "ASDShellT3",
     "ZeroLength",
