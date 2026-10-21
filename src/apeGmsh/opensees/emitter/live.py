@@ -168,7 +168,7 @@ _FORK_ONLY_ELEMENTS = frozenset(
      "LadrunoQuad", "LadrunoCST", "LadrunoUP",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
      "LadrunoEmbeddedNode", "LadrunoRigidBody",
-     "LadrunoDispBeamColumn", "LadrunoIMKBeam",
+     "LadrunoDispBeamColumn", "LadrunoForceBeamColumn", "LadrunoIMKBeam",
      "LadrunoMembrane"})
 
 #: Integrator types that exist only in the Ladruno fork build. Unlike the

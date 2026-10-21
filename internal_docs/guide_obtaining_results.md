@@ -27,7 +27,7 @@ differs.
 - [Strategy A₁ — Export Tcl, run elsewhere](#strategy-a1-export-tcl-run-elsewhere)
 - [Strategy A₂ — Export Python, run elsewhere](#strategy-a2-export-python-run-elsewhere)
 - [Strategy A₃ — Live recorders in the notebook](#strategy-a3-live-recorders-in-the-notebook)
-- [Strategy B — Domain capture (broadest coverage)](#strategy-b-domain-capture-broadest-coverage)
+- [Strategy B — removed: the in-process capture (#2191)](#strategy-b-removed-the-in-process-capture-2191)
 - [Strategy C₁ — Export with MPCO, run with STKO](#strategy-c1-export-with-mpco-run-with-stko)
 - [Strategy C₂ — Live MPCO in the notebook](#strategy-c2-live-mpco-in-the-notebook)
 - [Picking a strategy](#picking-a-strategy) · [Reading the results](#reading-the-results) · [Common pitfalls](#common-pitfalls)
@@ -165,8 +165,8 @@ When `stage_id` is set and `stage_name` is left at its default (`"analysis"`), `
 ### How it works
 
 - `__enter__` validates the spec; raises immediately if it contains
-  any **modal** records (those need `ops.eigen()` driving and live on
-  Strategy B instead).
+  any **modal** records (modes come from `ops.eigen(n)`, or
+  `capture_live_modes` for a plain openseespy deck).
 - `begin_stage(name, kind)` issues `ops.recorder("Node", ...)` /
   `ops.recorder("Element", ...)` calls with output filenames prefixed
   `<name>__` so per-stage files don't collide.
@@ -183,9 +183,9 @@ When `stage_id` is set and `stage_name` is left at its default (`"analysis"`), `
 | `elements` (per-element-node forces) | Supported |
 | `gauss` (continuum stress/strain) | Supported |
 | `line_stations` (beam section forces) | Supported (emits paired integrationPoints recorder) |
-| `fibers` | Warn-and-skip — use `spec.capture` or `spec.emit_mpco` |
+| `fibers` | Warn-and-skip — use `spec.emit_mpco` or the fork's `.ladruno` |
 | `layers` | Warn-and-skip — same |
-| `modal` | **Raises** at `__enter__` — use `spec.capture` |
+| `modal` | **Raises** at `__enter__` — use `ops.eigen(n)` / `capture_live_modes` |
 
 | Pros | Cons |
 |---|---|
@@ -195,72 +195,25 @@ When `stage_id` is set and `stage_name` is left at its default (`"analysis"`), `
 
 ---
 
-## Strategy B — Domain capture (broadest coverage)
+## Strategy B — removed: the in-process capture (#2191)
 
-apeGmsh queries the live `ops` domain itself and writes apeGmsh's own
-native HDF5 directly. The most complete strategy — supports every
-topology level and modal stages.
+apeGmsh used to query the live `ops` domain itself and write its own
+native HDF5 (`DomainCaptureSpec` / `ops.domain_capture`). That route was
+deleted in #2191; files it wrote stay readable with
+`Results.from_native` (their `source_type` is `"domain_capture"`). Its
+jobs moved:
 
-```python
-import openseespy.opensees as ops
-
-with spec.capture(path="run.h5", fem=fem, ndm=3, ndf=3) as cap:
-    cap.begin_stage("gravity", kind="static")
-    # ... static analysis setup ...
-    for _ in range(n_grav):
-        ops.analyze(1, 1.0)
-        cap.step(t=ops.getTime())     # ← apeGmsh probes ops here
-    cap.end_stage()
-
-    cap.begin_stage("dynamic", kind="transient")
-    # ... dynamic analysis setup ...
-    for _ in range(n_dyn):
-        ops.analyze(1, dt)
-        cap.step(t=ops.getTime())
-    cap.end_stage()
-
-    # Modal stages — each mode becomes its own stage
-    cap.capture_modes(n_modes=10)
-
-# One file holds all stages including modes
-results = Results.from_native("run.h5", fem=fem, model=model)
-
-for mode in results.modes:
-    print(mode.mode_index, mode.frequency_hz, mode.period_s)
-```
-
-### How it works
-
-- Each `cap.step(t)` calls `ops.nodeDisp(...)`, `ops.eleResponse(...)`,
-  etc. for every record in the spec — translating canonical names to
-  the right openseespy call.
-- Per-step values buffer in RAM; `end_stage()` flushes a chunked HDF5
-  write via `NativeWriter`.
-- `capture_modes(n)` runs `ops.eigen(n)` and writes one stage per
-  mode with `kind="mode"` and the eigenvalue / frequency / period in
-  the stage attributes.
-
-### Coverage
-
-| Category | Status |
+| Job | Route now |
 |---|---|
-| All seven topology levels (incl. fibers, layers, springs) | Supported |
-| Modal | **Native via `capture_modes`** |
-| Multi-stage with mixed kinds | Yes |
+| Record an in-process run | `spec.emit_default("run", model_h5=...)` — the fork's `.ladruno`, MPCO on a stock build that has it, classic `.out` on pip; read with `run.results()` |
+| Several stages in one notebook run | Strategy A₃ (`emit_recorders`, one `begin_stage` per stage) |
+| Modes of a bridge model | `ops.eigen(n)` → `EigenResult.to_native(path)` / `.results()` |
+| Modes of a plain openseespy deck | `apeGmsh.results.live.capture_live_modes(model_h5, n, path)` |
+| Fibres, layers, per-material Gauss | `emit_mpco`, the fork's `.ladruno`, and pip `.out` fibres |
 
-| Pros | Cons |
-|---|---|
-| Broadest coverage | Slower than recorders for huge runs |
-| Interactive-friendly | Output is apeGmsh-native, not Tcl-compatible |
-| Modal handled natively | |
-
-> **Tri31 strain routing.** Tri31 has no element-level `"strains"`
-> branch in OpenSees (only `"stresses"`). For any class listed in
-> `PER_MATERIAL_STRAIN_CLASSES` (`solvers/_element_response.py:2072`),
-> capture queries strain per Gauss-point material via
-> `ops.eleResponse(eid, "material", "<gp>", "strain")`
-> (`capture/_domain.py:870-874`). Reads are unaffected — see the
-> Tri31 note in [`guide_results.md`](guide_results.md).
+Modes now land in their own native file: no route writes a run's
+static, mode and transient stages into one file the way the capture
+did (the open question is on #2191).
 
 ---
 
@@ -375,16 +328,17 @@ flowchart TD
     Q3 -->|Yes| C2[Strategy C₂<br/>emit_mpco]
     Q3 -->|No| Q4{Need fibers,<br/>layers, or modal?}
 
-    Q4 -->|Yes| B[Strategy B<br/>capture]
+    Q4 -->|Yes| B[Fork .ladruno, or<br/>ops.eigen for modes]
     Q4 -->|No| A3[Strategy A₃<br/>emit_recorders]
 ```
 
 **Quick rules of thumb:**
 
 - **Notebook + you control the build:** Strategy C₂ if you have STKO,
-  Strategy B otherwise.
+  `emit_default` otherwise.
 - **Notebook + simple recorders only:** Strategy A₃.
-- **Notebook + need modal / fibers / layers + no STKO:** Strategy B.
+- **Notebook + need modal / fibers / layers + no STKO:** modes from
+  `ops.eigen(n)`; fibres and layers from the fork's `.ladruno`.
 - **Cluster:** Strategy A₁ for general OpenSees, Strategy C₁ for STKO
   shops.
 - **Mixing in Python tooling:** Strategy A₂ (same as A₁ but Python
@@ -448,17 +402,16 @@ Results.from_recorders(spec, "out/", fem=fem, model=model, stage_id="gravity")
 
 You're running on a `openseespy` build without the MPCO recorder.
 Either switch to STKO's bundled Python distribution, or fall back
-to Strategy A₃ (`emit_recorders`) or Strategy B (`capture`).
+to Strategy A₃ (`emit_recorders`) or `emit_default`.
 
 ### "`emit_recorders` raises about modal records"
 
-The classic recorder path can't drive `ops.eigen()`. Move modal
-records to Strategy B (`capture`):
+The classic recorder path can't drive `ops.eigen()`. Take the modes
+from the eigen solve instead, into their own file:
 
 ```python
-# Modal records → use capture
-with spec.capture("modes.h5", fem=fem) as cap:
-    cap.capture_modes(n_modes=10)
+# Modes → ops.eigen on the bridge (capture_live_modes for a plain deck)
+ops.eigen(10).to_native("modes.h5")
 
 # Other records → emit_recorders separately
 with spec.emit_recorders("out/", model=model) as live:

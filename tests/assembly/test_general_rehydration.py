@@ -521,6 +521,43 @@ def test_time_series_factor_raises_before_registration(files, tmp_path):
                          r"'-factor' references a time series")
 
 
+def test_an_unknown_material_family_is_refused_by_the_reader_naming_it(
+        files, tmp_path):
+    """#2374: an archive carrying a material family the writer never writes
+    is refused by the model reader, ``MalformedH5Error`` naming the family,
+    before the rehydrator sees a model, so the rehydrator holds no refusal
+    of its own for it."""
+    import shutil
+
+    import h5py
+
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    path = tmp_path / "plastic.h5"
+    shutil.copyfile(files["frame"], path)
+    with h5py.File(str(path), "r+") as f:
+        grp = f.require_group("opensees/materials").create_group(
+            "plastic").create_group("Frob_9")
+        grp.attrs["type"] = "Frob"
+        grp.attrs["tag"] = 9
+        grp.attrs["params"] = np.asarray([1.0])
+    with pytest.raises(MalformedH5Error,
+                       match=r"/opensees/materials/plastic: unknown material "
+                             r"family"):
+        Assembly("x").instance("p", path).bridge(ndm=3, ndf=6)
+
+
+def test_the_planned_material_families_are_the_readers():
+    """The rehydrator plans exactly the families the model reader accepts:
+    a family the reader learns and the rehydrator does not would otherwise
+    be skipped without a word (#2374)."""
+    from apeGmsh.assembly._rehydrate import _MATERIAL_FAMILIES
+    from apeGmsh.opensees.emitter.h5_reader import _MATERIAL_KINDS
+
+    assert dict(_MATERIAL_FAMILIES) == _MATERIAL_KINDS
+
+
 def _stub_model(bar_area: float, bar_material: str):
     """The members ``_rebar_rows`` / ``_element_specs`` read, for one bar
     cell (1, 2) and one ``fem_eid=-1`` CorotTruss row on material tag 3."""

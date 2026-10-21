@@ -40,16 +40,16 @@ selectors / cadence options apply.**
 | `recorders.elements(...)` | per element-node | `ElementSlab` `(T, E, npe)` | All five |
 | `recorders.line_stations(...)` | per beam IP | `LineStationSlab` `(T, sum_S)` | All five |
 | `recorders.gauss(...)` | per continuum GP | `GaussSlab` `(T, sum_GP)` | All five |
-| `recorders.fibers(...)` | per fiber | `FiberSlab` `(T, sum_F)` | `capture` + `emit_mpco` only |
-| `recorders.layers(...)` | per shell layer | `LayerSlab` `(T, sum_L)` | `capture` + `emit_mpco` only |
-| `recorders.modal(n_modes=N)` | per mode | one stage per mode | `capture` + `emit_mpco` only |
+| `recorders.fibers(...)` | per fiber | `FiberSlab` `(T, sum_F)` | `emit_mpco` + the fork's `.ladruno` (pip `.out` fibres since #2243) |
+| `recorders.layers(...)` | per shell layer | `LayerSlab` `(T, sum_L)` | `emit_mpco` + the fork's `.ladruno` only |
+| `recorders.modal(n_modes=N)` | per mode | one stage per mode | `ops.eigen(n)` + `emit_mpco` only |
 
 > "Strategy coverage" refers to the five execution paths described in
 > [Obtaining results](guide_obtaining_results.md). Fibers, layers,
 > and modal records aren't expressible as classic OpenSees recorder
 > commands cleanly, so the export.tcl/py and live-recorder paths
-> can't carry them. Use `spec.capture(...)` or
-> `spec.emit_mpco(...)` instead.
+> can't carry them. Use `spec.emit_mpco(...)` or the fork's
+> `.ladruno` recorder instead, and `ops.eigen(n)` for modes.
 
 ---
 
@@ -274,8 +274,8 @@ per layer. They aren't enumerated here; pass them directly.
 
 **Not emittable via the classic recorder path** (`emit_recorders`,
 `export.tcl`, `export.py`) — the per-fiber row count would explode
-the `.out` file format. Use `spec.capture(...)` or
-`spec.emit_mpco(...)` instead.
+the `.out` file format. Use `spec.emit_mpco(...)` or the fork's
+`.ladruno` recorder instead.
 
 ```python
 ops.recorder.Element(
@@ -303,8 +303,7 @@ Per-layer stress / strain through the thickness of layered shells
 ### Coverage caveat
 
 Same as `fibers` — not emittable via classic recorders. Use
-`spec.capture(...)` (needs an OpenSees back-reference for per-layer
-thickness + material-tag metadata) or `spec.emit_mpco(...)`.
+`spec.emit_mpco(...)` or the fork's `.ladruno` recorder.
 
 ```python
 ops.recorder.Element(
@@ -325,7 +324,8 @@ Eigenvalue analysis. Each requested mode lands as its own stage with
 
 ```python
 # TODO(apeSees migration): g.opensees.recorders.modal(n_modes=10, dt=None, n_steps=None, name=None)
-# Modal capture uses domain capture (Strategy B): spec.capture(...).capture_modes(n_modes=10)
+# Modes come from ops.eigen(n_modes) (EigenResult.to_native / .results());
+# a plain openseespy deck uses apeGmsh.results.live.capture_live_modes.
 ```
 
 Modal records have **no `components=` and no selectors** — they
@@ -335,7 +335,9 @@ capture all node displacement DOFs of every mode shape.
 
 Modal records can only be executed via:
 
-- `spec.capture(...)` — apeGmsh calls `ops.eigen()` itself.
+- `ops.eigen(n)` — apeGmsh calls `ops.eigen()` itself and writes the
+  modes with `EigenResult.to_native` (`capture_live_modes` for a plain
+  openseespy deck).
 - `spec.emit_mpco(...)` — MPCO records the `modesOfVibration` token
   natively.
 
@@ -345,9 +347,8 @@ contains modal records.
 
 ```python
 # TODO(apeSees migration): g.opensees.recorders.modal(n_modes=10)
-# Modal capture in apeSees uses domain capture (Strategy B):
-#   with spec.capture(path="modes.h5", fem=fem) as cap:
-#       cap.capture_modes(n_modes=10)
+# Modes in apeSees come from the eigen solve:
+#   ops.eigen(10).to_native("modes.h5")
 ```
 
 ---
@@ -360,7 +361,7 @@ contains modal records.
 | Component name in vocabulary | At `resolve(fem)` |
 | Component is allowed in this category | At `resolve(fem)` |
 | Selector name resolves to IDs | At `resolve(fem)` |
-| Element class supports the component | At execution (in `capture` / `emit_*`) |
+| Element class supports the component | At execution (in `emit_*`) |
 | MPCO build is available | At `emit_mpco.__enter__` |
 
 If `resolve()` errors, the message lists the valid components for

@@ -170,7 +170,10 @@ def _sec_elastic(p: tuple[Any, ...], name: "str | None", what: str) -> _Make:
     raise AssemblyError(f"{what}: {len(v)} params is neither the 2-D nor the 3-D form.")
 
 
-#: Material families of ``/opensees/materials`` -> ``names()`` kind.
+#: Material families of ``/opensees/materials`` -> ``names()`` kind. The
+#: model reader raises ``MalformedH5Error`` naming any other family before
+#: an ``OpenSeesModel`` exists, and a test holds this table to the reader's,
+#: so every family a model can carry is planned here.
 _MATERIAL_FAMILIES: tuple[tuple[str, str], ...] = (
     ("uniaxial", "uniaxialMaterial"),
     ("nd", "nDMaterial"),
@@ -576,12 +579,6 @@ def _plan(
 
     def what(kind: str, token: str, tag: int) -> str:
         return f"instance {label!r}: {kind} {token!r} (tag {tag})"
-
-    unknown = set(model.materials_by_family()) - {fam for fam, _ in _MATERIAL_FAMILIES}
-    if unknown:
-        raise AssemblyError(
-            f"instance {label!r}: unknown material families {sorted(unknown)}."
-        )
 
     iface_rows, iface_mats = _interface_rows(label, model, names)
     plan: list[_Decl] = []

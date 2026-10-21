@@ -10,12 +10,13 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.32.0"  # #1853 (the six side-channel verbs' /opensees/program.decl is proved at emit)
-OPENSEES_PRIOR_MINOR = "2.31.0"  # A7 #1839 (/opensees/program.decl holds each call's proved declaration)
+OPENSEES_CURRENT     = "2.33.0"  # #2372 (/opensees@requires gains the value tokens "mpco" and "mpi")
+OPENSEES_PRIOR_MINOR = "2.32.0"  # #1853 (the six side-channel verbs' /opensees/program.decl is proved at emit)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_PARAM_TAGS_FROM = "2.27.0"  # the minor whose archives store every parameter tag (K1-8 #1465); fixed history
 OPENSEES_EMBEDDED_REBAR_FROM = "2.29.0"  # the minor whose archives store every reinforce tie (K2b #1795); fixed history
 OPENSEES_PROGRAM_DECL_FROM = "2.31.0"  # the minor whose /opensees/program.decl records declarations (A7 #1839); fixed history
+OPENSEES_VALUE_REQUIRES_FROM = "2.33.0"  # the minor whose @requires names "mpco" / "mpi" (K #2372); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
 NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)

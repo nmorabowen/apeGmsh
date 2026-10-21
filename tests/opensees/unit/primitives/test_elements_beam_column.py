@@ -32,6 +32,7 @@ from apeGmsh.opensees._internal.types import (
 from apeGmsh.opensees.element.beam_column import (
     ElasticTimoshenkoBeam,
     LadrunoDispBeamColumn,
+    LadrunoForceBeamColumn,
     LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
@@ -41,7 +42,6 @@ from apeGmsh.opensees.emitter.base import Emitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.integration import Lobatto
 from apeGmsh.opensees.transform import Corotational, Linear, PDelta
-
 
 # ---------------------------------------------------------------------------
 # Test-local fakes — same shape as the Phase 1 fiber tests.
@@ -973,12 +973,25 @@ class TestLadrunoDispBeamColumn:
                 hinge_ij=(_FakeMat(name="h1"), _FakeMat(name="h2")),
             )
 
-    def test_rejects_hinge_loc_without_dual_hinge(self) -> None:
+    def test_rejects_hinge_loc_without_any_hinge(self) -> None:
         integ, t = self._bits()
-        with pytest.raises(ValueError, match="hinge_loc requires a dual-end hinge"):
+        with pytest.raises(ValueError, match="hinge_loc requires a hinge"):
             LadrunoDispBeamColumn(
-                pg="C", transf=t, integration=integ,
-                hinge=_FakeMat(name="h"), hinge_loc=(0.1, 0.9))
+                pg="C", transf=t, integration=integ, hinge_loc=(0.1, 0.9))
+
+    def test_accepts_hinge_loc_with_single_hinge(self) -> None:
+        integ, t = self._bits()
+        hz = _FakeMat(name="hz")
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ, hinge=hz, hinge_loc=0.5)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2, id(hz): 31}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=10)
+        assert rec.calls[0][1] == (
+            "LadrunoDispBeamColumn", 10, 10, 20, 2, 7,
+            "-hinge", 31, "-hingeLoc", 0.5,
+        )
 
     @pytest.mark.parametrize("loc", [(-0.1, 0.9), (0.1, 1.1)])
     def test_rejects_bad_hinge_loc_bounds(self, loc: tuple[float, float]) -> None:
@@ -993,6 +1006,123 @@ class TestLadrunoDispBeamColumn:
         integ, t = self._bits()
         with pytest.raises(ValueError, match="pm"):
             LadrunoDispBeamColumn(pg="C", transf=t, integration=integ, pm=pm)
+
+    def test_emit_no_span_load(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ, span_load=False)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=9)
+        assert rec.calls[0][1] == (
+            "LadrunoDispBeamColumn", 9, 10, 20, 2, 7, "-noSpanLoad",
+        )
+
+
+# ===========================================================================
+# LadrunoForceBeamColumn (Ladruno fork — force-based + fork hinges)
+# ===========================================================================
+
+class TestLadrunoForceBeamColumn:
+    def _bits(self) -> tuple[BeamIntegration, Linear]:
+        return _integ_from(_FakeSection(name="sec")), Linear(vecxz=(0, 0, 1))
+
+    def test_emit_minimal(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoForceBeamColumn(pg="C", transf=t, integration=integ)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=1)
+        assert rec.calls[0][1] == ("LadrunoForceBeamColumn", 1, 10, 20, 2, 7)
+
+    def test_emit_iter_lch_mass_shear_pm_implex(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoForceBeamColumn(
+            pg="C", transf=t, integration=integ,
+            mass=3.0, c_mass=True, max_iter=20, tol=1e-10,
+            lch=0.25, shear=2.4e9, pm=(2.5e6, 1.5), implex=True,
+        )
+        assert spec.dependencies() == (integ, t)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoForceBeamColumn", 2, 10, 20, 2, 7,
+            "-mass", 3.0, "-cMass",
+            "-iter", 20, 1e-10,
+            "-lch", "0.25",
+            "-pm", 2.5e6, 1.5,
+            "-shear", 2.4e9,
+            "-implex",
+        )
+
+    def test_emit_3d_shear_and_dual_hinges(self) -> None:
+        integ, t = self._bits()
+        hbi = _FakeNDMat(name="hbi")
+        hbj = _FakeNDMat(name="hbj")
+        spec = LadrunoForceBeamColumn(
+            pg="C", transf=t, integration=integ,
+            hinge_biaxial_ij=(hbi, hbj),
+            hinge_loc=(0.05, 0.95),
+            shear=(2.4e9, 2.0e9),
+        )
+        assert spec.dependencies() == (integ, t, hbi, hbj)
+        rec = RecordingEmitter()
+        set_tag_resolver(
+            rec,
+            _resolver_from({
+                id(integ): 7, id(t): 2,
+                id(hbi): 51, id(hbj): 52,
+            }),
+        )
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            "LadrunoForceBeamColumn", 3, 10, 20, 2, 7,
+            "-hingeBiaxialIJ", 51, 52,
+            "-hingeLoc", 0.05, 0.95,
+            "-shear", 2.4e9, 2.0e9,
+        )
+
+    def test_emit_subdivide_tuple_and_single_hinge_loc(self) -> None:
+        integ, t = self._bits()
+        hz = _FakeMat(name="hz")
+        spec = LadrunoForceBeamColumn(
+            pg="C", transf=t, integration=integ,
+            subdivide=(4, 4.0), hinge=hz, hinge_loc=0.5,
+        )
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2, id(hz): 31}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=4)
+        assert rec.calls[0][1] == (
+            "LadrunoForceBeamColumn", 4, 10, 20, 2, 7,
+            "-subdivide", 4, 4.0,
+            "-hinge", 31, "-hingeLoc", 0.5,
+        )
+
+    @pytest.mark.parametrize("bad_sub", [0, -1, True, (0, 2.0), (2, 1.0), (2, 0.5), (2, float("inf"))])
+    def test_rejects_bad_subdivide(self, bad_sub: object) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="subdivide"):
+            LadrunoForceBeamColumn(
+                pg="C", transf=t, integration=integ,
+                subdivide=bad_sub,  # type: ignore[arg-type]
+            )
+
+    def test_rejects_hinge_loc_without_any_hinge(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="hinge_loc requires a hinge"):
+            LadrunoForceBeamColumn(
+                pg="C", transf=t, integration=integ, hinge_loc=0.5)
+
+    def test_rejects_partial_iter(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="max_iter and tol must be supplied together"):
+            LadrunoForceBeamColumn(pg="C", transf=t, integration=integ, max_iter=15)
 
 
 # ===========================================================================
@@ -1071,6 +1201,70 @@ class TestLadrunoIMKBeam:
             "-pm", 1.5e6,
         )
 
+    def test_emit_shear_hinges_and_biaxial_hinges(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        sh = _FakeMat(name="sh")
+        spec2d = LadrunoIMKBeam(
+            pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+            shear_hinge=sh,
+        )
+        assert spec2d.dependencies() == (t, sh)
+        rec2d = RecordingEmitter()
+        set_tag_resolver(rec2d, _resolver_from({id(t): 2, id(sh): 71}))
+        set_element_nodes(rec2d, (10, 20))
+        spec2d._emit(rec2d, tag=5)
+        assert rec2d.calls[0][1] == (
+            "LadrunoIMKBeam", 5, 10, 20, 0.04, 2e11, 2e-4, 2,
+            "-shearHinge", 71,
+        )
+
+        shy = _FakeMat(name="shy")
+        shz = _FakeMat(name="shz")
+        hbi = _FakeNDMat(name="hbi")
+        hbj = _FakeNDMat(name="hbj")
+        spec3d = LadrunoIMKBeam(
+            pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+            G=8e10, Jx=1e-4, Iy=1.5e-4,
+            hinge_biaxial_ij=(hbi, hbj),
+            shear_hinge_y=shy, shear_hinge_z=shz,
+        )
+        assert spec3d.dependencies() == (t, hbi, hbj, shy, shz)
+        rec3d = RecordingEmitter()
+        set_tag_resolver(
+            rec3d,
+            _resolver_from({
+                id(t): 2, id(hbi): 51, id(hbj): 52, id(shy): 71, id(shz): 72,
+            }),
+        )
+        set_element_nodes(rec3d, (10, 20))
+        spec3d._emit(rec3d, tag=6)
+        assert rec3d.calls[0][1] == (
+            "LadrunoIMKBeam", 6, 10, 20,
+            0.04, 2e11, 8e10, 1e-4, 1.5e-4, 2e-4, 2,
+            "-hingeBiaxialIJ", 51, 52,
+            "-shearHingeY", 71, "-shearHingeZ", 72,
+        )
+
+        # 3-D shear_hinge=(shy, shz) emits `-shearHinge 71 72`
+        spec3d_pair = LadrunoIMKBeam(
+            pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+            G=8e10, Jx=1e-4, Iy=1.5e-4,
+            shear_hinge=(shy, shz),
+        )
+        assert spec3d_pair.dependencies() == (t, shy, shz)
+        rec3d_pair = RecordingEmitter()
+        set_tag_resolver(
+            rec3d_pair,
+            _resolver_from({id(t): 2, id(shy): 71, id(shz): 72}),
+        )
+        set_element_nodes(rec3d_pair, (10, 20))
+        spec3d_pair._emit(rec3d_pair, tag=7)
+        assert rec3d_pair.calls[0][1] == (
+            "LadrunoIMKBeam", 7, 10, 20,
+            0.04, 2e11, 8e10, 1e-4, 1.5e-4, 2e-4, 2,
+            "-shearHinge", 71, 72,
+        )
+
     def test_rejects_bad_shear_and_end_zones(self) -> None:
         t = Linear(vecxz=(0, 0, 1))
         with pytest.raises(ValueError, match="2-D shear must be"):
@@ -1085,6 +1279,36 @@ class TestLadrunoIMKBeam:
             LadrunoIMKBeam(
                 pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
                 end_zones=(-0.1, 0.2))
+        with pytest.raises(ValueError, match="shear_hinge_y / shear_hinge_z are 3-D only"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                shear_hinge_y=_FakeMat(name="shy"))
+        with pytest.raises(ValueError, match="2-D shear_hinge must be a single"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                shear_hinge=(_FakeMat(name="s1"), _FakeMat(name="s2")))
+        with pytest.raises(ValueError, match="shear_hinge_y must be a single"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                G=8e10, Jx=1e-4, Iy=1.5e-4,
+                shear_hinge_y=(_FakeMat(name="s1"), _FakeMat(name="s2")),  # type: ignore[arg-type]
+            )
+        with pytest.raises(ValueError, match="shear_hinge is mutually exclusive"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                G=8e10, Jx=1e-4, Iy=1.5e-4,
+                shear_hinge=_FakeMat(name="s1"),
+                shear_hinge_z=_FakeMat(name="s2"),
+            )
+        with pytest.raises(ValueError, match="biaxial hinges .* are 3-D only"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                hinge_biaxial=_FakeNDMat(name="hb"))
+        with pytest.raises(ValueError, match="hinge_biaxial\\* .* is mutually exclusive"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                G=8e10, Jx=1e-4, Iy=1.5e-4,
+                mat_z=_FakeMat(name="hz"), hinge_biaxial=_FakeNDMat(name="hb"))
 
     def test_rejects_partial_3d(self) -> None:
         t = Linear(vecxz=(0, 0, 1))
@@ -1117,3 +1341,31 @@ class TestLadrunoIMKBeam:
         spec = LadrunoIMKBeam(pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4)
         assert "LadrunoIMKBeam" in repr(spec)
 
+
+def test_token_for_live_class_includes_ladruno_beams() -> None:
+    from apeGmsh.opensees._readback import _CLASS_FOR_TOKEN, _ROTATIONAL_FAMILIES
+    from apeGmsh.opensees._recorder_translate import _TOKEN_FOR_LIVE_CLASS
+
+    for live_cls, tok in (
+        ("LadrunoDispBeamColumn2d", "LadrunoDispBeamColumn"),
+        ("LadrunoDispBeamColumn3d", "LadrunoDispBeamColumn"),
+        ("LadrunoForceBeamColumn2d", "LadrunoForceBeamColumn"),
+        ("LadrunoForceBeamColumn3d", "LadrunoForceBeamColumn"),
+        ("LadrunoIMKBeam2d", "LadrunoIMKBeam"),
+        ("LadrunoIMKBeam", "LadrunoIMKBeam"),
+    ):
+        assert _TOKEN_FOR_LIVE_CLASS[live_cls] == tok
+        cls = _CLASS_FOR_TOKEN[tok]
+        assert issubclass(cls, _ROTATIONAL_FAMILIES)
+
+
+def test_element_namespace_ladruno_annotations() -> None:
+    import inspect
+    from apeGmsh.opensees._internal.ns.element import _ElementNS
+
+    fbc_sig = inspect.signature(_ElementNS.LadrunoForceBeamColumn)
+    assert "tuple[int, float]" in str(fbc_sig.parameters["subdivide"].annotation)
+
+    imk_sig = inspect.signature(_ElementNS.LadrunoIMKBeam)
+    assert "tuple" not in str(imk_sig.parameters["shear_hinge_y"].annotation)
+    assert "tuple" not in str(imk_sig.parameters["shear_hinge_z"].annotation)

@@ -31,7 +31,7 @@ fiber/line buckets, with these specifics:
    ``localAxes``. A shell does not, so the writer stores no row for it;
    its frame is then computed from the file's own connectivity and node
    coordinates with :func:`apeGmsh.results._shell_geometry.shell_quaternion`
-   (the convention DomainCapture writes, and the writer's beam
+   (the ``.ladruno`` reader's convention, and the writer's beam
    convention). When neither is available the row is NaN and a
    :class:`ShellFrameUnavailableWarning` names the elements; a frame is
    never assumed (#1996). The quaternion is broadcast to per-row in the

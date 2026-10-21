@@ -26,6 +26,7 @@ from apeGmsh.opensees._internal.types import (
 )
 from apeGmsh.opensees.element.beam_column import (
     ElasticTimoshenkoBeam,
+    LadrunoForceBeamColumn,
     dispBeamColumn,
     elasticBeamColumn,
     forceBeamColumn,
@@ -40,6 +41,7 @@ ALL_BEAM_COLUMN_ELEMENTS: list[type[Element]] = [
     forceBeamColumn,
     dispBeamColumn,
     ElasticTimoshenkoBeam,
+    LadrunoForceBeamColumn,
 ]
 
 
@@ -88,6 +90,9 @@ _MINIMAL_PARAMS: dict[type[Element], dict[str, Any]] = {
     ElasticTimoshenkoBeam: {
         "pg": "c", "transf": _FAKE_TRANSF,
         "E": 200e9, "G": 80e9, "A": 0.01, "Iz": 1e-4, "Avy": 0.005,
+    },
+    LadrunoForceBeamColumn: {
+        "pg": "c", "transf": _FAKE_TRANSF, "integration": _FAKE_INTEG,
     },
 }
 
