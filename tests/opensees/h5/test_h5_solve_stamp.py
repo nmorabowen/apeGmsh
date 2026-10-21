@@ -36,13 +36,18 @@ from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.lineage import compute_model_hash, read_stored_lineage
 from apeGmsh.opensees._target import BackendInfo
 from apeGmsh.opensees.emitter import h5_reader
-from apeGmsh.opensees.emitter.caps import SolveStamp
+from apeGmsh.opensees.emitter.caps import (
+    REQUIRES_TOKENS,
+    SolveStamp,
+    value_requires,
+)
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
-from apeGmsh.opensees.opensees_model import refuse_live_requires
+from apeGmsh.opensees.opensees_model import refuse_live_requires, unmet_requires
 
 from tests.fixtures.schema import (
     OPENSEES_CURRENT,
+    OPENSEES_PRIOR_MINOR,
     OPENSEES_SOLVE_STAMP_FROM,
 )
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
@@ -103,7 +108,8 @@ def test_partitioned_stamp_round_trips_both_verdicts(tmp_path: Path) -> None:
     e.write(str(tmp_path / "p.h5"))
     with h5_reader.open(str(tmp_path / "p.h5")) as m:
         stamp = m.solve_stamp()
-    assert stamp == SolveStamp(True, (), (), "partitioned", ("ladruno_up_solver",))
+    # A partitioned mode puts "mpi" in @requires (opensees 2.33.0, #2372).
+    assert stamp == SolveStamp(True, (), ("mpi",), "partitioned", ("ladruno_up_solver",))
     assert stamp.refusals_for("partitioned") == ()
     assert stamp.refusals_for("flat") == ("ladruno_up_solver",)
     with pytest.raises(ValueError, match="no verdict for partition mode"):
@@ -483,3 +489,179 @@ def test_build_live_refuses_before_touching_the_domain(
     with pytest.raises(BridgeError, match="require 'fork'"):
         model.build("live")
     assert constructed == []
+
+
+# -- the value tokens "mpco" and "mpi" (opensees 2.33.0, #2372) --------------
+
+
+@pytest.mark.parametrize("kinds, systems, mode, want", [
+    ((), (), "flat", frozenset()),
+    (("Node", "Element"), ("UmfPack", "BandGeneral"), "flat", frozenset()),
+    (("mpco",), (), "flat", frozenset({"mpco"})),
+    (("MPCO",), (), "flat", frozenset({"mpco"})),
+    ((), ("Mumps",), "flat", frozenset({"mpi"})),
+    ((), ("MumpsParallel",), "flat", frozenset({"mpi"})),
+    ((), (), "partitioned", frozenset({"mpi"})),
+    (("mpco",), ("Mumps",), "partitioned", frozenset({"mpco", "mpi"})),
+], ids=["none", "plain", "mpco", "mpco-case", "mumps", "mumps-family",
+        "partitioned", "all"])
+def test_value_requires_closed_form(
+    kinds: tuple, systems: tuple, mode: str, want: frozenset,
+) -> None:
+    assert value_requires(recorder_kinds=kinds, systems=systems,
+                          solve_mode=mode) == want
+    assert want <= set(REQUIRES_TOKENS)
+
+
+def test_value_requires_refuses_an_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="solve_mode must be one of"):
+        value_requires(recorder_kinds=(), systems=(), solve_mode="ranked")
+
+
+def _value_emitter(*, recorder: str = "", system: str = "",
+                   staged: bool = False) -> H5Emitter:
+    e = H5Emitter()
+    e.model(ndm=3, ndf=6)
+    e.node(1, 0.0, 0.0, 0.0)
+    e.fix(1, 1, 1, 1, 1, 1, 1)
+    if staged:
+        e.stage_open("s")
+    if recorder:
+        e.recorder(recorder, "out.bin", "-N", "displacement")
+    if system:
+        e.system(system)
+    if staged:
+        e.stage_close()
+    e.set_solve_stamp(will_solve=True)
+    return e
+
+
+@pytest.mark.parametrize("staged", [False, True], ids=["global", "staged"])
+@pytest.mark.parametrize("recorder, system, want", [
+    ("", "", ()),
+    ("Node", "UmfPack", ()),
+    ("mpco", "", ("mpco",)),
+    ("", "Mumps", ("mpi",)),
+    ("mpco", "Mumps", ("mpco", "mpi")),
+], ids=["none", "plain", "mpco", "mumps", "both"])
+def test_writer_derives_the_value_tokens_and_the_reader_returns_them(
+    tmp_path: Path, staged: bool, recorder: str, system: str, want: tuple,
+) -> None:
+    """The stamp writer names ``"mpco"`` for a ``recorder mpco`` and
+    ``"mpi"`` for a Mumps system, in a stage as globally; the archive
+    reads the same tokens back (a bare staged emitter cannot write: the
+    bridge hands it the stage records, so a staged archive's tokens are
+    read back by the corpus rows' tests)."""
+    e = _value_emitter(recorder=recorder, system=system, staged=staged)
+    stamp = e.solve_stamp()
+    assert stamp is not None and stamp.requires == want
+    if staged:
+        return
+    out = tmp_path / "m.h5"
+    e.write(str(out))
+    with h5_reader.open(str(out)) as m:
+        assert m.solve_stamp() == stamp
+
+
+def test_value_tokens_join_the_verb_tokens_sorted() -> None:
+    e = H5Emitter()
+    e.model(ndm=3, ndf=6)
+    e.node(1, 0.0, 0.0, 0.0)
+    e.contact_surface(1, 1.0)  # a VERBS row that requires the fork
+    e.recorder("mpco", "out.mpco", "-N", "displacement")
+    e.set_solve_stamp(will_solve=False)
+    assert e.solve_stamp() == SolveStamp(False, (), ("fork", "mpco"))
+
+
+def test_a_reader_accepts_an_unknown_token(tmp_path: Path) -> None:
+    """A token this bridge does not know reads back as written (a newer
+    writer may add one); only a solving target refuses it."""
+    out = _write(tmp_path / "m.h5", (True, ()))
+    _tamper(out, requires=["fork", "mpco", "mpi", "zz_future"])
+    with h5_reader.open(str(out)) as m:
+        stamp = m.solve_stamp()
+    assert stamp is not None
+    assert stamp.requires == ("fork", "mpco", "mpi", "zz_future")
+    with pytest.raises(BridgeError, match="'zz_future'.*newer bridge"):
+        refuse_live_requires(stamp, _backend("fork"))
+
+
+def test_an_older_archive_keeps_its_requires_on_read(tmp_path: Path) -> None:
+    """Reload seam: a file below 2.33.0 never named the value tokens, and
+    the reader does not add them; its stamp keeps the meaning it was
+    written with. A rewrite (``to_h5``) writes today's tokens."""
+    ops = _frame_bridge(analysis=True)
+    ops.recorder.MPCO(file="run.mpco", nodal_responses=("displacement",))
+    out = tmp_path / "m.h5"
+    ops.h5(str(out))
+    fresh = OpenSeesModel.from_h5(out).solve_stamp
+    assert fresh is not None and fresh.requires == ("mpco",)
+    _tamper(out, requires=[])
+    with h5py.File(out, "r+") as f:
+        f["meta"].attrs["opensees_schema_version"] = OPENSEES_PRIOR_MINOR
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp is not None and model.solve_stamp.requires == ()
+    again = tmp_path / "again.h5"
+    model.to_h5(str(again))
+    rewritten = OpenSeesModel.from_h5(again).solve_stamp
+    assert rewritten is not None and rewritten.requires == ("mpco",)
+
+
+def test_a_partitioned_bridge_archive_requires_mpi(tmp_path: Path) -> None:
+    out = tmp_path / "p.h5"
+    _up_column_bridge(partitions=2, system="UmfPack").h5(str(out))
+    stamp = OpenSeesModel.from_h5(out).solve_stamp
+    assert stamp is not None and stamp.solve_mode == "partitioned"
+    assert stamp.requires == ("mpi",)
+
+
+@pytest.mark.parametrize("requires, kind, missing", [
+    (("mpco",), "fork", ()),
+    (("mpco",), "stock", ("mpco",)),
+    (("mpi",), "fork", ("mpi",)),
+    (("mpi",), "stock", ("mpi",)),
+    (("fork", "mpco", "mpi"), "fork", ("mpi",)),
+    (("fork", "mpco", "mpi"), "stock", ("fork", "mpco", "mpi")),
+], ids=["mpco-fork", "mpco-stock", "mpi-fork", "mpi-stock", "all-fork",
+        "all-stock"])
+def test_build_live_refuses_per_token(
+    requires: tuple, kind: str, missing: tuple,
+) -> None:
+    assert unmet_requires(requires, kind) == missing
+    stamp = SolveStamp(True, requires=requires)
+    if not missing:
+        refuse_live_requires(stamp, _backend(kind))
+        return
+    pattern = "require " + re.escape(", ".join(repr(t) for t in missing))
+    with pytest.raises(BridgeError, match=pattern) as info:
+        refuse_live_requires(stamp, _backend(kind))
+    if "mpi" in missing:
+        assert "multi-rank run" in str(info.value)
+
+
+@pytest.mark.parametrize("mpco, changes", [(True, True), (False, False)],
+                         ids=["mpco-model", "plain-model"])
+def test_the_value_tokens_change_model_hash_only_where_they_appear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mpco: bool, changes: bool,
+) -> None:
+    """``@requires`` folds into ``model_hash``, so at 2.33.0 re-emitting a
+    model with an MPCO recorder (likewise a Mumps system or partitions)
+    stores a different ``model_hash`` than the 2.32 writer did, which
+    named no value token; a model without one hashes the same. The 2.32
+    writer is this writer with the value tokens switched off."""
+    import apeGmsh.opensees.emitter.h5 as h5_mod
+
+    def emit(name: str) -> "str | None":
+        ops = _frame_bridge(analysis=True)
+        if mpco:
+            ops.recorder.MPCO(file="run.mpco", nodal_responses=("displacement",))
+        out = tmp_path / name
+        ops.h5(str(out))
+        with h5py.File(out, "r") as f:
+            return read_stored_lineage(f["meta"])[1]
+
+    today = emit("today.h5")
+    monkeypatch.setattr(h5_mod, "value_requires", lambda **_kw: frozenset())
+    before = emit("before.h5")
+    assert today is not None and before is not None
+    assert (today != before) is changes
