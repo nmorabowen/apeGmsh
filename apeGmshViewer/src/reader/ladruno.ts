@@ -42,7 +42,7 @@ import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
-import { collectModelLocalAxes, decodeLocalAxesRow, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
+import { collectModelLocalAxes, resolveLocalAxes, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
@@ -525,6 +525,9 @@ export class LadrunoFile {
         }
       }
     }
+    // A stage with line stations attaches MODEL/LOCAL_AXES to them: a group a read would not take warns here, at open (#2336).
+    const modelLa = found.size > 0 ? this.optionalSubgroup(hostGrp, ["MODEL", "LOCAL_AXES"]) : null;
+    if (modelLa) warnModelLocalAxes(modelLa, this.localAxesReads(warningsOut));
     return LINE_STATION_COMPONENTS.filter((c) => found.has(c));
   }
 
@@ -679,7 +682,7 @@ export class LadrunoFile {
       colOffset += elem.nSt;
     }
 
-    const { localAxesQuaternion, localAxesZRec, localAxesSources } = this.stationLocalAxes(stageId, elementIndex, step);
+    const { localAxesQuaternion, localAxesZRec, localAxesSources } = stationLocalAxes(this.readLocalAxes(stageId, { step, warningsOut: options?.warningsOut }), elementIndex);
     return {
       component: canon,
       values,
@@ -718,69 +721,25 @@ export class LadrunoFile {
    * Per-element local frames from `RESULTS/ON_ELEMENTS/LOCAL_AXES` (at `step`, when
    * `options?.step !== undefined`) and `MODEL/LOCAL_AXES/<class>/{ID, FRAME}` (reference).
    */
-  readLocalAxes(stageId: string, options?: { elementIds?: ArrayLike<number>; step?: number }): LadrunoLocalAxes {
+  readLocalAxes(stageId: string, options?: { elementIds?: ArrayLike<number>; step?: number; warningsOut?: string[] }): LadrunoLocalAxes {
     const s = this.stage(stageId);
     const hostId = this.mode(stageId)?.hostStageId ?? s.id;
     const hostStage = this.stage(hostId);
     const hostGrp = this.group(this.f, hostStage.name);
 
-    const idToQuat = new Map<number, [number, number, number, number]>();
-    const idToZRec = new Map<number, [number, number, number]>();
-    const idToSource = new Map<number, LocalAxesSource>();
-
-    // 1. Reference MODEL/LOCAL_AXES
+    // 1. Reference MODEL/LOCAL_AXES; a group that is not read warns through `warningsOut` (reader/ladrunoLocalAxes.ts).
     const modelLa = this.optionalSubgroup(hostGrp, ["MODEL", "LOCAL_AXES"]);
-    if (modelLa) {
-      collectModelLocalAxes(modelLa, this.localAxesReads(), idToQuat, idToZRec, idToSource);
-    }
+    const groups: FrameRows[] = modelLa ? collectModelLocalAxes(modelLa, this.localAxesReads(options?.warningsOut)) : [];
 
     // 2. Per-step RESULTS/ON_ELEMENTS/LOCAL_AXES (only when `options?.step !== undefined`; wins over MODEL/LOCAL_AXES)
     const step = options?.step;
     if (step !== undefined) {
       const stepLa = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS", "LOCAL_AXES"]);
       if (stepLa && step >= 0 && step < hostStage.nSteps) {
-        this.collectStepLocalAxes(stepLa, step, idToQuat, idToZRec, idToSource);
+        groups.push(...this.collectStepLocalAxes(stepLa, step));
       }
     }
-
-    const outIds = options?.elementIds
-      ? Float64Array.from(options.elementIds, Number)
-      : Float64Array.from([...new Set([...idToQuat.keys(), ...idToZRec.keys()])].sort((a, b) => a - b));
-    const n = outIds.length;
-    const quaternions = new Float64Array(n * 4);
-    const zRec = new Float64Array(n * 3);
-    const hasRecorded = new Uint8Array(n);
-    const sources: (LocalAxesSource | null)[] = new Array(n).fill(null);
-    for (let k = 0; k < n; k++) {
-      const eid = outIds[k]!;
-      const q = idToQuat.get(eid);
-      const z = idToZRec.get(eid);
-      if (q) {
-        quaternions[k * 4] = q[0];
-        quaternions[k * 4 + 1] = q[1];
-        quaternions[k * 4 + 2] = q[2];
-        quaternions[k * 4 + 3] = q[3];
-      } else {
-        quaternions[k * 4] = 1;
-        quaternions[k * 4 + 1] = 0;
-        quaternions[k * 4 + 2] = 0;
-        quaternions[k * 4 + 3] = 0;
-      }
-      if (z) {
-        zRec[k * 3] = z[0];
-        zRec[k * 3 + 1] = z[1];
-        zRec[k * 3 + 2] = z[2];
-        hasRecorded[k] = 1;
-        sources[k] = idToSource.get(eid) ?? "model_local_axes";
-      } else {
-        zRec[k * 3] = Number.NaN;
-        zRec[k * 3 + 1] = Number.NaN;
-        zRec[k * 3 + 2] = Number.NaN;
-        hasRecorded[k] = 0;
-        sources[k] = null;
-      }
-    }
-    return { elementIds: outIds, quaternions, zRec, hasRecorded, sources };
+    return resolveLocalAxes(groups, options?.elementIds);
   }
 
   // -- the gate ---------------------------------------------------------------
@@ -1454,62 +1413,14 @@ export class LadrunoFile {
     });
   }
 
-  private stationLocalAxes(
-    stageId: string,
-    elementIndex: Float64Array,
-    step: number | undefined,
-  ): {
-    localAxesQuaternion: Float64Array | null;
-    localAxesZRec: Float64Array | null;
-    localAxesSources: (LocalAxesSource | null)[] | null;
-  } {
-    const recorded = this.readLocalAxes(stageId, { step });
-    if (recorded.elementIds.length === 0) {
-      return { localAxesQuaternion: null, localAxesZRec: null, localAxesSources: null };
-    }
-    const idToRow = new Map<number, number>();
-    recorded.elementIds.forEach((eid, idx) => idToRow.set(eid, idx));
-    const n = elementIndex.length;
-    const quats = new Float64Array(n * 4);
-    const zRec = new Float64Array(n * 3);
-    const sources: (LocalAxesSource | null)[] = new Array(n).fill(null);
-    for (let i = 0; i < n; i++) {
-      const idx = idToRow.get(elementIndex[i]!);
-      if (idx !== undefined && recorded.hasRecorded[idx]) {
-        quats[i * 4] = recorded.quaternions[idx * 4]!;
-        quats[i * 4 + 1] = recorded.quaternions[idx * 4 + 1]!;
-        quats[i * 4 + 2] = recorded.quaternions[idx * 4 + 2]!;
-        quats[i * 4 + 3] = recorded.quaternions[idx * 4 + 3]!;
-        zRec[i * 3] = recorded.zRec[idx * 3]!;
-        zRec[i * 3 + 1] = recorded.zRec[idx * 3 + 1]!;
-        zRec[i * 3 + 2] = recorded.zRec[idx * 3 + 2]!;
-        sources[i] = recorded.sources[idx] ?? "model_local_axes";
-      } else {
-        quats[i * 4] = Number.NaN;
-        quats[i * 4 + 1] = Number.NaN;
-        quats[i * 4 + 2] = Number.NaN;
-        quats[i * 4 + 3] = Number.NaN;
-        zRec[i * 3] = Number.NaN;
-        zRec[i * 3 + 1] = Number.NaN;
-        zRec[i * 3 + 2] = Number.NaN;
-        sources[i] = null;
-      }
-    }
-    return { localAxesQuaternion: quats, localAxesZRec: zRec, localAxesSources: sources };
+  /** The group, dataset and dtype reads reader/ladrunoLocalAxes.ts takes from this file; a group it does not read warns into `warningsOut`. */
+  private localAxesReads(warningsOut: string[] | undefined): LocalAxesReads {
+    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), ints: intsAsNumbers, floats: toFloat64, file: this.f.filename, fail: (m) => new LadrunoError("layout", m), warn: (m) => warningsOut?.push(m) };
   }
 
-  /** The group, dataset and dtype reads reader/ladrunoLocalAxes.ts takes from this file. */
-  private localAxesReads(): LocalAxesReads {
-    return { optionalGroup: (p: LGroup, n) => this.optionalGroup(p, n), dataset: (p: LGroup, n) => this.dataset(p, n), ints: intsAsNumbers, floats: toFloat64, file: this.f.filename, fail: (m) => new LadrunoError("layout", m) };
-  }
-
-  private collectStepLocalAxes(
-    stepLa: LGroup,
-    step: number,
-    idToQuat: Map<number, [number, number, number, number]>,
-    idToZRec: Map<number, [number, number, number]>,
-    idToSource: Map<number, LocalAxesSource>,
-  ): void {
+  /** The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` at `step`, one entry per bucket read. */
+  private collectStepLocalAxes(stepLa: LGroup, step: number): FrameRows[] {
+    const read: FrameRows[] = [];
     const readBucket = (b: LGroup) => {
       if (!b.keys().includes("ID") || !b.keys().includes("DATA")) return;
       const idNode = b.get("ID");
@@ -1526,16 +1437,7 @@ export class LadrunoFile {
       if (slice.length === 0 || slice.length % nE !== 0) return;
       const cols = slice.length / nE;
       if (cols !== shape[2]) return;
-      for (let i = 0; i < nE; i++) {
-        const eid = ids[i]!;
-        const decoded = decodeLocalAxesRow(slice, i * cols, cols);
-        if (decoded) {
-          if (decoded.quat) idToQuat.set(eid, decoded.quat);
-          else idToQuat.delete(eid);
-          idToZRec.set(eid, decoded.zRec);
-          idToSource.set(eid, "step_local_axes");
-        }
-      }
+      read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
     };
     if (stepLa.keys().includes("ID") && stepLa.keys().includes("DATA")) {
       readBucket(stepLa);
@@ -1544,6 +1446,7 @@ export class LadrunoFile {
       const sub = this.optionalGroup(stepLa, k);
       if (sub) readBucket(sub);
     }
+    return read;
   }
 }
 

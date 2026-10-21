@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
+import { resolveLocalAxes, stationLocalAxes } from "../../src/reader/ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
@@ -834,6 +835,134 @@ test("#2321: an id in two classes' MODEL/LOCAL_AXES groups, or in the flat ID an
   });
 });
 
+// #2336: a MODEL/LOCAL_AXES group whose frames cannot be paired with its ids used to be
+// dropped with no word: its elements had no recorded frame (readLocalAxes leaves them
+// out, a line-station read gives them NaN frames), so a diagram computed theirs from
+// the model. That fallback stays (Python and MPCO recompute too, #2090), and now the
+// read says so by name in warningsOut. An empty ID beside FRAME rows is refused. Each
+// case adds a second class group, ElasticBeam3d, beside the fixture's ForceBeamColumn3d
+// (elements 1..10), which reads as before.
+const EB_LA = `${MODEL_LA}/ElasticBeam3d`;
+const withClass = (ids: number[], frame: Float64Array, shape: number[]) =>
+  edited(FRAME3D, (f) => {
+    const g = (f.get(MODEL_LA) as h5wasm.Group).create_group("ElasticBeam3d");
+    g.create_dataset({ name: "ID", data: Int32Array.from(ids), shape: [ids.length] });
+    g.create_dataset({ name: "FRAME", data: frame, shape });
+  });
+const TEN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+test("#2336: a MODEL/LOCAL_AXES FRAME with more or fewer rows than its ID warns by name, and its elements fall back to no recorded frame", () => {
+  for (const rows of [3, 1]) {
+    const p = withClass([11, 12], Float64Array.from({ length: rows * 4 }, (_, i) => (i % 4 === 0 ? 1 : 0)), [rows, 4]);
+    const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/FRAME holds ${rows} row\\(s\\) for the 2 id\\(s\\) of ${escapedRe(EB_LA)}/ID; its frames are not read, so its elements have no recorded frame and a diagram computes theirs from the model`);
+    withFile(p, (r) => {
+      // At open: the index's line-station listing (main/results.ts metaOf) warns, from the shapes alone.
+      const atOpen: string[] = [];
+      assert.ok(r.availableLineStations("stage_0", atOpen).includes("N"));
+      assert.equal(atOpen.length, 1);
+      assert.match(atOpen[0]!, named);
+      const warnings: string[] = [];
+      const axes = r.readLocalAxes("stage_0", { warningsOut: warnings });
+      assert.deepEqual(Array.from(axes.elementIds), TEN, "ForceBeamColumn3d reads; ElasticBeam3d does not");
+      assert.deepEqual(warnings, atOpen, "open and the read say it in the same words");
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!, named);
+      // Asked for by id, 11 and 12 read as unrecorded (hasRecorded 0, z NaN); 1 keeps its frame.
+      const picked = r.readLocalAxes("stage_0", { elementIds: [11, 1, 12] });
+      assert.deepEqual(Array.from(picked.hasRecorded), [0, 1, 0]);
+      assert.ok(Number.isNaN(picked.zRec[0]!) && Number.isNaN(picked.zRec[6]!));
+      // A line-station read warns through its own warningsOut.
+      const lsWarnings: string[] = [];
+      assert.ok(r.readLineStations("stage_0", "N", { warningsOut: lsWarnings }).nStationsTotal > 0);
+      assert.ok(lsWarnings.some((w) => named.test(w)));
+      // MODEL_STAGE[2] keeps its own MODEL/LOCAL_AXES, unedited: it reads all ten, silently.
+      const quiet: string[] = [];
+      assert.deepEqual(Array.from(r.readLocalAxes("stage_1", { warningsOut: quiet }).elementIds), TEN);
+      assert.deepEqual(quiet, []);
+    });
+  }
+  // The unedited fixture reads silently; its frame is a quarter turn about x, so z_local is global y.
+  withFile(FRAME3D, (r) => {
+    const warnings: string[] = [];
+    const axes = r.readLocalAxes("stage_0", { warningsOut: warnings });
+    assert.deepEqual(warnings, []);
+    const atOpen: string[] = [];
+    r.availableLineStations("stage_0", atOpen);
+    assert.deepEqual(atOpen, []);
+    assert.deepEqual(Array.from(axes.zRec.subarray(0, 3)).map((v) => +v.toFixed(12)), [0, 1, 0]);
+  });
+});
+
+test("#2336: a MODEL/LOCAL_AXES FRAME whose rows are not 3, 4 or 9 wide warns by name", () => {
+  const p = withClass([11, 12], new Float64Array(2 * 5), [2, 5]);
+  withFile(p, (r) => {
+    const warnings: string[] = [];
+    assert.deepEqual(Array.from(r.readLocalAxes("stage_0", { warningsOut: warnings }).elementIds), TEN);
+    const atOpen: string[] = [];
+    r.availableLineStations("stage_0", atOpen);
+    assert.deepEqual(atOpen, warnings, "open warns in the read's words");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/FRAME holds rows 5 wide for the 2 id\\(s\\) of ${escapedRe(EB_LA)}/ID, not 3 \\(the local z axis\\), 4 \\(a quaternion\\) or 9 \\(a rotation matrix\\); `));
+  });
+});
+
+test("#2336: an empty MODEL/LOCAL_AXES ID beside FRAME rows refuses readLocalAxes and a line-station read by name", () => {
+  const p = withClass([], Float64Array.from([1, 0, 0, 0, 1, 0, 0, 0]), [2, 4]);
+  const named = new RegExp(`^${escapedRe(p)}: ${escapedRe(EB_LA)}/ID is empty, but ${escapedRe(EB_LA)}/FRAME holds 2 row\\(s\\); .*belong to no element; the local axes are not read$`);
+  withFile(p, (r) => {
+    // Open lists the stage's line stations without a word: the read refuses the empty ID.
+    const atOpen: string[] = [];
+    assert.ok(r.availableLineStations("stage_0", atOpen).includes("N"));
+    assert.deepEqual(atOpen, []);
+    refusesAxes(() => r.readLocalAxes("stage_0"), named);
+    refusesAxes(() => r.readLineStations("stage_0", "N"), named);
+    assert.deepEqual(Array.from(r.readLocalAxes("stage_1").elementIds), TEN);
+  });
+  // An empty ID beside an empty FRAME holds no frame for anyone: it reads, silently, as nothing.
+  const bothEmpty = withClass([], new Float64Array(0), [0, 4]);
+  withFile(bothEmpty, (r) => {
+    const warnings: string[] = [];
+    assert.deepEqual(Array.from(r.readLocalAxes("stage_0", { warningsOut: warnings }).elementIds), TEN);
+    assert.deepEqual(warnings, []);
+  });
+});
+
+test("#2336: resolveLocalAxes takes the last row that decodes, in group order, and keeps no frame for an element it cannot decode", () => {
+  const rows = (ids: number[], raw: number[], cols: number, source: "model_local_axes" | "step_local_axes") => ({ at: "x", ids: Float64Array.from(ids), raw: Float64Array.from(raw), cols, source });
+  const nan = Number.NaN;
+  const got = resolveLocalAxes([
+    rows([3, 1], [1, 0, 0, 0, 0, 0, 0, 1], 4, "model_local_axes"),
+    // the step: element 1 by its z alone (the reference quaternion goes), element 3 not finite (the reference stays), element 7 new
+    rows([1, 3, 7], [1, 0, 0, nan, 0, 0, 0, 1, 0], 3, "step_local_axes"),
+  ]);
+  assert.deepEqual(Array.from(got.elementIds), [1, 3, 7]);
+  assert.deepEqual(Array.from(got.quaternions), [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+  assert.deepEqual(Array.from(got.zRec), [1, 0, 0, 0, 0, 1, 0, 1, 0]);
+  assert.deepEqual(got.sources, ["step_local_axes", "model_local_axes", "step_local_axes"]);
+  const picked = resolveLocalAxes([rows([3, 1], [1, 0, 0, 0, 0, 0, 0, 1], 4, "model_local_axes")], [1, 5, 1]);
+  assert.deepEqual(Array.from(picked.hasRecorded), [1, 0, 1]);
+  assert.deepEqual(picked.sources, ["model_local_axes", null, "model_local_axes"]);
+  assert.ok(Number.isNaN(picked.zRec[3]!));
+});
+
+test("#2336: resolveLocalAxes and stationLocalAxes take 2^24 + 1 framed elements, past V8's Map and Set cap", () => {
+  // A stand-in for a file that size (half a gigabyte of frames): the reads' own resolve, on typed arrays.
+  // A Map or Set of that many ids throws "RangeError: Map maximum size exceeded", as the reads before #2336 did.
+  const n = 2 ** 24 + 1;
+  const ids = new Float64Array(n);
+  for (let i = 0; i < n; i++) ids[i] = n - i; // descending, so the resolve must sort
+  const raw = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) raw[i * 3 + 2] = 1;
+  const got = resolveLocalAxes([{ at: "x", ids, raw, cols: 3, source: "model_local_axes" }]);
+  assert.equal(got.elementIds.length, n);
+  assert.equal(got.elementIds[0], 1);
+  assert.equal(got.elementIds[n - 1], n);
+  assert.equal(got.hasRecorded[n - 1], 1);
+  const stations = stationLocalAxes(got, Float64Array.from([n, 1, n + 1]));
+  assert.deepEqual(Array.from(stations.localAxesZRec!.subarray(0, 6)), [0, 0, 1, 0, 0, 1]);
+  assert.ok(Number.isNaN(stations.localAxesZRec![6]!));
+});
+
 test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-based, out-of-bounds, negative), 2D section alias gating on 3D, and LOCAL_AXES shape guard", () => {
   const timeArr = new Float64Array([0.25, 0.5, 0.75, 1.0]);
   const stepArr = new Int32Array([0, 1, 2, 3]);
@@ -985,9 +1114,12 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     assert.equal(kz.values.length, 3);
     assert.deepEqual(Array.from(kz.stationNaturalCoord), [-1, 0, 1]);
     assert.deepEqual(Array.from(kz.values), [1, 2, 3]);
-    // Malformed MODEL/LOCAL_AXES is safely skipped
-    const axes = r.readLocalAxes("stage_0");
+    // Malformed MODEL/LOCAL_AXES is not read, and says so by name (#2336)
+    const warnings: string[] = [];
+    const axes = r.readLocalAxes("stage_0", { warningsOut: warnings });
     assert.equal(axes.elementIds.length, 0);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /\/MODEL\/LOCAL_AXES\/BadBeam\/FRAME holds 5 value\(s\), not one whole row for each of the 2 id\(s\) of \S+\/BadBeam\/ID; its frames are not read/);
   });
 });
 
