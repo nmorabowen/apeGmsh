@@ -265,7 +265,6 @@ from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-    from pathlib import Path
     from types import FrameType
 
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).

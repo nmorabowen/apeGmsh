@@ -3311,7 +3311,7 @@ def _shell_frames(
     A frame the file stores (``MODEL/LOCAL_AXES/<classTag>-<Class>``)
     wins; every other element's frame is computed from the file's
     connectivity and node coordinates with :func:`shell_quaternion`, the
-    convention the MPCO reader and DomainCapture use. A row with neither
+    convention the MPCO reader uses. A row with neither
     is NaN, and one :class:`ShellFrameUnavailableWarning` names its
     elements and why. A stored group without the ``ID`` + ``FRAME`` pair,
     or whose ``FRAME`` size is not four per ``ID``, is ignored with a
