@@ -181,7 +181,16 @@ def warn_stale_shell_probe_under_linear(
     stages *k* onward and an unclaimed one sees every stage. A recorder
     that sees a Linear step and reads a non-force response (or, for the
     NL classes, any response) of a listed class warns.
+
+    The other Linear-algorithm gate runs first, on the same facts: a
+    multi-yield soil material under a Linear step raises
+    (:func:`~.soil.refuse_multi_yield_soil_under_linear`).
     """
+    from .soil import refuse_multi_yield_soil_under_linear
+
+    refuse_multi_yield_soil_under_linear(
+        (spec for spec, _rows in element_plan), staged=staged,
+        flat_algorithms=flat_algorithms, stage_chain=stage_chain)
     if staged:
         linear_stages = [
             i for i, (_n, algos, _ids) in enumerate(stage_chain)

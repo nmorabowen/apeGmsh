@@ -117,6 +117,37 @@ Which namespace:
 
 Every method has an explicit, fully-typed signature (no `**kwargs`).
 
+### Site-response soils (multi-yield, PM4)
+
+`ops.nDMaterial.PressureIndependMultiYield` (total-stress clay),
+`PressureDependMultiYield` / `PressureDependMultiYield02` (effective-stress
+sand), `PM4Sand` / `PM4Silt` (plane strain only) mirror their OpenSees
+parsers argument for argument and emit the full positional list. Pressures
+default to OpenSees' kPa values (`ref_pressure=100`, `atm=101`,
+`P_atm=101.3`): set them in other units. `backbone=((strain, G/Gmax), ...)`
+replaces the automatic yield surfaces of the multi-yield classes.
+
+```python
+clay = ops.nDMaterial.PressureIndependMultiYield(
+    nd=2, rho=1.8, ref_shear_modulus=6e4, ref_bulk_modulus=3e5, cohesion=40.0)
+ops.element.FourNodeQuad(pg="L000", thickness=1.0, material=clay,
+                         body_force=(0.0, -18.0))
+with ops.stage(name="gravity") as s:          # elastic gravity, then plastic
+    s.update_material_stage(materials=[clay], stage=0)
+    ...
+with ops.stage(name="plastic") as s:
+    s.update_material_stage(materials=[clay], stage=1)
+    ...
+```
+
+The multi-yield classes cache their stress in `getStress()`, so an
+`algorithm Linear` step commits a stale stress (about 2 % of the right
+answer); the build refuses that pairing. Use Newton, `ModifiedNewton` or
+`KrylovNewton`. `PM4Sand` `FirstCall` / `PostShake` and the multi-yield
+`bulkModulus` / `shearModulus` updates go through
+`s.update_parameter(name, value, pg=..., material=mat)`.
+<!-- verified: tests/opensees/unit/primitives/test_materials_nd_soil.py, tests/opensees/live/test_soil_materials_live.py -->
+
 ## Elements
 
 `ops.element.<Type>(pg="PG", ...)` writes every mesh element in that
@@ -792,6 +823,12 @@ material=sand)` changes a MATERIAL one — the tag rides as the trailing
 argv because the element forwards it to its GP materials, which match on
 their own tag.
 <!-- verified: tests/opensees/unit/test_stage_update_parameter.py -->
+
+`s.update_material_stage(materials=[...], stage=0|1)` flips SANISAND, the
+multi-yield soils and PM4Sand / PM4Silt between their elastic and plastic
+stage (`stage=2`, elastic with pressure-dependent moduli, for the two
+`PressureDependMultiYield` classes only); any other class is refused, since
+OpenSees would ignore the flip.
 
 Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,
