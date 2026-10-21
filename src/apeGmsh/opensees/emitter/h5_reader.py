@@ -2407,12 +2407,24 @@ class H5Model:
 
     def slot_types(self) -> "SlotTypes":
         """The archive's :class:`~apeGmsh.opensees._internal.replay_types.
-        SlotTypes`, built once from :meth:`declarations` (K R1b-S2)."""
+        SlotTypes`, built once from :meth:`declarations` and the
+        ``/opensees/computed_sections`` rows (K R1b-S2): a computed
+        section's moduli take the type of the values that table records."""
         cached = self._slot_types
         if cached is None:
+            from .._internal._computed_sections_h5 import (
+                COMPUTED_SECTIONS_GROUP,
+            )
             from .._internal.replay_types import SlotTypes
 
-            cached = SlotTypes(self.declarations())
+            computed: list[tuple[int, str]] = []
+            ops = self._f["opensees"] if "opensees" in self._f else None
+            if ops is not None and COMPUTED_SECTIONS_GROUP in ops:
+                g = ops[COMPUTED_SECTIONS_GROUP]
+                computed = [
+                    (int(tag), str(_decode_bytes(payload)))
+                    for tag, payload in zip(g["tag"][()], g["payload"][()])]
+            cached = SlotTypes(self.declarations(), computed=computed)
             self._slot_types = cached
         return cached
 
