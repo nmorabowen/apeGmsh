@@ -229,7 +229,7 @@ def read_fiber_record(
     if isinstance(model, LiveDomainFacts):
         # The live section locations place each station, in whatever order
         # its rule gives (a long-hinge HingeRadau writes them out of order,
-        # legally), as the line-stations read does (#2332).
+        # legally), as the line-stations read does.
         live_fib: "int | None" = _require_live_fibers(
             rec, model, xi, lengths_of(ids), gpx_lr.file_path)
     else:
