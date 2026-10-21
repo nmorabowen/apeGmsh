@@ -493,3 +493,38 @@ def test_recorder_element_label_refusals(pratt: Any) -> None:
         ops.recorder.Element(file="d.out", response=("axialForce",),
                              label="Webs")
     assert len(ops._primitives) == before
+
+
+def test_a_live_translational_row_neither_gives_nor_blocks_a_rotation() -> None:
+    """#2407: ``LiveTranslationalRole`` (an ``ASDEmbeddedNodeElement`` that
+    cannot carry a pressure) counts as translational-only. A beam node it
+    touches keeps the beam's rotation, a node only it touches has no
+    element establishing one, and it is no model blocker, so an
+    element-less node keeps its rotation. The same row as an unknown class
+    (``None``, as before #2407) blocks every one of them."""
+    import numpy as np
+
+    from apeGmsh.opensees._readback import (
+        LiveTranslationalRole,
+        _roles_from_rows,
+    )
+    from apeGmsh.opensees.element.beam_column import elasticBeamColumn
+
+    beam = (elasticBeamColumn, "ElasticBeam3d", np.array([1, 2]))
+    for cls in (LiveTranslationalRole, None):
+        roles = _roles_from_rows(
+            [beam, (cls, "ASDEmbeddedNodeElement", np.array([1, 3]))],
+            [1, 2, 3, 4])
+        if cls is None:
+            assert roles.model_blocker == "ASDEmbeddedNodeElement"
+            for n in (1, 3):
+                assert "a ASDEmbeddedNodeElement touches it" in (
+                    roles.refusal(n) or "")
+            assert "token this table does not know" in (roles.refusal(4) or "")
+            continue
+        assert roles.model_blocker is None
+        assert roles.blocked == {}
+        assert roles.refusal(1) is None          # the beam's rotation
+        assert roles.refusal(2) is None
+        assert "no beam-column or shell" in (roles.refusal(3) or "")
+        assert roles.refusal(4) is None          # element-less

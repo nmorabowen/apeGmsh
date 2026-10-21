@@ -10,6 +10,10 @@ so the expected file is known entry by entry:
 * a rotation slot holds the rotation only where a beam touches the node;
   a 3-D solid node writes 0.0 there, and a node under an unknown class
   writes 0.0 with one ``RotationSlotUnresolvedWarning``;
+* an ``ASDEmbeddedNodeElement`` that cannot carry a pressure (a node of
+  its with ndf other than ``ndm + 1``) leaves a beam node's rotation
+  written; an embedded node whose rotation slot no element settles, or
+  whose element may carry a pressure, refuses by name (#2407);
 * each refusal (wrong coordinates, a missing node, a non-positive or
   non-finite eigenvalue, a failed solve, a short solve, a vector whose
   length is not the node's ndf,
@@ -219,6 +223,95 @@ def test_an_unknown_class_writes_zero_rotations_with_one_warning(tmp_path: Path)
     got = _read(p, fem)
     # No node holds a rotation, so no rotation component is written.
     assert set(got[1]) == {f"displacement_{a}" for a in _AXES}
+
+
+# ---------------------------------------------------------------------------
+# ASDEmbeddedNodeElement (#2407)
+# ---------------------------------------------------------------------------
+
+
+def _embedded(extra: "dict[int, tuple[str, list[int]]]") -> "tuple[FEMData, FakeOps]":
+    """:func:`_solid_and_frame` with the column's base node 9 embedded in
+    the brick's tet (5, 6, 8, 1), as the bridge emits ``embedded``, plus
+    ``extra`` elements."""
+    fem, ops = _solid_and_frame()
+    ops.elements[4] = ("ASDEmbeddedNodeElement", [9, 5, 6, 8, 1])
+    ops.elements.update(extra)
+    return fem, ops
+
+
+def test_an_embedded_beam_node_writes_its_rotation(tmp_path: Path) -> None:
+    """The base node's ndf is 6 and the brick's nodes' ndf 3, so the
+    element cannot carry a pressure (that needs every node at ndf 4): the
+    beam's rotation is written, with no warning, not 0.0."""
+    fem, ops = _embedded({})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 4, tmp_path / "modes.h5", ops=ops)
+    got = _read(p, fem)
+    for k, comps in got.items():
+        for n in range(1, 12):
+            vec = ops.vectors[(n, k)]
+            for d, a in enumerate(_AXES):
+                want = float(vec[3 + d]) if n >= 9 else 0.0
+                assert comps[f"rotation_{a}"][n] == want
+        assert all(comps[f"rotation_{a}"][9] != 0.0 for a in _AXES)
+
+
+def test_an_embedded_node_no_beam_touches_refuses(tmp_path: Path) -> None:
+    """Node 11 (ndf 6) is embedded, and the beam that touched it is gone:
+    no element settles its rotation slots, and the element may tie them
+    to the host's rotation (``-rot``), so the capture refuses by name
+    rather than write 0.0."""
+    fem, ops = _embedded({5: ("ASDEmbeddedNodeElement", [11, 5, 6, 8, 1])})
+    del ops.elements[3]
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=(
+            r"capture_live_modes: the rotation slots of 1 node\(s\) an "
+            r"ASDEmbeddedNodeElement touches \(\[11\]\).*for node 11, no "
+            r"beam-column or shell.*Nothing was written")):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
+
+
+def test_an_embedded_node_that_may_carry_a_pressure_refuses(tmp_path: Path) -> None:
+    """2-D, every node of the element at ndf 3 = ndm + 1: the element may
+    tie the third DOF to a pore pressure (``-p``), so the beam node's slot
+    is not settled and the capture refuses by name."""
+    fem, ops = _frame_2d()
+    ops.coords[4] = [0.75, 0.5]
+    ops.ndf[4] = 3
+    ops.vectors |= {(4, k): np.ones(3) for k in (1, 2, 3)}
+    ops.elements[3] = ("ASDEmbeddedNodeElement", [2, 1, 3, 4])
+    fem = _fem(np.array([[0.0, 0.0], [1.5, 0.0], [3.0, 0.0], [0.75, 0.5]]),
+               {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])})
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=(
+            r"capture_live_modes: the rotation slots of 4 node\(s\) an "
+            r"ASDEmbeddedNodeElement touches \(\[1, 2, 3, 4\]\).*for node 1, "
+            r"a ASDEmbeddedNodeElement touches it")):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
+
+
+def test_a_2d_embedded_beam_node_over_ndf_2_writes_its_rotation(tmp_path: Path) -> None:
+    """2-D: the retained nodes have ndf 2, so no pressure is possible and
+    the beam node's ``rotation_z`` is written."""
+    fem, ops = _frame_2d()
+    for n, xy in ((4, [0.0, 1.0]), (5, [3.0, 1.0])):
+        ops.coords[n], ops.ndf[n] = xy, 2
+        ops.vectors |= {(n, k): np.ones(2) for k in (1, 2, 3)}
+    ops.elements[3] = ("ASDEmbeddedNodeElement", [2, 1, 4, 5])
+    fem = _fem(np.array([[0.0, 0.0], [1.5, 0.0], [3.0, 0.0], [0.0, 1.0], [3.0, 1.0]]),
+               {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 3, tmp_path / "modes.h5", ops=ops)
+    got = _read(p, fem)
+    for k, comps in got.items():
+        for n in (1, 2, 3):
+            assert comps["rotation_z"][n] == float(ops.vectors[(n, k)][2])
+        assert comps["rotation_z"][2] != 0.0
 
 
 # ---------------------------------------------------------------------------
