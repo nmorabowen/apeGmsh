@@ -105,14 +105,10 @@ def base_tributary_area(
                 conn = None  # this namespace has no curve of that name
             if conn is not None:
                 break
-    if conn is None or len(conn) == 0:
-        raise ValueError(
-            f"lysmer_base: base={base!r} names no label or physical group "
-            f"with line elements on the FEM snapshot (a 2-D base is a "
-            f"curve; mesh it with the model)."
-        )
     xyz = {int(n): np.asarray(c, dtype=float)
            for n, c in zip(fem.nodes.ids, fem.nodes.coords)}
+    if conn is None or len(conn) == 0:
+        return _chain_tributary(fem, base, xyz, thickness)
     area: dict[int, float] = {}
     for row in np.asarray(conn):
         ends = [int(n) for n in row if int(n) >= 0][:2]
@@ -122,13 +118,57 @@ def base_tributary_area(
     return area
 
 
+def _chain_tributary(
+    fem: Any, base: str, xyz: "dict[int, Any]", thickness: float,
+) -> dict[int, float]:
+    """Tributary lengths of a straight 2-D base known by its nodes only.
+
+    A snapshot read back from ``model.h5`` keeps a curve group's nodes
+    but not its line elements; the nodes are then ordered along the
+    base and each gap is shared by its two end nodes. Exact for a
+    straight base of linear elements.
+    """
+    ids: list[int] = []
+    for groups in (fem.nodes.labels, fem.nodes.physical):
+        try:
+            ids = [int(n) for n in groups.node_ids(base)]
+        except (AttributeError, KeyError, ValueError):
+            continue  # not a name of this namespace
+        if ids:
+            break
+    if len(ids) < 2:
+        raise ValueError(
+            f"lysmer_base: base={base!r} names no label or physical group "
+            f"with at least two nodes on the FEM snapshot (a 2-D base is a "
+            f"curve)."
+        )
+    pts = np.array([xyz[n] for n in ids])
+    centred = pts - pts.mean(axis=0)
+    direction = np.linalg.svd(centred, full_matrices=False)[2][0]
+    off_line = centred - np.outer(centred @ direction, direction)
+    span = float(np.ptp(centred @ direction))
+    if np.abs(off_line).max() > 1e-9 * max(span, 1.0):
+        raise ValueError(
+            f"lysmer_base: base={base!r} is not straight and the snapshot "
+            f"has no line elements to share its length by; build the "
+            f"bridge from the session's own snapshot."
+        )
+    order = np.argsort(centred @ direction)
+    area: dict[int, float] = {n: 0.0 for n in ids}
+    for a, b in zip(order[:-1], order[1:]):
+        half = 0.5 * float(np.linalg.norm(pts[b] - pts[a])) * float(thickness)
+        area[ids[a]] += half
+        area[ids[b]] += half
+    return area
+
+
 def _coincident_ground(
     fem: Any, label: str, nodes: "tuple[int, ...]", tol: float = 1e-9,
 ) -> dict[int, int]:
     """``{base node: ground node}`` for a ground-set *label*, matching
     each base node to the decoupled node at its position (a model
     reloaded from ``model.h5`` has no set handle, only its label)."""
-    labels = getattr(fem.nodes, "labels", None)
+    labels: Any = getattr(fem.nodes, "labels", None)
     try:
         gids = [int(n) for n in labels.node_ids(label)]
     except (AttributeError, KeyError, ValueError):
