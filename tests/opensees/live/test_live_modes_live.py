@@ -117,15 +117,19 @@ def _capture(fem: FEMData, ops: Any, n: int, tmp: Path) -> "tuple[Path, Path, Sp
 
 
 def _check_file(p: Path, archive: Path, spy: Spy, ops: Any, n: int,
-                rotation_nodes: "set[int]", ndm: int) -> "list[float]":
-    """Assert the file against the live domain; return its eigenvalues."""
+                rotation_nodes: "set[int]", ndm: int,
+                rotations_written: bool = True) -> "list[float]":
+    """Assert the file against the live domain; return its eigenvalues.
+    ``rotations_written=False``: the file holds no rotation component."""
     lam_live = spy.eigen_returned
     assert lam_live is not None and len(lam_live) == n
     with Results.from_native(p, model=OpenSeesModel.from_h5(archive)) as res:
         modes = sorted(res.modes, key=lambda m: m.mode_index)
         assert [m.mode_index for m in modes] == list(range(1, n + 1))
         trans = [f"displacement_{a}" for a in _AXES[:ndm]]
-        rots = ["rotation_z"] if ndm == 2 else [f"rotation_{a}" for a in _AXES]
+        rots = ([] if not rotations_written
+                else ["rotation_z"] if ndm == 2
+                else [f"rotation_{a}" for a in _AXES])
         for m, lam in zip(modes, lam_live):
             assert m.eigenvalue == lam                         # bit for bit
             omega = math.sqrt(lam)
@@ -390,6 +394,35 @@ def test_an_embedded_node_that_may_carry_a_pressure_refuses(
             r".*Nothing was written")):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
+
+
+def test_a_quadup_pressure_is_not_a_rotation(opspy: Any, tmp_path: Path) -> None:
+    """Two stock ``quadUP`` elements (live class ``FourNodeQuadUP``, ndf
+    3): the third DOF is a pore pressure, non-zero in the modes. The
+    capture writes the translations, no rotation component (so no
+    pressure lands in ``rotation_z``), and neither refuses nor warns."""
+    ops = opspy
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0],
+                   [0.0, 1.0], [1.0, 1.0], [2.0, 1.0]])
+    fem = _fem(xy, {3: ("Quadrilateral 4", 2, [[1, 2, 5, 4], [2, 3, 6, 5]], [1, 2])},
+               "live_modes_quadup")
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    for n, (x, y) in enumerate(xy, start=1):
+        ops.node(n, float(x), float(y))
+    for n in (1, 2, 3):
+        ops.fix(n, 1, 1, 0)
+    for n in (4, 5, 6):
+        ops.fix(n, 0, 0, 1)               # drained top
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e5, 0.3, 2.0)
+    for eid, conn in ((1, (1, 2, 5, 4)), (2, (2, 3, 6, 5))):
+        ops.element("quadUP", eid, *conn, 1.0, 1, 2.2e6, 1.0, 1.0e-4, 1.0e-4)
+    assert ops.eleType(1) == "FourNodeQuadUP"
+    p, archive, spy = _capture(fem, ops, 2, tmp_path)
+    _check_file(p, archive, spy, ops, 2, rotation_nodes=set(), ndm=2,
+                rotations_written=False)
+    pressure = max(abs(ops.nodeEigenvector(n, k)[2])
+                   for n in (1, 2, 3) for k in (1, 2))
+    assert pressure > 1e-6
 
 
 def test_an_unmapped_beam_class_over_live_rotations_refuses(

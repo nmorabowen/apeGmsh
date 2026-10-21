@@ -231,6 +231,48 @@ def test_an_unknown_class_over_live_rotations_refuses(tmp_path: Path) -> None:
     assert not out.exists()
 
 
+@pytest.mark.parametrize("cls", ["FourNodeQuadUP", "SSPquadUP"])
+def test_a_stock_up_class_slot_is_a_pressure_not_a_rotation(
+        tmp_path: Path, cls: str) -> None:
+    """2-D, ndf 3 under a stock u-p class: the third DOF is a pore
+    pressure (non-zero here), so no rotation is written, nothing refuses
+    and nothing warns."""
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    fem = _fem(xy, {3: ("Quadrilateral 4", 2, [[1, 2, 3, 4]], [1])})
+    ops = FakeOps(2, {n + 1: list(xy[n]) for n in range(4)},
+                  {n: 3 for n in range(1, 5)}, {1: (cls, [1, 2, 3, 4])},
+                  [4.0, 25.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.h5", ops=ops)
+    got = _read(p, fem)
+    for k, comps in got.items():
+        assert set(comps) == {"displacement_x", "displacement_y"}
+        assert any(ops.vectors[(n, k)][2] != 0.0 for n in range(1, 5))
+
+
+@pytest.mark.parametrize("case", ["mode_2_only", "tiny"])
+def test_an_unknown_class_refuses_on_any_non_zero_rotation(
+        tmp_path: Path, case: str) -> None:
+    """The check reads every captured mode and has no tolerance: a
+    rotation that is non-zero only in mode 2, or that is 1e-9 of the
+    translations, still refuses."""
+    fem, ops = _solid_and_frame(beam_class="SomeUnknownBeam")
+    for (n, k), v in ops.vectors.items():
+        if n >= 9:
+            scale = float(np.abs(v[:3]).max())
+            v[3:] = (0.0 if case == "mode_2_only" and k != 2
+                     else 1e-9 * scale if case == "tiny" else v[3:])
+    assert all(ops.vectors[(9, k)][3:].any() == (case == "tiny" or k == 2)
+               for k in (1, 2, 3))
+    out = tmp_path / "modes.h5"
+    with pytest.raises(ValueError, match=(
+            r"rotation slots of 3 node\(s\) \(\[9, 10, 11\]\).*SomeUnknownBeam "
+            r"is not in the live class table")):
+        capture_live_modes(fem, 3, out, ops=ops)
+    assert not out.exists()
+
+
 def test_an_unknown_class_over_zero_rotations_writes_zero_with_one_warning(
         tmp_path: Path) -> None:
     """Where the unsettled slots are 0.0 in every mode, 0.0 is their live

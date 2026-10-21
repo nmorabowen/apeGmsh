@@ -131,6 +131,14 @@ class LiveTranslationalRole:
     ``ASDEmbeddedNodeElement`` whose nodes cannot carry a pressure DOF."""
 
 
+class LiveUPRole:
+    """The row class :func:`_roles_from_rows` takes for a live u-p element
+    that no bridge ``Element`` class names (stock ``quadUP``, ``brickUP``
+    and their kin): it counts as :data:`_UP_FAMILIES`, so the slot past
+    its nodes' translations is a known pore pressure. Its one user is
+    :meth:`~._recorder_translate.LiveDomainFacts.rotation_roles`."""
+
+
 #: u-p families: their pressure DOF sits in a slot an element-less node's
 #: layout calls a rotation, so a constraint could tie the two. A model
 #: holding one refuses rotations on element-less nodes.
@@ -155,6 +163,14 @@ class RotationRoles:
     model_blocker: "str | None"
     #: ``model_blocker`` is an unknown element token, not a u-p class.
     model_blocker_unknown: bool = False
+    #: The names of the u-p classes among the rows (:data:`_UP_FAMILIES`,
+    #: :class:`LiveUPRole`).
+    pressure_classes: frozenset[str] = frozenset()
+
+    def holds_pressure(self, tag: int) -> bool:
+        """Node ``tag`` is blocked by a u-p class: the slot past its
+        translations is a pore pressure, not an unsettled rotation."""
+        return self.blocked.get(tag) in self.pressure_classes
 
     def refusal(self, tag: int) -> "str | None":
         """Why node ``tag``'s rotational DOF slots carry no rotation, or
@@ -227,12 +243,15 @@ def _roles_from_rows(
     blocked: dict[int, str] = {}
     model_blocker: "str | None" = None
     unknown = False
+    pressure: set[str] = set()
     for cls, name, flat in rows:
         is_rot = cls is not None and issubclass(cls, _ROTATIONAL_FAMILIES)
         is_trans = cls is not None and issubclass(
             cls, _TRANSLATIONAL_ONLY + (LiveTranslationalRole,))
-        if model_blocker is None and (
-                cls is None or issubclass(cls, _UP_FAMILIES)):
+        is_up = cls is not None and issubclass(cls, _UP_FAMILIES + (LiveUPRole,))
+        if is_up:
+            pressure.add(name)
+        if model_blocker is None and (cls is None or is_up):
             model_blocker, unknown = name, cls is None
         hit = flat if want is None else np.intersect1d(flat, want)
         nodes = [int(n) for n in hit]
@@ -245,7 +264,7 @@ def _roles_from_rows(
     return RotationRoles(
         rotational=frozenset(rotational), blocked=blocked,
         touched=frozenset(touched), model_blocker=model_blocker,
-        model_blocker_unknown=unknown,
+        model_blocker_unknown=unknown, pressure_classes=frozenset(pressure),
     )
 
 

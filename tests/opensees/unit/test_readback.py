@@ -528,3 +528,22 @@ def test_a_live_translational_row_neither_gives_nor_blocks_a_rotation() -> None:
         assert roles.refusal(2) is None
         assert "no beam-column or shell" in (roles.refusal(3) or "")
         assert roles.refusal(4) is None          # element-less
+
+
+def test_a_live_up_row_holds_a_pressure() -> None:
+    """``LiveUPRole`` (a stock u-p class such as ``FourNodeQuadUP``) blocks
+    its nodes as a known pore pressure and is a model blocker; an unknown
+    class blocks without the pressure meaning."""
+    import numpy as np
+
+    from apeGmsh.opensees._readback import LiveUPRole, _roles_from_rows
+
+    roles = _roles_from_rows(
+        [(LiveUPRole, "FourNodeQuadUP", np.array([1, 2])),
+         (None, "SomeUnknown", np.array([3]))], [1, 2, 3, 4])
+    assert roles.holds_pressure(1) and roles.holds_pressure(2)
+    assert not roles.holds_pressure(3)       # unknown: not a known pressure
+    assert not roles.holds_pressure(4)       # element-less
+    assert roles.model_blocker == "FourNodeQuadUP"
+    assert not roles.model_blocker_unknown
+    assert "a FourNodeQuadUP touches it" in (roles.refusal(1) or "")

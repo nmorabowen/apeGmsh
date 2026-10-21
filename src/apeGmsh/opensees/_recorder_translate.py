@@ -519,6 +519,23 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
 #: (:meth:`LiveDomainFacts.rotation_roles`).
 _EMBEDDED_NODE_CLASS = "ASDEmbeddedNodeElement"
 
+#: The ``eleType`` of each stock u-p element (``quadUP``, ``SSPquadUP``,
+#: ``9_4_QuadUP``, ``brickUP``, ``bbarBrickUP``, ``SSPbrickUP``,
+#: ``20_8_BrickUP``), as stock openseespy 3.7.1 answers it. Each carries a
+#: pore pressure at DOF ``ndm + 1`` of its corner nodes, so the rotation
+#: roles count it as a u-p family (:class:`~._readback.LiveUPRole`). It
+#: stays out of :data:`_TOKEN_FOR_LIVE_CLASS`: no bridge class shares its
+#: responses, so element pairing keeps refusing it.
+_UP_LIVE_CLASSES: "frozenset[str]" = frozenset({
+    "FourNodeQuadUP",
+    "SSPquadUP",
+    "NineFourNodeQuadUP",
+    "BrickUP",
+    "BBarBrickUP",
+    "SSPbrickUP",
+    "TwentyEightNodeBrickUP",
+})
+
 #: Live class -> the slot of the FEM (Gmsh) connectivity each of its
 #: ``eleNodes`` holds, for a class whose node order is not Gmsh's. The
 #: pairing compares ``eleNodes`` against the FEM connectivity in this
@@ -1057,12 +1074,14 @@ class LiveDomainFacts:
         An :data:`_EMBEDDED_NODE_CLASS` element is classed by its nodes'
         live ndf: one with a node whose ndf is not ``ndm + 1`` cannot
         carry a pressure DOF, so it counts as translational-only; one
-        whose nodes all have that ndf stays unknown and blocks."""
+        whose nodes all have that ndf stays unknown and blocks. A stock
+        u-p class (:data:`_UP_LIVE_CLASSES`) counts as a u-p family."""
         import numpy as np
 
         from ._readback import (
             _CLASS_FOR_TOKEN,
             LiveTranslationalRole,
+            LiveUPRole,
             _roles_from_rows,
         )
 
@@ -1087,6 +1106,7 @@ class LiveDomainFacts:
             token = _TOKEN_FOR_LIVE_CLASS.get(name)
             cls: "type | None" = (
                 LiveTranslationalRole if translational
+                else LiveUPRole if name in _UP_LIVE_CLASSES
                 else None if token is None else _CLASS_FOR_TOKEN[token])
             rows.append((cls, name, np.unique(np.asarray(nodes, dtype=np.int64))))
         return _roles_from_rows(rows, node_ids)

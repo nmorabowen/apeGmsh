@@ -34,6 +34,7 @@ from ..writers._native import NativeWriter
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
+    from ...opensees._readback import RotationRoles
 
 __all__ = ["capture_live_modes"]
 
@@ -64,7 +65,9 @@ def capture_live_modes(
     laid onto ``ux..rz`` by its own live ndf: ``displacement_*`` holds the
     first ``min(3, ndm)`` slots. A rotation slot holds the rotation only
     where the live elements' DOF roles say so (a beam, shell or
-    zero-length element touches the node). A slot they cannot settle
+    zero-length element touches the node); the slot a u-p element (stock
+    ``quadUP``, ``brickUP`` and kin) gives a pore pressure holds no
+    rotation and is written as 0.0. A slot they cannot settle
     refuses when its live value is non-zero in any mode (a class the live
     table does not map, such as ``MixedBeamColumn3d``, may carry a
     rotation there) or when an ``ASDEmbeddedNodeElement`` touches the
@@ -240,7 +243,11 @@ def _capture(
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
     if unresolved:
-        _refuse_unsettled(facts, node_ids, vectors, layouts, unresolved)
+        roles = facts.rotation_roles([n for n, _ in unresolved])
+        # A u-p class's extra slot is a known pore pressure: no rotation.
+        unresolved = [(n, why) for n, why in unresolved
+                      if not roles.holds_pressure(n)]
+        _refuse_unsettled(facts, roles, node_ids, vectors, layouts, unresolved)
     spatial, rotation_slots = _native_fields(vectors, layouts, rotations, ndm)
     _warn_unresolved(_WHERE, unresolved, 3)
     info = backend_info_of(ops)
@@ -263,14 +270,14 @@ def _capture(
 
 
 def _refuse_unsettled(
-    facts: LiveDomainFacts, node_ids: "np.ndarray",
+    facts: LiveDomainFacts, roles: "RotationRoles", node_ids: "np.ndarray",
     vectors: "list[list[np.ndarray]]", layouts: "list[tuple[int, ...]]",
     unresolved: "list[tuple[int, str]]",
 ) -> None:
     """Raise when an unsettled rotation slot may hold a value a 0.0 would
     replace (#2407): its live ``nodeEigenvector`` entry is non-zero in a
-    captured mode (an unmapped beam class, such as ``MixedBeamColumn3d``,
-    or an unknown u-p class), or an ``ASDEmbeddedNodeElement`` touches the
+    captured mode (an unmapped class, such as ``MixedBeamColumn3d``), or
+    an ``ASDEmbeddedNodeElement`` touches the
     node. An unsettled slot that is 0.0 in every mode, at a node no
     embedded element touches, keeps the warning: 0.0 is its live value."""
     embedded = facts.embedded_nodes()
@@ -285,7 +292,7 @@ def _refuse_unsettled(
     if not hit:
         return
     node, why, peak = hit[0]
-    blocker = facts.rotation_roles([node]).blocked.get(node)
+    blocker = roles.blocked.get(node)
     if blocker == "ASDEmbeddedNodeElement":
         cause = (
             "Every node of that ASDEmbeddedNodeElement has ndf ndm + 1, so "
