@@ -1,20 +1,15 @@
-"""``DomainCaptureSpec`` resolves ``element_class_name`` off the bridge.
+"""``cpp_class_name_for_pgs`` names the one element class a PG set carries.
 
-``_lookup_class_hint_for_pgs`` read ``self._opensees._elem_assignments``,
-an attribute of the legacy ``g.opensees`` composite removed in Phase 8.
-The ``apeSees`` bridge carries no such attribute, so the guarded
-``getattr`` returned ``{}`` and the lookup always answered ``None`` —
-``element_class_name`` silently stayed unset on every resolved record.
-
-That matters because :func:`_identify_layout` needs a single class to
+The in-process capture spec (deleted in #2191) used it to fill
+``element_class_name``: :func:`_identify_layout` needs a single class to
 separate two catalog entries sharing a flat column width. ``LadrunoLST``
 and ``BezierTri6`` are BOTH 3 Gauss points x 4 components under
 ``stress_plane_strain`` (and both 3 x 3 under ``stress``), with different
 Gauss orderings — so without the hint such a record raises
-``Ambiguous catalog match`` and the caller has to name the class by hand.
+``Ambiguous catalog match``.
 
-The lookup now walks the bridge's typed ``Element`` primitives, the same
-source the σ_zz capability gate uses.
+The helper walks the bridge's typed ``Element`` primitives, never the
+legacy ``g.opensees`` ``_elem_assignments`` attribute (removed in Phase 8).
 """
 from __future__ import annotations
 
@@ -23,7 +18,6 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._element_capabilities import cpp_class_name_for_pgs
-from apeGmsh.results.capture.spec import DomainCaptureSpec
 
 WITH_ZZ = ("stress_xx", "stress_yy", "stress_xy", "stress_zz")
 
@@ -51,25 +45,6 @@ def _model(element: str, *, pg: str = "Plate", second_pg: bool = False):
     return fem, ops
 
 
-def _resolved(fem, ops, **declare_kwargs):
-    cs = DomainCaptureSpec(opensees=ops)
-    cs.gauss(components=WITH_ZZ, name="g", **declare_kwargs)
-    return cs.resolve(fem).records[0]
-
-
-# =====================================================================
-# The fix
-# =====================================================================
-
-@pytest.mark.parametrize(
-    "element", ["LadrunoLST", "LadrunoCST", "LadrunoQuad"],
-)
-def test_class_hint_resolves_from_the_bridge(element: str) -> None:
-    """A normal ``gauss(pg=...)`` record names its own element class."""
-    fem, ops = _model(element)
-    assert _resolved(fem, ops, pg="Plate").element_class_name == element
-
-
 def test_legacy_attribute_really_is_gone() -> None:
     """Pins WHY the old lookup was dead, so a revert cannot pass silently.
 
@@ -82,17 +57,13 @@ def test_legacy_attribute_really_is_gone() -> None:
     assert getattr(ops, "_primitives", None), "the new source must exist"
 
 
-def test_explicit_kwarg_beats_the_lookup() -> None:
-    """A caller who names the class is never second-guessed."""
-    fem, ops = _model("LadrunoLST")
-    rec = _resolved(fem, ops, pg="Plate", element_class_name="BezierTri6")
-    assert rec.element_class_name == "BezierTri6"
-
-
-def test_unnamed_target_set_stays_unknown() -> None:
-    """``ids=`` names no PG, so no ``Element`` primitive can be matched."""
-    fem, ops = _model("LadrunoLST")
-    assert _resolved(fem, ops, ids=[2, 3]).element_class_name is None
+@pytest.mark.parametrize(
+    "element", ["LadrunoLST", "LadrunoCST", "LadrunoQuad"],
+)
+def test_helper_names_the_bridge_class(element: str) -> None:
+    """A PG drawn with one class answers that class."""
+    _fem, ops = _model(element)
+    assert cpp_class_name_for_pgs(ops, ("Plate",)) == element
 
 
 # =====================================================================
@@ -138,30 +109,6 @@ def test_helper_is_defensive_about_its_inputs() -> None:
 
 
 # =====================================================================
-# The sibling dereference that was NOT guarded
-# =====================================================================
-
-def test_layers_record_does_not_crash_on_a_bridge_attached_spec() -> None:
-    """``_resolve_layer_section_metadata`` hit the same removed attributes.
-
-    It dereferenced ``self._opensees._sections`` and ``._elem_assignments``
-    with no ``getattr`` guard, so resolving ANY ``layers`` record against a
-    bridge raised ``AttributeError: 'apeSees' object has no attribute
-    '_sections'`` — verified on the unfixed source. It now answers "no
-    layered-section metadata", which is what it already returned when no
-    bridge was attached at all.
-    """
-    from apeGmsh._vocabulary import FIBER
-
-    fem, ops = _model("LadrunoCST")
-    cs = DomainCaptureSpec(opensees=ops)
-    cs.layers(components=(FIBER[0],), pg="Plate", name="L")
-
-    resolved = cs.resolve(fem).records[0]        # must not raise
-    assert resolved.layer_section_metadata is None
-
-
-# =====================================================================
 # What the hint actually buys — the ambiguity it resolves
 # =====================================================================
 
@@ -175,8 +122,8 @@ def test_hint_resolves_the_width_12_plane_strain_ambiguity() -> None:
     """
     from apeGmsh.results.transcoders._recorder import _identify_layout
 
-    fem, ops = _model("LadrunoLST")
-    hint = _resolved(fem, ops, pg="Plate").element_class_name
+    _fem, ops = _model("LadrunoLST")
+    hint = cpp_class_name_for_pgs(ops, ("Plate",))
     assert hint == "LadrunoLST"
 
     with pytest.raises(ValueError, match="Ambiguous"):

@@ -1,4 +1,4 @@
-"""#2072: frame-beam nodal forces on MPCO, DomainCapture and ``.out``.
+"""#2072: frame-beam nodal forces on MPCO and ``.out``.
 
 An MPCO read of ``nodal_resisting_*`` on a force-based beam used to return
 an empty slab with no warning: the fork writes a frame beam's
@@ -9,8 +9,9 @@ takes any custom-rule index, and a bucket it leaves unread warns by class.
 
 The bucket keys below are the ones the fork's MPCO recorder wrote on build
 79e0623670 for these classes (``_FRAME_KEYS``). ``NODAL_FORCE_CATALOG``
-also gates DomainCapture and the ``.out`` transcoder, so each added class
-is read on all three routes here, from one synthetic end-force history.
+also gates the ``.out`` transcoder, so each added class is read on both
+routes here, from one synthetic end-force history (an in-process capture
+route was the third until #2191 deleted it).
 The fork lane solves the same classes for real
 (``tests/opensees/integration_ladruno/test_mpco_frame_nodal_forces_live.py``).
 """
@@ -29,8 +30,6 @@ from apeGmsh.opensees._response_catalog import (
     synthesize_line_station_layout_for_elastic_beam,
 )
 from apeGmsh.results import Results
-from apeGmsh.results.capture._domain import DomainCapture
-from apeGmsh.results.capture.spec import ResolvedDomainCaptureRecord
 from apeGmsh.results.readers._mpco_nodal_io import (
     NodalForceBucketSkippedWarning,
 )
@@ -38,12 +37,6 @@ from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
 from apeGmsh.results.transcoders._recorder import RecorderTranscoder
 
 from tests.conftest import _open_model_from_h5, _stub_model_h5_path
-from tests.fixtures.capture_tags import identity_tags
-from tests.test_results_domain_capture_nodal_forces import (
-    _FakeOpsBeams,
-    _MockFem,
-    _spec_with,
-)
 from tests.test_results_mpco_nodal_mock import _create_skeleton
 from tests.test_results_recorder_transcoder_nodal_forces import (
     _make_spec,
@@ -256,46 +249,8 @@ def test_mpco_unread_bucket_outside_the_id_filter_stays_quiet(
 
 
 # =====================================================================
-# DomainCapture and .out: the other two routes the catalog gates
+# .out: the other route the catalog gates
 # =====================================================================
-
-@pytest.mark.parametrize("fr", list(_FRAMES))
-@pytest.mark.parametrize("cls", _CLASSES)
-def test_domain_capture_records_the_frame_beam(
-    tmp_path: Path, cls: str, fr: str,
-) -> None:
-    ndm = _FRAME_KEYS[cls][1]
-    names = _FRAMES[fr][ndm]
-    fem = _MockFem([1, 2, 3])
-    spec = _spec_with(
-        ResolvedDomainCaptureRecord(
-            category="elements", name="frame", components=names,
-            dt=None, n_steps=None, element_ids=_EIDS,
-        ),
-        snapshot_id=fem.snapshot_id,
-    )
-    ops = _FakeOpsBeams()
-    flat = _flat(ndm, fr)
-    for e in _EIDS:
-        ops.ele_class[int(e)] = cls
-    path = tmp_path / "cap.h5"
-    with DomainCapture(spec, path, fem, ops=ops,
-                       tag_map=identity_tags(spec)) as cap:
-        cap.begin_stage("s", kind="static")
-        for t in range(_T):
-            for i, e in enumerate(_EIDS):
-                ops.ele_response[(int(e), fr)] = flat[t, i]
-            cap.step(t=float(t + 1))
-        cap.end_stage()
-        (nfc,) = cap._nodal_force_capturers
-        assert nfc.skipped_elements == []
-    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
-        for k, comp in enumerate(names):
-            slab = r.elements.get(component=comp)
-            np.testing.assert_array_equal(slab.element_ids, _EIDS)
-            np.testing.assert_array_equal(
-                slab.values, _expected(ndm, fr, k), err_msg=comp)
-
 
 @pytest.mark.parametrize("fr", list(_FRAMES))
 @pytest.mark.parametrize("cls", _CLASSES)

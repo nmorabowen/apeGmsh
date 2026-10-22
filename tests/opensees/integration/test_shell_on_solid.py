@@ -20,11 +20,11 @@ footing" use case (the E7 docs example):
     load: ``Σ reactions == Σ applied`` to numerical precision.
 
 3.  **node_ndf round-trips through Results.from_native** — a real
-    mixed-ndf model captured with ``ops.domain_capture`` writes the
-    ndf envelope into the Composed file's ``/model/meta`` so
-    ``OpenSeesModel.from_h5(path, fem_root="/model")`` recovers
-    ``ndf=6`` (it read ``ndf=0`` and raised before the
-    ``DomainCapture`` bridge-forwarding fix).
+    mixed-ndf model's Composed run file (``NativeWriter`` with the
+    bridge's ``model.h5`` as ``model_h5_src``) carries the ndf envelope
+    in ``/model/meta``, so ``OpenSeesModel.from_h5(path,
+    fem_root="/model")`` recovers ``ndf=6`` (a file without the bridge
+    zone read ``ndf=0`` and raised).
 
 See ADR 0048 (inferred per-node ndf; supersedes 0032 / 0033) and the partitioned
 companion ``test_emit_partitioned_mixed_ndf_shell_on_solid.py``.
@@ -207,53 +207,6 @@ def test_asdshellt3_on_solid_fails_loud():
 
 
 # ---------------------------------------------------------------------------
-# 1c. domain_capture sidecar gate — only PARTITIONED staged builds keep
-#     the pre-Composed behaviour (mirrors the ops.h5 guard; ADR 0055).
-# ---------------------------------------------------------------------------
-
-
-def test_domain_capture_forwards_sidecar_for_initial_stress_builds(tmp_path):
-    """domain_capture forwards the bridge whenever ops.h5() (the sidecar
-    writer) supports the build.  ADR 0055 Phase 1 made global
-    initial-stress builds archivable, so they forward the bridge just
-    like a plain build — only PARTITIONED staged builds gate it off
-    (see test_h5_staged_domain_capture.py).
-    """
-    from apeGmsh.opensees._internal.build.records import InitialStressRecord
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
-
-    nodes = _NodesStub(
-        ids=[1, 2, 3, 4],
-        coords=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
-        node_pgs={"Solid": [1, 2, 3, 4]},
-    )
-    elements = _ElementsStub(elem_pgs={
-        "Solid": _ElementGroupView(ids=(1,), connectivity=((1, 2, 3, 4),)),
-    })
-    fem = FEMStub(nodes=nodes, elements=elements)
-    fem.snapshot_id = "stub"  # spec resolve reads fem.snapshot_id
-    ops = apeSees(fem)
-    ops.model(ndm=3, ndf=3)
-
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(ids=[1], components=["displacement_x"], name="probe")
-
-    # Plain build: sidecar forwarded so node_ndf can round-trip.
-    cap_plain = ops.domain_capture(spec, path=str(tmp_path / "plain.h5"))
-    assert cap_plain._bridge is ops
-
-    # Initial-stress build: ops.h5 archives it (ADR 0055 Phase 1), so
-    # the sidecar is forwarded too — the gate was lifted.
-    ops._initial_stress_records.append(InitialStressRecord(
-        name="insitu", pg="Solid", elements=None,
-        sigma_xx=0.0, sigma_yy=0.0, sigma_zz=-1.0,
-        ramp_steps=1, lambda_install=1.0,
-    ))
-    cap_is = ops.domain_capture(spec, path=str(tmp_path / "is.h5"))
-    assert cap_is._bridge is ops
-
-
-# ---------------------------------------------------------------------------
 # 2. Correct idiom — separate coincident nodes + equalDOF + rotation clamp
 #    transmits the full load (Σ reactions == Σ applied).
 # ---------------------------------------------------------------------------
@@ -393,29 +346,29 @@ def test_shell_on_solid_correct_idiom_satisfies_equilibrium():
 
 
 # ---------------------------------------------------------------------------
-# 3. node_ndf round-trips through ops.domain_capture -> Results.from_native.
+# 3. node_ndf round-trips through a Composed run file -> Results.from_native.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.live
-def test_node_ndf_roundtrips_through_domain_capture(g, tmp_path):
-    """A real mixed-ndf model captured with ``ops.domain_capture``
-    persists its ndf envelope into the Composed file's ``/model/meta`` so
-    ``OpenSeesModel.from_h5(path, fem_root="/model")`` recovers ``ndf=6``.
+def test_node_ndf_roundtrips_through_a_composed_run_file(g, tmp_path):
+    """A real mixed-ndf model's Composed run file persists its ndf
+    envelope into ``/model/meta``, so ``OpenSeesModel.from_h5(path,
+    fem_root="/model")`` recovers ``ndf=6``.
 
-    Before the ``DomainCapture(bridge=self)`` forwarding fix, the capture
-    file carried only ``/model`` + ``/stages`` (no ``/opensees`` zone),
-    the broker ``/model/meta`` had no bridge ``ndf``, and
-    ``OpenSeesModel.from_h5`` read ``ndf=0`` —
-    ``validate_envelope_covers_broker_ndf`` then rejected the model with
+    A run file that carries only ``/model`` + ``/stages`` (no
+    ``/opensees`` zone) has no bridge ``ndf`` in the broker
+    ``/model/meta``: ``OpenSeesModel.from_h5`` read ``ndf=0`` and
+    ``validate_envelope_covers_broker_ndf`` rejected the model with
     ``BridgeError: OpenSeesModel(ndf=0) cannot host node ... ndf=6``.
+    ``NativeWriter.open(model_h5_src=)`` (the route every recorder
+    transcode with ``model=`` takes) propagates the envelope.
     """
-    pytest.importorskip("openseespy.opensees")
     import gmsh
 
     from apeGmsh.opensees import OpenSeesModel
     from apeGmsh.results import Results
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
+
+    from tests.conftest import _write_composed_run
 
     b, H = 1.0, 1.0
     G = g.model.geometry
@@ -470,21 +423,17 @@ def test_node_ndf_roundtrips_through_domain_capture(g, tmp_path):
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    path = str(tmp_path / "node_ndf_roundtrip.h5")
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(pg="WallTop", components=["displacement_y"], name="tip")
-    with ops.domain_capture(spec, path=path) as cap:
-        cap.begin_stage("lat", kind="static")
-        ops.analyze(steps=1)
-        cap.step(t=1.0)
-        cap.end_stage()
+    path = _write_composed_run(
+        ops, fem, tmp_path / "node_ndf_roundtrip.h5", top,
+        [("lat", [1.0], {"displacement_y": np.zeros((1, len(top)))})],
+    )
 
     # BUG 2: the ndf envelope must survive the Composed-file round-trip.
     om = OpenSeesModel.from_h5(path, fem_root="/model")
     assert om.ndf == 6, (
-        f"node_ndf envelope lost across domain_capture: recovered "
-        f"ndf={om.ndf}, expected 6.  The DomainCapture sidecar bridge "
-        f"forwarding did not persist /model/meta ndf."
+        f"node_ndf envelope lost across the Composed run file: recovered "
+        f"ndf={om.ndf}, expected 6.  The bridge zone copy did not "
+        f"persist /model/meta ndf."
     )
     # And the full Results chain opens against the recovered model.
     with Results.from_native(path, model=om) as r:
