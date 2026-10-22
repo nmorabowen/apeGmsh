@@ -142,6 +142,8 @@ class Model:
     module: str
     function: str
     kwargs: tuple[tuple[str, Any], ...] = ()
+    #: The test package that holds ``module``.
+    package: str = "tests.opensees.h5"
 
     @property
     def id(self) -> str:
@@ -149,7 +151,7 @@ class Model:
         return f"{self.module}::{self.function}" + (f"[{args}]" if args else "")
 
     def build(self) -> apeSees:
-        mod = importlib.import_module(f"tests.opensees.h5.{self.module}")
+        mod = importlib.import_module(f"{self.package}.{self.module}")
         factory: Callable[..., apeSees] = getattr(mod, self.function)
         return factory(**dict(self.kwargs))
 
@@ -223,6 +225,11 @@ CORPUS: tuple[Model, ...] = (
                 "rigid_diaphragm", "rigid_body", "embedded",
                 "equal_dof,rigid_beam,rigid_diaphragm,embedded")
       for p in _B),
+    # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
+    # the archive stores none of it and the replay writes it back: before
+    # the analyze of the stage that adds the upper quad, then the user's 1.
+    Model("test_manzari_stage_zero", "_md_column_flipped",
+          package="tests.opensees.integration"),
 )
 
 
