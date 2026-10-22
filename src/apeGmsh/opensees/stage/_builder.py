@@ -81,6 +81,9 @@ STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
 #: and inherits its ``mElastFlag``.  A class whose flag is per tag
 #: (the multi-yield soils keep ``loadStagex[matN]``) is not listed.
 #: A new class-wide class is one entry ``"<Class>": "<Class>::<static>"``.
+#: The static also survives ``ops.wipe()``: an in-process re-run starts at
+#: the previous run's value, while these checks assume each model starts
+#: at 0 (#2460; the stage-0 line after the elements is #2440's).
 CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "ManzariDafalias": "ManzariDafalias::mElastFlag",
     "LadrunoSANISAND": "ManzariDafalias::mElastFlag",

@@ -116,7 +116,14 @@ def _flip(ops: apeSees, name: str, value: float, *, material: Any,
         s.run(n_increments=1)
 
 
-_STAGED = sorted(STAGED_MATERIAL_CLASSES)
+_STAGED = sorted(_KW)
+
+
+def test_every_staged_class_is_covered() -> None:
+    """A class that joins STAGED_MATERIAL_CLASSES (PM4Sand and PM4Silt with
+    #2401) joins these refusal tests with its constructor keywords in
+    ``_KW``."""
+    assert set(_KW) == STAGED_MATERIAL_CLASSES
 
 
 # ---------------------------------------------------------------------------
