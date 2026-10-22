@@ -15,7 +15,8 @@ of Mass*. It takes its module from `ops=` or `get_ops()`.
 - `StoryDrifts(levels, *, points=None, method="nearest"|"rigid", max_offset=)`
   gives drift ratios `(u_top - u_bottom) / h`. With no `points`, it covers
   every joint that has a node directly below it, and `.story_max()` gives
-  the ETABS story maximum in X and Y. With `points=`, it reads the nearest
+  the ETABS story maximum in X and Y, with the story average beside it
+  (`AvgX`, `AvgY`: the max/avg pair of the torsional irregularity ratio). With `points=`, it reads the nearest
   node, or the in-plane rigid fit of the level, at each plan point.
 - `Pier(name, elements, bottom=, top=, axis2=)`, `Pier.from_pg(bridge, pg)`,
   `piers_by_story(pier, levels)` and `PierForces(piers)` give

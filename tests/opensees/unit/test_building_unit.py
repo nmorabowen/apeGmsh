@@ -149,7 +149,9 @@ def test_drift_joints_and_story_max() -> None:
     d = B.StoryDrifts((0.0, 3.0), ops=_mod(fake))
     assert d.labels == ("Story1:3:DX", "Story1:3:DY", "Story1:4:DX", "Story1:4:DY")
     np.testing.assert_allclose(d(_mod(fake)), [0.01, -0.02, 0.01, 0.03])
-    np.testing.assert_allclose(d.story_max(ops=_mod(fake)).values, [[0.01, 0.03]])
+    t = d.story_max(ops=_mod(fake))
+    assert t.columns == ("DriftX", "DriftY", "AvgX", "AvgY")
+    np.testing.assert_allclose(t.values, [[0.01, 0.03, 0.01, 0.025]])
 
 
 def test_story_table_accessors() -> None:

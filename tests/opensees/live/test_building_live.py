@@ -232,18 +232,21 @@ def test_joint_drifts_match_nodedisp_differences() -> None:
     d = B.StoryDrifts(LEVELS)
     v = d.table()
     by_xyz = {c: t for t, c in b.coords.items()}
-    want_max = np.zeros((3, 2))
+    want_max = np.zeros((3, 4))           # max |DX|, |DY|, then the means
     n_joints = 0
     for i in range(1, 4):
         h = LEVELS[i] - LEVELS[i - 1]
+        story = []
         for (x, y, z), t in by_xyz.items():
             if z != LEVELS[i] or (x, y, LEVELS[i - 1]) not in by_xyz:
                 continue
             bot = by_xyz[(x, y, LEVELS[i - 1])]
             want = (np.array(ops.nodeDisp(t)[:2]) - np.array(ops.nodeDisp(bot)[:2])) / h
             np.testing.assert_allclose(v.row(f"Story{i}:{t}"), want, rtol=1e-13)
-            want_max[i - 1] = np.maximum(want_max[i - 1], np.abs(want))
+            story.append(np.abs(want))
             n_joints += 1
+        want_max[i - 1, :2] = np.max(story, axis=0)
+        want_max[i - 1, 2:] = np.mean(story, axis=0)
     assert len(v.rows) == n_joints
     np.testing.assert_allclose(d.story_max().values, want_max, rtol=1e-13)
     np.testing.assert_allclose(B.story_drifts(LEVELS).values, want_max, rtol=1e-13)

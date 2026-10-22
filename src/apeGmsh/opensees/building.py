@@ -55,6 +55,17 @@ Refusals
 - an element whose ``forces`` vector is not one value per DOF of its nodes
   (``eleType`` is named);
 - nodes with an ``ndf`` other than 3 or 6, and 2-D models.
+
+Code checks
+-----------
+The tables carry what an ASCE 7 check reads; naming columns is the
+caller's. For example, apeETABS's ``TorsionCheck`` drifts frame::
+
+    t = drifts.story_max(combined).to_frame().rename_axis("Story").reset_index()
+    h = dict(zip(drifts.stories, drifts.heights))
+    t["Elevation"] = list(drifts.levels[1:])
+    t["drift_max"] = t["DriftX"] * t["Story"].map(h)
+    t["drift_avg"] = t["AvgX"] * t["Story"].map(h)
 """
 from __future__ import annotations
 
@@ -701,17 +712,20 @@ class StoryDrifts:
     def story_max(self, values: FloatArray | None = None, *,
                   ops: ModuleType | None = None) -> StoryTable:
         """The largest ``|DX|`` and ``|DY|`` of each story (ETABS *Story
-        Drifts*). For a modal combination, pass the combined vector: the
+        Drifts*), and beside them the mean over the story's entries
+        (``AvgX``, ``AvgY``; the max/avg pair of a torsional irregularity
+        ratio). For a modal combination, pass the combined vector: the
         maximum of the combined joint drifts, not the combination of maxima."""
         v = self(ops) if values is None else _check_len(values, self.labels)
         a = np.abs(v.reshape(-1, 2))
         story = np.asarray(self._story)
-        out = np.zeros((len(self.stories), 2))
+        out = np.zeros((len(self.stories), 4))
         for s in range(len(self.stories)):
             sel = a[story == s]
             if sel.size:
-                out[s] = sel.max(axis=0)
-        return StoryTable(self.stories, ("DriftX", "DriftY"), out)
+                out[s, :2] = sel.max(axis=0)
+                out[s, 2:] = sel.mean(axis=0)
+        return StoryTable(self.stories, ("DriftX", "DriftY", "AvgX", "AvgY"), out)
 
 
 def _pick(row: int) -> tuple[IntArray, FloatArray]:
