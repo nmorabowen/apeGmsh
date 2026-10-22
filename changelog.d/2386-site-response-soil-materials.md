@@ -36,3 +36,11 @@ modulus-reduction curve, `backbone=((shear strain, G/Gmax), ...)`.
   `PM4Sand` / `PM4Silt` integrate in `setTrialStrain` and are not
   affected. `integrator CentralDifference` has the same defect; the
   build does not check it yet.
+
+- PM4Sand's and PM4Silt's stage flags are class-wide C++ statics
+  (`PM4Sand::me2p` and `PM4Silt::me2p`, one each), the same as on stock
+  OpenSees 3.8.0 and on the fork. So `s.update_material_stage` that names
+  only some of a class's materials is refused at stage close (#2442's
+  `CLASS_WIDE_STAGE_FLAG`), and naming all of them is fine. The
+  multi-yield soils (PIMY, PDMY, PDMY02) keep a per-tag flag and are
+  unaffected.

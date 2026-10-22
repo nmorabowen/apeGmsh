@@ -84,6 +84,8 @@ CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "ManzariDafalias": "ManzariDafalias::mElastFlag",
     "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
     "SAniSandMS": "SAniSandMS::mElastFlag",
+    "PM4Sand": "PM4Sand::me2p",
+    "PM4Silt": "PM4Silt::me2p",
 }
 
 #: The ``setParameter`` names that set a class-wide stage flag.  Every
