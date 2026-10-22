@@ -166,11 +166,11 @@ class H5LedgerWarning(UserWarning):
 
     A ``ledger`` row of ``VERBS`` (ADR 0114, Q3) is a verb ``H5Emitter``
     counts and drops: ``/opensees`` carries no record of the call, so a
-    deck replayed from the file omits it (the contact and embed rows and an
-    ``enforce="equation"`` tie's ``equationConstraint`` rows; some persist in
-    the neutral zone instead). A bridge-level ``apeSees.equation_constraint``
-    row is not counted: its ``EquationConstraintRecord`` is a
-    ``/opensees/decl_params`` row that replay re-emits.
+    deck replayed from the file omits it (the contact and embed rows and a
+    stage-claimed ``enforce="equation"`` tie's ``equationConstraint`` lines;
+    some persist in the neutral zone instead). A global ``equationConstraint``
+    line is not counted: from opensees 2.35.0 it is a
+    ``/opensees/constraints/equationConstraint`` row that replay re-emits.
     The bridge raises it at most once per ``apeSees`` instance for each
     distinct set of ledgered verbs. It is not an ``H5FeatureDeferredWarning``,
     so the automatic ``model.h5`` write does not silence it."""
