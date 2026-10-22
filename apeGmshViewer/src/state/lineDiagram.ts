@@ -346,6 +346,10 @@ export function defaultVecxz(xLocal: readonly [number, number, number]): [number
  *
  * `zLocal = normalize(vecxz - (vecxz . xLocal) xLocal)`
  * `yLocal = normalize(zLocal x xLocal)`
+ *
+ * Returns `null` when the frame is degenerate (`vecxz` parallel to the chord,
+ * zero or non-finite). The caller decides whether a substitute frame is
+ * acceptable: a 3-D bending frame is never guessed (#2473).
  */
 export function beamLocalAxes(
   xLocal: readonly [number, number, number],
@@ -354,22 +358,15 @@ export function beamLocalAxes(
   xLocal: [number, number, number];
   yLocal: [number, number, number];
   zLocal: [number, number, number];
-} {
+} | null {
   const [xx, xy, xz] = xLocal;
-  let [vx, vy, vz] = vecxz;
-  let dot = vx * xx + vy * xy + vz * xz;
-  let zx = vx - dot * xx;
-  let zy = vy - dot * xy;
-  let zz = vz - dot * xz;
-  let zNorm = Math.hypot(zx, zy, zz);
-  if (!Number.isFinite(zNorm) || zNorm < 1e-6) {
-    [vx, vy, vz] = defaultVecxz(xLocal);
-    dot = vx * xx + vy * xy + vz * xz;
-    zx = vx - dot * xx;
-    zy = vy - dot * xy;
-    zz = vz - dot * xz;
-    zNorm = Math.hypot(zx, zy, zz);
-  }
+  const [vx, vy, vz] = vecxz;
+  const dot = vx * xx + vy * xy + vz * xz;
+  const zx = vx - dot * xx;
+  const zy = vy - dot * xy;
+  const zz = vz - dot * xz;
+  const zNorm = Math.hypot(zx, zy, zz);
+  if (!Number.isFinite(zNorm) || zNorm < 1e-6) return null;
   const zLocal: [number, number, number] = [zx / zNorm, zy / zNorm, zz / zNorm];
   // yLocal = zLocal x xLocal
   const yx = zLocal[1] * xz - zLocal[2] * xy;
@@ -470,8 +467,9 @@ export function declTransformVecxz(decl: Decl): { tag: number; vecxz: [number, n
  * Extract candidate `geomTransf` integer tags from an element declaration's
  * `metas`: when `ELEMENT_SYNTAX[m.type]` decodes the element, only the decoded
  * `geomTransf` slot is returned (preventing `secTag` or `matTag` from colliding
- * with a transform tag); when the element type is not in `ELEMENT_SYNTAX`, integer
- * arguments are returned as fallback candidates.
+ * with a transform tag). An element type not in `ELEMENT_SYNTAX`, or one whose
+ * args the decoder refuses, yields no candidate: any integer arg (a node tag, a
+ * material tag) could equal a transform tag, so none is guessed (#2473).
  */
 function candidateElementTransfTags(elementDecl: Decl): number[] {
   const out: number[] = [];
@@ -487,10 +485,6 @@ function candidateElementTransfTags(elementDecl: Decl): number[] {
           }
         }
       }
-      continue;
-    }
-    for (const arg of m.args) {
-      if (typeof arg === "number" && Number.isInteger(arg)) out.push(arg);
     }
   }
   return out;
@@ -537,14 +531,20 @@ export function elementTransformVecxzFromState(
     }
   }
   if (!transfPath && transfTags.length > 0) {
+    // Fan-out `geomTransf` models carry no `refs.transfTag` (#2142): match the
+    // decoded transform tag across every transform, but only when exactly one
+    // vecxz answers. Two transforms that claim the tag with different vecxz are
+    // ambiguous, and the beam is left unframed (#2473).
+    let found: [number, number, number] | null = null;
     for (const d of Object.values(decls)) {
       if (d.kind !== "geomTransf") continue;
-      const pairs = declTransformVecxz(d);
-      for (const tag of transfTags) {
-        const hit = pairs.find((p) => p.tag === tag);
-        if (hit) return hit.vecxz;
+      for (const p of declTransformVecxz(d)) {
+        if (!transfTags.includes(p.tag)) continue;
+        if (found && (found[0] !== p.vecxz[0] || found[1] !== p.vecxz[1] || found[2] !== p.vecxz[2])) return null;
+        found = p.vecxz;
       }
     }
+    return found;
   }
   return null;
 }
@@ -930,7 +930,18 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
         continue;
       }
 
-      const axes = beamLocalAxes(xLocal, zRec);
+      let axes = beamLocalAxes(xLocal, zRec);
+      if (!axes && (is2D || !needs3dFrame)) {
+        // A degenerate frame (vecxz parallel to the chord) is replaced by the
+        // default only where no 3-D bending frame is needed (#2473).
+        axes = beamLocalAxes(xLocal, defaultVecxz(xLocal));
+        source = "default_vecxz";
+      }
+      if (!axes) {
+        // Fail-closed: a degenerate recorded frame in 3-D is never guessed.
+        skippedBeamDecls.push(decl);
+        continue;
+      }
       if (axisChoice === "y") {
         extrudeDir = axes.yLocal;
       } else if (component === "My" || component === "kappaY") {
@@ -1101,7 +1112,7 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
   const skippedCount = skippedBeamDecls.length;
   const notice =
     skippedCount > 0
-      ? `${skippedCount} 3-D beam${skippedCount === 1 ? "" : "s"} skipped: ${component} in local plane requires LOCAL_AXES or geomTransf vecxz (never guessed in 3-D).`
+      ? `${skippedCount} 3-D beam${skippedCount === 1 ? "" : "s"} skipped: ${component} in local plane requires LOCAL_AXES or geomTransf vecxz that is unambiguous and not parallel to the beam (never guessed in 3-D).`
       : null;
 
   return {
