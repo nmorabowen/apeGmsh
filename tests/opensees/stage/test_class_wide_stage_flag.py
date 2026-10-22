@@ -77,6 +77,29 @@ def _fem() -> FEMStub:
     )
 
 
+def _tri6_fem() -> FEMStub:
+    """Two DISCONNECTED 6-node triangles, ``A`` (eid 1) and ``B`` (eid 2):
+    SixNodeTri hands ``materialState`` on to its material (#2460)."""
+    tri = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 0.0), (0.5, 0.5),
+           (0.0, 0.5)]
+    coords = [(x + dx, y, 0.0) for dx in (0.0, 3.0) for x, y in tri]
+    return FEMStub(
+        nodes=_NodesStub(
+            ids=list(range(1, 13)), coords=coords,
+            node_pgs={"A": [1, 2, 3, 4, 5, 6], "B": [7, 8, 9, 10, 11, 12],
+                      "Base": [1, 2, 4, 7, 8, 10]},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={
+                "A": _ElementGroupView(
+                    ids=(1,), connectivity=((1, 2, 3, 4, 5, 6),)),
+                "B": _ElementGroupView(
+                    ids=(2,), connectivity=((7, 8, 9, 10, 11, 12),)),
+            },
+        ),
+    )
+
+
 def _chain(ops: apeSees) -> dict[str, object]:
     return {
         "test": ops.test.NormDispIncr(tol=1e-8, max_iter=50),
@@ -89,15 +112,18 @@ def _chain(ops: apeSees) -> dict[str, object]:
     }
 
 
-def _bridge(cls_a: str, cls_b: str) -> tuple[apeSees, Any, Any]:
-    ops = apeSees(_fem(), default_orientation=None)
+def _bridge(
+    cls_a: str, cls_b: str, host: str = "FourNodeQuad",
+) -> tuple[apeSees, Any, Any]:
+    fem = _tri6_fem() if host == "SixNodeTri" else _fem()
+    ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")   # SAniSandMS's default scheme warns
         mat_a = getattr(ops.nDMaterial, cls_a)(name="mat_a", **_KW[cls_a])
         mat_b = getattr(ops.nDMaterial, cls_b)(name="mat_b", **_KW[cls_b])
-    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
-    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    getattr(ops.element, host)(pg="A", thickness=1.0, material=mat_a)
+    getattr(ops.element, host)(pg="B", thickness=1.0, material=mat_b)
     ops.fix(pg="Base", dofs=(0, 1))
     return ops, mat_a, mat_b
 
@@ -452,11 +478,13 @@ def test_stage_flag_parameter_names() -> None:
 
 
 @pytest.mark.parametrize(("cls_a", "cls_b"), _GROUP_PAIRS)
-@pytest.mark.parametrize("name", sorted(STAGE_FLAG_PARAMETERS))
+@pytest.mark.parametrize("name", ["materialState"])
 def test_parameter_route_subset_refuses(
     cls_a: str, cls_b: str, name: str,
 ) -> None:
-    ops, mat_a, mat_b = _bridge(cls_a, cls_b)
+    # #2460: on a forwarding host; the stage close refuses the
+    # updateMaterialStage name (test_stage_parameter_routes.py).
+    ops, mat_a, mat_b = _bridge(cls_a, cls_b, host="SixNodeTri")
     with ops.stage(name="flip") as s:
         s.update_parameter(name, 1.0, pg="A", material=mat_a)
         s.analysis(**_chain(ops))
@@ -467,7 +495,9 @@ def test_parameter_route_subset_refuses(
 
 
 def test_parameter_route_full_group_passes() -> None:
-    ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    # #2460: on a SixNodeTri host, which forwards materialState.
+    ops, mat_a, mat_b = _bridge(
+        "ManzariDafalias", "ManzariDafalias", host="SixNodeTri")
     with ops.stage(name="flip") as s:
         s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
         s.update_parameter("materialState", 1.0, pg="B", material=mat_b)
@@ -476,9 +506,25 @@ def test_parameter_route_full_group_passes() -> None:
     _emit(ops)
 
 
+def test_parameter_route_full_group_on_four_node_quad_refuses() -> None:
+    """#2460: FourNodeQuad reads materialState as its own per-point
+    address, so the full-group flip that passes on SixNodeTri is lost."""
+    ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    with pytest.raises(BridgeError) as exc:
+        with ops.stage(name="flip") as s:
+            s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
+            s.update_parameter("materialState", 1.0, pg="B", material=mat_b)
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    msg = str(exc.value)
+    assert "targets FourNodeQuad elements" in msg and "#2460" in msg
+    assert not ops._stage_records
+
+
 @pytest.mark.parametrize(("value", "ok"), [(1.0, True), (0.0, False)])
 def test_the_two_routes_count_together(value: float, ok: bool) -> None:
-    ops, mat_a, mat_b = _bridge("ManzariDafalias", "LadrunoSANISAND")
+    ops, mat_a, mat_b = _bridge(
+        "ManzariDafalias", "LadrunoSANISAND", host="SixNodeTri")
 
     def build() -> None:
         with ops.stage(name="flip") as s:
@@ -574,7 +620,8 @@ def test_live_parameter_route_switches_the_unnamed_material(
     """Stock and fork: ``materialState 1`` on material 1 moves material 2,
     and the bridge refuses exactly that selection."""
     pytest.importorskip("openseespy.opensees")
-    ops, mat_a, _mat_b = _bridge(cls, cls)
+    # #2460: a forwarding host, as the raw deck's SSPquad.
+    ops, mat_a, _mat_b = _bridge(cls, cls, host="SixNodeTri")
     with ops.stage(name="flip") as s:
         s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
         s.analysis(**_chain(ops))
@@ -738,17 +785,25 @@ def test_live_reset_ladruno_sanisand_on_the_fork() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _one_material_bridge(cls: str, pgs: "tuple[str, ...]") -> tuple[apeSees, Any]:
+def _one_material_bridge(
+    cls: str, pgs: "tuple[str, ...]", host: str = "FourNodeQuad",
+) -> tuple[apeSees, Any]:
     """One material of ``cls`` on the elements of ``pgs`` (one each)."""
-    ops = apeSees(_fem(), default_orientation=None)
+    fem = _tri6_fem() if host == "SixNodeTri" else _fem()
+    ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         mat = getattr(ops.nDMaterial, cls)(name="mat", **_KW[cls])
     for pg in pgs:
-        ops.element.FourNodeQuad(pg=pg, thickness=1.0, material=mat)
+        getattr(ops.element, host)(pg=pg, thickness=1.0, material=mat)
     ops.fix(pg="Base", dofs=(0, 1))
     return ops, mat
+
+
+#: #2460: the parameter route passes only on a host that forwards
+#: materialState; FourNodeQuad drops it (refused below).
+_PASS_HOST = {"stage": "FourNodeQuad", "parameter": "SixNodeTri"}
 
 
 def _flip_one(ops: apeSees, mat: Any, *, route: str, value: int) -> None:
@@ -792,7 +847,7 @@ def test_plastic_flip_of_a_two_element_material_refuses_on_four_node_quad(
 def test_plastic_flip_of_a_one_element_material_passes(
     cls: str, route: str,
 ) -> None:
-    ops, mat = _one_material_bridge(cls, ("A",))
+    ops, mat = _one_material_bridge(cls, ("A",), _PASS_HOST[route])
     with ops.stage(name="push") as s:
         if route == "stage":
             s.update_material_stage(materials=[mat], stage=1)
@@ -808,9 +863,29 @@ def test_plastic_flip_of_a_one_element_material_passes(
 def test_elastic_flip_of_a_two_element_material_passes(
     cls: str, route: str,
 ) -> None:
-    ops, mat = _one_material_bridge(cls, ("A", "B"))
+    ops, mat = _one_material_bridge(cls, ("A", "B"), _PASS_HOST[route])
     _flip_one(ops, mat, route=route, value=0)
     assert len(ops._stage_records) == 1
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+@pytest.mark.parametrize(("pgs", "value"), [(("A",), 1), (("A", "B"), 0)])
+def test_parameter_route_on_four_node_quad_refuses(
+    cls: str, pgs: "tuple[str, ...]", value: int,
+) -> None:
+    """#2460: the one-element plastic and two-element elastic flips that
+    pass on SixNodeTri never reach the material on FourNodeQuad."""
+    ops, mat = _one_material_bridge(cls, pgs)
+    with pytest.raises(BridgeError) as exc:
+        with ops.stage(name="push") as s:
+            for pg in pgs:
+                s.update_parameter("materialState", float(value), pg=pg,
+                                   material=mat)
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    msg = str(exc.value)
+    assert "targets FourNodeQuad elements" in msg and "#2460" in msg
+    assert not ops._stage_records
 
 
 def test_a_flag_only_class_on_two_elements_passes() -> None:
