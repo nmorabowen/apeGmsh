@@ -49,6 +49,12 @@ build is not `FORK_PIN`, and the fork source at the pin forwards it. They stay
 refused until #2457 re-measures them at the pin, and their refusal cites that
 issue.
 
+An element whose material is a `PlaneStrain` or `StagedStrain` wrapper over
+the sand counts as one of its elements, and the update reaches the wrapped
+sand. Reaching the sand through any other primitive raises `BridgeError`,
+naming that primitive. This includes `LogStrain`, `LogStrain2D` and
+`InitDefGrad`, which are not yet measured.
+
 The other rules:
 
 - `s.update_parameter("materialState", v, material=m)` on two or more
