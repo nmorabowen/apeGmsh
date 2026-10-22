@@ -683,7 +683,7 @@ def _equation_tie_keys(rec: Any) -> "list[tuple[Any, ...]]":
     from .build.constraints import _emit_equation_tie
 
     rec_em = RecordingEmitter()
-    _emit_equation_tie(rec_em, rec)  # type: ignore[arg-type]
+    _emit_equation_tie(rec_em, rec)
     return [_equation_line_key(*args) for method, args, _kw in rec_em.calls
             if method == "equationConstraint"]
 
@@ -728,10 +728,12 @@ def _skipped_replay_streams(
 
     # interpolations() expands tied_contact / mortar into their slave rows,
     # as the forward emit does, so each slave is matched on its own.
+    # With no row left to match, a record is skipped without expanding its
+    # lines (an equation tie's expansion refuses a record with no weights).
     surface_skipped: "Counter[str]" = Counter(
         str(rec.kind) for rec in fem.elements.constraints.interpolations()
         if not _interpolation_replays_as_element(rec, kind_cls)
-        and not _staged(_interpolation_stage_keys(rec))
+        and not (+available and _staged(_interpolation_stage_keys(rec)))
     )
     if surface_skipped:
         out["fem.elements.constraints"] = surface_skipped
@@ -794,6 +796,8 @@ def refuse_unreplayable_streams(
     available: "Counter[tuple[Any, ...]]" = _mp_row_keys(equation_rows)
 
     def _archived(rec: Any) -> bool:
+        if not +available:
+            return False
         need = Counter(_equation_tie_keys(rec))
         if any(available[k] < n for k, n in need.items()):
             return False
@@ -1852,7 +1856,7 @@ def _replay_into(
             from .build.records import EquationConstraintRecord
 
             emit_equation_constraints(
-                RecordingEmitter(), fem,  # type: ignore[arg-type]
+                RecordingEmitter(), fem,
                 [EquationConstraintRecord(
                     cnode=r.cnode, cdof=r.cdof, ccoef=r.ccoef,
                     retained=r.retained) for r in eq_rows],
