@@ -2,13 +2,12 @@
 Typed primitives for OpenSees ``nDMaterial`` commands.
 
 Phase 1B ships the priority-1 set: ``ElasticIsotropic``,
-``J2Plasticity``, ``DruckerPrager``. The exotic soil and ASD damage
-models (``PressureIndepMultiYield``, ``PM4Sand``, ``ASDConcrete3D``)
-are deferred — their parameter sets are large, version-dependent,
-and would benefit from an OpenSees expert sign-off before being
-locked in. The critical-state sand pair ``ManzariDafalias``
-(SANISAND-2004) and ``SAniSandMS`` (SANISAND-MS memory surface) is
-the exception: both are exposed here with their parameter sets
+``J2Plasticity``, ``DruckerPrager``. The site-response soil family
+(``PressureIndependMultiYield``, ``PressureDependMultiYield(02)``,
+``PM4Sand``, ``PM4Silt``) lives in :mod:`.nd_soil` and is re-exported
+here. The critical-state sand pair ``ManzariDafalias``
+(SANISAND-2004) and ``SAniSandMS`` (SANISAND-MS memory surface) are
+exposed here, with their parameter sets
 audited against the vanilla C++ parsers.
 
 Per P12, every user-facing parameter is a fully typed keyword on the
@@ -53,6 +52,15 @@ from .._internal.types import NDMaterial, Primitive, UniaxialMaterial
 # beside the other build floors. Set the floor in ``_rc_c2_flags``.
 from .._rc_c2_flags import LADRUNO_RC_C2_MIN_BUILD, LadrunoRCBuildWarning
 from ..emitter.base import Emitter
+# The site-response soil family lives in its own module; re-exported here
+# so ``material.nd`` stays the one import path for nD materials.
+from .nd_soil import (
+    PM4Sand,
+    PM4Silt,
+    PressureDependMultiYield,
+    PressureDependMultiYield02,
+    PressureIndependMultiYield,
+)
 
 
 __all__ = [
@@ -96,6 +104,11 @@ __all__ = [
     "LogStrain2D",
     "InitDefGrad",
     "StagedStrain",
+    "PressureIndependMultiYield",
+    "PressureDependMultiYield",
+    "PressureDependMultiYield02",
+    "PM4Sand",
+    "PM4Silt",
 ]
 
 

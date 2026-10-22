@@ -8,6 +8,7 @@ body changed.  The class is private, so there is no facade in
 from __future__ import annotations
 
 import math
+import numbers
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
@@ -54,14 +55,22 @@ if TYPE_CHECKING:
     from ..pattern.pattern import Plain
 
 
-# Phase SSI-2.E: nDMaterial classes that honour ``updateMaterialStage``.
-# Matched by ``type(handle).__name__`` so the stage verb does not have to
-# import the material classes.  Flipping anything else is a silent no-op
-# in OpenSees, so ``s.update_material_stage`` refuses it instead.  This
-# set grows when the PressureIndepMultiYield / PM4Sand family gets typed.
-STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
-    {"ManzariDafalias", "SAniSandMS", "LadrunoSANISAND"},
-)
+# nDMaterial classes that honour ``updateMaterialStage`` (their
+# ``setParameter`` answers ``updateMaterialStage``).  Matched by
+# ``type(handle).__name__`` so the stage verb does not have to import the
+# material classes.  Flipping anything else is a silent no-op in
+# OpenSees, so ``s.update_material_stage`` refuses it instead.
+STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "ManzariDafalias", "SAniSandMS", "LadrunoSANISAND",
+    "PressureIndependMultiYield", "PressureDependMultiYield",
+    "PressureDependMultiYield02", "PM4Sand", "PM4Silt",
+})
+
+#: The classes that also take stage 2: elastic with pressure-dependent
+#: moduli (``loadStage == 2`` in ``PressureDependMultiYield*.cpp``).
+STAGE_2_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "PressureDependMultiYield", "PressureDependMultiYield02",
+})
 
 #: nDMaterial classes whose ``updateMaterialStage`` flag is a C++
 #: ``static``, mapped to that static.  The flag holds ONE value
@@ -79,6 +88,8 @@ CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "ManzariDafalias": "ManzariDafalias::mElastFlag",
     "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
     "SAniSandMS": "SAniSandMS::mElastFlag",
+    "PM4Sand": "PM4Sand::me2p",
+    "PM4Silt": "PM4Silt::me2p",
 }
 
 #: The ``setParameter`` names that set a class-wide stage flag.  Every
@@ -2012,8 +2023,8 @@ class _StageBuilder:
         materials: "Iterable[Primitive]",
         stage: int,
     ) -> None:
-        """Flip SANISAND materials between the elastic and the
-        elastoplastic stage within this stage (Phase SSI-2.E).
+        """Flip soil materials between the elastic and the elastoplastic
+        stage within this stage (Phase SSI-2.E).
 
         Stage-bound only — there is no top-level
         ``apeSees.update_material_stage``.  Emits one
@@ -2025,8 +2036,11 @@ class _StageBuilder:
         (``_internal/build/stage_emit.MaterialStageCarriers``).
         ``stage=0`` is elastic, ``stage=1`` is elastoplastic;
         the OpenSees handler additionally calls ``Elastic2Plastic()``
-        when the value is 1.  This is the staged-gravity idiom for soil
-        plasticity: build elastic, solve gravity, flip to plastic, push.
+        when the value is 1.  ``stage=2`` (elastic, pressure-dependent
+        moduli) is accepted for ``PressureDependMultiYield`` /
+        ``PressureDependMultiYield02`` only.  This is the staged-gravity
+        idiom for soil plasticity: build elastic, solve gravity, flip to
+        plastic, push.
 
         The lines emit AFTER this stage's element activation and after
         its ``remove_sp`` / ``remove_element`` block, and BEFORE the
@@ -2057,11 +2071,13 @@ class _StageBuilder:
         Parameters
         ----------
         materials
-            The SANISAND material handles to flip.  Every handle must
+            The material handles to flip (SANISAND, the multi-yield
+            soils, PM4Sand / PM4Silt).  Every handle must
             already be registered on the bridge and must be one of
             :data:`STAGED_MATERIAL_CLASSES`.
         stage
-            ``0`` (elastic) or ``1`` (elastoplastic).
+            ``0`` (elastic) or ``1`` (elastoplastic); ``2`` for the
+            pressure-dependent multi-yield sands.
 
         Raises
         ------
@@ -2071,12 +2087,17 @@ class _StageBuilder:
             If a handle was never registered on this bridge, or its
             class does not honour ``updateMaterialStage``.
         """
+        if isinstance(stage, bool) or not isinstance(stage, numbers.Integral):
+            raise ValueError(
+                f"Stage {self._name!r}.update_material_stage: stage= must "
+                f"be an int (0, 1 or 2), got {stage!r}."
+            )
         stage_i = int(stage)
-        if stage_i not in (0, 1):
+        if stage_i not in (0, 1, 2):
             raise ValueError(
                 f"Stage {self._name!r}.update_material_stage: stage= "
-                f"must be 0 (elastic) or 1 (elastoplastic), got "
-                f"{stage!r}."
+                f"must be 0 (elastic) or 1 (elastoplastic), or 2 for the "
+                f"pressure-dependent multi-yield sands, got {stage!r}."
             )
         mats = tuple(materials)
         if not mats:
@@ -2102,6 +2123,14 @@ class _StageBuilder:
                     "updateMaterialStage — the command would be a "
                     "silent no-op.  Supported: "
                     f"{', '.join(sorted(STAGED_MATERIAL_CLASSES))}."
+                )
+            if stage_i == 2 and type(mat).__name__ not in (
+                    STAGE_2_MATERIAL_CLASSES):
+                raise ValueError(
+                    f"Stage {self._name!r}.update_material_stage: stage=2 "
+                    f"(elastic, pressure-dependent moduli) is a "
+                    f"{' / '.join(sorted(STAGE_2_MATERIAL_CLASSES))} stage; "
+                    f"{type(mat).__name__} takes 0 or 1."
                 )
             mat_tags.append(int(tag))
         flip = MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i)
