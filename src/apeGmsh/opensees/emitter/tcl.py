@@ -1816,7 +1816,7 @@ class TclEmitter:
         self._lines.indent = prev_indent
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
-        # A plastic flip also sweeps every element (#2445):
+        # A plastic flip also sweeps every element;
         # material_stage_flip_commands says why.
         prev_indent = self._lines.indent
         self._lines.indent = ""

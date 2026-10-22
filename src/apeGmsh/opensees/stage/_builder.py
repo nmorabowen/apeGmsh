@@ -107,8 +107,8 @@ FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
 #: are initialised; every other element of the material turns plastic
 #: uninitialised (measured on stock 3.8.0 and the fork).  The emit
 #: therefore sweeps every element with ``materialState`` before the
-#: ``updateMaterialStage`` line (#2446,
-#: ``_internal/build/stage_emit.material_stage_flip_commands``), and a
+#: ``updateMaterialStage`` line
+#: (``_internal/build/stage_emit.material_stage_flip_commands``), and a
 #: plastic flip of such a material on more than one element passes only
 #: when every element carrying it is of a
 #: :data:`MATERIAL_STATE_ELEMENTS` class.  SAniSandMS, PM4Sand and PM4Silt
@@ -120,7 +120,9 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = frozenset(
 #: The element classes whose ``setParameter`` hands ``materialState
 #: <tag>`` to every integration-point material, so the sweep that
 #: initialises each element of a plastic flip reaches them.  Measured
-#: by the #2446 census: two elements of the class on one material, the
+#: by the census of ``tests/opensees/integration/
+#: test_md_stage_route_elements.py``: two elements of the class on one
+#: material, the
 #: swept flip against the per-element reference (each element its own
 #: material and its own ``updateMaterialStage``), equal bit for bit, with
 #: one ``Elastic2Plastic()`` per integration point, on stock openseespy
@@ -787,6 +789,7 @@ class _StageBuilder:
             if prec.elements is not None:
                 eids = {int(e) for e in prec.elements}
             else:
+                assert prec.pg is not None  # update_parameter takes one
                 eids = {
                     int(e) for e in expand_pg_to_elements(
                         self._bridge.fem, prec.pg).eids}
