@@ -70,7 +70,14 @@ from tests.opensees.golden.test_roundtrip_oracle import (
     _move,
     _waivers,
 )
-from tests.opensees.h5.test_h5_solve_stamp import _SYSTEM_TOKENS
+from tests.opensees.h5.test_h5_solve_stamp import (
+    _CHAIN_ROWS as _CHAIN_MEMBER_ROWS,
+    _CHAIN_TOKENS,
+    _SYSTEM_TOKENS,
+    _UNARCHIVED,
+    _chain_frame,
+    _tamper,
+)
 
 pytestmark = pytest.mark.live
 
@@ -110,9 +117,18 @@ _SYSTEM_ROWS = [Model("test_h5_solve_stamp", "_system_frame",
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
 #: What a build without the MPCO recorder logs when a deck declares one.
 _MPCO_REFUSAL = "recorder type mpco is unknown"
+#: One staged frame per member of the other analysis-chain families the
+#: bridge ships (#2430), against the token table ``_CHAIN_TOKENS`` pins.
+_CHAIN_ROWS = [Model("test_h5_solve_stamp", "_chain_frame",
+                     (("family", f), ("row", r), ("staged", True)))
+               for f, r in _CHAIN_MEMBER_ROWS]
 #: The bridge's own abort line when an ``analyze`` fails (``stage_emit``).
 _ANALYZE_FAILED = re.compile(
     r"apeGmsh: analyze FAILED at increment \d+/\d+ of stage '[^']*'")
+#: How stock openseespy accepts a type it does not know without raising:
+#: it warns, then the analysis solves with its default (an unknown
+#: ``integrator`` gives the default static integrator's answer, #2430).
+_SILENT_FALLBACK = re.compile(r"WARNING unknown \w+ type[^\n]*")
 
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
@@ -156,16 +172,32 @@ def _run(deck: Path) -> tuple[bool, str]:
         [sys.executable, str(deck)], capture_output=True, text=True,
         timeout=300, cwd=str(deck.parent),
     )
-    out = proc.stdout.strip().splitlines()
-    ran = proc.returncode == 0 and bool(out) and out[-1] == _MARKER
-    return ran, (f"rc={proc.returncode}\nstdout:\n{proc.stdout[-1500:]}\n"
-                 f"stderr:\n{proc.stderr[-1500:]}")
+    return _verdict(proc.returncode, proc.stdout, proc.stderr)
+
+
+def _verdict(rc: int, stdout: str, stderr: str) -> tuple[bool, str]:
+    """Whether a deck run reached its end, and its log. A deck *runs* when
+    it exits 0, prints the completion marker last, **and** its stderr names
+    no :data:`_SILENT_FALLBACK`: stock openseespy accepts an unknown type
+    (a fork-only integrator) with that warning and solves on with its
+    default one, a wrong answer that exits 0 (#2430). Its full line leads
+    the log, so :func:`_failure` names it."""
+    out = stdout.strip().splitlines()
+    fallback = _SILENT_FALLBACK.search(stderr)
+    ran = rc == 0 and bool(out) and out[-1] == _MARKER and fallback is None
+    head = f"{fallback.group(0)}\n" if fallback else ""
+    return ran, (f"{head}rc={rc}\nstdout:\n{stdout[-1500:]}\n"
+                 f"stderr:\n{stderr[-1500:]}")
 
 
 def _failure(log: str) -> str:
-    """Where a deck that did not run stopped: the bridge's ``analyze
+    """Where a deck that did not run stopped: a silent fallback's
+    ``WARNING unknown <family> type`` line, else the bridge's ``analyze
     FAILED`` line (stage and increment), else the statement the traceback
     names and the exception it raised, else the log's last line."""
+    hit = _SILENT_FALLBACK.search(log)
+    if hit:
+        return hit.group(0)
     hit = _ANALYZE_FAILED.search(log)
     if hit:
         return hit.group(0)
@@ -411,6 +443,170 @@ def test_each_system_deck_runs_iff_its_stamp_says_so(
             assert f"ops.system({name!r}" in _failure(log), (
                 f"{model.id}: the {deck.stem} deck did not stop at its "
                 f"system command:\n{log}")
+
+
+@pytest.mark.parametrize("model", _CHAIN_ROWS, ids=[m.id for m in _CHAIN_ROWS])
+def test_each_chain_deck_runs_iff_its_stamp_says_so(
+        model: Model, tmp_path: Path, backend_kind: str) -> None:
+    """A chain member's bridge deck and its replay run on this build
+    exactly when the stamp names nothing it lacks (#2430). One that does not
+    run stops at its own command: stock refuses the fork-only numberer,
+    test and handler, and accepts a fork-only integrator only to fall back
+    to its default one, which :func:`_verdict` counts as not running. The
+    ``LadrunoContact`` handler is not archived (``_UNARCHIVED``): its bridge
+    deck needs the fork, and its replay, which drops it, runs on both."""
+    kw = dict(model.kwargs)
+    family, row = kw["family"], kw["row"]
+    bridge, replay, requires, flat = _decks_and_replay_needs(model, tmp_path)
+    assert requires == flat == _CHAIN_TOKENS[family][row]
+    if (family, row) in _UNARCHIVED:
+        ran, log = _run(bridge)
+        assert ran == (backend_kind == "fork"), (
+            f"{model.id}: the bridge deck "
+            + ("runs" if ran else f"fails at {_failure(log)!r}")
+            + f" on this {backend_kind} build:\n{log}")
+        ran, log = _run(replay)
+        assert ran, f"{model.id}: the replay deck does not run:\n{log}"
+        return
+    unmet = unmet_requires(requires, backend_kind)
+    command = row.split("[")[0]
+    for deck in (bridge, replay):
+        ran, log = _run(deck)
+        assert ran == (not unmet), (
+            f"{model.id}: the {deck.stem} deck "
+            + ("runs" if ran else f"fails at {_failure(log)!r}")
+            + f" on this {backend_kind} build, but its stamp requires "
+            f"{requires!r} (unmet here: {unmet!r}):\n{log}")
+        if ran:
+            continue
+        where = _failure(log)
+        stopped = (where.startswith(f"WARNING unknown integrator type {command}")
+                   if family == "integrator" else
+                   f"ops.{family}({command!r}" in where)
+        assert stopped, (
+            f"{model.id}: the {deck.stem} deck did not stop at its {family} "
+            f"command ({where!r}):\n{log}")
+
+
+#: The global (unstaged) archive of every fork-only chain member, the
+#: archive ``build('live')`` takes (it refuses a staged one by design).
+_LIVE_BUILD_ROWS = [
+    *(Model("test_h5_solve_stamp", "_chain_frame",
+            (("family", f), ("row", r), ("staged", False)))
+      for f, r in _CHAIN_MEMBER_ROWS
+      if "fork" in _CHAIN_TOKENS[f][r] and (f, r) not in _UNARCHIVED),
+    Model("test_h5_solve_stamp", "_system_frame",
+          (("name", "Pardiso"), ("staged", False))),
+]
+_LIVE_BUILD = """import sys
+from apeGmsh.opensees import OpenSeesModel
+from apeGmsh.opensees._internal.build.errors import BridgeError
+for path in sys.argv[1:]:
+    try:
+        OpenSeesModel.from_h5(path).build("live")
+    except BridgeError as exc:
+        print("REFUSED", " ".join(str(exc).split()))
+    else:
+        print("BUILT")
+"""
+
+
+@pytest.mark.parametrize("model", _LIVE_BUILD_ROWS,
+                         ids=[m.id for m in _LIVE_BUILD_ROWS])
+def test_live_build_of_a_fork_chain_archive_refuses_on_stock(
+        model: Model, tmp_path: Path, backend_kind: str) -> None:
+    """``build('live')`` of a fork-only chain member's archive, today's and
+    one an earlier bridge wrote with ``requires=()``, refuses on stock
+    naming ``'fork'`` and builds on the fork (#2430). A subprocess runs it,
+    so this process never imports openseespy. The oracle is the refusal,
+    not a deck that ran: on stock a fork-only integrator's deck runs to its
+    end with the default integrator."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = model.build()
+        today = tmp_path / "today.h5"
+        ops.h5(str(today))
+    pre = tmp_path / "pre.h5"
+    pre.write_bytes(today.read_bytes())
+    _tamper(pre, requires=[])
+    script = tmp_path / "live_build.py"
+    script.write_text(_LIVE_BUILD, encoding="utf-8")
+    src = Path(__file__).resolve().parents[3] / "src"
+    env = {**os.environ, "LADRUNO_OPENSEES_QUIET": "1",
+           "PYTHONPATH": os.pathsep.join(
+               [str(src), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)}
+    proc = subprocess.run(
+        [sys.executable, str(script), str(today), str(pre)],
+        capture_output=True, text=True, timeout=300, cwd=str(tmp_path), env=env,
+    )
+    log = f"rc={proc.returncode}\n{proc.stdout[-1500:]}\n{proc.stderr[-1500:]}"
+    verdicts = [ln for ln in proc.stdout.splitlines()
+                if ln.startswith(("REFUSED", "BUILT"))]
+    assert proc.returncode == 0 and len(verdicts) == 2, log
+    for archive, verdict in zip(("today", "pre-2430"), verdicts):
+        if backend_kind == "stock":
+            assert verdict.startswith("REFUSED") and "require 'fork'" in verdict \
+                and "stock build" in verdict, f"{model.id} {archive}:\n{log}"
+        else:
+            assert verdict == "BUILT", f"{model.id} {archive}:\n{log}"
+
+
+#: A hand-written deck on a 1-DOF truss (EA/L = 100, unit load):
+#: ``LadrunoLoadControl 0.1`` takes one tenth of the load, u = 0.001. Stock
+#: warns ``unknown integrator type`` and solves with its default static
+#: integrator (a full load step), u = 0.01, exiting 0 (#2430).
+_FALLBACK_DECK = """import openseespy.opensees as ops
+ops.wipe()
+ops.model('basic', '-ndm', 1, '-ndf', 1)
+ops.node(1, 0.0)
+ops.node(2, 1.0)
+ops.fix(1, 1)
+ops.uniaxialMaterial('Elastic', 1, 100.0)
+ops.element('truss', 1, 1, 2, 1.0, 1)
+ops.timeSeries('Linear', 1)
+ops.pattern('Plain', 1, 1)
+ops.load(2, 1.0)
+ops.system('UmfPack')
+ops.numberer('RCM')
+ops.constraints('Plain')
+ops.test('NormDispIncr', 1e-10, 10)
+ops.algorithm('Newton')
+ops.integrator('LadrunoLoadControl', 0.1)
+ops.analysis('Static')
+assert ops.analyze(1) == 0
+print('u', ops.nodeDisp(2, 1))
+"""
+
+
+def test_the_net_fails_a_deck_that_silently_falls_back(
+        tmp_path: Path, backend_kind: str) -> None:
+    """The guard catches the class: on stock the hand-written
+    ``LadrunoLoadControl`` deck exits 0 with the default integrator's
+    answer, and the net says it did not run, naming the warning; on the
+    fork it runs with the closed-form answer."""
+    deck = tmp_path / "fallback.py"
+    deck.write_text(_FALLBACK_DECK, encoding="utf-8")
+    ran, log = _run(deck)
+    hit = re.search(r"^u (\S+)$", log, re.M)
+    assert hit is not None, log
+    u = float(hit.group(1))
+    if backend_kind == "stock":
+        assert "rc=0" in log and u == pytest.approx(0.01), log
+        assert not ran, log
+        assert _failure(log) == "WARNING unknown integrator type LadrunoLoadControl"
+    else:
+        assert ran and u == pytest.approx(0.001), log
+
+
+def test_the_verdict_counts_a_silent_fallback_as_not_running() -> None:
+    done = f"u 0.01\n{_MARKER}\n"
+    assert _verdict(0, done, "")[0]
+    assert _verdict(0, done, "WARNING analysis Static - no Integrator\n")[0]
+    for family in ("integrator", "numberer", "system", "test"):
+        ran, log = _verdict(0, done, f"WARNING unknown {family} type Foo\n")
+        assert not ran and _failure(log) == f"WARNING unknown {family} type Foo"
+    assert not _verdict(1, done, "")[0]
+    assert not _verdict(0, "u 0.01\n", "")[0]
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])

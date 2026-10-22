@@ -1088,8 +1088,7 @@ def _chain_frame(family: str, row: str, *, staged: bool) -> apeSees:
 
     ops = _frame_bridge(analysis=False)
     ops.mass(nodes=[2], values=(1.0,) * 6)
-    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        p.load(nodes=[2], forces=(1e-3, 0.0, 0.0, 0.0, 0.0, 0.0))
+    force = (1e-3, 0.0, 0.0, 0.0, 0.0, 0.0)
     member = _CHAIN_MEMBERS[family][row](ops)
     transient = family == "integrator" and row in _TRANSIENT
     if staged:
@@ -1099,9 +1098,14 @@ def _chain_frame(family: str, row: str, *, staged: bool) -> apeSees:
         if row == "LadrunoDynamicRelaxation":
             chain["algorithm"] = ops.algorithm.Linear()
         with ops.stage(name="solve") as s:
+            with s.pattern(series=ops.timeSeries.Linear()) as p:
+                p.load(node=2, forces=force)
             s.analysis(**chain)
             s.run(n_increments=1, dt=0.01 if transient else None)
-    elif transient:
+        return ops
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=2, forces=force)
+    if transient:
         ops.analysis.Transient()
     else:
         ops.analysis.Static()
