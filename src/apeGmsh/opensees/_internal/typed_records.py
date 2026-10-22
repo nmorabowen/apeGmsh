@@ -225,11 +225,16 @@ class TransformRecord:
     group, so the deviation does not affect orientation correctness —
     but consumers walking ``OpenSeesModel.transforms()`` will see one
     record per emitted call, not one per spec.
+
+    ``jnt_offset`` is the call's flat ``-jntOffset`` tail, global
+    ``(dXi, dYi[, dZi], dXj, dYj[, dZj])``; empty when the line has none
+    (opensees 2.35.0; an older file has none).
     """
 
     type_token: str
     tag: int
     vec: tuple[float, ...]
+    jnt_offset: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

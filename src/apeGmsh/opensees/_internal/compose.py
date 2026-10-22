@@ -421,6 +421,13 @@ def _path_stem(path: str) -> str:
     return stem or "model"
 
 
+def _jnt_kw(rec: Any) -> "dict[str, tuple[float, ...]]":
+    """A ``TransformRecord``'s ``-jntOffset`` tail as the emitter kwarg;
+    ``{}`` when the archived line had none, so its replay is unchanged."""
+    jnt = tuple(getattr(rec, "jnt_offset", ()))
+    return {"jnt_offset": jnt} if jnt else {}
+
+
 def _constraint_replays_as_element(rec: Any, kind_cls: Any) -> bool:
     """True iff the forward emit writes ``rec`` as an ``element`` line.
 
@@ -1691,7 +1698,9 @@ def _replay_into(
     # record's stored ``vec``.
     _tagged(
         "geomTransf", frozenset({"geomTransf"}), transforms,
-        lambda rec: emitter.geomTransf(rec.type_token, int(rec.tag), *rec.vec),
+        lambda rec: emitter.geomTransf(
+            rec.type_token, int(rec.tag), *rec.vec,
+            **_jnt_kw(rec)),
     )
 
     # 6. Beam integration.
@@ -2406,7 +2415,8 @@ def _replay_staged_into(
                 for scoped, recs, emit in (
                     ("geomTransf", replay_kwargs.get("transforms", ()),
                      lambda r: emitter.geomTransf(
-                         r.type_token, int(r.tag), *r.vec)),
+                         r.type_token, int(r.tag), *r.vec,
+                         **_jnt_kw(r))),
                     ("beamIntegration",
                      replay_kwargs.get("beam_integrations", ()),
                      lambda r: emitter.beamIntegration(
