@@ -5,11 +5,13 @@
 `± c M φ_k` as a nodal pattern, solves with the declared algorithm at `dλ = 0`, calls every response
 extractor on the committed state, and solves back to the gravity state. The per-mode value is the
 central difference about the gravity state scaled by `Γ_k Sa(T_k)` for each `DesignSpectrum`: a
-`(T, Sa)` table or a vectorised callable `Sa(T)`, plus a g-to-model-units scale and a direction (the
-scale is applied in Python). An extractor is any `extractor(ops) -> 1-D array` of fixed length,
+`(T, Sa)` table, any object with a vectorised `.at(T)` (a codeSpectra `Spectrum`, never imported) or a
+vectorised callable, plus a g-to-model-units scale and a direction (the scale is applied in Python). An extractor is any `extractor(ops) -> 1-D array` of fixed length,
 optionally with `.labels`; `NodeDisp`, `NodeReaction` and `ElementResponse` are built in, and the
 driver adds `"base_shear"` (total support reaction per direction) so `SpectrumModalResult.base_shear`
-gives `V_t` per direction. `.combine` gives CQC (Der Kiureghian `ρ_ij`, one ratio or one per mode) or
+gives `V_t` per direction, and `scale_to_base_shear(v_target, names)` lifts the named combined forces
+by `max(1, v_target/V_t)` per direction (code-agnostic: ASCE 7-22 §12.9.1.4.1, NEC, NCh targets are the
+caller's; drifts are not scaled). `.combine` gives CQC (Der Kiureghian `ρ_ij`, one ratio or one per mode) or
 SRSS per quantity, `.directional` 100/30 or SRSS over the directions, and `seismic_envelope` the
 `S ± f·E` envelope for a gravity combination; `gravity_values` keeps each extractor at the gravity
 state. `responseSpectrumAnalysis -mode k` is not used: it replaces the committed displacement with the

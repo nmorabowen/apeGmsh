@@ -122,15 +122,20 @@ is the other rule. Directional combination is 100/30 (the envelope over which
 direction carries the 100 %) or the SRSS of the per-direction results. Every
 combination works on one quantity's own per-mode values, never on derived
 displacements. The spectrum is a `(periods, accels)` table, interpolated the
-way the fork does (linear, clamped at both ends), or a vectorised callable
-`Sa(T)` (a codeSpectra spectrum's `.at`, so codeSpectra never becomes a
-dependency), with a scale factor and a direction; the scale is applied in
-Python, not passed as `-scale`.
+way the fork does (linear, clamped at both ends), or a function: any object
+with a vectorised `.at(T)` (a codeSpectra `Spectrum` satisfies it) or a plain
+vectorised callable, normalised by one small function so codeSpectra never
+becomes a dependency. It carries a scale factor and a direction; the scale is
+applied in Python, not passed as `-scale`.
 
 The driver adds one extractor of its own, `base_shear` (the total support
 reaction per translational direction), so the combined `V_t` per direction is
-always in the result. Code scaling (ASCE 7-22 §12.9.1.4, `max(1, V / V_t)`)
-is the user's step on top of it; drift scaling stays in apeETABS.
+always in the result. Minimum-base-shear scaling is code-agnostic:
+`scale_to_base_shear(v_target, names)` returns `max(1, v_target / V_t)` per
+direction and applies it to the combined force quantities named. The target
+is the caller's (ASCE 7-22 §12.9.1.4.1, NEC-SE-DS, NCh433, …); code maths
+stays in codeSpectra / apeETABS, and drifts are not scaled here (apeETABS
+`DriftScale` owns that).
 
 ### D7 — Gravity is combined separately
 

@@ -172,6 +172,21 @@ def test_driver_refuses_before_the_build() -> None:
         _bridge().spectrum_after_gravity(0, spectra=[spec], extractors=ex)
 
 
+class _StubCodeSpectrum:
+    """A codeSpectra-like object: vectorised ``at(T)`` in g, nothing else."""
+
+    def at(self, periods: Any) -> np.ndarray:
+        t = np.asarray(periods, dtype=np.float64)
+        return np.where(t < 0.5, 1.0, 0.5 / np.maximum(t, 1e-12))
+
+
+def test_spectrum_takes_an_object_with_at() -> None:
+    s = DesignSpectrum(_StubCodeSpectrum(), direction=1, scale=9.81)
+    np.testing.assert_allclose(
+        s.sa([0.1, 0.5, 2.0]), 9.81 * np.array([1.0, 1.0, 0.25]))
+    assert s.periods == ()
+
+
 def test_spectrum_takes_a_callable_sa() -> None:
     def code_sa(t: np.ndarray) -> np.ndarray:   # e.g. a codeSpectra .at
         return np.where(t < 0.5, 1.0, 0.5 / np.maximum(t, 1e-12))

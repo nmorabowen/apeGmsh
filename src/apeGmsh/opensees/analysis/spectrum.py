@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -66,8 +66,10 @@ class DesignSpectrum:
     PGA anchor is legal), ``accels`` non-negative; ``Sa(T)`` is interpolated
     linearly and clamped at both ends, as the fork's
     ``ResponseSpectrumAnalysis::getSa`` does.
-    ``DesignSpectrum(sa, direction=1, scale=g)`` takes a vectorised callable
-    ``sa(T) -> Sa`` instead (for example a codeSpectra spectrum's ``.at``).
+    ``DesignSpectrum(spec, direction=1, scale=g)`` takes a function instead:
+    any object with a vectorised ``spec.at(T)`` (a codeSpectra ``Spectrum``,
+    Sa in g, satisfies it; codeSpectra is never imported) or a plain
+    vectorised callable ``sa(T)``. Its own rules apply; nothing is tabulated.
 
     ``direction`` is the global translational direction, 1-based.
     ``scale`` multiplies every ``Sa`` (the g-to-model-units factor times any
@@ -82,24 +84,23 @@ class DesignSpectrum:
 
     def __init__(
         self,
-        periods: "Sequence[float] | Callable[[np.ndarray], npt.ArrayLike]",
+        periods: "Sequence[float] | Callable[[np.ndarray], npt.ArrayLike] | Any",
         accels: "Sequence[float] | None" = None,
         *,
         direction: int,
         scale: float = 1.0,
     ) -> None:
-        function = None
+        function = _sa_function(periods)
         tn: tuple[float, ...] = ()
         sa: tuple[float, ...] = ()
-        if callable(periods):
+        if function is not None:
             if accels is not None:
                 raise ValueError(
                     "DesignSpectrum: give a table (periods, accels) or a "
-                    "callable Sa(T), not both."
+                    "spectrum function, not both."
                 )
-            function = periods
         else:
-            tn = tuple(float(t) for t in periods)
+            tn = tuple(float(t) for t in cast("Sequence[float]", periods))
             sa = tuple(float(a) for a in (accels or ()))
             if not tn or len(tn) != len(sa):
                 raise ValueError(
@@ -148,6 +149,19 @@ class DesignSpectrum:
                 "non-finite value."
             )
         return np.asarray(self.scale * raw)
+
+
+def _sa_function(
+    obj: Any,
+) -> "Callable[[np.ndarray], npt.ArrayLike] | None":
+    """The ``Sa(T)`` function of a spectrum object: its ``.at`` when it has
+    one, the object itself when it is callable, ``None`` for a table."""
+    at = getattr(obj, "at", None)
+    if callable(at):
+        return cast("Callable[[np.ndarray], npt.ArrayLike]", at)
+    if callable(obj):
+        return cast("Callable[[np.ndarray], npt.ArrayLike]", obj)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +472,48 @@ class SpectrumModalResult:
         return np.asarray([
             combined[i, s.direction - 1] for i, s in enumerate(self.spectra)
         ])
+
+    def scale_to_base_shear(
+        self,
+        v_target: "float | Sequence[float]",
+        names: Sequence[str],
+        *,
+        rule: str = "CQC",
+        damping: "float | npt.ArrayLike | None" = None,
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        """Scale combined forces up to a target base shear, per spectrum.
+
+        ``v_target`` is the minimum base shear per spectrum (one value for
+        all, or one per spectrum), computed by the caller from the code in
+        force: for example ASCE/SEI 7-22 §12.9.1.4.1 (100 % of the ELF
+        ``V``), NEC-SE-DS (80 % / 90 % of the static shear), NCh433. The
+        factor is ``max(1, v_target / V_t)`` with ``V_t`` from
+        :meth:`base_shear`, and it multiplies the combined values of each
+        quantity in ``names`` under that spectrum.
+
+        Returns ``(factors, scaled)``: ``factors`` shape ``(n_spectra,)``,
+        ``scaled[name]`` shape ``(n_spectra, n_values)`` (pass it to
+        :func:`combine_directions` for the directional combination). Name
+        force quantities only: drifts are not scaled here (apeETABS
+        ``DriftScale`` owns drift scaling).
+        """
+        v_t = self.base_shear(rule=rule, damping=damping)
+        target = np.broadcast_to(
+            np.asarray(v_target, dtype=np.float64), v_t.shape)
+        if np.any(target < 0.0) or not np.all(np.isfinite(target)):
+            raise ValueError(
+                "scale_to_base_shear: v_target must be finite and >= 0.")
+        if np.any(v_t <= 0.0):
+            raise ValueError(
+                f"scale_to_base_shear: a combined base shear is zero "
+                f"({v_t.tolist()}); nothing to scale against.")
+        factors = np.maximum(1.0, target / v_t)
+        scaled = {
+            name: self.combine(name, rule=rule, damping=damping)
+            * factors[:, None]
+            for name in names
+        }
+        return np.asarray(factors), scaled
 
     def _values(self, name: str) -> np.ndarray:
         try:

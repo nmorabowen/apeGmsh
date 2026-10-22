@@ -384,3 +384,17 @@ def test_base_shear_is_the_combined_total_reaction() -> None:
             1, spectra=[DesignSpectrum(TN, SA, direction=1)],
             extractors={"base_shear": EXTRACTORS["disp"]},
             solver="-fullGenLapack")
+
+
+@pytest.mark.live
+def test_scale_to_base_shear_lifts_forces_only_below_the_target() -> None:
+    res = _run()
+    v_t = float(res.base_shear(damping=XI)[0])
+    factors, scaled = res.scale_to_base_shear(
+        1.3 * v_t, ["cols", "base_shear"], damping=XI)
+    assert float(factors[0]) == pytest.approx(1.3)
+    np.testing.assert_allclose(
+        scaled["cols"], 1.3 * res.combine("cols", damping=XI), rtol=1e-14)
+    assert float(scaled["base_shear"][0][0]) == pytest.approx(1.3 * v_t)
+    factors, _ = res.scale_to_base_shear(0.5 * v_t, ["cols"], damping=XI)
+    assert float(factors[0]) == 1.0
