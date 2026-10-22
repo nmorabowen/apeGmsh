@@ -17,8 +17,12 @@ wall). Checks:
    statics resultant at ``rtol=1e-9``, and the headline analytical values from
    ``#2471`` are pinned explicitly.
 5. ``Results.from_ladruno(ladruno, model_h5=model_h5)`` reproduces the golden
-   station values, element FEM ids, natural coordinates and local-axes
-   quaternions across all six fixtures.
+   station values, element FEM ids and natural coordinates across all six
+   fixtures, and ``Results.from_ladruno(ladruno)`` (``r_raw``) reproduces the
+   ``MODEL/LOCAL_AXES`` quaternions and asymmetric rotation matrices (asserted
+   on ``r_raw`` until ``_ladruno.py:1359`` — ``_line_station_quaternions``
+   receiving ``fem_index`` instead of ``element_index``, ``#2485`` — is fixed
+   in its own Python slice).
 """
 
 from __future__ import annotations
@@ -217,17 +221,20 @@ def test_headline_closed_form_pins() -> None:
     )
     np.testing.assert_allclose(lob["gp_param_by_gauss_id"], lob["stations"]["bending_moment_z"]["xi"], atol=1e-12)
 
-    # 4. Vertical 3-D column with vecxz=(1,0,0) and the degenerate vecxz=(0,0,1) refusal probe.
+    # 4. Vertical 3-D column with vecxz=(0,1,0) (asymmetric R != R.T) and the degenerate vecxz=(0,0,1) refusal probe.
     col = _load_golden("line_oracle_column3d")
     col_el0 = col["elements"][0]
-    assert col_el0["frame"] == {"x": [0.0, 0.0, 1.0], "y": [0.0, -1.0, 0.0], "z": [1.0, 0.0, -0.0]}
+    assert col_el0["frame"] == {"x": [0.0, 0.0, 1.0], "y": [1.0, 0.0, 0.0], "z": [0.0, 1.0, 0.0]}
+    col_r = np.array([col_el0["frame"]["x"], col_el0["frame"]["y"], col_el0["frame"]["z"]])
+    assert not np.allclose(col_r, col_r.T)
+    np.testing.assert_allclose(col_el0["frame_quaternion_wxyz"], [0.5, 0.5, 0.5, 0.5], atol=1e-12)
     col_st = col_el0["buckets"]["localForce"]["stations"]
     np.testing.assert_allclose(col_st["axial_force"]["values"][-1], [-10.0, -10.0], rtol=1e-9)
-    np.testing.assert_allclose(col_st["shear_y"]["values"][-1], [3.0, 3.0], rtol=1e-9)
-    np.testing.assert_allclose(col_st["shear_z"]["values"][-1], [2.0, 2.0], rtol=1e-9)
+    np.testing.assert_allclose(col_st["shear_y"]["values"][-1], [-2.0, -2.0], rtol=1e-9)
+    np.testing.assert_allclose(col_st["shear_z"]["values"][-1], [3.0, 3.0], rtol=1e-9)
     np.testing.assert_allclose(col_st["torsion"]["values"][-1], [0.5, 0.5], rtol=1e-9)
-    np.testing.assert_allclose(col_st["bending_moment_y"]["values"][-1], [-6.0, -3.0], rtol=1e-9)
-    np.testing.assert_allclose(col_st["bending_moment_z"]["values"][-1], [-9.0, -4.5], rtol=1e-9)
+    np.testing.assert_allclose(col_st["bending_moment_y"]["values"][-1], [-9.0, -4.5], rtol=1e-9)
+    np.testing.assert_allclose(col_st["bending_moment_z"]["values"][-1], [6.0, 3.0], rtol=1e-9)
     deg = col["degenerate_vecxz"]
     assert deg["vecxz"] == [0.0, 0.0, 1.0]
     assert deg["opensees_accepts_it"] is False
@@ -252,9 +259,12 @@ def test_results_from_ladruno_matches_golden_stations_and_frames(stem: str) -> N
     la = r_raw.elements.local_axes()
     assert la.element_ids.tolist() == [el["ops_tag"] for el in golden["elements"]]
     for idx, el in enumerate(golden["elements"]):
+        assert el["frame_quaternion_rows"] == "local x, y, z axes (R rows, global components)"
         np.testing.assert_allclose(la.quaternions[idx], el["frame_quaternion_wxyz"], atol=1e-12)
         want_rows = np.array([el["frame"]["x"], el["frame"]["y"], el["frame"]["z"]])
         np.testing.assert_allclose(la.matrices[idx], want_rows, atol=1e-12)
+        if stem == "line_oracle_column3d":
+            assert not np.allclose(la.matrices[idx], la.matrices[idx].T)
 
     r = Results.from_ladruno(
         FIXTURES / golden["ladruno"],
@@ -269,6 +279,8 @@ def test_results_from_ladruno_matches_golden_stations_and_frames(stem: str) -> N
 
     for comp in all_comps:
         slab = r.elements.line_stations.get(component=comp)
+        # Assert local_axes_quaternion on r_raw (no model_h5) until #2485 fixes
+        # _ladruno.py:1359 passing fem_index instead of element_index to _line_station_quaternions.
         slab_raw = r_raw.elements.line_stations.get(component=comp)
         assert slab_raw.local_axes_quaternion is not None
         want_eids: list[int] = []

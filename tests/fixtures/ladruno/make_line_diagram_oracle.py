@@ -200,7 +200,7 @@ def linear_frame(xi: np.ndarray, xj: np.ndarray, ndm: int, vecxz: tuple[float, .
 
 
 def quat_to_matrix(q: np.ndarray) -> np.ndarray:
-    """A unit quaternion ``(w, x, y, z)`` as a rotation matrix whose columns are the rotated axes."""
+    """A unit quaternion ``(w, x, y, z)`` as a rotation matrix whose rows are the local axes in global coordinates."""
     w, x, y, z = (float(v) for v in q)
     return np.array([
         [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
@@ -364,8 +364,8 @@ def _fb_case(rule: str, n_ip: int) -> Case:
         ),
         closed_form_notes=[
             "Section at x: N = Fx, Mz = Fy (L - x) + w (L - x)^2 / 2, Vy = dMz/dx = -Fy - w (L - x).",
-            (f"Stations at the {rule} points: xi from the file's QUADRATURE/GP_PARAM, "
-             "checked against the textbook abscissae."),
+            (f"Stations at the {rule} points: xi from OpenSees sectionLocation, "
+             "checked against the textbook abscissae (and compared to QUADRATURE/GP_PARAM)."),
         ],
     )
 
@@ -373,7 +373,7 @@ def _fb_case(rule: str, n_ip: int) -> Case:
 # 4. Vertical 3-D column with an explicit vecxz. ---------------------------
 CO_H = 3.0
 CO_TIP = (2.0, 3.0, -10.0, 0.0, 0.0, 0.5)
-CO_VECXZ = (1.0, 0.0, 0.0)
+CO_VECXZ = (0.0, 1.0, 0.0)
 CO_DEGENERATE_VECXZ = (0.0, 0.0, 1.0)
 
 
@@ -397,13 +397,13 @@ def _co_model(vecxz: tuple[float, float, float]) -> Callable[[apeSees], None]:
 CO_CASE = Case(
     name="column3d",
     title="Vertical 3-D column, base a at the origin fixed, top b at z = 3, top load "
-          "(FX, FY, FZ, MZ) = (2, 3, -10, 0.5), elasticBeamColumn, vecxz = (1, 0, 0): "
-          "local x = +Z, y = -Y, z = +X.",
+          "(FX, FY, FZ, MZ) = (2, 3, -10, 0.5), elasticBeamColumn, vecxz = (0, 1, 0): "
+          "local x = +Z, y = +X, z = +Y.",
     ndm=3, build=_co_build, model=_co_model(CO_VECXZ), responses=("localForce",),
     vecxz=CO_VECXZ,
     statics=Statics(points=[PointLoad((0.0, 0.0, CO_H), CO_TIP[:3], CO_TIP[3:])]),
     closed_form_notes=[
-        "Local tip load (fx, fy, fz) = (FZ, -FY, FX) = (-10, -3, 2), local torque mx = MZ = 0.5.",
+        "Local tip load (fx, fy, fz) = (FZ, FX, FY) = (-10, 2, 3), local torque mx = MZ = 0.5.",
         "Section at s from the base: N = fx, Vy = -fy, Vz = fz, T = mx, My = -fz (H - s), Mz = fy (H - s).",
     ],
 )
@@ -593,10 +593,8 @@ def make(case: Case, out: Path) -> dict[str, Any]:
         if t in quats:
             r = quat_to_matrix(np.asarray(quats[t]))
             el["frame_quaternion_wxyz"] = quats[t]
-            if np.allclose(r, frame.T, atol=1e-12):
-                el["frame_quaternion_columns"] = "local x, y, z axes (R columns, global components)"
-            elif np.allclose(r, frame, atol=1e-12):
-                el["frame_quaternion_columns"] = "transposed: R rows are the local axes"
+            if np.allclose(r, frame, atol=1e-12):
+                el["frame_quaternion_rows"] = "local x, y, z axes (R rows, global components)"
             else:
                 findings.append(f"element {e}: LOCAL_AXES quaternion {quats[t]} does not match "
                                 f"the LinearCrdTransf frame {frame.tolist()}")

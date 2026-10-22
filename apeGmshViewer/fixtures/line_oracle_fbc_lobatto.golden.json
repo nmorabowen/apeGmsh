@@ -32,7 +32,7 @@
  },
  "closed_form": [
   "Section at x: N = Fx, Mz = Fy (L - x) + w (L - x)^2 / 2, Vy = dMz/dx = -Fy - w (L - x).",
-  "Stations at the Lobatto points: xi from the file's QUADRATURE/GP_PARAM, checked against the textbook abscissae."
+  "Stations at the Lobatto points: xi from OpenSees sectionLocation, checked against the textbook abscissae (and compared to QUADRATURE/GP_PARAM)."
  ],
  "elements": [
   {
@@ -331,7 +331,7 @@
     0.0,
     -0.0
    ],
-   "frame_quaternion_columns": "local x, y, z axes (R columns, global components)"
+   "frame_quaternion_rows": "local x, y, z axes (R rows, global components)"
   }
  ],
  "ladruno_provenance_keys": [

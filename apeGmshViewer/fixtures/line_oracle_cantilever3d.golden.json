@@ -300,7 +300,7 @@
     0.0,
     0.0
    ],
-   "frame_quaternion_columns": "local x, y, z axes (R columns, global components)"
+   "frame_quaternion_rows": "local x, y, z axes (R rows, global components)"
   },
   {
    "fem_id": 5,
@@ -564,7 +564,7 @@
     0.0,
     0.0
    ],
-   "frame_quaternion_columns": "local x, y, z axes (R columns, global components)"
+   "frame_quaternion_rows": "local x, y, z axes (R rows, global components)"
   }
  ],
  "ladruno_provenance_keys": [
