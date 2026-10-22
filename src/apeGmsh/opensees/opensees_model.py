@@ -1704,6 +1704,15 @@ class OpenSeesModel:
                 return None
             return int(val)
 
+        # Rehydrate connectivity per element from the broker FEM —
+        # without this the tcl/py/live targets emit invalid element
+        # calls (missing iNode / jNode prefix).
+        elements_with_conn = self._rehydrate_element_connectivity(self._elements)
+
+        # The interior of a LadrunoMembrane(pg=...) panel is not part of
+        # the deck the bridge emitted (membrane_interior_nodes): the
+        # replay skips the same nodes.
+        skip = self.membrane_interior_nodes(elements_with_conn)
         nodes = tuple(
             (
                 int(nid),
@@ -1711,12 +1720,8 @@ class OpenSeesModel:
                 _ndf_or_none(int(nid)),
             )
             for nid, c in zip(self._fem.nodes.ids, self._fem.nodes.coords)
+            if int(nid) not in skip
         )
-
-        # Rehydrate connectivity per element from the broker FEM —
-        # without this the tcl/py/live targets emit invalid element
-        # calls (missing iNode / jNode prefix).
-        elements_with_conn = self._rehydrate_element_connectivity(self._elements)
 
         # g.reinforce deck-replay (A4 full): the bond material name→tag map
         # `emit_reinforce_ties` needs to resolve a tie's `-bond <name>` is the
@@ -1777,6 +1782,53 @@ class OpenSeesModel:
             _replay_into(
                 emitter, commands=self._commands, flat=flat, **replay_kwargs,
             )
+
+    def membrane_interior_nodes(
+        self, elements: "tuple[ElementRecord, ...] | None" = None,
+    ) -> "frozenset[int]":
+        """The fem nodes the archived deck did not declare: the interior of
+        each ``LadrunoMembrane(pg=...)`` panel.
+
+        The replay twin of the bridge's
+        :func:`~apeGmsh.opensees._internal.build.ndf.membrane_interior_nodes`:
+        the nodes of the membranes' physical-group cells (the ``pg`` read
+        from ``/opensees/decl_params``) that no archived element touches,
+        counting each membrane's ``-nodes`` / ``-hole`` / ``-supportNodes``.
+        ``frozenset()`` for an archive with no ``pg=`` membrane, or one too
+        old to carry ``/opensees/decl_params``.
+        """
+        decls = self._declarations
+        if decls is None:
+            return frozenset()
+        pgs: list[str] = []
+        for rows in decls.params.values():
+            for row in rows:
+                if row.type == "LadrunoMembrane":
+                    pg = row.params.get("pg")
+                    if isinstance(pg, str) and pg:
+                        pgs.append(pg)
+        if not pgs:
+            return frozenset()
+        from ._internal.build.pg_expand import expand_pg_to_elements
+
+        cand: set[int] = set()
+        for pg in dict.fromkeys(pgs):
+            fan = expand_pg_to_elements(self._fem, pg)
+            for _eid, conn in fan:
+                cand.update(conn)
+        if elements is None:
+            elements = self._rehydrate_element_connectivity(self._elements)
+        keep: set[int] = set()
+        for rec in elements:
+            keep.update(int(n) for n in rec.connectivity)
+            if rec.type_token == "LadrunoMembrane":
+                taking = False
+                for a in rec.args:
+                    if isinstance(a, str):
+                        taking = a in ("-nodes", "-hole", "-supportNodes")
+                    elif taking and float(a) == int(float(a)):
+                        keep.add(int(float(a)))
+        return frozenset(cand - keep)
 
     def _rehydrate_element_connectivity(
         self, records: tuple[ElementRecord, ...],

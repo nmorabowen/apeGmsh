@@ -56,6 +56,9 @@ from ._internal.build.ndf import (
     emit_owned_nodes_with_inferred_ndf,
     validate_node_ndf_element_compat,
     infer_node_ndf,
+    membrane_interior_nodes,
+    validate_membrane_interior_untargeted,
+    warn_membrane_hole_nodes_free,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
@@ -130,7 +133,7 @@ from ._internal.build.interfaces import (
 )
 from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
-from ._internal.build.recorders import emit_recorder_spec
+from ._internal.build.recorders import emit_recorder_spec, recorder_node_targets
 from ._internal.build.transforms import emit_transform_specs
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
@@ -1870,6 +1873,51 @@ class BuiltModel:
                 r for st in self.stage_records for r in st.support_records
             ),
         )
+        # The interior mesh nodes of a LadrunoMembrane(pg=...) panel are
+        # not part of the OpenSees model (the membrane is one macro-element
+        # on the boundary loop): never emitted, and no record may target
+        # one.  Empty, at the cost of one isinstance pass, without a pg=
+        # membrane.
+        membrane_skip = membrane_interior_nodes(self.fem, elements)
+        if not _emitter_is_archival:
+            warn_membrane_hole_nodes_free(self.fem, elements)
+        if membrane_skip:
+            _nodes_obj = getattr(self.fem, "nodes", None)
+            _elems_obj = getattr(self.fem, "elements", None)
+            validate_membrane_interior_untargeted(
+                self.fem, membrane_skip,
+                fix_records=(
+                    *self.fix_records,
+                    *(r for st in self.stage_records for r in st.fix_records),
+                    *(r for st in self.stage_records
+                      for r in st.support_records),
+                ),
+                mass_records=(
+                    *self.mass_records,
+                    *(r for st in self.stage_records for r in st.mass_records),
+                ),
+                load_records=tuple(ld for p in _plains for ld in p.loads),
+                sp_records=tuple(sp for p in _plains for sp in p.sps),
+                constraint_records=(
+                    *(getattr(_nodes_obj, "constraints", None) or ()),
+                    *(getattr(_elems_obj, "constraints", None) or ()),
+                    *(getattr(_elems_obj, "interfaces", None) or ()),
+                    *(r for st in self.stage_records
+                      for r in st.stage_constraint_records),
+                ),
+                from_model_cases=tuple(
+                    c for p in _plains for c in p.from_model_cases),
+                mass_from_model=self.mass_from_model,
+                node_targets=tuple(
+                    t
+                    for r in (
+                        *(p for p in ordered if isinstance(p, Recorder)),
+                        *(r for st in self.stage_records
+                          for r in st.recorder_specs),
+                    )
+                    for t in recorder_node_targets(r, self.fem)
+                ),
+            )
 
         # G4 — a STATIC u-p deck whose pressure DOFs are all free is
         # singular in p and factorises through round-off with rc = 0 and an
@@ -2061,6 +2109,7 @@ class BuiltModel:
                 transforms=transforms,
                 elements=elements,
                 inferred_ndf=effective_ndf,
+                membrane_skip=membrane_skip,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -2076,6 +2125,7 @@ class BuiltModel:
                 transforms=transforms,
                 elements=elements,
                 inferred_ndf=effective_ndf,
+                membrane_skip=membrane_skip,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -2109,6 +2159,7 @@ class BuiltModel:
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
+        membrane_skip: "frozenset[int]" = frozenset(),
     ) -> None:
         """Pre-ADR 0027 flat emit path.
 
@@ -2174,8 +2225,10 @@ class BuiltModel:
         # block per Phase SSI-2.B).  S2 (ADR 0033): per-node ``-ndf K``
         # token is sourced from the broker when a declaration covers
         # the node; otherwise the model envelope wins.
+        # LadrunoMembrane(pg=...) interior nodes are not part of the
+        # model (membrane_interior_nodes): skipped.
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
-            if int(nid) in node_owner_stage:
+            if int(nid) in node_owner_stage or int(nid) in membrane_skip:
                 continue
             _emit_node_with_inferred_ndf(
                 emitter, inferred_ndf, int(nid),
@@ -3027,6 +3080,7 @@ class BuiltModel:
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
+        membrane_skip: "frozenset[int]" = frozenset(),
     ) -> None:
         """Per-rank fan-out implementing ADR 0027 (cross-partition MP-constraint
         emission policy).
@@ -3767,6 +3821,8 @@ class BuiltModel:
                 _exclude: "list[Any]" = [_hoisted] if _hoisted else []
                 if staged and node_owner_stage:
                     _exclude.append(node_owner_stage)
+                if membrane_skip:
+                    _exclude.append(membrane_skip)
                 emit_owned_nodes_with_inferred_ndf(
                     emitter, inferred_ndf, part.node_ids,
                     node_idx_lookup, self.fem.nodes.coords, self.ndf,
