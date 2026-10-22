@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 
@@ -80,10 +81,10 @@ SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 
 #: The capability tokens this bridge writes into ``/opensees@requires``.
 #: ``"fork"`` (the Ladruno build) comes from the ``VERBS`` rows, and from
-#: a fork-only ``system`` (:func:`is_fork_system`). Tokens that
+#: a fork-only analysis-chain type (:data:`FORK_CHAIN`). Tokens that
 #: depend on argument values (opensees 2.33.0) are derived by the stamp
 #: writer, not ``VERBS`` (:func:`value_requires`): ``"fork"`` for a
-#: fork-only ``system``; ``"mpco"``, any ``recorder mpco`` (pip openseespy
+#: fork-only chain type; ``"mpco"``, any ``recorder mpco`` (pip openseespy
 #: ships no MPCO recorder); ``"mpi"``, a Mumps-family or ``Parallel*``
 #: ``system`` (:func:`is_mpi_system`) or a partitioned ``solve_mode`` (the
 #: deck needs a multi-rank MPI run; a flat replay re-derives its own need,
@@ -91,19 +92,49 @@ SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 #: any token; a solving target that does not know one refuses it.
 REQUIRES_TOKENS: tuple[str, ...] = ("fork", "mpco", "mpi")
 
-#: The ``system`` types only the Ladruno fork declares, casefolded.
-#: ``Pardiso`` (fork ADR-75 P1, MKL builds): stock openseespy refuses the
-#: command and the fork solves with it. Every other LinearSystem member
-#: behaves the same on both builds; ``_SYSTEM_TOKENS`` in
-#: ``tests/opensees/h5/test_h5_solve_stamp.py`` pins each one.
-FORK_SYSTEMS: frozenset[str] = frozenset({"pardiso"})
+#: The analysis-chain types only the Ladruno fork declares, per chain
+#: family (the OpenSees command), casefolded. Stock openseespy refuses the
+#: ``system``, ``numberer``, ``test`` and ``constraints`` types; it accepts
+#: an unknown ``integrator`` with ``WARNING unknown integrator type`` and
+#: solves with its default integrator, a wrong answer that exits 0. The
+#: token tables in ``tests/opensees/h5/test_h5_solve_stamp.py`` pin every
+#: member of each family, and the live net runs each one.
+FORK_CHAIN: Mapping[str, frozenset[str]] = MappingProxyType({
+    "constraints": frozenset({"ladrunocontact", "ladrunoprojection"}),
+    "integrator": frozenset({
+        "centraldifferenceladruno", "centraldifferencesms",
+        "centraldifferencesmsconsistent", "explicitbathe",
+        "explicitbathelnvd", "explicitbathelnvdsms",
+        "explicitbathelnvdsmsconsistent", "explicitbathesms",
+        "explicitbathesmsconsistent", "ladrunoarclength",
+        "ladrunodynamicrelaxation", "ladrunogeneralizedalpha",
+        "ladrunohht", "ladrunoindirectcontrol", "ladrunoloadcontrol",
+    }),
+    "numberer": frozenset({"ladrunoparallelrcm"}),
+    "system": frozenset({"pardiso"}),
+    "test": frozenset({"ladrunostabilizedunbalance"}),
+})
+
+#: The analysis-chain attr each :data:`FORK_CHAIN` family stores its type
+#: under (``/opensees/analysis`` and each stage's chain).
+CHAIN_ATTRS: Mapping[str, str] = MappingProxyType({
+    "constraints": "handler", "integrator": "integrator",
+    "numberer": "numberer", "system": "system", "test": "test",
+})
 
 
-def is_fork_system(s_type: str) -> bool:
-    """Whether ``system <s_type>`` needs the Ladruno fork: a type in
-    :data:`FORK_SYSTEMS`, any case. Stock openseespy refuses it, so a deck
-    that declares it aborts there."""
-    return s_type.casefold() in FORK_SYSTEMS
+def is_fork_chain(family: str, c_type: str) -> bool:
+    """Whether ``<family> <c_type>`` needs the Ladruno fork: a type in
+    :data:`FORK_CHAIN` of that family, any case. A family the map does not
+    hold raises, so a new one cannot read as stock by omission."""
+    try:
+        types = FORK_CHAIN[family]
+    except KeyError:
+        raise ValueError(
+            f"is_fork_chain: unknown chain family {family!r}; the families "
+            f"are {sorted(FORK_CHAIN)}"
+        ) from None
+    return c_type.casefold() in types
 
 
 def is_mpi_system(s_type: str) -> bool:
@@ -116,61 +147,94 @@ def is_mpi_system(s_type: str) -> bool:
     return folded.startswith("mumps") or folded.startswith("parallel")
 
 
-def binding_systems(chains: "Iterable[Mapping[str, Any]]") -> tuple[str, ...]:
-    """The ``system`` types analysis chains (the archive's ``analysis``
-    attrs, global and staged) bind a deck to: every declared ``system``
-    but one carrying a ``system_runtime_fallback`` (the ADR 0027
+def binding_types(
+    chains: "Iterable[Mapping[str, Any]]", family: str,
+) -> tuple[str, ...]:
+    """The ``family`` types analysis chains (the archive's ``analysis``
+    attrs, global and staged) bind a deck to, in chain order: every declared
+    one but one carrying a ``<attr>_runtime_fallback`` (the ADR 0027
     auto-emitted ``Mumps`` with an ``UmfPack`` fallback runs in one process
-    too, so it binds the deck to nothing)."""
-    return tuple(str(c["system"]) for c in chains
-                 if "system" in c and "system_runtime_fallback" not in c)
+    too, so it binds the deck to nothing). ``family`` is a
+    :data:`CHAIN_ATTRS` key; any other raises."""
+    try:
+        attr = CHAIN_ATTRS[family]
+    except KeyError:
+        raise ValueError(
+            f"binding_types: unknown chain family {family!r}; the families "
+            f"are {sorted(CHAIN_ATTRS)}"
+        ) from None
+    fallback = f"{attr}_runtime_fallback"
+    return tuple(str(c[attr]) for c in chains
+                 if attr in c and fallback not in c)
+
+
+def binding_systems(chains: "Iterable[Mapping[str, Any]]") -> tuple[str, ...]:
+    """The ``system`` types analysis chains bind a deck to
+    (:func:`binding_types`)."""
+    return binding_types(chains, "system")
+
+
+def needs_fork(chains: "Iterable[Mapping[str, Any]]") -> bool:
+    """Whether analysis chains (global and staged) bind a deck to the
+    Ladruno fork: any family's binding type is fork-only
+    (:func:`is_fork_chain`)."""
+    chains = tuple(chains)
+    return any(is_fork_chain(family, t) for family in FORK_CHAIN
+               for t in binding_types(chains, family))
 
 
 def flat_requires(
-    requires: "tuple[str, ...]", *, systems: "tuple[str, ...]",
+    requires: "tuple[str, ...]", *, chains: "Iterable[Mapping[str, Any]]",
 ) -> tuple[str, ...]:
     """The tokens of a stamp's ``requires`` that a **flat** replay needs.
 
-    ``"mpi"`` holds for the archive's own deck when it was derived from a
-    partitioned ``solve_mode``, but every replay target emits flat, so a
-    flat replay needs it only when its own analysis chain declares an MPI
-    system (:func:`is_mpi_system`); ``systems`` are the ``system`` types the
-    archive stores, global and staged. ``"mpi"`` is only dropped, never
-    added: a file below 2.33.0 keeps the ``"mpi"`` it was written with.
+    ``chains`` are the archive's analysis chains (its ``analysis`` attrs,
+    global and staged). ``"mpi"`` holds for the archive's own deck when it
+    was derived from a partitioned ``solve_mode``, but every replay target
+    emits flat, so a flat replay needs it only when its own chain declares
+    an MPI system (:func:`is_mpi_system` over :func:`binding_systems`).
+    ``"mpi"`` is only dropped, never added: a file below 2.33.0 keeps the
+    ``"mpi"`` it was written with.
 
-    ``"fork"`` is added when ``systems`` holds a fork-only one
-    (:func:`is_fork_system`, #2393): the replay deck declares that system,
-    so it aborts on stock whatever the stamp says, and an archive written
-    before the emit side derived the token (``requires=()`` with
-    ``Pardiso``) still fails closed. Every other token passes through."""
+    ``"fork"`` is added when a chain declares a fork-only type
+    (:func:`needs_fork`): the replay deck declares it, so it aborts on
+    stock, or for an integrator solves with stock's default integrator,
+    whatever the stamp says. An archive written before the emit side
+    derived the token (``requires=()``) still fails closed. Every other
+    token passes through."""
+    chains = tuple(chains)
     out = set(requires)
-    if "mpi" in out and not any(is_mpi_system(s) for s in systems):
+    if "mpi" in out and not any(
+            is_mpi_system(s) for s in binding_systems(chains)):
         out.discard("mpi")
-    if any(is_fork_system(s) for s in systems):
+    if needs_fork(chains):
         out.add("fork")
     return tuple(sorted(out))
 
 
 def value_requires(
-    *, recorder_kinds: "tuple[str, ...]", systems: "tuple[str, ...]",
-    solve_mode: str,
+    *, recorder_kinds: "tuple[str, ...]",
+    chains: "Iterable[Mapping[str, Any]]", solve_mode: str,
 ) -> frozenset[str]:
     """The requirement tokens a model's argument values imply: ``"fork"``
-    for a fork-only ``system`` (:func:`is_fork_system`), ``"mpco"`` for a
+    for a fork-only chain type (:func:`needs_fork`), ``"mpco"`` for a
     ``recorder mpco``, ``"mpi"`` for an MPI ``system``
-    (:func:`is_mpi_system`; pass :func:`binding_systems`) or a partitioned
-    ``solve_mode`` (see :data:`REQUIRES_TOKENS`)."""
+    (:func:`is_mpi_system` over :func:`binding_systems`) or a partitioned
+    ``solve_mode`` (see :data:`REQUIRES_TOKENS`). ``chains`` are the
+    model's analysis-chain attrs, global and staged."""
     if solve_mode not in SOLVE_MODES:
         raise ValueError(
             f"value_requires: solve_mode must be one of {SOLVE_MODES}, got "
             f"{solve_mode!r}"
         )
+    chains = tuple(chains)
     out: set[str] = set()
-    if any(is_fork_system(s) for s in systems):
+    if needs_fork(chains):
         out.add("fork")
     if any(k.casefold() == "mpco" for k in recorder_kinds):
         out.add("mpco")
-    if solve_mode == "partitioned" or any(is_mpi_system(s) for s in systems):
+    if solve_mode == "partitioned" or any(
+            is_mpi_system(s) for s in binding_systems(chains)):
         out.add("mpi")
     return frozenset(out)
 
@@ -192,7 +256,7 @@ class SolveStamp:
         every emitted verb require (``"fork"``: the Ladruno build),
         ledger rows included, and, from opensees 2.33.0, the tokens the
         emitted argument values imply (``"mpco"``, ``"mpi"``, and
-        ``"fork"`` for a fork-only ``system`` since #2393:
+        ``"fork"`` for a fork-only chain type, :data:`FORK_CHAIN`:
         :func:`value_requires`), so ``build('live')`` can refuse on a
         backend that lacks one. The writer derives it from its own
         program (``/opensees/program@methods``) and stores. An archive
@@ -270,7 +334,8 @@ class SolveStamp:
 
 
 __all__ = [
-    "FORK_SYSTEMS", "REQUIRES_TOKENS", "SOLVE_MODES", "SolveStamp",
-    "TargetCaps", "binding_systems", "flat_requires", "is_fork_system",
-    "is_mpi_system", "value_requires",
+    "CHAIN_ATTRS", "FORK_CHAIN", "REQUIRES_TOKENS", "SOLVE_MODES",
+    "SolveStamp", "TargetCaps", "binding_systems", "binding_types",
+    "flat_requires", "is_fork_chain", "is_mpi_system", "needs_fork",
+    "value_requires",
 ]
