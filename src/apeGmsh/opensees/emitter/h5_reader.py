@@ -1324,13 +1324,9 @@ class H5Model:
             staged program.
         """
         from .._internal.typed_records import (
-            EmbeddedNodeRecord,
-            EqualDOFRecord,
             FixRecord,
             MassRecord,
             RegionRecord,
-            RigidDiaphragmRecord,
-            RigidLinkRecord,
             StageRecordRO,
         )
 
@@ -1419,67 +1415,9 @@ class H5Model:
                     region_seq.append(int(rattrs["emit_index"]))
 
             # -- MP constraints ----------------------------------------
-            equal_dofs: "list[EqualDOFRecord]" = []
-            rigid_links: "list[RigidLinkRecord]" = []
-            rigid_diaphragms: "list[RigidDiaphragmRecord]" = []
-            embedded_nodes: "list[EmbeddedNodeRecord]" = []
-            if "constraints" in g:
-                cons = g["constraints"]
-                if "equalDOF" in cons:
-                    for row in cons["equalDOF"][:]:
-                        # equalDOF dofs are a 1-based dof LIST — the
-                        # compound pads the tail with 0, which is NOT
-                        # a valid dof.  Trim trailing pads so the
-                        # public .stages() surface never exposes
-                        # dof-0 entries (re-write re-pads to the same
-                        # global-ndf width, so the echo stays stable).
-                        raw = [int(d) for d in row["dofs"]]
-                        while raw and raw[-1] == 0:
-                            raw.pop()
-                        equal_dofs.append(EqualDOFRecord(
-                            master=int(row["master"]),
-                            slave=int(row["slave"]),
-                            dofs=tuple(raw),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
-                if "rigidLink" in cons:
-                    for row in cons["rigidLink"][:]:
-                        rigid_links.append(RigidLinkRecord(
-                            kind=str(_decode_bytes(row["kind"])),
-                            master=int(row["master"]),
-                            slave=int(row["slave"]),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
-                if "rigidDiaphragm" in cons:
-                    for row in cons["rigidDiaphragm"][:]:
-                        n_slaves = int(row["n_slaves"])
-                        rigid_diaphragms.append(RigidDiaphragmRecord(
-                            perp_dir=int(row["perp_dir"]),
-                            master=int(row["master"]),
-                            slaves=tuple(
-                                int(s) for s in row["slaves"][:n_slaves]
-                            ),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
-                if "embeddedNode" in cons:
-                    for row in cons["embeddedNode"][:]:
-                        n_args = int(row["n_args"])
-                        has_kp = bool(int(row["has_stiffness_p"]))
-                        embedded_nodes.append(EmbeddedNodeRecord(
-                            ele_tag=int(row["ele_tag"]),
-                            cnode=int(row["cnode"]),
-                            args=tuple(
-                                int(a) for a in row["args"][:n_args]
-                            ),
-                            stiffness=float(row["stiffness"]),
-                            stiffness_p=(
-                                float(row["stiffness_p"]) if has_kp
-                                else None
-                            ),
-                            rotational=bool(int(row["rotational"])),
-                            pressure=bool(int(row["pressure"])),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
+            equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes = (
+                _read_mp_rows(g["constraints"]) if "constraints" in g
+                else ([], [], [], []))
 
             # -- MP emit_index seqs (ADR 0055 P2.3; absent pre-P2.3 →
             # empty → replay falls back to the fixed kind order) -------
@@ -2099,6 +2037,24 @@ class H5Model:
             out.append(EmbeddedRebarRecordRO(
                 ele_tag=tags[i], args=tuple(args), name=names[i]))
         return tuple(out)
+
+    def mp_constraints(
+        self,
+    ) -> "tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]]":
+        """Return the global ``/opensees/constraints`` MP rows (schema 2.7.0).
+
+        ``(equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes)``,
+        each in write order, as the typed records a stage's buckets use
+        (:meth:`stages`). These are the MP lines the bridge emitted
+        outside every stage block: a partitioned archive captures each
+        replicated line once (ADR 0027 INV-1), so the rows are flat. All
+        four are empty when the file has no ``/opensees/constraints``
+        group or none of the four datasets.
+        """
+        if "opensees" not in self._f or "constraints" not in self._f["opensees"]:
+            return (), (), (), ()
+        eq, rl, rd, en = _read_mp_rows(self._f["opensees"]["constraints"])
+        return tuple(eq), tuple(rl), tuple(rd), tuple(en)
 
     def recorders(self) -> list[RecorderRecord]:
         """Return every ``/opensees/recorders/{name}`` group.
@@ -3026,6 +2982,84 @@ def records_program_decl(table: "DeclarationTable | None") -> bool:
     ``to_h5`` rewrite of one (marker ``"absent"``)."""
     return table is not None and table.program_decl == PROGRAM_DECL_COMPLETE
 
+
+
+def _read_mp_rows(cons: Any) -> "tuple[list[Any], list[Any], list[Any], list[Any]]":
+    """The four MP-constraint buckets of one ``constraints`` group.
+
+    ``cons`` is ``/opensees/constraints`` (the global rows) or a stage's
+    ``constraints`` sub-group; both hold the same compound datasets
+    (schema 2.7.0). Returns ``(equal_dofs, rigid_links, rigid_diaphragms,
+    embedded_nodes)`` as typed records, in write order. A dataset that is
+    absent reads as empty: the writer omits an empty bucket.
+    """
+    from .._internal.typed_records import (
+        EmbeddedNodeRecord,
+        EqualDOFRecord,
+        RigidDiaphragmRecord,
+        RigidLinkRecord,
+    )
+
+    equal_dofs: "list[EqualDOFRecord]" = []
+    rigid_links: "list[RigidLinkRecord]" = []
+    rigid_diaphragms: "list[RigidDiaphragmRecord]" = []
+    embedded_nodes: "list[EmbeddedNodeRecord]" = []
+    if "equalDOF" in cons:
+        for row in cons["equalDOF"][:]:
+            # equalDOF dofs are a 1-based dof LIST — the
+            # compound pads the tail with 0, which is NOT
+            # a valid dof.  Trim trailing pads so the
+            # public .stages() surface never exposes
+            # dof-0 entries (re-write re-pads to the same
+            # global-ndf width, so the echo stays stable).
+            raw = [int(d) for d in row["dofs"]]
+            while raw and raw[-1] == 0:
+                raw.pop()
+            equal_dofs.append(EqualDOFRecord(
+                master=int(row["master"]),
+                slave=int(row["slave"]),
+                dofs=tuple(raw),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    if "rigidLink" in cons:
+        for row in cons["rigidLink"][:]:
+            rigid_links.append(RigidLinkRecord(
+                kind=str(_decode_bytes(row["kind"])),
+                master=int(row["master"]),
+                slave=int(row["slave"]),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    if "rigidDiaphragm" in cons:
+        for row in cons["rigidDiaphragm"][:]:
+            n_slaves = int(row["n_slaves"])
+            rigid_diaphragms.append(RigidDiaphragmRecord(
+                perp_dir=int(row["perp_dir"]),
+                master=int(row["master"]),
+                slaves=tuple(
+                    int(s) for s in row["slaves"][:n_slaves]
+                ),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    if "embeddedNode" in cons:
+        for row in cons["embeddedNode"][:]:
+            n_args = int(row["n_args"])
+            has_kp = bool(int(row["has_stiffness_p"]))
+            embedded_nodes.append(EmbeddedNodeRecord(
+                ele_tag=int(row["ele_tag"]),
+                cnode=int(row["cnode"]),
+                args=tuple(
+                    int(a) for a in row["args"][:n_args]
+                ),
+                stiffness=float(row["stiffness"]),
+                stiffness_p=(
+                    float(row["stiffness_p"]) if has_kp
+                    else None
+                ),
+                rotational=bool(int(row["rotational"])),
+                pressure=bool(int(row["pressure"])),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    return equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes
 
 def _initial_stress_param_tags(
     grp: Any, where: str,
