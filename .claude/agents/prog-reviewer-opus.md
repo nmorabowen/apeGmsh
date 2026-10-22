@@ -37,3 +37,5 @@ Round 1 checks every seam the card lists.
 - `Verdict: approve|changes <head-sha>`;
 - at most 5 findings, each with `file:line` and a reproducer;
 - a short list of what you hunted and found clean.
+
+- **Run revert checks out of place (lesson #2422).** A "fails with the fix reverted" check runs in a scratch tree: `git worktree add --detach <scratch> <base-sha>` with the new tests copied in, or `git archive <sha> | tar -x -C <scratch>`, with `PYTHONPATH=<scratch>/src`. Never run `git checkout <ref> -- <path>`, `git restore`, `git reset --hard` or `git clean` in the working worktree. Afterwards run `git worktree remove` on the scratch tree, first making sure nothing is junctioned into it.

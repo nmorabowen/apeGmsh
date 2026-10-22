@@ -113,7 +113,9 @@ def test_stages_accessor_kitchen_sink(tmp_path: Path) -> None:
     # HOLD pattern read back with its sp_holds rows.
     holds = [p for p in s.patterns if p.sp_holds]
     assert len(holds) == 1
-    assert sorted(holds[0].sp_holds) == [(5, 1), (6, 1)]
+    assert sorted(holds[0].sp_holds) == [
+        (1, 1), (2, 1), (5, 1), (5, 2), (6, 1), (6, 2),
+    ]
     # Pattern order restored from emit_index stamps.
     assert list(s.pattern_seq) == sorted(s.pattern_seq)
     # Rayleigh + provenance.
