@@ -84,6 +84,52 @@ Every Manzari variant differs from stock, with no warning and exit 0:
 on both builds. A non-default `tol_r` is already refused by the bridge
 (`NotImplementedError`).
 
+### Confirmation on CI's stock pin (openseespywin 3.8.0.0)
+
+This section confirms the (c) rows on the stock build CI pins.
+
+**Environment.**
+- A fresh venv outside every worktree (CPython 3.12, `-I` isolated mode).
+- `openseespywin==3.8.0.0` installed offline with `--no-deps`. Its sha256
+  `ee0f4831…6089b73` matches PyPI's published digest.
+- The bridge's tokens were recorded once, then replayed by a standalone
+  script that never imports apeGmsh. The fork runs in the same venv through
+  `C:\Program Files\Ladruno\OpenSees\bin` (build `79e06`).
+
+**Deviations from CI.** `numpy` is not installed: the probe does not need
+it, and the oracle values are in the table above. The `openseespy==3.8.0.0`
+shim is also absent: the probe imports `openseespywin.opensees` directly,
+which is the module that shim re-exports. CI itself runs the Linux
+`openseespylinux` 3.8.0.0.
+
+| Row | Stock 3.8.0.0 | Fork 79e06 | Oracle |
+|---|---|---|---|
+| `TenNodeTetrahedron`, apex `ux, uy, uz` | 0.616596, 0.289096, 0.079813 (identical to 3.7.1.2) | 0.102766, 0.048183, 0.013302 | 0.102766, 0.048183, 0.013302 |
+| `ManzariDafalias`, bridge default: `uz` after `p = 100`; `σa` at `εa = -0.001` | -0.00188025; -45.6756 | -0.00129377; -69.5642 | -0.00129377; -69.564 (elastic at `P_atm`) |
+| the same, with an explicit `updateMaterialStage -stage 0` | **-0.00129377; -69.5642** (equal to the fork to 1e-12) | -0.00129377; -69.5642 | same |
+| `-stage 0`, then `-stage 1` after confinement: `σa` at `εa = -0.001` | -45.4618 | -45.4324 | none (residual 0.065%) |
+
+Refusals re-run:
+
+- **`ASDPlasticMaterial3D`:** stock 3.8.0 still refuses it (`material type
+  ASDPlasticMaterial3D is unknown`), so it stays (b).
+- **`ASDSteel1D`:** stock 3.8.0 **accepts** it, and in a one-element
+  `Truss` under displacement control it gives the same stresses as the
+  fork. That holds for the default, `-implex` and `-fracture`, for example
+  200.0, 413.140, 439.079, -383.889 and -422.887 for the default. So on 3.8.0
+  it is (a), and it is (b) only on 3.7.1.2.
+
+  Separately, `testUniaxialMaterial` plus `setStrain` on `ASDSteel1D`
+  segfaults on stock 3.8.0 (exit 139). It runs fine inside an element.
+  That path is a test driver only, but a phase-2 live row must not use it.
+
+What this means for the rulings:
+
+- **Q1:** stock 3.8.0 is **not** correct, so no stock version qualifies for
+  a version gate. The refusal of tet10 applies to every stock build seen.
+- **Q2:** the explicit `-stage 0` closes the default-stage gap exactly on
+  3.8.0.
+
 ## (b') Loud only at `analyze`
 
 `DruckerPrager` gives the same answer while one surface is active. Two cases
