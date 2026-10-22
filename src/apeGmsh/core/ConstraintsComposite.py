@@ -866,6 +866,24 @@ from apeGmsh._kernel.geometry._host_decomposition import (
 _ConstraintT = TypeVar("_ConstraintT", bound=ConstraintDef)
 
 
+def _names_a_pg(fem, name) -> bool:
+    """True when ``name`` is a physical group of the snapshot (either side)."""
+    for groups in (getattr(fem.nodes, "physical", None),
+                   getattr(fem.elements, "physical", None)):
+        if groups is not None and name in groups:
+            return True
+    return False
+
+
+def _label_is_decoupled_def(fem, name, defn) -> bool:
+    """True when the snapshot label ``name`` holds exactly the node the
+    decoupled def of that label resolved to."""
+    labels = getattr(fem.nodes, "labels", None)
+    if defn is None or defn.tag is None or labels is None or name not in labels:
+        return False
+    return {int(t) for t in labels.node_ids(name)} == {int(defn.tag)}
+
+
 class ConstraintsComposite(_DeclarationsMixin):
     """Solver-agnostic kinematic-constraint composite — declare on
     geometry, resolve to nodes after meshing.
@@ -2063,15 +2081,24 @@ class ConstraintsComposite(_DeclarationsMixin):
                 from apeGmsh._kernel.resolvers._source import FEMDataSource
 
                 src = FEMDataSource(self._parent._fem)
+                head = self._parent._fem
                 for lbl in (defn.master_label, defn.slave_label):
                     is_decoupled = lbl in decoupled_ok
                     ok = src.has_target(lbl) if isinstance(lbl, str) else False
+                    if is_decoupled and ok and not _names_a_pg(head, lbl) \
+                            and _label_is_decoupled_def(
+                                head, lbl, self._decoupled_def_for(lbl)):
+                        # The snapshot label the decoupled node's own
+                        # ``label=`` registered, not a clash.
+                        ok = False
                     if is_decoupled and ok:
                         raise ValueError(
                             f"Constraint label {lbl!r} names both a "
                             f"decoupled node and a label / physical group "
-                            f"in the FEMData chain head — rename one so "
-                            f"the constraint role is unambiguous."
+                            f"(or another decoupled node or node set of "
+                            f"that label) in the FEMData chain head — "
+                            f"rename one so the constraint role is "
+                            f"unambiguous."
                         )
                     if is_decoupled and type(defn) not in _DECOUPLED_ROLE_TYPES:
                         raise ValueError(

@@ -177,11 +177,12 @@ ops.element.ZeroLength(pg="AbsBnd",
 
 # Node-pair form (ADR 0049) — spring to a g.decouple_node ground, NO meshed line.
 # Pass nodes=(node_i, node_j) instead of pg=; each endpoint is a decouple_node
-# handle, a single-node label, or an int tag. The dominant SSI case: a boundary
-# mesh node ↔ a coincident decoupled ground.
+# handle, a name selecting exactly one node (a node label — the decouple_node
+# label= included — else a physical group), or an int tag. The dominant SSI
+# case: a boundary mesh node ↔ a coincident decoupled ground.
 gnd = g.decouple_node(coords=(x, y, z), label="pile_ground")   # session-side
-ops.ndf(gnd, ndf=3)                                            # size the element-less ground
-ops.element.ZeroLength(nodes=("boundary_node", gnd),           # mesh-node label + ground handle
+ops.ndf("pile_ground", ndf=3)                                  # size the element-less ground
+ops.element.ZeroLength(nodes=("boundary_node", "pile_ground"), # mesh-node label + ground label
     mat_dirs=(ZeroLengthMatDir(material=ks, dof=1),
               ZeroLengthMatDir(material=ks, dof=2),
               ZeroLengthMatDir(material=ks, dof=3)))
@@ -607,8 +608,11 @@ ops.fix(nodes=[h.tag], dofs=(1, 1, 1, 1, 1, 1))  # after get_fem_data
 ```
 <!-- verified: tests/test_decoupled_constraint_master.py -->
 
-`ops.ndf` targets a `g.decouple_node` handle or its int tag (a `label=`/`pg=`
-grammar is deferred). It **fails loud** on a mesh node or any element-touched
+`ops.ndf` targets a `g.decouple_node` handle, its int tag, or its label (a
+`g.decouple_node_set` label sizes every node of the set). A decoupled node's
+`label=` is a node label of the snapshot (#2389): `fem.nodes.select(label=)`,
+`ops.fix(label=)`, `ops.nodes.one(label=)` and `model.h5` all carry it, and a
+name that is already a geometry label raises at `get_fem_data`. It **fails loud** on a mesh node or any element-touched
 node — inference owns those, and restating would create a two-headed model. The
 stated value is checked by three gates (all `BridgeError` at build): **G1**
 adaptive 2-node-link endpoints must agree, **G2** a `rigidDiaphragm`/`rigidLink`
