@@ -124,6 +124,11 @@ class FixedDofs:
     retained: "frozenset[int]" = frozenset()
     constrained: "frozenset[int]" = frozenset()
     ndm: int = 3
+    #: Whether some analysis runs under Transformation (declared, or
+    #: auto-emitted for MP constraints), and whether the deck declares no
+    #: Analysis (a modal deck then forces Transformation, ADR 0077 INV-10).
+    transformation: bool = False
+    no_analysis: bool = False
     #: False for a stage-claimed tie: a ``fix`` added after an analysis
     #: is total, an ``equalDOF`` incremental, so a slave that has moved
     #: would snap back. Such a tie keeps its form and warns.
@@ -138,6 +143,8 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
     """The :class:`FixedDofs` of a built model (its global ``fix`` records,
     ``fix_from_model`` included, and every stage's ``s.fix`` /
     ``s.remove_sp``)."""
+    from ...analysis.constraint_handler import Transformation
+    from ..types import Analysis, ConstraintHandler
     from .ndf import fit_fix_mask
 
     eff = dict(inferred_ndf or {})
@@ -180,12 +187,27 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
             slaves = (rec.slave_nodes if hasattr(rec, "slave_nodes")
                       else [rec.slave_node])
             constrained.update(int(n) for n in slaves)
+    stages = getattr(built, "stage_records", ()) or ()
+    prims = list(getattr(built, "primitives", ()) or ())
+    declared = next((p for p in prims
+                     if isinstance(p, ConstraintHandler)), None)
+    global_t = isinstance(declared, Transformation) or (
+        declared is None and not built._has_equation_constraints())
+    # a stage that declares no handler runs under the global one, which
+    # the flat staged emit auto-emits as Transformation for MP constraints
+    transformation = (any(isinstance(st.constraints, Transformation)
+                          or (st.constraints is None and global_t)
+                          for st in stages)
+                      if stages else global_t)
     return FixedDofs(
         fixed={n: frozenset(d) for n, d in fixed.items()},
         staged=frozenset(staged), ndf=eff, default_ndf=default,
         owner=owner, decl_cursor=getattr(built, "_decl_cursor", None),
         retained=frozenset(retained), constrained=frozenset(constrained),
-        ndm=int(getattr(built, "ndm", 3) or 3))
+        ndm=int(getattr(built, "ndm", 3) or 3),
+        transformation=transformation,
+        no_analysis=not stages and not any(isinstance(p, Analysis)
+                                           for p in prims))
 
 
 def _split_partly_fixed_tie(
@@ -427,7 +449,7 @@ def emit_mp_constraints(
     #    NodeGroupRecord(kind=RIGID_DIAPHRAGM).
     # -------------------------------------------------------------------
     if node_constraints is not None:
-        _emit_rigid_diaphragms(emitter, node_constraints)
+        _emit_rigid_diaphragms(emitter, node_constraints, fixed=fixed_dofs)
 
     # -------------------------------------------------------------------
     # 5. Kinematic couplings (RBE2) — one fork
@@ -951,6 +973,7 @@ def _emit_slave_fix(
 def _emit_rigid_diaphragms(
     emitter: "Emitter", node_constraints: Iterable[object],
     *, allowed_ids: frozenset[int] | None = None,
+    fixed: "FixedDofs | None" = None,
 ) -> None:
     """Emit ``rigidDiaphragm(perp_dir, master, *slaves)`` per
     :class:`NodeGroupRecord` row with ``kind == 'rigid_diaphragm'``.
@@ -975,11 +998,54 @@ def _emit_rigid_diaphragms(
         ):
             continue
         perp = _perp_dirn_from_normal(rec.plane_normal)
+        _refuse_partly_fixed_diaphragm(emitter, rec, perp, fixed)
         _emit_name(emitter, rec.name)
         emitter.rigidDiaphragm(
             perp, int(rec.master_node),
             *(int(s) for s in rec.slave_nodes),
         )
+
+
+def _refuse_partly_fixed_diaphragm(
+    emitter: "Emitter", rec: Any, perp: int, fixed: "FixedDofs | None",
+) -> None:
+    """Refuse a ``rigidDiaphragm`` whose retained node is held on some of
+    its in-plane DOFs and free on others, under Transformation (#2427).
+
+    ``TransformationDOF_Group`` then adds the master's total in-plane
+    displacement at every step instead of the increment: the slaves are
+    right, the master is not (1, 3, 6, 10 x the increment over four
+    linear steps, where Lagrange gives 1, 2, 3, 4). A master free or fully
+    held in plane, or fixed only out of plane, is exact.
+    """
+    if fixed is None:
+        return
+    forced = fixed.no_analysis and bool(getattr(
+        getattr(emitter, "caps", None),
+        "suppress_analysis_chain_auto_emit", False))
+    if not (fixed.transformation or forced):
+        return
+    master = int(rec.master_node)
+    from .ndf import _DIAPHRAGM_TIED_DOFS
+
+    plane = _DIAPHRAGM_TIED_DOFS.get((fixed.ndm, perp))
+    if plane is None:
+        return
+    held = (set(fixed.fixed.get(master, frozenset()))
+            | {d for d in plane if (master, d) in fixed.staged}) & plane
+    if not held or held == plane:
+        return
+    raise BridgeError(
+        f"rigidDiaphragm {perp} {master} ..."
+        + (f" ({rec.name})" if getattr(rec, "name", None) else "")
+        + f": its master node is fixed on in-plane DOF(s) {sorted(held)} "
+        f"and free on {sorted(plane - held)}. Under the Transformation "
+        "handler (declared, or auto-emitted for MP constraints) OpenSees "
+        "then accumulates the master's total in-plane displacement at "
+        "every step, a silently wrong master response (#2427). Declare "
+        "ops.constraints.Lagrange() or Penalty(...), or drop the master's "
+        "in-plane fix (fixing it only out of plane is exact)."
+    )
 
 
 def _coupling_control_flags(
@@ -1619,7 +1685,7 @@ def emit_stage_mp_constraints(
     _emit_rigid_links(emitter, adapter, fixed=staged)
     _emit_rigid_body_elements(emitter, adapter, tag_plan)
     _emit_equal_dofs(emitter, adapter, fixed=staged)
-    _emit_rigid_diaphragms(emitter, adapter)
+    _emit_rigid_diaphragms(emitter, adapter, fixed=staged)
     _emit_kinematic_couplings(
         emitter, adapter, tag_plan, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
     )
