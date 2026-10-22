@@ -220,14 +220,28 @@ function withLineDiagramPick(s: State): State {
   const stage = shownStage(s);
   const avail = stage?.lineStations;
   if (!avail || avail.length === 0) {
-    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null && s.lineDiagram.notice === null) return s;
+    if (stage !== undefined && s.lineDiagram.component !== null) {
+      const prevComp = s.lineDiagram.component;
+      const notice = `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`;
+      return {
+        ...s,
+        lineDiagram: {
+          ...s.lineDiagram,
+          component: null,
+          flipSign: null,
+          stepRange: null,
+          scan: null,
+          notice,
+        },
+      };
+    }
+    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null) return s;
     return {
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: null,
         scan: null,
-        notice: null,
       },
     };
   }
@@ -235,19 +249,27 @@ function withLineDiagramPick(s: State): State {
     const keys = lineDiagramKeysOf(s);
     const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
     const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
-    if (keepStep && keepScan) return s;
+    const nextNotice = keepStep || s.lineDiagram.stepRange === null ? s.lineDiagram.notice : null;
+    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return s;
     return {
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: keepStep ? s.lineDiagram.stepRange : null,
         scan: keepScan ? s.lineDiagram.scan : null,
-        notice: keepStep ? s.lineDiagram.notice : null,
+        notice: nextNotice,
       },
     };
   }
+  const prevComp = s.lineDiagram.component;
   const picked = defaultLineDiagramComponent(avail);
-  if (picked === s.lineDiagram.component) return s;
+  const notice =
+    prevComp !== null && prevComp !== picked
+      ? picked !== null
+        ? `Stage ${stage.name || stage.id} has no ${prevComp} line stations; switched to ${picked}.`
+        : `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`
+      : null;
+  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return s;
   return {
     ...s,
     lineDiagram: {
@@ -256,7 +278,7 @@ function withLineDiagramPick(s: State): State {
       flipSign: null,
       stepRange: null,
       scan: null,
-      notice: null,
+      notice,
     },
   };
 }
@@ -475,7 +497,11 @@ export function reduce(s: State, e: Event): State {
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
-      return withPhase({ ...s, phase: { ...s.phase, at: e.at } });
+      return withPhase({
+        ...s,
+        phase: { ...s.phase, at: e.at },
+        ...(e.at.kind !== "results" ? { lineDiagram: { ...s.lineDiagram, notice: null } } : {}),
+      });
     case "setResultStep": {
       if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error("setResultStep: the phase axis has no results");
       const at = s.phase.at;
@@ -517,6 +543,13 @@ export function reduce(s: State, e: Event): State {
         : preferSlabMy
           ? "My"
           : defaultLineDiagramComponent(firstLineStage?.lineStations);
+      const fileName = e.info.path.split(/[\\/]/).pop() ?? e.info.path;
+      const lineSwitchNotice =
+        curComp !== null && nextLineComp !== curComp
+          ? nextLineComp !== null
+            ? `${fileName} has no ${curComp} line stations; switched to ${nextLineComp}.`
+            : `${fileName} has no ${curComp} line stations; the line-diagram pick was cleared.`
+          : null;
       // V4c1: a re-read invalidates the measured ranges (the same path, other
       // data); a pick the re-read stage no longer has is cleared, with a notice.
       const next = withPhase({
@@ -536,7 +569,7 @@ export function reduce(s: State, e: Event): State {
           flipSign: nextLineComp === curComp ? s.lineDiagram.flipSign : null,
           stepRange: null,
           scan: null,
-          notice: null,
+          notice: lineSwitchNotice,
         },
       });
       const c = next.contour;

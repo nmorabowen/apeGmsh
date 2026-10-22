@@ -191,45 +191,56 @@ export class LineDiagramLayer {
     const basePos = blobs.f32(s.mesh.linePositions);
     let deformKey = "undeformed";
     let drawnLinePositions = basePos;
-    if (s.deform.on && deform) {
-      if ("dispKey" in deform) {
-        const rawKey = deform.dispKey;
-        const rawLine = deform.line;
-        const dv = deformView(s);
-        const validDeform =
-          dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
-            ? rawKey === dv.keys.disp
-            : rawKey.length > 0;
-        if (validDeform && rawLine.length === basePos.length) {
-          deformKey = `${rawKey}|${s.deform.scale}`;
-          drawnLinePositions = new Float32Array(basePos.length);
-          const scale = s.deform.scale;
-          for (let i = 0; i < basePos.length; i++) {
-            drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+    if (s.deform.on) {
+      const dv = deformView(s);
+      let deformApplied = false;
+      if (deform) {
+        if ("dispKey" in deform) {
+          const rawKey = deform.dispKey;
+          const rawLine = deform.line;
+          const validDeform =
+            dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
+              ? rawKey === dv.keys.disp
+              : rawKey.length > 0;
+          if (validDeform && rawLine.length === basePos.length) {
+            deformKey = `${rawKey}|${s.deform.scale}`;
+            drawnLinePositions = new Float32Array(basePos.length);
+            const scale = s.deform.scale;
+            for (let i = 0; i < basePos.length; i++) {
+              drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+            }
+            deformApplied = true;
+          }
+        } else if (deform.line instanceof Float32Array) {
+          // Pre-deformed full-mesh positions from Viewport (`this.full`)
+          if (deform.key.length > 0 && deform.line.length === basePos.length) {
+            deformKey = deform.key;
+            drawnLinePositions = deform.line;
+            deformApplied = true;
+          }
+        } else {
+          const rawKey = deform.key;
+          const rawLine = deform.line.d;
+          const validDeform =
+            dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
+              ? rawKey === dv.keys.disp
+              : rawKey.length > 0;
+          if (validDeform && rawLine.length === basePos.length) {
+            deformKey = `${rawKey}|${s.deform.scale}`;
+            drawnLinePositions = new Float32Array(basePos.length);
+            const scale = s.deform.scale;
+            for (let i = 0; i < basePos.length; i++) {
+              drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+            }
+            deformApplied = true;
           }
         }
-      } else if (deform.line instanceof Float32Array) {
-        // Pre-deformed full-mesh positions from Viewport (`this.full`)
-        if (deform.line.length === basePos.length) {
-          deformKey = deform.key;
-          drawnLinePositions = deform.line;
-        }
-      } else {
-        const rawKey = deform.key;
-        const rawLine = deform.line.d;
-        const dv = deformView(s);
-        const validDeform =
-          dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
-            ? rawKey === dv.keys.disp
-            : rawKey.length > 0;
-        if (validDeform && rawLine.length === basePos.length) {
-          deformKey = `${rawKey}|${s.deform.scale}`;
-          drawnLinePositions = new Float32Array(basePos.length);
-          const scale = s.deform.scale;
-          for (let i = 0; i < basePos.length; i++) {
-            drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
-          }
-        }
+      }
+      if (!deformApplied && (dv.state === "ready" || dv.state === "partial" || dv.state === "loading" || deform !== undefined)) {
+        const wasVisible = this.root.visible;
+        this.root.visible = false;
+        this.appliedKey = null;
+        return wasVisible;
       }
     }
 
@@ -277,11 +288,13 @@ export class LineDiagramLayer {
       meshElements: s.mesh.elements,
       lineElement: blobs.i32(s.mesh.lineElement),
       drawnLinePositions,
+      lineNodes: blobs.get(s.mesh.vertexNodes.line) as Float64Array,
       visibleLineMap: visibleIndices,
       stepData: step.step,
       join,
       ndm: s.ndm.ndm,
       charLength: 0.8 * s.mesh.radius,
+      deformed: s.deform.on,
       scale: s.lineDiagram.scale,
       flipSign: s.lineDiagram.flipSign,
       cmap: s.lineDiagram.cmap,

@@ -90,7 +90,7 @@ export interface Bridge {
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group). */
   readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent }): Promise<
-    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array>; lineDiagram?: LadrunoLineStationStep | null }
+    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array>; lineDiagram?: LadrunoLineStationStep | null; lineDiagramError?: string }
     | { ok: false; seq: number; error: string; changed?: true }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
@@ -217,6 +217,8 @@ export interface StepData {
   gauss: Record<string, Float64Array>;
   /** Line diagram component fetched with the step, or null */
   lineDiagram?: LadrunoLineStationStep | null;
+  /** Refusal message when the step's line-station read failed while nodal/gauss succeeded */
+  lineDiagramError?: string | null;
 }
 
 export class Effects {
@@ -404,53 +406,70 @@ export class Effects {
       data &&
       data.stage === at.stage &&
       data.step === at.step &&
-      s.resultStep?.status === "ready" &&
-      data.lineDiagram &&
-      data.lineDiagram.component === s.lineDiagram.component
+      s.resultStep?.status === "ready"
     ) {
-      const rangeContextKey = `${ldKeys.step}|${s.lineDiagram.plane}|${s.visibility.hidden.join(",")}|${s.mesh?.linePositions.id ?? "nomesh"}`;
-      const stepMeasured = s.lineDiagram.stepRange?.key === ldKeys.step && this.lineRangeFor?.key === rangeContextKey;
-      if (!stepMeasured && !(this.lineRangeFor && this.lineRangeFor.key === rangeContextKey && this.lineRangeFor.data === data)) {
-        this.lineRangeFor = { key: rangeContextKey, data };
-        let r: { min: number; max: number } | null;
-        let notice: string | null = null;
-        if (s.mesh && s.results && resultsPairing(s).state === "paired") {
-          const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results.elementIndexSpace);
-          if (!join.ok) {
-            r = null;
-            notice = join.reason;
-          } else {
-            const visibleIndices = visibleMaps(
-              s.mesh.legend,
-              s.visibility.hidden,
-              this.blobs.i32(s.mesh.lineGroup),
-              this.blobs.i32(s.mesh.triGroup),
-              elementMaskOf(s, s.mesh, this.blobs),
-            ).lineMap;
-            const geom = buildLineDiagram3D({
-              decls: s.decls,
-              meshElements: s.mesh.elements,
-              lineElement: this.blobs.i32(s.mesh.lineElement),
-              drawnLinePositions: this.blobs.f32(s.mesh.linePositions),
-              visibleLineMap: visibleIndices,
-              stepData: data.lineDiagram,
-              join,
-              ndm: s.ndm.ndm,
-              charLength: 2 * s.mesh.radius,
-              scale: s.lineDiagram.scale,
-              flipSign: s.lineDiagram.flipSign,
-              cmap: s.lineDiagram.cmap,
-              plane: s.lineDiagram.plane,
-              cameraViewDir: [0, 0, -1],
-            });
-            r = geom.beams.length > 0 ? finiteRangeOf(geom.beams.map((b) => b.values)) : null;
-            notice = geom.notice;
-          }
-        } else {
-          r = finiteRange([data.lineDiagram.values], false);
+      if (data.lineDiagramError) {
+        const rangeContextKey = `${ldKeys.step}|error|${data.lineDiagramError}`;
+        const stepMeasured = s.lineDiagram.stepRange?.key === ldKeys.step && this.lineRangeFor?.key === rangeContextKey;
+        if (!stepMeasured && !(this.lineRangeFor && this.lineRangeFor.key === rangeContextKey && this.lineRangeFor.data === data)) {
+          this.lineRangeFor = { key: rangeContextKey, data };
+          const key = ldKeys.step;
+          const notice = data.lineDiagramError;
+          queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: null, max: null, notice }));
         }
-        const key = ldKeys.step;
-        queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: r?.min ?? null, max: r?.max ?? null, notice }));
+      } else if (data.lineDiagram && data.lineDiagram.component === s.lineDiagram.component) {
+        const rangeContextKey = `${ldKeys.step}|${s.lineDiagram.plane}|${s.deform.on ? "def" : "undef"}|${s.visibility.hidden.join(",")}|${s.mesh?.linePositions.id ?? "nomesh"}`;
+        const stepMeasured = s.lineDiagram.stepRange?.key === ldKeys.step && this.lineRangeFor?.key === rangeContextKey;
+        if (!stepMeasured && !(this.lineRangeFor && this.lineRangeFor.key === rangeContextKey && this.lineRangeFor.data === data)) {
+          this.lineRangeFor = { key: rangeContextKey, data };
+          let r: { min: number; max: number } | null;
+          let notice: string | null = null;
+          if (s.mesh && s.results && resultsPairing(s).state === "paired") {
+            const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results.elementIndexSpace);
+            if (!join.ok) {
+              r = null;
+              notice = join.reason;
+            } else {
+              const visibleIndices = visibleMaps(
+                s.mesh.legend,
+                s.visibility.hidden,
+                this.blobs.i32(s.mesh.lineGroup),
+                this.blobs.i32(s.mesh.triGroup),
+                elementMaskOf(s, s.mesh, this.blobs),
+              ).lineMap;
+              const geom = buildLineDiagram3D({
+                decls: s.decls,
+                meshElements: s.mesh.elements,
+                lineElement: this.blobs.i32(s.mesh.lineElement),
+                drawnLinePositions: this.blobs.f32(s.mesh.linePositions),
+                lineNodes: this.blobs.get(s.mesh.vertexNodes.line) as Float64Array,
+                visibleLineMap: visibleIndices,
+                stepData: data.lineDiagram,
+                join,
+                ndm: s.ndm.ndm,
+                charLength: 2 * s.mesh.radius,
+                deformed: s.deform.on,
+                scale: s.lineDiagram.scale,
+                flipSign: s.lineDiagram.flipSign,
+                cmap: s.lineDiagram.cmap,
+                plane: s.lineDiagram.plane,
+                cameraViewDir: [0, 0, -1],
+              });
+              r = geom.beams.length > 0 ? finiteRangeOf(geom.beams.map((b) => b.values)) : null;
+              notice = geom.notice;
+            }
+          } else {
+            r = finiteRange([data.lineDiagram.values], false);
+            if (s.mesh && s.results) {
+              const p = resultsPairing(s);
+              if (p.state === "mismatch" || p.state === "unpairable") notice = p.reason;
+            } else if (!s.mesh) {
+              notice = "No model mesh is loaded to draw 1-D beam diagrams.";
+            }
+          }
+          const key = ldKeys.step;
+          queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: r?.min ?? null, max: r?.max ?? null, notice }));
+        }
       }
     }
     const want = s.lineDiagram.range === "history" ? ldKeys.scan : null;
@@ -815,7 +834,15 @@ export class Effects {
       if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
       return;
     }
-    this.step = { stage, step, nodal: res.nodal, element, gauss: res.gauss ?? {}, lineDiagram: res.lineDiagram ?? null };
+    this.step = {
+      stage,
+      step,
+      nodal: res.nodal,
+      element,
+      gauss: res.gauss ?? {},
+      lineDiagram: res.lineDiagram ?? null,
+      lineDiagramError: res.lineDiagramError ?? null,
+    };
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
   }
 

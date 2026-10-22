@@ -69,7 +69,7 @@ export interface LineDiagramComponentMeta {
   readonly field: LineDiagramFieldName;
   /** Local beam axis along which the diagram is extruded when `plane === "local"`. */
   readonly axis: "y" | "z";
-  /** Default tension-side sign convention (`true` for bending moments `My, Mz`, `false` otherwise). */
+  /** Default tension-side sign convention (`true` for bending moments `My, Mz` and curvatures `kappaY, kappaZ`, `false` otherwise). */
   readonly defaultFlipSign: boolean;
   /** Whether a 3-D beam requires an explicit local frame (`LOCAL_AXES` or `geomTransf.vecxz`) when `plane === "local"`. */
   readonly requires3dFrame: boolean;
@@ -178,7 +178,7 @@ export const LINE_DIAGRAM_COMPONENT_META: Readonly<Record<LineStationComponent, 
     label: "kappaY",
     field: "section_deformation",
     axis: "z",
-    defaultFlipSign: false,
+    defaultFlipSign: true,
     requires3dFrame: true,
   },
   kappaZ: {
@@ -187,7 +187,7 @@ export const LINE_DIAGRAM_COMPONENT_META: Readonly<Record<LineStationComponent, 
     label: "kappaZ",
     field: "section_deformation",
     axis: "y",
-    defaultFlipSign: false,
+    defaultFlipSign: true,
     requires3dFrame: true,
   },
 };
@@ -263,7 +263,7 @@ export function lineDiagramFieldsOf(available: readonly string[]): LineDiagramFi
   return out;
 }
 
-/** Default `flipSign` for `component`: `true` for bending moments (`My, Mz`), `false` otherwise. */
+/** Default `flipSign` for `component`: `true` for bending moments (`My, Mz`) and curvatures (`kappaY, kappaZ`), `false` otherwise. */
 export function defaultFlipSignFor(component: string): boolean {
   const c = normalizeLineStationComponent(component);
   return c ? LINE_DIAGRAM_COMPONENT_META[c].defaultFlipSign : false;
@@ -640,6 +640,10 @@ export interface BeamDiagramSpan3D {
   segmentIndex: number;
   /** Last drawn segment index for this element (equals `segmentIndex` for 2-node elements; `> segmentIndex` for multi-segment 1-D elements). */
   endSegmentIndex?: number;
+  /** Start node tag (`iNode`, at `xi = -1`), when resolved from `lineNodes` / `inlineNodes`. */
+  nodeStart?: number;
+  /** End node tag (`jNode`, at `xi = +1`), when resolved from `lineNodes` / `inlineNodes`. */
+  nodeEnd?: number;
   pStart: [number, number, number];
   pEnd: [number, number, number];
   length: number;
@@ -697,6 +701,8 @@ export interface LineDiagram3DGeometry {
   clim: [number, number];
   /** Count of 3-D beams refused by the fail-closed local-frame gate. */
   skippedUnorientedBeams: number;
+  /** Count of beams refused because element connectivity (iNode, jNode) contradicts cell corner nodes. */
+  skippedOrientationMismatchBeams: number;
   /** `DeclPath`s of 3-D beams refused by the fail-closed local-frame gate. */
   skippedBeamDecls: DeclPath[];
   /** User-facing notice when beams were skipped or nothing could be drawn. */
@@ -712,6 +718,10 @@ export interface BuildLineDiagram3DOptions {
   lineElement: Int32Array;
   /** Current drawn line segment positions (`Float32Array`, 6 floats per segment — deformed when `deform.on` is true). */
   drawnLinePositions: Float32Array;
+  /** Optional node tags per drawn line segment (2 per segment, `MeshInfo.vertexNodes.line`), used for the P0-2 element vs. cell orientation check. */
+  lineNodes?: ArrayLike<number>;
+  /** Optional OpenSees element connectivity `[iNode, jNode]` by `.ladruno` element ID, used for the P0-2 orientation check when `Decl.element.inlineNodes` is empty. */
+  elementNodesById?: ReadonlyMap<number, readonly [number, number]>;
   /** Optional indices of visible line segments (from `renderer/visible.ts`); if omitted, all segments in `lineElement` are considered. */
   visibleLineMap?: Int32Array;
   /** `.ladruno` single-step line-station data. */
@@ -728,6 +738,8 @@ export interface BuildLineDiagram3DOptions {
   ndm: 2 | 3 | null;
   /** Optional characteristic length (`2 * mesh.radius` in the 3-D layer; defaults to median beam length). */
   charLength?: number;
+  /** Whether `drawnLinePositions` is a deformed baseline (`s.deform.on === true`). */
+  deformed?: boolean;
   /** Diagram display options. */
   scale?: number;
   flipSign?: boolean | null;
@@ -837,6 +849,21 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
     entry.values.push(val);
   }
 
+  // All .ladruno element IDs that join any 1-D beam in the model mesh (`opts.lineElement`),
+  // regardless of current group/element visibility (`opts.visibleLineMap`).
+  const allLineEids = new Set<number>();
+  for (let segIdx = 0; segIdx < opts.lineElement.length; segIdx++) {
+    const elemIdx = opts.lineElement[segIdx]!;
+    const decl = opts.meshElements[elemIdx];
+    if (!decl) continue;
+    const eid = opts.join.byDeclPath.get(decl);
+    if (eid !== undefined) allLineEids.add(eid);
+  }
+  let unjoinedRows = 0;
+  for (let i = 0; i < elementIndex.length; i++) {
+    if (!allLineEids.has(elementIndex[i]!)) unjoinedRows++;
+  }
+
   // Map DeclPath -> first and last drawn line segment index (supporting multi-segment 1-D elements).
   const nSegs = opts.visibleLineMap ? opts.visibleLineMap.length : opts.lineElement.length;
   const candidateSegments: { segIdx: number; endSegIdx: number; decl: DeclPath; eid: number }[] = [];
@@ -860,6 +887,9 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
 
   const beams: BeamDiagramSpan3D[] = [];
   const skippedBeamDecls: DeclPath[] = [];
+  let skippedNonFiniteBeams = 0;
+  let skippedZeroLengthBeams = 0;
+  let skippedOrientationBeams = 0;
   const lengths: number[] = [];
   let maxAbsVal = 0;
   let minVal = Infinity;
@@ -867,25 +897,70 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
 
   for (const { segIdx, endSegIdx, decl, eid } of candidateSegments) {
     const st = stationsByEid.get(eid)!;
-    if (st.values.some((v) => !Number.isFinite(v))) continue;
+    const badStation =
+      st.values.length === 0 ||
+      st.xi.length !== st.values.length ||
+      st.values.some((v) => !Number.isFinite(v)) ||
+      st.xi.some((x) => !Number.isFinite(x) || x < -1 - 1e-9 || x > 1 + 1e-9);
+    if (badStation) {
+      skippedNonFiniteBeams++;
+      continue;
+    }
 
     const oStart = segIdx * 6;
     const oEnd = endSegIdx * 6;
-    const pStart: [number, number, number] = [
+    let pStart: [number, number, number] = [
       opts.drawnLinePositions[oStart]!,
       opts.drawnLinePositions[oStart + 1]!,
       opts.drawnLinePositions[oStart + 2]!,
     ];
-    const pEnd: [number, number, number] = [
+    let pEnd: [number, number, number] = [
       opts.drawnLinePositions[oEnd + 3]!,
       opts.drawnLinePositions[oEnd + 4]!,
       opts.drawnLinePositions[oEnd + 5]!,
     ];
+
+    // P0-2: Cross-check element connectivity (iNode, jNode) against cell corner nodes (nStart, nEnd).
+    const declObj = opts.decls[decl];
+    const inlineNodes = declObj?.element?.inlineNodes;
+    const elemNodes: readonly [number, number] | null =
+      opts.elementNodesById?.get(eid) ??
+      (inlineNodes && inlineNodes.length >= 2
+        ? [inlineNodes[0]!, inlineNodes[inlineNodes.length - 1]!]
+        : null);
+    let nodeStart: number | undefined;
+    let nodeEnd: number | undefined;
+    if (opts.lineNodes && endSegIdx * 2 + 1 < opts.lineNodes.length) {
+      const nStart = opts.lineNodes[segIdx * 2]!;
+      const nEnd = opts.lineNodes[endSegIdx * 2 + 1]!;
+      nodeStart = nStart;
+      nodeEnd = nEnd;
+      if (elemNodes) {
+        const [iNode, jNode] = elemNodes;
+        if (iNode === nStart && jNode === nEnd) {
+          // Forward orientation: cell corner order matches element (iNode -> jNode).
+        } else if (iNode === nEnd && jNode === nStart && iNode !== jNode) {
+          // Reversed orientation: flip pStart <-> pEnd so xi = -1 sits at iNode and xLocal runs iNode -> jNode.
+          [pStart, pEnd] = [pEnd, pStart];
+          nodeStart = iNode;
+          nodeEnd = jNode;
+        } else {
+          skippedOrientationBeams++;
+          continue;
+        }
+      }
+    } else if (elemNodes) {
+      [nodeStart, nodeEnd] = elemNodes;
+    }
+
     const dx = pEnd[0] - pStart[0];
     const dy = pEnd[1] - pStart[1];
     const dz = pEnd[2] - pStart[2];
     const length = Math.hypot(dx, dy, dz);
-    if (!Number.isFinite(length) || length < 1e-12) continue;
+    if (!Number.isFinite(length) || length < 1e-12) {
+      skippedZeroLengthBeams++;
+      continue;
+    }
     const xLocal: [number, number, number] = [dx / length, dy / length, dz / length];
 
     let extrudeDir: [number, number, number];
@@ -912,7 +987,6 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
           zRec = modelZ;
           source = "model_local_axes";
         } else {
-          const declObj = opts.decls[decl];
           const transfZ = declObj ? elementTransformVecxzFromState(opts.decls, declObj, opts.modelTransformVecxzByTag) : null;
           if (transfZ) {
             zRec = transfZ;
@@ -982,6 +1056,8 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       elementId: eid,
       segmentIndex: segIdx,
       endSegmentIndex: endSegIdx,
+      ...(nodeStart !== undefined ? { nodeStart } : {}),
+      ...(nodeEnd !== undefined ? { nodeEnd } : {}),
       pStart,
       pEnd,
       length,
@@ -1110,10 +1186,50 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
   });
 
   const skippedCount = skippedBeamDecls.length;
-  const notice =
-    skippedCount > 0
-      ? `${skippedCount} 3-D beam${skippedCount === 1 ? "" : "s"} skipped: ${component} in local plane requires LOCAL_AXES or geomTransf vecxz that is unambiguous and not parallel to the beam (never guessed in 3-D).`
-      : null;
+  const reasons: string[] = [];
+  if (skippedCount > 0) {
+    reasons.push(
+      `${skippedCount} 3-D beam${skippedCount === 1 ? "" : "s"} skipped: ${component} in local plane requires LOCAL_AXES or geomTransf vecxz that is unambiguous and not parallel to the beam (never guessed in 3-D).`,
+    );
+  }
+  if (skippedOrientationBeams > 0) {
+    reasons.push(
+      `${skippedOrientationBeams} beam${skippedOrientationBeams === 1 ? "" : "s"} skipped: element connectivity (iNode, jNode) contradicts mesh cell corner nodes.`,
+    );
+  }
+  if (skippedNonFiniteBeams > 0) {
+    reasons.push(
+      `${skippedNonFiniteBeams} beam${skippedNonFiniteBeams === 1 ? "" : "s"} skipped: non-finite station value or natural coordinate xi outside [-1, 1].`,
+    );
+  }
+  if (skippedZeroLengthBeams > 0) {
+    reasons.push(
+      `${skippedZeroLengthBeams} beam${skippedZeroLengthBeams === 1 ? "" : "s"} skipped: zero or non-finite chord length.`,
+    );
+  }
+  const totalRows = elementIndex.length;
+  if (unjoinedRows > 0) {
+    if (unjoinedRows === totalRows) {
+      reasons.push(
+        `No line-station row joins a drawn 1-D beam (${unjoinedRows} of ${totalRows} station row${totalRows === 1 ? "" : "s"} unjoined).`,
+      );
+    } else {
+      reasons.push(
+        `${unjoinedRows} of ${totalRows} station row${totalRows === 1 ? "" : "s"} unjoined (no matching 1-D beam in mesh).`,
+      );
+    }
+  } else if (beams.length === 0 && reasons.length === 0) {
+    reasons.push("No line-station row joins a drawn 1-D beam.");
+  }
+  if (
+    opts.deformed &&
+    beams.some((b) => b.zRecSource !== "step_local_axes" && b.zRecSource !== "screen")
+  ) {
+    reasons.push(
+      "Deformed baseline uses reference local frame (no per-step RESULTS/ON_ELEMENTS/LOCAL_AXES recorded).",
+    );
+  }
+  const notice = reasons.length > 0 ? reasons.join(" ") : null;
 
   return {
     component,
@@ -1135,6 +1251,7 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
     effectiveScale,
     clim,
     skippedUnorientedBeams: skippedCount,
+    skippedOrientationMismatchBeams: skippedOrientationBeams,
     skippedBeamDecls,
     notice,
   };
@@ -1555,8 +1672,8 @@ export function buildSelectedBeamChainsFromState(
     const b = byDecl.get(decl);
     if (!b) continue;
     const endSeg = b.endSegmentIndex ?? b.segmentIndex;
-    const nodeStart = lineNodes[b.segmentIndex * 2]!;
-    const nodeEnd = lineNodes[endSeg * 2 + 1]!;
+    const nodeStart = b.nodeStart ?? lineNodes[b.segmentIndex * 2]!;
+    const nodeEnd = b.nodeEnd ?? lineNodes[endSeg * 2 + 1]!;
     spans.push({
       decl: b.decl,
       elementId: b.elementId,

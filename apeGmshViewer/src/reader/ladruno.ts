@@ -486,11 +486,7 @@ export class LadrunoFile {
         if (!bucket) continue;
         const parsed = this.parseBucketBlocks(bucket);
         if ("reason" in parsed) {
-          if (token === "localForce" || token === "localForces") {
-            warningsOut?.push(
-              `localForce bucket ${JSON.stringify(key)} (element class ${JSON.stringify(classNameOfBucket(key) || "<unparsed>")}) is unreadable: ${parsed.reason} Its line stations are left out.`,
-            );
-          }
+          warningsOut?.push(unreadableBucketWarning(token, key, parsed.reason));
           continue;
         }
         const { blocks, width } = parsed;
@@ -608,7 +604,10 @@ export class LadrunoFile {
         const bucket = this.optionalGroup(tokenGrp, key);
         if (!bucket) continue;
         const parsed = this.parseBucketBlocks(bucket);
-        if ("reason" in parsed) continue;
+        if ("reason" in parsed) {
+          options?.warningsOut?.push(unreadableBucketWarning(token, key, parsed.reason));
+          continue;
+        }
         if (!parsed.blocks.some((b) => b.level === 2 && b.multiplicity > 0 && b.compNames.some((n) => sectionComponentOf(n, token, ndm) === canon))) {
           continue;
         }
@@ -630,7 +629,10 @@ export class LadrunoFile {
         const bucket = this.optionalGroup(tokenGrp, key);
         if (!bucket) continue;
         const parsed = this.parseBucketBlocks(bucket);
-        if ("reason" in parsed) continue;
+        if ("reason" in parsed) {
+          options?.warningsOut?.push(unreadableBucketWarning(token, key, parsed.reason));
+          continue;
+        }
         const hasLevel2 = parsed.blocks.some((b) => b.level === 2);
         if (!hasLevel2) {
           const part = this.readElementBucketStations(
@@ -1785,6 +1787,11 @@ function localForce2dGate(
     };
   }
   return { ok: true, alias2d: true };
+}
+
+function unreadableBucketWarning(token: string, key: string, reason: string): string {
+  const label = token === "localForces" ? "localForce" : token === "basicForces" ? "basicForce" : token;
+  return `${label} bucket ${JSON.stringify(key)} (element class ${JSON.stringify(classNameOfBucket(key) || "<unparsed>")}) is unreadable: ${reason} Its line stations are left out.`;
 }
 
 function basicForceRefusal(bucketKey: string, component: LineStationComponent, stations: readonly number[]): string | null {
