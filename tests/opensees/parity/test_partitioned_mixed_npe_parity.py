@@ -310,7 +310,10 @@ def test_zero_primary_rank_emits_loads_once_and_does_not_crash() -> None:
 
 def _material_stage_ops() -> apeSees:
     """Same 3-rank mesh, but the bricks carry a SANISAND material that
-    a second stage flips to elastoplastic."""
+    a second stage flips.  The flip is to stage 0: a stage-1 flip of one
+    ManzariDafalias on many bricks is refused (#2445, only the first
+    element would be initialised), and the per-rank replication this
+    fixture checks does not depend on the value."""
     ops = apeSees(cast("object", _make_3rank_mixed_npe_fem()))
     ops.model(ndm=3, ndf=3)
     sand = ops.nDMaterial.ManzariDafalias(
@@ -327,7 +330,7 @@ def _material_stage_ops() -> apeSees:
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     with ops.stage(name="push") as s:
-        s.update_material_stage(materials=[sand], stage=1)
+        s.update_material_stage(materials=[sand], stage=0)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     return ops
@@ -356,7 +359,7 @@ def test_stage_material_flip_replicates_in_every_rank_bracket() -> None:
             assert rank is not None, "flip emitted outside a rank bracket"
             per_rank.setdefault(rank, []).append((args[0], args[1]))
 
-    assert per_rank == {0: [(tag, 1)], 1: [(tag, 1)], 2: [(tag, 1)]}
+    assert per_rank == {0: [(tag, 0)], 1: [(tag, 0)], 2: [(tag, 0)]}
 
 # ---------------------------------------------------------------------------
 # 3. Stream-vs-list byte identity on this fixture (the P3 gate shape).
