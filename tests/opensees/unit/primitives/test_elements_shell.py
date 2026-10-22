@@ -4,6 +4,7 @@ Covers the four shell elements, and the removal of ``ShellMITC3`` (#2092):
 
 * :class:`ShellMITC4` — 4-node
 * :class:`ShellDKGQ`  — 4-node
+* :class:`ShellNLDKGQ` — 4-node, geometrically nonlinear (ADR 0123)
 * :class:`ASDShellQ4` — 4-node, with optional flags
 * :class:`ASDShellT3` — 3-node, with optional flags
 
@@ -37,6 +38,7 @@ from apeGmsh.opensees.element.shell import (
     ASDShellT3,
     ShellDKGQ,
     ShellMITC4,
+    ShellNLDKGQ,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.section.plate import ElasticMembranePlateSection
@@ -299,6 +301,42 @@ class TestShellDKGQMisc:
     def test_repr_includes_class_name(self) -> None:
         ele = ShellDKGQ(pg="Wall", section=_section())
         assert "ShellDKGQ" in repr(ele)
+
+
+# ===========================================================================
+# ShellNLDKGQ
+# ===========================================================================
+
+class TestShellNLDKGQ:
+    def test_emit_records_correct_call(self) -> None:
+        s = _section()
+        ele = ShellNLDKGQ(pg="Wall", section=s)
+        e = _prepare_emitter(s, sec_tag=2, nodes=(31, 32, 33, 34))
+        ele._emit(e, tag=15)
+        assert e.calls == [
+            ("element", ("ShellNLDKGQ", 15, 31, 32, 33, 34, 2), {}),
+        ]
+
+    @pytest.mark.parametrize("nodes", [(1, 2, 3), (1, 2, 3, 4, 5)])
+    def test_emit_wrong_node_count_raises(
+        self, nodes: tuple[int, ...]
+    ) -> None:
+        s = _section()
+        ele = ShellNLDKGQ(pg="Wall", section=s)
+        e = _prepare_emitter(s, sec_tag=2, nodes=nodes)
+        with pytest.raises(ValueError, match="expected 4 node tags"):
+            ele._emit(e, tag=15)
+
+    def test_dependencies_returns_section(self) -> None:
+        s = _section()
+        assert ShellNLDKGQ(pg="Wall", section=s).dependencies() == (s,)
+
+    def test_bridge_namespace_registers_it(self) -> None:
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))
+        sec = ops.section.ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2)
+        ele = ops.element.ShellNLDKGQ(pg="Wall", section=sec)
+        assert isinstance(ele, ShellNLDKGQ)
+        assert ele.section is sec
 
 
 # ===========================================================================

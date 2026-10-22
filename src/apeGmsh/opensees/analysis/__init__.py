@@ -58,6 +58,7 @@ from .constraint_handler import Lagrange, Penalty, Transformation
 from .complex_eigen import ComplexEigenResult
 from .eigen import EigenResult
 from .footfall_result import FootfallResult
+from .gravity_modal import GravityModalResult, GravityState
 from .modal import (
     FrequencyResponseResult,
     ModalHistoryResult,
@@ -198,4 +199,7 @@ __all__ = [
     "ParallelModalResult",
     # footfall vibration walking evaluation (ADR 0109)
     "FootfallResult",
+    # gravity-preloaded modal analysis on one live domain (ADR 0123)
+    "GravityModalResult",
+    "GravityState",
 ]
