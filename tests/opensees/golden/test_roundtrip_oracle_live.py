@@ -75,7 +75,6 @@ from tests.opensees.h5.test_h5_solve_stamp import (
     _CHAIN_TOKENS,
     _SYSTEM_TOKENS,
     _UNARCHIVED,
-    _chain_frame,
     _tamper,
 )
 
