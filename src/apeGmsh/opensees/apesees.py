@@ -2806,6 +2806,7 @@ class BuiltModel:
                     stage.stage_constraint_records, emitter, tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
+                    fixed_dofs=fixed_dof_map(self, inferred_ndf),
                 )
 
             # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
@@ -3746,6 +3747,7 @@ class BuiltModel:
         # ``partitions`` so it does not collide with Gmsh's 1-based
         # ``part.id``.  See the bug fix in commit titled
         # ``fix(opensees-bridge): emit 0-based runtime ranks``.
+        fixed_dofs = fixed_dof_map(self, inferred_ndf)
         for idx, part in enumerate(partitions):
             rank = runtime_rank_from_partition_record(part, idx)
             emitter.partition_open(rank)
@@ -3880,6 +3882,7 @@ class BuiltModel:
                         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                         ghost_sp_ops=ghost_sp_ops,
                         stiffness_resolver=self._auto_stiffness_resolver(),
+                        fixed_dofs=fixed_dofs,
                     )
                 )
 
@@ -4214,6 +4217,7 @@ class BuiltModel:
         # preserved exactly by SortedIntToInt.
         ops_tag_to_fem_eid = fem_eid_to_ops_tag.inverse()
 
+        stage_fixed_dofs = fixed_dof_map(self, inferred_ndf)
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
 
@@ -4598,6 +4602,7 @@ class BuiltModel:
                                 ndm=self.ndm,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                                 ghost_sp_ops=stage_ghost_sp_ops,
+                                fixed_dofs=stage_fixed_dofs,
                                 stiffness_resolver=(
                                     self._auto_stiffness_resolver()),
                             )
