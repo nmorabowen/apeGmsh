@@ -8,6 +8,7 @@ body changed.  The class is private, so there is no facade in
 from __future__ import annotations
 
 import math
+import numbers
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
@@ -16,6 +17,7 @@ from .._internal.build.stage_emit import (
     MATERIAL_STATE_WRAPPERS,
     SWEPT_MATERIAL_CLASSES,
 )
+from .._internal.build.stage_validate import stage_flips
 from .._internal.build.records import (
     DampingAttachRecord,
     ActivateAbsorbingRecord,
@@ -34,7 +36,13 @@ from .._internal.build.records import (
     ZeroVelocityRecord,
 )
 from .._internal.ns import _StageDampingNS
-from .._internal.types import Element, Primitive, Recorder, TimeSeries
+from .._internal.types import (
+    Element,
+    NDMaterial,
+    Primitive,
+    Recorder,
+    TimeSeries,
+)
 from ..analysis.analysis import Static
 from ..node import Node, _iter_tags, _select_nodes
 from ._chain import (
@@ -54,14 +62,22 @@ if TYPE_CHECKING:
     from ..pattern.pattern import Plain
 
 
-# Phase SSI-2.E: nDMaterial classes that honour ``updateMaterialStage``.
-# Matched by ``type(handle).__name__`` so the stage verb does not have to
-# import the material classes.  Flipping anything else is a silent no-op
-# in OpenSees, so ``s.update_material_stage`` refuses it instead.  This
-# set grows when the PressureIndepMultiYield / PM4Sand family gets typed.
-STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
-    {"ManzariDafalias", "SAniSandMS", "LadrunoSANISAND"},
-)
+# nDMaterial classes that honour ``updateMaterialStage`` (their
+# ``setParameter`` answers ``updateMaterialStage``).  Matched by
+# ``type(handle).__name__`` so the stage verb does not have to import the
+# material classes.  Flipping anything else is a silent no-op in
+# OpenSees, so ``s.update_material_stage`` refuses it instead.
+STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "ManzariDafalias", "SAniSandMS", "LadrunoSANISAND",
+    "PressureIndependMultiYield", "PressureDependMultiYield",
+    "PressureDependMultiYield02", "PM4Sand", "PM4Silt",
+})
+
+#: The classes that also take stage 2: elastic with pressure-dependent
+#: moduli (``loadStage == 2`` in ``PressureDependMultiYield*.cpp``).
+STAGE_2_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "PressureDependMultiYield", "PressureDependMultiYield02",
+})
 
 #: nDMaterial classes whose ``updateMaterialStage`` flag is a C++
 #: ``static``, mapped to that static.  The flag holds ONE value
@@ -70,22 +86,71 @@ STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
 #: ``Elastic2Plastic()``, so an unnamed material lands on an answer that
 #: matches neither the elastic nor the properly flipped run (measured on
 #: stock openseespy 3.8.0 and on the fork alike).  Classes that share one
-#: static share one value here, and the stage-close check counts their
-#: materials together: ``LadrunoSANISAND`` subclasses ``ManzariDafalias``
-#: and inherits its ``mElastFlag``.  A class whose flag is per tag
+#: static share one value here, and the emit-time check in
+#: ``_internal/build/stage_validate.py`` counts their materials together:
+#: ``LadrunoSANISAND`` subclasses ``ManzariDafalias`` and inherits its
+#: ``mElastFlag``.  A class whose flag is per tag
 #: (the multi-yield soils keep ``loadStagex[matN]``) is not listed.
 #: A new class-wide class is one entry ``"<Class>": "<Class>::<static>"``.
+#: The static also survives ``ops.wipe()``: an in-process re-run starts at
+#: the previous run's value, while these checks assume each model starts
+#: at 0.
 CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "ManzariDafalias": "ManzariDafalias::mElastFlag",
     "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
     "SAniSandMS": "SAniSandMS::mElastFlag",
+    "PM4Sand": "PM4Sand::me2p",
+    "PM4Silt": "PM4Silt::me2p",
 }
+
+#: nDMaterial classes whose ``setParameter`` takes a stage-flag name
+#: without checking the material tag that follows it, mapped to the names
+#: it takes that way.  A ``materialState <tagX>`` that reaches an element
+#: carrying one of them switches its stage, whatever ``tagX`` is: for
+#: DruckerPrager ``mElastFlag=1`` is elastic, so a flip of a neighbouring
+#: sand to plastic makes it elastic (a tri6n in simple shear: a stress
+#: of -18.3 becomes -1115.4 on stock 3.8.0 and the fork,
+#: ``tests/opensees/stage/test_tag_blind_stage_parameter.py``).  Read from the
+#: ``setParameter`` bodies (``DruckerPrager.cpp``, ``BoundingCamClay.cpp``,
+#: ``StressDensityModel.cpp``, ``stressDensity.cpp``); every other
+#: ``nD`` class that takes either name compares ``argv[1]`` with its own
+#: tag first.  DruckerPrager returns -1 for ``updateMaterialStage``.  The
+#: stage close refuses an ``s.update_parameter`` of a
+#: :data:`STAGE_FLAG_PARAMETERS` name whose targets carry one of these
+#: classes under another tag, and an ``s.update_material_stage`` in a
+#: model whose elements carry a class listed here for
+#: ``updateMaterialStage`` (``MaterialStageParameter::setDomain`` stops at
+#: the first element that accepts it, which could be that one).  An
+#: upstream OpenSees defect; a new tag-blind class is one entry here.
+TAG_BLIND_STAGE_PARAMETER: dict[str, frozenset[str]] = {
+    "DruckerPrager": frozenset({"materialState"}),
+    "BoundingCamClay": frozenset({"materialState"}),
+    "StressDensityModel": frozenset({"materialState", "updateMaterialStage"}),
+    "stressDensity": frozenset({"materialState", "updateMaterialStage"}),
+}
+
+#: nDMaterial classes whose ``setParameter`` takes ``materialState``
+#: (read from the ``nD`` sources: the only ones with that branch, plus
+#: ``LadrunoSANISAND``, which inherits ManzariDafalias's).  On any other
+#: class, the multi-yield soils included, ``s.update_parameter(
+#: "materialState", v, material=m)`` reaches no object: OpenSees warns
+#: and the run keeps its stage, so the call is refused.
+MATERIAL_STATE_CLASSES: frozenset[str] = frozenset({
+    "ManzariDafalias", "LadrunoSANISAND", "SAniSandMS", "PM4Sand",
+    "PM4Silt", "J2CyclicBoundingSurface",
+    *(cls for cls, names in TAG_BLIND_STAGE_PARAMETER.items()
+      if "materialState" in names),
+})
 
 #: The ``setParameter`` names that set a class-wide stage flag.  Every
 #: class of :data:`CLASS_WIDE_STAGE_FLAG` answers both (ManzariDafalias,
 #: inherited by LadrunoSANISAND, SAniSandMS, PM4Sand and PM4Silt alike),
 #: so ``s.update_parameter(<name>, v, material=m)`` flips the group as
-#: ``s.update_material_stage`` does and the stage-close check counts it.
+#: ``s.update_material_stage`` does and the emit-time check counts it.
+#: Only ``materialState`` acts through ``s.update_parameter``: the stage
+#: close refuses ``updateMaterialStage`` there, and a
+#: ``materialState`` update only on hosts of
+#: :data:`MATERIAL_STATE_ELEMENTS`.
 STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
     {"updateMaterialStage", "materialState"},
 )
@@ -414,9 +479,9 @@ class _StageBuilder:
                 "dt=) — every stage must declare its analyze loop."
             )
         self._check_chain_against_run()
-        self._check_class_wide_stage_flags()
         self._check_fork_stage_static_reset()
         self._check_multi_element_plastic_flip()
+        self._check_stage_parameter_routes()
         self._check_activation_after_plastic_flip()
         record = StageRecord(
             name=self._name,
@@ -493,103 +558,6 @@ class _StageBuilder:
                     type(mat).__name__]
         return members, used, group_of_tag
 
-    @staticmethod
-    def _stage_flips(
-        mat_stage_records: "Iterable[MaterialStageRecord]",
-        parameter_records: "Iterable[UpdateParameterRecord]",
-    ) -> "list[tuple[int, int]]":
-        """``(material tag, stage value)`` for every flip of one stage.
-
-        Both routes set the static: ``s.update_material_stage`` and an
-        ``s.update_parameter`` of a :data:`STAGE_FLAG_PARAMETERS` name on
-        a material (the material casts that double with ``(int)``).
-        """
-        flips: list[tuple[int, int]] = [
-            (int(tag), int(rec.stage))
-            for rec in mat_stage_records
-            for tag in rec.mat_tags
-        ]
-        flips.extend(
-            (int(prec.mat_tag), int(prec.value))
-            for prec in parameter_records
-            if prec.mat_tag is not None
-            and prec.name in STAGE_FLAG_PARAMETERS
-        )
-        return flips
-
-    def _check_class_wide_stage_flags(self) -> None:
-        """Refuse a stage flip that names only part of a class-wide group.
-
-        For a group of :data:`CLASS_WIDE_STAGE_FLAG` this stage flips,
-        every material of the group in the model must be named by this
-        stage's flips (see :meth:`_stage_flips`), all with one stage
-        value.  A subset would switch the unnamed materials too, through
-        the shared static, without their own flip.  A group none of whose
-        named materials an element uses yet is left to validator V7: that
-        flip reaches no element, so it switches nothing.
-        """
-        flips = self._stage_flips(
-            self._update_material_stage_records,
-            self._update_parameter_records)
-        if not flips:
-            return
-        members, used, group_of_tag = self._class_wide_members()
-        # group -> {named tag: stage values} for this stage.
-        named: dict[str, dict[int, set[int]]] = {}
-        for tag, value in flips:
-            group = group_of_tag.get(tag)
-            if group is not None:
-                named.setdefault(group, {}).setdefault(tag, set()).add(value)
-        for group, tags in named.items():
-            if not any(
-                id(mat) in used and self._bridge.tag_for(mat) in tags
-                for mat in members.values()
-            ):
-                # No named material has an element yet: the flip reaches
-                # nothing, which build-time validator V7 refuses.
-                continue
-            classes = sorted(
-                cls for cls, flag in CLASS_WIDE_STAGE_FLAG.items()
-                if flag == group)
-            values = set().union(*tags.values())
-            if len(values) > 1:
-                raise BridgeError(
-                    f"Stage {self._name!r}: the "
-                    f"{' / '.join(classes)} materials are flipped to "
-                    f"different stages {sorted(values)} in one stage, but "
-                    f"their stage flag is the class-wide C++ static "
-                    f"{group}: it holds one value, so the last line "
-                    "decides the stage of every one of them.  Flip them "
-                    "all to the same stage."
-                )
-            unnamed: list[str] = []
-            for mat in members.values():
-                if CLASS_WIDE_STAGE_FLAG[type(mat).__name__] != group:
-                    continue
-                mat_tag = self._bridge.tag_for(mat)
-                if mat_tag is None:
-                    unnamed.append(
-                        f"{type(mat).__name__} (not registered on the "
-                        "bridge; an element uses it)")
-                elif int(mat_tag) not in tags:
-                    unnamed.append(
-                        f"{type(mat).__name__} (nDMaterial tag {mat_tag})")
-            if not unnamed:
-                continue
-            raise BridgeError(
-                f"Stage {self._name!r}: this stage "
-                f"flips some {' / '.join(classes)} materials but not "
-                f"{', '.join(unnamed)}.  Their stage flag is the "
-                f"class-wide C++ static {group}, so updateMaterialStage "
-                "on one material switches all of them, and an unnamed "
-                "material skips its own flip (Elastic2Plastic on a flip "
-                "to 1): its answer matches neither stage.  Name every "
-                "one of them in this stage, with one stage value, in a "
-                "stage where all their elements are live (a material no "
-                "element uses cannot be flipped: remove it from the "
-                "model)."
-            )
-
     def _check_fork_stage_static_reset(self) -> None:
         """Refuse, on a fork-pinned bridge, an activation that resets a flip.
 
@@ -641,7 +609,7 @@ class _StageBuilder:
         # The group's stage when this stage opens: the last earlier flip.
         last: dict[str, int] = {}
         for stage in self._bridge._stage_records:
-            for tag, value in self._stage_flips(
+            for tag, value in stage_flips(
                     stage.update_material_stage_records,
                     stage.update_parameter_records):
                 group = group_of_tag.get(tag)
@@ -649,7 +617,7 @@ class _StageBuilder:
                     last[group] = value
         this_stage = {
             group_of_tag[tag]
-            for tag, _value in self._stage_flips(
+            for tag, _value in stage_flips(
                 self._update_material_stage_records,
                 self._update_parameter_records)
             if tag in group_of_tag
@@ -722,7 +690,7 @@ class _StageBuilder:
         """Refuse a plastic flip that cannot initialise every element (#2445).
 
         A :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material flipped to a
-        stage ``>= 1``, through either route of :meth:`_stage_flips`, on
+        stage ``>= 1``, through either route of ``stage_flips``, on
         more than one OpenSees element needs ``Elastic2Plastic()`` in
         every element.  Elements are counted over every element spec
         registered so far, whichever stage activates them.
@@ -747,7 +715,7 @@ class _StageBuilder:
         from .._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
 
         plastic = {
-            tag for tag, value in self._stage_flips(
+            tag for tag, value in stage_flips(
                 self._update_material_stage_records,
                 self._update_parameter_records)
             if value >= 1
@@ -862,6 +830,207 @@ class _StageBuilder:
                     "use s.update_material_stage, which sweeps them all."
                 )
 
+    def _check_stage_parameter_routes(self) -> None:
+        """Refuse a stage-flag update that reaches nothing, or the wrong
+        material (#2458, #2460).
+
+        For each ``s.update_parameter`` of this stage whose name is in
+        :data:`STAGE_FLAG_PARAMETERS`:
+
+        * ``updateMaterialStage`` is refused.  ``updateParameter`` goes
+          through ``Parameter::update(double)``, which sets only
+          ``theDouble``, and every class that takes the name (each of
+          :data:`STAGED_MATERIAL_CLASSES`, PM4Sand, PM4Silt, the
+          stress-density models) reads ``Information::theInt`` for it,
+          which nothing sets: the stage the run lands on is uninitialised
+          memory, while the bridge counted a flip to the value given.
+        * ``materialState`` is refused when no targeted element carries the
+          named material (the update would reach nothing, yet count as a
+          flip).
+        * ``materialState`` is refused when a targeted element that carries
+          the named material is not of a :data:`MATERIAL_STATE_ELEMENTS`
+          class.  ``FourNodeQuad``,
+          ``Tri31`` and ``stdBrick`` read any ``material...`` name as their
+          own per-point address, so the update never reaches the material.
+        * ``materialState`` is refused when a targeted element carries a
+          :data:`TAG_BLIND_STAGE_PARAMETER` class under a tag other than
+          the ``material=`` it names: that material switches too.
+
+        And an ``s.update_material_stage`` is refused while any element
+        carries a class listed there for ``updateMaterialStage``.
+        """
+        from .._internal.build.pg_expand import (
+            expand_pg_to_elements,
+            expand_spec_to_elements,
+        )
+
+        def call_of(prec: "UpdateParameterRecord") -> str:
+            where = (f"pg {prec.pg!r}" if prec.elements is None
+                     else f"elements {list(prec.elements)!r}")
+            return (f"Stage {self._name!r}: s.update_parameter("
+                    f"{prec.name!r}, {prec.value}) on {where}")
+
+        records = [p for p in self._update_parameter_records
+                   if p.name in STAGE_FLAG_PARAMETERS]
+        for prec in records:
+            if prec.name == "updateMaterialStage":
+                cls = self._nd_class_of_tag(prec.mat_tag)
+                instead = (
+                    "s.update_material_stage, or s.update_parameter("
+                    "'materialState', ...), which reads theDouble"
+                    if cls in MATERIAL_STATE_CLASSES else
+                    "s.update_material_stage")
+                raise BridgeError(
+                    f"{call_of(prec)} does not carry its value: "
+                    "updateParameter sets only Parameter::theDouble "
+                    "(Parameter::update(double)), while every material that "
+                    "takes updateMaterialStage reads Information::theInt for "
+                    "it, which is never set.  The stage the run lands on is "
+                    "uninitialised memory (measured: the elastic answer in "
+                    "one process, a plastic one in another), while the "
+                    "bridge counts a flip to the value given (issue #2460).  "
+                    f"Use {instead}."
+                )
+        if not records and not self._update_material_stage_records:
+            return
+        # Per element spec: the tags of the nDMaterials it reaches, and the
+        # (class, tag) of each tag-blind material among them.
+        specs: list[tuple[
+            Element, set[int], list[tuple[str, int | None]]]] = []
+        for spec in self._bridge._primitives:
+            if not isinstance(spec, Element):
+                continue
+            carried: set[int] = set()
+            blind: list[tuple[str, int | None]] = []
+            seen: set[int] = set()
+            frontier: list[Primitive] = list(spec.dependencies())
+            while frontier:
+                dep = frontier.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                frontier.extend(dep.dependencies())
+                tag = self._bridge.tag_for(dep)
+                if tag is not None and isinstance(dep, NDMaterial):
+                    carried.add(int(tag))
+                if type(dep).__name__ in TAG_BLIND_STAGE_PARAMETER:
+                    blind.append((type(dep).__name__,
+                                  None if tag is None else int(tag)))
+            specs.append((spec, carried, blind))
+        if self._update_material_stage_records:
+            swallow = sorted({
+                f"{type(spec).__name__} on pg {getattr(spec, 'pg', None)!r} "
+                f"({cls})"
+                for spec, _carried, blind in specs for cls, _tag in blind
+                if "updateMaterialStage" in TAG_BLIND_STAGE_PARAMETER[cls]
+            })
+            if swallow:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_material_stage: "
+                    f"{', '.join(swallow)} takes updateMaterialStage "
+                    "without checking the material tag, and "
+                    "MaterialStageParameter::setDomain stops at the first "
+                    "element that takes it: the flip could switch that "
+                    "material instead of the one it names (issue #2458).  "
+                    "Remove the class from this model, or stage it in a "
+                    "separate model."
+                )
+        fanout: "list[set[int]] | None" = None
+        for prec in records:
+            call = call_of(prec)
+            if prec.elements is not None:
+                targets = {int(e) for e in prec.elements}
+            else:
+                assert prec.pg is not None  # update_parameter takes one
+                targets = {int(e) for e in expand_pg_to_elements(
+                    self._bridge.fem, prec.pg).eids}
+            if fanout is None:
+                fanout = [
+                    {int(e) for e in expand_spec_to_elements(
+                        self._bridge.fem, spec).eids}
+                    for spec, _carried, _blind in specs]
+            hit = [(spec, carried, blind)
+                   for (spec, carried, blind), eids in zip(specs, fanout)
+                   if eids & targets]
+            # update_parameter refuses a materialState that names no
+            # material.  A host is lost only if it carries the named one.
+            assert prec.mat_tag is not None
+            mat_tag = int(prec.mat_tag)
+            if not any(mat_tag in carried for _s, carried, _b in hit):
+                cls = self._nd_class_of_tag(mat_tag) or "the material"
+                held = sorted({
+                    f"{type(spec).__name__} on pg "
+                    f"{getattr(spec, 'pg', None)!r}"
+                    for spec, _carried, _blind in hit})
+                raise BridgeError(
+                    f"{call} names {cls} (nDMaterial tag {mat_tag}), but "
+                    + (f"its targets ({', '.join(held)}) do not carry it"
+                       if held else "it targets no element")
+                    + ": the update reaches nothing, while the bridge "
+                    "counts a flip of that material (issue #2460).  Target "
+                    "the elements that carry it."
+                )
+            hosts = sorted({
+                type(spec).__name__ for spec, carried, _blind in hit
+                if type(spec).__name__ not in MATERIAL_STATE_ELEMENTS
+                and mat_tag in carried
+            })
+            if hosts:
+                unmeasured = sorted(
+                    set(hosts) & MATERIAL_STATE_UNMEASURED_AT_PIN)
+                pin_note = (
+                    f"  ({', '.join(unmeasured)}: measured to drop it on "
+                    "fork build 79e062367, not at FORK_PIN; issue #2457 "
+                    "re-measures them at the pin.)" if unmeasured else ""
+                )
+                raise BridgeError(
+                    f"{call} targets {', '.join(hosts)} elements, which are "
+                    "not measured to hand materialState on to their "
+                    "materials: FourNodeQuad, Tri31 and stdBrick read any "
+                    "'material...' name as their own per-point address, so "
+                    "OpenSees warns that no object took the parameter and "
+                    "the flip is lost (issue #2460).  Carry the material "
+                    "on one of "
+                    f"{', '.join(sorted(MATERIAL_STATE_ELEMENTS))}, or use "
+                    "s.update_material_stage." + pin_note
+                )
+            others = sorted({
+                f"{cls} (nDMaterial tag {tag})"
+                for _spec, _carried, blind in hit for cls, tag in blind
+                if "materialState" in TAG_BLIND_STAGE_PARAMETER[cls]
+                and tag != mat_tag
+            })
+            if others:
+                raise BridgeError(
+                    f"{call} names nDMaterial tag {mat_tag}, but its targets "
+                    "carry "
+                    f"{', '.join(others)}, whose setParameter takes "
+                    "materialState without checking the tag: the update "
+                    "would switch that material's stage too, silently "
+                    "(issue #2458; DruckerPrager materialState 1 is "
+                    "elastic).  Target only the elements that carry the "
+                    "material you flip."
+                )
+
+    def _nd_class_of_tag(self, tag: "int | None") -> "str | None":
+        """The class name of the nDMaterial with ``tag`` the model holds
+        (registered, or a dependency of a registered primitive), else
+        ``None``."""
+        if tag is None:
+            return None
+        seen: set[int] = set()
+        frontier: list[Primitive] = list(self._bridge._primitives)
+        while frontier:
+            prim = frontier.pop()
+            if id(prim) in seen:
+                continue
+            seen.add(id(prim))
+            frontier.extend(prim.dependencies())
+            if (isinstance(prim, NDMaterial)
+                    and self._bridge.tag_for(prim) == int(tag)):
+                return type(prim).__name__
+        return None
+
     def _check_activation_after_plastic_flip(self) -> None:
         """Refuse activating an element of a plastic first-element-only group.
 
@@ -878,7 +1047,7 @@ class _StageBuilder:
         _members, _used, group_of_tag = self._class_wide_members()
         last: dict[str, int] = {}
         for stage in self._bridge._stage_records:
-            for tag, value in self._stage_flips(
+            for tag, value in stage_flips(
                     stage.update_material_stage_records,
                     stage.update_parameter_records):
                 group = group_of_tag.get(tag)
@@ -889,7 +1058,7 @@ class _StageBuilder:
             return
         this_stage = {
             group_of_tag[tag]
-            for tag, _value in self._stage_flips(
+            for tag, _value in stage_flips(
                 self._update_material_stage_records,
                 self._update_parameter_records)
             if tag in group_of_tag
@@ -2012,8 +2181,8 @@ class _StageBuilder:
         materials: "Iterable[Primitive]",
         stage: int,
     ) -> None:
-        """Flip SANISAND materials between the elastic and the
-        elastoplastic stage within this stage (Phase SSI-2.E).
+        """Flip soil materials between the elastic and the elastoplastic
+        stage within this stage (Phase SSI-2.E).
 
         Stage-bound only — there is no top-level
         ``apeSees.update_material_stage``.  Emits one
@@ -2025,8 +2194,11 @@ class _StageBuilder:
         (``_internal/build/stage_emit.MaterialStageCarriers``).
         ``stage=0`` is elastic, ``stage=1`` is elastoplastic;
         the OpenSees handler additionally calls ``Elastic2Plastic()``
-        when the value is 1.  This is the staged-gravity idiom for soil
-        plasticity: build elastic, solve gravity, flip to plastic, push.
+        when the value is 1.  ``stage=2`` (elastic, pressure-dependent
+        moduli) is accepted for ``PressureDependMultiYield`` /
+        ``PressureDependMultiYield02`` only.  This is the staged-gravity
+        idiom for soil plasticity: build elastic, solve gravity, flip to
+        plastic, push.
 
         The lines emit AFTER this stage's element activation and after
         its ``remove_sp`` / ``remove_element`` block, and BEFORE the
@@ -2049,19 +2221,21 @@ class _StageBuilder:
         cannot sit at different stages, and construction order preserves
         nothing.  The enforced practice is to call this for EVERY
         material tag, EVERY time, immediately before the
-        stage-dependent analysis step.  The stage close enforces it for
-        the :data:`CLASS_WIDE_STAGE_FLAG` groups: a stage that flips
-        some of a group's materials but not all, or flips them to
-        different values, raises :class:`BridgeError`.
+        stage-dependent analysis step.  The emit enforces it for the
+        :data:`CLASS_WIDE_STAGE_FLAG` groups: a stage that flips some of
+        a group's live materials but not all, or flips them to different
+        values, raises :class:`BridgeError`.
 
         Parameters
         ----------
         materials
-            The SANISAND material handles to flip.  Every handle must
+            The material handles to flip (SANISAND, the multi-yield
+            soils, PM4Sand / PM4Silt).  Every handle must
             already be registered on the bridge and must be one of
             :data:`STAGED_MATERIAL_CLASSES`.
         stage
-            ``0`` (elastic) or ``1`` (elastoplastic).
+            ``0`` (elastic) or ``1`` (elastoplastic); ``2`` for the
+            pressure-dependent multi-yield sands.
 
         Raises
         ------
@@ -2071,12 +2245,17 @@ class _StageBuilder:
             If a handle was never registered on this bridge, or its
             class does not honour ``updateMaterialStage``.
         """
+        if isinstance(stage, bool) or not isinstance(stage, numbers.Integral):
+            raise ValueError(
+                f"Stage {self._name!r}.update_material_stage: stage= must "
+                f"be an int (0, 1 or 2), got {stage!r}."
+            )
         stage_i = int(stage)
-        if stage_i not in (0, 1):
+        if stage_i not in (0, 1, 2):
             raise ValueError(
                 f"Stage {self._name!r}.update_material_stage: stage= "
-                f"must be 0 (elastic) or 1 (elastoplastic), got "
-                f"{stage!r}."
+                f"must be 0 (elastic) or 1 (elastoplastic), or 2 for the "
+                f"pressure-dependent multi-yield sands, got {stage!r}."
             )
         mats = tuple(materials)
         if not mats:
@@ -2102,6 +2281,14 @@ class _StageBuilder:
                     "updateMaterialStage — the command would be a "
                     "silent no-op.  Supported: "
                     f"{', '.join(sorted(STAGED_MATERIAL_CLASSES))}."
+                )
+            if stage_i == 2 and type(mat).__name__ not in (
+                    STAGE_2_MATERIAL_CLASSES):
+                raise ValueError(
+                    f"Stage {self._name!r}.update_material_stage: stage=2 "
+                    f"(elastic, pressure-dependent moduli) is a "
+                    f"{' / '.join(sorted(STAGE_2_MATERIAL_CLASSES))} stage; "
+                    f"{type(mat).__name__} takes 0 or 1."
                 )
             mat_tags.append(int(tag))
         flip = MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i)
@@ -2183,7 +2370,11 @@ class _StageBuilder:
             Empty ``name``; both or neither of ``pg`` / ``elements``.
         BridgeError
             ``material=`` was never registered on this bridge (so it has
-            no tag, and the argv would name nothing).
+            no tag, and the argv would name nothing); or ``name`` is
+            ``"materialState"`` with no ``material=``, or with one whose
+            class is not in :data:`MATERIAL_STATE_CLASSES` (no object
+            would take it).  The stage close refuses the other stage-flag
+            routes that reach nothing or the wrong material.
         """
         if not name:
             raise ValueError(
@@ -2210,6 +2401,30 @@ class _StageBuilder:
                     "register it with ops.register(mat)) first."
                 )
             mat_tag = int(tag)
+        if name == "materialState":
+            if material is None:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_parameter('materialState', "
+                    f"{value}) names no material.  Every class that answers "
+                    "materialState for its own tag needs that tag in the "
+                    "argv, so this update would reach only the classes that "
+                    "take it for any tag ("
+                    f"{', '.join(sorted(TAG_BLIND_STAGE_PARAMETER))}) and "
+                    "switch them unasked (issue #2458).  Pass material=."
+                )
+            cls = type(material).__name__
+            if cls not in MATERIAL_STATE_CLASSES:
+                instead = (
+                    "Flip it with s.update_material_stage."
+                    if cls in STAGED_MATERIAL_CLASSES else
+                    "It has no stage flag the bridge can set.")
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_parameter('materialState', "
+                    f"{value}, material={cls}): {cls}'s setParameter has no "
+                    "materialState, so no object takes the update: OpenSees "
+                    "warns and the run keeps its stage (issue #2460).  "
+                    + instead
+                )
         record = UpdateParameterRecord(
             name=str(name),
             value=float(value),
