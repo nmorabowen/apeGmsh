@@ -534,7 +534,7 @@ class _StageBuilder:
         """Refuse a plastic flip of a first-element-only material on 2+ elements.
 
         A :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material flipped to a
-        stage ``>= 1``, through either route of :meth:`_stage_flips`, is
+        stage ``>= 1``, through either route of ``stage_flips``, is
         refused when the model's elements carry it more than once
         (#2445).  The count is the OpenSees elements every element
         registered so far fans out to (its PG, or one for a node-pair
@@ -542,7 +542,7 @@ class _StageBuilder:
         one-element materials pass.
         """
         plastic = {
-            tag for tag, value in self._stage_flips(
+            tag for tag, value in stage_flips(
                 self._update_material_stage_records,
                 self._update_parameter_records)
             if value >= 1

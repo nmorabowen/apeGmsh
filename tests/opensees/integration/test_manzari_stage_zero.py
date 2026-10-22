@@ -77,7 +77,9 @@ def _md_column(
     """The two stacked quads of ``build_two_quad_fem`` as an oedometer: no
     lateral strain, base fixed, 100 on top in stage ``confine``, then 20
     more in stage ``load`` (``second``), which flips the sand to ``flip``
-    first when given.  ``activate_fill`` puts the upper quad in the first
+    first when given.  A flipped column gives each quad its own material:
+    a flip to 1 initialises one element per material (#2445), which the
+    bridge refuses for a material on two.  ``activate_fill`` puts the upper quad in the first
     stage instead of the global pass."""
     ops = apeSees(build_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
@@ -89,8 +91,11 @@ def _md_column(
         else:
             sand = getattr(ops.nDMaterial, cls)(
                 name="sand", **(_MS if cls == "SAniSandMS" else _MD))
+        fill = sand
+        if flip is not None:
+            fill = getattr(ops.nDMaterial, cls)(name="fill", **_MD)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=sand)
-    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=sand)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=fill)
     ops.fix(nodes=[1, 2], dofs=(1, 1))
     ops.fix(nodes=[3, 4], dofs=(1, 0))
     if not activate_fill:
@@ -109,7 +114,8 @@ def _md_column(
         if second:
             with ops.stage(name="load") as s:
                 if flip is not None:
-                    s.update_material_stage(materials=[sand], stage=flip)
+                    s.update_material_stage(
+                        materials=[sand, fill], stage=flip)
                 with s.pattern(series=ops.timeSeries.Linear()) as p:
                     for node in (5, 6):
                         p.load(node=node, forces=(0.0, -10.0))
@@ -279,14 +285,13 @@ def test_a_flat_deck_writes_it_before_its_analyze(tmp_path: Path) -> None:
 def test_a_user_stage_one_comes_after_and_wins(tmp_path: Path) -> None:
     ops = _md_column(flip=1)
     lines = _tcl(ops, tmp_path)
-    tag = ops.tag_for(ops._names["sand"])
+    tags = [ops.tag_for(ops._names[n]) for n in ("sand", "fill")]
     rows = _stage_lines(lines)
     assert [r[1] for r in rows] == [
-        f"updateMaterialStage -material {tag} -stage 0",
-        f"updateMaterialStage -material {tag} -stage 1",
-    ]
+        f"updateMaterialStage -material {t} -stage {v}"
+        for v in (0, 1) for t in tags]
     stage_open = _index(lines, lambda s: s.startswith("# === Stage: load"))
-    assert rows[0][0] < stage_open[0] < rows[1][0]
+    assert rows[1][0] < stage_open[0] < rows[2][0]
 
 
 def test_a_user_flip_before_the_first_solve_leaves_no_derived_line(
@@ -339,7 +344,7 @@ def test_the_archive_stores_only_the_user_flip(tmp_path: Path) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops.h5(str(path))
-    tag = ops.tag_for(ops._names["sand"])
+    tags = [ops.tag_for(ops._names[n]) for n in ("sand", "fill")]
     rows: list[list[int]] = []
 
     def _visit(name: str, obj: object) -> None:
@@ -351,7 +356,7 @@ def test_the_archive_stores_only_the_user_flip(tmp_path: Path) -> None:
 
     with h5py.File(path, "r") as f:
         f.visititems(_visit)
-    assert rows == [[tag, 1]]
+    assert rows == [[t, 1] for t in tags]
 
 
 def test_model_hash_does_not_see_the_line(
