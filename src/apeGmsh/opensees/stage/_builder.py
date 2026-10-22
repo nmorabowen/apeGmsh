@@ -92,8 +92,9 @@ CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
 #: it takes that way.  A ``materialState <tagX>`` that reaches an element
 #: carrying one of them switches its stage, whatever ``tagX`` is: for
 #: DruckerPrager ``mElastFlag=1`` is elastic, so a flip of a neighbouring
-#: sand to plastic makes it elastic (simple shear on a tri6n: tau 12.36
-#: against 1000.0, stock 3.8.0 and the fork, #2458).  Read from the
+#: sand to plastic makes it elastic (a tri6n in simple shear: a stress
+#: of -18.3 becomes -1115.4 on stock 3.8.0 and the fork,
+#: ``tests/opensees/stage/test_tag_blind_stage_parameter.py``).  Read from the
 #: ``setParameter`` bodies (``DruckerPrager.cpp``, ``BoundingCamClay.cpp``,
 #: ``StressDensityModel.cpp``, ``stressDensity.cpp``); every other
 #: ``nD`` class that takes either name compares ``argv[1]`` with its own
