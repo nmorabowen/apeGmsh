@@ -30,6 +30,14 @@ resets the flag to 0, so the whole group would silently go back to elastic.
 Stock keeps the flag. The refusal is gated by `FORK_RESETS_STAGE_STATIC`,
 which is emptied once the fork fix lands.
 
+**On every build, a flip to stage 1 or higher is refused for a
+`ManzariDafalias` or `LadrunoSANISAND` material that more than one element
+carries.** This covers both routes (#2445). `updateMaterialStage` runs
+`Elastic2Plastic()` only on the first element it finds, so the material's
+other elements turn plastic without being initialised. Stage 0 flips and
+materials on a single element still pass, and `SAniSandMS`, `PM4Sand` and
+`PM4Silt` are unaffected.
+
 **Behaviour change:** a model that flipped a single `ManzariDafalias` or
 `SAniSandMS` material beside others of its group used to build, and silently
 switched the others too. It now refuses. Name every material of the group in
