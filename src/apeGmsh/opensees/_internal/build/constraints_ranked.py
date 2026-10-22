@@ -397,9 +397,10 @@ def emit_stage_mp_constraints_partitioned(
 
     # Constraint emission — same ordering as the unpartitioned path.
     ids = plan.allowed_record_ids
-    _emit_rigid_links(emitter, adapter, allowed_ids=ids, fixed=fixed_dofs)
+    staged = fixed_dofs.in_stage() if fixed_dofs is not None else None
+    _emit_rigid_links(emitter, adapter, allowed_ids=ids, fixed=staged)
     _emit_rigid_body_elements(emitter, adapter, tag_plan, allowed_ids=ids)
-    _emit_equal_dofs(emitter, adapter, allowed_ids=ids, fixed=fixed_dofs)
+    _emit_equal_dofs(emitter, adapter, allowed_ids=ids, fixed=staged)
     _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
     _emit_kinematic_couplings(
         emitter, adapter, tag_plan, allowed_ids=ids,

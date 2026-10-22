@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Iterator, Literal, Mapping
 
 import numpy as np
@@ -124,6 +124,14 @@ class FixedDofs:
     retained: "frozenset[int]" = frozenset()
     constrained: "frozenset[int]" = frozenset()
     ndm: int = 3
+    #: False for a stage-claimed tie: a ``fix`` added after an analysis
+    #: is total, an ``equalDOF`` incremental, so a slave that has moved
+    #: would snap back. Such a tie keeps its form and warns.
+    rewrite: bool = True
+
+    def in_stage(self) -> "FixedDofs":
+        """This map for a stage-claimed tie (``rewrite=False``)."""
+        return replace(self, rewrite=False)
 
 
 def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> FixedDofs:
@@ -165,9 +173,13 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
     retained: set[int] = set()
     constrained: set[int] = set()
     for rec in getattr(built.fem.nodes, "constraints", None) or ():
-        if getattr(rec, "kind", None) in ("equal_dof", "equal_dof_mixed"):
+        kind = getattr(rec, "kind", None)
+        if kind in ("equal_dof", "equal_dof_mixed", "rigid_beam",
+                    "rigid_rod", "rigid_body"):
             retained.add(int(rec.master_node))
-            constrained.add(int(rec.slave_node))
+            slaves = (rec.slave_nodes if hasattr(rec, "slave_nodes")
+                      else [rec.slave_node])
+            constrained.update(int(n) for n in slaves)
     return FixedDofs(
         fixed={n: frozenset(d) for n, d in fixed.items()},
         staged=frozenset(staged), ndf=eff, default_ndf=default,
@@ -207,17 +219,19 @@ def _split_partly_fixed_pairs(
         return pairs, ()
     held = fixed.fixed.get(master, frozenset())
     on = tuple(p for p in pairs if p[0] in held)
-    varying = [r for r, _c in pairs if (master, r) in fixed.staged]
-    if len(on) == len(pairs):
-        return pairs, ()           # fully held: Transformation is exact
-    if not on:
-        if varying and len(set(varying)) < len(pairs):
-            _warn_partly_fixed(master, slave, name,
-                               why="a stage or a pattern SP acts on")
-        return pairs, ()
-    if varying:
+    tied = {r for r, _c in pairs}
+    varying = {r for r in tied if (master, r) in fixed.staged}
+    if varying and (varying != tied or on):
+        # some retained DOFs change while others hold or stay free
         _warn_partly_fixed(master, slave, name,
                            why="a stage or a pattern SP acts on")
+        return pairs, ()
+    if not on or len(on) == len(pairs):
+        return pairs, ()           # free or fully held: Transformation is exact
+    if not fixed.rewrite:
+        _warn_partly_fixed(master, slave, name,
+                           why="a stage claims the tie (a fix added "
+                           "mid-analysis is total, not incremental) on")
         return pairs, ()
     if any((slave, c) in fixed.staged for _r, c in on):
         _warn_partly_fixed(master, slave, name,
@@ -247,7 +261,7 @@ def _warn_partly_fixed_rigid_link(
               else set(range(1, min(fixed.ndm, ndf) + 1)))
     held = set(fixed.fixed.get(master, frozenset())) & mapped
     varying = {d for d in mapped if (master, d) in fixed.staged}
-    if (held and held != mapped) or (varying and (held | varying) != mapped):
+    if (held and held != mapped) or (varying and (varying != mapped or held)):
         warnings.warn(
             f"rigidLink {kind} {master} -> {slave}"
             + (f" ({name})" if name else "")
@@ -798,10 +812,11 @@ def _emit_rigid_links(
                 # H5; one ``# name`` comment in Tcl preceding the first
                 # rigidLink line).
                 _emit_name(emitter, rec.name)
-                for sn in rec.slave_nodes:
+                if rec.slave_nodes:      # one warning for the body
                     _warn_partly_fixed_rigid_link(
-                        "beam", int(rec.master_node), int(sn), rec.name,
-                        fixed)
+                        "beam", int(rec.master_node),
+                        int(rec.slave_nodes[0]), rec.name, fixed)
+                for sn in rec.slave_nodes:
                     emitter.rigidLink(
                         "beam", int(rec.master_node), int(sn),
                     )
@@ -1600,9 +1615,10 @@ def emit_stage_mp_constraints(
 
     # Same ordering as emit_mp_constraints (INV-3).
     _emit_phantom_nodes(emitter, adapter)
-    _emit_rigid_links(emitter, adapter, fixed=fixed_dofs)
+    staged = fixed_dofs.in_stage() if fixed_dofs is not None else None
+    _emit_rigid_links(emitter, adapter, fixed=staged)
     _emit_rigid_body_elements(emitter, adapter, tag_plan)
-    _emit_equal_dofs(emitter, adapter, fixed=fixed_dofs)
+    _emit_equal_dofs(emitter, adapter, fixed=staged)
     _emit_rigid_diaphragms(emitter, adapter)
     _emit_kinematic_couplings(
         emitter, adapter, tag_plan, fem_eid_to_ops_tag=fem_eid_to_ops_tag,

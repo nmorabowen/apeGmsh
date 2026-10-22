@@ -233,6 +233,8 @@ def test_node_to_surface_pairs_split() -> None:
     ("beam", {1: {3}}, (), True),         # ... but a beam maps it
     ("rod", {}, ((1, 1),), True),         # a stage varies DOF 1 only
     ("rod", {}, (), False),
+    ("rod", {1: {1, 2}}, ((1, 1),), True),    # held, a stage releases DOF 1
+    ("rod", {}, ((1, 1), (1, 2)), False),     # every mapped DOF varies
 ])
 def test_rigid_link_warns_on_a_partly_fixed_master(
         kind, fixed, staged, warns) -> None:
@@ -250,7 +252,11 @@ def test_rigid_link_warns_on_a_partly_fixed_master(
     assert em.lines == [("rigidLink", {"rod": "bar"}.get(kind, kind), 1, 2)]
 
 
-def test_a_stage_claimed_tie_is_rewritten(squares, tmp_path: Path) -> None:
+def test_a_stage_claimed_tie_keeps_its_form_and_warns(
+        squares, tmp_path: Path) -> None:
+    """A ``fix`` added mid-analysis is total, an ``equalDOF`` incremental:
+    a slave that moved in an earlier stage would snap back (review of
+    #2421), so a stage-claimed tie is never rewritten."""
     fem, base_a, m, s, corner, top_right = squares
     ops = apeSees(fem)
     ops.model(ndm=2, ndf=2)
@@ -271,9 +277,10 @@ def test_a_stage_claimed_tie_is_rewritten(squares, tmp_path: Path) -> None:
             numberer=ops.numberer.RCM(), system=ops.system.UmfPack(),
             analysis=ops.analysis.Static())
         st.run(n_increments=1)
-    lines = _lines(ops, tmp_path / "m.tcl")
-    assert f"equalDOF {m} {s} 1" in lines
-    assert f"fix {s} 0 1" in lines
+    with pytest.warns(PartlyFixedTieWarning, match="claims the tie"):
+        lines = _lines(ops, tmp_path / "m.tcl")
+    assert f"equalDOF {m} {s} 1 2" in lines
+    assert f"fix {s} 0 1" not in lines
 
 
 @pytest.mark.parametrize("staged", [False, True])
@@ -317,12 +324,57 @@ def test_a_partitioned_emit_rewrites_on_every_rank(staged, tmp_path) -> None:
                 numberer=ops.numberer.ParallelPlain(),
                 system=ops.system.Mumps(), analysis=ops.analysis.Static())
             st.run(n_increments=1)
-    with warnings.catch_warnings():
+    with warnings.catch_warnings(record=True) as got:
         warnings.simplefilter("ignore", UserWarning)
-        warnings.simplefilter("error", PartlyFixedTieWarning)
+        warnings.simplefilter("always", PartlyFixedTieWarning)
         ops.tcl(str(tmp_path / "p.tcl"))
+    warned = any(issubclass(w.category, PartlyFixedTieWarning) for w in got)
     text = (tmp_path / "p.tcl").read_text()
     ties = [ln.strip() for ln in text.splitlines()
             if ln.strip().startswith(f"equalDOF {m} ")]
-    assert ties and all(t == f"equalDOF {m} {pairs[m]} 1" for t in ties)
-    assert text.count(f"fix {pairs[m]} 0 1") == len(ties)
+    dofs = "1 2" if staged else "1"
+    assert warned is staged
+    assert ties and all(t == f"equalDOF {m} {pairs[m]} {dofs}" for t in ties)
+    assert text.count(f"fix {pairs[m]} 0 1") == (0 if staged else len(ties))
+
+
+def test_mixed_pairs_sharing_a_varying_retained_dof_do_not_warn() -> None:
+    from apeGmsh._kernel.records._constraints import NodePairRecord
+    from apeGmsh.opensees._internal.build.constraints import _emit_equal_dofs
+
+    rec = NodePairRecord(kind="equal_dof_mixed", master_node=1, slave_node=2,
+                         dofs=[1, 2], master_dofs=[1, 1])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", PartlyFixedTieWarning)
+        _emit_equal_dofs(_Rec(), [rec], fixed=_fixed({}, {(1, 1)}))
+
+
+def test_a_rigid_body_warns_once() -> None:
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh.opensees._internal.build.constraints import _emit_rigid_links
+
+    rec = NodeGroupRecord(kind="rigid_body", master_node=1,
+                          slave_nodes=list(range(2, 12)))
+    with warnings.catch_warnings(record=True) as got:
+        warnings.simplefilter("always")
+        _emit_rigid_links(_Rec(), [rec], fixed=_fixed({1: {2}}, ndf=3))
+    assert sum(issubclass(w.category, PartlyFixedTieWarning)
+               for w in got) == 1
+
+
+def test_a_tie_into_a_rigid_link_master_is_a_chain() -> None:
+    """equalDOF m -> s with s retaining a rigidLink: rewriting would leave
+    s partly fixed under the link, so the tie keeps its form and warns."""
+    from apeGmsh._kernel.records._constraints import NodePairRecord
+    from apeGmsh.opensees._internal.build.constraints import _emit_equal_dofs
+
+    tie = NodePairRecord(kind="equal_dof", master_node=2, slave_node=3,
+                         dofs=[1, 2])
+    fd = _fixed({2: {2}})
+    from dataclasses import replace
+
+    fd = replace(fd, retained=frozenset({2, 3}), constrained=frozenset({3, 4}))
+    em = _Rec()
+    with pytest.warns(PartlyFixedTieWarning, match="chain"):
+        _emit_equal_dofs(em, [tie], fixed=fd)
+    assert em.lines == [("equalDOF", 2, 3, 1, 2)]
