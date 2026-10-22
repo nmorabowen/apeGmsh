@@ -216,5 +216,6 @@ def test_a_flat_live_run_refuses_a_subdivide_ladder(column) -> None:
     ops.analysis.Transient()
     lad = ops.strategy.Ladder(rungs=(ops.algorithm.Newton(),
                                      ops.strategy.Subdivide(4)))
-    with pytest.raises(BridgeError, match="decks only"):
+    with pytest.raises(BridgeError, match="decks only.*ops.stage"):
         ops.analyze(steps=2, dt=DT, strategy=lad)
+    assert ops._live_emitter is None        # refused before any live domain

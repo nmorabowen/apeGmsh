@@ -537,8 +537,10 @@ _MAX_RUNGS = 8
 LIVE_SUBDIVIDE_REFUSAL = (
     "apeSees.analyze: a Subdivide rung is emitted into py / tcl decks only; "
     "the live runner does not know the piece loop yet (ADR 0057 Amendment 1 "
-    "§3). Run the stage through ops.py(path, run=True) or ops.tcl(path, "
-    "run=True), or drop the Subdivide rungs for a live run."
+    "§3). Move the run into a transient ops.stage(...) with "
+    "s.run(n_increments=, dt=, strategy=ladder) and run the deck through "
+    "ops.py(path, run=True) or ops.tcl(path, run=True), or drop the "
+    "Subdivide rungs for a live run."
 )
 
 
