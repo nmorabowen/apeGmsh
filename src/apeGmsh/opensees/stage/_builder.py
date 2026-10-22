@@ -940,6 +940,9 @@ class _StageBuilder:
           stress-density models) reads ``Information::theInt`` for it,
           which nothing sets: the stage the run lands on is uninitialised
           memory, while the bridge counted a flip to the value given.
+        * ``materialState`` is refused when no targeted element carries the
+          named material (the update would reach nothing, yet count as a
+          flip).
         * ``materialState`` is refused when a targeted element that carries
           the named material is not of a :data:`MATERIAL_STATE_ELEMENTS`
           class.  ``FourNodeQuad``,
@@ -1049,6 +1052,20 @@ class _StageBuilder:
             # material.  A host is lost only if it carries the named one.
             assert prec.mat_tag is not None
             mat_tag = int(prec.mat_tag)
+            if not any(mat_tag in carried for _s, carried, _b in hit):
+                cls = self._nd_class_of_tag(mat_tag) or "the material"
+                held = sorted({
+                    f"{type(spec).__name__} on pg "
+                    f"{getattr(spec, 'pg', None)!r}"
+                    for spec, _carried, _blind in hit})
+                raise BridgeError(
+                    f"{call} names {cls} (nDMaterial tag {mat_tag}), but "
+                    + (f"its targets ({', '.join(held)}) do not carry it"
+                       if held else "it targets no element")
+                    + ": the update reaches nothing, while the bridge "
+                    "counts a flip of that material (issue #2460).  Target "
+                    "the elements that carry it."
+                )
             hosts = sorted({
                 type(spec).__name__ for spec, carried, _blind in hit
                 if type(spec).__name__ not in MATERIAL_STATE_ELEMENTS

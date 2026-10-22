@@ -297,6 +297,76 @@ def test_a_four_node_quad_that_does_not_carry_the_material_passes() -> None:
     assert len(ops._stage_records) == 1
 
 
+@pytest.mark.parametrize("target", [{"pg": "R"}, {"elements": [3]}],
+                         ids=["pg", "elements"])
+def test_materialstate_over_targets_that_carry_only_other_materials_refuses(
+    target: "dict[str, Any]",
+) -> None:
+    """The coordinator's p5 reproducer: the sand sits on T, the update
+    targets only the rock quad on R.  It reached nothing, yet counted as
+    a flip of the sand."""
+    ops, mat = _bridge("ManzariDafalias", "T")
+    rock = ops.nDMaterial.ElasticIsotropic(name="rock", E=1e5, nu=0.3)
+    ops.element.FourNodeQuad(pg="R", thickness=1.0, material=rock)
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, "materialState", 1.0, material=mat, **target)
+    msg = str(exc.value)
+    assert (f"names ManzariDafalias (nDMaterial tag {ops.tag_for(mat)})"
+            in msg)
+    assert "FourNodeQuad on pg 'R'" in msg and "do not carry it" in msg
+    assert "#2460" in msg
+    assert not ops._stage_records
+
+
+def test_materialstate_over_an_empty_target_set_refuses() -> None:
+    ops, mat = _bridge("ManzariDafalias", "T")
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, "materialState", 1.0, material=mat, elements=[])
+    assert "it targets no element" in str(exc.value)
+    assert not ops._stage_records
+
+
+def _two_carrier_bridge(cls: str) -> tuple[apeSees, Any]:
+    """One material of ``cls`` on SixNodeTri A and B (eids 1, 2)."""
+    from tests.opensees.stage.test_tag_blind_stage_parameter import (
+        _fem as _three_tri_fem,
+    )
+
+    ops = apeSees(_three_tri_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat = getattr(ops.nDMaterial, cls)(name="sand", **_KW[cls])
+    for pg in ("A", "B"):
+        ops.element.SixNodeTri(pg=pg, thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+    return ops, mat
+
+
+def test_a_partial_overlap_on_a_first_element_only_class_is_the_2445_rule(
+) -> None:
+    """Targets that reach one of the material's two carriers pass this
+    check.  A plastic ManzariDafalias flip then falls to the #2445 rule:
+    the other carrier would turn plastic uninitialised."""
+    ops, mat = _two_carrier_bridge("ManzariDafalias")
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, "materialState", 1.0, material=mat, elements=[1])
+    msg = str(exc.value)
+    assert "leaves 1 of those elements out of its targets" in msg
+    assert "#2445" in msg
+
+
+@pytest.mark.parametrize(("cls", "value"), [
+    ("SAniSandMS", 1.0), ("PM4Sand", 1.0), ("ManzariDafalias", 0.0)])
+def test_a_partial_overlap_otherwise_passes(cls: str, value: float) -> None:
+    """A flag-only class, or an elastic flip: the class-wide static
+    switches every carrier, and no Elastic2Plastic() is owed, so the
+    subset rule (#2439) has nothing to refuse for one material."""
+    ops, mat = _two_carrier_bridge(cls)
+    _flip(ops, "materialState", value, material=mat, elements=[1])
+    assert len(ops._stage_records) == 1
+
+
 def test_a_non_stage_parameter_on_four_node_quad_is_not_checked() -> None:
     ops, mat = _bridge("ManzariDafalias", "Q")
     _flip(ops, "poissonRatio", 0.3, material=mat, pg="Q")
