@@ -931,6 +931,42 @@ def resolve_ladruno_membrane_context(
     return tuple(frames_out), tuple(supp_out), tuple(holes_out)
 
 
+def resolve_ladruno_membrane_diaphragm_nodes(
+    fem: "FEMData", spec: Element,
+) -> "tuple[int, ...]":
+    """``diaphragm_nodes=`` of a :class:`LadrunoMembrane` as node tags.
+
+    The forms of ``support_nodes=``: int tags, ``Node`` handles and PG or
+    label names (a PG first, then a node label), in order, first
+    occurrence kept. ``()`` when the spec has none.
+    """
+    raw = getattr(spec, "diaphragm_nodes", None)
+    out: list[int] = []
+    seen: set[int] = set()
+
+    def _add(n: int) -> None:
+        ni = int(n)
+        if ni not in seen:
+            seen.add(ni)
+            out.append(ni)
+
+    for item in raw or ():
+        if isinstance(item, str):
+            try:
+                nids = expand_pg_to_nodes(fem, item)
+            except BridgeError:
+                nids = _expand_label_to_nodes(fem, item)
+            if not nids:
+                raise BridgeError(
+                    f"LadrunoMembrane: diaphragm_nodes= {item!r} matched 0 nodes."
+                )
+            for nid in nids:
+                _add(int(nid))
+        else:
+            _add(_resolve_membrane_node_ref(fem, item, "diaphragm_nodes"))
+    return tuple(out)
+
+
 def expand_spec_to_elements(
     fem: "FEMData", spec: Element,
 ) -> "PGElementFanout":
