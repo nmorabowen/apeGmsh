@@ -1120,6 +1120,15 @@ class LiveOpsEmitter:
             and not _tet10_volume_fixed(self._ops)
         ):
             raise RuntimeError(_TET10_STOCK_DEFECT)
+        if ele_type in ("ASDShellQ4", "ASDShellT3") and "-pDelta" in args:
+            # The ASD shell parsers have no else branch: a build without
+            # fork WP-205 accepts -pDelta and drops the geometric stiffness.
+            self._stock_build_gate(
+                f"element {ele_type} -pDelta (p_delta=True) requires the "
+                "Ladruno fork (fork WP-205, ASDSHELL_PDELTA_MIN_BUILD "
+                "c83ee812e); stock OpenSees ignores the token and runs "
+                "without the geometric stiffness."
+            )
         self._ops.element(ele_type, tag, *args)
 
     def _element_fork_gated(
@@ -1441,6 +1450,7 @@ class LiveOpsEmitter:
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         # openseespy (Ladruno fork, ADR-43): band-targeted FEAST eigen —
         # returns ALL modes with f in [f_min, f_max] Hz. The stock
@@ -1452,6 +1462,8 @@ class LiveOpsEmitter:
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
+        if trace_stop:
+            args.append("-traceStop")
         values: Any = self._ops.eigen(*args)
         if values is None:
             return []

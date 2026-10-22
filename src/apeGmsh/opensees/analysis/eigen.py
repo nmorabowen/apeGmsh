@@ -13,8 +13,9 @@ without re-running the eigen solve. :meth:`to_native` persists the modes
 as ``kind="mode"`` stages of a native results file (the
 modes route on pip ``openseespy``), and :meth:`results` opens that file.
 :meth:`to_ladruno` writes the same modes as a stamped ``.ladruno`` (ADR
-0122), the format the native file retires into. No modal-mass /
-participation calculations live here.
+0122), the format the native file retires into.
+:meth:`EigenResult.modal_properties` hands the solve to ``modalProperties``;
+no modal-mass / participation calculations live here.
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from ..apesees import apeSees
     from ..emitter.live import LiveOpsEmitter
     from ..node import Node
+    from .modal import ModalPropertiesResult
 
 
 __all__ = ["EigenResult", "RotationSlotUnresolvedWarning"]
@@ -430,6 +432,30 @@ class EigenResult:
             finally:
                 writer.close()
         return out_path
+
+    def modal_properties(self, *, unorm: bool = False) -> "ModalPropertiesResult":
+        """Run ``modalProperties -return`` on this solve's modes.
+
+        The participation factors and modal masses of the eigenpairs this
+        result holds, on the domain that solved them, as a
+        :class:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult`.
+        After :meth:`apeSees.eigen_feast` this needs a fork build at or
+        after ``c83ee812e`` (fork WP-203: ``modalProperties`` after
+        ``eigen -feast``); :meth:`apeSees.modal_properties` remains the
+        one-call route for an ARPACK / LAPACK solve.
+
+        Raises what :meth:`to_native` raises for an empty band, a result
+        built by hand, or a domain rebuilt since the solve.
+        """
+        from .modal import ModalPropertiesResult
+
+        self._checked_solve("modal_properties")
+        properties = self._live.modal_properties(unorm=unorm)
+        return ModalPropertiesResult(
+            eigenvalues=np.asarray(self.eigenvalues, dtype=np.float64),
+            properties=properties,
+            _live=self._live,
+        )
 
     def results(
         self, model_h5: "str | os.PathLike[str] | None" = None,

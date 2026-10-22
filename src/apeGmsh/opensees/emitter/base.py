@@ -716,6 +716,7 @@ class Emitter(Protocol):
     # h5 no-ops; recording captures.
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]: ...
 
     # -- Profiler (Ladruno fork) -----------------------------------------

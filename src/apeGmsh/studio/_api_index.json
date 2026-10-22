@@ -126,6 +126,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ComplexEigenResult.from_flat"
     },
+    "EigenResult.modal_properties": {
+      "doc": "Run ``modalProperties -return`` on this solve's modes.",
+      "signature": "modal_properties(*, unorm: 'bool' = False) -> \"'ModalPropertiesResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.modal_properties"
+    },
     "EigenResult.mode_shape": {
       "doc": "Return the mode shape for ``node`` in ``mode`` (1-indexed).",
       "signature": "mode_shape(node: \"'int | Node'\", mode: 'int') -> 'np.ndarray'",
@@ -3410,7 +3416,7 @@
     },
     "ops.eigen_feast": {
       "doc": "Band-targeted FEAST eigensolve via the live emitter.",
-      "signature": "eigen_feast(f_min: 'float', f_max: 'float', *, certify: 'bool' = False) -> \"'EigenResult'\"",
+      "signature": "eigen_feast(f_min: 'float', f_max: 'float', *, certify: 'bool' = False, trace_stop: 'bool' = False) -> \"'EigenResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.eigen_feast"
     },
@@ -3428,13 +3434,13 @@
     },
     "ops.element.ASDShellQ4": {
       "doc": "",
-      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
+      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, p_delta: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ASDShellQ4"
     },
     "ops.element.ASDShellT3": {
       "doc": "",
-      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
+      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, p_delta: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ASDShellT3"
     },
@@ -4256,7 +4262,7 @@
     },
     "ops.response_spectrum_analysis": {
       "doc": "Run a response-spectrum analysis with native combination.",
-      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack') -> \"'ResponseSpectrumResult'\"",
+      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack', scale: 'float | None' = None) -> \"'ResponseSpectrumResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.response_spectrum_analysis"
     },

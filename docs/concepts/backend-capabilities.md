@@ -174,6 +174,28 @@ are unaffected and run on any build.
   `ops.critical_time_step()` / `ops.analyze_explicit(...)`.
 - **`system Pardiso`** — threaded MKL sparse-direct.
 
+#### Fork build `c83ee812e` (2026-10-22)
+
+Each of these needs fork build `c83ee812e` or later. Older builds parse the
+same deck but give a different answer. None of them is enforced by hash,
+because a bare hash cannot prove ancestry.
+
+- **`ASDShellQ4` / `ASDShellT3` `p_delta=True`** (`-pDelta`) adds the
+  initial-stress stiffness of the current membrane forces, for gravity, then
+  `loadConst`, then `eigen`. It cannot be combined with `corotational=True`.
+  Stock OpenSees and older fork builds accept the token and ignore it, so
+  the in-process run refuses `p_delta=True` off the fork.
+  `ASDSHELL_PDELTA_MIN_BUILD` names the floor.
+- **`ElasticTimoshenkoBeam` (3-D)** honours a `PDelta` or `Corotational`
+  transformation and answers `basicForce` (`N, Mz1, Mz2, My1, My2, T`).
+  Older builds ignore the transformation's geometric terms.
+- **`response_spectrum_analysis(..., scale=s)`** (`-scale`) multiplies `Sa`
+  under `-combine`. Older builds parse it and ignore it.
+- **`eigen_feast(..., trace_stop=True)`** (`-traceStop`) selects MKL's trace
+  stopping criterion. The default stops on the relative residual and returns
+  the same eigenpairs. `EigenResult.modal_properties()` runs
+  `modalProperties` on a FEAST band.
+
 ### Materials
 
 `LadrunoBondSlip`, `LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial`,

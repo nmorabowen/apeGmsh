@@ -512,10 +512,11 @@ class _H5StagesMixin(_H5Host):
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         # Runtime one-shot retrieval — no-op, mirroring ``eigen`` above
         # (ADR 0075 INV-2).
-        del f_min, f_max, certify
+        del f_min, f_max, certify, trace_stop
         self._ledger("eigen_feast")
         return []
 

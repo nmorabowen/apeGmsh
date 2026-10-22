@@ -1410,11 +1410,14 @@ class TclEmitter:
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         self._stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
+        if trace_stop:
+            args.append("-traceStop")
         self._lines.append(_join("eigen", *args))
         return []
 
