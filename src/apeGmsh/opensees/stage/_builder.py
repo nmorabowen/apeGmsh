@@ -77,6 +77,28 @@ CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "SAniSandMS": "SAniSandMS::mElastFlag",
 }
 
+#: The ``setParameter`` names that set a class-wide stage flag.  Every
+#: class of :data:`CLASS_WIDE_STAGE_FLAG` answers both (ManzariDafalias,
+#: inherited by LadrunoSANISAND, SAniSandMS, PM4Sand and PM4Silt alike),
+#: so ``s.update_parameter(<name>, v, material=m)`` flips the group as
+#: ``s.update_material_stage`` does and the stage-close check counts it.
+STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
+    {"updateMaterialStage", "materialState"},
+)
+
+#: The class-wide classes whose Ladruno-fork constructor resets their
+#: static to 0 (elastic).  Every element made with one of them copies the
+#: material through that constructor, so a stage that activates such an
+#: element after a stage flipped the group to plastic silently puts the
+#: whole group back to elastic, on the fork only (stock keeps the flag;
+#: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
+#: This is the version gate of the stage-close refusal: empty it once
+#: ``FORK_PIN`` carries the fork fix.
+# TODO(#2444): empty once FORK_PIN carries the fork constructor fix.  # apegmsh-lint: comment-provenance-ok the gate's own removal ticket, asked for by the slice
+FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
+    {"ManzariDafalias", "LadrunoSANISAND"},
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared validation for initial_stress (used by ops.initial_stress PULL +
@@ -337,6 +359,7 @@ class _StageBuilder:
             )
         self._check_chain_against_run()
         self._check_class_wide_stage_flags()
+        self._check_fork_stage_static_reset()
         record = StageRecord(
             name=self._name,
             initial_stress_records=tuple(self._initial_stress_records),
@@ -377,23 +400,15 @@ class _StageBuilder:
         )
         self._bridge._stage_records.append(record)
 
-    def _check_class_wide_stage_flags(self) -> None:
-        """Refuse a stage flip that names only part of a class-wide group.
+    def _class_wide_members(
+        self,
+    ) -> "tuple[dict[int, Primitive], set[int], dict[int, str]]":
+        """The model's :data:`CLASS_WIDE_STAGE_FLAG` materials so far.
 
-        For a group of :data:`CLASS_WIDE_STAGE_FLAG` this stage flips,
-        every material of the group in the model must be named by this
-        stage's ``update_material_stage`` calls, all with one stage
-        value.  The model's materials are the ones registered on the
-        bridge plus any an element registered so far depends on.  A
-        subset would switch the unnamed materials too, through the
-        shared static, without their own flip.  A group none of
-        whose named materials an element uses yet is left to validator
-        V7: that flip reaches no element, so it switches nothing.
+        Returns the materials by identity (the ones registered on the
+        bridge plus any an element registered so far depends on), the
+        identities an element uses, and each tagged material's group.
         """
-        if not self._update_material_stage_records:
-            return
-        # Every class-wide material the model holds, by identity, and the
-        # ones an element registered so far uses.
         members: dict[int, Primitive] = {}
         used: set[int] = set()
         seen: set[int] = set()
@@ -418,14 +433,55 @@ class _StageBuilder:
             if tag is not None:
                 group_of_tag[int(tag)] = CLASS_WIDE_STAGE_FLAG[
                     type(mat).__name__]
+        return members, used, group_of_tag
+
+    @staticmethod
+    def _stage_flips(
+        mat_stage_records: "Iterable[MaterialStageRecord]",
+        parameter_records: "Iterable[UpdateParameterRecord]",
+    ) -> "list[tuple[int, int]]":
+        """``(material tag, stage value)`` for every flip of one stage.
+
+        Both routes set the static: ``s.update_material_stage`` and an
+        ``s.update_parameter`` of a :data:`STAGE_FLAG_PARAMETERS` name on
+        a material (the material casts that double with ``(int)``).
+        """
+        flips: list[tuple[int, int]] = [
+            (int(tag), int(rec.stage))
+            for rec in mat_stage_records
+            for tag in rec.mat_tags
+        ]
+        flips.extend(
+            (int(prec.mat_tag), int(prec.value))
+            for prec in parameter_records
+            if prec.mat_tag is not None
+            and prec.name in STAGE_FLAG_PARAMETERS
+        )
+        return flips
+
+    def _check_class_wide_stage_flags(self) -> None:
+        """Refuse a stage flip that names only part of a class-wide group.
+
+        For a group of :data:`CLASS_WIDE_STAGE_FLAG` this stage flips,
+        every material of the group in the model must be named by this
+        stage's flips (see :meth:`_stage_flips`), all with one stage
+        value.  A subset would switch the unnamed materials too, through
+        the shared static, without their own flip.  A group none of whose
+        named materials an element uses yet is left to validator V7: that
+        flip reaches no element, so it switches nothing.
+        """
+        flips = self._stage_flips(
+            self._update_material_stage_records,
+            self._update_parameter_records)
+        if not flips:
+            return
+        members, used, group_of_tag = self._class_wide_members()
         # group -> {named tag: stage values} for this stage.
         named: dict[str, dict[int, set[int]]] = {}
-        for rec in self._update_material_stage_records:
-            for tag in rec.mat_tags:
-                group = group_of_tag.get(int(tag))
-                if group is not None:
-                    named.setdefault(group, {}).setdefault(
-                        int(tag), set()).add(int(rec.stage))
+        for tag, value in flips:
+            group = group_of_tag.get(tag)
+            if group is not None:
+                named.setdefault(group, {}).setdefault(tag, set()).add(value)
         for group, tags in named.items():
             if not any(
                 id(mat) in used and self._bridge.tag_for(mat) in tags
@@ -440,7 +496,7 @@ class _StageBuilder:
             values = set().union(*tags.values())
             if len(values) > 1:
                 raise BridgeError(
-                    f"Stage {self._name!r}.update_material_stage: the "
+                    f"Stage {self._name!r}: the "
                     f"{' / '.join(classes)} materials are flipped to "
                     f"different stages {sorted(values)} in one stage, but "
                     f"their stage flag is the class-wide C++ static "
@@ -463,7 +519,7 @@ class _StageBuilder:
             if not unnamed:
                 continue
             raise BridgeError(
-                f"Stage {self._name!r}.update_material_stage: this stage "
+                f"Stage {self._name!r}: this stage "
                 f"flips some {' / '.join(classes)} materials but not "
                 f"{', '.join(unnamed)}.  Their stage flag is the "
                 f"class-wide C++ static {group}, so updateMaterialStage "
@@ -474,6 +530,83 @@ class _StageBuilder:
                 "stage where all their elements are live (a material no "
                 "element uses cannot be flipped: remove it from the "
                 "model)."
+            )
+
+    def _check_fork_stage_static_reset(self) -> None:
+        """Refuse, on a fork-pinned bridge, an activation that resets a flip.
+
+        On the Ladruno fork the constructor of a
+        :data:`FORK_RESETS_STAGE_STATIC` class sets the class-wide static
+        to 0, and every element copies its material through it.  So when
+        an earlier stage left the group plastic, this stage's activation
+        of an element carrying such a material puts the whole group back
+        to elastic, silently.  Refused unless this stage flips the group
+        itself (its flip lines emit after the activation and set the
+        static again).  Only a bridge whose ``OpenSeesTarget`` pins
+        ``mode="fork"`` is known to run the fork at stage close; an
+        ``"auto"`` target is decided by the imported binary at run time,
+        which this check cannot see.
+        """
+        target = self._bridge.opensees
+        if target is None or target.mode != "fork":
+            return
+        if not (self._activated_pgs and FORK_RESETS_STAGE_STATIC):
+            return
+        _members, _used, group_of_tag = self._class_wide_members()
+        activated = set(self._activated_pgs)
+        resetting: dict[str, list[str]] = {}
+        for spec in self._bridge._primitives:
+            if not isinstance(spec, Element):
+                continue
+            spec_pg = getattr(spec, "pg", None)
+            if spec_pg not in activated:
+                continue
+            seen: set[int] = set()
+            frontier: list[Primitive] = list(spec.dependencies())
+            while frontier:
+                dep = frontier.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                frontier.extend(dep.dependencies())
+                cls = type(dep).__name__
+                if cls in FORK_RESETS_STAGE_STATIC:
+                    resetting.setdefault(
+                        CLASS_WIDE_STAGE_FLAG[cls], []).append(
+                            f"{type(spec).__name__} on pg {spec_pg!r} "
+                            f"({cls})")
+        if not resetting:
+            return
+        # The group's stage when this stage opens: the last earlier flip.
+        last: dict[str, int] = {}
+        for stage in self._bridge._stage_records:
+            for tag, value in self._stage_flips(
+                    stage.update_material_stage_records,
+                    stage.update_parameter_records):
+                group = group_of_tag.get(tag)
+                if group is not None:
+                    last[group] = value
+        this_stage = {
+            group_of_tag[tag]
+            for tag, _value in self._stage_flips(
+                self._update_material_stage_records,
+                self._update_parameter_records)
+            if tag in group_of_tag
+        }
+        for group, what in resetting.items():
+            if last.get(group, 0) == 0 or group in this_stage:
+                continue
+            raise BridgeError(
+                f"Stage {self._name!r}.activate: on the Ladruno fork this "
+                f"stage's {', '.join(sorted(set(what)))} reset the "
+                f"class-wide C++ static {group} to 0: the fork's material "
+                "constructor sets it, and every new element copies its "
+                f"material through that constructor.  An earlier stage "
+                f"left the group at stage {last[group]}, so every one of "
+                "its materials would go back to elastic with no warning "
+                "(fork issue #2444; stock keeps the flag).  Flip the whole "
+                "group again in this stage, after the activation, or "
+                "activate these elements before the flip."
             )
 
     def _check_chain_against_run(self) -> None:
