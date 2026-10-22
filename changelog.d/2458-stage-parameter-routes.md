@@ -10,6 +10,13 @@ Each one is now refused at stage close, by name:
   nothing sets. The run kept a stage that depended on uninitialised memory,
   while the bridge counted the flip. Use `s.update_material_stage`, or
   `s.update_parameter("materialState", ...)`, which reads `theDouble`.
+- **`materialState` on a class that has no such branch.** The
+  multi-yield soils (PressureIndependMultiYield, PressureDependMultiYield,
+  PressureDependMultiYield02) have no `materialState` in `setParameter`, so
+  OpenSees warns that no object took it and the run stays elastic. The call
+  is now refused at once, as is a `materialState` with no `material=`. The
+  classes that take it are listed in `MATERIAL_STATE_CLASSES`. A refusal
+  never suggests a route that does nothing for the class.
 - **`materialState` through a `FourNodeQuad` host.**
   `FourNodeQuad::setParameter` reads any `material...` name as its own
   per-point address, so the flip never reached the material. The update is

@@ -50,7 +50,32 @@ _MS = dict(
     e0=0.934, ksi=0.7, P_atm=100.0, m=0.01, h0=7.05, Ch=0.968, nb=1.1,
     A0=0.704, nd=3.5, zeta=0.0005, mu0=260.0, beta=1.0, rho=1.6,
 )
-_KW = {"ManzariDafalias": _MD, "LadrunoSANISAND": _MD, "SAniSandMS": _MS}
+#: The #2401 soils, as ``tests/opensees/unit/primitives/
+#: test_materials_nd_soil.py`` builds them (the multi-yield ones in 2-D).
+_PIMY = dict(
+    nd=2, rho=1.8, ref_shear_modulus=6.0e4, ref_bulk_modulus=3.0e5,
+    cohesion=40.0,
+)
+_PDMY = dict(
+    nd=2, rho=2.0, ref_shear_modulus=9.0e4, ref_bulk_modulus=2.2e5,
+    friction_angle=32.0, peak_shear_strain=0.1, ref_pressure=80.0,
+    press_depend_coe=0.5, pt_angle=26.0, contrac=0.21, dilat1=0.0,
+    dilat2=0.0, liquefac1=10.0, liquefac2=0.02, liquefac4=1.0,
+)
+_PDMY02 = dict(
+    nd=2, rho=2.0, ref_shear_modulus=9.0e4, ref_bulk_modulus=2.2e5,
+    friction_angle=32.0, peak_shear_strain=0.1, ref_pressure=101.0,
+    press_depend_coe=0.5, pt_angle=26.0, contrac1=0.067, contrac3=0.23,
+    dilat1=0.06, dilat3=0.27,
+)
+_KW: dict[str, dict[str, Any]] = {
+    "ManzariDafalias": _MD, "LadrunoSANISAND": _MD, "SAniSandMS": _MS,
+    "PM4Sand": dict(Dr=0.55, G0=677.0, hpo=0.4, rho=1.7),
+    "PM4Silt": dict(Su=0.0, Su_rate=0.25, G0=500.0, hpo=0.1, rho=1.7),
+    "PressureIndependMultiYield": _PIMY,
+    "PressureDependMultiYield": _PDMY,
+    "PressureDependMultiYield02": _PDMY02,
+}
 
 
 def _fem() -> FEMStub:
@@ -120,13 +145,19 @@ def _flip(ops: apeSees, name: str, value: float, *, material: Any,
 
 
 _STAGED = sorted(_KW)
+#: The staged classes that answer materialState, and those that do not
+#: (the multi-yield soils: their setParameter has no such branch).
+_STATEFUL = sorted(set(_KW) & MATERIAL_STATE_CLASSES)
+_STATELESS = sorted(set(_KW) - MATERIAL_STATE_CLASSES)
 
 
 def test_every_staged_class_is_covered() -> None:
-    """A class that joins STAGED_MATERIAL_CLASSES (PM4Sand and PM4Silt with
-    #2401) joins these refusal tests with its constructor keywords in
-    ``_KW``."""
+    """A class that joins STAGED_MATERIAL_CLASSES joins these refusal tests
+    with its constructor keywords in ``_KW``."""
     assert set(_KW) == STAGED_MATERIAL_CLASSES
+    assert _STATELESS == [
+        "PressureDependMultiYield", "PressureDependMultiYield02",
+        "PressureIndependMultiYield"]
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +177,10 @@ def test_the_updatematerialstage_parameter_refuses_by_name(
     msg = str(exc.value)
     assert "s.update_parameter('updateMaterialStage'" in msg
     assert "theInt" in msg and "#2460" in msg
+    # It never steers to a route that is a no-op for the class.
+    assert ("s.update_parameter('materialState'" in msg) == (
+        cls in MATERIAL_STATE_CLASSES)
+    assert "s.update_material_stage" in msg
     assert not ops._stage_records
 
 
@@ -155,13 +190,30 @@ def test_the_updatematerialstage_parameter_refuses_without_a_material() -> None:
         _flip(ops, "updateMaterialStage", 1.0, material=None, pg="T")
 
 
-@pytest.mark.parametrize("cls", _STAGED)
+@pytest.mark.parametrize("cls", _STATEFUL)
 def test_the_materialstate_parameter_passes_on_a_forwarding_host(
     cls: str,
 ) -> None:
     ops, mat = _bridge(cls, "T")
     _flip(ops, "materialState", 1.0, material=mat, pg="T")
     assert len(ops._stage_records) == 1
+
+
+@pytest.mark.parametrize("cls", _STATELESS)
+@pytest.mark.parametrize("host", ["T", "Q"])
+def test_the_materialstate_parameter_refuses_where_the_class_has_none(
+    cls: str, host: str,
+) -> None:
+    """The multi-yield soils have no materialState branch: on stock and the
+    fork OpenSees prints "no objects were able to identify parameter" and
+    the run stays elastic (the live test below)."""
+    ops, mat = _bridge(cls, host)
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, "materialState", 1.0, material=mat, pg=host)
+    msg = str(exc.value)
+    assert f"{cls}'s setParameter has no materialState" in msg
+    assert "Flip it with s.update_material_stage" in msg and "#2460" in msg
+    assert not ops._stage_records
 
 
 def test_the_materialstate_classes_table() -> None:
@@ -204,7 +256,7 @@ def test_the_updatematerialstage_refusal_steers_to_materialstate_only_where_it_a
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cls", _STAGED)
+@pytest.mark.parametrize("cls", _STATEFUL)
 @pytest.mark.parametrize("value", [0.0, 1.0])
 def test_materialstate_on_four_node_quad_refuses_by_name(
     cls: str, value: float,
@@ -349,3 +401,59 @@ def test_live_four_node_quad_drops_materialstate(cls: str, dev: float) -> None:
         uy["quad", "none"], rel=1e-12)
     assert uy["SSPquad", "materialState"] == pytest.approx(
         uy["SSPquad", "command"], rel=1e-12)
+
+
+def _soil_argv(cls: str) -> "list[Any]":
+    """The ``nDMaterial`` argv the bridge emits for ``cls`` at tag 1."""
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+    from apeGmsh.opensees.material import nd
+
+    rec = RecordingEmitter()
+    getattr(nd, cls)(**_KW[cls])._emit(rec, 1)
+    ((_verb, args, _kw),) = rec.calls
+    return list(args)
+
+
+#: ``(class, deviatoric load)`` for the #2401 soils that converge on this
+#: path (PM4Silt's flipped leg does not, on either build).
+_SOILS = [("PM4Sand", 40.0), ("PressureIndependMultiYield", 60.0),
+          ("PressureDependMultiYield", 60.0),
+          ("PressureDependMultiYield02", 60.0)]
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(("cls", "dev"), _SOILS, ids=[c for c, _d in _SOILS])
+def test_live_materialstate_reaches_only_the_classes_that_take_it(
+    cls: str, dev: float,
+) -> None:
+    """Stock and fork, on SSPquad: PM4Sand's materialState answers as the
+    updateMaterialStage command does, and quad drops it; a multi-yield
+    soil's materialState answers as no flip at all.  The bridge refuses
+    every route that answers as no flip."""
+    _ARGS[cls] = _soil_argv(cls)[2:]
+    try:
+        runs = {
+            (element, route): _run(cls, element, route, dev)
+            for element in ("quad", "SSPquad")
+            for route in ("none", "command", "materialState")
+        }
+    finally:
+        del _ARGS[cls]
+    assert {code for code, _uy in runs.values()} == {0}
+    uy = {key: value for key, (_code, value) in runs.items()}
+    assert abs(uy["SSPquad", "command"] - uy["SSPquad", "none"]) > 1e-2 * abs(
+        uy["SSPquad", "none"])
+    assert uy["quad", "materialState"] == pytest.approx(
+        uy["quad", "none"], rel=1e-12)
+    if cls in MATERIAL_STATE_CLASSES:
+        assert uy["SSPquad", "materialState"] == pytest.approx(
+            uy["SSPquad", "command"], rel=1e-12)
+        ops, mat = _bridge(cls, "Q")
+        with pytest.raises(BridgeError, match="targets FourNodeQuad"):
+            _flip(ops, "materialState", 1.0, material=mat, pg="Q")
+    else:
+        assert uy["SSPquad", "materialState"] == pytest.approx(
+            uy["SSPquad", "none"], rel=1e-12)
+        ops, mat = _bridge(cls, "T")
+        with pytest.raises(BridgeError, match="has no materialState"):
+            _flip(ops, "materialState", 1.0, material=mat, pg="T")
