@@ -79,16 +79,31 @@ class TargetCaps:
 SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 
 #: The capability tokens this bridge writes into ``/opensees@requires``.
-#: ``"fork"`` comes from the ``VERBS`` rows (the Ladruno build). The other
-#: two depend on argument values (opensees 2.33.0), so the stamp writer
-#: derives them, not ``VERBS`` (:func:`value_requires`):
-#: ``"mpco"``, any ``recorder mpco`` (pip openseespy ships no MPCO
-#: recorder); ``"mpi"``, a Mumps-family or ``Parallel*`` ``system``
-#: (:func:`is_mpi_system`) or a partitioned ``solve_mode`` (the deck
-#: needs a multi-rank MPI run; a flat replay re-derives its own need,
+#: ``"fork"`` (the Ladruno build) comes from the ``VERBS`` rows, and from
+#: a fork-only ``system`` (:func:`is_fork_system`). Tokens that
+#: depend on argument values (opensees 2.33.0) are derived by the stamp
+#: writer, not ``VERBS`` (:func:`value_requires`): ``"fork"`` for a
+#: fork-only ``system``; ``"mpco"``, any ``recorder mpco`` (pip openseespy
+#: ships no MPCO recorder); ``"mpi"``, a Mumps-family or ``Parallel*``
+#: ``system`` (:func:`is_mpi_system`) or a partitioned ``solve_mode`` (the
+#: deck needs a multi-rank MPI run; a flat replay re-derives its own need,
 #: :func:`flat_requires`). A reader accepts
 #: any token; a solving target that does not know one refuses it.
 REQUIRES_TOKENS: tuple[str, ...] = ("fork", "mpco", "mpi")
+
+#: The ``system`` types only the Ladruno fork declares, casefolded.
+#: ``Pardiso`` (fork ADR-75 P1, MKL builds): stock openseespy refuses the
+#: command and the fork solves with it. Every other LinearSystem member
+#: behaves the same on both builds; ``_SYSTEM_TOKENS`` in
+#: ``tests/opensees/h5/test_h5_solve_stamp.py`` pins each one.
+FORK_SYSTEMS: frozenset[str] = frozenset({"pardiso"})
+
+
+def is_fork_system(s_type: str) -> bool:
+    """Whether ``system <s_type>`` needs the Ladruno fork: a type in
+    :data:`FORK_SYSTEMS`, any case. Stock openseespy refuses it, so a deck
+    that declares it aborts there."""
+    return s_type.casefold() in FORK_SYSTEMS
 
 
 def is_mpi_system(s_type: str) -> bool:
@@ -120,20 +135,29 @@ def flat_requires(
     partitioned ``solve_mode``, but every replay target emits flat, so a
     flat replay needs it only when its own analysis chain declares an MPI
     system (:func:`is_mpi_system`); ``systems`` are the ``system`` types the
-    archive stores, global and staged. Every other token passes through.
-    Tokens are only dropped, never added: a file below 2.33.0 keeps the
-    ``requires`` it was written with."""
-    if "mpi" not in requires or any(is_mpi_system(s) for s in systems):
-        return requires
-    return tuple(t for t in requires if t != "mpi")
+    archive stores, global and staged. ``"mpi"`` is only dropped, never
+    added: a file below 2.33.0 keeps the ``"mpi"`` it was written with.
+
+    ``"fork"`` is added when ``systems`` holds a fork-only one
+    (:func:`is_fork_system`, #2393): the replay deck declares that system,
+    so it aborts on stock whatever the stamp says, and an archive written
+    before the emit side derived the token (``requires=()`` with
+    ``Pardiso``) still fails closed. Every other token passes through."""
+    out = set(requires)
+    if "mpi" in out and not any(is_mpi_system(s) for s in systems):
+        out.discard("mpi")
+    if any(is_fork_system(s) for s in systems):
+        out.add("fork")
+    return tuple(sorted(out))
 
 
 def value_requires(
     *, recorder_kinds: "tuple[str, ...]", systems: "tuple[str, ...]",
     solve_mode: str,
 ) -> frozenset[str]:
-    """The requirement tokens a model's argument values imply: ``"mpco"``
-    for a ``recorder mpco``, ``"mpi"`` for an MPI ``system``
+    """The requirement tokens a model's argument values imply: ``"fork"``
+    for a fork-only ``system`` (:func:`is_fork_system`), ``"mpco"`` for a
+    ``recorder mpco``, ``"mpi"`` for an MPI ``system``
     (:func:`is_mpi_system`; pass :func:`binding_systems`) or a partitioned
     ``solve_mode`` (see :data:`REQUIRES_TOKENS`)."""
     if solve_mode not in SOLVE_MODES:
@@ -142,6 +166,8 @@ def value_requires(
             f"{solve_mode!r}"
         )
     out: set[str] = set()
+    if any(is_fork_system(s) for s in systems):
+        out.add("fork")
     if any(k.casefold() == "mpco" for k in recorder_kinds):
         out.add("mpco")
     if solve_mode == "partitioned" or any(is_mpi_system(s) for s in systems):
@@ -165,7 +191,8 @@ class SolveStamp:
         The sorted union of the capability tokens the ``VERBS`` rows of
         every emitted verb require (``"fork"``: the Ladruno build),
         ledger rows included, and, from opensees 2.33.0, the tokens the
-        emitted argument values imply (``"mpco"``, ``"mpi"``:
+        emitted argument values imply (``"mpco"``, ``"mpi"``, and
+        ``"fork"`` for a fork-only ``system`` since #2393:
         :func:`value_requires`), so ``build('live')`` can refuse on a
         backend that lacks one. The writer derives it from its own
         program (``/opensees/program@methods``) and stores. An archive
@@ -243,6 +270,7 @@ class SolveStamp:
 
 
 __all__ = [
-    "REQUIRES_TOKENS", "SOLVE_MODES", "SolveStamp", "TargetCaps",
-    "binding_systems", "flat_requires", "is_mpi_system", "value_requires",
+    "FORK_SYSTEMS", "REQUIRES_TOKENS", "SOLVE_MODES", "SolveStamp",
+    "TargetCaps", "binding_systems", "flat_requires", "is_fork_system",
+    "is_mpi_system", "value_requires",
 ]
