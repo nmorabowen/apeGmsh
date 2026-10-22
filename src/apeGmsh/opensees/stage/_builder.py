@@ -914,10 +914,11 @@ class _StageBuilder:
           ``theDouble``, and every class that takes the name (each of
           :data:`STAGED_MATERIAL_CLASSES`, PM4Sand, PM4Silt, the
           stress-density models) reads ``Information::theInt`` for it,
-          which nothing sets: the run keeps its stage while the bridge
-          counted a flip.
-        * ``materialState`` is refused when a targeted element is not of a
-          :data:`MATERIAL_STATE_ELEMENTS` class.  ``FourNodeQuad``,
+          which nothing sets: the stage the run lands on is uninitialised
+          memory, while the bridge counted a flip to the value given.
+        * ``materialState`` is refused when a targeted element that carries
+          the named material (a tag-blind one, when it names none) is not
+          of a :data:`MATERIAL_STATE_ELEMENTS` class.  ``FourNodeQuad``,
           ``Tri31`` and ``stdBrick`` read any ``material...`` name as their
           own per-point address, so the update never reaches the material.
         * ``materialState`` is refused when a targeted element carries a
@@ -943,14 +944,16 @@ class _StageBuilder:
         for prec in records:
             if prec.name == "updateMaterialStage":
                 raise BridgeError(
-                    f"{call_of(prec)} changes nothing: updateParameter sets "
-                    "only Parameter::theDouble (Parameter::update(double)), "
-                    "while every material that takes updateMaterialStage "
-                    "reads Information::theInt for it, which is never set.  "
-                    "The run would keep its stage while the bridge counted "
-                    "a flip (issue #2460).  Use s.update_material_stage, or "
-                    "s.update_parameter('materialState', ...), which reads "
-                    "theDouble."
+                    f"{call_of(prec)} does not carry its value: "
+                    "updateParameter sets only Parameter::theDouble "
+                    "(Parameter::update(double)), while every material that "
+                    "takes updateMaterialStage reads Information::theInt for "
+                    "it, which is never set.  The stage the run lands on is "
+                    "uninitialised memory (measured: the elastic answer in "
+                    "one process, a plastic one in another), while the "
+                    "bridge counts a flip to the value given (issue #2460).  "
+                    "Use s.update_material_stage, or s.update_parameter("
+                    "'materialState', ...), which reads theDouble."
                 )
         if not records and not self._update_material_stage_records:
             return
