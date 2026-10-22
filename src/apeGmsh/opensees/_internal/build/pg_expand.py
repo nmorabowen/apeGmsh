@@ -870,7 +870,8 @@ class _PanelGeometry:
         """Per point: on the plane, and on the outer boundary or strictly
         inside it, and not strictly inside a hole."""
         pts = np.asarray(pts, dtype=np.float64).reshape(-1, 3)
-        ok = np.abs((pts - self.origin) @ self.normal) <= self.tol
+        ok: np.ndarray = np.asarray(
+            np.abs((pts - self.origin) @ self.normal) <= self.tol, dtype=bool)
         p2 = self._proj(pts)
         ok &= np.all((p2 >= self.lo) & (p2 <= self.hi), axis=1)
         idx = np.nonzero(ok)[0]
