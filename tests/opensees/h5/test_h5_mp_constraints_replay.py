@@ -43,7 +43,8 @@ from apeGmsh.opensees._internal.compose import ReplaySkippedStreamWarning
 
 #: The MP tokens a deck line can start with; ``element`` lines are checked
 #: by type (an ``embeddedNode`` goes out as an ASDEmbeddedNodeElement).
-_MP_TOKENS = frozenset({"equalDOF", "rigidLink", "rigidDiaphragm"})
+_MP_TOKENS = frozenset({"equalDOF", "rigidLink", "rigidDiaphragm",
+                        "equationConstraint"})
 _MP_ELEMENTS = frozenset({"ASDEmbeddedNodeElement"})
 
 #: Two ranks: column A (nodes 1-2, element 1) and column B (3-4, element 2).
@@ -160,6 +161,21 @@ _KINDS: "dict[str, dict[str, list[Any]]]" = {
     "named_equal_dof": {"node_constraints": [NodePairRecord(
         kind="equal_dof", name="tops", master_node=2, slave_node=4,
         dofs=[1, 2])]},
+    # #2416: the equation route writes one equationConstraint line per tied
+    # DOF and no element. Three weighted masters, so each line carries three
+    # retained terms; the tie is named, so its comment line rides along.
+    "tie_equation": {"surface_constraints": [InterpolationRecord(
+        kind="tie", name="tops_eq", slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.25, 0.5, 0.25]), dofs=[1, 2, 3],
+        enforce="equation")]},
+    "distributing_equation": {"surface_constraints": [InterpolationRecord(
+        kind="distributing", slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.25, 0.5, 0.25]), dofs=[1, 2],
+        enforce="equation")]},
+    "embedded_equation": {"surface_constraints": [InterpolationRecord(
+        kind="embedded", slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.25, 0.5, 0.25]), dofs=[1, 2, 3],
+        enforce="equation")]},
 }
 
 
