@@ -222,6 +222,35 @@ ops.element.ZeroLength(nodes=("boundary_node", "pile_ground"), # mesh-node label
 - For frequency-band damping on a group of springs, attach a `ops.damping.*`
   object by PG (`on="MyPG"`) rather than a per-element flag.
 
+### Compliant (Lysmer–Kuhlemeyer) base — `lysmer_base`
+
+`from apeGmsh.opensees.site_response import lysmer_base` builds the viscous
+base of a site-response model: one dashpot per node of the base curve (2-D) or
+face (3-D), from a fixed ground node, `C = rho Vs A_i` on the horizontal DOFs
+and `rho Vp A_i` on the vertical one (or, with no `vp`, a vertical fixity, which
+it skips on a node a `periodic` / `equal_dof` tie already slaves). The ground
+nodes are one decoupled node per base node:
+
+```python
+gnd = g.decouple_node_set("Base", label="base_ground")      # session, pre-mesh
+...
+base = lysmer_base(ops, "Base", gnd, rho=2.2, vs=760.0)      # bridge
+vel = ops.timeSeries.Path(dt=dt, values=tuple(v_outcrop))    # input VELOCITY
+with ops.pattern.Plain(series=vel) as p:                     # or s.pattern(...)
+    base.add_input(p)               # force C_i v(t) = 2 rho Vs A_i v_inc(t)
+```
+
+`add_input(p, motion="incident")` doubles the force for an incident-wave
+velocity. Declare the side ties (`g.constraints.periodic`, #2388, or
+`ops.equation_constraint` rows) BEFORE `lysmer_base`: it leaves a tied
+vertical DOF unfixed, and a tie added later meets a fixed DOF (a singular
+solve). With tied sides the base pair's master
+ends up fixed vertically while tied horizontally: OpenSees' `Transformation`
+handler (the bridge default for `equalDOF`) silently drops that tie every step
+(#2396, `PartlyFixedTieWarning`), so declare `ops.constraints.Lagrange()`. Put the input pattern in the shaking stage of a staged model, so the
+gravity stages never see it.
+<!-- verified: tests/opensees/unit/test_site_response_lysmer.py, tests/opensees/live/test_lysmer_base_live.py -->
+
 ## Boundary conditions, masses, loads — explicit / opt-in
 
 The `Emitter` protocol exposes `node / fix / mass / element / sp`
