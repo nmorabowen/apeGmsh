@@ -27,10 +27,16 @@ solve the model.
   `FORK_CHAIN` must equal the types the bridge's fork-only members emit.
   The live net runs one deck per member on the bound build and checks
   that `build('live')` of each fork-only archive refuses on stock.
+- **`LadrunoContact` is archived.** The H5 emitter used to drop that
+  handler, so its archive stamped nothing. It is recorded now, and the
+  stamp carries `"fork"`.
+- **In-process gates.** `LiveOpsEmitter` refuses every fork-only chain
+  type on stock: integrator, numberer, test, constraints and system, read
+  from `FORK_CHAIN`. Before, it did not know the SMS integrators'
+  consistent tokens (`CentralDifferenceSMSConsistent`,
+  `ExplicitBatheSMSConsistent`, `ExplicitBatheLNVDSMSConsistent`).
+  `apeSees.analyze` on stock then returned 0 with the default
+  integrator's answer.
 - **Live-net guard.** A deck whose stderr says `WARNING unknown <family>
   type` does not count as having run, even when it exits 0. A command the
   deck itself tries in `try:` (the ADR 0027 `Mumps` fallback) is exempt.
-
-`LadrunoContact` is the exception. The archive never stores that handler,
-because the replay drops the contact, so its archive stamps nothing. A
-model that uses it declares contact verbs, and those stamp `"fork"`.
