@@ -70,6 +70,7 @@ from tests.opensees.golden.test_roundtrip_oracle import (
     _move,
     _waivers,
 )
+from tests.opensees.h5.test_h5_solve_stamp import _SYSTEM_TOKENS
 
 pytestmark = pytest.mark.live
 
@@ -99,6 +100,12 @@ _KNOWN_STOCK_FAILURES: dict[str, str] = {
     "test_h5_stages_reader::_real_kitchen_sink_bridge":
         _KITCHEN_SINK_SINGULAR,
 }
+#: One staged frame per LinearSystem member, solving one increment with
+#: that ``system`` (#2429): the net runs each deck on the bound build, so
+#: the token table ``_SYSTEM_TOKENS`` pins is proven on stock and the fork.
+_SYSTEM_ROWS = [Model("test_h5_solve_stamp", "_system_frame",
+                      (("name", n), ("staged", True)))
+                for n in sorted(_SYSTEM_TOKENS)]
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
 #: What a build without the MPCO recorder logs when a deck declares one.
@@ -374,6 +381,36 @@ def test_a_replay_runs_where_the_bridge_deck_runs(
            "nothing this backend lacks,")
         + " but the replay deck does not run: a semantic difference the "
         f"static oracle missed; track it in an issue:\n{log}")
+
+
+@pytest.mark.parametrize("model", _SYSTEM_ROWS, ids=[m.id for m in _SYSTEM_ROWS])
+def test_each_system_deck_runs_iff_its_stamp_says_so(
+        model: Model, tmp_path: Path, backend_kind: str) -> None:
+    """A ``system`` member's bridge deck and its replay run on this build
+    exactly when the stamp names nothing it lacks; one that does not run
+    stops at its ``system`` command. ``Pardiso`` aborts on stock and runs
+    on the fork (#2393); every member without ``"mpi"`` runs on both. A
+    member that needs ``"mpi"`` (``Mumps``, ``ParallelProfileSPD``) is not
+    judged: one process is not an MPI run, and the bridge refuses a serial
+    ``Mumps`` deck before writing it."""
+    name = dict(model.kwargs)["name"]
+    if "mpi" in _SYSTEM_TOKENS[name]:
+        pytest.skip(f"{model.id}: system {name} needs an MPI run, which one "
+                    "process is not; not judged here")
+    bridge, replay, requires, flat = _decks_and_replay_needs(model, tmp_path)
+    assert requires == flat == _SYSTEM_TOKENS[name]
+    unmet = unmet_requires(requires, backend_kind)
+    for deck in (bridge, replay):
+        ran, log = _run(deck)
+        assert ran == (not unmet), (
+            f"{model.id}: the {deck.stem} deck "
+            + ("runs" if ran else f"fails at {_failure(log)!r}")
+            + f" on this {backend_kind} build, but its stamp requires "
+            f"{requires!r} (unmet here: {unmet!r}):\n{log}")
+        if not ran:
+            assert f"ops.system({name!r}" in _failure(log), (
+                f"{model.id}: the {deck.stem} deck did not stop at its "
+                f"system command:\n{log}")
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])

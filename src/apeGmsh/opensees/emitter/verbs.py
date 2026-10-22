@@ -35,7 +35,9 @@ and the lock pins the moves:
 ``requires``
     Capability tokens a solving backend must have (``"fork"``: the
     Ladruno build). Value-dependent requirements, such as the
-    ``LadrunoContact`` handler token of ``constraints``, are not here.
+    ``LadrunoContact`` handler token of ``constraints`` or a fork-only
+    ``system`` type (``caps.is_fork_system``), are not here: the stamp
+    writer derives the ones it knows (``caps.value_requires``).
 ``returns``
     The return annotation on ``base.py::Emitter``, verbatim.
 ``seq_op`` / ``seq_what``
