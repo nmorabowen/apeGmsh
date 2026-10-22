@@ -177,6 +177,7 @@ from ._internal.tag_resolution import (
     set_membrane_context,
     set_stage_owned_node_tags,
 )
+from .element.frame_modifiers import derived_primitives
 from .element.shell import LadrunoMembrane
 from ._internal.compose import _compose_model_h5, _path_stem
 from .._internal.provenance import ProvenanceStore
@@ -11142,7 +11143,33 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                     "opensees", kind, name, on_existing="raise")
             self._note_decl(
                 prim, kind, name, path, synth=synthesised is not None)
+        if isinstance(prim, Element):
+            self._register_frame_modifier_copies(prim)
         return prim
+
+    def _register_frame_modifier_copies(self, spec: Element) -> None:
+        """Register the modified section and integration copies that a
+        force-/disp-based spec's ``modifiers=`` makes it reference
+        (``element/frame_modifiers.py``).
+
+        They are synthesised (unnamed, key ``frame_modifiers:<pg>/<kind>k``)
+        and registered once per bridge: specs that share a section and a
+        modifier set reference the same copies. Both the namespace verbs
+        and ``ops.register(spec)`` (P11) come through here.
+        """
+        for derived in derived_primitives(spec):
+            if self._tags.tag_for(derived) is not None:
+                continue
+            kind = _kind_of(derived)
+            pg = getattr(spec, "pg", "") or "?"
+            k = 1
+            while True:
+                key = f"frame_modifiers:{pg}/{kind}{k}"
+                if (f"opensees/{kind}/{key}" not in self._decl_sites
+                        and not self._provenance.has("opensees", kind, key)):
+                    break
+                k += 1
+            self._register(derived, synthesised=key)
 
     def _declare_record(
         self, owner: object, family: str, name: str | None,

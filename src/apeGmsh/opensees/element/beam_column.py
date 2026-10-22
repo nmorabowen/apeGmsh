@@ -92,6 +92,14 @@ from .._internal.types import (
     UniaxialMaterial,
 )
 from ..transform import Corotational, Linear, PDelta
+from .frame_modifiers import (
+    FrameModifiers,
+    check_frame_modifiers,
+    is_reference_stub,
+    modified_integration,
+    scaled,
+    scaled_mass,
+)
 
 
 if TYPE_CHECKING:
@@ -189,6 +197,43 @@ def _check_optional_mass(type_name: str, mass: float | None) -> None:
         )
 
 
+def _check_integration_modifiers(
+    type_name: str,
+    integration: BeamIntegration,
+    mods: FrameModifiers | None,
+    mass: float | None,
+) -> None:
+    """Refuse ``mods`` a force-/disp-based element cannot apply.
+
+    The section-side checks (an ``ElasticSection`` in every slot, the
+    property each non-unit modifier needs) run by building the modified
+    rule once; the copy is memoised, so this costs nothing later.
+    """
+    check_frame_modifiers(
+        type_name, mods, lacks={}, has_mass=mass is not None,
+    )
+    if (mods is not None and not mods.is_identity
+            and not is_reference_stub(integration)):
+        modified_integration(type_name, integration, mods)
+
+
+def _emitted_integration(
+    type_name: str,
+    integration: BeamIntegration,
+    mods: FrameModifiers | None,
+) -> BeamIntegration:
+    """The rule the element references: ``integration`` itself, or its
+    modified copy when ``mods`` is not the identity.
+
+    A reference stub (the replay dry run's field-less stand-in, which only
+    a tag lookup may use) is referenced as it is: the dry run needs the
+    slot types of the element call, not the copy's values.
+    """
+    if mods is None or mods.is_identity or is_reference_stub(integration):
+        return integration
+    return modified_integration(type_name, integration, mods)
+
+
 # ---------------------------------------------------------------------------
 # elasticBeamColumn — section properties as scalars + geomTransf.
 # ---------------------------------------------------------------------------
@@ -222,6 +267,12 @@ class elasticBeamColumn(Element):
         Optional ``-mass <m>`` per-unit-length mass.
     c_mass
         If ``True``, append the ``-cMass`` flag (consistent-mass form).
+    modifiers
+        Optional :class:`~.frame_modifiers.FrameModifiers`. The emitted
+        ``A``, ``Iz``, ``Iy``, ``J`` and ``-mass`` are the declared values
+        times ``A``, ``Iz``, ``Iy``, ``J`` and ``mass``; ``E`` and ``G`` are
+        never scaled. An Euler-Bernoulli element has no shear area, so a
+        non-unit ``Avy`` / ``Avz`` is refused, as are ``Iy`` / ``J`` in 2-D.
     """
 
     pg: str
@@ -235,6 +286,7 @@ class elasticBeamColumn(Element):
     mass: float | None = None
     c_mass: bool = False
     damp: Damping | None = None
+    modifiers: FrameModifiers | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
@@ -281,6 +333,16 @@ class elasticBeamColumn(Element):
             )
 
         _check_optional_mass("elasticBeamColumn", self.mass)
+        euler = ("an Euler-Bernoulli element carries no shear deformation; "
+                 "use ElasticTimoshenkoBeam")
+        lacks = {"Avy": euler, "Avz": euler}
+        if not is_3d:
+            lacks["Iy"] = "a 2-D element has no second moment about local y"
+            lacks["J"] = "a 2-D element has no torsion"
+        check_frame_modifiers(
+            "elasticBeamColumn", self.modifiers, lacks=lacks,
+            has_mass=self.mass is not None,
+        )
 
     def _is_3d(self) -> bool:
         return any(v is not None for v in (self.Iy, self.G, self.J))
@@ -296,6 +358,8 @@ class elasticBeamColumn(Element):
         i_node, j_node = nodes
         transf_tag = resolve_tag(emitter, self.transf)
 
+        m = self.modifiers or FrameModifiers()
+        A, Iz = scaled(self.A, m.A), scaled(self.Iz, m.Iz)
         args: list[int | float | str] = [i_node, j_node]
         if self._is_3d():
             # 3-D: A E G J Iy Iz transfTag.
@@ -303,14 +367,16 @@ class elasticBeamColumn(Element):
             assert self.J is not None
             assert self.Iy is not None
             args.extend(
-                [self.A, self.E, self.G, self.J, self.Iy, self.Iz, transf_tag]
+                [A, self.E, self.G, scaled(self.J, m.J),
+                 scaled(self.Iy, m.Iy), Iz, transf_tag]
             )
         else:
             # 2-D: A E Iz transfTag.
-            args.extend([self.A, self.E, self.Iz, transf_tag])
+            args.extend([A, self.E, Iz, transf_tag])
 
-        if self.mass is not None:
-            args.extend(["-mass", self.mass])
+        mass = scaled_mass(self.mass, self.modifiers)
+        if mass is not None:
+            args.extend(["-mass", mass])
         if self.c_mass:
             args.append("-cMass")
         args.extend(damp_args(emitter, self.damp))
@@ -373,6 +439,13 @@ class forceBeamColumn(Element):
         Optional ``-iter`` max-iterations (paired with ``tol``).
     tol
         Optional ``-iter`` tolerance (paired with ``max_iter``).
+    modifiers
+        Optional :class:`~.frame_modifiers.FrameModifiers`. Every section
+        of ``integration`` must then be an ``ElasticSection``: the element
+        references a modified copy of the rule and of each section (one
+        copy per distinct section and modifier set; the declared ones are
+        untouched), and ``-mass`` is scaled by ``mass``. The bridge
+        registers the copies when it registers the element.
 
     Notes
     -----
@@ -388,6 +461,7 @@ class forceBeamColumn(Element):
     max_iter: int | None = None
     tol: float | None = None
     damp: Damping | None = None
+    modifiers: FrameModifiers | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
@@ -407,24 +481,33 @@ class forceBeamColumn(Element):
             raise ValueError(
                 f"forceBeamColumn: tol must be > 0, got {self.tol}."
             )
+        _check_integration_modifiers(
+            "forceBeamColumn", self.integration, self.modifiers, self.mass,
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        integ = _emitted_integration(
+            "forceBeamColumn", self.integration, self.modifiers,
+        )
         if self.damp is not None:
-            return (self.integration, self.transf, self.damp)
-        return (self.integration, self.transf)
+            return (integ, self.transf, self.damp)
+        return (integ, self.transf)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
         _check_two_nodes("forceBeamColumn", nodes)
         i_node, j_node = nodes
         transf_tag = resolve_tag(emitter, self.transf)
-        integ_tag = resolve_tag(emitter, self.integration)
+        integ_tag = resolve_tag(emitter, _emitted_integration(
+            "forceBeamColumn", self.integration, self.modifiers,
+        ))
 
         args: list[int | float | str] = [
             i_node, j_node, transf_tag, integ_tag,
         ]
-        if self.mass is not None:
-            args.extend(["-mass", self.mass])
+        mass = scaled_mass(self.mass, self.modifiers)
+        if mass is not None:
+            args.extend(["-mass", mass])
         if self.max_iter is not None and self.tol is not None:
             args.extend(["-iter", self.max_iter, self.tol])
         args.extend(damp_args(emitter, self.damp))
@@ -461,6 +544,9 @@ class dispBeamColumn(Element):
         Optional ``-mass <m>`` per-unit-length mass.
     c_mass
         If ``True``, append the ``-cMass`` flag (consistent-mass form).
+    modifiers
+        Optional :class:`~.frame_modifiers.FrameModifiers`, as on
+        :class:`forceBeamColumn`.
     """
 
     pg: str
@@ -469,29 +555,39 @@ class dispBeamColumn(Element):
     mass: float | None = None
     c_mass: bool = False
     damp: Damping | None = None
+    modifiers: FrameModifiers | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
             raise ValueError("dispBeamColumn: pg must be a non-empty name.")
         _check_optional_mass("dispBeamColumn", self.mass)
+        _check_integration_modifiers(
+            "dispBeamColumn", self.integration, self.modifiers, self.mass,
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        integ = _emitted_integration(
+            "dispBeamColumn", self.integration, self.modifiers,
+        )
         if self.damp is not None:
-            return (self.integration, self.transf, self.damp)
-        return (self.integration, self.transf)
+            return (integ, self.transf, self.damp)
+        return (integ, self.transf)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
         _check_two_nodes("dispBeamColumn", nodes)
         i_node, j_node = nodes
         transf_tag = resolve_tag(emitter, self.transf)
-        integ_tag = resolve_tag(emitter, self.integration)
+        integ_tag = resolve_tag(emitter, _emitted_integration(
+            "dispBeamColumn", self.integration, self.modifiers,
+        ))
 
         args: list[int | float | str] = [
             i_node, j_node, transf_tag, integ_tag,
         ]
-        if self.mass is not None:
-            args.extend(["-mass", self.mass])
+        mass = scaled_mass(self.mass, self.modifiers)
+        if mass is not None:
+            args.extend(["-mass", mass])
         if self.c_mass:
             args.append("-cMass")
         args.extend(damp_args(emitter, self.damp))
@@ -541,6 +637,12 @@ class ElasticTimoshenkoBeam(Element):
         Optional ``-mass <m>`` per-unit-length mass.
     c_mass
         If ``True``, append the ``-cMass`` flag.
+    modifiers
+        Optional :class:`~.frame_modifiers.FrameModifiers`: the emitted
+        ``A``, ``Iz``, ``Avy`` (and in 3-D ``J``, ``Iy``, ``Avz``) and
+        ``-mass`` are the declared values times the matching modifier;
+        ``E`` and ``G`` are never scaled. ``Iy`` / ``J`` / ``Avz`` are
+        refused in 2-D.
     """
 
     pg: str
@@ -555,6 +657,7 @@ class ElasticTimoshenkoBeam(Element):
     Avz: float | None = None
     mass: float | None = None
     c_mass: bool = False
+    modifiers: FrameModifiers | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
@@ -612,6 +715,15 @@ class ElasticTimoshenkoBeam(Element):
             )
 
         _check_optional_mass("ElasticTimoshenkoBeam", self.mass)
+        lacks: dict[str, str] = {}
+        if not is_3d:
+            lacks["Iy"] = "a 2-D element has no second moment about local y"
+            lacks["J"] = "a 2-D element has no torsion"
+            lacks["Avz"] = "a 2-D element has no shear area along local z"
+        check_frame_modifiers(
+            "ElasticTimoshenkoBeam", self.modifiers, lacks=lacks,
+            has_mass=self.mass is not None,
+        )
 
     def _is_3d(self) -> bool:
         return any(v is not None for v in (self.Iy, self.J, self.Avz))
@@ -625,6 +737,9 @@ class ElasticTimoshenkoBeam(Element):
         i_node, j_node = nodes
         transf_tag = resolve_tag(emitter, self.transf)
 
+        m = self.modifiers or FrameModifiers()
+        A, Iz = scaled(self.A, m.A), scaled(self.Iz, m.Iz)
+        Avy = scaled(self.Avy, m.Avy)
         args: list[int | float | str] = [i_node, j_node]
         if self._is_3d():
             # 3-D: E G A J Iy Iz Avy Avz transfTag.
@@ -633,20 +748,19 @@ class ElasticTimoshenkoBeam(Element):
             assert self.Avz is not None
             args.extend(
                 [
-                    self.E, self.G, self.A,
-                    self.J, self.Iy, self.Iz,
-                    self.Avy, self.Avz,
+                    self.E, self.G, A,
+                    scaled(self.J, m.J), scaled(self.Iy, m.Iy), Iz,
+                    Avy, scaled(self.Avz, m.Avz),
                     transf_tag,
                 ]
             )
         else:
             # 2-D: E G A Iz Avy transfTag.
-            args.extend(
-                [self.E, self.G, self.A, self.Iz, self.Avy, transf_tag]
-            )
+            args.extend([self.E, self.G, A, Iz, Avy, transf_tag])
 
-        if self.mass is not None:
-            args.extend(["-mass", self.mass])
+        mass = scaled_mass(self.mass, self.modifiers)
+        if mass is not None:
+            args.extend(["-mass", mass])
         if self.c_mass:
             args.append("-cMass")
 
