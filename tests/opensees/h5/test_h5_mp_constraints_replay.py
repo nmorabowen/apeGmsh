@@ -266,8 +266,43 @@ def test_to_h5_rewrite_keeps_the_rows(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Streams the archive cannot replay refuse, by name: phantom-node ties
-# (#2411) and equation-route ties (#2416)
+# (#2411), and equation-route ties in an archive below opensees 2.35.0
+# (#2416), which stores none of their lines
 # ---------------------------------------------------------------------------
+
+
+def _as_pre_2_35(path: Path) -> None:
+    """Make the 2.35 archive ``path`` read as one below opensees 2.35.0, as
+    its writer would have left it: no ``equationConstraint`` store, the
+    program's ``equationConstraint`` calls linked to no store (a ledger
+    verb then), and the zone stamped 2.34.0."""
+    from tests.fixtures.schema import OPENSEES_BEFORE_EQUATION_CONSTRAINT
+
+    store = "{scope}/constraints/equationConstraint"
+    with h5py.File(path, "r+") as f:
+        cons = f["opensees/constraints"]
+        if "equationConstraint" in cons:
+            del cons["equationConstraint"]
+        if len(cons.keys()) == 0:
+            del f["opensees/constraints"]
+        program = f["opensees/program"]
+        methods = [m.decode() if isinstance(m, bytes) else str(m)
+                   for m in program.attrs["methods"]]
+        stores = [m.decode() if isinstance(m, bytes) else str(m)
+                  for m in program.attrs["stores"]]
+        if store in stores:
+            gone = stores.index(store)
+            rows = program[()]
+            for r in rows:
+                if methods[int(r["method"])] == "equationConstraint":
+                    r["store"], r["row"] = -1, -1
+                elif int(r["store"]) > gone:
+                    r["store"] = int(r["store"]) - 1
+            program[...] = rows
+            del stores[gone]
+            program.attrs["stores"] = np.array(stores, dtype=object)
+        f["meta"].attrs["opensees_schema_version"] = (
+            OPENSEES_BEFORE_EQUATION_CONSTRAINT)
 
 
 def _node_to_surface(kind: str) -> Any:
@@ -373,6 +408,10 @@ def _refused_archive(case: str, tmp_path: Path) -> Path:
     fwd, path = (_mixed_ndf_interface_archive(tmp_path) if streams is None
                  else _archive(_fem(partitioned=False, **streams), tmp_path))
     assert any(ln.split()[:1] == [token] for ln in fwd.splitlines())
+    if case.endswith("_equation"):
+        # A 2.35 archive stores the tie's lines and replays them
+        # (test_replay_carries_every_bridge_mp_line); one below it does not.
+        _as_pre_2_35(path)
     return path
 
 
@@ -504,3 +543,209 @@ def test_one_row_excuses_one_of_two_equal_records():
     assert _skipped_replay_streams(fem, stage_mp_keys=Counter({row: 2})) == {}
     assert _skipped_replay_streams(fem, stage_mp_keys=Counter({row: 1})) == {
         "fem.nodes.constraints": Counter({"equal_dof": 1})}
+
+
+# ---------------------------------------------------------------------------
+# Equation-route ties replay from their stored lines (#2416, opensees 2.35.0)
+# ---------------------------------------------------------------------------
+
+#: The schema corpus' assembly archive: real bytes from a writer below
+#: opensees 2.35.0 (its zone is 2.22.0), joined by nine equation ties.
+_PRE_FIX_CORPUS = (Path(__file__).resolve().parents[2]
+                   / "fixtures" / "schema_corpus" / "assembly_1.0.h5")
+
+
+def test_a_pre_fix_corpus_archive_still_refuses_its_equation_ties():
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = OpenSeesModel.from_h5(str(_PRE_FIX_CORPUS))
+        with pytest.raises(BridgeError) as caught:
+            model.build("tcl", flat=True)
+    assert "tie (enforce='equation'): 9" in str(caught.value)
+    assert "#2416" in str(caught.value)
+
+
+def _mixed_equation_bridge() -> apeSees:
+    """An equalDOF, a named equation tie, a penalty embedded node, an
+    equation distributing coupling and a user ``equation_constraint`` row:
+    the bridge writes them in that order, so the replay must interleave
+    the stored lines with the other MP rows by emit index."""
+    eq = lambda kind, name, w, dofs: InterpolationRecord(  # noqa: E731
+        kind=kind, name=name, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array(w), dofs=dofs, enforce="equation")
+    fem = _fem(
+        partitioned=False,
+        node_constraints=[NodePairRecord(
+            kind="equal_dof", master_node=2, slave_node=4, dofs=[1])],
+        surface_constraints=[
+            eq("tie", "eq_tie", [0.25, 0.5, 0.25], [1, 2]),
+            InterpolationRecord(
+                kind="embedded", slave_node=4, master_nodes=[1, 2, 3],
+                weights=np.array([0.0, 1.0, 0.0]), dofs=[1, 2, 3]),
+            eq("distributing", "", [0.0, 1.0, 0.0], [1, 2, 3]),
+        ])
+    ops = _bridge(fem)
+    ops.equation_constraint(constrained=(4, 3), retained=[(2, 3, -1.0)])
+    return ops
+
+
+def _mixed_archive(tmp_path: Path) -> "tuple[str, Path]":
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = _mixed_equation_bridge()
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True)
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return deck.read_text(encoding="utf-8"), path
+
+
+def test_stored_lines_interleave_with_the_other_mp_rows(tmp_path):
+    fwd, path = _mixed_archive(tmp_path)
+    eq = [ln for ln in fwd.splitlines() if ln.startswith("equationConstraint")]
+    assert len(eq) == 2 + 3 + 1  # the tie's, the coupling's, the user row
+    # The bridge put the embedded element between the two ties' lines.
+    kinds = [ln.split()[0] if ln.startswith(("equalDOF", "equation"))
+             else ln.split()[1] for ln in _mp_lines(fwd)]
+    assert kinds == ["equalDOF", *["equationConstraint"] * 2,
+                     "ASDEmbeddedNodeElement",
+                     *["equationConstraint"] * 4]
+    assert _replay(path) == fwd
+    assert _replay(path, "py").count("ops.equationConstraint(") == 6
+
+
+def test_the_rows_are_the_lines_and_the_comment(tmp_path):
+    _fwd, path = _mixed_archive(tmp_path)
+    rows = OpenSeesModel.from_h5(str(path))
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    with open_h5(str(path)) as model:
+        stored = model.equation_constraints()
+    assert [r.name for r in stored] == ["eq_tie", "", "", "", "", ""]
+    assert stored[0].retained == ((1, 1, -0.25), (2, 1, -0.5), (3, 1, -0.25))
+    # Zero weights are filtered, as the bridge does.
+    assert stored[2].retained == ((2, 1, -1.0),)
+    assert stored[-1].retained == ((2, 3, -1.0),)
+    assert rows._equation_tie_rows() == stored[:-1]
+
+
+def test_an_archive_that_lost_its_lines_refuses(tmp_path):
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    _fwd, path = _archive(_fem(partitioned=False, **_KINDS["tie_equation"]),
+                          tmp_path)
+    with h5py.File(path, "r+") as f:
+        cons = f["opensees/constraints/equationConstraint"]
+        ret_offsets = cons["ret_offsets"][()]
+        # Keep the group well formed but drop the last line.
+        for key in ("cnode", "cdof", "ccoef", "name"):
+            vals = cons[key][()][:-1]
+            del cons[key]
+            cons.create_dataset(key, data=vals)
+        last = int(ret_offsets[-2])
+        for key in ("ret_node", "ret_dof", "ret_coef"):
+            vals = cons[key][()][:last]
+            del cons[key]
+            cons.create_dataset(key, data=vals)
+        del cons["ret_offsets"]
+        cons.create_dataset("ret_offsets", data=ret_offsets[:-1])
+    model = OpenSeesModel.from_h5(str(path))
+    with pytest.raises(BridgeError, match=r"tie \(enforce='equation'\): 1"):
+        model.build("tcl", flat=True)
+
+
+@pytest.mark.parametrize("damage", ["below_2_35", "offsets", "zero_coef",
+                                    "missing_column"])
+def test_a_malformed_store_raises(damage, tmp_path):
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+    from tests.fixtures.schema import OPENSEES_BEFORE_EQUATION_CONSTRAINT
+
+    _fwd, path = _archive(_fem(partitioned=False, **_KINDS["tie_equation"]),
+                          tmp_path)
+    with h5py.File(path, "r+") as f:
+        cons = f["opensees/constraints/equationConstraint"]
+        if damage == "below_2_35":
+            f["meta"].attrs["opensees_schema_version"] = (
+                OPENSEES_BEFORE_EQUATION_CONSTRAINT)
+        elif damage == "offsets":
+            off = cons["ret_offsets"][()]
+            off[-1] += 1
+            cons["ret_offsets"][...] = off
+        elif damage == "zero_coef":
+            coef = cons["ret_coef"][()]
+            coef[0] = 0.0
+            cons["ret_coef"][...] = coef
+        else:
+            del cons["ret_dof"]
+    with pytest.raises(MalformedH5Error, match="equationConstraint"):
+        OpenSeesModel.from_h5(str(path))
+
+
+def test_partition_replicas_are_stored_once(tmp_path):
+    (tmp_path / "f").mkdir()
+    (tmp_path / "p").mkdir()
+    _flat_fwd, flat = _archive(
+        _fem(partitioned=False, **_KINDS["tie_equation"]), tmp_path / "f")
+    part_fwd, part = _archive(
+        _fem(partitioned=True, **_KINDS["tie_equation"]), tmp_path / "p")
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    with open_h5(str(flat)) as a, open_h5(str(part)) as b:
+        assert len(a.equation_constraints()) == 3
+        assert b.equation_constraints() == a.equation_constraints()
+    assert _mp_lines(_replay(part)) == _mp_lines(part_fwd)
+
+
+def test_to_h5_rewrite_keeps_the_lines(tmp_path):
+    fwd, path = _mixed_archive(tmp_path)
+    rewrite = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        OpenSeesModel.from_h5(str(path)).to_h5(str(rewrite))
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    with open_h5(str(path)) as a, open_h5(str(rewrite)) as b:
+        assert b.equation_constraints() == a.equation_constraints()
+    assert _replay(rewrite) == fwd
+
+
+def _staged_equation_tie_archive(tmp_path: Path) -> Path:
+    """A global penalty embedded node and an equation-route embedded tie a
+    stage claims (``s.embedded(name="st")``)."""
+    from tests.opensees.h5.test_h5_stages_writer import _chain
+
+    staged = InterpolationRecord(
+        kind="embedded", name="st", slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.25, 0.5, 0.25]), dofs=[1, 2, 3],
+        enforce="equation")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = _bridge(_fem(partitioned=False, surface_constraints=[staged]))
+        with ops.stage(name="s0") as st:
+            st.embedded(name="st")
+            st.analysis(**{**_chain(ops),
+                           "constraints": ops.constraints.Lagrange()})
+            st.run(n_increments=1, dt=1.0)
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True)
+        assert "equationConstraint" in deck.read_text(encoding="utf-8")
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return path
+
+
+def test_a_stage_claimed_equation_tie_still_refuses(tmp_path):
+    # The interim scope (#2447): global lines only. A stage block stores no
+    # equationConstraint row yet (#2448), so the tie refuses by name.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    path = _staged_equation_tie_archive(tmp_path)
+    with h5py.File(path, "r") as f:
+        assert "equationConstraint" not in f["opensees"].get(
+            "constraints", {})
+    with pytest.raises(BridgeError) as caught:
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    assert "embedded (enforce='equation'): 1" in str(caught.value)
+    assert "#2448" in str(caught.value)

@@ -117,6 +117,7 @@ from ._h5_program import (
     _command_kind,
 )
 from ._h5_write import _set_attr
+from .h5_reader import EquationConstraintRecordRO
 from ._h5_decls import _H5DeclsMixin, _decl_refs, _json_text
 from ._h5_stages import _H5StagesMixin
 from ._h5_verbs_model import _H5ModelVerbsMixin
@@ -673,7 +674,20 @@ class H5RefusedVerb(NotImplementedError):
 #:     reader would read a dataset-form pair as no arguments, hence the
 #:     bump: a 2.34 reader opens 2.12 through 2.34 and refuses a dataset
 #:     form below 2.34.0; a 2.33.x reader REFUSES a 2.34.x file.
-SCHEMA_VERSION: str = "2.34.0"
+#:   * 2.35.0 — equationConstraint lines archived: additive — a new
+#:     ``/opensees/constraints/equationConstraint`` group holds one row
+#:     per global ``equationConstraint`` line, an ``enforce="equation"``
+#:     tie's (one per tied DOF) and an ``apeSees.equation_constraint``
+#:     row's alike, its ``/opensees/program`` call linking it, so a replay
+#:     writes each line at its emit index. Written only when a line
+#:     exists, so every other archive keeps its bytes and hash; the group
+#:     is hashed, so an archive with one hashes differently once at this
+#:     minor. A stage-claimed equation tie's lines stay unarchived (the
+#:     replay refuses it by name). A 2.34 reader would replay the model
+#:     untied, hence the bump: a 2.35 reader opens 2.12 through 2.35 and
+#:     refuses the group below 2.35.0; a 2.34.x reader REFUSES a 2.35.x
+#:     file.
+SCHEMA_VERSION: str = "2.35.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1038,6 +1052,9 @@ class H5Emitter(
         # build wrote, archived from 2.29.0 (K2b) under
         # ``/opensees/constraints/embeddedRebar``. See ``embedded_rebar``.
         self._embedded_rebars: list[_EmbeddedRebarRecord] = []
+        # The global equationConstraint lines (opensees 2.35.0), each a row of
+        # ``/opensees/constraints/equationConstraint``. See ``equationConstraint``.
+        self._equation_constraints: list[EquationConstraintRecordRO] = []
 
         # ADR 0114 D1: every drop of a ``ledger`` verb goes through :meth:`_ledger`, which
         # counts it here by verb. The ``ledger`` rows of ``VERBS`` are the
@@ -1766,8 +1783,9 @@ def _noted(
     and a Protocol method a body calls internally counts once, as the
     outer call.
     """
-    glob, _, stage_side = VERBS[name].store.partition("|")
-    stage_store = stage_side or glob
+    glob, split, stage_side = VERBS[name].store.partition("|")
+    # ``"<global>|"``: a stage call writes no row (``equationConstraint``).
+    stage_store = stage_side if split else glob
     tagged = _DECL_TAG_ARG.get(name)
     side_channel = name in _SIDE_CHANNEL_DECL_VERBS
 

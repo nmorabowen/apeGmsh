@@ -130,12 +130,35 @@ def test_an_unreadable_equation_constraint_row_refuses(tmp_path: Path) -> None:
         OpenSeesModel.from_h5(str(archive)).build("tcl")
 
 
+def _rewrite_eq_line(archive: Path, column: str, row: int, value: Any) -> None:
+    """Set ``column[row]`` of ``/opensees/constraints/equationConstraint``
+    (opensees 2.35.0) in place."""
+    with h5py.File(str(archive), "a") as f:
+        ds = f["opensees/constraints/equationConstraint"][column]
+        values = ds[()]
+        values[row] = value
+        ds[...] = values
+
+
 def test_a_bad_equation_constraint_row_refuses(tmp_path: Path) -> None:
-    # A DOF past the node's ndf: the bridge's own emit check, on replay too.
+    # A DOF past the node's ndf, in the stored line and its declaration
+    # alike: the bridge's own emit check, on replay too.
     _, _, archive = _bridge_and_replay(_broad_frame(), tmp_path)
     _rewrite_eq_row(archive, lambda p: p.__setitem__("cdof", 7))
+    _rewrite_eq_line(archive, "cdof", 0, 7)
     with pytest.raises(Exception, match="exceeds that node's ndf"):
         OpenSeesModel.from_h5(str(archive)).build("tcl")
+
+
+def test_a_stored_line_its_declaration_contradicts_refuses(
+    tmp_path: Path,
+) -> None:
+    # Opensees 2.35.0 stores the line itself; its /opensees/decl_params
+    # record must agree, so a file where they differ is not replayed.
+    _, _, archive = _bridge_and_replay(_broad_frame(), tmp_path)
+    _rewrite_eq_line(archive, "ccoef", 0, 2.0)
+    with pytest.raises(MalformedH5Error, match="disagree"):
+        OpenSeesModel.from_h5(str(archive))
 
 
 # A live closed form: a cantilever column along z (L = 1) with Iy = Iz,
@@ -234,12 +257,14 @@ def test_h5_does_not_warn_about_an_archived_equation_constraint(
     assert len(_lines(replay, "equationConstraint")) == 2
 
 
-def test_an_equation_tie_beside_an_archived_row_is_the_only_ledgered_one(
+def test_an_equation_tie_beside_an_archived_row_is_archived_too(
     tmp_path: Path,
 ) -> None:
-    """An ``enforce="equation"`` tie emits ``equationConstraint`` too, and
-    deck replay skips it, so it stays ledgered: the warning counts it and
-    not the archived bridge row beside it."""
+    """An ``enforce="equation"`` tie emits ``equationConstraint`` too. From
+    opensees 2.35.0 its line is a row of
+    ``/opensees/constraints/equationConstraint`` beside the bridge row, so
+    ``h5`` warns about neither and the replay writes both, in the bridge's
+    order (#2416)."""
     from apeGmsh._kernel.records._constraints import InterpolationRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
 
@@ -253,9 +278,18 @@ def test_an_equation_tie_beside_an_archived_row_is_the_only_ledgered_one(
     integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
     ops.element.forceBeamColumn(pg="Cols", transf=transf, integration=integ)
     ops.equation_constraint(constrained=(2, 1), retained=[(2, 2, -1.0)])
-    (only,) = _about_the_archive(ops, tmp_path / "model.h5")
-    assert only.category is H5LedgerWarning
-    assert "equationConstraint x1" in str(only.message)
+    archive = tmp_path / "model.h5"
+    assert _about_the_archive(ops, archive) == []
+    deck = tmp_path / "bridge.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.tcl(str(deck), progress=False, flat=True)
+        replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=True)
+    assert isinstance(replay, str)
+    want = _lines(deck.read_text(encoding="utf-8"), "equationConstraint")
+    assert want == ["equationConstraint 2 3 1.0 1 3 -1.0",
+                    "equationConstraint 2 1 1.0 2 2 -1.0"]
+    assert _lines(replay, "equationConstraint") == want
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +410,11 @@ def test_an_archive_without_decls_warns_that_ties_are_unverified(
     tmp_path: Path,
 ) -> None:
     """No /opensees/decls (pre-2.25.0): replay loads, and says it cannot see
-    the equation constraints, rather than dropping them in silence."""
+    the equation constraints, rather than dropping them in silence. Such a
+    file is below opensees 2.35.0, so it stores no equationConstraint line
+    either."""
     _, _, archive = _bridge_and_replay(_broad_frame(), tmp_path)
+    _as_pre_2_35(archive)
     with h5py.File(str(archive), "a") as f:
         for name in ("decls", "decl_params"):
             if name in f["opensees"]:
@@ -387,7 +424,44 @@ def test_an_archive_without_decls_warns_that_ties_are_unverified(
         rows = program[()]
         rows["decl"] = -1
         program[...] = rows
-    om = OpenSeesModel.from_h5(str(archive))
-    assert om.declarations is None
     with pytest.warns(H5LedgerWarning, match="cannot verify apeSees.equation_constraint"):
-        om.build("tcl")
+        om = OpenSeesModel.from_h5(str(archive))
+    assert om.declarations is None
+    om.build("tcl")
+
+
+def test_a_2_35_archive_without_decls_replays_its_stored_lines(
+    tmp_path: Path,
+) -> None:
+    """From opensees 2.35.0 the stored line is the record (a ``to_h5``
+    rewrite of a pre-2.25 file carries no decls), so the replay writes it
+    without the decls and without a warning."""
+    bridge, _, archive = _bridge_and_replay(_broad_frame(), tmp_path)
+    with h5py.File(str(archive), "a") as f:
+        for name in ("decls", "decl_params"):
+            if name in f["opensees"]:
+                del f["opensees"][name]
+        program = f["opensees"]["program"]
+        rows = program[()]
+        rows["decl"] = -1
+        program[...] = rows
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", H5LedgerWarning)
+        om = OpenSeesModel.from_h5(str(archive))
+        replay = om.build("tcl")
+    assert isinstance(replay, str)
+    assert _lines(replay, "equationConstraint") == _lines(
+        bridge, "equationConstraint")
+
+
+def _as_pre_2_35(archive: Path) -> None:
+    """Make ``archive`` read as one below opensees 2.35.0: drop the
+    ``equationConstraint`` store (no such writer made one) and stamp the
+    zone 2.34.0."""
+    from tests.fixtures.schema import OPENSEES_BEFORE_EQUATION_CONSTRAINT
+
+    with h5py.File(str(archive), "a") as f:
+        cons = f["opensees"]["constraints"]
+        del cons["equationConstraint"]
+        f["meta"].attrs["opensees_schema_version"] = (
+            OPENSEES_BEFORE_EQUATION_CONSTRAINT)
