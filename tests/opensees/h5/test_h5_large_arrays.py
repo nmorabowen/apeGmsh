@@ -3,9 +3,10 @@
 ``ops.timeSeries.Path(values=<16384 floats>)`` ran its deck, but the
 ``model.h5`` write failed with ``OSError: object header message is too
 large``: the writer stored the values as one HDF5 attribute, and an
-attribute's object-header message is capped at 64 KiB (about 8,180
-float64 slots, or 4,090 variable-length string slots, measured on
-h5py 3.15 / HDF5 1.14.6).
+attribute's object-header message is capped at 65,535 bytes (about 8,183
+float64 slots, or 4,091 variable-length string slots, measured on
+h5py 3.15 / HDF5 1.14.6). The writer now tries the attribute and falls
+back to same-named datasets only when HDF5 refuses it.
 
 Oracles:
 
@@ -122,32 +123,99 @@ def test_large_pair_is_two_same_named_datasets(tmp_path: Path) -> None:
     assert not {"params", "params_str"} & attrs
 
 
-def test_pair_switches_at_the_payload_limit() -> None:
-    """The threshold is by size: a pair with a string slot costs 16 bytes
-    a slot, a numeric pair 8, and the pair crosses at
-    :data:`ATTR_PAYLOAD_LIMIT` bytes. Every pair that stays an attribute
-    is one HDF5 can hold."""
-    import numpy as np
+# ---------------------------------------------------------------------------
+# The boundary: the attribute form wherever a 2.33 writer could write one
+# ---------------------------------------------------------------------------
 
+#: ``model_hash("", /opensees)`` of the largest archive a 2.33 writer could
+#: write, as main's writer gave it (origin/main e094d9e05, run out of place
+#: from a ``git archive`` copy). One more value made that writer fail with
+#: ``object header message is too large``. A Path pair is bound by its
+#: string half (4,091 slots: ``-dt``, ``-values`` and the values); a
+#: MultiLinear pair is all numeric (8,183 slots: the tag and two per point).
+MAIN_LARGEST_PATH = (4_088, "869adb87bcc7b6dd8bdefee594e5672b")
+MAIN_LARGEST_MULTILINEAR = (4_091, "8c7605bb3607b720b926f506079c8047")
+
+
+def _frame_with_multilinear(n_points: int) -> apeSees:
+    ops = apeSees(cast("object", build_simple_frame_fem()))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.0125, E=2900.25, Iz=1.5e-4, Iy=2.5e-4, G=1100.75, J=3.5e-4,
+    )
+    ops.uniaxialMaterial.MultiLinear(points=tuple(
+        (0.001 * (i + 1), 1.0 + 0.5 * i) for i in range(n_points)))
+    return ops
+
+
+def _form_and_hash(ops: apeSees, group: str, path: Path) -> tuple[str, str]:
+    ops.h5(str(path))
+    with h5py.File(str(path), "r") as f:
+        (name,) = list(f[group])
+        g = f[group][name]
+        in_attrs = {"params", "params_str"} & set(g.attrs)
+        in_group = {"params", "params_str"} & set(g)
+        assert not (in_attrs and in_group), "one form per group"
+        form = "dataset" if in_group else "attr"
+        return form, compute_model_hash("", f["opensees"])
+
+
+@pytest.mark.parametrize(("build", "group", "largest"), [
+    (_frame_with_path, "opensees/time_series", MAIN_LARGEST_PATH),
+    (_frame_with_multilinear, "opensees/materials/uniaxial",
+     MAIN_LARGEST_MULTILINEAR),
+], ids=["path", "multilinear"])
+def test_boundary_keeps_main_bytes_then_falls_back(
+    build: object, group: str, largest: tuple[int, str], tmp_path: Path,
+) -> None:
+    """At the largest size main's writer could write, the pair is still an
+    attribute and the archive hashes as main's did; one more value and the
+    pair is two datasets, with no half-written attribute left behind."""
+    from collections.abc import Callable
+
+    make = cast("Callable[[int], apeSees]", build)
+    n, main_hash = largest
+
+    assert _form_and_hash(make(n), group, tmp_path / "at.h5") == (
+        "attr", main_hash)
+    form, _ = _form_and_hash(make(n + 1), group, tmp_path / "past.h5")
+    assert form == "dataset"
+
+
+def test_set_attr_refuses_only_what_hdf5_refuses() -> None:
+    """``_set_attr`` writes every string list a raw ``attrs.create`` (main's
+    writer) can hold and refuses, by name, the first one it cannot."""
     from apeGmsh.opensees.emitter._h5_write import (
-        ATTR_PAYLOAD_LIMIT,
-        _write_param_array,
+        AttributeTooLargeError,
+        _set_attr,
     )
 
-    cases: dict[str, tuple[float | str, ...]] = {
-        "num_fits": (0.5,) * (ATTR_PAYLOAD_LIMIT // 8),
-        "num_over": (0.5,) * (ATTR_PAYLOAD_LIMIT // 8 + 1),
-        "str_fits": ("-x",) + (0.5,) * (ATTR_PAYLOAD_LIMIT // 16 - 1),
-        "str_over": ("-x",) + (0.5,) * (ATTR_PAYLOAD_LIMIT // 16),
-    }
-    with h5py.File("pair.h5", "w", driver="core", backing_store=False) as f:
-        for name, params in cases.items():
-            _write_param_array(f.create_group(name), "params", params)
-        forms = {n: ("dataset" if "params" in f[n] else "attr") for n in cases}
-        assert np.isnan(f["str_over/params"][0])
+    str_dtype = h5py.string_dtype(encoding="utf-8")
+    with h5py.File("raw.h5", "w", driver="core", backing_store=False) as f:
+        def raw_fits(n: int) -> bool:
+            g = f.create_group(f"raw_{n}")
+            try:
+                g.attrs.create("selection", ["s"] * n, dtype=str_dtype)
+            except OSError:
+                return False
+            return True
 
-    assert forms == {"num_fits": "attr", "num_over": "dataset",
-                     "str_fits": "attr", "str_over": "dataset"}
+        lo, hi = 1, 20_000
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            lo, hi = (mid, hi) if raw_fits(mid) else (lo, mid - 1)
+        largest = lo
+
+        g = f.create_group("ours")
+        _set_attr(g, "selection", ["s"] * largest)
+        assert len(g.attrs["selection"]) == largest
+        g2 = f.create_group("ours_past")
+        with pytest.raises(AttributeTooLargeError,
+                           match=r"'selection' on /ours_past holds"):
+            _set_attr(g2, "selection", ["s"] * (largest + 1))
+        assert "selection" not in g2.attrs
 
 
 # ---------------------------------------------------------------------------

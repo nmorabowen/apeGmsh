@@ -662,13 +662,14 @@ class H5RefusedVerb(NotImplementedError):
 #:     this minor; any other archive is unchanged. A 2.33 reader opens
 #:     2.12 through 2.33; a 2.32.x reader REFUSES a 2.33.x file.
 #:   * 2.34.0 — large arrays as datasets: additive — a ``params`` /
-#:     ``params_str`` pair, or a declared recorder's ``ids``, whose
-#:     payload is past ``_h5_write.ATTR_PAYLOAD_LIMIT`` (64,000 bytes;
-#:     an HDF5 attribute holds at most 65,535) is written as uncompressed
-#:     datasets of the same names in its group, since an attribute
-#:     cannot hold them. Any other oversized sequence attribute refuses
-#:     by name. An array that fitted keeps the attribute form, so every
-#:     archive a 2.33 writer could write keeps its bytes and hash. A 2.33
+#:     ``params_str`` pair, or a declared recorder's ``ids``, that HDF5
+#:     refuses as an attribute for size (an object-header message holds
+#:     at most 65,535 bytes) is written as uncompressed datasets of the
+#:     same names in its group. The writer tries the attribute first and
+#:     falls back only on that refusal. Any other sequence attribute HDF5
+#:     refuses raises by name. An array that fits keeps the attribute
+#:     form, so every archive a 2.33 writer could write keeps its bytes
+#:     and hash. A 2.33
 #:     reader would read a dataset-form pair as no arguments, hence the
 #:     bump: a 2.34 reader opens 2.12 through 2.34 and refuses a dataset
 #:     form below 2.34.0; a 2.33.x reader REFUSES a 2.34.x file.

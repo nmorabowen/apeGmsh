@@ -821,33 +821,35 @@ series, patterns, dampings, regions, recorders, and their stage
 copies) keeps a call's positional arguments as the `params` /
 `params_str` pair: `params` float64 with `NaN` in string slots,
 `params_str` UTF-8 with `""` in numeric slots, `params_str` absent when
-no slot is a string. The pair is written as **attributes**, unless its
-payload is past 64,000 bytes (`_h5_write.ATTR_PAYLOAD_LIMIT`, 8 bytes a
-numeric slot and 16 a string slot): then it is two **uncompressed
-datasets of the same names** in the same group, as an element's
-`args` / `args_str` are. An HDF5 attribute holds at most 65,535 bytes
-(about 8,183 float64 or 4,091 string slots), so a long `Path` series
-failed to archive before (#2404).
+no slot is a string. The writer tries the pair as **attributes**. When
+HDF5 refuses either half for size (an attribute is one object-header
+message of at most 65,535 bytes: about 8,183 float64 or 4,091 string
+slots), it writes two **uncompressed datasets of the same names** in the
+same group instead, as an element's `args` / `args_str` are. A long
+`Path` series failed to archive before (#2404).
 
 ```
 /opensees/time_series/Path_1/
 ├── attrs: type="Path", tag=1
-├── params        float64 dataset (n,)   ← past the limit only
+├── params        float64 dataset (n,)   ← only when the attribute is refused
 └── params_str    vlen str dataset (n,)  ← when any slot is a string
 ```
 
-- The pair switches together: a group holds both arrays in one form.
+- The pair switches together: a half already written as an attribute is
+  deleted, so a group holds both arrays in one form.
 - A declared recorder's `ids` follows the same rule (an int64 attribute,
-  or past the limit an int64 dataset named `ids`).
-- Any other sequence attribute past the limit refuses at write, naming
-  the key and the group.
+  or when HDF5 refuses that, an int64 dataset named `ids`).
+- Any other sequence attribute HDF5 refuses for size raises at write,
+  naming the key and the group.
 - The reader reads either form and raises `MalformedH5Error` when a key
   is in both forms, when the pair is split across them, or when a file
   stamped below 2.34.0 holds the dataset form
   (`h5_reader.LARGE_ARRAY_DATASETS_FROM`).
 - `model_hash` walks datasets as it walks attributes, so the values are
-  hashed in either form. An array that fitted keeps the attribute form,
-  so no archive a 2.33 writer could write changes bytes or hash.
+  hashed in either form. The fallback fires only where a 2.33 writer
+  failed, so no archive a 2.33 writer could write changes bytes or hash.
+- The app (`apeGmshViewer`) reads either form for every typed store and
+  refuses the same malformed cases.
 
 ## `/opensees/patterns`
 
@@ -2901,8 +2903,8 @@ detail lives in the `SCHEMA_VERSION` docstring in
   Additive minor (a 2.32.x reader refuses a 2.33.x file, INV-4).
 - `2.34.0` — #2404 (chain K, slice #2418; the maintainer's ruling (i) of
   2026-10-21): a `params` / `params_str` pair, or a declared recorder's
-  `ids`, whose payload is past 64,000 bytes is stored as uncompressed
-  datasets of the same names in its group; see
+  `ids`, that HDF5 refuses as an attribute for size is stored as
+  uncompressed datasets of the same names in its group; see
   [large arrays as datasets](#large-arrays-as-datasets-opensees-2340).
   The writer failed on such an archive before. Any other oversized
   sequence attribute refuses by name. Every array that fitted keeps the
