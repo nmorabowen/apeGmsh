@@ -2235,11 +2235,23 @@ a stage is `time[k]`.
 ### Partitions
 
 `/stages/{sid}/partitions/{pid}` splits a stage's rows by partition. Every
-writer in `src/` today writes exactly one partition, `partition_0`. A
-reader must still handle several. It takes the union of the partitions in
-name order: nodal columns are concatenated and then de-duplicated by node
-id (first occurrence wins, because boundary nodes repeat across
-partitions), and element rows are concatenated.
+writer in `src/` writes exactly one partition, `partition_0`, and native
+results carry no `PARTITION_REDUCTION` rule (ADR 0123, Proposed, makes one
+partition per stage the contract). A file written with several partitions
+through the public `NativeWriter` API still opens in the Python reader:
+
+- a node id repeated within one partition's `nodes/_ids` refuses at open
+  (`NativeRepeatedNodeId`);
+- a node several partitions hold reads once when its copies are bit-for-bit
+  equal over the stage; if any node's copies of a component differ, every
+  read of that component raises `NativePartitionCopiesDisagree` (#2360),
+  because a per-partition partial value cannot be told from a replicated
+  one;
+- element rows are concatenated in partition-name order.
+
+The viewer refuses a stage that does not hold exactly one partition
+(`unsupported`). Partitioned runs reach a reader as `.ladruno` or MPCO part
+sets, which carry `PARTITION_REDUCTION`.
 
 ### Nodal results: `nodes/`
 
