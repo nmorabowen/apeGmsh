@@ -175,7 +175,7 @@ _FORK_ONLY_ELEMENTS = frozenset(
 #: the capability map (``docs/concepts/backend-capabilities.md``) and the
 #: warrant rows read. The gate does not read it: it reads
 #: :data:`~apeGmsh.opensees.emitter.caps.FORK_CHAIN`, the emitted types,
-#: which also hold each SMS member's ``...Consistent`` token (#2430), and
+#: which also hold each SMS member's ``...Consistent`` token, and
 #: ``tests/opensees/h5/test_h5_solve_stamp.py`` pins the two together.
 #: Unlike the element gate, an integrator cannot be verified after the
 #: fact: openseespy's ``integrator`` does NOT raise on an unknown type, so

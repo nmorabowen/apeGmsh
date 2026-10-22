@@ -427,7 +427,7 @@ class _H5StagesMixin(_H5Host):
         return self._analysis_attrs
 
     def constraints(self, c_type: str, *args: int | float | str) -> None:
-        # Every handler is recorded, ``LadrunoContact`` included (#2430). The
+        # Every handler is recorded, ``LadrunoContact`` included. The
         # OpenSees *deck* zone (``/opensees/...``) carries no contactSurface /
         # contact records (the contact persists in the NEUTRAL zone, schema
         # 2.21.0; ``FEMData.from_h5`` → ``apeSees(fem)`` re-runs
