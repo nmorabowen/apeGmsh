@@ -289,10 +289,13 @@ def _build_kitchen_sink_bridge() -> apeSees:
 
     The deck solves (#2376): removing the Rock quad orphans the Base
     nodes, and the Fill quad then rests on nothing but its own
-    supports. So the stage holds FillTop in both DOFs, and re-holds the
-    released Base x-DOF (``remove_sp`` then ``support`` on the same
-    target, the same-stage re-support V1/V2 allow). Without either hold
-    the stiffness is singular on stock and fork alike."""
+    supports. So the stage re-holds the released Base x-DOF
+    (``remove_sp`` then ``support`` on the same target, the same-stage
+    re-support V1/V2 allow) and holds FillTop in both DOFs. Without the
+    Base hold the orphaned x-DOFs are exact zero pivots, and the deck
+    aborts on stock and fork alike. Without FillTop's y-hold the Fill
+    quad keeps two rigid-body modes (y-translation and a rotation), a
+    singular stiffness that a direct solver need not flag."""
     fem = build_two_quad_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
