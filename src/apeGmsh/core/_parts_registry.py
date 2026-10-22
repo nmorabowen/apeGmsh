@@ -1559,21 +1559,21 @@ class PartsRegistry(_PartsFragmentationMixin):
             payload = read_sidecar(file_path)
             if payload is not None:
                 anchors = payload.get('anchors', [])
-                # For rebinding, we need ALL entities in the model
-                # (including sub-entities like surfaces of volumes)
-                # because the sidecar may carry anchors at any dim.
-                # ``entities`` from importShapes may be incomplete
-                # when ``highest_dim_only=True`` was used.
-                all_model_entities: dict[int, list[int]] = {}
-                for d in range(4):
-                    tags_at_d = [
-                        t for _, t in gmsh.model.getEntities(d)
-                    ]
-                    if tags_at_d:
-                        all_model_entities[d] = tags_at_d
+                # Rebind against every entity of THIS import, sub-
+                # entities included (the sidecar may carry anchors at
+                # any dim, and ``entities`` from importShapes is only
+                # the top dim when ``highest_dim_only=True``): the
+                # boundary closure of the imported shapes.  Matching
+                # against the whole model made each ``add`` O(model)
+                # and let an anchor claim another instance's
+                # coincident entity.
+                from ._model_boolean import _boundary_closure
+                own_entities: dict[int, list[int]] = {}
+                for d, t in sorted(_boundary_closure(shape_dimtags)):
+                    own_entities.setdefault(d, []).append(t)
                 pg_matches = rebind_physical_groups(
                     anchors=anchors,
-                    imported_entities=all_model_entities,
+                    imported_entities=own_entities,
                     translate=(dx, dy, dz),
                     rotate=rotate,
                     gmsh_module=gmsh,

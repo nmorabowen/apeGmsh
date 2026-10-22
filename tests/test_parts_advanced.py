@@ -405,6 +405,21 @@ class TestAnchorRebinding:
         finally:
             p.cleanup()
 
+    def test_coincident_instances_rebind_their_own_entities(self, simple_labeled_part, g):
+        """Each instance's sidecar labels bind to its OWN import.
+
+        The rebind used to match anchors against every model entity, so
+        a second placement at the same spot could claim the first
+        instance's coincident box (and each ``add`` cost O(model)).
+        """
+        a = g.parts.add(simple_labeled_part, label="a")
+        b = g.parts.add(simple_labeled_part, label="b")
+        a_core = set(g.labels.entities("a.core"))
+        b_core = set(g.labels.entities("b.core"))
+        assert a_core and b_core and not (a_core & b_core)
+        assert a_core <= set(a.entities[3])
+        assert b_core <= set(b.entities[3])
+
 
 # =====================================================================
 # Group 5: End-to-End Assembly Workflow
