@@ -110,7 +110,8 @@ def test_1804_a_fix_on_the_declared_master_constrains_the_floor(fem):
     assert free_joint == pytest.approx(free_master, rel=1e-9)
     held_master, held_joint = _floor_ux(fem, master_fix=HELD)
     # main: the declared master was a slave, Transformation dropped the
-    # fix on its constrained ux, and the floor slid as if it were free.
+    # fixes on its constrained DOFs, and the floor (read at the joint)
+    # slid as if it were free.
     assert abs(held_master) < 1e-12
     assert abs(held_joint) < 1e-12
 
@@ -198,8 +199,9 @@ def test_1829_a_fix_on_the_declared_master_constrains_the_floor(wide):
     free_master, _ = _floor_ux(wide, master_fix=(0, 0, 1, 1, 1, 0))
     assert free_master > 1e-5
     held_master, held_joint = _floor_ux(wide, master_fix=HELD)
-    # main: floor_2_master was a slave, Transformation dropped the fix on
-    # its constrained ux, and the floor slid as if it were free.
+    # main: floor_2_master was a slave, Transformation dropped the fixes
+    # on its constrained DOFs, and the floor (read at the joint) slid as
+    # if it were free.
     assert abs(held_master) < 1e-12
     assert abs(held_joint) < 1e-12
 

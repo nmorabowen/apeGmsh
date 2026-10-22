@@ -10,8 +10,10 @@ increment, where Lagrange gives 1, 2, 3, 4. Nothing warned, so every
 recorder or drift read at the master node was wrong.
 
 The bridge now raises `BridgeError` for such a deck when an analysis
-runs under Transformation, whether declared, auto-emitted for MP
-constraints, or forced by a modal deck. The check covers both a global
+runs under Transformation: declared, auto-emitted for MP constraints,
+inherited by a stage that declares no handler, or forced by the ARPACK
+modal deck. The in-plane DOFs follow OpenSees per `ndm`: a 2-D floor ties
+DOFs 1, 2, 3, so a 2-D master held on rz alone is refused too. The check covers both a global
 `fix` and a stage or pattern SP on the master. The message names
 `ops.constraints.Lagrange()` and `Penalty(...)`, or dropping the
 master's in-plane fix.

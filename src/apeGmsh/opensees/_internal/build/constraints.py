@@ -189,15 +189,16 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
             constrained.update(int(n) for n in slaves)
     stages = getattr(built, "stage_records", ()) or ()
     prims = list(getattr(built, "primitives", ()) or ())
-    if stages:
-        # a stage that declares no handler runs Plain, which ignores MP
-        transformation = any(isinstance(st.constraints, Transformation)
-                             for st in stages)
-    else:
-        declared = next((p for p in prims
-                         if isinstance(p, ConstraintHandler)), None)
-        transformation = isinstance(declared, Transformation) or (
-            declared is None and not built._has_equation_constraints())
+    declared = next((p for p in prims
+                     if isinstance(p, ConstraintHandler)), None)
+    global_t = isinstance(declared, Transformation) or (
+        declared is None and not built._has_equation_constraints())
+    # a stage that declares no handler runs under the global one, which
+    # the flat staged emit auto-emits as Transformation for MP constraints
+    transformation = (any(isinstance(st.constraints, Transformation)
+                          or (st.constraints is None and global_t)
+                          for st in stages)
+                      if stages else global_t)
     return FixedDofs(
         fixed={n: frozenset(d) for n, d in fixed.items()},
         staged=frozenset(staged), ndf=eff, default_ndf=default,
@@ -1005,11 +1006,6 @@ def _emit_rigid_diaphragms(
         )
 
 
-#: The DOFs a ``rigidDiaphragm`` constrains in its plane, by ``perpDirn``.
-_DIAPHRAGM_IN_PLANE = {1: frozenset({2, 3, 4}), 2: frozenset({1, 3, 5}),
-                       3: frozenset({1, 2, 6})}
-
-
 def _refuse_partly_fixed_diaphragm(
     emitter: "Emitter", rec: Any, perp: int, fixed: "FixedDofs | None",
 ) -> None:
@@ -1030,7 +1026,11 @@ def _refuse_partly_fixed_diaphragm(
     if not (fixed.transformation or forced):
         return
     master = int(rec.master_node)
-    plane = _DIAPHRAGM_IN_PLANE[perp]
+    from .ndf import _DIAPHRAGM_TIED_DOFS
+
+    plane = _DIAPHRAGM_TIED_DOFS.get((fixed.ndm, perp))
+    if plane is None:
+        return
     held = (set(fixed.fixed.get(master, frozenset()))
             | {d for d in plane if (master, d) in fixed.staged}) & plane
     if not held or held == plane:
