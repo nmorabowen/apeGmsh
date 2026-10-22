@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_emit import material_stage_flip_commands
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo
@@ -1520,12 +1521,12 @@ class PyEmitter:
         self._lines.indent = prev_indent
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        # A plastic flip also sweeps every element (#2445):
+        # material_stage_flip_commands says why.
         prev_indent = self._lines.indent
         self._lines.indent = ""
-        self._lines.append(_ops_call(
-            "updateMaterialStage",
-            "-material", int(mat_tag), "-stage", int(stage),
-        ))
+        for command, argv in material_stage_flip_commands(mat_tag, stage):
+            self._lines.append(_ops_call(command, *argv))
         self._lines.indent = prev_indent
 
     def _emit_hook_ramp_function(

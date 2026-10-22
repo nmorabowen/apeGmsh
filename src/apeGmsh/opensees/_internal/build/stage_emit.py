@@ -670,6 +670,59 @@ def emit_zero_velocities_by_record(
             cursor.close()
 
 
+#: The element-tag range a plastic stage flip sweeps: every tag an
+#: OpenSees element can hold (a C++ ``int``, from 1).
+MATERIAL_STATE_ELE_RANGE: tuple[int, int] = (1, 2147483647)
+
+
+def material_stage_flip_commands(
+    mat_tag: int, stage: int,
+) -> tuple[tuple[str, tuple[int | float | str, ...]], ...]:
+    """The commands one ``s.update_material_stage`` flip emits (#2445).
+
+    Each entry is ``(command, argv)``; every target renders them alike.
+    ``updateMaterialStage`` alone reaches the material through
+    ``MaterialStageParameter::setDomain``, which stops at the FIRST
+    element that accepts it, so a ``ManzariDafalias`` /
+    ``LadrunoSANISAND`` flip to a plastic stage runs ``Elastic2Plastic()``
+    on that element's integration points only. A flip to a stage ``>= 1``
+    is therefore preceded by::
+
+        setParameter -val <stage> -eleRange 1 2147483647 materialState <tag>
+
+    ``setParameter`` with an element selector builds an
+    ``ElementStateParameter`` that offers ``materialState <tag>`` to
+    every element in the range, one at a time, and updates each element
+    that accepts it: every integration-point material of the tag runs its
+    own stage update, ``Elastic2Plastic()`` included. Elements of other
+    materials decline it. OpenSees numbers the transient parameter itself
+    (``maxParamTag + 1``) and removes it, as ``updateMaterialStage`` does,
+    so the deck carries no parameter tag. (The selector is needed: the
+    selector-free form consumes the parameter name as an unknown option
+    and updates nothing, measured on stock 3.8.0 and the fork.) The
+    ``updateMaterialStage`` line still follows: it sets the class-wide
+    flag, reaches the elements that refresh their stage caches only on it
+    (``LadrunoUP``), and its second ``Elastic2Plastic()`` on the first
+    element repeats the first (the class-wide check of
+    ``stage/_builder.py`` and the #2446 route proof hold the rest).
+
+    A stage ``0`` flip does no per-instance work, so it stays the one
+    ``updateMaterialStage`` line.
+    """
+    tag = int(mat_tag)
+    value = int(stage)
+    ums = ("updateMaterialStage", ("-material", tag, "-stage", value))
+    if value < 1:
+        return (ums,)
+    lo, hi = MATERIAL_STATE_ELE_RANGE
+    return (
+        ("setParameter", (
+            "-val", float(value), "-eleRange", lo, hi,
+            "materialState", str(tag))),
+        ums,
+    )
+
+
 #: One SP-constraint operation in a node's owner-side command stream,
 #: replayed onto that node's ghost copies (ADR 0027 INV-2).  Either
 #: ``("fix", flags)`` — the 0/1 fixity vector ``ops.fix`` / ``s.fix``
