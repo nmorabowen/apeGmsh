@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_emit import MaterialStageCarriers
+from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo, OpenSeesTarget
@@ -515,6 +517,8 @@ class TclEmitter:
         if backend is not None:
             header.append(provenance_stamp(backend))
         self._lines: _LineBuf = _LineBuf(header)
+        # The elements each swept material is on, for its plastic flip.
+        self._stage_carriers = MaterialStageCarriers()
         # Tracks the type token of the currently-open pattern (for
         # pattern_close to decide whether to emit ``\\}``). None means
         # no pattern open or the open pattern is single-line.
@@ -565,6 +569,8 @@ class TclEmitter:
         self._analysis_token: str | None = None
         # Set by the bridge when the deck will write a record.
         self._run_record: bool = False
+        # The ManzariDafalias ``-stage 0`` lines owed before a solve verb.
+        self._stage0 = StageZeroLedger()
 
     # -- Output --------------------------------------------------------------
 
@@ -949,6 +955,8 @@ class TclEmitter:
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
         warn_rc_c2_deck(mat_type, params)
+        self._stage0.material(mat_type, tag)
+        self._stage_carriers.note_material(mat_type, tag, params)
         self._lines.append(_join("nDMaterial", mat_type, tag, *params))
 
     def section(
@@ -995,6 +1003,8 @@ class TclEmitter:
     def element(
         self, ele_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        self._stage0.owed = True
+        self._stage_carriers.note_element(ele_type, tag, args)
         self._lines.append(_join("element", ele_type, tag, *args))
 
     # -- Time series --------------------------------------------------------
@@ -1127,6 +1137,7 @@ class TclEmitter:
         label: str | None = None,
         strategy: StrategySpec | None = None,
     ) -> int:
+        self._stage_zero()
         # Fail-loud per-increment loop (see the Emitter Protocol note):
         # a batched ``analyze N`` short-circuits internally on the first
         # failed increment and the deck would silently run on with the
@@ -1382,6 +1393,7 @@ class TclEmitter:
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
+        self._stage_zero()
         self._lines.append(_join("eigen", solver, num_modes))
         return []
 
@@ -1399,6 +1411,7 @@ class TclEmitter:
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
     ) -> list[float]:
+        self._stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
@@ -1655,6 +1668,7 @@ class TclEmitter:
         args: tuple[str | int, ...],
         value: float,
     ) -> None:
+        self._stage0.parameter(args)
         self._lines.append(_join("parameter", int(pid)))
         for et in ele_tags:
             self._lines.append(
@@ -1809,19 +1823,30 @@ class TclEmitter:
         self._lines.indent = prev_indent
 
     def remove_element(self, tag: int) -> None:
+        self._stage_carriers.note_removed(tag)
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"remove element {int(tag)}")
         self._lines.indent = prev_indent
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        self._stage0.user_flip(mat_tag)
+        # A plastic flip of a swept material also updates each of its
+        # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
         self._lines.indent = ""
-        self._lines.append(
-            f"updateMaterialStage -material {int(mat_tag)} "
-            f"-stage {int(stage)}"
-        )
+        for command, argv in self._stage_carriers.flip_commands(
+                mat_tag, stage):
+            self._lines.append(_join(command, *argv))
         self._lines.indent = prev_indent
+
+    def _stage_zero(self) -> None:
+        """Write the owed ManzariDafalias ``-stage 0`` lines
+        (:class:`~apeGmsh.opensees._internal.build.stage_validate.
+        StageZeroLedger`), at a solve verb."""
+        for tag in self._stage0.due():
+            self._lines.append(
+                f"updateMaterialStage -material {tag} -stage 0")
 
     def _emit_hook_ramp_proc(
         self,
@@ -1894,6 +1919,7 @@ class TclEmitter:
         MPI rank evaluates ``getPID`` as 0 — all ranks silently build
         rank 0's submodel (run-verified under ``mpiexec -n 8``).
         """
+        self._stage_carriers.partition_open(rank)
         if not self._partition_shim_emitted:
             # Emit at indent 0 (the shim is global, not per-rank).
             # In stream mode the active sink is the driver here, so the
@@ -1955,6 +1981,7 @@ class TclEmitter:
 
     def partition_close(self) -> None:
         """Close the current per-rank block; emit trailing blank line."""
+        self._stage_carriers.partition_close()
         # Drop one indent level.
         if self._lines.indent.endswith("    "):
             self._lines.indent = self._lines.indent[:-4]
