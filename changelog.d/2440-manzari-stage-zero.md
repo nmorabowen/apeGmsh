@@ -27,10 +27,14 @@ fork's answer to round-off.
   reads the flag there. A script that sources such a deck and then solves
   must set the stage itself.
 
-**The class-wide stage check moves to the emit.** The #2439 refusal of a
-flip that names only some of a group's materials now runs when the model is
-emitted, beside validator V7, instead of when the stage closes. It is the
-same refusal and the same message, but it now sees two more things:
+**The class-wide stage check moves to the emit.** This supersedes the
+"when the stage closes" wording of the #2439 entry. The refusal of a flip
+that names only some of a group's materials, by either route, now runs
+when the model is emitted, beside validator V7. No check is left at stage
+close: a later stage can still activate or remove the elements that decide
+which materials are live, so a check there could refuse a correct model.
+The refusal and its message are the same as #2439's, but it now sees two
+more things:
 
 - It sees the final model, so a group material registered after the stage
   block counts. The stage-close check missed that material, and the flip

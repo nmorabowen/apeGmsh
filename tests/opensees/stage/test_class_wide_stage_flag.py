@@ -253,6 +253,31 @@ def test_a_material_removed_in_the_same_stage_need_not_be_named() -> None:
     assert ("update_material_stage", (ops.tag_for(mat_a), 1), {}) in rec.calls
 
 
+def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
+    """``B`` is registered before the flip stage closes, but the stage after
+    it activates ``B``, so ``B`` is out of the domain at the flip line.  Only
+    the final model shows that, which is why no check runs at stage close:
+    one there would refuse this correct model."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_a = ops.nDMaterial.ManzariDafalias(name="mat_a", **_MD)
+        mat_b = ops.nDMaterial.ManzariDafalias(name="mat_b", **_MD)
+    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
+    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    ops.fix(nodes=[1, 2], dofs=(0, 1))
+    _stage(ops, [([mat_a], 1)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ops.stage(name="install") as s:
+            s.activate(pgs=["B"])
+            s.fix(nodes=[5, 6], dofs=(0, 1))
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    _emit(ops)
+
+
 def test_a_material_removed_in_an_earlier_stage_need_not_be_named() -> None:
     ops, mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
     _stage(ops, [], name="excavate", remove="B")
