@@ -232,6 +232,11 @@ CORPUS: tuple[Model, ...] = (
                 "rigid_diaphragm", "rigid_body", "embedded",
                 "equal_dof,rigid_beam,rigid_diaphragm,embedded")
       for p in _B),
+    # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
+    # the archive stores none of it and the replay writes it back: before
+    # the analyze of the stage that adds the upper quad, then the user's 1.
+    _m("tests.opensees.integration.test_manzari_stage_zero",
+       "_md_column_flipped"),
 )
 
 
