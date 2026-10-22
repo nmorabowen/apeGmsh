@@ -87,17 +87,11 @@ _RUN_ROWS = [m for m in CORPUS
 #: Shrink-only.
 _FIXTURE_UNSOLVABLE = ("fixture has no supports; eigen cannot run "
                        "(fixture-unsolvable, not a replay fault)")
-_KITCHEN_SINK_SINGULAR = (
-    "fixture removes the Rock quad and the base x-fix, so the Fill quad "
-    "is singular on stock and fork alike (fixture-unsolvable, not a "
-    "replay fault; the fixture fix is #2376)")
 _KNOWN_STOCK_FAILURES: dict[str, str] = {
     "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
         _FIXTURE_UNSOLVABLE,
     "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
         _FIXTURE_UNSOLVABLE,
-    "test_h5_stages_reader::_real_kitchen_sink_bridge":
-        _KITCHEN_SINK_SINGULAR,
 }
 #: The model the synthetic fatal reorder (#1814) is cut from.
 _FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
@@ -234,18 +228,17 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...],
 
 
 def test_known_stock_failures_name_run_rows() -> None:
-    """The table is exactly these three rows, each a row the net runs,
+    """The table is exactly these two rows, each a row the net runs,
     each citing its fixture fact: it can only shrink as a fixture is
     fixed, never grow. #2372 removed the #2220 rows: two now stamp what
-    their deck needs, one fixture was fixed, and the kitchen sink names
-    its fixture fact (its fix is #2376)."""
+    their deck needs, one fixture was fixed. #2376 fixed the kitchen
+    sink's fixture (its stage holds what the removals orphan), so its
+    deck runs and its row is gone."""
     assert _KNOWN_STOCK_FAILURES == {
         "test_h5_commands_program::_frame[rayleigh=False,modal=True]":
             _FIXTURE_UNSOLVABLE,
         "test_h5_commands_program::_frame[rayleigh=True,modal=True]":
             _FIXTURE_UNSOLVABLE,
-        "test_h5_stages_reader::_real_kitchen_sink_bridge":
-            _KITCHEN_SINK_SINGULAR,
     }
     assert set(_KNOWN_STOCK_FAILURES) <= {m.id for m in _RUN_ROWS}
     assert not any("#2220" in r for r in _KNOWN_STOCK_FAILURES.values())

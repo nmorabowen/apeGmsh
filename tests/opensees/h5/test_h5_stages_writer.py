@@ -285,7 +285,14 @@ def test_stages_zone_deterministic_across_writes(tmp_path: Path) -> None:
 
 def _build_kitchen_sink_bridge() -> apeSees:
     """Every stage mutation verb in one stage, on a real two-quad
-    :class:`FEMData` so the archive replays (#1880)."""
+    :class:`FEMData` so the archive replays (#1880).
+
+    The deck solves (#2376): removing the Rock quad orphans the Base
+    nodes, and the Fill quad then rests on nothing but its own
+    supports. So the stage holds FillTop in both DOFs, and re-holds the
+    released Base x-DOF (``remove_sp`` then ``support`` on the same
+    target, the same-stage re-support V1/V2 allow). Without either hold
+    the stiffness is singular on stock and fork alike."""
     fem = build_two_quad_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
@@ -296,9 +303,10 @@ def _build_kitchen_sink_bridge() -> apeSees:
 
     with ops.stage(name="mutate") as s:
         s.activate(pgs=["Fill"])
-        s.support(pg="FillTop", dofs=(1, 0))
+        s.support(pg="FillTop", dofs=(1, 1))
         s.mass(pg="FillTop", values=(2.0, 2.0))
         s.remove_sp(pg="Base", dofs=(1,))
+        s.support(pg="Base", dofs=(1, 0))
         s.remove_element(elements=[1])  # the global Rock quad (fem eid)
         s.damping.rayleigh(alpha_m=0.05)              # global form
         s.damping.rayleigh(alpha_m=0.1, on="Fill")    # region-scoped
@@ -340,8 +348,10 @@ def test_kitchen_sink_stage_branches(tmp_path: Path) -> None:
         assert len(hold_names) == 1
         hold = pats[hold_names[0]]
         sp_holds = hold["sp_holds"][()]
+        # Both support calls share the stage's one HOLD pattern: the
+        # re-held Base x-DOF and FillTop in both DOFs.
         assert sorted((int(r[0]), int(r[1])) for r in sp_holds) == [
-            (5, 1), (6, 1),
+            (1, 1), (2, 1), (5, 1), (5, 2), (6, 1), (6, 2),
         ]
         assert int(hold.attrs["emit_index"]) > 0
         # Stage rayleigh: global form dataset + emit-order stamps; the
