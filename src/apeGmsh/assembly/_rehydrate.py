@@ -41,6 +41,7 @@ import numpy as np
 
 from apeGmsh.mesh._compose import _apply_geometric_transform, _prefix_namespaced_name
 from apeGmsh.opensees._internal.typed_records import SectionSimpleRecord
+from apeGmsh.opensees.emitter.h5_reader import param_array_slots
 
 from ._errors import AssemblyError
 
@@ -717,12 +718,11 @@ def _group_ids(
 
 
 def _region_params(g: Any) -> list[Any]:
-    """A region group's ``params`` tail (the writer's float/str attr pair)."""
-    nums = [float(v) for v in g.attrs["params"]] if "params" in g.attrs else []
-    strs: list[str] = []
-    if "params_str" in g.attrs:
-        strs = [s.decode("utf-8") if isinstance(s, bytes) else str(s)
-                for s in g.attrs["params_str"]]
+    """A region group's ``params`` tail: the writer's float/str pair, as
+    attributes or, past the attribute limit, as datasets (opensees 2.34.0,
+    #2404), so a ``-damp`` in a long region is never missed."""
+    raw, strs, _ = param_array_slots(g, "params")
+    nums = [float(v) for v in raw]
     return [strs[i] if i < len(strs) and strs[i] != "" else v
             for i, v in enumerate(nums)]
 

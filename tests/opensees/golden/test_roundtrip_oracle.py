@@ -17,6 +17,11 @@ as is. The golden emit corpus beside this file is built on ``FEMStub`` and
 archives only the bridge zone, so it cannot be replayed (#1797). The ledger
 header records that.
 
+**A replay that leaves a stream out fails its row** (#2405): ``_replay``
+turns :class:`ReplaySkippedStreamWarning` into an error, and the corpus
+carries FEMData-side MP constraints (``_mp_bridge``), so a replay that drops
+a constraint cannot pass as a deck that merely lacks one.
+
 **Every difference is an assertion, not a skip.**
 ``roundtrip_oracle_ledger.txt`` holds one row per differing model:
 
@@ -104,6 +109,7 @@ from typing import Any, Callable
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees._internal.compose import ReplaySkippedStreamWarning
 from apeGmsh.opensees._internal.replay_types import (
     ReplaySlotTypeWarning, SlotTypes,
 )
@@ -208,6 +214,15 @@ CORPUS: tuple[Model, ...] = (
     # ... and with the bar's CorotTruss cells, which replay after the ties,
     # in the bridge's slot (#1828).
     _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", rebar_cells=True),
+    # #2405: FEMData-side MP constraints, which no row above carried, so a
+    # replay that dropped every global equalDOF passed. One row per kind the
+    # bridge fans out, and every kind at once, flat and partitioned.
+    *(_m("test_h5_mp_constraints_replay", "_mp_bridge", kinds=k,
+         partitioned=p)
+      for k in ("equal_dof", "named_equal_dof", "rigid_beam", "rigid_rod",
+                "rigid_diaphragm", "rigid_body", "embedded",
+                "equal_dof,rigid_beam,rigid_diaphragm,embedded")
+      for p in _B),
 )
 
 
@@ -303,6 +318,8 @@ def _replay(archive: Path, *, flat: bool = True) -> str:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         warnings.simplefilter("error", ReplaySlotTypeWarning)
+        # A replay that leaves a stream out fails the row (#2405).
+        warnings.simplefilter("error", ReplaySkippedStreamWarning)
         replay = OpenSeesModel.from_h5(str(archive)).build("tcl", flat=flat)
     assert isinstance(replay, str)
     return _canon(replay, archive.parent)

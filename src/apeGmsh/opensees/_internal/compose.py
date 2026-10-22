@@ -39,12 +39,13 @@ class ReplaySkippedStreamWarning(UserWarning):
     """Deck replay left out a stream the source model carries (D8, #1412).
 
     :func:`_replay_into` re-emits the ``/opensees`` deck records plus the
-    ``g.reinforce`` ties.  It has no deck record for the neutral-zone
-    streams that the forward bridge fans out at emit time: equalDOF /
-    rigidLink / rigidDiaphragm / node-to-surface couplings, penalty and
-    equation ties, ``g.embed`` ties, contacts, and phantom-bridged
-    interfaces.  A replayed deck that carries any of them differs from the
-    forward ``apeSees`` deck, so the replay warns and names each one.
+    ``g.reinforce`` ties, and the global ``/opensees/constraints`` MP rows
+    (#2405). It has no deck record for the equation ties, ``g.embed``
+    ties and contacts, nor for an MP constraint whose rows the archive
+    lacks. A replayed deck that leaves any of them out differs from the
+    forward ``apeSees`` deck, so the replay warns and names each one. A
+    stream it cannot write at all refuses instead
+    (:func:`refuse_unreplayable_streams`).
     """
 
 
@@ -451,8 +452,9 @@ def _interpolation_replays_as_element(rec: Any, kind_cls: Any) -> bool:
     )
 
 
-def _stage_mp_keys(stages: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
-    """The keys of every MP line the stage blocks of ``stages`` re-emit.
+def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
+    """The keys of every MP line the stage blocks of ``stages`` re-emit,
+    counted: a multiset, so N equal records need N lines.
 
     A key is ``(bucket, *what it ties)`` over the four ``StageRecordRO``
     MP buckets; :func:`_constraint_stage_keys` builds the matching side.
@@ -461,20 +463,141 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
     ``name=None`` (only its parent is named), and a ``rigid_body`` group
     writes its name on its first ``rigidLink`` only.
     """
-    keys: "set[tuple[Any, ...]]" = set()
+    keys: "Counter[tuple[Any, ...]]" = Counter()
     for s in stages:
-        for r in s.equal_dofs:
-            keys.add(("equal_dof", int(r.master), int(r.slave),
-                      tuple(int(d) for d in r.dofs)))
-        for r in s.rigid_links:
-            keys.add(("rigid_link", str(r.kind), int(r.master), int(r.slave)))
-        for r in s.rigid_diaphragms:
-            keys.add(("rigid_diaphragm", int(r.master),
-                      tuple(sorted(int(n) for n in r.slaves))))
-        for r in s.embedded_nodes:
-            keys.add(("embedded_node", int(r.cnode),
-                      tuple(int(n) for n in r.args)))
-    return frozenset(keys)
+        keys += _mp_row_keys((*s.equal_dofs, *s.rigid_links,
+                              *s.rigid_diaphragms, *s.embedded_nodes))
+    return keys
+
+
+def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
+    """The keys of archived MP rows (``EqualDOFRecord`` /
+    ``RigidLinkRecord`` / ``RigidDiaphragmRecord`` /
+    ``EmbeddedNodeRecord``), counted, shaped as
+    :func:`_constraint_stage_keys` / :func:`_interpolation_stage_keys`
+    build them for the FEMData side. An unknown row type raises."""
+    from .typed_records import (
+        EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
+        RigidLinkRecord,
+    )
+
+    keys: "Counter[tuple[Any, ...]]" = Counter()
+    for r in rows:
+        if isinstance(r, EqualDOFRecord):
+            keys[("equal_dof", int(r.master), int(r.slave),
+                  tuple(int(d) for d in r.dofs))] += 1
+        elif isinstance(r, RigidLinkRecord):
+            keys[("rigid_link", str(r.kind), int(r.master),
+                  int(r.slave))] += 1
+        elif isinstance(r, RigidDiaphragmRecord):
+            keys[("rigid_diaphragm", int(r.master),
+                  tuple(sorted(int(n) for n in r.slaves)))] += 1
+        elif isinstance(r, EmbeddedNodeRecord):
+            keys[("embedded_node", int(r.cnode),
+                  tuple(int(n) for n in r.args))] += 1
+        else:
+            raise TypeError(
+                f"replay: {type(r).__name__} is no MP-constraint row.")
+    return keys
+
+
+def _emit_mp_row(emitter: Any, r: Any) -> None:
+    """Re-emit one archived MP row, its ``name`` label first, as the
+    bridge wrote it. An unknown row type raises."""
+    from .typed_records import (
+        EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
+        RigidLinkRecord,
+    )
+
+    if not isinstance(r, (EqualDOFRecord, RigidLinkRecord,
+                          RigidDiaphragmRecord, EmbeddedNodeRecord)):
+        raise TypeError(f"replay: {type(r).__name__} is no MP-constraint row.")
+    if r.name:
+        emitter.mp_constraint_comment(r.name)
+    if isinstance(r, EqualDOFRecord):
+        emitter.equalDOF(int(r.master), int(r.slave),
+                         *(int(d) for d in r.dofs))
+    elif isinstance(r, RigidLinkRecord):
+        emitter.rigidLink(r.kind, int(r.master), int(r.slave))
+    elif isinstance(r, RigidDiaphragmRecord):
+        emitter.rigidDiaphragm(int(r.perp_dir), int(r.master),
+                               *(int(n) for n in r.slaves))
+    else:
+        emitter.embeddedNode(
+            int(r.ele_tag), int(r.cnode), *(int(a) for a in r.args),
+            stiffness=r.stiffness, stiffness_p=r.stiffness_p,
+            rotational=r.rotational, pressure=r.pressure,
+        )
+
+
+def _refuse_replayed_partly_fixed_diaphragms(
+    *, ndm: int, fixes: "Sequence[Any]", diaphragms: "Sequence[Any]",
+    handlers: "Sequence[Any]", staged_fixes: "Sequence[Any]" = (),
+    staged_removals: "Sequence[tuple[int, int]]" = (),
+    pattern_sps: "Sequence[tuple[int, int]]" = (),
+) -> None:
+    """#2427 on the replay path (#2435): an archive written before the
+    emit-time refusal can hold a ``rigidDiaphragm`` whose master is fixed
+    on some in-plane DOFs only, under Transformation. Replaying it would
+    re-emit that silently wrong deck, so the same check runs on the
+    archived rows (fix masks, stage fixes and removals, pattern SPs, the
+    recorded ``constraints`` handlers), as ``fixed_dof_map`` reads them
+    at emit, so an archive the emit accepted always replays.
+    """
+    from types import SimpleNamespace
+
+    from .build.constraints import FixedDofs, _refuse_partly_fixed_diaphragm
+
+    rows = list(diaphragms)
+    if not rows or "Transformation" not in {str(h) for h in handlers if h}:
+        return
+    fixed: "dict[int, set[int]]" = {}
+    for rec in fixes:
+        fixed.setdefault(int(rec.tag), set()).update(
+            i + 1 for i, m in enumerate(rec.dofs) if int(m))
+    staged = {(int(r.tag), i + 1) for r in staged_fixes
+              for i, m in enumerate(r.dofs) if int(m)}
+    staged |= {(int(n), int(d)) for n, d in staged_removals}
+    staged |= {(int(n), int(d)) for n, d in pattern_sps}
+    fd = FixedDofs(fixed={n: frozenset(d) for n, d in fixed.items()},
+                   staged=frozenset(staged), ndf={}, default_ndf=0,
+                   owner={}, ndm=int(ndm), transformation=True)
+    for r in rows:
+        _refuse_partly_fixed_diaphragm(
+            None, SimpleNamespace(master_node=int(r.master), name=r.name),
+            int(r.perp_dir), fd)
+
+
+def refuse_archived_partly_fixed_diaphragms(
+    *, ndm: int, fixes: "Sequence[Any]", mp_constraints: "Sequence[Any]",
+    analysis_attrs: "dict[str, Any] | None", patterns: "Sequence[Any]",
+    stages: "Sequence[Any]" = (),
+) -> None:
+    """:func:`_refuse_replayed_partly_fixed_diaphragms` over one
+    rehydrated archive, global rows and every stage's. Called by
+    ``OpenSeesModel.build`` before any emitter exists (the live one
+    wipes the domain on creation)."""
+    from .typed_records import RigidDiaphragmRecord
+
+    def sps(pats: "Sequence[Any]") -> "list[tuple[int, int]]":
+        return [(int(sp.target), int(sp.dof)) for pat in pats
+                for sp in (getattr(pat, "sps", None) or ())] + [
+            (int(n), int(d)) for pat in pats
+            for n, d in (getattr(pat, "sp_holds", None) or ())]
+
+    _refuse_replayed_partly_fixed_diaphragms(
+        ndm=int(ndm), fixes=fixes,
+        diaphragms=[
+            *(r for _i, r in mp_constraints
+              if isinstance(r, RigidDiaphragmRecord)),
+            *(r for st in stages for r in st.rigid_diaphragms)],
+        handlers=[(analysis_attrs or {}).get("handler"),
+                  *(dict(st.chain_attrs or {}).get("handler")
+                    for st in stages)],
+        staged_fixes=[r for st in stages for r in st.fixes],
+        staged_removals=[(n, d) for st in stages for n, d in st.remove_sps],
+        pattern_sps=[*sps(patterns),
+                     *(x for st in stages for x in sps(st.patterns))])
 
 
 def _pair_stage_keys(rec: Any, kind_cls: Any) -> "list[tuple[Any, ...]]":
@@ -521,15 +644,21 @@ def _constraint_stage_keys(
 
 def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
     """Stage-bucket key of one non-element interpolation row: its
-    ``embeddedNode`` line (none on the equation route, a ledger verb)."""
+    ``embeddedNode`` line (none on the equation route, a ledger verb).
+
+    The key carries the retained nodes the forward emit writes
+    (``_embedded_retained_nodes``): a quad tie goes out on the triangle of
+    its face that holds the point, three of the record's four corners."""
+    from .build.constraints import _embedded_retained_nodes
+
     if rec.enforce == "equation":
         return []
     return [("embedded_node", int(rec.slave_node),
-             tuple(int(n) for n in rec.master_nodes))]
+             tuple(int(n) for n in _embedded_retained_nodes(rec)))]
 
 
 def _skipped_replay_streams(
-    fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
+    fem: Any, *, stage_mp_keys: "Counter[tuple[Any, ...]] | frozenset[tuple[Any, ...]]",
 ) -> "dict[str, Counter[str]]":
     """Return ``{stream: Counter(kind -> count)}`` for every non-empty
     neutral-zone stream that :func:`_replay_into` does not re-emit.
@@ -538,15 +667,23 @@ def _skipped_replay_streams(
     staged archive's stage blocks re-emit.  A record counts as replayed
     there only when every line its fan-out writes is among them, matched
     on bucket and nodes, so a stage that claims the equalDOF named ``x``
-    does not also excuse a rigidDiaphragm named ``x``.
+    does not also excuse a rigidDiaphragm named ``x``. The keys are a
+    multiset: a matched record consumes its lines, so two equal records
+    need two lines, and one line never excuses a second record.
 
     The streams are read without defaults: a ``fem`` that lacks one fails
     here rather than passing for empty.
     """
     out: "dict[str, Counter[str]]" = {}
 
+    available: "Counter[tuple[Any, ...]]" = Counter(stage_mp_keys)
+
     def _staged(keys: "list[tuple[Any, ...]]") -> bool:
-        return bool(keys) and all(k in stage_mp_keys for k in keys)
+        need = Counter(keys)
+        if not need or any(available[k] < n for k, n in need.items()):
+            return False
+        available.subtract(need)
+        return True
 
     node_set = fem.nodes.constraints
     kind_cls = node_set.Kind
@@ -591,8 +728,54 @@ def _skipped_replay_streams(
     return out
 
 
+def refuse_unreplayable_streams(fem: Any) -> None:
+    """Raise :class:`BridgeError` iff ``fem`` carries a stream the deck
+    replay cannot write, so it would run untied. Each kind is named, with
+    its count and the issue that tracks it:
+
+    - a ``node_to_surface`` / ``node_to_surface_spring`` coupling or a
+      mixed-ndf interface, whose lines tie through phantom nodes the
+      archive does not store (#2411);
+    - an interpolation on the ``enforce="equation"`` route, whose
+      ``equationConstraint`` lines the archive does not store (#2416).
+
+    :meth:`OpenSeesModel.build` calls it for the ``tcl`` / ``py`` /
+    ``live`` targets before any emitter is made, so a refused live build
+    leaves the domain as it was.
+    """
+    from .build.errors import BridgeError
+
+    kind_cls = fem.nodes.constraints.Kind
+    phantom_kinds = (kind_cls.NODE_TO_SURFACE, kind_cls.NODE_TO_SURFACE_SPRING)
+    phantom: "Counter[str]" = Counter(
+        str(rec.kind) for rec in fem.nodes.constraints
+        if rec.kind in phantom_kinds)
+    phantom.update(
+        f"{rec.kind} (mixed-ndf)" for rec in fem.elements.interfaces
+        if rec.phantom_node is not None)
+    equation: "Counter[str]" = Counter(
+        f"{rec.kind} (enforce='equation')"
+        for rec in fem.elements.constraints.interpolations()
+        if rec.enforce == "equation")
+    parts = []
+    for found, why in (
+        (phantom, "tie through phantom nodes the archive does not store "
+                  "(#2411)"),
+        (equation, "are equationConstraint lines the archive does not "
+                   "store (#2416)"),
+    ):
+        if found:
+            detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
+            parts.append(f"{detail}, whose deck lines {why}")
+    if parts:
+        raise BridgeError(
+            "Deck replay refuses this archive: it carries "
+            + "; and ".join(parts) + ". The replay would run untied. Load "
+            "FEMData.from_h5(path) and emit it through apeSees(fem).")
+
+
 def _warn_skipped_replay_streams(
-    fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
+    fem: Any, *, stage_mp_keys: "Counter[tuple[Any, ...]] | frozenset[tuple[Any, ...]]",
 ) -> None:
     """Warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a
     stream that replay does not re-emit, naming each stream and count."""
@@ -853,7 +1036,7 @@ _FLAT_SECTIONS: "dict[str, int]" = {
     "elements": 5,  # 6b
     "fixes": 6, "masses": 7,  # 7
     "region": 8, "command": 8,  # 7: regions, rayleigh, attaches, modal
-    "equation_constraints": 9,  # 7b
+    "mp_constraints": 9, "equation_constraints": 9,  # 7b
     "reinforce_ties": 10,  # 7b'
     "rebar_cells": 11,  # 7b''
     "initial_stress": 13,  # 7d
@@ -1165,9 +1348,10 @@ def _replay_into(
     reinforce_name_to_tag: "dict[str, int] | None" = None,
     embedded_rebars: "Sequence[Any]" = (),
     deck_ordering: bool = True,
-    stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
+    stage_mp_keys: "Counter[tuple[Any, ...]] | frozenset[tuple[Any, ...]]" = frozenset(),
     commands: "Sequence[Any]" = (),
     equation_constraints: "Sequence[Any]" = (),
+    mp_constraints: "Sequence[tuple[int | None, Any]]" = (),
     flat: bool = False,
     order: "_ReplayOrder | None" = None,
 ) -> None:
@@ -1209,7 +1393,11 @@ def _replay_into(
           verbatim and in store order: after the global
           ``rayleigh`` so a region-scoped one still wins per element, and
           before the recorders that reference a fan-out region by ``-R``
-      9b'. ``emitter.equationConstraint`` for ``equation_constraints``,
+      9b'. the global ``/opensees/constraints`` MP rows
+          (``mp_constraints``: ``(emit index | None, row)`` pairs, in the
+          bridge's order; #2405): its slot 7b, one unit keyed by the first
+          row's index
+      9b''. ``emitter.equationConstraint`` for ``equation_constraints``,
           in call order
       9c'. the g.reinforce ``LadrunoEmbeddedRebar`` ties: the stored
           ``embedded_rebars`` rows (opensees 2.29.0), else, for an older
@@ -1316,7 +1504,10 @@ def _replay_into(
             "deck_ordering=True; the H5 rewrite keeps its store order.")
 
     if fem is not None:
-        _warn_skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
+        # A record whose every line is an archived global row replays.
+        _warn_skipped_replay_streams(
+            fem, stage_mp_keys=Counter(stage_mp_keys) + _mp_row_keys(
+                tuple(row for _i, row in mp_constraints)))
 
     # Every step below appends ``(emit index | None, kind, thunk)`` units;
     # _run_units runs them in this (category) order, or merged by emit
@@ -1584,7 +1775,21 @@ def _replay_into(
         lambda rec: emitter.region(int(rec.tag), *rec.args),
     )
 
-    # 9b'. User ``equationConstraint`` rows, in call order,
+    # 9b'. The global MP rows, at the bridge's slot 7b: after the
+    # regions, before the equation constraints. One unit, keyed by its
+    # first row's emit index; the caller passes the rows in bridge order.
+    if mp_constraints:
+        first_mp = min((int(i) for i, _r in mp_constraints if i is not None),
+                       default=None)
+
+        def _mp_rows() -> None:
+            for _i, row in mp_constraints:
+                _emit_mp_row(emitter, row)
+
+        units.append((None if order is None else first_mp,
+                      "mp_constraints", _mp_rows))
+
+    # 9b''. User ``equationConstraint`` rows, in call order,
     # where the bridge emits them: after the regions, before the initial
     # stress. The archive keeps each one only as its ``/opensees/decl_params``
     # row (``H5Emitter`` ledgers the verb), which the caller decodes into
@@ -2270,58 +2475,29 @@ def _replay_staged_into(
         # equalDOF straddles rigidDiaphragm.  Merge-sort by the captured
         # emit_index to reproduce that exactly; fall back to the fixed
         # kind order for pre-P2.3 archives that carry no seq.
-        def _emit_rigid_link(r: Any) -> None:
-            if r.name:
-                emitter.mp_constraint_comment(r.name)
-            emitter.rigidLink(r.kind, int(r.master), int(r.slave))
-
-        def _emit_equal_dof(r: Any) -> None:
-            if r.name:
-                emitter.mp_constraint_comment(r.name)
-            emitter.equalDOF(
-                int(r.master), int(r.slave), *(int(d) for d in r.dofs),
-            )
-
-        def _emit_rigid_diaphragm(r: Any) -> None:
-            if r.name:
-                emitter.mp_constraint_comment(r.name)
-            emitter.rigidDiaphragm(
-                int(r.perp_dir), int(r.master),
-                *(int(s2) for s2 in r.slaves),
-            )
-
-        def _emit_embedded(r: Any) -> None:
-            if r.name:
-                emitter.mp_constraint_comment(r.name)
-            emitter.embeddedNode(
-                int(r.ele_tag), int(r.cnode), *(int(a) for a in r.args),
-                stiffness=r.stiffness, stiffness_p=r.stiffness_p,
-                rotational=r.rotational, pressure=r.pressure,
-            )
-
         mp_groups = (
-            (st.rigid_links, st.rigid_link_seq, _emit_rigid_link),
-            (st.equal_dofs, st.equal_dof_seq, _emit_equal_dof),
-            (st.rigid_diaphragms, st.rigid_diaphragm_seq, _emit_rigid_diaphragm),
-            (st.embedded_nodes, st.embedded_node_seq, _emit_embedded),
+            (st.rigid_links, st.rigid_link_seq),
+            (st.equal_dofs, st.equal_dof_seq),
+            (st.rigid_diaphragms, st.rigid_diaphragm_seq),
+            (st.embedded_nodes, st.embedded_node_seq),
         )
         have_seq = all(
-            len(seq) == len(recs) for recs, seq, _ in mp_groups
-        ) and any(seq for _, seq, _ in mp_groups)
+            len(seq) == len(recs) for recs, seq in mp_groups
+        ) and any(seq for _, seq in mp_groups)
         if have_seq:
-            mp_items: "list[tuple[int, Any, Any]]" = []
-            for recs, seq, fn in mp_groups:
+            mp_items: "list[tuple[int, Any]]" = []
+            for recs, seq in mp_groups:
                 for s_idx, rec in zip(seq, recs):
-                    mp_items.append((int(s_idx), fn, rec))
+                    mp_items.append((int(s_idx), rec))
             mp_items.sort(key=lambda it: it[0])
-            for _s, fn, rec in mp_items:
-                fn(rec)
+            for _s, rec in mp_items:
+                _emit_mp_row(emitter, rec)
         else:
             # Pre-P2.3 fallback: fixed kind order (correct unless a
             # stage mixes rigid_diaphragm + kinematic_coupling).
-            for recs, _seq, fn in mp_groups:
+            for recs, _seq in mp_groups:
                 for rec in recs:
-                    fn(rec)
+                    _emit_mp_row(emitter, rec)
 
         # HOLD support patterns (slot 10, BEFORE domain_change) — split
         # by sp_holds presence (the role attr is not read back).
