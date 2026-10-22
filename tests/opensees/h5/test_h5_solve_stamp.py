@@ -41,6 +41,7 @@ from apeGmsh.opensees.emitter.caps import (
     SolveStamp,
     binding_systems,
     flat_requires,
+    is_fork_system,
     is_mpi_system,
     value_requires,
 )
@@ -506,8 +507,13 @@ def test_build_live_refuses_before_touching_the_domain(
     ((), ("MumpsParallel",), "flat", frozenset({"mpi"})),
     ((), (), "partitioned", frozenset({"mpi"})),
     (("mpco",), ("Mumps",), "partitioned", frozenset({"mpco", "mpi"})),
+    ((), ("Pardiso",), "flat", frozenset({"fork"})),
+    ((), ("UmfPack", "pardiso"), "flat", frozenset({"fork"})),
+    (("mpco",), ("Pardiso", "Mumps"), "partitioned",
+     frozenset({"fork", "mpco", "mpi"})),
 ], ids=["none", "plain", "mpco", "mpco-case", "mumps", "mumps-family",
-        "partitioned", "all"])
+        "partitioned", "all", "pardiso", "pardiso-staged-case",
+        "every-token"])
 def test_value_requires_closed_form(
     kinds: tuple, systems: tuple, mode: str, want: frozenset,
 ) -> None:
@@ -674,14 +680,19 @@ def test_the_value_tokens_change_model_hash_only_where_they_appear(
 
 #: The ``requires`` a flat solving frame stamps with each ``system`` of the
 #: bridge's LinearSystem family (``analysis/system.py``), audited on stock
-#: openseespywin 3.7.1.2 and the fork 79e06 (one-process truss solve):
-#: ``Mumps`` and ``ParallelProfileSPD`` abort on both builds ("unknown
-#: system type"), so they need an MPI run; ``MPIDiagonal`` falls back to
-#: the serial diagonal solver on both, so it needs nothing. Every member is
-#: listed, so a new one fails until it is classified here.
+#: openseespywin 3.7.1.2 and the fork 79e06 (one-process truss solve, #2372
+#: F1, repeated in #2429): ``Pardiso`` refuses on stock and solves on the
+#: fork, so it needs the fork (#2393); ``Mumps`` and ``ParallelProfileSPD``
+#: abort on both builds ("unknown system type"), so they need an MPI run;
+#: ``MPIDiagonal`` falls back to the serial diagonal solver on both, so it
+#: needs nothing; every other member solves on both. Every member is
+#: listed, so a new one fails until it is classified here, and the live
+#: net (``test_roundtrip_oracle_live.py``) runs each member's deck on the
+#: bound build against this table.
 _SYSTEM_TOKENS: dict[str, tuple[str, ...]] = {
     "BandGeneral": (), "BandSPD": (), "ProfileSPD": (), "SProfileSPD": (),
-    "UmfPack": (), "Pardiso": (), "Mumps": ("mpi",), "SparseGeneral": (),
+    "UmfPack": (), "Pardiso": ("fork",), "Mumps": ("mpi",),
+    "SparseGeneral": (),
     "SparseSYM": (), "FullGeneral": (), "Diagonal": (), "MPIDiagonal": (),
     "ParallelProfileSPD": ("mpi",),
 }
@@ -722,6 +733,7 @@ def test_each_system_pins_its_token(
     assert model.solve_stamp.requires == _SYSTEM_TOKENS[name]
     assert model.replay_requires() == _SYSTEM_TOKENS[name]
     assert is_mpi_system(name) == ("mpi" in _SYSTEM_TOKENS[name])
+    assert is_fork_system(name) == ("fork" in _SYSTEM_TOKENS[name])
 
 
 # -- F2: a flat replay re-derives its own "mpi" (T ruling (a), #2372) --------
@@ -736,8 +748,14 @@ def test_each_system_pins_its_token(
     (("fork", "mpco", "mpi"), ("BandGeneral",), ("fork", "mpco")),
     (("fork",), ("Mumps",), ("fork",)),
     ((), ("Mumps",), ()),
+    ((), ("Pardiso",), ("fork",)),
+    (("mpi",), ("UmfPack", "pardiso"), ("fork",)),
+    (("fork",), ("Pardiso",), ("fork",)),
+    (("mpco", "mpi"), ("Pardiso", "Mumps"), ("fork", "mpco", "mpi")),
 ], ids=["mode-only", "serial", "mpidiagonal", "mumps", "parallel-staged",
-        "keeps-others", "never-adds", "pre-2.33-keeps-meaning"])
+        "keeps-others", "never-adds-mpi", "pre-2.33-keeps-meaning",
+        "pardiso-adds-fork", "pardiso-staged-drops-mode-mpi",
+        "pardiso-already-stamped", "every-token-sorted"])
 def test_flat_requires_closed_form(
     requires: tuple, systems: tuple, want: tuple,
 ) -> None:
@@ -813,6 +831,40 @@ def test_build_live_names_the_mpi_system_of_a_flat_replay(
     msg = str(info.value)
     assert "'ParallelProfileSPD'" in msg and "serial system" in msg
     assert "mpiexec" not in msg
+
+
+@pytest.mark.parametrize("prefix", [False, True], ids=["today", "pre-2393"])
+@pytest.mark.parametrize("kind", ["stock", "fork"])
+def test_build_live_of_a_pardiso_archive_needs_the_fork(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, prefix: bool,
+) -> None:
+    """``system Pardiso`` refuses on stock (#2393), so ``build('live')`` of
+    its archive refuses a stock backend before the live emitter, naming
+    ``'fork'``, and goes on to it on the fork. ``pre-2393`` is the archive
+    an earlier bridge wrote, with ``requires=()``: the flat replay derives
+    ``"fork"`` from the stored system (:func:`flat_requires`), so it fails
+    closed too."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    out = tmp_path / "m.h5"
+    _system_frame("Pardiso", staged=False).h5(str(out))
+    if prefix:
+        _tamper(out, requires=[])
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp is not None
+    assert model.solve_stamp.requires == (() if prefix else ("fork",))
+    assert model.replay_requires() == ("fork",)
+    _FakeLive.constructed = []
+    monkeypatch.setattr(live_mod, "LiveOpsEmitter", _FakeLive)
+    monkeypatch.setattr(live_mod, "get_backend_info", lambda: _backend(kind))
+    if kind == "stock":
+        with pytest.raises(BridgeError, match="require 'fork'.*stock build"):
+            model.build("live")
+        assert _FakeLive.constructed == []
+    else:
+        with pytest.raises(_Reached):
+            model.build("live")
+        assert len(_FakeLive.constructed) == 1
 
 
 def test_binding_systems_skip_a_runtime_fallback() -> None:
