@@ -231,10 +231,11 @@ def refuse_fork_chain_before_wipe(bm: Any) -> None:
     the declared primitives: each chain primitive's own ``_emit`` into a
     recorder, plus the constraint handler the bridge auto-emits, decided by
     the bridge's own method.  No model walk, no domain, no file; measured
-    at about 0.5 ms on the emit-cost gate cells.  Nothing runs on the fork.
+    at about 0.5 ms on the emit-cost gate cells.  The backend is resolved
+    only when a fork-only type is found, and through the resolver's one
+    verdict (:func:`get_backend_info`), so a stock chain never imports
+    OpenSees here and a fork build passes.
     """
-    if backend_info_of(_get_ops()).kind == "fork":
-        return
     from .._internal.tag_resolution import set_tag_resolver
     from .._internal.types import (
         ConstraintHandler,
@@ -258,10 +259,13 @@ def refuse_fork_chain_before_wipe(bm: Any) -> None:
         # LadrunoProjection, ...) is decided only here, so reuse it rather
         # than restate it.
         bm._maybe_auto_emit_constraint_handler(probe, chain)
-    for name, args, _kw in probe.calls:
-        if name in CHAIN_ATTRS and args and is_fork_chain(name, str(args[0])):
-            raise RuntimeError(
-                _fork_chain_message(name, str(args[0])) + _UNSTAMPED_FORK_NOTE)
+    fork_only = [
+        (name, str(args[0])) for name, args, _kw in probe.calls
+        if name in CHAIN_ATTRS and args and is_fork_chain(name, str(args[0]))]
+    if fork_only and get_backend_info().kind != "fork":
+        family, c_type = fork_only[0]
+        raise RuntimeError(
+            _fork_chain_message(family, c_type) + _UNSTAMPED_FORK_NOTE)
 
 
 def _fork_chain_required(family: str, c_type: str) -> str:

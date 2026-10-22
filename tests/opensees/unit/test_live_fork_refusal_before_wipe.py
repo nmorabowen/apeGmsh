@@ -52,21 +52,39 @@ def test_a_stock_chain_still_wipes_and_runs(
     assert ("analyze", 1) in stock.calls
 
 
-def test_the_fork_skips_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    """On the fork nothing is read: the check returns before the chain."""
+def test_the_fork_passes_a_fork_only_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resolver's verdict says fork: a fork-only chain passes."""
     import apeGmsh.opensees.emitter.live as live_mod
 
     class _Fork:
         kind = "fork"
 
-    monkeypatch.setattr(live_mod, "backend_info_of", lambda _ops: _Fork())
+    monkeypatch.setattr(live_mod, "get_backend_info", lambda: _Fork())
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bm = _chain_frame("integrator", "LadrunoLoadControl",
+                          staged=False).build()
+    live_mod.refuse_fork_chain_before_wipe(bm)
 
-    class _NoChain:
-        @property
-        def primitives(self) -> Any:
-            raise AssertionError("the fork path read the chain")
 
-    live_mod.refuse_fork_chain_before_wipe(_NoChain())
+def test_a_stock_chain_never_resolves_the_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No fork-only type: the check imports no OpenSees backend, so it runs
+    where none is installed (the ``suite`` lane, a stubbed live emitter)."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    def _no_backend() -> Any:
+        raise AssertionError("the check resolved the backend")
+
+    monkeypatch.setattr(live_mod, "get_backend_info", _no_backend)
+    monkeypatch.setattr(live_mod, "_get_ops", _no_backend)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bm = _chain_frame("integrator", "LoadControl", staged=False).build()
+    live_mod.refuse_fork_chain_before_wipe(bm)
 
 
 @pytest.mark.live
