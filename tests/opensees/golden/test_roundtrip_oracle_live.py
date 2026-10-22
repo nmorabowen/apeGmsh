@@ -127,7 +127,11 @@ _ANALYZE_FAILED = re.compile(
 #: How stock openseespy accepts a type it does not know without raising:
 #: it warns, then the analysis solves with its default (an unknown
 #: ``integrator`` gives the default static integrator's answer, #2430).
-_SILENT_FALLBACK = re.compile(r"WARNING unknown \w+ type[^\n]*")
+_SILENT_FALLBACK = re.compile(r"WARNING unknown \w+ type (\S+)[^\n]*")
+#: A command a deck tries in ``try:`` and replaces in ``except`` (the
+#: ADR 0027 runtime fallback: ``Mumps``, then ``UmfPack``, in one
+#: process). Its ``unknown <family> type`` warning is that design at work.
+_TRIED = re.compile(r"^try:\n\s+ops\.\w+\('([^']+)'", re.M)
 
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
@@ -171,18 +175,21 @@ def _run(deck: Path) -> tuple[bool, str]:
         [sys.executable, str(deck)], capture_output=True, text=True,
         timeout=300, cwd=str(deck.parent),
     )
-    return _verdict(proc.returncode, proc.stdout, proc.stderr)
+    return _verdict(proc.returncode, proc.stdout, proc.stderr,
+                    tried=frozenset(_TRIED.findall(text)))
 
 
-def _verdict(rc: int, stdout: str, stderr: str) -> tuple[bool, str]:
+def _verdict(rc: int, stdout: str, stderr: str, *,
+             tried: "frozenset[str]" = frozenset()) -> tuple[bool, str]:
     """Whether a deck run reached its end, and its log. A deck *runs* when
     it exits 0, prints the completion marker last, **and** its stderr names
-    no :data:`_SILENT_FALLBACK`: stock openseespy accepts an unknown type
-    (a fork-only integrator) with that warning and solves on with its
-    default one, a wrong answer that exits 0 (#2430). Its line leads the
-    log."""
+    no :data:`_SILENT_FALLBACK` but for a type the deck itself ``tried``
+    (:data:`_TRIED`): stock openseespy accepts an unknown type (a fork-only
+    integrator) with that warning and solves on with its default one, a
+    wrong answer that exits 0 (#2430). Its line leads the log."""
     out = stdout.strip().splitlines()
-    fallback = _SILENT_FALLBACK.search(stderr)
+    fallback = next((m for m in _SILENT_FALLBACK.finditer(stderr)
+                     if m.group(1) not in tried), None)
     ran = rc == 0 and bool(out) and out[-1] == _MARKER and fallback is None
     head = f"{fallback.group(0)}\n" if fallback else ""
     return ran, (f"{head}rc={rc}\nstdout:\n{stdout[-1500:]}\n"
@@ -609,6 +616,15 @@ def test_the_verdict_counts_a_silent_fallback_as_not_running() -> None:
         assert not ran and _failure(log) == f"WARNING unknown {family} type Foo"
     assert not _verdict(1, done, "")[0]
     assert not _verdict(0, "u 0.01\n", "")[0]
+    # The ADR 0027 runtime fallback the deck tries is not silent; another
+    # unknown type beside it still is.
+    mumps = "WARNING unknown system type Mumps\n"
+    assert _verdict(0, done, mumps, tried=frozenset({"Mumps"}))[0]
+    assert not _verdict(0, done, mumps + "WARNING unknown integrator type "
+                        "LadrunoHHT\n", tried=frozenset({"Mumps"}))[0]
+    deck = ("ops.numberer('RCM')\ntry:\n    ops.system('Mumps')\n"
+            "except Exception:\n    ops.system('UmfPack')\n")
+    assert _TRIED.findall(deck) == ["Mumps"]
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])
