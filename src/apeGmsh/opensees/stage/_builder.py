@@ -30,7 +30,7 @@ from .._internal.build.records import (
     ZeroVelocityRecord,
 )
 from .._internal.ns import _StageDampingNS
-from .._internal.types import Primitive, Recorder, TimeSeries
+from .._internal.types import Element, Primitive, Recorder, TimeSeries
 from ..analysis.analysis import Static
 from ..node import Node, _iter_tags, _select_nodes
 from ._chain import (
@@ -60,7 +60,7 @@ STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
 )
 
 #: nDMaterial classes whose ``updateMaterialStage`` flag is a C++
-#: ``static``, mapped to that static (#2439).  The flag holds ONE value
+#: ``static``, mapped to that static.  The flag holds ONE value
 #: per process: ``updateMaterialStage -material A`` switches every
 #: material of the group, and for a flip to 1 only ``A`` runs
 #: ``Elastic2Plastic()``, so an unnamed material lands on an answer that
@@ -386,20 +386,30 @@ class _StageBuilder:
         value.  The model's materials are the ones registered on the
         bridge plus any an element registered so far depends on.  A
         subset would switch the unnamed materials too, through the
-        shared static, without their own flip (#2439).
+        shared static, without their own flip.  A group none of
+        whose named materials an element uses yet is left to validator
+        V7: that flip reaches no element, so it switches nothing.
         """
         if not self._update_material_stage_records:
             return
-        # Every class-wide material the model holds, by identity.
+        # Every class-wide material the model holds, by identity, and the
+        # ones an element registered so far uses.
         members: dict[int, Primitive] = {}
+        used: set[int] = set()
         seen: set[int] = set()
-        frontier: list[Primitive] = list(self._bridge._primitives)
+        frontier: list[tuple[Primitive, bool]] = [
+            (p, isinstance(p, Element)) for p in self._bridge._primitives]
         while frontier:
-            prim = frontier.pop()
-            if id(prim) in seen:
+            prim, under_element = frontier.pop()
+            if under_element:
+                if id(prim) in used:
+                    continue
+                used.add(id(prim))
+            elif id(prim) in seen:
                 continue
             seen.add(id(prim))
-            frontier.extend(prim.dependencies())
+            frontier.extend(
+                (dep, under_element) for dep in prim.dependencies())
             if type(prim).__name__ in CLASS_WIDE_STAGE_FLAG:
                 members[id(prim)] = prim
         group_of_tag: dict[int, str] = {}
@@ -417,6 +427,13 @@ class _StageBuilder:
                     named.setdefault(group, {}).setdefault(
                         int(tag), set()).add(int(rec.stage))
         for group, tags in named.items():
+            if not any(
+                id(mat) in used and self._bridge.tag_for(mat) in tags
+                for mat in members.values()
+            ):
+                # No named material has an element yet: the flip reaches
+                # nothing, which build-time validator V7 refuses.
+                continue
             classes = sorted(
                 cls for cls, flag in CLASS_WIDE_STAGE_FLAG.items()
                 if flag == group)
@@ -1568,7 +1585,7 @@ class _StageBuilder:
         stage-dependent analysis step.  The stage close enforces it for
         the :data:`CLASS_WIDE_STAGE_FLAG` groups: a stage that flips
         some of a group's materials but not all, or flips them to
-        different values, raises :class:`BridgeError` (#2439).
+        different values, raises :class:`BridgeError`.
 
         Parameters
         ----------

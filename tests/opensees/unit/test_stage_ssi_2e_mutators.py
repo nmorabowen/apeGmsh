@@ -765,12 +765,12 @@ def test_flat_emit_one_line_per_material_in_listed_order() -> None:
 def test_flat_emit_slot_is_after_removals_and_before_stage_bcs() -> None:
     """A stage may release, re-fix, and then flip - the flip line sits
     after both removals and before the stage's new ``fix``."""
-    ops, sand_a, _sand_b = _sanisand_ops()
+    ops, sand_a, sand_b = _sanisand_ops()
     ops.fix(pg="Left", dofs=(1, 1))
     with ops.stage(name="swap") as s:
         s.remove_sp(nodes=[1], dofs=(1,))
         s.remove_element(elements=[2])       # cimbra
-        s.update_material_stage(materials=[sand_a], stage=1)
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
         s.fix(nodes=[1], dofs=(1, 0))
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
@@ -813,9 +813,9 @@ def test_flat_emit_slot_is_after_the_stages_own_element_activation() -> None:
 
 
 def test_flat_flip_alone_still_emits_domain_change() -> None:
-    ops, sand_a, _b = _sanisand_ops()
+    ops, sand_a, sand_b = _sanisand_ops()
     with ops.stage(name="push") as s:
-        s.update_material_stage(materials=[sand_a], stage=1)
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     rec = RecordingEmitter()
@@ -826,9 +826,9 @@ def test_flat_flip_alone_still_emits_domain_change() -> None:
 
 
 def test_tcl_emit_update_material_stage_line() -> None:
-    ops, sand_a, _b = _sanisand_ops()
+    ops, sand_a, sand_b = _sanisand_ops()
     with ops.stage(name="push") as s:
-        s.update_material_stage(materials=[sand_a], stage=1)
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
