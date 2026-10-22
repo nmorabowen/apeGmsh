@@ -138,3 +138,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0120](0120-multi-rank-composed-models.md) | Multi-rank composed models: routed element-less nodes, one-graph repartition, a hosted assembly | Proposed |
 | [0121](0121-charter-v2-b-with-amendments.md) | Charter v2: B with amendments, one engine policy, a mechanized freeze | Accepted |
 | [0122](0122-ladruno-canonical-results-format.md) | `.ladruno` is the canonical results format | Accepted |
+| [0124](0124-gravity-preloaded-modal-and-per-mode-rsa.md) | Gravity-preloaded modal analysis and per-mode response spectrum on one live domain | Proposed |

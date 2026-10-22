@@ -259,6 +259,7 @@ from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin, no_live_domain_error
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
 from .procedures._frf import _FrfMixin
+from .procedures._gravity_modal import _GravityModalMixin
 from .procedures._modal import _ModalMixin
 from .stage._builder import _StageBuilder, _build_initial_stress_record
 from .stage._chain import algorithm_needs_test
@@ -8560,7 +8561,10 @@ def _merge_homogeneous_fixes(
     return tuple(out) if changed else records
 
 
-class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
+class apeSees(
+    _ContactQueryMixin, _ModalMixin, _GravityModalMixin, _FrfMixin,
+    _ExplicitMixin,
+):
     """The OpenSees bridge.
 
     Construct with a :class:`~apeGmsh.mesh.FEMData` snapshot:
