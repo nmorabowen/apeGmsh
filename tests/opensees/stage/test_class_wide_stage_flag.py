@@ -20,6 +20,7 @@ from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees._target import OpenSeesTarget
 from apeGmsh.opensees.stage._builder import (
     CLASS_WIDE_STAGE_FLAG,
+    FIRST_ELEMENT_ONLY_PLASTIC_INIT,
     FORK_RESETS_STAGE_STATIC,
     STAGE_FLAG_PARAMETERS,
     STAGED_MATERIAL_CLASSES,
@@ -455,30 +456,33 @@ def test_live_parameter_route_switches_the_unnamed_material(
 
 
 def _staged_bridge(cls: str, mode: "str | None") -> tuple[apeSees, Any]:
-    """One material on pg A (global) and pg B (activated by a later stage)."""
+    """Two materials of ``cls``, one element each: pg A is global and pg B
+    is activated by a later stage (one element per material keeps the
+    plastic flip clear of the #2445 refusal)."""
     target = None if mode is None else OpenSeesTarget(mode=mode)  # type: ignore[arg-type]
     ops = apeSees(_fem(), default_orientation=None, opensees=target)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        mat = getattr(ops.nDMaterial, cls)(name="mat", **_KW[cls])
-    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat)
-    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat)
+        mat_a = getattr(ops.nDMaterial, cls)(name="mat_a", **_KW[cls])
+        mat_b = getattr(ops.nDMaterial, cls)(name="mat_b", **_KW[cls])
+    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
+    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
     ops.fix(pg="Base", dofs=(0, 1))
-    return ops, mat
+    return ops, [mat_a, mat_b]
 
 
 def _flip_then_activate(
-    ops: apeSees, mat: Any, *, first: int = 1, reflip: bool = False,
+    ops: apeSees, mats: Any, *, first: int = 1, reflip: bool = False,
 ) -> None:
     with ops.stage(name="plastic") as s:
-        s.update_material_stage(materials=[mat], stage=first)
+        s.update_material_stage(materials=mats, stage=first)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
     with ops.stage(name="install") as s:
         s.activate(pgs=["B"])
         if reflip:
-            s.update_material_stage(materials=[mat], stage=first)
+            s.update_material_stage(materials=mats, stage=first)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
 
@@ -590,3 +594,158 @@ def test_live_reset_ladruno_sanisand_on_the_fork() -> None:
     code_a, uy_added = _run_reset("LadrunoSANISAND", add=True)
     assert (code_f, code_a) == (0, 0)
     assert abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
+
+
+# ---------------------------------------------------------------------------
+# #2445: a plastic flip initialises only the first element of a material
+# ---------------------------------------------------------------------------
+
+
+def _one_material_bridge(cls: str, pgs: "tuple[str, ...]") -> tuple[apeSees, Any]:
+    """One material of ``cls`` on the elements of ``pgs`` (one each)."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat = getattr(ops.nDMaterial, cls)(name="mat", **_KW[cls])
+    for pg in pgs:
+        ops.element.FourNodeQuad(pg=pg, thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(0, 1))
+    return ops, mat
+
+
+def _flip_one(ops: apeSees, mat: Any, *, route: str, value: int) -> None:
+    with ops.stage(name="push") as s:
+        if route == "stage":
+            s.update_material_stage(materials=[mat], stage=value)
+        else:
+            for pg in ("A", "B"):
+                s.update_parameter("materialState", float(value), pg=pg,
+                                   material=mat)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+
+
+def test_first_element_only_table() -> None:
+    assert FIRST_ELEMENT_ONLY_PLASTIC_INIT == {
+        "ManzariDafalias", "LadrunoSANISAND"}
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+@pytest.mark.parametrize("route", ["stage", "parameter"])
+def test_plastic_flip_of_a_two_element_material_refuses(
+    cls: str, route: str,
+) -> None:
+    ops, mat = _one_material_bridge(cls, ("A", "B"))
+    with pytest.raises(BridgeError) as exc:
+        _flip_one(ops, mat, route=route, value=1)
+    msg = str(exc.value)
+    assert "#2445" in msg and "Elastic2Plastic" in msg
+    assert f"{cls} (nDMaterial tag {ops.tag_for(mat)}, 2 elements)" in msg
+    assert not ops._stage_records
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+@pytest.mark.parametrize("route", ["stage", "parameter"])
+def test_plastic_flip_of_a_one_element_material_passes(
+    cls: str, route: str,
+) -> None:
+    ops, mat = _one_material_bridge(cls, ("A",))
+    with ops.stage(name="push") as s:
+        if route == "stage":
+            s.update_material_stage(materials=[mat], stage=1)
+        else:
+            s.update_parameter("materialState", 1.0, pg="A", material=mat)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    assert len(ops._stage_records) == 1
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+@pytest.mark.parametrize("route", ["stage", "parameter"])
+def test_elastic_flip_of_a_two_element_material_passes(
+    cls: str, route: str,
+) -> None:
+    ops, mat = _one_material_bridge(cls, ("A", "B"))
+    _flip_one(ops, mat, route=route, value=0)
+    assert len(ops._stage_records) == 1
+
+
+def test_a_flag_only_class_on_two_elements_passes() -> None:
+    ops, mat = _one_material_bridge("SAniSandMS", ("A", "B"))
+    _flip_one(ops, mat, route="stage", value=1)
+    assert len(ops._stage_records) == 1
+
+
+def _run_shared(cls: str, *, shared: bool, dev: float) -> "tuple[int, float]":
+    """Two quads, elastic start, hydrostatic 100, ``-stage 1``, +dev sigma_y.
+    ``shared``: ONE material (tag 1) on both quads, one flip line.  Else the
+    per-element reference: tag 1 and tag 2, both flipped.  Quad 2's uy."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = get_ops()
+    ops.wipe()
+    try:
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        quads = {1: (0.0, (1, 2, 3, 4)), 2: (2.0, (5, 6, 7, 8))}
+        for x0, nn in quads.values():
+            for n, (dx, y) in zip(nn, ((0, 0), (1, 0), (1, 1), (0, 1))):
+                ops.node(n, x0 + dx, float(y))
+                ops.fix(n, int(dx == 0), int(y == 0))
+        tags = (1,) if shared else (1, 2)
+        for t in tags:
+            ops.nDMaterial(cls, t, *_ARGS[cls])
+        for e, (_x0, nn) in quads.items():
+            ops.element("quad", e, *nn, 1.0, "PlaneStrain",
+                        1 if shared else e)
+        for t in tags:
+            ops.updateMaterialStage("-material", t, "-stage", 0)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        for _x0, nn in quads.values():
+            for n in (nn[1], nn[2]):
+                ops.load(n, -50.0, 0.0)
+            for n in (nn[2], nn[3]):
+                ops.load(n, 0.0, -50.0)
+        code = _analyze(ops)
+        ops.loadConst("-time", 0.0)
+        for t in tags:
+            ops.updateMaterialStage("-material", t, "-stage", 1)
+        ops.timeSeries("Linear", 2)
+        ops.pattern("Plain", 2, 2)
+        for _x0, nn in quads.values():
+            for n in (nn[2], nn[3]):
+                ops.load(n, 0.0, -dev / 2.0)
+        code = code or _analyze(ops)
+        return code, float(ops.nodeDisp(7, 2))
+    finally:
+        ops.wipe()
+
+
+def _assert_first_element_only(cls: str, dev: float) -> None:
+    ops, mat = _one_material_bridge(cls, ("A", "B"))
+    with pytest.raises(BridgeError, match="#2445"):
+        _flip_one(ops, mat, route="stage", value=1)
+    code_s, uy_shared = _run_shared(cls, shared=True, dev=dev)
+    code_r, uy_ref = _run_shared(cls, shared=False, dev=dev)
+    assert code_r == 0
+    # The second element of the shared material is not initialised: it is
+    # off the reference, or (LadrunoSANISAND) cannot carry the leg at all.
+    assert code_s != 0 or abs(uy_shared - uy_ref) > 1e-2 * abs(uy_ref)
+    if cls == "ManzariDafalias":
+        assert code_s == 0, "the measured ManzariDafalias case converges"
+
+
+@pytest.mark.live
+def test_live_shared_manzari_flip_misses_the_second_element() -> None:
+    """Stock and fork: one material on two quads, one ``-stage 1`` line;
+    quad 2 is off the per-element reference, the case the bridge refuses."""
+    pytest.importorskip("openseespy.opensees")
+    _assert_first_element_only("ManzariDafalias", 40.0)
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_live_shared_ladruno_sanisand_flip_misses_the_second_element() -> None:
+    pytest.importorskip("openseespy.opensees")
+    _assert_first_element_only("LadrunoSANISAND", 4.0)
