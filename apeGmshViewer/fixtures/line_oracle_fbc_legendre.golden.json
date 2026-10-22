@@ -1,0 +1,330 @@
+{
+ "fixture": "line_oracle_fbc_legendre",
+ "title": "2-D cantilever along +x, L = 3, fixed at a, tip load (Fx, Fy) = (1, -5) at b and uniform wy = -2, one forceBeamColumn, Legendre with 3 points, elastic section.",
+ "model_h5": "line_oracle_fbc_legendre.h5",
+ "ladruno": "line_oracle_fbc_legendre.ladruno",
+ "generator": "tests/fixtures/ladruno/make_line_diagram_oracle.py",
+ "ndm": 2,
+ "analysis": "static, LoadControl 0.5 x 2 steps, Newton to NormDispIncr 1e-12; lambda = TIME",
+ "responses": [
+  "section.force",
+  "localForce"
+ ],
+ "vecxz": null,
+ "sign_convention": {
+  "convention": "force-beam section force (#2009): station 1 (xi=-1) = s * localForce(end i), station 2 (xi=+1) = -s * localForce(end j)",
+  "end_i_sign": {
+   "axial_force": -1.0,
+   "bending_moment_y": -1.0,
+   "bending_moment_z": -1.0,
+   "shear_y": 1.0,
+   "shear_z": -1.0,
+   "torsion": -1.0
+  },
+  "end_i_sign_source": "src/apeGmsh/opensees/_response_catalog.py _LOCAL_FORCE_END_I_SIGN",
+  "physical": "N, Vz, T, My, Mz: resultants on the section's +x face (toward node j); Vy = dMz/dx (minus the +x-face y-resultant).",
+  "basicForce": "end moments read as stations [-M_1, +M_2] (#2011); N and T one station at xi = 0",
+  "moment_tension_side": {
+   "bending_moment_z": "Mz > 0 puts tension on the local -y side",
+   "bending_moment_y": "My > 0 puts tension on the local +z side"
+  },
+  "xi": "natural coordinate along the element from node i (-1) to node j (+1); node i is the line cell's first corner"
+ },
+ "closed_form": [
+  "Section at x: N = Fx, Mz = Fy (L - x) + w (L - x)^2 / 2, Vy = dMz/dx = -Fy - w (L - x).",
+  "Stations at the Legendre points: xi from the file's QUADRATURE/GP_PARAM, checked against the textbook abscissae."
+ ],
+ "elements": [
+  {
+   "fem_id": 3,
+   "ops_tag": 2,
+   "nodes": [
+    1,
+    2
+   ],
+   "coords_i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "coords_j": [
+    3.0,
+    0.0,
+    0.0
+   ],
+   "length": 3.0,
+   "frame": {
+    "x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "y": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "buckets": {
+    "section.force": {
+     "block": "73-ForceBeamColumn2d[1000:1:0]",
+     "columns": [
+      "P",
+      "Mz",
+      "P",
+      "Mz",
+      "P",
+      "Mz"
+     ],
+     "raw": [
+      [
+       0.5,
+       -10.197580015448898,
+       0.5,
+       -4.875,
+       0.5,
+       -0.9024199845511018
+      ],
+      [
+       1.0,
+       -20.395160030897795,
+       1.0,
+       -9.750000000000002,
+       1.0,
+       -1.8048399691022041
+      ]
+     ],
+     "time": [
+      0.5,
+      1.0
+     ],
+     "step": [
+      4,
+      5
+     ],
+     "stations": {
+      "axial_force": {
+       "xi": [
+        -0.774596669241483,
+        0.0,
+        0.7745966692414832
+       ],
+       "values": [
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         1.0,
+         1.0,
+         1.0
+        ]
+       ],
+       "from": "P at each GAUSS_ID",
+       "closed_form": [
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         1.0,
+         1.0,
+         1.0
+        ]
+       ]
+      },
+      "bending_moment_z": {
+       "xi": [
+        -0.774596669241483,
+        0.0,
+        0.7745966692414832
+       ],
+       "values": [
+        [
+         -10.197580015448898,
+         -4.875,
+         -0.9024199845511018
+        ],
+        [
+         -20.395160030897795,
+         -9.750000000000002,
+         -1.8048399691022041
+        ]
+       ],
+       "from": "Mz at each GAUSS_ID",
+       "closed_form": [
+        [
+         -10.197580015448898,
+         -4.875,
+         -0.9024199845511008
+        ],
+        [
+         -20.395160030897795,
+         -9.75,
+         -1.8048399691022017
+        ]
+       ]
+      }
+     },
+     "param_domain": "[-1,1]",
+     "section_location": [
+      0.33810499613777556,
+      1.5,
+      2.6618950038622247
+     ],
+     "gp_param_by_gauss_id": [
+      -1.0,
+      -2.220446049250313e-16,
+      1.0
+     ],
+     "gp_param_matches_true_xi": false,
+     "gp_param_defect": "The fork's QUADRATURE/GP_PARAM is not where OpenSees put the sections: LadrunoElementResults getCustomGaussPointLocations min/max-normalizes the 'integrationPoints' positions, 2 (x - x_min) / (x_max - x_min) - 1, instead of 2 x / L - 1, which is exact only for rules with both end points (Lobatto). The station values are at the true xi (stations.xi); a reader that takes xi from GP_PARAM draws them at gp_param_by_gauss_id."
+    },
+    "localForce": {
+     "block": "73-ForceBeamColumn2d[1000:1:0]",
+     "columns": [
+      "N_1",
+      "V_1",
+      "M_1",
+      "N_2",
+      "V_2",
+      "M_2"
+     ],
+     "raw": [
+      [
+       -0.5,
+       5.4999999999999964,
+       11.999999999999995,
+       0.5,
+       -2.499999999999997,
+       -2.8912057932946794e-15
+      ],
+      [
+       -1.0,
+       11.000000000000002,
+       24.000000000000004,
+       1.0,
+       -5.000000000000002,
+       -1.1832913578315177e-30
+      ]
+     ],
+     "time": [
+      0.5,
+      1.0
+     ],
+     "step": [
+      4,
+      5
+     ],
+     "stations": {
+      "axial_force": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         0.5,
+         0.5
+        ],
+        [
+         1.0,
+         1.0
+        ]
+       ],
+       "from": "[-1 * N_1, +1 * N_2]",
+       "closed_form": [
+        [
+         0.5,
+         0.5
+        ],
+        [
+         1.0,
+         1.0
+        ]
+       ]
+      },
+      "shear_y": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         5.4999999999999964,
+         2.499999999999997
+        ],
+        [
+         11.000000000000002,
+         5.000000000000002
+        ]
+       ],
+       "from": "[+1 * V_1, -1 * V_2]",
+       "closed_form": [
+        [
+         5.5,
+         2.5
+        ],
+        [
+         11.0,
+         5.0
+        ]
+       ]
+      },
+      "bending_moment_z": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         -11.999999999999995,
+         -2.8912057932946794e-15
+        ],
+        [
+         -24.000000000000004,
+         -1.1832913578315177e-30
+        ]
+       ],
+       "from": "[-1 * M_1, +1 * M_2]",
+       "closed_form": [
+        [
+         -12.0,
+         0.0
+        ],
+        [
+         -24.0,
+         0.0
+        ]
+       ]
+      }
+     }
+    }
+   },
+   "frame_quaternion_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "frame_quaternion_columns": "local x, y, z axes (R columns, global components)"
+  }
+ ],
+ "ladruno_provenance_keys": [
+  "fem_hash",
+  "model_hash",
+  "opensees_backend",
+  "opensees_build_sha",
+  "units",
+  "unsupported",
+  "writer"
+ ],
+ "opensees_build_sha": "462cf9cf301dc1e34395c08a5057c42e8c994043"
+}

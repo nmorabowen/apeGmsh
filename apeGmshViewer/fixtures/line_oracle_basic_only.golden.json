@@ -1,0 +1,416 @@
+{
+ "fixture": "line_oracle_basic_only",
+ "title": "3-D cantilever along +x, L = 4, tip load (1, 2, 3, 0.4, 0.5, 0.6), elasticBeamColumn, vecxz = (0, 0, 1), recording basicForce only (N, Mz_1, Mz_2, My_1, My_2, T).",
+ "model_h5": "line_oracle_basic_only.h5",
+ "ladruno": "line_oracle_basic_only.ladruno",
+ "generator": "tests/fixtures/ladruno/make_line_diagram_oracle.py",
+ "ndm": 3,
+ "analysis": "static, LoadControl 0.5 x 2 steps, Newton to NormDispIncr 1e-12; lambda = TIME",
+ "responses": [
+  "basicForce"
+ ],
+ "vecxz": [
+  0.0,
+  0.0,
+  1.0
+ ],
+ "sign_convention": {
+  "convention": "force-beam section force (#2009): station 1 (xi=-1) = s * localForce(end i), station 2 (xi=+1) = -s * localForce(end j)",
+  "end_i_sign": {
+   "axial_force": -1.0,
+   "bending_moment_y": -1.0,
+   "bending_moment_z": -1.0,
+   "shear_y": 1.0,
+   "shear_z": -1.0,
+   "torsion": -1.0
+  },
+  "end_i_sign_source": "src/apeGmsh/opensees/_response_catalog.py _LOCAL_FORCE_END_I_SIGN",
+  "physical": "N, Vz, T, My, Mz: resultants on the section's +x face (toward node j); Vy = dMz/dx (minus the +x-face y-resultant).",
+  "basicForce": "end moments read as stations [-M_1, +M_2] (#2011); N and T one station at xi = 0",
+  "moment_tension_side": {
+   "bending_moment_z": "Mz > 0 puts tension on the local -y side",
+   "bending_moment_y": "My > 0 puts tension on the local +z side"
+  },
+  "xi": "natural coordinate along the element from node i (-1) to node j (+1); node i is the line cell's first corner"
+ },
+ "closed_form": [
+  "Section at x: N = Fx, T = Mx, My = My_tip - Fz (L - x), Mz = Mz_tip + Fy (L - x).",
+  "basicForce has no shear. Its end moments read as stations [-M_1, +M_2] at xi = -1, +1 (#2011); N and T are one station at xi = 0."
+ ],
+ "elements": [
+  {
+   "fem_id": 4,
+   "ops_tag": 2,
+   "nodes": [
+    1,
+    2
+   ],
+   "coords_i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "coords_j": [
+    2.0,
+    0.0,
+    0.0
+   ],
+   "length": 2.0,
+   "frame": {
+    "x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "y": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "buckets": {
+    "basicForce": {
+     "block": "5-ElasticBeam3d[1:0:0]",
+     "columns": [
+      "N",
+      "Mz_1",
+      "Mz_2",
+      "My_1",
+      "My_2",
+      "T"
+     ],
+     "raw": [
+      [
+       0.5,
+       -4.3,
+       2.299999999999999,
+       5.750000000000002,
+       -2.749999999999999,
+       0.2
+      ],
+      [
+       1.0,
+       -8.599999999999998,
+       4.600000000000003,
+       11.499999999999996,
+       -5.500000000000002,
+       0.4
+      ]
+     ],
+     "time": [
+      0.5,
+      1.0
+     ],
+     "step": [
+      10,
+      11
+     ],
+     "stations": {
+      "bending_moment_z": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         4.3,
+         2.299999999999999
+        ],
+        [
+         8.599999999999998,
+         4.600000000000003
+        ]
+       ],
+       "from": "[-Mz_1, +Mz_2]",
+       "closed_form": [
+        [
+         4.3,
+         2.3
+        ],
+        [
+         8.6,
+         4.6
+        ]
+       ]
+      },
+      "bending_moment_y": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         -5.750000000000002,
+         -2.749999999999999
+        ],
+        [
+         -11.499999999999996,
+         -5.500000000000002
+        ]
+       ],
+       "from": "[-My_1, +My_2]",
+       "closed_form": [
+        [
+         -5.75,
+         -2.75
+        ],
+        [
+         -11.5,
+         -5.5
+        ]
+       ]
+      },
+      "axial_force": {
+       "xi": [
+        0.0
+       ],
+       "values": [
+        [
+         0.5
+        ],
+        [
+         1.0
+        ]
+       ],
+       "from": "N",
+       "closed_form": [
+        [
+         0.5
+        ],
+        [
+         1.0
+        ]
+       ]
+      },
+      "torsion": {
+       "xi": [
+        0.0
+       ],
+       "values": [
+        [
+         0.2
+        ],
+        [
+         0.4
+        ]
+       ],
+       "from": "T",
+       "closed_form": [
+        [
+         0.2
+        ],
+        [
+         0.4
+        ]
+       ]
+      }
+     }
+    }
+   },
+   "frame_quaternion_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "frame_quaternion_columns": "local x, y, z axes (R columns, global components)"
+  },
+  {
+   "fem_id": 5,
+   "ops_tag": 3,
+   "nodes": [
+    2,
+    3
+   ],
+   "coords_i": [
+    2.0,
+    0.0,
+    0.0
+   ],
+   "coords_j": [
+    4.0,
+    0.0,
+    0.0
+   ],
+   "length": 2.0,
+   "frame": {
+    "x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "y": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "buckets": {
+    "basicForce": {
+     "block": "5-ElasticBeam3d[1:0:0]",
+     "columns": [
+      "N",
+      "Mz_1",
+      "Mz_2",
+      "My_1",
+      "My_2",
+      "T"
+     ],
+     "raw": [
+      [
+       0.5,
+       -2.3000000000000007,
+       0.2999999999999996,
+       2.749999999999994,
+       0.249999999999994,
+       0.2
+      ],
+      [
+       1.0,
+       -4.599999999999997,
+       0.6000000000000014,
+       5.4999999999999964,
+       0.4999999999999991,
+       0.4
+      ]
+     ],
+     "time": [
+      0.5,
+      1.0
+     ],
+     "step": [
+      10,
+      11
+     ],
+     "stations": {
+      "bending_moment_z": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         2.3000000000000007,
+         0.2999999999999996
+        ],
+        [
+         4.599999999999997,
+         0.6000000000000014
+        ]
+       ],
+       "from": "[-Mz_1, +Mz_2]",
+       "closed_form": [
+        [
+         2.3,
+         0.3
+        ],
+        [
+         4.6,
+         0.6
+        ]
+       ]
+      },
+      "bending_moment_y": {
+       "xi": [
+        -1.0,
+        1.0
+       ],
+       "values": [
+        [
+         -2.749999999999994,
+         0.249999999999994
+        ],
+        [
+         -5.4999999999999964,
+         0.4999999999999991
+        ]
+       ],
+       "from": "[-My_1, +My_2]",
+       "closed_form": [
+        [
+         -2.75,
+         0.25
+        ],
+        [
+         -5.5,
+         0.5
+        ]
+       ]
+      },
+      "axial_force": {
+       "xi": [
+        0.0
+       ],
+       "values": [
+        [
+         0.5
+        ],
+        [
+         1.0
+        ]
+       ],
+       "from": "N",
+       "closed_form": [
+        [
+         0.5
+        ],
+        [
+         1.0
+        ]
+       ]
+      },
+      "torsion": {
+       "xi": [
+        0.0
+       ],
+       "values": [
+        [
+         0.2
+        ],
+        [
+         0.4
+        ]
+       ],
+       "from": "T",
+       "closed_form": [
+        [
+         0.2
+        ],
+        [
+         0.4
+        ]
+       ]
+      }
+     }
+    }
+   },
+   "frame_quaternion_wxyz": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "frame_quaternion_columns": "local x, y, z axes (R columns, global components)"
+  }
+ ],
+ "ladruno_provenance_keys": [
+  "fem_hash",
+  "model_hash",
+  "opensees_backend",
+  "opensees_build_sha",
+  "units",
+  "unsupported",
+  "writer"
+ ],
+ "opensees_build_sha": "462cf9cf301dc1e34395c08a5057c42e8c994043"
+}
