@@ -182,7 +182,7 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
     for rec in getattr(built.fem.nodes, "constraints", None) or ():
         kind = getattr(rec, "kind", None)
         if kind in ("equal_dof", "equal_dof_mixed", "rigid_beam",
-                    "rigid_rod", "rigid_body"):
+                    "rigid_rod", "rigid_body", "rigid_diaphragm"):
             retained.add(int(rec.master_node))
             slaves = (rec.slave_nodes if hasattr(rec, "slave_nodes")
                       else [rec.slave_node])

@@ -9,8 +9,16 @@ H5 replay writes the archived rows directly and skipped that check. An
 archive written before #2427 therefore replayed the wrong deck with no
 error, through `OpenSeesModel.from_h5(...).build(...)`.
 
-Replay now runs the same check, flat and staged, on the archived fix
-masks, stage fixes and removals, and the recorded `constraints`
-handlers. It raises `BridgeError` before anything is emitted. Archives
+`OpenSeesModel.build` now runs the same check, before any emitter
+exists, so a live build does not wipe the domain first. It reads the
+archive's rows as the emit reads the model: fix masks, stage fixes and
+removals, pattern `sp` rows (counted as varying), and the recorded
+`constraints` handlers. An archive the bridge wrote and accepted
+therefore always replays.
+
+An `equalDOF` into a `rigidDiaphragm` node now counts as a chain for the
+#2396 rewrite. It keeps its declared form and warns
+`PartlyFixedTieWarning`, rather than fixing the diaphragm master, which
+would leave that master partly fixed under the diaphragm. Archives
 that are exact still replay unchanged: a master fixed only out of plane,
 or a deck under Lagrange.

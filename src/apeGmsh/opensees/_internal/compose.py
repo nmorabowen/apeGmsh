@@ -534,13 +534,15 @@ def _refuse_replayed_partly_fixed_diaphragms(
     *, ndm: int, fixes: "Sequence[Any]", diaphragms: "Sequence[Any]",
     handlers: "Sequence[Any]", staged_fixes: "Sequence[Any]" = (),
     staged_removals: "Sequence[tuple[int, int]]" = (),
+    pattern_sps: "Sequence[tuple[int, int]]" = (),
 ) -> None:
     """#2427 on the replay path (#2435): an archive written before the
     emit-time refusal can hold a ``rigidDiaphragm`` whose master is fixed
     on some in-plane DOFs only, under Transformation. Replaying it would
     re-emit that silently wrong deck, so the same check runs on the
-    archived rows (fix masks, stage fixes and removals, the recorded
-    ``constraints`` handlers) before anything is emitted.
+    archived rows (fix masks, stage fixes and removals, pattern SPs, the
+    recorded ``constraints`` handlers), as ``fixed_dof_map`` reads them
+    at emit, so an archive the emit accepted always replays.
     """
     from types import SimpleNamespace
 
@@ -556,6 +558,7 @@ def _refuse_replayed_partly_fixed_diaphragms(
     staged = {(int(r.tag), i + 1) for r in staged_fixes
               for i, m in enumerate(r.dofs) if int(m)}
     staged |= {(int(n), int(d)) for n, d in staged_removals}
+    staged |= {(int(n), int(d)) for n, d in pattern_sps}
     fd = FixedDofs(fixed={n: frozenset(d) for n, d in fixed.items()},
                    staged=frozenset(staged), ndf={}, default_ndf=0,
                    owner={}, ndm=int(ndm), transformation=True)
@@ -563,6 +566,38 @@ def _refuse_replayed_partly_fixed_diaphragms(
         _refuse_partly_fixed_diaphragm(
             None, SimpleNamespace(master_node=int(r.master), name=r.name),
             int(r.perp_dir), fd)
+
+
+def refuse_archived_partly_fixed_diaphragms(
+    *, ndm: int, fixes: "Sequence[Any]", mp_constraints: "Sequence[Any]",
+    analysis_attrs: "dict[str, Any] | None", patterns: "Sequence[Any]",
+    stages: "Sequence[Any]" = (),
+) -> None:
+    """:func:`_refuse_replayed_partly_fixed_diaphragms` over one
+    rehydrated archive, global rows and every stage's. Called by
+    ``OpenSeesModel.build`` before any emitter exists (the live one
+    wipes the domain on creation)."""
+    from .typed_records import RigidDiaphragmRecord
+
+    def sps(pats: "Sequence[Any]") -> "list[tuple[int, int]]":
+        return [(int(sp.target), int(sp.dof)) for pat in pats
+                for sp in (getattr(pat, "sps", None) or ())] + [
+            (int(n), int(d)) for pat in pats
+            for n, d in (getattr(pat, "sp_holds", None) or ())]
+
+    _refuse_replayed_partly_fixed_diaphragms(
+        ndm=int(ndm), fixes=fixes,
+        diaphragms=[
+            *(r for _i, r in mp_constraints
+              if isinstance(r, RigidDiaphragmRecord)),
+            *(r for st in stages for r in st.rigid_diaphragms)],
+        handlers=[(analysis_attrs or {}).get("handler"),
+                  *(dict(st.chain_attrs or {}).get("handler")
+                    for st in stages)],
+        staged_fixes=[r for st in stages for r in st.fixes],
+        staged_removals=[(n, d) for st in stages for n, d in st.remove_sps],
+        pattern_sps=[*sps(patterns),
+                     *(x for st in stages for x in sps(st.patterns))])
 
 
 def _pair_stage_keys(rec: Any, kind_cls: Any) -> "list[tuple[Any, ...]]":
@@ -1485,16 +1520,6 @@ def _replay_into(
 
     _ELEMENT = frozenset({"element"})
 
-    if not skip_node_tags and not skip_element_tags:
-        # a staged prefix is checked, stages included, by its caller
-        from .typed_records import RigidDiaphragmRecord
-
-        _refuse_replayed_partly_fixed_diaphragms(
-            ndm=int(ndm), fixes=fixes,
-            diaphragms=[r for _i, r in mp_constraints
-                        if isinstance(r, RigidDiaphragmRecord)],
-            handlers=[(analysis_attrs or {}).get("handler")])
-
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
 
@@ -2286,21 +2311,6 @@ def _replay_staged_into(
         # tags (replay_initial_stress_global, replay_activate_absorbing);
         # pre-2.27 archives only, behind the version check above.
         tags = TagAllocator()
-
-    from .typed_records import RigidDiaphragmRecord
-
-    _refuse_replayed_partly_fixed_diaphragms(
-        ndm=int(replay_kwargs["ndm"]),
-        fixes=replay_kwargs.get("fixes", ()),
-        diaphragms=[
-            *(r for _i, r in replay_kwargs.get("mp_constraints", ())
-              if isinstance(r, RigidDiaphragmRecord)),
-            *(r for st in stages for r in st.rigid_diaphragms)],
-        handlers=[(replay_kwargs.get("analysis_attrs") or {}).get("handler"),
-                  *(dict(st.chain_attrs or {}).get("handler")
-                    for st in stages)],
-        staged_fixes=[r for st in stages for r in st.fixes],
-        staged_removals=[(n, d) for st in stages for n, d in st.remove_sps])
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
     # out and the shared allocator threaded for any GLOBAL initial_stress.
