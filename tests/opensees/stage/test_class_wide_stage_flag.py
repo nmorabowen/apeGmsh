@@ -648,15 +648,20 @@ def test_first_element_only_table() -> None:
 
 @pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
 @pytest.mark.parametrize("route", ["stage", "parameter"])
-def test_plastic_flip_of_a_two_element_material_refuses(
+def test_plastic_flip_of_a_two_element_material_refuses_on_four_node_quad(
     cls: str, route: str,
 ) -> None:
+    """#2446 lifted the count rule: a multi-element plastic flip passes on a
+    class the flip's element sweep reaches
+    (``tests/opensees/integration/test_md_stage_route_elements.py``), and
+    FourNodeQuad, which drops it, is still refused, by name."""
     ops, mat = _one_material_bridge(cls, ("A", "B"))
     with pytest.raises(BridgeError) as exc:
         _flip_one(ops, mat, route=route, value=1)
     msg = str(exc.value)
     assert "#2445" in msg and "Elastic2Plastic" in msg
-    assert f"{cls} (nDMaterial tag {ops.tag_for(mat)}, 2 elements)" in msg
+    assert "FourNodeQuad carries it" in msg
+    assert f"nDMaterial tag {ops.tag_for(mat)} (2 elements)" in msg
     assert not ops._stage_records
 
 
