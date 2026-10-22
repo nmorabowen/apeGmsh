@@ -562,6 +562,9 @@ don't hand-write the deck.
 
 ```
 equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=None, dofs=None)
+periodic(master_label, slave_label, *, axis="x"|"y"|"z", dofs=None, tolerance=1e-6)
+#   opposite sides (column Left/Right, box faces): pairs nodes whose coords OFF axis
+#   match -> one equalDOF per pair; any unmatched / doubly-matched node raises.
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
 rigid_diaphragm(master_label, slave_label, *, master_point=None, plane_normal=(0,0,1),
                 constrained_dofs=None, plane_tolerance=1.0, name=None)

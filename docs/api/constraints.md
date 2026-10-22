@@ -33,7 +33,7 @@ Seven tiers, ordered by topology:
 
 | Tier         | Methods                                                                                                   | Record family               |
 | ------------ | --------------------------------------------------------------------------------------------------------- | --------------------------- |
-| 1 — Pair     | [`equal_dof`](#tier-1-node-to-node), [`rigid_link`](#tier-1-node-to-node), [`penalty`](#tier-1-node-to-node) | `NodePairRecord`            |
+| 1 — Pair     | [`equal_dof`](#tier-1-node-to-node), [`periodic`](#tier-1-node-to-node), [`rigid_link`](#tier-1-node-to-node), [`penalty`](#tier-1-node-to-node) | `NodePairRecord`            |
 | 2 — Group    | [`rigid_diaphragm`](#tier-2-node-to-group), [`rigid_body`](#tier-2-node-to-group), [`kinematic_coupling`](#tier-2-node-to-group) | `NodeGroupRecord`           |
 | 2b — Mixed   | [`node_to_surface`](#tier-2b-mixed-dof), [`node_to_surface_spring`](#tier-2b-mixed-dof)                   | `NodeToSurfaceRecord`       |
 | 3 — Surface  | [`tie`](#tier-3-node-to-surface), [`distributing_coupling`](#tier-3-node-to-surface), [`embedded`](#tier-3-node-to-surface) | `InterpolationRecord`       |
@@ -136,7 +136,9 @@ parameters.
 
 Pairwise constraints between **co-located** nodes. The resolver
 matches master-side nodes against slave-side nodes within
-`tolerance` and emits one `NodePairRecord` per match.
+`tolerance` and emits one `NodePairRecord` per match. `periodic`
+builds the same `EqualDOFDef` with `axis` set: it pairs two opposite
+sides by their coordinates off that axis, and every node must pair.
 
 ::: apeGmsh._kernel.defs.constraints.EqualDOFDef
     options:

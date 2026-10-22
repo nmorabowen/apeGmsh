@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import warnings
-from typing import Any, Callable, Iterable, Iterator, Literal
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Iterator, Literal, Mapping
 
 import numpy as np
 
@@ -93,11 +94,148 @@ def emit_equation_constraints(
 # ---------------------------------------------------------------------------
 
 
+class PartlyFixedTieWarning(UserWarning):
+    """An ``equalDOF`` whose retained node is fixed on some tied DOFs and
+    free on others, in a case the bridge cannot rewrite (a stage adds or
+    releases that fix). OpenSees' Transformation handler then drops the
+    tie on the free DOF at every step (#2396); Lagrange and Penalty are
+    correct."""
+
+
+@dataclass(frozen=True)
+class FixedDofs:
+    """The homogeneous fixity the global ``fix`` pass emits, for the
+    ``equalDOF`` rewrite (#2396): ``fixed[node]`` holds the 1-based DOFs
+    fixed from the first step on, ``staged`` every other ``(node, dof)``
+    an SP ever acts on (a stage ``s.fix`` / ``s.support`` / ``s.remove_sp``,
+    a pattern ``p.sp``), which a static rewrite cannot reproduce, and
+    ``ndf`` each node's DOF count."""
+
+    fixed: "Mapping[int, frozenset[int]]"
+    staged: "frozenset[tuple[int, int]]"
+    ndf: "Mapping[int, int]"
+    default_ndf: int
+    #: The fix record that fixed each node first, and the bridge's
+    #: declaration cursor: a rewritten slave fix is archived under the
+    #: master fix's declaration.
+    owner: "Mapping[int, object]"
+    decl_cursor: "Callable[[Emitter], Any] | None" = None
+    #: Nodes that retain, and nodes that are constrained by, some tie.
+    retained: "frozenset[int]" = frozenset()
+    constrained: "frozenset[int]" = frozenset()
+
+
+def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> FixedDofs:
+    """The :class:`FixedDofs` of a built model (its global ``fix`` records,
+    ``fix_from_model`` included, and every stage's ``s.fix`` /
+    ``s.remove_sp``)."""
+    from .ndf import fit_fix_mask
+
+    eff = dict(inferred_ndf or {})
+    default = int(built.ndf)
+    fixed: dict[int, set[int]] = {}
+    owner: dict[int, object] = {}
+    for rec in built.fix_records:
+        for node in built._resolve_node_target(rec.pg, rec.nodes):
+            n = int(node)
+            owner.setdefault(n, rec)
+            mask = fit_fix_mask(rec.dofs, int(eff.get(n, default)))
+            fixed.setdefault(n, set()).update(
+                i + 1 for i, m in enumerate(mask) if int(m))
+    staged: set[tuple[int, int]] = set()
+
+    def _pattern_sps(patterns: "Iterable[Any]") -> None:
+        for pat in patterns:
+            for sp in getattr(pat, "sps", ()) or ():
+                nodes = ([int(sp.target)] if sp.target_kind == "node"
+                         else built._resolve_node_target(sp.target, None))
+                staged.update((int(n), int(sp.dof)) for n in nodes)
+
+    for stage in getattr(built, "stage_records", ()) or ():
+        for rec in (*stage.fix_records, *stage.support_records):
+            for node in built._resolve_node_target(rec.pg, rec.nodes):
+                staged.update((int(node), i + 1)
+                              for i, m in enumerate(rec.dofs) if int(m))
+        for rem in stage.remove_sp_records:
+            for node in built._resolve_node_target(rem.pg, rem.nodes):
+                staged.update((int(node), int(d)) for d in rem.dofs)
+        _pattern_sps(stage.pattern_specs)
+    _pattern_sps(p for p in built.primitives if hasattr(p, "sps"))
+    retained: set[int] = set()
+    constrained: set[int] = set()
+    for rec in getattr(built.fem.nodes, "constraints", None) or ():
+        if getattr(rec, "kind", None) in ("equal_dof", "equal_dof_mixed"):
+            retained.add(int(rec.master_node))
+            constrained.add(int(rec.slave_node))
+    return FixedDofs(
+        fixed={n: frozenset(d) for n, d in fixed.items()},
+        staged=frozenset(staged), ndf=eff, default_ndf=default,
+        owner=owner, decl_cursor=getattr(built, "_decl_cursor", None),
+        retained=frozenset(retained), constrained=frozenset(constrained))
+
+
+def _split_partly_fixed_tie(
+    master: int, slave: int, dofs: "tuple[int, ...]",
+    fixed: "FixedDofs | None", name: "str | None",
+) -> "tuple[tuple[int, ...], tuple[int, ...]]":
+    """``(dofs to tie, dofs to fix on the slave)`` for one ``equalDOF``.
+
+    A retained node fixed on some tied DOFs and free on others breaks the
+    Transformation handler (``TransformationDOF_Group::enforceSPs`` resets
+    the constrained node's free DOF every step, #2396). Tying only the free
+    DOFs and fixing the slave on the others is the same constraint set
+    under every handler. Left as declared when nothing is partly fixed;
+    when a stage adds or releases the fix, warned instead.
+    """
+    if fixed is None:
+        return dofs, ()
+    held = fixed.fixed.get(master, frozenset())
+    on = tuple(d for d in dofs if d in held)
+    varying = [d for d in dofs if (master, d) in fixed.staged]
+    if len(on) == len(dofs):
+        return dofs, ()            # fully held: Transformation is exact
+    if not on:
+        if varying and len(set(varying)) < len(dofs):
+            _warn_partly_fixed(master, slave, name,
+                               why="a stage or a pattern SP acts on")
+        return dofs, ()
+    if varying:
+        _warn_partly_fixed(master, slave, name,
+                           why="a stage or a pattern SP acts on")
+        return dofs, ()
+    if any((slave, d) in fixed.staged for d in on):
+        _warn_partly_fixed(master, slave, name,
+                           why="a stage fixes the slave on")
+        return dofs, ()
+    if slave in fixed.retained or master in fixed.constrained:
+        _warn_partly_fixed(master, slave, name,
+                           why="the tie is part of a chain of ties through")
+        return dofs, ()
+    free = tuple(d for d in dofs if d not in held)
+    already = fixed.fixed.get(slave, frozenset())
+    return free, tuple(d for d in on if d not in already)
+
+
+def _warn_partly_fixed(master: int, slave: int, name: "str | None", *,
+                       why: str) -> None:
+    warnings.warn(
+        f"equalDOF {master} -> {slave}"
+        + (f" ({name})" if name else "")
+        + f": its retained node is (or becomes) fixed on only some tied "
+        f"DOFs, and {why} a tied DOF, so the tie cannot be rewritten for "
+        "the Transformation handler, which then drops the tie on the free "
+        "DOF at every step (#2396). Use ops.constraints.Lagrange() or "
+        "Penalty(...).",
+        PartlyFixedTieWarning, stacklevel=4,
+    )
+
+
 def emit_mp_constraints(
     emitter: "Emitter", fem: "FEMData", tag_plan: "TagPlan",
     *, claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
+    fixed_dofs: "FixedDofs | None" = None,
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -224,7 +362,7 @@ def emit_mp_constraints(
     #    NodeToSurfaceRecord.equal_dof_records expansion.
     # -------------------------------------------------------------------
     if node_constraints is not None:
-        _emit_equal_dofs(emitter, node_constraints)
+        _emit_equal_dofs(emitter, node_constraints, fixed=fixed_dofs)
 
     # -------------------------------------------------------------------
     # 4. Rigid diaphragms — one ``rigidDiaphragm`` per
@@ -673,11 +811,14 @@ def _emit_rigid_body_elements(
 def _emit_equal_dofs(
     emitter: "Emitter", node_constraints: Iterable[object],
     *, allowed_ids: frozenset[int] | None = None,
+    fixed: "FixedDofs | None" = None,
 ) -> None:
     """Emit ``equalDOF`` per :class:`NodePairRecord` (equal_dof) plus
     the :attr:`NodeToSurfaceRecord.equal_dof_records` expansion.
 
     ``allowed_ids`` filters to a rank's claimed subset when given.
+    ``fixed`` (the global fix pass's :class:`FixedDofs`) rewrites a tie
+    whose retained node is partly fixed (:func:`_split_partly_fixed_tie`).
     """
     from apeGmsh._kernel.records._constraints import (
         NodePairRecord, NodeToSurfaceRecord,
@@ -690,10 +831,21 @@ def _emit_equal_dofs(
         if isinstance(rec, NodePairRecord):
             if rec.kind == ConstraintKind.EQUAL_DOF:
                 _emit_name(emitter, rec.name)
-                emitter.equalDOF(
-                    int(rec.master_node), int(rec.slave_node),
-                    *(int(d) for d in rec.dofs),
-                )
+                m, sl = int(rec.master_node), int(rec.slave_node)
+                tie, to_fix = _split_partly_fixed_tie(
+                    m, sl, tuple(int(d) for d in rec.dofs), fixed, rec.name)
+                if tie:
+                    emitter.equalDOF(m, sl, *tie)
+                if to_fix and fixed is not None:
+                    ndf = int(fixed.ndf.get(sl, fixed.default_ndf))
+                    cursor = (fixed.decl_cursor(emitter)
+                              if fixed.decl_cursor is not None else None)
+                    if cursor is not None:
+                        cursor.open(fixed.owner[m])
+                    emitter.fix(sl, *(1 if d in to_fix else 0
+                                      for d in range(1, ndf + 1)))
+                    if cursor is not None:
+                        cursor.close()
             elif rec.kind == ConstraintKind.EQUAL_DOF_MIXED:
                 _emit_name(emitter, rec.name)
                 # master_dofs (retained / RDOF) paired index-wise with
