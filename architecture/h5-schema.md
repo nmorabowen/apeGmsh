@@ -2236,7 +2236,7 @@ a stage is `time[k]`.
 
 `/stages/{sid}/partitions/{pid}` splits a stage's rows by partition. Every
 writer in `src/` writes exactly one partition, `partition_0`, and native
-results carry no `PARTITION_REDUCTION` rule (ADR 0123, Proposed, makes one
+results carry no `PARTITION_REDUCTION` rule (ADR 0123 makes one
 partition per stage the contract). A file written with several partitions
 through the public `NativeWriter` API still opens in the Python reader:
 

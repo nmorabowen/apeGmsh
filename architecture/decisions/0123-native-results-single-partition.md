@@ -1,6 +1,6 @@
 # ADR 0123 — Native results stay single-partition; no native PARTITION_REDUCTION
 
-**Status:** Proposed (2026-10-22; for ratification on #2450)
+**Status:** Accepted (2026-10-22; ratified by the maintainer, relayed by T, on #2452, comment 6345122037)
 
 **Owner:** nmora
 
@@ -9,8 +9,7 @@ one by Fable, from one card; neither read the other. They are kept in T's
 notes folder as `native_partition_reduction/brief_opus.md` and
 `native_partition_reduction/brief_fable.md`, beside the card
 (`architect_card.md`). Both recommended option A below. This ADR reconciles
-them; where they differed, it says so under *Open points for the
-maintainer*.
+them; where they differed, it says so under *Rulings*.
 
 **Applies** [ADR 0122](0122-ladruno-canonical-results-format.md) D2 (native
 `results.h5` is frozen, then deleted) to the partition axis. It does not
@@ -112,7 +111,7 @@ raises a `ValueError` subclass before creating any group, and names the
 file, the stage, the existing id and the refused id. The rule is about
 count, not name: a stage whose only partition is `partition_3` is legal,
 which matches the viewer's per-stage gate. This is the one change to a
-frozen writer; see open point 1.
+frozen writer; the maintainer ruled it in (see *Rulings*).
 
 ### D6 — The viewer is unchanged
 
@@ -143,7 +142,7 @@ lands in files slice 10 deletes.
 multi-partition file with per-rank partial reactions is refused rather than
 summed. Partial copies that happen to be equal, such as a support on an
 interface where both ranks hold half of a symmetric reaction, still read as
-one rank's share (open point 2).
+one rank's share (kept by ruling 2).
 
 **Schema impact.** None. The results zone stays at 1.2.0, floor 1.0.0.
 `architecture/h5-schema.md` "Partitions" is rewritten to state the contract
@@ -187,23 +186,22 @@ native element-side repeat check.
 - No removal of the `partitions/` level before slice 10.
 - No `merge_partitions=` option on `Results.from_native`.
 
-## Open points for the maintainer
+## Rulings (2026-10-22)
 
-1. **Does D2's "no new writer" admit D5's guard?** Both architects added the
-   guard; Fable asked whether a frozen writer may change at all. The
-   recommendation is yes: the guard narrows, it does not grow the format. If
-   "frozen" means untouched, drop D5 and slice 2's writer change, and the
-   contract is held by the doc and the readers only.
-2. **Equal partial copies.** Should the native reader refuse `reaction_*`
-   and the unbalanced `force_*` / `moment_*` that several partitions hold
-   even when the copies agree? Opus leans yes, inside #2363. It amends the
-   #2360 ruling for those components, and no file in the repo is affected.
-   Fable keeps #2360 as written. The recommendation is to keep #2360: no
-   producer writes such a file.
-3. **Refuse now, or warn for one release?** No third-party caller is known.
-   The recommendation is to refuse now.
-4. **If slice 10 is carded in the next batch**, slices 2 and 3 can be skipped
-   and this ADR's slice 1 alone closes #2450.
+The maintainer ratified the ADR as written and ruled its open points
+(#2452, comment 6345122037):
+
+1. **D5's writer refusal stands.** The frozen `NativeWriter` gains a named
+   refusal of a second partition per stage; it narrows the format, it does
+   not grow it. Slice 2 is carded.
+2. **#2360 is kept as is.** Agreeing cross-partition copies read once, even
+   for partial components such as reactions; disagreeing copies refuse.
+   Equal partial copies on legacy third-party files remain a known gap.
+
+Two points the architects raised were not ruled separately and follow the
+recommendation: the refusal lands at once, with no warning release (no
+third-party caller is known); and if slice 10 is carded first, slices 2 and
+3 may be skipped.
 
 ## Adjacent findings (separate cards, not this ADR's scope)
 
