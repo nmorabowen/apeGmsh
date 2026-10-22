@@ -110,8 +110,8 @@
       1.0
      ],
      "step": [
-      6,
-      7
+      0,
+      1
      ],
      "stations": {
       "axial_force": {
@@ -237,8 +237,8 @@
       1.0
      ],
      "step": [
-      6,
-      7
+      0,
+      1
      ],
      "stations": {
       "axial_force": {

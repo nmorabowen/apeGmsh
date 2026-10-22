@@ -88,6 +88,7 @@ def test_oracle_provenance_and_lineage_pair_model_and_ladruno(stem: str) -> None
         assert _text(prov["model_hash"]) == model_hash
         assert _text(prov["fem_hash"]) == fem_hash
         assert _text(prov["opensees_build_sha"]) == golden["opensees_build_sha"]
+        assert "DISPLACEMENT" in lf["MODEL_STAGE[1]/RESULTS/ON_NODES"]
 
 
 @pytest.mark.parametrize("stem", STEMS)
@@ -163,6 +164,8 @@ def test_golden_stations_agree_with_closed_form_statics_and_sign_table(stem: str
     assert golden["sign_convention"]["end_i_sign"] == dict(sorted(_LOCAL_FORCE_END_I_SIGN.items()))
     for el in golden["elements"]:
         for bucket in el["buckets"].values():
+            assert bucket["step"] == [0, 1]
+            assert bucket["time"] == [0.5, 1.0]
             for comp, st in bucket["stations"].items():
                 np.testing.assert_allclose(
                     st["values"], st["closed_form"], rtol=1e-9, atol=1e-9,

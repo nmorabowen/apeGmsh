@@ -107,8 +107,8 @@
       1.0
      ],
      "step": [
-      10,
-      11
+      0,
+      1
      ],
      "stations": {
       "bending_moment_z": {
@@ -289,8 +289,8 @@
       1.0
      ],
      "step": [
-      10,
-      11
+      0,
+      1
      ],
      "stations": {
       "bending_moment_z": {

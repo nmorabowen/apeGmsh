@@ -62,8 +62,10 @@ its golden JSON to the committed one (the generator is deterministic).
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -225,6 +227,7 @@ class Case:
 
 
 SESSION_DIR = Path(tempfile.mkdtemp(prefix="line_oracle_session_"))
+atexit.register(shutil.rmtree, SESSION_DIR, ignore_errors=True)
 
 
 def _mesh(name: str, points: dict[str, tuple[float, float, float]],
@@ -467,7 +470,11 @@ def _solve(case: Case, out: Path) -> dict[str, Any]:
     fem = case.build(case)
     ops = apeSees(fem, default_orientation=None)
     case.model(ops)
-    ops.recorder.Ladruno(file=str(ladruno), elem_responses=case.responses)
+    ops.recorder.Ladruno(
+        file=str(ladruno),
+        nodal_responses=("displacement",),
+        elem_responses=case.responses,
+    )
     ops.constraints.Plain()
     ops.numberer.RCM()
     ops.system.BandGeneral()
@@ -758,38 +765,53 @@ def _dump(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=1, sort_keys=False) + "\n"
 
 
+def _case_child(case_name: str, out: Path, tmp: Path) -> None:
+    case = next(c for c in CASES if c.name == case_name)
+    golden = make(case, out)
+    if case.name == "column3d":
+        golden["degenerate_vecxz"] = degenerate_vecxz_probe(tmp)
+    (tmp / f"line_oracle_{case.name}.golden.json").write_text(_dump(golden))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true",
                     help="re-solve into a temporary directory and compare to the committed golden JSON")
     ap.add_argument("--only", nargs="*", help="fixture names to (re)write")
     ap.add_argument("--degenerate-child", help=argparse.SUPPRESS)
+    ap.add_argument("--case-child", nargs=3, help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.degenerate_child:
         _degenerate_child(Path(args.degenerate_child))
         return
+    if args.case_child:
+        _case_child(args.case_child[0], Path(args.case_child[1]), Path(args.case_child[2]))
+        return
     print("apeGmsh from", apegmsh_pkg.__file__)
-    tmp = Path(tempfile.mkdtemp(prefix="line_oracle_"))
-    out = tmp if args.check else FIXTURES
-    bad = []
-    for case in CASES:
-        if args.only and case.name not in args.only:
-            continue
-        golden = make(case, out)
-        if case.name == "column3d":
-            golden["degenerate_vecxz"] = degenerate_vecxz_probe(tmp)
-        path = FIXTURES / f"line_oracle_{case.name}.golden.json"
-        text = _dump(golden)
-        if args.check:
-            same = path.exists() and path.read_text() == text
-            print(("same     " if same else "DIFFERENT"), path.name)
-            bad += [] if same else [path.name]
-        else:
-            path.write_text(text)
-            for p in (path, out / golden["model_h5"], out / golden["ladruno"]):
-                print(f"wrote {p.name} ({p.stat().st_size} bytes)")
-    if bad:
-        sys.exit(f"golden JSON not reproduced: {bad}")
+    with tempfile.TemporaryDirectory(prefix="line_oracle_") as tmp_str:
+        tmp = Path(tmp_str)
+        out = tmp if args.check else FIXTURES
+        bad = []
+        for case in CASES:
+            if args.only and case.name not in args.only:
+                continue
+            subprocess.run(
+                [sys.executable, __file__, "--case-child", case.name, str(out), str(tmp)],
+                check=True,
+                env={**os.environ, "LADRUNO_OPENSEES_QUIET": "1"},
+            )
+            path = FIXTURES / f"line_oracle_{case.name}.golden.json"
+            text = (tmp / path.name).read_text()
+            if args.check:
+                same = path.exists() and path.read_text() == text
+                print(("same     " if same else "DIFFERENT"), path.name)
+                bad += [] if same else [path.name]
+            else:
+                path.write_text(text)
+                for p in (path, out / f"line_oracle_{case.name}.h5", out / f"line_oracle_{case.name}.ladruno"):
+                    print(f"wrote {p.name} ({p.stat().st_size} bytes)")
+        if bad:
+            sys.exit(f"golden JSON not reproduced: {bad}")
 
 
 if __name__ == "__main__":
