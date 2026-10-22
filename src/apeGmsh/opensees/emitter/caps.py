@@ -80,7 +80,7 @@ SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 
 #: The capability tokens this bridge writes into ``/opensees@requires``.
 #: ``"fork"`` (the Ladruno build) comes from the ``VERBS`` rows, and from
-#: a fork-only ``system`` (:func:`is_fork_system`, #2393). Tokens that
+#: a fork-only ``system`` (:func:`is_fork_system`). Tokens that
 #: depend on argument values (opensees 2.33.0) are derived by the stamp
 #: writer, not ``VERBS`` (:func:`value_requires`): ``"fork"`` for a
 #: fork-only ``system``; ``"mpco"``, any ``recorder mpco`` (pip openseespy
@@ -92,10 +92,10 @@ SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
 REQUIRES_TOKENS: tuple[str, ...] = ("fork", "mpco", "mpi")
 
 #: The ``system`` types only the Ladruno fork declares, casefolded.
-#: ``Pardiso`` (fork ADR-75 P1, MKL builds): a one-process truss solve on
-#: stock openseespywin 3.7.1.2 refuses the command and solves on the fork
-#: 79e06 (#2393). Every other LinearSystem member behaves the same on
-#: both builds (the #2372 F1 audit, repeated in #2429).
+#: ``Pardiso`` (fork ADR-75 P1, MKL builds): stock openseespy refuses the
+#: command and the fork solves with it. Every other LinearSystem member
+#: behaves the same on both builds; ``_SYSTEM_TOKENS`` in
+#: ``tests/opensees/h5/test_h5_solve_stamp.py`` pins each one.
 FORK_SYSTEMS: frozenset[str] = frozenset({"pardiso"})
 
 
