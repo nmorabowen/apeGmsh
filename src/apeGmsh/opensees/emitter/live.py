@@ -1324,7 +1324,7 @@ class LiveOpsEmitter:
         # ``label`` names the loop in the DECK emitters' fail-loud
         # banners; live runs in-process and reports failure through the
         # returned rc instead (the staged orchestrator raises on it).
-        self.write_stage_zero()
+        self._write_stage_zero()
         if strategy is not None:
             return self._analyze_ladder(
                 steps=int(steps), dt=dt, label=label, strategy=strategy,
@@ -1416,7 +1416,7 @@ class LiveOpsEmitter:
         # eigenvalues ``λ_i = ω_i²``. Modal shapes are queried separately
         # via ``ops.nodeEigenvector(node_tag, mode_idx)`` — see
         # :class:`apeGmsh.opensees.analysis.eigen.EigenResult`.
-        self.write_stage_zero()
+        self._write_stage_zero()
         values: Any = self._ops.eigen(solver, num_modes)
         return [float(v) for v in values]
 
@@ -1444,7 +1444,7 @@ class LiveOpsEmitter:
         # gate cannot fire here; a stock build rejects the '-feast'
         # token with a parse error instead — the bridge driver
         # pre-checks capabilities().has_fork for the friendly message.
-        self.write_stage_zero()
+        self._write_stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
@@ -1936,7 +1936,7 @@ class LiveOpsEmitter:
             self._stage0 = StageZeroLedger()
         return self._stage0
 
-    def write_stage_zero(self) -> None:
+    def _write_stage_zero(self) -> None:
         """Issue the owed ManzariDafalias ``-stage 0`` calls
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`): at a solve verb, and at the end of

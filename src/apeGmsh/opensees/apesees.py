@@ -10730,7 +10730,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
-        emitter.write_stage_zero()  # the caller's own analyze follows
+        emitter._write_stage_zero()  # the caller's own analyze follows
         self._artifacts.after_emit(self)
 
     def wipe(self) -> None:
