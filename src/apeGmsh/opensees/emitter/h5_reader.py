@@ -2111,6 +2111,10 @@ class H5Model:
         rdof = [int(v) for v in col["ret_dof"]]
         rcoef = [float(v) for v in col["ret_coef"]]
         n, m = len(cnode), len(rnode)
+        if n == 0:
+            raise MalformedH5Error(
+                f"{where} holds no row; the writer writes the group only "
+                "when a line exists.")
         if not (len(cdof) == len(ccoef) == len(names) == n
                 and len(offsets) == n + 1 and offsets[0] == 0
                 and offsets[-1] == m == len(rdof) == len(rcoef)

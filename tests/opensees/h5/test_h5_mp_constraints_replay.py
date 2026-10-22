@@ -657,7 +657,7 @@ def test_an_archive_that_lost_its_lines_refuses(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["below_2_35", "offsets", "zero_coef",
-                                    "missing_column"])
+                                    "missing_column", "empty"])
 def test_a_malformed_store_raises(damage, tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
     from tests.fixtures.schema import OPENSEES_BEFORE_EQUATION_CONSTRAINT
@@ -677,6 +677,14 @@ def test_a_malformed_store_raises(damage, tmp_path):
             coef = cons["ret_coef"][()]
             coef[0] = 0.0
             cons["ret_coef"][...] = coef
+        elif damage == "empty":
+            # No writer makes an empty group: one line at least, or none.
+            for key in list(cons.keys()):
+                dtype = cons[key].dtype
+                del cons[key]
+                cons.create_dataset(
+                    key, data=np.zeros(1 if key == "ret_offsets" else 0,
+                                       dtype=dtype))
         else:
             del cons["ret_dof"]
     with pytest.raises(MalformedH5Error, match="equationConstraint"):
