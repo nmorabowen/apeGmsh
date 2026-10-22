@@ -101,6 +101,19 @@ FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
 )
 
+#: The classes whose flip to a plastic stage runs a per-instance
+#: ``Elastic2Plastic()`` (it re-seats the back-stress on the current
+#: stress).  ``updateMaterialStage`` reaches it through
+#: ``MaterialStageParameter::setDomain``, which stops at the FIRST element
+#: that accepts the parameter, so only that element's integration points
+#: are initialised; every other element of the material turns plastic
+#: uninitialised (measured on stock 3.8.0 and the fork).  A stage >= 1
+#: flip of such a material on more than one element is refused on every
+#: build.  SAniSandMS, PM4Sand and PM4Silt only set their flag.
+FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = frozenset(
+    {"ManzariDafalias", "LadrunoSANISAND"},
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared validation for initial_stress (used by ops.initial_stress PULL +
@@ -361,6 +374,7 @@ class _StageBuilder:
             )
         self._check_chain_against_run()
         self._check_fork_stage_static_reset()
+        self._check_multi_element_plastic_flip()
         record = StageRecord(
             name=self._name,
             initial_stress_records=tuple(self._initial_stress_records),
@@ -515,6 +529,72 @@ class _StageBuilder:
                 "group again in this stage, after the activation, or "
                 "activate these elements before the flip."
             )
+
+    def _check_multi_element_plastic_flip(self) -> None:
+        """Refuse a plastic flip of a first-element-only material on 2+ elements.
+
+        A :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material flipped to a
+        stage ``>= 1``, through either route of :meth:`_stage_flips`, is
+        refused when the model's elements carry it more than once
+        (#2445).  The count is the OpenSees elements every element
+        registered so far fans out to (its PG, or one for a node-pair
+        spec), whichever stage activates them.  Stage 0 flips and
+        one-element materials pass.
+        """
+        plastic = {
+            tag for tag, value in self._stage_flips(
+                self._update_material_stage_records,
+                self._update_parameter_records)
+            if value >= 1
+        }
+        if not plastic:
+            return
+        from .._internal.build.pg_expand import expand_spec_to_elements
+
+        counts: dict[int, int] = {}
+        names: dict[int, str] = {}
+        for spec in self._bridge._primitives:
+            if not isinstance(spec, Element):
+                continue
+            carried: set[int] = set()
+            seen: set[int] = set()
+            frontier: list[Primitive] = list(spec.dependencies())
+            while frontier:
+                dep = frontier.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                frontier.extend(dep.dependencies())
+                if type(dep).__name__ not in FIRST_ELEMENT_ONLY_PLASTIC_INIT:
+                    continue
+                tag = self._bridge.tag_for(dep)
+                if tag is not None and int(tag) in plastic:
+                    carried.add(int(tag))
+                    names[int(tag)] = type(dep).__name__
+            if not carried:
+                continue
+            n = len(expand_spec_to_elements(self._bridge.fem, spec))
+            for tag in carried:
+                counts[tag] = counts.get(tag, 0) + n
+        offenders = sorted(tag for tag, n in counts.items() if n > 1)
+        if not offenders:
+            return
+        listed = ", ".join(
+            f"{names[t]} (nDMaterial tag {t}, {counts[t]} elements)"
+            for t in offenders)
+        raise BridgeError(
+            f"Stage {self._name!r}: flips {listed} to a plastic stage, "
+            "but OpenSees initialises only one element of each "
+            "(issue #2445).  updateMaterialStage reaches the material "
+            "through MaterialStageParameter::setDomain, which stops at the "
+            "first element that accepts it, so Elastic2Plastic() runs on "
+            "that element's integration points only; every other element "
+            "turns plastic with its back-stress never re-seated, which "
+            "gives a wrong answer on stock and on the fork alike.  Until "
+            "the bridge emits a flip that reaches every element, give "
+            "each element its own material, or keep this material on a "
+            "single element.  A stage 0 (elastic) flip is unaffected."
+        )
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.

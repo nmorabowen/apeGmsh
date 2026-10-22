@@ -793,8 +793,11 @@ def test_flat_emit_slot_is_after_the_stages_own_element_activation() -> None:
     fem = _make_two_pg_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
+    # The sand sits on the activated element only: a stage-1 flip of one
+    # ManzariDafalias on two elements is refused (#2445).
+    elastic = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     sand = ops.nDMaterial.ManzariDafalias(**_MD_KW)
-    ops.element.FourNodeQuad(pg="rock", thickness=1.0, material=sand)
+    ops.element.FourNodeQuad(pg="rock", thickness=1.0, material=elastic)
     ops.element.FourNodeQuad(pg="cimbra", thickness=1.0, material=sand)
     with ops.stage(name="install") as s:
         s.activate(pgs=["cimbra"])
