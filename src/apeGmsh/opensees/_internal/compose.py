@@ -530,6 +530,76 @@ def _emit_mp_row(emitter: Any, r: Any) -> None:
         )
 
 
+def _refuse_replayed_partly_fixed_diaphragms(
+    *, ndm: int, fixes: "Sequence[Any]", diaphragms: "Sequence[Any]",
+    handlers: "Sequence[Any]", staged_fixes: "Sequence[Any]" = (),
+    staged_removals: "Sequence[tuple[int, int]]" = (),
+    pattern_sps: "Sequence[tuple[int, int]]" = (),
+) -> None:
+    """#2427 on the replay path (#2435): an archive written before the
+    emit-time refusal can hold a ``rigidDiaphragm`` whose master is fixed
+    on some in-plane DOFs only, under Transformation. Replaying it would
+    re-emit that silently wrong deck, so the same check runs on the
+    archived rows (fix masks, stage fixes and removals, pattern SPs, the
+    recorded ``constraints`` handlers), as ``fixed_dof_map`` reads them
+    at emit, so an archive the emit accepted always replays.
+    """
+    from types import SimpleNamespace
+
+    from .build.constraints import FixedDofs, _refuse_partly_fixed_diaphragm
+
+    rows = list(diaphragms)
+    if not rows or "Transformation" not in {str(h) for h in handlers if h}:
+        return
+    fixed: "dict[int, set[int]]" = {}
+    for rec in fixes:
+        fixed.setdefault(int(rec.tag), set()).update(
+            i + 1 for i, m in enumerate(rec.dofs) if int(m))
+    staged = {(int(r.tag), i + 1) for r in staged_fixes
+              for i, m in enumerate(r.dofs) if int(m)}
+    staged |= {(int(n), int(d)) for n, d in staged_removals}
+    staged |= {(int(n), int(d)) for n, d in pattern_sps}
+    fd = FixedDofs(fixed={n: frozenset(d) for n, d in fixed.items()},
+                   staged=frozenset(staged), ndf={}, default_ndf=0,
+                   owner={}, ndm=int(ndm), transformation=True)
+    for r in rows:
+        _refuse_partly_fixed_diaphragm(
+            None, SimpleNamespace(master_node=int(r.master), name=r.name),
+            int(r.perp_dir), fd)
+
+
+def refuse_archived_partly_fixed_diaphragms(
+    *, ndm: int, fixes: "Sequence[Any]", mp_constraints: "Sequence[Any]",
+    analysis_attrs: "dict[str, Any] | None", patterns: "Sequence[Any]",
+    stages: "Sequence[Any]" = (),
+) -> None:
+    """:func:`_refuse_replayed_partly_fixed_diaphragms` over one
+    rehydrated archive, global rows and every stage's. Called by
+    ``OpenSeesModel.build`` before any emitter exists (the live one
+    wipes the domain on creation)."""
+    from .typed_records import RigidDiaphragmRecord
+
+    def sps(pats: "Sequence[Any]") -> "list[tuple[int, int]]":
+        return [(int(sp.target), int(sp.dof)) for pat in pats
+                for sp in (getattr(pat, "sps", None) or ())] + [
+            (int(n), int(d)) for pat in pats
+            for n, d in (getattr(pat, "sp_holds", None) or ())]
+
+    _refuse_replayed_partly_fixed_diaphragms(
+        ndm=int(ndm), fixes=fixes,
+        diaphragms=[
+            *(r for _i, r in mp_constraints
+              if isinstance(r, RigidDiaphragmRecord)),
+            *(r for st in stages for r in st.rigid_diaphragms)],
+        handlers=[(analysis_attrs or {}).get("handler"),
+                  *(dict(st.chain_attrs or {}).get("handler")
+                    for st in stages)],
+        staged_fixes=[r for st in stages for r in st.fixes],
+        staged_removals=[(n, d) for st in stages for n, d in st.remove_sps],
+        pattern_sps=[*sps(patterns),
+                     *(x for st in stages for x in sps(st.patterns))])
+
+
 def _pair_stage_keys(rec: Any, kind_cls: Any) -> "list[tuple[Any, ...]]":
     """Stage-bucket keys of one ``NodePairRecord`` (empty: no bucket)."""
     if rec.kind == kind_cls.EQUAL_DOF:

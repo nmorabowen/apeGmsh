@@ -923,6 +923,16 @@ class OpenSeesModel:
                 "'h5' rewrite must keep its attrs."
             )
         self._require_declared_ndm()
+        # An archived rigidDiaphragm whose master is fixed on some in-plane
+        # DOFs only, under Transformation, refuses before any emitter
+        # exists (the live one wipes the domain on creation).
+        from ._internal.compose import refuse_archived_partly_fixed_diaphragms
+
+        refuse_archived_partly_fixed_diaphragms(
+            ndm=self._ndm, fixes=self._fixes,
+            mp_constraints=self._mp_constraints,
+            analysis_attrs=dict(self._analysis_attrs),
+            patterns=self._patterns, stages=self._stages)
         if target in ("tcl", "py", "live"):
             # ADR 0114 D6: fail closed on the stored refusals before any
             # emit. The archive skipped the solve-time gates and recorded
