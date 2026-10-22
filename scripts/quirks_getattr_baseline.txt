@@ -21,9 +21,6 @@ src/apeGmsh/mesh/_femdata_h5_io.py::_names
 src/apeGmsh/mesh/_mesh_queries.py::_fem_from_h5
 src/apeGmsh/mesh/_mesh_queries.py::_fem_is_fresh
 src/apeGmsh/opensees/_internal/build/pg_expand.py::_groups
-src/apeGmsh/results/capture/_domain.py::_live_emitter
-src/apeGmsh/results/capture/spec.py::_names
-src/apeGmsh/results/capture/spec.py::_primitives
 src/apeGmsh/studio/_host.py::_rebuild_scene
 src/apeGmsh/studio/_host.py::_win
 src/apeGmsh/viewers/data/_elements.py::_module_label

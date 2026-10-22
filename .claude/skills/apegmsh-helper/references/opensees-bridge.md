@@ -1032,9 +1032,10 @@ not co-presence.
    files (`Results.from_recorders`); the two stock routes warn once
    with `DefaultRouteWarning`. Modal records refuse there: modes come
    from `ops.eigen(n)`, whose `EigenResult.results()` /
-   `.to_native(path)` / `.to_ladruno(path)` write and open them.
-   `ops.domain_capture(spec, path=)` with a `DomainCaptureSpec` is the
-   legacy in-process route; do not teach it.
+   `.to_native(path)` / `.to_ladruno(path)` write and open them; a
+   plain openseespy deck's modes come from
+   `apeGmsh.results.live.capture_live_modes`. The old in-process
+   capture route was deleted (#2191).
 
 The canonical component vocabulary is the neutral top-level
 `apeGmsh._vocabulary` (`expand_shorthand` / `expand_many`). The old

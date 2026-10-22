@@ -20,12 +20,21 @@ import h5py
 import numpy as np
 import pytest
 
+from apeGmsh.mesh import _femdata_mpco_io
 from apeGmsh.mesh._femdata_ladruno_io import read_fem_from_ladruno
 from apeGmsh.mesh._femdata_mpco_io import (
+    ElementDimContradictionWarning,
     ElementDimUnknownWarning,
     read_fem_from_mpco,
 )
 from apeGmsh.opensees import _response_catalog as rc
+
+
+@pytest.fixture(autouse=True)
+def _fresh_dim_warning_session(monkeypatch):
+    """Each test starts a fresh warn-once session (#2312), and the
+    process-wide registry is restored afterwards."""
+    monkeypatch.setattr(_femdata_mpco_io, "_DIM_WARNED", set())
 
 
 def _oracle_dims() -> dict[str, int]:
@@ -167,7 +176,118 @@ def test_uncatalogued_class_with_declared_topology_is_silent(tmp_path):
 
 
 def test_declared_topology_contradicting_catalog_warns_catalog_wins(tmp_path):
-    with pytest.warns(ElementDimUnknownWarning, match="LadrunoLST"):
-        fem = _read(tmp_path, [("LadrunoLST", 6)], ladruno=True, ndm=3,
-                    topology="wedge")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ElementDimUnknownWarning)
+        with pytest.warns(ElementDimContradictionWarning,
+                          match=r"LadrunoLST \(declared 3, catalog 2\)"):
+            fem = _read(tmp_path, [("LadrunoLST", 6)], ladruno=True, ndm=3,
+                        topology="wedge")
     assert int(next(iter(fem.elements)).element_type.dim) == 2
+
+
+# ---------------------------------------------------------------------------
+# #2312: one warning per fact per session, never one per read or per group
+# ---------------------------------------------------------------------------
+
+
+def _write(tmp_path, classes, *, ladruno: bool, ndm: int = 3, **kw):
+    path = tmp_path / ("m.ladruno" if ladruno else "m.mpco")
+    with h5py.File(path, "w") as f:
+        _write_model(f, classes, ladruno=ladruno, ndm=ndm, **kw)
+    return path
+
+
+def _read_path(path, *, ladruno: bool):
+    reader = read_fem_from_ladruno if ladruno else read_fem_from_mpco
+    with h5py.File(path, "r") as f:
+        return reader(f["MODEL"])
+
+
+def _recorded(path, *, ladruno: bool, reads: int):
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        for _ in range(reads):
+            _read_path(path, ladruno=ladruno)
+    return [w for w in rec if issubclass(
+        w.category, (ElementDimUnknownWarning, ElementDimContradictionWarning))]
+
+
+def test_contradiction_is_not_an_unknown_dim_warning():
+    assert not issubclass(ElementDimContradictionWarning,
+                          ElementDimUnknownWarning)
+
+
+@pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
+def test_repeated_reads_warn_an_uncatalogued_class_once(tmp_path, ladruno):
+    """ShellMITC3 (uncatalogued, guessed right) and a made-up class: three
+    reads of one file give one warning naming both, not three."""
+    path = _write(tmp_path, [("ShellMITC3", 3), ("MadeUpPanel", 4)],
+                  ladruno=ladruno)
+    got = _recorded(path, ladruno=ladruno, reads=3)
+    assert [w.category for w in got] == [ElementDimUnknownWarning]
+    msg = str(got[0].message)
+    assert "ShellMITC3 (dim=2)" in msg and "MadeUpPanel" in msg
+
+
+@pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
+def test_a_later_read_names_only_the_new_class(tmp_path, ladruno):
+    first = _write(tmp_path, [("ShellMITC3", 3)], ladruno=ladruno)
+    assert len(_recorded(first, ladruno=ladruno, reads=1)) == 1
+    sub = tmp_path / "second"
+    sub.mkdir()
+    second = _write(sub, [("ShellMITC3", 3), ("MadeUpPanel", 4)],
+                    ladruno=ladruno)
+    got = _recorded(second, ladruno=ladruno, reads=2)
+    assert len(got) == 1
+    assert "MadeUpPanel" in str(got[0].message)
+    assert "ShellMITC3" not in str(got[0].message)
+
+
+def test_contradiction_warns_once_per_class_not_per_group_or_read(tmp_path):
+    """Two LadrunoLST groups declaring ``wedge``, read twice: one warning."""
+    path = _write(tmp_path, [("LadrunoLST", 6), ("LadrunoLST", 6)],
+                  ladruno=True, topology="wedge")
+    got = _recorded(path, ladruno=True, reads=2)
+    assert [w.category for w in got] == [ElementDimContradictionWarning]
+    assert str(got[0].message).count("LadrunoLST") == 1
+
+
+@pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
+def test_two_groups_of_one_class_guessing_two_dims_are_both_named(
+        tmp_path, ladruno):
+    """FooThing with 2 and 4 nodes in a 3-D model guesses dims 1 and 3:
+    both are named and both are spent, not only the last group's."""
+    path = _write(tmp_path, [("FooThing", 2), ("FooThing", 4)],
+                  ladruno=ladruno)
+    got = _recorded(path, ladruno=ladruno, reads=2)
+    assert len(got) == 1
+    msg = str(got[0].message)
+    assert "FooThing (dim=1)" in msg and "FooThing (dim=3)" in msg
+    fem = _read_path(path, ladruno=ladruno)
+    assert sorted(int(g.element_type.dim) for g in fem.elements) == [1, 3]
+
+
+def test_two_groups_of_one_class_contradicting_two_ways_are_both_named(
+        tmp_path):
+    path = _write(tmp_path, [("LadrunoLST", 6), ("LadrunoLST", 6)],
+                  ladruno=True)
+    with h5py.File(path, "r+") as f:
+        f["MODEL/ELEMENTS/1-LadrunoLST[0:0]"].attrs["TOPOLOGY"] = "wedge"
+        f["MODEL/ELEMENTS/2-LadrunoLST[0:0]"].attrs["TOPOLOGY"] = "line"
+    got = _recorded(path, ladruno=True, reads=2)
+    assert [w.category for w in got] == [ElementDimContradictionWarning]
+    msg = str(got[0].message)
+    assert "LadrunoLST (declared 3, catalog 2)" in msg
+    assert "LadrunoLST (declared 1, catalog 2)" in msg
+
+
+@pytest.mark.parametrize("ladruno", [True, False], ids=["ladruno", "mpco"])
+def test_a_raised_warning_is_not_spent(tmp_path, ladruno):
+    """Under an ``error`` filter every read raises: a warning that became
+    an exception was not delivered, so it is not marked as warned."""
+    path = _write(tmp_path, [("MadeUpPanel", 4)], ladruno=ladruno)
+    for _ in range(2):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ElementDimUnknownWarning)
+            with pytest.raises(ElementDimUnknownWarning, match="MadeUpPanel"):
+                _read_path(path, ladruno=ladruno)

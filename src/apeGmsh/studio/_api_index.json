@@ -948,6 +948,12 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.constraints.penalty"
     },
+    "g.constraints.periodic": {
+      "doc": "Tie two opposite boundaries node for node, along ``axis``.",
+      "signature": "periodic(master_label, slave_label, *, axis, dofs=None, tolerance=1e-06, master_entities=None, slave_entities=None, name=None) -> 'EqualDOFDef'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.constraints.periodic"
+    },
     "g.constraints.resolve": {
       "doc": "",
       "signature": "resolve(node_tags, node_coords, elem_tags=None, connectivity=None, *, node_map=None, face_map=None) -> 'ConstraintSet'",
@@ -3395,12 +3401,6 @@
       "signature": "urd_beta(*, points: \"'Iterable[tuple[float, float]]'\", on: 'str | Iterable[str] | None' = None, activate_time: 'float | None' = None, deactivate_time: 'float | None' = None, factor: 'TimeSeries | None' = None, name: 'str | None' = None) -> 'URDbeta'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.damping.urd_beta"
-    },
-    "ops.domain_capture": {
-      "doc": "Open a :class:`DomainCapture` for in-process recording.",
-      "signature": "domain_capture(spec: \"'DomainCaptureSpec'\", *, path: \"'str | Path'\", ops: 'Any' = None) -> \"'DomainCapture'\"",
-      "skill": "references/opensees-bridge.md",
-      "symbol": "ops.domain_capture"
     },
     "ops.eigen": {
       "doc": "Build + emit + run a one-shot ``eigen`` solve via the live emitter.",

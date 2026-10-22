@@ -98,8 +98,8 @@ record `material.ladrunoBranch` with the Ladruno recorder during the run, then r
 `Results.from_ladruno`, which names the eight columns through the material-bucket seam above
 (ADR 0108 D2) and feeds `corner_census()`. This re-homes ADR 0108 D5 (its 2026-10-18
 superseded-in-part note; maintainer ruling 2026-10-14 on #1767, gap G14). The in-process seam D5
-first named, DomainCapture's per-material routing, is being removed with that class (#1767), so
-the generalisation slice D5 listed is no longer owed. The reader half is tested on a hand-built
+first named, the in-process capture's per-material routing, was deleted with that route (#2191),
+so the generalisation slice D5 listed is no longer owed. The reader half is tested on a hand-built
 `.ladruno` (`tests/results/readers/test_ladruno_reader.py`); a post-`61b3efa04` engine writing
 the bucket end to end is the live gate's post-fix half, still owed.
 

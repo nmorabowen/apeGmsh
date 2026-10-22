@@ -492,38 +492,77 @@ def test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live(
         ops3.build().emit(em3)
         assert em3.analyze(steps=1) == 0
 
-    # 3. Single-hinge hinge_loc=0.5 on LadrunoDispBeamColumn and LadrunoForceBeamColumn + subdivide=(4, 4.0)
+    # 3. Single-hinge hinge_loc=0.5 on LadrunoDispBeamColumn and LadrunoForceBeamColumn
+    #    with both 2-tuple subdivide=(4, 4.0) and scalar subdivide=4 followed by mass=10.0 (2D & 3D)
     for cls_name in ("LadrunoDispBeamColumn", "LadrunoForceBeamColumn"):
-        fem_h = _two_element_cantilever_fem(f"wp200_{cls_name}_single_loc")
-        ops_h = apeSees(fem_h, default_orientation=None)
-        ops_h.model(ndm=2, ndf=3)
-        tr_h = ops_h.geomTransf.Linear()
-        sec_h = ops_h.section.Elastic(E=2.0e11, A=0.04, Iz=1.6e-4)
-        integ_h = ops_h.beamIntegration.Lobatto(section=sec_h, n_ip=4)
-        h_m = ops_h.uniaxialMaterial.LadrunoCohesiveHinge(
-            Mc=40.0e3, Gf=250.0, softening="linear"
+        sub_cases: tuple[dict[str, Any], ...] = (
+            ({"subdivide": (4, 4.0)}, {"subdivide": 4, "mass": 10.0})
+            if cls_name == "LadrunoForceBeamColumn"
+            else ({},)
         )
-        extra = {"subdivide": (4, 4.0)} if cls_name == "LadrunoForceBeamColumn" else {}
-        getattr(ops_h.element, cls_name)(
-            pg="Beam",
-            transf=tr_h,
-            integration=integ_h,
-            hinge=h_m,
-            hinge_loc=0.5,
-            **extra,
+        for case_idx, extra in enumerate(sub_cases):
+            fem_h = _two_element_cantilever_fem(f"wp200_{cls_name}_single_loc_{case_idx}")
+            ops_h = apeSees(fem_h, default_orientation=None)
+            ops_h.model(ndm=2, ndf=3)
+            tr_h = ops_h.geomTransf.Linear()
+            sec_h = ops_h.section.Elastic(E=2.0e11, A=0.04, Iz=1.6e-4)
+            integ_h = ops_h.beamIntegration.Lobatto(section=sec_h, n_ip=4)
+            h_m = ops_h.uniaxialMaterial.LadrunoCohesiveHinge(
+                Mc=40.0e3, Gf=250.0, softening="linear"
+            )
+            getattr(ops_h.element, cls_name)(
+                pg="Beam",
+                transf=tr_h,
+                integration=integ_h,
+                hinge=h_m,
+                hinge_loc=0.5,
+                **extra,
+            )
+            ops_h.fix(label="base", dofs=(1, 1, 1))
+            with ops_h.pattern.Plain(series=ops_h.timeSeries.Linear()) as p:
+                p.load(node=ops_h.nodes.one(label="tip"), forces=(FX, FY, 0.0))
+            ops_h.constraints.Plain()
+            ops_h.numberer.RCM()
+            ops_h.system.BandGeneral()
+            ops_h.test.NormDispIncr(tol=1e-12, max_iter=25)
+            ops_h.algorithm.Newton()
+            ops_h.integrator.LoadControl(dlam=1.0)
+            ops_h.analysis.Static()
+
+            em_h = LiveOpsEmitter(wipe=True)
+            ops_h.build().emit(em_h)
+            assert em_h.analyze(steps=1) == 0
+
+    # 4. 3-D LadrunoForceBeamColumn with scalar subdivide=4 and mass=10.0
+    fem_f3 = _two_element_cantilever_fem("wp200_lfbc3d_scalar_subdivide")
+    ops_f3 = apeSees(fem_f3, default_orientation=None)
+    ops_f3.model(ndm=3, ndf=6)
+    tr_f3 = ops_f3.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+    sec_f3 = ops_f3.section.Elastic(
+        E=2.0e11, A=0.04, Iz=1.6e-4, Iy=1.2e-4, G=8.0e10, J=2.0e-4
+    )
+    integ_f3 = ops_f3.beamIntegration.Lobatto(section=sec_f3, n_ip=4)
+    ops_f3.element.LadrunoForceBeamColumn(
+        pg="Beam",
+        transf=tr_f3,
+        integration=integ_f3,
+        subdivide=4,
+        mass=10.0,
+    )
+    ops_f3.fix(label="base", dofs=(1, 1, 1, 1, 1, 1))
+    with ops_f3.pattern.Plain(series=ops_f3.timeSeries.Linear()) as p:
+        p.load(
+            node=ops_f3.nodes.one(label="tip"),
+            forces=(FX, FY, FZ, MX, 0.0, 0.0),
         )
-        ops_h.fix(label="base", dofs=(1, 1, 1))
-        with ops_h.pattern.Plain(series=ops_h.timeSeries.Linear()) as p:
-            p.load(node=ops_h.nodes.one(label="tip"), forces=(FX, FY, 0.0))
-        ops_h.constraints.Plain()
-        ops_h.numberer.RCM()
-        ops_h.system.BandGeneral()
-        ops_h.test.NormDispIncr(tol=1e-12, max_iter=25)
-        ops_h.algorithm.Newton()
-        ops_h.integrator.LoadControl(dlam=1.0)
-        ops_h.analysis.Static()
+    ops_f3.constraints.Plain()
+    ops_f3.numberer.RCM()
+    ops_f3.system.BandGeneral()
+    ops_f3.test.NormDispIncr(tol=1e-12, max_iter=25)
+    ops_f3.algorithm.Newton()
+    ops_f3.integrator.LoadControl(dlam=1.0)
+    ops_f3.analysis.Static()
 
-        em_h = LiveOpsEmitter(wipe=True)
-        ops_h.build().emit(em_h)
-        assert em_h.analyze(steps=1) == 0
-
+    em_f3 = LiveOpsEmitter(wipe=True)
+    ops_f3.build().emit(em_f3)
+    assert em_f3.analyze(steps=1) == 0

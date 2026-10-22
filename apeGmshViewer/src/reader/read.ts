@@ -140,11 +140,19 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * and `decl` (`programDecls`, below) and applies Python's rule
  * (state/results.ts `sideChannelHashCause`).
  *
+ * opensees 2.33.0 (#2372, h5-schema.md "Solve stamp"): `/opensees@requires`
+ * may name the value tokens `"mpco"` (a `recorder mpco`) and `"mpi"` (a
+ * Mumps-family or `Parallel*` `system` or a partitioned `@solve_mode`). No path or dtype
+ * change, and this app does not read the solve stamp, so nothing here reads
+ * differently. `@requires` is hashed: a 2.33 re-emit of a model with an MPCO
+ * recorder, a Mumps system or partitions has a new model_hash, which the
+ * results pairing shows as a plain mismatch.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 32 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 33 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
