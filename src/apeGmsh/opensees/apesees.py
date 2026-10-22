@@ -131,6 +131,7 @@ from ._internal.build.interfaces import (
 from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
+from ._internal.build.stage_validate import validate_class_wide_stage_flags
 from ._internal.build.transforms import emit_transform_specs
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
@@ -4985,6 +4986,10 @@ class BuiltModel:
             else FemToOpsTagMap.from_plan(()),
         )
         self._validate_material_stage_targets(element_owner_stage or {})
+        validate_class_wide_stage_flags(
+            stage_records=self.stage_records, primitives=self.primitives,
+            tag_for=self.tag_for, fem=self.fem,
+            element_owner_stage=element_owner_stage or {})
 
     # -- Ownership-tier helpers (PR-A: shared by H1 + V1) -----------------
 
@@ -5748,11 +5753,8 @@ class BuiltModel:
         activated by this stage or a strictly-earlier one — the flip
         block emits after the stage's own element fan-out.
 
-        Known gap: ``s.remove_element`` is NOT modelled here.  A deck
-        that removes every element using a material and then flips that
-        material still passes V7 and silently no-ops at run time.  That
-        needs a per-stage live-set walk rather than this earliest-live
-        map; it is not worth the machinery until a real deck hits it.
+        ``s.remove_element`` is not modelled here; for the class-wide
+        groups ``validate_class_wide_stage_flags`` models it.
         """
         if not self.stage_records:
             return

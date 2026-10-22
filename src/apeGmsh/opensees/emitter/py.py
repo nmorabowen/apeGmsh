@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo
@@ -652,6 +653,8 @@ class PyEmitter:
         self._analysis_token: str | None = None
         # Set by the bridge when the deck will write a record.
         self._run_record: bool = False
+        # The ManzariDafalias ``-stage 0`` lines owed before a solve verb.
+        self._stage0 = StageZeroLedger()
 
     # -- Output --------------------------------------------------------------
 
@@ -895,6 +898,7 @@ class PyEmitter:
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
         warn_rc_c2_deck(mat_type, params)
+        self._stage0.material(mat_type, tag)
         self._lines.append(_ops_call("nDMaterial", mat_type, tag, *params))
 
     def section(
@@ -943,6 +947,7 @@ class PyEmitter:
     def element(
         self, ele_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        self._stage0.owed = True
         self._lines.append(_ops_call("element", ele_type, tag, *args))
 
     # -- Time series --------------------------------------------------------
@@ -1072,6 +1077,7 @@ class PyEmitter:
         label: str | None = None,
         strategy: StrategySpec | None = None,
     ) -> int:
+        self._stage_zero()
         # Fail-loud per-increment loop (see the Emitter Protocol note):
         # a batched ``ops.analyze(N)`` short-circuits internally on the
         # first failed increment and the deck would silently run on
@@ -1318,6 +1324,7 @@ class PyEmitter:
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
+        self._stage_zero()
         self._lines.append(_ops_call("eigen", solver, num_modes))
         return []
 
@@ -1335,6 +1342,7 @@ class PyEmitter:
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
     ) -> list[float]:
+        self._stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
@@ -1520,6 +1528,7 @@ class PyEmitter:
         self._lines.indent = prev_indent
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        self._stage0.user_flip(mat_tag)
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(_ops_call(
@@ -1527,6 +1536,14 @@ class PyEmitter:
             "-material", int(mat_tag), "-stage", int(stage),
         ))
         self._lines.indent = prev_indent
+
+    def _stage_zero(self) -> None:
+        """Write the owed ManzariDafalias ``-stage 0`` lines
+        (:class:`~apeGmsh.opensees._internal.build.stage_validate.
+        StageZeroLedger`), at a solve verb."""
+        for tag in self._stage0.due():
+            self._lines.append(_ops_call(
+                "updateMaterialStage", "-material", tag, "-stage", 0))
 
     def _emit_hook_ramp_function(
         self,
