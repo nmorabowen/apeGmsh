@@ -83,7 +83,7 @@ STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
 #: A new class-wide class is one entry ``"<Class>": "<Class>::<static>"``.
 #: The static also survives ``ops.wipe()``: an in-process re-run starts at
 #: the previous run's value, while these checks assume each model starts
-#: at 0 (#2460; the stage-0 line after the elements is #2440's).
+#: at 0.
 CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "ManzariDafalias": "ManzariDafalias::mElastFlag",
     "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
@@ -122,7 +122,7 @@ TAG_BLIND_STAGE_PARAMETER: dict[str, frozenset[str]] = {
 #: so ``s.update_parameter(<name>, v, material=m)`` flips the group as
 #: ``s.update_material_stage`` does and the stage-close check counts it.
 #: Only ``materialState`` acts through ``s.update_parameter``: the stage
-#: close refuses ``updateMaterialStage`` there (#2460), and a
+#: close refuses ``updateMaterialStage`` there, and a
 #: ``materialState`` update only on hosts of
 #: :data:`MATERIAL_STATE_ELEMENTS`.
 STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
