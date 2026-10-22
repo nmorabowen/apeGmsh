@@ -142,7 +142,7 @@ export class LadrunoGauss {
       }
       const left: string[] = [];
       let read = 0;
-      // The token's element ids: its buckets' (the flat LOCAL_AXES layout keeps one ID on the token itself).
+      // The token's element ids: its buckets', and an ID on the token itself (a flat LOCAL_AXES, which a step read refuses, #2451).
       const lists: IdList[] = [];
       const own = this.elementIdsIn(rg);
       if (own) lists.push({ at: `${rg.path}/ID`, ids: own });

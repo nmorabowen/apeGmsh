@@ -963,7 +963,10 @@ test("#2336: resolveLocalAxes and stationLocalAxes take 2^24 + 1 framed elements
   assert.ok(Number.isNaN(stations.localAxesZRec![6]!));
 });
 
-// #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (schema §5; the fork at
+// #2451 ruled the layout: one class bucket {ID, DATA[steps, nE, w], STEP?, TIME?} (fork
+// schema §7.0 in §7.2's buckets); §5's DATA/STEP_<k> and anything on LOCAL_AXES itself
+// are refused by name.
+// #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (the fork at
 // FORK_PIN does not write it) that could not be paired with its ids or the stage's
 // steps used to be dropped with no word, so a step read drew the MODEL (reference)
 // frame in its place. Every such bucket is now refused by name, with no fallback. The
@@ -989,6 +992,17 @@ const stepBucket = (la: h5wasm.Group, name: string, ids: number[] | null, shape:
   if (ids) b.create_dataset({ name: "ID", data: Int32Array.from(ids), shape: [ids.length] });
   if (shape) b.create_dataset({ name: "DATA", data: quarterTurns(shape), shape });
 };
+/** STEP and TIME of `n` values each on the bucket `name` (either left out with null). */
+const stepAxes = (la: h5wasm.Group, name: string, nStep: number | null, nTime: number | null) => {
+  const b = la.get(name) as h5wasm.Group;
+  if (nStep !== null) b.create_dataset({ name: "STEP", data: Int32Array.from({ length: nStep }, (_, i) => i), shape: [nStep] });
+  if (nTime !== null) b.create_dataset({ name: "TIME", data: Float64Array.from({ length: nTime }, (_, i) => i + 1), shape: [nTime] });
+};
+/** Schema §5's per-step form under `g`: DATA as a group of STEP_<k> datasets, `steps` of them, 3 rows of quaternions. */
+const schema5Data = (g: h5wasm.Group, steps: number) => {
+  const d = g.create_group("DATA");
+  for (let k = 0; k < steps; k++) d.create_dataset({ name: `STEP_${k}`, data: quarterTurns([3, 4]), shape: [3, 4] });
+};
 const zOf = (z: Float64Array | null) => Array.from(z ?? []).map((v) => +v.toFixed(12) + 0);
 const refusesStep = (read: () => unknown, pattern: RegExp) =>
   assert.throws(read, (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message), "a malformed step LOCAL_AXES bucket is refused by name");
@@ -1012,6 +1026,14 @@ test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in
       assert.deepEqual(zOf(r.readLocalAxes("stage_0").zRec), PORTAL_MODEL_Z, "a step-less read keeps the MODEL frame");
     });
   }
+  // #2451's full layout: the class bucket with its STEP and TIME axes reads the same frames.
+  const axed = withStepLa((la) => {
+    stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [1, 2, 3], [3, 3, 4]);
+    stepAxes(la, "74-ForceBeamColumn3d[1000:1:0]", 3, 3);
+  });
+  withFile(axed, (r) => {
+    for (const step of [0, 1, 2]) assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step }).zRec), [0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  });
   // Empty ID beside empty DATA holds no frame for anyone: the step reads the MODEL frames, silently.
   const empty = withStepLa((la) => stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [], [3, 0, 4]));
   withFile(empty, (r) => assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step: 1 }).zRec), PORTAL_MODEL_Z));
@@ -1033,10 +1055,17 @@ test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in
     ["a DATA that is not 3-D", (la) => stepBucket(la, B, [1, 2, 3], [3, 12]), PORTAL_BUCKET, "has DATA of shape (3, 12), not (steps, elements, components)"],
     ["an ID and no DATA", (la) => stepBucket(la, B, [1, 2, 3], null), PORTAL_BUCKET, "holds an ID but no DATA"],
     ["a DATA and no ID", (la) => stepBucket(la, B, null, [3, 3, 4]), PORTAL_BUCKET, "holds a DATA but no ID"],
-    ["a flat DATA and no ID", (la) => la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }), STEP_LA, "holds a DATA but no ID"],
+    // #2451: nothing on LOCAL_AXES itself; the flat form and §5's form are named.
+    ["a flat DATA and no ID", (la) => la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }), STEP_LA, "holds DATA on itself (a flat layout this reader does not take; a step bucket is one <classTag>-<ClassName> group"],
+    ["a flat ID and DATA", (la) => { la.create_dataset({ name: "ID", data: Int32Array.from([1, 2, 3]), shape: [3] }); la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }); }, STEP_LA, "holds ID, DATA on itself (a flat layout this reader does not take; a step bucket is"],
+    ["schema §5's ID and DATA/STEP_<k> on LOCAL_AXES itself", (la) => { la.create_dataset({ name: "ID", data: Int32Array.from([1, 2, 3]), shape: [3] }); schema5Data(la, 3); }, STEP_LA, "holds ID, DATA on itself (the per-step DATA/STEP_<k> form schema §5 draws, which §7.0's chunked DATA superseded; a step bucket is"],
+    ["a STEP on LOCAL_AXES itself beside a good bucket", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_dataset({ name: "STEP", data: Int32Array.from([0, 1, 2]), shape: [3] }); }, STEP_LA, "holds STEP on itself (a flat layout this reader does not take"],
+    ["a STEP of 2 values", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); stepAxes(la, B, 2, null); }, PORTAL_BUCKET, "has STEP holding 2 value(s), but its DATA holds 3 step(s)"],
+    ["a TIME of 4 values", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); stepAxes(la, B, 3, 4); }, PORTAL_BUCKET, "has TIME holding 4 value(s), but its DATA holds 3 step(s)"],
+    ["a TIME that is a group", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); (la.get(B) as h5wasm.Group).create_group("TIME"); }, PORTAL_BUCKET, "holds a TIME that is not a dataset (a step bucket is"],
     ["an ID that is a group", (la) => { stepBucket(la, B, null, [3, 3, 4]); (la.get(B) as h5wasm.Group).create_group("ID"); }, PORTAL_BUCKET, "holds an ID that is not a dataset"],
-    // The literal §5 layout, DATA as a group of per-step datasets, is not the layout this reader takes.
-    ["a DATA that is a group", (la) => { stepBucket(la, B, [1, 2, 3], null); (la.get(B) as h5wasm.Group).create_group("DATA").create_dataset({ name: "STEP_0", data: quarterTurns([3, 4]), shape: [3, 4] }); }, PORTAL_BUCKET, "holds a DATA that is not a dataset (a step bucket is one ID[nE] dataset and one DATA[steps, nE, 3|4|9] dataset"],
+    // §5's DATA as a group of per-step datasets, in a class bucket, is named as §5's form (#2451).
+    ["a DATA that is a group of STEP_<k>", (la) => { stepBucket(la, B, [1, 2, 3], null); schema5Data(la.get(B) as h5wasm.Group, 3); }, PORTAL_BUCKET, "holds a DATA group, not a DATA dataset (the per-step DATA/STEP_<k> form schema §5 draws, which §7.0's chunked DATA superseded; a step bucket is"],
     ["neither an ID nor a DATA", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_group("COLUMN_MAP"); }, `${STEP_LA}/COLUMN_MAP`, "holds neither an ID nor a DATA (a step bucket is"],
   ];
   for (const [label, edit, at, what] of cases) {
