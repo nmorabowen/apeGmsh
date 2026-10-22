@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -37,12 +38,16 @@ from apeGmsh.opensees._internal.lineage import compute_model_hash, read_stored_l
 from apeGmsh.opensees._target import BackendInfo
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.caps import (
+    CHAIN_ATTRS,
+    FORK_CHAIN,
     REQUIRES_TOKENS,
     SolveStamp,
     binding_systems,
+    binding_types,
     flat_requires,
-    is_fork_system,
+    is_fork_chain,
     is_mpi_system,
+    needs_fork,
     value_requires,
 )
 from apeGmsh.opensees.emitter.h5 import H5Emitter
@@ -517,14 +522,72 @@ def test_build_live_refuses_before_touching_the_domain(
 def test_value_requires_closed_form(
     kinds: tuple, systems: tuple, mode: str, want: frozenset,
 ) -> None:
-    assert value_requires(recorder_kinds=kinds, systems=systems,
+    assert value_requires(recorder_kinds=kinds, chains=_systems(systems),
                           solve_mode=mode) == want
     assert want <= set(REQUIRES_TOKENS)
 
 
+def _systems(systems: "tuple[str, ...]") -> "tuple[dict[str, str], ...]":
+    """One analysis chain per ``system`` type, as a global chain and its
+    stages store them."""
+    return tuple({"system": s} for s in systems)
+
+
+#: Closed-form rows over every :data:`FORK_CHAIN` family: one chain each
+#: (global, then staged), stored under the family's chain attr.
+_FORK_CHAIN_ROWS = [
+    (({"integrator": "LoadControl"},), ()),
+    (({"integrator": "LadrunoLoadControl"},), ("fork",)),
+    (({"integrator": "LoadControl"}, {"integrator": "ladrunohht"}), ("fork",)),
+    (({"integrator": "ExplicitBatheLNVDSMSConsistent"},), ("fork",)),
+    (({"numberer": "RCM"},), ()),
+    (({"numberer": "LadrunoParallelRCM"},), ("fork",)),
+    (({"numberer": "LadrunoParallelRCM",
+       "numberer_runtime_fallback": "RCM"},), ()),
+    (({"test": "NormDispIncr"},), ()),
+    (({"test": "LadrunoStabilizedUnbalance"},), ("fork",)),
+    (({"handler": "Transformation"},), ()),
+    (({"handler": "LadrunoProjection"},), ("fork",)),
+    (({"handler": "LADRUNOCONTACT"},), ("fork",)),
+    (({"constraints": "LadrunoProjection", "algorithm": "LadrunoHHT",
+       "analysis": "LadrunoLoadControl"},), ()),
+    (({"system": "UmfPack", "integrator": "Newmark", "numberer": "AMD",
+       "test": "EnergyIncr", "handler": "Penalty"},), ()),
+]
+_FORK_CHAIN_IDS = [
+    "stock-integrator", "ladruno-integrator", "staged-integrator-case",
+    "sms-consistent", "stock-numberer", "ladruno-numberer",
+    "numberer-with-runtime-fallback", "stock-test", "ladruno-test",
+    "stock-handler", "projection-handler", "contact-handler-case",
+    "not-a-chain-attr", "stock-chain",
+]
+
+
+@pytest.mark.parametrize("chains, want", _FORK_CHAIN_ROWS, ids=_FORK_CHAIN_IDS)
+def test_value_and_flat_requires_derive_fork_from_every_chain_family(
+    chains: tuple, want: tuple,
+) -> None:
+    """``"fork"`` comes from a fork-only type of any chain family, global
+    or staged, any case, and from nothing else: a key that is not the
+    family's chain attr (``constraints``, ``algorithm``, ``analysis``) and
+    a type with a runtime fallback do not bind the deck (#2430)."""
+    assert needs_fork(chains) == (want == ("fork",))
+    assert value_requires(recorder_kinds=(), chains=chains,
+                          solve_mode="flat") == frozenset(want)
+    assert flat_requires((), chains=chains) == want
+    assert flat_requires(("fork",), chains=chains) == ("fork",)
+
+
 def test_value_requires_refuses_an_unknown_mode() -> None:
     with pytest.raises(ValueError, match="solve_mode must be one of"):
-        value_requires(recorder_kinds=(), systems=(), solve_mode="ranked")
+        value_requires(recorder_kinds=(), chains=(), solve_mode="ranked")
+
+
+def test_an_unknown_chain_family_raises() -> None:
+    with pytest.raises(ValueError, match="unknown chain family 'algorithm'"):
+        is_fork_chain("algorithm", "Newton")
+    with pytest.raises(ValueError, match="unknown chain family 'handler'"):
+        binding_types(({"handler": "Plain"},), "handler")
 
 
 def _value_emitter(*, recorder: str = "", system: str = "",
@@ -733,7 +796,7 @@ def test_each_system_pins_its_token(
     assert model.solve_stamp.requires == _SYSTEM_TOKENS[name]
     assert model.replay_requires() == _SYSTEM_TOKENS[name]
     assert is_mpi_system(name) == ("mpi" in _SYSTEM_TOKENS[name])
-    assert is_fork_system(name) == ("fork" in _SYSTEM_TOKENS[name])
+    assert is_fork_chain("system", name) == ("fork" in _SYSTEM_TOKENS[name])
 
 
 # -- F2: a flat replay re-derives its own "mpi" (T ruling (a), #2372) --------
@@ -759,7 +822,7 @@ def test_each_system_pins_its_token(
 def test_flat_requires_closed_form(
     requires: tuple, systems: tuple, want: tuple,
 ) -> None:
-    assert flat_requires(requires, systems=systems) == want
+    assert flat_requires(requires, chains=_systems(systems)) == want
 
 
 class _FakeLive:
@@ -865,6 +928,381 @@ def test_build_live_of_a_pardiso_archive_needs_the_fork(
         with pytest.raises(_Reached):
             model.build("live")
         assert len(_FakeLive.constructed) == 1
+
+
+# -- #2430: every fork-only chain command stamps "fork" -----------------------
+
+#: How each member of the analysis-chain families the bridge ships is
+#: declared in a solving frame, by row id: the class name, plus
+#: ``[consistent]`` for the SMS integrators' consistent token. The
+#: ``integrator`` rows that need ``Transient`` are in :data:`_TRANSIENT`.
+_CHAIN_MEMBERS: "dict[str, dict[str, Any]]" = {
+    "integrator": {
+        "LoadControl": lambda o: o.integrator.LoadControl(dlam=0.1),
+        "DisplacementControl": lambda o: o.integrator.DisplacementControl(
+            node=2, dof=1, dU=1e-4),
+        "ArcLength": lambda o: o.integrator.ArcLength(s=0.1, alpha=1.0),
+        "Newmark": lambda o: o.integrator.Newmark(gamma=0.5, beta=0.25),
+        "HHT": lambda o: o.integrator.HHT(alpha=0.9),
+        "CentralDifference": lambda o: o.integrator.CentralDifference(),
+        "ExplicitDifference": lambda o: o.integrator.ExplicitDifference(),
+        "ExplicitBathe": lambda o: o.integrator.ExplicitBathe(),
+        "ExplicitBatheLNVD": lambda o: o.integrator.ExplicitBatheLNVD(),
+        "CentralDifferenceLadruno":
+            lambda o: o.integrator.CentralDifferenceLadruno(),
+        "LadrunoArcLength":
+            lambda o: o.integrator.LadrunoArcLength(s=0.1, alpha=1.0),
+        "LadrunoDynamicRelaxation":
+            lambda o: o.integrator.LadrunoDynamicRelaxation(),
+        "LadrunoIndirectControl": lambda o: o.integrator.LadrunoIndirectControl(
+            incr=1e-4, controls=((2, 1, 1.0),)),
+        "LadrunoLoadControl":
+            lambda o: o.integrator.LadrunoLoadControl(dlam=0.1),
+        "LadrunoHHT": lambda o: o.integrator.LadrunoHHT(alpha=0.9),
+        "LadrunoGeneralizedAlpha": lambda o: o.integrator.LadrunoGeneralizedAlpha(
+            alpha_m=1.0, alpha_f=0.8),
+        "CentralDifferenceSMS":
+            lambda o: o.integrator.CentralDifferenceSMS(dt_target=0.01),
+        "CentralDifferenceSMS[consistent]": lambda o: (
+            o.integrator.CentralDifferenceSMS(dt_target=0.01, consistent=True)),
+        "ExplicitBatheSMS":
+            lambda o: o.integrator.ExplicitBatheSMS(dt_target=0.01),
+        "ExplicitBatheSMS[consistent]": lambda o: (
+            o.integrator.ExplicitBatheSMS(dt_target=0.01, consistent=True)),
+        "ExplicitBatheLNVDSMS":
+            lambda o: o.integrator.ExplicitBatheLNVDSMS(dt_target=0.01),
+        "ExplicitBatheLNVDSMS[consistent]": lambda o: (
+            o.integrator.ExplicitBatheLNVDSMS(dt_target=0.01, consistent=True)),
+    },
+    "numberer": {
+        "Plain": lambda o: o.numberer.Plain(),
+        "RCM": lambda o: o.numberer.RCM(),
+        "AMD": lambda o: o.numberer.AMD(),
+        "ParallelPlain": lambda o: o.numberer.ParallelPlain(),
+        "ParallelRCM": lambda o: o.numberer.ParallelRCM(),
+        "LadrunoParallelRCM": lambda o: o.numberer.LadrunoParallelRCM(),
+    },
+    "test": {
+        "NormDispIncr": lambda o: o.test.NormDispIncr(tol=1e-6, max_iter=10),
+        "NormUnbalance": lambda o: o.test.NormUnbalance(tol=1e-6, max_iter=10),
+        "EnergyIncr": lambda o: o.test.EnergyIncr(tol=1e-6, max_iter=10),
+        "FixedNumIter": lambda o: o.test.FixedNumIter(max_iter=10),
+        "RelativeNormDispIncr":
+            lambda o: o.test.RelativeNormDispIncr(tol=1e-6, max_iter=10),
+        "LadrunoStabilizedUnbalance":
+            lambda o: o.test.LadrunoStabilizedUnbalance(tol=1e-6, max_iter=10),
+    },
+    "constraints": {
+        "Plain": lambda o: o.constraints.Plain(),
+        "Penalty": lambda o: o.constraints.Penalty(alpha_sp=1e12, alpha_mp=1e12),
+        "Transformation": lambda o: o.constraints.Transformation(),
+        "Lagrange": lambda o: o.constraints.Lagrange(),
+        "Auto": lambda o: o.constraints.Auto(),
+        "LadrunoProjection": lambda o: o.constraints.LadrunoProjection(),
+        "LadrunoContact": lambda o: o.constraints.LadrunoContact(),
+    },
+}
+#: The integrator rows a ``Transient`` analysis drives.
+_TRANSIENT = frozenset({
+    "Newmark", "HHT", "CentralDifference", "ExplicitDifference",
+    "ExplicitBathe", "ExplicitBatheLNVD", "CentralDifferenceLadruno",
+    "LadrunoDynamicRelaxation", "LadrunoHHT", "LadrunoGeneralizedAlpha",
+    "CentralDifferenceSMS", "CentralDifferenceSMS[consistent]",
+    "ExplicitBatheSMS", "ExplicitBatheSMS[consistent]",
+    "ExplicitBatheLNVDSMS", "ExplicitBatheLNVDSMS[consistent]",
+})
+_FORK = ("fork",)
+#: The ``requires`` a flat solving frame stamps with each chain member,
+#: audited on stock openseespywin 3.7.1.2 and the fork 79e06 (#2430): stock
+#: refuses ``LadrunoParallelRCM``, ``LadrunoStabilizedUnbalance`` and
+#: ``LadrunoProjection``, and accepts every fork-only integrator with
+#: ``WARNING unknown integrator type`` to solve with its default one, so
+#: each needs the fork. Every member is listed (with ``_SYSTEM_TOKENS``, the
+#: ``system`` family), so a new one fails until it is classified here, and
+#: the live net runs each member's deck on the bound build against this
+#: table.
+_CHAIN_TOKENS: "dict[str, dict[str, tuple[str, ...]]]" = {
+    "integrator": {
+        "LoadControl": (), "DisplacementControl": (), "ArcLength": (),
+        "Newmark": (), "HHT": (), "CentralDifference": (),
+        "ExplicitDifference": (), "ExplicitBathe": _FORK,
+        "ExplicitBatheLNVD": _FORK, "CentralDifferenceLadruno": _FORK,
+        "LadrunoArcLength": _FORK, "LadrunoDynamicRelaxation": _FORK,
+        "LadrunoIndirectControl": _FORK, "LadrunoLoadControl": _FORK,
+        "LadrunoHHT": _FORK, "LadrunoGeneralizedAlpha": _FORK,
+        "CentralDifferenceSMS": _FORK,
+        "CentralDifferenceSMS[consistent]": _FORK,
+        "ExplicitBatheSMS": _FORK, "ExplicitBatheSMS[consistent]": _FORK,
+        "ExplicitBatheLNVDSMS": _FORK,
+        "ExplicitBatheLNVDSMS[consistent]": _FORK,
+    },
+    "numberer": {
+        "Plain": (), "RCM": (), "AMD": (), "ParallelPlain": (),
+        "ParallelRCM": (), "LadrunoParallelRCM": _FORK,
+    },
+    "test": {
+        "NormDispIncr": (), "NormUnbalance": (), "EnergyIncr": (),
+        "FixedNumIter": (), "RelativeNormDispIncr": (),
+        "LadrunoStabilizedUnbalance": _FORK,
+    },
+    "constraints": {
+        "Plain": (), "Penalty": (), "Transformation": (), "Lagrange": (),
+        "Auto": (), "LadrunoProjection": _FORK, "LadrunoContact": _FORK,
+    },
+}
+_CHAIN_ROWS = [(fam, row) for fam in sorted(_CHAIN_TOKENS)
+               for row in _CHAIN_TOKENS[fam]]
+_CHAIN_IDS = [f"{fam}-{row}" for fam, row in _CHAIN_ROWS]
+
+
+def test_the_chain_token_tables_list_every_family_member() -> None:
+    from apeGmsh.opensees.analysis import (
+        constraint_handler,
+        integrator,
+        numberer,
+        test,
+    )
+
+    modules = {"constraints": constraint_handler, "integrator": integrator,
+               "numberer": numberer, "test": test}
+    assert set(_CHAIN_TOKENS) == set(_CHAIN_MEMBERS) == set(modules)
+    assert set(_CHAIN_TOKENS) | {"system"} == set(FORK_CHAIN) == set(CHAIN_ATTRS)
+    for fam, mod in modules.items():
+        assert set(_CHAIN_TOKENS[fam]) == set(_CHAIN_MEMBERS[fam])
+        assert {r.split("[")[0] for r in _CHAIN_TOKENS[fam]} == set(mod.__all__)
+    assert _TRANSIENT <= set(_CHAIN_TOKENS["integrator"])
+
+
+def _chain_member(ops: apeSees, family: str, row: str) -> Any:
+    """The ``row`` member of ``family``, declared on ``ops``; ``system``
+    members by class name (``_SYSTEM_TOKENS``)."""
+    if family == "system":
+        return getattr(ops.system, row)()
+    return _CHAIN_MEMBERS[family][row](ops)
+
+
+def _chain_frame(family: str, row: str, *, staged: bool) -> apeSees:
+    """A solving frame whose full chain declares the ``row`` member of
+    ``family`` and a stock default for every other verb: a lumped mass and
+    a nodal load at the free node, so every static and transient member has
+    something to solve; ``staged`` puts the chain in a one-increment
+    stage."""
+    ops = _frame_bridge(analysis=False)
+    ops.mass(nodes=[2], values=(1.0,) * 6)
+    force = (1e-3, 0.0, 0.0, 0.0, 0.0, 0.0)
+    transient = family == "integrator" and row in _TRANSIENT
+    defaults: "dict[str, Any]" = {
+        "test": lambda: ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+        "algorithm": lambda: (
+            ops.algorithm.Linear() if row == "LadrunoDynamicRelaxation"
+            else ops.algorithm.Newton()),
+        "integrator": lambda: ops.integrator.LoadControl(dlam=0.1),
+        "constraints": lambda: ops.constraints.Plain(),
+        "numberer": lambda: ops.numberer.RCM(),
+        "system": lambda: ops.system.UmfPack(),
+        "analysis": lambda: (
+            ops.analysis.Transient() if transient else ops.analysis.Static()),
+    }
+    chain = {verb: (_chain_member(ops, family, row) if verb == family
+                    else make()) for verb, make in defaults.items()}
+    if staged:
+        with ops.stage(name="solve") as s:
+            with s.pattern(series=ops.timeSeries.Linear()) as p:
+                p.load(node=2, forces=force)
+            s.analysis(**chain)
+            s.run(n_increments=1, dt=0.01 if transient else None)
+        return ops
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=2, forces=force)
+    return ops
+
+
+@pytest.mark.parametrize("staged", [False, True], ids=["global", "staged"])
+@pytest.mark.parametrize("family, row", _CHAIN_ROWS, ids=_CHAIN_IDS)
+def test_each_chain_member_pins_its_token(
+    tmp_path: Path, family: str, row: str, staged: bool,
+) -> None:
+    """A flat archive whose chain declares the member, globally or in a
+    stage, stamps the table's tokens, the flat replay needs the same, and
+    :func:`is_fork_chain` agrees on the type the archive stores (#2430)."""
+    out = tmp_path / "m.h5"
+    _chain_frame(family, row, staged=staged).h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    want = _CHAIN_TOKENS[family][row]
+    assert model.solve_stamp is not None and model.solve_stamp.solve_mode == "flat"
+    assert model.solve_stamp.requires == want
+    assert model.replay_requires() == want
+    if staged:
+        return
+    stored = model.analysis().get(CHAIN_ATTRS[family])
+    assert isinstance(stored, str)
+    assert is_fork_chain(family, stored) == (want == _FORK)
+
+
+def test_fork_chain_is_exactly_the_bridges_fork_only_types(tmp_path: Path) -> None:
+    """Each :data:`FORK_CHAIN` family holds exactly the casefolded types the
+    bridge's fork-only members emit, the SMS consistent tokens included:
+    nothing stock, nothing the bridge cannot emit."""
+    emitted: dict[str, set[str]] = {fam: set() for fam in _CHAIN_TOKENS}
+    for fam, row in _CHAIN_ROWS:
+        if _CHAIN_TOKENS[fam][row] != _FORK:
+            continue
+        out = tmp_path / f"{fam}-{row}.h5"
+        _chain_frame(fam, row, staged=False).h5(str(out))
+        emitted[fam].add(str(OpenSeesModel.from_h5(out).analysis()[
+            CHAIN_ATTRS[fam]]).casefold())
+    emitted["system"] = {n.casefold() for n, t in _SYSTEM_TOKENS.items()
+                         if "fork" in t}
+    assert emitted == {fam: set(types) for fam, types in FORK_CHAIN.items()}
+
+
+def test_the_live_fork_integrator_inventory_is_fork_chain_by_member() -> None:
+    """The live emitter's ``_FORK_ONLY_INTEGRATORS`` (the bridge class
+    names the capability map and the warrant rows read) is exactly the
+    fork-only integrator members here; the gate reads ``FORK_CHAIN``, which
+    is those names casefolded plus the SMS members' consistent tokens."""
+    from apeGmsh.opensees.emitter import live
+
+    members = {r for r, t in _CHAIN_TOKENS["integrator"].items()
+               if t == _FORK and "[" not in r}
+    assert set(live._FORK_ONLY_INTEGRATORS) == members
+    consistent = {r.split("[")[0].casefold() + "consistent"
+                  for r in _CHAIN_TOKENS["integrator"] if "[consistent]" in r}
+    assert {m.casefold() for m in members} | consistent == FORK_CHAIN["integrator"]
+
+
+class _StockOps:
+    """A stock openseespy stand-in for in-process ``apeSees.analyze``: it
+    has no ``ladrunoBuild`` (nor any other fork command), answers every
+    other command with 0 and records each call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, ...]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith(("_", "ladruno")) or name in (
+                "criticalTimeStep", "version"):
+            raise AttributeError(name)
+
+        def call(*args: Any) -> int:
+            self.calls.append((name, *args))
+            return 0
+        return call
+
+
+#: Every fork-only member of the chain families, ``system Pardiso`` too.
+_FORK_MEMBER_ROWS = [(f, r) for f, r in _CHAIN_ROWS
+                     if _CHAIN_TOKENS[f][r] == _FORK] + [("system", "Pardiso")]
+
+
+@pytest.mark.parametrize("family, row", _FORK_MEMBER_ROWS,
+                         ids=[f"{f}-{r}" for f, r in _FORK_MEMBER_ROWS])
+def test_in_process_analyze_on_stock_refuses_each_fork_member(
+    monkeypatch: pytest.MonkeyPatch, family: str, row: str,
+) -> None:
+    """In-process ``apeSees.analyze`` on stock refuses every fork-only chain
+    member at its own command, before stock sees it and before any analysis
+    step: an integrator stock would accept with a warning (the
+    ``...Consistent`` SMS tokens among them, #2430) never reaches the domain,
+    so ``analyze`` cannot return 0 with the default integrator's answer."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    stock = _StockOps()
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: stock)
+    ops = _chain_frame(family, row, staged=False)
+    transient = family == "integrator" and row in _TRANSIENT
+    with pytest.raises(RuntimeError, match="requires the Ladruno fork|fork-only"):
+        ops.analyze(steps=1, dt=0.01 if transient else None)
+    verbs = [c[0] for c in stock.calls]
+    assert "analyze" not in verbs and "analysis" not in verbs
+    verb = "constraints" if family == "constraints" else family
+    assert not any(c[0] == verb and str(c[1]).casefold().startswith(
+        row.split("[")[0].casefold()) for c in stock.calls), stock.calls
+
+
+def test_in_process_analyze_on_stock_runs_a_stock_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: the same frame with a stock chain reaches ``analyze``."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    stock = _StockOps()
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: stock)
+    assert _chain_frame("integrator", "LoadControl", staged=False).analyze(
+        steps=1) == 0
+    assert ("integrator", "LoadControl", 0.1) in stock.calls
+    assert ("analyze", 1) in stock.calls
+
+
+_FORK_REPRESENTATIVES = [
+    ("integrator", "LadrunoLoadControl"), ("integrator", "ExplicitBathe"),
+    ("numberer", "LadrunoParallelRCM"),
+    ("test", "LadrunoStabilizedUnbalance"),
+    ("constraints", "LadrunoProjection"),
+]
+
+
+@pytest.mark.parametrize("archive", ["today", "pre-2430", "unstamped"])
+@pytest.mark.parametrize("kind", ["stock", "fork"])
+@pytest.mark.parametrize("family, row", _FORK_REPRESENTATIVES,
+                         ids=[f"{f}-{r}" for f, r in _FORK_REPRESENTATIVES])
+def test_build_live_of_a_fork_chain_archive_needs_the_fork(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    family: str, row: str, kind: str, archive: str,
+) -> None:
+    """``build('live')`` of an archive whose chain declares a fork-only
+    member refuses a stock backend before the live emitter, naming
+    ``'fork'``, and goes on to it on the fork. ``pre-2430`` is the archive
+    an earlier bridge wrote, with ``requires=()``; ``unstamped`` carries no
+    stamp at all (below 2.24.0). The flat replay derives ``"fork"`` from
+    the stored chain (:func:`flat_requires`), so both fail closed too."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    out = tmp_path / "m.h5"
+    _chain_frame(family, row, staged=False).h5(str(out))
+    if archive == "pre-2430":
+        _tamper(out, requires=[])
+    elif archive == "unstamped":
+        _tamper(out, **{a: None for a in _STAMP_ATTRS})
+    model = OpenSeesModel.from_h5(out)
+    if archive == "unstamped":
+        assert model.solve_stamp is None
+    else:
+        assert model.solve_stamp is not None
+        assert model.solve_stamp.requires == (
+            () if archive == "pre-2430" else _FORK)
+    assert model.replay_requires() == _FORK
+    _FakeLive.constructed = []
+    monkeypatch.setattr(live_mod, "LiveOpsEmitter", _FakeLive)
+    monkeypatch.setattr(live_mod, "get_backend_info", lambda: _backend(kind))
+    if kind == "stock":
+        with pytest.raises(BridgeError, match="require 'fork'.*stock build"):
+            model.build("live")
+        assert _FakeLive.constructed == []
+    else:
+        with pytest.raises(_Reached):
+            model.build("live")
+        assert len(_FakeLive.constructed) == 1
+
+
+#: The five ``/opensees`` attributes a solve stamp is written as.
+_STAMP_ATTRS = ("will_solve", "solve_refusals", "requires", "solve_mode",
+                "solve_refusals_flat")
+
+
+@pytest.mark.parametrize("name, want", [("Pardiso", _FORK), ("UmfPack", ())])
+def test_an_unstamped_archive_derives_fork_from_its_chain(
+    tmp_path: Path, name: str, want: tuple,
+) -> None:
+    """An archive with no solve stamp (below 2.24.0) still names the fork
+    its stored ``system Pardiso`` needs (#2432 review); a stock system needs
+    nothing."""
+    out = tmp_path / "m.h5"
+    _system_frame(name, staged=False).h5(str(out))
+    _tamper(out, **{a: None for a in _STAMP_ATTRS})
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp is None
+    assert model.replay_requires() == want
 
 
 def test_binding_systems_skip_a_runtime_fallback() -> None:

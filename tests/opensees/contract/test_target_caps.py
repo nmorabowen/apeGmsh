@@ -14,7 +14,13 @@ import dataclasses
 import pytest
 
 from apeGmsh.opensees.emitter.base import Emitter
-from apeGmsh.opensees.emitter.caps import SolveStamp, TargetCaps
+from apeGmsh.opensees.emitter.caps import (
+    CHAIN_ATTRS,
+    FORK_CHAIN,
+    SolveStamp,
+    TargetCaps,
+    is_fork_chain,
+)
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.opensees.emitter.py import PyEmitter
@@ -117,3 +123,40 @@ def test_solve_stamp_requires_must_be_sorted_and_unique() -> None:
 def test_solve_stamp_tokens_must_be_non_empty_strings(bad: object) -> None:
     with pytest.raises(TypeError, match="tuple of non-empty strings"):
         SolveStamp(True, solve_refusals=bad)  # type: ignore[arg-type]
+
+
+# -- FORK_CHAIN (#2430) -----------------------------------------------------
+
+
+def test_fork_chain_names_each_chain_family_once_with_its_attr() -> None:
+    """One ``{family: casefolded types}`` map over the chain verbs whose
+    fork-only types stamp ``"fork"``, each family with the chain attr the
+    archive stores its type under, both read-only."""
+    assert set(FORK_CHAIN) == set(CHAIN_ATTRS) == {
+        "constraints", "integrator", "numberer", "system", "test"}
+    assert CHAIN_ATTRS["constraints"] == "handler"
+    assert all(CHAIN_ATTRS[f] == f for f in FORK_CHAIN if f != "constraints")
+    for family, types in FORK_CHAIN.items():
+        assert isinstance(types, frozenset) and types, family
+        assert all(t == t.casefold() for t in types), family
+    with pytest.raises(TypeError):
+        FORK_CHAIN["algorithm"] = frozenset()  # type: ignore[index]
+    with pytest.raises(TypeError):
+        CHAIN_ATTRS["algorithm"] = "algorithm"  # type: ignore[index]
+
+
+@pytest.mark.parametrize("family, c_type, want", [
+    ("integrator", "LadrunoLoadControl", True),
+    ("integrator", "ladrunoloadcontrol", True),
+    ("integrator", "LoadControl", False),
+    ("system", "PARDISO", True),
+    ("numberer", "LadrunoParallelRCM", True),
+    ("test", "LadrunoStabilizedUnbalance", True),
+    ("constraints", "LadrunoProjection", True),
+    ("constraints", "Transformation", False),
+    ("numberer", "LadrunoLoadControl", False),
+])
+def test_is_fork_chain_reads_the_family_any_case(
+    family: str, c_type: str, want: bool,
+) -> None:
+    assert is_fork_chain(family, c_type) is want
