@@ -1007,7 +1007,7 @@ def _emit_rigid_diaphragms(
 
 
 def _refuse_partly_fixed_diaphragm(
-    emitter: "Emitter", rec: Any, perp: int, fixed: "FixedDofs | None",
+    emitter: "Emitter | None", rec: Any, perp: int, fixed: "FixedDofs | None",
 ) -> None:
     """Refuse a ``rigidDiaphragm`` whose retained node is held on some of
     its in-plane DOFs and free on others, under Transformation (#2427).
