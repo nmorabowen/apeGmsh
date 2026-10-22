@@ -1215,7 +1215,8 @@ class H5Model:
         for name in sorted(grp, key=_recorder_group_order):
             g = grp[name]
             attrs = _attrs_as_dict(g)
-            if "tag" not in attrs or "params" not in attrs:
+            if "tag" not in attrs or ("params" not in attrs
+                                      and "params" not in g):
                 raise MalformedH5Error(
                     f"/opensees/regions/{name}: missing tag or params; the "
                     "writer always stamps both."
@@ -1324,13 +1325,9 @@ class H5Model:
             staged program.
         """
         from .._internal.typed_records import (
-            EmbeddedNodeRecord,
-            EqualDOFRecord,
             FixRecord,
             MassRecord,
             RegionRecord,
-            RigidDiaphragmRecord,
-            RigidLinkRecord,
             StageRecordRO,
         )
 
@@ -1419,67 +1416,9 @@ class H5Model:
                     region_seq.append(int(rattrs["emit_index"]))
 
             # -- MP constraints ----------------------------------------
-            equal_dofs: "list[EqualDOFRecord]" = []
-            rigid_links: "list[RigidLinkRecord]" = []
-            rigid_diaphragms: "list[RigidDiaphragmRecord]" = []
-            embedded_nodes: "list[EmbeddedNodeRecord]" = []
-            if "constraints" in g:
-                cons = g["constraints"]
-                if "equalDOF" in cons:
-                    for row in cons["equalDOF"][:]:
-                        # equalDOF dofs are a 1-based dof LIST — the
-                        # compound pads the tail with 0, which is NOT
-                        # a valid dof.  Trim trailing pads so the
-                        # public .stages() surface never exposes
-                        # dof-0 entries (re-write re-pads to the same
-                        # global-ndf width, so the echo stays stable).
-                        raw = [int(d) for d in row["dofs"]]
-                        while raw and raw[-1] == 0:
-                            raw.pop()
-                        equal_dofs.append(EqualDOFRecord(
-                            master=int(row["master"]),
-                            slave=int(row["slave"]),
-                            dofs=tuple(raw),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
-                if "rigidLink" in cons:
-                    for row in cons["rigidLink"][:]:
-                        rigid_links.append(RigidLinkRecord(
-                            kind=str(_decode_bytes(row["kind"])),
-                            master=int(row["master"]),
-                            slave=int(row["slave"]),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
-                if "rigidDiaphragm" in cons:
-                    for row in cons["rigidDiaphragm"][:]:
-                        n_slaves = int(row["n_slaves"])
-                        rigid_diaphragms.append(RigidDiaphragmRecord(
-                            perp_dir=int(row["perp_dir"]),
-                            master=int(row["master"]),
-                            slaves=tuple(
-                                int(s) for s in row["slaves"][:n_slaves]
-                            ),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
-                if "embeddedNode" in cons:
-                    for row in cons["embeddedNode"][:]:
-                        n_args = int(row["n_args"])
-                        has_kp = bool(int(row["has_stiffness_p"]))
-                        embedded_nodes.append(EmbeddedNodeRecord(
-                            ele_tag=int(row["ele_tag"]),
-                            cnode=int(row["cnode"]),
-                            args=tuple(
-                                int(a) for a in row["args"][:n_args]
-                            ),
-                            stiffness=float(row["stiffness"]),
-                            stiffness_p=(
-                                float(row["stiffness_p"]) if has_kp
-                                else None
-                            ),
-                            rotational=bool(int(row["rotational"])),
-                            pressure=bool(int(row["pressure"])),
-                            name=str(_decode_bytes(row["name"])),
-                        ))
+            equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes = (
+                _read_mp_rows(g["constraints"]) if "constraints" in g
+                else ([], [], [], []))
 
             # -- MP emit_index seqs (ADR 0055 P2.3; absent pre-P2.3 →
             # empty → replay falls back to the fixed kind order) -------
@@ -2100,6 +2039,24 @@ class H5Model:
                 ele_tag=tags[i], args=tuple(args), name=names[i]))
         return tuple(out)
 
+    def mp_constraints(
+        self,
+    ) -> "tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]]":
+        """Return the global ``/opensees/constraints`` MP rows (schema 2.7.0).
+
+        ``(equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes)``,
+        each in write order, as the typed records a stage's buckets use
+        (:meth:`stages`). These are the MP lines the bridge emitted
+        outside every stage block: a partitioned archive captures each
+        replicated line once (ADR 0027 INV-1), so the rows are flat. All
+        four are empty when the file has no ``/opensees/constraints``
+        group or none of the four datasets.
+        """
+        if "opensees" not in self._f or "constraints" not in self._f["opensees"]:
+            return (), (), (), ()
+        eq, rl, rd, en = _read_mp_rows(self._f["opensees"]["constraints"])
+        return tuple(eq), tuple(rl), tuple(rd), tuple(en)
+
     def recorders(self) -> list[RecorderRecord]:
         """Return every ``/opensees/recorders/{name}`` group.
 
@@ -2321,6 +2278,22 @@ class H5Model:
             sp_holds=sp_holds,
         )
 
+    def _recorder_ids(self, g: Any) -> "tuple[int, ...] | None":
+        """A declared recorder's ``ids``: the attribute, or past the
+        attribute limit an int64 dataset of the same name (opensees
+        2.34.0, #2404). ``None`` when the record carries neither."""
+        in_attrs, in_group = "ids" in g.attrs, "ids" in g
+        if in_attrs and in_group:
+            raise MalformedH5Error(
+                f"{g.name}: 'ids' is both an attribute and a dataset; the "
+                "writer stores one form.")
+        if in_group:
+            self._require_large_array_datasets(g, "ids")
+            return tuple(int(i) for i in _dataset_values(g, "ids"))
+        if not in_attrs:
+            return None
+        return tuple(int(i) for i in _as_seq(g.attrs["ids"]))
+
     def _recorder_record(self, g: Any) -> RecorderRecord:
         attrs = _attrs_as_dict(g)
         params = self._read_param_array(g, "params")
@@ -2343,9 +2316,7 @@ class H5Model:
                 selection=tuple(
                     str(s) for s in _as_seq(attrs.get("selection"))
                 ),
-                ids=None if "ids" not in attrs else tuple(
-                    int(i) for i in _as_seq(attrs.get("ids"))
-                ),
+                ids=self._recorder_ids(g),
                 dt=_attr_or_none(attrs.get("dt"), float),
                 n_steps=_attr_or_none(attrs.get("n_steps"), int),
                 file_root=str(attrs.get("file_root", ".")),
@@ -2371,20 +2342,9 @@ class H5Model:
         replay_types.SlotTypes`, K R1b-S2), keyed on the group's ``type``
         and ``tag``.
         """
-        import numpy as np
-
-        if key not in g.attrs:
-            return ()
-        nums = np.asarray(g.attrs[key], dtype=np.float64)
-        strs_key = f"{key}_str"
-        strs: list[str] = []
-        if strs_key in g.attrs:
-            raw = g.attrs[strs_key]
-            for item in raw:
-                if isinstance(item, bytes):
-                    strs.append(item.decode("utf-8", "replace"))
-                else:
-                    strs.append(str(item))
+        nums, strs, as_dataset = param_array_slots(g, key)
+        if as_dataset:
+            self._require_large_array_datasets(g, key)
         out: list[int | float | str] = []
         for i, num in enumerate(nums):
             if i < len(strs) and strs[i] != "":
@@ -2404,6 +2364,19 @@ class H5Model:
         return self.slot_types().recover(
             kind, int(_decode_bytes(g.attrs["tag"])),
             str(_decode_bytes(g.attrs["type"])), out)
+
+    def _require_large_array_datasets(self, g: Any, key: str) -> None:
+        """Refuse a dataset-form ``key`` in a file below
+        :data:`LARGE_ARRAY_DATASETS_FROM`: no writer before it made one."""
+        version = self.opensees_zone_version()
+        if ((version.major, version.minor, version.patch)
+                < LARGE_ARRAY_DATASETS_FROM):
+            raise MalformedH5Error(
+                f"{g.name}/{key} is a dataset in an opensees "
+                f"{version} file; a large array is stored as a dataset "
+                "from opensees "
+                f"{'.'.join(map(str, LARGE_ARRAY_DATASETS_FROM))} on."
+            )
 
     def slot_types(self) -> "SlotTypes":
         """The archive's :class:`~apeGmsh.opensees._internal.replay_types.
@@ -3027,6 +3000,84 @@ def records_program_decl(table: "DeclarationTable | None") -> bool:
     return table is not None and table.program_decl == PROGRAM_DECL_COMPLETE
 
 
+
+def _read_mp_rows(cons: Any) -> "tuple[list[Any], list[Any], list[Any], list[Any]]":
+    """The four MP-constraint buckets of one ``constraints`` group.
+
+    ``cons`` is ``/opensees/constraints`` (the global rows) or a stage's
+    ``constraints`` sub-group; both hold the same compound datasets
+    (schema 2.7.0). Returns ``(equal_dofs, rigid_links, rigid_diaphragms,
+    embedded_nodes)`` as typed records, in write order. A dataset that is
+    absent reads as empty: the writer omits an empty bucket.
+    """
+    from .._internal.typed_records import (
+        EmbeddedNodeRecord,
+        EqualDOFRecord,
+        RigidDiaphragmRecord,
+        RigidLinkRecord,
+    )
+
+    equal_dofs: "list[EqualDOFRecord]" = []
+    rigid_links: "list[RigidLinkRecord]" = []
+    rigid_diaphragms: "list[RigidDiaphragmRecord]" = []
+    embedded_nodes: "list[EmbeddedNodeRecord]" = []
+    if "equalDOF" in cons:
+        for row in cons["equalDOF"][:]:
+            # equalDOF dofs are a 1-based dof LIST — the
+            # compound pads the tail with 0, which is NOT
+            # a valid dof.  Trim trailing pads so the
+            # public .stages() surface never exposes
+            # dof-0 entries (re-write re-pads to the same
+            # global-ndf width, so the echo stays stable).
+            raw = [int(d) for d in row["dofs"]]
+            while raw and raw[-1] == 0:
+                raw.pop()
+            equal_dofs.append(EqualDOFRecord(
+                master=int(row["master"]),
+                slave=int(row["slave"]),
+                dofs=tuple(raw),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    if "rigidLink" in cons:
+        for row in cons["rigidLink"][:]:
+            rigid_links.append(RigidLinkRecord(
+                kind=str(_decode_bytes(row["kind"])),
+                master=int(row["master"]),
+                slave=int(row["slave"]),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    if "rigidDiaphragm" in cons:
+        for row in cons["rigidDiaphragm"][:]:
+            n_slaves = int(row["n_slaves"])
+            rigid_diaphragms.append(RigidDiaphragmRecord(
+                perp_dir=int(row["perp_dir"]),
+                master=int(row["master"]),
+                slaves=tuple(
+                    int(s) for s in row["slaves"][:n_slaves]
+                ),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    if "embeddedNode" in cons:
+        for row in cons["embeddedNode"][:]:
+            n_args = int(row["n_args"])
+            has_kp = bool(int(row["has_stiffness_p"]))
+            embedded_nodes.append(EmbeddedNodeRecord(
+                ele_tag=int(row["ele_tag"]),
+                cnode=int(row["cnode"]),
+                args=tuple(
+                    int(a) for a in row["args"][:n_args]
+                ),
+                stiffness=float(row["stiffness"]),
+                stiffness_p=(
+                    float(row["stiffness_p"]) if has_kp
+                    else None
+                ),
+                rotational=bool(int(row["rotational"])),
+                pressure=bool(int(row["pressure"])),
+                name=str(_decode_bytes(row["name"])),
+            ))
+    return equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes
+
 def _initial_stress_param_tags(
     grp: Any, where: str,
 ) -> "tuple[tuple[int, int, int], ...]":
@@ -3322,6 +3373,66 @@ def _parse_repr(s: str) -> int | float | str:
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
         return s[1:-1]
     return s
+
+
+#: First opensees-zone version whose writer stores an array past the HDF5
+#: attribute limit as a dataset of the same name: a ``params`` /
+#: ``params_str`` pair and a declared recorder's ``ids``. No file below it
+#: holds one, so the reader refuses a dataset form there.
+LARGE_ARRAY_DATASETS_FROM: tuple[int, int, int] = (2, 34, 0)
+
+
+def _dataset_values(g: Any, key: str) -> Any:
+    """The values of dataset ``g[key]``; :class:`MalformedH5Error` when
+    ``key`` names a group."""
+    import h5py
+
+    node = g[key]
+    if not isinstance(node, h5py.Dataset):
+        raise MalformedH5Error(
+            f"{g.name}/{key} is a group; the writer stores a dataset there.")
+    return node[()]
+
+
+def _decode_strs(raw: Any) -> list[str]:
+    return [item.decode("utf-8", "replace") if isinstance(item, bytes)
+            else str(item) for item in raw]
+
+
+def param_array_slots(
+    g: Any, key: str,
+) -> "tuple[Any, list[str], bool]":
+    """Read the ``{key}`` / ``{key}_str`` pair
+    :func:`~apeGmsh.opensees.emitter._h5_write._write_param_array` wrote.
+
+    Returns ``(nums, strs, as_dataset)``: the float64 slots, the string
+    slots (empty when the pair has no ``{key}_str``) and whether the pair
+    was read from datasets (the opensees 2.34.0 form of an array past the
+    attribute limit, #2404). An absent pair reads as no slots. A pair split
+    across the two forms, or a key present in both, raises
+    :class:`MalformedH5Error`: the writer switches the pair together.
+    """
+    import numpy as np
+
+    skey = f"{key}_str"
+    in_attrs = [k for k in (key, skey) if k in g.attrs]
+    in_group = [k for k in (key, skey) if k in g]
+    if in_attrs and in_group:
+        raise MalformedH5Error(
+            f"{g.name}: {in_attrs} are attributes and {in_group} datasets; "
+            "the writer stores the params pair in one form.")
+    if in_group:
+        if key not in g:
+            raise MalformedH5Error(
+                f"{g.name}/{skey} is a dataset with no {key!r} beside it.")
+        nums = np.asarray(_dataset_values(g, key), dtype=np.float64)
+        strs = (_decode_strs(_dataset_values(g, skey)) if skey in g else [])
+        return nums, strs, True
+    if key not in g.attrs:
+        return np.empty(0, dtype=np.float64), [], False
+    nums = np.asarray(g.attrs[key], dtype=np.float64)
+    strs = _decode_strs(g.attrs[skey]) if skey in g.attrs else []
+    return nums, strs, False
 
 
 def _as_seq(value: Any) -> "list[Any]":

@@ -16,6 +16,7 @@ from typing import Any, Sequence
 from ...analysis.strategy import PROFILE_NAMES, profile as _profile
 from ...analysis.strategy import Ladder as _Ladder
 from ...analysis.strategy import OpenSeesPyDriver as _OpenSeesPyDriver
+from ...analysis.strategy import Subdivide as _Subdivide
 from ...analysis.strategy import Substep as _Substep
 from ..types import SolutionAlgorithm
 from ._base import _BridgeNamespace
@@ -29,7 +30,7 @@ class _StrategyNS(_BridgeNamespace):
     def Ladder(
         self,
         *,
-        rungs: Sequence[SolutionAlgorithm | _Substep],
+        rungs: Sequence[SolutionAlgorithm | _Substep | _Subdivide],
         name: str = "custom",
     ) -> _Ladder:
         """Declare a bespoke escalation ladder.
@@ -41,6 +42,23 @@ class _StrategyNS(_BridgeNamespace):
         semantics.
         """
         return _Ladder(rungs=tuple(rungs), name=name)
+
+    def Subdivide(self, n: int) -> _Subdivide:
+        """Declare a transient rung that retries a failed increment in
+        ``n`` equal pieces of its remaining time (ADR 0057 Amendment 1).
+
+        Transient stages only (``s.run(..., dt=, strategy=)``); the
+        increment always ends on the step grid, and exhausting every rung
+        still aborts the deck. For example, the cut a site-response
+        driver uses::
+
+            ops.strategy.Ladder(rungs=(
+                ops.algorithm.Newton(),
+                ops.strategy.Subdivide(4),
+                ops.strategy.Subdivide(16),
+            ))
+        """
+        return _Subdivide(n=n)
 
     def Substep(
         self,

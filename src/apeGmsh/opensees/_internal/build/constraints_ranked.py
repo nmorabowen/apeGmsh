@@ -26,6 +26,7 @@ from .constraints_plan import (
     mp_constraint_pools,
 )
 from .constraints import (
+    FixedDofs,
     _StageConstraintAdapter,
     _emit_equal_dofs,
     _emit_kinematic_couplings,
@@ -356,6 +357,7 @@ def emit_stage_mp_constraints_partitioned(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
+    fixed_dofs: "FixedDofs | None" = None,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -395,10 +397,11 @@ def emit_stage_mp_constraints_partitioned(
 
     # Constraint emission — same ordering as the unpartitioned path.
     ids = plan.allowed_record_ids
-    _emit_rigid_links(emitter, adapter, allowed_ids=ids)
+    staged = fixed_dofs.in_stage() if fixed_dofs is not None else None
+    _emit_rigid_links(emitter, adapter, allowed_ids=ids, fixed=staged)
     _emit_rigid_body_elements(emitter, adapter, tag_plan, allowed_ids=ids)
-    _emit_equal_dofs(emitter, adapter, allowed_ids=ids)
-    _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
+    _emit_equal_dofs(emitter, adapter, allowed_ids=ids, fixed=staged)
+    _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids, fixed=staged)
     _emit_kinematic_couplings(
         emitter, adapter, tag_plan, allowed_ids=ids,
         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
@@ -435,6 +438,7 @@ def emit_mp_constraints_partitioned(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
+    fixed_dofs: "FixedDofs | None" = None,
 ) -> "frozenset[int]":
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -516,12 +520,15 @@ def emit_mp_constraints_partitioned(
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------
     if node_constraints is not None:
         ids = plan.allowed_record_ids
-        _emit_rigid_links(emitter, node_constraints, allowed_ids=ids)
+        _emit_rigid_links(emitter, node_constraints, allowed_ids=ids,
+                          fixed=fixed_dofs)
         _emit_rigid_body_elements(
             emitter, node_constraints, tag_plan, allowed_ids=ids,
         )
-        _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids)
-        _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids)
+        _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids,
+                         fixed=fixed_dofs)
+        _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids,
+                               fixed=fixed_dofs)
         _emit_kinematic_couplings(
             emitter, node_constraints, tag_plan, allowed_ids=ids,
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,

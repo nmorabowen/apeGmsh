@@ -226,6 +226,13 @@ from .caps import TargetCaps
 from .verbs import VERBS, Verb
 
 
+#: The ``StrategySpec`` rung-tuple head of an ``ops.strategy.Subdivide(n)``
+#: rung, ``(SUBDIVIDE_TOKEN, n)``. Not an algorithm name: an emitter that
+#: does not know the rung passes it to ``algorithm``, which refuses it
+#: loudly instead of running fixed-step (ADR 0057 Amendment 1).
+SUBDIVIDE_TOKEN = "__apegmsh_subdivide__"
+
+
 @dataclass(frozen=True, slots=True)
 class StrategySpec:
     """Resolved, emitter-ready form of an ADR 0057 solution-strategy ladder.
