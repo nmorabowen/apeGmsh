@@ -74,9 +74,18 @@ def test_column_ties_emit_equal_dof(tmp_path: Path) -> None:
     ops.fix(pg="Base", dofs=(0, 1))
     out = tmp_path / "m.tcl"
     ops.tcl(str(out))
-    lines = [ln.split() for ln in out.read_text().splitlines()
-             if ln.strip().startswith("equalDOF ")]
-    assert len(lines) == 11 and all(ln[3:] == ["1", "2"] for ln in lines)
+    text = out.read_text().splitlines()
+    lines = [ln.split() for ln in text if ln.strip().startswith("equalDOF ")]
+    assert len(lines) == 11
+    # The base pair's retained node is fixed in y, so #2396 ties it on x
+    # only; its constrained node is on Base too, already fixed in y.
+    base = {int(n) for n in fem.nodes.select(pg="Base").ids}
+    for ln in lines:
+        on_base = int(ln[1]) in base
+        assert ln[3:] == (["1"] if on_base else ["1", "2"])
+        if on_base:
+            assert int(ln[2]) in base
+    assert sum(int(ln[1]) in base for ln in lines) == 1
 
 
 @pytest.mark.filterwarnings("ignore:autosave")
