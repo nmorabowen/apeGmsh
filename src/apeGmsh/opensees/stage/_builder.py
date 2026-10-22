@@ -1967,11 +1967,14 @@ class _StageBuilder:
         Stage-bound only — there is no top-level
         ``apeSees.update_material_stage``.  Emits one
         ``updateMaterialStage -material $tag -stage $stage`` line per
-        material, in the order given.  ``stage=0`` is elastic,
-        ``stage=1`` is elastoplastic; the OpenSees handler additionally
-        calls ``Elastic2Plastic()`` when the value is 1.  This is the
-        staged-gravity idiom for soil plasticity: build elastic, solve
-        gravity, flip to plastic, push.
+        material, in the order given; a flip to ``stage=1`` is preceded
+        by ``setParameter -val 1 -eleRange 1 2147483647 materialState
+        $tag``, which runs every element's own stage update
+        (``_internal/build/stage_emit.material_stage_flip_commands``,
+        #2446).  ``stage=0`` is elastic, ``stage=1`` is elastoplastic;
+        the OpenSees handler additionally calls ``Elastic2Plastic()``
+        when the value is 1.  This is the staged-gravity idiom for soil
+        plasticity: build elastic, solve gravity, flip to plastic, push.
 
         The lines emit AFTER this stage's element activation and after
         its ``remove_sp`` / ``remove_element`` block, and BEFORE the

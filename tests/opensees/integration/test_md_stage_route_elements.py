@@ -125,7 +125,7 @@ def _tri6_fem() -> FEMStub:
 
 def _chain(ops: apeSees) -> dict[str, object]:
     return {
-        "test": ops.test.NormDispIncr(tol=1e-8, max_iter=50),
+        "test": ops.test.NormUnbalance(tol=1e-6, max_iter=50),
         "algorithm": ops.algorithm.Newton(),
         "integrator": ops.integrator.LoadControl(dlam=0.1),
         "constraints": ops.constraints.Plain(),
