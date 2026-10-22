@@ -116,10 +116,12 @@ def write_block(workdir: Path) -> Path:
     return path
 
 
-def declare_stack(block: Path) -> tuple[Any, dict[str, int]]:
+def declare_stack(
+    block: Path, *, enforce: str = "equation",
+) -> tuple[Any, dict[str, int]]:
     """Three stacked instances (the third turned half a turn about z), one
-    named and one unnamed tie. Returns the assembly and each declaration's
-    line."""
+    named and one unnamed tie on the ``enforce`` route. Returns the
+    assembly and each declaration's line."""
     from apeGmsh.assembly import Assembly
 
     lines: dict[str, int] = {}
@@ -131,9 +133,9 @@ def declare_stack(block: Path) -> tuple[Any, dict[str, int]]:
     lines["pier_3"] = _here() + 1
     asm.instance("pier_3", block, translate=(SIDE, SIDE, 2 * H), rotate=((0.0, 0.0, 1.0), math.pi))
     lines["t1"] = _here() + 1
-    asm.tie("pier_1.top", "pier_2.bot", enforce="equation", dofs=[1, 2, 3], name="t1")
+    asm.tie("pier_1.top", "pier_2.bot", enforce=enforce, dofs=[1, 2, 3], name="t1")
     lines["#1"] = _here() + 1
-    asm.tie("pier_2.top", "pier_3.bot", enforce="equation", dofs=[1, 2, 3])
+    asm.tie("pier_2.top", "pier_3.bot", enforce=enforce, dofs=[1, 2, 3])
     return asm, lines
 
 
@@ -201,6 +203,19 @@ def built(tmp_path_factory) -> dict[str, Any]:
     ops.h5(str(plain), model_name="stack")
     return {"dir": d, "block": block, "asm": asm, "ops": ops, "lines": lines,
             "archive": archive, "plain": plain}
+
+
+@pytest.fixture(scope="module")
+def built_penalty(tmp_path_factory) -> dict[str, Any]:
+    """:func:`built` with the ties on the default ``enforce="penalty"``
+    route, which the deck replay writes (``embeddedNode`` rows)."""
+    d = tmp_path_factory.mktemp("as3_penalty")
+    asm, _ = declare_stack(write_block(d), enforce="penalty")
+    ops = _bridge(asm)
+    archive, plain = d / "archive.h5", d / "plain.h5"
+    asm.h5(archive, model_name="stack")
+    ops.h5(str(plain), model_name="stack")
+    return {"archive": archive, "plain": plain}
 
 
 def _root_and_meta(path: Path) -> tuple[set[str], set[str]]:
@@ -301,7 +316,35 @@ def test_inv10_every_reader_opens_the_archive_as_the_plain_file(built):
     a_model = OpenSeesModel.from_h5(str(built["archive"]))
     p_model = OpenSeesModel.from_h5(str(built["plain"]))
     assert dump_model(a_model) == dump_model(p_model)
-    assert a_model.build("tcl") == p_model.build("tcl")
+    # The equation-route ties have no archived deck line, so both readers
+    # refuse the deck replay, and refuse it the same way (#2416).
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    refusals = []
+    for model in (a_model, p_model):
+        with pytest.raises(BridgeError, match=r"#2416") as caught:
+            model.build("tcl")
+        refusals.append(str(caught.value))
+    assert refusals[0] == refusals[1]
+
+
+def test_inv10_penalty_ties_replay_the_same_deck_from_both_readers(
+        built_penalty):
+    # The positive case of the reader parity: penalty ties replay, so both
+    # readers build one deck, it carries the ties, and nothing is skipped
+    # (a quad host goes out as the triangle of corners that carry weight).
+    import warnings
+
+    from apeGmsh.opensees._internal.compose import ReplaySkippedStreamWarning
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    a = OpenSeesModel.from_h5(str(built_penalty["archive"]))
+    p = OpenSeesModel.from_h5(str(built_penalty["plain"]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ReplaySkippedStreamWarning)
+        deck = a.build("tcl")
+        assert deck == p.build("tcl")
+    assert deck.count("element ASDEmbeddedNodeElement") == 18
 
 
 def test_inv10_plain_file_has_no_assembly_and_from_h5_refuses_it(built):

@@ -31,7 +31,12 @@ from .._internal.typed_records import (
 )
 from ._h5_blocks import _ramp_tags_by_name
 from ._h5_program import _KIND_STR, _command_kind
-from ._h5_write import _scan_flag, _set_attr, _write_param_array
+from ._h5_write import (
+    _scan_flag,
+    _set_attr,
+    _set_attr_or_dataset,
+    _write_param_array,
+)
 from ._h5_host import _H5Host
 
 
@@ -884,7 +889,9 @@ class _H5WriteModelMixin(_H5Host):
             _set_attr(g, "label", ctx.label)
             _set_attr(g, "selection", ctx.selection)
             if ctx.ids is not None:
-                _set_attr(g, "ids", ctx.ids)
+                # Past the attribute limit, an int64 dataset of the
+                # same name (opensees 2.34.0).
+                _set_attr_or_dataset(g, "ids", ctx.ids)
             _set_attr(g, "dt", ctx.dt)
             _set_attr(g, "n_steps", ctx.n_steps)
             _set_attr(g, "file_root", ctx.file_root)
