@@ -93,8 +93,8 @@ STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
 #: whole group back to elastic, on the fork only (stock keeps the flag;
 #: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
 #: This is the version gate of the stage-close refusal: empty it once
-#: ``FORK_PIN`` carries the fork fix.
-# TODO(#2444): empty once FORK_PIN carries the fork constructor fix.  # apegmsh-lint: comment-provenance-ok the gate's own removal ticket, asked for by the slice
+#: ``FORK_PIN`` carries the fork fix (the TODO and its ticket are in
+#: :meth:`_StageBuilder._check_fork_stage_static_reset`).
 FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
 )
@@ -546,6 +546,9 @@ class _StageBuilder:
         ``mode="fork"`` is known to run the fork at stage close; an
         ``"auto"`` target is decided by the imported binary at run time,
         which this check cannot see.
+
+        TODO(#2444): empty :data:`FORK_RESETS_STAGE_STATIC` once
+        ``FORK_PIN`` carries the fork's constructor fix.
         """
         target = self._bridge.opensees
         if target is None or target.mode != "fork":
