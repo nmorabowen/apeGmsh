@@ -12,6 +12,10 @@ import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_emit import (
+    MATERIAL_STATE_WRAPPERS,
+    SWEPT_MATERIAL_CLASSES,
+)
 from .._internal.build.records import (
     DampingAttachRecord,
     ActivateAbsorbingRecord,
@@ -105,12 +109,51 @@ FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
 #: ``MaterialStageParameter::setDomain``, which stops at the FIRST element
 #: that accepts the parameter, so only that element's integration points
 #: are initialised; every other element of the material turns plastic
-#: uninitialised (measured on stock 3.8.0 and the fork).  A stage >= 1
-#: flip of such a material on more than one element is refused on every
-#: build.  SAniSandMS, PM4Sand and PM4Silt only set their flag.
-FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = frozenset(
-    {"ManzariDafalias", "LadrunoSANISAND"},
-)
+#: uninitialised (measured on stock 3.8.0 and the fork).  The emit
+#: therefore updates each carrying element with ``materialState`` before
+#: the ``updateMaterialStage`` line
+#: (``_internal/build/stage_emit.MaterialStageCarriers``), and a plastic
+#: flip of such a material on more than one element passes only when
+#: every element carrying it is of a :data:`MATERIAL_STATE_ELEMENTS`
+#: class.  SAniSandMS, PM4Sand and PM4Silt only set their flag.  The emit
+#: side's own set, so the two cannot disagree.
+FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
+
+#: The element classes whose ``setParameter`` hands ``materialState
+#: <tag>`` to every integration-point material, so the sweep that
+#: initialises each element of a plastic flip reaches them.  Measured
+#: by the census of ``tests/opensees/integration/
+#: test_md_stage_route_elements.py``: two elements of the class on one
+#: material, the
+#: swept flip against the per-element reference (each element its own
+#: material and its own ``updateMaterialStage``), equal bit for bit, with
+#: one ``Elastic2Plastic()`` per integration point, on stock openseespy
+#: 3.8.0 (``SixNodeTri``, ``FourNodeTetrahedron``, ``SSPquad``,
+#: ``SSPbrick``) and on the fork build 79e062367 (all seven).  ``SSPquad``
+#: and ``SSPbrick`` have no bridge primitive yet (``element/solid.py``
+#: defers them), so no spec carries those names today; they are listed so
+#: the primitive that adds them is not refused.  Every other class is
+#: refused for a multi-element plastic flip.  ``FourNodeQuad``, ``Tri31``
+#: and ``stdBrick`` read any ``material*`` name as a per-point address and
+#: drop the sweep, as do the :data:`MATERIAL_STATE_UNMEASURED_AT_PIN`
+#: classes on that fork build.  ``TenNodeTetrahedron`` forwards on the
+#: fork but crashed the stock reference, so it is not proven on every
+#: build.  A new class joins only with a census row on each build it
+#: runs on.
+MATERIAL_STATE_ELEMENTS: frozenset[str] = frozenset({
+    "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
+    "BezierTri6", "BezierTet10", "LadrunoUP",
+})
+
+#: The fork element classes that dropped the sweep on fork build
+#: 79e062367, the build available when they were measured, while the
+#: fork source at ``FORK_PIN`` forwards ``materialState``.  They stay
+#: refused (fail closed) until a pinned build is measured; their refusal
+#: names the re-measure issue.
+MATERIAL_STATE_UNMEASURED_AT_PIN: frozenset[str] = frozenset({
+    "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
+    "LadrunoBrick20",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +417,7 @@ class _StageBuilder:
         self._check_class_wide_stage_flags()
         self._check_fork_stage_static_reset()
         self._check_multi_element_plastic_flip()
+        self._check_activation_after_plastic_flip()
         record = StageRecord(
             name=self._name,
             initial_stress_records=tuple(self._initial_stress_records),
@@ -626,17 +670,82 @@ class _StageBuilder:
                 "activate these elements before the flip."
             )
 
+    def _first_element_only_carriers(
+        self, tags: "set[int]",
+    ) -> "tuple[dict[int, list[tuple[Element, Any]]], dict[int, set[str]]]":
+        """Each element spec registered so far that carries a tag of ``tags``.
+
+        ``tags`` are nDMaterial tags of
+        :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` materials.  Returns, per
+        tag, ``(spec, fan-out)`` for every element spec whose dependencies
+        reach that material, whichever stage activates it.  The fan-out is
+        the spec's OpenSees elements: its PG, or one
+        ``MISSING_FEM_ELEMENT_ID`` row for a node-pair spec.
+
+        The second dict holds, per tag, the classes of every primitive
+        between an element and the material (a wrapper such as
+        ``StagedStrain``, or a section), which the plastic-flip check holds
+        to :data:`MATERIAL_STATE_WRAPPERS`.
+        """
+        from .._internal.build.pg_expand import expand_spec_to_elements
+
+        carriers: dict[int, list[tuple[Element, Any]]] = {}
+        carrier_via: dict[int, set[str]] = {}
+        for spec in self._bridge._primitives:
+            if not isinstance(spec, Element):
+                continue
+            carried: set[int] = set()
+            seen: set[int] = set()
+            frontier: list[tuple[Primitive, tuple[str, ...]]] = [
+                (dep, ()) for dep in spec.dependencies()]
+            while frontier:
+                dep, via = frontier.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                below = (*via, type(dep).__name__)
+                frontier.extend((d, below) for d in dep.dependencies())
+                if type(dep).__name__ not in FIRST_ELEMENT_ONLY_PLASTIC_INIT:
+                    continue
+                tag = self._bridge.tag_for(dep)
+                if tag is not None and int(tag) in tags:
+                    carried.add(int(tag))
+                    carrier_via.setdefault(int(tag), set()).update(via)
+            if not carried:
+                continue
+            fanout = expand_spec_to_elements(self._bridge.fem, spec)
+            for tag in carried:
+                carriers.setdefault(tag, []).append((spec, fanout))
+        return carriers, carrier_via
+
     def _check_multi_element_plastic_flip(self) -> None:
-        """Refuse a plastic flip of a first-element-only material on 2+ elements.
+        """Refuse a plastic flip that cannot initialise every element (#2445).
 
         A :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material flipped to a
-        stage ``>= 1``, through either route of :meth:`_stage_flips`, is
-        refused when the model's elements carry it more than once
-        (#2445).  The count is the OpenSees elements every element
-        registered so far fans out to (its PG, or one for a node-pair
-        spec), whichever stage activates them.  Stage 0 flips and
-        one-element materials pass.
+        stage ``>= 1``, through either route of :meth:`_stage_flips`, on
+        more than one OpenSees element needs ``Elastic2Plastic()`` in
+        every element.  Elements are counted over every element spec
+        registered so far, whichever stage activates them.
+
+        * ``s.update_material_stage`` emits a ``materialState`` update of
+          every carrying element of a :data:`MATERIAL_STATE_ELEMENTS`
+          class (``stage_emit.MaterialStageCarriers``).  A carrier of any
+          other class is refused by name, because the update would skip
+          it silently.
+        * ``s.update_parameter("materialState", v, material=m)`` reaches
+          only the elements it targets.  The same class rule holds, and
+          this stage's targets must cover every element carrying ``m``,
+          unless this stage also flips ``m`` with
+          ``s.update_material_stage``.
+        * ``s.update_parameter("updateMaterialStage", ...)`` is refused:
+          that parameter id reads ``Information::theInt``, which
+          ``updateParameter`` never sets.
+
+        Stage 0 flips and one-element materials pass unchanged.
         """
+        from .._internal.build.pg_expand import expand_pg_to_elements
+        from .._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
+
         plastic = {
             tag for tag, value in self._stage_flips(
                 self._update_material_stage_records,
@@ -645,52 +754,178 @@ class _StageBuilder:
         }
         if not plastic:
             return
-        from .._internal.build.pg_expand import expand_spec_to_elements
-
-        counts: dict[int, int] = {}
-        names: dict[int, str] = {}
-        for spec in self._bridge._primitives:
-            if not isinstance(spec, Element):
-                continue
-            carried: set[int] = set()
-            seen: set[int] = set()
-            frontier: list[Primitive] = list(spec.dependencies())
-            while frontier:
-                dep = frontier.pop()
-                if id(dep) in seen:
-                    continue
-                seen.add(id(dep))
-                frontier.extend(dep.dependencies())
-                if type(dep).__name__ not in FIRST_ELEMENT_ONLY_PLASTIC_INIT:
-                    continue
-                tag = self._bridge.tag_for(dep)
-                if tag is not None and int(tag) in plastic:
-                    carried.add(int(tag))
-                    names[int(tag)] = type(dep).__name__
-            if not carried:
-                continue
-            n = len(expand_spec_to_elements(self._bridge.fem, spec))
-            for tag in carried:
-                counts[tag] = counts.get(tag, 0) + n
-        offenders = sorted(tag for tag, n in counts.items() if n > 1)
-        if not offenders:
+        carriers, carrier_via = self._first_element_only_carriers(plastic)
+        multi = {
+            tag: specs for tag, specs in carriers.items()
+            if sum(len(fanout) for _spec, fanout in specs) > 1
+        }
+        if not multi:
             return
-        listed = ", ".join(
-            f"{names[t]} (nDMaterial tag {t}, {counts[t]} elements)"
-            for t in offenders)
-        raise BridgeError(
-            f"Stage {self._name!r}: flips {listed} to a plastic stage, "
-            "but OpenSees initialises only one element of each "
-            "(issue #2445).  updateMaterialStage reaches the material "
-            "through MaterialStageParameter::setDomain, which stops at the "
-            "first element that accepts it, so Elastic2Plastic() runs on "
-            "that element's integration points only; every other element "
-            "turns plastic with its back-stress never re-seated, which "
-            "gives a wrong answer on stock and on the fork alike.  Until "
-            "the bridge emits a flip that reaches every element, give "
-            "each element its own material, or keep this material on a "
-            "single element.  A stage 0 (elastic) flip is unaffected."
-        )
+
+        def what(tag: int) -> str:
+            n = sum(len(fanout) for _spec, fanout in multi[tag])
+            return f"nDMaterial tag {tag} ({n} elements)"
+
+        for tag in sorted(multi):
+            refused = sorted({
+                type(spec).__name__ for spec, _fanout in multi[tag]
+                if type(spec).__name__ not in MATERIAL_STATE_ELEMENTS
+            })
+            if refused:
+                unmeasured = sorted(
+                    set(refused) & MATERIAL_STATE_UNMEASURED_AT_PIN)
+                pin_note = (
+                    f"  ({', '.join(unmeasured)}: measured to drop it on "
+                    "fork build 79e062367, not at FORK_PIN, whose source "
+                    "forwards it; issue #2457 re-measures them at the pin.)"
+                    if unmeasured else ""
+                )
+                raise BridgeError(
+                    f"Stage {self._name!r}: flips {what(tag)} to a plastic "
+                    f"stage, but {', '.join(refused)} carries it, and that "
+                    "class drops the materialState update that initialises "
+                    "each element (issue #2445).  updateMaterialStage alone "
+                    "runs Elastic2Plastic() on the first element only, and "
+                    "this class reads any 'material...' parameter as a "
+                    "per-point address, so every other element would turn "
+                    "plastic with its back-stress never re-seated: a wrong "
+                    "answer on stock and on the fork alike.  Carry the "
+                    "material on one of "
+                    f"{', '.join(sorted(MATERIAL_STATE_ELEMENTS))}, give "
+                    "each element its own material, or keep it on a single "
+                    "element.  A stage 0 (elastic) flip is unaffected."
+                    + pin_note
+                )
+            between = sorted(
+                carrier_via.get(tag, set()) - set(MATERIAL_STATE_WRAPPERS))
+            if between:
+                raise BridgeError(
+                    f"Stage {self._name!r}: flips {what(tag)} to a plastic "
+                    f"stage, but its elements reach it through "
+                    f"{', '.join(between)}, which is not known to hand the "
+                    "materialState update on to the material it wraps "
+                    "(issue #2445).  The update that initialises each "
+                    "element could stop there silently, leaving every "
+                    "element but the first plastic with its back-stress "
+                    "never re-seated.  Wrap the material only in "
+                    f"{', '.join(sorted(MATERIAL_STATE_WRAPPERS))}, give "
+                    "each element its own material, or keep it on a single "
+                    "element."
+                )
+        swept = {
+            int(t) for rec in self._update_material_stage_records
+            if int(rec.stage) >= 1 for t in rec.mat_tags
+        }
+        targeted: dict[int, set[int]] = {}
+        for prec in self._update_parameter_records:
+            if (prec.mat_tag is None or int(prec.mat_tag) not in multi
+                    or prec.name not in STAGE_FLAG_PARAMETERS
+                    or int(prec.value) < 1):
+                continue
+            tag = int(prec.mat_tag)
+            if prec.name != "materialState":
+                raise BridgeError(
+                    f"Stage {self._name!r}: s.update_parameter("
+                    f"{prec.name!r}, {prec.value}) flips {what(tag)} to a "
+                    "plastic stage through the updateMaterialStage "
+                    "parameter id, which reads Information::theInt, while "
+                    "updateParameter sets only theDouble (issue #2445).  "
+                    "Use s.update_material_stage, or s.update_parameter("
+                    "'materialState', ...) over every element carrying "
+                    "the material."
+                )
+            if prec.elements is not None:
+                eids = {int(e) for e in prec.elements}
+            else:
+                assert prec.pg is not None  # update_parameter takes one
+                eids = {
+                    int(e) for e in expand_pg_to_elements(
+                        self._bridge.fem, prec.pg).eids}
+            targeted.setdefault(tag, set()).update(eids)
+        for tag in sorted(targeted):
+            if tag in swept:
+                continue
+            missed = sum(
+                1 for _spec, fanout in multi[tag] for eid in fanout.eids
+                if int(eid) == MISSING_FEM_ELEMENT_ID
+                or int(eid) not in targeted[tag]
+            )
+            if missed:
+                raise BridgeError(
+                    f"Stage {self._name!r}: s.update_parameter("
+                    f"'materialState', ...) flips {what(tag)} to a plastic "
+                    f"stage but leaves {missed} of those elements out of "
+                    "its targets (issue #2445).  The flag is class-wide, so "
+                    "they turn plastic too, without their own "
+                    "Elastic2Plastic(): a wrong answer.  Target every "
+                    "element carrying the material (pg= or elements=), or "
+                    "use s.update_material_stage, which sweeps them all."
+                )
+
+    def _check_activation_after_plastic_flip(self) -> None:
+        """Refuse activating an element of a plastic first-element-only group.
+
+        An earlier stage may have left a
+        :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` group plastic.  An element
+        this stage activates with such a material then copies it straight
+        into the plastic stage, and no flip ever runs its
+        ``Elastic2Plastic()`` (#2445).  This is refused on every build,
+        unless this stage flips the group again: its flip lines emit after
+        the activation and reach the new element.
+        """
+        if not self._activated_pgs:
+            return
+        _members, _used, group_of_tag = self._class_wide_members()
+        last: dict[str, int] = {}
+        for stage in self._bridge._stage_records:
+            for tag, value in self._stage_flips(
+                    stage.update_material_stage_records,
+                    stage.update_parameter_records):
+                group = group_of_tag.get(tag)
+                if group is not None:
+                    last[group] = value
+        plastic_groups = {g for g, v in last.items() if v >= 1}
+        if not plastic_groups:
+            return
+        this_stage = {
+            group_of_tag[tag]
+            for tag, _value in self._stage_flips(
+                self._update_material_stage_records,
+                self._update_parameter_records)
+            if tag in group_of_tag
+        }
+        tags = {
+            tag for tag, group in group_of_tag.items()
+            if group in plastic_groups and group not in this_stage
+        }
+        if not tags:
+            return
+        activated = set(self._activated_pgs)
+        for tag, specs in sorted(
+                self._first_element_only_carriers(tags)[0].items()):
+            new = sorted({
+                f"{type(spec).__name__} on pg {getattr(spec, 'pg', None)!r}"
+                for spec, _fanout in specs
+                if getattr(spec, "pg", None) in activated
+            })
+            # A material none of whose elements was live before this
+            # stage reached nothing at the earlier flip: build-time
+            # validator V7 refuses that flip, with its own message.
+            earlier_live = any(
+                getattr(spec, "pg", None) not in activated
+                for spec, _fanout in specs
+            )
+            if new and earlier_live:
+                raise BridgeError(
+                    f"Stage {self._name!r}.activate: {', '.join(new)} "
+                    f"carries nDMaterial tag {tag}, whose stage flag an "
+                    "earlier stage left plastic.  The new element enters "
+                    "the plastic stage with no Elastic2Plastic() of its "
+                    "own, so its back-stress is never re-seated (issue "
+                    "#2445).  Flip the whole group again in this stage "
+                    "(the flip runs after the activation and reaches it), "
+                    "or activate the element before the flip."
+                )
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.
@@ -1783,11 +2018,15 @@ class _StageBuilder:
         Stage-bound only — there is no top-level
         ``apeSees.update_material_stage``.  Emits one
         ``updateMaterialStage -material $tag -stage $stage`` line per
-        material, in the order given.  ``stage=0`` is elastic,
-        ``stage=1`` is elastoplastic; the OpenSees handler additionally
-        calls ``Elastic2Plastic()`` when the value is 1.  This is the
-        staged-gravity idiom for soil plasticity: build elastic, solve
-        gravity, flip to plastic, push.
+        material, in the order given.  A flip to ``stage=1`` of a
+        :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material on two or more
+        elements is preceded by ``setParameter -val 1 -ele <its elements>
+        materialState $tag``, which runs each element's own stage update
+        (``_internal/build/stage_emit.MaterialStageCarriers``).
+        ``stage=0`` is elastic, ``stage=1`` is elastoplastic;
+        the OpenSees handler additionally calls ``Elastic2Plastic()``
+        when the value is 1.  This is the staged-gravity idiom for soil
+        plasticity: build elastic, solve gravity, flip to plastic, push.
 
         The lines emit AFTER this stage's element activation and after
         its ``remove_sp`` / ``remove_element`` block, and BEFORE the
