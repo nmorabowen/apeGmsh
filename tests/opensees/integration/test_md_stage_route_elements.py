@@ -381,6 +381,81 @@ def test_the_replayed_deck_sweeps_too(tmp_path: Any) -> None:
     assert replayed.count(sweep) == 1
 
 
+def _deck_tri6_run(tmp_path: Any, *, shared: bool) -> list[float]:
+    """The bridge's own openseespy deck, run on the resolved backend: two
+    SixNodeTri, hydrostatic 100 kPa elastic, a plastic flip, then 40 kPa
+    more vertical.  ``shared``: one material on both (the swept flip);
+    else each its own (one element per flip, the per-element reference).
+    """
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = apeSees(_tri6_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mats = [ops.nDMaterial.ManzariDafalias(name=f"sand_{i}", **_MD)
+            for i in range(1 if shared else 2)]
+    ops.element.SixNodeTri(pg="A", thickness=1.0, material=mats[0])
+    ops.element.SixNodeTri(pg="B", thickness=1.0, material=mats[-1])
+    # Nodes 13-16 (the stub's quad, unused here) carry no element.
+    ops.fix(nodes=[1, 7, 13, 14, 15, 16], dofs=(1, 1))
+    ops.fix(nodes=[2, 4, 8, 10], dofs=(0, 1))
+    ops.fix(nodes=[3, 6, 9, 12], dofs=(1, 0))
+
+    def chain() -> dict[str, object]:
+        return {
+            "test": ops.test.NormUnbalance(tol=1e-8, max_iter=100),
+            "algorithm": ops.algorithm.Newton(),
+            "integrator": ops.integrator.LoadControl(dlam=0.05),
+            "constraints": ops.constraints.Transformation(),
+            "numberer": ops.numberer.RCM(),
+            "system": ops.system.UmfPack(),
+            "analysis": ops.analysis.Static(),
+        }
+
+    # Consistent loads of a quadratic edge: 1/6, 4/6, 1/6.
+    edge = ((2, 1 / 6), (3, 1 / 6), (5, 4 / 6))
+    with ops.stage(name="gravity") as s:
+        s.update_material_stage(materials=mats, stage=0)
+        with s.pattern(series=ops.timeSeries.Linear()) as p:
+            for b in (0, 6):
+                for n, w in edge:
+                    p.load(node=b + n, forces=(-100.0 * w, -100.0 * w))
+        s.analysis(**chain())
+        s.run(n_increments=20)
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=mats, stage=1)
+        with s.pattern(series=ops.timeSeries.Linear()) as p:
+            for b in (0, 6):
+                for n, w in edge:
+                    p.load(node=b + n, forces=(0.0, -40.0 * w))
+        s.analysis(**chain())
+        s.run(n_increments=20)
+    path = tmp_path / ("shared.py" if shared else "reference.py")
+    ops.py(str(path))
+    src = path.read_text(encoding="utf-8")
+    header = "import openseespy.opensees as ops\n"
+    assert src.count(header) == 1
+    live = get_ops()
+    try:
+        exec(compile(src.replace(header, ""), str(path), "exec"),  # noqa: S102
+             {"__name__": "deck", "ops": live})
+        return [d for n in sorted(live.getNodeTags())
+                for d in live.nodeDisp(n)]
+    finally:
+        live.wipe()
+
+
+@pytest.mark.live
+def test_the_bridge_deck_initialises_every_element(tmp_path: Any) -> None:
+    """End to end: the bridge's deck with one shared material matches the
+    deck that gives each element its own (stock and fork)."""
+    pytest.importorskip("openseespy.opensees")
+    ref = _deck_tri6_run(tmp_path, shared=False)
+    swept = _deck_tri6_run(tmp_path, shared=True)
+    scale = max(abs(v) for v in ref)
+    assert scale > 1e-4
+    assert _diff(swept, ref) <= 1e-10 * max(1.0, scale)
+
+
 # ---------------------------------------------------------------------------
 # The live census
 # ---------------------------------------------------------------------------
