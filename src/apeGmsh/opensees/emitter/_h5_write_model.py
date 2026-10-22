@@ -399,6 +399,12 @@ class _H5WriteModelMixin(_H5Host):
             # vecxz; per_element_vecxz is therefore (1, 3).
             vec_arr = np.asarray([list(rec.vec)], dtype=np.float64)
             g.create_dataset("per_element_vecxz", data=vec_arr)
+            if rec.jnt_offset:
+                # opensees 2.35.0: the line's -jntOffset tail, (1, 6) in
+                # 3-D, (1, 4) in 2-D; absent when the line has none.
+                g.create_dataset(
+                    "jnt_offset",
+                    data=np.asarray([list(rec.jnt_offset)], dtype=np.float64))
             tag_arr = np.asarray([rec.tag], dtype=np.int64)
             g.create_dataset("per_element_emitted_tag", data=tag_arr)
             _set_attr(g, "__deviation__", "per-emitted-call grouping")

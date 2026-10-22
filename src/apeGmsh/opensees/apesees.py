@@ -1062,7 +1062,7 @@ class BuiltModel:
             if lines:
                 decl = decl_of(transf)
                 runs.extend(
-                    ("geomTransf", int(tag), 1, decl) for tag, _ in lines[1:])
+                    ("geomTransf", int(tag), 1, decl) for tag, *_ in lines[1:])
         runs.extend(self._region_runs(tag_plan, decl_of))
         return rows, runs
 

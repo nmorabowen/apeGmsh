@@ -154,11 +154,16 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * `readDef` reads either form and refuses a group holding both; smaller
  * arrays keep the attribute form and read as before.
  *
+ * opensees 2.35.0 (h5-schema.md "/opensees/transforms"): a transform group
+ * whose `geomTransf` line carries `-jntOffset` gains a `jnt_offset` dataset
+ * ((1, 6) in 3-D, (1, 4) in 2-D). `readObject` reads it as one more table;
+ * the scene still draws each beam between its nodes, not its offset ends.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 34 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 35 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;

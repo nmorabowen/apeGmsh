@@ -25,6 +25,7 @@ from .ndf import _load_dof_layout, fit_dof_vector
 from .transforms import (
     _element_transf,
     compute_vecxz_for_element,
+    element_jnt_offset,
     is_orientation_transform,
 )
 
@@ -527,6 +528,51 @@ def _resolve_beam_vecxz(
     return np.asarray(vecxz, dtype=float)
 
 
+def _refuse_tilting_jnt_offset(
+    el_spec: Element | None,
+    p_i: np.ndarray,
+    p_j: np.ndarray,
+    e_x: np.ndarray,
+    ndm: int,
+    fem: "FEMData",
+    eid: int,
+    pattern: object,
+) -> None:
+    """Refuse a global line load on a beam whose joint offsets tilt its axis.
+
+    The load is projected on the local axes of the node chord; OpenSees
+    builds them between the offset ends. Offsets that shift both ends
+    alike (a cardinal point) or run along the axis (end lengths) leave
+    the direction alone; any other pair would project the load on the
+    wrong axes, silently.
+    """
+    transf = _element_transf(el_spec) if el_spec is not None else None
+    if transf is None or getattr(transf, "jnt_offset", None) is None:
+        return
+    vecxz = None
+    if ndm == 3:
+        vecxz = tuple(float(c) for c in _resolve_beam_vecxz(
+            el_spec, p_i, p_j, fem, eid))
+    jnt = element_jnt_offset(transf, p_i, p_j, vecxz, ndm)  # type: ignore[arg-type]
+    if not jnt:
+        return
+    w = len(jnt) // 2
+    d_i = np.zeros(3)
+    d_j = np.zeros(3)
+    d_i[:w] = jnt[:w]
+    d_j[:w] = jnt[w:]
+    chord = (p_j + d_j) - (p_i + d_i)
+    n = float(np.linalg.norm(chord))
+    if n <= 0.0 or float(np.linalg.norm(np.cross(chord / n, e_x))) > 1e-9:
+        raise BridgeError(
+            f"from_model({pattern!r}): beamUniform on element {eid}: its "
+            "geomTransf jnt_offset turns the element axis away from the node "
+            "chord, so a global line load cannot be projected on the axes "
+            "OpenSees uses. Declare the load in local components with "
+            "Plain.beam_uniform, or give both ends the same transverse offset."
+        )
+
+
 def _translate_fem_eids_for_ele_load(
     fem_eids: Iterable[int],
     *,
@@ -826,6 +872,8 @@ def resolve_ele_load_commands(
                     "has zero length."
                 )
             e_x = edge / length
+            _refuse_tilting_jnt_offset(
+                elem_spec, p_i, p_j, e_x, ndm, fem, eid, rec.pattern)
             if ndm == 2:
                 if wz1 != 0.0 or wz2 != 0.0:
                     raise _BridgeValueError(

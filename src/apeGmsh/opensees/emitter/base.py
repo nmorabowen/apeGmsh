@@ -347,8 +347,11 @@ class Emitter(Protocol):
         self, sec_type: str, tag: int, *params: float | str
     ) -> None: ...
     def geomTransf(
-        self, t_type: str, tag: int, *vec: float
+        self, t_type: str, tag: int, *vec: float,
+        jnt_offset: tuple[float, ...] = (),
     ) -> None: ...
+    # ``jnt_offset`` is the flat ``-jntOffset`` tail (dXi dYi [dZi] dXj
+    # dYj [dZj], global); empty emits no flag.
 
     # -- Sections that take blocks (Fiber) -------------------------------
     def section_open(

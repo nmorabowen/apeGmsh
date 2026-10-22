@@ -3680,19 +3680,19 @@
     },
     "ops.geomTransf.Corotational": {
       "doc": "Register a ``geomTransf Corotational``. See :class:`Corotational`.",
-      "signature": "Corotational(*, orientation: 'Orientation | None' = None, vecxz: 'tuple[float, float, float] | None' = None, roll_deg: 'float' = 0.0, name: 'str | None' = None) -> 'Corotational'",
+      "signature": "Corotational(*, orientation: 'Orientation | None' = None, vecxz: 'tuple[float, float, float] | None' = None, roll_deg: 'float' = 0.0, jnt_offset: 'JntOffset | InsertionPoint | None' = None, name: 'str | None' = None) -> 'Corotational'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.geomTransf.Corotational"
     },
     "ops.geomTransf.Linear": {
       "doc": "Register a ``geomTransf Linear``. See :class:`Linear`.",
-      "signature": "Linear(*, orientation: 'Orientation | None' = None, vecxz: 'tuple[float, float, float] | None' = None, roll_deg: 'float' = 0.0, name: 'str | None' = None) -> 'Linear'",
+      "signature": "Linear(*, orientation: 'Orientation | None' = None, vecxz: 'tuple[float, float, float] | None' = None, roll_deg: 'float' = 0.0, jnt_offset: 'JntOffset | InsertionPoint | None' = None, name: 'str | None' = None) -> 'Linear'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.geomTransf.Linear"
     },
     "ops.geomTransf.PDelta": {
       "doc": "Register a ``geomTransf PDelta``. See :class:`PDelta`.",
-      "signature": "PDelta(*, orientation: 'Orientation | None' = None, vecxz: 'tuple[float, float, float] | None' = None, roll_deg: 'float' = 0.0, name: 'str | None' = None) -> 'PDelta'",
+      "signature": "PDelta(*, orientation: 'Orientation | None' = None, vecxz: 'tuple[float, float, float] | None' = None, roll_deg: 'float' = 0.0, jnt_offset: 'JntOffset | InsertionPoint | None' = None, name: 'str | None' = None) -> 'PDelta'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.geomTransf.PDelta"
     },

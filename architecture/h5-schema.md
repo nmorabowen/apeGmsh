@@ -579,9 +579,19 @@ are attribute-only, like materials. Every section group is named
 │         __deviation__="per-emitted-call grouping"
 ├── per_element_vecxz       float64 (1, 3) in 3-D, (1, 0) in 2-D
 │                            the vecxz of this one geomTransf call
-└── per_element_emitted_tag int64 (1,)
-                             the call's geomTransf tag (equals attr tag)
+├── per_element_emitted_tag int64 (1,)
+│                            the call's geomTransf tag (equals attr tag)
+└── jnt_offset              float64 (1, 6) in 3-D, (1, 4) in 2-D; optional
+                             (opensees 2.35.0): the call's -jntOffset
+                             dXi dYi [dZi] dXj dYj [dZj], global
 ```
+
+* **Joint offsets (opensees 2.35.0).** `jnt_offset` is present only when
+  the line carries `-jntOffset`; its absence means no offsets (every file
+  below 2.35.0). A transform declared with an `InsertionPoint` rule
+  (`apeGmsh.opensees.joint_offset`) fans out like an orientation: one
+  line per distinct `(vecxz, jnt_offset)`, each its own group, and only
+  the resolved offsets are stored.
 
 One group per emitted `geomTransf` call, not per element and not per
 user-declared transform (`H5Emitter._write_transforms`). Both datasets
@@ -2396,7 +2406,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.34.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.35.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2912,6 +2922,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   bytes and hash. A 2.33 reader would read a dataset-form pair as no
   arguments, hence the minor. Additive minor (a 2.33.x reader refuses a
   2.34.x file, INV-4).
+- `2.35.0` — joint offsets: a transform group whose `geomTransf` line
+  carries `-jntOffset` gains a float64 `jnt_offset` dataset, `(1, 6)` in
+  3-D and `(1, 4)` in 2-D, the line's global offsets; see
+  [`/opensees/transforms`](#openseestransforms). A line without offsets
+  writes no dataset, so every archive a 2.34 writer could write keeps its
+  bytes and hash. A 2.34 reader would replay an offset line without its
+  offsets, hence the minor. Additive minor (a 2.34.x reader refuses a
+  2.35.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

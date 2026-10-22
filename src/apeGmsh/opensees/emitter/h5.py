@@ -673,7 +673,15 @@ class H5RefusedVerb(NotImplementedError):
 #:     reader would read a dataset-form pair as no arguments, hence the
 #:     bump: a 2.34 reader opens 2.12 through 2.34 and refuses a dataset
 #:     form below 2.34.0; a 2.33.x reader REFUSES a 2.34.x file.
-SCHEMA_VERSION: str = "2.34.0"
+#:   * 2.35.0 — joint offsets: additive — a ``/opensees/transforms/*``
+#:     group whose ``geomTransf`` line carries ``-jntOffset`` gains a
+#:     float64 ``jnt_offset`` dataset, ``(1, 6)`` in 3-D and ``(1, 4)`` in
+#:     2-D, the line's global ``dXi dYi [dZi] dXj dYj [dZj]``. A line
+#:     without offsets writes no dataset, so every archive a 2.34 writer
+#:     could write keeps its bytes and hash. A 2.34 reader would replay an
+#:     offset line without its offsets, hence the bump: a 2.35 reader opens
+#:     2.12 through 2.35; a 2.34.x reader REFUSES a 2.35.x file.
+SCHEMA_VERSION: str = "2.35.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
