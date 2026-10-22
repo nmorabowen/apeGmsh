@@ -174,3 +174,155 @@ def test_a_varying_sp_on_the_pair_keeps_the_tie_and_warns(
         lines = _lines(_staged(squares, verb), tmp_path / "m.tcl")
     assert f"equalDOF {m} {s} 1 2" in lines
     assert lines.count(f"fix {s} 0 1") <= 1      # never a duplicate SP
+
+
+# -- #2406: the other emit paths ------------------------------------------
+
+class _Rec:
+    """Records what the constraint emitters write."""
+
+    def __init__(self) -> None:
+        self.lines: list[tuple] = []
+
+    def __getattr__(self, verb: str) -> Any:
+        if verb.startswith("_"):
+            raise AttributeError(verb)
+        return lambda *a, **_k: self.lines.append((verb, *a))
+
+
+def _fixed(fixed: dict, staged=frozenset(), ndm: int = 2, ndf: int = 2):
+    from apeGmsh.opensees._internal.build.constraints import FixedDofs
+
+    return FixedDofs(fixed={n: frozenset(d) for n, d in fixed.items()},
+                     staged=frozenset(staged), ndf={}, default_ndf=ndf,
+                     owner={n: object() for n in fixed}, decl_cursor=None,
+                     ndm=ndm)
+
+
+def test_equal_dof_mixed_splits_on_the_retained_dof() -> None:
+    from apeGmsh._kernel.records._constraints import NodePairRecord
+    from apeGmsh.opensees._internal.build.constraints import _emit_equal_dofs
+
+    rec = NodePairRecord(kind="equal_dof_mixed", master_node=1, slave_node=2,
+                         dofs=[1, 2], master_dofs=[2, 1])
+    em = _Rec()
+    _emit_equal_dofs(em, [rec], fixed=_fixed({1: {2}}))
+    # retained DOF 2 is held: its pair (2 -> 1) becomes fix(slave, DOF 1)
+    assert em.lines == [("equalDOF_mixed", 1, 2, [(1, 2)]), ("fix", 2, 1, 0)]
+
+
+def test_node_to_surface_pairs_split() -> None:
+    from apeGmsh._kernel.records._constraints import (
+        NodePairRecord, NodeToSurfaceRecord,
+    )
+    from apeGmsh.opensees._internal.build.constraints import _emit_equal_dofs
+
+    pair = NodePairRecord(kind="equal_dof", master_node=7, slave_node=3,
+                          dofs=[1, 2, 3])
+    rec = NodeToSurfaceRecord(kind="node_to_surface", master_node=1,
+                              equal_dof_records=[pair])
+    em = _Rec()
+    _emit_equal_dofs(em, [rec], fixed=_fixed({7: {3}}, ndm=3, ndf=3))
+    assert em.lines == [("equalDOF", 7, 3, 1, 2), ("fix", 3, 0, 0, 1)]
+
+
+@pytest.mark.parametrize("kind, fixed, staged, warns", [
+    ("rod", {1: {2}}, (), True),          # 2-D rod maps DOFs 1, 2
+    ("rod", {1: {1, 2}}, (), False),      # fully held
+    ("rod", {1: {3}}, (), False),         # the rotation is not mapped
+    ("beam", {1: {3}}, (), True),         # ... but a beam maps it
+    ("rod", {}, ((1, 1),), True),         # a stage varies DOF 1 only
+    ("rod", {}, (), False),
+])
+def test_rigid_link_warns_on_a_partly_fixed_master(
+        kind, fixed, staged, warns) -> None:
+    from apeGmsh._kernel.records._constraints import NodePairRecord
+    from apeGmsh.opensees._internal.build.constraints import _emit_rigid_links
+
+    rec = NodePairRecord(kind=f"rigid_{kind}", master_node=1, slave_node=2)
+    em = _Rec()
+    with warnings.catch_warnings(record=True) as got:
+        warnings.simplefilter("always")
+        _emit_rigid_links(em, [rec],
+                          fixed=_fixed(fixed, staged, ndm=2, ndf=3))
+    hit = [w for w in got if issubclass(w.category, PartlyFixedTieWarning)]
+    assert bool(hit) is warns
+    assert em.lines == [("rigidLink", {"rod": "bar"}.get(kind, kind), 1, 2)]
+
+
+def test_a_stage_claimed_tie_is_rewritten(squares, tmp_path: Path) -> None:
+    fem, base_a, m, s, corner, top_right = squares
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e5, nu=0.3)
+    ops.element.FourNodeQuad(pg="SA", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="SB", thickness=1.0, material=mat)
+    ops.fix(nodes=base_a, dofs=(0, 1))
+    ops.fix(nodes=[corner], dofs=(1, 0))
+    with ops.stage(name="tie") as st:
+        st.equal_dof(name="iface")
+        with st.pattern(series=ops.timeSeries.Linear()) as p:
+            p.load(node=top_right, forces=(1.0, 0.0))
+        st.analysis(
+            test=ops.test.NormDispIncr(tol=1e-10, max_iter=5),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            constraints=ops.constraints.Transformation(),
+            numberer=ops.numberer.RCM(), system=ops.system.UmfPack(),
+            analysis=ops.analysis.Static())
+        st.run(n_increments=1)
+    lines = _lines(ops, tmp_path / "m.tcl")
+    assert f"equalDOF {m} {s} 1" in lines
+    assert f"fix {s} 0 1" in lines
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_a_partitioned_emit_rewrites_on_every_rank(staged, tmp_path) -> None:
+    g = apeGmsh(model_name="t2406p", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="A")
+        g.model.geometry.add_rectangle(1, 0, 0, 1, 1, label="B")
+        g.physical.add_surface("A", name="SA")
+        g.physical.add_surface("B", name="SB")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.structured.set_transfinite_automatic()
+        g.constraints.equal_dof("SA", "SB", dofs=[1, 2], name="iface")
+        g.mesh.generation.generate(dim=2)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    finally:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)   # no model.h5
+            g.end()
+    xyz = {int(n): c for n, c in zip(fem.nodes.ids, fem.nodes.coords)}
+    pairs = {int(r.master_node): int(r.slave_node)
+             for r in fem.nodes.constraints}
+    m = next(n for n in pairs if abs(xyz[n][1]) < 1e-9)
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e5, nu=0.3)
+    ops.element.FourNodeQuad(pg="SA", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="SB", thickness=1.0, material=mat)
+    ops.fix(nodes=[m], dofs=(0, 1))
+    ops.fix(nodes=[n for n in xyz if xyz[n][0] < 1e-9], dofs=(1, 1))
+    if staged:
+        with ops.stage(name="tie") as st:
+            st.equal_dof(name="iface")
+            st.analysis(
+                test=ops.test.NormDispIncr(tol=1e-10, max_iter=5),
+                algorithm=ops.algorithm.Newton(),
+                integrator=ops.integrator.LoadControl(dlam=1.0),
+                constraints=ops.constraints.Transformation(),
+                numberer=ops.numberer.ParallelPlain(),
+                system=ops.system.Mumps(), analysis=ops.analysis.Static())
+            st.run(n_increments=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        warnings.simplefilter("error", PartlyFixedTieWarning)
+        ops.tcl(str(tmp_path / "p.tcl"))
+    text = (tmp_path / "p.tcl").read_text()
+    ties = [ln.strip() for ln in text.splitlines()
+            if ln.strip().startswith(f"equalDOF {m} ")]
+    assert ties and all(t == f"equalDOF {m} {pairs[m]} 1" for t in ties)
+    assert text.count(f"fix {pairs[m]} 0 1") == len(ties)

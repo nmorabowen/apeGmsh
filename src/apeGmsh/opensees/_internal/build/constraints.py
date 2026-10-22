@@ -123,6 +123,7 @@ class FixedDofs:
     #: Nodes that retain, and nodes that are constrained by, some tie.
     retained: "frozenset[int]" = frozenset()
     constrained: "frozenset[int]" = frozenset()
+    ndm: int = 3
 
 
 def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> FixedDofs:
@@ -171,49 +172,92 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
         fixed={n: frozenset(d) for n, d in fixed.items()},
         staged=frozenset(staged), ndf=eff, default_ndf=default,
         owner=owner, decl_cursor=getattr(built, "_decl_cursor", None),
-        retained=frozenset(retained), constrained=frozenset(constrained))
+        retained=frozenset(retained), constrained=frozenset(constrained),
+        ndm=int(getattr(built, "ndm", 3) or 3))
 
 
 def _split_partly_fixed_tie(
     master: int, slave: int, dofs: "tuple[int, ...]",
     fixed: "FixedDofs | None", name: "str | None",
 ) -> "tuple[tuple[int, ...], tuple[int, ...]]":
-    """``(dofs to tie, dofs to fix on the slave)`` for one ``equalDOF``.
+    """``(dofs to tie, dofs to fix on the slave)`` for one ``equalDOF``
+    (:func:`_split_partly_fixed_pairs` with each DOF tied to itself)."""
+    keep, to_fix = _split_partly_fixed_pairs(
+        master, slave, tuple((d, d) for d in dofs), fixed, name)
+    return tuple(c for _r, c in keep), to_fix
+
+
+def _split_partly_fixed_pairs(
+    master: int, slave: int, pairs: "tuple[tuple[int, int], ...]",
+    fixed: "FixedDofs | None", name: "str | None",
+) -> "tuple[tuple[tuple[int, int], ...], tuple[int, ...]]":
+    """``(pairs to tie, slave DOFs to fix)`` for one tie of
+    ``(retained DOF, constrained DOF)`` pairs (``equalDOF`` /
+    ``equalDOF_Mixed``).
 
     A retained node fixed on some tied DOFs and free on others breaks the
     Transformation handler (``TransformationDOF_Group::enforceSPs`` resets
-    the constrained node's free DOF every step, #2396). Tying only the free
-    DOFs and fixing the slave on the others is the same constraint set
-    under every handler. Left as declared when nothing is partly fixed;
-    when a stage adds or releases the fix, warned instead.
+    the constrained node's free DOF every step, #2396). Tying only the
+    pairs whose retained DOF is free, and fixing the slave on the others,
+    is the same constraint set under every handler. Left as declared when
+    nothing is partly fixed; when a stage or a pattern changes the fix, or
+    the tie is part of a chain, warned instead.
     """
     if fixed is None:
-        return dofs, ()
+        return pairs, ()
     held = fixed.fixed.get(master, frozenset())
-    on = tuple(d for d in dofs if d in held)
-    varying = [d for d in dofs if (master, d) in fixed.staged]
-    if len(on) == len(dofs):
-        return dofs, ()            # fully held: Transformation is exact
+    on = tuple(p for p in pairs if p[0] in held)
+    varying = [r for r, _c in pairs if (master, r) in fixed.staged]
+    if len(on) == len(pairs):
+        return pairs, ()           # fully held: Transformation is exact
     if not on:
-        if varying and len(set(varying)) < len(dofs):
+        if varying and len(set(varying)) < len(pairs):
             _warn_partly_fixed(master, slave, name,
                                why="a stage or a pattern SP acts on")
-        return dofs, ()
+        return pairs, ()
     if varying:
         _warn_partly_fixed(master, slave, name,
                            why="a stage or a pattern SP acts on")
-        return dofs, ()
-    if any((slave, d) in fixed.staged for d in on):
+        return pairs, ()
+    if any((slave, c) in fixed.staged for _r, c in on):
         _warn_partly_fixed(master, slave, name,
                            why="a stage fixes the slave on")
-        return dofs, ()
+        return pairs, ()
     if slave in fixed.retained or master in fixed.constrained:
         _warn_partly_fixed(master, slave, name,
                            why="the tie is part of a chain of ties through")
-        return dofs, ()
-    free = tuple(d for d in dofs if d not in held)
+        return pairs, ()
+    free = tuple(p for p in pairs if p[0] not in held)
     already = fixed.fixed.get(slave, frozenset())
-    return free, tuple(d for d in on if d not in already)
+    return free, tuple(c for _r, c in on if c not in already)
+
+
+def _warn_partly_fixed_rigid_link(
+    kind: str, master: int, slave: int, name: "str | None",
+    fixed: "FixedDofs | None",
+) -> None:
+    """Warn when a ``rigidLink``'s retained node is fixed on some of the
+    DOFs the link maps and free on others: the same Transformation defect
+    as #2396, which a rigid link cannot be split around (its slave DOFs
+    depend on the master's rotations). Lagrange and Penalty are correct."""
+    if fixed is None:
+        return
+    ndf = int(fixed.ndf.get(master, fixed.default_ndf))
+    mapped = (set(range(1, ndf + 1)) if kind == "beam"
+              else set(range(1, min(fixed.ndm, ndf) + 1)))
+    held = set(fixed.fixed.get(master, frozenset())) & mapped
+    varying = {d for d in mapped if (master, d) in fixed.staged}
+    if (held and held != mapped) or (varying and (held | varying) != mapped):
+        warnings.warn(
+            f"rigidLink {kind} {master} -> {slave}"
+            + (f" ({name})" if name else "")
+            + ": its retained node is fixed on only some of the DOFs the "
+            "link maps. OpenSees' Transformation handler (the bridge "
+            "default with MP constraints) then drops the tie on the free "
+            "DOFs at every step (#2396, #2406). Use "
+            "ops.constraints.Lagrange() or Penalty(...).",
+            PartlyFixedTieWarning, stacklevel=4,
+        )
 
 
 def _warn_partly_fixed(master: int, slave: int, name: "str | None", *,
@@ -346,7 +390,7 @@ def emit_mp_constraints(
     #    drops the per-pair ``name`` field.
     # -------------------------------------------------------------------
     if node_constraints is not None:
-        _emit_rigid_links(emitter, node_constraints)
+        _emit_rigid_links(emitter, node_constraints, fixed=fixed_dofs)
 
     # -------------------------------------------------------------------
     # 2b. Rigid bodies (as_element) — one fork ``element LadrunoRigidBody``
@@ -704,6 +748,7 @@ def _emit_phantom_nodes(
 def _emit_rigid_links(
     emitter: "Emitter", node_constraints: Iterable[object],
     *, allowed_ids: frozenset[int] | None = None,
+    fixed: "FixedDofs | None" = None,
 ) -> None:
     """Emit ``rigidLink`` per :class:`NodePairRecord` (rigid_beam /
     rigid_rod) plus the rigid_body and node_to_surface compound
@@ -730,6 +775,9 @@ def _emit_rigid_links(
                     "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
                 )
                 _emit_name(emitter, rec.name)
+                _warn_partly_fixed_rigid_link(
+                    kind, int(rec.master_node), int(rec.slave_node),
+                    rec.name, fixed)
                 emitter.rigidLink(
                     kind, int(rec.master_node), int(rec.slave_node),
                 )
@@ -751,6 +799,9 @@ def _emit_rigid_links(
                 # rigidLink line).
                 _emit_name(emitter, rec.name)
                 for sn in rec.slave_nodes:
+                    _warn_partly_fixed_rigid_link(
+                        "beam", int(rec.master_node), int(sn), rec.name,
+                        fixed)
                     emitter.rigidLink(
                         "beam", int(rec.master_node), int(sn),
                     )
@@ -763,6 +814,9 @@ def _emit_rigid_links(
                         else "bar"
                     )
                     _emit_name(emitter, pair.name)
+                    _warn_partly_fixed_rigid_link(
+                        pair_kind, int(pair.master_node),
+                        int(pair.slave_node), pair.name, fixed)
                     emitter.rigidLink(
                         pair_kind, int(pair.master_node), int(pair.slave_node),
                     )
@@ -836,34 +890,47 @@ def _emit_equal_dofs(
                     m, sl, tuple(int(d) for d in rec.dofs), fixed, rec.name)
                 if tie:
                     emitter.equalDOF(m, sl, *tie)
-                if to_fix and fixed is not None:
-                    ndf = int(fixed.ndf.get(sl, fixed.default_ndf))
-                    cursor = (fixed.decl_cursor(emitter)
-                              if fixed.decl_cursor is not None else None)
-                    if cursor is not None:
-                        cursor.open(fixed.owner[m])
-                    emitter.fix(sl, *(1 if d in to_fix else 0
-                                      for d in range(1, ndf + 1)))
-                    if cursor is not None:
-                        cursor.close()
+                _emit_slave_fix(emitter, m, sl, to_fix, fixed)
             elif rec.kind == ConstraintKind.EQUAL_DOF_MIXED:
                 _emit_name(emitter, rec.name)
                 # master_dofs (retained / RDOF) paired index-wise with
                 # dofs (constrained / CDOF) — resolver guarantees equal length.
+                m, sl = int(rec.master_node), int(rec.slave_node)
                 rdofs = rec.master_dofs or []
-                pairs = [
-                    (int(r), int(c)) for r, c in zip(rdofs, rec.dofs)
-                ]
-                emitter.equalDOF_mixed(
-                    int(rec.master_node), int(rec.slave_node), pairs,
-                )
+                kept, to_fix = _split_partly_fixed_pairs(
+                    m, sl,
+                    tuple((int(r), int(c)) for r, c in zip(rdofs, rec.dofs)),
+                    fixed, rec.name)
+                if kept:
+                    emitter.equalDOF_mixed(m, sl, list(kept))
+                _emit_slave_fix(emitter, m, sl, to_fix, fixed)
         elif isinstance(rec, NodeToSurfaceRecord):
             for pair in rec.equal_dof_records:
                 _emit_name(emitter, pair.name)
-                emitter.equalDOF(
-                    int(pair.master_node), int(pair.slave_node),
-                    *(int(d) for d in pair.dofs),
-                )
+                m, sl = int(pair.master_node), int(pair.slave_node)
+                tie, to_fix = _split_partly_fixed_tie(
+                    m, sl, tuple(int(d) for d in pair.dofs), fixed, pair.name)
+                if tie:
+                    emitter.equalDOF(m, sl, *tie)
+                _emit_slave_fix(emitter, m, sl, to_fix, fixed)
+
+
+def _emit_slave_fix(
+    emitter: "Emitter", master: int, slave: int,
+    to_fix: "tuple[int, ...]", fixed: "FixedDofs | None",
+) -> None:
+    """``fix(slave, mask)`` for the DOFs a partly-fixed tie hands to the
+    slave, declared under the retained node's ``fix`` owner."""
+    if not to_fix or fixed is None:
+        return
+    ndf = int(fixed.ndf.get(slave, fixed.default_ndf))
+    cursor = (fixed.decl_cursor(emitter)
+              if fixed.decl_cursor is not None else None)
+    if cursor is not None:
+        cursor.open(fixed.owner[master])
+    emitter.fix(slave, *(1 if d in to_fix else 0 for d in range(1, ndf + 1)))
+    if cursor is not None:
+        cursor.close()
 
 
 def _emit_rigid_diaphragms(
@@ -1500,6 +1567,7 @@ def emit_stage_mp_constraints(
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
+    fixed_dofs: "FixedDofs | None" = None,
 ) -> None:
     """Emit a stage's MP constraints inside the stage block (flat path).
 
@@ -1532,9 +1600,9 @@ def emit_stage_mp_constraints(
 
     # Same ordering as emit_mp_constraints (INV-3).
     _emit_phantom_nodes(emitter, adapter)
-    _emit_rigid_links(emitter, adapter)
+    _emit_rigid_links(emitter, adapter, fixed=fixed_dofs)
     _emit_rigid_body_elements(emitter, adapter, tag_plan)
-    _emit_equal_dofs(emitter, adapter)
+    _emit_equal_dofs(emitter, adapter, fixed=fixed_dofs)
     _emit_rigid_diaphragms(emitter, adapter)
     _emit_kinematic_couplings(
         emitter, adapter, tag_plan, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
