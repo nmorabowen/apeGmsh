@@ -201,6 +201,30 @@ def test_a_stage_flag_parameter_takes_the_group_over(
     assert _stage_zero_tags(em) == ([] if takes_over else [7])
 
 
+@pytest.mark.parametrize("cls", [TclEmitter, PyEmitter], ids=lambda c: c.__name__)
+def test_stage_zero_comes_before_the_carrier_sweep_of_a_user_flip(
+    cls: type,
+) -> None:
+    """A user stage 1 on a material with two carriers emits #2459's
+    ``setParameter ... materialState`` sweep; the derived stage 0 sits
+    before it, at the earlier solve, and never after."""
+    em = cls()
+    em.nDMaterial("ManzariDafalias", 7, *([1.0] * 18))
+    em.element("SSPquad", 1, 1, 2, 3, 4, 7, "PlaneStrain", 1.0)
+    em.element("SSPquad", 2, 3, 4, 5, 6, 7, "PlaneStrain", 1.0)
+    em.analyze(steps=1)
+    em.update_material_stage(7, 1)
+    em.analyze(steps=1)
+    lines = [ln for ln in em.lines()
+             if "updateMaterialStage" in ln or "setParameter" in ln]
+    assert len(lines) == 3, lines
+    assert "materialState" not in lines[0] and lines[0].replace(
+        "'", "").replace(",", "").rstrip(")").endswith("-stage 0")
+    assert "setParameter" in lines[1] and "materialState" in lines[1]
+    assert lines[2].replace("'", "").replace(",", "").rstrip(")").endswith(
+        "-stage 1")
+
+
 def _stage_zero_tags(em: Any) -> list[int]:
     if isinstance(em, RecordingEmitter):
         return [a[0] for n, a, _k in em.calls

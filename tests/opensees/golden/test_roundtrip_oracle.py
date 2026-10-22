@@ -142,8 +142,6 @@ class Model:
     module: str
     function: str
     kwargs: tuple[tuple[str, Any], ...] = ()
-    #: The test package that holds ``module``.
-    package: str = "tests.opensees.h5"
 
     @property
     def id(self) -> str:
@@ -151,7 +149,12 @@ class Model:
         return f"{self.module}::{self.function}" + (f"[{args}]" if args else "")
 
     def build(self) -> apeSees:
-        mod = importlib.import_module(f"{self.package}.{self.module}")
+        # A bare name is a ``tests/opensees/h5`` module; a dotted one is
+        # imported as written (the #2446 stage-flip model lives with its
+        # route tests).
+        name = (self.module if "." in self.module
+                else f"tests.opensees.h5.{self.module}")
+        mod = importlib.import_module(name)
         factory: Callable[..., apeSees] = getattr(mod, self.function)
         return factory(**dict(self.kwargs))
 
@@ -201,6 +204,10 @@ CORPUS: tuple[Model, ...] = (
     _m("test_h5_regions_round_trip", "_partitioned_staged_with_fan_out"),
     *(_m("test_h5_solve_stamp", "_frame_bridge", analysis=a) for a in _B),
     _m("test_h5_stages_reader", "_real_two_stage_bridge"),
+    # #2446: a plastic ManzariDafalias flip on two elements, whose deck
+    # sweeps every element before updateMaterialStage.
+    _m("tests.opensees.integration.test_md_stage_route_elements",
+       "r1b_tri6_flip_bridge"),
     _m("test_h5_stages_reader", "_real_kitchen_sink_bridge"),
     # The stages_writer bridges are these two (#1880): listed once.
     _m("test_h5_stages_replay", "_no_param_two_stage_bridge"),
@@ -228,8 +235,8 @@ CORPUS: tuple[Model, ...] = (
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before
     # the analyze of the stage that adds the upper quad, then the user's 1.
-    Model("test_manzari_stage_zero", "_md_column_flipped",
-          package="tests.opensees.integration"),
+    _m("tests.opensees.integration.test_manzari_stage_zero",
+       "_md_column_flipped"),
 )
 
 

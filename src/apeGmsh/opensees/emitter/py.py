@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_emit import MaterialStageCarriers
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
@@ -619,6 +620,8 @@ class PyEmitter:
             header.append(provenance_stamp(backend))
         header += ["import openseespy.opensees as ops", "ops.wipe()"]
         self._lines: _LineBuf = _LineBuf(header)
+        # The elements each swept material is on, for its plastic flip.
+        self._stage_carriers = MaterialStageCarriers()
         # Partition-emission state (ADR 0027 / P4). On the first
         # ``partition_open`` call across the emitter's lifetime, emit a
         # one-shot runtime shim that pulls ``getPID`` from openseespy
@@ -899,6 +902,7 @@ class PyEmitter:
     ) -> None:
         warn_rc_c2_deck(mat_type, params)
         self._stage0.material(mat_type, tag)
+        self._stage_carriers.note_material(mat_type, tag, params)
         self._lines.append(_ops_call("nDMaterial", mat_type, tag, *params))
 
     def section(
@@ -948,6 +952,7 @@ class PyEmitter:
         self, ele_type: str, tag: int, *args: int | float | str,
     ) -> None:
         self._stage0.owed = True
+        self._stage_carriers.note_element(ele_type, tag, args)
         self._lines.append(_ops_call("element", ele_type, tag, *args))
 
     # -- Time series --------------------------------------------------------
@@ -1523,6 +1528,7 @@ class PyEmitter:
         self._lines.indent = prev_indent
 
     def remove_element(self, tag: int) -> None:
+        self._stage_carriers.note_removed(tag)
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(_ops_call("remove", "element", int(tag)))
@@ -1530,12 +1536,13 @@ class PyEmitter:
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
         self._stage0.user_flip(mat_tag)
+        # A plastic flip of a swept material also updates each of its
+        # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
         self._lines.indent = ""
-        self._lines.append(_ops_call(
-            "updateMaterialStage",
-            "-material", int(mat_tag), "-stage", int(stage),
-        ))
+        for command, argv in self._stage_carriers.flip_commands(
+                mat_tag, stage):
+            self._lines.append(_ops_call(command, *argv))
         self._lines.indent = prev_indent
 
     def _stage_zero(self) -> None:
@@ -1600,6 +1607,7 @@ class PyEmitter:
         except ImportError`` with a 0-returning fallback — so a
         single-process Python (no OpenSeesMP) still runs the deck.
         """
+        self._stage_carriers.partition_open(rank)
         if not self._partition_shim_emitted:
             # Emit at indent 0 (the shim is global, not per-rank).
             prev_indent = self._lines.indent
@@ -1625,6 +1633,7 @@ class PyEmitter:
         simply dedents and emits a blank separator line at the outer
         indent for readability.
         """
+        self._stage_carriers.partition_close()
         if self._lines.indent.endswith("    "):
             self._lines.indent = self._lines.indent[:-4]
         self._lines.append("")
