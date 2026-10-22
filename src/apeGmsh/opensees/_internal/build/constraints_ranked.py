@@ -401,7 +401,7 @@ def emit_stage_mp_constraints_partitioned(
     _emit_rigid_links(emitter, adapter, allowed_ids=ids, fixed=staged)
     _emit_rigid_body_elements(emitter, adapter, tag_plan, allowed_ids=ids)
     _emit_equal_dofs(emitter, adapter, allowed_ids=ids, fixed=staged)
-    _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
+    _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids, fixed=staged)
     _emit_kinematic_couplings(
         emitter, adapter, tag_plan, allowed_ids=ids,
         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
@@ -527,7 +527,8 @@ def emit_mp_constraints_partitioned(
         )
         _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids,
                          fixed=fixed_dofs)
-        _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids)
+        _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids,
+                               fixed=fixed_dofs)
         _emit_kinematic_couplings(
             emitter, node_constraints, tag_plan, allowed_ids=ids,
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
