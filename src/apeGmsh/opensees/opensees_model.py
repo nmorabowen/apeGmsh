@@ -1168,13 +1168,16 @@ class OpenSeesModel:
     #: stored verdict it answers to is the flat one.
     _REPLAY_SOLVE_MODE = "flat"
 
+    def _archived_chains(self) -> "tuple[Mapping[str, Any], ...]":
+        """The archive's analysis-chain attrs, the global chain first, then
+        each stage's."""
+        return (self._analysis_attrs,
+                *(stage.chain_attrs for stage in self._stages))
+
     def _archived_systems(self) -> tuple[str, ...]:
         """The ``system`` types the archive's analysis chains bind a replay
-        to, the global chain first, then each stage's
-        (:func:`~apeGmsh.opensees.emitter.caps.binding_systems`)."""
-        return binding_systems(
-            (self._analysis_attrs,
-             *(stage.chain_attrs for stage in self._stages)))
+        to (:func:`~apeGmsh.opensees.emitter.caps.binding_systems`)."""
+        return binding_systems(self._archived_chains())
 
     def replay_requires(self) -> tuple[str, ...]:
         """The ``/opensees@requires`` tokens a replay of this archive needs.
@@ -1182,13 +1185,15 @@ class OpenSeesModel:
         Every replay target emits flat, so a ``"mpi"`` the stamp derived
         from a partitioned ``solve_mode`` does not apply; ``"mpi"`` stays
         only when the archived chain declares a Mumps-family or
-        ``Parallel*`` system (:func:`~apeGmsh.opensees.emitter.caps.flat_requires`).
-        Empty for an archive without a stamp (below 2.24.0).
+        ``Parallel*`` system. ``"fork"`` is added when the archived chain
+        declares a fork-only type
+        (:func:`~apeGmsh.opensees.emitter.caps.flat_requires`), also for an
+        archive without a stamp (below 2.24.0), whose stored chain is all
+        that is known.
         """
         stamp = self._solve_stamp
-        if stamp is None:
-            return ()
-        return flat_requires(stamp.requires, systems=self._archived_systems())
+        requires = () if stamp is None else stamp.requires
+        return flat_requires(requires, chains=self._archived_chains())
 
     def _refuse_stored_solve_refusals(self, target: str) -> None:
         stamp = self._solve_stamp
@@ -2203,10 +2208,14 @@ class OpenSeesModel:
         # ADR 0114 D6: a model whose flat replay needs the fork, an MPCO
         # build or an MPI system cannot be built into this domain; refuse
         # before the wipe, naming the gap. The flat replay's own need, not
-        # the archive's partitioned deck's (``replay_requires``).
+        # the archive's partitioned deck's (``replay_requires``). An
+        # archive without a stamp is judged on its stored chain alone.
         stamp = self._solve_stamp
+        requires = self.replay_requires()
         if stamp is not None:
-            stamp = replace(stamp, requires=self.replay_requires())
+            stamp = replace(stamp, requires=requires)
+        elif requires:
+            stamp = SolveStamp(will_solve=True, requires=requires)
         refuse_live_requires(
             stamp, get_backend_info(),
             mpi_systems=tuple(
