@@ -1,10 +1,11 @@
-"""#2446: which element classes the plastic stage-flip sweep reaches.
+"""#2446: which element classes the plastic stage flip reaches.
 
 The bridge emits a ``ManzariDafalias`` / ``LadrunoSANISAND`` flip to a plastic
-stage as an element sweep (``setParameter -val 1 -eleRange ... materialState
-<tag>``) followed by ``updateMaterialStage``
-(``stage_emit.material_stage_flip_commands``).  The sweep initialises an
-element only when the element hands ``materialState`` to its materials, so a
+stage, on a material two or more elements carry, as a ``materialState``
+update of exactly those elements (``setParameter -val 1 -ele <carriers>
+materialState <tag>``) followed by ``updateMaterialStage``
+(``stage_emit.MaterialStageCarriers``).  The update initialises an element
+only when the element hands ``materialState`` to its materials, so a
 multi-element plastic flip passes only on a :data:`MATERIAL_STATE_ELEMENTS`
 class and is refused, by class name, on any other.
 
@@ -24,8 +25,9 @@ import pytest
 
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.build.stage_emit import (
-    MATERIAL_STATE_ELE_RANGE,
-    material_stage_flip_commands,
+    MATERIAL_STATE_ELEMENT_TOKENS,
+    SWEPT_MATERIAL_CLASSES,
+    MaterialStageCarriers,
 )
 from apeGmsh.opensees._target import OpenSeesTarget
 from apeGmsh.opensees.apesees import apeSees
@@ -45,6 +47,7 @@ from tests.opensees.fixtures.fem_stub import (
 )
 from tests.opensees.integration.test_md_stage_all_elements import (
     MD_ARGS,
+    Deck,
     emitted_flip_lines,
 )
 
@@ -54,33 +57,123 @@ _MD = dict(
     A0=0.704, nd=3.5, z_max=4.0, cz=600.0, rho=1.42,
 )
 
+#: The token each :data:`MATERIAL_STATE_ELEMENTS` class emits.
+_TOKEN_OF = {
+    "SixNodeTri": "tri6n", "FourNodeTetrahedron": "FourNodeTetrahedron",
+    "SSPquad": "SSPquad", "SSPbrick": "SSPbrick", "BezierTri6": "BezierTri6",
+    "BezierTet10": "BezierTet10", "LadrunoUP": "LadrunoUP",
+}
+
+_TRI6_ARGV = (1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain")
+
 
 # ---------------------------------------------------------------------------
 # The emitted lines
 # ---------------------------------------------------------------------------
 
 
-def test_the_flip_commands() -> None:
-    lo, hi = MATERIAL_STATE_ELE_RANGE
-    assert (lo, hi) == (1, 2147483647)
-    assert material_stage_flip_commands(7, 0) == (
-        ("updateMaterialStage", ("-material", 7, "-stage", 0)),)
-    assert material_stage_flip_commands(7, 1) == (
-        ("setParameter", ("-val", 1.0, "-eleRange", lo, hi,
-                          "materialState", "7")),
-        ("updateMaterialStage", ("-material", 7, "-stage", 1)),
+def _carriers(mat: str = "ManzariDafalias") -> MaterialStageCarriers:
+    """Tag 7 (``mat``) on tri6n 1 and 2, DruckerPrager tag 8 on tri6n 3."""
+    c = MaterialStageCarriers()
+    c.note_material(mat, 7)
+    c.note_material("DruckerPrager", 8)
+    c.note_element("tri6n", 1, (*_TRI6_ARGV, 7))
+    c.note_element("tri6n", 2, (*_TRI6_ARGV, 7))
+    c.note_element("tri6n", 3, (*_TRI6_ARGV, 8))
+    return c
+
+
+def _ums(tag: int, stage: int) -> tuple[str, tuple[Any, ...]]:
+    return ("updateMaterialStage", ("-material", tag, "-stage", stage))
+
+
+def test_the_flip_names_the_carriers_only() -> None:
+    assert _carriers().flip_commands(7, 1) == (
+        ("setParameter", ("-val", 1.0, "-ele", 1, 2, "materialState", "7")),
+        _ums(7, 1),
     )
+
+
+@pytest.mark.parametrize("cls", sorted(SWEPT_MATERIAL_CLASSES))
+def test_both_swept_classes_are_updated(cls: str) -> None:
+    assert _carriers(cls).flip_commands(7, 1)[0][0] == "setParameter"
+
+
+def test_what_keeps_the_single_line() -> None:
+    c = _carriers()
+    assert c.flip_commands(7, 0) == (_ums(7, 0),), "an elastic flip"
+    assert c.flip_commands(8, 1) == (_ums(8, 1),), "a class not swept"
+    for mat in ("PressureDependMultiYield", "PM4Sand", "SAniSandMS"):
+        other = MaterialStageCarriers()
+        other.note_material(mat, 9)
+        other.note_element("tri6n", 1, (*_TRI6_ARGV, 9))
+        other.note_element("tri6n", 2, (*_TRI6_ARGV, 9))
+        assert other.flip_commands(9, 1) == (_ums(9, 1),), mat
+    c.note_removed(2)
+    assert c.flip_commands(7, 1) == (_ums(7, 1),), "one carrier left"
+
+
+def test_an_untracked_class_is_not_listed() -> None:
+    """A FourNodeQuad carrier is not tracked (the stage close refuses a
+    multi-element plastic flip on it), so the list holds the rest."""
+    c = _carriers()
+    c.note_element("quad", 4, (1, 2, 3, 4, 1.0, "PlaneStrain", 7))
+    assert c.flip_commands(7, 1)[0][1][3:5] == (1, 2)
+
+
+def test_a_rank_lists_its_own_and_the_global_carriers() -> None:
+    c = MaterialStageCarriers()
+    c.note_material("ManzariDafalias", 7)
+    c.note_element("tri6n", 1, (*_TRI6_ARGV, 7))
+    for rank, tags in ((0, (2, 3)), (1, (4, 5))):
+        c.partition_open(rank)
+        for t in tags:
+            c.note_element("tri6n", t, (*_TRI6_ARGV, 7))
+        c.partition_close()
+    c.partition_open(1)
+    assert c.flip_commands(7, 1)[0][1][3:6] == (1, 4, 5)
+    c.partition_close()
+    assert c.flip_commands(7, 1)[0][1][3:8] == (1, 2, 3, 4, 5)
+
+
+@pytest.mark.parametrize(("token", "argv", "tag"), [
+    ("tri6n", (*_TRI6_ARGV, 7), 7),
+    ("BezierTri6", (*_TRI6_ARGV, 7, "-bbar"), 7),
+    ("FourNodeTetrahedron", (1, 2, 3, 4, 7), 7),
+    ("BezierTet10", (*range(1, 11), 7, "-rho", 1.0), 7),
+    ("SSPquad", (1, 2, 3, 4, 7, "PlaneStrain", 1.0), 7),
+    ("SSPbrick", (*range(1, 9), 7, 0.0, 0.0, -9.81), 7),
+    ("LadrunoUP", (1, 2, 3, 4, 7, "-Kf", 2.2e6), 7),
+    ("LadrunoUP", (*range(1, 11), 7, "-thick", 1.0, "-Kf", 2.2e6), 7),
+])
+def test_the_carried_tag_is_read_from_the_grammar(
+    token: str, argv: tuple[Any, ...], tag: int,
+) -> None:
+    c = MaterialStageCarriers()
+    c.note_material("ManzariDafalias", tag)
+    c.note_element(token, 1, argv)
+    c.note_element(token, 2, argv)
+    assert c.flip_commands(tag, 1)[0][1][3:5] == (1, 2)
+
+
+def test_a_grammar_without_the_tag_fails_loud() -> None:
+    c = MaterialStageCarriers()
+    with pytest.raises(BridgeError, match="no nDMaterial tag"):
+        c.note_element("tri6n", 1, (1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain"))
 
 
 def test_the_py_lines_pass_the_tag_as_a_string() -> None:
     """``setParameter`` reads its trailing argv as strings: an int tag is
     'Invalid String Input!' on openseespy (measured, stock and fork)."""
-    assert emitted_flip_lines(7) == [
-        "ops.setParameter('-val', 1.0, '-eleRange', 1, 2147483647, "
-        "'materialState', '7')",
+    em = PyEmitter()
+    em.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    em.element("tri6n", 1, *_TRI6_ARGV, 7)
+    em.element("tri6n", 2, *_TRI6_ARGV, 7)
+    assert emitted_flip_lines(7, emitter=em) == [
+        "ops.setParameter('-val', 1.0, '-ele', 1, 2, 'materialState', '7')",
         "ops.updateMaterialStage('-material', 7, '-stage', 1)",
     ]
-    assert emitted_flip_lines(7, 0) == [
+    assert emitted_flip_lines(7, 0, emitter=em) == [
         "ops.updateMaterialStage('-material', 7, '-stage', 0)"]
 
 
@@ -94,6 +187,10 @@ def test_the_tables() -> None:
         "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
         "LadrunoBrick20"}
     assert not MATERIAL_STATE_UNMEASURED_AT_PIN & MATERIAL_STATE_ELEMENTS
+    # One emit-side token per class, and no token without its class.
+    assert {_TOKEN_OF[c] for c in MATERIAL_STATE_ELEMENTS} == set(
+        MATERIAL_STATE_ELEMENT_TOKENS)
+    assert FIRST_ELEMENT_ONLY_PLASTIC_INIT is SWEPT_MATERIAL_CLASSES
     # Every class of the table has a census row on each build it runs on.
     assert MATERIAL_STATE_ELEMENTS == (
         {cls for cls, _builds in _FORWARDING} | {"LadrunoUP"})
@@ -178,7 +275,9 @@ def test_the_decks_sweep_then_flip(cls: str) -> None:
     tcl = TclEmitter()
     ops.build().emit(tcl)
     lines = tcl.lines()
-    sweep = (f"setParameter -val 1.0 -eleRange 1 2147483647 materialState "
+    eles = [ln.split()[2] for ln in lines if ln.startswith("element tri6n")]
+    assert len(eles) == 2
+    sweep = (f"setParameter -val 1.0 -ele {' '.join(eles)} materialState "
              f"{tag}")
     ums = f"updateMaterialStage -material {tag} -stage 1"
     assert lines.index(sweep) + 1 == lines.index(ums)
@@ -188,10 +287,33 @@ def test_the_decks_sweep_then_flip(cls: str) -> None:
     py.write_to(buf)
     text = buf.getvalue()
     assert (
-        "ops.setParameter('-val', 1.0, '-eleRange', 1, 2147483647, "
+        f"ops.setParameter('-val', 1.0, '-ele', {', '.join(eles)}, "
         f"'materialState', '{tag}')\n"
         f"ops.updateMaterialStage('-material', {tag}, '-stage', 1)"
     ) in text
+
+
+def test_a_neighbour_of_another_material_is_not_listed() -> None:
+    """The reviewer's #2446 model: the sand on SixNodeTri A, DruckerPrager
+    (which takes materialState whatever its tag) on B.  The sand has one
+    carrier, so the deck keeps the bare updateMaterialStage line."""
+    ops = apeSees(_tri6_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+    clay = ops.nDMaterial.DruckerPrager(
+        K=1e5, G=5e4, sigmaY=10.0, rho=0.0, rhoBar=0.0, Kinf=10.0, Ko=10.0,
+        delta1=0.0, delta2=0.0, H=1000.0, theta=1.0, name="clay")
+    ops.element.SixNodeTri(pg="A", thickness=1.0, material=sand)
+    ops.element.SixNodeTri(pg="B", thickness=1.0, material=clay)
+    ops.fix(pg="Base", dofs=(1, 1))
+    _flip(ops, sand)
+    tcl = TclEmitter()
+    ops.build().emit(tcl)
+    assert not [ln for ln in tcl.lines() if ln.startswith("setParameter")]
+    assert (f"updateMaterialStage -material {ops.tag_for(sand)} -stage 1"
+            in tcl.lines())
 
 
 def test_an_elastic_flip_is_one_line() -> None:
@@ -399,9 +521,13 @@ def test_the_replayed_deck_sweeps_too(tmp_path: Any) -> None:
     _gravity, push = model.stages()
     assert push.update_material_stages == ((tag, 1),)
     replayed = model.build("tcl", flat=True)
-    sweep = (f"setParameter -val 1.0 -eleRange 1 2147483647 materialState "
+    text = deck.read_text(encoding="utf-8")
+    eles = [ln.split()[2] for ln in text.splitlines()
+            if ln.startswith("element tri6n")]
+    sweep = (f"setParameter -val 1.0 -ele {' '.join(eles)} materialState "
              f"{tag}")
-    assert deck.read_text(encoding="utf-8").count(sweep) == 1
+    assert len(eles) == 2
+    assert text.count(sweep) == 1
     assert replayed.count(sweep) == 1
 
 
@@ -412,8 +538,6 @@ def _deck_tri6_run(tmp_path: Any, *, shared: bool,
     more vertical.  ``shared``: one material on both (the swept flip);
     else each its own (one element per flip, the per-element reference).
     """
-    from apeGmsh.opensees.emitter.live import get_ops
-
     ops = apeSees(_tri6_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mats = [ops.nDMaterial.ManzariDafalias(name=f"sand_{i}", **_MD)
@@ -460,6 +584,19 @@ def _deck_tri6_run(tmp_path: Any, *, shared: bool,
         s.analysis(**chain())
         s.run(n_increments=20)
     path = tmp_path / f"{'shared' if shared else 'reference'}_{route}.py"
+    live = _run_bridge_deck(ops, path)
+    try:
+        return [d for n in sorted(live.getNodeTags())
+                for d in live.nodeDisp(n)]
+    finally:
+        live.wipe()
+
+
+def _run_bridge_deck(ops: apeSees, path: Any) -> Any:
+    """Write the bridge's openseespy deck and run it on the resolved
+    backend; returns that backend with the analysed domain."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
     ops.py(str(path))
     src = path.read_text(encoding="utf-8")
     header = "import openseespy.opensees as ops\n"
@@ -468,10 +605,83 @@ def _deck_tri6_run(tmp_path: Any, *, shared: bool,
     try:
         exec(compile(src.replace(header, ""), str(path), "exec"),  # noqa: S102
              {"__name__": "deck", "ops": live})
-        return [d for n in sorted(live.getNodeTags())
-                for d in live.nodeDisp(n)]
+    except BaseException:
+        live.wipe()
+        raise
+    return live
+
+
+def _deck_dp_neighbour_run(tmp_path: Any, *, stage: int) -> list[float]:
+    """The reviewer's #2446 model as a bridge deck: ManzariDafalias on
+    SixNodeTri A under load, DruckerPrager (which accepts materialState
+    whatever its tag) on SixNodeTri B, driven in plastic shear by
+    prescribed displacements in the stage that flips the sand to
+    ``stage``.  Returns B's stresses: B is fully prescribed, so the sand
+    cannot reach it except through a flip that names it."""
+    ops = apeSees(_tri6_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+    clay = ops.nDMaterial.DruckerPrager(
+        K=1e5, G=5e4, sigmaY=10.0, rho=0.0, rhoBar=0.0, Kinf=10.0, Ko=10.0,
+        delta1=0.0, delta2=0.0, H=1000.0, theta=1.0, name="clay")
+    ops.element.SixNodeTri(pg="A", thickness=1.0, material=sand)
+    ops.element.SixNodeTri(pg="B", thickness=1.0, material=clay)
+    ops.fix(nodes=[1, 7, 8, 10, 13, 14, 15, 16], dofs=(1, 1))
+    ops.fix(nodes=[2, 4], dofs=(0, 1))
+    ops.fix(nodes=[3, 6], dofs=(1, 0))
+
+    def chain() -> dict[str, object]:
+        return {
+            "test": ops.test.NormUnbalance(tol=1e-8, max_iter=100),
+            "algorithm": ops.algorithm.Newton(),
+            "integrator": ops.integrator.LoadControl(dlam=0.01),
+            "constraints": ops.constraints.Transformation(),
+            "numberer": ops.numberer.RCM(),
+            "system": ops.system.UmfPack(),
+            "analysis": ops.analysis.Static(),
+        }
+
+    edge = ((2, 1 / 6), (3, 1 / 6), (5, 4 / 6))
+    with ops.stage(name="gravity") as s:
+        s.update_material_stage(materials=[sand], stage=0)
+        with s.pattern(series=ops.timeSeries.Linear()) as p:
+            for n, w in edge:
+                p.load(node=n, forces=(-100.0 * w, -100.0 * w))
+        s.analysis(**chain())
+        s.run(n_increments=100)
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand], stage=stage)
+        with s.pattern(series=ops.timeSeries.Linear()) as p:
+            for n, w in edge:
+                p.load(node=n, forces=(0.0, -40.0 * w))
+            for n, y in ((9, 1.0), (11, 0.5), (12, 0.5)):
+                p.sp(node=n, dof=1, value=0.02 * y)
+                p.sp(node=n, dof=2, value=-0.002 * y)
+        s.analysis(**chain())
+        s.run(n_increments=100)
+    live = _run_bridge_deck(ops, tmp_path / f"dp_{stage}.py")
+    try:
+        (b,) = [e for e in live.getEleTags() if 9 in live.eleNodes(e)]
+        return list(live.eleResponse(b, "stresses"))
     finally:
         live.wipe()
+
+
+@pytest.mark.live
+def test_a_druckerprager_neighbour_is_not_switched(tmp_path: Any) -> None:
+    """The reviewer's model: ManzariDafalias on SixNodeTri A, DruckerPrager
+    on SixNodeTri B, the sand flipped plastic.  DruckerPrager accepts
+    materialState without checking the tag, so a flip that reached B
+    switched it to elastic (fd836151d: shear 12.36 became 1000.0).  B must
+    answer exactly as when the sand stays elastic (stock and fork)."""
+    pytest.importorskip("openseespy.opensees")
+    flipped = _deck_dp_neighbour_run(tmp_path, stage=1)
+    elastic = _deck_dp_neighbour_run(tmp_path, stage=0)
+    scale = max(abs(v) for v in elastic)
+    assert scale > 1.0
+    assert _diff(flipped, elastic) <= 1e-10 * scale
 
 
 @pytest.mark.live
@@ -551,7 +761,7 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias") -> list[float]:
     pytest.importorskip("openseespy.opensees")
     from apeGmsh.opensees.emitter.live import get_ops
 
-    ops = get_ops()
+    ops = Deck(get_ops())
     token, ndm, coords, argv = _CLASSES[cls]
     eps = (-1e-2, -1.5e-2, 0.0)[:ndm]
     ops.wipe()
@@ -584,8 +794,7 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias") -> list[float]:
         ops.analysis("Static")
         assert ops.analyze(20) == 0
         if how == "emitted":
-            for line in emitted_flip_lines(1):
-                exec(line, {"ops": ops})  # noqa: S102 - the emitted deck line
+            ops.emitted_flip(1)
         else:
             for t in sorted(set(tags)):
                 ops.updateMaterialStage("-material", t, "-stage", 1)

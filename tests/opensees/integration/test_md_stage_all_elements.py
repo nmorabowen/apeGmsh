@@ -37,33 +37,72 @@ MD_ARGS = [125.0, 0.05, 0.8, 1.25, 0.712, 0.019, 0.934, 0.7, 100.0, 0.01,
            7.05, 0.968, 1.1, 0.704, 3.5, 4.0, 600.0, 1.42]
 
 
-def _ops() -> Any:
-    pytest.importorskip("openseespy.opensees")
-    from apeGmsh.opensees.emitter.live import get_ops
-
-    return get_ops()
+_FLIP_PREFIXES = ("ops.setParameter(", "ops.updateMaterialStage(")
 
 
-def emitted_flip_lines(mat_tag: int, stage: int = 1) -> list[str]:
-    """The openseespy lines the deck emitter writes for one flip."""
-    em = PyEmitter()
-    em.update_material_stage(mat_tag, stage)
+def _flip_lines_of(em: PyEmitter) -> list[str]:
     buf = io.StringIO()
     em.write_to(buf)
-    lines = [
-        ln for ln in buf.getvalue().splitlines()
-        if ln.startswith(("ops.setParameter(", "ops.updateMaterialStage("))
-    ]
+    return [ln for ln in buf.getvalue().splitlines()
+            if ln.startswith(_FLIP_PREFIXES)]
+
+
+def emitted_flip_lines(
+    mat_tag: int, stage: int = 1, *, emitter: "PyEmitter | None" = None,
+) -> list[str]:
+    """The openseespy lines ``emitter`` writes for one flip, after the
+    model it has seen so far (a fresh emitter has seen no element)."""
+    em = PyEmitter() if emitter is None else emitter
+    before = len(_flip_lines_of(em))
+    em.update_material_stage(mat_tag, stage)
+    lines = _flip_lines_of(em)[before:]
     assert lines, "the PyEmitter wrote no flip line"
     return lines
 
 
-def flip(ops: Any, how: str, tags: "list[int]") -> None:
+class Deck:
+    """The resolved backend, with every ``nDMaterial`` and ``element``
+    command also handed to a :class:`PyEmitter`, so an emitted flip comes
+    from the emitter's own record of which elements carry the material."""
+
+    def __init__(self, ops: Any) -> None:
+        self.ops = ops
+        self.emitter = PyEmitter()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ops, name)
+
+    def wipe(self) -> None:
+        self.ops.wipe()
+        self.emitter = PyEmitter()
+
+    def nDMaterial(self, cls: str, tag: int, *args: Any) -> None:  # noqa: N802
+        self.ops.nDMaterial(cls, tag, *args)
+        self.emitter.nDMaterial(cls, tag, *args)
+
+    def element(self, token: str, tag: int, *args: Any) -> None:
+        self.ops.element(token, tag, *args)
+        self.emitter.element(token, tag, *args)
+
+    def emitted_flip(self, mat_tag: int, stage: int = 1) -> list[str]:
+        lines = emitted_flip_lines(mat_tag, stage, emitter=self.emitter)
+        for line in lines:
+            exec(line, {"ops": self.ops})  # noqa: S102 - the emitted line
+        return lines
+
+
+def _ops() -> Deck:
+    pytest.importorskip("openseespy.opensees")
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    return Deck(get_ops())
+
+
+def flip(ops: Deck, how: str, tags: "list[int]") -> None:
     """Flip to stage 1: ``how`` is emitted / reference / first."""
     if how == "emitted":
         (tag,) = set(tags)
-        for line in emitted_flip_lines(tag):
-            exec(line, {"ops": ops})  # noqa: S102 - the emitted deck line
+        ops.emitted_flip(tag)
     elif how == "reference":
         for tag in sorted(set(tags)):
             ops.updateMaterialStage("-material", tag, "-stage", 1)
@@ -270,60 +309,120 @@ def test_four_node_quad_drops_the_sweep() -> None:
     assert _max_diff(emitted, ref) > 1e-6
 
 
-def test_the_sweep_leaves_other_elements_alone() -> None:
-    """The sweep offers ``materialState`` to every element in the domain.
-    A truss, a zeroLength and an elastic quad beside the sand decline it,
-    and the answer is still the per-element reference."""
-    ops = _ops()
+#: Plastic neighbours whose ``setParameter`` accepts ``materialState``
+#: WITHOUT checking the material tag (``DruckerPrager.cpp`` at the
+#: ``"materialState"`` branch; ``StressDensityModel.cpp`` likewise), as
+#: ``(class, args, strain amplitude)``.  A flip that offered
+#: ``materialState`` to their elements would switch them too.
+#: ``BoundingCamClay`` is tag-blind as well, but it cannot run from a
+#: zero stress on openseespy (NaN on the fork, an access violation on
+#: stock 3.8.0), and ``stressDensity`` is registered for Tcl only; the
+#: deck tests of ``test_md_stage_route_elements.py`` pin that the flip
+#: names the carriers and nothing else.
+TAG_BLIND_NEIGHBOURS = [
+    ("DruckerPrager",
+     [1e5, 5e4, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, 0.0, 1000.0, 1.0], 1.0),
+    ("StressDensityModel",
+     [2.0, 0.65, 600.0, 0.6, 0.3, 0.58, 0.023, 230.0, 65.0, 79.0, 16.0,
+      4.0, 0.22, 0.0, 0.0055, 0.607, 98.1], 0.05),
+]
 
-    def run(how: str) -> "tuple[int, list[float]]":
-        ops.wipe()
-        ops.model("basic", "-ndm", 2, "-ndf", 2)
-        tags = [1, 2] if how == "reference" else [1, 1]
-        for t in sorted(set(tags)):
-            ops.nDMaterial("ManzariDafalias", t, *MD_ARGS)
-        ops.nDMaterial("ElasticIsotropic", 50, 1.0e5, 0.3)
-        ops.uniaxialMaterial("Elastic", 60, 1.0e5)
-        for q, t in enumerate(tags):
-            b, x0 = 10 * q, 3.0 * q
-            for i, (dx, y) in enumerate(((0, 0), (1, 0), (1, 1), (0, 1))):
-                ops.node(b + i + 1, x0 + dx, float(y))
-            ops.fix(b + 1, 1, 1)
-            ops.fix(b + 2, 0, 1)
-            ops.fix(b + 4, 1, 0)
-            ops.element("SSPquad", q + 1, b + 1, b + 2, b + 3, b + 4, t,
-                        "PlaneStrain", 1.0)
-        for i, (x, y) in enumerate(((7, 0), (8, 0), (8, 1), (7, 1))):
-            ops.node(71 + i, float(x), float(y))
-        ops.fix(71, 1, 1)
-        ops.fix(72, 0, 1)
-        ops.fix(74, 1, 0)
-        ops.element("quad", 7, 71, 72, 73, 74, 1.0, "PlaneStrain", 50)
-        ops.element("Truss", 8, 72, 73, 1.0, 60)
-        ops.node(75, 8.0, 1.0)
-        ops.fix(75, 1, 1)
-        ops.element("zeroLength", 9, 73, 75, "-mat", 60, 60, "-dir", 1, 2)
-        for t in sorted(set(tags)):
-            ops.updateMaterialStage("-material", t, "-stage", 0)
-        ops.timeSeries("Linear", 1)
-        ops.pattern("Plain", 1, 1)
-        for b in (0, 10):
-            ops.load(b + 3, -50.0, -50.0)
-            ops.load(b + 4, 0.0, -50.0)
-            ops.load(b + 2, -50.0, 0.0)
-        ops.load(73, 0.0, -10.0)
-        _chain(ops, 1e-8, 0.05)
-        code = int(ops.analyze(20))
-        ops.loadConst("-time", 0.0)
+_TRI6 = [(0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)]
+_QUAD4 = [(0, 0), (1, 0), (1, 1), (0, 1)]
+
+
+def _neighbour_model(ops: Deck, how: str) -> "tuple[int, list[list[float]]]":
+    """Every DOF on a prescribed strain path to t=1, the flip, then on to
+    t=2.  Elements 1 and 2: SSPquads carrying ManzariDafalias (tags 1 and
+    2 for the reference, tag 1 otherwise).  Then one SixNodeTri per
+    :data:`TAG_BLIND_NEIGHBOURS` class in simple shear, an elastic quad
+    and a truss.  Returns each element's response."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    tags = [1, 2] if how == "reference" else [1, 1]
+    for t in sorted(set(tags)):
+        ops.nDMaterial("ManzariDafalias", t, *MD_ARGS)
+    ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0,
+                   "-values", 0.0, 1.0, 2.0)
+    ops.pattern("Plain", 1, 1)
+    origin = [0.0]
+
+    def place(coords: "list[tuple[int, int]]",
+              path: "Callable[[float, float], tuple[float, float]]",
+              ) -> list[int]:
+        x0 = origin[0]
+        origin[0] += 3.0
+        first = len(ops.getNodeTags()) + 1
+        out = []
+        for i, (x, y) in enumerate(coords):
+            n = first + i
+            ops.node(n, x0 + x, float(y))
+            ux, uy = path(float(x), float(y))
+            ops.sp(n, 1, ux)
+            ops.sp(n, 2, uy)
+            out.append(n)
+        return out
+
+    def squeeze(x: float, y: float) -> tuple[float, float]:
+        return -1e-2 * x, -1.5e-2 * y
+
+    for e, t in zip((1, 2), tags):
+        ops.element("SSPquad", e, *place(_QUAD4, squeeze), t,
+                    "PlaneStrain", 1.0)
+    for k, (cls, args, amp) in enumerate(TAG_BLIND_NEIGHBOURS):
+        ops.nDMaterial(cls, 10 + k, *args)
+
+        def shear(x: float, y: float, amp: float = amp) -> tuple[float, float]:
+            return amp * (1e-2 * y - 2e-3 * x), amp * (-2e-3 * y)
+
+        ops.element("tri6n", 3 + k, *place(_TRI6, shear), 1.0,
+                    "PlaneStrain", 10 + k)
+    n = len(TAG_BLIND_NEIGHBOURS)
+    ops.nDMaterial("ElasticIsotropic", 50, 1.0e5, 0.3)
+    ops.element("quad", 3 + n, *place(_QUAD4, squeeze), 1.0, "PlaneStrain",
+                50)
+    ops.uniaxialMaterial("Elastic", 60, 1.0e5)
+    ops.element("Truss", 4 + n, *place([(0, 0), (1, 0)], squeeze), 1.0, 60)
+    for t in sorted(set(tags)):
+        ops.updateMaterialStage("-material", t, "-stage", 0)
+    ops.constraints("Penalty", 1.0e12, 1.0e12)
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormUnbalance", 1e-8, 20, 0)
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 0.05)
+    ops.analysis("Static")
+    code = int(ops.analyze(20))
+    if how == "every_element":
+        # The sweep fd836151d emitted, kept here as the counter-example.
+        ops.setParameter("-val", 1.0, "-eleRange", 1, 2147483647,
+                         "materialState", "1")
+        ops.updateMaterialStage("-material", 1, "-stage", 1)
+    else:
         flip(ops, how, tags)
-        ops.timeSeries("Linear", 2)
-        ops.pattern("Plain", 2, 2)
-        for b in (0, 10):
-            for n in (3, 4):
-                ops.load(b + n, 0.0, -20.0)
-        code = code or int(ops.analyze(20))
-        state = _state(ops, [1, 2, 7])
-        ops.wipe()
-        return code, state
+    code = code or int(ops.analyze(20))
+    out = [
+        list(ops.eleResponse(e, "stresses") or ops.eleResponse(e, "stress")
+             or ops.eleResponse(e, "axialForce"))
+        for e in range(1, 5 + n)
+    ]
+    ops.wipe()
+    return code, out
 
-    assert_route_matches_reference(run)
+
+def test_the_sweep_leaves_other_elements_alone() -> None:
+    """The emitted flip names the carriers only.  A DruckerPrager and a
+    StressDensityModel element in plastic shear beside the sand keep the
+    per-element reference's answer, which an every-element sweep breaks
+    (it switches them: measured on stock 3.8.0 and the fork)."""
+    ops = _ops()
+    code_r, ref = _neighbour_model(ops, "reference")
+    code_e, emitted = _neighbour_model(ops, "emitted")
+    code_s, swept = _neighbour_model(ops, "every_element")
+    assert (code_r, code_e, code_s) == (0, 0, 0)
+    flat_ref = [v for resp in ref for v in resp]
+    scale = max(1.0, max(abs(v) for v in flat_ref))
+    assert _max_diff([v for r in emitted for v in r], flat_ref) <= 1e-10 * scale
+    for k, (cls, _args, _amp) in enumerate(TAG_BLIND_NEIGHBOURS):
+        hit = _max_diff(swept[2 + k], ref[2 + k])
+        assert hit > 1e-3 * max(abs(v) for v in ref[2 + k]), cls

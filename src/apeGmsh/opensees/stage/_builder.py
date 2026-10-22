@@ -12,6 +12,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_emit import SWEPT_MATERIAL_CLASSES
 from .._internal.build.records import (
     DampingAttachRecord,
     ActivateAbsorbingRecord,
@@ -106,16 +107,14 @@ FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
 #: that accepts the parameter, so only that element's integration points
 #: are initialised; every other element of the material turns plastic
 #: uninitialised (measured on stock 3.8.0 and the fork).  The emit
-#: therefore sweeps every element with ``materialState`` before the
-#: ``updateMaterialStage`` line
-#: (``_internal/build/stage_emit.material_stage_flip_commands``), and a
-#: plastic flip of such a material on more than one element passes only
-#: when every element carrying it is of a
-#: :data:`MATERIAL_STATE_ELEMENTS` class.  SAniSandMS, PM4Sand and PM4Silt
-#: only set their flag.
-FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = frozenset(
-    {"ManzariDafalias", "LadrunoSANISAND"},
-)
+#: therefore updates each carrying element with ``materialState`` before
+#: the ``updateMaterialStage`` line
+#: (``_internal/build/stage_emit.MaterialStageCarriers``), and a plastic
+#: flip of such a material on more than one element passes only when
+#: every element carrying it is of a :data:`MATERIAL_STATE_ELEMENTS`
+#: class.  SAniSandMS, PM4Sand and PM4Silt only set their flag.  The emit
+#: side's own set, so the two cannot disagree.
+FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
 
 #: The element classes whose ``setParameter`` hands ``materialState
 #: <tag>`` to every integration-point material, so the sweep that
@@ -716,11 +715,11 @@ class _StageBuilder:
         every element.  Elements are counted over every element spec
         registered so far, whichever stage activates them.
 
-        * ``s.update_material_stage`` emits an element sweep that reaches
-          every element of a :data:`MATERIAL_STATE_ELEMENTS` class
-          (``stage_emit.material_stage_flip_commands``).  A carrier of any
-          other class is refused by name, because the sweep would skip it
-          silently.
+        * ``s.update_material_stage`` emits a ``materialState`` update of
+          every carrying element of a :data:`MATERIAL_STATE_ELEMENTS`
+          class (``stage_emit.MaterialStageCarriers``).  A carrier of any
+          other class is refused by name, because the update would skip
+          it silently.
         * ``s.update_parameter("materialState", v, material=m)`` reaches
           only the elements it targets.  The same class rule holds, and
           this stage's targets must cover every element carrying ``m``,
@@ -1991,11 +1990,12 @@ class _StageBuilder:
         Stage-bound only — there is no top-level
         ``apeSees.update_material_stage``.  Emits one
         ``updateMaterialStage -material $tag -stage $stage`` line per
-        material, in the order given; a flip to ``stage=1`` is preceded
-        by ``setParameter -val 1 -eleRange 1 2147483647 materialState
-        $tag``, which runs every element's own stage update
-        (``_internal/build/stage_emit.material_stage_flip_commands``,
-        #2446).  ``stage=0`` is elastic, ``stage=1`` is elastoplastic;
+        material, in the order given.  A flip to ``stage=1`` of a
+        :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material on two or more
+        elements is preceded by ``setParameter -val 1 -ele <its elements>
+        materialState $tag``, which runs each element's own stage update
+        (``_internal/build/stage_emit.MaterialStageCarriers``).
+        ``stage=0`` is elastic, ``stage=1`` is elastoplastic;
         the OpenSees handler additionally calls ``Elastic2Plastic()``
         when the value is 1.  This is the staged-gravity idiom for soil
         plasticity: build elastic, solve gravity, flip to plastic, push.
