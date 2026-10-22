@@ -1078,6 +1078,13 @@ class LadrunoReader:
         lookup. ``element_ids=None`` returns every recorded frame (sorted
         by id); an explicit list returns those ids with an identity-frame
         fallback for any element without a recorded frame.
+
+        The reference frame only: the per-step co-rotational stream
+        ``RESULTS/ON_ELEMENTS/LOCAL_AXES`` is not read here. Its layout
+        (#2451) is one class bucket ``{ID[nE], DATA[T, nE, 3|4|9]}`` with
+        optional ``STEP[T]`` and ``TIME[T]`` (the fork writes 4-wide
+        quaternions), fork schema §7.0, not §5's ``DATA/STEP_<k>``; the
+        viewer's ``reader/ladrunoLocalAxes.ts`` reads it.
         """
         from .._slabs import LocalAxes
 

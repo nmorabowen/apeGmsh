@@ -142,9 +142,10 @@ export class LadrunoGauss {
       }
       const left: string[] = [];
       let read = 0;
-      // The token's element ids: its buckets' (the flat LOCAL_AXES layout keeps one ID on the token itself).
+      // The token's element ids: its buckets', and an ID on the token itself. Not LOCAL_AXES's own ID: that flat
+      // form is refused by name on a step read (#2451), and counting it here would refuse the whole file unnamed.
       const lists: IdList[] = [];
-      const own = this.elementIdsIn(rg);
+      const own = result === "LOCAL_AXES" ? null : this.elementIdsIn(rg);
       if (own) lists.push({ at: `${rg.path}/ID`, ids: own });
       for (const key of rg.keys()) {
         const bg = this.groupOf(rg, key);
