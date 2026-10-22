@@ -74,7 +74,6 @@ from tests.opensees.h5.test_h5_solve_stamp import (
     _CHAIN_ROWS as _CHAIN_MEMBER_ROWS,
     _CHAIN_TOKENS,
     _SYSTEM_TOKENS,
-    _UNARCHIVED,
     _tamper,
 )
 
@@ -131,7 +130,7 @@ _SILENT_FALLBACK = re.compile(r"WARNING unknown \w+ type (\S+)[^\n]*")
 #: A command a deck tries in ``try:`` and replaces in ``except`` (the
 #: ADR 0027 runtime fallback: ``Mumps``, then ``UmfPack``, in one
 #: process). Its ``unknown <family> type`` warning is that design at work.
-_TRIED = re.compile(r"^try:\n\s+ops\.\w+\('([^']+)'", re.M)
+_TRIED = re.compile(r"^[ \t]*try:\n\s+ops\.\w+\('([^']+)'", re.M)
 
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
@@ -461,22 +460,11 @@ def test_each_chain_deck_runs_iff_its_stamp_says_so(
     exactly when the stamp names nothing it lacks (#2430). One that does not
     run stops at its own command: stock refuses the fork-only numberer,
     test and handler, and accepts a fork-only integrator only to fall back
-    to its default one, which :func:`_verdict` counts as not running. The
-    ``LadrunoContact`` handler is not archived (``_UNARCHIVED``): its bridge
-    deck needs the fork, and its replay, which drops it, runs on both."""
+    to its default one, which :func:`_verdict` counts as not running."""
     kw = dict(model.kwargs)
     family, row = kw["family"], kw["row"]
     bridge, replay, requires, flat = _decks_and_replay_needs(model, tmp_path)
     assert requires == flat == _CHAIN_TOKENS[family][row]
-    if (family, row) in _UNARCHIVED:
-        ran, log = _run(bridge)
-        assert ran == (backend_kind == "fork"), (
-            f"{model.id}: the bridge deck "
-            + ("runs" if ran else f"fails at {_failure(log)!r}")
-            + f" on this {backend_kind} build:\n{log}")
-        ran, log = _run(replay)
-        assert ran, f"{model.id}: the replay deck does not run:\n{log}"
-        return
     unmet = unmet_requires(requires, backend_kind)
     command = row.split("[")[0]
     for deck in (bridge, replay):
@@ -503,7 +491,7 @@ _LIVE_BUILD_ROWS = [
     *(Model("test_h5_solve_stamp", "_chain_frame",
             (("family", f), ("row", r), ("staged", False)))
       for f, r in _CHAIN_MEMBER_ROWS
-      if "fork" in _CHAIN_TOKENS[f][r] and (f, r) not in _UNARCHIVED),
+      if "fork" in _CHAIN_TOKENS[f][r]),
     Model("test_h5_solve_stamp", "_system_frame",
           (("name", "Pardiso"), ("staged", False))),
 ]
@@ -625,6 +613,8 @@ def test_the_verdict_counts_a_silent_fallback_as_not_running() -> None:
     deck = ("ops.numberer('RCM')\ntry:\n    ops.system('Mumps')\n"
             "except Exception:\n    ops.system('UmfPack')\n")
     assert _TRIED.findall(deck) == ["Mumps"]
+    nested = "if rank == 0:\n    try:\n        ops.system('Mumps')\n"
+    assert _TRIED.findall(nested) == ["Mumps"]
 
 
 @pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])

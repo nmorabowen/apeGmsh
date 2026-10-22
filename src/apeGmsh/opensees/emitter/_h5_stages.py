@@ -427,20 +427,15 @@ class _H5StagesMixin(_H5Host):
         return self._analysis_attrs
 
     def constraints(self, c_type: str, *args: int | float | str) -> None:
-        # The OpenSees *deck* zone (``/opensees/...``) carries no
-        # contactSurface/contact records (deck-replay is a follow-on; the
-        # contact instead persists in the NEUTRAL zone, schema 2.21.0). The
-        # LadrunoContact handler the bridge auto-emits for a contact model
-        # would otherwise be recorded against a DECK with no contact data — an
-        # inconsistent deck that, on ``OpenSeesModel.from_h5`` replay, emits
-        # ``constraints LadrunoContact`` with nothing to handle (and
-        # LadrunoContact is Plain-style for MP). Skip it so the replayed deck
-        # falls back to the default handler (correct for "deck minus contact").
-        # The full model still round-trips via the neutral zone:
-        # ``FEMData.from_h5`` → ``apeSees(fem)`` re-runs emit_contacts +
-        # re-derives the handler.
-        if c_type == "LadrunoContact":
-            return
+        # Every handler is recorded, ``LadrunoContact`` included (#2430). The
+        # OpenSees *deck* zone (``/opensees/...``) carries no contactSurface /
+        # contact records (the contact persists in the NEUTRAL zone, schema
+        # 2.21.0; ``FEMData.from_h5`` → ``apeSees(fem)`` re-runs
+        # emit_contacts), so the replayed deck declares the handler with no
+        # contact to handle; LadrunoContact is Plain-style for MP, the
+        # default handler's behaviour. Recording it is what puts ``"fork"``
+        # in the stamp (``caps.FORK_CHAIN``): the replay names a fork-only
+        # handler, so a stock backend must refuse it.
         attrs = self._chain_attrs
         attrs["handler"] = c_type
         if args:

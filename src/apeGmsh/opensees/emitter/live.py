@@ -30,7 +30,7 @@ from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
 from .base import DroppedAxisGuard, StrategySpec, command_row, plain_scalar
-from .caps import TargetCaps
+from .caps import TargetCaps, is_fork_chain
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -171,11 +171,16 @@ _FORK_ONLY_ELEMENTS = frozenset(
      "LadrunoDispBeamColumn", "LadrunoForceBeamColumn", "LadrunoIMKBeam",
      "LadrunoMembrane"})
 
-#: Integrator types that exist only in the Ladruno fork build. Unlike the
-#: element gate, these cannot be verified after the fact: openseespy's
-#: ``integrator`` does NOT raise on an unknown type, so an ungated
-#: ``integrator ExplicitBathe`` on stock is silently accepted and the
-#: analysis then steps with whatever integrator was set before — a wrong
+#: The fork-only integrator *members* (bridge class names), the inventory
+#: the capability map (``docs/concepts/backend-capabilities.md``) and the
+#: warrant rows read. The gate does not read it: it reads
+#: :data:`~apeGmsh.opensees.emitter.caps.FORK_CHAIN`, the emitted types,
+#: which also hold each SMS member's ``...Consistent`` token (#2430), and
+#: ``tests/opensees/h5/test_h5_solve_stamp.py`` pins the two together.
+#: Unlike the element gate, an integrator cannot be verified after the
+#: fact: openseespy's ``integrator`` does NOT raise on an unknown type, so
+#: an ungated ``integrator ExplicitBathe`` on stock is silently accepted
+#: and the analysis then steps with its default integrator — a wrong
 #: answer with no diagnostic. Gated up front against the resolved build in
 #: :meth:`LiveOpsEmitter.integrator` below.
 _FORK_ONLY_INTEGRATORS = frozenset(
@@ -205,6 +210,16 @@ def _fork_integrator_required(i_type: str) -> str:
         f"ops.tcl(...) / ops.py(...) works on any build; only running the "
         f"deck in-process needs the fork. On a stock build use Newmark / "
         f"HHT / CentralDifference / ExplicitDifference instead."
+    )
+
+
+def _fork_chain_required(family: str, c_type: str) -> str:
+    return (
+        f"{family} {c_type} requires the Ladruno fork build of OpenSees "
+        f"(fork-only, caps.FORK_CHAIN) — the live build is stock "
+        f"openseespy, which does not know it. Deck emission via "
+        f"ops.tcl(...) / ops.py(...) works on any build; only running the "
+        f"deck in-process needs the fork."
     )
 
 
@@ -1206,26 +1221,39 @@ class LiveOpsEmitter:
 
     # -- Analysis chain -----------------------------------------------------
 
-    def constraints(self, c_type: str, *args: int | float | str) -> None:
-        if c_type == "LadrunoProjection":
+    def _fork_chain_gate(self, family: str, c_type: str) -> None:
+        """Refuse a fork-only chain type (:func:`~apeGmsh.opensees.emitter.
+        caps.is_fork_chain`) before it reaches a stock domain."""
+        if not is_fork_chain(family, c_type):
+            return
+        if family == "constraints" and c_type == "LadrunoProjection":
             self._stock_build_gate(_LADRUNO_PROJECTION_FORK_REQUIRED)
+        elif family == "integrator":
+            self._stock_build_gate(_fork_integrator_required(c_type))
+        else:
+            self._stock_build_gate(_fork_chain_required(family, c_type))
+
+    def constraints(self, c_type: str, *args: int | float | str) -> None:
+        self._fork_chain_gate("constraints", c_type)
         self._ops.constraints(c_type, *args)
 
     def numberer(self, n_type: str) -> None:
+        self._fork_chain_gate("numberer", n_type)
         self._ops.numberer(n_type)
 
     def system(self, s_type: str, *args: int | float | str) -> None:
+        self._fork_chain_gate("system", s_type)
         self._ops.system(s_type, *args)
 
     def test(self, t_type: str, *args: int | float | str) -> None:
+        self._fork_chain_gate("test", t_type)
         self._ops.test(t_type, *args)
 
     def algorithm(self, a_type: str, *args: int | float | str) -> None:
         self._ops.algorithm(a_type, *args)
 
     def integrator(self, i_type: str, *args: int | float | str) -> None:
-        if i_type in _FORK_ONLY_INTEGRATORS:
-            self._stock_build_gate(_fork_integrator_required(i_type))
+        self._fork_chain_gate("integrator", i_type)
         check_llc = i_type == "LadrunoLoadControl" and not self._in_partition
         if check_llc and not hasattr(self._ops, "ladrunoLoadControl"):
             raise RuntimeError(_LADRUNO_LOAD_CONTROL_REQUIRED)

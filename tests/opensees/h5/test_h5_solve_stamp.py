@@ -1020,10 +1020,7 @@ _FORK = ("fork",)
 #: each needs the fork. Every member is listed (with ``_SYSTEM_TOKENS``, the
 #: ``system`` family), so a new one fails until it is classified here, and
 #: the live net runs each member's deck on the bound build against this
-#: table. ``LadrunoContact`` is the exception the archive makes: the H5
-#: emitter does not record that handler (the replay drops the contact), so
-#: its archive stamps nothing; the contact verbs that make it useful stamp
-#: ``"fork"`` themselves.
+#: table.
 _CHAIN_TOKENS: "dict[str, dict[str, tuple[str, ...]]]" = {
     "integrator": {
         "LoadControl": (), "DisplacementControl": (), "ArcLength": (),
@@ -1050,12 +1047,9 @@ _CHAIN_TOKENS: "dict[str, dict[str, tuple[str, ...]]]" = {
     },
     "constraints": {
         "Plain": (), "Penalty": (), "Transformation": (), "Lagrange": (),
-        "Auto": (), "LadrunoProjection": _FORK, "LadrunoContact": (),
+        "Auto": (), "LadrunoProjection": _FORK, "LadrunoContact": _FORK,
     },
 }
-#: The rows whose archive stores no chain type for the family (see
-#: :data:`_CHAIN_TOKENS`).
-_UNARCHIVED = {("constraints", "LadrunoContact")}
 _CHAIN_ROWS = [(fam, row) for fam in sorted(_CHAIN_TOKENS)
                for row in _CHAIN_TOKENS[fam]]
 _CHAIN_IDS = [f"{fam}-{row}" for fam, row in _CHAIN_ROWS]
@@ -1079,24 +1073,39 @@ def test_the_chain_token_tables_list_every_family_member() -> None:
     assert _TRANSIENT <= set(_CHAIN_TOKENS["integrator"])
 
 
-def _chain_frame(family: str, row: str, *, staged: bool) -> apeSees:
-    """A solving frame whose chain declares the ``row`` member of
-    ``family``: a lumped mass and a nodal load at the free node, so every
-    static and transient member has something to solve; ``staged`` puts the
-    chain in a one-increment stage."""
-    from tests.opensees.h5.test_h5_decls import _chain
+def _chain_member(ops: apeSees, family: str, row: str) -> Any:
+    """The ``row`` member of ``family``, declared on ``ops``; ``system``
+    members by class name (``_SYSTEM_TOKENS``)."""
+    if family == "system":
+        return getattr(ops.system, row)()
+    return _CHAIN_MEMBERS[family][row](ops)
 
+
+def _chain_frame(family: str, row: str, *, staged: bool) -> apeSees:
+    """A solving frame whose full chain declares the ``row`` member of
+    ``family`` and a stock default for every other verb: a lumped mass and
+    a nodal load at the free node, so every static and transient member has
+    something to solve; ``staged`` puts the chain in a one-increment
+    stage."""
     ops = _frame_bridge(analysis=False)
     ops.mass(nodes=[2], values=(1.0,) * 6)
     force = (1e-3, 0.0, 0.0, 0.0, 0.0, 0.0)
-    member = _CHAIN_MEMBERS[family][row](ops)
     transient = family == "integrator" and row in _TRANSIENT
+    defaults: "dict[str, Any]" = {
+        "test": lambda: ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+        "algorithm": lambda: (
+            ops.algorithm.Linear() if row == "LadrunoDynamicRelaxation"
+            else ops.algorithm.Newton()),
+        "integrator": lambda: ops.integrator.LoadControl(dlam=0.1),
+        "constraints": lambda: ops.constraints.Plain(),
+        "numberer": lambda: ops.numberer.RCM(),
+        "system": lambda: ops.system.UmfPack(),
+        "analysis": lambda: (
+            ops.analysis.Transient() if transient else ops.analysis.Static()),
+    }
+    chain = {verb: (_chain_member(ops, family, row) if verb == family
+                    else make()) for verb, make in defaults.items()}
     if staged:
-        chain = {**_chain(ops), family: member}
-        if transient:
-            chain["analysis"] = ops.analysis.Transient()
-        if row == "LadrunoDynamicRelaxation":
-            chain["algorithm"] = ops.algorithm.Linear()
         with ops.stage(name="solve") as s:
             with s.pattern(series=ops.timeSeries.Linear()) as p:
                 p.load(node=2, forces=force)
@@ -1105,10 +1114,6 @@ def _chain_frame(family: str, row: str, *, staged: bool) -> apeSees:
         return ops
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(node=2, forces=force)
-    if transient:
-        ops.analysis.Transient()
-    else:
-        ops.analysis.Static()
     return ops
 
 
@@ -1130,9 +1135,6 @@ def test_each_chain_member_pins_its_token(
     if staged:
         return
     stored = model.analysis().get(CHAIN_ATTRS[family])
-    if (family, row) in _UNARCHIVED:
-        assert stored is None
-        return
     assert isinstance(stored, str)
     assert is_fork_chain(family, stored) == (want == _FORK)
 
@@ -1149,10 +1151,87 @@ def test_fork_chain_is_exactly_the_bridges_fork_only_types(tmp_path: Path) -> No
         _chain_frame(fam, row, staged=False).h5(str(out))
         emitted[fam].add(str(OpenSeesModel.from_h5(out).analysis()[
             CHAIN_ATTRS[fam]]).casefold())
-    emitted["constraints"].add("ladrunocontact")  # never archived (_UNARCHIVED)
     emitted["system"] = {n.casefold() for n, t in _SYSTEM_TOKENS.items()
                          if "fork" in t}
     assert emitted == {fam: set(types) for fam, types in FORK_CHAIN.items()}
+
+
+def test_the_live_fork_integrator_inventory_is_fork_chain_by_member() -> None:
+    """The live emitter's ``_FORK_ONLY_INTEGRATORS`` (the bridge class
+    names the capability map and the warrant rows read) is exactly the
+    fork-only integrator members here; the gate reads ``FORK_CHAIN``, which
+    is those names casefolded plus the SMS members' consistent tokens."""
+    from apeGmsh.opensees.emitter import live
+
+    members = {r for r, t in _CHAIN_TOKENS["integrator"].items()
+               if t == _FORK and "[" not in r}
+    assert set(live._FORK_ONLY_INTEGRATORS) == members
+    consistent = {r.split("[")[0].casefold() + "consistent"
+                  for r in _CHAIN_TOKENS["integrator"] if "[consistent]" in r}
+    assert {m.casefold() for m in members} | consistent == FORK_CHAIN["integrator"]
+
+
+class _StockOps:
+    """A stock openseespy stand-in for in-process ``apeSees.analyze``: it
+    has no ``ladrunoBuild`` (nor any other fork command), answers every
+    other command with 0 and records each call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, ...]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith(("_", "ladruno")) or name in (
+                "criticalTimeStep", "version"):
+            raise AttributeError(name)
+
+        def call(*args: Any) -> int:
+            self.calls.append((name, *args))
+            return 0
+        return call
+
+
+#: Every fork-only member of the chain families, ``system Pardiso`` too.
+_FORK_MEMBER_ROWS = [(f, r) for f, r in _CHAIN_ROWS
+                     if _CHAIN_TOKENS[f][r] == _FORK] + [("system", "Pardiso")]
+
+
+@pytest.mark.parametrize("family, row", _FORK_MEMBER_ROWS,
+                         ids=[f"{f}-{r}" for f, r in _FORK_MEMBER_ROWS])
+def test_in_process_analyze_on_stock_refuses_each_fork_member(
+    monkeypatch: pytest.MonkeyPatch, family: str, row: str,
+) -> None:
+    """In-process ``apeSees.analyze`` on stock refuses every fork-only chain
+    member at its own command, before stock sees it and before any analysis
+    step: an integrator stock would accept with a warning (the
+    ``...Consistent`` SMS tokens among them, #2430) never reaches the domain,
+    so ``analyze`` cannot return 0 with the default integrator's answer."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    stock = _StockOps()
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: stock)
+    ops = _chain_frame(family, row, staged=False)
+    transient = family == "integrator" and row in _TRANSIENT
+    with pytest.raises(RuntimeError, match="requires the Ladruno fork|fork-only"):
+        ops.analyze(steps=1, dt=0.01 if transient else None)
+    verbs = [c[0] for c in stock.calls]
+    assert "analyze" not in verbs and "analysis" not in verbs
+    verb = "constraints" if family == "constraints" else family
+    assert not any(c[0] == verb and str(c[1]).casefold().startswith(
+        row.split("[")[0].casefold()) for c in stock.calls), stock.calls
+
+
+def test_in_process_analyze_on_stock_runs_a_stock_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: the same frame with a stock chain reaches ``analyze``."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    stock = _StockOps()
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: stock)
+    assert _chain_frame("integrator", "LoadControl", staged=False).analyze(
+        steps=1) == 0
+    assert ("integrator", "LoadControl", 0.1) in stock.calls
+    assert ("analyze", 1) in stock.calls
 
 
 _FORK_REPRESENTATIVES = [
