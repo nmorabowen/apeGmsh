@@ -847,12 +847,13 @@ def test_h5_deck_contact_behavior():
     assert len(deferred) == 0
     # the latched name was consumed (cannot leak onto the next real MP record)
     assert e._pending_mp_name == ""
-    # the auto-emitted LadrunoContact handler is still NOT recorded in the deck
-    # zone (which carries no contact deck records — the full model round-trips
-    # via the neutral zone), so the replayed deck falls back to the default.
+    # the auto-emitted LadrunoContact handler IS recorded in the deck zone
+    # (#2430): the zone carries no contact deck records (the full model
+    # round-trips via the neutral zone), but the replay names the fork-only
+    # handler, so the stamp carries "fork" and a stock backend refuses it.
     e.constraints("LadrunoContact")
-    assert e._chain_attrs.get("handler") != "LadrunoContact"
-    # a real handler IS still recorded
+    assert e._chain_attrs.get("handler") == "LadrunoContact"
+    # any other handler is recorded the same way
     e.constraints("Transformation")
     assert e._chain_attrs.get("handler") == "Transformation"
 
