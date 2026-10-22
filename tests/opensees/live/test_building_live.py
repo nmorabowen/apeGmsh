@@ -288,6 +288,27 @@ def test_rigid_point_drift_is_exact_for_a_rigid_level_motion() -> None:
         np.testing.assert_allclose(t.row(f"Story{i}:P0"), want, rtol=1e-10)
 
 
+def test_story_displacements_match_nodedisp() -> None:
+    ops = get_ops()
+    b = build(ops)
+    u = B.StoryDisplacements(LEVELS)
+    t = u.table()
+    want = np.zeros((3, 4))
+    for k in (1, 2, 3):
+        level = [t_ for t_, c in b.coords.items() if c[2] == LEVELS[k]]
+        disp = np.array([ops.nodeDisp(n)[:2] for n in level])
+        for n, d in zip(level, disp):
+            np.testing.assert_allclose(t.row(f"Story{k}:{n}"), d, rtol=1e-14)
+        want[k - 1, :2] = np.abs(disp).max(axis=0)
+        want[k - 1, 2:] = np.abs(disp).mean(axis=0)
+    assert len(t.rows) == sum(1 for c in b.coords.values() if c[2] > 0 and c[2] in LEVELS)
+    np.testing.assert_allclose(u.story_max().values, want, rtol=1e-14)
+    corner = next(n for n, c in b.coords.items() if c == (6.0, 4.0, 9.0))
+    p = B.StoryDisplacements(LEVELS, points=[(6.0, 4.0)])
+    np.testing.assert_allclose(p.table().row("Story3:P0"), ops.nodeDisp(corner)[:2],
+                               rtol=1e-14)
+
+
 # ---------------------------------------------------------------------------
 # Masses
 # ---------------------------------------------------------------------------

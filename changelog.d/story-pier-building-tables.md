@@ -18,6 +18,10 @@ of Mass*. It takes its module from `ops=` or `get_ops()`.
   the ETABS story maximum in X and Y, with the story average beside it
   (`AvgX`, `AvgY`: the max/avg pair of the torsional irregularity ratio). With `points=`, it reads the nearest
   node, or the in-plane rigid fit of the level, at each plan point.
+- `StoryDisplacements(levels, *, points=None, method=, max_offset=)` gives
+  the level displacements `UX, UY` (every node on each level, or plan
+  points). Its `.story_max()` gives each level's largest and average
+  `|UX|` and `|UY|`: the max/avg pair a torsional-amplification check reads.
 - `Pier(name, elements, bottom=, top=, axis2=)`, `Pier.from_pg(bridge, pg)`,
   `piers_by_story(pier, levels)` and `PierForces(piers)` give
   `P, V2, V3, T, M2, M3` at the bottom and top of each pier. These are in

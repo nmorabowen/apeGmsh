@@ -154,6 +154,21 @@ def test_drift_joints_and_story_max() -> None:
     np.testing.assert_allclose(t.values, [[0.01, 0.03, 0.01, 0.025]])
 
 
+def test_story_displacements_joints_points_and_story_max() -> None:
+    fake = FakeOps()
+    fake.disp[3] = [0.03, -0.06, 0, 0, 0, 0]
+    fake.disp[4] = [-0.01, 0.09, 0, 0, 0, 0]
+    u = B.StoryDisplacements((0.0, 3.0), ops=_mod(fake))
+    assert u.labels == ("Story1:3:UX", "Story1:3:UY", "Story1:4:UX", "Story1:4:UY")
+    np.testing.assert_allclose(u(_mod(fake)), [0.03, -0.06, -0.01, 0.09])
+    t = u.story_max(ops=_mod(fake))
+    assert t.columns == ("MaxX", "MaxY", "AvgX", "AvgY")
+    np.testing.assert_allclose(t.values, [[0.03, 0.09, 0.02, 0.075]])
+    p = B.StoryDisplacements((0.0, 3.0), points=[(4.0, 0.0)], ops=_mod(fake))
+    assert p.table(ops=_mod(fake)).rows == ("Story1:P0",)
+    np.testing.assert_allclose(p(_mod(fake)), [-0.01, 0.09])
+
+
 def test_story_table_accessors() -> None:
     t = B.StoryTable(("a", "b"), ("X", "Y"), np.array([[1.0, 2.0], [3.0, 4.0]]))
     np.testing.assert_array_equal(t.column("Y"), [2.0, 4.0])

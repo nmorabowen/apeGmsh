@@ -66,6 +66,9 @@ caller's. For example, apeETABS's ``TorsionCheck`` drifts frame::
     t["Elevation"] = list(drifts.levels[1:])
     t["drift_max"] = t["DriftX"] * t["Story"].map(h)
     t["drift_avg"] = t["AvgX"] * t["Story"].map(h)
+
+and its displacements frame (for ``Ax``) is ``StoryDisplacements.story_max()``
+with ``MaxX, AvgX`` renamed ``Maximum, Average``.
 """
 from __future__ import annotations
 
@@ -92,6 +95,7 @@ __all__ = [
     "Extractor",
     "Pier",
     "PierForces",
+    "StoryDisplacements",
     "StoryDrifts",
     "StoryForces",
     "StoryTable",
@@ -781,6 +785,95 @@ def story_drifts(
     d = StoryDrifts(levels, points=points, names=names, method=method,
                     max_offset=max_offset, ops=ops, tol=tol)
     return d.story_max(ops=ops) if points is None else d.table(ops=ops)
+
+
+class StoryDisplacements:
+    """Level displacements ``UX, UY``, as an :class:`Extractor`.
+
+    Every node on each level above the base (``points=None``), or the
+    given plan points read as :class:`StoryDrifts` reads them (``method``,
+    ``max_offset``). :meth:`story_max` gives each level's largest and
+    average ``|UX|``, ``|UY|``: the input of a torsional-irregularity or
+    torsional-amplification check. ``labels`` read ``"<story>:<node>:UX"``
+    or ``"<story>:P<j>:UX"``; the other parameters are as for
+    :class:`StoryDrifts`.
+    """
+
+    def __init__(
+        self,
+        levels: Sequence[float],
+        *,
+        points: Sequence[tuple[float, float]] | None = None,
+        names: Sequence[str] | None = None,
+        method: Literal["nearest", "rigid"] = "nearest",
+        max_offset: float | None = None,
+        ops: ModuleType | None = None,
+        tol: float | None = None,
+    ) -> None:
+        where = "StoryDisplacements"
+        if method not in ("nearest", "rigid"):
+            raise ValueError(f"{where}: method must be 'nearest' or 'rigid', "
+                             f"got {method!r}.")
+        z = _check_levels(levels, where)
+        level_names = _level_names(names, z.size, where)
+        self.levels: tuple[float, ...] = tuple(float(v) for v in z)
+        self.stories: tuple[str, ...] = level_names[1:]
+        module = _resolve_ops(ops)
+        self._dom = dom = _capture(module, tol, where)
+        self._story: list[int] = []
+        self._ops: list[tuple[IntArray, FloatArray]] = []
+        labels: list[str] = []
+        for i in range(1, z.size):
+            w = f"{where} level {level_names[i]!r}"
+            rows = np.flatnonzero(np.abs(dom.coords[:, 2] - z[i]) <= dom.tol)
+            if rows.size == 0:
+                raise BridgeError(f"{w}: no node lies on it (z={z[i]:g}).")
+            if points is None:
+                ops_i = [_pick(int(r)) for r in rows]
+                keys = [str(int(dom.node_tags[r])) for r in rows]
+            else:
+                pts = [(float(p[0]), float(p[1])) for p in points]
+                off = dom.tol if max_offset is None else float(max_offset)
+                ops_i = ([_nearest(dom, rows, p, off, w) for p in pts]
+                         if method == "nearest" else _rigid(dom, rows, pts, w))
+                keys = [f"P{j}" for j in range(len(pts))]
+            for op, key in zip(ops_i, keys):
+                self._story.append(i - 1)
+                self._ops.append(op)
+                labels += [f"{level_names[i]}:{key}:UX", f"{level_names[i]}:{key}:UY"]
+        self.labels: tuple[str, ...] = tuple(labels)
+
+    def __call__(self, ops: ModuleType | None = None) -> FloatArray:
+        module = _resolve_ops(ops)
+        tags = self._dom.node_tags
+        out = np.empty((len(self._ops), 2))
+        for e, (rows, mat) in enumerate(self._ops):
+            u = np.array([[float(c) for c in module.nodeDisp(int(tags[r]))[:2]]
+                          for r in rows])
+            out[e] = mat @ u.ravel()
+        return out.ravel()
+
+    def table(self, values: FloatArray | None = None, *,
+              ops: ModuleType | None = None) -> StoryTable:
+        """Every entry as a row (``"<story>:<node|P<j>>"``), columns ``UX, UY``."""
+        v = self(ops) if values is None else _check_len(values, self.labels)
+        rows = tuple(lab.rsplit(":", 1)[0] for lab in self.labels[::2])
+        return StoryTable(rows, ("UX", "UY"), v.reshape(-1, 2))
+
+    def story_max(self, values: FloatArray | None = None, *,
+                  ops: ModuleType | None = None) -> StoryTable:
+        """Per level ``MaxX, MaxY, AvgX, AvgY``: the largest and the mean
+        ``|UX|``, ``|UY|`` over its entries (of a combined vector, for a
+        modal combination)."""
+        v = self(ops) if values is None else _check_len(values, self.labels)
+        a = np.abs(v.reshape(-1, 2))
+        story = np.asarray(self._story)
+        out = np.zeros((len(self.stories), 4))
+        for s in range(len(self.stories)):
+            sel = a[story == s]
+            out[s, :2] = sel.max(axis=0)
+            out[s, 2:] = sel.mean(axis=0)
+        return StoryTable(self.stories, ("MaxX", "MaxY", "AvgX", "AvgY"), out)
 
 
 # ---------------------------------------------------------------------------
