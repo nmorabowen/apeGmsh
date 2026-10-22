@@ -432,6 +432,7 @@ class RecordingEmitter:
         args: tuple[str | int, ...],
         value: float,
     ) -> None:
+        self._stage0.parameter(args)
         self.calls.append((
             "update_parameter",
             (int(pid), tuple(ele_tags), tuple(args), float(value)),

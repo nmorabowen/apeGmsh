@@ -179,6 +179,22 @@ def test_the_ledger_writes_once_per_element_batch_until_the_user_flips(
     assert _stage_zero_tags(em) == [7, 8, 7, 8, 7, 8]
 
 
+@pytest.mark.parametrize("cls", _EMITTERS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize(("args", "takes_over"), [
+    (("materialState", 7), True), (("updateMaterialStage", 7), True),
+    (("poissonRatio", 7), False), (("materialState", 9), False)])
+def test_a_stage_flag_parameter_takes_the_group_over(
+    cls: type, args: tuple[str, int], takes_over: bool,
+) -> None:
+    """The ``s.update_parameter`` route sets the same static."""
+    em = cls()
+    em.nDMaterial("ManzariDafalias", 7, *([1.0] * 18))
+    em.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 7)
+    em.update_parameter(1, (1,), args, 1.0)
+    em.analyze(steps=1)
+    assert _stage_zero_tags(em) == ([] if takes_over else [7])
+
+
 def _stage_zero_tags(em: Any) -> list[int]:
     if isinstance(em, RecordingEmitter):
         return [a[0] for n, a, _k in em.calls

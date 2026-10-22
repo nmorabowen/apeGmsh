@@ -30,7 +30,11 @@ from .pg_expand import expand_pg_to_elements, expand_spec_to_elements
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
-    from .records import MaterialStageRecord, StageRecord
+    from .records import (
+        MaterialStageRecord,
+        StageRecord,
+        UpdateParameterRecord,
+    )
 
 
 def stage_zero_classes() -> frozenset[str]:
@@ -43,6 +47,32 @@ def stage_zero_classes() -> frozenset[str]:
         if static == flag)
 
 
+def stage_flips(
+    mat_stage_records: "Iterable[MaterialStageRecord]",
+    parameter_records: "Iterable[UpdateParameterRecord]",
+) -> list[tuple[int, int]]:
+    """``(material tag, stage value)`` for every flip of one stage.
+
+    Both routes set the static: ``s.update_material_stage``, and an
+    ``s.update_parameter`` of a
+    :data:`~apeGmsh.opensees.stage._builder.STAGE_FLAG_PARAMETERS` name on
+    a material (the material casts that double with ``(int)``).
+    """
+    from ...stage._builder import STAGE_FLAG_PARAMETERS
+
+    flips: list[tuple[int, int]] = [
+        (int(tag), int(rec.stage))
+        for rec in mat_stage_records
+        for tag in rec.mat_tags
+    ]
+    flips.extend(
+        (int(prec.mat_tag), int(prec.value))
+        for prec in parameter_records
+        if prec.mat_tag is not None and prec.name in STAGE_FLAG_PARAMETERS
+    )
+    return flips
+
+
 class StageZeroLedger:
     """The ``updateMaterialStage ... -stage 0`` lines an emitter owes.
 
@@ -52,8 +82,9 @@ class StageZeroLedger:
     instead asks :meth:`due` at each solve verb (``analyze``, ``eigen``).
     The answer is every ManzariDafalias-group tag declared so far, when an
     element was emitted since the last answer.  After a user
-    ``updateMaterialStage`` names one of those tags, the answer is always
-    empty, because the user owns the static from then on.  So stage 0
+    ``updateMaterialStage`` names one of those tags, or a user
+    ``updateParameter`` sets its stage flag, the answer is always empty,
+    because the user owns the static from then on.  So stage 0
     comes after the elements and before any user stage line, and a user
     stage 1 still wins.
 
@@ -63,10 +94,13 @@ class StageZeroLedger:
     ``model_hash`` does not change.
     """
 
-    __slots__ = ("_classes", "_tags", "_user", "owed")
+    __slots__ = ("_classes", "_params", "_tags", "_user", "owed")
 
     def __init__(self) -> None:
+        from ...stage._builder import STAGE_FLAG_PARAMETERS
+
         self._classes = stage_zero_classes()
+        self._params = STAGE_FLAG_PARAMETERS
         self._tags: list[int] = []
         self._user = False
         #: Set by the emitter's ``element``: a line is due at the next
@@ -82,6 +116,12 @@ class StageZeroLedger:
         """Note a user ``updateMaterialStage``; the group is then theirs."""
         if int(tag) in self._tags:
             self._user = True
+
+    def parameter(self, args: "tuple[str | int, ...]") -> None:
+        """Note a user ``parameter`` on ``args``; a stage-flag name on one
+        of the group's tags hands the group to the user too."""
+        if len(args) > 1 and args[0] in self._params:
+            self.user_flip(int(args[1]))
 
     def due(self) -> tuple[int, ...]:
         """The tags to write ``-stage 0`` for now, in declaration order."""
@@ -118,7 +158,9 @@ def validate_class_wide_stage_flags(
     from ...stage._builder import CLASS_WIDE_STAGE_FLAG
 
     stages = tuple(stage_records)
-    if not any(st.update_material_stage_records for st in stages):
+    flips = [stage_flips(st.update_material_stage_records,
+                         st.update_parameter_records) for st in stages]
+    if not any(flips):
         return
     # Each element spec that uses a group material:
     # (spec, owning stage or -1, {tag: class}).
@@ -152,7 +194,7 @@ def validate_class_wide_stage_flags(
                     int(eid) for eid, _c in expand_pg_to_elements(fem, rem.pg))
             else:
                 removed.update(int(e) for e in rem.elements or ())
-        if not stage.update_material_stage_records:
+        if not flips[idx]:
             continue
         # tag -> class of every group material live at this flip.
         live: dict[int, str] = {}
@@ -168,13 +210,13 @@ def validate_class_wide_stage_flags(
                 if eids and eids <= removed:
                     continue
             live.update(mats)
-        _check_stage(stage.name, stage.update_material_stage_records,
-                     live, group_of, CLASS_WIDE_STAGE_FLAG)
+        _check_stage(stage.name, flips[idx], live, group_of,
+                     CLASS_WIDE_STAGE_FLAG)
 
 
 def _check_stage(
     name: str,
-    records: "Iterable[MaterialStageRecord]",
+    flips: "Iterable[tuple[int, int]]",
     live: Mapping[int, str],
     group_of: Mapping[int, str],
     table: Mapping[str, str],
@@ -182,19 +224,17 @@ def _check_stage(
     """Refuse one stage's flips, per group: two values, no named material
     live, or a live material left unnamed."""
     named: dict[str, dict[int, set[int]]] = {}
-    for rec in records:
-        for tag in rec.mat_tags:
-            group = group_of.get(int(tag))
-            if group is not None:
-                named.setdefault(group, {}).setdefault(
-                    int(tag), set()).add(int(rec.stage))
+    for tag, value in flips:
+        group = group_of.get(tag)
+        if group is not None:
+            named.setdefault(group, {}).setdefault(tag, set()).add(value)
     for group, tags in named.items():
         classes = " / ".join(sorted(
             cls for cls, static in table.items() if static == group))
         values = set().union(*tags.values())
         if len(values) > 1:
             raise BridgeError(
-                f"Stage {name!r}.update_material_stage: the {classes} "
+                f"Stage {name!r}: the {classes} "
                 f"materials are flipped to different stages "
                 f"{sorted(values)} in one stage, but their stage flag is "
                 f"the class-wide C++ static {group}: it holds one value, "
@@ -204,7 +244,7 @@ def _check_stage(
         members = {t: c for t, c in live.items() if table[c] == group}
         if not set(tags) & set(members):
             raise BridgeError(
-                f"Stage {name!r}.update_material_stage flips {classes} "
+                f"Stage {name!r} flips {classes} "
                 f"nDMaterial tag(s) {sorted(tags)}, but every element "
                 "using them has been removed (s.remove_element) by this "
                 "point.  updateMaterialStage reaches a material through "
@@ -216,7 +256,7 @@ def _check_stage(
                    for t, cls in sorted(members.items()) if t not in tags]
         if unnamed:
             raise BridgeError(
-                f"Stage {name!r}.update_material_stage: this stage flips "
+                f"Stage {name!r}: this stage flips "
                 f"some {classes} materials but not {', '.join(unnamed)}.  "
                 f"Their stage flag is the class-wide C++ static {group}, "
                 "so updateMaterialStage on one material switches all of "

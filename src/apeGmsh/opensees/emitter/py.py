@@ -1391,6 +1391,7 @@ class PyEmitter:
         args: tuple[str | int, ...],
         value: float,
     ) -> None:
+        self._stage0.parameter(args)
         self._lines.append(_ops_call("parameter", int(pid)))
         for et in ele_tags:
             self._lines.append(

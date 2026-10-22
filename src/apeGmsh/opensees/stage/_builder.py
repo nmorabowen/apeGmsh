@@ -12,6 +12,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
+from .._internal.build.stage_validate import stage_flips
 from .._internal.build.records import (
     DampingAttachRecord,
     ActivateAbsorbingRecord,
@@ -30,7 +31,7 @@ from .._internal.build.records import (
     ZeroVelocityRecord,
 )
 from .._internal.ns import _StageDampingNS
-from .._internal.types import Primitive, Recorder, TimeSeries
+from .._internal.types import Element, Primitive, Recorder, TimeSeries
 from ..analysis.analysis import Static
 from ..node import Node, _iter_tags, _select_nodes
 from ._chain import (
@@ -77,6 +78,28 @@ CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
     "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
     "SAniSandMS": "SAniSandMS::mElastFlag",
 }
+
+#: The ``setParameter`` names that set a class-wide stage flag.  Every
+#: class of :data:`CLASS_WIDE_STAGE_FLAG` answers both (ManzariDafalias,
+#: inherited by LadrunoSANISAND, SAniSandMS, PM4Sand and PM4Silt alike),
+#: so ``s.update_parameter(<name>, v, material=m)`` flips the group as
+#: ``s.update_material_stage`` does and the emit-time check counts it.
+STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
+    {"updateMaterialStage", "materialState"},
+)
+
+#: The class-wide classes whose Ladruno-fork constructor resets their
+#: static to 0 (elastic).  Every element made with one of them copies the
+#: material through that constructor, so a stage that activates such an
+#: element after a stage flipped the group to plastic silently puts the
+#: whole group back to elastic, on the fork only (stock keeps the flag;
+#: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
+#: This is the version gate of the stage-close refusal: empty it once
+#: ``FORK_PIN`` carries the fork fix (the TODO and its ticket are in
+#: :meth:`_StageBuilder._check_fork_stage_static_reset`).
+FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
+    {"ManzariDafalias", "LadrunoSANISAND"},
+)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +360,7 @@ class _StageBuilder:
                 "dt=) — every stage must declare its analyze loop."
             )
         self._check_chain_against_run()
+        self._check_fork_stage_static_reset()
         record = StageRecord(
             name=self._name,
             initial_stress_records=tuple(self._initial_stress_records),
@@ -376,6 +400,121 @@ class _StageBuilder:
             profile=self._profile,
         )
         self._bridge._stage_records.append(record)
+
+    def _class_wide_members(
+        self,
+    ) -> "tuple[dict[int, Primitive], set[int], dict[int, str]]":
+        """The model's :data:`CLASS_WIDE_STAGE_FLAG` materials so far.
+
+        Returns the materials by identity (the ones registered on the
+        bridge plus any an element registered so far depends on), the
+        identities an element uses, and each tagged material's group.
+        """
+        members: dict[int, Primitive] = {}
+        used: set[int] = set()
+        seen: set[int] = set()
+        frontier: list[tuple[Primitive, bool]] = [
+            (p, isinstance(p, Element)) for p in self._bridge._primitives]
+        while frontier:
+            prim, under_element = frontier.pop()
+            if under_element:
+                if id(prim) in used:
+                    continue
+                used.add(id(prim))
+            elif id(prim) in seen:
+                continue
+            seen.add(id(prim))
+            frontier.extend(
+                (dep, under_element) for dep in prim.dependencies())
+            if type(prim).__name__ in CLASS_WIDE_STAGE_FLAG:
+                members[id(prim)] = prim
+        group_of_tag: dict[int, str] = {}
+        for mat in members.values():
+            tag = self._bridge.tag_for(mat)
+            if tag is not None:
+                group_of_tag[int(tag)] = CLASS_WIDE_STAGE_FLAG[
+                    type(mat).__name__]
+        return members, used, group_of_tag
+
+    def _check_fork_stage_static_reset(self) -> None:
+        """Refuse, on a fork-pinned bridge, an activation that resets a flip.
+
+        On the Ladruno fork the constructor of a
+        :data:`FORK_RESETS_STAGE_STATIC` class sets the class-wide static
+        to 0, and every element copies its material through it.  So when
+        an earlier stage left the group plastic, this stage's activation
+        of an element carrying such a material puts the whole group back
+        to elastic, silently.  Refused unless this stage flips the group
+        itself (its flip lines emit after the activation and set the
+        static again).  Only a bridge whose ``OpenSeesTarget`` pins
+        ``mode="fork"`` is known to run the fork at stage close; an
+        ``"auto"`` target is decided by the imported binary at run time,
+        which this check cannot see.
+
+        TODO(#2444): empty :data:`FORK_RESETS_STAGE_STATIC` once
+        ``FORK_PIN`` carries the fork's constructor fix.
+        """
+        target = self._bridge.opensees
+        if target is None or target.mode != "fork":
+            return
+        if not (self._activated_pgs and FORK_RESETS_STAGE_STATIC):
+            return
+        _members, _used, group_of_tag = self._class_wide_members()
+        activated = set(self._activated_pgs)
+        resetting: dict[str, list[str]] = {}
+        for spec in self._bridge._primitives:
+            if not isinstance(spec, Element):
+                continue
+            spec_pg = getattr(spec, "pg", None)
+            if spec_pg not in activated:
+                continue
+            seen: set[int] = set()
+            frontier: list[Primitive] = list(spec.dependencies())
+            while frontier:
+                dep = frontier.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                frontier.extend(dep.dependencies())
+                cls = type(dep).__name__
+                if cls in FORK_RESETS_STAGE_STATIC:
+                    resetting.setdefault(
+                        CLASS_WIDE_STAGE_FLAG[cls], []).append(
+                            f"{type(spec).__name__} on pg {spec_pg!r} "
+                            f"({cls})")
+        if not resetting:
+            return
+        # The group's stage when this stage opens: the last earlier flip.
+        last: dict[str, int] = {}
+        for stage in self._bridge._stage_records:
+            for tag, value in stage_flips(
+                    stage.update_material_stage_records,
+                    stage.update_parameter_records):
+                group = group_of_tag.get(tag)
+                if group is not None:
+                    last[group] = value
+        this_stage = {
+            group_of_tag[tag]
+            for tag, _value in stage_flips(
+                self._update_material_stage_records,
+                self._update_parameter_records)
+            if tag in group_of_tag
+        }
+        for group, what in resetting.items():
+            if last.get(group, 0) == 0 or group in this_stage:
+                continue
+            raise BridgeError(
+                f"Stage {self._name!r}.activate: on the Ladruno fork this "
+                f"stage's {', '.join(sorted(set(what)))} reset the "
+                f"class-wide C++ static {group} to 0: the fork's material "
+                "constructor sets it, and every new element copies its "
+                f"material through that constructor.  An earlier stage "
+                f"left the group at stage {last[group]}, so every one of "
+                "its materials would go back to elastic with no warning "
+                "(fork issue #2444; stock keeps the flag).  Flip the whole "
+                "group again in this stage, after the activation, or "
+                "activate these elements before the flip."
+            )
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.
