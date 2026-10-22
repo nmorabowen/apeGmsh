@@ -1,4 +1,4 @@
-"""Live oracles for :meth:`apeSees.modal_after_gravity` (ADR 0123).
+"""Live oracles for :meth:`apeSees.modal_after_gravity` (ADR 0124).
 
 1. **P-Delta cantilever with a tip mass.** ``n`` ``elasticBeamColumn``
    elements on ``geomTransf PDelta`` under a tip axial load ``P``. The

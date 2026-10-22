@@ -1,4 +1,4 @@
-# ADR 0123 — Gravity-preloaded modal analysis and per-mode response spectrum on one live domain
+# ADR 0124 — Gravity-preloaded modal analysis and per-mode response spectrum on one live domain
 
 **Status:** Proposed (2026-10-22). Ships in two PRs: PR 1 the gravity-preloaded
 modal driver (D1–D3), PR 2 the per-mode response spectrum and its combinations

@@ -1,4 +1,4 @@
-"""Gravity-preloaded modal analysis on one live domain (ADR 0123).
+"""Gravity-preloaded modal analysis on one live domain (ADR 0124).
 
 ``modal_after_gravity`` is the P-Delta route the ETABS "iterative based on
 loads" option takes: the gravity preload, ``loadConst -time 0``, then
@@ -37,7 +37,7 @@ class _GravityModalMixin(_ProcedureHost):
         """Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``
         on the same live domain.
 
-        The sequence (ADR 0123 D1):
+        The sequence (ADR 0124 D1):
 
         1. Build and emit the model, as :meth:`analyze` does.
         2. Run the declared analysis chain to ``λ = 1``: every registered

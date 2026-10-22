@@ -1,6 +1,6 @@
 """
 ``GravityModalResult`` — the return type of
-:meth:`apeGmsh.opensees.apeSees.modal_after_gravity` (ADR 0123).
+:meth:`apeGmsh.opensees.apeSees.modal_after_gravity` (ADR 0124).
 
 The driver runs the gravity preload, ``loadConst -time 0``, ``eigen`` and
 ``modalProperties`` on **one** live domain, so the eigenproblem sees the

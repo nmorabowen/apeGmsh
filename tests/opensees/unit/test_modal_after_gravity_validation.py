@@ -1,4 +1,4 @@
-"""Bridge-side validation of :meth:`apeSees.modal_after_gravity` (ADR 0123).
+"""Bridge-side validation of :meth:`apeSees.modal_after_gravity` (ADR 0124).
 
 Every refusal here fires before the build, so no openseespy is needed. The
 live solve is in ``tests/opensees/live/test_modal_after_gravity_live.py``.

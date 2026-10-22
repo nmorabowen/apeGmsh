@@ -1,4 +1,4 @@
-### ADDED — `modal_after_gravity`: modes on the gravity-preloaded tangent, on one live domain (ADR 0123)
+### ADDED — `modal_after_gravity`: modes on the gravity-preloaded tangent, on one live domain (ADR 0124)
 
 `apeSees.modal_after_gravity(num_modes, *, p_delta=True, solver="-genBandArpack")` runs the declared
 `Static` + `LoadControl(dlam=1/N)` chain to `λ = 1` (every registered pattern is the gravity preload),

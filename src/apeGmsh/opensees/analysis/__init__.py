@@ -199,7 +199,7 @@ __all__ = [
     "ParallelModalResult",
     # footfall vibration walking evaluation (ADR 0109)
     "FootfallResult",
-    # gravity-preloaded modal analysis on one live domain (ADR 0123)
+    # gravity-preloaded modal analysis on one live domain (ADR 0124)
     "GravityModalResult",
     "GravityState",
 ]

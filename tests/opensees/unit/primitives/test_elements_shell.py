@@ -4,7 +4,7 @@ Covers the four shell elements, and the removal of ``ShellMITC3`` (#2092):
 
 * :class:`ShellMITC4` — 4-node
 * :class:`ShellDKGQ`  — 4-node
-* :class:`ShellNLDKGQ` — 4-node, geometrically nonlinear (ADR 0123)
+* :class:`ShellNLDKGQ` — 4-node, geometrically nonlinear (ADR 0124)
 * :class:`ASDShellQ4` — 4-node, with optional flags
 * :class:`ASDShellT3` — 3-node, with optional flags
 

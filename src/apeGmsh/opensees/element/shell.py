@@ -207,7 +207,7 @@ class ShellNLDKGQ(Element):
     The updated-Lagrangian twin of :class:`ShellDKGQ`: its tangent carries
     the initial-stress (geometric) stiffness of the current membrane
     forces, so an ``eigen`` after a gravity preload sees the P-Delta
-    softening of a wall (ADR 0123). Under ``algorithm Linear`` its nodal
+    softening of a wall (ADR 0124). Under ``algorithm Linear`` its nodal
     forces read stale (``shell_probe``); solve with ``Newton``.
 
     Parameters
