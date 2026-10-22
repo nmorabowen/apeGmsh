@@ -82,7 +82,7 @@ from datetime import datetime, timezone
 from typing import Any, NamedTuple, NoReturn, Sequence
 
 from .base import DroppedAxisGuard
-from .caps import SolveStamp, TargetCaps, binding_systems, value_requires
+from .caps import SolveStamp, TargetCaps, value_requires
 from .verbs import VERBS, Verb
 from .._internal.typed_records import (
     BeamIntegrationRecord as _BeamIntegrationRecord,
@@ -661,7 +661,19 @@ class H5RefusedVerb(NotImplementedError):
 #:     recorder, a Mumps system or partitions hashes differently once at
 #:     this minor; any other archive is unchanged. A 2.33 reader opens
 #:     2.12 through 2.33; a 2.32.x reader REFUSES a 2.33.x file.
-SCHEMA_VERSION: str = "2.33.0"
+#:   * 2.34.0 — large arrays as datasets: additive — a ``params`` /
+#:     ``params_str`` pair, or a declared recorder's ``ids``, that HDF5
+#:     refuses as an attribute for size (an object-header message holds
+#:     at most 65,535 bytes) is written as uncompressed datasets of the
+#:     same names in its group. The writer tries the attribute first and
+#:     falls back only on that refusal. Any other sequence attribute HDF5
+#:     refuses raises by name. An array that fits keeps the attribute
+#:     form, so every archive a 2.33 writer could write keeps its bytes
+#:     and hash. A 2.33
+#:     reader would read a dataset-form pair as no arguments, hence the
+#:     bump: a 2.34 reader opens 2.12 through 2.34 and refuses a dataset
+#:     form below 2.34.0; a 2.33.x reader REFUSES a 2.34.x file.
+SCHEMA_VERSION: str = "2.34.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1341,10 +1353,11 @@ class H5Emitter(
         """The stamp :meth:`write` puts on ``/opensees``: the verbs' tokens
         (:meth:`_H5DeclsMixin.solve_stamp`) joined with the ones the
         stored argument values imply (opensees 2.33.0,
-        :func:`~apeGmsh.opensees.emitter.caps.value_requires`): ``"mpco"``
-        for a ``recorder mpco`` and ``"mpi"`` for a Mumps-family or
-        ``Parallel*`` ``system`` without a runtime fallback
-        (:func:`~apeGmsh.opensees.emitter.caps.binding_systems`) or a
+        :func:`~apeGmsh.opensees.emitter.caps.value_requires`): ``"fork"``
+        for a fork-only analysis-chain type
+        (:data:`~apeGmsh.opensees.emitter.caps.FORK_CHAIN`), ``"mpco"`` for
+        a ``recorder mpco`` and ``"mpi"`` for a Mumps-family or
+        ``Parallel*`` ``system`` without a runtime fallback or a
         partitioned ``solve_mode``, global and staged stores alike.
 
         The stores are the source's on an H5 -> H5 rewrite too (the
@@ -1358,9 +1371,8 @@ class H5Emitter(
         blocks = self._stage_blocks
         kinds = tuple(r.kind for r in self._recorders) + tuple(
             r.kind for blk in blocks for r in blk.recorders)
-        systems = binding_systems(
-            (self._analysis_attrs, *(blk.chain_attrs for blk in blocks)))
-        extra = value_requires(recorder_kinds=kinds, systems=systems,
+        chains = (self._analysis_attrs, *(blk.chain_attrs for blk in blocks))
+        extra = value_requires(recorder_kinds=kinds, chains=chains,
                                solve_mode=stamp.solve_mode)
         if extra <= set(stamp.requires):
             return stamp

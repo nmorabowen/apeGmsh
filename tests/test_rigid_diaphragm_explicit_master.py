@@ -9,7 +9,7 @@ Oracles, each naming the right answer independently of the code:
   (node 23) as master and demoted the declared, fixed and massed master
   ``floor_2_master`` (node 29) to a zero-offset slave.  The master must be
   the one node of the master label, by construction of the frame.
-* **A fix on the declared master holds.**  With the master's ux fixed and
+* **A fix on the declared master holds.**  With the master held in plane and
   a lateral X load on a floor corner, the floor's rigid-body ux (the
   displacement at the plan centre, where the master sits) is zero; with
   the master's ux free the same load moves it.
@@ -19,7 +19,7 @@ Oracles, each naming the right answer independently of the code:
   nearer the point than every master node.
 * **#1829, live.**  The frame with floor 2's master label widened to
   {``floor_2_master``, ``J22_L2``} and the point next to slave joint
-  ``J00_L2``: the master stays ``floor_2_master``, and a fix on its ux
+  ``J00_L2``: the master stays ``floor_2_master``, and holding it in plane
   holds the floor.
 * **Refusals.**  A one-node master off the plane through the point, and a
   multi-node master label with no node in that plane, raise naming the
@@ -77,6 +77,12 @@ def test_1804_the_deck_ties_the_floor_to_the_fixed_master(fem, tmp_path: Path):
         assert str(declared) in fixed
 
 
+#: The master held on every in-plane DOF (ux, uy, rz). A master held on
+#: some in-plane DOFs only is refused under Transformation (#2427); held
+#: fully, a demoted master (#1804) still lets the floor slide.
+HELD = (1, 1, 1, 1, 1, 1)
+
+
 def _floor_ux(fem, *, master_fix) -> tuple[float, float]:
     """Floor-2 ux at the declared master and at the coincident joint under
     a 100 kN X load on corner joint J00_L2."""
@@ -102,9 +108,10 @@ def test_1804_a_fix_on_the_declared_master_constrains_the_floor(fem):
     # Not vacuous: the load moves the floor when the master's ux is free.
     assert free_master > 1e-5
     assert free_joint == pytest.approx(free_master, rel=1e-9)
-    held_master, held_joint = _floor_ux(fem, master_fix=(1, 0, 1, 1, 1, 0))
+    held_master, held_joint = _floor_ux(fem, master_fix=HELD)
     # main: the declared master was a slave, Transformation dropped the
-    # fix on its constrained ux, and the floor slid as if it were free.
+    # fixes on its constrained DOFs, and the floor (read at the joint)
+    # slid as if it were free.
     assert abs(held_master) < 1e-12
     assert abs(held_joint) < 1e-12
 
@@ -191,9 +198,10 @@ def test_1829_a_fix_on_the_declared_master_constrains_the_floor(wide):
     pytest.importorskip("openseespy.opensees")
     free_master, _ = _floor_ux(wide, master_fix=(0, 0, 1, 1, 1, 0))
     assert free_master > 1e-5
-    held_master, held_joint = _floor_ux(wide, master_fix=(1, 0, 1, 1, 1, 0))
-    # main: floor_2_master was a slave, Transformation dropped the fix on
-    # its constrained ux, and the floor slid as if it were free.
+    held_master, held_joint = _floor_ux(wide, master_fix=HELD)
+    # main: floor_2_master was a slave, Transformation dropped the fixes
+    # on its constrained DOFs, and the floor (read at the joint) slid as
+    # if it were free.
     assert abs(held_master) < 1e-12
     assert abs(held_joint) < 1e-12
 

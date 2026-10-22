@@ -27,6 +27,5 @@ handlers:
 - a stage fixes the slave on a DOF the rewrite would fix;
 - the tie is part of a chain, where its slave retains another tie.
 
-Stage-claimed (`s.equal_dof`) and partitioned `equalDOF`s, `rigidLink`
-(which has the same upstream defect) and the H5 replay are not covered
-yet.
+Stage-claimed, partitioned, mixed and `rigidLink` ties are covered by
+#2406.

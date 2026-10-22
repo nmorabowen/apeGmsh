@@ -45,6 +45,7 @@ from typing import (
 )
 
 from .caps import TargetCaps
+from .base import SUBDIVIDE_TOKEN
 from .base import (
     NUMPY_VALUE_TYPES,
     DroppedAxisGuard,
@@ -1184,6 +1185,10 @@ class TclEmitter:
             "{" + _join(*rung) + "}" for rung in strategy.rungs
         ) + "}"
         sname = stage_marker_name(strategy.name)
+        if any(r and r[0] == SUBDIVIDE_TOKEN for r in strategy.rungs):
+            return self._analyze_subdivided(
+                n=n, dt=dt, where=where, sname=sname,
+                rungs_literal=rungs_literal, n_rungs=len(strategy.rungs))
         self._lines.append(f"set _apesees_rungs {rungs_literal}")
         self._lines.append(
             f"for {{set _apesees_i 0}} {{$_apesees_i < {n}}} "
@@ -1244,6 +1249,94 @@ class TclEmitter:
             self._lines.append("_apesees_call_after_step")
         self._lines.indent = prev_indent
         self._lines.append("}")
+        return 0
+
+    def _analyze_subdivided(
+        self, *, n: int, dt: float | None, where: str, sname: str,
+        rungs_literal: str, n_rungs: int,
+    ) -> int:
+        """The ladder loop with ``Subdivide`` rungs (ADR 0057 Amendment
+        1); the Tcl twin of the py emitter's loop."""
+        if dt is None:
+            raise BridgeError(
+                f"analyze strategy '{sname}'{where}: a Subdivide rung cuts "
+                "the time step, so it needs a transient stage with dt "
+                "(s.run(n_increments=..., dt=...)); a static stage uses "
+                "Substep (ADR 0057 Amendment 1)."
+            )
+        add = self._lines.append
+        prev = self._lines.indent
+
+        def ind(k: int) -> str:
+            return prev + "    " * k
+
+        add(f"set _apesees_rungs {rungs_literal}")
+        add(f"for {{set _apesees_i 0}} {{$_apesees_i < {n}}} "
+            f"{{incr _apesees_i}} {{")
+        self._lines.indent = ind(1)
+        if self._step_hooks_registered:
+            add("_apesees_call_before_step")
+        add(f"set _apesees_t1 [expr {{[getTime] + {_join(float(dt))}}}]")
+        add("set _apesees_ok 0")
+        add("set _apesees_r 0")
+        add("foreach _apesees_rung $_apesees_rungs {")
+        self._lines.indent = ind(2)
+        add("if {$_apesees_r > 0} {")
+        self._lines.indent = ind(3)
+        add(f'puts "apeGmsh strategy \'{sname}\': increment '
+            f"[expr {{$_apesees_i + 1}}]/{n}{where} -> rung "
+            '$_apesees_r ($_apesees_rung)"')
+        self._lines.indent = ind(2)
+        add("}")
+        add(f"if {{[lindex $_apesees_rung 0] eq \"{SUBDIVIDE_TOKEN}\"}} {{")
+        self._lines.indent = ind(3)
+        add("eval algorithm [lindex $_apesees_rungs 0]")
+        add("set _apesees_m [lindex $_apesees_rung 1]")
+        add("set _apesees_h [expr {($_apesees_t1 - [getTime]) / double($_apesees_m)}]")
+        add("set _apesees_rc 0")
+        add("for {set _apesees_k 0} {$_apesees_k < $_apesees_m} {incr _apesees_k} {")
+        self._lines.indent = ind(4)
+        add("set _apesees_rc [analyze 1 $_apesees_h]")
+        add("if {$_apesees_rc != 0} { break }")
+        self._lines.indent = ind(3)
+        add("}")
+        add("set _apesees_done $_apesees_k")
+        add(f'puts "apeGmsh strategy \'{sname}\': increment '
+            f"[expr {{$_apesees_i + 1}}]/{n}{where} Subdivide($_apesees_m) "
+            'committed $_apesees_done/$_apesees_m pieces"')
+        self._lines.indent = ind(2)
+        add("} else {")
+        self._lines.indent = ind(3)
+        add("if {$_apesees_r > 0} { eval algorithm $_apesees_rung }")
+        add("set _apesees_rc [analyze 1 [expr {$_apesees_t1 - [getTime]}]]")
+        self._lines.indent = ind(2)
+        add("}")
+        add("if {$_apesees_rc == 0} { set _apesees_ok 1; break }")
+        add(f"if {{$_apesees_rc == {COMMIT_ABORT_RC}}} {{")
+        self._lines.indent = ind(3)
+        add('error "apeGmsh: analyze aborted at increment '
+            f"[expr {{$_apesees_i + 1}}]/{n}{where} "
+            f'(pseudo-time [getTime]) -- {COMMIT_ABORT_MESSAGE}"')
+        self._lines.indent = ind(2)
+        add("}")
+        add("incr _apesees_r")
+        self._lines.indent = ind(1)
+        add("}")
+        add("if {!$_apesees_ok} {")
+        self._lines.indent = ind(2)
+        add('error "apeGmsh: analyze FAILED at increment '
+            f"[expr {{$_apesees_i + 1}}]/{n}{where} "
+            "(pseudo-time [getTime]) -- aborting after exhausting "
+            f"strategy ladder '{sname}' ({n_rungs} rungs); "
+            'the remaining deck would run on a partial state"')
+        self._lines.indent = ind(1)
+        add("}")
+        add("if {$_apesees_r > 0} { eval algorithm [lindex $_apesees_rungs 0] }")
+        self._emit_progress_marker(n, prev)
+        if self._step_hooks_registered:
+            add("_apesees_call_after_step")
+        self._lines.indent = prev
+        add("}")
         return 0
 
     def _emit_progress_marker(self, n: int, prev_indent: str) -> None:

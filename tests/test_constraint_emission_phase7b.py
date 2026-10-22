@@ -1041,7 +1041,7 @@ class TestH5SchemaIntegration:
             validate_zone_version,
         )
         reader = reader_version(OPENSEES)
-        assert reader == SchemaVersion(2, 33, 0)
+        assert reader == SchemaVersion(2, 34, 0)
         validate_zone_version(SchemaVersion(2, 22, 0), reader, zone=OPENSEES)
         validate_zone_version(SchemaVersion(2, 23, 0), reader, zone=OPENSEES)
         validate_zone_version(SchemaVersion(2, 24, 0), reader, zone=OPENSEES)
@@ -1054,6 +1054,7 @@ class TestH5SchemaIntegration:
         validate_zone_version(SchemaVersion(2, 31, 0), reader, zone=OPENSEES)
         validate_zone_version(SchemaVersion(2, 32, 0), reader, zone=OPENSEES)
         validate_zone_version(SchemaVersion(2, 33, 0), reader, zone=OPENSEES)
+        validate_zone_version(SchemaVersion(2, 34, 0), reader, zone=OPENSEES)
         validate_zone_version(SchemaVersion(2, 21, 0), reader, zone=OPENSEES)
         # 2.20.x, outside the retired two-version window, opens again.
         validate_zone_version(SchemaVersion(2, 20, 0), reader, zone=OPENSEES)
