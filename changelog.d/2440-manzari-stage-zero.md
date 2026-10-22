@@ -23,10 +23,14 @@ fork's answer to round-off.
   not to the model, so `model.h5` stores none of it and `model_hash` is
   unchanged. A deck replayed from an archive writes the line too, older
   archives included.
-- **Decks without a solve.** A deck that drives no `analyze` or `eigen`
-  (`ops.tcl(path)` without `analyze_steps`) writes no line, because nothing
-  reads the flag there. A script that sources such a deck and then solves
-  must set the stage itself.
+- **`ops.run()`.** It builds the live model and leaves the solve to its
+  caller, so it issues the line at its end. The caller's own `analyze`
+  then starts elastic on stock as on the fork.
+- **Decks without a solve still diverge.** A deck file that drives no
+  `analyze` or `eigen` (`ops.tcl(path)` without `analyze_steps`) writes no
+  line, since the writer cannot tell where its elements end. A script
+  that sources such a deck and then solves on stock starts elastoplastic
+  unless it states `updateMaterialStage ... -stage 0` itself.
 
 **The class-wide stage check moves to the emit.** This supersedes the
 "when the stage closes" wording of the #2439 entry. The refusal of a flip

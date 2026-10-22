@@ -483,13 +483,8 @@ def test_live_without_the_line_stock_is_not_elastic(tmp_path: Path) -> None:
     assert elastic is bool(r["fork"])
 
 
-@pytest.mark.live
-@pytest.mark.skipif(not _openseespy(), reason="no openseespy")
-def test_live_in_process_analyze_is_elastic_on_every_build() -> None:
-    """The live emitter's own ledger: in-process ``apeSees.analyze`` of the
-    unstaged column meets the same closed form and settlement."""
-    from apeGmsh.opensees.emitter.live import get_ops
-
+def _flat_column() -> apeSees:
+    """The column of :func:`_md_column`, unstaged, with a flat chain."""
     ops = apeSees(build_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
@@ -503,6 +498,69 @@ def test_live_in_process_analyze_is_elastic_on_every_build() -> None:
             for node in (5, 6):
                 p.load(node=node, forces=(0.0, -50.0))
         _chain(ops)
+    return ops
+
+
+@pytest.mark.parametrize("verb", ["run", "analyze"])
+def test_run_and_analyze_both_issue_stage_zero(
+    monkeypatch: pytest.MonkeyPatch, verb: str,
+) -> None:
+    """``ops.run()`` leaves the solve to its caller, so it issues the line
+    at its end; ``ops.analyze`` issues it before its solve."""
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    from tests.opensees.h5.test_h5_solve_stamp import _StockOps
+
+    stock = _StockOps()
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: stock)
+    ops = _flat_column()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if verb == "run":
+            ops.run()
+        else:
+            ops.analyze(steps=1)
+    tag = ops.tag_for(ops._names["sand"])
+    flips = [c for c in stock.calls if c[0] == "updateMaterialStage"]
+    assert flips == [("updateMaterialStage", "-material", tag, "-stage", 0)]
+    if verb == "run":
+        assert stock.calls[-1] == flips[0]
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _openseespy(), reason="no openseespy")
+def test_live_run_then_the_users_analyze_is_elastic_on_every_build() -> None:
+    """``ops.run()`` and then the user's own ``analyze``: K0 and the
+    fork's settlement on stock too."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = _flat_column()
+    dom = get_ops()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ops.run()
+        assert dom.analyze(10) == 0
+        tag = max(dom.getEleTags())
+        sxx, syy = dom.eleResponse(tag, "stresses")[:2]
+        uy = dom.nodeDisp(5, 2)
+    finally:
+        dom.wipe()
+    assert sxx == pytest.approx(_NU / (1.0 - _NU) * syy, rel=1e-10)
+    assert syy == pytest.approx(-100.0, rel=1e-10)
+    assert uy == pytest.approx(_UY_CONFINE, rel=1e-10)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _openseespy(), reason="no openseespy")
+def test_live_in_process_analyze_is_elastic_on_every_build() -> None:
+    """The live emitter's own ledger: in-process ``apeSees.analyze`` of the
+    unstaged column meets the same closed form and settlement."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = _flat_column()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
         dom = get_ops()
         try:
             assert ops.analyze(steps=10) == 0
