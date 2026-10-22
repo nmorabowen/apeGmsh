@@ -14,7 +14,9 @@ fork's answer to round-off.
   It writes it again at the next one if a later stage adds elements, so a
   material whose elements a stage activates is reached as well.
 - **A user flip still wins.** Once an `s.update_material_stage` names one
-  of these materials, the deck writes no more stage-0 lines. A user stage 1
+  of these materials, or an `s.update_parameter("materialState" |
+  "updateMaterialStage", ..., material=m)` sets its flag, the deck writes
+  no more stage-0 lines. A user stage 1
   therefore still switches plasticity on.
 - **The archive does not change.** The line belongs to the deck writer,
   not to the model, so `model.h5` stores none of it and `model_hash` is
