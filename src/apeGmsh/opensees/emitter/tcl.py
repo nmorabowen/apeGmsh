@@ -952,7 +952,7 @@ class TclEmitter:
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
         warn_rc_c2_deck(mat_type, params)
-        self._stage_carriers.note_material(mat_type, tag)
+        self._stage_carriers.note_material(mat_type, tag, params)
         self._lines.append(_join("nDMaterial", mat_type, tag, *params))
 
     def section(

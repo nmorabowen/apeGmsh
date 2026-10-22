@@ -26,6 +26,7 @@ import pytest
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.build.stage_emit import (
     MATERIAL_STATE_ELEMENT_TOKENS,
+    MATERIAL_STATE_WRAPPERS,
     SWEPT_MATERIAL_CLASSES,
     MaterialStageCarriers,
 )
@@ -755,9 +756,13 @@ _FORWARDING = [
 _DROPPING = ["FourNodeQuad", "Tri31", "stdBrick"]
 
 
-def _census(cls: str, how: str, mat: str = "ManzariDafalias") -> list[float]:
+def _census(cls: str, how: str, mat: str = "ManzariDafalias",
+            wrapper: "tuple[str, tuple[Any, ...]] | None" = None,
+            ) -> list[float]:
     """Two elements of ``cls``, every DOF on a homogeneous strain path to
-    t=1 elastic, flip, then on to t=2; returns their stresses."""
+    t=1 elastic, flip, then on to t=2; returns their stresses.
+    ``wrapper``: ``(token, argv after the wrapped tag)``; each element then
+    carries that wrapper (tag ``10 + t``) over the material (tag ``t``)."""
     pytest.importorskip("openseespy.opensees")
     from apeGmsh.opensees.emitter.live import get_ops
 
@@ -770,6 +775,8 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias") -> list[float]:
         tags = [1, 2] if how == "reference" else [1, 1]
         for t in sorted(set(tags)):
             ops.nDMaterial(mat, t, *MD_ARGS)
+            if wrapper is not None:
+                ops.nDMaterial(wrapper[0], 10 + t, t, *wrapper[1])
         ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0,
                        "-values", 0.0, 1.0, 2.0)
         ops.pattern("Plain", 1, 1)
@@ -782,7 +789,8 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias") -> list[float]:
                 nodes.append(n)
                 for d in range(ndm):
                     ops.sp(n, d + 1, eps[d] * xyz[d])
-            ops.element(token, q + 1, *argv(nodes, t))
+            carried = t if wrapper is None else 10 + t
+            ops.element(token, q + 1, *argv(nodes, carried))
         for t in sorted(set(tags)):
             ops.updateMaterialStage("-material", t, "-stage", 0)
         ops.constraints("Penalty", 1.0e12, 1.0e12)
@@ -842,3 +850,118 @@ def test_census_a_refused_class_drops_the_sweep(cls: str) -> None:
     assert _diff(emitted, first) == 0.0
     assert _diff(emitted, ref) > 0.0
     assert cls not in MATERIAL_STATE_ELEMENTS
+
+
+# ---------------------------------------------------------------------------
+# A wrapped material (StagedStrain, PlaneStrain, ...)
+# ---------------------------------------------------------------------------
+
+#: Each :data:`MATERIAL_STATE_WRAPPERS` token over ManzariDafalias, as
+#: ``(token, argv after the wrapped tag, element class, build)``: the
+#: census element it runs on, and whether it needs the fork.
+_WRAPPERS = [
+    ("PlaneStrain", (), "SixNodeTri", "both"),
+    ("StagedStrain", ("-noInit",), "FourNodeTetrahedron", "fork"),
+]
+
+
+def test_every_wrapper_has_a_census_row() -> None:
+    assert {w for w, *_rest in _WRAPPERS} == set(MATERIAL_STATE_WRAPPERS)
+
+
+def _wrapper_params() -> list[Any]:
+    out = []
+    for token, argv, cls, builds in _WRAPPERS:
+        marks = [pytest.mark.live]
+        if builds == "fork":
+            marks.append(pytest.mark.ladruno_fork)
+        out.append(pytest.param(token, argv, cls, marks=marks, id=token))
+    return out
+
+
+@pytest.mark.parametrize(("token", "argv", "cls"), _wrapper_params())
+def test_census_a_wrapped_material_is_initialised_on_every_element(
+    token: str, argv: tuple[Any, ...], cls: str,
+) -> None:
+    """The element carries the wrapper's tag, and the update still names
+    it: it reaches the wrapped ManzariDafalias of every element, as the
+    per-element reference does."""
+    ref = _census(cls, "reference", wrapper=(token, argv))
+    emitted = _census(cls, "emitted", wrapper=(token, argv))
+    first = _census(cls, "first", wrapper=(token, argv))
+    scale = max(1.0, max(abs(v) for v in ref))
+    assert _diff(emitted, ref) <= 1e-10 * scale
+    assert _diff(first, ref) > 1e-8 * scale, "the case must tell them apart"
+
+
+def test_the_wrapper_table() -> None:
+    assert MATERIAL_STATE_WRAPPERS == {"PlaneStrain": 0, "StagedStrain": 0}
+
+
+def test_a_wrapper_resolves_to_the_material_it_wraps() -> None:
+    c = MaterialStageCarriers()
+    c.note_material("ManzariDafalias", 7, MD_ARGS)
+    c.note_material("StagedStrain", 17, (7, "-noInit"))
+    c.note_material("PlaneStrain", 27, (17,))
+    c.note_element("tri6n", 1, (*_TRI6_ARGV, 17))
+    c.note_element("tri6n", 2, (*_TRI6_ARGV, 27))
+    assert c.flip_commands(7, 1)[0][1][3:5] == (1, 2)
+
+
+def test_an_unknown_wrapper_is_not_resolved() -> None:
+    """PlateFiber is not a MATERIAL_STATE_WRAPPERS wrapper: its elements are
+    not listed (the stage close refuses such a flip by name)."""
+    c = MaterialStageCarriers()
+    c.note_material("ManzariDafalias", 7, MD_ARGS)
+    c.note_material("PlateFiber", 17, (7,))
+    c.note_element("tri6n", 1, (*_TRI6_ARGV, 17))
+    c.note_element("tri6n", 2, (*_TRI6_ARGV, 17))
+    assert c.flip_commands(7, 1) == (_ums(7, 1),)
+
+
+def test_a_wrapper_grammar_without_the_tag_fails_loud() -> None:
+    with pytest.raises(BridgeError, match="no wrapped material tag"):
+        MaterialStageCarriers().note_material("StagedStrain", 17, ("-noInit",))
+
+
+def _wrapped_bridge(wrap: str) -> tuple[apeSees, Any]:
+    ops = apeSees(_tri6_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+    if wrap == "PlaneStrain":
+        outer = ops.nDMaterial.PlaneStrain(base=sand)
+    elif wrap == "LogStrain":
+        outer = ops.nDMaterial.LogStrain(inner=sand)
+    else:
+        outer = ops.nDMaterial.PlateFiber(material=sand)
+    for pg in ("A", "B"):
+        ops.element.SixNodeTri(pg=pg, thickness=1.0, material=outer)
+    ops.fix(pg="Base", dofs=(1, 1))
+    return ops, sand
+
+
+def test_the_stage_close_and_the_deck_agree_on_a_wrapper() -> None:
+    """A forwarding wrapper passes the stage close, and the deck names
+    both elements; the two read one table (MATERIAL_STATE_WRAPPERS)."""
+    ops, sand = _wrapped_bridge("PlaneStrain")
+    _flip(ops, sand)
+    tcl = TclEmitter()
+    ops.build().emit(tcl)
+    eles = [ln.split()[2] for ln in tcl.lines()
+            if ln.startswith("element tri6n")]
+    assert (f"setParameter -val 1.0 -ele {' '.join(eles)} materialState "
+            f"{ops.tag_for(sand)}") in tcl.lines()
+
+
+@pytest.mark.parametrize("wrap", ["PlateFiber", "LogStrain"])
+def test_an_unproven_wrapper_is_refused_by_name(wrap: str) -> None:
+    """PlateFiber is not known to forward; LogStrain forwards in the fork
+    source, but over ManzariDafalias it ends the process on the measured
+    build, so it stays refused until measured."""
+    ops, sand = _wrapped_bridge(wrap)
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, sand)
+    msg = str(exc.value)
+    assert f"through {wrap}" in msg and "#2445" in msg

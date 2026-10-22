@@ -696,6 +696,27 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
 }
 
 
+#: The nDMaterial wrappers, by type token (the bridge class has the same
+#: name), whose ``setParameter`` hands every name on to the material they
+#: wrap, mapped to the argv index of that material's tag.  An element of
+#: a wrapper over a swept material is a carrier of the swept material:
+#: its ``materialState <tag>`` reaches the wrapped integration points.
+#: Each entry is measured against the per-element reference
+#: (``tests/opensees/integration/test_md_stage_route_elements.py``):
+#: ``PlaneStrain`` on stock 3.8.0 and the fork, ``StagedStrain`` on the
+#: fork build 79e062367.  ``LogStrain``, ``LogStrain2D`` and
+#: ``InitDefGrad`` forward ``setParameter`` in the fork source too, but
+#: are not listed: over ManzariDafalias the first two end the process on
+#: that build, and ``InitDefGrad`` takes only a finite-strain inner.  The
+#: stage close refuses a multi-element plastic flip reached through any
+#: primitive outside this table, so it is the one resolution both sides
+#: use.
+MATERIAL_STATE_WRAPPERS: dict[str, int] = {
+    "PlaneStrain": 0,
+    "StagedStrain": 0,
+}
+
+
 def _carried_material_tag(
     token: str, argv: "Sequence[int | float | str]",
 ) -> int:
@@ -762,23 +783,51 @@ class MaterialStageCarriers:
 
     def __init__(self) -> None:
         self._swept: set[int] = set()
+        # wrapper tag -> the tag it wraps (MATERIAL_STATE_WRAPPERS only).
+        self._wraps: dict[int, int] = {}
         # material tag -> rank (None: outside any partition block) ->
         # element tags, in emission order.
         self._carriers: dict[int, dict[int | None, dict[int, None]]] = {}
         self._rank: int | None = None
 
-    def note_material(self, mat_type: str, tag: int) -> None:
+    def note_material(
+        self, mat_type: str, tag: int,
+        params: "Sequence[int | float | str]" = (),
+    ) -> None:
+        tag = int(tag)
+        self._wraps.pop(tag, None)
         if mat_type in SWEPT_MATERIAL_CLASSES:
-            self._swept.add(int(tag))
-        else:
-            self._swept.discard(int(tag))
+            self._swept.add(tag)
+            return
+        self._swept.discard(tag)
+        if mat_type in MATERIAL_STATE_WRAPPERS:
+            where = MATERIAL_STATE_WRAPPERS[mat_type]
+            inner = params[where] if where < len(params) else None
+            if isinstance(inner, bool) or not isinstance(inner, int):
+                raise BridgeError(
+                    f"nDMaterial {mat_type} {tag}: no wrapped material tag "
+                    f"at argv position {where} of {tuple(params)!r}; the "
+                    "stage-flip update cannot tell what it wraps.  Update "
+                    "MATERIAL_STATE_WRAPPERS with the wrapper's grammar."
+                )
+            self._wraps[tag] = int(inner)
+
+    def _resolve(self, mat: int) -> int:
+        """The material ``mat`` wraps, through every forwarding wrapper."""
+        seen = {mat}
+        while mat in self._wraps:
+            mat = self._wraps[mat]
+            if mat in seen:  # pragma: no cover - OpenSees refuses a cycle
+                break
+            seen.add(mat)
+        return mat
 
     def note_element(
         self, token: str, tag: int, argv: "Sequence[int | float | str]",
     ) -> None:
         if token not in MATERIAL_STATE_ELEMENT_TOKENS:
             return
-        mat = _carried_material_tag(token, argv)
+        mat = self._resolve(_carried_material_tag(token, argv))
         if mat in self._swept:
             by_rank = self._carriers.setdefault(mat, {})
             by_rank.setdefault(self._rank, {})[int(tag)] = None

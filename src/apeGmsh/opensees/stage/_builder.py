@@ -12,7 +12,10 @@ import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
-from .._internal.build.stage_emit import SWEPT_MATERIAL_CLASSES
+from .._internal.build.stage_emit import (
+    MATERIAL_STATE_WRAPPERS,
+    SWEPT_MATERIAL_CLASSES,
+)
 from .._internal.build.records import (
     DampingAttachRecord,
     ActivateAbsorbingRecord,
@@ -669,7 +672,7 @@ class _StageBuilder:
 
     def _first_element_only_carriers(
         self, tags: "set[int]",
-    ) -> "dict[int, list[tuple[Element, Any]]]":
+    ) -> "tuple[dict[int, list[tuple[Element, Any]]], dict[int, set[str]]]":
         """Each element spec registered so far that carries a tag of ``tags``.
 
         ``tags`` are nDMaterial tags of
@@ -678,33 +681,42 @@ class _StageBuilder:
         reach that material, whichever stage activates it.  The fan-out is
         the spec's OpenSees elements: its PG, or one
         ``MISSING_FEM_ELEMENT_ID`` row for a node-pair spec.
+
+        The second dict holds, per tag, the classes of every primitive
+        between an element and the material (a wrapper such as
+        ``StagedStrain``, or a section), which the plastic-flip check holds
+        to :data:`MATERIAL_STATE_WRAPPERS`.
         """
         from .._internal.build.pg_expand import expand_spec_to_elements
 
         carriers: dict[int, list[tuple[Element, Any]]] = {}
+        carrier_via: dict[int, set[str]] = {}
         for spec in self._bridge._primitives:
             if not isinstance(spec, Element):
                 continue
             carried: set[int] = set()
             seen: set[int] = set()
-            frontier: list[Primitive] = list(spec.dependencies())
+            frontier: list[tuple[Primitive, tuple[str, ...]]] = [
+                (dep, ()) for dep in spec.dependencies()]
             while frontier:
-                dep = frontier.pop()
+                dep, via = frontier.pop()
                 if id(dep) in seen:
                     continue
                 seen.add(id(dep))
-                frontier.extend(dep.dependencies())
+                below = (*via, type(dep).__name__)
+                frontier.extend((d, below) for d in dep.dependencies())
                 if type(dep).__name__ not in FIRST_ELEMENT_ONLY_PLASTIC_INIT:
                     continue
                 tag = self._bridge.tag_for(dep)
                 if tag is not None and int(tag) in tags:
                     carried.add(int(tag))
+                    carrier_via.setdefault(int(tag), set()).update(via)
             if not carried:
                 continue
             fanout = expand_spec_to_elements(self._bridge.fem, spec)
             for tag in carried:
                 carriers.setdefault(tag, []).append((spec, fanout))
-        return carriers
+        return carriers, carrier_via
 
     def _check_multi_element_plastic_flip(self) -> None:
         """Refuse a plastic flip that cannot initialise every element (#2445).
@@ -742,7 +754,7 @@ class _StageBuilder:
         }
         if not plastic:
             return
-        carriers = self._first_element_only_carriers(plastic)
+        carriers, carrier_via = self._first_element_only_carriers(plastic)
         multi = {
             tag: specs for tag, specs in carriers.items()
             if sum(len(fanout) for _spec, fanout in specs) > 1
@@ -783,6 +795,22 @@ class _StageBuilder:
                     "each element its own material, or keep it on a single "
                     "element.  A stage 0 (elastic) flip is unaffected."
                     + pin_note
+                )
+            between = sorted(
+                carrier_via.get(tag, set()) - set(MATERIAL_STATE_WRAPPERS))
+            if between:
+                raise BridgeError(
+                    f"Stage {self._name!r}: flips {what(tag)} to a plastic "
+                    f"stage, but its elements reach it through "
+                    f"{', '.join(between)}, which is not known to hand the "
+                    "materialState update on to the material it wraps "
+                    "(issue #2445).  The update that initialises each "
+                    "element could stop there silently, leaving every "
+                    "element but the first plastic with its back-stress "
+                    "never re-seated.  Wrap the material only in "
+                    f"{', '.join(sorted(MATERIAL_STATE_WRAPPERS))}, give "
+                    "each element its own material, or keep it on a single "
+                    "element."
                 )
         swept = {
             int(t) for rec in self._update_material_stage_records
@@ -874,7 +902,7 @@ class _StageBuilder:
             return
         activated = set(self._activated_pgs)
         for tag, specs in sorted(
-                self._first_element_only_carriers(tags).items()):
+                self._first_element_only_carriers(tags)[0].items()):
             new = sorted({
                 f"{type(spec).__name__} on pg {getattr(spec, 'pg', None)!r}"
                 for spec, _fanout in specs
