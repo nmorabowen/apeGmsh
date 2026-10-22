@@ -83,7 +83,13 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from ._internal.lineage import Lineage
-from .emitter.caps import SolveStamp
+from .emitter.caps import (
+    REQUIRES_TOKENS,
+    SolveStamp,
+    binding_systems,
+    flat_requires,
+    is_mpi_system,
+)
 from ._internal.typed_records import (
     BeamIntegrationRecord,
     DampingObjectRecord,
@@ -216,6 +222,39 @@ def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
         out.append(make_equation_constraint_record(
             p["cnode"], p["cdof"], p["ccoef"], p["retained"]))
     return tuple(out)
+
+
+#: The ``/opensees/constraints`` datasets of :meth:`H5Model.mp_constraints`,
+#: each with the verb that wrote it, in the bridge's fixed kind order
+#: (``emit_mp_constraints``), which a file with no program falls back to.
+_MP_BUCKETS = ("equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode")
+_MP_KIND_ORDER = ("rigidLink", "equalDOF", "rigidDiaphragm", "embeddedNode")
+
+
+def _mp_rows_in_bridge_order(
+    buckets: "Sequence[Sequence[Any]]", program: "Sequence[Any]",
+) -> "tuple[tuple[int | None, Any], ...]":
+    """The global MP rows as ``(emit index, row)`` pairs, in the order the
+    bridge emitted them (#2405).
+
+    ``buckets`` is :meth:`H5Model.mp_constraints` (the :data:`_MP_BUCKETS`
+    order). With a ``/opensees/program`` each row is joined to the call
+    that wrote it, and a row no call wrote raises (``LookupError``);
+    without one (below opensees 2.23.0, or a model made from the
+    emitter's buffers) the index is ``None`` and the rows keep the
+    bridge's fixed kind order.
+    """
+    from .emitter.h5_reader import emit_index_of
+
+    by_verb = dict(zip(_MP_BUCKETS, buckets))
+    rows: "list[tuple[int | None, Any]]" = []
+    for verb in _MP_KIND_ORDER:
+        for i, row in enumerate(by_verb[verb]):
+            rows.append((emit_index_of(program, verb, i) if program else None,
+                         row))
+    if program:
+        rows.sort(key=lambda it: int(it[0] or 0))
+    return tuple(rows)
 
 
 def _materials_in_emit_order(
@@ -410,6 +449,12 @@ class OpenSeesModel:
     #: build wrote. Empty for a model without a tie and for an archive
     #: below 2.29.0, whose replay re-derives its ties from the neutral zone.
     _embedded_rebars: "tuple[Any, ...]" = field(default_factory=tuple)
+    #: The global ``/opensees/constraints`` MP rows (schema 2.7.0) as
+    #: ``(emit index | None, row)`` pairs in the bridge's emit order
+    #: (:func:`_mp_rows_in_bridge_order`). The deck targets replay
+    #: them at the bridge's slot 7b and ``to_h5`` writes them back.
+    _mp_constraints: "tuple[tuple[int | None, Any], ...]" = field(
+        default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -549,6 +594,8 @@ class OpenSeesModel:
             program = model.program()
             commands = model.commands()
             embedded_rebars = model.embedded_rebars()
+            mp_constraints = _mp_rows_in_bridge_order(
+                model.mp_constraints(), program)
             solve_stamp = model.solve_stamp()
             declarations = model.declarations()
 
@@ -630,6 +677,7 @@ class OpenSeesModel:
             _solve_stamp=solve_stamp,
             _declarations=declarations,
             _embedded_rebars=embedded_rebars,
+            _mp_constraints=mp_constraints,
         )
 
     @classmethod
@@ -739,6 +787,10 @@ class OpenSeesModel:
             _initial_stress=tuple(emitter._initial_stress_records),
             # K2b: the ties the buffers stored (a 2.29.0 archive's rows).
             _embedded_rebars=tuple(emitter._embedded_rebars),
+            # The global MP rows, in the fixed kind order (no program).
+            _mp_constraints=_mp_rows_in_bridge_order(
+                (emitter._equal_dofs, emitter._rigid_links,
+                 emitter._rigid_diaphragms, emitter._embedded_nodes), ()),
             # K1-8: the buffers are this writer's own, so they hold the
             # tags a 2.27.0 archive stores.
             _initial_stress_param_tags=tuple(
@@ -871,12 +923,27 @@ class OpenSeesModel:
                 "'h5' rewrite must keep its attrs."
             )
         self._require_declared_ndm()
+        # An archived rigidDiaphragm whose master is fixed on some in-plane
+        # DOFs only, under Transformation, refuses before any emitter
+        # exists (the live one wipes the domain on creation).
+        from ._internal.compose import refuse_archived_partly_fixed_diaphragms
+
+        refuse_archived_partly_fixed_diaphragms(
+            ndm=self._ndm, fixes=self._fixes,
+            mp_constraints=self._mp_constraints,
+            analysis_attrs=dict(self._analysis_attrs),
+            patterns=self._patterns, stages=self._stages)
         if target in ("tcl", "py", "live"):
             # ADR 0114 D6: fail closed on the stored refusals before any
             # emit. The archive skipped the solve-time gates and recorded
             # which would refuse; a deck or domain built from it would
             # carry the solve those gates exist to stop.
             self._refuse_stored_solve_refusals(target)
+            # A stream the replay cannot write refuses here, before any
+            # emitter exists: the live one wipes the domain on creation.
+            from ._internal.compose import refuse_unreplayable_streams
+
+            refuse_unreplayable_streams(self._fem)
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":
@@ -1110,6 +1177,33 @@ class OpenSeesModel:
     #: side is partition-blind (the flat single-domain degrade), so the
     #: stored verdict it answers to is the flat one.
     _REPLAY_SOLVE_MODE = "flat"
+
+    def _archived_chains(self) -> "tuple[Mapping[str, Any], ...]":
+        """The archive's analysis-chain attrs, the global chain first, then
+        each stage's."""
+        return (self._analysis_attrs,
+                *(stage.chain_attrs for stage in self._stages))
+
+    def _archived_systems(self) -> tuple[str, ...]:
+        """The ``system`` types the archive's analysis chains bind a replay
+        to (:func:`~apeGmsh.opensees.emitter.caps.binding_systems`)."""
+        return binding_systems(self._archived_chains())
+
+    def replay_requires(self) -> tuple[str, ...]:
+        """The ``/opensees@requires`` tokens a replay of this archive needs.
+
+        Every replay target emits flat, so a ``"mpi"`` the stamp derived
+        from a partitioned ``solve_mode`` does not apply; ``"mpi"`` stays
+        only when the archived chain declares a Mumps-family or
+        ``Parallel*`` system. ``"fork"`` is added when the archived chain
+        declares a fork-only type
+        (:func:`~apeGmsh.opensees.emitter.caps.flat_requires`), also for an
+        archive without a stamp (below 2.24.0), whose stored chain is all
+        that is known.
+        """
+        stamp = self._solve_stamp
+        requires = () if stamp is None else stamp.requires
+        return flat_requires(requires, chains=self._archived_chains())
 
     def _refuse_stored_solve_refusals(self, target: str) -> None:
         stamp = self._solve_stamp
@@ -1666,6 +1760,7 @@ class OpenSeesModel:
             equation_constraints=_equation_constraint_records(
                 self._declarations),
             embedded_rebars=self._embedded_rebars,
+            mp_constraints=self._mp_constraints,
             order=self._replay_order(),
         )
 
@@ -1805,6 +1900,8 @@ class OpenSeesModel:
             # deck replay re-derives (:meth:`_echo_embedded_rebars`).
             embedded_rebars=(self._embedded_rebars if embedded_rebars is None
                              else tuple(embedded_rebars)),
+            # The rewrite keeps the global MP rows.
+            mp_constraints=self._mp_constraints,
             # ADR 0099: no deck here — ``H5Emitter.model`` only stores
             # ndm/ndf, so a builder-ndf bracket is never persisted as a
             # line and the INV-1 hoist would buy this path nothing.
@@ -2037,8 +2134,10 @@ class OpenSeesModel:
         # bridge emitted.
         emitter_fresh.restore_program(self._program, self._commands)
         # ADR 0114 D6: echo the solve stamp. ``@requires`` regenerates
-        # from the echoed program's methods, so it equals the source's; a
-        # source without a stamp (below 2.24.0) stays without one.
+        # from the echoed program's methods and the rewritten stores, so
+        # it equals a current source's; a source below 2.33.0 gains the
+        # value tokens its model implies ("mpco", "mpi"). A source
+        # without a stamp (below 2.24.0) stays without one.
         if self._solve_stamp is not None:
             emitter_fresh.set_solve_stamp(
                 will_solve=self._solve_stamp.will_solve,
@@ -2116,45 +2215,91 @@ class OpenSeesModel:
             )
         from .emitter.live import LiveOpsEmitter, get_backend_info
 
-        # ADR 0114 D6: a model whose verbs need the fork cannot be built
-        # into a stock domain; refuse before the wipe, naming the gap.
-        refuse_live_requires(self._solve_stamp, get_backend_info())
+        # ADR 0114 D6: a model whose flat replay needs the fork, an MPCO
+        # build or an MPI system cannot be built into this domain; refuse
+        # before the wipe, naming the gap. The flat replay's own need, not
+        # the archive's partitioned deck's (``replay_requires``). An
+        # archive without a stamp is judged on its stored chain alone.
+        stamp = self._solve_stamp
+        requires = self.replay_requires()
+        if stamp is not None:
+            stamp = replace(stamp, requires=requires)
+        elif requires:
+            stamp = SolveStamp(will_solve=True, requires=requires)
+        refuse_live_requires(
+            stamp, get_backend_info(),
+            mpi_systems=tuple(
+                s for s in self._archived_systems() if is_mpi_system(s)))
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
 
 
 def refuse_live_requires(
-    stamp: "SolveStamp | None", backend: "BackendInfo",
+    stamp: "SolveStamp | None", backend: "BackendInfo", *,
+    mpi_systems: "Sequence[str]" = (),
 ) -> None:
     """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
 
-    ``"fork"`` is the one token ``VERBS`` rows carry today; it is met by
-    a ``BackendInfo`` of kind ``"fork"`` (``ladrunoBuild()`` answered a
-    sha). Any other token is unknown to this bridge and refuses too: an
-    archive from a newer bridge must not be solved on a guess.
+    The tokens are :data:`~apeGmsh.opensees.emitter.caps.REQUIRES_TOKENS`.
+    ``"fork"`` and ``"mpco"`` are met by a ``BackendInfo`` of kind
+    ``"fork"`` (``ladrunoBuild()`` answered a sha; the fork builds the
+    MPCO recorder, pip openseespy does not). ``"mpi"`` is never met: the
+    live target is one in-process domain, not a multi-rank MPI run. Any
+    other token is unknown to this bridge and refuses too: an archive
+    from a newer bridge must not be solved on a guess. ``build('live')``
+    hands in the flat replay's tokens
+    (:meth:`OpenSeesModel.replay_requires`) and the MPI systems its chain
+    declares (``mpi_systems``), which the message names.
     """
     if stamp is None or not stamp.requires:
         return
     from ._internal.build.errors import BridgeError
 
-    missing = [
-        t for t in stamp.requires
-        if not (t == "fork" and backend.kind == "fork")
-    ]
+    missing = unmet_requires(stamp.requires, backend.kind)
     if not missing:
         return
+    known = [t for t in missing if t in REQUIRES_TOKENS]
+    unknown = [t for t in missing if t not in REQUIRES_TOKENS]
+    hints: list[str] = []
+    if any(t in ("fork", "mpco") for t in known):
+        hints.append(
+            "Run it with the Ladruno fork on PYTHONPATH (or "
+            "APEGMSH_OPENSEES_BIN), or build('tcl') / build('py') and run "
+            "the deck with a fork binary.")
+    if "mpi" in known and mpi_systems:
+        hints.append(
+            "'mpi': this replay declares system "
+            + ", ".join(repr(s) for s in mpi_systems)
+            + ", which needs an MPI run that one in-process domain is "
+            "not. Declare a serial system (UmfPack, ProfileSPD, ...) and "
+            "archive the model again.")
+    elif "mpi" in known:
+        hints.append(
+            "'mpi' needs a multi-rank MPI run, which one in-process domain "
+            "is not; a partitioned model's own deck (apeSees.tcl() / .py()) "
+            "runs under mpiexec.")
+    if unknown:
+        hints.append(
+            "This bridge knows no backend that provides "
+            + ", ".join(repr(t) for t in unknown)
+            + "; the archive was written by a newer bridge.")
     raise BridgeError(
         "OpenSeesModel.build('live'): the archive's verbs require "
         + ", ".join(repr(t) for t in missing)
         + f" (/opensees@requires), but the bound openseespy is a "
-        f"{backend.kind} build ({backend.source}). "
-        + ("Run it with the Ladruno fork on PYTHONPATH (or "
-           "APEGMSH_OPENSEES_BIN), or build('tcl') / build('py') and run "
-           "the deck with a fork binary."
-           if missing == ["fork"] else
-           "This bridge knows no backend that provides it; the archive "
-           "was written by a newer bridge.")
+        f"{backend.kind} build ({backend.source}). " + " ".join(hints)
     )
+
+
+def unmet_requires(
+    requires: "Sequence[str]", backend_kind: str,
+) -> tuple[str, ...]:
+    """The tokens of ``requires`` an in-process backend of kind
+    ``backend_kind`` (``"fork"`` or ``"stock"``) does not meet: ``"fork"``
+    and ``"mpco"`` unless it is the fork, ``"mpi"`` always (one process is
+    not an MPI run), and every token this bridge does not know."""
+    met = {"fork", "mpco"} if backend_kind == "fork" else set()
+    return tuple(t for t in requires if t not in met)
 
 
 # ---------------------------------------------------------------------------

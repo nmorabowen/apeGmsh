@@ -685,6 +685,23 @@ with ops.stage(name="geostatic") as s:
   does a stage with `s.run(strategy=)`.
 <!-- verified: tests/opensees/unit/test_stage_chain.py, tests/opensees/live/test_stage_linear_without_test_live.py -->
 
+**Cutting a failed transient step: `ops.strategy.Subdivide(n)`** (ADR 0057
+Amendment 1). In a transient stage's ladder, a `Subdivide(n)` rung retries a
+failed increment in `n` pieces of its remaining time, with rung 0's algorithm.
+The increment always ends on the step grid, so a recorder at the stage's `dt`
+stays aligned, and exhausting every rung still aborts the deck:
+
+```python
+lad = ops.strategy.Ladder(rungs=(ops.strategy.Subdivide(4), ops.strategy.Subdivide(16)))
+s.run(n_increments=n, dt=dt, strategy=lad)      # transient only; static uses Substep
+```
+
+A stage that is not `Transient` with a `dt` refuses it at close. Do not use
+it on a flat live `ops.analyze(strategy=)`: that path fails at the first rescue
+(OpenSees rejects the rung's `__apegmsh_subdivide__` token). A recorder writes
+a row at every committed piece, so read rows by time.
+<!-- verified: tests/opensees/unit/test_strategy_subdivide.py -->
+
 **The stage clock restarts at 0.** Every stage closes with
 `loadConst -time 0.0`: its loads become the permanent baseline and the
 pseudo-time goes back to 0. The next stage's increments therefore land at
@@ -995,9 +1012,10 @@ not co-presence.
    files (`Results.from_recorders`); the two stock routes warn once
    with `DefaultRouteWarning`. Modal records refuse there: modes come
    from `ops.eigen(n)`, whose `EigenResult.results()` /
-   `.to_native(path)` / `.to_ladruno(path)` write and open them.
-   `ops.domain_capture(spec, path=)` with a `DomainCaptureSpec` is the
-   legacy in-process route; do not teach it.
+   `.to_native(path)` / `.to_ladruno(path)` write and open them; a
+   plain openseespy deck's modes come from
+   `apeGmsh.results.live.capture_live_modes`. The old in-process
+   capture route was deleted (#2191).
 
 The canonical component vocabulary is the neutral top-level
 `apeGmsh._vocabulary` (`expand_shorthand` / `expand_many`). The old

@@ -15,7 +15,7 @@ from pathlib import Path
 import h5py
 import pytest
 
-from tests.fixtures.schema import NEUTRAL_CURRENT, OPENSEES_CURRENT
+from tests.fixtures.schema import NEUTRAL_CURRENT
 from tests.opensees.h5._opensees_model_fixtures import (
     PRE_NDM_FIX_STAMP,
     build_simple_frame_fem,
@@ -222,31 +222,6 @@ def test_opensees_model_refuses_to_build_from_a_broker_only_file(
         om.build("tcl")
     with pytest.raises(ValueError, match="no declared ndm"):
         om.to_h5(tmp_path / "rewritten.h5")
-
-
-def test_domain_capture_from_h5_refuses_an_undeclared_ndm(
-    tmp_path: Path,
-) -> None:
-    """``DomainCapture.from_h5`` never resolves a spec in zero dimensions."""
-    from apeGmsh.results.capture import DomainCaptureSpec
-    from apeGmsh.results.capture._domain import DomainCapture
-
-    model_path = tmp_path / "broker_only_meta.h5"
-    with h5py.File(model_path, "w") as f:
-        meta = f.create_group("meta")
-        meta.attrs["schema_version"] = OPENSEES_CURRENT
-        meta.attrs["opensees_schema_version"] = OPENSEES_CURRENT
-        meta.attrs["ndm"] = 0
-        meta.attrs["ndf"] = 0
-        meta.attrs["snapshot_id"] = "stub"
-        meta.attrs["model_name"] = "stub"
-    spec = DomainCaptureSpec()
-    spec.nodes(components=["displacement"], ids=[1])
-    with pytest.raises(RuntimeError, match="no declared ndm"):
-        DomainCapture.from_h5(
-            model_path, spec=spec, fem=build_simple_frame_fem(),
-            output=tmp_path / "run.h5", ops=None,
-        )
 
 
 def test_compose_refuses_an_undeclared_ndm(tmp_path: Path) -> None:

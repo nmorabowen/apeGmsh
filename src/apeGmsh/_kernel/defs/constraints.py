@@ -239,12 +239,19 @@ class EqualDOFDef(ConstraintDef):
         Limit the master search to specific geometric entities.
     slave_entities : list of (dim, tag), optional
         Limit the slave search to specific geometric entities.
+    axis : int or None
+        Periodic pairing (``g.constraints.periodic``): the coordinate
+        index (0, 1, 2) the two sides are separated along. Nodes pair
+        when their *other* coordinates match within *tolerance*, every
+        node of both sides must pair one-to-one, and an unmatched node
+        raises. ``None`` (``equal_dof``) pairs co-located nodes only.
     """
     kind: str = field(init=False, default="equal_dof")
     dofs: list[int] | None = None
     tolerance: float = 1e-6
     master_entities: list[tuple[int, int]] | None = None
     slave_entities: list[tuple[int, int]] | None = None
+    axis: int | None = None
 
 
 @dataclass

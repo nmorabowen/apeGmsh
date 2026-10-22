@@ -104,6 +104,7 @@ from ._internal.build.constraints import (
     emit_embed_ties,
     emit_rebar_elements,
     emit_stage_mp_constraints,
+    fixed_dof_map,
 )
 from ._internal.build.constraints_ranked import (
     emit_mp_constraints_partitioned,
@@ -265,7 +266,6 @@ from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-    from pathlib import Path
     from types import FrameType
 
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).
@@ -281,8 +281,6 @@ if TYPE_CHECKING:
     from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
     from .pattern.pattern import Plain
-    from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
     from apeGmsh.results.Results import Results
     from apeGmsh.hpc import Cluster, Job
 
@@ -2387,6 +2385,7 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+            fixed_dofs=fixed_dof_map(self, inferred_ndf),
         )
         emit_equation_constraints(
             emitter, self.fem, self.equation_constraint_records,
@@ -2807,6 +2806,7 @@ class BuiltModel:
                     stage.stage_constraint_records, emitter, tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
+                    fixed_dofs=fixed_dof_map(self, inferred_ndf),
                 )
 
             # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
@@ -3747,6 +3747,7 @@ class BuiltModel:
         # ``partitions`` so it does not collide with Gmsh's 1-based
         # ``part.id``.  See the bug fix in commit titled
         # ``fix(opensees-bridge): emit 0-based runtime ranks``.
+        fixed_dofs = fixed_dof_map(self, inferred_ndf)
         for idx, part in enumerate(partitions):
             rank = runtime_rank_from_partition_record(part, idx)
             emitter.partition_open(rank)
@@ -3881,6 +3882,7 @@ class BuiltModel:
                         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                         ghost_sp_ops=ghost_sp_ops,
                         stiffness_resolver=self._auto_stiffness_resolver(),
+                        fixed_dofs=fixed_dofs,
                     )
                 )
 
@@ -4215,6 +4217,7 @@ class BuiltModel:
         # preserved exactly by SortedIntToInt.
         ops_tag_to_fem_eid = fem_eid_to_ops_tag.inverse()
 
+        stage_fixed_dofs = fixed_dof_map(self, inferred_ndf)
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
 
@@ -4599,6 +4602,7 @@ class BuiltModel:
                                 ndm=self.ndm,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                                 ghost_sp_ops=stage_ghost_sp_ops,
+                                fixed_dofs=stage_fixed_dofs,
                                 stiffness_resolver=(
                                     self._auto_stiffness_resolver()),
                             )
@@ -8978,105 +8982,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         self._ndm = ndm
         self._ndf = ndf
 
-    def domain_capture(
-        self,
-        spec: "DomainCaptureSpec",
-        *,
-        path: "str | Path",
-        ops: Any = None,
-    ) -> "DomainCapture":
-        """Open a :class:`DomainCapture` for in-process recording.
-
-        Live entry point that resolves the supplied
-        :class:`DomainCaptureSpec` against the bridge's ``fem``
-        snapshot using the bridge's ``ndm`` / ``ndf``, then returns a
-        :class:`DomainCapture` context manager writing to ``path``.
-
-        Per Phase 9 D8 ``ndm`` / ``ndf`` are sourced implicitly from
-        the bridge — the user must have called ``ops.model(ndm=,
-        ndf=)`` first. Use :meth:`DomainCapture.from_h5` instead when
-        no live bridge is available (sources ``ndm`` / ``ndf`` from a
-        ``model.h5`` ``/meta`` block).
-
-        Example::
-
-            ops.model(ndm=3, ndf=6)
-            from apeGmsh.opensees.emitter.live import get_ops
-            osp = get_ops()   # the module the bridge drives; never import openseespy
-            spec = DomainCaptureSpec(opensees=ops)
-            spec.nodes(pg="Top", components=["displacement"])
-            with ops.domain_capture(spec, path="run.h5", ops=osp) as cap:
-                cap.begin_stage("gravity", kind="static")
-                for _ in range(n):
-                    osp.analyze(1, 1.0)   # the backend module, not the bridge
-                    cap.step(t=osp.getTime())
-                cap.end_stage()
-
-        Raises
-        ------
-        RuntimeError
-            If ``ops.model(ndm=, ndf=)`` has not been called yet.
-        """
-        if self._ndm is None or self._ndf is None:
-            raise RuntimeError(
-                "ops.domain_capture: ops.model(ndm=, ndf=) must be "
-                "called before opening a DomainCapture (Phase 9 D8 "
-                "binds ndm/ndf at resolve time)."
-            )
-        from ..results.capture._domain import DomainCapture
-        resolved = spec._resolve_with_explicit_ndm_ndf(
-            self._fem, ndm=self._ndm, ndf=self._ndf,
-        )
-        # Pass the live bridge through so DomainCapture materialises a
-        # sidecar model.h5 and composes its ``/opensees/`` zone into the
-        # run file (ADR 0020 Composed-file pattern).  Without this the
-        # capture file carries only ``/model/`` + ``/stages/`` — and the
-        # broker's neutral ``/model/meta`` has no bridge ``ndf`` (the
-        # broker doesn't know the OpenSees envelope), so
-        # ``OpenSeesModel.from_h5(path, fem_root="/model")`` would read
-        # ``ndf=0``.  Forwarding the bridge lets
-        # ``NativeWriter.write_opensees_from`` propagate the envelope
-        # ndf onto ``/model/meta`` so mixed-ndf models round-trip through
-        # ``Results.from_native``.
-        #
-        # The sidecar is written via ``self.h5(...)``.  Every build
-        # forwards the bridge now: ADR 0055 Phase 5 lifted the
-        # partitioned-staged ``h5()`` guard (P5.1), so the Composed run
-        # file carries ``/opensees/stages`` + ``/opensees/partitions``
-        # + the envelope ndf for partitioned staged captures too
-        # (P5.3) — the feedstock the stage-aware viewer reads.  The
-        # one remaining staged raise site (stage-claimed phantom
-        # nodes, emitter gate-2) is handled by ``DomainCapture``'s
-        # __enter__ degrade: it warns and proceeds sidecar-less.
-        #
-        # The declared algorithm decides whether the gauss
-        # capture can trust the upstream shells' probes (stale after a
-        # Linear step). Any declared Linear wins: flat, a stage's chain, or
-        # a rung of a stage's strategy ladder (a rescue rung solves the
-        # step too). No declared algorithm is unknown (None), which the
-        # capture treats as Linear. A flat ladder is an argument of
-        # ``analyze`` only, never declared here, so it cannot be counted.
-        declared = [
-            p for p in self._primitives if isinstance(p, SolutionAlgorithm)
-        ] + [
-            a for st in self._stage_records
-            for a in (
-                st.algorithm,
-                *(st.strategy.rungs if st.strategy is not None else ()),
-            )
-            if isinstance(a, SolutionAlgorithm)
-        ]
-        names = {type(a).__name__ for a in declared}
-        algorithm = (
-            "Linear" if "Linear" in names
-            else min(names) if names
-            else None
-        )
-        return DomainCapture(
-            resolved, path, self._fem, ops=ops, bridge=self,
-            algorithm=algorithm,
-        )
-
     def fix(
         self,
         *,
@@ -9894,6 +9799,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             )
         self._check_analysis_chain_for_analyze(
             strategy_attached=strategy is not None)
+        if strategy is not None:
+            strategy.check_live()
         self._check_explicit_solver_compat()
 
         # Local import — keeps openseespy out of import-time for users

@@ -186,16 +186,18 @@ test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.
   assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 });
 });
 
-test("opensees 2.32.0 is the target: a 2.32 file with a 2.29 embeddedRebar store opens with no banner", () => {
+test("opensees 2.34.0 is the target: a 2.34 file with a 2.29 embeddedRebar store opens with no banner", () => {
   // h5-schema.md: 2.28 adds decl_params `label`, 2.29 the optional
   // /opensees/constraints/embeddedRebar group (replay data the app does not
   // read), 2.30 decl_params `precision`, 2.31 /opensees/program's `decl`
   // column and the /opensees/decls@program_decl marker (neither read here),
-  // 2.32 that column's side-channel verbs (still not read here).
+  // 2.32 that column's side-channel verbs (still not read here), 2.33 the
+  // @requires value tokens (the solve stamp is not read here), 2.34 the
+  // dataset form of a large params pair or recorder ids (tests below).
   // A file at the target opens silently; tests/test_app_target_drift.py
   // holds the target equal to the Python writer's SCHEMA_VERSION.
-  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 32 });
-  const path = writeFile("o-232.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.32.0");
+  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 34 });
+  const path = writeFile("o-234.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.34.0");
   const f = new h5wasm.File(path, "a");
   const er = (f.get("opensees") as h5wasm.Group).create_group("constraints").create_group("embeddedRebar");
   er.create_dataset({ name: "ele_tag", data: new BigInt64Array([10n]) });
@@ -203,7 +205,7 @@ test("opensees 2.32.0 is the target: a 2.32 file with a 2.29 embeddedRebar store
   er.create_dataset({ name: "args", data: new Float64Array([1]) });
   f.close();
   const m = read(path);
-  assert.equal(m.opensees?.version, "2.32.0");
+  assert.equal(m.opensees?.version, "2.34.0");
   assert.deepEqual(m.warnings, []);
   // V4m: a group missing the string and kind columns opens; its ties are unknown, not 0
   assert.deepEqual(m.opensees?.definitions.embeddedRebar, {
@@ -213,6 +215,99 @@ test("opensees 2.32.0 is the target: a 2.32 file with a 2.29 embeddedRebar store
     unbonded: 0,
     unresolved: [{ why: "/opensees/constraints/embeddedRebar has no args_str, arg_kinds", ties: 1 }],
   });
+});
+
+// ---- opensees 2.34.0 (#2404): a large params pair or recorder ids is a dataset ----
+//
+// The writer stores either form; a group holding both is refused by name.
+
+/** A file with one typed group at `/opensees/<store...>/<name>`, stamped `opensees`. */
+function typedFile(name: string, store: string[], group: string, type: string, build: (g: h5wasm.Group) => void, opensees = "2.34.0"): string {
+  const path = writeFile(name, v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, opensees);
+  const f = new h5wasm.File(path, "a");
+  let parent = f.get("opensees") as h5wasm.Group;
+  for (const s of store) parent = parent.create_group(s);
+  const g = parent.create_group(group);
+  g.create_attribute("type", type);
+  g.create_attribute("tag", 1);
+  build(g);
+  f.close();
+  return path;
+}
+
+function seriesFile(name: string, build: (g: h5wasm.Group) => void, opensees = "2.34.0"): string {
+  return typedFile(name, ["time_series"], "Path_1", "Path", build, opensees);
+}
+
+/** A long numeric pair, as the writer stores one HDF5 refuses as an attribute. */
+const LONG = Float64Array.from({ length: 9000 }, (_, i) => i + 0.5);
+
+test("opensees 2.34: a dataset-form params pair reads as the series' params, not a table", () => {
+  const path = seriesFile("o-234-large.h5", (g) => {
+    g.create_dataset({ name: "params", data: new Float64Array([Number.NaN, 0.5, 1.5, Number.NaN, 0.01]) });
+    g.create_dataset({ name: "params_str", data: ["-values", "", "", "-dt", ""] });
+  });
+  const m = read(path);
+  assert.deepEqual(m.warnings, []);
+  const [ts] = m.opensees!.definitions.timeSeries;
+  assert.deepEqual(ts!.params, ["-values", 0.5, 1.5, "-dt", 0.01]);
+  assert.deepEqual(Object.keys(ts!.tables), []);
+});
+
+test("opensees 2.34: a group holding the params pair in both forms is refused by name", () => {
+  const path = seriesFile("o-234-both.h5", (g) => {
+    g.create_attribute("params", new Float64Array([1, 2]));
+    g.create_dataset({ name: "params", data: new Float64Array([1, 2]) });
+  });
+  assert.throws(() => read(path), (e: unknown) => e instanceof SchemaError && /Path_1\/params is both an attribute and a dataset/.test(e.message));
+});
+
+test("opensees 2.34: a dataset-form material reads every parameter, not a table", () => {
+  const path = typedFile("o-234-mat.h5", ["materials", "uniaxial"], "MultiLinear_1", "MultiLinear", (g) => {
+    g.create_dataset({ name: "params", data: LONG });
+  });
+  const m = read(path);
+  assert.deepEqual(m.warnings, []);
+  const mat = m.opensees!.objects.find((o) => o.family === "uniaxialMaterial")!;
+  assert.equal(mat.params.length, LONG.length);
+  assert.deepEqual(mat.params.slice(0, 2), [0.5, 1.5]);
+  assert.deepEqual(Object.keys(mat.tables), []);
+});
+
+test("opensees 2.34: a dataset-form section reads its string slots too", () => {
+  const nums = Float64Array.from(LONG);
+  nums[0] = Number.NaN;
+  const strs = Array.from(LONG, () => "");
+  strs[0] = "-GJ";
+  const path = typedFile("o-234-sec.h5", ["sections"], "Fiber_1", "Fiber", (g) => {
+    g.create_dataset({ name: "params", data: nums });
+    g.create_dataset({ name: "params_str", data: strs });
+  });
+  const m = read(path);
+  const sec = m.opensees!.objects.find((o) => o.family === "section")!;
+  assert.equal(sec.params.length, LONG.length);
+  assert.deepEqual(sec.params.slice(0, 2), ["-GJ", 1.5]);
+  assert.deepEqual(Object.keys(sec.tables), []);
+});
+
+test("opensees 2.34: a material pair split across the two forms is refused by name", () => {
+  const path = typedFile("o-234-split.h5", ["materials", "uniaxial"], "MultiLinear_1", "MultiLinear", (g) => {
+    g.create_dataset({ name: "params", data: LONG });
+    g.create_attribute("params_str", ["-x"]);
+  });
+  assert.throws(() => read(path), (e: unknown) => e instanceof SchemaError && /MultiLinear_1 holds its params pair in both forms/.test(e.message));
+});
+
+test("a dataset-form pair in a file stamped below opensees 2.34.0 is refused, as Python does", () => {
+  for (const [name, store, group, type] of [
+    ["o-233-series.h5", ["time_series"], "Path_1", "Path"],
+    ["o-233-mat.h5", ["materials", "uniaxial"], "MultiLinear_1", "MultiLinear"],
+  ] as const) {
+    const path = typedFile(name, [...store], group, type, (g) => {
+      g.create_dataset({ name: "params", data: LONG });
+    }, "2.33.0");
+    assert.throws(() => read(path), (e: unknown) => e instanceof SchemaError && new RegExp(`${group}/params is a dataset in an opensees 2\\.33\\.0 file`).test(e.message));
+  }
 });
 
 // ---- V4m (#1846): the bond tag of a LadrunoEmbeddedRebar tie (tieBonds) ------

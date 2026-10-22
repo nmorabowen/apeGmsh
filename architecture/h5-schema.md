@@ -814,6 +814,43 @@ time and stored verbatim.
 Compression: HDF5 gzip level 4 on `time` and `values`. Negligible cost,
 significant savings for ground motions.
 
+### Large arrays as datasets (opensees 2.34.0)
+
+Every typed store above (materials, sections, beam integrations, time
+series, patterns, dampings, regions, recorders, and their stage
+copies) keeps a call's positional arguments as the `params` /
+`params_str` pair: `params` float64 with `NaN` in string slots,
+`params_str` UTF-8 with `""` in numeric slots, `params_str` absent when
+no slot is a string. The writer tries the pair as **attributes**. When
+HDF5 refuses either half for size (an attribute is one object-header
+message of at most 65,535 bytes: about 8,183 float64 or 4,091 string
+slots), it writes two **uncompressed datasets of the same names** in the
+same group instead, as an element's `args` / `args_str` are. A long
+`Path` series failed to archive before (#2404).
+
+```
+/opensees/time_series/Path_1/
+├── attrs: type="Path", tag=1
+├── params        float64 dataset (n,)   ← only when the attribute is refused
+└── params_str    vlen str dataset (n,)  ← when any slot is a string
+```
+
+- The pair switches together: a half already written as an attribute is
+  deleted, so a group holds both arrays in one form.
+- A declared recorder's `ids` follows the same rule (an int64 attribute,
+  or when HDF5 refuses that, an int64 dataset named `ids`).
+- Any other sequence attribute HDF5 refuses for size raises at write,
+  naming the key and the group.
+- The reader reads either form and raises `MalformedH5Error` when a key
+  is in both forms, when the pair is split across them, or when a file
+  stamped below 2.34.0 holds the dataset form
+  (`h5_reader.LARGE_ARRAY_DATASETS_FROM`).
+- `model_hash` walks datasets as it walks attributes, so the values are
+  hashed in either form. The fallback fires only where a 2.33 writer
+  failed, so no archive a 2.33 writer could write changes bytes or hash.
+- The app (`apeGmshViewer`) reads either form for every typed store and
+  refuses the same malformed cases.
+
 ## `/opensees/patterns`
 
 ```
@@ -1208,8 +1245,34 @@ R4; verdicts per partition mode by the maintainer's ruling of
                                          @solve_refusals when @solve_mode is `flat`
   @requires              vlen str (Q,)   sorted union of the emitted verbs'
                                          `VERBS.requires` tokens (`fork`: the
-                                         Ladruno build); empty when none
+                                         Ladruno build) and, from 2.33.0, the
+                                         value tokens `mpco` / `mpi`; empty
+                                         when none
 ```
+
+The `@requires` tokens (`REQUIRES_TOKENS` in `emitter/caps.py`):
+
+| Token | From | Written when | Met by (`build('live')`, the live net) |
+|---|---|---|---|
+| `fork` | 2.24.0 | an emitted verb's `VERBS` row requires it | a Ladruno build (`ladrunoBuild()` answers a sha) |
+| `mpco` | 2.33.0 | any `recorder mpco`, global or staged | a Ladruno build: pip openseespy ships no MPCO recorder |
+| `mpi` | 2.33.0 | a Mumps-family or `Parallel*` `system` (global or staged) that has no runtime fallback, or `@solve_mode` `partitioned` | never in process: the deck needs a multi-rank MPI run |
+
+`mpco` and `mpi` depend on argument values, so `VERBS` rows do not
+carry them; the stamp writer derives them from its own stores
+(`H5Emitter.solve_stamp`, `caps.value_requires`). The MPI systems are
+`Mumps` and `ParallelProfileSPD` (`caps.is_mpi_system`; neither stock
+openseespy nor the fork's serial build declares them). `MPIDiagonal` falls
+back to the serial diagonal solver on both, so it needs nothing, and
+neither does the ADR 0027 auto-emitted `Mumps`, which carries an `UmfPack`
+runtime fallback (`caps.binding_systems`). `@requires` describes the
+archive's own deck. A flat replay re-derives its need from the archived
+chains (`OpenSeesModel.replay_requires`, `caps.flat_requires`): it keeps
+`mpi` only when a chain declares an MPI system, so a partitioned mode
+alone does not bind a flat replay. A file below 2.33.0
+never names them, and its `@requires` keeps the meaning it was written
+with (verb tokens only). A reader accepts any non-empty token, known or
+not; a solving target refuses a token it does not know.
 
 `BuiltModel.emit` hands the writer `will_solve`, the mode and the two
 verdicts through `H5Emitter.set_solve_stamp` on every `apeSees.h5`
@@ -1234,9 +1297,12 @@ array that is not sorted and unique raises `MalformedH5Error`.
 is partition-blind), so it fails closed on a non-empty
 `@solve_refusals_flat`, naming the archive's own verdict beside it;
 `build('live')` refuses on a backend that lacks a token in `@requires`
-(`fork` needs a Ladruno build; an unknown token always refuses);
+of its flat replay (`replay_requires`: `fork` and `mpco` need a
+Ladruno build, `mpi` (an MPI system in the chain) always refuses in
+process, and so does an unknown token);
 `to_h5` echoes the stamp, and `@requires` regenerates from the echoed
-program. A fork *element or
+program and the rewritten stores (a rewrite of a file below 2.33.0
+gains the value tokens its model implies). A fork *element or
 material type* rides the generic `element` / `nDMaterial` verb, whose
 row requires nothing, so it does not reach `@requires` until K4 moves
 typed fork verbs onto the command channel. Attributes of `/opensees`
@@ -1894,11 +1960,13 @@ This section describes the layout those modules write at results zone
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
 
-Five writers produce the file. `source_type` names the writer, but it is a stamp, not proof of origin:
+Six writers produce the file, and files from a seventh, deleted writer stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
-| `domain_capture` | `DomainCapture` (`ops.domain_capture`) | yes | yes when the bridge archives a `model.h5` sidecar; otherwise absent, with a warning, and an element-scoped capture then refuses (#1764) | the user's `begin_stage` calls, then one `mode` stage per mode from `capture_modes` |
+| `eigen` | `EigenResult.to_native` (`ops.eigen(n)`, `opensees/analysis/eigen.py`) | yes | yes: the bridge's zone | one `mode` stage per mode |
+| `eigen` | `capture_live_modes` (`results/live/_modes.py`), a plain openseespy deck | yes | no: the deck is not the bridge's | one `mode` stage per mode |
+| `domain_capture` (legacy) | the in-process `DomainCapture`, deleted in #2191; its files stay readable until the native format retires | yes | yes when the bridge archived a `model.h5` sidecar, else absent | the user's `begin_stage` calls, then one `mode` stage per mode |
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
 | `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
@@ -2033,11 +2101,12 @@ Who writes it:
 | Writer (`source_type`) | Writes `element_index_space`? |
 |---|---|
 | recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
-| `DomainCapture` (`domain_capture`) | `"fem"` on every capture that runs, from #1764 on. An element-scoped capture refuses unless a `{fem_eid: ops_tag}` pairing covers every recorded id ([Domain capture eras](#domain-capture-eras)) |
+| `DomainCapture` (`domain_capture`, legacy files; the writer was deleted in #2191) | `"fem"` on every capture from #1764 on. An element-scoped capture refused unless a `{fem_eid: ops_tag}` pairing covered every recorded id ([Domain capture eras](#domain-capture-eras)) |
+| `EigenResult.to_native`, `capture_live_modes` (`eigen`) | never: they write nodal rows only |
 | `make_demo_results` (`domain_capture`) | `"fem"`, from #1764 on. It writes nodal rows only, in every version |
 | `ParallelModalResult` (`parallel_modal`) | never: absent |
 | `FootfallResult` (`footfall_walking`) | never: absent |
-| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder, `DomainCapture` and `make_demo_results` are the callers in `src/` |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder and `make_demo_results` are the callers in `src/` |
 | MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
 
 The transcoder labels element rows with the recorder spec's FEM ids. Those
@@ -2327,7 +2396,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.32.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.34.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2820,6 +2889,29 @@ detail lives in the `SCHEMA_VERSION` docstring in
   these calls hashes differently once at this minor; any other archive is
   unchanged. Additive minor (a 2.31.x reader refuses a 2.32.x file,
   INV-4).
+- `2.33.0` — #2372 (chain K; the maintainer's ruling of 2026-10-21 on
+  #2220): `/opensees@requires` gains two value tokens the stamp writer
+  derives from argument values: `mpco` (any `recorder mpco`) and `mpi`
+  (a Mumps-family or `Parallel*` `system` without a runtime fallback, or
+  `@solve_mode` `partitioned`; a flat replay keeps `mpi` only for the
+  system); see
+  [the solve stamp](#opensees-attributes-the-solve-stamp-optional-opensees-2240).
+  No path or dtype changes; below this minor `@requires` names verb
+  tokens only and keeps that meaning on read. `@requires` is hashed, so
+  an archive with an MPCO recorder, a Mumps system or partitions hashes
+  differently once at this minor; any other archive is unchanged.
+  Additive minor (a 2.32.x reader refuses a 2.33.x file, INV-4).
+- `2.34.0` — #2404 (chain K, slice #2418; the maintainer's ruling (i) of
+  2026-10-21): a `params` / `params_str` pair, or a declared recorder's
+  `ids`, that HDF5 refuses as an attribute for size is stored as
+  uncompressed datasets of the same names in its group; see
+  [large arrays as datasets](#large-arrays-as-datasets-opensees-2340).
+  The writer failed on such an archive before. Any other oversized
+  sequence attribute refuses by name. Every array that fitted keeps the
+  attribute form, so every archive a 2.33 writer could write keeps its
+  bytes and hash. A 2.33 reader would read a dataset-form pair as no
+  arguments, hence the minor. Additive minor (a 2.33.x reader refuses a
+  2.34.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
