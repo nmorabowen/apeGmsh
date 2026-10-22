@@ -3,8 +3,9 @@
 **Behaviour change: stage 0 is explicit.** Upstream OpenSees starts
 `ManzariDafalias` elastoplastic and the Ladruno fork starts it elastic, so
 one deck gave two answers. One `SSPbrick` under a pressure of 100 settled
-2.08e-3 on stock 3.8.0 and 1.31e-3 on the fork (#2437). The Tcl and py decks
-now write `updateMaterialStage -material <tag> -stage 0` for every
+2.08e-3 on stock 3.8.0 and 1.31e-3 on the fork (#2437). The Tcl and py
+decks and the in-process run (`apeSees.analyze`) now issue
+`updateMaterialStage -material <tag> -stage 0` for every
 `ManzariDafalias` and `LadrunoSANISAND` material. With it, stock gives the
 fork's answer to round-off.
 
@@ -43,3 +44,11 @@ more things:
   by the flip line need not be named. The stage-close check refused that
   case. A flip whose named materials have all been removed is refused,
   because it would switch nothing.
+
+**In-process `analyze` on stock refuses a fork-only chain before the wipe.**
+A fork-only `system`, `integrator`, `numberer`, `test` or constraint
+handler, declared or auto-emitted, is now refused before the live emitter
+wipes the domain. Before, it was refused at its own command, after the wipe
+and the model emit, so a refused run had already cleared the user's domain.
+The check reads the declared chain and costs about 0.5 ms; the fork skips
+it.

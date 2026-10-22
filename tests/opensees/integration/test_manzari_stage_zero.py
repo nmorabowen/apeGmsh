@@ -480,6 +480,39 @@ def test_live_without_the_line_stock_is_not_elastic(tmp_path: Path) -> None:
 
 @pytest.mark.live
 @pytest.mark.skipif(not _openseespy(), reason="no openseespy")
+def test_live_in_process_analyze_is_elastic_on_every_build() -> None:
+    """The live emitter's own ledger: in-process ``apeSees.analyze`` of the
+    unstaged column meets the same closed form and settlement."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = apeSees(build_two_quad_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+        ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=sand)
+        ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=sand)
+        ops.fix(nodes=[1, 2], dofs=(1, 1))
+        ops.fix(nodes=[3, 4, 5, 6], dofs=(1, 0))
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            for node in (5, 6):
+                p.load(node=node, forces=(0.0, -50.0))
+        _chain(ops)
+        dom = get_ops()
+        try:
+            assert ops.analyze(steps=10) == 0
+            tag = max(dom.getEleTags())
+            sxx, syy = dom.eleResponse(tag, "stresses")[:2]
+            uy = dom.nodeDisp(5, 2)
+        finally:
+            dom.wipe()
+    assert syy == pytest.approx(-100.0, rel=1e-10)
+    assert sxx == pytest.approx(_NU / (1.0 - _NU) * -100.0, rel=1e-10)
+    assert uy == pytest.approx(_UY_CONFINE, rel=1e-10)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _openseespy(), reason="no openseespy")
 def test_live_a_user_stage_one_still_wins(tmp_path: Path) -> None:
     """Stage ``load`` flipped to 1 leaves the elastic K0 line."""
     r = _run(_md_column(flip=1), tmp_path)

@@ -9807,10 +9807,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         # Local import — keeps openseespy out of import-time for users
         # who only emit Tcl / py.
-        from .emitter.live import LiveOpsEmitter
+        from .emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         # Retain for post-run live queries (e.g. ladruno_projection_tie_force);
         # the in-process openseespy session stays alive after analyze returns.

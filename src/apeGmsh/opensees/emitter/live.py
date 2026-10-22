@@ -27,10 +27,11 @@ from typing import (
 )
 
 from .._internal.analyze_rc import check_analyze_rc
+from .._internal.build.stage_validate import StageZeroLedger
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
 from .base import DroppedAxisGuard, StrategySpec, command_row, plain_scalar
-from .caps import TargetCaps, is_fork_chain
+from .caps import CHAIN_ATTRS, TargetCaps, is_fork_chain
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -211,6 +212,56 @@ def _fork_integrator_required(i_type: str) -> str:
         f"deck in-process needs the fork. On a stock build use Newmark / "
         f"HHT / CentralDifference / ExplicitDifference instead."
     )
+
+
+def _fork_chain_message(family: str, c_type: str) -> str:
+    """The refusal of fork-only chain type ``c_type`` on a stock build."""
+    if family == "constraints" and c_type == "LadrunoProjection":
+        return _LADRUNO_PROJECTION_FORK_REQUIRED
+    if family == "integrator":
+        return _fork_integrator_required(c_type)
+    return _fork_chain_required(family, c_type)
+
+
+def refuse_fork_chain_before_wipe(bm: Any) -> None:
+    """Refuse a fork-only chain type before a live emitter wipes the domain.
+
+    In-process ``apeSees.analyze`` on a stock build (it refuses staged
+    models, so the chain is the flat one).  The chain types are read from
+    the declared primitives: each chain primitive's own ``_emit`` into a
+    recorder, plus the constraint handler the bridge auto-emits, decided by
+    the bridge's own method.  No model walk, no domain, no file; measured
+    at about 0.5 ms on the emit-cost gate cells.  Nothing runs on the fork.
+    """
+    if backend_info_of(_get_ops()).kind == "fork":
+        return
+    from .._internal.tag_resolution import set_tag_resolver
+    from .._internal.types import (
+        ConstraintHandler,
+        ConvergenceTest,
+        Integrator,
+        LinearSystem,
+        Numberer,
+    )
+    from .recording import RecordingEmitter
+
+    chain = [p for p in bm.primitives if isinstance(
+        p, (ConstraintHandler, Numberer, LinearSystem, ConvergenceTest,
+            Integrator))]
+    probe = RecordingEmitter()
+    set_tag_resolver(probe, lambda p: bm.tag_for[id(p)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for prim in chain:
+            prim._emit(probe, bm.tag_for[id(prim)])
+        # The one private call: which handler the emit adds (LadrunoContact,
+        # LadrunoProjection, ...) is decided only here, so reuse it rather
+        # than restate it.
+        bm._maybe_auto_emit_constraint_handler(probe, chain)
+    for name, args, _kw in probe.calls:
+        if name in CHAIN_ATTRS and args and is_fork_chain(name, str(args[0])):
+            raise RuntimeError(
+                _fork_chain_message(name, str(args[0])) + _UNSTAMPED_FORK_NOTE)
 
 
 def _fork_chain_required(family: str, c_type: str) -> str:
@@ -994,6 +1045,7 @@ class LiveOpsEmitter:
             )
             if refusal is not None:
                 raise RuntimeError(refusal)
+        self._stage_zero_ledger().material(mat_type, tag)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(
@@ -1050,6 +1102,7 @@ class LiveOpsEmitter:
         # element TYPE has been verified (per-type, not a single flag — a
         # build that knows one fork element but not another must still be
         # gated on the second).
+        self._stage_zero_ledger().owed = True
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition
@@ -1224,14 +1277,8 @@ class LiveOpsEmitter:
     def _fork_chain_gate(self, family: str, c_type: str) -> None:
         """Refuse a fork-only chain type (:func:`~apeGmsh.opensees.emitter.
         caps.is_fork_chain`) before it reaches a stock domain."""
-        if not is_fork_chain(family, c_type):
-            return
-        if family == "constraints" and c_type == "LadrunoProjection":
-            self._stock_build_gate(_LADRUNO_PROJECTION_FORK_REQUIRED)
-        elif family == "integrator":
-            self._stock_build_gate(_fork_integrator_required(c_type))
-        else:
-            self._stock_build_gate(_fork_chain_required(family, c_type))
+        if is_fork_chain(family, c_type):
+            self._stock_build_gate(_fork_chain_message(family, c_type))
 
     def constraints(self, c_type: str, *args: int | float | str) -> None:
         self._fork_chain_gate("constraints", c_type)
@@ -1277,6 +1324,7 @@ class LiveOpsEmitter:
         # ``label`` names the loop in the DECK emitters' fail-loud
         # banners; live runs in-process and reports failure through the
         # returned rc instead (the staged orchestrator raises on it).
+        self._stage_zero()
         if strategy is not None:
             return self._analyze_ladder(
                 steps=int(steps), dt=dt, label=label, strategy=strategy,
@@ -1368,6 +1416,7 @@ class LiveOpsEmitter:
         # eigenvalues ``λ_i = ω_i²``. Modal shapes are queried separately
         # via ``ops.nodeEigenvector(node_tag, mode_idx)`` — see
         # :class:`apeGmsh.opensees.analysis.eigen.EigenResult`.
+        self._stage_zero()
         values: Any = self._ops.eigen(solver, num_modes)
         return [float(v) for v in values]
 
@@ -1395,6 +1444,7 @@ class LiveOpsEmitter:
         # gate cannot fire here; a stock build rejects the '-feast'
         # token with a parse error instead — the bridge driver
         # pre-checks capabilities().has_fork for the friendly message.
+        self._stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
@@ -1872,9 +1922,26 @@ class LiveOpsEmitter:
         self._ops.remove("element", int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        self._stage_zero_ledger().user_flip(mat_tag)
         self._ops.updateMaterialStage(
             "-material", int(mat_tag), "-stage", int(stage),
         )
+
+    #: Created on first use, so an emitter built with ``__new__`` (the
+    #: gate tests) still has one.
+    _stage0: "StageZeroLedger | None" = None
+
+    def _stage_zero_ledger(self) -> StageZeroLedger:
+        if self._stage0 is None:
+            self._stage0 = StageZeroLedger()
+        return self._stage0
+
+    def _stage_zero(self) -> None:
+        """Issue the owed ManzariDafalias ``-stage 0`` calls
+        (:class:`~apeGmsh.opensees._internal.build.stage_validate.
+        StageZeroLedger`), at a solve verb."""
+        for tag in self._stage_zero_ledger().due():
+            self._ops.updateMaterialStage("-material", tag, "-stage", 0)
 
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
@@ -1899,6 +1966,7 @@ class LiveOpsEmitter:
         args: tuple[str | int, ...],
         value: float,
     ) -> None:
+        self._stage_zero_ledger().parameter(args)
         self._ops.parameter(int(pid))
         for et in ele_tags:
             self._ops.addToParameter(int(pid), "element", int(et), *args)
