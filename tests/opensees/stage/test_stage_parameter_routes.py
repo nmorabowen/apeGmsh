@@ -26,8 +26,11 @@ import pytest
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.stage._builder import (
+    CLASS_WIDE_STAGE_FLAG,
+    MATERIAL_STATE_CLASSES,
     MATERIAL_STATE_ELEMENTS,
     STAGED_MATERIAL_CLASSES,
+    TAG_BLIND_STAGE_PARAMETER,
 )
 
 from tests.opensees.fixtures.fem_stub import (
@@ -159,6 +162,41 @@ def test_the_materialstate_parameter_passes_on_a_forwarding_host(
     ops, mat = _bridge(cls, "T")
     _flip(ops, "materialState", 1.0, material=mat, pg="T")
     assert len(ops._stage_records) == 1
+
+
+def test_the_materialstate_classes_table() -> None:
+    """Read from the nD sources: every class with a materialState branch."""
+    assert MATERIAL_STATE_CLASSES == {
+        "ManzariDafalias", "LadrunoSANISAND", "SAniSandMS", "PM4Sand",
+        "PM4Silt", "J2CyclicBoundingSurface", "DruckerPrager",
+        "BoundingCamClay", "StressDensityModel", "stressDensity",
+    }
+    # Every class-wide group answers materialState (the stage-close count
+    # relies on it); the tag-blind classes take it too.
+    assert set(CLASS_WIDE_STAGE_FLAG) <= MATERIAL_STATE_CLASSES
+    assert {c for c, n in TAG_BLIND_STAGE_PARAMETER.items()
+            if "materialState" in n} <= MATERIAL_STATE_CLASSES
+
+
+def test_materialstate_on_a_class_without_it_refuses_by_name() -> None:
+    """ElasticIsotropic has no materialState branch: nothing takes it."""
+    ops, _mat = _bridge("ManzariDafalias", "T")
+    rock = ops.nDMaterial.ElasticIsotropic(name="rock", E=1e5, nu=0.3)
+    with pytest.raises(BridgeError) as exc:
+        with ops.stage(name="push") as s:
+            s.update_parameter("materialState", 1.0, pg="T", material=rock)
+    msg = str(exc.value)
+    assert "ElasticIsotropic's setParameter has no materialState" in msg
+    assert "#2460" in msg and "no stage flag" in msg
+    assert "s.update_material_stage" not in msg
+
+
+def test_the_updatematerialstage_refusal_steers_to_materialstate_only_where_it_acts(
+) -> None:
+    ops, mat = _bridge("ManzariDafalias", "T")
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, "updateMaterialStage", 1.0, material=mat, pg="T")
+    assert "s.update_parameter('materialState'" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

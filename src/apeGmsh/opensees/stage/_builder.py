@@ -116,6 +116,19 @@ TAG_BLIND_STAGE_PARAMETER: dict[str, frozenset[str]] = {
     "stressDensity": frozenset({"materialState", "updateMaterialStage"}),
 }
 
+#: nDMaterial classes whose ``setParameter`` takes ``materialState``
+#: (read from the ``nD`` sources: the only ones with that branch, plus
+#: ``LadrunoSANISAND``, which inherits ManzariDafalias's).  On any other
+#: class, the multi-yield soils included, ``s.update_parameter(
+#: "materialState", v, material=m)`` reaches no object: OpenSees warns
+#: and the run keeps its stage, so the call is refused.
+MATERIAL_STATE_CLASSES: frozenset[str] = frozenset({
+    "ManzariDafalias", "LadrunoSANISAND", "SAniSandMS", "PM4Sand",
+    "PM4Silt", "J2CyclicBoundingSurface",
+    *(cls for cls, names in TAG_BLIND_STAGE_PARAMETER.items()
+      if "materialState" in names),
+})
+
 #: The ``setParameter`` names that set a class-wide stage flag.  Every
 #: class of :data:`CLASS_WIDE_STAGE_FLAG` answers both (ManzariDafalias,
 #: inherited by LadrunoSANISAND, SAniSandMS, PM4Sand and PM4Silt alike),
@@ -917,8 +930,8 @@ class _StageBuilder:
           which nothing sets: the stage the run lands on is uninitialised
           memory, while the bridge counted a flip to the value given.
         * ``materialState`` is refused when a targeted element that carries
-          the named material (a tag-blind one, when it names none) is not
-          of a :data:`MATERIAL_STATE_ELEMENTS` class.  ``FourNodeQuad``,
+          the named material is not of a :data:`MATERIAL_STATE_ELEMENTS`
+          class.  ``FourNodeQuad``,
           ``Tri31`` and ``stdBrick`` read any ``material...`` name as their
           own per-point address, so the update never reaches the material.
         * ``materialState`` is refused when a targeted element carries a
@@ -943,6 +956,12 @@ class _StageBuilder:
                    if p.name in STAGE_FLAG_PARAMETERS]
         for prec in records:
             if prec.name == "updateMaterialStage":
+                cls = self._nd_class_of_tag(prec.mat_tag)
+                instead = (
+                    "s.update_material_stage, or s.update_parameter("
+                    "'materialState', ...), which reads theDouble"
+                    if cls in MATERIAL_STATE_CLASSES else
+                    "s.update_material_stage")
                 raise BridgeError(
                     f"{call_of(prec)} does not carry its value: "
                     "updateParameter sets only Parameter::theDouble "
@@ -952,8 +971,7 @@ class _StageBuilder:
                     "uninitialised memory (measured: the elastic answer in "
                     "one process, a plastic one in another), while the "
                     "bridge counts a flip to the value given (issue #2460).  "
-                    "Use s.update_material_stage, or s.update_parameter("
-                    "'materialState', ...), which reads theDouble."
+                    f"Use {instead}."
                 )
         if not records and not self._update_material_stage_records:
             return
@@ -1016,13 +1034,14 @@ class _StageBuilder:
             hit = [(spec, carried, blind)
                    for (spec, carried, blind), eids in zip(specs, fanout)
                    if eids & targets]
-            # A host is lost only if it carries what the update names (a
-            # tag-blind material when it names none).
+            # update_parameter refuses a materialState that names no
+            # material.  A host is lost only if it carries the named one.
+            assert prec.mat_tag is not None
+            mat_tag = int(prec.mat_tag)
             hosts = sorted({
-                type(spec).__name__ for spec, carried, blind in hit
+                type(spec).__name__ for spec, carried, _blind in hit
                 if type(spec).__name__ not in MATERIAL_STATE_ELEMENTS
-                and (int(prec.mat_tag) in carried
-                     if prec.mat_tag is not None else bool(blind))
+                and mat_tag in carried
             })
             if hosts:
                 unmeasured = sorted(
@@ -1047,20 +1066,38 @@ class _StageBuilder:
                 f"{cls} (nDMaterial tag {tag})"
                 for _spec, _carried, blind in hit for cls, tag in blind
                 if "materialState" in TAG_BLIND_STAGE_PARAMETER[cls]
-                and (prec.mat_tag is None or tag != int(prec.mat_tag))
+                and tag != mat_tag
             })
             if others:
-                named = ("names no material" if prec.mat_tag is None else
-                         f"names nDMaterial tag {prec.mat_tag}")
                 raise BridgeError(
-                    f"{call} {named}, but its targets carry "
+                    f"{call} names nDMaterial tag {mat_tag}, but its targets "
+                    "carry "
                     f"{', '.join(others)}, whose setParameter takes "
                     "materialState without checking the tag: the update "
                     "would switch that material's stage too, silently "
                     "(issue #2458; DruckerPrager materialState 1 is "
                     "elastic).  Target only the elements that carry the "
-                    "material you flip, and pass it as material=."
+                    "material you flip."
                 )
+
+    def _nd_class_of_tag(self, tag: "int | None") -> "str | None":
+        """The class name of the nDMaterial with ``tag`` the model holds
+        (registered, or a dependency of a registered primitive), else
+        ``None``."""
+        if tag is None:
+            return None
+        seen: set[int] = set()
+        frontier: list[Primitive] = list(self._bridge._primitives)
+        while frontier:
+            prim = frontier.pop()
+            if id(prim) in seen:
+                continue
+            seen.add(id(prim))
+            frontier.extend(prim.dependencies())
+            if (isinstance(prim, NDMaterial)
+                    and self._bridge.tag_for(prim) == int(tag)):
+                return type(prim).__name__
+        return None
 
     def _check_activation_after_plastic_flip(self) -> None:
         """Refuse activating an element of a plastic first-element-only group.
@@ -2383,7 +2420,11 @@ class _StageBuilder:
             Empty ``name``; both or neither of ``pg`` / ``elements``.
         BridgeError
             ``material=`` was never registered on this bridge (so it has
-            no tag, and the argv would name nothing).
+            no tag, and the argv would name nothing); or ``name`` is
+            ``"materialState"`` with no ``material=``, or with one whose
+            class is not in :data:`MATERIAL_STATE_CLASSES` (no object
+            would take it).  The stage close refuses the other stage-flag
+            routes that reach nothing or the wrong material.
         """
         if not name:
             raise ValueError(
@@ -2410,6 +2451,30 @@ class _StageBuilder:
                     "register it with ops.register(mat)) first."
                 )
             mat_tag = int(tag)
+        if name == "materialState":
+            if material is None:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_parameter('materialState', "
+                    f"{value}) names no material.  Every class that answers "
+                    "materialState for its own tag needs that tag in the "
+                    "argv, so this update would reach only the classes that "
+                    "take it for any tag ("
+                    f"{', '.join(sorted(TAG_BLIND_STAGE_PARAMETER))}) and "
+                    "switch them unasked (issue #2458).  Pass material=."
+                )
+            cls = type(material).__name__
+            if cls not in MATERIAL_STATE_CLASSES:
+                instead = (
+                    "Flip it with s.update_material_stage."
+                    if cls in STAGED_MATERIAL_CLASSES else
+                    "It has no stage flag the bridge can set.")
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_parameter('materialState', "
+                    f"{value}, material={cls}): {cls}'s setParameter has no "
+                    "materialState, so no object takes the update: OpenSees "
+                    "warns and the run keeps its stage (issue #2460).  "
+                    + instead
+                )
         record = UpdateParameterRecord(
             name=str(name),
             value=float(value),

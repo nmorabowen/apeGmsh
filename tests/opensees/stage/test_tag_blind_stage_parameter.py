@@ -182,12 +182,14 @@ def test_a_flip_naming_the_tag_blind_material_itself_passes() -> None:
 
 
 def test_a_flip_naming_no_material_refuses() -> None:
-    ops, _sand, clay = _bridge()
+    """Only a tag-blind class takes a materialState with no tag."""
+    ops, _sand, _clay = _bridge()
     with pytest.raises(BridgeError) as exc:
         _flip(ops, elements=[3], material=None)
     msg = str(exc.value)
-    assert "names no material" in msg
-    assert f"DruckerPrager (nDMaterial tag {ops.tag_for(clay)})" in msg
+    assert "names no material" in msg and "#2458" in msg
+    for cls in TAG_BLIND_STAGE_PARAMETER:
+        assert cls in msg
 
 
 def test_a_non_stage_parameter_is_not_checked() -> None:
