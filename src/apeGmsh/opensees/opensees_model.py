@@ -923,8 +923,9 @@ class OpenSeesModel:
                 "'h5' rewrite must keep its attrs."
             )
         self._require_declared_ndm()
-        # #2427 / #2435: a legacy archive's partly fixed rigidDiaphragm
-        # under Transformation refuses before any emitter exists.
+        # An archived rigidDiaphragm whose master is fixed on some in-plane
+        # DOFs only, under Transformation, refuses before any emitter
+        # exists (the live one wipes the domain on creation).
         from ._internal.compose import refuse_archived_partly_fixed_diaphragms
 
         refuse_archived_partly_fixed_diaphragms(
