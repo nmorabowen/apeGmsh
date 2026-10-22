@@ -1,12 +1,16 @@
-"""#2439: a stage flip that names part of a class-wide stage-flag group refuses.
+"""#2439, #2440: a stage flip that names part of a class-wide stage-flag group
+refuses.
 
 ``ManzariDafalias::mElastFlag`` (inherited by ``LadrunoSANISAND``) and
 ``SAniSandMS::mElastFlag`` are C++ statics: ``updateMaterialStage -material A``
 switches every material of the group, and an unnamed one skips its own
-``Elastic2Plastic()``.  The unit tests pin the stage-close refusal
-(``CLASS_WIDE_STAGE_FLAG`` in ``stage/_builder.py``); the live tests run the
-refused selection on OpenSees and show it is exactly the one that switches
-the material it did not name.
+``Elastic2Plastic()``.  The unit tests pin the emit-time refusal
+(``validate_class_wide_stage_flags`` in ``_internal/build/stage_validate.py``,
+over ``CLASS_WIDE_STAGE_FLAG`` in ``stage/_builder.py``).  It sees the final
+model, so a material registered after the stage block counts (#2440), and it
+models ``s.remove_element``: a material whose elements are all removed need
+not be named.  The live tests run the refused selection on OpenSees and show
+it is exactly the one that switches the material it did not name.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import pytest
 
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
+from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees._target import OpenSeesTarget
 from apeGmsh.opensees.stage._builder import (
     CLASS_WIDE_STAGE_FLAG,
@@ -97,12 +102,22 @@ def _bridge(cls_a: str, cls_b: str) -> tuple[apeSees, Any, Any]:
     return ops, mat_a, mat_b
 
 
-def _stage(ops: apeSees, flips: "list[tuple[list[Any], int]]") -> None:
-    with ops.stage(name="flip") as s:
+def _stage(ops: apeSees, flips: "list[tuple[list[Any], int]]", *,
+           name: str = "flip", remove: "str | None" = None) -> None:
+    with ops.stage(name=name) as s:
+        if remove is not None:
+            s.remove_element(pg=remove)
         for mats, value in flips:
             s.update_material_stage(materials=mats, stage=value)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
+
+
+def _emit(ops: apeSees) -> RecordingEmitter:
+    """The emit is where the check runs, beside validator V7."""
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    return rec
 
 
 #: Every class-wide pair: two of one class, and the two classes that share
@@ -147,13 +162,13 @@ def test_subset_flip_refuses_and_names_the_unnamed(
 ) -> None:
     ops, mat_a, mat_b = _bridge(cls_a, cls_b)
     tag_b = ops.tag_for(mat_b)
+    _stage(ops, [([mat_a], value)])
     with pytest.raises(BridgeError) as exc:
-        _stage(ops, [([mat_a], value)])
+        _emit(ops)
     msg = str(exc.value)
     assert f"{cls_b} (nDMaterial tag {tag_b})" in msg
     assert CLASS_WIDE_STAGE_FLAG[cls_a] in msg
     assert "class-wide" in msg
-    assert not ops._stage_records, "a refused stage must not be recorded"
 
 
 @pytest.mark.parametrize(("cls_a", "cls_b"), _GROUP_PAIRS)
@@ -162,19 +177,21 @@ def test_full_group_flip_passes(cls_a: str, cls_b: str) -> None:
     _stage(ops, [([mat_a, mat_b], 1)])
     (rec,) = ops._stage_records[0].update_material_stage_records
     assert rec.mat_tags == (ops.tag_for(mat_a), ops.tag_for(mat_b))
+    _emit(ops)
 
 
 def test_full_group_over_two_calls_passes() -> None:
     """The lines emit back to back, so one call per material is the same."""
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "LadrunoSANISAND")
     _stage(ops, [([mat_a], 1), ([mat_b], 1)])
-    assert len(ops._stage_records) == 1
+    _emit(ops)
 
 
 def test_one_group_two_values_refuses() -> None:
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [([mat_a], 1), ([mat_b], 0)])
     with pytest.raises(BridgeError, match=r"different stages \[0, 1\]"):
-        _stage(ops, [([mat_a], 1), ([mat_b], 0)])
+        _emit(ops)
 
 
 def test_separate_groups_do_not_count_together() -> None:
@@ -182,7 +199,7 @@ def test_separate_groups_do_not_count_together() -> None:
     one group and none of the other is complete."""
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "SAniSandMS")
     _stage(ops, [([mat_a], 1)])
-    assert len(ops._stage_records) == 1
+    _emit(ops)
 
 
 def test_pm4sand_and_pm4silt_are_separate_groups() -> None:
@@ -196,7 +213,110 @@ def test_pm4sand_and_pm4silt_are_separate_groups() -> None:
 def test_an_unflipped_stage_is_not_checked() -> None:
     ops, _mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
     _stage(ops, [])
-    assert len(ops._stage_records) == 1
+    _emit(ops)
+
+
+# ---------------------------------------------------------------------------
+# #2440: the final model, and s.remove_element
+# ---------------------------------------------------------------------------
+
+
+def _late_bridge() -> tuple[apeSees, Any, Any]:
+    """``mat_b`` and its element on ``B`` are registered AFTER the stage
+    block that flips ``mat_a`` alone."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_a = ops.nDMaterial.ManzariDafalias(name="mat_a", **_MD)
+    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
+    ops.fix(pg="Base", dofs=(0, 1))
+    _stage(ops, [([mat_a], 1)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_b = ops.nDMaterial.ManzariDafalias(name="mat_b", **_MD)
+    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    return ops, mat_a, mat_b
+
+
+def test_a_material_registered_after_the_stage_counts() -> None:
+    """The blind spot of a stage-close check: ``mat_b`` did not exist when
+    the stage closed, yet its element is global, so it is live at the flip
+    line and the flip would switch it."""
+    ops, _mat_a, mat_b = _late_bridge()
+    with pytest.raises(BridgeError) as exc:
+        _emit(ops)
+    assert f"ManzariDafalias (nDMaterial tag {ops.tag_for(mat_b)})" in str(
+        exc.value)
+
+
+@pytest.mark.parametrize("target", ["tcl", "py", "h5"])
+def test_the_late_material_refuses_on_every_target(
+    target: str, tmp_path: Any,
+) -> None:
+    ops, _mat_a, _mat_b = _late_bridge()
+    with pytest.raises(BridgeError, match="class-wide"):
+        getattr(ops, target)(str(tmp_path / f"deck.{target}"))
+
+
+def test_a_material_removed_in_the_same_stage_need_not_be_named() -> None:
+    """The removals emit before the flips, so the only element of ``B`` is
+    out of the domain at the flip line: ``mat_b`` is not switched.  A
+    stage-close check that did not model the removal refused this."""
+    ops, mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [([mat_a], 1)], remove="B")
+    rec = _emit(ops)
+    assert ("update_material_stage", (ops.tag_for(mat_a), 1), {}) in rec.calls
+
+
+def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
+    """``B`` is registered before the flip stage closes, but the stage after
+    it activates ``B``, so ``B`` is out of the domain at the flip line.  Only
+    the final model shows that, which is why no check runs at stage close:
+    one there would refuse this correct model."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_a = ops.nDMaterial.ManzariDafalias(name="mat_a", **_MD)
+        mat_b = ops.nDMaterial.ManzariDafalias(name="mat_b", **_MD)
+    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
+    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    ops.fix(nodes=[1, 2], dofs=(0, 1))
+    _stage(ops, [([mat_a], 1)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ops.stage(name="install") as s:
+            s.activate(pgs=["B"])
+            s.fix(nodes=[5, 6], dofs=(0, 1))
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    _emit(ops)
+
+
+def test_a_material_removed_in_an_earlier_stage_need_not_be_named() -> None:
+    ops, mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [], name="excavate", remove="B")
+    _stage(ops, [([mat_a], 1)])
+    _emit(ops)
+
+
+def test_a_flip_before_the_removal_still_counts_the_removed_material() -> None:
+    ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [([mat_a], 1)])
+    _stage(ops, [], name="excavate", remove="B")
+    with pytest.raises(BridgeError) as exc:
+        _emit(ops)
+    assert f"(nDMaterial tag {ops.tag_for(mat_b)})" in str(exc.value)
+
+
+def test_a_flip_whose_materials_are_all_removed_refuses() -> None:
+    """Every element of the named material is gone: the line reaches no
+    element and switches nothing (``no effect``), which V7 does not see."""
+    ops, mat_a, _mat_b = _bridge("ManzariDafalias", "SAniSandMS")
+    _stage(ops, [([mat_a], 1)], remove="A")
+    with pytest.raises(BridgeError, match="has been removed"):
+        _emit(ops)
 
 
 # ---------------------------------------------------------------------------
@@ -275,8 +395,9 @@ def _run(cls_a: str, cls_b: str, named: "tuple[int, ...]", *,
 
 def _assert_bridge_refuses(cls_a: str, cls_b: str, flip: int) -> None:
     ops, mat_a, _mat_b = _bridge(cls_a, cls_b)
+    _stage(ops, [([mat_a], flip)])
     with pytest.raises(BridgeError, match="class-wide"):
-        _stage(ops, [([mat_a], flip)])
+        _emit(ops)
 
 
 @pytest.mark.live
@@ -336,13 +457,13 @@ def test_parameter_route_subset_refuses(
     cls_a: str, cls_b: str, name: str,
 ) -> None:
     ops, mat_a, mat_b = _bridge(cls_a, cls_b)
+    with ops.stage(name="flip") as s:
+        s.update_parameter(name, 1.0, pg="A", material=mat_a)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
     with pytest.raises(BridgeError) as exc:
-        with ops.stage(name="flip") as s:
-            s.update_parameter(name, 1.0, pg="A", material=mat_a)
-            s.analysis(**_chain(ops))
-            s.run(n_increments=1)
+        _emit(ops)
     assert f"{cls_b} (nDMaterial tag {ops.tag_for(mat_b)})" in str(exc.value)
-    assert not ops._stage_records
 
 
 def test_parameter_route_full_group_passes() -> None:
@@ -352,7 +473,7 @@ def test_parameter_route_full_group_passes() -> None:
         s.update_parameter("materialState", 1.0, pg="B", material=mat_b)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
-    assert len(ops._stage_records) == 1
+    _emit(ops)
 
 
 @pytest.mark.parametrize(("value", "ok"), [(1.0, True), (0.0, False)])
@@ -366,12 +487,12 @@ def test_the_two_routes_count_together(value: float, ok: bool) -> None:
             s.analysis(**_chain(ops))
             s.run(n_increments=1)
 
+    build()
     if ok:
-        build()
-        assert len(ops._stage_records) == 1
+        _emit(ops)
     else:
         with pytest.raises(BridgeError, match=r"different stages \[0, 1\]"):
-            build()
+            _emit(ops)
 
 
 def test_a_non_stage_parameter_is_not_a_flip() -> None:
@@ -380,7 +501,7 @@ def test_a_non_stage_parameter_is_not_a_flip() -> None:
         s.update_parameter("poissonRatio", 0.3, pg="A", material=mat_a)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
-    assert len(ops._stage_records) == 1
+    _emit(ops)
 
 
 def _analyze(ops: Any) -> int:
@@ -454,11 +575,12 @@ def test_live_parameter_route_switches_the_unnamed_material(
     and the bridge refuses exactly that selection."""
     pytest.importorskip("openseespy.opensees")
     ops, mat_a, _mat_b = _bridge(cls, cls)
+    with ops.stage(name="flip") as s:
+        s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
     with pytest.raises(BridgeError, match="class-wide"):
-        with ops.stage(name="flip") as s:
-            s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
-            s.analysis(**_chain(ops))
-            s.run(n_increments=1)
+        _emit(ops)
     code_n, uy_n = _run_param(cls, named_param=False, dev=dev)
     code_p, uy_p = _run_param(cls, named_param=True, dev=dev)
     assert (code_n, code_p) == (0, 0)
