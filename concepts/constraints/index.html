@@ -3880,18 +3880,34 @@ shapes of the same situation: <code>equal_dof_mixed</code> ties <em>differently 
 DOFs across a pair (master <code>uz</code> driving slave <code>rz</code>, say, at a solid-to-shell
 joint), and <code>penalty</code> replaces the algebraic constraint with a stiff spring
 when the solver's constraint handler struggles.</p>
+<p><code>periodic</code> ties two <em>opposite</em> boundaries instead of a shared one: the left
+and right sides of a soil column, or two faces of a unit cell. The sides are
+separated along <code>axis</code>, and each slave node pairs with the master node whose
+other coordinates match, so every elevation of a column gets one <code>equalDOF</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">periodic</span><span class="p">(</span><span class="s2">"Left"</span><span class="p">,</span> <span class="s2">"Right"</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="s2">"x"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Mesh the two sides alike. A node of either side with no partner raises at
+<code>get_fem_data</code>, so a boundary is never half tied. Two periodic directions
+(the sides of a square, the faces of a box) meet at corner and edge nodes. Their
+pairs merge so each corner has a single master. Declare all of them before the
+first snapshot, with the same <code>dofs</code>.</p>
+<p>Take care where a tied pair is also fixed, as at the base of a soil column.
+Under the <code>Transformation</code> handler (the bridge default for <code>equalDOF</code>), a tie
+whose master is fixed on one tied DOF and free on another loses the free tie
+at every step (an OpenSees defect, #2396). Either fix that DOF on both nodes
+and leave it out of the tie, or declare <code>ops.constraints.Lagrange()</code>.</p>
 <p><code>rigid_link</code> adds kinematics: each slave follows the master through a rigid
 offset arm, so a rotation at the master produces translations at the slaves.
 <code>link_type="beam"</code> carries all six DOFs; <code>"rod"</code> couples translations only.
 Three group-level constraints build on the same idea. <code>rigid_diaphragm</code> is the
 classic floor constraint — every slab node within <code>plane_tolerance</code> of the
 diaphragm plane shares in-plane motion with a master node:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">rigid_diaphragm</span><span class="p">(</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">"slab_master"</span><span class="p">,</span> <span class="s2">"slab"</span><span class="p">,</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">master_point</span><span class="o">=</span><span class="p">(</span><span class="mf">2.5</span><span class="p">,</span> <span class="mf">2.5</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">),</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">plane_normal</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">plane_tolerance</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">rigid_diaphragm</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="s2">"slab_master"</span><span class="p">,</span> <span class="s2">"slab"</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">master_point</span><span class="o">=</span><span class="p">(</span><span class="mf">2.5</span><span class="p">,</span> <span class="mf">2.5</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">),</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">plane_normal</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">plane_tolerance</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">)</span>
 </span></code></pre></div>
 <p><code>master_point</code> is optional. Left out, <code>"slab_master"</code> must resolve to exactly one
 node, which becomes the master, and the plane passes through it; zero or several
@@ -3925,7 +3941,7 @@ non-matching interface: each slave node is projected onto the closest master
 face and its DOFs are interpolated from that face's corner DOFs through the
 face's shape functions, <code>u_slave = Σ Nᵢ(ξ, η) · u_masterᵢ</code> — the same idea as
 Abaqus <code>*TIE</code>.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">"flange_surface"</span><span class="p">,</span> <span class="s2">"web_surface"</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">"flange_surface"</span><span class="p">,</span> <span class="s2">"web_surface"</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The <code>tolerance</code> is the maximum projection distance — generous enough to bridge
 any geometric gap, tight enough not to grab the wrong face. As a rule, make the
@@ -3967,7 +3983,7 @@ in <a href="../../examples/tie-non-matching-meshes/">the tie example</a>.</p>
 <p>Two situations look like ties but aren't surface-to-surface. The first is
 <strong>embedding</strong>: a lower-dimensional part living inside a host — rebar curves in
 a concrete volume, stiffeners in a shell.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="s2">"concrete_volume"</span><span class="p">,</span> <span class="s2">"rebar_lines"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="s2">"concrete_volume"</span><span class="p">,</span> <span class="s2">"rebar_lines"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Each embedded node is located inside a host element and constrained to follow
 the host's displacement field through its shape functions. Non-simplex and
@@ -3980,7 +3996,7 @@ else.</p>
 3-DOF solid face. <code>node_to_surface</code> builds a compound constraint — phantom
 6-DOF nodes duplicated at the slave positions, rigid links from the master to
 each phantom, <code>equalDOF</code> from each phantom down to the real solid node:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">node_to_surface</span><span class="p">(</span><span class="s2">"frame_end"</span><span class="p">,</span> <span class="s2">"solid_face"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">node_to_surface</span><span class="p">(</span><span class="s2">"frame_end"</span><span class="p">,</span> <span class="s2">"solid_face"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Here the master is a geometric <em>point</em> entity, not a part label — the one
 place in the family where you target an entity rather than a name. The
@@ -3993,8 +4009,8 @@ without a stiffness path and the matrix conditioning suffers.</p>
 <code>g.constraints.contact(...)</code> is the genuinely different animal: a face-to-face
 contact interaction that can open, close, slide, and carry friction, emitted
 through the Ladruno fork's contact subsystem.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">contact</span><span class="p">(</span><span class="s2">"wall_face"</span><span class="p">,</span> <span class="s2">"soil_face"</span><span class="p">,</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>                      <span class="n">formulation</span><span class="o">=</span><span class="s2">"nts"</span><span class="p">,</span> <span class="n">kn</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span> <span class="n">mu</span><span class="o">=</span><span class="mf">0.4</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">contact</span><span class="p">(</span><span class="s2">"wall_face"</span><span class="p">,</span> <span class="s2">"soil_face"</span><span class="p">,</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>                      <span class="n">formulation</span><span class="o">=</span><span class="s2">"nts"</span><span class="p">,</span> <span class="n">kn</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span> <span class="n">mu</span><span class="o">=</span><span class="mf">0.4</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Two formulations: <code>"nts"</code> (node-to-segment penalty, with Coulomb friction) and
 <code>"mortar"</code> (segment-to-segment augmented-Lagrange — the accuracy lane for
