@@ -280,7 +280,11 @@ def _equation_rows(
             (emit_index_of(program, "equationConstraint", i) if program
              else None, row)
             for i, row in enumerate(stored))
-    users = _equation_constraint_records(declarations)
+    # No /opensees/decls (below 2.25.0): nothing to join. The deck targets
+    # say so when they build (:meth:`OpenSeesModel._populate_emitter`), not
+    # every reader that opens the file.
+    users = (_equation_constraint_records(declarations)
+             if declarations is not None else ())
     if not users:
         return ()
     calls = [run.first + k for run in program
@@ -1805,15 +1809,21 @@ class OpenSeesModel:
         return tuple(rows[:len(rows) - _user_equation_count(
             self._declarations)])
 
+    def _stores_equation_lines(self) -> bool:
+        """Whether the source archive stores its ``equationConstraint``
+        lines (opensees 2.35.0); a model with no source version (made from
+        the emitter's buffers) holds them."""
+        from .emitter.h5_reader import archives_equation_constraints
+
+        return (self._opensees_version is None
+                or archives_equation_constraints(self._opensees_version))
+
     def _echoed_program(self) -> "tuple[Any, ...]":
         """The program the ``to_h5`` rewrite echoes: the source's, with a
         pre-2.35 source's user ``equationConstraint`` calls linked to the
         rows the rewrite stores (:func:`_link_user_equation_calls`)."""
-        from .emitter.h5_reader import archives_equation_constraints
-
         program = tuple(self._program)
-        if (not program or self._opensees_version is None
-                or archives_equation_constraints(self._opensees_version)):
+        if not program or self._stores_equation_lines():
             return program
         return _link_user_equation_calls(
             program, _user_equation_count(self._declarations))
@@ -1870,6 +1880,11 @@ class OpenSeesModel:
         # without this the tcl/py/live targets emit invalid element
         # calls (missing iNode / jNode prefix).
         elements_with_conn = self._rehydrate_element_connectivity(self._elements)
+
+        # An archive below 2.35.0 with no /opensees/decls cannot say whether
+        # it had apeSees.equation_constraint rows: the deck says so.
+        if self._declarations is None and not self._stores_equation_lines():
+            _equation_constraint_records(None)
 
         # g.reinforce deck-replay (A4 full): the bond material name→tag map
         # `emit_reinforce_ties` needs to resolve a tie's `-bond <name>` is the

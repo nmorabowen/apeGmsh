@@ -424,10 +424,10 @@ def test_an_archive_without_decls_warns_that_ties_are_unverified(
         rows = program[()]
         rows["decl"] = -1
         program[...] = rows
-    with pytest.warns(H5LedgerWarning, match="cannot verify apeSees.equation_constraint"):
-        om = OpenSeesModel.from_h5(str(archive))
+    om = OpenSeesModel.from_h5(str(archive))
     assert om.declarations is None
-    om.build("tcl")
+    with pytest.warns(H5LedgerWarning, match="cannot verify apeSees.equation_constraint"):
+        om.build("tcl")
 
 
 def test_a_2_35_archive_without_decls_replays_its_stored_lines(
