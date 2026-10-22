@@ -433,9 +433,10 @@ def test_an_archive_without_decls_warns_that_ties_are_unverified(
 def test_a_2_35_archive_without_decls_replays_its_stored_lines(
     tmp_path: Path,
 ) -> None:
-    """From opensees 2.35.0 the stored line is the record (a ``to_h5``
-    rewrite of a pre-2.25 file carries no decls), so the replay writes it
-    without the decls and without a warning."""
+    """A 2.35 file without decls replays the lines it stores, and still
+    warns: every bridge emit writes the decls, so such a file is a rewrite
+    of one below 2.25.0 or no bridge's, and nothing proves its lines
+    complete."""
     bridge, _, archive = _bridge_and_replay(_broad_frame(), tmp_path)
     with h5py.File(str(archive), "a") as f:
         for name in ("decls", "decl_params"):
@@ -445,13 +446,31 @@ def test_a_2_35_archive_without_decls_replays_its_stored_lines(
         rows = program[()]
         rows["decl"] = -1
         program[...] = rows
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", H5LedgerWarning)
-        om = OpenSeesModel.from_h5(str(archive))
+    om = OpenSeesModel.from_h5(str(archive))
+    with pytest.warns(H5LedgerWarning, match="cannot verify apeSees.equation_constraint"):
         replay = om.build("tcl")
     assert isinstance(replay, str)
     assert _lines(replay, "equationConstraint") == _lines(
         bridge, "equationConstraint")
+
+
+@pytest.mark.parametrize("era", ["2.22", "2.24"])
+def test_a_rewrite_of_a_decls_less_archive_still_warns(
+    era: str, tmp_path: Path,
+) -> None:
+    """A ``to_h5`` rewrite of a file below 2.25.0 is stamped at the current
+    minor and carries no decls either; its deck must still say it cannot
+    verify the user rows the source may have lost."""
+    source = (Path(__file__).resolve().parents[2] / "fixtures"
+              / "schema_corpus" / f"opensees_{era}.h5")
+    rewrite = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        OpenSeesModel.from_h5(str(source)).to_h5(str(rewrite))
+    om = OpenSeesModel.from_h5(str(rewrite))
+    assert om.declarations is None
+    with pytest.warns(H5LedgerWarning, match="cannot verify apeSees.equation_constraint"):
+        om.build("tcl", flat=True)
 
 
 def _as_pre_2_35(archive: Path) -> None:

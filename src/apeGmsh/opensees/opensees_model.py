@@ -1881,9 +1881,12 @@ class OpenSeesModel:
         # calls (missing iNode / jNode prefix).
         elements_with_conn = self._rehydrate_element_connectivity(self._elements)
 
-        # An archive below 2.35.0 with no /opensees/decls cannot say whether
-        # it had apeSees.equation_constraint rows: the deck says so.
-        if self._declarations is None and not self._stores_equation_lines():
+        # With no /opensees/decls the archive cannot say whether it had
+        # apeSees.equation_constraint rows: the deck says so, at any version.
+        # Every bridge emit writes the decls, so a 2.35 file without them is
+        # a rewrite of a file below 2.25.0 (which lost its rows) or no
+        # bridge's: neither proves its stored lines complete.
+        if self._declarations is None:
             _equation_constraint_records(None)
 
         # g.reinforce deck-replay (A4 full): the bond material name→tag map
