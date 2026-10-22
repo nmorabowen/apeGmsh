@@ -508,14 +508,14 @@ class _StageBuilder:
             for mat in members.values():
                 if CLASS_WIDE_STAGE_FLAG[type(mat).__name__] != group:
                     continue
-                tag = self._bridge.tag_for(mat)
-                if tag is None:
+                mat_tag = self._bridge.tag_for(mat)
+                if mat_tag is None:
                     unnamed.append(
                         f"{type(mat).__name__} (not registered on the "
                         "bridge; an element uses it)")
-                elif int(tag) not in tags:
+                elif int(mat_tag) not in tags:
                     unnamed.append(
-                        f"{type(mat).__name__} (nDMaterial tag {tag})")
+                        f"{type(mat).__name__} (nDMaterial tag {mat_tag})")
             if not unnamed:
                 continue
             raise BridgeError(

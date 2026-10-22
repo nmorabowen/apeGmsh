@@ -17,6 +17,19 @@ calls within the same stage, still passes. The groups are listed in
 `CLASS_WIDE_STAGE_FLAG` (`apeGmsh.opensees.stage._builder`), where a new
 class-wide class takes one entry.
 
+The check counts both routes that set the flag:
+
+- `s.update_material_stage`;
+- `s.update_parameter("materialState" | "updateMaterialStage", v, material=m)`.
+
+**Fork-pinned bridges also refuse a stage that activates elements after an
+earlier stage left the group plastic.** This applies to a bridge built with
+`OpenSeesTarget(mode="fork")`, when the activated elements carry a
+`ManzariDafalias` or `LadrunoSANISAND` material. The fork's constructor
+resets the flag to 0, so the whole group would silently go back to elastic.
+Stock keeps the flag. The refusal is gated by `FORK_RESETS_STAGE_STATIC`,
+which is emptied once the fork fix lands.
+
 **Behaviour change:** a model that flipped a single `ManzariDafalias` or
 `SAniSandMS` material beside others of its group used to build, and silently
 switched the others too. It now refuses. Name every material of the group in
