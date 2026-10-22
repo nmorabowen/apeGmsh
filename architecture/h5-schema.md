@@ -826,6 +826,16 @@ stores only:
   attributes, or as uncompressed datasets of the same names when HDF5
   refuses either half for size (see below).
 
+The emitted positional argument sequence after `tag` per `type`
+([`opensees/time_series/time_series.py`](../src/apeGmsh/opensees/time_series/time_series.py)):
+
+| `type` | Emitted positional arguments in `params` / `params_str` (optional flags emitted only when non-default) |
+|---|---|
+| `"Constant"`, `"Linear"` | `()` when `factor == 1.0`, else `("-factor", factor)` |
+| `"Trig"` | `(t_start, t_end, period[, "-factor", factor][, "-shift", shift][, "-zeroShift", zero_shift])` |
+| `"Pulse"` | `(t_start, t_end, period, width[, "-factor", factor][, "-shift", shift][, "-zeroShift", zero_shift])` |
+| `"Path"` | `(("-filePath", file) \| ("-values", *values)[, ("-dt", dt) \| ("-time", *time)][, "-factor", factor][, "-startTime", start_time][, "-prependZero"][, "-useLast"])` |
+
 **No pre-sampled `time` / `values` datasets on disk.** The writer does
 not sample algorithmic series (`Linear`, `Constant`, `Trig`, `Pulse`)
 and does not create standalone `time` or `values` datasets under
@@ -839,7 +849,7 @@ and does not create standalone `time` or `values` datasets under
   Consumers (`apeGmshViewer/src/panels/windows/plot/series.ts`)
   evaluate the OpenSees closed forms directly from those parameters.
 * **Inline `Path` series and generator primitives** (`Path(values=...)`,
-   plus `Ricker`, `MomentStep`, `Yoffe`, `ASCE41Protocol`,
+  plus `Ricker`, `MomentStep`, `Yoffe`, `ASCE41Protocol`,
   `ModifiedATC24Protocol`, and `FEMA461Protocol`, which sample their
   waveform at emit time and delegate to `Path`) emit as `type="Path"`
   with `-values v0 v1 ...` and `-dt dt` (or `-time t0 t1 ...`) in the
@@ -3091,8 +3101,8 @@ column.h5
     │   └── args       [[1, 1]]                 — (transf_tag, integration_tag)
     ├── /time_series/Path_1/
     │   └── attrs: type="Path", tag=1,
-    │              params=[nan, nan, 0.01, nan, 9.81],
-    │              params_str=["-filePath", "elcentro.txt", "", "-dt", "", "-factor", ""]
+    │              params=[nan, nan, nan, 0.01, nan, 9.81],
+    │              params_str=["-filePath", "elcentro.txt", "-dt", "", "-factor", ""]
     ├── /patterns/UniformExcitation_1/
     │   └── attrs: type="UniformExcitation", tag=1, direction=1,
     │              series_ref="/opensees/time_series/Path_1",
