@@ -180,8 +180,8 @@ def _verdict(rc: int, stdout: str, stderr: str) -> tuple[bool, str]:
     it exits 0, prints the completion marker last, **and** its stderr names
     no :data:`_SILENT_FALLBACK`: stock openseespy accepts an unknown type
     (a fork-only integrator) with that warning and solves on with its
-    default one, a wrong answer that exits 0 (#2430). Its full line leads
-    the log, so :func:`_failure` names it."""
+    default one, a wrong answer that exits 0 (#2430). Its line leads the
+    log."""
     out = stdout.strip().splitlines()
     fallback = _SILENT_FALLBACK.search(stderr)
     ran = rc == 0 and bool(out) and out[-1] == _MARKER and fallback is None
@@ -191,13 +191,13 @@ def _verdict(rc: int, stdout: str, stderr: str) -> tuple[bool, str]:
 
 
 def _failure(log: str) -> str:
-    """Where a deck that did not run stopped: a silent fallback's
-    ``WARNING unknown <family> type`` line, else the bridge's ``analyze
+    """Where a deck that did not run stopped: the bridge's ``analyze
     FAILED`` line (stage and increment), else the statement the traceback
-    names and the exception it raised, else the log's last line."""
-    hit = _SILENT_FALLBACK.search(log)
-    if hit:
-        return hit.group(0)
+    names and the exception it raised, else a silent fallback's
+    ``WARNING unknown <family> type`` line (the deck ran to its end on a
+    default), else the log's last line. Stock prints the same warning
+    before it raises on an unknown numberer, test or handler, so the
+    traceback comes first."""
     hit = _ANALYZE_FAILED.search(log)
     if hit:
         return hit.group(0)
@@ -205,6 +205,9 @@ def _failure(log: str) -> str:
     for i in range(len(lines) - 1, 0, -1):
         if lines[i - 1].startswith("File ") and ", line " in lines[i - 1]:
             return f"{lines[i]} -> {lines[-1]}"
+    hit = _SILENT_FALLBACK.search(log)
+    if hit:
+        return hit.group(0)
     return lines[-1] if lines else ""
 
 
