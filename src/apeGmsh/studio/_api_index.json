@@ -3558,6 +3558,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ShellMITC4"
     },
+    "ops.element.ShellNLDKGQ": {
+      "doc": "",
+      "signature": "ShellNLDKGQ(*, pg: 'str', section: '_ShellSection | str', damp: 'Damping | None' = None) -> 'ShellNLDKGQ'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.element.ShellNLDKGQ"
+    },
     "ops.element.SixNodeTri": {
       "doc": "",
       "signature": "SixNodeTri(*, pg: 'str', thickness: 'float', material: 'NDMaterial | str', plane_type: 'str' = 'PlaneStrain', pressure: 'float | None' = None, rho: 'float | None' = None, body_force: 'tuple[float, float] | None' = None) -> 'SixNodeTri'",
@@ -3869,6 +3875,12 @@
       "signature": "mass_from_model() -> 'None'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.mass_from_model"
+    },
+    "ops.modal_after_gravity": {
+      "doc": "Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``",
+      "signature": "modal_after_gravity(num_modes: 'int', *, p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'GravityModalResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.modal_after_gravity"
     },
     "ops.modal_deck": {
       "doc": "Emit a distributed modal deck (ADR 0077 Tier 1) — two backends.",
