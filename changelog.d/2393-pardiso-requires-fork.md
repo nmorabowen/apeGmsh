@@ -26,4 +26,4 @@ LadrunoProjection` / `LadrunoContact`. Stock openseespy treats them in
 one of two ways. It rejects the numberer, the test and both handlers.
 It accepts an unknown integrator with a warning and solves with its
 default instead. Deriving their token needs the chain attributes at the
-stamp writer, in `emitter/h5.py`, so it is a follow-up.
+stamp writer, in `emitter/h5.py`, so it is a follow-up (#2430).
