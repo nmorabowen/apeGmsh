@@ -118,12 +118,19 @@ reactions (they call `reactions` first), and element responses by
 ### D6 — Combination happens in Python, per quantity
 
 CQC uses the Der Kiureghian (1981) `ρ_ij` with per-mode damping ratios; SRSS
-and ABS are offered as well. Directional combination is 100/30 (the envelope
-over which direction carries the 100 %) or the SRSS of the per-direction
-results. Every combination works on one quantity's own per-mode values, never
-on derived displacements. The spectrum is a `(periods, accels)` table with a
-scale factor and a direction, interpolated the way the fork does (linear,
-clamped at both ends); the scale is applied in Python, not passed as `-scale`.
+is the other rule. Directional combination is 100/30 (the envelope over which
+direction carries the 100 %) or the SRSS of the per-direction results. Every
+combination works on one quantity's own per-mode values, never on derived
+displacements. The spectrum is a `(periods, accels)` table, interpolated the
+way the fork does (linear, clamped at both ends), or a vectorised callable
+`Sa(T)` (a codeSpectra spectrum's `.at`, so codeSpectra never becomes a
+dependency), with a scale factor and a direction; the scale is applied in
+Python, not passed as `-scale`.
+
+The driver adds one extractor of its own, `base_shear` (the total support
+reaction per translational direction), so the combined `V_t` per direction is
+always in the result. Code scaling (ASCE 7-22 §12.9.1.4, `max(1, V / V_t)`)
+is the user's step on top of it; drift scaling stays in apeETABS.
 
 ### D7 — Gravity is combined separately
 
