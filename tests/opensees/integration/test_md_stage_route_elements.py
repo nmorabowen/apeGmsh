@@ -381,7 +381,8 @@ def test_the_replayed_deck_sweeps_too(tmp_path: Any) -> None:
     assert replayed.count(sweep) == 1
 
 
-def _deck_tri6_run(tmp_path: Any, *, shared: bool) -> list[float]:
+def _deck_tri6_run(tmp_path: Any, *, shared: bool,
+                   route: str = "stage") -> list[float]:
     """The bridge's own openseespy deck, run on the resolved backend: two
     SixNodeTri, hydrostatic 100 kPa elastic, a plastic flip, then 40 kPa
     more vertical.  ``shared``: one material on both (the swept flip);
@@ -422,14 +423,19 @@ def _deck_tri6_run(tmp_path: Any, *, shared: bool) -> list[float]:
         s.analysis(**chain())
         s.run(n_increments=20)
     with ops.stage(name="push") as s:
-        s.update_material_stage(materials=mats, stage=1)
+        if route == "stage":
+            s.update_material_stage(materials=mats, stage=1)
+        else:
+            for pg in ("A", "B"):
+                s.update_parameter("materialState", 1.0, pg=pg,
+                                   material=mats[0])
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             for b in (0, 6):
                 for n, w in edge:
                     p.load(node=b + n, forces=(0.0, -40.0 * w))
         s.analysis(**chain())
         s.run(n_increments=20)
-    path = tmp_path / ("shared.py" if shared else "reference.py")
+    path = tmp_path / f"{'shared' if shared else 'reference'}_{route}.py"
     ops.py(str(path))
     src = path.read_text(encoding="utf-8")
     header = "import openseespy.opensees as ops\n"
@@ -454,6 +460,19 @@ def test_the_bridge_deck_initialises_every_element(tmp_path: Any) -> None:
     scale = max(abs(v) for v in ref)
     assert scale > 1e-4
     assert _diff(swept, ref) <= 1e-10 * max(1.0, scale)
+
+
+@pytest.mark.live
+def test_the_materialstate_parameter_route_initialises_every_element(
+    tmp_path: Any,
+) -> None:
+    """``s.update_parameter("materialState", 1, material=m)`` over every
+    element carrying ``m`` passes the stage close (#2442 refused it) and its
+    per-element ``addToParameter`` deck matches the reference."""
+    pytest.importorskip("openseespy.opensees")
+    ref = _deck_tri6_run(tmp_path, shared=False)
+    routed = _deck_tri6_run(tmp_path, shared=True, route="materialState")
+    assert _diff(routed, ref) <= 1e-10 * max(1.0, max(abs(v) for v in ref))
 
 
 # ---------------------------------------------------------------------------
