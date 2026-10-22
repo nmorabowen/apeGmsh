@@ -1664,6 +1664,18 @@ class LineStationBucketSkippedWarning(UserWarning):
     """
 
 
+class LineStationGpParamFallbackWarning(UserWarning):
+    """Section-level line stations placed evenly, not at their Gauss points.
+
+    A ``section.force`` / ``section.deformation`` station takes its natural
+    coordinate from the class's ``QUADRATURE/GP_PARAM`` row keyed by its
+    ``GAUSS_ID``. When the file carries no ``GP_PARAM`` for the class, or a
+    ``GAUSS_ID`` falls outside it, those stations sit evenly spaced over
+    ``[-1, +1]`` instead; the warning names the component, the bucket, its
+    element class and how many elements it covers.
+    """
+
+
 def _station_token(token: str) -> str:
     """``token`` with a plural recorder spelling read as its singular."""
     return _STATION_TOKEN_ALIAS.get(token, token)
@@ -2240,7 +2252,9 @@ def _read_section_stations(
 
     Each ``LEVELS==2`` block is one integration station; the station's
     natural coordinate comes from the element's ``GP_PARAM`` keyed by
-    ``GAUSS_ID``.
+    ``GAUSS_ID``. A station with no ``GP_PARAM`` row sits evenly spaced
+    over ``[-1, +1]`` and :class:`LineStationGpParamFallbackWarning` names
+    the bucket, its class and its element count.
     """
     # gauss_id → DATA column carrying this component.
     gp_to_col: dict[int, int] = {}
@@ -2269,11 +2283,26 @@ def _read_section_stations(
     )
     xi = np.empty(n_st, dtype=np.float64)
     fallback = _station_xi(n_st)
+    unmapped: list[int] = []
     for s_i, gid in enumerate(gauss_ids):
         if gp_param is not None and 0 <= gid < gp_param.shape[0]:
             xi[s_i] = float(gp_param[gid, 0])
         else:
             xi[s_i] = fallback[s_i]
+            unmapped.append(gid)
+    if unmapped:
+        if gp_param is None:
+            why = "the file carries no QUADRATURE/GP_PARAM for its class"
+        else:
+            why = (f"GAUSS_ID(s) {unmapped[:10]} fall outside its "
+                   f"QUADRATURE/GP_PARAM ({gp_param.shape[0]} row(s))")
+        warnings.warn(
+            f"{component!r} line stations of bucket {bucket_key!r} (element "
+            f"class {_class_name(bucket_key) or '<unparsed>'!r}, {E} "
+            f"element(s)): {why}, so {len(unmapped)} of {n_st} station(s) "
+            f"sit evenly spaced over [-1, +1], not at the integration points.",
+            LineStationGpParamFallbackWarning, stacklevel=4,
+        )
     return (
         out.reshape(T, E * n_st),
         np.repeat(sel_ids, n_st),
