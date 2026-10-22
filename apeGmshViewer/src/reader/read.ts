@@ -249,6 +249,8 @@ class Reader {
   readonly warnings: string[] = [];
   private readonly h5: H5Module;
   private readonly f: H5File;
+  /** The opensees zone's stamp while `/opensees` is read (gates the 2.34.0 dataset form). */
+  private opsVersion: string | null = null;
 
   constructor(h5: H5Module, f: H5File) {
     this.h5 = h5;
@@ -370,6 +372,7 @@ class Reader {
   }
 
   private readOpenSees(g: H5Group, version: string): OpenSeesZone {
+    this.opsVersion = version;
     const objects: OpsObject[] = [];
     const families: [string, OpsFamily][] = [
       ["sections", "section"],
@@ -520,25 +523,10 @@ class Reader {
     for (const [k, v] of Object.entries(a)) {
       if (k !== "type" && k !== "tag" && k !== "params" && k !== "params_str") attrs[k] = v;
     }
-    // opensees 2.34.0 (#2404): an array past the attribute limit is a same-named dataset.
-    const keys = g.keys();
-    const large: Record<string, Param[]> = {};
-    for (const key of LARGE_ARRAY_KEYS) {
-      if (!keys.includes(key)) continue;
-      if (key in a) throw new SchemaError(`${joinPath(g.path, key)} is both an attribute and a dataset; the writer stores one form`);
-      const ds = this.dataset(g, key);
-      large[key] = key === "params_str" ? strings(ds) : Array.from(numbers(ds));
-    }
-    const pairInDatasets = "params" in large || "params_str" in large;
-    if (pairInDatasets && ("params" in a || "params_str" in a)) {
-      throw new SchemaError(`${g.path} holds its params pair in both forms; the writer stores one`);
-    }
-    if ("params_str" in large && !("params" in large)) {
-      throw new SchemaError(`${joinPath(g.path, "params_str")} is a dataset with no 'params' beside it`);
-    }
+    const { params, large } = this.readLargeArrays(g, a, ["params", "params_str", "ids"]);
     if (large["ids"] !== undefined) attrs["ids"] = large["ids"];
     const tables: Record<string, Table> = {};
-    for (const key of keys) {
+    for (const key of g.keys()) {
       if (key in large) continue;
       const node = g.get(key);
       if (!(node instanceof this.h5.Dataset)) {
@@ -552,10 +540,42 @@ class Reader {
       groupName: g.path.slice(g.path.lastIndexOf("/") + 1),
       type,
       tag: typeof tag === "number" ? tag : null,
-      params: pairInDatasets ? mergeParams(large["params"], large["params_str"]) : mergeParams(a["params"], a["params_str"]),
+      params,
       attrs,
       tables,
     };
+  }
+
+  /**
+   * A typed group's `params` pair, in either form, and the same-named
+   * datasets among `keys` (opensees 2.34.0: an array HDF5 refuses as an
+   * attribute is written as a dataset). Refuses a key in both forms, a pair
+   * split across them, a lone `params_str` dataset, and any dataset form in
+   * a file stamped below 2.34.0, as the Python reader does.
+   */
+  private readLargeArrays(
+    g: H5Group, a: Record<string, Param | Param[]>, keys: readonly string[],
+  ): { params: Param[]; large: Record<string, Param[]> } {
+    const children = g.keys();
+    const large: Record<string, Param[]> = {};
+    for (const key of keys) {
+      if (!children.includes(key)) continue;
+      if (key in a) throw new SchemaError(`${joinPath(g.path, key)} is both an attribute and a dataset; the writer stores one form`);
+      if (!atLeast(this.opsVersion, LARGE_ARRAY_DATASETS_FROM)) {
+        throw new SchemaError(`${joinPath(g.path, key)} is a dataset in an opensees ${this.opsVersion} file; a large array is stored as a dataset from opensees ${LARGE_ARRAY_DATASETS_FROM.major}.${LARGE_ARRAY_DATASETS_FROM.minor}.0 on`);
+      }
+      const ds = this.dataset(g, key);
+      large[key] = key === "params_str" ? strings(ds) : Array.from(numbers(ds));
+    }
+    const pairInDatasets = "params" in large || "params_str" in large;
+    if (pairInDatasets && ("params" in a || "params_str" in a)) {
+      throw new SchemaError(`${g.path} holds its params pair in both forms; the writer stores one`);
+    }
+    if ("params_str" in large && !("params" in large)) {
+      throw new SchemaError(`${joinPath(g.path, "params_str")} is a dataset with no 'params' beside it`);
+    }
+    const params = pairInDatasets ? mergeParams(large["params"], large["params_str"]) : mergeParams(a["params"], a["params_str"]);
+    return { params, large };
   }
 
   private readAnalysis(g: H5Group): AnalysisDef {
@@ -824,13 +844,14 @@ class Reader {
     const tag = a["tag"];
     if (typeof type !== "string") throw new SchemaError(`${g.path} has no string 'type' attribute`);
     if (typeof tag !== "number") throw new SchemaError(`${g.path} has no integer 'tag' attribute`);
-    const params = mergeParams(a["params"], a["params_str"]);
+    const { params, large } = this.readLargeArrays(g, a, ["params", "params_str"]);
     const attrs: Record<string, Param | Param[]> = {};
     for (const [k, v] of Object.entries(a)) {
       if (k !== "type" && k !== "tag" && k !== "params" && k !== "params_str") attrs[k] = v;
     }
     const tables: Record<string, Table> = {};
     for (const key of g.keys()) {
+      if (key in large) continue;
       const node = g.get(key);
       if (!(node instanceof this.h5.Dataset)) {
         this.warnings.push(`${g.path}/${key} is not a dataset; not shown`);
@@ -1073,8 +1094,16 @@ function strings(ds: H5Dataset): string[] {
   throw new SchemaError(`${ds.path} is not a string dataset`);
 }
 
-/** The keys a 2.34.0 writer stores as same-named datasets past the attribute limit (#2404). */
-const LARGE_ARRAY_KEYS = ["params", "params_str", "ids"] as const;
+/** The first opensees minor whose writer stores an array HDF5 refuses as an attribute as a same-named dataset (#2404). */
+const LARGE_ARRAY_DATASETS_FROM = { major: 2, minor: 34 } as const;
+
+/** True when `version` ("M.m.p") is at or above `from`; false for null or unparsable. */
+function atLeast(version: string | null, from: { major: number; minor: number }): boolean {
+  const m = version === null ? null : /^(\d+)\.(\d+)\./.exec(version);
+  if (m === null) return false;
+  const major = Number(m[1]), minor = Number(m[2]);
+  return major > from.major || (major === from.major && minor >= from.minor);
+}
 
 function mergeParams(p: Param | Param[] | undefined, s: Param | Param[] | undefined): Param[] {
   const nums = p === undefined ? [] : Array.isArray(p) ? p : [p];

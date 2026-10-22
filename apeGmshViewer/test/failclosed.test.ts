@@ -221,16 +221,26 @@ test("opensees 2.34.0 is the target: a 2.34 file with a 2.29 embeddedRebar store
 //
 // The writer stores either form; a group holding both is refused by name.
 
-function seriesFile(name: string, build: (g: h5wasm.Group) => void): string {
-  const path = writeFile(name, v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.34.0");
+/** A file with one typed group at `/opensees/<store...>/<name>`, stamped `opensees`. */
+function typedFile(name: string, store: string[], group: string, type: string, build: (g: h5wasm.Group) => void, opensees = "2.34.0"): string {
+  const path = writeFile(name, v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, opensees);
   const f = new h5wasm.File(path, "a");
-  const g = (f.get("opensees") as h5wasm.Group).create_group("time_series").create_group("Path_1");
-  g.create_attribute("type", "Path");
+  let parent = f.get("opensees") as h5wasm.Group;
+  for (const s of store) parent = parent.create_group(s);
+  const g = parent.create_group(group);
+  g.create_attribute("type", type);
   g.create_attribute("tag", 1);
   build(g);
   f.close();
   return path;
 }
+
+function seriesFile(name: string, build: (g: h5wasm.Group) => void, opensees = "2.34.0"): string {
+  return typedFile(name, ["time_series"], "Path_1", "Path", build, opensees);
+}
+
+/** A long numeric pair, as the writer stores one HDF5 refuses as an attribute. */
+const LONG = Float64Array.from({ length: 9000 }, (_, i) => i + 0.5);
 
 test("opensees 2.34: a dataset-form params pair reads as the series' params, not a table", () => {
   const path = seriesFile("o-234-large.h5", (g) => {
@@ -250,6 +260,54 @@ test("opensees 2.34: a group holding the params pair in both forms is refused by
     g.create_dataset({ name: "params", data: new Float64Array([1, 2]) });
   });
   assert.throws(() => read(path), (e: unknown) => e instanceof SchemaError && /Path_1\/params is both an attribute and a dataset/.test(e.message));
+});
+
+test("opensees 2.34: a dataset-form material reads every parameter, not a table", () => {
+  const path = typedFile("o-234-mat.h5", ["materials", "uniaxial"], "MultiLinear_1", "MultiLinear", (g) => {
+    g.create_dataset({ name: "params", data: LONG });
+  });
+  const m = read(path);
+  assert.deepEqual(m.warnings, []);
+  const mat = m.opensees!.objects.find((o) => o.family === "uniaxialMaterial")!;
+  assert.equal(mat.params.length, LONG.length);
+  assert.deepEqual(mat.params.slice(0, 2), [0.5, 1.5]);
+  assert.deepEqual(Object.keys(mat.tables), []);
+});
+
+test("opensees 2.34: a dataset-form section reads its string slots too", () => {
+  const nums = Float64Array.from(LONG);
+  nums[0] = Number.NaN;
+  const strs = Array.from(LONG, () => "");
+  strs[0] = "-GJ";
+  const path = typedFile("o-234-sec.h5", ["sections"], "Fiber_1", "Fiber", (g) => {
+    g.create_dataset({ name: "params", data: nums });
+    g.create_dataset({ name: "params_str", data: strs });
+  });
+  const m = read(path);
+  const sec = m.opensees!.objects.find((o) => o.family === "section")!;
+  assert.equal(sec.params.length, LONG.length);
+  assert.deepEqual(sec.params.slice(0, 2), ["-GJ", 1.5]);
+  assert.deepEqual(Object.keys(sec.tables), []);
+});
+
+test("opensees 2.34: a material pair split across the two forms is refused by name", () => {
+  const path = typedFile("o-234-split.h5", ["materials", "uniaxial"], "MultiLinear_1", "MultiLinear", (g) => {
+    g.create_dataset({ name: "params", data: LONG });
+    g.create_attribute("params_str", ["-x"]);
+  });
+  assert.throws(() => read(path), (e: unknown) => e instanceof SchemaError && /MultiLinear_1 holds its params pair in both forms/.test(e.message));
+});
+
+test("a dataset-form pair in a file stamped below opensees 2.34.0 is refused, as Python does", () => {
+  for (const [name, store, group, type] of [
+    ["o-233-series.h5", ["time_series"], "Path_1", "Path"],
+    ["o-233-mat.h5", ["materials", "uniaxial"], "MultiLinear_1", "MultiLinear"],
+  ] as const) {
+    const path = typedFile(name, [...store], group, type, (g) => {
+      g.create_dataset({ name: "params", data: LONG });
+    }, "2.33.0");
+    assert.throws(() => read(path), (e: unknown) => e instanceof SchemaError && new RegExp(`${group}/params is a dataset in an opensees 2\\.33\\.0 file`).test(e.message));
+  }
 });
 
 // ---- V4m (#1846): the bond tag of a LadrunoEmbeddedRebar tie (tieBonds) ------
