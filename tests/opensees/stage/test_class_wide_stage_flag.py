@@ -44,7 +44,10 @@ _MS = dict(
     e0=0.934, ksi=0.7, P_atm=100.0, m=0.01, h0=7.05, Ch=0.968, nb=1.1,
     A0=0.704, nd=3.5, zeta=0.0005, mu0=260.0, beta=1.0, rho=1.6,
 )
-_KW = {"ManzariDafalias": _MD, "LadrunoSANISAND": _MD, "SAniSandMS": _MS}
+_PM4SAND = dict(Dr=0.55, G0=677.0, hpo=0.4, rho=1.7)
+_PM4SILT = dict(Su=0.0, Su_rate=0.25, G0=500.0, hpo=0.1, rho=1.7)
+_KW = {"ManzariDafalias": _MD, "LadrunoSANISAND": _MD, "SAniSandMS": _MS,
+       "PM4Sand": _PM4SAND, "PM4Silt": _PM4SILT}
 
 
 def _fem() -> FEMStub:
@@ -136,6 +139,8 @@ _GROUP_PAIRS = [
     ("LadrunoSANISAND", "LadrunoSANISAND"),
     ("ManzariDafalias", "LadrunoSANISAND"),
     ("LadrunoSANISAND", "ManzariDafalias"),
+    ("PM4Sand", "PM4Sand"),
+    ("PM4Silt", "PM4Silt"),
 ]
 
 
@@ -149,6 +154,8 @@ def test_table_groups_the_shared_statics() -> None:
         "ManzariDafalias": "ManzariDafalias::mElastFlag",
         "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
         "SAniSandMS": "SAniSandMS::mElastFlag",
+        "PM4Sand": "PM4Sand::me2p",      # its own static, not PM4Silt's
+        "PM4Silt": "PM4Silt::me2p",
     }
     # A class-wide class must be stageable at all, or the check is dead.
     assert set(CLASS_WIDE_STAGE_FLAG) <= STAGED_MATERIAL_CLASSES
@@ -200,6 +207,14 @@ def test_separate_groups_do_not_count_together() -> None:
     """ManzariDafalias and SAniSandMS have separate statics: flipping all of
     one group and none of the other is complete."""
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "SAniSandMS")
+    _stage(ops, [([mat_a], 1)])
+    assert len(ops._stage_records) == 1
+
+
+def test_pm4sand_and_pm4silt_are_separate_groups() -> None:
+    """``PM4Sand::me2p`` and ``PM4Silt::me2p`` are two statics (PM4Silt does
+    not derive from PM4Sand): flipping one class alone is complete."""
+    ops, mat_a, mat_b = _bridge("PM4Sand", "PM4Silt")
     _stage(ops, [([mat_a], 1)])
     assert len(ops._stage_records) == 1
 
