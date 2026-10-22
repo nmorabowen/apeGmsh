@@ -59,6 +59,24 @@ STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
     {"ManzariDafalias", "SAniSandMS", "LadrunoSANISAND"},
 )
 
+#: nDMaterial classes whose ``updateMaterialStage`` flag is a C++
+#: ``static``, mapped to that static (#2439).  The flag holds ONE value
+#: per process: ``updateMaterialStage -material A`` switches every
+#: material of the group, and for a flip to 1 only ``A`` runs
+#: ``Elastic2Plastic()``, so an unnamed material lands on an answer that
+#: matches neither the elastic nor the properly flipped run (measured on
+#: stock openseespy 3.8.0 and on the fork alike).  Classes that share one
+#: static share one value here, and the stage-close check counts their
+#: materials together: ``LadrunoSANISAND`` subclasses ``ManzariDafalias``
+#: and inherits its ``mElastFlag``.  A class whose flag is per tag
+#: (the multi-yield soils keep ``loadStagex[matN]``) is not listed.
+#: A new class-wide class is one entry ``"<Class>": "<Class>::<static>"``.
+CLASS_WIDE_STAGE_FLAG: dict[str, str] = {
+    "ManzariDafalias": "ManzariDafalias::mElastFlag",
+    "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
+    "SAniSandMS": "SAniSandMS::mElastFlag",
+}
+
 
 # ---------------------------------------------------------------------------
 # Shared validation for initial_stress (used by ops.initial_stress PULL +
@@ -318,6 +336,7 @@ class _StageBuilder:
                 "dt=) — every stage must declare its analyze loop."
             )
         self._check_chain_against_run()
+        self._check_class_wide_stage_flags()
         record = StageRecord(
             name=self._name,
             initial_stress_records=tuple(self._initial_stress_records),
@@ -357,6 +376,88 @@ class _StageBuilder:
             profile=self._profile,
         )
         self._bridge._stage_records.append(record)
+
+    def _check_class_wide_stage_flags(self) -> None:
+        """Refuse a stage flip that names only part of a class-wide group.
+
+        For a group of :data:`CLASS_WIDE_STAGE_FLAG` this stage flips,
+        every material of the group in the model must be named by this
+        stage's ``update_material_stage`` calls, all with one stage
+        value.  The model's materials are the ones registered on the
+        bridge plus any an element registered so far depends on.  A
+        subset would switch the unnamed materials too, through the
+        shared static, without their own flip (#2439).
+        """
+        if not self._update_material_stage_records:
+            return
+        # Every class-wide material the model holds, by identity.
+        members: dict[int, Primitive] = {}
+        seen: set[int] = set()
+        frontier: list[Primitive] = list(self._bridge._primitives)
+        while frontier:
+            prim = frontier.pop()
+            if id(prim) in seen:
+                continue
+            seen.add(id(prim))
+            frontier.extend(prim.dependencies())
+            if type(prim).__name__ in CLASS_WIDE_STAGE_FLAG:
+                members[id(prim)] = prim
+        group_of_tag: dict[int, str] = {}
+        for mat in members.values():
+            tag = self._bridge.tag_for(mat)
+            if tag is not None:
+                group_of_tag[int(tag)] = CLASS_WIDE_STAGE_FLAG[
+                    type(mat).__name__]
+        # group -> {named tag: stage values} for this stage.
+        named: dict[str, dict[int, set[int]]] = {}
+        for rec in self._update_material_stage_records:
+            for tag in rec.mat_tags:
+                group = group_of_tag.get(int(tag))
+                if group is not None:
+                    named.setdefault(group, {}).setdefault(
+                        int(tag), set()).add(int(rec.stage))
+        for group, tags in named.items():
+            classes = sorted(
+                cls for cls, flag in CLASS_WIDE_STAGE_FLAG.items()
+                if flag == group)
+            values = set().union(*tags.values())
+            if len(values) > 1:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_material_stage: the "
+                    f"{' / '.join(classes)} materials are flipped to "
+                    f"different stages {sorted(values)} in one stage, but "
+                    f"their stage flag is the class-wide C++ static "
+                    f"{group}: it holds one value, so the last line "
+                    "decides the stage of every one of them.  Flip them "
+                    "all to the same stage."
+                )
+            unnamed: list[str] = []
+            for mat in members.values():
+                if CLASS_WIDE_STAGE_FLAG[type(mat).__name__] != group:
+                    continue
+                tag = self._bridge.tag_for(mat)
+                if tag is None:
+                    unnamed.append(
+                        f"{type(mat).__name__} (not registered on the "
+                        "bridge; an element uses it)")
+                elif int(tag) not in tags:
+                    unnamed.append(
+                        f"{type(mat).__name__} (nDMaterial tag {tag})")
+            if not unnamed:
+                continue
+            raise BridgeError(
+                f"Stage {self._name!r}.update_material_stage: this stage "
+                f"flips some {' / '.join(classes)} materials but not "
+                f"{', '.join(unnamed)}.  Their stage flag is the "
+                f"class-wide C++ static {group}, so updateMaterialStage "
+                "on one material switches all of them, and an unnamed "
+                "material skips its own flip (Elastic2Plastic on a flip "
+                "to 1): its answer matches neither stage.  Name every "
+                "one of them in this stage, with one stage value, in a "
+                "stage where all their elements are live (a material no "
+                "element uses cannot be flipped: remove it from the "
+                "model)."
+            )
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.
@@ -1464,7 +1565,10 @@ class _StageBuilder:
         cannot sit at different stages, and construction order preserves
         nothing.  The enforced practice is to call this for EVERY
         material tag, EVERY time, immediately before the
-        stage-dependent analysis step.
+        stage-dependent analysis step.  The stage close enforces it for
+        the :data:`CLASS_WIDE_STAGE_FLAG` groups: a stage that flips
+        some of a group's materials but not all, or flips them to
+        different values, raises :class:`BridgeError` (#2439).
 
         Parameters
         ----------
