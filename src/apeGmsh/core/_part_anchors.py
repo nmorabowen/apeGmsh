@@ -101,7 +101,9 @@ def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
         has ``pg_name`` (the label name WITHOUT the ``_label:``
         prefix), ``dim``, ``com``, and ``bbox``.
     """
-    from .Labels import is_label_pg, strip_prefix
+    from .Labels import bind_held_labels, is_label_pg, strip_prefix
+
+    bind_held_labels()      # labels on sync=False entities travel too
 
     records: list[dict] = []
     for dim, pg_tag in gmsh_module.model.getPhysicalGroups():
