@@ -259,6 +259,70 @@ def _open_model_from_h5(path: "str | Path") -> Any:
     return _stub_opensees_model()
 
 
+class _MockFem:
+    """Tiny FEMData stand-in: node ids, zero coords, no elements.
+
+    Uses the real ``compute_snapshot_id`` so the bind-contract round
+    trip works (the writer embeds the hash, the reader recomputes it
+    from the reconstructed data, and the two must match). ``salt``
+    offsets the coords so two instances over the same ids hash apart.
+    """
+
+    def __init__(self, node_ids: Any, salt: int = 0) -> None:
+        from types import SimpleNamespace
+
+        import numpy as np
+
+        ids = np.asarray(node_ids, dtype=np.int64)
+        coords = np.zeros((ids.size, 3), dtype=np.float64) + float(salt) * 1e-9
+        self.nodes = SimpleNamespace(ids=ids, coords=coords)
+        self.elements: list[Any] = []
+
+    @property
+    def snapshot_id(self) -> str:
+        from apeGmsh.mesh._femdata_hash import compute_snapshot_id
+        return compute_snapshot_id(self)
+
+    def to_native_h5(self, group: Any) -> None:
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
+
+
+def _write_composed_run(
+    bridge: Any, fem: Any, path: "str | Path", node_ids: Any,
+    stages: Any,
+) -> Path:
+    """Write a Composed native run file (ADR 0020) for ``bridge``.
+
+    The bridge archives its ``model.h5`` beside ``path``, and
+    :class:`NativeWriter` copies that ``/opensees/`` zone (stages,
+    partitions, the envelope ndf) into the run file at open, under the
+    neutral ``/model/`` zone of ``fem``. ``stages`` is a sequence of
+    ``(name, time, components)``: ``time`` is the stage's step times and
+    ``components`` maps each nodal component to a ``(T, N)`` array over
+    ``node_ids``. Each stage is written as ``kind="static"``.
+    """
+    import numpy as np
+
+    from apeGmsh.results.writers import NativeWriter
+
+    path = Path(path)
+    model_h5 = path.with_suffix(".model.h5")
+    bridge.h5(str(model_h5))
+    ids = np.asarray(node_ids, dtype=np.int64)
+    with NativeWriter(path) as w:
+        w.open(fem=fem, model_h5_src=model_h5)
+        for name, time, components in stages:
+            sid = w.begin_stage(
+                name=name, kind="static",
+                time=np.asarray(time, dtype=np.float64),
+            )
+            w.write_nodes(sid, "partition_0", node_ids=ids,
+                          components=components)
+            w.end_stage()
+    return path
+
+
 def _stub_opensees_model() -> Any:
     """Return a tiny stub :class:`OpenSeesModel` for tests that
     don't exercise the model surface.

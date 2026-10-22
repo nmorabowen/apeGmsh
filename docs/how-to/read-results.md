@@ -7,9 +7,9 @@ component, index `.values`.
 
 The shape in one line:
 
-> `Results.from_native(path, model=...)` → `results.nodes.get(pg=,
-> component=)` → a frozen slab with `.values` `(T, N)`, `.node_ids`,
-> and `.time`.
+> a `Results` (`run.results()`, or any `Results.from_*` constructor) →
+> `results.nodes.get(pg=, component=)` → a frozen slab with `.values`
+> `(T, N)`, `.node_ids`, and `.time`.
 
 ## Recipe
 
@@ -20,8 +20,10 @@ from apeGmsh.opensees import OpenSeesModel
 # Every Results constructor REQUIRES the read-side broker (model= /
 # model_h5=); omitting it raises TypeError (ADR 0020 INV-1). Pass fem=
 # too so pg=/label= name-resolution works against your session mesh.
+# Here: the classic .out files a pip run of emit_default("run", ...)
+# wrote to run_out/ (run.results() opens the same thing for you).
 model = OpenSeesModel.from_h5("model.h5")
-results = Results.from_native("run.h5", model=model, fem=fem)
+results = Results.from_recorders(recorder_spec, "run_out/", model=model, fem=fem)
 
 # --- Displacement: u_y history at every node in PG "Top" ---
 disp = results.nodes.get(pg="Top", component="displacement_y")
@@ -47,10 +49,10 @@ apeGmsh vocabulary: `displacement_x/y/z`, `reaction_force_x/y/z`,
 ## Notes / gotchas
 
 - **Reactions must be recorded.** `reaction_force_*` only exists in the
-  file if you asked for it on the write side — e.g.
-  `spec.nodes(components=["displacement", "reaction_force"], pg="Base")`
-  (capture) or the equivalent recorder declaration. If the read comes
-  back empty, the component was never captured. Call
+  file if you asked for it on the write side — a `nodes` record whose
+  components include `reaction_force_y` (the [results strategy
+  how-to](choose-results-strategy.md) declares one). If the read comes
+  back empty, the component was never recorded. Call
   `results.nodes.available_components()` to see what's actually there.
 - **`model=` is mandatory; `fem=` is for names.** Without `model=` the
   constructor raises `TypeError`. Without a bound `fem`, the embedded

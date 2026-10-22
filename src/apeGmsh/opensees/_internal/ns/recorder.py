@@ -205,9 +205,9 @@ class _RecorderNS(_BridgeNamespace):
         ``nodes`` / ``elements`` / ``line_stations`` / ``gauss``
         with ``pg=`` / ``label=`` / ``selection=`` / ``ids=`` selectors.
         The other categories (``fibers`` / ``layers`` / ``modal``)
-        raise :class:`NotImplementedError` from emit time — they belong
-        on the DomainCapture side (Phase 9 commit 5 surfaces an
-        explicit bridge entry point for that).
+        raise :class:`NotImplementedError` from emit time — record them
+        with the MPCO or ``.ladruno`` recorder, and modes with
+        ``ops.eigen(...)`` (``EigenResult.to_native``).
 
         Parameters
         ----------
