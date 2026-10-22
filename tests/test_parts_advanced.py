@@ -380,6 +380,31 @@ class TestAnchorRebinding:
         assert a.label_names == ["col_0"]
         assert b.label_names == ["col_1"]
 
+    def test_translated_instance_tracks_live_sub_entities(self, g):
+        """Regression: a translated instance's dim<top tags must be live.
+
+        OCC keeps the moved shapes' tags but rebinds their faces, edges
+        and points under new tags, so ``entities`` recorded from the
+        import went stale (a later ``fragment_pair`` died with "Unknown
+        OpenCASCADE entity of dimension 0").
+        """
+        p = Part("storey")
+        with p:
+            p.model.geometry.add_rectangle(0, 0, 1, 2, 2, label="slab")
+            p.model.geometry.add_rectangle(0, 0, 0, 2, 1, plane="xz", label="wall")
+        try:
+            g.parts.add(p, label="s1")
+            g.parts.add(p, label="s2", translate=(0.0, 0.0, 1.0))
+            for label in ("s1", "s2"):
+                inst = g.parts.get(label)
+                for d, tags in inst.entities.items():
+                    live = {t for _, t in gmsh.model.getEntities(d)}
+                    assert tags and set(tags) <= live, (label, d)
+            for d in (0, 1, 2):
+                assert len(g.parts.get("s2").entities[d]) == len(g.parts.get("s1").entities[d])
+        finally:
+            p.cleanup()
+
 
 # =====================================================================
 # Group 5: End-to-End Assembly Workflow

@@ -1526,6 +1526,16 @@ class PartsRegistry(_PartsFragmentationMixin):
         top_dim = max(entities) if entities else -1
         self._apply_transforms(shape_dimtags, translate, rotate)
         dx, dy, dz = translate
+        if rotate is not None or any(v != 0.0 for v in (dx, dy, dz)):
+            # OCC keeps the tags of the transformed shapes but rebinds
+            # their sub-entities under new tags, so the imported tags
+            # below the shapes are stale: re-derive them from the
+            # moved shapes' boundary closure.
+            from ._model_boolean import _boundary_closure
+            entities = {}
+            for d, t in sorted(_boundary_closure(shape_dimtags)):
+                entities.setdefault(d, []).append(t)
+            dimtags_all = [(d, t) for d, tags in entities.items() for t in tags]
 
         # Rebind labels from the sidecar (if present).
         # For each label defined in the Part, re-create it as a
