@@ -23,11 +23,12 @@ from ._geom import (
     _shape_tri3,
     _shape_tri6,
 )
-from ._resolver import ConstraintResolver
+from ._resolver import ConstraintResolver, collapse_periodic_pairs
 
 
 __all__ = [
     "ConstraintResolver",
+    "collapse_periodic_pairs",
     "SHAPE_FUNCTIONS",
     "_SpatialIndex",
     "_project_point_to_face",

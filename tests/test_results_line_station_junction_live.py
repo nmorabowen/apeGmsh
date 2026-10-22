@@ -12,9 +12,10 @@ shared node, at ``rtol=1e-10``, for every component and step: N, V and M
 are then continuous across both junctions. Before #2009 every route read
 N and M (and, in 3-D, Vz and T) with the opposite sign; only Vy agreed.
 
-This file holds the DomainCapture and ``.out`` routes, on the backend the
-bridge resolves (stock openseespy in CI). The MPCO and ``.ladruno`` routes
-of the same model are in
+This file holds the ``.out`` route, on the backend the bridge resolves
+(stock openseespy in CI); an in-process capture route sat beside it until
+#2191 deleted that route. The MPCO and ``.ladruno`` routes of the same
+model are in
 ``tests/opensees/integration_ladruno/test_line_station_junction_live.py``.
 
 The oracle is checked twice: the live section force against the closed
@@ -27,7 +28,6 @@ backends probed (fork 79e062367), so it has no station to pin.
 """
 from __future__ import annotations
 
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Callable
 
@@ -214,7 +214,7 @@ def station_values(r: Any, comp: str, eid: int) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# DomainCapture and .out
+# .out
 # ---------------------------------------------------------------------------
 
 
@@ -222,7 +222,6 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
     from apeGmsh.opensees import OpenSeesModel
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
     from apeGmsh.results import Results
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
     from apeGmsh.results.spec._resolved import (
         ResolvedRecorderRecord, ResolvedRecorderSpec,
     )
@@ -240,8 +239,6 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
     tags = {pg: to_ops[e] for pg, e in eid.items()}
     assert emitter.ops.eleType(tags["Mid"]) == cls
 
-    cspec = DomainCaptureSpec(opensees=ops)
-    cspec.line_stations(pg="Mid", components=list(COMPS[ndm]), name="mid")
     rspec = ResolvedRecorderSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(ResolvedRecorderRecord(
@@ -251,28 +248,19 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
         ),),
     )
     model = OpenSeesModel.from_h5(model_h5)
-    cap_path = str(tmp / "capture.h5")
     out_dir = tmp / "out"
     truth = []
-    with ExitStack() as stack:
-        live = stack.enter_context(
-            rspec.emit_recorders(str(out_dir), ops=emitter.ops, model=model))
-        cap = stack.enter_context(
-            ops.domain_capture(cspec, path=cap_path, ops=emitter.ops))
+    with rspec.emit_recorders(str(out_dir), ops=emitter.ops,
+                              model=model) as live:
         live.begin_stage("s", kind="static")
-        cap.begin_stage("s", kind="static")
         for _ in LAMS:
             assert emitter.analyze(steps=1) == 0
-            cap.step(t=emitter.ops.getTime())
             truth.append(junction_truth(emitter.ops, cls, tags))
-        cap.end_stage()
         live.end_stage()
     emitter.ops.remove("recorders")
 
-    om = OpenSeesModel.from_h5(cap_path, fem_root="/model")
     return {
         "results": {
-            "capture": Results.from_native(cap_path, model=om),
             "out": Results.from_recorders(
                 rspec, out_dir, fem=fem, stage_id="s", model=model,
                 cache_root=tmp / "cache"),
@@ -290,7 +278,7 @@ def solved(request: pytest.FixtureRequest,
                  request.param)
     sol["cls"] = request.param
     yield sol
-    sol["results"]["capture"].close()
+    sol["results"]["out"].close()
 
 
 def test_force_beam_sections_are_statics(solved: dict[str, Any]) -> None:
@@ -302,7 +290,7 @@ def test_force_beam_sections_are_statics(solved: dict[str, Any]) -> None:
         close(solved["truth"][:, :, k], want, f"{solved['cls']} {comp}")
 
 
-@pytest.mark.parametrize("route", ["capture", "out"])
+@pytest.mark.parametrize("route", ["out"])
 def test_elastic_stations_meet_the_force_beams(
     solved: dict[str, Any], route: str,
 ) -> None:

@@ -95,6 +95,27 @@ DOFs across a pair (master `uz` driving slave `rz`, say, at a solid-to-shell
 joint), and `penalty` replaces the algebraic constraint with a stiff spring
 when the solver's constraint handler struggles.
 
+`periodic` ties two *opposite* boundaries instead of a shared one: the left
+and right sides of a soil column, or two faces of a unit cell. The sides are
+separated along `axis`, and each slave node pairs with the master node whose
+other coordinates match, so every elevation of a column gets one `equalDOF`:
+
+```python
+g.constraints.periodic("Left", "Right", axis="x", dofs=[1, 2])
+```
+
+Mesh the two sides alike. A node of either side with no partner raises at
+`get_fem_data`, so a boundary is never half tied. Two periodic directions
+(the sides of a square, the faces of a box) meet at corner and edge nodes. Their
+pairs merge so each corner has a single master. Declare all of them before the
+first snapshot, with the same `dofs`.
+
+Take care where a tied pair is also fixed, as at the base of a soil column.
+Under the `Transformation` handler (the bridge default for `equalDOF`), a tie
+whose master is fixed on one tied DOF and free on another loses the free tie
+at every step (an OpenSees defect, #2396). Either fix that DOF on both nodes
+and leave it out of the tie, or declare `ops.constraints.Lagrange()`.
+
 `rigid_link` adds kinematics: each slave follows the master through a rigid
 offset arm, so a rotation at the master produces translations at the slaves.
 `link_type="beam"` carries all six DOFs; `"rod"` couples translations only.

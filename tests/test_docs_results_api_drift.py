@@ -107,8 +107,7 @@ Use native domain capture (`spec.capture(...)`) instead.
 def test_control_incident_grid_is_flagged() -> None:
     problems = "\n".join(_scan(_INCIDENT_GRID, "incident.md").problems)
     for expected in (
-        "neither of `DomainCaptureSpec` / `ResolvedRecorderSpec` has "
-        "attribute `capture`",
+        "`ResolvedRecorderSpec` has no attribute `capture`",
         "`apeSees.tcl()` takes no keyword `recorders=`",
         "`apeSees.tcl()` takes no keyword `mpco=`",
     ):
@@ -132,7 +131,7 @@ def test_control_live_chains_resolve() -> None:
     page = _scan(textwrap.dedent("""\
         ```python
         from apeGmsh.opensees import apeSees
-        from apeGmsh.results.capture import DomainCaptureSpec
+        from apeGmsh.results.spec import ResolvedRecorderSpec
 
         def build():
             ops = apeSees(fem)
@@ -141,18 +140,18 @@ def test_control_live_chains_resolve() -> None:
         ops = build()
         ops.recorder.MPCO(file="run.mpco", nodal_responses=("displacement",))
         ops.tcl("model.tcl", analyze_steps=10)
-        spec = DomainCaptureSpec(opensees=ops)
-        with ops.domain_capture(spec, path="run.h5") as cap:
-            cap.capture_modes(2)
+        spec = ResolvedRecorderSpec(fem_snapshot_id="x", records=())
+        with spec.emit_recorders("out/", ops=ops) as live:
+            live.begin_stage("gravity", kind="static")
         ```
         """), "control.md")
     assert page.problems == [], page.problems
     # Across a page-defined helper, an attribute set in ``__init__``
-    # (``self.recorder``), an annotated return (``-> DomainCapture``) and
+    # (``self.recorder``), an annotated return (``-> LiveRecorders``) and
     # a ``with ... as`` target.
     assert {
         "apeSees.recorder", "_RecorderNS.MPCO", "apeSees.tcl",
-        "apeSees.domain_capture", "DomainCapture.capture_modes",
+        "ResolvedRecorderSpec.emit_recorders", "LiveRecorders.begin_stage",
     } <= page.checked, sorted(page.checked)
 
 

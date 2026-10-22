@@ -298,10 +298,8 @@ def staged_results(g, tmp_path):
     'construction'; capture stages named after the program stages."""
     from apeGmsh.opensees.apesees import apeSees
     from apeGmsh.results import Results
-    from apeGmsh.results.capture.spec import DomainCaptureSpec
 
-    from tests.conftest import _open_model_from_h5
-    from tests.test_results_domain_capture import _FakeOps
+    from tests.conftest import _open_model_from_h5, _write_composed_run
 
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="rock")
     g.model.geometry.add_box(0, 0, 1, 1, 1, 1, label="fill")
@@ -340,17 +338,13 @@ def staged_results(g, tmp_path):
         s.analysis(**chain())
         s.run(n_increments=1)
 
-    spec = DomainCaptureSpec(opensees=ops)
-    spec.nodes(
-        ids=[int(fem.nodes.ids[0])],
-        components=["displacement_x"], name="probe",
+    out = _write_composed_run(
+        ops, fem, tmp_path / "staged_run.h5", [int(fem.nodes.ids[0])],
+        [
+            (name, [float(i + 1)], {"displacement_x": np.zeros((1, 1))})
+            for i, name in enumerate(["g", "construction", "excavate"])
+        ],
     )
-    out = tmp_path / "staged_run.h5"
-    with ops.domain_capture(spec, path=str(out), ops=_FakeOps()) as cap:
-        for i, name in enumerate(["g", "construction", "excavate"]):
-            cap.begin_stage(name, kind="static")
-            cap.step(t=float(i + 1))
-            cap.end_stage()
     return Results.from_native(out, model=_open_model_from_h5(out)), fem
 
 

@@ -252,6 +252,70 @@ class ConstraintResolver:
 
         return pairs
 
+    def _match_periodic_pairs(
+        self,
+        master_tags: set[int],
+        slave_tags: set[int],
+        tolerance: float,
+        axis: int,
+        *,
+        where: str,
+    ) -> list[tuple[int, int]]:
+        """Pair every master node with the one slave node whose
+        coordinates off ``axis`` match within ``tolerance``.
+
+        The pairing must be one-to-one and complete: a node of either
+        side with no partner, two partners, or a partner already taken
+        raises, naming the first offenders, so a periodic boundary never
+        ties only part of a face.
+        """
+        if set(master_tags) & set(slave_tags):
+            shared = sorted(set(master_tags) & set(slave_tags))
+            raise ValueError(
+                f"periodic {where!r}: nodes {shared[:5]} are on both "
+                f"sides; the two sides must be disjoint."
+            )
+        keep = [i for i in range(3) if i != axis]
+        masters = sorted(master_tags)
+        slaves = sorted(slave_tags)
+        if not masters or not slaves:
+            raise ValueError(
+                f"periodic {where!r}: the {'master' if not masters else 'slave'}"
+                f" side has no nodes."
+            )
+        m_xyz = np.array([self._coords_of(t) for t in masters])[:, keep]
+        s_xyz = np.array([self._coords_of(t) for t in slaves])[:, keep]
+        tree = _SpatialIndex(np.column_stack(
+            [m_xyz, np.zeros(len(masters))]))
+        pairs: list[tuple[int, int]] = []
+        taken: dict[int, int] = {}
+        unmatched: list[tuple[int, tuple[float, ...]]] = []
+        for st, xy in zip(slaves, s_xyz):
+            dist, idx = tree.query(np.array([xy[0], xy[1], 0.0]))
+            if dist > tolerance:
+                unmatched.append((st, ", ".join(
+                    f"{'xyz'[i]}={float(v):.9g}" for i, v in zip(keep, xy))))
+                continue
+            mt = masters[int(idx)]
+            if mt in taken:
+                raise ValueError(
+                    f"periodic {where!r}: master node {mt} matches slave "
+                    f"nodes {taken[mt]} and {st} within tolerance="
+                    f"{tolerance}; tighten the tolerance."
+                )
+            taken[mt] = st
+            pairs.append((mt, st))
+        lonely = [t for t in masters if t not in taken]
+        if unmatched or lonely:
+            raise ValueError(
+                f"periodic {where!r}: the two sides do not pair node for "
+                f"node off axis {'xyz'[axis]} within tolerance={tolerance}"
+                f" — slave nodes with no master: {unmatched[:5]}; master "
+                f"nodes with no slave: {lonely[:5]}. Mesh both sides "
+                f"alike (e.g. transfinite with the same node counts)."
+            )
+        return pairs
+
     # ------------------------------------------------------------------
     # Resolve methods — one per constraint level
     # ------------------------------------------------------------------
@@ -273,9 +337,15 @@ class ConstraintResolver:
         slave_nodes : set[int]
             Node tags belonging to the slave instance.
         """
-        pairs = self._match_node_pairs(
-            master_nodes, slave_nodes, defn.tolerance,
-        )
+        if getattr(defn, "axis", None) is None:
+            pairs = self._match_node_pairs(
+                master_nodes, slave_nodes, defn.tolerance,
+            )
+        else:
+            pairs = self._match_periodic_pairs(
+                master_nodes, slave_nodes, defn.tolerance, int(defn.axis),
+                where=defn.name or f"{defn.master_label}->{defn.slave_label}",
+            )
         dofs = defn.dofs or [1, 2, 3, 4, 5, 6]
         return [
             NodePairRecord(
@@ -1250,4 +1320,71 @@ class ConstraintResolver:
         )
 
 
-__all__ = ["ConstraintResolver"]
+def collapse_periodic_pairs(
+    records: "Sequence[NodePairRecord]",
+) -> list[NodePairRecord]:
+    """Merge periodic pairs that share nodes onto one master per group.
+
+    Two periodic directions (x and y sides of a square, faces of a box)
+    pair a corner or edge node twice, or chain a slave on to another
+    slave. ``equalDOF`` cannot express that: under the Transformation
+    handler a node constrained twice, or a constrained retained node,
+    solves the whole model wrong without a warning. Within one DOF set the
+    pairs form groups of nodes that must move together; each group gets
+    the one node no pair slaves as master and every other node as its
+    slave. A group with no such node (a cycle) or two, or a node tied on
+    two different DOF sets, raises.
+    """
+    by_dofs: dict[tuple[int, ...], list[NodePairRecord]] = {}
+    for rec in records:
+        by_dofs.setdefault(tuple(int(d) for d in rec.dofs), []).append(rec)
+    owner: dict[int, tuple[int, ...]] = {}
+    for dofs, recs in by_dofs.items():
+        for rec in recs:
+            for n in (int(rec.master_node), int(rec.slave_node)):
+                if owner.setdefault(n, dofs) != dofs:
+                    raise ValueError(
+                        f"periodic ties on DOFs {owner[n]} and {dofs} share "
+                        f"node {n}; give every periodic tie that meets at a "
+                        f"node the same dofs."
+                    )
+    out: list[NodePairRecord] = []
+    for dofs, recs in by_dofs.items():
+        parent: dict[int, int] = {}
+
+        def find(n: int) -> int:
+            parent.setdefault(n, n)
+            while parent[n] != n:
+                parent[n] = parent[parent[n]]
+                n = parent[n]
+            return n
+
+        name_of: dict[int, "str | None"] = {}
+        slaves: set[int] = set()
+        for rec in recs:
+            m, sl = int(rec.master_node), int(rec.slave_node)
+            parent[find(m)] = find(sl)
+            slaves.add(sl)
+            name_of.setdefault(sl, rec.name)
+        groups: dict[int, list[int]] = {}
+        for n in list(parent):
+            groups.setdefault(find(n), []).append(n)
+        for members in groups.values():
+            roots = [n for n in members if n not in slaves]
+            if len(roots) != 1:
+                raise ValueError(
+                    f"periodic ties over nodes {sorted(members)[:8]} have "
+                    f"{len(roots)} free masters {roots[:4]}; each group of "
+                    f"tied nodes needs exactly one (a cycle of ties, or a "
+                    f"group pinned twice, cannot be written as equalDOF)."
+                )
+            root = roots[0]
+            for n in sorted(members):
+                if n != root:
+                    out.append(NodePairRecord(
+                        kind=ConstraintKind.EQUAL_DOF, name=name_of.get(n),
+                        master_node=root, slave_node=n, dofs=list(dofs)))
+    return out
+
+
+__all__ = ["ConstraintResolver", "collapse_periodic_pairs"]
