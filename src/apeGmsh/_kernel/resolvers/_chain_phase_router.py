@@ -337,6 +337,22 @@ def _route_equal_dof(fem: "FEMData", source, defn) -> "FEMData":
     }
     resolver = _build_resolver(fem, ConstraintResolver)
     records = resolver.resolve_equal_dof(defn, master_nodes, slave_nodes)
+    if getattr(defn, "axis", None) is not None:
+        tied = {
+            int(n) for r in (getattr(fem.nodes, "constraints", None) or ())
+            if getattr(r, "kind", None) == "equal_dof"
+            for n in (r.master_node, r.slave_node)
+        }
+        shared = sorted({
+            n for r in records for n in (int(r.master_node), int(r.slave_node))
+        } & tied)
+        if shared:
+            raise ValueError(
+                f"g.constraints.periodic({defn.master_label!r}, "
+                f"{defn.slave_label!r}): nodes {shared[:5]} are already "
+                f"tied by an earlier equal_dof; periodic ties that meet are "
+                f"merged only when declared before the first get_fem_data."
+            )
     new_fem = fem
     for rec in records:
         new_fem = new_fem.with_constraint(rec)
