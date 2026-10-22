@@ -31,13 +31,18 @@ The #2445 refusal of every multi-element plastic flip, added in #2442, is
 lifted where the sweep reaches every element. That is the case when every
 element carrying the material is a `SixNodeTri`, `FourNodeTetrahedron`,
 `BezierTri6`, `BezierTet10` or `LadrunoUP`
-(`MATERIAL_STATE_ELEMENTS` in `apeGmsh.opensees.stage._builder`).
+(`MATERIAL_STATE_ELEMENTS` in `apeGmsh.opensees.stage._builder`). The table
+also lists `SSPquad` and `SSPbrick`, measured on both builds, for the bridge
+primitive that will emit them. No bridge primitive emits either one yet.
 
 The flip still raises `BridgeError`, naming the class, when another class
 carries the material on more than one element. `FourNodeQuad`, `Tri31` and
 `stdBrick` read any `material...` parameter as a per-point address, so they
-drop the sweep silently. On the fork build that was measured, `LadrunoQuad`,
-`LadrunoCST`, `LadrunoLST`, `LadrunoBrick` and `LadrunoBrick20` drop it too.
+drop the sweep silently. `LadrunoQuad`, `LadrunoCST`, `LadrunoLST`,
+`LadrunoBrick` and `LadrunoBrick20` dropped it on fork build 79e062367. That
+build is not `FORK_PIN`, and the fork source at the pin forwards it. They stay
+refused until #2457 re-measures them at the pin, and their refusal cites that
+issue.
 
 The other rules:
 

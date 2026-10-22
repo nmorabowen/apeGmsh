@@ -34,6 +34,7 @@ from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.stage._builder import (
     FIRST_ELEMENT_ONLY_PLASTIC_INIT,
     MATERIAL_STATE_ELEMENTS,
+    MATERIAL_STATE_UNMEASURED_AT_PIN,
 )
 
 from tests.opensees.fixtures.fem_stub import (
@@ -87,8 +88,12 @@ def test_the_tables() -> None:
     assert FIRST_ELEMENT_ONLY_PLASTIC_INIT == {
         "ManzariDafalias", "LadrunoSANISAND"}
     assert MATERIAL_STATE_ELEMENTS == {
-        "SixNodeTri", "FourNodeTetrahedron", "BezierTri6", "BezierTet10",
-        "LadrunoUP"}
+        "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
+        "BezierTri6", "BezierTet10", "LadrunoUP"}
+    assert MATERIAL_STATE_UNMEASURED_AT_PIN == {
+        "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
+        "LadrunoBrick20"}
+    assert not MATERIAL_STATE_UNMEASURED_AT_PIN & MATERIAL_STATE_ELEMENTS
     # Every class of the table has a census row on each build it runs on.
     assert MATERIAL_STATE_ELEMENTS == (
         {cls for cls, _builds in _FORWARDING} | {"LadrunoUP"})
@@ -222,6 +227,25 @@ def test_a_non_forwarding_carrier_is_refused_by_name(route: str) -> None:
     assert "SixNodeTri carries" not in msg
     assert f"nDMaterial tag {ops.tag_for(mat)} (3 elements)" in msg
     assert not ops._stage_records
+
+
+def test_a_ladruno_quad_is_refused_citing_the_pin_remeasure() -> None:
+    """Measured to drop the sweep on fork build 79e062367, not at FORK_PIN:
+    refused (fail closed), and the refusal names the re-measure issue."""
+    ops, mat = _bridge(pgs=("A",))
+    ops.element.LadrunoQuad(pg="Q", material=mat, thickness=1.0)
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, mat)
+    msg = str(exc.value)
+    assert "LadrunoQuad carries it" in msg
+    assert "79e062367" in msg and "#2457" in msg
+
+
+def test_a_stock_class_refusal_does_not_cite_the_pin_remeasure() -> None:
+    ops, mat = _bridge(quad=True)
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, mat)
+    assert "#2457" not in str(exc.value)
 
 
 def test_a_materialstate_route_must_cover_every_element() -> None:
@@ -502,6 +526,10 @@ _CLASSES: dict[str, Any] = {
     "FourNodeTetrahedron": ("FourNodeTetrahedron", 3, _TET4,
                             lambda n, m: (*n, m)),
     "BezierTet10": ("BezierTet10", 3, _TET10, lambda n, m: (*n, m)),
+    # No bridge primitive emits these two yet (element/solid.py defers
+    # them); the census drives the raw tokens the future primitive emits.
+    "SSPquad": ("SSPquad", 2, _QUAD4, lambda n, m: (*n, m, _PS, 1.0)),
+    "SSPbrick": ("SSPbrick", 3, _HEX8, lambda n, m: (*n, m)),
     "FourNodeQuad": ("quad", 2, _QUAD4, lambda n, m: (*n, 1.0, _PS, m)),
     "Tri31": ("tri31", 2, _TRI3, lambda n, m: (*n, 1.0, _PS, m)),
     "stdBrick": ("stdBrick", 3, _HEX8, lambda n, m: (*n, m)),
@@ -510,6 +538,7 @@ _CLASSES: dict[str, Any] = {
 #: The table's classes, and whether their census needs the fork.
 _FORWARDING = [
     ("SixNodeTri", "both"), ("FourNodeTetrahedron", "both"),
+    ("SSPquad", "both"), ("SSPbrick", "both"),
     ("BezierTri6", "fork"), ("BezierTet10", "fork"),
 ]
 #: Upstream classes that drop the sweep (on stock and at FORK_PIN alike).

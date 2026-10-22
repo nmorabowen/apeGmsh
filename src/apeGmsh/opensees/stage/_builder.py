@@ -126,19 +126,31 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = frozenset(
 #: swept flip against the per-element reference (each element its own
 #: material and its own ``updateMaterialStage``), equal bit for bit, with
 #: one ``Elastic2Plastic()`` per integration point, on stock openseespy
-#: 3.8.0 (``SixNodeTri``, ``FourNodeTetrahedron``) and on the fork build
-#: 79e062367 (all five).  Every other class is refused for a multi-element
-#: plastic flip.  ``FourNodeQuad``, ``Tri31`` and ``stdBrick`` read any
-#: ``material*`` name as a per-point address and drop the sweep, as do
-#: ``LadrunoQuad`` / ``LadrunoCST`` / ``LadrunoLST`` / ``LadrunoBrick`` /
-#: ``LadrunoBrick20`` on that fork build (the fork source at ``FORK_PIN``
-#: forwards it; add them once a pinned build is measured).
-#: ``TenNodeTetrahedron`` forwards on the fork but crashed the stock
-#: reference, so it is not proven on every build.  A new class joins
-#: only with a census row on each build it runs on.
+#: 3.8.0 (``SixNodeTri``, ``FourNodeTetrahedron``, ``SSPquad``,
+#: ``SSPbrick``) and on the fork build 79e062367 (all seven).  ``SSPquad``
+#: and ``SSPbrick`` have no bridge primitive yet (``element/solid.py``
+#: defers them), so no spec carries those names today; they are listed so
+#: the primitive that adds them is not refused.  Every other class is
+#: refused for a multi-element plastic flip.  ``FourNodeQuad``, ``Tri31``
+#: and ``stdBrick`` read any ``material*`` name as a per-point address and
+#: drop the sweep, as do the :data:`MATERIAL_STATE_UNMEASURED_AT_PIN`
+#: classes on that fork build.  ``TenNodeTetrahedron`` forwards on the
+#: fork but crashed the stock reference, so it is not proven on every
+#: build.  A new class joins only with a census row on each build it
+#: runs on.
 MATERIAL_STATE_ELEMENTS: frozenset[str] = frozenset({
-    "SixNodeTri", "FourNodeTetrahedron", "BezierTri6", "BezierTet10",
-    "LadrunoUP",
+    "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
+    "BezierTri6", "BezierTet10", "LadrunoUP",
+})
+
+#: The fork element classes that dropped the sweep on fork build
+#: 79e062367, the build available when they were measured, while the
+#: fork source at ``FORK_PIN`` forwards ``materialState``.  They stay
+#: refused (fail closed) until a pinned build is measured; their refusal
+#: names the re-measure issue.
+MATERIAL_STATE_UNMEASURED_AT_PIN: frozenset[str] = frozenset({
+    "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
+    "LadrunoBrick20",
 })
 
 
@@ -749,6 +761,14 @@ class _StageBuilder:
                 if type(spec).__name__ not in MATERIAL_STATE_ELEMENTS
             })
             if refused:
+                unmeasured = sorted(
+                    set(refused) & MATERIAL_STATE_UNMEASURED_AT_PIN)
+                pin_note = (
+                    f"  ({', '.join(unmeasured)}: measured to drop it on "
+                    "fork build 79e062367, not at FORK_PIN, whose source "
+                    "forwards it; issue #2457 re-measures them at the pin.)"
+                    if unmeasured else ""
+                )
                 raise BridgeError(
                     f"Stage {self._name!r}: flips {what(tag)} to a plastic "
                     f"stage, but {', '.join(refused)} carries it, and that "
@@ -763,6 +783,7 @@ class _StageBuilder:
                     f"{', '.join(sorted(MATERIAL_STATE_ELEMENTS))}, give "
                     "each element its own material, or keep it on a single "
                     "element.  A stage 0 (elastic) flip is unaffected."
+                    + pin_note
                 )
         swept = {
             int(t) for rec in self._update_material_stage_records
