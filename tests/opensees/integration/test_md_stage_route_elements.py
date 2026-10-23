@@ -955,13 +955,19 @@ def test_the_stage_close_and_the_deck_agree_on_a_wrapper() -> None:
             f"{ops.tag_for(sand)}") in tcl.lines()
 
 
-@pytest.mark.parametrize("wrap", ["PlateFiber", "LogStrain"])
+@pytest.mark.parametrize("wrap", ["PlateFiber"])
 def test_an_unproven_wrapper_is_refused_by_name(wrap: str) -> None:
-    """PlateFiber is not known to forward; LogStrain forwards in the fork
-    source, but over ManzariDafalias it ends the process on the measured
-    build, so it stays refused until measured."""
+    """PlateFiber is not known to forward."""
     ops, sand = _wrapped_bridge(wrap)
     with pytest.raises(BridgeError) as exc:
         _flip(ops, sand)
     msg = str(exc.value)
     assert f"through {wrap}" in msg and "#2445" in msg
+
+
+def test_log_strain_over_md_is_refused_at_construction() -> None:
+    """LogStrain over ManzariDafalias ends the fork process at its
+    nDMaterial line, so it is refused at construction (#2499), before
+    any stage flip can route through it."""
+    with pytest.raises(ValueError, match=r"LogStrain: inner ManzariDafalias.*#2499"):
+        _wrapped_bridge("LogStrain")
