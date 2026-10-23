@@ -52,6 +52,8 @@ class _ModalMixin(_ProcedureHost):
         self,
         values: Sequence[float],
         live_emitter: "LiveOpsEmitter",
+        *,
+        feast: bool = False,
     ) -> "EigenResult":
         """Wrap a just-finished solve in an ``EigenResult`` with the handles
         :meth:`EigenResult.to_native` needs: this
@@ -74,6 +76,7 @@ class _ModalMixin(_ProcedureHost):
             _ndm=int(self._ndm),
             _ndf=int(self._ndf),
             _epoch=epoch,
+            _feast=feast,
         )
 
     def eigen(
@@ -691,7 +694,7 @@ class _ModalMixin(_ProcedureHost):
             float(f_min), float(f_max), certify=certify,
             trace_stop=trace_stop,
         )
-        return self._eigen_result(values, live_emitter)
+        return self._eigen_result(values, live_emitter, feast=True)
 
     def complex_eigen(
         self,
@@ -963,11 +966,13 @@ class _ModalMixin(_ProcedureHost):
             Optional damping channel (uniform ratio or per-mode).
             Required for ``CQC``.
         scale
-            Optional ``-scale s``: multiplies ``Sa`` (a unit conversion
-            such as g to model units, or an ``I/R`` factor). Must be finite
-            and > 0; ``None`` omits the token (scale 1). The fork applies
-            it to ``-combine`` from build ``c83ee812e`` (fork WP-202); an
-            older build parses and ignores it.
+            Optional factor on ``Sa`` (a unit conversion such as g to
+            model units, or an ``I/R`` factor). Must be finite and > 0;
+            ``None`` is scale 1. The bridge multiplies the ``-Sa`` values
+            by it and does not emit the fork's ``-scale``, which only
+            builds from ``c83ee812e`` (fork WP-202) apply under
+            ``-combine`` and older ones parse and ignore: the scaled
+            ordinates give the same answer on every build.
         """
         from ..analysis.modal import (
             ResponseSpectrumResult,
@@ -1022,12 +1027,11 @@ class _ModalMixin(_ProcedureHost):
                 raise ValueError(
                     f"{context}: scale must be finite and > 0, got {scale!r}."
                 )
+            sa = [a * s_val for a in sa]
 
         args: list[int | float | str] = ["-Tn", *tn, "-Sa", *sa]
         args.extend(("-combine", combine))
         args.extend(damping_args)
-        if scale is not None:
-            args.extend(("-scale", float(scale)))
 
         bm = self.build()
         self._assert_fork_if_required()

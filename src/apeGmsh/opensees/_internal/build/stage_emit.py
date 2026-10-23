@@ -832,17 +832,21 @@ class ForkBuildAllowlist(NamedTuple):
     """Ladruno fork builds that an emitted deck accepts by exact sha.
 
     The deck asks the running build for ``ladrunoBuild``.  A build without
-    the command runs on: stock OpenSees, which this guard says is right.
-    A build with it must answer one of :attr:`builds`, else the deck stops
-    with :attr:`message`: an unknown, unmeasured or unanswering fork build
-    is refused (fail closed).  Used where no command marks the fix, so no
-    :class:`ForkBuildFloor` probe can (#2516).
+    the command runs on when :attr:`stock_runs` (stock OpenSees, which the
+    guard says is right) and stops otherwise (a fork-only feature that
+    stock ignores).  A build with it must answer one of :attr:`builds`,
+    else the deck stops with :attr:`message`: an unknown, unmeasured or
+    unanswering fork build is refused (fail closed).  Used where no
+    command marks the fix, so no :class:`ForkBuildFloor` probe can
+    (#2516).
     """
 
     #: The accepted ``ladrunoBuild()`` answers, 40 lowercase hex each.
     builds: tuple[str, ...]
     #: The error the deck stops with.
     message: str
+    #: Whether a build without ``ladrunoBuild`` (stock) runs on.
+    stock_runs: bool = True
 
 
 #: A check an emitted deck runs on the build at its start.
@@ -876,6 +880,82 @@ MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
     message=MD_STATIC_RESET_MESSAGE)
 
 
+#: The Ladruno fork merge that completes fork WP-202, WP-203 and WP-205
+#: (fork PR #1010): ASD shell ``-pDelta``, ``responseSpectrumAnalysis
+#: -scale`` and ``modalProperties`` after ``eigen -feast``.
+C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
+
+#: Fork builds measured for :data:`C83_FORK_COMMIT`, by exact
+#: ``ladrunoBuild()`` sha: does the build carry it?  No command marks these
+#: features, and a sha cannot be ordered, so a build joins only once its
+#: ancestry is checked on the fork, and every fork build not listed
+#: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
+#: unit lock fails otherwise).
+FORK_BUILD_HAS_C83: dict[str, bool] = {
+    # FORK_PIN ladruno-v20261023: c83ee812e is its ancestor.
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # The maintainer's venv build, which predates it: -pDelta runs without
+    # the geometric stiffness, and modalProperties after eigen -feast exits
+    # the process (apeGmsh PR #2493 review).
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
+
+
+def fork_build_has_c83(build: "str | None") -> bool:
+    """Whether the build that answers ``ladrunoBuild()`` with ``build`` is
+    measured to carry :data:`C83_FORK_COMMIT` (:data:`FORK_BUILD_HAS_C83`).
+
+    ``None`` (stock, or a fork build without the stamp) and every unlisted
+    sha are ``False``.
+    """
+    return FORK_BUILD_HAS_C83.get(build or "", False)
+
+
+#: The error ``p_delta=True`` stops with below :data:`C83_FORK_COMMIT`:
+#: the live route raises it and :data:`ASDSHELL_PDELTA_GUARD` stops a deck
+#: with it.
+ASDSHELL_PDELTA_MESSAGE = (
+    "apeGmsh: p_delta=True on ASDShellQ4 or ASDShellT3 emits -pDelta, the "
+    "initial-stress geometric stiffness of fork WP-205, which only a "
+    "Ladruno fork build at or after fork commit "
+    f"{C83_FORK_COMMIT[:9]} honours. Stock OpenSees and older fork builds "
+    "accept the token and run without the geometric stiffness, a wrong "
+    "answer with no warning (apeGmsh PR #2493). The running OpenSees has "
+    "no ladrunoBuild command, or its ladrunoBuild sha is not one measured "
+    "to carry that commit. Rebuild the Ladruno fork at FORK_PIN."
+)
+
+#: The guard a deck with an ASD shell ``-pDelta`` element runs: stock is
+#: refused too, since it ignores the token.
+ASDSHELL_PDELTA_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, ok in FORK_BUILD_HAS_C83.items() if ok)),
+    message=ASDSHELL_PDELTA_MESSAGE,
+    stock_runs=False)
+
+
+def is_asdshell_p_delta(
+    ele_type: str, args: "Sequence[int | float | str]",
+) -> bool:
+    """Whether ``element ele_type ... *args`` is an ASD shell with
+    ``-pDelta``: the element the live route and :data:`ASDSHELL_PDELTA_GUARD`
+    hold to :data:`C83_FORK_COMMIT`."""
+    return ele_type in ("ASDShellQ4", "ASDShellT3") and "-pDelta" in args
+
+
+#: The error :meth:`EigenResult.modal_properties` raises after
+#: ``eigen_feast`` below :data:`C83_FORK_COMMIT`.
+FEAST_MODAL_PROPERTIES_MESSAGE = (
+    "EigenResult.modal_properties: modalProperties after eigen -feast "
+    "needs a Ladruno fork build at or after fork commit "
+    f"{C83_FORK_COMMIT[:9]} (fork WP-203). An older build ends the "
+    "process (DomainModalProperties: inconsistent eigenvector matrix and "
+    "ID), and the running build's ladrunoBuild sha is not one measured to "
+    "carry that commit. Rebuild the Ladruno fork at FORK_PIN, or call "
+    "apeSees.modal_properties, which runs its own ARPACK solve."
+)
+
+
 def fork_guard_lines(
     guard: ForkBuildGuard, dialect: 'Literal["py", "tcl"]',
 ) -> list[str]:
@@ -883,8 +963,8 @@ def fork_guard_lines(
 
     A :class:`ForkBuildFloor` stops the deck when the build lacks its
     probe command; a :class:`ForkBuildAllowlist` when the build has
-    ``ladrunoBuild`` and it does not answer a listed sha.  Any other
-    object raises.
+    ``ladrunoBuild`` and it does not answer a listed sha, or lacks it and
+    the guard is not ``stock_runs``.  Any other object raises.
     """
     if isinstance(guard, ForkBuildFloor):
         message = fork_floor_message(guard)
@@ -901,6 +981,20 @@ def fork_guard_lines(
                 raise BridgeError(
                     f"ForkBuildAllowlist: {sha!r} is not a 40-hex "
                     "ladrunoBuild sha.")
+        if not guard.stock_runs:
+            if dialect == "tcl":
+                return ['if {[info commands ladrunoBuild] eq "" || '
+                        "[catch {ladrunoBuild} _apesees_build] || "
+                        f"[lsearch -exact {{{' '.join(guard.builds)}}} "
+                        "[string trim $_apesees_build]] < 0} {",
+                        f'    error "{guard.message}"',
+                        "}"]
+            return ["try:",
+                    "    _apesees_build = str(ops.ladrunoBuild()).strip()",
+                    "except Exception:",
+                    "    _apesees_build = ''",
+                    f"if _apesees_build not in {tuple(guard.builds)!r}:",
+                    f"    raise SystemExit({guard.message!r})"]
         if dialect == "tcl":
             return ['if {[info commands ladrunoBuild] ne ""} {',
                     "    if {[catch {ladrunoBuild} _apesees_build] || "

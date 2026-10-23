@@ -31,7 +31,12 @@ from typing import (
 )
 
 from .._internal.analyze_rc import check_analyze_rc
-from .._internal.build.stage_emit import SweptMaterialReach
+from .._internal.build.stage_emit import (
+    ASDSHELL_PDELTA_MESSAGE,
+    SweptMaterialReach,
+    fork_build_has_c83,
+    is_asdshell_p_delta,
+)
 from .._internal.build.stage_validate import StageZeroLedger
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
@@ -1286,15 +1291,9 @@ class LiveOpsEmitter:
             and not _tet10_volume_fixed(self._ops)
         ):
             raise RuntimeError(_TET10_STOCK_DEFECT)
-        if ele_type in ("ASDShellQ4", "ASDShellT3") and "-pDelta" in args:
-            # The ASD shell parsers have no else branch: a build without
-            # fork WP-205 accepts -pDelta and drops the geometric stiffness.
-            self._stock_build_gate(
-                f"element {ele_type} -pDelta (p_delta=True) requires the "
-                "Ladruno fork (fork WP-205, ASDSHELL_PDELTA_MIN_BUILD "
-                "c83ee812e); stock OpenSees ignores the token and runs "
-                "without the geometric stiffness."
-            )
+        if is_asdshell_p_delta(ele_type, args) and not fork_build_has_c83(
+                self._backend().build):
+            raise RuntimeError(ASDSHELL_PDELTA_MESSAGE)
         self._ops.element(ele_type, tag, *args)
 
     def _element_fork_gated(

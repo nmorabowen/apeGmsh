@@ -103,6 +103,9 @@ class EigenResult:
     _ndm: int | None = None
     _ndf: int | None = None
     _epoch: int | None = None
+    # ``True`` when ``apeSees.eigen_feast`` solved: :meth:`modal_properties`
+    # then needs a fork build that carries ``C83_FORK_COMMIT``.
+    _feast: bool = False
 
     @property
     def omega(self) -> np.ndarray:
@@ -461,15 +464,26 @@ class EigenResult:
         :class:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult`.
         After :meth:`apeSees.eigen_feast` this needs a fork build at or
         after ``c83ee812e`` (fork WP-203: ``modalProperties`` after
-        ``eigen -feast``); :meth:`apeSees.modal_properties` remains the
-        one-call route for an ARPACK / LAPACK solve.
+        ``eigen -feast``); an older build ends the process there, so any
+        build not measured to carry it
+        (``stage_emit.FORK_BUILD_HAS_C83``) is refused before the call.
+        :meth:`apeSees.modal_properties` remains the one-call route for an
+        ARPACK / LAPACK solve.
 
         Raises what :meth:`to_native` raises for an empty band, a result
-        built by hand, or a domain rebuilt since the solve.
+        built by hand, or a domain rebuilt since the solve, and
+        ``RuntimeError`` for a FEAST solve on such a build.
         """
+        from .._internal.build.stage_emit import (
+            FEAST_MODAL_PROPERTIES_MESSAGE,
+            fork_build_has_c83,
+        )
+        from ..emitter.live import get_backend_info
         from .modal import ModalPropertiesResult
 
         self._checked_solve("modal_properties")
+        if self._feast and not fork_build_has_c83(get_backend_info().build):
+            raise RuntimeError(FEAST_MODAL_PROPERTIES_MESSAGE)
         properties = self._live.modal_properties(unorm=unorm)
         return ModalPropertiesResult(
             eigenvalues=np.asarray(self.eigenvalues, dtype=np.float64),

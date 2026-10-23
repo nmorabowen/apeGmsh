@@ -176,25 +176,36 @@ are unaffected and run on any build.
 
 #### Fork build `c83ee812e` (2026-10-22)
 
-Each of these needs fork build `c83ee812e` or later. Older builds parse the
-same deck but give a different answer. None of them is enforced by hash,
-because a bare hash cannot prove ancestry.
+These need fork build `c83ee812e` or later. `FORK_PIN`
+(`ladruno-v20261023`) carries it. An older build does not refuse what it
+cannot do: some features give a different answer, and one ends the
+process. No command marks these features, so apeGmsh checks the build by
+its `ladrunoBuild` sha, against the builds measured to carry `c83ee812e`.
+It refuses stock OpenSees and every other build, including an unmeasured
+newer one.
 
 - **`ASDShellQ4` / `ASDShellT3` `p_delta=True`** (`-pDelta`) adds the
   initial-stress stiffness of the current membrane forces, for gravity, then
   `loadConst`, then `eigen`. It cannot be combined with `corotational=True`.
-  Stock OpenSees and older fork builds accept the token and ignore it, so
-  the in-process run refuses `p_delta=True` off the fork.
-  `ASDSHELL_PDELTA_MIN_BUILD` names the floor.
+  Stock OpenSees and older fork builds accept the token and run without the
+  stiffness. So the in-process run refuses `p_delta=True` on them, and a
+  Tcl or Python deck that carries `-pDelta` stops at its start.
 - **`ElasticTimoshenkoBeam` (3-D)** honours a `PDelta` or `Corotational`
   transformation and answers `basicForce` (`N, Mz1, Mz2, My1, My2, T`).
   Older builds ignore the transformation's geometric terms.
-- **`response_spectrum_analysis(..., scale=s)`** (`-scale`) multiplies `Sa`
-  under `-combine`. Older builds parse it and ignore it.
+- **`response_spectrum_analysis(..., scale=s)`** multiplies `Sa` by `s`.
+  apeGmsh scales the `-Sa` values itself and does not emit the fork's
+  `-scale`, which older builds parse and ignore. The result is the same on
+  every build.
 - **`eigen_feast(..., trace_stop=True)`** (`-traceStop`) selects MKL's trace
   stopping criterion. The default stops on the relative residual and returns
-  the same eigenpairs. `EigenResult.modal_properties()` runs
-  `modalProperties` on a FEAST band.
+  the same eigenpairs. An older build refuses `-traceStop` as an unknown
+  option.
+- **`EigenResult.modal_properties()`** runs `modalProperties` on the band
+  that `eigen_feast` solved. On an older build, `modalProperties` after
+  `eigen -feast` ends the process, so apeGmsh refuses the call before it
+  reaches the build. `apeSees.modal_properties(num_modes)` runs its own
+  ARPACK solve and works on any build.
 
 ### Materials
 

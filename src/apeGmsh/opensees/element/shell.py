@@ -109,15 +109,6 @@ def _check_local_cs(type_name: str, local_cs: tuple[float, ...]) -> None:
         )
 
 
-#: First fork build (``ops.ladrunoBuild()``) whose ASD shells parse
-#: ``-pDelta``. Documented, not enforced: a bare hash cannot prove
-#: ancestry (the ``ASDP_MIN_FORK_BUILD`` convention). The parser's option
-#: loop has no ``else`` branch, so an older build, and stock OpenSees,
-#: accept the token and run without the geometric stiffness; the live
-#: route therefore refuses ``p_delta=True`` off the fork.
-ASDSHELL_PDELTA_MIN_BUILD = "c83ee812e"
-
-
 def _check_p_delta(type_name: str, p_delta: bool, corotational: bool) -> None:
     """``-pDelta`` and ``-corotational`` are exclusive (the fork refuses
     the element when both are given)."""
@@ -236,13 +227,16 @@ class ASDShellQ4(Element):
     corotational
         Append the ``-corotational`` flag.
     p_delta
-        Append ``-pDelta`` (**Ladruno fork**, build
-        :data:`ASDSHELL_PDELTA_MIN_BUILD` and later): linear kinematics
+        Append ``-pDelta`` (**Ladruno fork**, at or after
+        ``stage_emit.C83_FORK_COMMIT`` c83ee812e): linear kinematics
         plus the initial-stress (geometric) stiffness of the current
         membrane forces, the shell analogue of ``geomTransf PDelta``, for a
         gravity, ``loadConst``, ``eigen`` sequence. Refused with
         ``corotational=True`` (the fork refuses the pair). Stock OpenSees
-        ignores the token, so the live route refuses it off the fork.
+        and older fork builds accept the token and drop the stiffness, so
+        the live route refuses any build not measured to carry c83ee812e
+        (``stage_emit.FORK_BUILD_HAS_C83``) and a Tcl / py deck checks
+        ``ladrunoBuild`` at its start (``ASDSHELL_PDELTA_GUARD``).
     no_eas
         Append ``-noeas``: turn off the enhanced membrane (the AGQI
         incompatible modes and their EAS parameters), leaving the plain
