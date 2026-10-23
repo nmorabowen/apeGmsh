@@ -1,0 +1,3 @@
+### FIXED — `architecture/h5-schema.md` documents the on-disk `element_loads` 2-D token table and `time_series` layout (#2488)
+
+Updated `architecture/h5-schema.md` so `/opensees/patterns/{name}/element_loads` (and `/opensees/stages/stage_NNN/patterns/{name}/element_loads`) is documented as the 2-D UTF-8 string dataset `(n_calls, max_tokens)` of raw `eleLoad` tokens right-padded with `""`, including `-ele` and `-range` / `-eleRange` target forms in OpenSees element tag space and the 2-D (2/4/6 float tokens) and 3-D (2/3/5/8 float tokens) `-beamUniform` forms, and `/opensees/time_series/{name}` is documented with its actual `@type`, `@tag`, and `params` / `params_str` layout rather than pre-sampled `time` / `values` datasets.

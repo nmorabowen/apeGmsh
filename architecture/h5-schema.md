@@ -794,25 +794,75 @@ written only when the model has auto-emitted bars.  The outer fields are
 
 ## `/opensees/time_series`
 
+One group per emitted `timeSeries` call, named `{type}_{tag}`
+(`time_series_name` in
+[`opensees/emitter/_h5_write_model.py`](../src/apeGmsh/opensees/emitter/_h5_write_model.py);
+a user-supplied `name=` is recorded in `/opensees/names` and
+`/opensees/decls`, never as the HDF5 group name).
+
 ```
-/opensees/time_series/elcentro/
-├── attrs: type="Path", factor=9.81, dt=0.01,
-│         file_path="elcentro.txt"        ← if loaded from file
-├── time              float dataset (n_steps,)
-└── values            float dataset (n_steps,)
+/opensees/time_series/Linear_1/
+└── attrs: type="Linear", tag=1,
+          params=[nan, 2.0], params_str=["-factor", ""]
+          (params=[] and no params_str when factor == 1.0)
+
+/opensees/time_series/Path_2/
+└── attrs: type="Path", tag=2,
+          params=[nan, 0.0, 0.5, 1.0, nan, 0.01, nan, 9.81],
+          params_str=["-values", "", "", "", "-dt", "", "-factor", ""]
 ```
 
-For algorithmic series (`Linear`, `Constant`, `Trig`, etc.), `time`
-and `values` are sampled at a configurable resolution (default: 200
-points across the natural domain) so the viewer can plot them
-without re-implementing the algorithm.
+Each group (`H5Emitter._write_time_series`, `H5Model.time_series`)
+stores only:
 
-For loading protocols (`ASCE41Protocol`, `FEMA461Protocol`,
-`ATC24Protocol`), the time/values arrays are computed at construction
-time and stored verbatim.
+* `type` — vlen UTF-8 string attribute: the emitted OpenSees
+  `timeSeries` command token (`"Linear"`, `"Constant"`, `"Path"`,
+  `"Trig"`, `"Pulse"`).
+* `tag` — int64 attribute: the emitted OpenSees time-series tag.
+* `params` / `params_str` — the positional OpenSees arguments after
+  `tag`, written by `_write_param_array` (`params` float64 `(n_args,)`
+  with `NaN` at string slots; `params_str` vlen UTF-8 `(n_args,)` with
+  `""` at numeric slots, omitted when all slots are numeric). Stored as
+  attributes, or as uncompressed datasets of the same names when HDF5
+  refuses either half for size (see below).
 
-Compression: HDF5 gzip level 4 on `time` and `values`. Negligible cost,
-significant savings for ground motions.
+The emitted positional argument sequence after `tag` per `type`
+([`opensees/time_series/time_series.py`](../src/apeGmsh/opensees/time_series/time_series.py)):
+
+| `type` | Emitted positional arguments in `params` / `params_str` (optional flags emitted only when non-default) |
+|---|---|
+| `"Constant"`, `"Linear"` | `()` when `factor == 1.0`, else `("-factor", factor)` |
+| `"Trig"` | `(t_start, t_end, period[, "-factor", factor][, "-shift", shift][, "-zeroShift", zero_shift])` |
+| `"Pulse"` | `(t_start, t_end, period, width[, "-factor", factor][, "-shift", shift][, "-zeroShift", zero_shift])` |
+| `"Path"` | `(("-filePath", file) \| ("-values", *values)[, ("-dt", dt) \| ("-time", *time)][, "-factor", factor][, "-startTime", start_time][, "-prependZero"][, "-useLast"])` |
+
+**No pre-sampled `time` / `values` datasets on disk.** The writer does
+not sample algorithmic series (`Linear`, `Constant`, `Trig`, `Pulse`)
+and does not create standalone `time` or `values` datasets under
+`/opensees/time_series/{name}`:
+
+* **Closed-form series (`Constant`, `Linear`, `Trig`, `Pulse`)** store
+  their command arguments in `params` / `params_str` and their
+  dataclass fields (`factor`, `t_start`, `t_end`, `period`, `width`,
+  `shift`, `zero_shift`) by field name in
+  [`/opensees/decl_params`](#opensees-decl_params-optional-opensees-2260).
+  Consumers (`apeGmshViewer/src/panels/windows/plot/series.ts`)
+  evaluate the OpenSees closed forms directly from those parameters.
+* **Inline `Path` series and generator primitives** (`Path(values=...)`,
+  plus `Ricker`, `MomentStep`, `Yoffe`, `ASCE41Protocol`,
+  `ModifiedATC24Protocol`, and `FEMA461Protocol`, which sample their
+  waveform at emit time and delegate to `Path`) emit as `type="Path"`
+  with `-values v0 v1 ...` and `-dt dt` (or `-time t0 t1 ...`) in the
+  `params` / `params_str` pair. For a direct `Path(values=...)`
+  declaration, `/opensees/decl_params` also carries `values` (and
+  `time` or `dt`, `factor`, `start_time`, `prepend_zero`, `use_last`)
+  as JSON fields; for a generator primitive, `/opensees/decl_params`
+  carries the generator class and its own dataclass knobs while the
+  tabulated samples sit in `/opensees/time_series/Path_{tag}`'s
+  `params` / `params_str`.
+* **File-backed `Path(file=...)` series** carry `-filePath <path>` in
+  `params` / `params_str` (and `file` in `/opensees/decl_params`); the
+  external file is not copied into the archive.
 
 ### Large arrays as datasets (opensees 2.34.0)
 
@@ -853,30 +903,98 @@ same group instead, as an element's `args` / `args_str` are. A long
 
 ## `/opensees/patterns`
 
+One group per emitted `pattern` block, named `{type}_{tag}`
+(`pattern_name` in
+[`opensees/emitter/_h5_write_model.py`](../src/apeGmsh/opensees/emitter/_h5_write_model.py)).
+Global patterns live under `/opensees/patterns/{type}_{tag}`;
+stage-scoped patterns live under
+`/opensees/stages/stage_NNN/patterns/{type}_{tag}` with the identical
+group layout plus an `emit_index` (int64) attribute and, for an ADR 0052
+`s.support` HOLD pattern, `role="hold"` and an `sp_holds` `(n_holds, 2)`
+int64 dataset of `(node_tag, dof)` pairs.
+
 ```
-/opensees/patterns/Wind/
+/opensees/patterns/Plain_1/
 ├── attrs: type="Plain", tag=1,
-│         series_ref="/opensees/time_series/Linear_1"
+│         series_ref="/opensees/time_series/Linear_1",
+│         params=[1.0]
 ├── /loads               compound dataset, shape (n_loads,)
-│     fields: target_kind (string),    ← "node" | "pg"
-│             target (string),         ← node tag (str) or PG name
-│             forces (float[ndf])      ← padded to ndf length
-├── /sps                 compound dataset
-│     fields: target, dof (int), value (float)
-└── /element_loads       compound dataset
-      fields: target, kind (string),   ← "beamUniform" | "surfacePressure" | …
-              params (float[6])         ← padded
+│     fields: target_kind (vlen utf-8),  ← always "node" (PGs already fanned out)
+│             target (vlen utf-8),       ← node tag as string
+│             forces (float64[ndf])      ← padded with NaN to ndf
+├── /sps                 compound dataset, shape (n_sps,)
+│     fields: target_kind (vlen utf-8),  ← always "node"
+│             target (vlen utf-8),       ← node tag as string
+│             dof (int64), value (float64)
+└── /element_loads       vlen utf-8 dataset, shape (n_calls, max_tokens)
+      raw eleLoad command tokens, one row per emitted eleLoad call,
+      right-padded with "" to max_tokens
 ```
 
-`/opensees/patterns/Earthquake_X/` for `UniformExcitation`:
+Each child dataset (`loads`, `sps`, `element_loads`, `sp_holds`) is
+created only when that pattern emitted at least one record of that kind.
+
+### `element_loads`: 2-D token table
+
+`/opensees/patterns/{name}/element_loads` (and
+`/opensees/stages/stage_NNN/patterns/{name}/element_loads`) is a **2-D
+variable-length UTF-8 string dataset** of shape `(n_calls, max_tokens)`
+(`dtype=h5py.string_dtype(encoding="utf-8")`), written by
+`H5Emitter._write_pattern_ele_loads`
+([`opensees/emitter/_h5_write_model.py`](../src/apeGmsh/opensees/emitter/_h5_write_model.py))
+and read by `H5Model._pattern_record`
+([`opensees/emitter/h5_reader.py`](../src/apeGmsh/opensees/emitter/h5_reader.py))
+and `apeGmshViewer` (`readTable` in `apeGmshViewer/src/reader/read.ts`):
+
+* **Rows and padding.** Row `i` holds the positional arguments of the
+  `i`-th `emitter.eleLoad(*args)` call in that pattern. String tokens
+  are stored as `str(v)` and numeric arguments via `repr(v)`. When calls
+  in the same pattern have different token counts, shorter rows are
+  right-padded with `""` (empty string) to `max_tokens`. Readers drop
+  `""` cells when reconstructing a call's token list.
+* **Target tokens (before `-type`).** Every row starts with its target
+  elements in **OpenSees element tag space** (the bridge's
+  `resolve_ele_load_commands` has already fanned out any `pg=`,
+  `label=`, `Element` handle, or `from_model(case)` declaration and
+  translated FEM element IDs through the build's `fem_eid -> ops_tag`
+  map; consumers map an OpenSees element tag back to its FEM element ID
+  via `/opensees/element_meta/{type}/ids` and `fem_eids`):
+  * `"-ele", "<tag_1>", ["<tag_2>", ...]` — one or more explicit
+    OpenSees element tags (followed by `"-type"`).
+  * `"-range", "<start_tag>", "<end_tag>"` or
+    `"-eleRange", "<start_tag>", "<end_tag>"` — inclusive OpenSees
+    element tag range `start_tag .. end_tag`.
+* **Load-type tokens (`"-type", "<kind>", ...`).** Immediately after the
+  target tokens sits `"-type"` followed by the OpenSees element-load
+  kind token and its numeric arguments (`_beam_uniform_args` and
+  `_self_weight_args` in
+  [`opensees/pattern/pattern.py`](../src/apeGmsh/opensees/pattern/pattern.py),
+  parsed by `parse_ele_load_beam_uniform` in
+  [`results/_beam_diagrams.py`](../src/apeGmsh/results/_beam_diagrams.py)):
+
+  | Kind token | Model `ndm` | Trailing float tokens (after `"-type", "<kind>"`) | Meaning (element-local axes `x, y, z`; fractional span `0 <= aL < bL <= 1`) |
+  |---|---|---|---|
+  | `"-beamUniform"` | `2` | 2 tokens: `wy, wx` | full-span uniform (`aL=0, bL=1`, `wya=wyb=wy`, `wxa=wxb=wx`) |
+  | `"-beamUniform"` | `2` | 4 tokens: `wy, wx, aL, bL` | partial-span uniform on `[aL, bL]` (`wya=wyb=wy`, `wxa=wxb=wx`) |
+  | `"-beamUniform"` | `2` | 6 tokens: `wya, wxa, aL, bL, wyb, wxb` | partial-span trapezoidal on `[aL, bL]` |
+  | `"-beamUniform"` | `3` | 2 tokens: `wy, wz` | full-span uniform transverse (`aL=0, bL=1`, `wx=0`) |
+  | `"-beamUniform"` | `3` | 3 tokens: `wy, wz, wx` | full-span uniform (`aL=0, bL=1`, `wya=wyb=wy`, `wza=wzb=wz`, `wxa=wxb=wx`) |
+  | `"-beamUniform"` | `3` | 5 tokens: `wy, wz, wx, aL, bL` | partial-span uniform on `[aL, bL]` |
+  | `"-beamUniform"` | `3` | 8 tokens: `wya, wza, wxa, aL, bL, wyb, wzb, wxb` | partial-span trapezoidal on `[aL, bL]` |
+  | `"-selfWeight"` | `2` | 2 tokens: `wx, wy` | element self-weight factors `(wx, wy)` |
+  | `"-selfWeight"` | `3` | 3 tokens: `wx, wy, wz` | element self-weight factors `(wx, wy, wz)` |
+  | `"-surfaceLoad"` | `2` or `3` | 0 tokens | surface pressure follower marker |
+
+`/opensees/patterns/UniformExcitation_2/` for `UniformExcitation`:
 
 ```
-/opensees/patterns/Earthquake_X/
+/opensees/patterns/UniformExcitation_2/
 └── attrs: type="UniformExcitation", tag=2, direction=1,
-          series_ref="/opensees/time_series/elcentro"
+          series_ref="/opensees/time_series/Path_1",
+          params=[1.0, nan, 1.0], params_str=["", "-accel", ""]
 ```
 
-(no contained loads — uniform excitation IS the pattern's payload)
+(no contained load datasets — uniform excitation IS the pattern's payload)
 
 ## `/opensees/bcs`
 
@@ -2416,7 +2534,7 @@ Every reference uses an HDF5 path string. Examples:
 | `material_ref` | `/opensees/materials/uniaxial/Steel_S420` |
 | `section_ref` | `/opensees/sections/Cols` |
 | `transf_ref` | `/opensees/transforms/Cols` |
-| `series_ref` | `/opensees/time_series/elcentro` |
+| `series_ref` | `/opensees/time_series/Path_1` |
 
 Readers MUST resolve via `h5py.File["{ref}"]` and validate the
 returned group's `type` attribute matches expectations.
@@ -2427,9 +2545,10 @@ For variable-length string fields (`material_ref`, `target`, `kind`),
 use HDF5 variable-length string type
 (`h5py.string_dtype(encoding="utf-8")`).
 
-For padded float arrays (`forces`, `params`), pad with `nan` to a
-fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
-`np.dtype([...])` compound types.
+For padded float arrays (`forces` in `/opensees/patterns/{name}/loads`,
+`coords` / `line` in `/opensees/sections/{name}`), pad with `nan` to a
+fixed length (`ndf` for forces, 8 for patch `coords`, 6 for layer
+`line`). Use `np.dtype([...])` compound types.
 
 ## Versioning
 
@@ -3047,15 +3166,16 @@ column.h5
     │   ├── ids        [1]
     │   ├── fem_eids   [1]                      — Phase 8.6 mapping (broker's eid → ops_tag)
     │   └── args       [[1, 1]]                 — (transf_tag, integration_tag)
-    ├── /time_series/elcentro/
-    │   ├── attrs: type="Path", factor=9.81, dt=0.01, file_path="elcentro.txt"
-    │   ├── time       (n_steps,)  = [0.00, 0.01, 0.02, ...]
-    │   └── values     (n_steps,)  = [0.001, 0.005, ..., -0.012, ...]
-    ├── /patterns/Quake/
+    ├── /time_series/Path_1/
+    │   └── attrs: type="Path", tag=1,
+    │              params=[nan, nan, nan, 0.01, nan, 9.81],
+    │              params_str=["-filePath", "elcentro.txt", "-dt", "", "-factor", ""]
+    ├── /patterns/UniformExcitation_1/
     │   └── attrs: type="UniformExcitation", tag=1, direction=1,
-    │              series_ref="/opensees/time_series/elcentro"
+    │              series_ref="/opensees/time_series/Path_1",
+    │              params=[1.0, nan, 1.0], params_str=["", "-accel", ""]
     └── /bcs/fix
-        target_kind=["pg"], target=["Base"], dofs=[[1,1,1,1,1,1]]
+        target_kind=["node"], target=["1"], dofs=[[1,1,1,1,1,1]]
 ```
 
 This file is ~50 KB and tells the viewer everything it needs to
