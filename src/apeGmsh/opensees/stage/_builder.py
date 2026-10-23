@@ -164,13 +164,14 @@ STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
 #: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
 #: Fork commit ``43b235bbb`` stops the reset and ``FORK_PIN`` carries it,
 #: but every older fork build still resets (79e062367, measured).  The
-#: table stays full and the refusal fails closed.  It runs at stage close,
-#: before any engine is bound, so it cannot see the build a deck will run
-#: on; and ``ladrunoBuild()``'s bare sha cannot prove the build descends
-#: from the fix.  It can be gated once the fork registers a capability
-#: marker for the fix, as the ``materialState`` floor is
-#: (``_internal/build/stage_emit.MATERIAL_STATE_FORK_FLOOR``), or once
-#: the live route checks the bound build against an allowlist.
+#: build is known only where the model runs, and a staged model runs only
+#: as a deck (``apeSees.analyze`` / ``run`` and ``OpenSeesModel.build(
+#: "live")`` refuse stages), so the check is the deck's: a deck that
+#: builds an element or material after a flip of the group, and solves
+#: before flipping it again, asks the running build for ``ladrunoBuild``
+#: and stops unless the sha is one measured to carry the fix
+#: (``_internal/build/stage_emit.MD_STATIC_RESET_GUARD``, on every target
+#: mode; stock has no ``ladrunoBuild`` and runs).
 FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
 )
@@ -487,7 +488,6 @@ class _StageBuilder:
                 "dt=) — every stage must declare its analyze loop."
             )
         self._check_chain_against_run()
-        self._check_fork_stage_static_reset()
         self._check_multi_element_plastic_flip()
         self._check_stage_parameter_routes()
         self._check_activation_after_plastic_flip()
@@ -565,95 +565,6 @@ class _StageBuilder:
                 group_of_tag[int(tag)] = CLASS_WIDE_STAGE_FLAG[
                     type(mat).__name__]
         return members, used, group_of_tag
-
-    def _check_fork_stage_static_reset(self) -> None:
-        """Refuse, on a fork-pinned bridge, an activation that resets a flip.
-
-        On the Ladruno fork the constructor of a
-        :data:`FORK_RESETS_STAGE_STATIC` class sets the class-wide static
-        to 0, and every element copies its material through it.  So when
-        an earlier stage left the group plastic, this stage's activation
-        of an element carrying such a material puts the whole group back
-        to elastic, silently.  Refused unless this stage flips the group
-        itself (its flip lines emit after the activation and set the
-        static again).  Only a bridge whose ``OpenSeesTarget`` pins
-        ``mode="fork"`` is known to run the fork at stage close; an
-        ``"auto"`` target is decided by the imported binary at run time,
-        which this check cannot see.
-
-        Fork commit ``43b235bbb`` (carried by ``FORK_PIN``) keeps the
-        flag, but the check stays on for every fork build, failing closed:
-        it runs before any engine is bound, so a deck's build is unknown
-        here, and the sha ``ladrunoBuild()`` returns in-process cannot by
-        itself prove the build descends from the fix.  It can be gated on
-        a fork capability marker for the fix, as ``materialState`` is on
-        ``ladrunoSchema``, or on a live-route allowlist of bound builds.
-        """
-        target = self._bridge.opensees
-        if target is None or target.mode != "fork":
-            return
-        if not (self._activated_pgs and FORK_RESETS_STAGE_STATIC):
-            return
-        _members, _used, group_of_tag = self._class_wide_members()
-        activated = set(self._activated_pgs)
-        resetting: dict[str, list[str]] = {}
-        for spec in self._bridge._primitives:
-            if not isinstance(spec, Element):
-                continue
-            spec_pg = getattr(spec, "pg", None)
-            if spec_pg not in activated:
-                continue
-            seen: set[int] = set()
-            frontier: list[Primitive] = list(spec.dependencies())
-            while frontier:
-                dep = frontier.pop()
-                if id(dep) in seen:
-                    continue
-                seen.add(id(dep))
-                frontier.extend(dep.dependencies())
-                cls = type(dep).__name__
-                if cls in FORK_RESETS_STAGE_STATIC:
-                    resetting.setdefault(
-                        CLASS_WIDE_STAGE_FLAG[cls], []).append(
-                            f"{type(spec).__name__} on pg {spec_pg!r} "
-                            f"({cls})")
-        if not resetting:
-            return
-        # The group's stage when this stage opens: the last earlier flip.
-        last: dict[str, int] = {}
-        for stage in self._bridge._stage_records:
-            for tag, value in stage_flips(
-                    stage.update_material_stage_records,
-                    stage.update_parameter_records):
-                group = group_of_tag.get(tag)
-                if group is not None:
-                    last[group] = value
-        this_stage = {
-            group_of_tag[tag]
-            for tag, _value in stage_flips(
-                self._update_material_stage_records,
-                self._update_parameter_records)
-            if tag in group_of_tag
-        }
-        for group, what in resetting.items():
-            if last.get(group, 0) == 0 or group in this_stage:
-                continue
-            raise BridgeError(
-                f"Stage {self._name!r}.activate: on the Ladruno fork this "
-                f"stage's {', '.join(sorted(set(what)))} reset the "
-                f"class-wide C++ static {group} to 0: the fork's material "
-                "constructor sets it, and every new element copies its "
-                f"material through that constructor.  An earlier stage "
-                f"left the group at stage {last[group]}, so every one of "
-                "its materials would go back to elastic with no warning "
-                "(fork issue #2444; stock keeps the flag).  Fork builds "
-                "that carry commit 43b235bbb (FORK_PIN does) keep it too, "
-                "but this check runs at stage close, before any engine is "
-                "bound, and a build sha cannot prove that ancestry, so it "
-                "is refused on every fork target.  Flip the whole "
-                "group again in this stage, after the activation, or "
-                "activate these elements before the flip."
-            )
 
     def _first_element_only_carriers(
         self, tags: "set[int]",
