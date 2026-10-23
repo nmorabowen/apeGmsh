@@ -21,9 +21,14 @@ Both elements run the same prescribed homogeneous strain path (every DOF
 driven), elastic to t=1, the flip, then on to t=2.  ``routed`` must equal
 ``reference`` bit for bit and ``first`` must differ from it.
 
+Measured at FORK_PIN 100eb9ae (live-fork run 39874892907): every element
+case forwards, bit for bit; on 79e062367 every one drops it.
+
 It also runs the fork's finite-strain wrappers over ManzariDafalias
 (``LogStrain``, ``LogStrain2D``, ``InitDefGrad``), refused by #2446 because
-over MD the first two ended the process on 79e062367.
+over MD the first two ended the process on 79e062367.  They still do at the
+pin (``ManzariDafalias::getType`` exits), and ``InitDefGrad`` still refuses
+a small-strain inner; the tests pin those outcomes.
 
 Every case runs in a child interpreter, so a fork crash fails one case
 instead of ending the lane's pytest process.
@@ -259,14 +264,19 @@ def _diff(a: list[float], b: list[float]) -> float:
     return max(abs(x - y) for x, y in zip(a, b))
 
 
+def _check_build(result: dict[str, Any]) -> None:
+    if os.environ.get("APEGMSH_FORK_PIN_ENFORCE") == "1":
+        assert result["build"] == _pinned_sha(), (
+            f"measured on {result['build']}, not FORK_PIN {_pinned_sha()}")
+
+
 def _measure(kind: str, case: str) -> dict[str, Any]:
     rc, result, tail = _in_child(kind, case)
     assert result is not None, (
         f"{case}: the child ended without a result (rc={rc}); the fork "
         f"crashed or refused the deck.\n{tail}")
-    if os.environ.get("APEGMSH_FORK_PIN_ENFORCE") == "1":
-        assert result["build"] == _pinned_sha(), (
-            f"measured on {result['build']}, not FORK_PIN {_pinned_sha()}")
+    _check_build(result)
+    result["tail"] = tail
     return result
 
 
@@ -287,13 +297,48 @@ def _verdict(result: dict[str, Any]) -> str:
 
 @pytest.mark.parametrize("case", sorted(_ELEMENT_CASES))
 def test_ladruno_element_forwards_material_state_at_pin(case: str) -> None:
+    """Measured at FORK_PIN 100eb9ae (live-fork run 39874892907): every case
+    forwards, bit for bit (on 79e062367 every one dropped it)."""
     result = _measure("element", case)
     assert _verdict(result) == "forwards", (
-        f"{case} on {result['build']}: {_verdict(result)}")
+        f"{case} on {result['build']}: {_verdict(result)}\n{result['tail']}")
+
+
+#: What each wrapper case did at FORK_PIN 100eb9ae (live-fork run
+#: 39874892907).  ``crash``: ``LogStrain`` asks its inner for
+#: ``getType()``, which ManzariDafalias does not implement, and the
+#: NDMaterial base exits the process (rc 255) before any analysis.
+#: ``refused``: ``InitDefGrad`` refuses a small-strain inner at
+#: construction.  A case that starts to run fails here and asks for a
+#: re-measure; the bridge keeps all three off ``MATERIAL_STATE_WRAPPERS``.
+_WRAPPER_MEASURED = {
+    "LogStrain": "crash",
+    "LogStrain2D": "crash",
+    "InitDefGrad-LogStrain": "crash",
+    "InitDefGrad-direct": "refused",
+}
+_MD_GETTYPE_EXIT = "ManzariDafalias::getType -- subclass responsibility"
 
 
 @pytest.mark.parametrize("case", sorted(_WRAPPER_CASES))
 def test_ladruno_wrapper_over_md_at_pin(case: str) -> None:
-    result = _measure("wrapper", case)
-    assert _verdict(result) == "forwards", (
-        f"{case} on {result['build']}: {_verdict(result)}")
+    from apeGmsh.opensees._internal.build.stage_emit import (
+        MATERIAL_STATE_WRAPPERS,
+    )
+
+    chain = _WRAPPER_CASES[case][4]
+    assert not {tok for tok, _extra in chain} & set(MATERIAL_STATE_WRAPPERS)
+    rc, result, tail = _in_child("wrapper", case)
+    if _WRAPPER_MEASURED[case] == "crash":
+        assert result is None and rc != 0, (
+            f"{case} no longer ends the process (rc={rc}): re-measure it "
+            f"(#2457) and list it on MATERIAL_STATE_WRAPPERS if it forwards."
+            f"\n{result}\n{tail}")
+        assert _MD_GETTYPE_EXIT in tail, tail
+    else:
+        assert result is not None, f"{case}: rc={rc}\n{tail}"
+        _check_build(result)
+        assert all(isinstance(result[h], str) and "OpenSeesError" in result[h]
+                   for h in ("reference", "routed", "first")), (
+            f"{case} is no longer refused at construction: re-measure it "
+            f"(#2457).\n{result}\n{tail}")
