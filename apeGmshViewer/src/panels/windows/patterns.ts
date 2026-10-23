@@ -279,10 +279,37 @@ function paramsEl(lines: readonly ParamLine[], note: string | null, act: (e: Eve
   );
 }
 
-function patternEl(p: PatternCard, act: (e: Event) => void): HTMLElement {
+function patternEl(p: PatternCard, s: State, act: (e: Event) => void): HTMLElement {
   const row = el("div", "window-row");
   row.dataset["h5"] = p.h5;
-  row.append(head(p.title, p.self, p.synth, act));
+  const h = head(p.title, p.self, p.synth, act);
+  const isShown =
+    s.loads.on &&
+    (s.loads.selectedPatterns === null
+      ? p.role !== "support_reaction" || s.loads.includeSupportReactions
+      : s.loads.selectedPatterns.includes(p.h5));
+  const btn3d = el("button", "window-pattern-3d" + (isShown ? " on" : ""), "show in 3D");
+  btn3d.title = isShown ? `Hide ${p.title} in 3-D viewport` : `Show ${p.title} in 3-D viewport`;
+  btn3d.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (
+      s.loads.on &&
+      s.loads.selectedPatterns !== null &&
+      s.loads.selectedPatterns.length === 1 &&
+      s.loads.selectedPatterns[0] === p.h5
+    ) {
+      act({ type: "setLoads", on: false, selectedPatterns: null });
+    } else {
+      act({
+        type: "setLoads",
+        on: true,
+        selectedPatterns: [p.h5],
+        ...(p.role === "support_reaction" ? { includeSupportReactions: true } : {}),
+      });
+    }
+  });
+  h.append(btn3d);
+  row.append(h);
   const series = el("span");
   series.append("series ", p.series ? refEl(p.series, act) : (p.seriesValue ?? p.seriesH5 ?? "none"));
   row.append(detail([`${p.type} · tag ${p.tag ?? "?"}`, ...(p.role ? [`role ${p.role}`] : []), series]));
@@ -322,7 +349,7 @@ export const view: WindowView = (s, act) => {
   if (m.note) body.append(el("div", "window-note", m.note));
   for (const sec of m.sections) {
     body.append(el("div", "window-section", `patterns · ${sec.name}`));
-    for (const p of sec.patterns) body.append(patternEl(p, act));
+    for (const p of sec.patterns) body.append(patternEl(p, s, act));
   }
   if (m.series.length) {
     body.append(el("div", "window-section", "time series"));
