@@ -261,7 +261,7 @@ def _flip_then_activate(*, system: str = "UmfPack", reflip: bool = False,
 
 
 def alive_at_the_flip(*, reflip: str = "sweep", register: str = "between",
-                      host: str = "C") -> apeSees:
+                      host: str = "C", push: str = "A") -> apeSees:
     """#2528: sand on ``A`` flipped plastic by ``materialState`` over pg
     ``A``, which is every element alive at ``push``.  ``host`` (``C``, a
     SixNodeTri, or ``P``, a FourNodeQuad) carries the same sand and is
@@ -269,17 +269,24 @@ def alive_at_the_flip(*, reflip: str = "sweep", register: str = "between",
     ``"sweep"`` (``s.update_material_stage``), ``"materialState"`` (over
     ``A`` and the host), ``"host only"``, or ``"none"``.  ``register``
     puts the host's element ``"early"`` (before ``push``), ``"between"``
-    the stages, or ``"after"`` both."""
+    the stages, or ``"after"`` both.  ``push="host"`` flips the host's
+    element alone at ``push``, before it is in the domain."""
     ops = _ops()
     sand = _md(ops, "sand")
     _host(ops, "A", sand)
     if register == "early":
         _host(ops, host, sand)
-    _stage(ops, "push", lambda s: s.update_parameter(
-        "materialState", 1.0, pg="A", material=sand))
+    eid = {"C": 6, "P": 5}[host]
+    if push == "A":
+        _stage(ops, "push", lambda s: s.update_parameter(
+            "materialState", 1.0, pg="A", material=sand))
+    elif push == "host":
+        _stage(ops, "push", lambda s: s.update_parameter(
+            "materialState", 1.0, elements=[eid], material=sand))
+    else:
+        raise KeyError(push)
     if register == "between":
         _host(ops, host, sand)
-    eid = {"C": 6, "P": 5}[host]
 
     def install(s: Any) -> None:
         s.activate(pgs=[host])
@@ -336,6 +343,10 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
         "Stage 'install': s.update_parameter('materialState', ...) flips "
         "nDMaterial tag 1 (2 elements) to a plastic stage but leaves 1 of "
         "those elements out"),
+    "materialState on a carrier not yet in the domain": (
+        lambda: alive_at_the_flip(push="host"), "#2460",
+        "on elements [6] names ManzariDafalias (nDMaterial tag 1), but it "
+        "targets no element"),
     "reflip over a FourNodeQuad activated after the flip": (
         lambda: alive_at_the_flip(host="P"), "#2445",
         "Stage 'install': flips nDMaterial tag 1 (2 elements) to a plastic "

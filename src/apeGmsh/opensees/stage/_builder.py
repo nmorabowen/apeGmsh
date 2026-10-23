@@ -554,7 +554,7 @@ def check_stage_routes(
     _refuse_multi_element_plastic_flip(
         name, model, index, mat_stage_records, parameter_records)
     _refuse_stage_parameter_routes(
-        name, model, mat_stage_records, parameter_records)
+        name, model, index, mat_stage_records, parameter_records)
     _refuse_activation_after_plastic_flip(
         name, model, mat_stage_records, parameter_records, activated_pgs,
         earlier_flips)
@@ -795,15 +795,15 @@ def _targets(model: RouteModel, prec: "UpdateParameterRecord") -> "set[int]":
 
 
 def _refuse_stage_parameter_routes(
-    name: str, model: RouteModel,
+    name: str, model: RouteModel, index: int,
     mat_stage_records: "Sequence[MaterialStageRecord]",
     parameter_records: "Sequence[UpdateParameterRecord]",
 ) -> None:
     """Refuse a stage-flag update that reaches nothing, or the wrong
     material (#2458, #2460).
 
-    For each ``s.update_parameter`` of this stage whose name is in
-    :data:`STAGE_FLAG_PARAMETERS`:
+    For each ``s.update_parameter`` of this stage (at ``index``) whose
+    name is in :data:`STAGE_FLAG_PARAMETERS`:
 
     * ``updateMaterialStage`` is refused.  ``updateParameter`` goes
       through ``Parameter::update(double)``, which sets only
@@ -812,9 +812,10 @@ def _refuse_stage_parameter_routes(
       stress-density models) reads ``Information::theInt`` for it,
       which nothing sets: the stage the run lands on is uninitialised
       memory, while the bridge counted a flip to the value given.
-    * ``materialState`` is refused when no targeted element carries the
-      named material (the update would reach nothing, yet count as a
-      flip).
+    * ``materialState`` is refused when no targeted element alive at the
+      stage (:meth:`RouteSpec.alive_at`) carries the named material (the
+      update would reach nothing, yet count as a flip).  A target that a
+      later stage activates is not in the domain yet (#2528).
     * ``materialState`` is refused when a targeted element that carries
       the named material is not of a :data:`MATERIAL_STATE_ELEMENTS`
       class.  ``FourNodeQuad``,
@@ -888,13 +889,18 @@ def _refuse_stage_parameter_routes(
                 "(issues #2458, #2460).  Pass material=."
             )
         mat_tag = int(prec.mat_tag)
-        if not any(mat_tag in spec.nd_tags for spec in hit):
+        alive = [spec for spec in hit if spec.alive_at(index)]
+        if not any(mat_tag in spec.nd_tags for spec in alive):
             cls = model.nd_class.get(mat_tag) or "the material"
-            held = sorted({spec.where for spec in hit})
+            held = sorted({spec.where for spec in alive})
+            later = sorted({spec.where for spec in hit
+                            if spec not in alive and mat_tag in spec.nd_tags})
             raise BridgeError(
                 f"{call} names {cls} (nDMaterial tag {mat_tag}), but "
                 + (f"its targets ({', '.join(held)}) do not carry it"
                    if held else "it targets no element")
+                + (f" in the domain ({', '.join(later)} carries it, but "
+                   "a later stage activates it)" if later else "")
                 + ": the update reaches nothing, while the bridge "
                 "counts a flip of that material (issue #2460).  Target "
                 "the elements that carry it."

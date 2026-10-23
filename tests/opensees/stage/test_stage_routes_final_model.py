@@ -434,6 +434,30 @@ def test_the_early_twin_is_still_refused_at_the_stage_close() -> None:
     assert msg.startswith("Stage 'push': ") and "leaves 1 of those" in msg
 
 
+def test_a_flip_of_a_carrier_not_yet_in_the_domain_is_refused_on_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed where counting alive carriers would open a seam: a
+    pre-fix archive whose 'push' flips C's element alone, before 'install'
+    activates C.  The update reaches nothing at 'push'.  The multi-element
+    check no longer counts C there, so the reach check reads the alive
+    targets, and the replay refuses by name."""
+    from tests.opensees.h5.test_h5_stage_route_replay import (
+        _replay,
+        _write,
+        alive_at_the_flip,
+    )
+
+    path = _write(lambda: alive_at_the_flip(push="host"),
+                  tmp_path / "pre_fix.h5", monkeypatch, pre_fix=True)
+    with pytest.raises(BridgeError) as exc:
+        _replay(path)
+    msg = str(exc.value)
+    assert msg.startswith("Stage 'push': s.update_parameter(")
+    assert ("it targets no element in the domain (SixNodeTri on pg 'C' "
+            "carries it, but a later stage activates it)") in msg
+
+
 def test_the_owners_are_the_ownership_pass_owners() -> None:
     """The owner oracle: the ``RouteSpec.owner`` the emit and the stage
     close read is, spec for spec, the stage ``compute_stage_ownership``
