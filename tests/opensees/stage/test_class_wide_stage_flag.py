@@ -826,8 +826,13 @@ def test_live_reset_happens_exactly_where_the_table_says(cls: str) -> None:
 def test_live_reset_follows_the_fork_build(cls: str) -> None:
     """On the fork lane: reset on a fork build older than the fix
     (79e062367), kept at FORK_PIN (the #2444 plastic answer).
-    LadrunoSANISAND inherits ManzariDafalias's static."""
-    pytest.importorskip("openseespy.opensees")
+    LadrunoSANISAND inherits ManzariDafalias's static.  The engine comes
+    from the resolver, not ``import openseespy``: the live-fork lane
+    installs the fork as ``opensees`` and has no openseespy, so an
+    ``importorskip`` would skip this test on the one lane it is for."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    assert get_backend_info().kind == "fork"
     expected = _reset_expected(cls)
     code_f, uy_flipped = _run_reset(cls, add=False)
     code_a, uy_added = _run_reset(cls, add=True)
