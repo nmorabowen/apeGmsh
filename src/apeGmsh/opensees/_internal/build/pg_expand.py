@@ -384,8 +384,10 @@ def resolve_element_node_pair(
     * a ``DecoupledNodeDef`` handle (from ``g.decouple_node``) → its
       ``.tag`` (fail-loud if the handle was never materialized by the FEM
       factory, i.e. ``.tag is None``);
-    * a node-label ``str`` → exactly one node via
-      :func:`_expand_label_to_nodes` (0 or ≥2 matches fail loud);
+    * a ``str`` → exactly one node of the node label (a
+      ``g.decouple_node`` ``label=`` included) or, failing that, the
+      physical group of that name (:func:`node_name_to_nodes`;
+      0 or ≥2 matches fail loud);
     * an ``int`` → the raw node tag (power-user escape hatch — **not**
       compose-safe: ``g.compose`` offsets node tags at the FEM level
       before the bridge runs, so a raw int authored against pre-compose
@@ -416,7 +418,8 @@ def resolve_element_node_pair(
         if isinstance(ref, int):
             return int(ref)
         if isinstance(ref, str):
-            ids = _expand_label_to_nodes(fem, ref)
+            ids = node_name_to_nodes(
+                fem, ref, where=f"{cls} nodes= {which} endpoint")
             if len(ids) != 1:
                 raise BridgeError(
                     f"{cls} nodes= {which} endpoint label {ref!r} resolves to "
@@ -445,6 +448,45 @@ def resolve_element_node_pair(
             f"would otherwise assemble a singular element silently)."
         )
     return i_tag, j_tag
+
+
+def node_name_to_nodes(
+    fem: "FEMData", name: str, *, where: str,
+) -> tuple[int, ...]:
+    """The nodes a node-argument name selects: a node label (a
+    ``g.decouple_node`` label included) or a physical group.
+
+    A name that is both, selecting different nodes, is refused rather
+    than picked; one that is neither raises naming both namespaces.
+    """
+    nodes_obj = getattr(fem, "nodes", None)
+
+    def _lookup(attr: str) -> tuple[int, ...] | None:
+        groups = getattr(nodes_obj, attr, None)
+        if groups is None:
+            return None
+        try:
+            return tuple(int(n) for n in groups.node_ids(name))
+        except KeyError:
+            return None  # not a name of this namespace
+
+    by_label = _lookup("labels")
+    by_pg = _lookup("physical")
+    if by_label is None:
+        if by_pg is None:
+            raise BridgeError(
+                f"{where} {name!r} is neither a node "
+                f"label nor a physical group on the FEM snapshot (a "
+                f"g.decouple_node label=... is a node label)."
+            )
+        return by_pg
+    if by_pg is not None and set(by_label) != set(by_pg):
+        raise BridgeError(
+            f"{where} {name!r} names both a label "
+            f"(nodes {by_label[:5]}) and a physical group (nodes "
+            f"{by_pg[:5]}) — rename one, or pass the node handle."
+        )
+    return by_label
 
 
 def _polygon_area_3d(fem: "FEMData", cycle: Sequence[int]) -> float:

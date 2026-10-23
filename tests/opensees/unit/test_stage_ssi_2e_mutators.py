@@ -705,6 +705,8 @@ def test_update_material_stage_rejects_out_of_range_stage() -> None:
     ops, sand_a, _b = _sanisand_ops()
     with ops.stage(name="bad") as s:
         with pytest.raises(ValueError, match="stage= must be 0"):
+            s.update_material_stage(materials=[sand_a], stage=3)
+        with pytest.raises(ValueError, match="takes 0 or 1"):
             s.update_material_stage(materials=[sand_a], stage=2)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)

@@ -155,11 +155,20 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * `readDef` reads either form and refuses a group holding both; smaller
  * arrays keep the attribute form and read as before.
  *
+ * opensees 2.35.0 (#2416, h5-schema.md "`/opensees/constraints/
+ * equationConstraint` (optional, opensees 2.35.0)"): a new optional group
+ * holding every global `equationConstraint` line the build wrote (an
+ * `enforce="equation"` tie's and an `apeSees.equation_constraint` row's), for
+ * the deck replay. Replay data the app does not read, as `embeddedRebar` was
+ * at 2.29: no window lists MP constraints, so nothing here reads differently.
+ * The group is hashed: a 2.35 re-emit of a model with such a line has a new
+ * model_hash, which the results pairing shows as a plain mismatch.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 34 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 35 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;

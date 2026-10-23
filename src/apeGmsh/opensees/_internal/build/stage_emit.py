@@ -670,6 +670,325 @@ def emit_zero_velocities_by_record(
             cursor.close()
 
 
+#: The nDMaterial classes whose flip to a plastic stage runs a
+#: per-instance ``Elastic2Plastic()`` that ``updateMaterialStage`` gives
+#: the first carrying element only.  ``stage/_builder.py`` re-exports
+#: it as ``FIRST_ELEMENT_ONLY_PLASTIC_INIT``.
+SWEPT_MATERIAL_CLASSES: frozenset[str] = frozenset(
+    {"ManzariDafalias", "LadrunoSANISAND"},
+)
+
+#: The element type tokens, as the ``element`` verb receives them, whose
+#: element hands ``materialState <tag>`` to every integration-point
+#: material, mapped to where the nDMaterial tag sits in the verb's argv:
+#: an index, or ``None`` for "the integer right before the first option
+#: string" (``LadrunoUP``, whose node count varies with its shape).  The
+#: tokens of ``stage/_builder.MATERIAL_STATE_ELEMENTS``, one per class
+#: (``SixNodeTri`` emits ``tri6n``).
+MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
+    "tri6n": 8,
+    "FourNodeTetrahedron": 4,
+    "SSPquad": 4,
+    "SSPbrick": 8,
+    "BezierTri6": 8,
+    "BezierTet10": 10,
+    "LadrunoUP": None,
+}
+
+
+#: The nDMaterial wrappers, by type token (the bridge class has the same
+#: name), whose ``setParameter`` hands every name on to the material they
+#: wrap, mapped to the argv index of that material's tag.  An element of
+#: a wrapper over a swept material is a carrier of the swept material:
+#: its ``materialState <tag>`` reaches the wrapped integration points.
+#: Each entry is measured against the per-element reference
+#: (``tests/opensees/integration/test_md_stage_route_elements.py``):
+#: ``PlaneStrain`` on stock 3.8.0 and the fork, ``StagedStrain`` on the
+#: fork build 79e062367.  ``LogStrain``, ``LogStrain2D`` and
+#: ``InitDefGrad`` forward ``setParameter`` in the fork source too, but
+#: are not listed: over ManzariDafalias the first two end the process on
+#: that build, and ``InitDefGrad`` takes only a finite-strain inner.  The
+#: stage close refuses a multi-element plastic flip reached through any
+#: primitive outside this table, so it is the one resolution both sides
+#: use.
+MATERIAL_STATE_WRAPPERS: dict[str, int] = {
+    "PlaneStrain": 0,
+    "StagedStrain": 0,
+}
+
+
+class ForkBuildFloor(NamedTuple):
+    """A Ladruno fork build floor that an emitted deck checks at its start.
+
+    A deck cannot order two build shas, so the floor is proven by a
+    ``probe`` command: one that every fork build at or after the floor
+    registers, in the classic Tcl and the Python engines alike, while
+    stock OpenSees and every older fork build lack it.  The deck that
+    needs the floor stops with :func:`fork_floor_message` when the
+    running build has no such command (#2504).
+    """
+
+    #: The command the running build must expose.
+    probe: str
+    #: The floor, as the message names it.
+    floor: str
+    #: What goes wrong below the floor, as the message names it.
+    failure: str
+
+
+#: The ``materialState`` forwarding of the Ladruno continuum solids.  Fork
+#: commit ``64a0341a6`` (WP-124 C10) lets ``materialState`` through
+#: ``LadrunoShell::isMaterialPointToken`` to ``forwardToMaterials``.
+#: Without it these elements read the name as a per-point address and
+#: drop it, so a flip reaches the first element only
+#: (``updateMaterialStage``) or none (``setParameter``,
+#: ``updateParameter``): measured on fork build 79e062367, and forwarding
+#: bit for bit at ``FORK_PIN`` 100eb9ae.  ``ladrunoSchema`` enters the
+#: fork in ``d9ff64c03``, a descendant of ``64a0341a6``, so every build
+#: that registers it forwards.  A build that forwards but predates the
+#: command is refused (fail closed).
+LADRUNO_SOLID_MATERIAL_STATE_FLOOR = ForkBuildFloor(
+    probe="ladrunoSchema",
+    floor="a Ladruno fork build at or after FORK_PIN 100eb9ae "
+          "(fork PR #859)",
+    failure="the switch reaches the first element or none, and the run "
+            "gives a wrong answer without a warning (apeGmsh issues #2445, "
+            "#2504)",
+)
+
+#: Element class -> the fork build floor a ``materialState`` update of
+#: one of its elements needs.  The five classes emit their class name as
+#: their ``element`` token, so the key is both.  One table for both sides:
+#: ``stage/_builder.py`` derives its fork-floor classes from it, and the
+#: deck emitters guard on it (:class:`MaterialStageCarriers`).
+MATERIAL_STATE_FORK_FLOOR: dict[str, ForkBuildFloor] = {
+    cls: LADRUNO_SOLID_MATERIAL_STATE_FLOOR
+    for cls in ("LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
+                "LadrunoBrick20")
+}
+
+
+def fork_floor_message(floor: ForkBuildFloor) -> str:
+    """The error a deck stops with below ``floor``.
+
+    One line of plain text, so both targets quote it as is: no Tcl
+    substitution character and no backslash.
+    """
+    classes = ", ".join(sorted(
+        cls for cls, f in MATERIAL_STATE_FORK_FLOOR.items() if f == floor))
+    message = (
+        f"apeGmsh: this deck switches materialState on {classes} "
+        f"elements, which hand it to their materials only on "
+        f"{floor.floor}. The running OpenSees has no {floor.probe} "
+        "command, so it is stock OpenSees or an older fork build, where "
+        f"{floor.failure}. Rebuild the Ladruno fork at or after FORK_PIN."
+    )
+    bad = sorted(set(message) & set('[]{}$"\\\n'))
+    if bad:
+        raise BridgeError(
+            f"fork_floor_message: {bad!r} in the guard message would be "
+            "read as Tcl syntax; reword the ForkBuildFloor.")
+    return message
+
+
+def _carried_material_tag(
+    token: str, argv: "Sequence[int | float | str]",
+) -> int:
+    """The nDMaterial tag an element of ``token`` carries in ``argv``.
+
+    Raises :class:`BridgeError` when ``argv`` does not hold an integer
+    where :data:`MATERIAL_STATE_ELEMENT_TOKENS` says the tag sits.
+    """
+    where = MATERIAL_STATE_ELEMENT_TOKENS[token]
+    if where is None:
+        first_str = next(
+            (i for i, v in enumerate(argv) if isinstance(v, str)), None)
+        where = -1 if first_str is None else first_str - 1
+    value = argv[where] if 0 <= where < len(argv) else None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BridgeError(
+            f"element {token}: no nDMaterial tag at argv position {where} "
+            f"of {tuple(argv)!r}; the stage-flip sweep cannot tell which "
+            "material the element carries.  Update "
+            "MATERIAL_STATE_ELEMENT_TOKENS with the element's grammar."
+        )
+    return int(value)
+
+
+class MaterialStageCarriers:
+    """Which emitted elements carry each swept material (#2445).
+
+    Every deck emitter keeps one and feeds it its ``nDMaterial``,
+    ``element``, ``remove_element`` and ``partition_open`` /
+    ``partition_close`` calls.  ``updateMaterialStage`` alone reaches a
+    material through ``MaterialStageParameter::setDomain``, which stops at
+    the FIRST element that accepts it, so a :data:`SWEPT_MATERIAL_CLASSES`
+    flip to a plastic stage would run ``Elastic2Plastic()`` on that
+    element's integration points only.  :meth:`flip_commands` therefore
+    precedes the flip of such a material on two or more carriers with::
+
+        setParameter -val <stage> -ele <every carrier> materialState <tag>
+
+    ``setParameter`` with an element list builds an
+    ``ElementStateParameter`` that offers ``materialState <tag>`` to each
+    listed element and updates each one that accepts it, so every
+    integration-point material of the tag runs its own stage update,
+    ``Elastic2Plastic()`` included.  OpenSees numbers the transient
+    parameter itself and removes it, as ``updateMaterialStage`` does, so
+    the deck carries no parameter tag.  The list names the carriers only:
+    DruckerPrager, BoundingCamClay and the stress-density models accept
+    ``materialState`` without checking the tag, so a sweep that reached
+    their elements would switch them too.  An element of another rank is
+    skipped by OpenSees (it is not in that rank's domain).
+
+    The ``updateMaterialStage`` line still follows every flip: it sets the
+    class-wide flag, reaches the elements that refresh their stage caches
+    only on it (``LadrunoUP``), and its second ``Elastic2Plastic()`` on the
+    first element repeats the first.  A stage ``0`` flip, a material of
+    any other class, and a material on one carrier keep the single
+    ``updateMaterialStage`` line.  A carrier of a class outside
+    :data:`MATERIAL_STATE_ELEMENT_TOKENS` is not tracked: the stage close
+    refuses a multi-element plastic flip of such a material.
+
+    The carriers are the elements emitted before the flip, so an element
+    a later stage activates is not listed; the archive replays the same
+    calls in the same order, so its deck lists the same elements.
+
+    It also notes each element of a :data:`MATERIAL_STATE_FORK_FLOOR`
+    class.  :meth:`flip_fork_floors` and :meth:`fork_floors` name the
+    floors a sweep or a ``materialState`` update of such an element
+    needs, and the deck emitters check each at the deck's start
+    (#2504).  The check is derived from the calls, like the lines it
+    guards, so ``model_hash`` does not see it.
+    """
+
+    def __init__(self) -> None:
+        self._swept: set[int] = set()
+        # wrapper tag -> the tag it wraps (MATERIAL_STATE_WRAPPERS only).
+        self._wraps: dict[int, int] = {}
+        # material tag -> rank (None: outside any partition block) ->
+        # element tags, in emission order.
+        self._carriers: dict[int, dict[int | None, dict[int, None]]] = {}
+        self._rank: int | None = None
+        # element tag -> its MATERIAL_STATE_FORK_FLOOR floor.
+        self._floors: dict[int, ForkBuildFloor] = {}
+
+    def note_material(
+        self, mat_type: str, tag: int,
+        params: "Sequence[int | float | str]" = (),
+    ) -> None:
+        tag = int(tag)
+        self._wraps.pop(tag, None)
+        if mat_type in SWEPT_MATERIAL_CLASSES:
+            self._swept.add(tag)
+            return
+        self._swept.discard(tag)
+        if mat_type in MATERIAL_STATE_WRAPPERS:
+            where = MATERIAL_STATE_WRAPPERS[mat_type]
+            inner = params[where] if where < len(params) else None
+            if isinstance(inner, bool) or not isinstance(inner, int):
+                raise BridgeError(
+                    f"nDMaterial {mat_type} {tag}: no wrapped material tag "
+                    f"at argv position {where} of {tuple(params)!r}; the "
+                    "stage-flip update cannot tell what it wraps.  Update "
+                    "MATERIAL_STATE_WRAPPERS with the wrapper's grammar."
+                )
+            self._wraps[tag] = int(inner)
+
+    def _resolve(self, mat: int) -> int:
+        """The material ``mat`` wraps, through every forwarding wrapper."""
+        seen = {mat}
+        while mat in self._wraps:
+            mat = self._wraps[mat]
+            if mat in seen:  # pragma: no cover - OpenSees refuses a cycle
+                break
+            seen.add(mat)
+        return mat
+
+    def note_element(
+        self, token: str, tag: int, argv: "Sequence[int | float | str]",
+    ) -> None:
+        floor = MATERIAL_STATE_FORK_FLOOR.get(token)
+        if floor is not None:
+            self._floors[int(tag)] = floor
+        if token not in MATERIAL_STATE_ELEMENT_TOKENS:
+            return
+        mat = self._resolve(_carried_material_tag(token, argv))
+        if mat in self._swept:
+            by_rank = self._carriers.setdefault(mat, {})
+            by_rank.setdefault(self._rank, {})[int(tag)] = None
+
+    def note_removed(self, tag: int) -> None:
+        self._floors.pop(int(tag), None)
+        for by_rank in self._carriers.values():
+            for tags in by_rank.values():
+                tags.pop(int(tag), None)
+
+    def partition_open(self, rank: int) -> None:
+        self._rank = int(rank)
+
+    def partition_close(self) -> None:
+        self._rank = None
+
+    def _carriers_of(self, mat_tag: int) -> tuple[int, ...]:
+        by_rank = self._carriers.get(int(mat_tag), {})
+        if self._rank is None:
+            ranks: "Iterable[int | None]" = by_rank
+        else:
+            ranks = (None, self._rank)
+        out: dict[int, None] = {}
+        for rank in ranks:
+            out.update(by_rank.get(rank, {}))
+        return tuple(out)
+
+    def _sweep(self, tag: int, value: int) -> tuple[int, ...]:
+        """The carriers a flip of ``tag`` to ``value`` updates one by
+        one; empty when the flip is the bare ``updateMaterialStage``."""
+        carriers = self._carriers_of(tag)
+        if value < 1 or tag not in self._swept or len(carriers) < 2:
+            return ()
+        return carriers
+
+    def fork_floors(
+        self, ele_tags: "Iterable[int]",
+    ) -> tuple[ForkBuildFloor, ...]:
+        """The floors a ``materialState`` update of ``ele_tags`` needs
+        (:data:`MATERIAL_STATE_FORK_FLOOR`), each once, in first-seen
+        order."""
+        out: dict[ForkBuildFloor, None] = {}
+        for et in ele_tags:
+            floor = self._floors.get(int(et))
+            if floor is not None:
+                out[floor] = None
+        return tuple(out)
+
+    def flip_fork_floors(
+        self, mat_tag: int, stage: int,
+    ) -> tuple[ForkBuildFloor, ...]:
+        """The floors the flip :meth:`flip_commands` emits needs: those
+        of its swept carriers.  The bare ``updateMaterialStage`` needs
+        none: on one carrier it reaches the only element on any build."""
+        return self.fork_floors(self._sweep(int(mat_tag), int(stage)))
+
+    def flip_commands(
+        self, mat_tag: int, stage: int,
+    ) -> tuple[tuple[str, tuple[int | float | str, ...]], ...]:
+        """The commands one flip of ``mat_tag`` to ``stage`` emits, as
+        ``(command, argv)``; every target renders them alike."""
+        tag = int(mat_tag)
+        value = int(stage)
+        ums = ("updateMaterialStage", ("-material", tag, "-stage", value))
+        carriers = self._sweep(tag, value)
+        if not carriers:
+            return (ums,)
+        return (
+            ("setParameter", (
+                "-val", float(value), "-ele", *carriers,
+                "materialState", str(tag))),
+            ums,
+        )
+
+
 #: One SP-constraint operation in a node's owner-side command stream,
 #: replayed onto that node's ghost copies (ADR 0027 INV-2).  Either
 #: ``("fix", flags)`` — the 0/1 fixity vector ``ops.fix`` / ``s.fix``

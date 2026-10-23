@@ -76,6 +76,7 @@ __all__ = [
     "DeclarationRO",
     "DeclarationTable",
     "EmbeddedRebarRecordRO",
+    "EquationConstraintRecordRO",
     "H5Model",
     "MalformedH5Error",
     "PartitionEmittedRecord",
@@ -183,6 +184,26 @@ class EmbeddedRebarRecordRO:
     ele_tag: int
     args: tuple[int | float | str, ...]
     name: str
+
+
+@dataclass(frozen=True, slots=True)
+class EquationConstraintRecordRO:
+    """One ``/opensees/constraints/equationConstraint`` row (opensees 2.35.0).
+
+    One ``equationConstraint`` line the global pass wrote, in its OpenSees
+    sum-to-zero form ``ccoef * u[cdof](cnode) + sum rcoef * u[rdof](rnode)
+    = 0``: an ``enforce="equation"`` tie's line per tied DOF, or an
+    ``apeSees.equation_constraint`` row. ``retained`` holds the ``(rnode,
+    rdof, rcoef)`` triples in call order; ``name`` is the
+    ``mp_constraint_comment`` label the line carried (a tie's first line),
+    ``""`` when none. The H5 writer buffers the same record.
+    """
+
+    cnode: int
+    cdof: int
+    ccoef: float
+    retained: tuple[tuple[int, int, float], ...]
+    name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1416,6 +1437,13 @@ class H5Model:
                     region_seq.append(int(rattrs["emit_index"]))
 
             # -- MP constraints ----------------------------------------
+            if "constraints" in g and "equationConstraint" in g["constraints"]:
+                # The writer stores global lines only; a stage-claimed
+                # equation tie is ledgered (VERBS store ``...|``).
+                raise MalformedH5Error(
+                    f"/opensees/stages/{gname}/constraints/equationConstraint "
+                    "exists; no writer stores a stage's equationConstraint "
+                    "lines.")
             equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes = (
                 _read_mp_rows(g["constraints"]) if "constraints" in g
                 else ([], [], [], []))
@@ -2038,6 +2066,76 @@ class H5Model:
             out.append(EmbeddedRebarRecordRO(
                 ele_tag=tags[i], args=tuple(args), name=names[i]))
         return tuple(out)
+
+    def equation_constraints(self) -> tuple[EquationConstraintRecordRO, ...]:
+        """Return every ``/opensees/constraints/equationConstraint`` row, in
+        write order (opensees 2.35.0).
+
+        Empty when the file has none: no global ``equationConstraint``
+        line, or a file below :data:`EQUATION_CONSTRAINT_FROM`, which
+        stores none (its replay refuses an ``enforce="equation"`` tie and
+        reads the ``apeSees.equation_constraint`` rows from
+        ``/opensees/decl_params``). Raises :class:`MalformedH5Error` on the
+        group in a file below that minor, on columns that disagree, and on
+        a DOF below 1 or a zero or non-finite coefficient, which no writer
+        stores and OpenSees rejects.
+        """
+        if "opensees" not in self._f:
+            return ()
+        ops = self._f["opensees"]
+        if "constraints" not in ops or "equationConstraint" not in ops["constraints"]:
+            return ()
+        import h5py
+        import numpy as np
+
+        where = "/opensees/constraints/equationConstraint"
+        version = self.opensees_zone_version()
+        if not archives_equation_constraints(version):
+            raise MalformedH5Error(
+                f"{where} is in an opensees {version} file; the writer "
+                "stores equationConstraint lines from opensees "
+                f"{'.'.join(map(str, EQUATION_CONSTRAINT_FROM))} on.")
+        g = ops["constraints"]["equationConstraint"]
+        if not isinstance(g, h5py.Group):
+            raise MalformedH5Error(f"{where} is a dataset; the writer stores a group.")
+        missing = sorted(set(_EQUATION_CONSTRAINT_COLUMNS) - set(g.keys()))
+        if missing:
+            raise MalformedH5Error(f"{where} lacks the column(s) {missing}.")
+        col = {k: _dataset_values(g, k) for k in _EQUATION_CONSTRAINT_COLUMNS}
+        cnode = [int(v) for v in col["cnode"]]
+        cdof = [int(v) for v in col["cdof"]]
+        ccoef = [float(v) for v in col["ccoef"]]
+        names = [str(_decode_bytes(v)) for v in col["name"]]
+        offsets = [int(v) for v in col["ret_offsets"]]
+        rnode = [int(v) for v in col["ret_node"]]
+        rdof = [int(v) for v in col["ret_dof"]]
+        rcoef = [float(v) for v in col["ret_coef"]]
+        n, m = len(cnode), len(rnode)
+        if n == 0:
+            raise MalformedH5Error(
+                f"{where} holds no row; the writer writes the group only "
+                "when a line exists.")
+        if not (len(cdof) == len(ccoef) == len(names) == n
+                and len(offsets) == n + 1 and offsets[0] == 0
+                and offsets[-1] == m == len(rdof) == len(rcoef)
+                and all(a < b for a, b in zip(offsets, offsets[1:]))):
+            raise MalformedH5Error(
+                f"{where} columns disagree in length, or a row holds no "
+                "retained term.")
+        coefs = np.asarray([*ccoef, *rcoef], dtype=np.float64)
+        if (not bool(np.all(np.isfinite(coefs))) or bool(np.any(coefs == 0.0))
+                or min(cdof + rdof) < 1):
+            raise MalformedH5Error(
+                f"{where} holds a DOF below 1 or a zero or non-finite "
+                "coefficient, which no writer stores.")
+        return tuple(
+            EquationConstraintRecordRO(
+                cnode=cnode[i], cdof=cdof[i], ccoef=ccoef[i],
+                retained=tuple(
+                    (rnode[j], rdof[j], rcoef[j])
+                    for j in range(offsets[i], offsets[i + 1])),
+                name=names[i])
+            for i in range(n))
 
     def mp_constraints(
         self,
@@ -2971,6 +3069,31 @@ def archives_param_tags(version: "SchemaVersion") -> bool:
 #: it re-derives the ties from the neutral zone (``compose.py``, the
 #: pre-2.29 tag-law waiver).
 EMBEDDED_REBAR_FROM: tuple[int, int, int] = (2, 29, 0)
+
+
+#: First opensees-zone version whose archive stores every global
+#: ``equationConstraint`` line the build wrote:
+#: ``/opensees/constraints/equationConstraint``, an ``enforce="equation"``
+#: tie's lines and the ``apeSees.equation_constraint`` rows alike. A replay
+#: of an archive at or above it writes those rows; one below it refuses an
+#: equation-route tie by name and reads the user rows from
+#: ``/opensees/decl_params``.
+EQUATION_CONSTRAINT_FROM: tuple[int, int, int] = (2, 35, 0)
+
+#: The columns of ``/opensees/constraints/equationConstraint``: ``n`` rows
+#: (``cnode``, ``cdof``, ``ccoef``, ``name``) over ``m`` retained terms
+#: (``ret_node``, ``ret_dof``, ``ret_coef``), row ``i`` owning terms
+#: ``ret_offsets[i]:ret_offsets[i + 1]``.
+_EQUATION_CONSTRAINT_COLUMNS: tuple[str, ...] = (
+    "cnode", "cdof", "ccoef", "name",
+    "ret_offsets", "ret_node", "ret_dof", "ret_coef")
+
+
+def archives_equation_constraints(version: "SchemaVersion") -> bool:
+    """True iff an archive at opensees-zone ``version`` stores its global
+    ``equationConstraint`` lines (``>= EQUATION_CONSTRAINT_FROM``)."""
+    return ((version.major, version.minor, version.patch)
+            >= EQUATION_CONSTRAINT_FROM)
 
 
 def archives_embedded_rebar(version: "SchemaVersion") -> bool:

@@ -15,15 +15,14 @@ Two checks refuse that, so every ``.out`` reader slices by the same rule:
   is refused for its counts, as the fibre reader refuses it, and never as
   "not divisible" (#2267). A live pairing's counts follow the same rule.
   Without either, nothing names a count, and the read is refused (#2331);
-* :func:`require_ordered_stations`: each element's natural stations must
-  increase strictly within [-1, 1].
+* :func:`require_live_stations`: over a live pairing, each element's natural
+  stations must be its live section locations.
 
-:func:`require_line_stations` applies the second to a slice that neither a
-model nor a pairing proves. A model-proven slice skips the order check: a legal rule
-can place its stations out of order (HingeRadau with ``lp_i = lp_j = 0.15``
-on ``L = 0.75`` gives ``[-1, 0.067, 0.346, -0.346, -0.067, 1]``). A slice a
-live pairing proves is checked against the live section locations instead
-(:func:`require_live_stations`), which fixes the order too.
+:func:`require_line_stations` applies the second to a live pairing's slice. A
+model-proven slice skips the order check: a legal rule can place its stations
+out of order (HingeRadau with ``lp_i = lp_j = 0.15`` on ``L = 0.75`` gives
+``[-1, 0.067, 0.346, -0.346, -0.067, 1]``). A live pairing's locations fix the
+order too.
 """
 from __future__ import annotations
 
@@ -185,34 +184,6 @@ def require_station_source(
             f"without error. Results.from_recorders(model=) passes it.")
 
 
-def require_ordered_stations(
-    rec: "ResolvedRecorderRecord", xi_natural: ndarray, path: "str | Path",
-) -> None:
-    """Raise unless each row of ``xi_natural`` (one element's natural
-    stations) increases strictly within [-1, 1].
-
-    For a slice no model proves: a block that crosses an element boundary
-    carries one element's end and the next one's start, so it is out of
-    order. A block can also be out of order legally, so the refusal names
-    the order and asks for the model, which proves the slice.
-    """
-    tol = STATION_RANGE_TOL
-    bad = ~(np.all(np.diff(xi_natural, axis=1) > 0.0, axis=1)
-            & np.all(np.abs(xi_natural) <= 1.0 + tol, axis=1))
-    if bad.any():
-        assert rec.element_ids is not None
-        i = int(np.flatnonzero(bad)[0])
-        raise ValueError(
-            f"{path}: the stations read for FEM element "
-            f"{int(rec.element_ids[i])} of record {rec.name!r} "
-            f"({rec.category}) are {np.round(xi_natural[i], 6).tolist()}, "
-            f"which do not increase strictly within [-1, 1]. Without model= "
-            f"the equal slices of a .out record are read only when each "
-            f"element's stations are in that order, because the files carry "
-            f"no per-element point count. Pass model=, whose beamIntegration "
-            f"counts prove the slicing.")
-
-
 def require_live_stations(
     rec: "ResolvedRecorderRecord", facts: LiveDomainFacts, xi_natural: ndarray,
     lengths: "ndarray | list[float]", path: "str | Path",
@@ -254,8 +225,7 @@ def require_line_stations(
     elements' ``lengths``) the file stations must be the live section
     locations (:func:`require_live_stations`), which proves the slice and
     its order. Without either, the transcoder refuses the record before the
-    slice (:func:`require_station_source`); for any other caller, the
-    station order must hold.
+    slice (:func:`require_station_source`), so nothing is left to check.
     """
     if model_h5_src is not None:
         return
@@ -267,4 +237,3 @@ def require_line_stations(
                 f"were given.")
         require_live_stations(rec, pairing, xi_natural, lengths, path)
         return
-    require_ordered_stations(rec, xi_natural, path)

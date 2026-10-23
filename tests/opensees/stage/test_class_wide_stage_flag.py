@@ -1,12 +1,16 @@
-"""#2439: a stage flip that names part of a class-wide stage-flag group refuses.
+"""#2439, #2440: a stage flip that names part of a class-wide stage-flag group
+refuses.
 
 ``ManzariDafalias::mElastFlag`` (inherited by ``LadrunoSANISAND``) and
 ``SAniSandMS::mElastFlag`` are C++ statics: ``updateMaterialStage -material A``
 switches every material of the group, and an unnamed one skips its own
-``Elastic2Plastic()``.  The unit tests pin the stage-close refusal
-(``CLASS_WIDE_STAGE_FLAG`` in ``stage/_builder.py``); the live tests run the
-refused selection on OpenSees and show it is exactly the one that switches
-the material it did not name.
+``Elastic2Plastic()``.  The unit tests pin the emit-time refusal
+(``validate_class_wide_stage_flags`` in ``_internal/build/stage_validate.py``,
+over ``CLASS_WIDE_STAGE_FLAG`` in ``stage/_builder.py``).  It sees the final
+model, so a material registered after the stage block counts (#2440), and it
+models ``s.remove_element``: a material whose elements are all removed need
+not be named.  The live tests run the refused selection on OpenSees and show
+it is exactly the one that switches the material it did not name.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import pytest
 
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
+from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees._target import OpenSeesTarget
 from apeGmsh.opensees.stage._builder import (
     CLASS_WIDE_STAGE_FLAG,
@@ -44,7 +49,10 @@ _MS = dict(
     e0=0.934, ksi=0.7, P_atm=100.0, m=0.01, h0=7.05, Ch=0.968, nb=1.1,
     A0=0.704, nd=3.5, zeta=0.0005, mu0=260.0, beta=1.0, rho=1.6,
 )
-_KW = {"ManzariDafalias": _MD, "LadrunoSANISAND": _MD, "SAniSandMS": _MS}
+_PM4SAND = dict(Dr=0.55, G0=677.0, hpo=0.4, rho=1.7)
+_PM4SILT = dict(Su=0.0, Su_rate=0.25, G0=500.0, hpo=0.1, rho=1.7)
+_KW = {"ManzariDafalias": _MD, "LadrunoSANISAND": _MD, "SAniSandMS": _MS,
+       "PM4Sand": _PM4SAND, "PM4Silt": _PM4SILT}
 
 
 def _fem() -> FEMStub:
@@ -69,6 +77,29 @@ def _fem() -> FEMStub:
     )
 
 
+def _tri6_fem() -> FEMStub:
+    """Two DISCONNECTED 6-node triangles, ``A`` (eid 1) and ``B`` (eid 2):
+    SixNodeTri hands ``materialState`` on to its material (#2460)."""
+    tri = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 0.0), (0.5, 0.5),
+           (0.0, 0.5)]
+    coords = [(x + dx, y, 0.0) for dx in (0.0, 3.0) for x, y in tri]
+    return FEMStub(
+        nodes=_NodesStub(
+            ids=list(range(1, 13)), coords=coords,
+            node_pgs={"A": [1, 2, 3, 4, 5, 6], "B": [7, 8, 9, 10, 11, 12],
+                      "Base": [1, 2, 4, 7, 8, 10]},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={
+                "A": _ElementGroupView(
+                    ids=(1,), connectivity=((1, 2, 3, 4, 5, 6),)),
+                "B": _ElementGroupView(
+                    ids=(2,), connectivity=((7, 8, 9, 10, 11, 12),)),
+            },
+        ),
+    )
+
+
 def _chain(ops: apeSees) -> dict[str, object]:
     return {
         "test": ops.test.NormDispIncr(tol=1e-8, max_iter=50),
@@ -81,25 +112,38 @@ def _chain(ops: apeSees) -> dict[str, object]:
     }
 
 
-def _bridge(cls_a: str, cls_b: str) -> tuple[apeSees, Any, Any]:
-    ops = apeSees(_fem(), default_orientation=None)
+def _bridge(
+    cls_a: str, cls_b: str, host: str = "FourNodeQuad",
+) -> tuple[apeSees, Any, Any]:
+    fem = _tri6_fem() if host == "SixNodeTri" else _fem()
+    ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")   # SAniSandMS's default scheme warns
         mat_a = getattr(ops.nDMaterial, cls_a)(name="mat_a", **_KW[cls_a])
         mat_b = getattr(ops.nDMaterial, cls_b)(name="mat_b", **_KW[cls_b])
-    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
-    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    getattr(ops.element, host)(pg="A", thickness=1.0, material=mat_a)
+    getattr(ops.element, host)(pg="B", thickness=1.0, material=mat_b)
     ops.fix(pg="Base", dofs=(0, 1))
     return ops, mat_a, mat_b
 
 
-def _stage(ops: apeSees, flips: "list[tuple[list[Any], int]]") -> None:
-    with ops.stage(name="flip") as s:
+def _stage(ops: apeSees, flips: "list[tuple[list[Any], int]]", *,
+           name: str = "flip", remove: "str | None" = None) -> None:
+    with ops.stage(name=name) as s:
+        if remove is not None:
+            s.remove_element(pg=remove)
         for mats, value in flips:
             s.update_material_stage(materials=mats, stage=value)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
+
+
+def _emit(ops: apeSees) -> RecordingEmitter:
+    """The emit is where the check runs, beside validator V7."""
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    return rec
 
 
 #: Every class-wide pair: two of one class, and the two classes that share
@@ -110,6 +154,8 @@ _GROUP_PAIRS = [
     ("LadrunoSANISAND", "LadrunoSANISAND"),
     ("ManzariDafalias", "LadrunoSANISAND"),
     ("LadrunoSANISAND", "ManzariDafalias"),
+    ("PM4Sand", "PM4Sand"),
+    ("PM4Silt", "PM4Silt"),
 ]
 
 
@@ -123,6 +169,8 @@ def test_table_groups_the_shared_statics() -> None:
         "ManzariDafalias": "ManzariDafalias::mElastFlag",
         "LadrunoSANISAND": "ManzariDafalias::mElastFlag",
         "SAniSandMS": "SAniSandMS::mElastFlag",
+        "PM4Sand": "PM4Sand::me2p",      # its own static, not PM4Silt's
+        "PM4Silt": "PM4Silt::me2p",
     }
     # A class-wide class must be stageable at all, or the check is dead.
     assert set(CLASS_WIDE_STAGE_FLAG) <= STAGED_MATERIAL_CLASSES
@@ -140,13 +188,13 @@ def test_subset_flip_refuses_and_names_the_unnamed(
 ) -> None:
     ops, mat_a, mat_b = _bridge(cls_a, cls_b)
     tag_b = ops.tag_for(mat_b)
+    _stage(ops, [([mat_a], value)])
     with pytest.raises(BridgeError) as exc:
-        _stage(ops, [([mat_a], value)])
+        _emit(ops)
     msg = str(exc.value)
     assert f"{cls_b} (nDMaterial tag {tag_b})" in msg
     assert CLASS_WIDE_STAGE_FLAG[cls_a] in msg
     assert "class-wide" in msg
-    assert not ops._stage_records, "a refused stage must not be recorded"
 
 
 @pytest.mark.parametrize(("cls_a", "cls_b"), _GROUP_PAIRS)
@@ -155,19 +203,21 @@ def test_full_group_flip_passes(cls_a: str, cls_b: str) -> None:
     _stage(ops, [([mat_a, mat_b], 1)])
     (rec,) = ops._stage_records[0].update_material_stage_records
     assert rec.mat_tags == (ops.tag_for(mat_a), ops.tag_for(mat_b))
+    _emit(ops)
 
 
 def test_full_group_over_two_calls_passes() -> None:
     """The lines emit back to back, so one call per material is the same."""
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "LadrunoSANISAND")
     _stage(ops, [([mat_a], 1), ([mat_b], 1)])
-    assert len(ops._stage_records) == 1
+    _emit(ops)
 
 
 def test_one_group_two_values_refuses() -> None:
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [([mat_a], 1), ([mat_b], 0)])
     with pytest.raises(BridgeError, match=r"different stages \[0, 1\]"):
-        _stage(ops, [([mat_a], 1), ([mat_b], 0)])
+        _emit(ops)
 
 
 def test_separate_groups_do_not_count_together() -> None:
@@ -175,13 +225,124 @@ def test_separate_groups_do_not_count_together() -> None:
     one group and none of the other is complete."""
     ops, mat_a, mat_b = _bridge("ManzariDafalias", "SAniSandMS")
     _stage(ops, [([mat_a], 1)])
+    _emit(ops)
+
+
+def test_pm4sand_and_pm4silt_are_separate_groups() -> None:
+    """``PM4Sand::me2p`` and ``PM4Silt::me2p`` are two statics (PM4Silt does
+    not derive from PM4Sand): flipping one class alone is complete."""
+    ops, mat_a, mat_b = _bridge("PM4Sand", "PM4Silt")
+    _stage(ops, [([mat_a], 1)])
     assert len(ops._stage_records) == 1
 
 
 def test_an_unflipped_stage_is_not_checked() -> None:
     ops, _mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
     _stage(ops, [])
-    assert len(ops._stage_records) == 1
+    _emit(ops)
+
+
+# ---------------------------------------------------------------------------
+# #2440: the final model, and s.remove_element
+# ---------------------------------------------------------------------------
+
+
+def _late_bridge() -> tuple[apeSees, Any, Any]:
+    """``mat_b`` and its element on ``B`` are registered AFTER the stage
+    block that flips ``mat_a`` alone."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_a = ops.nDMaterial.ManzariDafalias(name="mat_a", **_MD)
+    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
+    ops.fix(pg="Base", dofs=(0, 1))
+    _stage(ops, [([mat_a], 1)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_b = ops.nDMaterial.ManzariDafalias(name="mat_b", **_MD)
+    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    return ops, mat_a, mat_b
+
+
+def test_a_material_registered_after_the_stage_counts() -> None:
+    """The blind spot of a stage-close check: ``mat_b`` did not exist when
+    the stage closed, yet its element is global, so it is live at the flip
+    line and the flip would switch it."""
+    ops, _mat_a, mat_b = _late_bridge()
+    with pytest.raises(BridgeError) as exc:
+        _emit(ops)
+    assert f"ManzariDafalias (nDMaterial tag {ops.tag_for(mat_b)})" in str(
+        exc.value)
+
+
+@pytest.mark.parametrize("target", ["tcl", "py", "h5"])
+def test_the_late_material_refuses_on_every_target(
+    target: str, tmp_path: Any,
+) -> None:
+    ops, _mat_a, _mat_b = _late_bridge()
+    with pytest.raises(BridgeError, match="class-wide"):
+        getattr(ops, target)(str(tmp_path / f"deck.{target}"))
+
+
+def test_a_material_removed_in_the_same_stage_need_not_be_named() -> None:
+    """The removals emit before the flips, so the only element of ``B`` is
+    out of the domain at the flip line: ``mat_b`` is not switched.  A
+    stage-close check that did not model the removal refused this."""
+    ops, mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [([mat_a], 1)], remove="B")
+    rec = _emit(ops)
+    assert ("update_material_stage", (ops.tag_for(mat_a), 1), {}) in rec.calls
+
+
+def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
+    """``B`` is registered before the flip stage closes, but the stage after
+    it activates ``B``, so ``B`` is out of the domain at the flip line.  Only
+    the final model shows that, which is why no check runs at stage close:
+    one there would refuse this correct model."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mat_a = ops.nDMaterial.ManzariDafalias(name="mat_a", **_MD)
+        mat_b = ops.nDMaterial.ManzariDafalias(name="mat_b", **_MD)
+    ops.element.FourNodeQuad(pg="A", thickness=1.0, material=mat_a)
+    ops.element.FourNodeQuad(pg="B", thickness=1.0, material=mat_b)
+    ops.fix(nodes=[1, 2], dofs=(0, 1))
+    _stage(ops, [([mat_a], 1)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ops.stage(name="install") as s:
+            s.activate(pgs=["B"])
+            s.fix(nodes=[5, 6], dofs=(0, 1))
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    _emit(ops)
+
+
+def test_a_material_removed_in_an_earlier_stage_need_not_be_named() -> None:
+    ops, mat_a, _mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [], name="excavate", remove="B")
+    _stage(ops, [([mat_a], 1)])
+    _emit(ops)
+
+
+def test_a_flip_before_the_removal_still_counts_the_removed_material() -> None:
+    ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    _stage(ops, [([mat_a], 1)])
+    _stage(ops, [], name="excavate", remove="B")
+    with pytest.raises(BridgeError) as exc:
+        _emit(ops)
+    assert f"(nDMaterial tag {ops.tag_for(mat_b)})" in str(exc.value)
+
+
+def test_a_flip_whose_materials_are_all_removed_refuses() -> None:
+    """Every element of the named material is gone: the line reaches no
+    element and switches nothing (``no effect``), which V7 does not see."""
+    ops, mat_a, _mat_b = _bridge("ManzariDafalias", "SAniSandMS")
+    _stage(ops, [([mat_a], 1)], remove="A")
+    with pytest.raises(BridgeError, match="has been removed"):
+        _emit(ops)
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +421,9 @@ def _run(cls_a: str, cls_b: str, named: "tuple[int, ...]", *,
 
 def _assert_bridge_refuses(cls_a: str, cls_b: str, flip: int) -> None:
     ops, mat_a, _mat_b = _bridge(cls_a, cls_b)
+    _stage(ops, [([mat_a], flip)])
     with pytest.raises(BridgeError, match="class-wide"):
-        _stage(ops, [([mat_a], flip)])
+        _emit(ops)
 
 
 @pytest.mark.live
@@ -316,33 +478,53 @@ def test_stage_flag_parameter_names() -> None:
 
 
 @pytest.mark.parametrize(("cls_a", "cls_b"), _GROUP_PAIRS)
-@pytest.mark.parametrize("name", sorted(STAGE_FLAG_PARAMETERS))
+@pytest.mark.parametrize("name", ["materialState"])
 def test_parameter_route_subset_refuses(
     cls_a: str, cls_b: str, name: str,
 ) -> None:
-    ops, mat_a, mat_b = _bridge(cls_a, cls_b)
+    # #2460: on a forwarding host; the stage close refuses the
+    # updateMaterialStage name (test_stage_parameter_routes.py).
+    ops, mat_a, mat_b = _bridge(cls_a, cls_b, host="SixNodeTri")
+    with ops.stage(name="flip") as s:
+        s.update_parameter(name, 1.0, pg="A", material=mat_a)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
     with pytest.raises(BridgeError) as exc:
-        with ops.stage(name="flip") as s:
-            s.update_parameter(name, 1.0, pg="A", material=mat_a)
-            s.analysis(**_chain(ops))
-            s.run(n_increments=1)
+        _emit(ops)
     assert f"{cls_b} (nDMaterial tag {ops.tag_for(mat_b)})" in str(exc.value)
-    assert not ops._stage_records
 
 
 def test_parameter_route_full_group_passes() -> None:
-    ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    # #2460: on a SixNodeTri host, which forwards materialState.
+    ops, mat_a, mat_b = _bridge(
+        "ManzariDafalias", "ManzariDafalias", host="SixNodeTri")
     with ops.stage(name="flip") as s:
         s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
         s.update_parameter("materialState", 1.0, pg="B", material=mat_b)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
-    assert len(ops._stage_records) == 1
+    _emit(ops)
+
+
+def test_parameter_route_full_group_on_four_node_quad_refuses() -> None:
+    """#2460: FourNodeQuad reads materialState as its own per-point
+    address, so the full-group flip that passes on SixNodeTri is lost."""
+    ops, mat_a, mat_b = _bridge("ManzariDafalias", "ManzariDafalias")
+    with pytest.raises(BridgeError) as exc:
+        with ops.stage(name="flip") as s:
+            s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
+            s.update_parameter("materialState", 1.0, pg="B", material=mat_b)
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    msg = str(exc.value)
+    assert "targets FourNodeQuad elements" in msg and "#2460" in msg
+    assert not ops._stage_records
 
 
 @pytest.mark.parametrize(("value", "ok"), [(1.0, True), (0.0, False)])
 def test_the_two_routes_count_together(value: float, ok: bool) -> None:
-    ops, mat_a, mat_b = _bridge("ManzariDafalias", "LadrunoSANISAND")
+    ops, mat_a, mat_b = _bridge(
+        "ManzariDafalias", "LadrunoSANISAND", host="SixNodeTri")
 
     def build() -> None:
         with ops.stage(name="flip") as s:
@@ -351,12 +533,12 @@ def test_the_two_routes_count_together(value: float, ok: bool) -> None:
             s.analysis(**_chain(ops))
             s.run(n_increments=1)
 
+    build()
     if ok:
-        build()
-        assert len(ops._stage_records) == 1
+        _emit(ops)
     else:
         with pytest.raises(BridgeError, match=r"different stages \[0, 1\]"):
-            build()
+            _emit(ops)
 
 
 def test_a_non_stage_parameter_is_not_a_flip() -> None:
@@ -365,7 +547,7 @@ def test_a_non_stage_parameter_is_not_a_flip() -> None:
         s.update_parameter("poissonRatio", 0.3, pg="A", material=mat_a)
         s.analysis(**_chain(ops))
         s.run(n_increments=1)
-    assert len(ops._stage_records) == 1
+    _emit(ops)
 
 
 def _analyze(ops: Any) -> int:
@@ -438,12 +620,14 @@ def test_live_parameter_route_switches_the_unnamed_material(
     """Stock and fork: ``materialState 1`` on material 1 moves material 2,
     and the bridge refuses exactly that selection."""
     pytest.importorskip("openseespy.opensees")
-    ops, mat_a, _mat_b = _bridge(cls, cls)
+    # #2460: a forwarding host, as the raw deck's SSPquad.
+    ops, mat_a, _mat_b = _bridge(cls, cls, host="SixNodeTri")
+    with ops.stage(name="flip") as s:
+        s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
     with pytest.raises(BridgeError, match="class-wide"):
-        with ops.stage(name="flip") as s:
-            s.update_parameter("materialState", 1.0, pg="A", material=mat_a)
-            s.analysis(**_chain(ops))
-            s.run(n_increments=1)
+        _emit(ops)
     code_n, uy_n = _run_param(cls, named_param=False, dev=dev)
     code_p, uy_p = _run_param(cls, named_param=True, dev=dev)
     assert (code_n, code_p) == (0, 0)
@@ -601,17 +785,25 @@ def test_live_reset_ladruno_sanisand_on_the_fork() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _one_material_bridge(cls: str, pgs: "tuple[str, ...]") -> tuple[apeSees, Any]:
+def _one_material_bridge(
+    cls: str, pgs: "tuple[str, ...]", host: str = "FourNodeQuad",
+) -> tuple[apeSees, Any]:
     """One material of ``cls`` on the elements of ``pgs`` (one each)."""
-    ops = apeSees(_fem(), default_orientation=None)
+    fem = _tri6_fem() if host == "SixNodeTri" else _fem()
+    ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         mat = getattr(ops.nDMaterial, cls)(name="mat", **_KW[cls])
     for pg in pgs:
-        ops.element.FourNodeQuad(pg=pg, thickness=1.0, material=mat)
+        getattr(ops.element, host)(pg=pg, thickness=1.0, material=mat)
     ops.fix(pg="Base", dofs=(0, 1))
     return ops, mat
+
+
+#: #2460: the parameter route passes only on a host that forwards
+#: materialState; FourNodeQuad drops it (refused below).
+_PASS_HOST = {"stage": "FourNodeQuad", "parameter": "SixNodeTri"}
 
 
 def _flip_one(ops: apeSees, mat: Any, *, route: str, value: int) -> None:
@@ -633,15 +825,20 @@ def test_first_element_only_table() -> None:
 
 @pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
 @pytest.mark.parametrize("route", ["stage", "parameter"])
-def test_plastic_flip_of_a_two_element_material_refuses(
+def test_plastic_flip_of_a_two_element_material_refuses_on_four_node_quad(
     cls: str, route: str,
 ) -> None:
+    """#2446 lifted the count rule: a multi-element plastic flip passes on a
+    class the flip's element sweep reaches
+    (``tests/opensees/integration/test_md_stage_route_elements.py``), and
+    FourNodeQuad, which drops it, is still refused, by name."""
     ops, mat = _one_material_bridge(cls, ("A", "B"))
     with pytest.raises(BridgeError) as exc:
         _flip_one(ops, mat, route=route, value=1)
     msg = str(exc.value)
     assert "#2445" in msg and "Elastic2Plastic" in msg
-    assert f"{cls} (nDMaterial tag {ops.tag_for(mat)}, 2 elements)" in msg
+    assert "FourNodeQuad carries it" in msg
+    assert f"nDMaterial tag {ops.tag_for(mat)} (2 elements)" in msg
     assert not ops._stage_records
 
 
@@ -650,7 +847,7 @@ def test_plastic_flip_of_a_two_element_material_refuses(
 def test_plastic_flip_of_a_one_element_material_passes(
     cls: str, route: str,
 ) -> None:
-    ops, mat = _one_material_bridge(cls, ("A",))
+    ops, mat = _one_material_bridge(cls, ("A",), _PASS_HOST[route])
     with ops.stage(name="push") as s:
         if route == "stage":
             s.update_material_stage(materials=[mat], stage=1)
@@ -666,9 +863,29 @@ def test_plastic_flip_of_a_one_element_material_passes(
 def test_elastic_flip_of_a_two_element_material_passes(
     cls: str, route: str,
 ) -> None:
-    ops, mat = _one_material_bridge(cls, ("A", "B"))
+    ops, mat = _one_material_bridge(cls, ("A", "B"), _PASS_HOST[route])
     _flip_one(ops, mat, route=route, value=0)
     assert len(ops._stage_records) == 1
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+@pytest.mark.parametrize(("pgs", "value"), [(("A",), 1), (("A", "B"), 0)])
+def test_parameter_route_on_four_node_quad_refuses(
+    cls: str, pgs: "tuple[str, ...]", value: int,
+) -> None:
+    """#2460: the one-element plastic and two-element elastic flips that
+    pass on SixNodeTri never reach the material on FourNodeQuad."""
+    ops, mat = _one_material_bridge(cls, pgs)
+    with pytest.raises(BridgeError) as exc:
+        with ops.stage(name="push") as s:
+            for pg in pgs:
+                s.update_parameter("materialState", float(value), pg=pg,
+                                   material=mat)
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    msg = str(exc.value)
+    assert "targets FourNodeQuad elements" in msg and "#2460" in msg
+    assert not ops._stage_records
 
 
 def test_a_flag_only_class_on_two_elements_passes() -> None:
