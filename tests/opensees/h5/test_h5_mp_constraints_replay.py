@@ -942,6 +942,66 @@ def test_a_partitioned_stage_tie_that_ghosts_a_fixed_node_refuses(tmp_path):
         OpenSeesModel.from_h5(str(part)).build("tcl", flat=True)
 
 
+def _staged_plan_archive(fem: FEMData, plan: "list[Any]",
+                         tmp_path: Path) -> "tuple[str, Path]":
+    """The bridge on ``fem`` with one stage per callable of ``plan`` (each
+    is handed the stage), each under Lagrange; its flat deck and archive."""
+    from tests.opensees.h5.test_h5_stages_writer import _chain
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = _bridge(fem)
+        for i, fn in enumerate(plan):
+            with ops.stage(name=f"s{i}") as st:
+                fn(st)
+                st.analysis(**{**_chain(ops),
+                               "constraints": ops.constraints.Lagrange()})
+                st.run(n_increments=1, dt=1.0)
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True, progress=False)
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return deck.read_text(encoding="utf-8"), path
+
+
+def test_a_zero_weight_fixed_master_still_refuses(tmp_path):
+    # The lines leave the zero-weight master 1 out, but the rank plan still
+    # ghosts it on rank 2, whose stage re-fixes it (#2530).
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    tie = InterpolationRecord(
+        kind="tie", name="zt", slave_node=4, master_nodes=[1, 2],
+        weights=np.array([0.0, 1.0]), dofs=[1], enforce="equation")
+    fwd, path = _staged_plan_archive(
+        _fem(partitioned=True, surface_constraints=[tie]),
+        [lambda st: st.tie(name="zt")], tmp_path)
+    assert sum(ln.startswith("fix 1 ") for ln in fwd.splitlines()) == 1
+    # equationConstraint cnode cdof ccoef (rnode rdof rcoef)*: master 1 is
+    # in no line.
+    retained = {tok for ln in fwd.splitlines()
+                if ln.startswith("equationConstraint ")
+                for tok in ln.split()[4::3]}
+    assert retained == {"2"}
+    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+
+
+def test_a_re_fix_after_a_full_release_replays(tmp_path):
+    # s0 releases node 3 on every DOF; s1 fixes it again and claims a tie
+    # on it. The bridge's deck holds both fixes of node 3 too, so the
+    # replay is the bridge's deck, not a refusal.
+    tie = InterpolationRecord(
+        kind="tie", name="t4", slave_node=4, master_nodes=[2, 3],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
+    fwd, path = _staged_plan_archive(
+        _fem(partitioned=True, surface_constraints=[tie]),
+        [lambda st: st.remove_sp(nodes=[3], dofs=[1, 2, 3, 4, 5, 6]),
+         lambda st: (st.fix(nodes=[3], dofs=(1,) * 6), st.tie(name="t4"))],
+        tmp_path)
+    assert sum(ln.startswith("fix 3 ") for ln in fwd.splitlines()) == 2
+    assert _replay(path) == fwd
+
+
 def test_to_h5_rewrite_keeps_the_stage_lines(tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import open as open_h5
 

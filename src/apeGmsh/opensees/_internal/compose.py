@@ -1042,16 +1042,22 @@ def refuse_stage_equation_ghost_fixes(
     *, stages: "Sequence[Any]", fixes: "Sequence[Any]", partitioned: bool,
 ) -> None:
     """Raise :class:`BridgeError` iff a partitioned archive's stage stores
-    ``equationConstraint`` rows and a ``fix`` row on one of their nodes
-    that repeats a fix written before it (the global fixes, then the
-    earlier stages').
+    ``equationConstraint`` rows and a ``fix`` row that repeats a fix still
+    in force when the stage opens: a global one, or an earlier stage's,
+    with at least one of its DOFs not released by a ``remove_sp`` since.
 
-    That row is the ghost replay of the node's fix on the rank the tie
-    ghosts it on (ADR 0027 INV-2): the stage block stores it as a stage
-    fix, so the flat replay writes the node's fix twice, which the bridge's
-    flat deck does not (#2530). The refusal is narrowed to the equation
-    rows, which replayed nowhere before opensees 2.37.0; it lifts with
-    #2530. A flat archive never stores a ghost replay, so it passes.
+    Such a row is the ghost replay of a node's fix on a rank that does not
+    own the node (ADR 0027 INV-2): the stage block stores it as a stage
+    fix, so the flat replay writes the node's fix twice, which the
+    bridge's flat deck does not (#2530). Every fix row of the stage is
+    checked, not only those on the nodes of the stored lines: the rank
+    plan ghosts every master of a tie, a zero-weight one included, and the
+    lines leave a zero-weight master out. The refusal is narrowed to the
+    stages with equation rows, which replayed nowhere before opensees
+    2.37.0; it lifts with #2530. A flat archive never stores a ghost
+    replay, so it passes. A stage that re-fixes a node its own or an
+    earlier stage released fully replays, as the bridge's deck holds both
+    fixes too.
     """
     if not partitioned:
         return
@@ -1060,23 +1066,34 @@ def refuse_stage_equation_ghost_fixes(
     def _key(rec: Any) -> "tuple[int, tuple[int, ...]]":
         return int(rec.tag), tuple(int(d) for d in rec.dofs)
 
-    earlier = {_key(r) for r in fixes}
+    # Each fix in force: its key -> its 1-based DOFs not released yet.
+    live: "dict[tuple[int, tuple[int, ...]], set[int]]" = {}
+
+    def _fix(rec: Any) -> None:
+        key = _key(rec)
+        live[key] = {i + 1 for i, m in enumerate(key[1]) if m}
+
+    for rec in fixes:
+        _fix(rec)
     for st in stages:
-        nodes = {int(n) for r in st.equation_constraints
-                 for n in (r.cnode, *(t[0] for t in r.retained))}
-        repeated = sorted({_key(r)[0] for r in st.fixes
-                           if _key(r)[0] in nodes and _key(r) in earlier})
-        if repeated:
+        # The replay writes a stage's releases before its fixes.
+        for n, d in st.remove_sps:
+            for key in [k for k in live if k[0] == int(n)]:
+                live[key].discard(int(d))
+                if not live[key]:
+                    del live[key]
+        repeated = sorted({_key(r)[0] for r in st.fixes if _key(r) in live})
+        if repeated and st.equation_constraints:
             raise BridgeError(
                 f"Deck replay refuses this archive: stage {st.name!r} of this "
-                "partitioned archive ties node(s) "
-                f"{repeated} with equationConstraint lines and stores a "
-                "repeat of each one's fix, the ghost replay of a rank that "
-                "does not own it, so the flat replay would fix the node "
-                "twice (#2530; this refusal lifts when #2530 is fixed). "
-                "Load FEMData.from_h5(path) and emit it through "
-                "apeSees(fem).")
-        earlier |= {_key(r) for r in st.fixes}
+                "partitioned archive holds equationConstraint lines and "
+                f"repeats the fix of node(s) {repeated}, the ghost replay "
+                "of a rank that does not own them, so the flat replay "
+                "would fix them twice (#2530; this refusal lifts when "
+                "#2530 is fixed). Load FEMData.from_h5(path) and emit it "
+                "through apeSees(fem).")
+        for rec in st.fixes:
+            _fix(rec)
 
 
 def _warn_skipped_replay_streams(
