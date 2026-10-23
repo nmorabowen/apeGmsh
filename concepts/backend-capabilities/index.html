@@ -2240,6 +2240,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Analysis and solvers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fork-build-c83ee812e-2026-10-22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fork build c83ee812e (2026-10-22)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3739,6 +3756,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Analysis and solvers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fork-build-c83ee812e-2026-10-22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fork build c83ee812e (2026-10-22)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3960,6 +3994,38 @@ are unaffected and run on any build.</p>
 <li><strong><code>ops.profiler</code> / <code>analyze(profile=...)</code></strong>, and
   <code>ops.critical_time_step()</code> / <code>ops.analyze_explicit(...)</code>.</li>
 <li><strong><code>system Pardiso</code></strong> — threaded MKL sparse-direct.</li>
+</ul>
+<h4 id="fork-build-c83ee812e-2026-10-22">Fork build <code>c83ee812e</code> (2026-10-22)<a class="headerlink" href="#fork-build-c83ee812e-2026-10-22" title="Permanent link">&para;</a></h4>
+<p>These need fork build <code>c83ee812e</code> or later. <code>FORK_PIN</code>
+(<code>ladruno-v20261023</code>) carries it. An older build does not refuse what it
+cannot do: some features give a different answer, and one ends the
+process. No command marks these features, so apeGmsh checks the build by
+its <code>ladrunoBuild</code> sha, against the builds measured to carry <code>c83ee812e</code>.
+It refuses stock OpenSees and every other build, including an unmeasured
+newer one.</p>
+<ul>
+<li><strong><code>ASDShellQ4</code> / <code>ASDShellT3</code> <code>p_delta=True</code></strong> (<code>-pDelta</code>) adds the
+  initial-stress stiffness of the current membrane forces, for gravity, then
+  <code>loadConst</code>, then <code>eigen</code>. It cannot be combined with <code>corotational=True</code>.
+  Stock OpenSees and older fork builds accept the token and run without the
+  stiffness. So the in-process run refuses <code>p_delta=True</code> on them, and a
+  Tcl or Python deck that carries <code>-pDelta</code> stops at its start.</li>
+<li><strong><code>ElasticTimoshenkoBeam</code> (3-D)</strong> honours a <code>PDelta</code> or <code>Corotational</code>
+  transformation and answers <code>basicForce</code> (<code>N, Mz1, Mz2, My1, My2, T</code>).
+  Older builds ignore the transformation's geometric terms.</li>
+<li><strong><code>response_spectrum_analysis(..., scale=s)</code></strong> multiplies <code>Sa</code> by <code>s</code>.
+  apeGmsh scales the <code>-Sa</code> values itself and does not emit the fork's
+  <code>-scale</code>, which older builds parse and ignore. The result is the same on
+  every build.</li>
+<li><strong><code>eigen_feast(..., trace_stop=True)</code></strong> (<code>-traceStop</code>) selects MKL's trace
+  stopping criterion. The default stops on the relative residual and returns
+  the same eigenpairs. An older build refuses <code>-traceStop</code> as an unknown
+  option.</li>
+<li><strong><code>EigenResult.modal_properties()</code></strong> runs <code>modalProperties</code> on the band
+  that <code>eigen_feast</code> solved. On an older build, <code>modalProperties</code> after
+  <code>eigen -feast</code> ends the process, so apeGmsh refuses the call before it
+  reaches the build. <code>apeSees.modal_properties(num_modes)</code> runs its own
+  ARPACK solve and works on any build.</li>
 </ul>
 <h3 id="materials">Materials<a class="headerlink" href="#materials" title="Permanent link">&para;</a></h3>
 <p><code>LadrunoBondSlip</code>, <code>LadrunoCohesiveHinge</code>, <code>LadrunoCohesiveHingeBiaxial</code>,
