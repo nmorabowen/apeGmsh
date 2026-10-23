@@ -10727,13 +10727,14 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         the user wants to declare a model, populate openseespy state,
         and then run their own analysis driver.
         """
-        from .emitter.live import LiveOpsEmitter
+        from .emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
+        bm = self.build()
+        refuse_fork_chain_before_wipe(bm)  # before the domain is touched
         self._read_state = DroppedSession(
             "ops.run() re-emitted the model into the live domain without "
             "solving it; call ops.analyze(...) to read"
         )
-        bm = self.build()
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
         emitter._write_stage_zero()  # the caller's own analyze follows

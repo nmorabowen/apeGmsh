@@ -146,10 +146,11 @@ class _ModalMixin(_ProcedureHost):
 
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         self._drop_read_session("ops.eigen(...)")
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
@@ -226,11 +227,12 @@ class _ModalMixin(_ProcedureHost):
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
         from ..analysis.modal import ModalPropertiesResult
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -670,10 +672,11 @@ class _ModalMixin(_ProcedureHost):
                 "the in-process openseespy is not the fork."
             )
 
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         self._drop_read_session("ops.eigen_feast(...)")
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
@@ -750,7 +753,7 @@ class _ModalMixin(_ProcedureHost):
             )
 
         from ..analysis.complex_eigen import ComplexEigenResult
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         args: list[int | float | str] = []
         if tol is not None:
@@ -764,6 +767,7 @@ class _ModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -852,7 +856,7 @@ class _ModalMixin(_ProcedureHost):
             ModalHistoryResult,
             _damping_channel_args,
         )
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         from ..pattern.pattern import Plain as _Plain
         import numpy as np
 
@@ -891,6 +895,7 @@ class _ModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -956,7 +961,7 @@ class _ModalMixin(_ProcedureHost):
             ResponseSpectrumResult,
             _damping_channel_args,
         )
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         import numpy as np
 
         context = "apeSees.response_spectrum_analysis"
@@ -1005,6 +1010,7 @@ class _ModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)

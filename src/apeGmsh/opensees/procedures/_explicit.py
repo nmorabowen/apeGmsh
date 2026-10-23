@@ -140,10 +140,11 @@ class _ExplicitMixin(_ProcedureHost):
         self._check_analysis_chain_for_analyze()
         self._check_explicit_solver_compat()
 
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -214,10 +215,11 @@ class _ExplicitMixin(_ProcedureHost):
         self._check_explicit_solver_compat()
         self._warn_if_unguarded_explicit_run()
 
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)

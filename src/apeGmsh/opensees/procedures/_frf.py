@@ -244,7 +244,7 @@ class _FrfMixin(_ProcedureHost):
         it on a fresh live domain (eigen → modalProperties → command).
         Returns the live emitter's raw return."""
         from ..analysis.modal import _damping_channel_args, _node_tag
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         from ..pattern.pattern import Plain as _Plain
 
         self._modal_prereqs_and_guards(num_modes, context=context)
@@ -326,6 +326,7 @@ class _FrfMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
