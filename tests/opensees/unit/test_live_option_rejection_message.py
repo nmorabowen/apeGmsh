@@ -15,7 +15,11 @@ These tests pin it with stub engines, without importing openseespy:
   names the feature in ``post_pin``, and its member never turns green;
 * every gated test asks for its features by name (AST);
 * every gate expires with the ``FORK_PIN`` sha it predates: a bumped pin
-  fails the lock, naming each stale gate.
+  fails the lock, naming each stale gate;
+* the live emitter's fork-element gate reads the same lines: a build that
+  knows the element but rejects an option raises "option X is not
+  supported by this build", never "requires the Ladruno fork build", which
+  stays for an unknown class (or output this process cannot read).
 """
 from __future__ import annotations
 
@@ -257,3 +261,92 @@ def test_every_gated_test_asks_for_its_features_first() -> None:
     call = _calls_gate_with(fn)
     assert call is not None
     assert tuple(ast.literal_eval(a) for a in call.args) == FBC_ROW.post_pin
+
+
+# ---------------------------------------------------------------------------
+# The live emitter's message: a rejected option is not an unknown element
+# ---------------------------------------------------------------------------
+
+_FORK_REQUIRED = "requires the Ladruno fork build"
+_UNKNOWN_ELEMENT = "does not know this element"
+
+
+class _ElementOps:
+    """A build whose ``element`` prints ``line`` and then raises, or (with
+    ``raises=False``) returns without creating the element."""
+
+    def __init__(self, line: str, *, fd: bool = False, raises: bool = True) -> None:
+        self.line, self.fd, self.raises = line, fd, raises
+
+    def element(self, *_args: Any) -> None:
+        if self.fd:
+            os.write(2, self.line.encode())
+        else:
+            sys.stderr.write(self.line)
+        if self.raises:
+            raise RuntimeError("See stderr output")
+
+    def getEleTags(self) -> list[int]:  # noqa: N802 - the OpenSees name
+        return []
+
+
+def _bare_emitter(ops: object) -> Any:
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    le = LiveOpsEmitter.__new__(LiveOpsEmitter)
+    le._ops = ops
+    le._in_partition = False
+    le._fork_verified_types = set()
+    return le
+
+
+@pytest.mark.parametrize("fd", [False, True], ids=["sys.stderr", "fd2"])
+@pytest.mark.parametrize("raises", [True, False], ids=["raises", "drops"])
+def test_a_rejected_option_names_the_option(fd: bool, raises: bool) -> None:
+    le = _bare_emitter(_ElementOps(PIN_LINES["LadrunoIMKBeam -shear"], fd=fd,
+                                   raises=raises))
+    with pytest.raises(RuntimeError) as info:
+        le.element("LadrunoIMKBeam", 2, 1, 2, 0.04, 2e11, 1.6e-4, 1, "-shear", 8e10, 0.03)
+    msg = str(info.value)
+    assert "option -shear is not supported by this build" in msg
+    assert "unknown option '-shear'" in msg, "it quotes the build's line"
+    assert _FORK_REQUIRED not in msg and _UNKNOWN_ELEMENT not in msg
+
+
+@pytest.mark.parametrize("raises", [True, False], ids=["raises", "drops"])
+def test_an_unknown_class_still_requires_the_fork(raises: bool) -> None:
+    unknown = "WARNING element type LadrunoIMKBeam is unknown\n"
+    le = _bare_emitter(_ElementOps(unknown, raises=raises))
+    with pytest.raises(RuntimeError, match=_FORK_REQUIRED) as info:
+        le.element("LadrunoIMKBeam", 2, 1, 2)
+    assert "is not supported by this build" not in str(info.value)
+
+
+def test_another_classes_option_line_is_not_this_elements() -> None:
+    le = _bare_emitter(_ElementOps(PIN_LINES["LadrunoCohesiveHinge -implex"]))
+    with pytest.raises(RuntimeError, match=_FORK_REQUIRED):
+        le.element("LadrunoIMKBeam", 2, 1, 2)
+    # A class whose name merely contains the element's is not the element.
+    le = _bare_emitter(_ElementOps("WARNING LadrunoIMKBeamX -- unknown option '-q'\n"))
+    with pytest.raises(RuntimeError, match=_FORK_REQUIRED):
+        le.element("LadrunoIMKBeam", 2, 1, 2)
+
+
+def test_the_builds_line_still_reaches_the_user(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    le = _bare_emitter(_ElementOps(PIN_LINES["LadrunoIMKBeam -shear"], fd=True))
+    with pytest.raises(RuntimeError):
+        le.element("LadrunoIMKBeam", 2, 1, 2)
+    assert "unknown option '-shear'" in capfd.readouterr().err
+
+
+def test_unreadable_streams_fall_back_to_the_fork_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apeGmsh.opensees.emitter import live
+
+    monkeypatch.setattr(live, "_dup_std_fds", lambda _streams: None)
+    le = _bare_emitter(_ElementOps(PIN_LINES["LadrunoIMKBeam -shear"]))
+    with pytest.raises(RuntimeError, match=_FORK_REQUIRED):
+        le.element("LadrunoIMKBeam", 2, 1, 2)

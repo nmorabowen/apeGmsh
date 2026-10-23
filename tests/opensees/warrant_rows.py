@@ -43,14 +43,9 @@ and invariant 9 over the fork members (``GRANDFATHERED_FORK_MEMBERS``).
 """
 from __future__ import annotations
 
-import contextlib
-import io
-import os
 import re
-import sys
-import tempfile
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Mapping
 
 #: The environment switch each live lane sets.
 LANE_ENV = "APEGMSH_WARRANT_LANE"
@@ -318,37 +313,6 @@ def stale_gates(pin_sha: str) -> list[str]:
     ]
 
 
-@contextlib.contextmanager
-def _captured_output() -> Iterator[list[str]]:
-    """Collect what the engine prints, through ``sys.stdout`` /
-    ``sys.stderr`` and through file descriptors 1 and 2; the text lands in
-    the yielded list on exit. A stream this process cannot see (a ``.pyd``
-    with its own C runtime on Windows) reads as nothing, never as absence.
-    """
-    box: list[str] = []
-    py_out, py_err = io.StringIO(), io.StringIO()
-    saved_streams = sys.stdout, sys.stderr
-    with tempfile.TemporaryFile() as raw:
-        for stream in saved_streams:
-            stream.flush()
-        saved_fds = os.dup(1), os.dup(2)
-        os.dup2(raw.fileno(), 1)
-        os.dup2(raw.fileno(), 2)
-        sys.stdout, sys.stderr = py_out, py_err
-        try:
-            yield box
-        finally:
-            sys.stdout, sys.stderr = saved_streams
-            os.dup2(saved_fds[0], 1)
-            os.dup2(saved_fds[1], 2)
-            os.close(saved_fds[0])
-            os.close(saved_fds[1])
-            raw.seek(0)
-            box.append(raw.read().decode("utf-8", errors="replace"))
-            box.append(py_out.getvalue())
-            box.append(py_err.getvalue())
-
-
 def probe_absence(ops: Any, name: str) -> str | None:
     """The line by which ``ops`` reports lacking feature ``name``, or ``None``.
 
@@ -361,16 +325,20 @@ def probe_absence(ops: Any, name: str) -> str | None:
             f"{name!r} is not a post-pin feature; known: "
             f"{sorted(POST_PIN_FEATURES)}"
         )
+    from apeGmsh.opensees.emitter.live import captured_engine_output
+
     feature = POST_PIN_FEATURES[name]
     ops.wipe()
-    with _captured_output() as text:
+    # The live emitter's own capture, so the gate and the emitter's
+    # option-rejection message read the build's lines the same way.
+    with captured_engine_output(echo=False) as printed:
         try:
             feature.declare(ops)
         except Exception:  # noqa: BLE001 - the printed line decides, not this
             pass
         finally:
             ops.wipe()
-    hit = feature.absent.search("\n".join(text))
+    hit = feature.absent.search(printed.text)
     return hit.group(0) if hit else None
 
 

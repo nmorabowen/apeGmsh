@@ -18,7 +18,11 @@ Code elsewhere that talks to the same domain calls :func:`get_ops`.
 """
 from __future__ import annotations
 
+import io
 import os
+import re
+import sys
+import tempfile
 import warnings
 from contextlib import contextmanager
 from typing import (
@@ -40,6 +44,7 @@ if TYPE_CHECKING:
 __all__ = [
     "LiveOpsEmitter", "get_backend_build", "get_backend_info",
     "domain_epoch", "get_backend_name", "get_ops",
+    "EngineOutput", "captured_engine_output",
 ]
 
 
@@ -189,6 +194,107 @@ _FORK_ONLY_INTEGRATORS = frozenset(
      "LadrunoArcLength", "LadrunoDynamicRelaxation", "LadrunoIndirectControl",
      "LadrunoLoadControl", "LadrunoHHT", "LadrunoGeneralizedAlpha",
      "CentralDifferenceSMS", "ExplicitBatheSMS", "ExplicitBatheLNVDSMS"})
+
+
+class EngineOutput:
+    """What the engine printed inside :func:`captured_engine_output`.
+
+    ``readable`` is False when this process could not redirect its streams
+    (no fd 1/2, as under ``pythonw``): the text is then empty, which is no
+    evidence of anything.
+    """
+
+    def __init__(self) -> None:
+        self.out = ""
+        self.err = ""
+        self.readable = False
+
+    @property
+    def text(self) -> str:
+        return f"{self.out}\n{self.err}"
+
+
+def _dup_std_fds(streams: "tuple[Any, Any]") -> "tuple[int, int] | None":
+    """Flush ``streams`` and duplicate fds 1 and 2; ``None`` when this
+    process has no usable standard descriptors."""
+    try:
+        for stream in streams:
+            if stream is not None:
+                stream.flush()
+        fd_out = os.dup(1)
+    except (OSError, ValueError):
+        return None
+    try:
+        return fd_out, os.dup(2)
+    except OSError:
+        os.close(fd_out)
+        return None
+
+
+@contextmanager
+def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
+    """Collect what the engine prints, through ``sys.stdout`` /
+    ``sys.stderr`` and through file descriptors 1 and 2 (the C streams the
+    OpenSees ``opserr`` reaches). With ``echo``, the text is written back to
+    the original streams on exit, so the user still sees it. A stream this
+    process cannot see (a ``.pyd`` with its own C runtime) reads as nothing.
+    """
+    got = EngineOutput()
+    saved = sys.stdout, sys.stderr
+    fds = _dup_std_fds(saved)
+    if fds is None:
+        yield got
+        return
+    py_out, py_err = io.StringIO(), io.StringIO()
+    with tempfile.TemporaryFile() as f_out, tempfile.TemporaryFile() as f_err:
+        os.dup2(f_out.fileno(), 1)
+        os.dup2(f_err.fileno(), 2)
+        sys.stdout, sys.stderr = py_out, py_err
+        try:
+            yield got
+        finally:
+            sys.stdout, sys.stderr = saved
+            os.dup2(fds[0], 1)
+            os.dup2(fds[1], 2)
+            os.close(fds[0])
+            os.close(fds[1])
+            f_out.seek(0)
+            f_err.seek(0)
+            got.out = f_out.read().decode("utf-8", errors="replace") + py_out.getvalue()
+            got.err = f_err.read().decode("utf-8", errors="replace") + py_err.getvalue()
+            got.readable = True
+            if echo:
+                for stream, text in ((sys.stdout, got.out), (sys.stderr, got.err)):
+                    if text and stream is not None:
+                        stream.write(text)
+                        stream.flush()
+
+
+#: The line a Ladruno build prints when it knows a class but not one of its
+#: options, e.g. ``WARNING LadrunoIMKBeam (2D) -- unknown option '-shear'``.
+_UNKNOWN_OPTION = re.compile(r"unknown option '([^']+)'")
+
+
+def _rejected_option(ele_type: str, text: str) -> "tuple[str, str] | None":
+    """``(option, line)`` when the build printed that ``ele_type`` rejects an
+    option; ``None`` otherwise (no such line, or nothing readable)."""
+    for line in text.splitlines():
+        if re.search(rf"\b{re.escape(ele_type)}\b", line):
+            m = _UNKNOWN_OPTION.search(line)
+            if m:
+                return m.group(1), line.strip()
+    return None
+
+
+def _fork_option_rejected(ele_type: str, option: str, line: str) -> str:
+    return (
+        f"element {ele_type}: option {option} is not supported by this build. "
+        f"The live build knows {ele_type} but rejected {option!r} "
+        f"(it printed: {line!r}), so the option is newer than this OpenSees "
+        f"build. Run on a Ladruno build that carries it (compare "
+        f"ops.ladrunoBuild() with the release that added it), or drop the "
+        f"option. Deck emission (ops.tcl(...) / ops.py(...)) is unaffected."
+    )
 
 
 def _fork_element_required(ele_type: str) -> str:
@@ -1127,10 +1233,20 @@ class LiveOpsEmitter:
     ) -> None:
         """Create a fork-only element, raising a clear fork-build error if
         the live build rejects it (by raising) or silently drops it (no
-        element created — stock openseespy warns and returns)."""
+        element created — stock openseespy warns and returns).
+
+        The call runs once per type under :func:`captured_engine_output`
+        (echoed, so the user still sees the build's lines). When the build
+        printed that it knows the element but not one of its options, the
+        error names that option instead of claiming the element is unknown
+        (#2498)."""
         try:
-            self._ops.element(ele_type, tag, *args)
+            with captured_engine_output(echo=True) as printed:
+                self._ops.element(ele_type, tag, *args)
         except Exception as e:
+            rejected = _rejected_option(ele_type, printed.text)
+            if rejected is not None:
+                raise RuntimeError(_fork_option_rejected(ele_type, *rejected)) from e
             raise RuntimeError(_fork_element_required(ele_type)) from e
         try:
             tags = self._ops.getEleTags()
@@ -1142,6 +1258,9 @@ class LiveOpsEmitter:
         if isinstance(tags, int):  # some builds return a bare int for 1 elem
             tags = [tags]
         if tag not in (tags or []):
+            rejected = _rejected_option(ele_type, printed.text)
+            if rejected is not None:
+                raise RuntimeError(_fork_option_rejected(ele_type, *rejected))
             raise RuntimeError(_fork_element_required(ele_type))
         self._fork_verified_types.add(ele_type)
 
