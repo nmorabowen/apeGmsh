@@ -31,7 +31,8 @@ and the lock pins the moves:
     The archive path template, ``""`` when nothing is written. ``{scope}``
     expands to ``/opensees`` or ``/opensees/stages/stage_{k:03d}``;
     ``@name`` names an attribute; ``|`` separates the global and the
-    stage store where their shapes differ.
+    stage store where their shapes differ, and an empty stage side
+    (``"<global>|"``) says a stage call writes no row.
 ``requires``
     Capability tokens a solving backend must have (``"fork"``: the
     Ladruno build). Value-dependent requirements, such as the
@@ -145,7 +146,10 @@ _ROWS: Final[tuple[Verb, ...]] = (
     _p("embedded_rebar", "embed", "global", "archive",
        "{scope}/constraints/embeddedRebar", requires=_FORK,
        seq=("add", "constraint"), decl=True),
-    _p("equationConstraint", "constraint", "both", "ledger", "",
+    # Global lines archive (opensees 2.35.0); a stage's lines are still
+    # dropped, so the row stays ``ledger`` and its stage store is empty.
+    _p("equationConstraint", "constraint", "both", "ledger",
+       "{scope}/constraints/equationConstraint|",
        seq=("add", "constraint"), decl=True),
     _p("embedded_node", "embed", "global", "ledger", "",
        requires=_FORK, seq=("add", "constraint"), decl=True),

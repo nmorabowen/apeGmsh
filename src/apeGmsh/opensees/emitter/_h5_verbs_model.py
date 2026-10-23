@@ -4,7 +4,7 @@ and damping (ADR 0114 S5-b). A pure move out of ``h5.py``; the mixin holds no st
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence, cast
+from typing import TYPE_CHECKING, Any, Iterable, Sequence, cast
 from .base import DroppedAxisGuard, plain_scalar
 from .verbs import VERBS
 from .._internal.tag_resolution import (
@@ -40,6 +40,7 @@ from .._internal.typed_records import (
 from ._h5_blocks import _StageEmitBlock, _merge_node_region_args
 from ._h5_program import _NO_DECL, _NO_ROW, _EmbeddedRebarRecord, _command_kind
 from ._h5_host import _H5Host
+from .h5_reader import EquationConstraintRecordRO
 
 
 _NODE_STORE = VERBS["node"].store
@@ -49,6 +50,10 @@ del _BAR
 
 class _H5ModelVerbsMixin(_H5Host):
     """Mixin: holds no state, no ``__init__``; see the module docstring."""
+
+    if TYPE_CHECKING:
+        # ``H5Emitter.__init__`` makes it (opensees 2.35.0).
+        _equation_constraints: list[EquationConstraintRecordRO]
 
     # =====================================================================
     # Protocol — Model
@@ -377,26 +382,34 @@ class _H5ModelVerbsMixin(_H5Host):
         self, cnode: int, cdof: int, ccoef: float,
         retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
-        # Counted, not stored: the deck zone has no equationConstraint store.
-        # A bridge-level ``apeSees.equation_constraint`` row is archived
-        # anyway, as its ``EquationConstraintRecord`` ``/opensees/decl_params``
-        # row, which replay re-emits; ``apeSees._write_h5`` takes
-        # those rows off this count before warning. The rest come
-        # from an ``enforce="equation"`` tie (ADR 0068, Open item 4,
-        # RESOLVED), which deck replay skips. It is NOT data loss: the tie
-        # is a resolved ``InterpolationRecord``, and the NEUTRAL zone
-        # already persists its ``enforce`` route AND the projection
-        # ``weights`` (schema 2.14.0).
-        # ``apeSees(fem).h5(path)`` writes that neutral zone into the same
-        # archive — so an equation-tied model.h5 round-trips its interface via
-        # ``FEMData.from_h5`` → ``apeSees(fem).tcl()/py()/run()`` (the forward
-        # emit re-runs ``_emit_one_interpolation`` → ``_emit_equation_tie``).
-        # Hence no deviation warning here (mirroring embed / contact /
-        # reinforce ties); just no-op the deck record and consume any latched
-        # mp comment so it can't leak onto the next real MP record.
-        del cnode, cdof, ccoef, retained
-        self._consume_pending_mp_name()
-        self._ledger("equationConstraint")
+        # Opensees 2.35.0: a global line is one
+        # ``/opensees/constraints/equationConstraint`` row, so a replay
+        # writes it at its emit index. The global pass writes two kinds and
+        # the archive stores both: an ``enforce="equation"`` tie's line per
+        # tied DOF (ADR 0068), and an ``apeSees.equation_constraint`` row,
+        # whose ``/opensees/decl_params`` record the reader checks the rows
+        # against. A partitioned emit writes a tie on every rank that holds
+        # its slave or a master (ADR 0068 Open item 2); each line is
+        # captured once (ADR 0027 INV-1).
+        name = self._consume_pending_mp_name()
+        if self._stage_current is not None:
+            # A stage-claimed equation tie's lines are still dropped: the
+            # stage blocks have no store for them (VERBS store ``...|``),
+            # and the replay refuses such a tie by name.
+            self._ledger("equationConstraint")
+            return
+        rec = EquationConstraintRecordRO(
+            cnode=int(cnode), cdof=int(cdof), ccoef=float(ccoef),
+            retained=tuple(
+                (int(rn), int(rd), float(rc)) for rn, rd, rc in retained),
+            name=name,
+        )
+        if self._partition_dup((
+            "equationConstraint", rec.cnode, rec.cdof, rec.ccoef,
+            rec.retained, rec.name,
+        )):
+            return
+        self._equation_constraints.append(rec)
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,

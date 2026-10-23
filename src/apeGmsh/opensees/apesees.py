@@ -11039,23 +11039,17 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             nodes_ndf=_nodes_ndf,
             provenance=self._provenance.snapshot(),
         )
-        # The emitter ledgers every ``equationConstraint`` call, but a
-        # bridge-level ``apeSees.equation_constraint`` row IS archived: its
-        # ``EquationConstraintRecord`` is a ``/opensees/decl_params`` row and
-        # deck replay re-emits it. Only the remainder (an
-        # ``enforce="equation"`` interface tie, which replay skips) is dropped.
-        counts = dict(emitter.ledger_counts)
-        counts["equationConstraint"] = (
-            counts.get("equationConstraint", 0)
-            - len(bm.equation_constraint_records)
-        )
-        self._warn_ledger(counts)
+        # From opensees 2.35.0 every global ``equationConstraint`` line (an
+        # ``apeSees.equation_constraint`` row and an ``enforce="equation"``
+        # tie's alike) is a ``/opensees/constraints/equationConstraint`` row;
+        # the emitter ledgers only the lines of a tie a stage claims.
+        self._warn_ledger(emitter.ledger_counts)
 
     def _warn_ledger(self, counts: "Mapping[str, int]") -> None:
         """Warn once per distinct set of ``ledger`` verbs ``h5()`` dropped.
 
-        ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed,
-        ``equationConstraint`` from an ``enforce="equation"`` tie) leaves
+        ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed, a stage-claimed
+        ``enforce="equation"`` tie's ``equationConstraint``) leaves
         no ``/opensees`` record, so a deck replayed from the file omits it.
         The guard is per instance and per verb set, so a model that writes
         on every emit warns once, and again only when a new ledgered verb

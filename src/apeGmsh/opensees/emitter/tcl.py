@@ -34,7 +34,11 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
-from .._internal.build.stage_emit import MaterialStageCarriers
+from .._internal.build.stage_emit import (
+    ForkBuildFloor,
+    MaterialStageCarriers,
+    fork_floor_message,
+)
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
@@ -519,6 +523,11 @@ class TclEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
+        # The fork build floors this deck already checks, with the rank
+        # whose block checks it (None: the whole deck).
+        self._fork_floors: set[tuple[ForkBuildFloor, int | None]] = set()
+        # The rank of the open partition block, None outside one.
+        self._partition_rank: int | None = None
         # Tracks the type token of the currently-open pattern (for
         # pattern_close to decide whether to emit ``\\}``). None means
         # no pattern open or the open pattern is single-line.
@@ -1669,6 +1678,9 @@ class TclEmitter:
         value: float,
     ) -> None:
         self._stage0.parameter(args)
+        if args and args[0] == "materialState":
+            self._require_fork_floors(
+                self._stage_carriers.fork_floors(ele_tags))
         self._lines.append(_join("parameter", int(pid)))
         for et in ele_tags:
             self._lines.append(
@@ -1831,6 +1843,8 @@ class TclEmitter:
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
         self._stage0.user_flip(mat_tag)
+        self._require_fork_floors(
+            self._stage_carriers.flip_fork_floors(mat_tag, stage))
         # A plastic flip of a swept material also updates each of its
         # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
@@ -1840,13 +1854,61 @@ class TclEmitter:
             self._lines.append(_join(command, *argv))
         self._lines.indent = prev_indent
 
+    def _require_fork_floors(
+        self, floors: "Sequence[ForkBuildFloor]",
+    ) -> None:
+        """Make the deck check each new fork build floor at its start.
+
+        The check goes before the first command, after the leading
+        comments, and stops the deck with :func:`fork_floor_message`
+        when the running build lacks the floor's command (#2504).  The
+        recorded partition spans move down with it.  A streamed deck has
+        its start on disk already, so it checks here, before the line
+        that needs the floor; inside a partition block that check runs
+        on that rank only, so each rank's block checks for itself.  A
+        deck that needs no floor is unchanged.
+        """
+        rank = self._partition_rank if self._stream is not None else None
+        for floor in floors:
+            if {(floor, None), (floor, rank)} & self._fork_floors:
+                continue
+            self._fork_floors.add((floor, rank))
+            guard = [
+                f'if {{[info commands {floor.probe}] eq ""}} {{',
+                f'    error "{fork_floor_message(floor)}"',
+                "}",
+            ]
+            if self._stream is not None:
+                prev_indent = self._lines.indent
+                self._lines.indent = ""
+                for line in guard:
+                    self._lines.append(line)
+                self._lines.indent = prev_indent
+                continue
+            at = next(
+                (i for i, line in enumerate(self._lines)
+                 if not line.startswith("#")), len(self._lines))
+            for i, line in enumerate(guard):
+                self._lines.insert(at + i, line)
+            n = len(guard)
+            self._partition_spans = [
+                span if span.header < at else span._replace(
+                    header=span.header + n, body_start=span.body_start + n,
+                    body_end=span.body_end + n, end=span.end + n)
+                for span in self._partition_spans
+            ]
+            if self._open_partition is not None:
+                rank, header = self._open_partition
+                if header >= at:
+                    self._open_partition = (rank, header + n)
+
     def _stage_zero(self) -> None:
-        """Write the owed ManzariDafalias ``-stage 0`` lines
+        """Write the owed fresh-stage lines of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`), at a solve verb."""
-        for tag in self._stage0.due():
+        for tag, stage in self._stage0.due():
             self._lines.append(
-                f"updateMaterialStage -material {tag} -stage 0")
+                f"updateMaterialStage -material {tag} -stage {stage}")
 
     def _emit_hook_ramp_proc(
         self,
@@ -1920,6 +1982,7 @@ class TclEmitter:
         rank 0's submodel (run-verified under ``mpiexec -n 8``).
         """
         self._stage_carriers.partition_open(rank)
+        self._partition_rank = int(rank)
         if not self._partition_shim_emitted:
             # Emit at indent 0 (the shim is global, not per-rank).
             # In stream mode the active sink is the driver here, so the
@@ -1982,6 +2045,7 @@ class TclEmitter:
     def partition_close(self) -> None:
         """Close the current per-rank block; emit trailing blank line."""
         self._stage_carriers.partition_close()
+        self._partition_rank = None
         # Drop one indent level.
         if self._lines.indent.endswith("    "):
             self._lines.indent = self._lines.indent[:-4]
