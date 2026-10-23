@@ -24,7 +24,7 @@ import re
 import sys
 import tempfile
 import warnings
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import (
     TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Sequence,
     cast,
@@ -246,7 +246,19 @@ def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
         yield got
         return
     py_out, py_err = io.StringIO(), io.StringIO()
-    with tempfile.TemporaryFile() as f_out, tempfile.TemporaryFile() as f_err:
+    files = ExitStack()
+    try:
+        f_out = files.enter_context(tempfile.TemporaryFile())
+        f_err = files.enter_context(tempfile.TemporaryFile())
+    except OSError:
+        # No temp file to capture into: run uncaptured (unreadable), so the
+        # caller judges the engine call itself, not this failure.
+        files.close()
+        os.close(fds[0])
+        os.close(fds[1])
+        yield got
+        return
+    with files:
         os.dup2(f_out.fileno(), 1)
         os.dup2(f_err.fileno(), 2)
         sys.stdout, sys.stderr = py_out, py_err
@@ -284,6 +296,21 @@ def _rejected_option(ele_type: str, text: str) -> "tuple[str, str] | None":
             if m:
                 return m.group(1), line.strip()
     return None
+
+
+def _fork_signature(
+    ele_type: str, args: "tuple[int | float | str, ...]",
+) -> str:
+    """The fork gate's verification key: the type name followed by the
+    sorted ``-option`` flags the call carries (``"LadrunoIMKBeam -shear"``),
+    or the bare type name for a call without options. A build can know a
+    class but reject one of its options, so a type verified without
+    ``-shear`` is not verified with it (#2498)."""
+    flags = sorted({
+        a for a in args
+        if isinstance(a, str) and a[:1] == "-" and a[1:2].isalpha()
+    })
+    return " ".join([ele_type, *flags])
 
 
 def _fork_option_rejected(ele_type: str, option: str, line: str) -> str:
@@ -948,7 +975,9 @@ class LiveOpsEmitter:
         # LadrunoUP) but shipping another (LadrunoQuad) would otherwise let
         # the first success wave the second element through the verification,
         # and openseespy would fail on it with a cryptic error instead of the
-        # curated fork-required message. Each type is verified once, then O(1).
+        # curated fork-required message. Each type is verified once per
+        # option set (the key is :func:`_fork_signature`: the bare type name
+        # for a call without ``-options``), then O(1).
         self._fork_verified_types: set[str] = set()
         # ADR 0057 Phase A: live harvest of strategy-ladder escalations —
         # one ``(label, increment, rung_index, rung_args)`` per escalation
@@ -1209,17 +1238,19 @@ class LiveOpsEmitter:
         # element instead of letting it fail later with a cryptic openseespy
         # error. Skipped while a non-zero partition block is open (the
         # ``_NoOpOps`` stand-in has no real domain to probe) and once THIS
-        # element TYPE has been verified (per-type, not a single flag — a
-        # build that knows one fork element but not another must still be
-        # gated on the second).
+        # element TYPE with THESE options has been verified (per-type, not a
+        # single flag — a build that knows one fork element but not another
+        # must still be gated on the second; per option set — a build that
+        # knows the type but not ``-shear`` must still be gated on it).
         self._stage_zero_ledger().owed = True
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition
-            and ele_type not in self._fork_verified_types
         ):
-            self._element_fork_gated(ele_type, tag, args)
-            return
+            key = _fork_signature(ele_type, args)
+            if key not in self._fork_verified_types:
+                self._element_fork_gated(ele_type, tag, args, key)
+                return
         if (
             ele_type == "TenNodeTetrahedron"
             and not self._in_partition
@@ -1230,12 +1261,14 @@ class LiveOpsEmitter:
 
     def _element_fork_gated(
         self, ele_type: str, tag: int, args: "tuple[int | float | str, ...]",
+        key: str,
     ) -> None:
         """Create a fork-only element, raising a clear fork-build error if
         the live build rejects it (by raising) or silently drops it (no
         element created — stock openseespy warns and returns).
 
-        The call runs once per type under :func:`captured_engine_output`
+        The call runs once per type and option set (``key``, from
+        :func:`_fork_signature`) under :func:`captured_engine_output`
         (echoed, so the user still sees the build's lines). When the build
         printed that it knows the element but not one of its options, the
         error names that option instead of claiming the element is unknown
@@ -1253,7 +1286,7 @@ class LiveOpsEmitter:
         except Exception:
             # Build lacks getEleTags — don't false-positive; the element
             # call did not raise, so trust it.
-            self._fork_verified_types.add(ele_type)
+            self._fork_verified_types.add(key)
             return
         if isinstance(tags, int):  # some builds return a bare int for 1 elem
             tags = [tags]
@@ -1262,7 +1295,7 @@ class LiveOpsEmitter:
             if rejected is not None:
                 raise RuntimeError(_fork_option_rejected(ele_type, *rejected))
             raise RuntimeError(_fork_element_required(ele_type))
-        self._fork_verified_types.add(ele_type)
+        self._fork_verified_types.add(key)
 
     def _stock_build_gate(self, message: str) -> None:
         """Raise ``message`` when the bound backend is not the Ladruno fork.
