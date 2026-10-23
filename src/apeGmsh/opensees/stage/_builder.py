@@ -336,8 +336,13 @@ class RouteSpec:
     * ``eids`` are its FEM element ids, one ``MISSING_FEM_ELEMENT_ID`` per
       node-pair element.  They are computed on first use, because a
       fan-out can be costly.
-    * ``owner`` is the stage that activates the spec, or ``-1`` when it
-      emits globally.  Only the replay's class-wide check reads it.
+    * ``owner`` is the index of the stage that activates the spec, or
+      ``-1`` when it emits globally.  The stage close and the emit read it
+      off the stages' ``activated_pgs`` (:func:`route_model`), the replay
+      off the archived ``owned_element_ids``.  A spec is in the domain at
+      a stage's flips when :meth:`alive_at` says so (#2528); the
+      multi-element plastic check and the replay's class-wide check read
+      it.
     """
 
     __slots__ = ("cls", "pg", "nd_tags", "blind",
@@ -368,6 +373,15 @@ class RouteSpec:
     def where(self) -> str:
         """``"<class> on pg <pg>"``, as the refusals name a spec."""
         return f"{self.cls} on pg {self.pg!r}"
+
+    def alive_at(self, index: int) -> bool:
+        """Whether the spec's elements are in the domain at the flips of
+        the stage at ``index``: emitted globally, or activated by that
+        stage or an earlier one.  A stage's activations emit before its
+        flip lines, so its own count.  ``s.remove_element`` is not
+        modelled: a removed carrier still counts, which can only refuse
+        more."""
+        return self.owner < 0 or self.owner <= index
 
 
 @dataclass(frozen=True)
@@ -422,20 +436,34 @@ def stage_routes_due(
 def route_model(
     primitives: "Iterable[Primitive]", *,
     tag_of: "Callable[[Primitive], int | None]", fem: "FEMData",
+    activations: "Sequence[Sequence[str]]",
 ) -> RouteModel:
     """The :class:`RouteModel` of a bridge's registered ``primitives``.
 
     The stage close builds it from the primitives registered so far, and
     the emit from the final ones (``stage_validate.validate_stage_routes``).
-    Every element spec counts, whichever stage activates it, and so does
-    every nDMaterial an element or another primitive depends on.
-    ``tag_of`` gives a primitive's tag, or ``None``.
+    Every element spec is a spec of the model, whichever stage activates
+    it, and so is every nDMaterial an element or another primitive depends
+    on.  ``tag_of`` gives a primitive's tag, or ``None``.
+
+    ``activations`` holds each stage's ``activated_pgs``, in program
+    order.  A spec's ``owner`` is the index of the stage whose list holds
+    its ``pg``, else ``-1``: the rule of
+    ``ownership.compute_stage_ownership``, and the stage whose
+    ``owned_element_ids`` the archive gives the spec's elements.  A ``pg``
+    two stages activate takes the first: ``compute_stage_ownership``
+    refuses it at emit, and the earlier owner keeps the spec alive at more
+    flips, so it can only refuse more here.
     """
     from .._internal.build.pg_expand import (
         expand_pg_to_elements,
         expand_spec_to_elements,
     )
 
+    owner_of_pg: dict[str, int] = {}
+    for index, pgs in enumerate(activations):
+        for pg in pgs:
+            owner_of_pg.setdefault(str(pg), index)
     prims = tuple(primitives)
 
     def fanout_of(spec: Element) -> "Callable[[], Iterable[int]]":
@@ -478,12 +506,14 @@ def route_model(
                 blind.append((cls, None if tag is None else int(tag)))
             if cls in FIRST_ELEMENT_ONLY_PLASTIC_INIT and tag is not None:
                 first_only.setdefault(int(tag), set()).update(via)
+        spec_pg = getattr(spec, "pg", None)
         specs.append(RouteSpec(
-            cls=type(spec).__name__, pg=getattr(spec, "pg", None),
+            cls=type(spec).__name__, pg=spec_pg,
             nd_tags=frozenset(nd_tags),
             blind=tuple(blind),
             first_only={t: frozenset(v) for t, v in first_only.items()},
             fanout=fanout_of(spec),
+            owner=owner_of_pg.get(str(spec_pg), -1) if spec_pg else -1,
         ))
     return RouteModel(
         specs=tuple(specs), nd_class=nd_class,
@@ -495,6 +525,7 @@ def check_stage_routes(
     name: str,
     model: RouteModel,
     *,
+    index: int,
     mat_stage_records: "Sequence[MaterialStageRecord]",
     parameter_records: "Sequence[UpdateParameterRecord]",
     activated_pgs: "Sequence[str]",
@@ -506,15 +537,24 @@ def check_stage_routes(
     parameter routes, and #2445's activation after a plastic flip, in that
     order.  The fork's constructor reset (#2443) is not one of them: the
     emitted deck checks the build it runs on
-    (``stage_emit.MD_STATIC_RESET_GUARD``).  ``earlier_flips`` are the ``(tag, stage)``
-    flips of every earlier stage, in order.  The stage close and the
-    ``model.h5`` replay both call this, so an archive that the stage close
-    would refuse is refused on replay, by the same message.
+    (``stage_emit.MD_STATIC_RESET_GUARD``).  ``index`` is the stage's
+    position in the program, which the specs' ``owner`` counts in.
+    ``earlier_flips`` are the ``(tag, stage)`` flips of every earlier
+    stage, in order.  The stage close, the emit and the ``model.h5``
+    replay all call this, so an archive that the stage close would refuse
+    is refused on replay, by the same message.
+
+    A plastic flip must reach every carrier alive at it
+    (:meth:`RouteSpec.alive_at`, #2528); a carrier a later stage
+    activates is not in the domain yet.  It is that stage's to reach: its
+    activation is refused unless the stage flips the group again, and
+    that flip must then reach every carrier alive at it, the new one
+    included.
     """
     _refuse_multi_element_plastic_flip(
-        name, model, mat_stage_records, parameter_records)
+        name, model, index, mat_stage_records, parameter_records)
     _refuse_stage_parameter_routes(
-        name, model, mat_stage_records, parameter_records)
+        name, model, index, mat_stage_records, parameter_records)
     _refuse_activation_after_plastic_flip(
         name, model, mat_stage_records, parameter_records, activated_pgs,
         earlier_flips)
@@ -534,9 +574,10 @@ def check_archived_stage_routes(
     ownership and removals as archived.
     """
     earlier: "list[tuple[int, int]]" = []
-    for st in stages:
+    for index, st in enumerate(stages):
         check_stage_routes(
-            st.name, model, mat_stage_records=st.mat_stage_records,
+            st.name, model, index=index,
+            mat_stage_records=st.mat_stage_records,
             parameter_records=st.parameter_records,
             activated_pgs=st.activated_pgs, earlier_flips=tuple(earlier))
         earlier.extend(stage_flips(st.mat_stage_records, st.parameter_records))
@@ -571,7 +612,7 @@ def _refuse_partial_class_wide_flips(
             continue
         live: "dict[int, str]" = {}
         for spec, mats in users:
-            if spec.owner > idx:
+            if not spec.alive_at(idx):
                 continue
             eids = set(spec.eids)
             if removed and eids and eids <= removed:
@@ -582,16 +623,16 @@ def _refuse_partial_class_wide_flips(
 
 
 def _first_element_only_carriers(
-    model: RouteModel, tags: "set[int]",
+    specs: "Iterable[RouteSpec]", tags: "set[int]",
 ) -> "tuple[dict[int, list[RouteSpec]], dict[int, set[str]]]":
-    """Each element spec that carries a tag of ``tags``.
+    """Each element spec of ``specs`` that carries a tag of ``tags``.
 
     ``tags`` are nDMaterial tags of
     :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` materials.  Returns, per
-    tag, every element spec whose dependencies reach that material,
-    whichever stage activates it.  The spec's ``eids`` are its OpenSees
-    elements: its PG, or one ``MISSING_FEM_ELEMENT_ID`` row for a
-    node-pair spec.
+    tag, every spec whose dependencies reach that material; the caller
+    picks the specs (every one, or those alive at a flip).  The spec's
+    ``eids`` are its OpenSees elements: its PG, or one
+    ``MISSING_FEM_ELEMENT_ID`` row for a node-pair spec.
 
     The second dict holds, per tag, the classes of every primitive
     between an element and the material (a wrapper such as
@@ -600,7 +641,7 @@ def _first_element_only_carriers(
     """
     carriers: dict[int, list[RouteSpec]] = {}
     carrier_via: dict[int, set[str]] = {}
-    for spec in model.specs:
+    for spec in specs:
         for tag, via in spec.first_only.items():
             if tag in tags:
                 carriers.setdefault(tag, []).append(spec)
@@ -609,7 +650,7 @@ def _first_element_only_carriers(
 
 
 def _refuse_multi_element_plastic_flip(
-    name: str, model: RouteModel,
+    name: str, model: RouteModel, index: int,
     mat_stage_records: "Sequence[MaterialStageRecord]",
     parameter_records: "Sequence[UpdateParameterRecord]",
 ) -> None:
@@ -618,8 +659,13 @@ def _refuse_multi_element_plastic_flip(
     A :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` material flipped to a
     stage ``>= 1``, through either route of ``stage_flips``, on
     more than one OpenSees element needs ``Elastic2Plastic()`` in
-    every element.  Elements are counted over every element spec
-    of ``model``, whichever stage activates them.
+    every element.  Elements are counted over the element specs of
+    ``model`` alive at the flip, the stage at ``index``
+    (:meth:`RouteSpec.alive_at`, #2528): a flip reaches only the domain's
+    elements, and the emit's sweep lists only those
+    (``stage_emit.MaterialStageCarriers``).  A carrier a later stage
+    activates is that stage's to reach
+    (:func:`_refuse_activation_after_plastic_flip`).
 
     * ``s.update_material_stage`` emits a ``materialState`` update of
       every carrying element of a :data:`MATERIAL_STATE_ELEMENTS`
@@ -646,7 +692,8 @@ def _refuse_multi_element_plastic_flip(
     }
     if not plastic:
         return
-    carriers, carrier_via = _first_element_only_carriers(model, plastic)
+    carriers, carrier_via = _first_element_only_carriers(
+        (spec for spec in model.specs if spec.alive_at(index)), plastic)
     multi = {
         tag: specs for tag, specs in carriers.items()
         if sum(len(spec.eids) for spec in specs) > 1
@@ -748,15 +795,15 @@ def _targets(model: RouteModel, prec: "UpdateParameterRecord") -> "set[int]":
 
 
 def _refuse_stage_parameter_routes(
-    name: str, model: RouteModel,
+    name: str, model: RouteModel, index: int,
     mat_stage_records: "Sequence[MaterialStageRecord]",
     parameter_records: "Sequence[UpdateParameterRecord]",
 ) -> None:
     """Refuse a stage-flag update that reaches nothing, or the wrong
     material (#2458, #2460).
 
-    For each ``s.update_parameter`` of this stage whose name is in
-    :data:`STAGE_FLAG_PARAMETERS`:
+    For each ``s.update_parameter`` of this stage (at ``index``) whose
+    name is in :data:`STAGE_FLAG_PARAMETERS`:
 
     * ``updateMaterialStage`` is refused.  ``updateParameter`` goes
       through ``Parameter::update(double)``, which sets only
@@ -765,9 +812,10 @@ def _refuse_stage_parameter_routes(
       stress-density models) reads ``Information::theInt`` for it,
       which nothing sets: the stage the run lands on is uninitialised
       memory, while the bridge counted a flip to the value given.
-    * ``materialState`` is refused when no targeted element carries the
-      named material (the update would reach nothing, yet count as a
-      flip).
+    * ``materialState`` is refused when no targeted element alive at the
+      stage (:meth:`RouteSpec.alive_at`) carries the named material (the
+      update would reach nothing, yet count as a flip).  A target that a
+      later stage activates is not in the domain yet (#2528).
     * ``materialState`` is refused when a targeted element that carries
       the named material is not of a :data:`MATERIAL_STATE_ELEMENTS`
       class.  ``FourNodeQuad``,
@@ -841,13 +889,18 @@ def _refuse_stage_parameter_routes(
                 "(issues #2458, #2460).  Pass material=."
             )
         mat_tag = int(prec.mat_tag)
-        if not any(mat_tag in spec.nd_tags for spec in hit):
+        alive = [spec for spec in hit if spec.alive_at(index)]
+        if not any(mat_tag in spec.nd_tags for spec in alive):
             cls = model.nd_class.get(mat_tag) or "the material"
-            held = sorted({spec.where for spec in hit})
+            held = sorted({spec.where for spec in alive})
+            later = sorted({spec.where for spec in hit
+                            if spec not in alive and mat_tag in spec.nd_tags})
             raise BridgeError(
                 f"{call} names {cls} (nDMaterial tag {mat_tag}), but "
                 + (f"its targets ({', '.join(held)}) do not carry it"
                    if held else "it targets no element")
+                + (f" in the domain ({', '.join(later)} carries it, but "
+                   "a later stage activates it)" if later else "")
                 + ": the update reaches nothing, while the bridge "
                 "counts a flip of that material (issue #2460).  Target "
                 "the elements that carry it."
@@ -903,7 +956,15 @@ def _refuse_activation_after_plastic_flip(
     into the plastic stage, and no flip ever runs its
     ``Elastic2Plastic()`` (#2445).  This is refused on every build,
     unless this stage flips the group again: its flip lines emit after
-    the activation and reach the new element.
+    the activation and reach the new element, and
+    :func:`_refuse_multi_element_plastic_flip` holds that flip to every
+    carrier alive at it, the new one included.  The earlier stages' flip
+    checks count only the carriers alive at them (#2528), so this is the
+    check that keeps a carrier activated after the flip refused.  It
+    counts per tag (``earlier_live``): it refuses a carrier of a tag that
+    has a carrier outside this stage's activations.  A carrier of another
+    material of the same class-wide group, whose own tag has no such
+    carrier, is not refused here; counting per group is #2534.
     """
     if not activated_pgs:
         return
@@ -928,11 +989,14 @@ def _refuse_activation_after_plastic_flip(
     if not tags:
         return
     activated = set(activated_pgs)
-    for tag, specs in sorted(_first_element_only_carriers(model, tags)[0].items()):
+    carriers = _first_element_only_carriers(model.specs, tags)[0]
+    for tag, specs in sorted(carriers.items()):
         new = sorted({spec.where for spec in specs if spec.pg in activated})
         # A material none of whose elements was live before this
         # stage reached nothing at the earlier flip: build-time
-        # validator V7 refuses that flip, with its own message.
+        # validator V7 refuses that flip, with its own message.  A
+        # carrier a later stage activates counts as live here, which can
+        # only refuse more.
         earlier_live = any(spec.pg not in activated for spec in specs)
         if new and earlier_live:
             raise BridgeError(
@@ -1189,6 +1253,7 @@ class _StageBuilder:
         ]
         check_stage_routes(
             self._name, self._route_model(),
+            index=len(self._bridge._stage_records),
             mat_stage_records=self._update_material_stage_records,
             parameter_records=records,
             activated_pgs=self._activated_pgs,
@@ -1197,10 +1262,14 @@ class _StageBuilder:
 
     def _route_model(self) -> RouteModel:
         """The model registered so far, as the route checks read it
-        (:func:`route_model`)."""
+        (:func:`route_model`).  The owners come from the closed stages'
+        activations and this stage's, which is the next one."""
         bridge = self._bridge
         return route_model(
-            bridge._primitives, tag_of=bridge.tag_for, fem=bridge.fem)
+            bridge._primitives, tag_of=bridge.tag_for, fem=bridge.fem,
+            activations=[
+                *(stage.activated_pgs for stage in bridge._stage_records),
+                self._activated_pgs])
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.

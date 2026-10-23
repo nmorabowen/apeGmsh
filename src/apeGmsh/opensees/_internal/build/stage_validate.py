@@ -15,7 +15,7 @@ stage close's route checks.
   live, so it need not be named.
 * :func:`validate_stage_routes` runs the stage close's route checks
   again at emit, on the final model, so an element registered after a
-  stage is checked too.
+  stage is checked too, with each element spec's owning stage.
 * :class:`StageZeroLedger` is how a deck or live emitter writes
   ``updateMaterialStage -material <tag> -stage <s>`` for every group, ``s``
   being the group's :data:`FRESH_STAGE`.  The static survives
@@ -257,8 +257,10 @@ def validate_stage_routes(
     ``updateMaterialStage``, the wrong answer the #2445 check refuses.
     Here each stage runs the same checks, in program order, on every
     registered primitive: the model the ``model.h5`` replay checks.  A
-    refusal gives the stage close's own message.  A carrier counts
-    whichever stage activates it, as at the stage close.
+    refusal gives the stage close's own message.  Each spec's owner is
+    read off the stages' ``activated_pgs``, as the stage close reads it
+    and as ``ownership.compute_stage_ownership`` assigns the elements, so
+    a flip counts the carriers alive at it, on all three paths (#2528).
     """
     from ...stage._builder import (
         STAGE_FLAG_PARAMETERS,
@@ -287,13 +289,14 @@ def validate_stage_routes(
                 "primitives via ops.register(prim) before build()."
             ) from e
 
-    model = route_model(primitives, tag_of=tag_of, fem=fem)
+    model = route_model(primitives, tag_of=tag_of, fem=fem,
+                        activations=[st.activated_pgs for st in stages])
     earlier: list[tuple[int, int]] = []
-    for st in stages:
+    for index, st in enumerate(stages):
         if stage_routes_due(st.update_material_stage_records,
                             st.update_parameter_records, st.activated_pgs):
             check_stage_routes(
-                st.name, model,
+                st.name, model, index=index,
                 mat_stage_records=st.update_material_stage_records,
                 parameter_records=st.update_parameter_records,
                 activated_pgs=st.activated_pgs,

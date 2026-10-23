@@ -10,7 +10,10 @@ so such an archive is refused by name.  The valid archives here replay
 byte for byte (the R1b oracle).  The replay checks the final model, and so
 does the bridge's emit (#2464), so an element registered after a flip is
 refused on both sides; ``test_a_carrier_registered_after_the_flip_...``
-pins that case.
+pins that case.  A flip counts only the carriers alive at it (#2528), by
+each spec's owning stage; ``test_the_emit_and_the_replay_check_one_model``
+holds the emit's model, owners included, to the one the replay reads from
+a pre-fix archive.
 
 The fork's constructor reset (#2443) is not a route check: the deck checks
 the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``), and the
@@ -257,6 +260,52 @@ def _flip_then_activate(*, system: str = "UmfPack", reflip: bool = False,
     return ops
 
 
+def alive_at_the_flip(*, reflip: str = "sweep", register: str = "between",
+                      host: str = "C", push: str = "A") -> apeSees:
+    """#2528: sand on ``A`` flipped plastic by ``materialState`` over pg
+    ``A``, which is every element alive at ``push``.  ``host`` (``C``, a
+    SixNodeTri, or ``P``, a FourNodeQuad) carries the same sand and is
+    activated by ``install``, which flips the group again by ``reflip``:
+    ``"sweep"`` (``s.update_material_stage``), ``"materialState"`` (over
+    ``A`` and the host), ``"host only"``, or ``"none"``.  ``register``
+    puts the host's element ``"early"`` (before ``push``), ``"between"``
+    the stages, or ``"after"`` both.  ``push="host"`` flips the host's
+    element alone at ``push``, before it is in the domain."""
+    ops = _ops()
+    sand = _md(ops, "sand")
+    _host(ops, "A", sand)
+    if register == "early":
+        _host(ops, host, sand)
+    eid = {"C": 6, "P": 5}[host]
+    if push == "A":
+        _stage(ops, "push", lambda s: s.update_parameter(
+            "materialState", 1.0, pg="A", material=sand))
+    elif push == "host":
+        _stage(ops, "push", lambda s: s.update_parameter(
+            "materialState", 1.0, elements=[eid], material=sand))
+    else:
+        raise KeyError(push)
+    if register == "between":
+        _host(ops, host, sand)
+
+    def install(s: Any) -> None:
+        s.activate(pgs=[host])
+        if reflip == "sweep":
+            s.update_material_stage(materials=[sand], stage=1)
+        elif reflip == "materialState":
+            s.update_parameter("materialState", 1.0, elements=[1, eid],
+                               material=sand)
+        elif reflip == "host only":
+            s.update_parameter("materialState", 1.0, pg=host, material=sand)
+        elif reflip != "none":
+            raise KeyError(reflip)
+
+    _stage(ops, "install", install)
+    if register == "after":
+        _host(ops, host, sand)
+    return ops
+
+
 REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
     "updateMaterialStage parameter": (
         _update_material_stage_parameter, "#2460",
@@ -283,6 +332,25 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
         _flip_then_activate, "#2445",
         "SixNodeTri on pg 'C' carries nDMaterial tag 1, whose stage flag "
         "an earlier stage left plastic"),
+    # #2528: the flip at 'push' counts only the carriers alive at it, so
+    # each of these is refused at 'install', where the carrier enters.
+    "activation after a flip of every alive carrier": (
+        lambda: alive_at_the_flip(reflip="none"), "#2445",
+        "SixNodeTri on pg 'C' carries nDMaterial tag 1, whose stage flag "
+        "an earlier stage left plastic"),
+    "reflip that leaves an alive carrier out": (
+        lambda: alive_at_the_flip(reflip="host only"), "#2445",
+        "Stage 'install': s.update_parameter('materialState', ...) flips "
+        "nDMaterial tag 1 (2 elements) to a plastic stage but leaves 1 of "
+        "those elements out"),
+    "materialState on a carrier not yet in the domain": (
+        lambda: alive_at_the_flip(push="host"), "#2460",
+        "on elements [6] names ManzariDafalias (nDMaterial tag 1), but it "
+        "targets no element"),
+    "reflip over a FourNodeQuad activated after the flip": (
+        lambda: alive_at_the_flip(host="P"), "#2445",
+        "Stage 'install': flips nDMaterial tag 1 (2 elements) to a plastic "
+        "stage, but FourNodeQuad carries it"),
 }
 
 
@@ -350,11 +418,18 @@ def valid_bridge(case: str) -> apeSees:
         _stage(ops, "push", lambda s: s.update_material_stage(
             materials=[sand], stage=1))
         return ops
+    if case == "alive_at_the_flip":
+        # #2528: the flip at 'push' reaches every element alive there;
+        # C enters at 'install', whose sweep reaches A and C.
+        return alive_at_the_flip()
+    if case == "alive_at_the_flip_materialstate":
+        return alive_at_the_flip(reflip="materialState")
     raise KeyError(case)
 
 
 VALID = ("both_routes", "beside_clay", "whole_group_elastic",
-         "reflip_on_activation", "own_material_on_stock", "ladruno_quads")
+         "reflip_on_activation", "own_material_on_stock", "ladruno_quads",
+         "alive_at_the_flip", "alive_at_the_flip_materialstate")
 
 
 # ---------------------------------------------------------------------------
@@ -574,11 +649,13 @@ def test_a_stage_without_a_flip_needs_no_declarations(
 
 
 def _facts(model: Any) -> list[tuple[Any, ...]]:
+    """Every fact the route checks read of each spec, its owning stage
+    included (#2528)."""
     return sorted(
         (spec.cls, spec.pg, sorted(spec.nd_tags),
          sorted(spec.blind, key=repr),
          sorted((t, sorted(v)) for t, v in spec.first_only.items()),
-         sorted(spec.eids))
+         sorted(spec.eids), spec.owner)
         for spec in model.specs)
 
 
@@ -612,6 +689,48 @@ def test_the_archive_reads_the_model_the_stage_close_reads(
     assert _facts(archived) == _facts(live)
     assert dict(archived.nd_class) == dict(live.nd_class)
     assert archived.group_of_tag() == live.group_of_tag()
+
+
+@pytest.mark.parametrize("build", [
+    *(v[0] for v in REFUSED.values()), _fork_reset,
+    *(lambda c=c: valid_bridge(c) for c in VALID),
+], ids=[*REFUSED, "fork constructor reset", *VALID])
+def test_the_emit_and_the_replay_check_one_model(
+    build: "Callable[[], apeSees]", monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Emit against replay (#2528): the ``RouteModel`` the bridge's emit
+    checks (``stage_validate.validate_stage_routes``), captured while it
+    writes a pre-fix archive, equals spec for spec, owners included, the
+    one the replay reads back from that archive.  The emit reads its
+    owners off the stages' activations, the replay off the archived
+    ``owned_element_ids``, so the two sides meet only in the facts."""
+    from apeGmsh.opensees._internal import compose
+
+    emitted: list[Any] = []
+    with monkeypatch.context() as m:
+        m.setattr(_builder, "check_stage_routes", lambda *a, **k: None)
+        m.setattr(_apesees, "validate_class_wide_stage_flags",
+                  lambda **k: None)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ops = build()
+            m.setattr(_builder, "check_stage_routes",
+                      lambda _name, model, **_kw: emitted.append(model))
+            path = tmp_path / "pre_fix.h5"
+            ops.h5(str(path))
+    assert emitted, "the emit ran no route check"
+    model = OpenSeesModel.from_h5(str(path))
+    archived = compose._archived_route_model(
+        stages=model.stages(), elements=model.elements(),
+        declarations=model.declarations, fem=model.fem)
+    owners = {spec.owner for spec in archived.specs}
+    for seen in emitted:
+        assert seen is emitted[0]
+        assert _facts(seen) == _facts(archived)
+        assert dict(seen.nd_class) == dict(archived.nd_class)
+    if any(st.activated_pgs for st in model.stages()):
+        assert owners - {-1}, "a staged activation lost its owner"
 
 
 @pytest.mark.parametrize("case", VALID)
