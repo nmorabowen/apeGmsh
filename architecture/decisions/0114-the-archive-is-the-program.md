@@ -296,3 +296,72 @@ specs, so the cost change is expected to be within noise.
   stale. It is not this design's to fix.
 - #1446 (one region tag wasted per stage-claimed filtered recorder on
   the partitioned staged path) is fixed by S4, not in a fast lane.
+
+## Amendment — 2026-10-23 — D1: `equationConstraint` leaves the ledger (reverses #1341 Q3 for it; #2448)
+
+**Status:** Accepted. The maintainer ruled (a) on #2447 and approved this
+amendment in advance ("I approve", relayed on #2448, 2026-10-22). As a
+human-gate change it is merged by the maintainer.
+
+**Program slices:** #2447 (merged, PR #2497: the interim, ruling (c)) and
+#2448 (this amendment and the end state); both fix #2416. Chain issue
+#1201.
+
+### What D1 said
+
+D1 gave `h5` a third value, `ledger`, for verbs that `H5Emitter` counts
+and drops, and named its ratified end state (#1341, Q3): the contact,
+rebar and embed rows **plus `equationConstraint`**. Refusing
+`equationConstraint` instead would have broken ADR 0112 D1 (a file on
+every run). Keeping it in the ledger meant that a model tied on the
+equation route (`InterpolationRecord(kind=tie|distributing|embedded,
+enforce="equation")`, ADR 0068) had no `/opensees` record of its
+`equationConstraint` lines: replay wrote the model untied (#2416), and
+since #2415 it refused by name.
+
+### D1, amended
+
+1. **`equationConstraint` is `archive` at every scope.** Every line the
+   bridge writes is a row of `{scope}/constraints/equationConstraint`: the
+   global lines from opensees 2.35.0 (#2447), an `enforce="equation"`
+   tie's and an `apeSees.equation_constraint` row's alike, and a stage
+   block's lines from opensees 2.37.0 (#2448), with the row-aligned
+   `equationConstraint_emit_index` that the stage's other MP kinds share.
+   The `VERBS` row is `archive` with the store
+   `{scope}/constraints/equationConstraint`, and its `H5Emitter` method no
+   longer reaches `self._ledger`.
+2. **The replay writes each line where the bridge did.** A global row is
+   joined to its `/opensees/program` call by emit index (`compose.py`
+   9b′). A stage row is merged with the stage's `equalDOF`, `rigidLink`,
+   `rigidDiaphragm` and `embeddedNode` rows by the stage's emit index, so
+   it lands in the stage's own position. The #2416 refusal is lifted at
+   both scopes.
+3. **Archives that predate the rows still refuse by name.** An
+   equation-route tie whose lines are not among the stored rows refuses
+   with `BridgeError`. That covers every archive below 2.35.0 and a
+   stage-claimed tie in an archive below 2.37.0, which stores nothing the
+   lines could be rebuilt from. Such an archive is never replayed untied.
+4. **The ledger shrinks from 9 to 8.** `tests/opensees/contract/verbs_ledger.txt`
+   drops `equationConstraint` and lowers `N_LEDGER` to 8.
+
+### End state
+
+D1's ledger end state is now **the contact, rebar and embed rows only**
+(the rebar row, `embedded_rebar`, already left at K2b, opensees 2.29.0).
+At this amendment the ledger holds `contact`, `contact_plane`,
+`contact_surface`, `embedded_node` and four modal-family rows
+(`eigen_feast`, `modal_properties`, `modal_response_history`,
+`response_spectrum_analysis`); the modal rows are outside Q3's end state
+and stay shrink-only. The rest of D1, and Q3's ruling that a `ledger` row
+is visible and can only shrink, stand.
+
+### Consequences
+
+- On main, every equation-route record round-trips through `model.h5` at
+  every scope: the R1b round-trip oracle carries stage-claimed tie,
+  distributing and embedded rows, flat and partitioned, beside #2447's
+  global ones.
+- `H5LedgerWarning` no longer fires for an equation tie, and the
+  `_skipped_equation_constraints` counter is gone with the ledger row.
+- Opensees schema 2.37.0 is the additive minor of the stage rows (a 2.36
+  reader refuses a 2.37 file; ADR 0113 D5).
