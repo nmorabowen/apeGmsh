@@ -16,7 +16,7 @@ Two things follow, and both live here.
   ``updateMaterialStage -material <tag> -stage <s>`` for every group, ``s``
   being the group's :data:`FRESH_STAGE`.  The static survives
   ``ops.wipe()``, so without the line an in-process re-run starts at the
-  stage the previous run left (#2463).  For ManzariDafalias the line also
+  stage the previous run left.  For ManzariDafalias the line also
   makes the two builds agree: upstream starts it elastoplastic (the static
   starts at 1) and the Ladruno fork elastic (its constructors set 0).
 """
@@ -40,11 +40,11 @@ if TYPE_CHECKING:
 
 #: The stage each class-wide static holds in a fresh process, which the
 #: ledger states at the first solve so a re-run in the same process starts
-#: there too.  Measured on stock openseespy 3.8.0 and the fork (#2463,
-#: ``tests/opensees/integration/test_stage_zero_every_group.py``):
+#: there too.  Measured on stock openseespy 3.8.0 and the fork
+#: (``tests/opensees/integration/test_stage_zero_every_group.py``):
 #: SAniSandMS starts plastic on both (``mElastFlag = 1``, no constructor
 #: resets it), PM4Sand and PM4Silt elastic (``me2p = 0``).  ManzariDafalias
-#: is 0, the fork's start, which #2440 states on upstream too.  A new
+#: is 0, the fork's start, which the line states on upstream too.  A new
 #: :data:`~apeGmsh.opensees.stage._builder.CLASS_WIDE_STAGE_FLAG` static
 #: needs its entry here, or no emitter builds.
 FRESH_STAGE: dict[str, int] = {
