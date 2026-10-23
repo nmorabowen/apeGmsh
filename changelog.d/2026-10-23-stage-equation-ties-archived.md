@@ -18,11 +18,12 @@ model by name rather than run the stage untied.
   amendment of 2026-10-23 reverses #1341 Q3 for it: no `H5LedgerWarning`
   fires for an equation tie any more.
 - A partitioned archive whose stage holds equationConstraint lines and
-  repeats a fix still in force (the ghost replay on a rank that does not
-  own the node, a zero-weight master's included) refuses by name: its flat
-  replay would fix the node twice (#2530). A re-fix after a full
-  `remove_sp` release still replays. The refusal lifts when #2530 is
-  fixed.
+  fixes a node an earlier fix named, released since or not, refuses by
+  name. That fix is the ghost replay of a rank that does not own the node
+  (a zero-weight master's included), and the flat replay would write the
+  node's SP history again (#2530). The rule also refuses a deliberate
+  re-fix after a release, a known over-refusal. The refusal lifts when
+  #2530 is fixed.
 - An archive below 2.37.0, or a `to_h5` rewrite of one, stores no stage's
   line, so a stage-claimed equation tie in it still refuses by name
   ("below opensees 2.37.0, or a rewrite of one"). The

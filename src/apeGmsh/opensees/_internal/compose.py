@@ -1042,58 +1042,43 @@ def refuse_stage_equation_ghost_fixes(
     *, stages: "Sequence[Any]", fixes: "Sequence[Any]", partitioned: bool,
 ) -> None:
     """Raise :class:`BridgeError` iff a partitioned archive's stage stores
-    ``equationConstraint`` rows and a ``fix`` row that repeats a fix still
-    in force when the stage opens: a global one, or an earlier stage's,
-    with at least one of its DOFs not released by a ``remove_sp`` since.
+    ``equationConstraint`` rows and a ``fix`` row on a node that an
+    earlier fix named: a global one, or an earlier stage's, whether or not
+    a ``remove_sp`` released it since.
 
-    Such a row is the ghost replay of a node's fix on a rank that does not
-    own the node (ADR 0027 INV-2): the stage block stores it as a stage
-    fix, so the flat replay writes the node's fix twice, which the
-    bridge's flat deck does not (#2530). Every fix row of the stage is
-    checked, not only those on the nodes of the stored lines: the rank
-    plan ghosts every master of a tie, a zero-weight one included, and the
-    lines leave a zero-weight master out. The refusal is narrowed to the
-    stages with equation rows, which replayed nowhere before opensees
-    2.37.0; it lifts with #2530. A flat archive never stores a ghost
-    replay, so it passes. A stage that re-fixes a node its own or an
-    earlier stage released fully replays, as the bridge's deck holds both
-    fixes too.
+    The ghost replay of a node on a rank that does not own it (ADR 0027
+    INV-2) re-plays the node's whole SP history into the stage that ghosts
+    it, its fixes and its releases alike. The stage block stores those
+    rows as the stage's own, so the flat replay writes the node's history
+    again, which the bridge's flat deck does not (#2530). Every fix row of
+    the stage is checked, not only those on the nodes of the stored lines:
+    the rank plan ghosts every master of a tie, a zero-weight one
+    included, and the lines leave a zero-weight master out.
+
+    The rule is deliberately coarse: it also refuses a stage that re-fixes,
+    on purpose, a node an earlier stage released (a deck that replays
+    exactly). It is narrowed to the stages with equation rows, which
+    replayed nowhere before opensees 2.37.0, and lifts with #2530. A flat
+    archive never stores a ghost replay, so it passes.
     """
     if not partitioned:
         return
     from .build.errors import BridgeError
 
-    def _key(rec: Any) -> "tuple[int, tuple[int, ...]]":
-        return int(rec.tag), tuple(int(d) for d in rec.dofs)
-
-    # Each fix in force: its key -> its 1-based DOFs not released yet.
-    live: "dict[tuple[int, tuple[int, ...]], set[int]]" = {}
-
-    def _fix(rec: Any) -> None:
-        key = _key(rec)
-        live[key] = {i + 1 for i, m in enumerate(key[1]) if m}
-
-    for rec in fixes:
-        _fix(rec)
+    earlier = {int(r.tag) for r in fixes}
     for st in stages:
-        # The replay writes a stage's releases before its fixes.
-        for n, d in st.remove_sps:
-            for key in [k for k in live if k[0] == int(n)]:
-                live[key].discard(int(d))
-                if not live[key]:
-                    del live[key]
-        repeated = sorted({_key(r)[0] for r in st.fixes if _key(r) in live})
+        repeated = sorted({int(r.tag) for r in st.fixes} & earlier)
         if repeated and st.equation_constraints:
             raise BridgeError(
                 f"Deck replay refuses this archive: stage {st.name!r} of this "
                 "partitioned archive holds equationConstraint lines and "
-                f"repeats the fix of node(s) {repeated}, the ghost replay "
-                "of a rank that does not own them, so the flat replay "
-                "would fix them twice (#2530; this refusal lifts when "
-                "#2530 is fixed). Load FEMData.from_h5(path) and emit it "
-                "through apeSees(fem).")
-        for rec in st.fixes:
-            _fix(rec)
+                f"fixes node(s) {repeated}, which an earlier fix named. That "
+                "is the ghost replay of a rank that does not own them, and "
+                "the flat replay would write their fixes again (#2530). A "
+                "deliberate re-fix after a release refuses too. This "
+                "refusal lifts when #2530 is fixed. Load "
+                "FEMData.from_h5(path) and emit it through apeSees(fem).")
+        earlier |= {int(r.tag) for r in st.fixes}
 
 
 def _warn_skipped_replay_streams(

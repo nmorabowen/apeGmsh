@@ -1794,11 +1794,13 @@ exists; hashed.
   and a file that lost rows. A pre-2.37 archive stores nothing a
   stage-claimed tie's lines could be rebuilt from, so it never replays;
   nor does a `to_h5` rewrite of one, although it is stamped 2.37.0. A
-  partitioned archive whose stage holds equation rows and repeats a fix
-  still in force (not fully released by a `remove_sp` since; the ghost
-  replay of a rank that does not own the node, a zero-weight master's
-  included) also refuses, since its flat replay would fix the node twice
-  (#2530).
+  partitioned archive whose stage holds equation rows and fixes a node
+  an earlier fix named (global or an earlier stage's, released since or
+  not) also refuses: the ghost replay of a rank that does not own the
+  node (a zero-weight master's included) re-plays the node's SP history
+  into the stage, which the flat replay would write again (#2530). A
+  deliberate re-fix after a release refuses too, a known over-refusal;
+  both lift with #2530.
 - **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
   pre-2.35 archive stores its `apeSees.equation_constraint` rows and links
   the source's last `K` global `equationConstraint` calls to them; its

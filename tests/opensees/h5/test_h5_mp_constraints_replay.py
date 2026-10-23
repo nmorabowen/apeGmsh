@@ -986,19 +986,92 @@ def test_a_zero_weight_fixed_master_still_refuses(tmp_path):
         OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
 
 
-def test_a_re_fix_after_a_full_release_replays(tmp_path):
-    # s0 releases node 3 on every DOF; s1 fixes it again and claims a tie
-    # on it. The bridge's deck holds both fixes of node 3 too, so the
-    # replay is the bridge's deck, not a refusal.
+def _unchecked_replay(path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The replay with the #2530 refusal switched off: the control that
+    shows a refused archive really replays wrong."""
+    from apeGmsh.opensees._internal import compose
+
+    monkeypatch.setattr(compose, "refuse_stage_equation_ghost_fixes",
+                        lambda **_kw: None)
+    return _replay(path)
+
+
+def test_the_zero_weight_case_replays_wrong_unchecked(tmp_path, monkeypatch):
+    tie = InterpolationRecord(
+        kind="tie", name="zt", slave_node=4, master_nodes=[1, 2],
+        weights=np.array([0.0, 1.0]), dofs=[1], enforce="equation")
+    fwd, path = _staged_plan_archive(
+        _fem(partitioned=True, surface_constraints=[tie]),
+        [lambda st: st.tie(name="zt")], tmp_path)
+    rep = _unchecked_replay(path, monkeypatch)
+    assert sum(ln.startswith("fix 1 ") for ln in rep.splitlines()) == 2
+    assert rep != fwd
+
+
+_RELEASE_ALL = [1, 2, 3, 4, 5, 6]
+
+#: A release of the fixed base node 1 and a stage tie that ghosts it, in
+#: two stages or in one: the ghost re-plays node 1's whole SP history (the
+#: global fix, then the release) into the tie's stage.
+_RELEASE_THEN_TIE = {
+    "two_stages": [
+        lambda st: st.remove_sp(nodes=[1], dofs=_RELEASE_ALL),
+        lambda st: st.tie(name="tg")],
+    "one_stage": [
+        lambda st: (st.remove_sp(nodes=[1], dofs=_RELEASE_ALL),
+                    st.tie(name="tg"))],
+}
+
+
+@pytest.mark.parametrize("plan", sorted(_RELEASE_THEN_TIE))
+def test_a_released_node_a_stage_tie_ghosts_refuses(plan, tmp_path,
+                                                     monkeypatch):
+    # The bridge leaves node 1 free after its release; the stage block
+    # stores the ghost's fix of node 1, so a flat replay re-fixes it.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    tie = InterpolationRecord(
+        kind="tie", name="tg", slave_node=4, master_nodes=[1, 2],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
+    fwd, path = _staged_plan_archive(
+        _fem(partitioned=True, surface_constraints=[tie]),
+        _RELEASE_THEN_TIE[plan], tmp_path)
+    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    assert _unchecked_replay(path, monkeypatch) != fwd
+
+
+def test_a_re_fix_after_a_full_release_refuses(tmp_path):
+    # Known over-refusal (#2530): s0 releases node 3 on every DOF and s1
+    # fixes it again on purpose and claims a tie on it. The bridge's deck
+    # holds both fixes too, so this archive would replay exactly, but the
+    # check cannot tell a deliberate re-fix from a ghost's and refuses
+    # until #2530 makes the ghost rows distinguishable.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
     tie = InterpolationRecord(
         kind="tie", name="t4", slave_node=4, master_nodes=[2, 3],
         weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
     fwd, path = _staged_plan_archive(
         _fem(partitioned=True, surface_constraints=[tie]),
-        [lambda st: st.remove_sp(nodes=[3], dofs=[1, 2, 3, 4, 5, 6]),
+        [lambda st: st.remove_sp(nodes=[3], dofs=_RELEASE_ALL),
          lambda st: (st.fix(nodes=[3], dofs=(1,) * 6), st.tie(name="t4"))],
         tmp_path)
     assert sum(ln.startswith("fix 3 ") for ln in fwd.splitlines()) == 2
+    with pytest.raises(BridgeError, match=r"node\(s\) \[3\].*re-fix"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+
+
+def test_a_fix_in_the_tie_stage_on_a_new_node_replays(tmp_path):
+    # A node first fixed in the tie's own stage is no repeat: the stage
+    # captures its replicas once, so the replay is the bridge's deck.
+    tie = InterpolationRecord(
+        kind="tie", name="t3", slave_node=4, master_nodes=[2, 3],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
+    fwd, path = _staged_plan_archive(
+        _fem(partitioned=True, surface_constraints=[tie]),
+        [lambda st: (st.fix(nodes=[2], dofs=(0, 0, 0, 0, 0, 1)),
+                     st.tie(name="t3"))], tmp_path)
     assert _replay(path) == fwd
 
 
