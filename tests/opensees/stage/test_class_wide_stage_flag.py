@@ -21,6 +21,11 @@ import pytest
 
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
+from apeGmsh.opensees._internal.build.stage_emit import (
+    FORK_BUILD_HAS_MD_STATIC_FIX,
+    MD_STATIC_FIX_COMMIT,
+    MD_STATIC_RESET_GUARD,
+)
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees._target import OpenSeesTarget
 from apeGmsh.opensees.stage._builder import (
@@ -677,39 +682,15 @@ def test_fork_reset_table() -> None:
 
 
 @pytest.mark.parametrize("cls", sorted(FORK_RESETS_STAGE_STATIC))
-def test_fork_activation_after_a_plastic_flip_refuses(cls: str) -> None:
-    ops, mat = _staged_bridge(cls, "fork")
-    with pytest.raises(BridgeError) as exc:
-        _flip_then_activate(ops, mat)
-    msg = str(exc.value)
-    assert "ManzariDafalias::mElastFlag" in msg and "#2444" in msg
-    assert f"FourNodeQuad on pg 'B' ({cls})" in msg
-    assert len(ops._stage_records) == 1, "only the flip stage is recorded"
-
-
-@pytest.mark.parametrize("cls", sorted(FORK_RESETS_STAGE_STATIC))
-@pytest.mark.parametrize("mode", ["stock", "auto", None])
-def test_no_reset_refusal_unless_the_target_pins_the_fork(
+@pytest.mark.parametrize("mode", ["fork", "stock", "auto", None])
+def test_the_stage_close_no_longer_refuses_the_reset(
     cls: str, mode: "str | None",
 ) -> None:
-    """Stock keeps the flag; an auto target cannot tell at stage close."""
+    """#2516: no target refuses the pattern at stage close.  A staged model
+    runs only as a deck, so the deck checks the build it runs on
+    (``tests/opensees/integration/test_deck_md_static_guard.py``)."""
     ops, mat = _staged_bridge(cls, mode)
     _flip_then_activate(ops, mat)
-    assert len(ops._stage_records) == 2
-
-
-def test_no_reset_refusal_for_a_class_whose_constructor_keeps_the_flag() -> None:
-    ops, mat = _staged_bridge("SAniSandMS", "fork")
-    _flip_then_activate(ops, mat)
-    assert len(ops._stage_records) == 2
-
-
-@pytest.mark.parametrize(("first", "reflip"), [(0, False), (1, True)])
-def test_no_reset_refusal_when_elastic_or_reflipped(
-    first: int, reflip: bool,
-) -> None:
-    ops, mat = _staged_bridge("ManzariDafalias", "fork")
-    _flip_then_activate(ops, mat, first=first, reflip=reflip)
     assert len(ops._stage_records) == 2
 
 
@@ -754,30 +735,88 @@ def _run_reset(cls: str, *, add: bool) -> "tuple[int, float]":
         ops.wipe()
 
 
+#: The fork commit that stops the constructor reset, and the fork builds
+#: measured with :func:`_run_reset` (does the build carry it?).  One
+#: table, in ``stage_emit``: the deck guard accepts its ``True`` rows.
+_MD_STATIC_FIX = MD_STATIC_FIX_COMMIT
+_FORK_BUILD_HAS_MD_STATIC_FIX = FORK_BUILD_HAS_MD_STATIC_FIX
+
+
+def _reset_expected(cls: str) -> bool:
+    """Whether the bound build resets ``cls``'s static on a new element:
+    a fork build without :data:`_MD_STATIC_FIX`, for the classes of
+    ``FORK_RESETS_STAGE_STATIC`` only.  An unmeasured fork build skips by
+    name rather than guess."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    info = get_backend_info()
+    if info.kind != "fork" or cls not in FORK_RESETS_STAGE_STATIC:
+        # Stock never resets; neither does a class whose constructor
+        # keeps the flag (SAniSandMS), on any fork build.
+        return False
+    if info.build not in _FORK_BUILD_HAS_MD_STATIC_FIX:
+        pytest.skip(
+            f"fork build {info.build!r} is not measured for the #2444 "
+            f"reset: add it to _FORK_BUILD_HAS_MD_STATIC_FIX (does it "
+            f"descend from {_MD_STATIC_FIX[:9]}?)")
+    fixed = _FORK_BUILD_HAS_MD_STATIC_FIX[info.build]
+    return not fixed
+
+
+def test_the_fork_pin_is_measured_for_the_reset() -> None:
+    """A FORK_PIN bump re-measures the reset: the live-fork lane runs
+    only the pinned build, so it must be in the table."""
+    from pathlib import Path
+
+    pin = Path(__file__).resolve().parents[3] / "FORK_PIN"
+    shas = [line.split("=", 1)[1] for line in
+            pin.read_text(encoding="utf-8").splitlines()
+            if line.startswith("sha=")]
+    assert len(shas) == 1, shas
+    assert shas[0] in _FORK_BUILD_HAS_MD_STATIC_FIX, (
+        "FORK_PIN moved: measure the #2444 reset on the new build "
+        "(test_live_reset_follows_the_fork_build) and add it")
+    # The pin carries the fix, so the deck guard accepts it (#2516).
+    assert _FORK_BUILD_HAS_MD_STATIC_FIX[shas[0]] is True
+    assert shas[0] in MD_STATIC_RESET_GUARD.builds
+    assert set(MD_STATIC_RESET_GUARD.builds) == {
+        sha for sha, fixed in _FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed}
+
+
 @pytest.mark.live
 @pytest.mark.parametrize("cls", ["ManzariDafalias", "SAniSandMS"])
 def test_live_reset_happens_exactly_where_the_table_says(cls: str) -> None:
-    """A new element after ``-stage 1`` resets the static on the fork for
-    the FORK_RESETS_STAGE_STATIC classes, and nowhere else (stock: never)."""
+    """A new element after ``-stage 1`` resets the static on a fork build
+    older than the fix, for the FORK_RESETS_STAGE_STATIC classes, and
+    nowhere else (stock: never; a fork build with the fix: never)."""
     pytest.importorskip("openseespy.opensees")
-    from apeGmsh.opensees.emitter.live import get_backend_name
-
-    on_fork = get_backend_name() == "ladruno-fork"
+    expected = _reset_expected(cls)
     code_f, uy_flipped = _run_reset(cls, add=False)
     code_a, uy_added = _run_reset(cls, add=True)
     assert (code_f, code_a) == (0, 0)
     reset = abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
-    assert reset == (on_fork and cls in FORK_RESETS_STAGE_STATIC)
+    assert reset == expected
 
 
 @pytest.mark.live
 @pytest.mark.ladruno_fork
-def test_live_reset_ladruno_sanisand_on_the_fork() -> None:
-    pytest.importorskip("openseespy.opensees")
-    code_f, uy_flipped = _run_reset("LadrunoSANISAND", add=False)
-    code_a, uy_added = _run_reset("LadrunoSANISAND", add=True)
+@pytest.mark.parametrize("cls", ["ManzariDafalias", "LadrunoSANISAND"])
+def test_live_reset_follows_the_fork_build(cls: str) -> None:
+    """On the fork lane: reset on a fork build older than the fix
+    (79e062367), kept at FORK_PIN (the #2444 plastic answer).
+    LadrunoSANISAND inherits ManzariDafalias's static.  The engine comes
+    from the resolver, not ``import openseespy``: the live-fork lane
+    installs the fork as ``opensees`` and has no openseespy, so an
+    ``importorskip`` would skip this test on the one lane it is for."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    assert get_backend_info().kind == "fork"
+    expected = _reset_expected(cls)
+    code_f, uy_flipped = _run_reset(cls, add=False)
+    code_a, uy_added = _run_reset(cls, add=True)
     assert (code_f, code_a) == (0, 0)
-    assert abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
+    reset = abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
+    assert reset == expected, (uy_flipped, uy_added)
 
 
 # ---------------------------------------------------------------------------

@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_35_0() -> None:
-    """Schema 2.35.0 — every global ``equationConstraint`` line is a row of
-    ``/opensees/constraints/equationConstraint`` (#2416)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 35, 0)
+def test_opensees_reader_version_is_2_36_0() -> None:
+    """Schema 2.36.0 — a pinned ``OpenSeesTarget.mode`` is
+    ``/opensees@target_mode`` (#2375)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 36, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

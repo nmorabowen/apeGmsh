@@ -37,7 +37,6 @@ from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.stage._builder import (
     FIRST_ELEMENT_ONLY_PLASTIC_INIT,
     MATERIAL_STATE_ELEMENTS,
-    MATERIAL_STATE_UNMEASURED_AT_PIN,
 )
 
 from tests.opensees.fixtures.fem_stub import (
@@ -45,6 +44,9 @@ from tests.opensees.fixtures.fem_stub import (
     _ElementGroupView,
     _ElementsStub,
     _NodesStub,
+)
+from tests.opensees.integration.test_md_stage_ladruno_at_pin import (
+    _ELEMENT_CASES as _AT_PIN_CASES,
 )
 from tests.opensees.integration.test_md_stage_all_elements import (
     MD_ARGS,
@@ -63,6 +65,9 @@ _TOKEN_OF = {
     "SixNodeTri": "tri6n", "FourNodeTetrahedron": "FourNodeTetrahedron",
     "SSPquad": "SSPquad", "SSPbrick": "SSPbrick", "BezierTri6": "BezierTri6",
     "BezierTet10": "BezierTet10", "LadrunoUP": "LadrunoUP",
+    "LadrunoQuad": "LadrunoQuad", "LadrunoCST": "LadrunoCST",
+    "LadrunoLST": "LadrunoLST", "LadrunoBrick": "LadrunoBrick",
+    "LadrunoBrick20": "LadrunoBrick20",
 }
 
 _TRI6_ARGV = (1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain")
@@ -146,6 +151,11 @@ def test_a_rank_lists_its_own_and_the_global_carriers() -> None:
     ("SSPbrick", (*range(1, 9), 7, 0.0, 0.0, -9.81), 7),
     ("LadrunoUP", (1, 2, 3, 4, 7, "-Kf", 2.2e6), 7),
     ("LadrunoUP", (*range(1, 11), 7, "-thick", 1.0, "-Kf", 2.2e6), 7),
+    ("LadrunoQuad", (1, 2, 3, 4, 7, "-formulation", "ssp", "-thick", 1.0), 7),
+    ("LadrunoCST", (1, 2, 3, 7, "-thick", 1.0), 7),
+    ("LadrunoLST", (*range(1, 7), 7, "-thick", 1.0), 7),
+    ("LadrunoBrick", (*range(1, 9), 7, "-formulation", "eas"), 7),
+    ("LadrunoBrick20", (*range(1, 21), 7, "-formulation", "uri"), 7),
 ])
 def test_the_carried_tag_is_read_from_the_grammar(
     token: str, argv: tuple[Any, ...], tag: int,
@@ -183,18 +193,61 @@ def test_the_tables() -> None:
         "ManzariDafalias", "LadrunoSANISAND"}
     assert MATERIAL_STATE_ELEMENTS == {
         "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
-        "BezierTri6", "BezierTet10", "LadrunoUP"}
-    assert MATERIAL_STATE_UNMEASURED_AT_PIN == {
+        "BezierTri6", "BezierTet10", "LadrunoUP",
         "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
         "LadrunoBrick20"}
-    assert not MATERIAL_STATE_UNMEASURED_AT_PIN & MATERIAL_STATE_ELEMENTS
-    # One emit-side token per class, and no token without its class.
-    assert {_TOKEN_OF[c] for c in MATERIAL_STATE_ELEMENTS} == set(
-        MATERIAL_STATE_ELEMENT_TOKENS)
     assert FIRST_ELEMENT_ONLY_PLASTIC_INIT is SWEPT_MATERIAL_CLASSES
-    # Every class of the table has a census row on each build it runs on.
+    # Every class of the table has a census row on each build it runs on:
+    # here, or (the Ladruno solids, every formulation) in the at-pin file.
     assert MATERIAL_STATE_ELEMENTS == (
-        {cls for cls, _builds in _FORWARDING} | {"LadrunoUP"})
+        {cls for cls, _builds in _FORWARDING} | {"LadrunoUP"}
+        | {row[0] for row in _AT_PIN_CASES.values()})
+
+
+def _emitted_token(cls: str) -> str:
+    """The ``element`` token the bridge primitive ``cls`` emits, read from
+    its ``_emit`` source; a class with no primitive (``SSPquad``,
+    ``SSPbrick``) emits its own name."""
+    import inspect
+    import re
+
+    from apeGmsh.opensees import element as element_pkg
+
+    prim = getattr(element_pkg, cls, None)
+    if prim is None:
+        return cls
+    found = set(re.findall(r'emitter\.element\(\s*"(\w+)"',
+                           inspect.getsource(prim._emit)))
+    assert len(found) == 1, (cls, found)
+    return found.pop()
+
+
+def test_the_stage_close_and_the_emit_side_list_the_same_classes() -> None:
+    """Drift guard (#2457): the stage close passes a multi-element plastic
+    flip on a :data:`MATERIAL_STATE_ELEMENTS` class, and only the emit
+    side's :data:`MATERIAL_STATE_ELEMENT_TOKENS` makes the deck list its
+    carriers.  A class on the first table without a token would pass the
+    stage close and emit the bare first-element-only flip; a token without
+    its class would never be reached.  Both directions fail here, with the
+    token read from each primitive's own ``_emit``."""
+    tokens = {cls: _emitted_token(cls) for cls in MATERIAL_STATE_ELEMENTS}
+    no_token = sorted(c for c, t in tokens.items()
+                      if t not in MATERIAL_STATE_ELEMENT_TOKENS)
+    assert not no_token, f"allowlisted, but the emit side drops: {no_token}"
+    no_class = sorted(set(MATERIAL_STATE_ELEMENT_TOKENS) - set(tokens.values()))
+    assert not no_class, f"emit-side tokens with no allowlisted class: {no_class}"
+    assert tokens == _TOKEN_OF
+    # The fork-floor table: each class is allowlisted (it is where the
+    # allowlist takes them from), and the deck guard looks floors up by
+    # the element token, so each class must emit its own name.
+    from apeGmsh.opensees._internal.build.stage_emit import (
+        MATERIAL_STATE_FORK_FLOOR,
+    )
+
+    assert set(MATERIAL_STATE_FORK_FLOOR) <= MATERIAL_STATE_ELEMENTS
+    renamed = sorted(c for c in MATERIAL_STATE_FORK_FLOOR
+                     if _emitted_token(c) != c)
+    assert not renamed, f"fork-floor classes the deck guard would miss: {renamed}"
 
 
 def _tri6_fem() -> FEMStub:
@@ -352,23 +405,32 @@ def test_a_non_forwarding_carrier_is_refused_by_name(route: str) -> None:
     assert not ops._stage_records
 
 
-def test_a_ladruno_quad_is_refused_citing_the_pin_remeasure() -> None:
-    """Measured to drop the sweep on fork build 79e062367, not at FORK_PIN:
-    refused (fail closed), and the refusal names the re-measure issue."""
+@pytest.mark.parametrize("route", ["stage", "materialState"])
+def test_a_ladruno_quad_carrier_passes_and_is_listed(route: str) -> None:
+    """Measured to forward at FORK_PIN (#2457, live-fork run 39874892907):
+    the stage close passes a SixNodeTri + LadrunoQuad carrier pair, and the
+    deck lists both elements in the materialState update."""
     ops, mat = _bridge(pgs=("A",))
     ops.element.LadrunoQuad(pg="Q", material=mat, thickness=1.0)
-    with pytest.raises(BridgeError) as exc:
-        _flip(ops, mat)
-    msg = str(exc.value)
-    assert "LadrunoQuad carries it" in msg
-    assert "79e062367" in msg and "#2457" in msg
-
-
-def test_a_stock_class_refusal_does_not_cite_the_pin_remeasure() -> None:
-    ops, mat = _bridge(quad=True)
-    with pytest.raises(BridgeError) as exc:
-        _flip(ops, mat)
-    assert "#2457" not in str(exc.value)
+    _flip(ops, mat, route=route, pgs=("A", "Q"))
+    tcl = TclEmitter()
+    ops.build().emit(tcl)
+    lines = tcl.lines()
+    eles = [ln.split()[2] for ln in lines
+            if ln.startswith(("element tri6n", "element LadrunoQuad"))]
+    assert len(eles) == 2
+    tag = ops.tag_for(mat)
+    if route == "stage":
+        sweep = (f"setParameter -val 1.0 -ele {' '.join(eles)} "
+                 f"materialState {tag}")
+        assert lines.index(sweep) + 1 == lines.index(
+            f"updateMaterialStage -material {tag} -stage 1")
+    else:
+        # The user's own update: each target element joins a parameter.
+        reached = {ln.split()[3] for ln in lines
+                   if ln.startswith("addToParameter")
+                   and ln.endswith(f"materialState {tag}")}
+        assert reached == set(eles), lines
 
 
 def test_a_materialstate_route_must_cover_every_element() -> None:
@@ -763,10 +825,16 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias",
     t=1 elastic, flip, then on to t=2; returns their stresses.
     ``wrapper``: ``(token, argv after the wrapped tag)``; each element then
     carries that wrapper (tag ``10 + t``) over the material (tag ``t``)."""
-    pytest.importorskip("openseespy.opensees")
+    # The resolved backend, not ``openseespy``: the live-fork lane installs
+    # the fork as ``opensees`` with no openseespy, where an importorskip of
+    # it skipped every fork row (#2457).
     from apeGmsh.opensees.emitter.live import get_ops
 
-    ops = Deck(get_ops())
+    try:
+        backend = get_ops()
+    except ImportError as exc:
+        pytest.skip(f"no OpenSees backend resolves: {exc}")
+    ops = Deck(backend)
     token, ndm, coords, argv = _CLASSES[cls]
     eps = (-1e-2, -1.5e-2, 0.0)[:ndm]
     ops.wipe()
@@ -933,7 +1001,10 @@ def _wrapped_bridge(wrap: str) -> tuple[apeSees, Any]:
     if wrap == "PlaneStrain":
         outer = ops.nDMaterial.PlaneStrain(base=sand)
     elif wrap == "LogStrain":
-        outer = ops.nDMaterial.LogStrain(inner=sand)
+        # LogStrain directly over MD is refused at construction (#2499);
+        # through StagedStrain it builds, and the flip meets LogStrain.
+        outer = ops.nDMaterial.LogStrain(
+            inner=ops.nDMaterial.StagedStrain(inner=sand))
     else:
         outer = ops.nDMaterial.PlateFiber(material=sand)
     for pg in ("A", "B"):
@@ -957,11 +1028,192 @@ def test_the_stage_close_and_the_deck_agree_on_a_wrapper() -> None:
 
 @pytest.mark.parametrize("wrap", ["PlateFiber", "LogStrain"])
 def test_an_unproven_wrapper_is_refused_by_name(wrap: str) -> None:
-    """PlateFiber is not known to forward; LogStrain forwards in the fork
-    source, but over ManzariDafalias it ends the process on the measured
-    build, so it stays refused until measured."""
+    """PlateFiber is not known to forward; LogStrain (here over
+    StagedStrain(MD), since directly over MD it is refused at
+    construction) is not measured to forward, so it stays refused."""
     ops, sand = _wrapped_bridge(wrap)
     with pytest.raises(BridgeError) as exc:
         _flip(ops, sand)
     msg = str(exc.value)
     assert f"through {wrap}" in msg and "#2445" in msg
+
+
+def test_log_strain_over_md_is_refused_at_construction() -> None:
+    """LogStrain over ManzariDafalias ends the fork process at its
+    nDMaterial line, so it is refused at construction (#2499), before
+    any stage flip can route through it."""
+    ops = apeSees(_tri6_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+    with pytest.raises(ValueError, match=r"LogStrain: inner ManzariDafalias.*#2499"):
+        ops.nDMaterial.LogStrain(inner=sand)
+
+
+# ---------------------------------------------------------------------------
+# The live emitter (no carrier sweep): it refuses the flip (#2457)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingOps:
+    """A stub backend: records every call, drives no domain."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        def call(*args: Any) -> None:
+            self.calls.append((name, args))
+        return call
+
+
+def _live() -> tuple[Any, _RecordingOps]:
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    le = LiveOpsEmitter.__new__(LiveOpsEmitter)
+    ops = _RecordingOps()
+    le._ops = ops  # type: ignore[assignment]
+    le._in_partition = False
+    return le, ops
+
+
+def _live_flips(ops: _RecordingOps) -> list[tuple[Any, ...]]:
+    return [a for name, a in ops.calls if name == "updateMaterialStage"]
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+def test_the_live_emitter_refuses_a_swept_flip_on_two_carriers(cls: str) -> None:
+    le, ops = _live()
+    le.nDMaterial(cls, 7, *MD_ARGS)
+    le.element("tri6n", 1, *_TRI6_ARGV, 7)
+    le.element("tri6n", 2, *_TRI6_ARGV, 7)
+    with pytest.raises(BridgeError) as exc:
+        le.update_material_stage(7, 1)
+    msg = str(exc.value)
+    assert "#2445" in msg and "bare updateMaterialStage" in msg
+    assert "2 elements may carry" in msg
+    assert not _live_flips(ops)
+
+
+def test_the_live_emitter_passes_what_needs_no_sweep() -> None:
+    le, ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.nDMaterial("PM4Sand", 8, 0.5, 0.0, 400.0, 1.0)
+    le.element("tri6n", 1, *_TRI6_ARGV, 7)
+    le.element("tri6n", 2, *_TRI6_ARGV, 7)
+    le.element("tri6n", 3, *_TRI6_ARGV, 8)
+    le.element("tri6n", 4, *_TRI6_ARGV, 8)
+    le.update_material_stage(7, 0)  # an elastic flip
+    le.update_material_stage(8, 1)  # a class that is not swept
+    le.remove_element(2)
+    le.update_material_stage(7, 1)  # one carrier left
+    assert _live_flips(ops) == [
+        ("-material", 7, "-stage", 0), ("-material", 8, "-stage", 1),
+        ("-material", 7, "-stage", 1)]
+
+
+def test_the_live_emitter_counts_carriers_without_a_grammar() -> None:
+    """A FourNodeQuad (no MATERIAL_STATE_ELEMENT_TOKENS entry) and an element
+    on a wrapper outside MATERIAL_STATE_WRAPPERS still count."""
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.nDMaterial("PlateFiber", 17, 7)
+    le.element("quad", 1, 11, 12, 13, 14, 1.0, "PlaneStrain", 7)
+    le.element("tri6n", 2, 21, 22, 23, 24, 25, 26, 1.0, "PlaneStrain", 17)
+    with pytest.raises(BridgeError, match="#2445"):
+        le.update_material_stage(7, 1)
+
+
+def test_the_live_emitter_follows_a_shell_section() -> None:
+    """The review's model: MD -> PlateFiber -> LayeredShell -> two
+    ShellMITC4 elements on the section."""
+    le, ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.nDMaterial("PlateFiber", 17, 7)
+    le.section("LayeredShell", 30, 3, 17, 0.1, 17, 0.1, 17, 0.1)
+    le.element("ShellMITC4", 1, 101, 102, 103, 104, 30)
+    le.element("ShellMITC4", 2, 201, 202, 203, 204, 30)
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+    assert not _live_flips(ops)
+
+
+@pytest.mark.parametrize("member", ["fiber", "patch", "layer"])
+def test_the_live_emitter_follows_a_fiber_section(member: str) -> None:
+    """MD named by a fiber-section member, the section by a beam
+    integration, the integration by two beam elements."""
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.section_open("NDFiber", 40)
+    if member == "fiber":
+        le.fiber(0.0, 0.0, 0.01, 7)
+    elif member == "patch":
+        le.patch("rect", 7, 2, 2, -0.1, -0.1, 0.1, 0.1)
+    else:
+        le.layer("straight", 7, 3, 0.01, -0.1, 0.0, 0.1, 0.0)
+    le.section_close()
+    le.beamIntegration("Lobatto", 50, 40, 3)
+    le.element("dispBeamColumn", 1, 101, 102, 60, 50)
+    le.element("dispBeamColumn", 2, 201, 202, 60, 50)
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+
+
+def test_the_live_emitter_follows_a_uniaxial_wrapper() -> None:
+    """The fork's ``uniaxialMaterial Continuum`` wraps an nD material and
+    forwards setParameter to it: two trusses on it carry the MD."""
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.uniaxialMaterial("Continuum", 40, 7)
+    le.element("truss", 1, 101, 102, 0.01, 40)
+    le.element("truss", 2, 201, 202, 0.01, 40)
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+
+
+def test_the_live_emitter_reads_numpy_integer_tags() -> None:
+    np = pytest.importorskip("numpy")
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", np.int64(7), *MD_ARGS)
+    le.element("tri6n", 1, *_TRI6_ARGV, np.int64(7))
+    le.element("tri6n", 2, *_TRI6_ARGV, np.int32(7))
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+
+
+def _shell_fem() -> FEMStub:
+    """Two disconnected quads ``S`` (eids 1, 2), base nodes fixed."""
+    coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+              (3, 0, 0), (4, 0, 0), (4, 1, 0), (3, 1, 0)]
+    return FEMStub(
+        nodes=_NodesStub(
+            ids=list(range(1, 9)), coords=coords,
+            node_pgs={"S": list(range(1, 9)), "Base": [1, 2, 5, 6]}),
+        elements=_ElementsStub(elem_pgs={"S": _ElementGroupView(
+            ids=(1, 2), connectivity=((1, 2, 3, 4), (5, 6, 7, 8)))}),
+    )
+
+
+def test_a_shell_section_carrier_is_refused_at_the_stage_close() -> None:
+    """The deck path for the same model: ShellMITC4 is not a
+    MATERIAL_STATE_ELEMENTS class, so the stage close refuses the flip by
+    name instead of emitting a sweep that misses the shells."""
+    from apeGmsh.opensees.section.plate import ShellLayer
+
+    ops = apeSees(_shell_fem(), default_orientation=None)
+    ops.model(ndm=3, ndf=6)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+    plate = ops.nDMaterial.PlateFiber(material=sand)
+    sec = ops.section.LayeredShell(layers=tuple(
+        ShellLayer(material=plate, thickness=0.1) for _ in range(3)))
+    ops.element.ShellMITC4(pg="S", section=sec)
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, sand, pgs=("S",))
+    msg = str(exc.value)
+    assert "ShellMITC4 carries it" in msg and "#2445" in msg
+    assert f"nDMaterial tag {ops.tag_for(sand)} (2 elements)" in msg
+    assert not ops._stage_records
