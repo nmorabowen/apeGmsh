@@ -81,6 +81,7 @@ from types import MappingProxyType
 from datetime import datetime, timezone
 from typing import Any, NamedTuple, NoReturn, Sequence
 
+from .._target import TargetMode
 from .base import DroppedAxisGuard
 from .caps import SolveStamp, TargetCaps, value_requires
 from .verbs import VERBS, Verb
@@ -117,7 +118,7 @@ from ._h5_program import (
     _command_kind,
 )
 from ._h5_write import _set_attr
-from .h5_reader import EquationConstraintRecordRO
+from .h5_reader import TARGET_MODES, EquationConstraintRecordRO
 from ._h5_decls import _H5DeclsMixin, _decl_refs, _json_text
 from ._h5_stages import _H5StagesMixin
 from ._h5_verbs_model import _H5ModelVerbsMixin
@@ -687,7 +688,19 @@ class H5RefusedVerb(NotImplementedError):
 #:     untied, hence the bump: a 2.35 reader opens 2.12 through 2.35 and
 #:     refuses the group below 2.35.0; a 2.34.x reader REFUSES a 2.35.x
 #:     file.
-SCHEMA_VERSION: str = "2.35.0"
+#:   * 2.36.0 — the target mode: additive — ``/opensees@target_mode``, a
+#:     string ``"fork"`` or ``"stock"``, is the bridge's pinned
+#:     ``OpenSeesTarget.mode``. Written only for a
+#:     pinned target; an absent attribute reads as ``"auto"``, so every
+#:     older archive and every unpinned one keeps its bytes and meaning.
+#:     ``binary`` / ``python`` are machine paths and are never archived.
+#:     Not hashed (``MODEL_HASH_EXCLUDED_ATTRS``): the same model pinned or
+#:     on auto has one ``model_hash``. A replay stamps its deck as the
+#:     bridge does and treats a ``"fork"`` archive as needing the fork. A
+#:     2.35 reader would replay a fork pin as auto, hence the bump: a 2.36
+#:     reader opens 2.12 through 2.36; a 2.35.x reader REFUSES a 2.36.x
+#:     file.
+SCHEMA_VERSION: str = "2.36.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1016,11 +1029,20 @@ class H5Emitter(
         model_name: str | None = None,
         apegmsh_version: str | None = None,
         snapshot_id: str | None = None,
+        target_mode: TargetMode = "auto",
     ) -> None:
         self._schema_version: str = schema_version
         self._model_name: str = model_name or "model"
         self._apegmsh_version: str = apegmsh_version or "unknown"
         self._snapshot_id: str = snapshot_id or ""
+        # opensees 2.36.0: the bridge's ``OpenSeesTarget.mode``,
+        # written as ``/opensees@target_mode`` when pinned. Only the mode:
+        # ``binary`` / ``python`` are machine paths, never archived.
+        if target_mode not in TARGET_MODES:
+            raise ValueError(
+                f"H5Emitter(target_mode={target_mode!r}): the target mode is "
+                f"one of {sorted(TARGET_MODES)} (OpenSeesTarget.mode).")
+        self._target_mode: TargetMode = target_mode
 
         self._ndm: int | None = None
         self._ndf: int | None = None
@@ -1465,8 +1487,12 @@ class H5Emitter(
         self._write_commands(f)
         self._write_program(f)
         # ADR 0114 D6 (schema 2.24.0): the solve stamp, on ``/opensees``
-        # itself. Hashed, like every attribute of the group.
+        # itself. Hashed, like every attribute of the group except
+        # ``target_mode`` (``MODEL_HASH_EXCLUDED_ATTRS``).
         self._write_solve_stamp(f)
+        # opensees 2.36.0: the pinned target mode, beside the
+        # stamp; hash-excluded (``MODEL_HASH_EXCLUDED_ATTRS``).
+        self._write_target_mode(f)
         # ADR 0114 R5 (K1-6, schema 2.25.0): the declarations. A label,
         # so ``decls`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``.
         self._write_decls(f)
@@ -1519,6 +1545,21 @@ class H5Emitter(
                         tuple(refs["integration_ref"]),
                         tuple(refs["section_ref"])))
         return out
+
+    def _write_target_mode(self, f: Any) -> None:
+        """Persist ``/opensees@target_mode`` for a pinned target.
+
+        ``"auto"`` writes nothing: an absent attribute reads as ``"auto"``,
+        so an unpinned model's archive keeps its pre-2.36 bytes.
+        """
+        if self._target_mode == "auto":
+            return
+        import h5py
+        import numpy as np
+
+        self._ops_group(f).attrs.create(
+            "target_mode", np.array(self._target_mode, dtype=object),
+            dtype=h5py.string_dtype(encoding="utf-8"))
 
     def _ops_group(self, f: Any) -> Any:
         """Lazily get or create the ``/opensees/`` namespace group.

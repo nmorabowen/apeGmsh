@@ -203,6 +203,10 @@ CORPUS: tuple[Model, ...] = (
       for ro in (None, "Cols") for n in _B),
     _m("test_h5_regions_round_trip", "_partitioned_staged_with_fan_out"),
     *(_m("test_h5_solve_stamp", "_frame_bridge", analysis=a) for a in _B),
+    # #2375: a pinned OpenSeesTarget is /opensees@target_mode, so the replay
+    # deck stamps its backend line as the bridge deck does.
+    *(_m("test_h5_target_mode", "_pinned_frame", mode=m)
+      for m in ("fork", "stock")),
     _m("test_h5_stages_reader", "_real_two_stage_bridge"),
     # #2446: a plastic ManzariDafalias flip on two elements, whose deck
     # sweeps every element before updateMaterialStage.
