@@ -7,9 +7,9 @@ and ``OpenSeesModel.from_h5(...).build`` re-emitted it silently.  The
 replay now builds the same ``RouteModel`` from the archive's declarations
 and runs the same checks (``stage._builder.check_archived_stage_routes``),
 so such an archive is refused by name.  The valid archives here replay
-byte for byte (the R1b oracle).  The replay checks the final model, so it
-may refuse an archive the bridge accepted, whose elements were registered
-after a flip (#2464); ``test_a_carrier_registered_after_the_flip_...``
+byte for byte (the R1b oracle).  The replay checks the final model, and so
+does the bridge's emit (#2464), so an element registered after a flip is
+refused on both sides; ``test_a_carrier_registered_after_the_flip_...``
 pins that case.
 
 The fork's constructor reset (#2443) is not a route check: the deck checks
@@ -627,18 +627,17 @@ def test_a_valid_archive_replays_byte_for_byte(
               "valid_bridge", case=case), None, tmp_path)
 
 
-def test_a_carrier_registered_after_the_flip_passes_the_bridge_but_not_replay(
+def test_a_carrier_registered_after_the_flip_is_refused_by_the_bridge_and_replay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """The known gap between the two sides (#2464), pinned so it stays in
-    view.  The stage close sees only the elements registered so far: a sand
-    on one SixNodeTri flipped plastic passes, and a FourNodeQuad on the
-    same sand registered after the stage is never checked.  The deck emits
-    all three carriers globally, before the stage, with a bare
+    """The stage close sees only the elements registered so far: a sand on
+    one SixNodeTri flipped plastic passes it, and a FourNodeQuad on the
+    same sand registered after the stage is not checked there.  The deck
+    would emit the carriers globally, before the stage, with a bare
     ``updateMaterialStage`` and no sweep: the #2445 wrong answer.  The
-    replay checks the final model and refuses it.  Replay is the correct
-    side; when #2464 closes the bridge hole, the bridge half of this test
-    flips to a refusal."""
+    bridge's emit checks the final model (#2464) and the replay checks the
+    archive's, so both refuse it, with one message.  The archive is written
+    with the checks off, as the bridge wrote it before #2464."""
     def build() -> apeSees:
         ops = _ops()
         sand = _md(ops, "sand")
@@ -650,14 +649,14 @@ def test_a_carrier_registered_after_the_flip_passes_the_bridge_but_not_replay(
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        build().tcl(str(tmp_path / "bridge.tcl"), flat=True)
-    deck = (tmp_path / "bridge.tcl").read_text(encoding="utf-8")
-    assert deck.count("element quad") == 2
-    assert "setParameter" not in deck
-    path = _write(build, tmp_path / "late.h5", monkeypatch, pre_fix=False)
-    with pytest.raises(BridgeError) as exc:
+        with pytest.raises(BridgeError) as bridge:
+            build().tcl(str(tmp_path / "bridge.tcl"), flat=True)
+    assert not (tmp_path / "bridge.tcl").exists()
+    path = _write(build, tmp_path / "late.h5", monkeypatch, pre_fix=True)
+    with pytest.raises(BridgeError) as replay:
         _replay(path)
-    msg = str(exc.value)
+    msg = str(replay.value)
+    assert str(bridge.value) == msg
     assert "#2445" in msg and "but FourNodeQuad carries it" in msg
     assert "(3 elements)" in msg
 

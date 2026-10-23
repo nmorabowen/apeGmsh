@@ -4,7 +4,8 @@ The stage flag of every class in
 :data:`~apeGmsh.opensees.stage._builder.CLASS_WIDE_STAGE_FLAG` is a C++
 ``static``.  It holds one value per process, so
 ``updateMaterialStage -material A`` switches every material of A's group.
-Two things follow, and both live here.
+Two things follow, and both live here, beside the emit-time run of the
+stage close's route checks.
 
 * :func:`validate_class_wide_stage_flags` runs at emit, beside validator
   V7.  It refuses a stage flip that names some of a group's live
@@ -12,6 +13,9 @@ Two things follow, and both live here.
   registered after the stage block counts, and it models
   ``s.remove_element``: a material whose elements are all removed is not
   live, so it need not be named.
+* :func:`validate_stage_routes` runs the stage close's route checks
+  again at emit, on the final model, so an element registered after a
+  stage is checked too.
 * :class:`StageZeroLedger` is how a deck or live emitter writes
   ``updateMaterialStage -material <tag> -stage <s>`` for every group, ``s``
   being the group's :data:`FRESH_STAGE`.  The static survives
@@ -234,6 +238,68 @@ def validate_class_wide_stage_flags(
             live.update(mats)
         _check_stage(stage.name, flips[idx], live, group_of,
                      CLASS_WIDE_STAGE_FLAG)
+
+
+def validate_stage_routes(
+    *,
+    stage_records: "Iterable[StageRecord]",
+    primitives: "Iterable[Primitive]",
+    tag_for: Mapping[int, int],
+    fem: "FEMData",
+) -> None:
+    """The stage-close route checks, run again at emit on the final model.
+
+    A stage close checks only the elements registered so far
+    (``stage._builder.check_stage_routes``).  The deck emits every element
+    spec, one registered after the stage included, before that stage's
+    flip lines.  So a carrier registered late, such as a FourNodeQuad on a
+    flipped ManzariDafalias, passed the stage close and emitted a bare
+    ``updateMaterialStage``, the wrong answer the #2445 check refuses.
+    Here each stage runs the same checks, in program order, on every
+    registered primitive: the model the ``model.h5`` replay checks.  A
+    refusal gives the stage close's own message.  A carrier counts
+    whichever stage activates it, as at the stage close.
+    """
+    from ...stage._builder import (
+        STAGE_FLAG_PARAMETERS,
+        check_stage_routes,
+        route_model,
+        stage_routes_due,
+    )
+
+    stages = tuple(stage_records)
+    if not any(
+        st.update_material_stage_records
+        or any(p.name in STAGE_FLAG_PARAMETERS
+               for p in st.update_parameter_records)
+        for st in stages
+    ):
+        return
+
+    def tag_of(prim: Primitive) -> int:
+        try:
+            return int(tag_for[id(prim)])
+        except KeyError as e:
+            raise BridgeError(
+                f"primitive {type(prim).__name__}({prim!r}) is referenced "
+                "as a dependency but was not registered with the "
+                "bridge. Per P11, register all standalone "
+                "primitives via ops.register(prim) before build()."
+            ) from e
+
+    model = route_model(primitives, tag_of=tag_of, fem=fem)
+    earlier: list[tuple[int, int]] = []
+    for st in stages:
+        if stage_routes_due(st.update_material_stage_records,
+                            st.update_parameter_records, st.activated_pgs):
+            check_stage_routes(
+                st.name, model,
+                mat_stage_records=st.update_material_stage_records,
+                parameter_records=st.update_parameter_records,
+                activated_pgs=st.activated_pgs,
+                earlier_flips=tuple(earlier))
+        earlier.extend(stage_flips(st.update_material_stage_records,
+                                   st.update_parameter_records))
 
 
 def _check_stage(
