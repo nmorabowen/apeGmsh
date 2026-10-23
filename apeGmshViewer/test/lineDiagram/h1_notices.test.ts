@@ -18,6 +18,7 @@ import * as h5wasm from "h5wasm/node";
 import * as THREE from "three";
 import { openLadruno } from "../../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
+import { basePositions } from "../../src/renderer/deform.ts";
 import { LineDiagramLayer } from "../../src/renderer/lineDiagram.ts";
 import {
   buildLineDiagram3D,
@@ -541,22 +542,75 @@ test("H1: LineDiagramLayer.sync hides the diagram when s.deform.on is true and d
     assert.equal(layer.sync(sDef, h.blobs, stepData, validDisp), true);
     assert.equal(layer.root.visible, true);
 
-    // 3. Passing stale key hides the layer:
-    const rawLineLen = h.blobs.f32(sDef.mesh!.linePositions).length;
+    // 3a. Passing stale key with non-zero coordinates hides the layer:
+    const nonZeroLine = h.blobs.f32(sDef.mesh!.linePositions);
     assert.equal(
-      layer.sync(sDef, h.blobs, stepData, { key: "stale-key", line: new Float32Array(rawLineLen) }),
+      layer.sync(sDef, h.blobs, stepData, { key: "stale-key", line: nonZeroLine }),
       true,
     );
     assert.equal(layer.root.visible, false);
 
-    // 4. Passing wrong-length array hides the layer:
+    // 3b. Passing basePositions (key: "base") while s.deform.on is true hides the layer:
     assert.equal(layer.sync(sDef, h.blobs, stepData, validDisp), true);
     assert.equal(layer.root.visible, true);
+    assert.equal(
+      layer.sync(sDef, h.blobs, stepData, basePositions(sDef.mesh!, h.blobs)),
+      true,
+    );
+    assert.equal(layer.root.visible, false);
+
+    // 3c. Passing FullPositions with valid `${dv.keys.disp}|scale ${s.deform.scale}` shows the layer:
+    assert.equal(
+      layer.sync(sDef, h.blobs, stepData, {
+        key: `${validDisp.key}|scale ${sDef.deform.scale}`,
+        line: nonZeroLine,
+      }),
+      true,
+    );
+    assert.equal(layer.root.visible, true);
+
+    // 4. Passing wrong-length array hides the layer:
     assert.equal(
       layer.sync(sDef, h.blobs, stepData, { dispKey: validDisp.key, line: new Float32Array(3) }),
       true,
     );
     assert.equal(layer.root.visible, false);
+
+    // 5. When dv.state is unavailable/refused while s.deform.on is true, layer hides even with undefined or validDisp:
+    assert.equal(layer.sync(sDef, h.blobs, stepData, validDisp), true);
+    assert.equal(layer.root.visible, true);
+    const sNoDisp: State = {
+      ...sDef,
+      results: {
+        ...sDef.results!,
+        stages: sDef.results!.stages.map((st, idx) => (idx === 0 ? { ...st, nodal: [] } : st)),
+      },
+    };
+    assert.equal(layer.sync(sNoDisp, h.blobs, stepData, undefined), true);
+    assert.equal(layer.root.visible, false);
+    assert.equal(layer.sync(sDef, h.blobs, stepData, validDisp), true);
+    assert.equal(layer.root.visible, true);
+    assert.equal(layer.sync(sNoDisp, h.blobs, stepData, validDisp), true);
+    assert.equal(layer.root.visible, false);
+
+    // 6. Effects.syncLineDiagram also hides the diagram (min/max null) and emits notice when s.deform.on && dv.state is unavailable:
+    h.store.dispatch({
+      type: "resultsLoaded",
+      info: sNoDisp.results!,
+      sizeBytes: 100,
+      readMs: 1,
+      warnings: [],
+    });
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 2 } });
+    await until(
+      () =>
+        h.store.get().lineDiagram.stepRange?.min === null &&
+        /Deformed line diagram hidden/.test(h.store.get().lineDiagram.notice ?? ""),
+      "Effects hides line diagram and emits notice when displacement is unavailable",
+    );
+    assert.equal(h.store.get().lineDiagram.stepRange?.min, null);
+    assert.equal(h.store.get().lineDiagram.stepRange?.max, null);
+    assert.match(h.store.get().lineDiagram.notice ?? "", /Deformed line diagram hidden/);
 
     layer.dispose();
   } finally {

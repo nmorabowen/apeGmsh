@@ -201,7 +201,7 @@ export class LineDiagramLayer {
           const validDeform =
             dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
               ? rawKey === dv.keys.disp
-              : rawKey.length > 0;
+              : false;
           if (validDeform && rawLine.length === basePos.length) {
             deformKey = `${rawKey}|${s.deform.scale}`;
             drawnLinePositions = new Float32Array(basePos.length);
@@ -213,7 +213,12 @@ export class LineDiagramLayer {
           }
         } else if (deform.line instanceof Float32Array) {
           // Pre-deformed full-mesh positions from Viewport (`this.full`)
-          if (deform.key.length > 0 && deform.line.length === basePos.length) {
+          const validDeform =
+            deform.key !== "base" &&
+            (dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
+              ? deform.key === dv.keys.disp || deform.key === `${dv.keys.disp}|scale ${s.deform.scale}`
+              : false);
+          if (validDeform && deform.line.length === basePos.length) {
             deformKey = deform.key;
             drawnLinePositions = deform.line;
             deformApplied = true;
@@ -224,7 +229,7 @@ export class LineDiagramLayer {
           const validDeform =
             dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
               ? rawKey === dv.keys.disp
-              : rawKey.length > 0;
+              : false;
           if (validDeform && rawLine.length === basePos.length) {
             deformKey = `${rawKey}|${s.deform.scale}`;
             drawnLinePositions = new Float32Array(basePos.length);
@@ -236,7 +241,7 @@ export class LineDiagramLayer {
           }
         }
       }
-      if (!deformApplied && (dv.state === "ready" || dv.state === "partial" || dv.state === "loading" || deform !== undefined)) {
+      if (!deformApplied) {
         const wasVisible = this.root.visible;
         this.root.visible = false;
         this.appliedKey = null;

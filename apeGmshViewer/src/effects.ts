@@ -420,7 +420,7 @@ export class Effects {
       } else if (data.lineDiagram && data.lineDiagram.component === s.lineDiagram.component) {
         const dv = deformView(s);
         const deformActive = s.deform.on && (dv.state === "ready" || dv.state === "partial" || dv.state === "loading");
-        const deformCtx = s.deform.on ? `def:${s.deform.scale}:${this.disp?.key ?? "none"}` : "undef";
+        const deformCtx = s.deform.on ? `def:${dv.state}:${s.deform.scale}:${this.disp?.key ?? "none"}` : "undef";
         const rangeContextKey = `${ldKeys.step}|${s.lineDiagram.plane}|${deformCtx}|${s.visibility.hidden.join(",")}|${s.mesh?.linePositions.id ?? "nomesh"}`;
         const stepMeasured = s.lineDiagram.stepRange?.key === ldKeys.step && this.lineRangeFor?.key === rangeContextKey;
         if (!stepMeasured && !(this.lineRangeFor && this.lineRangeFor.key === rangeContextKey && this.lineRangeFor.data === data)) {
@@ -445,9 +445,12 @@ export class Effects {
                 }
                 deformApplied = true;
               }
-              if (deformActive && !deformApplied) {
+              if (s.deform.on && !deformApplied) {
                 r = null;
-                notice = "Deformed line diagram hidden: displacement data is unavailable or does not match the drawn 1-D mesh.";
+                notice =
+                  dv.state === "unavailable" || dv.state === "refused"
+                    ? `Deformed line diagram hidden: displacement data is unavailable or does not match the drawn 1-D mesh (${dv.reason}).`
+                    : "Deformed line diagram hidden: displacement data is unavailable or does not match the drawn 1-D mesh.";
               } else {
                 const visibleIndices = visibleMaps(
                   s.mesh.legend,
