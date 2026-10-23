@@ -936,7 +936,7 @@ class OpenSeesModel:
             mp_constraints=self._mp_constraints,
             analysis_attrs=dict(self._analysis_attrs),
             patterns=self._patterns, stages=self._stages)
-        # So does an archived stage flip the stage close now refuses (#2465).
+        # So does an archived stage flip that the stage close refuses.
         refuse_archived_stage_routes(
             stages=self._stages, elements=self._elements,
             declarations=self._declarations, fem=self._fem,

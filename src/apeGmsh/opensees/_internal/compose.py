@@ -2445,8 +2445,8 @@ def _replay_staged_into(
     # exactly as the flat ``_replay_into(fem=...)`` path does.
     fem: Any = replay_kwargs.get("fem")
     order: "_ReplayOrder | None" = replay_kwargs.get("order")
-    # #2465: an archived stage flip the stage close now refuses is refused
-    # here too, before any emit.
+    # An archived stage flip that the stage close refuses is refused here
+    # too, before any emit.
     refuse_archived_stage_routes(
         stages=stages, elements=elements, declarations=declarations,
         fem=fem, requires=requires)
