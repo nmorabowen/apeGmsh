@@ -421,6 +421,75 @@ class TestAnchorRebinding:
         assert b_core <= set(b.entities[3])
 
 
+@pytest.fixture
+def storey_part():
+    """A slab at z=1 plus an xz wall below it: one storey of a tower.
+
+    List it before ``g``: a Part built inside a live session leaves the
+    Part's own gmsh model current.
+    """
+    p = Part("storey")
+    with p:
+        p.model.geometry.add_rectangle(0, 0, 1, 2, 2, label="slab")
+        p.model.geometry.add_rectangle(0, 0, 0, 2, 1, plane="xz", label="wall")
+    yield p
+    p.cleanup()
+
+
+def _stack(g, p, n, **add_kw):
+    """Place *n* storeys ``s0..`` with ``translate=(0, 0, i)``."""
+    assert gmsh.model.getCurrent() == "test"
+    for i in range(n):
+        g.parts.add(p, label=f"s{i}", translate=(0.0, 0.0, float(i)), **add_kw)
+
+
+def _fragment_mesh(g, n):
+    """``fragment_pair`` each neighbour storey pair, mesh in 2-D, check.
+
+    Oracle: a conformal stack has no coincident duplicate mesh nodes
+    (each wall's bottom edge must share the slab below's nodes; an
+    unfragmented stack duplicates them), and every instance names only
+    live entities.
+    """
+    for i in range(n - 1):
+        g.parts.fragment_pair(f"s{i}", f"s{i + 1}")
+    for i in range(n):
+        inst = g.parts.get(f"s{i}")
+        for d, tags in inst.entities.items():
+            live = {t for _, t in gmsh.model.getEntities(d)}
+            assert tags and set(tags) <= live, (inst.label, d)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(2)
+    _, coords, _ = gmsh.model.mesh.getNodes()
+    xyz = np.asarray(coords).reshape(-1, 3)
+    assert len(xyz) and len(np.unique(np.round(xyz, 9), axis=0)) == len(xyz)
+
+
+class TestStackedStoreys:
+    """``fragment_pair`` on Part instances placed with ``translate=``."""
+
+    @pytest.mark.parametrize("n", [2, 3])
+    def test_fragment_pair_after_translate(self, storey_part, g, n):
+        """Default flags: two (and three, chained) stacked storeys
+        fragment and mesh conformally.  ``fragment_pair`` used to hand
+        OCC each instance's edges and points as separate tools, which
+        broke the slab's wire ("Could not fix wire in surface 2")."""
+        _stack(g, storey_part, n)
+        _fragment_mesh(g, n)
+
+    def test_highest_dim_only_translate_keeps_top_dim(self, storey_part, g):
+        """``highest_dim_only=True`` + ``translate=``: a moved instance
+        records only its top dim, like an unmoved one, and the chained
+        ``fragment_pair`` meshes ("Could not fix wire in surface 4"
+        when the move re-derived edges and points into ``entities``)."""
+        _stack(g, storey_part, 3, highest_dim_only=True)
+        for i in range(3):
+            assert set(g.parts.get(f"s{i}").entities) == {2}
+        _fragment_mesh(g, 3)
+        for i in range(3):
+            assert set(g.parts.get(f"s{i}").entities) == {2}
+
+
 # =====================================================================
 # Group 5: End-to-End Assembly Workflow
 # =====================================================================
