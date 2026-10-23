@@ -27,6 +27,7 @@ from typing import (
 )
 
 from .._internal.analyze_rc import check_analyze_rc
+from .._internal.build.stage_emit import SweptMaterialReach
 from .._internal.build.stage_validate import StageZeroLedger
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
@@ -1050,6 +1051,7 @@ class LiveOpsEmitter:
             if refusal is not None:
                 raise RuntimeError(refusal)
         self._stage_zero_ledger().material(mat_type, tag)
+        self._swept_reach().note_material(mat_type, tag, params)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(
@@ -1107,6 +1109,7 @@ class LiveOpsEmitter:
         # build that knows one fork element but not another must still be
         # gated on the second).
         self._stage_zero_ledger().owed = True
+        self._swept_reach().note_element(tag, args)
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition
@@ -1923,9 +1926,37 @@ class LiveOpsEmitter:
         self._ops.remove("sp", int(node), int(dof))
 
     def remove_element(self, tag: int) -> None:
+        self._swept_reach().note_removed(tag)
         self._ops.remove("element", int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        """``updateMaterialStage`` alone, with no carrier sweep.
+
+        The deck emitters precede a plastic flip of a swept material
+        (``ManzariDafalias`` / ``LadrunoSANISAND``) on two or more
+        carriers with ``setParameter ... materialState`` (#2445,
+        ``stage_emit.MaterialStageCarriers``); this emitter does not, so
+        it refuses that flip instead of initialising the first element
+        only.  No bridge path reaches it today (live execution refuses a
+        staged model), so the refusal guards a direct driver and any
+        future staged-live lift.
+        """
+        n = self._swept_reach().carriers(mat_tag)
+        if int(stage) >= 1 and n is not None and n >= 2:
+            from .._internal.build.errors import BridgeError
+
+            raise BridgeError(
+                f"LiveOpsEmitter.update_material_stage: nDMaterial tag "
+                f"{int(mat_tag)} is a ManzariDafalias / LadrunoSANISAND "
+                f"material that {n} elements may carry, and the flip to "
+                f"stage {int(stage)} would run Elastic2Plastic() on the "
+                "first element only (issue #2445).  The live emitter sends "
+                "a bare updateMaterialStage with no carrier sweep "
+                "(setParameter -ele <carriers> materialState <tag>), so it "
+                "refuses the flip.  Emit the deck with ops.tcl(...) / "
+                "ops.py(...), which write the sweep, or give each element "
+                "its own material."
+            )
         self._stage_zero_ledger().user_flip(mat_tag)
         self._ops.updateMaterialStage(
             "-material", int(mat_tag), "-stage", int(stage),
@@ -1934,6 +1965,12 @@ class LiveOpsEmitter:
     #: Created on first use, so an emitter built with ``__new__`` (the
     #: gate tests) still has one.
     _stage0: "StageZeroLedger | None" = None
+    _reach: "SweptMaterialReach | None" = None
+
+    def _swept_reach(self) -> SweptMaterialReach:
+        if self._reach is None:
+            self._reach = SweptMaterialReach()
+        return self._reach
 
     def _stage_zero_ledger(self) -> StageZeroLedger:
         if self._stage0 is None:

@@ -1022,3 +1022,77 @@ def test_an_unproven_wrapper_is_refused_by_name(wrap: str) -> None:
         _flip(ops, sand)
     msg = str(exc.value)
     assert f"through {wrap}" in msg and "#2445" in msg
+
+
+# ---------------------------------------------------------------------------
+# The live emitter (no carrier sweep): it refuses the flip (#2457)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingOps:
+    """A stub backend: records every call, drives no domain."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        def call(*args: Any) -> None:
+            self.calls.append((name, args))
+        return call
+
+
+def _live() -> tuple[Any, _RecordingOps]:
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    le = LiveOpsEmitter.__new__(LiveOpsEmitter)
+    ops = _RecordingOps()
+    le._ops = ops  # type: ignore[assignment]
+    le._in_partition = False
+    return le, ops
+
+
+def _live_flips(ops: _RecordingOps) -> list[tuple[Any, ...]]:
+    return [a for name, a in ops.calls if name == "updateMaterialStage"]
+
+
+@pytest.mark.parametrize("cls", sorted(FIRST_ELEMENT_ONLY_PLASTIC_INIT))
+def test_the_live_emitter_refuses_a_swept_flip_on_two_carriers(cls: str) -> None:
+    le, ops = _live()
+    le.nDMaterial(cls, 7, *MD_ARGS)
+    le.element("tri6n", 1, *_TRI6_ARGV, 7)
+    le.element("tri6n", 2, *_TRI6_ARGV, 7)
+    with pytest.raises(BridgeError) as exc:
+        le.update_material_stage(7, 1)
+    msg = str(exc.value)
+    assert "#2445" in msg and "bare updateMaterialStage" in msg
+    assert "2 elements may carry" in msg
+    assert not _live_flips(ops)
+
+
+def test_the_live_emitter_passes_what_needs_no_sweep() -> None:
+    le, ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.nDMaterial("PM4Sand", 8, 0.5, 0.0, 400.0, 1.0)
+    le.element("tri6n", 1, *_TRI6_ARGV, 7)
+    le.element("tri6n", 2, *_TRI6_ARGV, 7)
+    le.element("tri6n", 3, *_TRI6_ARGV, 8)
+    le.element("tri6n", 4, *_TRI6_ARGV, 8)
+    le.update_material_stage(7, 0)  # an elastic flip
+    le.update_material_stage(8, 1)  # a class that is not swept
+    le.remove_element(2)
+    le.update_material_stage(7, 1)  # one carrier left
+    assert _live_flips(ops) == [
+        ("-material", 7, "-stage", 0), ("-material", 8, "-stage", 1),
+        ("-material", 7, "-stage", 1)]
+
+
+def test_the_live_emitter_counts_carriers_without_a_grammar() -> None:
+    """A FourNodeQuad (no MATERIAL_STATE_ELEMENT_TOKENS entry) and an element
+    on a wrapper outside MATERIAL_STATE_WRAPPERS still count."""
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.nDMaterial("PlateFiber", 17, 7)
+    le.element("quad", 1, 11, 12, 13, 14, 1.0, "PlaneStrain", 7)
+    le.element("tri6n", 2, 21, 22, 23, 24, 25, 26, 1.0, "PlaneStrain", 17)
+    with pytest.raises(BridgeError, match="#2445"):
+        le.update_material_stage(7, 1)

@@ -881,6 +881,63 @@ class MaterialStageCarriers:
         )
 
 
+def _int_tokens(argv: "Sequence[int | float | str]") -> set[int]:
+    return {int(v) for v in argv
+            if isinstance(v, int) and not isinstance(v, bool)}
+
+
+class SweptMaterialReach:
+    """Which emitted elements MAY carry each swept material, for an emitter
+    that cannot write the carrier sweep (``LiveOpsEmitter``, #2457).
+
+    Unlike :class:`MaterialStageCarriers` it knows no grammar, so it
+    over-counts on purpose: a material whose argv holds a reaching tag as
+    an integer may wrap it (any wrapper, not only
+    :data:`MATERIAL_STATE_WRAPPERS`), and an element whose argv holds a
+    reaching tag may carry it (a node tag equal to it counts too).  An
+    over-count refuses a flip that was safe; it never passes one that was
+    not.
+    """
+
+    def __init__(self) -> None:
+        # swept tag -> the tags that may reach it (itself, and wrappers).
+        self._reach: dict[int, set[int]] = {}
+        # swept tag -> element tags that may carry it.
+        self._carriers: dict[int, set[int]] = {}
+
+    def note_material(
+        self, mat_type: str, tag: int,
+        params: "Sequence[int | float | str]" = (),
+    ) -> None:
+        tag = int(tag)
+        if mat_type in SWEPT_MATERIAL_CLASSES:
+            self._reach[tag] = {tag}
+            self._carriers[tag] = set()
+            return
+        ints = _int_tokens(params)
+        for reach in self._reach.values():
+            if ints & reach:
+                reach.add(tag)
+
+    def note_element(
+        self, tag: int, argv: "Sequence[int | float | str]",
+    ) -> None:
+        ints = _int_tokens(argv)
+        for swept, reach in self._reach.items():
+            if ints & reach:
+                self._carriers[swept].add(int(tag))
+
+    def note_removed(self, tag: int) -> None:
+        for carriers in self._carriers.values():
+            carriers.discard(int(tag))
+
+    def carriers(self, mat_tag: int) -> int | None:
+        """How many elements may carry ``mat_tag``; ``None`` when it is
+        not a :data:`SWEPT_MATERIAL_CLASSES` material."""
+        found = self._carriers.get(int(mat_tag))
+        return None if found is None else len(found)
+
+
 #: One SP-constraint operation in a node's owner-side command stream,
 #: replayed onto that node's ghost copies (ADR 0027 INV-2).  Either
 #: ``("fix", flags)`` — the 0/1 fixity vector ``ops.fix`` / ``s.fix``
