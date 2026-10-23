@@ -20,21 +20,6 @@ job of ``tests.yml``, ``fork`` in ``live-fork.yml``). With it set, the root
   ``ladruno_mkl:`` reason stays a skip. It counts for the lane's green, as
   every ``ladruno_mkl`` skip does, and never for the member: the terminal
   summary reports that side as not green, so the member stays Inventory.
-* post-pin (#2498, T's option (b) of 2026-10-23): a fork-lane row test
-  that skips because :func:`require_fork_features` found the live build
-  reporting the absence of a feature the row names in ``post_pin`` stays a
-  skip, on the same terms as ruling 3: it counts for the lane, never for
-  the member. The skip lifts itself once ``FORK_PIN`` moves to a build that
-  has the feature.
-
-Post-pin features. A test that needs a fork feature newer than ``FORK_PIN``
-calls :func:`require_fork_features` with names from :data:`POST_PIN_FEATURES`.
-Each feature has a one-line probe declaration and the line the fork prints
-when it lacks the feature. The test skips **only** on that evidence: when
-the probe declaration is accepted, fails for any other reason, or prints
-nothing this process can read, the test runs, and fails loudly if it is
-wrong. A skip therefore never hides a failure on a build that has the
-feature (``tests/opensees/unit/test_live_option_rejection_message.py``).
 
 ``tests/opensees/unit/test_warrant_rows.py`` locks the registry (node ids
 exist, markers fit the lanes, a refused row's stock test holds a
@@ -43,9 +28,8 @@ and invariant 9 over the fork members (``GRANDFATHERED_FORK_MEMBERS``).
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Mapping
 
 #: The environment switch each live lane sets.
 LANE_ENV = "APEGMSH_WARRANT_LANE"
@@ -55,12 +39,6 @@ STOCK_STATES = ("refused", "honest")
 #: The reason prefix ``tests/opensees/integration_ladruno/conftest.py``
 #: gives a ``ladruno_mkl`` skip (Pardiso missing from the build).
 MKL_SKIP_PREFIX = "ladruno_mkl:"
-
-#: The reason prefix :func:`require_fork_features` gives a post-pin skip.
-POST_PIN_SKIP_PREFIX = "post_pin:"
-_POST_PIN_LACKS = f"{POST_PIN_SKIP_PREFIX} the live build lacks "
-_POST_PIN_SEP = " + "
-_POST_PIN_END = " -- "
 
 
 @dataclass(frozen=True)
@@ -72,10 +50,6 @@ class WarrantRow:
     stock_test: str
     fork_test: str
     roster: str | None = None
-    #: Names from :data:`POST_PIN_FEATURES` that the fork test needs and
-    #: ``FORK_PIN`` may predate; a post-pin skip naming only these stays a
-    #: skip in the fork lane (module docstring).
-    post_pin: tuple[str, ...] = ()
 
     def test_for(self, lane: str) -> str:
         return self.stock_test if lane == "stock" else self.fork_test
@@ -118,8 +92,6 @@ ROWS: tuple[WarrantRow, ...] = (
         stock_test=_FORCE_BEAM + "test_live_emitter_refuses_ladruno_force_beam_column_on_stock",
         fork_test=_FORCE_BEAM + "test_ladruno_force_beam_column_cantilever_matches_closed_form_on_fork",
         roster="D11",
-        # Absent at ladruno-v20261017 ("element type ... is unknown"); #2498.
-        post_pin=("LadrunoForceBeamColumn",),
     ),
 )
 
@@ -181,10 +153,9 @@ def skip_failure(
 ) -> str | None:
     """Why a skip of ``row``'s ``lane`` test fails the lane, or ``None``.
 
-    ``None`` only for ruling 3, a ``ladruno_mkl`` test in the fork lane that
-    skipped because the build lacks Pardiso, and for a fork-lane post-pin
-    skip whose missing features are all in ``row.post_pin``. Either skip
-    counts for the lane and never for the member (:func:`side_green`).
+    ``None`` only for ruling 3: a ``ladruno_mkl`` test in the fork lane that
+    skipped because the build lacks Pardiso. That skip counts for the lane
+    and never for the member (:func:`side_green`).
     """
     if (
         not xfail
@@ -193,10 +164,6 @@ def skip_failure(
         and reason.startswith(MKL_SKIP_PREFIX)
     ):
         return None
-    if not xfail and lane == "fork" and row.post_pin:
-        missing = post_pin_missing(reason)
-        if missing and set(missing) <= set(row.post_pin):
-            return None
     what = "xfailed" if xfail else "skipped"
     return (
         f"warrant row {row.member!r}: its {lane} test {what} in its own "
@@ -208,181 +175,3 @@ def skip_failure(
 def side_green(outcome: str) -> bool:
     """A member's side is green only when its own test passed."""
     return outcome == "passed"
-
-
-# ---------------------------------------------------------------------------
-# Post-pin features (#2498)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class PostPinFeature:
-    """A fork feature newer than some ``FORK_PIN``, and how to probe it.
-
-    ``declare`` issues the one-line probe declaration on a freshly wiped
-    domain; ``absent`` matches the line the fork prints when it lacks the
-    feature. Only that line is evidence of absence. ``predates`` is the
-    ``FORK_PIN`` sha the gate was justified against: once the pin moves,
-    ``test_every_gate_predates_the_current_fork_pin`` fails until the bump
-    re-justifies (re-stamps) or removes the gate, so no gate outlives its
-    pin unexamined.
-    """
-
-    name: str
-    declare: Callable[[Any], None]
-    absent: "re.Pattern[str]"
-    predates: str
-
-
-def _two_nodes_2d(ops: Any) -> None:
-    ops.model("basic", "-ndm", 2, "-ndf", 3)
-    ops.node(1, 0.0, 0.0)
-    ops.node(2, 1.0, 0.0)
-    ops.geomTransf("Linear", 1)
-
-
-def _imk_with(*option: Any) -> Callable[[Any], None]:
-    def declare(ops: Any) -> None:
-        _two_nodes_2d(ops)
-        ops.uniaxialMaterial("Elastic", 1, 1.0e9)
-        ops.element("LadrunoIMKBeam", 1, 1, 2, 0.04, 2.0e11, 1.6e-4, 1,
-                    "-matZ", 1, *option)
-    return declare
-
-
-def _cohesive_hinge_implex(ops: Any) -> None:
-    ops.model("basic", "-ndm", 1, "-ndf", 1)
-    ops.uniaxialMaterial("LadrunoCohesiveHinge", 1, 45.0e3, 250.0,
-                         "-linear", "-implex")
-
-
-def _force_beam_column(ops: Any) -> None:
-    _two_nodes_2d(ops)
-    ops.section("Elastic", 1, 30e9, 0.09, 6.75e-4)
-    ops.beamIntegration("Lobatto", 1, 1, 3)
-    ops.element("LadrunoForceBeamColumn", 1, 1, 2, 1, 1)
-
-
-#: ``FORK_PIN`` ``sha`` of ladruno-v20261017, the build these gates predate.
-_PIN_20261017 = "100eb9ae11a92bbcf623a44181a39304a697dcbb"
-
-#: Every post-pin feature a test may require, by name. The patterns are the
-#: lines ladruno-v20261017 printed on the live-fork lane (run 39773542334).
-POST_PIN_FEATURES: dict[str, PostPinFeature] = {
-    f.name: f for f in (
-        PostPinFeature(
-            "LadrunoIMKBeam -shear", _imk_with("-shear", 8.0e10, 0.03),
-            re.compile(r"LadrunoIMKBeam.*unknown option '-shear'"),
-            predates=_PIN_20261017,
-        ),
-        PostPinFeature(
-            "LadrunoIMKBeam -shearHinge", _imk_with("-shearHinge", 1),
-            re.compile(r"LadrunoIMKBeam.*unknown option '-shearHinge'"),
-            predates=_PIN_20261017,
-        ),
-        PostPinFeature(
-            "LadrunoCohesiveHinge -implex", _cohesive_hinge_implex,
-            re.compile(r"LadrunoCohesiveHinge.*unknown option '-implex'"),
-            predates=_PIN_20261017,
-        ),
-        PostPinFeature(
-            "LadrunoForceBeamColumn", _force_beam_column,
-            re.compile(r"element type LadrunoForceBeamColumn is unknown"),
-            predates=_PIN_20261017,
-        ),
-    )
-}
-
-
-def fork_pin_sha(text: str) -> str:
-    """The ``sha`` of a ``FORK_PIN`` file's ``text``, read as the live-fork
-    lane reads it (``grep -E '^sha=' FORK_PIN | cut -d= -f2-``): the rest of
-    the one line that starts with ``sha=``. None, or several, raises."""
-    shas = [line.split("=", 1)[1] for line in text.splitlines()
-            if line.startswith("sha=")]
-    if len(shas) != 1:
-        raise ValueError(f"FORK_PIN must hold exactly one sha= line, found {len(shas)}")
-    return shas[0]
-
-
-def stale_gates(pin_sha: str) -> list[str]:
-    """Each post-pin gate whose ``predates`` is not ``pin_sha``, described."""
-    return [
-        f"{f.name!r} predates {f.predates[:12]}, FORK_PIN is now {pin_sha[:12]}"
-        for f in POST_PIN_FEATURES.values() if f.predates != pin_sha
-    ]
-
-
-def probe_absence(ops: Any, name: str) -> str | None:
-    """The line by which ``ops`` reports lacking feature ``name``, or ``None``.
-
-    ``None`` means "not shown absent": the declaration was accepted, or it
-    failed for another reason, or the engine printed nothing this process
-    can read. The caller then runs its test. An unknown ``name`` raises.
-    """
-    if name not in POST_PIN_FEATURES:
-        raise KeyError(
-            f"{name!r} is not a post-pin feature; known: "
-            f"{sorted(POST_PIN_FEATURES)}"
-        )
-    from apeGmsh.opensees.emitter.live import captured_engine_output
-
-    feature = POST_PIN_FEATURES[name]
-    ops.wipe()
-    # The live emitter's own capture, so the gate and the emitter's
-    # option-rejection message read the build's lines the same way.
-    with captured_engine_output(echo=False) as printed:
-        try:
-            feature.declare(ops)
-        except Exception:  # noqa: BLE001 - the printed line decides, not this
-            pass
-        finally:
-            ops.wipe()
-    hit = feature.absent.search(printed.text)
-    return hit.group(0) if hit else None
-
-
-#: One probe per feature per process: the imported build cannot change.
-_ABSENCE_CACHE: dict[str, "str | None"] = {}
-
-
-def require_fork_features(*names: str) -> None:
-    """Skip the calling test, naming each feature the live build reports
-    missing; otherwise return and let the test run (#2498)."""
-    if not names:
-        raise ValueError("require_fork_features needs at least one feature")
-    from apeGmsh.opensees.emitter.live import get_ops
-
-    ops = get_ops()
-    evidence: dict[str, str] = {}
-    for name in names:
-        if name not in _ABSENCE_CACHE:
-            _ABSENCE_CACHE[name] = probe_absence(ops, name)
-        line = _ABSENCE_CACHE[name]
-        if line is not None:
-            evidence[name] = line
-    if evidence:
-        import pytest
-
-        pytest.skip(post_pin_reason(evidence))
-
-
-def post_pin_reason(evidence: Mapping[str, str]) -> str:
-    """The skip reason for the features a build reported missing."""
-    return (
-        _POST_PIN_LACKS + _POST_PIN_SEP.join(evidence) + _POST_PIN_END
-        + "; ".join(f"{k}: {v!r}" for k, v in evidence.items())
-        + ". FORK_PIN predates them (#2498); the test runs once it moves."
-    )
-
-
-def post_pin_missing(reason: str) -> tuple[str, ...]:
-    """The registered features a post-pin skip ``reason`` names; ``()`` when
-    ``reason`` is no post-pin skip or names an unregistered feature."""
-    if not reason.startswith(_POST_PIN_LACKS) or _POST_PIN_END not in reason:
-        return ()
-    head = reason[len(_POST_PIN_LACKS):].split(_POST_PIN_END, 1)[0]
-    names = tuple(head.split(_POST_PIN_SEP))
-    if not all(n in POST_PIN_FEATURES for n in names):
-        return ()
-    return names

@@ -1,22 +1,22 @@
-### FIXED — post-pin fork tests now skip by name until `FORK_PIN` moves, and the `live-fork` lane is green again (#2498, #2503)
+### FIXED — a live fork element whose option the build rejects says so, not "requires the Ladruno fork"; the post-pin fork tests run unconditionally (#2498, #2503)
 
-The nightly `live-fork` lane had been red: four tests exercised fork
-features newer than the pinned build (`ladruno-v20261017`). Those features
-are `LadrunoIMKBeam -shear` / `-shearHinge`, `LadrunoCohesiveHinge -implex`,
-and the `LadrunoForceBeamColumn` class.
+A Ladruno build can know an element class but not one of its options. It
+prints `unknown option '-shear'` and fails the call. The live emitter's
+fork-element gate used to answer with "element X requires the Ladruno fork
+build", which is wrong for that build. The gate now reads the build's line,
+from `sys.stderr` and from file descriptor 2. It raises "option -shear is not
+supported by this build", quoting that line, and the user still sees the
+line itself. An unknown class, or output this process cannot read, still
+gets the fork-required message.
 
-These tests now call `require_fork_features(...)` in
-`tests/opensees/warrant_rows.py`. A test skips, naming the missing feature,
-only when the live build itself prints that it lacks the feature (for
-example `unknown option '-shear'`). In every other case the test runs and
-fails loudly if it is wrong: the probe declaration was accepted, it failed
-some other way, or it printed nothing. The skip lifts itself once the pin
-moves.
+The gate verifies each element type once per option set, so a second
+element that adds an option the first one lacked is checked again.
 
-A warrant row can name such a feature in `post_pin`. Its fork-side skip then
-counts for the lane, but never for the member, which stays Inventory. The
-`ladruno_mkl` skip works the same way.
+The four `live-fork` tests that had failed at `ladruno-v20261017`
+(`LadrunoIMKBeam -shear` / `-shearHinge`, `LadrunoCohesiveHinge -implex`,
+the `LadrunoForceBeamColumn` class) run unconditionally at the new pin,
+`ladruno-v20261023`, which has all four features.
 
-The fork rows of `test_md_stage_all_elements.py` and
-`test_md_stage_route_elements.py` now take their backend from `get_ops()`
-instead of `importorskip("openseespy")`, so they run on the fork lane.
+The fork rows of `test_md_stage_all_elements.py` now take their backend from
+`get_ops()` instead of `importorskip("openseespy")`, so they run on the fork
+lane.

@@ -21,7 +21,6 @@ from tests.opensees.fixtures.fem_stub import (
     _ElementsStub,
     _NodesStub,
 )
-from tests.opensees.warrant_rows import require_fork_features
 
 pytestmark = pytest.mark.live
 
@@ -113,11 +112,8 @@ def test_live_emitter_refuses_ladruno_force_beam_column_on_stock() -> None:
 def test_ladruno_force_beam_column_cantilever_matches_closed_form_on_fork() -> None:
     """Fork side of LadrunoForceBeamColumn's warrant row (roster D11).
 
-    Skips only when the build itself reports the class unknown (FORK_PIN
-    ladruno-v20261017 predates it, #2498); the row's ``post_pin`` keeps
-    that skip from failing the lane while the member stays Inventory. A
-    creation probe that merely fails is no evidence, so the test runs."""
-    require_fork_features("LadrunoForceBeamColumn")
+    Runs unconditionally: ``FORK_PIN`` ladruno-v20261023 has the class, so a
+    build that lacks it fails this test instead of skipping it (#2498)."""
     fx = 10e3
     L = 3.0
     E = 30e9

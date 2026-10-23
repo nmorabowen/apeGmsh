@@ -509,3 +509,14 @@ the pin moves.
 imported `openseespy` by name now take their backend from `get_ops()`
 (#2503, folded into #2498). The remaining sibling sites are carded as
 #2506.
+
+**Status at landing (2026-10-23).** The pin advanced before this section
+landed: #2514 moved `FORK_PIN` to `ladruno-v20261023`
+(`sha=bdb69cea5a9f…`), and that build has all four features. Point 3's
+"removes it (now present)" therefore applied to every gate at once, so none
+is left. The code that implemented points 1–3 did not land with them:
+`require_fork_features`, `POST_PIN_FEATURES`, `WarrantRow.post_pin` and
+the `predates` lock. The four tests run unconditionally on the fork lane
+and fail it if the build lacks a feature. The ruling stands. The next time
+a fork test needs a feature newer than `FORK_PIN`, the gate is rebuilt on
+these four terms.
