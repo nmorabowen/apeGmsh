@@ -37,7 +37,9 @@ from apeGmsh.opensees.emitter.h5_reader import (
     TARGET_MODES, MalformedH5Error, open as h5_open,
 )
 
-from tests.fixtures.schema import OPENSEES_PRIOR_MINOR, OPENSEES_TARGET_MODE_FROM
+from tests.fixtures.schema import (
+    OPENSEES_BEFORE_TARGET_MODE, OPENSEES_TARGET_MODE_FROM,
+)
 from tests.opensees.h5.test_h5_solve_stamp import _frame_bridge
 
 _PINNED = ("fork", "stock")
@@ -137,9 +139,9 @@ def test_binary_and_python_are_never_archived(tmp_path: Path) -> None:
 def test_a_pre_bump_archive_reads_as_auto() -> None:
     """The reader-floor witness: the schema corpus file of the minor below
     the bump carries no attribute and reads as ``"auto"``."""
-    major, minor, _patch = OPENSEES_PRIOR_MINOR.split(".")
+    major, minor, _patch = OPENSEES_BEFORE_TARGET_MODE.split(".")
     path = _CORPUS / f"opensees_{major}.{minor}.h5"
-    assert OPENSEES_PRIOR_MINOR < OPENSEES_TARGET_MODE_FROM
+    assert OPENSEES_BEFORE_TARGET_MODE < OPENSEES_TARGET_MODE_FROM
     with h5py.File(path, "r") as f:
         assert "target_mode" not in f["opensees"].attrs
     assert h5_open(path).target_mode() == "auto"

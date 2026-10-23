@@ -774,8 +774,7 @@ def test_a_stage_claimed_equation_tie_replays_its_lines(tmp_path):
 #: node 1, which only rank 1 holds: a partitioned stage that ghosts a fixed
 #: node re-fixes it inside the stage, and the flat replay of that archive
 #: writes the fix twice, for every MP kind (a stage equalDOF from node 1
-#: to node 4 does it on main too; reported on the #2448 PR, not this
-#: slice's).
+#: to node 4 does it on main too; #2530).
 _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
     "tie_equation": ("tie", "surface_constraints", InterpolationRecord(
         kind="tie", name="st_tie", slave_node=4, master_nodes=[2, 3],
