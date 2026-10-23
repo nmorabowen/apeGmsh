@@ -380,12 +380,14 @@ def _ledgered_frame() -> apeSees:
 
 
 def _tie_ledgered_frame() -> apeSees:
-    """The frame plus an ``enforce="equation"`` tie: its
-    ``equationConstraint`` row is a ledger call deck replay skips. (The
-    bridge-level row of :func:`_ledgered_frame` is archived and replayed,
-    so it is not ledgered.)"""
+    """The frame plus an ``enforce="equation"`` tie that a stage claims:
+    its ``equationConstraint`` row is a ledger call deck replay skips. From
+    opensees 2.35.0 a global tie's lines are archived; a stage's are not
+    yet (#2448). (The bridge-level row of :func:`_ledgered_frame` is
+    archived and replayed, so it is not ledgered.)"""
     from apeGmsh._kernel.records._constraints import InterpolationRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
+    from tests.opensees.h5.test_h5_stages_writer import _chain
 
     fem = build_simple_frame_fem().with_constraint(InterpolationRecord(
         kind=ConstraintKind.TIE, name="eq", slave_node=2, master_nodes=[1],
@@ -397,6 +399,11 @@ def _tie_ledgered_frame() -> apeSees:
         pg="Cols", transf=transf,
         A=0.0125, E=2900.25, Iz=1.5e-4, Iy=2.5e-4, G=1100.75, J=3.5e-4,
     )
+    with ops.stage(name="s0") as st:
+        st.tie(name="eq")
+        st.analysis(**{**_chain(ops),
+                       "constraints": ops.constraints.Lagrange()})
+        st.run(n_increments=1, dt=1.0)
     return ops
 
 
@@ -411,8 +418,8 @@ def test_no_ledger_no_warning(tmp_path: Path) -> None:
 
 
 def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
-    """The equation tie's dropped row warns once across every category:
-    one ledger warning, no deferred warning."""
+    """The stage-claimed equation tie's dropped row warns once across
+    every category: one ledger warning, no deferred warning."""
     ops = _tie_ledgered_frame()
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
@@ -434,8 +441,8 @@ def test_automatic_write_warns_once_about_the_dropped_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The automatic write silences ``H5FeatureDeferredWarning``; the
-    ledger warning still carries the tie's ``equationConstraint`` there:
-    one warning, not zero."""
+    ledger warning still carries the stage-claimed tie's
+    ``equationConstraint`` there: one warning, not zero."""
     art = tmp_path / "artifacts"
     art.mkdir()
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(art))

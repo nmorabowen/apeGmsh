@@ -473,9 +473,10 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
 def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     """The keys of archived MP rows (``EqualDOFRecord`` /
     ``RigidLinkRecord`` / ``RigidDiaphragmRecord`` /
-    ``EmbeddedNodeRecord``), counted, shaped as
+    ``EmbeddedNodeRecord`` / ``EquationConstraintRecordRO``), counted, shaped as
     :func:`_constraint_stage_keys` / :func:`_interpolation_stage_keys`
     build them for the FEMData side. An unknown row type raises."""
+    from ..emitter.h5_reader import EquationConstraintRecordRO
     from .typed_records import (
         EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
         RigidLinkRecord,
@@ -483,7 +484,9 @@ def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
 
     keys: "Counter[tuple[Any, ...]]" = Counter()
     for r in rows:
-        if isinstance(r, EqualDOFRecord):
+        if isinstance(r, EquationConstraintRecordRO):
+            keys[_equation_line_key(r.cnode, r.cdof, r.ccoef, r.retained)] += 1
+        elif isinstance(r, EqualDOFRecord):
             keys[("equal_dof", int(r.master), int(r.slave),
                   tuple(int(d) for d in r.dofs))] += 1
         elif isinstance(r, RigidLinkRecord):
@@ -504,17 +507,22 @@ def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
 def _emit_mp_row(emitter: Any, r: Any) -> None:
     """Re-emit one archived MP row, its ``name`` label first, as the
     bridge wrote it. An unknown row type raises."""
+    from ..emitter.h5_reader import EquationConstraintRecordRO
     from .typed_records import (
         EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
         RigidLinkRecord,
     )
 
     if not isinstance(r, (EqualDOFRecord, RigidLinkRecord,
-                          RigidDiaphragmRecord, EmbeddedNodeRecord)):
+                          RigidDiaphragmRecord, EmbeddedNodeRecord,
+                          EquationConstraintRecordRO)):
         raise TypeError(f"replay: {type(r).__name__} is no MP-constraint row.")
     if r.name:
         emitter.mp_constraint_comment(r.name)
-    if isinstance(r, EqualDOFRecord):
+    if isinstance(r, EquationConstraintRecordRO):
+        emitter.equationConstraint(
+            int(r.cnode), int(r.cdof), float(r.ccoef), list(r.retained))
+    elif isinstance(r, EqualDOFRecord):
         emitter.equalDOF(int(r.master), int(r.slave),
                          *(int(d) for d in r.dofs))
     elif isinstance(r, RigidLinkRecord):
@@ -850,8 +858,9 @@ def _constraint_stage_keys(
 
 
 def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
-    """Stage-bucket key of one non-element interpolation row: its
-    ``embeddedNode`` line (none on the equation route, a ledger verb).
+    """Stage-bucket keys of one non-element interpolation row: its
+    ``embeddedNode`` line, or on the equation route its
+    ``equationConstraint`` lines (:func:`_equation_tie_keys`).
 
     The key carries the retained nodes the forward emit writes
     (``_embedded_retained_nodes``): a quad tie goes out on the triangle of
@@ -859,9 +868,31 @@ def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
     from .build.constraints import _embedded_retained_nodes
 
     if rec.enforce == "equation":
-        return []
+        return _equation_tie_keys(rec)
     return [("embedded_node", int(rec.slave_node),
              tuple(int(n) for n in _embedded_retained_nodes(rec)))]
+
+
+def _equation_line_key(
+    cnode: Any, cdof: Any, ccoef: Any, retained: Any,
+) -> "tuple[Any, ...]":
+    """The key of one ``equationConstraint`` line, from either side."""
+    return ("equation", int(cnode), int(cdof), float(ccoef),
+            tuple((int(n), int(d), float(c)) for n, d, c in retained))
+
+
+def _equation_tie_keys(rec: Any) -> "list[tuple[Any, ...]]":
+    """The keys of the ``equationConstraint`` lines an ``enforce="equation"``
+    interpolation writes, in order: the bridge's own expansion
+    (``_emit_equation_tie``) run on a recording emitter, so the zero-weight
+    filter and the DOF order are the bridge's."""
+    from ..emitter.recording import RecordingEmitter
+    from .build.constraints import _emit_equation_tie
+
+    rec_em = RecordingEmitter()
+    _emit_equation_tie(rec_em, rec)
+    return [_equation_line_key(*args) for method, args, _kw in rec_em.calls
+            if method == "equationConstraint"]
 
 
 def _skipped_replay_streams(
@@ -904,10 +935,12 @@ def _skipped_replay_streams(
 
     # interpolations() expands tied_contact / mortar into their slave rows,
     # as the forward emit does, so each slave is matched on its own.
+    # With no row left to match, a record is skipped without expanding its
+    # lines (an equation tie's expansion refuses a record with no weights).
     surface_skipped: "Counter[str]" = Counter(
         str(rec.kind) for rec in fem.elements.constraints.interpolations()
         if not _interpolation_replays_as_element(rec, kind_cls)
-        and not _staged(_interpolation_stage_keys(rec))
+        and not (+available and _staged(_interpolation_stage_keys(rec)))
     )
     if surface_skipped:
         out["fem.elements.constraints"] = surface_skipped
@@ -935,7 +968,9 @@ def _skipped_replay_streams(
     return out
 
 
-def refuse_unreplayable_streams(fem: Any) -> None:
+def refuse_unreplayable_streams(
+    fem: Any, *, equation_rows: "Sequence[Any]" = (),
+) -> None:
     """Raise :class:`BridgeError` iff ``fem`` carries a stream the deck
     replay cannot write, so it would run untied. Each kind is named, with
     its count and the issue that tracks it:
@@ -943,8 +978,13 @@ def refuse_unreplayable_streams(fem: Any) -> None:
     - a ``node_to_surface`` / ``node_to_surface_spring`` coupling or a
       mixed-ndf interface, whose lines tie through phantom nodes the
       archive does not store (#2411);
-    - an interpolation on the ``enforce="equation"`` route, whose
-      ``equationConstraint`` lines the archive does not store (#2416).
+    - an interpolation on the ``enforce="equation"`` route whose
+      ``equationConstraint`` lines are not all among ``equation_rows``,
+      the archive's global equation-tie rows (opensees 2.35.0, the
+      ``apeSees.equation_constraint`` rows taken off). An archive below
+      2.35.0 stores none (#2416), and a stage-claimed tie's lines are not
+      archived yet (#2448). A matched record consumes its lines, so N
+      equal ties need N sets of rows.
 
     :meth:`OpenSeesModel.build` calls it for the ``tcl`` / ``py`` /
     ``live`` targets before any emitter is made, so a refused live build
@@ -960,16 +1000,29 @@ def refuse_unreplayable_streams(fem: Any) -> None:
     phantom.update(
         f"{rec.kind} (mixed-ndf)" for rec in fem.elements.interfaces
         if rec.phantom_node is not None)
+    available: "Counter[tuple[Any, ...]]" = _mp_row_keys(equation_rows)
+
+    def _archived(rec: Any) -> bool:
+        if not +available:
+            return False
+        need = Counter(_equation_tie_keys(rec))
+        if any(available[k] < n for k, n in need.items()):
+            return False
+        available.subtract(need)
+        return True
+
     equation: "Counter[str]" = Counter(
         f"{rec.kind} (enforce='equation')"
         for rec in fem.elements.constraints.interpolations()
-        if rec.enforce == "equation")
+        if rec.enforce == "equation" and not _archived(rec))
     parts = []
     for found, why in (
         (phantom, "tie through phantom nodes the archive does not store "
                   "(#2411)"),
         (equation, "are equationConstraint lines the archive does not "
-                   "store (#2416)"),
+                   "store (an archive below opensees 2.35.0 stores none, "
+                   "#2416; a stage-claimed tie's lines are not archived "
+                   "yet, #2448)"),
     ):
         if found:
             detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
@@ -1605,7 +1658,9 @@ def _replay_into(
           bridge's order; #2405): its slot 7b, one unit keyed by the first
           row's index
       9b''. ``emitter.equationConstraint`` for ``equation_constraints``,
-          in call order
+          in call order: an archive below opensees 2.35.0, whose user rows
+          live only in ``/opensees/decl_params``. From 2.35.0 they are
+          ``mp_constraints`` rows (9b')
       9c'. the g.reinforce ``LadrunoEmbeddedRebar`` ties: the stored
           ``embedded_rebars`` rows (opensees 2.29.0), else, for an older
           archive, re-derived from the neutral-zone ``fem``; the bridge's
@@ -1982,10 +2037,37 @@ def _replay_into(
         lambda rec: emitter.region(int(rec.tag), *rec.args),
     )
 
+    # The ndf each node replays with (``None`` = the envelope), for the
+    # equationConstraint node and DOF checks below.
+    eq_node_ndf: "dict[int, int]" = {}
+    for entry in nodes:
+        entry_ndf = entry[2] if len(entry) == 3 else None
+        if entry_ndf is not None:
+            eq_node_ndf[int(entry[0])] = int(entry_ndf)
+
     # 9b'. The global MP rows, at the bridge's slot 7b: after the
     # regions, before the equation constraints. One unit, keyed by its
     # first row's emit index; the caller passes the rows in bridge order.
+    # From opensees 2.35.0 they include every global equationConstraint
+    # line (a tie's and a user row's), each checked here against the
+    # replayed nodes by the bridge's own helper before a deck is written.
     if mp_constraints:
+        from ..emitter.h5_reader import EquationConstraintRecordRO
+
+        eq_rows = [row for _i, row in mp_constraints
+                   if isinstance(row, EquationConstraintRecordRO)]
+        # The H5 rewrite passes no fem and writes no deck: it echoes them.
+        if eq_rows and fem is not None:
+            from ..emitter.recording import RecordingEmitter
+            from .build.constraints import emit_equation_constraints
+            from .build.records import EquationConstraintRecord
+
+            emit_equation_constraints(
+                RecordingEmitter(), fem,
+                [EquationConstraintRecord(
+                    cnode=r.cnode, cdof=r.cdof, ccoef=r.ccoef,
+                    retained=r.retained) for r in eq_rows],
+                node_ndf=eq_node_ndf, default_ndf=int(ndf))
         first_mp = min((int(i) for i, _r in mp_constraints if i is not None),
                        default=None)
 
@@ -2010,12 +2092,6 @@ def _replay_into(
             )
         from .build.constraints import emit_equation_constraints
 
-        # The ndf each node replays with (``None`` = the envelope).
-        eq_node_ndf: "dict[int, int]" = {}
-        for entry in nodes:
-            entry_ndf = entry[2] if len(entry) == 3 else None
-            if entry_ndf is not None:
-                eq_node_ndf[int(entry[0])] = int(entry_ndf)
         units.append((
             _key(lambda o: o.first("equationConstraint")),
             "equation_constraints",

@@ -131,6 +131,20 @@ export {
 
 export type { Activation } from "./activation.ts";
 export type { ResultsPairing } from "./results.ts";
+export {
+  buildLoads3D,
+  evaluatePatternSeriesFactor,
+  loadsColourPalette,
+  loadsSummaryOf,
+  loadsUnitsOf,
+  type BuildLoads3DOptions,
+  type LoadPatternCounts,
+  type LoadPatternEntry,
+  type Loads3DGeometry,
+  type LoadsPeaks,
+  type LoadsSummary,
+  type LoadsUnitLabels,
+} from "./loads.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,
