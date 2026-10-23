@@ -216,6 +216,8 @@ export interface LadrunoLineStationSlab {
   localAxesZRec: Float64Array | null;
   /** (nStationsTotal,) provenance of each station's local axes (`"step_local_axes"` or `"model_local_axes"`), or null when no frames recorded. */
   localAxesSources?: readonly (LocalAxesSource | null)[] | null;
+  /** (nStationsTotal * 2,) solver element end nodes `[iNode, jNode]` per station from `MODEL/ELEMENTS/<group>/CONNECTIVITY`, or null when unrecorded. */
+  elementNodes?: Float64Array | null;
 }
 
 /** One step's line-station data from `.ladruno`. */
@@ -234,6 +236,8 @@ export interface LadrunoLineStationStep {
   localAxesZRec: Float64Array | null;
   /** (nStationsTotal,) provenance of each station's local axes (`"step_local_axes"` or `"model_local_axes"`), or null when no frames recorded. */
   localAxesSources?: readonly (LocalAxesSource | null)[] | null;
+  /** (nStationsTotal * 2,) solver element end nodes `[iNode, jNode]` per station from `MODEL/ELEMENTS/<group>/CONNECTIVITY`, or null when unrecorded. */
+  elementNodes?: Float64Array | null;
 }
 
 /** Per-element local frames from `.ladruno` (`RESULTS/ON_ELEMENTS/LOCAL_AXES` and `MODEL/LOCAL_AXES`). */
@@ -480,16 +484,26 @@ export class LadrunoFile {
       const rank = tokenRank(token);
       if (rank === null) continue;
       const tokenGrp = this.optionalGroup(onElements, token);
-      if (!tokenGrp) continue;
+      if (!tokenGrp) {
+        warningsOut?.push(`${onElements.path}/${token} is not a group; its line stations are left out.`);
+        continue;
+      }
       for (const key of tokenGrp.keys()) {
         const bucket = this.optionalGroup(tokenGrp, key);
-        if (!bucket) continue;
+        if (!bucket) {
+          warningsOut?.push(unreadableBucketWarning(token, key, `${tokenGrp.path}/${key} is not a group`));
+          continue;
+        }
         const parsed = this.parseBucketBlocks(bucket);
         if ("reason" in parsed) {
           warningsOut?.push(unreadableBucketWarning(token, key, parsed.reason));
           continue;
         }
         const { blocks, width } = parsed;
+        if (rank >= 1 && blocks.some((b) => b.level === 2)) {
+          warningsOut?.push(unreadableBucketWarning(token, key, `${bucket.path} has section-level blocks (LEVELS == 2) under element-level token ${token}`));
+          continue;
+        }
         const gate = localForce2dGate(key, blocks, width, token, ndm);
         if (!gate.ok) {
           warningsOut?.push(`${gate.reason} Its line stations are left out.`);
@@ -599,10 +613,16 @@ export class LadrunoFile {
       const baseRank = tokenRank(token);
       if (baseRank !== 0) continue;
       const tokenGrp = this.optionalGroup(onElements, token);
-      if (!tokenGrp) continue;
+      if (!tokenGrp) {
+        options?.warningsOut?.push(`${onElements.path}/${token} is not a group; its line stations are left out.`);
+        continue;
+      }
       for (const key of tokenGrp.keys()) {
         const bucket = this.optionalGroup(tokenGrp, key);
-        if (!bucket) continue;
+        if (!bucket) {
+          options?.warningsOut?.push(unreadableBucketWarning(token, key, `${tokenGrp.path}/${key} is not a group`));
+          continue;
+        }
         const parsed = this.parseBucketBlocks(bucket);
         if ("reason" in parsed) {
           options?.warningsOut?.push(unreadableBucketWarning(token, key, parsed.reason));
@@ -624,32 +644,40 @@ export class LadrunoFile {
       const baseRank = tokenRank(token);
       if (baseRank === null || baseRank === 0) continue;
       const tokenGrp = this.optionalGroup(onElements, token);
-      if (!tokenGrp) continue;
+      if (!tokenGrp) {
+        options?.warningsOut?.push(`${onElements.path}/${token} is not a group; its line stations are left out.`);
+        continue;
+      }
       for (const key of tokenGrp.keys()) {
         const bucket = this.optionalGroup(tokenGrp, key);
-        if (!bucket) continue;
+        if (!bucket) {
+          options?.warningsOut?.push(unreadableBucketWarning(token, key, `${tokenGrp.path}/${key} is not a group`));
+          continue;
+        }
         const parsed = this.parseBucketBlocks(bucket);
         if ("reason" in parsed) {
           options?.warningsOut?.push(unreadableBucketWarning(token, key, parsed.reason));
           continue;
         }
         const hasLevel2 = parsed.blocks.some((b) => b.level === 2);
-        if (!hasLevel2) {
-          const part = this.readElementBucketStations(
-            parsed,
-            canon,
-            key,
-            token,
-            baseRank as 1 | 2 | 3,
-            ndm,
-            filterIds,
-            sectionServed,
-            step,
-            nStepsTotal,
-            options?.warningsOut,
-          );
-          if (part) found.push({ rank: baseRank as 1 | 2 | 3, perElement: part, nStepsRead });
+        if (hasLevel2) {
+          options?.warningsOut?.push(unreadableBucketWarning(token, key, `${bucket.path} has section-level blocks (LEVELS == 2) under element-level token ${token}`));
+          continue;
         }
+        const part = this.readElementBucketStations(
+          parsed,
+          canon,
+          key,
+          token,
+          baseRank as 1 | 2 | 3,
+          ndm,
+          filterIds,
+          sectionServed,
+          step,
+          nStepsTotal,
+          options?.warningsOut,
+        );
+        if (part) found.push({ rank: baseRank as 1 | 2 | 3, perElement: part, nStepsRead });
       }
     }
 
@@ -671,6 +699,7 @@ export class LadrunoFile {
         localAxesQuaternion: null,
         localAxesZRec: null,
         localAxesSources: null,
+        elementNodes: null,
       };
     }
 
@@ -681,8 +710,9 @@ export class LadrunoFile {
     let colOffset = 0;
     for (const elem of chosen) {
       for (let st = 0; st < elem.nSt; st++) {
-        elementIndex[colOffset + st] = elem.eid;
-        stationNaturalCoord[colOffset + st] = elem.xi[st]!;
+        const col = colOffset + st;
+        elementIndex[col] = elem.eid;
+        stationNaturalCoord[col] = elem.xi[st]!;
       }
       for (let t = 0; t < nStepsRead; t++) {
         const srcBase = t * elem.nSt;
@@ -694,6 +724,7 @@ export class LadrunoFile {
       colOffset += elem.nSt;
     }
 
+    const elementNodes = this.stationElementNodes(modelElements, elementIndex);
     const { localAxesQuaternion, localAxesZRec, localAxesSources } = stationLocalAxes(this.readLocalAxes(stageId, { step, warningsOut: options?.warningsOut }), elementIndex);
     return {
       component: canon,
@@ -706,6 +737,7 @@ export class LadrunoFile {
       localAxesQuaternion,
       localAxesZRec,
       localAxesSources,
+      elementNodes,
     };
   }
 
@@ -726,6 +758,7 @@ export class LadrunoFile {
       localAxesQuaternion: slab.localAxesQuaternion,
       localAxesZRec: slab.localAxesZRec,
       localAxesSources: slab.localAxesSources,
+      elementNodes: slab.elementNodes ?? null,
     };
   }
 
@@ -1257,6 +1290,42 @@ export class LadrunoFile {
     const firstCol = cols === 1 ? raw : Float64Array.from({ length: nRows }, (_, i) => raw[i * cols]!);
     const rows = { path: ds.path, group: grp.path, paramDomain: optionalText(grp, "PARAM_DOMAIN"), xi: firstCol };
     return { path: ds.path, xi: lineGpParamXi(rows, (m) => new LadrunoError("layout", `${this.f.filename}: ${m}`)) };
+  }
+
+  /**
+   * Solver end nodes `[iNode, jNode]` per station row from `MODEL/ELEMENTS/<group>/CONNECTIVITY`
+   * (`[eid, iNode, ..., jNode]`), or null when `MODEL/ELEMENTS` records none for `elementIndex`.
+   */
+  private stationElementNodes(modelElements: LGroup | null, elementIndex: Float64Array): Float64Array | null {
+    if (!modelElements || elementIndex.length === 0) return null;
+    const ids = sortedUniqueIds(elementIndex);
+    const endNodes = new Float64Array(ids.length * 2).fill(Number.NaN);
+    let anyFound = false;
+    for (const k of modelElements.keys()) {
+      const grp = this.optionalGroup(modelElements, k);
+      const ds = grp ? this.optionalDataset(grp, "CONNECTIVITY") : null;
+      const shape = ds?.shape ?? [];
+      if (!ds || shape.length !== 2 || shape[0]! <= 0 || shape[1]! < 3 || ds.metadata.type !== H5T_INTEGER) continue;
+      const [nRows, cols] = [shape[0]!, shape[1]!];
+      const raw = intsAsNumbers(ds);
+      for (let r = 0; r < nRows; r++) {
+        const idx = rowOf(ids, raw[r * cols]!);
+        if (idx < 0) continue;
+        endNodes[idx * 2] = raw[r * cols + 1]!;
+        endNodes[idx * 2 + 1] = raw[r * cols + cols - 1]!;
+        anyFound = true;
+      }
+    }
+    if (!anyFound) return null;
+    const out = new Float64Array(elementIndex.length * 2).fill(Number.NaN);
+    for (let c = 0; c < elementIndex.length; c++) {
+      const idx = rowOf(ids, elementIndex[c]!);
+      if (idx >= 0) {
+        out[c * 2] = endNodes[idx * 2]!;
+        out[c * 2 + 1] = endNodes[idx * 2 + 1]!;
+      }
+    }
+    return out;
   }
 
   /**

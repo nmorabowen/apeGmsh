@@ -191,9 +191,9 @@ export class LineDiagramLayer {
     const basePos = blobs.f32(s.mesh.linePositions);
     let deformKey = "undeformed";
     let drawnLinePositions = basePos;
+    let deformApplied = false;
     if (s.deform.on) {
       const dv = deformView(s);
-      let deformApplied = false;
       if (deform) {
         if ("dispKey" in deform) {
           const rawKey = deform.dispKey;
@@ -294,7 +294,7 @@ export class LineDiagramLayer {
       join,
       ndm: s.ndm.ndm,
       charLength: 0.8 * s.mesh.radius,
-      deformed: s.deform.on,
+      deformed: deformApplied,
       scale: s.lineDiagram.scale,
       flipSign: s.lineDiagram.flipSign,
       cmap: s.lineDiagram.cmap,

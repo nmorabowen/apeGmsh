@@ -418,7 +418,10 @@ export class Effects {
           queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: null, max: null, notice }));
         }
       } else if (data.lineDiagram && data.lineDiagram.component === s.lineDiagram.component) {
-        const rangeContextKey = `${ldKeys.step}|${s.lineDiagram.plane}|${s.deform.on ? "def" : "undef"}|${s.visibility.hidden.join(",")}|${s.mesh?.linePositions.id ?? "nomesh"}`;
+        const dv = deformView(s);
+        const deformActive = s.deform.on && (dv.state === "ready" || dv.state === "partial" || dv.state === "loading");
+        const deformCtx = s.deform.on ? `def:${s.deform.scale}:${this.disp?.key ?? "none"}` : "undef";
+        const rangeContextKey = `${ldKeys.step}|${s.lineDiagram.plane}|${deformCtx}|${s.visibility.hidden.join(",")}|${s.mesh?.linePositions.id ?? "nomesh"}`;
         const stepMeasured = s.lineDiagram.stepRange?.key === ldKeys.step && this.lineRangeFor?.key === rangeContextKey;
         if (!stepMeasured && !(this.lineRangeFor && this.lineRangeFor.key === rangeContextKey && this.lineRangeFor.data === data)) {
           this.lineRangeFor = { key: rangeContextKey, data };
@@ -430,33 +433,50 @@ export class Effects {
               r = null;
               notice = join.reason;
             } else {
-              const visibleIndices = visibleMaps(
-                s.mesh.legend,
-                s.visibility.hidden,
-                this.blobs.i32(s.mesh.lineGroup),
-                this.blobs.i32(s.mesh.triGroup),
-                elementMaskOf(s, s.mesh, this.blobs),
-              ).lineMap;
-              const geom = buildLineDiagram3D({
-                decls: s.decls,
-                meshElements: s.mesh.elements,
-                lineElement: this.blobs.i32(s.mesh.lineElement),
-                drawnLinePositions: this.blobs.f32(s.mesh.linePositions),
-                lineNodes: this.blobs.get(s.mesh.vertexNodes.line) as Float64Array,
-                visibleLineMap: visibleIndices,
-                stepData: data.lineDiagram,
-                join,
-                ndm: s.ndm.ndm,
-                charLength: 2 * s.mesh.radius,
-                deformed: s.deform.on,
-                scale: s.lineDiagram.scale,
-                flipSign: s.lineDiagram.flipSign,
-                cmap: s.lineDiagram.cmap,
-                plane: s.lineDiagram.plane,
-                cameraViewDir: [0, 0, -1],
-              });
-              r = geom.beams.length > 0 ? finiteRangeOf(geom.beams.map((b) => b.values)) : null;
-              notice = geom.notice;
+              const basePos = this.blobs.f32(s.mesh.linePositions);
+              let drawnLinePositions = basePos;
+              let deformApplied = false;
+              if (deformActive && this.disp && this.disp.key === dv.keys.disp && this.disp.line.d.length === basePos.length) {
+                drawnLinePositions = new Float32Array(basePos.length);
+                const scale = s.deform.scale;
+                const rawLine = this.disp.line.d;
+                for (let i = 0; i < basePos.length; i++) {
+                  drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+                }
+                deformApplied = true;
+              }
+              if (deformActive && !deformApplied) {
+                r = null;
+                notice = "Deformed line diagram hidden: displacement data is unavailable or does not match the drawn 1-D mesh.";
+              } else {
+                const visibleIndices = visibleMaps(
+                  s.mesh.legend,
+                  s.visibility.hidden,
+                  this.blobs.i32(s.mesh.lineGroup),
+                  this.blobs.i32(s.mesh.triGroup),
+                  elementMaskOf(s, s.mesh, this.blobs),
+                ).lineMap;
+                const geom = buildLineDiagram3D({
+                  decls: s.decls,
+                  meshElements: s.mesh.elements,
+                  lineElement: this.blobs.i32(s.mesh.lineElement),
+                  drawnLinePositions,
+                  lineNodes: this.blobs.get(s.mesh.vertexNodes.line) as Float64Array,
+                  visibleLineMap: visibleIndices,
+                  stepData: data.lineDiagram,
+                  join,
+                  ndm: s.ndm.ndm,
+                  charLength: 2 * s.mesh.radius,
+                  deformed: deformApplied,
+                  scale: s.lineDiagram.scale,
+                  flipSign: s.lineDiagram.flipSign,
+                  cmap: s.lineDiagram.cmap,
+                  plane: s.lineDiagram.plane,
+                  cameraViewDir: [0, 0, -1],
+                });
+                r = geom.beams.length > 0 ? finiteRangeOf(geom.beams.map((b) => b.values)) : null;
+                notice = geom.notice;
+              }
             }
           } else {
             r = finiteRange([data.lineDiagram.values], false);

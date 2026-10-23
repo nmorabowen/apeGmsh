@@ -22,10 +22,11 @@ import { LineDiagramLayer } from "../../src/renderer/lineDiagram.ts";
 import {
   buildLineDiagram3D,
   buildSelectedBeamChainsFromState,
+  joinLadrunoElements,
   lineDiagramKeysOf,
 } from "../../src/state/lineDiagram.ts";
 import { reduce } from "../../src/state/reduce.ts";
-import { contourView } from "../../src/state/selectors.ts";
+import { contourView, resultsPairing } from "../../src/state/selectors.ts";
 import type { Decl, DeclPath, ResultsInfo, ResultsStage, State } from "../../src/state/types.ts";
 import { opened, until } from "../contour/harness.ts";
 
@@ -580,7 +581,7 @@ test("H1: reduce emits a notice on setPhase and resultsLoaded when a selected co
     gauss: [],
     unread: [],
     elementIndexSpace: "ops_tag",
-    lineStations: ["N", "Mz", "kappaZ"],
+    lineStations: ["N", "Vy", "Mz", "kappaZ"],
   };
   const stage1: ResultsStage = {
     id: "MODEL_STAGE[2]",
@@ -665,4 +666,177 @@ test("H1: reduce emits a notice on setPhase and resultsLoaded when a selected co
     s.lineDiagram.notice,
     "ladruno_frame3d.ladruno has no Mz line stations; switched to N.",
   );
+
+  // 5. Stage auto-switch notice survives initial lineDiagramStepRange arrival, and clears when switching back to stage 0:
+  let sSwitch = reduce(baseState, { type: "fileOpened", artifact: "results", path: results.path });
+  sSwitch = reduce(sSwitch, {
+    type: "resultsLoaded",
+    info: results,
+    warnings: [],
+    sizeBytes: 100,
+    readMs: 1,
+  });
+  sSwitch = reduce(sSwitch, { type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  sSwitch = reduce(sSwitch, { type: "setLineDiagram", on: true });
+  sSwitch = reduce(sSwitch, { type: "setLineDiagramComponent", component: "kappaZ" });
+  sSwitch = reduce(sSwitch, { type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
+  assert.equal(sSwitch.lineDiagram.component, "Vy");
+  assert.equal(
+    sSwitch.lineDiagram.notice,
+    "Stage stage_1 has no kappaZ line stations; switched to Vy.",
+  );
+  const stage1Keys = lineDiagramKeysOf(sSwitch)!;
+  sSwitch = reduce(sSwitch, {
+    type: "lineDiagramStepRange",
+    key: stage1Keys.step,
+    min: -10,
+    max: 10,
+    notice: null,
+  });
+  assert.equal(
+    sSwitch.lineDiagram.notice,
+    "Stage stage_1 has no kappaZ line stations; switched to Vy.",
+    "initial lineDiagramStepRange after stage auto-switch preserves the auto-switch notice",
+  );
+  // Switching back to stage 0 (which has "Vy") clears the stale stage_1 auto-switch notice:
+  sSwitch = reduce(sSwitch, { type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  assert.equal(sSwitch.lineDiagram.component, "Vy");
+  assert.equal(sSwitch.lineDiagram.notice, null);
 });
+
+// -- 7. P0-2 end-to-end on neutral-zone .h5 + .ladruno via MODEL/ELEMENTS/*/CONNECTIVITY --
+
+test("P0-2: neutral-zone model.h5 (inlineNodes === []) cross-checks cell corner nodes against .ladruno MODEL/ELEMENTS/*/CONNECTIVITY automatically", async () => {
+  const h = await opened(LOBATTO_MODEL, LOBATTO_LADRUNO);
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 1 } });
+    h.store.dispatch({ type: "setLineDiagram", on: true });
+
+    await until(() => {
+      const cur = h.store.get();
+      const ldKeys = lineDiagramKeysOf(cur);
+      return ldKeys !== null && h.effects.currentLineDiagram()?.key === ldKeys.step;
+    }, "lineDiagram step loaded");
+
+    const s = h.store.get();
+    // Neutral-zone elements have empty inlineNodes in State.decls:
+    for (const d of Object.values(s.decls)) {
+      if (d.kind === "element") {
+        assert.deepEqual(d.element?.inlineNodes, []);
+      }
+    }
+    const stepData = h.effects.currentLineDiagram()!.step;
+    assert.ok(
+      stepData.elementNodes instanceof Float64Array && stepData.elementNodes.length === stepData.elementIndex.length * 2,
+      "readLineStationStep populates elementNodes from MODEL/ELEMENTS/*/CONNECTIVITY",
+    );
+
+    const lineElement = h.blobs.i32(s.mesh!.lineElement);
+    const drawnLinePositions = new Float32Array(h.blobs.f32(s.mesh!.linePositions));
+    const origLineNodes = h.blobs.get(s.mesh!.vertexNodes.line) as Float64Array;
+    const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results!.elementIndexSpace);
+    assert.equal(join.ok, true);
+    if (!join.ok) return;
+
+    // 1. Reversing segment 0's cell corner nodes & positions swaps pStart <-> pEnd back to iNode -> jNode without manual elementNodesById:
+    const revPositions = new Float32Array(drawnLinePositions);
+    revPositions.set(drawnLinePositions.subarray(3, 6), 0);
+    revPositions.set(drawnLinePositions.subarray(0, 3), 3);
+    const revLineNodes = new Float64Array(origLineNodes);
+    revLineNodes[0] = origLineNodes[1]!;
+    revLineNodes[1] = origLineNodes[0]!;
+
+    const geomRev = buildLineDiagram3D({
+      decls: s.decls,
+      meshElements: s.mesh!.elements,
+      lineElement,
+      drawnLinePositions: revPositions,
+      lineNodes: revLineNodes,
+      stepData,
+      join,
+      ndm: s.ndm.ndm,
+    });
+    assert.equal(geomRev.beams.length, 1);
+    assert.equal(geomRev.skippedOrientationMismatchBeams, 0);
+    assert.ok(closeVec(geomRev.beams[0]!.pStart, [...drawnLinePositions.subarray(0, 3)]));
+    assert.ok(closeVec(geomRev.beams[0]!.pEnd, [...drawnLinePositions.subarray(3, 6)]));
+
+    // 2. Contradicting segment 0's cell corner nodes skips the beam and surfaces notice:
+    const badLineNodes = new Float64Array(origLineNodes);
+    badLineNodes[0] = 999;
+    const geomBad = buildLineDiagram3D({
+      decls: s.decls,
+      meshElements: s.mesh!.elements,
+      lineElement,
+      drawnLinePositions,
+      lineNodes: badLineNodes,
+      stepData,
+      join,
+      ndm: s.ndm.ndm,
+    });
+    assert.equal(geomBad.beams.length, 0);
+    assert.equal(geomBad.skippedOrientationMismatchBeams, 1);
+    assert.match(geomBad.notice ?? "", /1 beam skipped: element connectivity \(iNode, jNode\) contradicts mesh cell corner nodes/);
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+// -- 8. H1: Missing PARAM_DOMAIN on MODEL/ELEMENTS group isolated in Effects --
+
+test("H1: missing PARAM_DOMAIN on a section bucket's MODEL/ELEMENTS group warns at open and isolates step refusal without failing nodal contour", async () => {
+  const legendreModel = fileURLToPath(new URL("../../fixtures/line_oracle_fbc_legendre.h5", import.meta.url));
+  const legendreLadruno = fileURLToPath(new URL("../../fixtures/line_oracle_fbc_legendre.ladruno", import.meta.url));
+  const dir = mkdtempSync(join(tmpdir(), "agv-h1-legendre-"));
+  const badLadruno = join(dir, "no_param_domain.ladruno");
+  copyFileSync(legendreLadruno, badLadruno);
+  const f = new h5wasm.File(badLadruno, "a");
+  try {
+    const elems = f.get("MODEL_STAGE[1]/MODEL/ELEMENTS") as h5wasm.Group;
+    for (const k of elems.keys()) {
+      (elems.get(k) as h5wasm.Group).delete_attribute("PARAM_DOMAIN");
+    }
+  } finally {
+    f.close();
+  }
+
+  const r = openLadruno(H5, badLadruno);
+  try {
+    const warnings: string[] = [];
+    const avail = r.availableLineStations("stage_0", warnings);
+    assert.ok(warnings.some((w) => w.includes("carries QUADRATURE/GP_PARAM but no PARAM_DOMAIN attribute")));
+    // Element-level localForce still provides N, Vy, Mz even when section.force is left out:
+    assert.deepEqual(avail, ["N", "Vy", "Mz"]);
+    assert.throws(
+      () => r.readLineStationStep("stage_0", "Mz", 0),
+      /carries QUADRATURE\/GP_PARAM but no PARAM_DOMAIN attribute/,
+    );
+  } finally {
+    r.close();
+  }
+
+  const h = await opened(legendreModel, badLadruno);
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "setDeform", on: true });
+    h.store.dispatch({ type: "setLineDiagram", on: true });
+
+    await until(() => {
+      const cur = h.store.get();
+      return (
+        contourView(cur).state === "ready" &&
+        h.effects.currentDisplacement() !== null &&
+        cur.lineDiagram.notice !== null
+      );
+    }, "nodal contour + deform ready and missing PARAM_DOMAIN refusal in lineDiagram.notice");
+
+    const s = h.store.get();
+    assert.equal(contourView(s).state, "ready");
+    assert.ok(h.effects.currentDisplacement() !== null);
+    assert.match(s.lineDiagram.notice ?? "", /carries QUADRATURE\/GP_PARAM but no PARAM_DOMAIN attribute/);
+  } finally {
+    h.effects.dispose();
+  }
+});
+

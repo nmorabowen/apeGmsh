@@ -814,9 +814,10 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       values: number[];
       zRec: [number, number, number] | null;
       zRecSource: "step_local_axes" | "model_local_axes" | null;
+      nodes: [number, number] | null;
     }
   >();
-  const { elementIndex, stationNaturalCoord, values, localAxesZRec, localAxesQuaternion, localAxesSources } = opts.stepData;
+  const { elementIndex, stationNaturalCoord, values, localAxesZRec, localAxesQuaternion, localAxesSources, elementNodes } = opts.stepData;
   for (let i = 0; i < elementIndex.length; i++) {
     const eid = elementIndex[i]!;
     const xi = stationNaturalCoord[i]!;
@@ -842,7 +843,15 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
         if (Number.isFinite(z[0])) zRec = z;
       }
       const zRecSource = zRec ? (localAxesSources?.[i] ?? "model_local_axes") : null;
-      entry = { xi: [], values: [], zRec, zRecSource };
+      let nodes: [number, number] | null = null;
+      if (elementNodes && i * 2 + 1 < elementNodes.length) {
+        const ni = elementNodes[i * 2]!;
+        const nj = elementNodes[i * 2 + 1]!;
+        if (Number.isFinite(ni) && Number.isFinite(nj)) {
+          nodes = [ni, nj];
+        }
+      }
+      entry = { xi: [], values: [], zRec, zRecSource, nodes };
       stationsByEid.set(eid, entry);
     }
     entry.xi.push(xi);
@@ -925,6 +934,7 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
     const inlineNodes = declObj?.element?.inlineNodes;
     const elemNodes: readonly [number, number] | null =
       opts.elementNodesById?.get(eid) ??
+      st.nodes ??
       (inlineNodes && inlineNodes.length >= 2
         ? [inlineNodes[0]!, inlineNodes[inlineNodes.length - 1]!]
         : null);
@@ -937,7 +947,7 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       nodeEnd = nEnd;
       if (elemNodes) {
         const [iNode, jNode] = elemNodes;
-        if (iNode === nStart && jNode === nEnd) {
+        if (iNode === nStart && jNode === nEnd && iNode !== jNode) {
           // Forward orientation: cell corner order matches element (iNode -> jNode).
         } else if (iNode === nEnd && jNode === nStart && iNode !== jNode) {
           // Reversed orientation: flip pStart <-> pEnd so xi = -1 sits at iNode and xLocal runs iNode -> jNode.
