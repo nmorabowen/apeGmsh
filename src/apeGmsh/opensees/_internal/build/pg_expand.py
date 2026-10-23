@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import warnings
 import weakref
 from typing import Any, Iterable, Iterator, Sequence
 
@@ -9,6 +10,7 @@ import numpy as np
 
 from ..types import Element
 from ..tag_resolution import MISSING_FEM_ELEMENT_ID
+from .._stacklevel import _stacklevel_outside_package
 from .errors import BridgeError
 from .records import FixRecord, MassRecord, SupportRecord
 
@@ -844,6 +846,16 @@ def _node_xyz(fem: "FEMData", ids: "Sequence[int] | np.ndarray") -> "np.ndarray"
 _PANEL_REL_TOL = 1e-6
 
 
+class MembraneFramesFilteredWarning(UserWarning):
+    """A ``LadrunoMembrane`` ``frames=`` group lost some, not all, of its
+    frames to the per-panel filter (:func:`resolve_ladruno_membrane_context`).
+
+    Expected for a group that spans several panels (a storey's beams); a
+    sign of a wrong group or a misplaced frame otherwise, so the build
+    names the dropped elements.
+    """
+
+
 class _PanelGeometry:
     """Plane + 2-D polygon of one membrane panel, for the frame filter."""
 
@@ -1195,6 +1207,20 @@ def resolve_ladruno_membrane_context(
                     f"transfers no load. Drop it from this panel's frames=, or "
                     f"name a group (PG / label) and let the bridge keep the "
                     f"panel's own frames."
+                )
+            if not explicit and 0 < int(np.count_nonzero(inside)) < len(inside):
+                dropped = tags_arr[~inside].tolist()
+                warnings.warn(
+                    f"{_membrane_panel_name(spec)}: frames= {source}: "
+                    f"{len(dropped)} of its {len(inside)} frame element(s) do "
+                    f"not lie in this panel and are not passed to it "
+                    f"(OpenSees element(s) {dropped[:10]}"
+                    f"{' ...' if len(dropped) > 10 else ''}). Expected when "
+                    f"the group spans several panels; otherwise check that "
+                    f"those frames lie on the panel's plane, on its outer "
+                    f"boundary or inside it, and not inside a hole.",
+                    MembraneFramesFilteredWarning,
+                    stacklevel=_stacklevel_outside_package(),
                 )
             for tag in tags_arr[inside].tolist():
                 if tag not in seen_frames:

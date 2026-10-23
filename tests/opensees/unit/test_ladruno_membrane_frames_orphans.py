@@ -14,6 +14,8 @@ one out-of-plane column under (4, 0).
 """
 from __future__ import annotations
 
+import re
+import warnings
 from typing import Any, cast
 
 import numpy as np
@@ -21,6 +23,7 @@ import pytest
 
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.pg_expand import MembraneFramesFilteredWarning
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from tests.opensees.fixtures.fem_stub import (
     FEMStub,
@@ -28,6 +31,11 @@ from tests.opensees.fixtures.fem_stub import (
     _ElementsStub,
     _NodesStub,
 )
+
+# "Beams" spans both panels, so most builds here drop frames per panel by
+# design; the tests that pin that warning catch it themselves.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::apeGmsh.opensees._internal.build.pg_expand.MembraneFramesFilteredWarning")
 
 # Grid nodes: x in 0, 2, 4, 6, 8 (columns 0..4), y in 0, 2, 4 (rows 0..2).
 _XS = (0.0, 2.0, 4.0, 6.0, 8.0)
@@ -68,7 +76,10 @@ def _fem() -> FEMStub:
             "PanelA": sorted({n for q in quads(0) for n in q}),
         },
     )
-    elements = _ElementsStub(elem_pgs={
+    # PanelA's own edge beams (x <= 4), as an element label.
+    beams_a = [eid for eid, (i, j) in zip(beam_ids, beams)
+               if max(_XS[(i - 1) % 5], _XS[(j - 1) % 5]) <= 4.0]
+    elements = _ElementsStub(labels={"BeamsA": beams_a}, elem_pgs={
         "PanelA": _ElementGroupView(ids=(1, 2, 3, 4), connectivity=quads(0)),
         "PanelB": _ElementGroupView(ids=(5, 6, 7, 8), connectivity=quads(2)),
         "Beams": _ElementGroupView(ids=beam_ids, connectivity=tuple(beams)),
@@ -76,7 +87,11 @@ def _fem() -> FEMStub:
         # A beam from PanelA's interior node to a corner (used by one test).
         "Link": _ElementGroupView(ids=(302,), connectivity=((INTERIOR[0], _nid(0, 0)),)),
     })
-    return FEMStub(nodes=nodes, elements=elements)
+    fem = FEMStub(nodes=nodes, elements=elements)
+    # FEMData always carries an interface list, which the interior-node
+    # guard reads directly; the shared stub has none.
+    fem.elements.interfaces = []  # type: ignore[attr-defined]
+    return fem
 
 
 def _bridge(frames: Any = "Beams", **mem: Any) -> "tuple[apeSees, Any, list[Any]]":
@@ -165,6 +180,41 @@ class TestFrameFilter:
         ops, _beams, _mems = _bridge(frames="Col")
         with pytest.raises(BridgeError, match=r"PanelA.*none of its frames="):
             ops.build().emit(RecordingEmitter())
+
+    def test_a_partly_dropped_group_warns_naming_the_dropped_frames(self) -> None:
+        """``"Beams"`` spans both panels: each panel keeps its own 8 beams
+        and drops the other panel's 6, and the build names those 6."""
+        ops, _beams, _mems = _bridge()
+        rec = RecordingEmitter()
+        with pytest.warns(MembraneFramesFilteredWarning) as caught:
+            ops.build().emit(rec)
+        ends = _beam_ends(rec)
+        col_tag = next(t for t, (i, j) in ends.items() if COL_BASE in (i, j))
+        beam_tags = set(ends) - {col_tag}
+        a, b = _membrane_args(rec)
+        msgs = [str(w.message) for w in caught
+                if issubclass(w.category, MembraneFramesFilteredWarning)]
+        for pg, kept in (("PanelA", _frames_of(a)), ("PanelB", _frames_of(b))):
+            (msg,) = [m for m in msgs if f"pg={pg!r}" in m]
+            assert "frames= group 'Beams': 6 of its 14 frame element(s)" in msg
+            named = re.search(r"OpenSees element\(s\) \[([0-9, ]+)\]", msg)
+            assert named is not None
+            assert {int(t) for t in named.group(1).split(",")} == beam_tags - kept
+
+    def test_a_group_wholly_in_the_panel_does_not_warn(self) -> None:
+        fem = _fem()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        t = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+        ops.element.elasticBeamColumn(
+            pg="Beams", transf=t, A=0.1, E=30e6, Iz=1e-3, Iy=1e-3, G=12e6, J=1e-4)
+        ops.element.LadrunoMembrane(pg="PanelA", frames="BeamsA")
+        rec = RecordingEmitter()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", MembraneFramesFilteredWarning)
+            ops.build().emit(rec)
+        (args,) = _membrane_args(rec)
+        assert len(_frames_of(args)) == 8
 
     def test_support_nodes_keep_a_frameless_panel_legal(self) -> None:
         ops, _beams, _mems = _bridge(frames="Col", support_nodes="Corners")
