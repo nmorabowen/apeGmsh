@@ -33,21 +33,37 @@ A target counts where the emit would resolve it to the membrane
 * ``pg=`` hits a membrane declared with that same ``pg=``;
 * ``label=`` resolves to mesh cells only, and a membrane is a macro
   element with no mesh cell, so it never hits one.
+
+The module also holds :func:`guard_membrane_interior` (#2468), the other
+build-time ``LadrunoMembrane`` guard: the interior mesh nodes of a ``pg=``
+panel are not emitted, and no record may target one.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterator, Sequence
 
 from ...element.shell import LadrunoMembrane
 from ...pattern.pattern import Plain
 from ...section.plate import ElasticMembranePlateSection
+from ..types import Recorder
 from .errors import BridgeError
+from .ndf import (
+    membrane_interior_nodes,
+    validate_membrane_interior_untargeted,
+    warn_membrane_hole_nodes_free,
+)
+from .recorders import recorder_node_targets
 
 if TYPE_CHECKING:
     from ...apesees import BuiltModel
+    from ..types import Element
 
 
-__all__ = ["InertMembranePressureError", "refuse_inert_membrane_pressure"]
+__all__ = [
+    "InertMembranePressureError",
+    "guard_membrane_interior",
+    "refuse_inert_membrane_pressure",
+]
 
 
 #: Every element-load type ``Plain`` records today; an unknown one fails
@@ -202,3 +218,62 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
         "or stiffness only. A stage's s.pattern(...) counts too; label= does "
         f"not, since it resolves to mesh cells and a membrane has none.{more}"
     )
+
+
+def guard_membrane_interior(
+    bm: "BuiltModel", elements: "Sequence[Element]", *, archival: bool,
+) -> "frozenset[int]":
+    """The nodes :func:`~.ndf.membrane_interior_nodes` keeps out of
+    ``bm``'s deck, after checking that nothing targets one (#2468).
+
+    Warns on a free hole node (:func:`~.ndf.warn_membrane_hole_nodes_free`,
+    skipped for an ``archival`` emit, which never solves), then refuses
+    every record that targets an interior node
+    (:func:`~.ndf.validate_membrane_interior_untargeted`): the global and
+    staged ``fix`` / support / ``mass`` records, every ``Plain``'s loads,
+    sps and ``from_model`` cases, the broker constraints and interfaces,
+    the staged constraints, ``mass_from_model`` and the recorders' node
+    lists. Each node-emit site calls it once and skips what it returns.
+    """
+    fem = bm.fem
+    skip = membrane_interior_nodes(fem, elements)
+    if not archival:
+        warn_membrane_hole_nodes_free(fem, elements)
+    if not skip:
+        return skip
+    stages = bm.stage_records
+    # A stage-claimed Plain is in bm.primitives too: dedup by id.
+    plains_by_id: dict[int, Plain] = {id(p): p for p in _plain_patterns(bm)}
+    for st in stages:
+        for p in st.pattern_specs:
+            plains_by_id[id(p)] = p
+    plains = list(plains_by_id.values())
+    recorders = (
+        *(p for p in bm.primitives if isinstance(p, Recorder)),
+        *(r for st in stages for r in st.recorder_specs),
+    )
+    validate_membrane_interior_untargeted(
+        fem, skip,
+        fix_records=(
+            *bm.fix_records,
+            *(r for st in stages for r in st.fix_records),
+            *(r for st in stages for r in st.support_records),
+        ),
+        mass_records=(
+            *bm.mass_records,
+            *(r for st in stages for r in st.mass_records),
+        ),
+        load_records=tuple(ld for p in plains for ld in p.loads),
+        sp_records=tuple(sp for p in plains for sp in p.sps),
+        constraint_records=(
+            *fem.nodes.constraints,
+            *fem.elements.constraints,
+            *fem.elements.interfaces,
+            *(r for st in stages for r in st.stage_constraint_records),
+        ),
+        from_model_cases=tuple(c for p in plains for c in p.from_model_cases),
+        mass_from_model=bm.mass_from_model,
+        node_targets=tuple(
+            t for r in recorders for t in recorder_node_targets(r, fem)),
+    )
+    return skip

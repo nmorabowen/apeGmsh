@@ -215,6 +215,17 @@ export interface StageDef {
   bcs: BcsDef;
   /** the stage's other children (h5-schema.md, opensees 2.18.0), by name, not interpreted here */
   other: string[];
+  /** optional `/opensees/stages/stage_NNN/remove_sp` (n, 2) table of `[nodeTag, dof]` pairs */
+  removeSp?: Table | null;
+}
+
+/** Neutral-zone `/loads/{nodal,element,sp}/{case}` tables keyed by kind and case name. */
+export interface NeutralLoads {
+  nodal: Record<string, Table>;
+  element: Record<string, Table>;
+  sp: Record<string, Table>;
+  /** Optional node-side `/physical_groups/node_side/<name>/node_ids` and `/labels/node_side/<name>/node_ids` for `pg` target resolution. */
+  nodeGroups?: Record<string, number[]>;
 }
 
 /** The model-definition data of the opensees zone. */
@@ -277,6 +288,8 @@ export interface ModelFile {
   physicalGroups: Group[];
   labels: Group[];
   opensees: OpenSeesZone | null;
+  /** optional neutral `/loads/{nodal,element,sp}/{case}` tables */
+  loads?: NeutralLoads | null;
   /** the root `/sequence` zone; `absent` when the file has none */
   sequence: SequenceZone;
   /** Loud, user-visible warnings raised while reading. */

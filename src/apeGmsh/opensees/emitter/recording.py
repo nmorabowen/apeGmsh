@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, Sequence
 
+from .._internal.build.stage_validate import StageZeroLedger
 from .base import DroppedAxisGuard, command_row
 from .caps import TargetCaps
 
@@ -40,6 +41,10 @@ class RecordingEmitter:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        # The class-wide groups' fresh-stage lines a deck owes before a
+        # solve verb, recorded as the ``update_material_stage`` calls the deck
+        # emitters write for them, so a parity sweep compares like with like.
+        self._stage0 = StageZeroLedger()
 
     # -- Model -----------------------------------------------------------
     #: Mirrors the concrete emitters so a parity sweep compares like
@@ -160,6 +165,7 @@ class RecordingEmitter:
     def nDMaterial(
         self, mat_type: str, tag: int, *params: float | str
     ) -> None:
+        self._stage0.material(mat_type, tag)
         self.calls.append(("nDMaterial", (mat_type, tag, *params), {}))
 
     def section(
@@ -200,6 +206,7 @@ class RecordingEmitter:
     def element(
         self, ele_type: str, tag: int, *args: int | float | str
     ) -> None:
+        self._stage0.owed = True
         self.calls.append(("element", (ele_type, tag, *args), {}))
 
     # -- Time series -----------------------------------------------------
@@ -322,6 +329,7 @@ class RecordingEmitter:
         label: str | None = None,
         strategy: "StrategySpec | None" = None,
     ) -> int:
+        self._stage_zero()
         kwargs: dict[str, Any] = {"steps": steps, "dt": dt}
         if label is not None:
             kwargs["label"] = label
@@ -333,6 +341,7 @@ class RecordingEmitter:
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
+        self._stage_zero()
         self.calls.append(
             ("eigen", (), {"num_modes": num_modes, "solver": solver}),
         )
@@ -349,6 +358,7 @@ class RecordingEmitter:
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
     ) -> list[float]:
+        self._stage_zero()
         self.calls.append(
             ("eigen_feast", (f_min, f_max), {"certify": certify}),
         )
@@ -422,6 +432,7 @@ class RecordingEmitter:
         args: tuple[str | int, ...],
         value: float,
     ) -> None:
+        self._stage0.parameter(args)
         self.calls.append((
             "update_parameter",
             (int(pid), tuple(ele_tags), tuple(args), float(value)),
@@ -485,6 +496,11 @@ class RecordingEmitter:
         self.calls.append(("remove_element", (int(tag),), {}))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        self._stage0.user_flip(mat_tag)
         self.calls.append(
             ("update_material_stage", (int(mat_tag), int(stage)), {}),
         )
+
+    def _stage_zero(self) -> None:
+        for tag, stage in self._stage0.due():
+            self.calls.append(("update_material_stage", (tag, stage), {}))

@@ -173,14 +173,17 @@ def _labels(pr: dict) -> set[str]:
 def wip_count(prs: list[dict]) -> tuple[list[tuple[dict, str]], list[tuple[dict, str]]]:
     """Split open ``program`` PRs into (counted, excluded), each with a reason.
 
-    Excluded: labelled ``human-gate`` and green and approved (``approval_at_head``,
+    Excluded: a draft PR (maintainer ruling 2026-10-23 on #1202: drafts do not count
+    toward the cap), and a PR labelled ``human-gate`` and green and approved (``approval_at_head``,
     a Review-verdict approve on the head sha; GitHub's reviewDecision is not
-    tied to the head and main does not dismiss stale reviews). Every other PR counts, drafts too.
+    tied to the head and main does not dismiss stale reviews). Every other PR counts.
     """
     counted: list[tuple[dict, str]] = []
     excluded: list[tuple[dict, str]] = []
     for pr in prs:
-        if HUMAN_GATE not in _labels(pr):
+        if pr.get("isDraft"):
+            excluded.append((pr, "draft: does not count"))
+        elif HUMAN_GATE not in _labels(pr):
             counted.append((pr, "counts"))
         elif last_green(pr) is None:
             counted.append((pr, "human-gate but not green: counts"))

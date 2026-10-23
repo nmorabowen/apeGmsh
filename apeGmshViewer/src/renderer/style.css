@@ -41,22 +41,27 @@ option:disabled { color: var(--muted); }
 }
 #banner div + div { margin-top: 3px; }
 
-#line-diagram {
-  position: fixed; left: 16px; top: 102px; max-height: calc(55vh - 118px); overflow: auto;
+#line-diagram, #loads {
+  position: fixed; left: 16px; top: 102px; max-height: calc(52vh - 110px); overflow: auto;
   padding: 10px 12px; border-radius: 10px; min-width: 280px; max-width: 292px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#banner:not([hidden]) ~ #line-diagram {
-  top: 168px; max-height: calc(55vh - 184px);
+#banner:not([hidden]) ~ #line-diagram, #banner:not([hidden]) ~ #loads {
+  top: 168px; max-height: calc(52vh - 176px);
 }
-#line-diagram[hidden] { display: none; }
+#line-diagram:not([hidden]) ~ #loads {
+  top: 310px; max-height: calc(52vh - 190px);
+}
+#line-diagram[hidden], #loads[hidden] { display: none; }
+.loads-patterns { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.loads-pattern-title { overflow-wrap: anywhere; }
 
 #legend {
   position: fixed; left: 16px; bottom: 16px; max-height: 45vh; overflow: auto;
   padding: 10px 12px; border-radius: 10px; min-width: 200px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#legend h3, #line-diagram h3, #inspector h3 {
+#legend h3, #line-diagram h3, #loads h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
@@ -178,7 +183,7 @@ code { font-family: var(--mono); }
 .sibling { color: var(--muted); }
 .legend-row.clickable { cursor: pointer; }
 .legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
-#legend h3, #line-diagram h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+#legend h3, #line-diagram h3, #loads h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
@@ -283,6 +288,12 @@ code { font-family: var(--mono); }
 .window-row-title { font-weight: 600; }
 .window-row-decl { font: 11px var(--mono); color: var(--muted); }
 .window-row-detail { font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.window-pattern-3d {
+  margin-left: auto; padding: 1px 6px; border-radius: 4px; cursor: pointer;
+  font: 600 10.5px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.window-pattern-3d.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
 /* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
    above the inspector; it scrolls past 45 % of the rail. */
@@ -372,26 +383,26 @@ code { font-family: var(--mono); }
 .vc-projection { flex: 1 1 auto; }
 .vc-theme { flex: 0 0 auto; }
 
-/* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, and #line-diagram */
-#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child {
+/* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, #line-diagram, and #loads */
+#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child {
   cursor: pointer; user-select: none;
 }
-#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before {
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before {
   content: "\25be"; font-size: 11px; color: var(--muted);
 }
-#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before {
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before {
   color: var(--accent);
 }
-#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before, #line-diagram[data-collapsed="true"] > h3:first-child::before {
+#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before, #line-diagram[data-collapsed="true"] > h3:first-child::before, #loads[data-collapsed="true"] > h3:first-child::before {
   content: "\25b8";
 }
-#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"], #line-diagram[data-collapsed="true"] {
+#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"], #line-diagram[data-collapsed="true"], #loads[data-collapsed="true"] {
   flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
 }
-#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child, #line-diagram[data-collapsed="true"] > h3:first-child {
+#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child, #line-diagram[data-collapsed="true"] > h3:first-child, #loads[data-collapsed="true"] > h3:first-child {
   margin-bottom: 0;
 }
-#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child), #line-diagram[data-collapsed="true"] > :not(:first-child) {
+#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child), #line-diagram[data-collapsed="true"] > :not(:first-child), #loads[data-collapsed="true"] > :not(:first-child) {
   display: none;
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }

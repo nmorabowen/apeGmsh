@@ -480,6 +480,9 @@ export class ResultsHost {
       let lineDiagram: LadrunoLineStationStep | null | undefined;
       if (req.lineDiagram !== undefined) {
         if (isLadruno(rf)) {
+          // No warningsOut here (#2348): each warning this read can give (a MODEL/LOCAL_AXES group it does not read,
+          // a basicForce bucket it refuses) was given once at open, by metaOf's availableLineStations for this stage,
+          // and a malformed step LOCAL_AXES bucket is refused, not warned (#2349). Passing it would repeat them each step.
           lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
         } else {
           const v = rf.elementIndexVerdict();
