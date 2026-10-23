@@ -1023,9 +1023,10 @@ def refuse_unreplayable_streams(
         (phantom, "tie through phantom nodes the archive does not store "
                   "(#2411)"),
         (equation, "are equationConstraint lines the archive does not "
-                   "store (an archive below opensees 2.35.0 stores none, "
-                   "#2416; one below opensees 2.37.0 stores none of a "
-                   "stage-claimed tie's, #2448)"),
+                   "store (an archive written below opensees 2.35.0, or a "
+                   "to_h5 rewrite of one, stores none, #2416; one written "
+                   "below opensees 2.37.0, or a rewrite of one, stores none "
+                   "of a stage-claimed tie's, #2448)"),
     ):
         if found:
             detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
@@ -1035,6 +1036,47 @@ def refuse_unreplayable_streams(
             "Deck replay refuses this archive: it carries "
             + "; and ".join(parts) + ". The replay would run untied. Load "
             "FEMData.from_h5(path) and emit it through apeSees(fem).")
+
+
+def refuse_stage_equation_ghost_fixes(
+    *, stages: "Sequence[Any]", fixes: "Sequence[Any]", partitioned: bool,
+) -> None:
+    """Raise :class:`BridgeError` iff a partitioned archive's stage stores
+    ``equationConstraint`` rows and a ``fix`` row on one of their nodes
+    that repeats a fix written before it (the global fixes, then the
+    earlier stages').
+
+    That row is the ghost replay of the node's fix on the rank the tie
+    ghosts it on (ADR 0027 INV-2): the stage block stores it as a stage
+    fix, so the flat replay writes the node's fix twice, which the bridge's
+    flat deck does not (#2530). The refusal is narrowed to the equation
+    rows, which replayed nowhere before opensees 2.37.0; it lifts with
+    #2530. A flat archive never stores a ghost replay, so it passes.
+    """
+    if not partitioned:
+        return
+    from .build.errors import BridgeError
+
+    def _key(rec: Any) -> "tuple[int, tuple[int, ...]]":
+        return int(rec.tag), tuple(int(d) for d in rec.dofs)
+
+    earlier = {_key(r) for r in fixes}
+    for st in stages:
+        nodes = {int(n) for r in st.equation_constraints
+                 for n in (r.cnode, *(t[0] for t in r.retained))}
+        repeated = sorted({_key(r)[0] for r in st.fixes
+                           if _key(r)[0] in nodes and _key(r) in earlier})
+        if repeated:
+            raise BridgeError(
+                f"Deck replay refuses this archive: stage {st.name!r} of this "
+                "partitioned archive ties node(s) "
+                f"{repeated} with equationConstraint lines and stores a "
+                "repeat of each one's fix, the ghost replay of a rank that "
+                "does not own it, so the flat replay would fix the node "
+                "twice (#2530; this refusal lifts when #2530 is fixed). "
+                "Load FEMData.from_h5(path) and emit it through "
+                "apeSees(fem).")
+        earlier |= {_key(r) for r in st.fixes}
 
 
 def _warn_skipped_replay_streams(

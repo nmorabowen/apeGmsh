@@ -1091,10 +1091,16 @@ class OpenSeesModel:
             self._refuse_stored_solve_refusals(target)
             # A stream the replay cannot write refuses here, before any
             # emitter exists: the live one wipes the domain on creation.
-            from ._internal.compose import refuse_unreplayable_streams
+            from ._internal.compose import (
+                refuse_stage_equation_ghost_fixes,
+                refuse_unreplayable_streams,
+            )
 
             refuse_unreplayable_streams(
                 self._fem, equation_rows=self._equation_tie_rows())
+            refuse_stage_equation_ghost_fixes(
+                stages=self._stages, fixes=self._fixes,
+                partitioned=bool(self._partitions))
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":

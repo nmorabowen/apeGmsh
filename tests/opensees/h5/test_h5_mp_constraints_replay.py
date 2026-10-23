@@ -774,7 +774,12 @@ def test_a_stage_claimed_equation_tie_replays_its_lines(tmp_path):
 #: node 1, which only rank 1 holds: a partitioned stage that ghosts a fixed
 #: node re-fixes it inside the stage, and the flat replay of that archive
 #: writes the fix twice, for every MP kind (a stage equalDOF from node 1
-#: to node 4 does it on main too; #2530).
+#: to node 4 does it on main too; #2530). For the equation rows the replay
+#: refuses that archive by name (``tie_fixed_master``).
+#:
+#: ``pen_embedded`` is a penalty embedded node (an ASDEmbeddedNodeElement
+#: line): in a stage after ``tie_equation`` it pins the emit-index merge,
+#: since the bridge writes the tie's lines before the element.
 _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
     "tie_equation": ("tie", "surface_constraints", InterpolationRecord(
         kind="tie", name="st_tie", slave_node=4, master_nodes=[2, 3],
@@ -798,6 +803,13 @@ _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
         kind="distributing", name="st_top_a", slave_node=2,
         master_nodes=[3, 4], weights=np.array([0.5, 0.5]),
         dofs=[1, 2], enforce="equation")),
+    "pen_embedded": ("embedded", "surface_constraints", InterpolationRecord(
+        kind="embedded", name="st_pen", slave_node=2,
+        master_nodes=[1, 3, 4], weights=np.array([0.2, 0.4, 0.4]),
+        dofs=[1, 2, 3])),
+    "tie_fixed_master": ("tie", "surface_constraints", InterpolationRecord(
+        kind="tie", name="st_tg", slave_node=4, master_nodes=[1, 2],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")),
 }
 
 
@@ -901,6 +913,35 @@ def test_the_stage_merge_keeps_the_bridge_order(tmp_path):
     assert _mp_lines(_replay(path)) == _mp_lines(fwd)
 
 
+def test_the_stage_lines_replay_before_a_later_embedded_element(tmp_path):
+    # The bridge writes the stage's equation lines, then the penalty
+    # embedded node's element: the replay keeps that order only by the
+    # stage emit index (a merge that put the equation rows last fails).
+    fwd, path = _staged_archive("tie_equation,pen_embedded", False, tmp_path)
+    lines = _mp_lines(fwd)
+    eq = [i for i, ln in enumerate(lines) if ln.startswith("equationConstraint")]
+    el = [i for i, ln in enumerate(lines) if ln.startswith("element")]
+    assert eq and el and max(eq) < min(el), lines
+    assert _replay(path) == fwd
+
+
+def test_a_partitioned_stage_tie_that_ghosts_a_fixed_node_refuses(tmp_path):
+    # #2530: a stage tie to the fixed base node 1 ghosts it on rank 2,
+    # whose stage re-fixes it; the stage block stores that fix, so a flat
+    # replay would fix node 1 twice. The replay refuses by name; the flat
+    # archive of the same model replays exactly.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    (tmp_path / "f").mkdir()
+    (tmp_path / "p").mkdir()
+    fwd, flat = _staged_archive("tie_fixed_master", False, tmp_path / "f")
+    assert _replay(flat) == fwd
+    pfwd, part = _staged_archive("tie_fixed_master", True, tmp_path / "p")
+    assert sum(ln.startswith("fix 1 ") for ln in pfwd.splitlines()) == 1
+    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
+        OpenSeesModel.from_h5(str(part)).build("tcl", flat=True)
+
+
 def test_to_h5_rewrite_keeps_the_stage_lines(tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import open as open_h5
 
@@ -975,8 +1016,27 @@ def test_a_pre_2_37_stage_claimed_tie_still_refuses(stages, tmp_path):
     assert "below opensees 2.37.0" in msg
 
 
+def test_a_rewrite_of_a_pre_2_37_stage_tie_archive_still_refuses(tmp_path):
+    # The to_h5 rewrite is stamped 2.37.0 but holds no line the source did
+    # not store, so its replay refuses too, and the reason names a rewrite.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    _fwd, path = _staged_archive("tie_equation", False, tmp_path)
+    _as_pre_2_37(path)
+    rewrite = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        OpenSeesModel.from_h5(str(path)).to_h5(str(rewrite))
+    with pytest.raises(BridgeError) as caught:
+        OpenSeesModel.from_h5(str(rewrite)).build("tcl", flat=True)
+    msg = str(caught.value)
+    assert "tie (enforce='equation'): 1" in msg
+    assert "below opensees 2.37.0, or a rewrite of one" in msg
+
+
 @pytest.mark.parametrize("damage", ["below_2_37", "seq_length",
-                                    "seq_missing", "zero_coef"])
+                                    "seq_missing", "rows_missing",
+                                    "zero_coef"])
 def test_a_malformed_stage_store_raises(damage, tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
     from tests.fixtures.schema import (
@@ -995,6 +1055,8 @@ def test_a_malformed_stage_store_raises(damage, tmp_path):
             cons.create_dataset("equationConstraint_emit_index", data=seq)
         elif damage == "seq_missing":
             del cons["equationConstraint_emit_index"]
+        elif damage == "rows_missing":
+            del cons["equationConstraint"]
         else:
             coef = cons["equationConstraint/ret_coef"][()]
             coef[0] = 0.0
