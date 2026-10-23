@@ -20,12 +20,11 @@ from apeGmsh.results import (
     BeamSpanSegmentLoad,
     ElementSlab,
     LineStationSlab,
-     parse_ele_load_beam_uniform,
+    parse_ele_load_beam_uniform,
     parse_membrane_subsegment_loads,
     reconstruct_beam_element_diagram,
     reconstruct_beam_span_diagrams,
 )
-
 
 # ===========================================================================
 # Helpers: Exact Hermite Fixed-End Forces for Partial Trapezoidal Load
@@ -199,13 +198,24 @@ class TestOracle1PartialTrapezoidalBeams:
         assert diag.N[-1] == pytest.approx(n_j, abs=1e-12)
         assert diag.Vy[0] == pytest.approx(vy_i, abs=1e-12)
         assert diag.Vy[-1] == pytest.approx(-vy_j, abs=1e-12)
-        assert diag.Vz[0] == pytest.approx(vz_i, abs=1e-12)
-        assert diag.Vz[-1] == pytest.approx(-vz_j, abs=1e-12)
+        assert diag.Vz[0] == pytest.approx(-vz_i, abs=1e-12)
+        assert diag.Vz[-1] == pytest.approx(vz_j, abs=1e-12)
         assert np.allclose(diag.T, -t_i, atol=1e-12)
         assert diag.Mz[0] == pytest.approx(-mz_i, abs=1e-12)
         assert diag.Mz[-1] == pytest.approx(mz_j, abs=1e-12)
         assert diag.My[0] == pytest.approx(-my_i, abs=1e-12)
         assert diag.My[-1] == pytest.approx(my_j, abs=1e-12)
+
+        # Differential relations dVz/dx = -wz(x) and dMy/dx = +Vz(x) inside each sub-interval
+        dx = np.diff(diag.x)
+        x_mid = 0.5 * (diag.x[:-1] + diag.x[1:])
+        wz_mid = _eval_piecewise_load(x_mid, L, [seg], "wza", "wzb")
+        dvz_dx = np.diff(diag.Vz) / dx
+        assert np.max(np.abs(dvz_dx - (-wz_mid))) < 1e-12
+        kz_mid = np.where((x_mid > a) & (x_mid < b), (wzb - wza) / (b - a), 0.0)
+        vz_avg_exact = 0.5 * (diag.Vz[:-1] + diag.Vz[1:]) + (1.0 / 12.0) * kz_mid * (dx ** 2)
+        dmy_dx = np.diff(diag.My) / dx
+        assert np.max(np.abs(dmy_dx - vz_avg_exact)) < 1e-12
 
         # Interior shear root for Vy(x*) = 0
         # Inside [1.5, 4.5], Vy(1.5 + xi) = vy_i - 10*xi - (10/3)*xi^2 = 0
@@ -222,6 +232,22 @@ class TestOracle1PartialTrapezoidalBeams:
             + (1.0 / 6.0) * ((wyb - wya) / (b - a)) * (xi_y_star ** 3)
         )
         assert abs(diag.Mz[idx_y] - mz_star_exact) / abs(mz_star_exact) < 1e-12
+
+        # Interior shear root for Vz(x*) = 0
+        # Inside [1.5, 4.5], Vz(1.5 + xi) = -vz_i - 15*xi + (20/3)*xi^2 = 0
+        xi_z_star = (15.0 + math.sqrt(225.0 + 4.0 * (20.0 / 3.0) * vz_i)) / (2.0 * (20.0 / 3.0))
+        x_z_star = a + xi_z_star
+        idx_z = int(np.argmin(np.abs(diag.x - x_z_star)))
+        assert abs(diag.x[idx_z] - x_z_star) < 1e-12
+        assert abs(diag.Vz[idx_z]) < 1e-12
+
+        my_star_exact = (
+            -my_i
+            - vz_i * x_z_star
+            - 0.5 * wza * (xi_z_star ** 2)
+            - (1.0 / 6.0) * ((wzb - wza) / (b - a)) * (xi_z_star ** 3)
+        )
+        assert abs(diag.My[idx_z] - my_star_exact) / abs(my_star_exact) < 1e-12
 
 
 # ===========================================================================
@@ -354,7 +380,18 @@ def _single_beam_fem(length: float = 6.0, fem_eid: int = 10) -> FEMData:
                 "node_coords": coords,
             },
         }),
-        labels=LabelSet({}),
+        labels=LabelSet({
+            (0, 1): {
+                "name": "EndI",
+                "node_ids": node_ids[:1],
+                "node_coords": coords[:1],
+            },
+            (0, 2): {
+                "name": "EndJ",
+                "node_ids": node_ids[1:],
+                "node_coords": coords[1:],
+            },
+        }),
     )
     elements = ElementComposite(
         groups={1: line_group},
@@ -579,9 +616,10 @@ class TestOracle3EleLoadParsingAndModelIntegration:
         and non-final step selection (step=0 vs step=1).
         """
         fem = _single_beam_fem(length=4.0, fem_eid=1)
-        # Step 0 has load w_z = -12 kN/m uniform on L=4m -> Vz(0) = +24, Vz(L) = -24,
-        # My(0) = 0, My(L) = 0, My(2.0) = -24.0 kN*m (since dMy/dx = -Vz(x)).
-        # Step 1 has double the load (w_z = -24 kN/m -> Vz(0) = +48, Vz(L) = -48).
+        # Step 0 has load w_z = -12 kN/m uniform on L=4m -> Vz_I = +24, Vz_J = +24,
+        # so catalog section-force Vz(0) = -24, Vz(L) = +24,
+        # My(0) = 0, My(L) = 0, My(2.0) = -24.0 kN*m (since dMy/dx = +Vz(x)).
+        # Step 1 has double the load (w_z = -24 kN/m -> Vz(0) = -48, Vz(L) = +48).
         # Also reverse station_natural_coord = [+1.0, -1.0] to verify sorting!
         t_arr = np.array([0.5, 1.0])
         eidx = np.array([1, 1], dtype=np.int64)
@@ -603,9 +641,9 @@ class TestOracle3EleLoadParsingAndModelIntegration:
             ),
             "shear_z": LineStationSlab(
                 component="shear_z",
-                # At xi=+1 (first col): Vz(L) = -24 (step 0), -48 (step 1)
-                # At xi=-1 (second col): Vz(0) = +24 (step 0), +48 (step 1)
-                values=np.array([[-24.0, 24.0], [-48.0, 48.0]]),
+                # At xi=+1 (first col): Vz(L) = +24 (step 0), +48 (step 1)
+                # At xi=-1 (second col): Vz(0) = -24 (step 0), -48 (step 1)
+                values=np.array([[24.0, -24.0], [48.0, -48.0]]),
                 element_index=eidx,
                 station_natural_coord=xi_rev,
                 time=t_arr,
@@ -640,13 +678,213 @@ class TestOracle3EleLoadParsingAndModelIntegration:
         d0 = diags_s0[1]
         assert d0.N[0] == pytest.approx(10.0, abs=1e-12)
         assert d0.T[0] == pytest.approx(5.0, abs=1e-12)
-        assert d0.Vz[0] == pytest.approx(24.0, abs=1e-12)
-        assert d0.Vz[-1] == pytest.approx(-24.0, abs=1e-12)
+        assert d0.Vz[0] == pytest.approx(-24.0, abs=1e-12)
+        assert d0.Vz[-1] == pytest.approx(24.0, abs=1e-12)
         assert d0.My[0] == pytest.approx(0.0, abs=1e-12)
         assert d0.My[-1] == pytest.approx(0.0, abs=1e-12)
         idx_mid = int(np.argmin(np.abs(d0.x - 2.0)))
         assert d0.Vz[idx_mid] == pytest.approx(0.0, abs=1e-12)
         assert d0.My[idx_mid] == pytest.approx(-24.0, rel=1e-12)
+
+    def test_catalog_station_signs_and_line_stations_roundtrip_parity(self) -> None:
+        """Verify that reconstruct_beam_element_diagram endpoints and the
+        LineStationSlab fallback in reconstruct_beam_span_diagrams agree with
+        _LOCAL_FORCE_END_I_SIGN / local_force_station_signs across all 6 3D
+        components (N, Vy, Vz, T, My, Mz), including a 3D cantilever tip load
+        and a 3D partial trapezoidal load.
+        """
+        from apeGmsh.opensees._response_catalog import (
+            _LOCAL_FORCE_END_I_SIGN,
+            local_force_station_signs,
+        )
+
+        assert _LOCAL_FORCE_END_I_SIGN["shear_z"] == -1.0
+        assert _LOCAL_FORCE_END_I_SIGN["bending_moment_y"] == -1.0
+
+        comps_3d = (
+            "axial_force",
+            "shear_y",
+            "shear_z",
+            "torsion",
+            "bending_moment_y",
+            "bending_moment_z",
+        )
+        signs = local_force_station_signs(comps_3d)  # shape (2, 6)
+
+        # 1. 3D cantilever (L = 4 m) with tip load (Fx, Fy, Fz, Mx) = (1, 2, 3, 0.4) at node j:
+        # localForce = [N_i, Vy_i, Vz_i, T_i, My_i, Mz_i, N_j, Vy_j, Vz_j, T_j, My_j, Mz_j]
+        L_cant = 4.0
+        lf_cant = np.array(
+            [-1.0, -2.0, -3.0, -0.4, 12.0, -8.0, 1.0, 2.0, 3.0, 0.4, 0.0, 0.0],
+            dtype=np.float64,
+        )
+        diag_cant = reconstruct_beam_element_diagram(1, L_cant, lf_cant, n_sub=4)
+        expected_i = signs[0] * lf_cant[:6]
+        expected_j = signs[1] * lf_cant[6:]
+        got_i = np.array(
+            [
+                diag_cant.N[0],
+                diag_cant.Vy[0],
+                diag_cant.Vz[0],
+                diag_cant.T[0],
+                diag_cant.My[0],
+                diag_cant.Mz[0],
+            ]
+        )
+        got_j = np.array(
+            [
+                diag_cant.N[-1],
+                diag_cant.Vy[-1],
+                diag_cant.Vz[-1],
+                diag_cant.T[-1],
+                diag_cant.My[-1],
+                diag_cant.Mz[-1],
+            ]
+        )
+        np.testing.assert_allclose(got_i, expected_i, atol=1e-12)
+        np.testing.assert_allclose(got_j, expected_j, atol=1e-12)
+        # Closed-form section forces along cantilever: Vz(x) = +3.0, My(x) = -3.0*(4 - x) -> dMy/dx = +Vz
+        np.testing.assert_allclose(diag_cant.Vz, 3.0, atol=1e-12)
+        np.testing.assert_allclose(diag_cant.My, -3.0 * (L_cant - diag_cant.x), atol=1e-12)
+        np.testing.assert_allclose(
+            np.diff(diag_cant.My) / np.diff(diag_cant.x), diag_cant.Vz[:-1], atol=1e-12,
+        )
+
+        # 2. 3D span with distributed load: localForce path and catalog-signed LineStationSlab
+        # path must reconstruct the exact same N, Vy, Vz, T, My, Mz arrays.
+        L = 4.0
+        fem = _single_beam_fem(length=L, fem_eid=1)
+        seg = BeamSpanSegmentLoad(
+            aL=0.0, bL=1.0, wya=-6.0, wyb=-6.0, wza=-12.0, wzb=-12.0, wxa=4.0, wxb=4.0,
+        )
+        lf_ss = np.array(
+            [-16.0, 12.0, 24.0, -5.0, 0.0, 0.0, 0.0, 12.0, 24.0, 5.0, 0.0, 0.0],
+            dtype=np.float64,
+        )
+        t_arr = np.array([1.0])
+        eids = np.array([1], dtype=np.int64)
+        res_lf = _StubResults(
+            fem=fem,
+            model=None,
+            slabs={
+                "localForce": ElementSlab(
+                    component="localForce",
+                    values=lf_ss.reshape(1, 1, 12),
+                    element_ids=eids,
+                    time=t_arr,
+                ),
+            },
+        )
+        ls_slabs = {
+            comp: LineStationSlab(
+                component=comp,
+                values=np.array([[signs[0, k] * lf_ss[k], signs[1, k] * lf_ss[6 + k]]]),
+                element_index=np.array([1, 1], dtype=np.int64),
+                station_natural_coord=np.array([-1.0, 1.0]),
+                time=t_arr,
+            )
+            for k, comp in enumerate(comps_3d)
+        }
+        res_ls = _StubResults(fem=fem, model=None, slabs={}, line_station_slabs=ls_slabs)
+
+        d_lf = reconstruct_beam_span_diagrams(
+            cast("Any", res_lf), subsegment_loads={1: [seg]}, n_sub=4,
+        )[1]
+        d_ls = reconstruct_beam_span_diagrams(
+            cast("Any", res_ls), subsegment_loads={1: [seg]}, n_sub=4,
+        )[1]
+        for attr in ("x", "N", "Vy", "Vz", "T", "My", "Mz"):
+            np.testing.assert_allclose(
+                getattr(d_ls, attr), getattr(d_lf, attr), atol=1e-12, err_msg=attr,
+            )
+
+    @pytest.mark.live
+    def test_live_opensees_3d_beam_uniform_wz_section_force_oracle(self) -> None:
+        """Live OpenSees oracle: 3D forceBeamColumn (5-point Lobatto, Aggregator
+        with Vy and Vz) under 3D -beamUniform (wy=-6, wz=-12, wx=4).
+        Reconstructed N, Vy, Vz, T, Mz, My must match OpenSees 'section force'
+        at all 5 Gauss-Lobatto stations for both simply supported and cantilever BCs.
+        """
+        pytest.importorskip("openseespy.opensees")
+        from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+        L = 4.0
+        wy, wz, wx = -6.0, -12.0, 4.0
+        xi_lobatto_5 = np.array([-1.0, -math.sqrt(3.0 / 7.0), 0.0, math.sqrt(3.0 / 7.0), 1.0])
+        x_lobatto_5 = 0.5 * (xi_lobatto_5 + 1.0) * L
+        a1, a3 = float(x_lobatto_5[1] / L), float(x_lobatto_5[3] / L)
+        segs = [
+            BeamSpanSegmentLoad(aL=0.0, bL=a1, wya=wy, wyb=wy, wza=wz, wzb=wz, wxa=wx, wxb=wx),
+            BeamSpanSegmentLoad(aL=a1, bL=a3, wya=wy, wyb=wy, wza=wz, wzb=wz, wxa=wx, wxb=wx),
+            BeamSpanSegmentLoad(aL=a3, bL=1.0, wya=wy, wyb=wy, wza=wz, wzb=wz, wxa=wx, wxb=wx),
+        ]
+
+        for bc in ("ss", "cantilever"):
+            fem = _single_beam_fem(length=L, fem_eid=10)
+            ops = apeSees(cast("Any", fem))
+            ops.model(ndm=3, ndf=6)
+            transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+            shear_mat = ops.uniaxialMaterial.ElasticMaterial(E=1e9)
+            base_sec = ops.section.Elastic(
+                E=200e9, A=0.01, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+            )
+            agg_sec = ops.section.Aggregator(
+                materials_by_dof={"Vy": shear_mat, "Vz": shear_mat},
+                base_section=base_sec,
+            )
+            integ = ops.beamIntegration.Lobatto(section=agg_sec, n_ip=5)
+            ops.element.forceBeamColumn(pg="Beams", transf=transf, integration=integ)
+            if bc == "ss":
+                ops.fix(label="EndI", dofs=(1, 1, 1, 1, 0, 0))
+                ops.fix(label="EndJ", dofs=(0, 1, 1, 0, 0, 0))
+            else:
+                ops.fix(label="EndI", dofs=(1, 1, 1, 1, 1, 1))
+            with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+                p.beam_uniform(pg="Beams", wy=wy, wz=wz, wx=wx)
+            ops.constraints.Plain()
+            ops.numberer.Plain()
+            ops.system.UmfPack()
+            ops.test.NormUnbalance(tol=1e-12, max_iter=10)
+            ops.algorithm.Newton()
+            ops.integrator.LoadControl(dlam=1.0)
+            ops.analysis.Static()
+
+            emitter = LiveOpsEmitter(wipe=True)
+            ops.build().emit(emitter)
+            assert emitter.analyze(steps=1) == 0
+
+            # Tag of the forceBeamColumn element
+            ele_tags = emitter.ops.getEleTags()
+            assert len(ele_tags) == 1
+            etag = int(ele_tags[0])
+            lf = np.asarray(emitter.ops.eleResponse(etag, "localForce"), dtype=np.float64)
+            sec_forces = np.array(
+                [
+                    emitter.ops.eleResponse(etag, "section", str(s), "force")
+                    for s in range(1, 6)
+                ],
+                dtype=np.float64,
+            )
+            # Aggregator section force order: [P, Mz, My, T, Vy, Vz]
+            diag = reconstruct_beam_element_diagram(10, L, lf, loads=segs, n_sub=4)
+            np.testing.assert_allclose(
+                np.interp(x_lobatto_5, diag.x, diag.N), sec_forces[:, 0], atol=1e-9, err_msg=f"{bc} N",
+            )
+            np.testing.assert_allclose(
+                np.interp(x_lobatto_5, diag.x, diag.Mz), sec_forces[:, 1], atol=1e-9, err_msg=f"{bc} Mz",
+            )
+            np.testing.assert_allclose(
+                np.interp(x_lobatto_5, diag.x, diag.My), sec_forces[:, 2], atol=1e-9, err_msg=f"{bc} My",
+            )
+            np.testing.assert_allclose(
+                np.interp(x_lobatto_5, diag.x, diag.T), sec_forces[:, 3], atol=1e-9, err_msg=f"{bc} T",
+            )
+            np.testing.assert_allclose(
+                np.interp(x_lobatto_5, diag.x, diag.Vy), sec_forces[:, 4], atol=1e-9, err_msg=f"{bc} Vy",
+            )
+            np.testing.assert_allclose(
+                np.interp(x_lobatto_5, diag.x, diag.Vz), sec_forces[:, 5], atol=1e-9, err_msg=f"{bc} Vz",
+            )
 
     def test_fem_eid_and_ops_tag_collision_isolation(self, tmp_path: Path) -> None:
         """Regression test: when fem_eids = [1, 2] (with lengths 4.0 m and 6.0 m)

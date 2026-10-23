@@ -110,9 +110,10 @@ def test_live_emitter_refuses_ladruno_force_beam_column_on_stock() -> None:
 
 @pytest.mark.ladruno_fork
 def test_ladruno_force_beam_column_cantilever_matches_closed_form_on_fork() -> None:
-    """Fork side of LadrunoForceBeamColumn's warrant row (roster D11)."""
-    if not _build_knows_ladruno_force_beam_column():
-        pytest.skip("fork build predates LadrunoForceBeamColumn (ELE_TAG = 33024)")
+    """Fork side of LadrunoForceBeamColumn's warrant row (roster D11).
+
+    Runs unconditionally: ``FORK_PIN`` ladruno-v20261023 has the class, so a
+    build that lacks it fails this test instead of skipping it (#2498)."""
     fx = 10e3
     L = 3.0
     E = 30e9

@@ -33,6 +33,15 @@ class FakeOps:
         self.retained: dict[int, list[int]] = {}
         self.disp: dict[int, list[float]] = {n: [0.0] * ndf for n in self.nodes}
         self.incr: dict[int, list[float]] = {}   # trial - committed per node
+        self.n_eq = 0                 # EQ constraints printModel reports
+        self.print_eq_line = True
+
+    def printModel(self, flag: str, path: str) -> None:
+        assert flag == "-file"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("MP_Constraints: numConstraints: 0\n")
+            if self.print_eq_line:
+                fh.write(f"EQ_Constraints: numConstraints: {self.n_eq}\n")
 
     def getNodeTags(self) -> list[int]:
         return list(self.nodes)
@@ -132,6 +141,32 @@ def test_mp_constraint_across_the_cut_refuses() -> None:
     B.StoryForces((0.0, 3.0), ops=_mod(fake))
 
 
+def test_an_eq_constraint_anywhere_refuses_the_story_cut() -> None:
+    fake = FakeOps()
+    _column_forces(fake, np.ones(3), np.zeros(3))
+    B.StoryForces((0.0, 3.0), ops=_mod(fake))
+    fake.n_eq = 2
+    with pytest.raises(BridgeError, match="2 EQ constraint"):
+        B.StoryForces((0.0, 3.0), ops=_mod(fake))
+
+
+class EqBuild(FakeOps):
+    """A build with the ``equationConstraint`` command."""
+
+    def equationConstraint(self, *args: Any) -> None:
+        raise AssertionError("not called")
+
+
+def test_an_unreadable_eq_count_refuses_when_the_build_has_eq() -> None:
+    fake = EqBuild()
+    fake.print_eq_line = False
+    with pytest.raises(BridgeError, match="EQ constraint count"):
+        B.StoryForces((0.0, 3.0), ops=_mod(fake))
+    old = FakeOps()                       # openseespy < 3.8: no EQ at all
+    old.print_eq_line = False
+    B.StoryForces((0.0, 3.0), ops=_mod(old))
+
+
 @pytest.mark.parametrize("levels", [(0.0,), (0.0, 0.0), (3.0, 1.0), (0.0, float("nan"))])
 def test_levels_are_checked(levels: tuple[float, ...]) -> None:
     with pytest.raises(ValueError, match="levels"):
@@ -176,6 +211,58 @@ def test_story_displacements_joints_points_and_story_max() -> None:
     np.testing.assert_allclose(p(_mod(fake)), [0.01, 0.08])
 
 
+def test_a_drift_story_without_a_joint_refuses_naming_it() -> None:
+    """Level 6 holds only an offset column top at x = 2: no node of it
+    lies over a level-3 node, so story 2 has no joint."""
+    fake = FakeOps()
+    fake.nodes[5] = [2.0, 0.0, 6.0]
+    fake.eles[4] = [4, 5]
+    fake.disp[5] = [0.49 * 3.0, 0, 0, 0, 0, 0]
+    with pytest.raises(BridgeError, match="story 'Story2' has no joint"):
+        B.StoryDrifts((0.0, 3.0, 6.0), ops=_mod(fake))
+    # a point read still answers, and the story is not zero
+    d = B.StoryDrifts((0.0, 3.0, 6.0), points=[(2.0, 0.0)], method="nearest",
+                      max_offset=2.0, ops=_mod(fake))
+    assert d.table(ops=_mod(fake)).row("Story2:P0")[0] == pytest.approx(0.49)
+
+
+def _rotated_level(xs: tuple[float, ...], x0: float, theta: float) -> FakeOps:
+    """Joints at ``x`` (y = 0) on z = 0 (fixed) and z = 3, the top level
+    rotated rigidly by ``theta`` about the plan point ``(x0, 0)``."""
+    fake = FakeOps()
+    fake.nodes = {}
+    fake.eles = {}
+    fake.disp = {}
+    for k, x in enumerate(xs):
+        fake.nodes[1 + k] = [x, 0.0, 0.0]
+        fake.disp[1 + k] = [0.0] * 6
+        fake.nodes[101 + k] = [x, 0.0, 3.0]
+        fake.disp[101 + k] = [0.0, theta * (x - x0), 0, 0, 0, theta]
+    return fake
+
+
+@pytest.mark.parametrize(("xs", "x0", "ratio"), [
+    # rotation about one end: the extreme points move 0 and 10 theta, so
+    # ASCE's average is 5 theta and max/avg = 2.0 (a mean over the five
+    # joints gives 10 / 2.12 = 4.72)
+    ((0.0, 0.1, 0.2, 0.3, 10.0), 0.0, 2.0),
+    # about an interior point: the ends move -2 and +8 theta, avg 5 theta
+    ((0.0, 2.0, 10.0), 2.0, 1.6),
+])
+def test_story_average_is_the_asce_extreme_point_average(
+        xs: tuple[float, ...], x0: float, ratio: float) -> None:
+    theta = 1e-3
+    fake = _rotated_level(xs, x0, theta)
+    u = B.StoryDisplacements((0.0, 3.0), ops=_mod(fake)).story_max(ops=_mod(fake))
+    max_y, avg_y = u.row("Story1")[[1, 3]]
+    assert max_y == pytest.approx(theta * max(abs(x - x0) for x in xs))
+    assert max_y / avg_y == pytest.approx(ratio)
+    d = B.StoryDrifts((0.0, 3.0), ops=_mod(fake)).story_max(ops=_mod(fake))
+    drift_y, davg_y = d.row("Story1")[[1, 3]]
+    assert drift_y == pytest.approx(max_y / 3.0)
+    assert drift_y / davg_y == pytest.approx(ratio)
+
+
 def test_story_table_accessors() -> None:
     t = B.StoryTable(("a", "b"), ("X", "Y"), np.array([[1.0, 2.0], [3.0, 4.0]]))
     np.testing.assert_array_equal(t.column("Y"), [2.0, 4.0])
@@ -191,6 +278,29 @@ def test_pier_from_pg_under_fem_element_tags() -> None:
     assert pier == B.Pier("Wall1", (7, 8), axis2=(1.0, 0.0))
     with pytest.raises(ValueError, match="empty"):
         B.Pier("W", ())
+
+
+def test_pier_from_pg_through_the_live_read_session() -> None:
+    """Under non-``fem`` element tags the FEM ids go through the bridge's
+    read session: ids 7, 8 were emitted as OpenSees elements 100, 101."""
+    from apeGmsh.opensees._internal.build.pg_expand import ElementPlanRows
+    from apeGmsh.opensees._readback import ReadSession
+    from apeGmsh.opensees.emitter.live import domain_epoch
+
+    sel = SimpleNamespace(ids=[8, 7])
+    fem = SimpleNamespace(elements=SimpleNamespace(select=lambda pg: sel))
+    rows = ElementPlanRows(np.array([7, 8, 9], dtype=np.int64),
+                           np.array([[1, 2], [2, 3], [3, 4]], dtype=np.int64),
+                           tag_start=100)
+    session = ReadSession(emitter=cast(Any, None), ndm=3, epoch=domain_epoch(),
+                          element_plan=((cast(Any, "spec"), rows),))
+    bridge = SimpleNamespace(fem=fem, _element_tags="sequential",
+                             _read_state=session)
+    pier = B.Pier.from_pg(cast(Any, bridge), "Wall1", name="W")
+    assert pier == B.Pier("W", (101, 100))
+    bridge._read_state = None                     # no live analyze yet
+    with pytest.raises(BridgeError, match="no live analyze"):
+        B.Pier.from_pg(cast(Any, bridge), "Wall1")
 
 
 def test_levels_from_pgs() -> None:
