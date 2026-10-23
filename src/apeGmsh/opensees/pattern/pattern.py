@@ -582,6 +582,13 @@ class Plain(Pattern):
                 )
             )
             return
+        # A bool is an Integral (True would emit 1.0) and a str would
+        # float() quietly; refuse both, as ele= refuses a bool tag.
+        if isinstance(pressure, bool) or not isinstance(pressure, numbers.Real):
+            raise ValueError(
+                "Plain.surface_load: pressure must be a real number, got "
+                f"{pressure!r} ({type(pressure).__name__})."
+            )
         q = float(pressure)
         if not math.isfinite(q):
             raise ValueError(
@@ -604,6 +611,21 @@ class Plain(Pattern):
                         "which another element reads as a beam load); got "
                         f"{item!r}. Pass the membrane handle."
                     )
+            # The fork adds one -beamUniform per listed tag, so a repeated
+            # handle loads that panel twice. Refused rather than deduplicated:
+            # a repeat is a mapping error (one panel assigned twice in a load
+            # set), and dropping it silently would hide which of q or 2q the
+            # caller meant. Two loads on one panel stay expressible as two
+            # surface_load calls.
+            seen: set[int] = set()
+            for item in target:
+                if id(item) in seen:
+                    raise ValueError(
+                        "Plain.surface_load(pressure=...): ele= lists "
+                        f"{item!r} more than once, which would apply its "
+                        "pressure once per listing. List each membrane once."
+                    )
+                seen.add(id(item))
         self._ele_loads_.append(
             _EleLoadRecord(
                 load_type="membranePressure",
@@ -859,11 +881,6 @@ class Plain(Pattern):
                 )
             elif erec.load_type == "surfaceLoad":
                 emitter.eleLoad("-ele", *ele_tags, "-type", "-surfaceLoad")
-            elif erec.load_type == "membranePressure":
-                emitter.eleLoad(
-                    "-ele", *ele_tags, "-type", "-beamUniform",
-                    *_membrane_pressure_args(erec, ndm),
-                )
             elif erec.load_type == "selfWeight":
                 emitter.eleLoad(
                     "-ele",
@@ -871,6 +888,15 @@ class Plain(Pattern):
                     "-type",
                     "-selfWeight",
                     *_self_weight_args(erec, ndm),
+                )
+            else:
+                # membranePressure lands here: only the bridge can check
+                # that a tag is a LadrunoMembrane, and on anything else
+                # its -beamUniform is a beam load.
+                raise NotImplementedError(
+                    f"Plain._emit: a {erec.load_type!r} element load is "
+                    "resolved by the bridge build pipeline only. Emit via "
+                    "the bridge (ops.tcl/py/build), not the primitive directly."
                 )
         emitter.pattern_close()
 
