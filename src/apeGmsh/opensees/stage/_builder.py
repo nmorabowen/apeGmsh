@@ -1205,6 +1205,10 @@ class _StageBuilder:
 
         bridge = self._bridge
         fem = bridge.fem
+
+        def fanout_of(spec: Element) -> "Callable[[], Iterable[int]]":
+            return lambda: expand_spec_to_elements(fem, spec).eids
+
         nd_class: dict[int, str] = {}
         seen: set[int] = set()
         frontier: list[Primitive] = list(bridge._primitives)
@@ -1249,8 +1253,7 @@ class _StageBuilder:
                 nd_tags=frozenset(nd_tags),
                 dep_classes=frozenset(dep_classes), blind=tuple(blind),
                 first_only={t: frozenset(v) for t, v in first_only.items()},
-                fanout=lambda spec=spec: expand_spec_to_elements(
-                    fem, spec).eids,
+                fanout=fanout_of(spec),
             ))
         target = bridge.opensees
         return RouteModel(
