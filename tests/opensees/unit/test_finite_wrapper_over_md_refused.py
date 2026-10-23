@@ -1,11 +1,12 @@
-"""#2502: a finite-strain lift over a SANISAND inner is refused at declaration.
+"""#2502: a finite-strain lift over an inner the fork cannot type is refused.
 
 The fork's ``LogStrain`` / ``LogStrain2D`` ask their inner for
 ``getType()`` at the wrapper's ``nDMaterial`` line. ``ManzariDafalias``,
-``LadrunoSANISAND`` and ``SAniSandMS`` do not implement it, so the fork
-exits the process there (rc 255, ``<Class>::getType -- subclass
-responsibility``; #2499). The bridge refuses exactly those pairs, by name,
-through :data:`~apeGmsh.opensees.material.nd.FINITE_LIFT_ABORTING_INNERS`.
+``LadrunoSANISAND``, ``SAniSandMS`` and ``DruckerPrager`` do not implement
+it, so the fork exits the process there (rc 255, ``<Class>::getType --
+subclass responsibility``; #2499). The bridge refuses exactly those pairs,
+by name, through
+:data:`~apeGmsh.opensees.material.nd.FINITE_LIFT_ABORTING_INNERS`.
 
 Two layers:
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -30,11 +32,12 @@ import pytest
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
-from apeGmsh.opensees.material import nd
 from apeGmsh.opensees.material.nd import (
     FINITE_LIFT_ABORTING_INNERS,
+    DruckerPrager,
     ElasticIsotropic,
     InitDefGrad,
+    LadrunoJ2,
     LadrunoSANISAND,
     LogStrain,
     LogStrain2D,
@@ -55,6 +58,12 @@ _GORINI: dict[str, float] = {
 _MD_KW: dict[str, float] = {**_GORINI, "z_max": 12.5, "cz": 1100.0}
 _MS_KW: dict[str, float] = {**_GORINI, "zeta": 0.0005, "mu0": 0.26,
                             "beta": 1.0}
+#: Elastic over the probe's strain path (sigmaY far above the stresses).
+_DP_KW: dict[str, float] = {
+    "K": 80.0e6, "G": 60.0e6, "sigmaY": 2.0e7, "rho": 0.0, "rhoBar": 0.0,
+    "Kinf": 0.0, "Ko": 0.0, "delta1": 0.0, "delta2": 0.0, "H": 0.0,
+    "theta": 1.0,
+}
 
 
 def _leaf(name: str) -> NDMaterial:
@@ -64,17 +73,25 @@ def _leaf(name: str) -> NDMaterial:
         return LadrunoSANISAND(**_MD_KW)
     if name == "SAniSandMS":
         return SAniSandMS(**_MS_KW)
+    if name == "DruckerPrager":
+        return DruckerPrager(**_DP_KW)
     if name == "ElasticIsotropic":
         return ElasticIsotropic(E=2.0e5, nu=0.25)
+    if name == "LadrunoJ2":
+        return LadrunoJ2(K=1.65e8, G=7.5e7, sig0=5.0e7)
     raise AssertionError(f"unknown leaf {name!r}")
 
 
-_SANDS = ("ManzariDafalias", "LadrunoSANISAND", "SAniSandMS")
-#: The fork class that prints the exit message, per inner (measured:
-#: LadrunoSANISAND exits through its ManzariDafalias base).
+#: The inners measured to abort under a direct lift, and the fork class
+#: that prints the exit message (LadrunoSANISAND exits through its
+#: ManzariDafalias base).
 _EXITS_AS = {"ManzariDafalias": "ManzariDafalias",
              "LadrunoSANISAND": "ManzariDafalias",
-             "SAniSandMS": "SAniSandMS"}
+             "SAniSandMS": "SAniSandMS",
+             "DruckerPrager": "DruckerPrager"}
+_ABORTING = tuple(_EXITS_AS)
+#: Inners measured to run under a direct lift: what the message offers.
+_RUNNING = ("ElasticIsotropic", "LadrunoJ2")
 _LIFTS = (LogStrain, LogStrain2D)
 
 
@@ -83,40 +100,59 @@ _LIFTS = (LogStrain, LogStrain2D)
 # ---------------------------------------------------------------------------
 
 
-def test_the_gate_names_exactly_the_measured_sands() -> None:
-    """The set is what the live probe measured to abort; every name is a
-    real nd class, so a typo cannot silently disarm the gate."""
-    assert FINITE_LIFT_ABORTING_INNERS == _EXITS_AS
-    for name in FINITE_LIFT_ABORTING_INNERS:
-        cls = getattr(nd, name)
-        assert isinstance(cls, type) and issubclass(cls, NDMaterial), name
+def test_the_gate_names_exactly_the_measured_inners() -> None:
+    """The table is what the live probe measured to abort."""
+    assert {c.__name__: v for c, v in FINITE_LIFT_ABORTING_INNERS.items()} \
+        == _EXITS_AS
+    for cls in FINITE_LIFT_ABORTING_INNERS:
+        assert issubclass(cls, NDMaterial), cls
 
 
-@pytest.mark.parametrize("sand", _SANDS)
+@pytest.mark.parametrize("inner", _ABORTING)
 @pytest.mark.parametrize("lift", _LIFTS, ids=lambda c: c.__name__)
-def test_a_lift_over_a_sand_is_refused_by_name(lift: type, sand: str) -> None:
+def test_a_lift_over_an_aborting_inner_is_refused_by_name(
+    lift: type, inner: str,
+) -> None:
     with pytest.raises(ValueError) as exc:
-        lift(inner=_leaf(sand))
+        lift(inner=_leaf(inner))
     msg = str(exc.value)
-    assert msg.startswith(f"{lift.__name__}: inner {sand} ")
+    assert msg.startswith(f"{lift.__name__}: inner {inner} ")
     assert "#2499" in msg
-    assert f"{_EXITS_AS[sand]}::getType -- subclass responsibility" in msg
+    assert f"{_EXITS_AS[inner]}::getType -- subclass responsibility" in msg
+    # The message offers only inners the probe runs under a lift.
+    for name in _ABORTING:
+        assert msg.count(name) == (
+            (name == inner) + (name == _EXITS_AS[inner])
+        ), (name, msg)
+    assert all(name in msg for name in _RUNNING)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _MySand(ManzariDafalias):
+    """A user subclass: still a ManzariDafalias in the fork."""
+
+
+@pytest.mark.parametrize("lift", _LIFTS, ids=lambda c: c.__name__)
+def test_a_subclass_of_an_aborting_inner_is_refused(lift: type) -> None:
+    with pytest.raises(ValueError, match=r"inner _MySand .*#2499"):
+        lift(inner=_MySand(**_MD_KW))
 
 
 def _bridge() -> apeSees:
     return apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("sand", ["ManzariDafalias", "LadrunoSANISAND"])
+@pytest.mark.parametrize("inner", ["ManzariDafalias", "LadrunoSANISAND",
+                                   "DruckerPrager"])
 @pytest.mark.parametrize("lift", ["LogStrain", "LogStrain2D"])
-def test_the_namespace_refuses_by_registered_name(lift: str, sand: str) -> None:
+def test_the_namespace_refuses_by_registered_name(lift: str, inner: str) -> None:
     """The refusal sits in the dataclass, so the namespace route (inner
     passed as its registered name) cannot reach the fork either."""
     ops = _bridge()
-    kw = _MD_KW
-    getattr(ops.nDMaterial, sand)(name="sand", **kw)
+    kw = _DP_KW if inner == "DruckerPrager" else _MD_KW
+    getattr(ops.nDMaterial, inner)(name="inner", **kw)
     with pytest.raises(ValueError, match=r"#2499"):
-        getattr(ops.nDMaterial, lift)(inner="sand")
+        getattr(ops.nDMaterial, lift)(inner="inner")
 
 
 def test_init_def_grad_over_a_lifted_sand_is_refused_at_the_lift() -> None:
@@ -126,22 +162,23 @@ def test_init_def_grad_over_a_lifted_sand_is_refused_at_the_lift() -> None:
         InitDefGrad(inner=LogStrain(inner=_leaf("ManzariDafalias")))
 
 
+@pytest.mark.parametrize("inner", _RUNNING)
 @pytest.mark.parametrize("lift", _LIFTS, ids=lambda c: c.__name__)
-def test_an_isotropic_inner_still_builds_and_emits(lift: type) -> None:
-    inner = _leaf("ElasticIsotropic")
-    mat = lift(inner=inner)
+def test_a_running_inner_still_builds_and_emits(lift: type, inner: str) -> None:
+    leaf = _leaf(inner)
+    mat = lift(inner=leaf)
     rec = RecordingEmitter()
-    set_tag_resolver(rec, lambda p: 7 if p is inner else 0)
+    set_tag_resolver(rec, lambda p: 7 if p is leaf else 0)
     mat._emit(rec, tag=12)
     assert rec.calls == [("nDMaterial", (lift.__name__, 12, 7), {})]
 
 
-@pytest.mark.parametrize("sand", _SANDS)
+@pytest.mark.parametrize("inner", _ABORTING)
 @pytest.mark.parametrize("lift", _LIFTS, ids=lambda c: c.__name__)
-def test_a_staged_sand_under_a_lift_still_builds(lift: type, sand: str) -> None:
+def test_a_staged_inner_under_a_lift_still_builds(lift: type, inner: str) -> None:
     """Only the direct inner aborts: ``StagedStrain`` answers ``getType``
     itself, and the probe runs the pair to the end at the pin."""
-    mat = lift(inner=StagedStrain(inner=_leaf(sand)))
+    mat = lift(inner=StagedStrain(inner=_leaf(inner)))
     assert isinstance(mat.inner, StagedStrain)
 
 
@@ -150,15 +187,16 @@ def test_init_def_grad_over_an_isotropic_lift_still_builds() -> None:
     assert isinstance(mat.inner, LogStrain)
 
 
-@pytest.mark.parametrize("sand", _SANDS)
-def test_init_def_grad_directly_over_a_sand_is_left_to_the_fork(
-    sand: str,
+@pytest.mark.parametrize("inner", _ABORTING)
+def test_init_def_grad_directly_over_an_aborting_inner_is_left_to_the_fork(
+    inner: str,
 ) -> None:
     """The fork refuses a small-strain inner with an error, not an exit,
     so the bridge does not add a refusal of its own (refuse what aborts,
     not more)."""
-    mat = InitDefGrad(inner=_leaf(sand))
-    assert type(mat.inner).__name__ == sand
+    mat = InitDefGrad(inner=_leaf(inner))
+    assert type(mat.inner).__name__ == inner
+
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +228,10 @@ _CHAINS: dict[str, tuple[str, int, list[Any], list[str]]] = {
                                 ["PlaneStrain", "LogStrain2D"]),
 }
 
-_LEAVES = (*_SANDS, "ElasticIsotropic")
+_LEAVES = (*_ABORTING, *_RUNNING)
 
-#: What each pair did at FORK_PIN 100eb9ae (live-fork run 39883289925):
+#: What each pair did at FORK_PIN 100eb9ae (live-fork runs 39883289925 and
+#: PROBE_RUN; the leaves in _RUNNING never abort):
 #: ``abort`` the process exits at the first wrapper line with
 #: ``<inner>::getType -- subclass responsibility``; ``refused`` the fork
 #: raises an OpenSeesError at a wrapper line (InitDefGrad wants a
@@ -211,7 +250,7 @@ _EXPECTED: dict[str, str] = {
 
 def _expected(leaf: str, chain_id: str) -> str:
     want = _EXPECTED[chain_id]
-    if leaf == "ElasticIsotropic" and want == "abort":
+    if leaf in _RUNNING and want == "abort":
         return "runs"
     return want
 
@@ -336,4 +375,4 @@ def test_the_gate_matches_the_probe_table() -> None:
     aborting = {leaf for leaf in _LEAVES
                 if _expected(leaf, "LogStrain") == "abort"
                 or _expected(leaf, "LogStrain2D") == "abort"}
-    assert aborting == set(FINITE_LIFT_ABORTING_INNERS)
+    assert aborting == {c.__name__ for c in FINITE_LIFT_ABORTING_INNERS}

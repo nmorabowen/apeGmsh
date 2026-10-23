@@ -933,7 +933,10 @@ def _wrapped_bridge(wrap: str) -> tuple[apeSees, Any]:
     if wrap == "PlaneStrain":
         outer = ops.nDMaterial.PlaneStrain(base=sand)
     elif wrap == "LogStrain":
-        outer = ops.nDMaterial.LogStrain(inner=sand)
+        # LogStrain directly over MD is refused at construction (#2499);
+        # through StagedStrain it builds, and the flip meets LogStrain.
+        outer = ops.nDMaterial.LogStrain(
+            inner=ops.nDMaterial.StagedStrain(inner=sand))
     else:
         outer = ops.nDMaterial.PlateFiber(material=sand)
     for pg in ("A", "B"):
@@ -955,9 +958,11 @@ def test_the_stage_close_and_the_deck_agree_on_a_wrapper() -> None:
             f"{ops.tag_for(sand)}") in tcl.lines()
 
 
-@pytest.mark.parametrize("wrap", ["PlateFiber"])
+@pytest.mark.parametrize("wrap", ["PlateFiber", "LogStrain"])
 def test_an_unproven_wrapper_is_refused_by_name(wrap: str) -> None:
-    """PlateFiber is not known to forward."""
+    """PlateFiber is not known to forward; LogStrain (here over
+    StagedStrain(MD), since directly over MD it is refused at
+    construction) is not measured to forward, so it stays refused."""
     ops, sand = _wrapped_bridge(wrap)
     with pytest.raises(BridgeError) as exc:
         _flip(ops, sand)
@@ -969,5 +974,10 @@ def test_log_strain_over_md_is_refused_at_construction() -> None:
     """LogStrain over ManzariDafalias ends the fork process at its
     nDMaterial line, so it is refused at construction (#2499), before
     any stage flip can route through it."""
+    ops = apeSees(_tri6_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
     with pytest.raises(ValueError, match=r"LogStrain: inner ManzariDafalias.*#2499"):
-        _wrapped_bridge("LogStrain")
+        ops.nDMaterial.LogStrain(inner=sand)

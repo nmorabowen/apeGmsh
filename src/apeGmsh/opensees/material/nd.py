@@ -3355,25 +3355,27 @@ class LadrunoJ2Finite(NDMaterial):
 
 #: Inner classes over which the fork's ``LogStrain`` / ``LogStrain2D`` end
 #: the OpenSees process. The wrapper's ``nDMaterial`` line asks the
-#: inner for ``getType()``; these SANISAND classes do not implement it, so
-#: the ``NDMaterial`` base prints ``<Class>::getType -- subclass
-#: responsibility`` and exits (rc 255), taking an in-process session with
-#: it. Measured per pair at FORK_PIN 100eb9ae by the live probe in
+#: inner for ``getType()``; these classes do not implement it, so the fork
+#: prints ``<Class>::getType -- subclass responsibility`` and exits
+#: (rc 255), taking an in-process session with it. Measured per pair at
+#: FORK_PIN 100eb9ae by the live probe in
 #: ``tests/opensees/unit/test_finite_wrapper_over_md_refused.py``. Only the
 #: **direct** inner aborts: a ``StagedStrain`` between the lift and the
-#: sand answers ``getType`` itself and runs, and ``InitDefGrad`` over the
-#: sand is refused by the fork with an error (not an exit), so neither is
-#: refused here. ``InitDefGrad(LogStrain(<sand>))`` aborts at its inner
+#: inner answers ``getType`` itself and runs, and ``InitDefGrad`` over the
+#: inner is refused by the fork with an error (not an exit), so neither is
+#: refused here. ``InitDefGrad(LogStrain(<inner>))`` aborts at its inner
 #: ``LogStrain`` line, which this table already refuses.
 #:
-#: Keyed by the apeGmsh class; the value is the fork class that prints the
-#: exit message (``LadrunoSANISAND`` derives from ``ManzariDafalias`` in
-#: the fork and exits through it). The lift condition is in the docstring
-#: of the refusal below.
-FINITE_LIFT_ABORTING_INNERS: dict[str, str] = {
-    "ManzariDafalias": "ManzariDafalias",
-    "LadrunoSANISAND": "ManzariDafalias",
-    "SAniSandMS": "SAniSandMS",
+#: Keyed by the apeGmsh class, matched with ``isinstance`` so a subclass is
+#: refused too; the value is the fork class that prints the exit message
+#: (``LadrunoSANISAND`` derives from ``ManzariDafalias`` in the fork and
+#: exits through it). The lift condition is in the docstring of the
+#: refusal below.
+FINITE_LIFT_ABORTING_INNERS: dict[type[NDMaterial], str] = {
+    ManzariDafalias: "ManzariDafalias",
+    LadrunoSANISAND: "ManzariDafalias",
+    SAniSandMS: "SAniSandMS",
+    DruckerPrager: "DruckerPrager",
 }
 
 
@@ -3384,17 +3386,17 @@ def _refuse_aborting_lift_inner(wrapper: str, inner: NDMaterial) -> None:
     implements ``getType`` for these classes. The pinned live probe fails
     first and says so.
     """
-    name = type(inner).__name__
-    if name in FINITE_LIFT_ABORTING_INNERS:
-        cpp = FINITE_LIFT_ABORTING_INNERS[name]
-        raise ValueError(
-            f"{wrapper}: inner {name} ends the OpenSees process on the "
-            f"Ladruno fork: the {wrapper} line asks it for getType(), which "
-            f"it does not implement, and the fork exits with "
-            f"'{cpp}::getType -- subclass responsibility' (rc 255). Refused "
-            f"until the fork is fixed (#2499). Use LadrunoJ2Finite or an "
-            f"isotropic inner such as ElasticIsotropic or DruckerPrager."
-        )
+    for cls, cpp in FINITE_LIFT_ABORTING_INNERS.items():
+        if isinstance(inner, cls):
+            name = type(inner).__name__
+            raise ValueError(
+                f"{wrapper}: inner {name} ends the OpenSees process on the "
+                f"Ladruno fork: the {wrapper} line asks it for getType(), "
+                f"which it does not implement, and the fork exits with "
+                f"'{cpp}::getType -- subclass responsibility' (rc 255). "
+                f"Refused until the fork is fixed (#2499). An inner the "
+                f"fork runs under {wrapper}: ElasticIsotropic or LadrunoJ2."
+            )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -3415,9 +3417,9 @@ class LogStrain(NDMaterial):
     consumable by ``LadrunoBrick ... -geom finite``.
 
     Exact and objective only for the **isotropic** spine: pair it with an
-    isotropic inner (e.g. ``LadrunoJ2(-kin 0)``, ``ElasticIsotropic``,
-    ``DruckerPrager``). For combined (kinematic) hardening at finite strain
-    use the native :class:`LadrunoJ2Finite` instead (the backstress doesn't
+    isotropic inner (e.g. ``LadrunoJ2(-kin 0)`` or ``ElasticIsotropic``;
+    not ``DruckerPrager``, see the warning below). For combined (kinematic)
+    hardening at finite strain use the native :class:`LadrunoJ2Finite` instead (the backstress doesn't
     co-rotate through the wrapper — dSNPO §14.11).
 
     .. note::
@@ -3426,9 +3428,9 @@ class LogStrain(NDMaterial):
        at ``ops.run()`` on stock ``openseespy``.
 
     .. warning::
-       A ``ManzariDafalias``, ``LadrunoSANISAND`` or ``SAniSandMS`` inner
-       is refused at construction: over them the fork exits the process
-       at the wrapper's line (#2499, :data:`FINITE_LIFT_ABORTING_INNERS`).
+       A ``ManzariDafalias``, ``LadrunoSANISAND``, ``SAniSandMS`` or
+       ``DruckerPrager`` inner (or a subclass) is refused at construction:
+       over them the fork exits the process at the wrapper's line (#2499, :data:`FINITE_LIFT_ABORTING_INNERS`).
 
     Parameters
     ----------
@@ -3520,8 +3522,9 @@ class LogStrain2D(NDMaterial):
     ----------
     inner
         The wrapped small-strain **3-D (order-6)** :class:`NDMaterial` —
-        e.g. :class:`ElasticIsotropic`, :class:`LadrunoJ2`,
-        :class:`DruckerPrager`. Held by reference; its tag is resolved at
+        e.g. :class:`ElasticIsotropic` or :class:`LadrunoJ2` (not
+        :class:`DruckerPrager`, see :data:`FINITE_LIFT_ABORTING_INNERS`).
+        Held by reference; its tag is resolved at
         emit time and the bridge emits it **before** the wrapper (via
         :meth:`dependencies`). See the warning above about
         :class:`PlaneStrain`.
