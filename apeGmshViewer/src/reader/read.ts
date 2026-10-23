@@ -163,11 +163,18 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * The group is hashed: a 2.35 re-emit of a model with such a line has a new
  * model_hash, which the results pairing shows as a plain mismatch.
  *
+ * opensees 2.36.0 (#2375, h5-schema.md "`/opensees@target_mode` (optional,
+ * opensees 2.36.0)"): an optional string attribute on `/opensees`, `"fork"` or
+ * `"stock"`, keeps a pinned `OpenSeesTarget.mode` for the deck replay; absent
+ * reads as `"auto"`. Replay data the app does not read, so nothing here reads
+ * differently. It is not hashed, so model_hash and the results pairing are
+ * unchanged.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 35 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 36 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
