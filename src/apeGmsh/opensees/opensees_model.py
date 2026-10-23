@@ -1058,13 +1058,21 @@ class OpenSeesModel:
         # An archived rigidDiaphragm whose master is fixed on some in-plane
         # DOFs only, under Transformation, refuses before any emitter
         # exists (the live one wipes the domain on creation).
-        from ._internal.compose import refuse_archived_partly_fixed_diaphragms
+        from ._internal.compose import (
+            refuse_archived_partly_fixed_diaphragms,
+            refuse_archived_stage_routes,
+        )
 
         refuse_archived_partly_fixed_diaphragms(
             ndm=self._ndm, fixes=self._fixes,
             mp_constraints=self._mp_constraints,
             analysis_attrs=dict(self._analysis_attrs),
             patterns=self._patterns, stages=self._stages)
+        # So does an archived stage flip that the stage close refuses.
+        refuse_archived_stage_routes(
+            stages=self._stages, elements=self._elements,
+            declarations=self._declarations, fem=self._fem,
+            requires=self.replay_requires())
         if target in ("tcl", "py", "live"):
             # ADR 0114 D6: fail closed on the stored refusals before any
             # emit. The archive skipped the solve-time gates and recorded
@@ -1943,7 +1951,9 @@ class OpenSeesModel:
         if self._stages:
             _replay_staged_into(
                 emitter, stages=self._stages, commands=self._commands,
-                program=self._program, flat=flat, **replay_kwargs,
+                program=self._program, flat=flat,
+                declarations=self._declarations,
+                requires=self.replay_requires(), **replay_kwargs,
             )
         else:
             _replay_into(
