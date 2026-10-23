@@ -25,6 +25,7 @@ import {
   type DeformState,
   type Event,
   type LineDiagramState,
+  type LoadsState,
   type PhaseKey,
   type SpatialNdm,
   type State,
@@ -36,6 +37,18 @@ import { UNIT_SYSTEM_IDS } from "./units.ts";
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
 
 export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
+
+export const initialLoads: LoadsState = {
+  on: false,
+  scale: 1,
+  showNodalForces: true,
+  showNodalMoments: true,
+  showElementLoads: true,
+  showSp: true,
+  includeSupportReactions: false,
+  scaleBySeries: false,
+  selectedPatterns: null,
+};
 
 /** No model, no dimension. */
 const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
@@ -92,6 +105,7 @@ export const initialState: State = {
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
   definitions: null,
+  neutralLoads: null,
   sequence: { status: "absent" },
   stage: null,
   lineage: null,
@@ -104,6 +118,7 @@ export const initialState: State = {
   deform: initialDeform,
   clip: initialClip,
   lineDiagram: initialLineDiagram,
+  loads: initialLoads,
   spotlight: initialSpotlight,
   search: initialSearch,
 };
@@ -293,12 +308,14 @@ export function reduce(s: State, e: Event): State {
         provenance,
         provenanceOrigin,
         definitions,
+        neutralLoads: e.load.neutralLoads ?? null,
         sequence,
         lineage,
         stageElements,
         ndm: e.load.ndm ?? { ndm: null, reason: "the model's /meta/ndm was not read" },
         units: modelUnits,
         contour: syncContourUnits(s.contour, declaredUnits, reread || s.results !== null),
+        loads: reread ? s.loads : { ...s.loads, selectedPatterns: null },
         stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
@@ -351,6 +368,7 @@ export function reduce(s: State, e: Event): State {
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
         lineDiagram: s.lineDiagram,
+        loads: { ...s.loads, selectedPatterns: null },
       });
     }
     case "fileClosed": {
@@ -381,6 +399,7 @@ export function reduce(s: State, e: Event): State {
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
         lineDiagram: s.lineDiagram,
+        loads: { ...s.loads, selectedPatterns: null },
       });
     }
     case "fileChanged": {
@@ -583,17 +602,21 @@ export function reduce(s: State, e: Event): State {
     case "contourScan":
       if (contourKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, contour: { ...s.contour, scan: e.scan } };
-    case "setDeform":
-      if (typeof e.on !== "boolean") throw new RangeError(`setDeform: ${JSON.stringify(e.on)}`);
-      return s.deform.on === e.on ? s : { ...s, deform: { ...s.deform, on: e.on } };
+    case "setDeform": {
+      const on: unknown = e.on;
+      if (typeof on !== "boolean") throw new RangeError(`setDeform: ${JSON.stringify(on)}`);
+      return s.deform.on === on ? s : { ...s, deform: { ...s.deform, on } };
+    }
     case "setDeformScale":
       if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
         throw new RangeError(`setDeformScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
       }
       return s.deform.scale === e.scale ? s : { ...s, deform: { ...s.deform, scale: e.scale } };
-    case "setReferenceGhost":
-      if (typeof e.on !== "boolean") throw new RangeError(`setReferenceGhost: ${JSON.stringify(e.on)}`);
-      return s.deform.ghost === e.on ? s : { ...s, deform: { ...s.deform, ghost: e.on } };
+    case "setReferenceGhost": {
+      const on: unknown = e.on;
+      if (typeof on !== "boolean") throw new RangeError(`setReferenceGhost: ${JSON.stringify(on)}`);
+      return s.deform.ghost === on ? s : { ...s, deform: { ...s.deform, ghost: on } };
+    }
     case "deformMeasured": {
       // A count for anything but what is shown now (another step, a re-read, another hidden set) is stale.
       const d = deformOf(s);
@@ -659,9 +682,11 @@ export function reduce(s: State, e: Event): State {
       const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
       return clip === s.clip ? s : { ...s, clip };
     }
-    case "setLineDiagram":
-      if (typeof e.on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(e.on)}`);
-      return s.lineDiagram.on === e.on ? s : withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on: e.on } });
+    case "setLineDiagram": {
+      const on: unknown = e.on;
+      if (typeof on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(on)}`);
+      return s.lineDiagram.on === on ? s : withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on } });
+    }
     case "setLineDiagramComponent": {
       if (!LINE_STATION_COMPONENTS.includes(e.component)) {
         throw new RangeError(`setLineDiagramComponent: ${JSON.stringify(e.component)}`);
@@ -734,6 +759,76 @@ export function reduce(s: State, e: Event): State {
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setLoads": {
+      if (e.on !== undefined && typeof e.on !== "boolean") {
+        throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
+      }
+      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
+        throw new RangeError(`setLoads: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
+      }
+      const cur = s.loads;
+      let on = e.on ?? cur.on;
+      const scale = e.scale ?? cur.scale;
+      const showNodalForces = e.showNodalForces ?? cur.showNodalForces;
+      const showNodalMoments = e.showNodalMoments ?? cur.showNodalMoments;
+      const showElementLoads = e.showElementLoads ?? cur.showElementLoads;
+      const showSp = e.showSp ?? cur.showSp;
+      const includeSupportReactions = e.includeSupportReactions ?? cur.includeSupportReactions;
+      const scaleBySeries = e.scaleBySeries ?? cur.scaleBySeries;
+      let selectedPatterns = cur.selectedPatterns;
+      if (e.selectedPatterns !== undefined) {
+        selectedPatterns = e.selectedPatterns === null ? null : [...new Set(e.selectedPatterns)];
+      } else if (e.togglePattern !== undefined) {
+        const key = e.togglePattern;
+        if (!cur.on || cur.selectedPatterns === null) {
+          on = e.on ?? true;
+          selectedPatterns = [key];
+        } else if (cur.selectedPatterns.includes(key)) {
+          const rest = cur.selectedPatterns.filter((p) => p !== key);
+          if (rest.length === 0) {
+            on = e.on ?? false;
+            selectedPatterns = null;
+          } else {
+            selectedPatterns = rest;
+          }
+        } else {
+          selectedPatterns = [...cur.selectedPatterns, key];
+        }
+      }
+      const samePatterns =
+        selectedPatterns === cur.selectedPatterns ||
+        (selectedPatterns !== null &&
+          cur.selectedPatterns !== null &&
+          selectedPatterns.length === cur.selectedPatterns.length &&
+          selectedPatterns.every((p, i) => p === cur.selectedPatterns![i]));
+      if (
+        on === cur.on &&
+        scale === cur.scale &&
+        showNodalForces === cur.showNodalForces &&
+        showNodalMoments === cur.showNodalMoments &&
+        showElementLoads === cur.showElementLoads &&
+        showSp === cur.showSp &&
+        includeSupportReactions === cur.includeSupportReactions &&
+        scaleBySeries === cur.scaleBySeries &&
+        samePatterns
+      ) {
+        return s;
+      }
+      return {
+        ...s,
+        loads: {
+          on,
+          scale,
+          showNodalForces,
+          showNodalMoments,
+          showElementLoads,
+          showSp,
+          includeSupportReactions,
+          scaleBySeries,
+          selectedPatterns,
+        },
+      };
+    }
     case "openSpotlight": {
       const mode = e.mode ?? "root";
       const query = e.query ?? s.spotlight.query;

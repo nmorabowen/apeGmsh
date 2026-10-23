@@ -143,6 +143,8 @@ model.h5
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
       │   @will_solve, @solve_refusals,      the solve stamp (optional attrs,
       │   @requires                          opensees 2.24.0; see below)
+      │   @target_mode                       pinned target mode (optional,
+      │                                      opensees 2.36.0; not hashed)
       ├── /materials
       │     ├── /uniaxial/{name}           one group per material
       │     └── /nd/{name}
@@ -794,25 +796,75 @@ written only when the model has auto-emitted bars.  The outer fields are
 
 ## `/opensees/time_series`
 
+One group per emitted `timeSeries` call, named `{type}_{tag}`
+(`time_series_name` in
+[`opensees/emitter/_h5_write_model.py`](../src/apeGmsh/opensees/emitter/_h5_write_model.py);
+a user-supplied `name=` is recorded in `/opensees/names` and
+`/opensees/decls`, never as the HDF5 group name).
+
 ```
-/opensees/time_series/elcentro/
-├── attrs: type="Path", factor=9.81, dt=0.01,
-│         file_path="elcentro.txt"        ← if loaded from file
-├── time              float dataset (n_steps,)
-└── values            float dataset (n_steps,)
+/opensees/time_series/Linear_1/
+└── attrs: type="Linear", tag=1,
+          params=[nan, 2.0], params_str=["-factor", ""]
+          (params=[] and no params_str when factor == 1.0)
+
+/opensees/time_series/Path_2/
+└── attrs: type="Path", tag=2,
+          params=[nan, 0.0, 0.5, 1.0, nan, 0.01, nan, 9.81],
+          params_str=["-values", "", "", "", "-dt", "", "-factor", ""]
 ```
 
-For algorithmic series (`Linear`, `Constant`, `Trig`, etc.), `time`
-and `values` are sampled at a configurable resolution (default: 200
-points across the natural domain) so the viewer can plot them
-without re-implementing the algorithm.
+Each group (`H5Emitter._write_time_series`, `H5Model.time_series`)
+stores only:
 
-For loading protocols (`ASCE41Protocol`, `FEMA461Protocol`,
-`ATC24Protocol`), the time/values arrays are computed at construction
-time and stored verbatim.
+* `type` — vlen UTF-8 string attribute: the emitted OpenSees
+  `timeSeries` command token (`"Linear"`, `"Constant"`, `"Path"`,
+  `"Trig"`, `"Pulse"`).
+* `tag` — int64 attribute: the emitted OpenSees time-series tag.
+* `params` / `params_str` — the positional OpenSees arguments after
+  `tag`, written by `_write_param_array` (`params` float64 `(n_args,)`
+  with `NaN` at string slots; `params_str` vlen UTF-8 `(n_args,)` with
+  `""` at numeric slots, omitted when all slots are numeric). Stored as
+  attributes, or as uncompressed datasets of the same names when HDF5
+  refuses either half for size (see below).
 
-Compression: HDF5 gzip level 4 on `time` and `values`. Negligible cost,
-significant savings for ground motions.
+The emitted positional argument sequence after `tag` per `type`
+([`opensees/time_series/time_series.py`](../src/apeGmsh/opensees/time_series/time_series.py)):
+
+| `type` | Emitted positional arguments in `params` / `params_str` (optional flags emitted only when non-default) |
+|---|---|
+| `"Constant"`, `"Linear"` | `()` when `factor == 1.0`, else `("-factor", factor)` |
+| `"Trig"` | `(t_start, t_end, period[, "-factor", factor][, "-shift", shift][, "-zeroShift", zero_shift])` |
+| `"Pulse"` | `(t_start, t_end, period, width[, "-factor", factor][, "-shift", shift][, "-zeroShift", zero_shift])` |
+| `"Path"` | `(("-filePath", file) \| ("-values", *values)[, ("-dt", dt) \| ("-time", *time)][, "-factor", factor][, "-startTime", start_time][, "-prependZero"][, "-useLast"])` |
+
+**No pre-sampled `time` / `values` datasets on disk.** The writer does
+not sample algorithmic series (`Linear`, `Constant`, `Trig`, `Pulse`)
+and does not create standalone `time` or `values` datasets under
+`/opensees/time_series/{name}`:
+
+* **Closed-form series (`Constant`, `Linear`, `Trig`, `Pulse`)** store
+  their command arguments in `params` / `params_str` and their
+  dataclass fields (`factor`, `t_start`, `t_end`, `period`, `width`,
+  `shift`, `zero_shift`) by field name in
+  [`/opensees/decl_params`](#opensees-decl_params-optional-opensees-2260).
+  Consumers (`apeGmshViewer/src/panels/windows/plot/series.ts`)
+  evaluate the OpenSees closed forms directly from those parameters.
+* **Inline `Path` series and generator primitives** (`Path(values=...)`,
+  plus `Ricker`, `MomentStep`, `Yoffe`, `ASCE41Protocol`,
+  `ModifiedATC24Protocol`, and `FEMA461Protocol`, which sample their
+  waveform at emit time and delegate to `Path`) emit as `type="Path"`
+  with `-values v0 v1 ...` and `-dt dt` (or `-time t0 t1 ...`) in the
+  `params` / `params_str` pair. For a direct `Path(values=...)`
+  declaration, `/opensees/decl_params` also carries `values` (and
+  `time` or `dt`, `factor`, `start_time`, `prepend_zero`, `use_last`)
+  as JSON fields; for a generator primitive, `/opensees/decl_params`
+  carries the generator class and its own dataclass knobs while the
+  tabulated samples sit in `/opensees/time_series/Path_{tag}`'s
+  `params` / `params_str`.
+* **File-backed `Path(file=...)` series** carry `-filePath <path>` in
+  `params` / `params_str` (and `file` in `/opensees/decl_params`); the
+  external file is not copied into the archive.
 
 ### Large arrays as datasets (opensees 2.34.0)
 
@@ -853,30 +905,98 @@ same group instead, as an element's `args` / `args_str` are. A long
 
 ## `/opensees/patterns`
 
+One group per emitted `pattern` block, named `{type}_{tag}`
+(`pattern_name` in
+[`opensees/emitter/_h5_write_model.py`](../src/apeGmsh/opensees/emitter/_h5_write_model.py)).
+Global patterns live under `/opensees/patterns/{type}_{tag}`;
+stage-scoped patterns live under
+`/opensees/stages/stage_NNN/patterns/{type}_{tag}` with the identical
+group layout plus an `emit_index` (int64) attribute and, for an ADR 0052
+`s.support` HOLD pattern, `role="hold"` and an `sp_holds` `(n_holds, 2)`
+int64 dataset of `(node_tag, dof)` pairs.
+
 ```
-/opensees/patterns/Wind/
+/opensees/patterns/Plain_1/
 ├── attrs: type="Plain", tag=1,
-│         series_ref="/opensees/time_series/Linear_1"
+│         series_ref="/opensees/time_series/Linear_1",
+│         params=[1.0]
 ├── /loads               compound dataset, shape (n_loads,)
-│     fields: target_kind (string),    ← "node" | "pg"
-│             target (string),         ← node tag (str) or PG name
-│             forces (float[ndf])      ← padded to ndf length
-├── /sps                 compound dataset
-│     fields: target, dof (int), value (float)
-└── /element_loads       compound dataset
-      fields: target, kind (string),   ← "beamUniform" | "surfacePressure" | …
-              params (float[6])         ← padded
+│     fields: target_kind (vlen utf-8),  ← always "node" (PGs already fanned out)
+│             target (vlen utf-8),       ← node tag as string
+│             forces (float64[ndf])      ← padded with NaN to ndf
+├── /sps                 compound dataset, shape (n_sps,)
+│     fields: target_kind (vlen utf-8),  ← always "node"
+│             target (vlen utf-8),       ← node tag as string
+│             dof (int64), value (float64)
+└── /element_loads       vlen utf-8 dataset, shape (n_calls, max_tokens)
+      raw eleLoad command tokens, one row per emitted eleLoad call,
+      right-padded with "" to max_tokens
 ```
 
-`/opensees/patterns/Earthquake_X/` for `UniformExcitation`:
+Each child dataset (`loads`, `sps`, `element_loads`, `sp_holds`) is
+created only when that pattern emitted at least one record of that kind.
+
+### `element_loads`: 2-D token table
+
+`/opensees/patterns/{name}/element_loads` (and
+`/opensees/stages/stage_NNN/patterns/{name}/element_loads`) is a **2-D
+variable-length UTF-8 string dataset** of shape `(n_calls, max_tokens)`
+(`dtype=h5py.string_dtype(encoding="utf-8")`), written by
+`H5Emitter._write_pattern_ele_loads`
+([`opensees/emitter/_h5_write_model.py`](../src/apeGmsh/opensees/emitter/_h5_write_model.py))
+and read by `H5Model._pattern_record`
+([`opensees/emitter/h5_reader.py`](../src/apeGmsh/opensees/emitter/h5_reader.py))
+and `apeGmshViewer` (`readTable` in `apeGmshViewer/src/reader/read.ts`):
+
+* **Rows and padding.** Row `i` holds the positional arguments of the
+  `i`-th `emitter.eleLoad(*args)` call in that pattern. String tokens
+  are stored as `str(v)` and numeric arguments via `repr(v)`. When calls
+  in the same pattern have different token counts, shorter rows are
+  right-padded with `""` (empty string) to `max_tokens`. Readers drop
+  `""` cells when reconstructing a call's token list.
+* **Target tokens (before `-type`).** Every row starts with its target
+  elements in **OpenSees element tag space** (the bridge's
+  `resolve_ele_load_commands` has already fanned out any `pg=`,
+  `label=`, `Element` handle, or `from_model(case)` declaration and
+  translated FEM element IDs through the build's `fem_eid -> ops_tag`
+  map; consumers map an OpenSees element tag back to its FEM element ID
+  via `/opensees/element_meta/{type}/ids` and `fem_eids`):
+  * `"-ele", "<tag_1>", ["<tag_2>", ...]` — one or more explicit
+    OpenSees element tags (followed by `"-type"`).
+  * `"-range", "<start_tag>", "<end_tag>"` or
+    `"-eleRange", "<start_tag>", "<end_tag>"` — inclusive OpenSees
+    element tag range `start_tag .. end_tag`.
+* **Load-type tokens (`"-type", "<kind>", ...`).** Immediately after the
+  target tokens sits `"-type"` followed by the OpenSees element-load
+  kind token and its numeric arguments (`_beam_uniform_args` and
+  `_self_weight_args` in
+  [`opensees/pattern/pattern.py`](../src/apeGmsh/opensees/pattern/pattern.py),
+  parsed by `parse_ele_load_beam_uniform` in
+  [`results/_beam_diagrams.py`](../src/apeGmsh/results/_beam_diagrams.py)):
+
+  | Kind token | Model `ndm` | Trailing float tokens (after `"-type", "<kind>"`) | Meaning (element-local axes `x, y, z`; fractional span `0 <= aL < bL <= 1`) |
+  |---|---|---|---|
+  | `"-beamUniform"` | `2` | 2 tokens: `wy, wx` | full-span uniform (`aL=0, bL=1`, `wya=wyb=wy`, `wxa=wxb=wx`) |
+  | `"-beamUniform"` | `2` | 4 tokens: `wy, wx, aL, bL` | partial-span uniform on `[aL, bL]` (`wya=wyb=wy`, `wxa=wxb=wx`) |
+  | `"-beamUniform"` | `2` | 6 tokens: `wya, wxa, aL, bL, wyb, wxb` | partial-span trapezoidal on `[aL, bL]` |
+  | `"-beamUniform"` | `3` | 2 tokens: `wy, wz` | full-span uniform transverse (`aL=0, bL=1`, `wx=0`) |
+  | `"-beamUniform"` | `3` | 3 tokens: `wy, wz, wx` | full-span uniform (`aL=0, bL=1`, `wya=wyb=wy`, `wza=wzb=wz`, `wxa=wxb=wx`) |
+  | `"-beamUniform"` | `3` | 5 tokens: `wy, wz, wx, aL, bL` | partial-span uniform on `[aL, bL]` |
+  | `"-beamUniform"` | `3` | 8 tokens: `wya, wza, wxa, aL, bL, wyb, wzb, wxb` | partial-span trapezoidal on `[aL, bL]` |
+  | `"-selfWeight"` | `2` | 2 tokens: `wx, wy` | element self-weight factors `(wx, wy)` |
+  | `"-selfWeight"` | `3` | 3 tokens: `wx, wy, wz` | element self-weight factors `(wx, wy, wz)` |
+  | `"-surfaceLoad"` | `2` or `3` | 0 tokens | surface pressure follower marker |
+
+`/opensees/patterns/UniformExcitation_2/` for `UniformExcitation`:
 
 ```
-/opensees/patterns/Earthquake_X/
+/opensees/patterns/UniformExcitation_2/
 └── attrs: type="UniformExcitation", tag=2, direction=1,
-          series_ref="/opensees/time_series/elcentro"
+          series_ref="/opensees/time_series/Path_1",
+          params=[1.0, nan, 1.0], params_str=["", "-accel", ""]
 ```
 
-(no contained loads — uniform excitation IS the pattern's payload)
+(no contained load datasets — uniform excitation IS the pattern's payload)
 
 ## `/opensees/bcs`
 
@@ -1077,7 +1197,7 @@ Every file the bridge writes from 2.23.0 on carries it; it is hashed.
     count   i4   calls in the run (>= 1)
     method  i2   index into @methods (the Protocol method name)
     store   i2   index into @stores (the VERBS store template), -1 when
-                 the call wrote nothing (a `ledger` verb)
+                 the call wrote nothing (a `ledger` verb's dropped call)
     row     i4   the record's ordinal among the records `method` wrote
                  to `store` in this stage, in emit order; -1 with store -1
     stage   i4   -1 global, else the `stage_NNN` ordinal
@@ -1135,7 +1255,7 @@ Everything else is an explicit **`-1`**:
   holds (an element a side pass mints with no declaration); and a tagless
   call with no declaration open, such as a ghost replay (ADR 0027 INV-2),
   whose row the `/opensees/decls/rows` column claims afterwards;
-- the `ledger` verbs, which write no row.
+- the `ledger` verbs' dropped calls, which write no row.
 
 A node that two `s.zero_velocities` records of one stage name is zeroed
 once, so its `set_node_vel` / `set_node_accel` calls are the first
@@ -1163,7 +1283,9 @@ joins are recorded; the completeness marker does:
 
 The marker sits on `/opensees/decls`, not on `/opensees`. The
 attributes of `/opensees` fold into `model_hash` (`canonical_bytes`
-hashes the root group's attributes), so an attribute there would move a
+hashes the root group's attributes, all but those in
+`MODEL_HASH_EXCLUDED_ATTRS`, which is `@target_mode` alone), so an
+attribute there would move a
 rewritten legacy file's hash. `decls` is hash-excluded, and it is the
 table the joins point into: with no `decls` group there is nothing to
 join to. A rewrite echoes the source's marker with its program, so a
@@ -1306,7 +1428,42 @@ gains the value tokens its model implies). A fork *element or
 material type* rides the generic `element` / `nDMaterial` verb, whose
 row requires nothing, so it does not reach `@requires` until K4 moves
 typed fork verbs onto the command channel. Attributes of `/opensees`
-fold into `model_hash`.
+fold into `model_hash`, except `@target_mode` (below).
+
+## `/opensees@target_mode` (optional, opensees 2.36.0)
+
+```
+/opensees
+  @target_mode           vlen str ()     "fork" or "stock": the bridge's
+                                         pinned OpenSeesTarget.mode
+```
+
+The mode of the `OpenSeesTarget` the bridge was built with (#2278, ruling
+A; #2375). It is written only for a pinned target. An unpinned model
+(`mode="auto"`, or no target) writes nothing, and an absent attribute reads
+as `"auto"`, so every file below 2.36.0 keeps its meaning. Only the mode is
+kept: `binary` and `python` are machine paths and are never archived.
+
+`H5Model.target_mode()` returns `"auto"`, `"fork"` or `"stock"`. A value
+that is not one string of `TARGET_MODES` (`emitter/h5_reader.py`), the
+empty string included, raises `MalformedH5Error` naming
+`/opensees@target_mode`. `OpenSeesModel` uses it as the bridge uses the
+target:
+
+- `build('tcl' | 'py')` stamps the deck through `deck_backend`, so a pinned
+  archive's replay writes the bridge's `# apeGmsh <v>; backend <mode>`
+  line and an unpinned one writes none;
+- a `"fork"` archive adds `"fork"` to `replay_requires()`, so
+  `build('live')` refuses a stock openseespy, and the stage-close route
+  checks on replay (#2465) treat the run as on the fork, which brings back
+  the #2444 fork-reset refusal;
+- `to_h5` echoes it.
+
+The attribute is in `MODEL_HASH_EXCLUDED_ATTRS`
+(`_internal/lineage.py`), so it never reaches `model_hash`: the same
+model pinned or on auto has the same physics and the same hash, the
+carve-out `regions` and `names` already have. Two archives with one hash
+can therefore stamp different backends.
 
 ## `/opensees/decls` (optional, opensees 2.25.0)
 
@@ -1356,7 +1513,7 @@ filtered recorder's to the recorder. `rows/commands` gives every
 `/opensees/commands` row its declaration (a global `rayleigh`, the `eigen`
 + `modal_damping` pair of `ops.damping.modal`, a stage's `s.profile`
 bracket), and `stages/stage_NNN/rayleigh` each stage `rayleigh` row;
-`ops.equation_constraint` is keyed but writes no row (a ledger verb). An unnamed object apeGmsh
+`ops.equation_constraint` is keyed but has no `rows` column (from opensees 2.35.0 its line is a row of [`/opensees/constraints/equationConstraint`](#opensees-constraints-equationconstraint-optional-opensees-2350), joined by its `/opensees/program` call). An unnamed object apeGmsh
 registers inside a user call that already has its provenance record
 (one record per user call) has no record of its own; it is keyed
 `opensees/<family>/@k` with `synth` 1. The `rows` columns are filled at the head of each
@@ -1567,6 +1724,60 @@ replay. A rewrite (`OpenSeesModel.to_h5`) of a pre-2.29 archive stores
 the ties that archive's replay derives and links their `/opensees/program`
 runs to the store. The writer refuses a tie inside a stage bracket and an
 argument that is not an `int`, `float` or `str`, at emit.
+
+## `/opensees/constraints/equationConstraint` (optional, opensees 2.35.0)
+
+One row per `equationConstraint` line the bridge's global pass wrote, in
+emit order (#2416; every such call was dropped before). Two kinds of line
+reach it, and the store holds both: an `enforce="equation"` tie's
+(`tie`, `distributing` or `embedded`, one line per tied DOF, ADR 0068)
+and an `apeSees.equation_constraint` row. Written only when a line
+exists; hashed.
+
+```
+/opensees/constraints/equationConstraint/
+    cnode        i8 (N,)          the constrained node
+    cdof         i4 (N,)          its 1-based DOF
+    ccoef        f8 (N,)          its coefficient
+    name         vlen str (N,)    the mp_constraint_comment label (a named tie's first line), "" when none
+    ret_offsets  i4 (N+1,)        row i owns terms ret_offsets[i]:ret_offsets[i+1], at least one
+    ret_node     i8 (M,)          retained node
+    ret_dof      i4 (M,)          its 1-based DOF
+    ret_coef     f8 (M,)          its coefficient
+```
+
+- **Join.** Each row is written by one `equationConstraint` call of
+  `/opensees/program` (store `{scope}/constraints/equationConstraint`),
+  so a replay writes it at the bridge's emit index, between the other
+  MP rows (`compose.py` 9b′). A row no call wrote refuses.
+- **Partitions.** A partitioned emit writes an equation tie on every rank
+  that holds its slave or a master (ADR 0068 Open item 2); the store
+  captures each line once (ADR 0027 INV-1), and its replicas' program
+  runs repeat the first capture's row.
+- **The user rows.** The bridge writes `apeSees.equation_constraint` rows
+  last in its MP pass, so they are the last `K` rows, `K` the
+  `equation_constraint` declarations of `/opensees/decls`. Their
+  `/opensees/decl_params` records must equal those rows, or the reader
+  raises `MalformedH5Error`. From this minor the rows are the replay's
+  only source for every line.
+- **Stage scope (interim).** A stage-claimed equation tie's lines are not
+  stored yet: the `VERBS` row stays `ledger` with an empty stage store
+  (`{scope}/constraints/equationConstraint|`), and the replay refuses such
+  a tie by name, citing #2448, which adds the stage rows.
+- **Reader refusals** (`H5Model.equation_constraints`, all
+  `MalformedH5Error`): the group in a file below 2.35.0
+  (`h5_reader.EQUATION_CONSTRAINT_FROM`), a missing column, columns that
+  disagree in length, a row with no retained term, a DOF below 1, a zero
+  or non-finite coefficient, and the group inside a stage.
+- **Replay refusal.** An `enforce="equation"` record of the neutral zone
+  whose lines are not all among the stored tie rows (matched as a
+  multiset) refuses with `BridgeError`: every archive below 2.35.0 (#2416),
+  a stage-claimed tie (#2448), and a 2.35 file that lost rows.
+- **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
+  pre-2.35 archive stores its `apeSees.equation_constraint` rows and links
+  the source's last `K` global `equationConstraint` calls to them; its
+  equation ties' calls stay unlinked, since the source stores no line,
+  and the rewritten file still refuses them.
 
 ## `/meta/session_id` and the geometry sibling
 
@@ -1931,7 +2142,8 @@ of equal-length column datasets.
   read through `/opensees/program` (one run per `add constraint` call):
   one row per declaration when `decls` covers `constraints/<kind>`, else
   one unnamed row (a constraint the mesh carried); a ledger constraint
-  verb, which the archive does not carry, names its `program[i]` run. A
+  verb's dropped call, which the archive does not carry, names its
+  `program[i]` run. A
   file below opensees 2.23.0 (no program) lists none.
 * **Not projected.** The stage verbs whose `seq` is empty in `VERBS`
   (`update_parameter`, `zero_velocities`, `set_creep`, the pre-analyze
@@ -2181,7 +2393,7 @@ its `/meta/lineage` into `/model/meta/lineage`. `/opensees` is that
 | Attr | Present when | Value |
 |---|---|---|
 | `fem_hash` | `/model` is embedded | the neutral zone's content hash, equal to `/model/meta/snapshot_id` |
-| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`. |
+| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`, and the attribute `/opensees@target_mode`. |
 | `results_hash` | always; stamped at close | `blake2b(model_hash ‖ /stages)`, chained on `""` when `model_hash` is absent |
 
 **Pairing rule.** A results file belongs to a given `model.h5` when its
@@ -2235,11 +2447,23 @@ a stage is `time[k]`.
 ### Partitions
 
 `/stages/{sid}/partitions/{pid}` splits a stage's rows by partition. Every
-writer in `src/` today writes exactly one partition, `partition_0`. A
-reader must still handle several. It takes the union of the partitions in
-name order: nodal columns are concatenated and then de-duplicated by node
-id (first occurrence wins, because boundary nodes repeat across
-partitions), and element rows are concatenated.
+writer in `src/` writes exactly one partition, `partition_0`, and native
+results carry no `PARTITION_REDUCTION` rule (ADR 0123 makes one
+partition per stage the contract). A file written with several partitions
+through the public `NativeWriter` API still opens in the Python reader:
+
+- a node id repeated within one partition's `nodes/_ids` refuses at open
+  (`NativeRepeatedNodeId`);
+- a node several partitions hold reads once when its copies are bit-for-bit
+  equal over the stage; if any node's copies of a component differ, every
+  read of that component raises `NativePartitionCopiesDisagree` (#2360),
+  because a per-partition partial value cannot be told from a replicated
+  one;
+- element rows are concatenated in partition-name order.
+
+The viewer refuses a stage that does not hold exactly one partition
+(`unsupported`). Partitioned runs reach a reader as `.ladruno` or MPCO part
+sets, which carry `PARTITION_REDUCTION`.
 
 ### Nodal results: `nodes/`
 
@@ -2361,7 +2585,7 @@ Every reference uses an HDF5 path string. Examples:
 | `material_ref` | `/opensees/materials/uniaxial/Steel_S420` |
 | `section_ref` | `/opensees/sections/Cols` |
 | `transf_ref` | `/opensees/transforms/Cols` |
-| `series_ref` | `/opensees/time_series/elcentro` |
+| `series_ref` | `/opensees/time_series/Path_1` |
 
 Readers MUST resolve via `h5py.File["{ref}"]` and validate the
 returned group's `type` attribute matches expectations.
@@ -2372,9 +2596,10 @@ For variable-length string fields (`material_ref`, `target`, `kind`),
 use HDF5 variable-length string type
 (`h5py.string_dtype(encoding="utf-8")`).
 
-For padded float arrays (`forces`, `params`), pad with `nan` to a
-fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
-`np.dtype([...])` compound types.
+For padded float arrays (`forces` in `/opensees/patterns/{name}/loads`,
+`coords` / `line` in `/opensees/sections/{name}`), pad with `nan` to a
+fixed length (`ndf` for forces, 8 for patch `coords`, 6 for layer
+`line`). Use `np.dtype([...])` compound types.
 
 ## Versioning
 
@@ -2396,7 +2621,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.34.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.36.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2912,6 +3137,28 @@ detail lives in the `SCHEMA_VERSION` docstring in
   bytes and hash. A 2.33 reader would read a dataset-form pair as no
   arguments, hence the minor. Additive minor (a 2.33.x reader refuses a
   2.34.x file, INV-4).
+- `2.35.0` — #2416 (chain K, slice #2447; the maintainer's ruling of
+  2026-10-22): a new optional
+  [`/opensees/constraints/equationConstraint`](#opensees-constraints-equationconstraint-optional-opensees-2350)
+  group holds every global `equationConstraint` line, an
+  `enforce="equation"` tie's and an `apeSees.equation_constraint` row's,
+  so a replay writes an equation-tied model tied. Below this minor the
+  replay refuses such a tie by name. A stage-claimed tie's lines stay
+  unstored in this minor (#2448). The group is written only when a line
+  exists, so every other archive keeps its bytes and hash; an archive
+  with one hashes differently once. A 2.34 reader would replay the model
+  untied, hence the minor. Additive minor (a 2.34.x reader refuses a
+  2.35.x file, INV-4).
+- `2.36.0` — #2278 (chain K, slice #2375; the maintainer's ruling A of
+  2026-10-21): the optional attribute
+  [`/opensees@target_mode`](#openseestarget_mode-optional-opensees-2360)
+  keeps a pinned `OpenSeesTarget(mode="fork" | "stock")`, so a replay
+  deck stamps its backend as the bridge's did and a fork pin survives the
+  round trip. Written only for a pinned target, so every unpinned archive
+  keeps its bytes; absent reads as `"auto"`. It is not hashed: the same
+  model pinned or on auto has one `model_hash`. A 2.35 reader would replay
+  a fork pin as auto, hence the minor. Additive minor (a 2.35.x reader
+  refuses a 2.36.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
@@ -2980,15 +3227,16 @@ column.h5
     │   ├── ids        [1]
     │   ├── fem_eids   [1]                      — Phase 8.6 mapping (broker's eid → ops_tag)
     │   └── args       [[1, 1]]                 — (transf_tag, integration_tag)
-    ├── /time_series/elcentro/
-    │   ├── attrs: type="Path", factor=9.81, dt=0.01, file_path="elcentro.txt"
-    │   ├── time       (n_steps,)  = [0.00, 0.01, 0.02, ...]
-    │   └── values     (n_steps,)  = [0.001, 0.005, ..., -0.012, ...]
-    ├── /patterns/Quake/
+    ├── /time_series/Path_1/
+    │   └── attrs: type="Path", tag=1,
+    │              params=[nan, nan, nan, 0.01, nan, 9.81],
+    │              params_str=["-filePath", "elcentro.txt", "-dt", "", "-factor", ""]
+    ├── /patterns/UniformExcitation_1/
     │   └── attrs: type="UniformExcitation", tag=1, direction=1,
-    │              series_ref="/opensees/time_series/elcentro"
+    │              series_ref="/opensees/time_series/Path_1",
+    │              params=[1.0, nan, 1.0], params_str=["", "-accel", ""]
     └── /bcs/fix
-        target_kind=["pg"], target=["Base"], dofs=[[1,1,1,1,1,1]]
+        target_kind=["node"], target=["1"], dofs=[[1,1,1,1,1,1]]
 ```
 
 This file is ~50 KB and tells the viewer everything it needs to

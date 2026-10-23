@@ -312,13 +312,12 @@ def test_dataset_form_below_2_34_is_malformed(tmp_path: Path) -> None:
     below it that holds one is corrupt, not an old archive."""
     from apeGmsh.opensees.emitter import h5_reader
     from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
-    from tests.fixtures.schema import OPENSEES_PRIOR_MINOR
-
     src = _large_archive(tmp_path)
     with h5py.File(str(src), "r+") as f:
         meta = f["meta"].attrs
         assert "opensees_schema_version" in meta
-        meta["opensees_schema_version"] = OPENSEES_PRIOR_MINOR
+        # Pinned: the minor just below 2.34.0, so a later bump cannot move it.
+        meta["opensees_schema_version"] = "2.33.0"
 
     with h5_reader.open(str(src)) as model:
         with pytest.raises(MalformedH5Error,

@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_34_0() -> None:
-    """Schema 2.34.0 — an array past the HDF5 attribute limit is stored as
-    a same-named dataset (#2404)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 34, 0)
+def test_opensees_reader_version_is_2_36_0() -> None:
+    """Schema 2.36.0 — a pinned ``OpenSeesTarget.mode`` is
+    ``/opensees@target_mode`` (#2375)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 36, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

@@ -457,3 +457,55 @@ difference; run as a script, it rewrites the file:
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/test_app_legacy_simplex_drift.py
 ```
+
+## `loads3d.h5` (#2385)
+
+A 3-D frame and slab whose neutral `/loads` zone is apeGmsh's own output. The
+`g.loads` and `g.displacements` declarations go through the real resolver
+(`_load_resolver.py`), and the session writes the file at `save_to`
+(`_write_element_loads`, `_write_nodal_loads`, `_write_sp_loads`).
+
+- **Geometry:** a column along +Z and a girder along +X meet at (0, 0, 3). A
+  triangulated slab lies at z = 3.
+- **Cases:**
+  - `dead`: a global `beamUniform` of `wz = -10` on the girder, and a
+    `surfacePressure` of 7 on the slab.
+  - `wind`: a global `beamUniform` of `wx = 5` on the column.
+  - `trap`: a trapezoid from 10 to 20 over x/L in [0.25, 0.75].
+  - `self`: a `bodyForce`.
+  - `wind_slab`: a traction, which is a `surfacePressure` with `normal: false`.
+  - `point`: a nodal force, plus a prescribed displacement.
+
+`test/loads.test.ts` checks the drawn directions and magnitudes against these
+declarations. The #2385 review found that a hand-written table with invented
+columns let wrong directions pass.
+
+`scripts/make_viewer_loads_fixtures.py` writes the file. It imports apeGmsh, so
+it lives outside this app (ADR 0112 D4). The fixture was generated on the #2385
+branch, with main at `257a7174c`. The script deletes the `loads3d.geometry.h5`
+sibling, which the tests do not read:
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_loads_fixtures.py
+```
+
+## `line_oracle_*.{h5,ladruno,golden.json}` (#2471)
+
+Six OpenSees-solved pairs for the line-diagram oracle (`tests/results/test_line_diagram_oracle_fixtures.py` and the viewer's line-diagram suite). Each `<stem>.h5` is written by `apeSees.h5`, each `<stem>.ladruno` is recorded by a Ladruno fork run (`462cf9cf30`, two `LoadControl 0.5` Newton steps to `NormDispIncr 1e-12`, paired with `stamp_provenance`), and each `<stem>.golden.json` records the raw bucket columns, station values, closed-form statics resultants, local frames (`LinearCrdTransf` vs `MODEL/LOCAL_AXES` quaternion), and the `#2009` sign convention:
+
+- `line_oracle_ss_udl.*`: 2-D simply supported `elasticBeamColumn` (`L = 6`, `w = 10` down), left half (`Fwd`) drawn along `+x` and right half (`Rev`) drawn against `+x` (`b -> m`), so its cells and elements run right-to-left (`Mz(L/2) = wL^2/8 = 45`, `+45` on `Fwd` where `local y = +Y` and `-45` on `Rev` where `local y = -Y`, both putting tension on the bottom). Pins the orientation probe: `apeGmsh` never emits a beam whose `iNode` is not its line cell's first corner.
+- `line_oracle_cantilever3d.*`: 3-D `elasticBeamColumn` cantilever along `+x` (`L = 4`, `vecxz = (0, 0, 1)`), tip load `(Fx, Fy, Fz, Mx) = (1, 2, 3, 0.4)`, pinning the `My` vs `Mz` plane, `Vz = +Fz` and `T = +Mx` signs.
+- `line_oracle_fbc_legendre.*` and `line_oracle_fbc_lobatto.*`: 2-D `forceBeamColumn` cantilevers (`L = 3`, tip load `(1, -5)` and `wy = -2`) with 3-point Legendre and 4-point Lobatto integration, recording `section.force` and `localForce`. `line_oracle_fbc_legendre.golden.json` records both the true Gauss-Legendre abscissae (`stations.xi`, from OpenSees `sectionLocation`) and the fork's min/max-normalized `QUADRATURE/GP_PARAM` (`gp_param_by_gauss_id = [-1, 0, 1]`, `#2480`).
+- `line_oracle_column3d.*`: vertical 3-D `elasticBeamColumn` column (`H = 3`, `vecxz = (0, 1, 0)` so `local x = +Z, y = +X, z = +Y`, `q = [0.5, 0.5, 0.5, 0.5]`, `R != R^T`); its golden JSON also records the `degenerate_vecxz = (0, 0, 1)` child-process probe (`LinearCrdTransf3d` refuses a `vecxz` parallel to the column at `setDomain`).
+- `line_oracle_basic_only.*`: 3-D `elasticBeamColumn` cantilever recording `basicForce` only (`[-M_1, +M_2]` end-moment stations at `xi = -1, +1` and `N, T` at `xi = 0`, `#2011`).
+
+The generator imports `apeGmsh`, so it lives outside the app at `tests/fixtures/ladruno/make_line_diagram_oracle.py` (ADR 0112 D4; `check_app_wall.py` rule W1):
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:LADRUNO_OPENSEES_QUIET = "1"
+& C:\Users\nmora\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_line_diagram_oracle.py
+& C:\Users\nmora\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_line_diagram_oracle.py --check
+```
+
