@@ -58,6 +58,8 @@ def test_fast_pattern_matches_sync_true(tmp_path):
             if not sync:
                 s.model.sync()
             maps[sync] = _label_map(s)
+            # the held-label mark leaves no trace on the model
+            assert gmsh.model.getAttributeNames() == []
     assert maps[False] == maps[True]
     assert len(maps[True]) == 8
 
@@ -148,10 +150,70 @@ def test_held_label_does_not_leak_into_another_session():
             fem = s2.mesh.queries.get_fem_data(dim=3)
             with pytest.raises(KeyError, match="LEAK"):
                 fem.elements.select(label="LEAK")
-        # s2's end() leaves its model current; s1 binds in its own model.
+        # s2's end() leaves its model current: s1's sync cannot bind into
+        # it and says so; with s1's model current again, it binds.
+        with pytest.warns(UserWarning, match="LEAK"):
+            s1.model.sync()
+        assert "_label:LEAK" not in {
+            gmsh.model.getPhysicalName(d, t) for d, t in gmsh.model.getPhysicalGroups()
+        }
         gmsh.model.setCurrent("leak_s1")
         s1.model.sync()
         assert s1.labels.entities("LEAK", dim=2) == [tag]
+    finally:
+        s1.end()
+
+
+def test_unnamed_session_binds_its_held_label(tmp_path):
+    """An unnamed session's model shares the name '' with gmsh's default
+    model; ownership does not hang on the name."""
+    from apeGmsh import apeGmsh
+
+    with apeGmsh(verbose=False, save_to=str(tmp_path / "m.h5")) as g:
+        assert g.name == ""
+        tag = g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="D", sync=False)
+        g.model.sync()
+        assert g.labels.has("D")
+        assert g.labels.entities("D", dim=2) == [tag]
+
+
+def test_same_name_nested_session_neither_leaks_nor_binds_blind():
+    """Two models named 'dup': s2 never carries s1's label, and s1 does
+    not bind into s2's model, whose name it shares."""
+    from apeGmsh import apeGmsh
+
+    s1 = apeGmsh(model_name="dup", verbose=False)
+    s1.begin()
+    try:
+        s1.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="SAME", sync=False)
+        with apeGmsh(model_name="dup", verbose=False) as s2:
+            s2.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+            s2.mesh.sizing.set_global_size(0.5)
+            s2.mesh.generation.generate(dim=3)
+            assert "SAME" not in s2.labels.get_all()
+        with pytest.warns(UserWarning, match="SAME"):
+            s1.model.sync()
+        assert "_label:SAME" not in {
+            gmsh.model.getPhysicalName(d, t) for d, t in gmsh.model.getPhysicalGroups()
+        }
+    finally:
+        with pytest.warns(UserWarning, match="SAME"):
+            s1.end()
+
+
+def test_holding_in_another_sessions_model_is_refused():
+    """s1 holds a label, then asks for another while s2's model is
+    current: the entity is in s2's model, so the label is refused."""
+    from apeGmsh import apeGmsh
+
+    s1 = apeGmsh(model_name="refuse_s1", verbose=False)
+    s1.begin()
+    try:
+        s1.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="A", sync=False)
+        with apeGmsh(model_name="refuse_s2", verbose=False):
+            with pytest.raises(RuntimeError, match="another session"):
+                s1.labels.add(2, [gmsh.model.occ.addRectangle(0, 0, 0, 1, 1)], name="B")
+        gmsh.model.setCurrent("refuse_s1")
     finally:
         s1.end()
 

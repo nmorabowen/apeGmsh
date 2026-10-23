@@ -160,8 +160,8 @@ class Model(_HasLogging):
         for on those entities (``label=``) are created here.
         """
         gmsh.model.occ.synchronize()
-        from .Labels import bind_held_labels
-        bind_held_labels()
+        from .Labels import sync_held_labels
+        sync_held_labels(self._parent)
         self._log("OCC kernel synchronised")
         return self
 

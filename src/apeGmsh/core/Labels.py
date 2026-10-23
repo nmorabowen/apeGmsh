@@ -52,6 +52,7 @@ with ``_label:`` so the two tiers do not interfere.
 """
 from __future__ import annotations
 
+import uuid
 import warnings
 import weakref
 from contextlib import contextmanager
@@ -1078,6 +1079,15 @@ def _is_bound(dim: int, tag: int) -> bool:
         gmsh.option.setNumber("General.Terminal", terminal)
 
 
+#: gmsh model attribute naming the ``Labels`` whose held labels belong to
+#: that model.  gmsh names models, and names repeat (every unnamed
+#: session's model is ``''``, as is gmsh's default model), so the model a
+#: label was held in is told by this mark, never by its name.  It is set
+#: on the first held label and removed once all are bound, so a session
+#: that never holds one (``sync=True``) never carries it.
+_HELD_MARK = "apeGmsh.heldLabels"
+
+
 def bind_held_labels() -> None:
     """Bind the held labels of the session whose model is current.
 
@@ -1090,6 +1100,31 @@ def bind_held_labels() -> None:
         labels._bind_held()
 
 
+def _still_held(session: "_SessionBase | _Session") -> list[str]:
+    """Names of the labels ``session`` holds after a bind attempt."""
+    names: set[str] = set()
+    for labels in list(_HOLDERS):
+        if labels._parent is session:
+            names.update(name for _, name in labels._held)
+    return sorted(names)
+
+
+def sync_held_labels(session: "_SessionBase") -> None:
+    """``g.model.sync()``: bind held labels; warn for the session's own
+    labels it cannot bind because another session's model is current."""
+    bind_held_labels()
+    names = _still_held(session)
+    if names:
+        warnings.warn(
+            f"g.model.sync() did not bind labels {names} of session "
+            f"{session.name!r}: they were asked for with sync=False and "
+            f"the current gmsh model is another session's, whose entities "
+            f"carry the same tags.  They stay held; call g.model.sync() "
+            f"before beginning another session.",
+            stacklevel=3,
+        )
+
+
 def release_held_labels(session: "_Session") -> None:
     """At ``session.end()``: bind the session's held labels, or warn.
 
@@ -1097,22 +1132,21 @@ def release_held_labels(session: "_Session") -> None:
     current gmsh model when the session ended (another session's was),
     so it cannot be created and is dropped with a warning naming it.
     """
+    bind_held_labels()
+    names = _still_held(session)
+    if not names:
+        return
     for labels in list(_HOLDERS):
-        if labels._parent is not session:
-            continue
-        labels._bind_held()
-        if labels._held:
-            names = sorted({name for _, name in labels._held})
+        if labels._parent is session:
             labels._held = {}
             _HOLDERS.discard(labels)
-            warnings.warn(
-                f"Labels {names} of session {session.name!r} were asked "
-                f"for with sync=False and never bound: the session's gmsh "
-                f"model was not the current model when it ended, so they "
-                f"are dropped.  Call g.model.sync() while the session's "
-                f"model is current.",
-                stacklevel=3,
-            )
+    warnings.warn(
+        f"Labels {names} of session {session.name!r} were asked for with "
+        f"sync=False and are dropped: when the session ended, the current "
+        f"gmsh model was another session's, so they could not be bound.  "
+        f"Call g.model.sync() before beginning another session.",
+        stacklevel=3,
+    )
 
 
 class Labels(_HasLogging):
@@ -1138,6 +1172,8 @@ class Labels(_HasLogging):
         # (dim, name) -> tags of labels asked for before their entities
         # were synchronised; bound by ``_bind_held``.
         self._held: dict[tuple[int, str], list[int]] = {}
+        # This composite's mark (``_HELD_MARK``) on the model it holds in.
+        self._mark = uuid.uuid4().hex
 
     def _require_kernel(self, verb: str) -> None:
         """Refuse a query that would read the absent gmsh kernel."""
@@ -1148,18 +1184,15 @@ class Labels(_HasLogging):
         self._bind_held()
 
     def _owns_current_model(self) -> bool:
-        """True when the current gmsh model is this session's own.
+        """True when the current gmsh model is the one this composite
+        holds labels in: it carries this composite's ``_HELD_MARK``.
 
-        gmsh names models, and apeGmsh switches between them by name
-        (``gmsh.model.setCurrent``), so a name two models share cannot
-        say which one is current: that case is not owned, and the
-        labels stay held (``release_held_labels`` reports them).
+        The mark, not the model's name, says so: names repeat (an
+        unnamed session's model shares ``''`` with gmsh's default one).
         """
-        name = self._parent.name
         return (
             self._parent.is_active
-            and gmsh.model.getCurrent() == name
-            and gmsh.model.list().count(name) == 1
+            and gmsh.model.getAttribute(_HELD_MARK) == [self._mark]
         )
 
     def _bind_held(self) -> None:
@@ -1195,6 +1228,7 @@ class Labels(_HasLogging):
                 self._add_bound(dim, live, name, record=False)
             del self._held[key]
         _HOLDERS.discard(self)
+        gmsh.model.removeAttribute(_HELD_MARK)
 
     # ------------------------------------------------------------------
     # Create / update
@@ -1253,7 +1287,20 @@ class Labels(_HasLogging):
         if not all(_is_bound(dim, t) for t in tags):
             # Entities created with sync=False: the model does not know
             # them yet, and gmsh would drop the group silently.  Hold the
-            # label until the next synchronising apeGmsh call.
+            # label until the next synchronising apeGmsh call, marking
+            # the model it is held in (``_HELD_MARK``).
+            mark = gmsh.model.getAttribute(_HELD_MARK)
+            if mark != [self._mark]:
+                if mark or self._held:
+                    raise RuntimeError(
+                        f"g.labels.add({name!r}) on entities made with "
+                        f"sync=False: the current gmsh model is not the one "
+                        f"this session holds labels in (another session's "
+                        f"model is current), so the label cannot be held "
+                        f"for the right entities.  Call g.model.sync() "
+                        f"before beginning another session."
+                    )
+                gmsh.model.setAttribute(_HELD_MARK, [self._mark])
             first = (dim, name) not in self._held
             self._held.setdefault((dim, name), []).extend(tags)
             _HOLDERS.add(self)
