@@ -121,6 +121,42 @@ class _PartsFragmentationMixin:
                     new_tags.extend(old_to_new.get(ot, [ot]))
                 inst.entities[d] = new_tags
 
+    def _instances_sharing(
+        self,
+        input_ents: list[DimTag],
+        participants: dict[str, list[DimTag]],
+    ) -> dict[str, list[DimTag]]:
+        """Shapes of every instance whose entities a fragment of
+        *input_ents* renumbers: the participants (their shapes given)
+        and any other instance owning one of the inputs' sub-entities
+        (a face, edge or point shared through an earlier fragment).
+
+        An instance that already names a dead entity cannot be
+        re-derived from its shapes; it is left as it is, with a
+        warning, rather than refused (the fragment never reads it).
+        """
+        touched = _boundary_closure(input_ents)
+        live = {(int(d), int(t)) for d, t in gmsh.model.getEntities()}
+        out = dict(participants)
+        for lbl, inst in self._instances.items():
+            if lbl in out:
+                continue
+            owned = {(d, t) for d, ts in inst.entities.items() for t in ts}
+            if not owned & touched:
+                continue
+            if owned <= live:
+                out[lbl] = _instance_shapes(inst)
+            else:
+                warnings.warn(
+                    f"fragment_pair: Part '{lbl}' shares sub-entities "
+                    f"with the fragmented Parts but already names "
+                    f"entities that no longer exist "
+                    f"({sorted(owned - live)[:5]}...); its "
+                    f"entities are left as they are and may be stale.",
+                    stacklevel=3,
+                )
+        return out
+
     def _rederive_sub_entities(
         self,
         shapes_before: dict[str, list[DimTag]],
@@ -311,9 +347,12 @@ class _PartsFragmentationMixin:
         Supports cross-dimensional pairs — e.g. a 2D shell wall placed
         against a 3D solid foundation's top face.  When the two
         instances live at different dimensions and ``dim`` is None,
-        every entity at every dim each Part owns is included in a
-        single OCC fragment call so the shell becomes conformal at the
-        volume-face interface.  Passing ``dim=`` explicitly restricts
+        each Part's shapes at every dim (its entities that bound no
+        other entity of the same Part) go into a single OCC fragment
+        call so the shell becomes conformal at the volume-face
+        interface; afterwards the faces, edges and points of every Part
+        owning a renumbered one are re-derived from its shapes, at the
+        dims it recorded.  Passing ``dim=`` explicitly restricts
         the operation to that single dimension (legacy behaviour) and
         raises ``RuntimeError`` if the requested dim is missing from
         either Part.
@@ -337,6 +376,7 @@ class _PartsFragmentationMixin:
                 )
             obj = [(dim, t) for t in inst_a.entities.get(dim, [])]
             tool = [(dim, t) for t in inst_b.entities.get(dim, [])]
+            rederive: dict[str, list[DimTag]] = {}
         else:
             # Auto-dim path: each Part's shapes at every dim it owns.
             # Shells against volumes (dim 2 vs 3) go through OCC as a
@@ -355,17 +395,11 @@ class _PartsFragmentationMixin:
                 )
             obj = _instance_shapes(inst_a)
             tool = _instance_shapes(inst_b)
+            rederive = self._instances_sharing(
+                obj + tool, {label_a: obj, label_b: tool},
+            )
 
         input_ents = obj + tool
-        # Instances owning a sub-entity of the inputs: OCC renumbers
-        # those sub-entities, which ``result_map`` does not report.
-        touched = _boundary_closure(input_ents)
-        affected = {
-            lbl: _instance_shapes(inst)
-            for lbl, inst in self._instances.items()
-            if any((d, t) in touched
-                   for d, ts in inst.entities.items() for t in ts)
-        }
 
         with pg_preserved() as pg:
             result, result_map = gmsh.model.occ.fragment(
@@ -374,7 +408,7 @@ class _PartsFragmentationMixin:
             gmsh.model.occ.synchronize()
             pg.set_result(input_ents, result_map)
             self._remap_from_result(input_ents, result_map)
-            self._rederive_sub_entities(affected, input_ents, result_map)
+            self._rederive_sub_entities(rederive, input_ents, result_map)
 
         self._reap_consumed_metadata(input_ents)
 
