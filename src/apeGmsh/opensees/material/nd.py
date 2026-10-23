@@ -3353,8 +3353,9 @@ class LadrunoJ2Finite(NDMaterial):
 # LogStrain — Hencky finite-strain lift wrapper (Ladruno fork)
 # ---------------------------------------------------------------------------
 
+# apegmsh-lint: comment-provenance-ok the TODO below names the fork issue whose fix lifts this gate
 #: Inner classes over which the fork's ``LogStrain`` / ``LogStrain2D`` end
-#: the OpenSees process (#2499). The wrapper's ``nDMaterial`` line asks the
+#: the OpenSees process. The wrapper's ``nDMaterial`` line asks the
 #: inner for ``getType()``; these SANISAND classes do not implement it, so
 #: the ``NDMaterial`` base prints ``<Class>::getType -- subclass
 #: responsibility`` and exits (rc 255), taking an in-process session with
@@ -3364,24 +3365,31 @@ class LadrunoJ2Finite(NDMaterial):
 #: sand answers ``getType`` itself and runs, and ``InitDefGrad`` over the
 #: sand is refused by the fork with an error (not an exit), so neither is
 #: refused here. ``InitDefGrad(LogStrain(<sand>))`` aborts at its inner
-#: ``LogStrain`` line, which this set already refuses.
+#: ``LogStrain`` line, which this table already refuses.
 #:
-#: TODO #2499: empty this set once the fork pin implements ``getType`` for
-#: these classes (the probe's pinned outcomes fail first and say so).
-FINITE_LIFT_ABORTING_INNERS: frozenset[str] = frozenset({
-    "ManzariDafalias", "LadrunoSANISAND", "SAniSandMS",
-})
+#: Keyed by the apeGmsh class; the value is the fork class that prints the
+#: exit message (``LadrunoSANISAND`` derives from ``ManzariDafalias`` in
+#: the fork and exits through it).
+#:
+#: TODO #2499: empty this table once the fork pin implements ``getType``
+#: for these classes (the probe's pinned outcomes fail first and say so).
+FINITE_LIFT_ABORTING_INNERS: dict[str, str] = {
+    "ManzariDafalias": "ManzariDafalias",
+    "LadrunoSANISAND": "ManzariDafalias",
+    "SAniSandMS": "SAniSandMS",
+}
 
 
 def _refuse_aborting_lift_inner(wrapper: str, inner: NDMaterial) -> None:
     """Raise if ``wrapper`` over ``inner`` would end the fork process."""
     name = type(inner).__name__
     if name in FINITE_LIFT_ABORTING_INNERS:
+        cpp = FINITE_LIFT_ABORTING_INNERS[name]
         raise ValueError(
             f"{wrapper}: inner {name} ends the OpenSees process on the "
             f"Ladruno fork: the {wrapper} line asks it for getType(), which "
-            f"{name} does not implement, and the fork exits with "
-            f"'{name}::getType -- subclass responsibility' (rc 255). Refused "
+            f"it does not implement, and the fork exits with "
+            f"'{cpp}::getType -- subclass responsibility' (rc 255). Refused "
             f"until the fork is fixed (#2499). Use LadrunoJ2Finite or an "
             f"isotropic inner such as ElasticIsotropic or DruckerPrager."
         )
