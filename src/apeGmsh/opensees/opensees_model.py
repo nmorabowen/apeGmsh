@@ -175,8 +175,10 @@ def _fem_element_arity(fem: Any) -> dict[int, int]:
 def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     """The archive's ``apeSees.equation_constraint`` rows, in call order.
 
-    ``H5Emitter`` ledgers the ``equationConstraint`` verb, so the only
-    record of a row is its declaration's ``/opensees/decl_params`` entry
+    Each row's declaration has a ``/opensees/decl_params`` entry (the only
+    record of the row in an archive below opensees 2.35.0, which stores no
+    ``equationConstraint`` line; the reader checks the stored rows against
+    it from that minor on)
     (K1-7, opensees 2.26.0): an ``EquationConstraintRecord`` with ``cnode``,
     ``cdof``, ``ccoef`` and ``retained``. Each is re-validated by
     ``make_equation_constraint_record``. A declaration whose entry is
