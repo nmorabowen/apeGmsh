@@ -141,7 +141,7 @@ class TestRefuses:
         ops, slab = _deck_2143()
         with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
             p.beam_uniform(ele=slab, wz=-1.0)
-        with pytest.raises(InertMembranePressureError, match="beam_uniform never"):
+        with pytest.raises(InertMembranePressureError, match=r"beam_uniform and surface_load\(pressure=\.\.\.\) never"):
             ops.build()
 
     def test_self_weight_with_rho_t_refuses(self) -> None:
