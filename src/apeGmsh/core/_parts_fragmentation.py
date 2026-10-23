@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import gmsh
 
+from ._model_boolean import _boundary_closure
 from .Labels import pg_preserved
 from apeGmsh._types import DimTag
 
@@ -21,6 +22,27 @@ class UnregisteredPartEntityWarning(UserWarning):
     the message; pytest's default filter ignores it (see
     ``pyproject.toml`` ``[tool.pytest.ini_options]``).
     """
+
+
+def _instance_shapes(inst: "Instance") -> list[DimTag]:
+    """The instance's shapes: its entities that bound no other entity
+    of the same instance, in (dim, tag) order.
+
+    Instance-relative on purpose: a shell face that also bounds another
+    instance's volume is still this instance's shape.  A tag the model
+    does not know raises (``getBoundary``) instead of being skipped.
+    """
+    owned = [(d, t) for d, ts in inst.entities.items() for t in ts]
+    parents = [(d, t) for d, t in owned if d > 0]
+    bounded: set[tuple[int, int]] = set()
+    if parents:
+        children = gmsh.model.getBoundary(
+            parents, combined=False, oriented=False, recursive=False,
+        )
+        bounded = _boundary_closure(
+            [(abs(int(d)), abs(int(t))) for d, t in children]
+        )
+    return sorted({(int(d), int(t)) for d, t in owned} - bounded)
 
 
 class _PartsFragmentationMixin:
@@ -98,6 +120,36 @@ class _PartsFragmentationMixin:
                 for ot in old_tags:
                     new_tags.extend(old_to_new.get(ot, [ot]))
                 inst.entities[d] = new_tags
+
+    def _rederive_sub_entities(
+        self,
+        shapes_before: dict[str, list[DimTag]],
+        input_ents: list[DimTag],
+        result_map: list[list[DimTag]],
+    ) -> None:
+        """Rebuild each listed instance's entities from its shapes.
+
+        ``shapes_before[label]`` holds the instance's shapes before the
+        fragment.  Each is carried through ``result_map`` (same-dim
+        outputs) when it was an input, kept otherwise, and the
+        instance's entities become the boundary closure of the
+        survivors at the dims the instance already recorded: OCC
+        renumbers the faces, edges and points below a fragmented shape
+        without listing them in ``result_map``.
+        """
+        moved: dict[DimTag, list[DimTag]] = {}
+        for (d, t), news in zip(input_ents, result_map):
+            moved[(int(d), int(t))] = [
+                (int(nd), int(nt)) for nd, nt in news if int(nd) == int(d)
+            ]
+        for lbl, shapes in shapes_before.items():
+            inst = self._instances[lbl]
+            survivors = [
+                n for dt in shapes for n in moved.get(dt, [dt])
+            ]
+            closure = _boundary_closure(survivors)
+            for d in inst.entities:
+                inst.entities[d] = sorted(t for cd, t in closure if cd == d)
 
     def _reap_consumed_metadata(self, input_ents: list[DimTag]) -> None:
         """Pop ``model._metadata`` entries for fragment inputs OCC
@@ -286,30 +338,34 @@ class _PartsFragmentationMixin:
             obj = [(dim, t) for t in inst_a.entities.get(dim, [])]
             tool = [(dim, t) for t in inst_b.entities.get(dim, [])]
         else:
-            # Auto-dim path: include every dim each Part owns.  Shells
-            # against volumes (dim 2 vs 3) now go through OCC as a
+            # Auto-dim path: each Part's shapes at every dim it owns.
+            # Shells against volumes (dim 2 vs 3) go through OCC as a
             # single mixed-dim fragment call — OCC supports mixed-dim
-            # objects/tools and will produce conformal fragments.
-            a_dims = {d for d, ts in inst_a.entities.items() if ts}
-            b_dims = {d for d, ts in inst_b.entities.items() if ts}
-            if not a_dims:
+            # objects/tools and will produce conformal fragments.  Only
+            # the shapes go in: handing OCC the faces, edges and points
+            # that bound them as separate tools breaks the shapes'
+            # wires ("Could not fix wire in surface N").
+            if not any(inst_a.entities.values()):
                 raise RuntimeError(
                     f"Part '{label_a}' has no entities to fragment."
                 )
-            if not b_dims:
+            if not any(inst_b.entities.values()):
                 raise RuntimeError(
                     f"Part '{label_b}' has no entities to fragment."
                 )
-            obj = [
-                (d, t) for d in sorted(a_dims)
-                for t in inst_a.entities.get(d, [])
-            ]
-            tool = [
-                (d, t) for d in sorted(b_dims)
-                for t in inst_b.entities.get(d, [])
-            ]
+            obj = _instance_shapes(inst_a)
+            tool = _instance_shapes(inst_b)
 
         input_ents = obj + tool
+        # Instances owning a sub-entity of the inputs: OCC renumbers
+        # those sub-entities, which ``result_map`` does not report.
+        touched = _boundary_closure(input_ents)
+        affected = {
+            lbl: _instance_shapes(inst)
+            for lbl, inst in self._instances.items()
+            if any((d, t) in touched
+                   for d, ts in inst.entities.items() for t in ts)
+        }
 
         with pg_preserved() as pg:
             result, result_map = gmsh.model.occ.fragment(
@@ -318,6 +374,7 @@ class _PartsFragmentationMixin:
             gmsh.model.occ.synchronize()
             pg.set_result(input_ents, result_map)
             self._remap_from_result(input_ents, result_map)
+            self._rederive_sub_entities(affected, input_ents, result_map)
 
         self._reap_consumed_metadata(input_ents)
 
