@@ -1792,7 +1792,11 @@ exists; hashed.
   (matched as a multiset), refuses with `BridgeError`: every archive below
   2.35.0 (#2416), a stage-claimed tie in an archive below 2.37.0 (#2448),
   and a file that lost rows. A pre-2.37 archive stores nothing a
-  stage-claimed tie's lines could be rebuilt from, so it never replays.
+  stage-claimed tie's lines could be rebuilt from, so it never replays;
+  nor does a `to_h5` rewrite of one, although it is stamped 2.37.0. A
+  partitioned archive whose stage ties a node and repeats that node's
+  fix (the ghost replay of a rank that does not own it) also refuses,
+  since its flat replay would fix the node twice (#2530).
 - **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
   pre-2.35 archive stores its `apeSees.equation_constraint` rows and links
   the source's last `K` global `equationConstraint` calls to them; its
