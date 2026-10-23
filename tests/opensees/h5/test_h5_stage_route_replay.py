@@ -10,7 +10,10 @@ so such an archive is refused by name.  The valid archives here replay
 byte for byte (the R1b oracle).  The replay checks the final model, and so
 does the bridge's emit (#2464), so an element registered after a flip is
 refused on both sides; ``test_a_carrier_registered_after_the_flip_...``
-pins that case.
+pins that case.  A flip counts only the carriers alive at it (#2528), by
+each spec's owning stage; ``test_the_emit_and_the_replay_check_one_model``
+holds the emit's model, owners included, to the one the replay reads from
+a pre-fix archive.
 
 The fork's constructor reset (#2443) is not a route check: the deck checks
 the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``), and the
