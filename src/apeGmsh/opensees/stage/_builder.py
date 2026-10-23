@@ -506,14 +506,14 @@ def route_model(
                 blind.append((cls, None if tag is None else int(tag)))
             if cls in FIRST_ELEMENT_ONLY_PLASTIC_INIT and tag is not None:
                 first_only.setdefault(int(tag), set()).update(via)
-        pg = getattr(spec, "pg", None)
+        spec_pg = getattr(spec, "pg", None)
         specs.append(RouteSpec(
-            cls=type(spec).__name__, pg=pg,
+            cls=type(spec).__name__, pg=spec_pg,
             nd_tags=frozenset(nd_tags),
             blind=tuple(blind),
             first_only={t: frozenset(v) for t, v in first_only.items()},
             fanout=fanout_of(spec),
-            owner=owner_of_pg.get(str(pg), -1) if pg else -1,
+            owner=owner_of_pg.get(str(spec_pg), -1) if spec_pg else -1,
         ))
     return RouteModel(
         specs=tuple(specs), nd_class=nd_class,
