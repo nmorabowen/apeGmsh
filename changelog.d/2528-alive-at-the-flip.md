@@ -13,7 +13,9 @@ or activated by that stage or an earlier one. The same rule runs at the
 stage close, at the emit and on the replay. A carrier activated after a
 plastic flip is still refused unless the stage that activates it flips
 the group again (#2445), and that flip must reach every carrier alive at
-it, the new one included.
+it, the new one included. A `materialState` update whose only carriers
+are elements a later stage activates reaches nothing, and it is refused by
+name on the emit and the replay too.
 
 The emit now gives each element spec its owning stage, read off the
 stages' activations, as the replay reads it off the archive. Before, the
