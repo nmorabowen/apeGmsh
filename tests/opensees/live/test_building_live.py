@@ -287,17 +287,31 @@ def test_piers_by_story_splits_the_wall() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _ends_avg(xy: np.ndarray, vals: np.ndarray) -> np.ndarray:
+    """ASCE 7 average per direction: the signed values at the two ends of
+    the plan across the direction (least and greatest y for X, x for Y),
+    each end's entries averaged, then ``|d_A + d_B| / 2``."""
+    out = np.zeros(2)
+    for c in (0, 1):
+        across = xy[:, 1 - c]
+        d_a = vals[across == across.min(), c].mean()
+        d_b = vals[across == across.max(), c].mean()
+        out[c] = 0.5 * abs(d_a + d_b)
+    return out
+
+
 def test_joint_drifts_match_nodedisp_differences() -> None:
     ops = get_ops()
     b = build(ops)
     d = B.StoryDrifts(LEVELS)
     v = d.table()
     by_xyz = {c: t for t, c in b.coords.items()}
-    want_max = np.zeros((3, 4))   # max |DX|, |DY|, then (|max| + |min|) / 2
+    want_max = np.zeros((3, 4))   # max |DX|, |DY|, then the ASCE end average
     n_joints = 0
     for i in range(1, 4):
         h = LEVELS[i] - LEVELS[i - 1]
         story = []
+        xy = []
         for (x, y, z), t in by_xyz.items():
             if z != LEVELS[i] or (x, y, LEVELS[i - 1]) not in by_xyz:
                 continue
@@ -305,10 +319,10 @@ def test_joint_drifts_match_nodedisp_differences() -> None:
             want = (np.array(ops.nodeDisp(t)[:2]) - np.array(ops.nodeDisp(bot)[:2])) / h
             np.testing.assert_allclose(v.row(f"Story{i}:{t}"), want, rtol=1e-13)
             story.append(want)
+            xy.append((x, y))
             n_joints += 1
         want_max[i - 1, :2] = np.max(np.abs(story), axis=0)
-        want_max[i - 1, 2:] = 0.5 * (np.abs(np.max(story, axis=0))
-                                     + np.abs(np.min(story, axis=0)))
+        want_max[i - 1, 2:] = _ends_avg(np.array(xy), np.array(story))
     assert len(v.rows) == n_joints
     np.testing.assert_allclose(d.story_max().values, want_max, rtol=1e-13)
     np.testing.assert_allclose(B.story_drifts(LEVELS).values, want_max, rtol=1e-13)
@@ -362,7 +376,8 @@ def test_story_displacements_match_nodedisp() -> None:
         for n, d in zip(level, disp):
             np.testing.assert_allclose(t.row(f"Story{k}:{n}"), d, rtol=1e-14)
         want[k - 1, :2] = np.abs(disp).max(axis=0)
-        want[k - 1, 2:] = 0.5 * (np.abs(disp.max(axis=0)) + np.abs(disp.min(axis=0)))
+        xy = np.array([b.coords[n][:2] for n in level])
+        want[k - 1, 2:] = _ends_avg(xy, disp)
     assert len(t.rows) == sum(1 for c in b.coords.values() if c[2] > 0 and c[2] in LEVELS)
     np.testing.assert_allclose(u.story_max().values, want, rtol=1e-14)
     corner = next(n for n, c in b.coords.items() if c == (6.0, 4.0, 9.0))
