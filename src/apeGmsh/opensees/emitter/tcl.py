@@ -35,9 +35,11 @@ from __future__ import annotations
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
+    ASDSHELL_PDELTA_GUARD,
     ForkBuildGuard,
     MaterialStageCarriers,
     fork_guard_lines,
+    is_asdshell_p_delta,
 )
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
@@ -1014,6 +1016,8 @@ class TclEmitter:
     ) -> None:
         self._stage0.owed = True
         self._stage_carriers.note_element(ele_type, tag, args)
+        if is_asdshell_p_delta(ele_type, args):
+            self._require_fork_floors((ASDSHELL_PDELTA_GUARD,))
         self._lines.append(_join("element", ele_type, tag, *args))
 
     # -- Time series --------------------------------------------------------
@@ -1419,11 +1423,14 @@ class TclEmitter:
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         self._stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
+        if trace_stop:
+            args.append("-traceStop")
         self._lines.append(_join("eigen", *args))
         return []
 

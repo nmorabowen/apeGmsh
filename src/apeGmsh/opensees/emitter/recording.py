@@ -357,11 +357,13 @@ class RecordingEmitter:
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         self._stage_zero()
-        self.calls.append(
-            ("eigen_feast", (f_min, f_max), {"certify": certify}),
-        )
+        kw: dict[str, bool] = {"certify": certify}
+        if trace_stop:
+            kw["trace_stop"] = True
+        self.calls.append(("eigen_feast", (f_min, f_max), kw))
         return []
 
     def modal_response_history(
