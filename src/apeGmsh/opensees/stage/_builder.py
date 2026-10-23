@@ -960,7 +960,11 @@ def _refuse_activation_after_plastic_flip(
     :func:`_refuse_multi_element_plastic_flip` holds that flip to every
     carrier alive at it, the new one included.  The earlier stages' flip
     checks count only the carriers alive at them (#2528), so this is the
-    check that keeps a carrier activated after the flip refused.
+    check that keeps a carrier activated after the flip refused.  It
+    counts per tag (``earlier_live``): it refuses a carrier of a tag that
+    has a carrier outside this stage's activations.  A carrier of another
+    material of the same class-wide group, whose own tag has no such
+    carrier, is not refused here; counting per group is #2534.
     """
     if not activated_pgs:
         return

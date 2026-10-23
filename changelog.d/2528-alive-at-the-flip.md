@@ -10,10 +10,12 @@ stage and is not in the domain yet. Since #2464 the emit and the
 
 A flip now counts only the carriers alive when it runs: emitted globally,
 or activated by that stage or an earlier one. The same rule runs at the
-stage close, at the emit and on the replay. A carrier activated after a
-plastic flip is still refused unless the stage that activates it flips
-the group again (#2445), and that flip must reach every carrier alive at
-it, the new one included. A `materialState` update whose only carriers
+stage close, at the emit and on the replay. A carrier of the flipped
+material activated after a plastic flip is still refused unless the stage
+that activates it flips the group again (#2445), and that flip must reach
+every carrier alive at it, the new one included. That check counts per
+material: a carrier of another material of the same class-wide group is
+not caught by it, a hole that predates this change (#2534). A `materialState` update whose only carriers
 are elements a later stage activates reaches nothing, and it is refused by
 name on the emit and the replay too.
 
