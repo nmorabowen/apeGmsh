@@ -813,36 +813,56 @@ def resolve_ndf_overlay(
         except Exception:
             decoupled = set()
 
+    from .pg_expand import node_name_to_nodes
+
     overlay: dict[int, int] = {}
     for rec in records:
-        tag = rec.tag
-        if tag is None and rec.handle is not None:
-            tag = getattr(rec.handle, "tag", None)
-        if tag is None:
-            raise BridgeError(
-                "ops.ndf: the target decoupled node has no resolved tag — its "
-                "g.decouple_node handle was not materialized. Call "
-                "g.mesh.queries.get_fem_data(...) so the FEM factory assigns "
-                "the node its tag before constructing the bridge."
-            )
-        tag = int(tag)
-        if tag in inferred:
-            raise BridgeError(
-                f"ops.ndf may only state the ndf of an element-LESS decoupled "
-                f"node, but node {tag} is touched by an element (its ndf is "
-                f"inferred as {inferred[tag]}). Drop ops.ndf for node {tag} — "
-                f"the incident element class already determines its ndf "
-                f"(ADR 0048 / 0049)."
-            )
-        if tag not in decoupled:
-            raise BridgeError(
-                f"ops.ndf target node {tag} is not a decoupled node. ops.ndf "
-                f"is restricted to element-less nodes created via "
-                f"g.decouple_node(...); a mesh node's ndf is inferred from its "
-                f"incident elements and cannot be overridden (ADR 0048 / 0049)."
-            )
-        overlay[tag] = int(rec.ndf)
+        if isinstance(rec.handle, str):
+            # A decoupled node's (or node set's) label: every node
+            # it names, each checked below like a tag.
+            targets: "tuple[int | None, ...]" = node_name_to_nodes(
+                fem, rec.handle, where="ops.ndf target")
+        elif rec.tag is None and rec.handle is not None:
+            targets = (getattr(rec.handle, "tag", None),)
+        else:
+            targets = (rec.tag,)
+        for target in targets:
+            _overlay_one(target, rec.ndf, inferred, decoupled, overlay)
     return overlay
+
+
+def _overlay_one(
+    tag: "int | None",
+    ndf: int,
+    inferred: "dict[int, int]",
+    decoupled: "set[int]",
+    overlay: "dict[int, int]",
+) -> None:
+    """Check one ``ops.ndf`` target node and add it to ``overlay``."""
+    if tag is None:
+        raise BridgeError(
+            "ops.ndf: the target decoupled node has no resolved tag — its "
+            "g.decouple_node handle was not materialized. Call "
+            "g.mesh.queries.get_fem_data(...) so the FEM factory assigns "
+            "the node its tag before constructing the bridge."
+        )
+    tag = int(tag)
+    if tag in inferred:
+        raise BridgeError(
+            f"ops.ndf may only state the ndf of an element-LESS decoupled "
+            f"node, but node {tag} is touched by an element (its ndf is "
+            f"inferred as {inferred[tag]}). Drop ops.ndf for node {tag} — "
+            f"the incident element class already determines its ndf "
+            f"(ADR 0048 / 0049)."
+        )
+    if tag not in decoupled:
+        raise BridgeError(
+            f"ops.ndf target node {tag} is not a decoupled node. ops.ndf "
+            f"is restricted to element-less nodes created via "
+            f"g.decouple_node(...); a mesh node's ndf is inferred from its "
+            f"incident elements and cannot be overridden (ADR 0048 / 0049)."
+        )
+    overlay[tag] = int(ndf)
 
 
 def validate_constraint_master_ndf(

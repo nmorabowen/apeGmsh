@@ -117,6 +117,37 @@ Which namespace:
 
 Every method has an explicit, fully-typed signature (no `**kwargs`).
 
+### Site-response soils (multi-yield, PM4)
+
+`ops.nDMaterial.PressureIndependMultiYield` (total-stress clay),
+`PressureDependMultiYield` / `PressureDependMultiYield02` (effective-stress
+sand), `PM4Sand` / `PM4Silt` (plane strain only) mirror their OpenSees
+parsers argument for argument and emit the full positional list. Pressures
+default to OpenSees' kPa values (`ref_pressure=100`, `atm=101`,
+`P_atm=101.3`): set them in other units. `backbone=((strain, G/Gmax), ...)`
+replaces the automatic yield surfaces of the multi-yield classes.
+
+```python
+clay = ops.nDMaterial.PressureIndependMultiYield(
+    nd=2, rho=1.8, ref_shear_modulus=6e4, ref_bulk_modulus=3e5, cohesion=40.0)
+ops.element.FourNodeQuad(pg="L000", thickness=1.0, material=clay,
+                         body_force=(0.0, -18.0))
+with ops.stage(name="gravity") as s:          # elastic gravity, then plastic
+    s.update_material_stage(materials=[clay], stage=0)
+    ...
+with ops.stage(name="plastic") as s:
+    s.update_material_stage(materials=[clay], stage=1)
+    ...
+```
+
+The multi-yield classes cache their stress in `getStress()`, so an
+`algorithm Linear` step commits a stale stress (about 2 % of the right
+answer); the build refuses that pairing. Use Newton, `ModifiedNewton` or
+`KrylovNewton`. `PM4Sand` `FirstCall` / `PostShake` and the multi-yield
+`bulkModulus` / `shearModulus` updates go through
+`s.update_parameter(name, value, pg=..., material=mat)`.
+<!-- verified: tests/opensees/unit/primitives/test_materials_nd_soil.py, tests/opensees/live/test_soil_materials_live.py -->
+
 ## Elements
 
 `ops.element.<Type>(pg="PG", ...)` writes every mesh element in that
@@ -177,11 +208,12 @@ ops.element.ZeroLength(pg="AbsBnd",
 
 # Node-pair form (ADR 0049) — spring to a g.decouple_node ground, NO meshed line.
 # Pass nodes=(node_i, node_j) instead of pg=; each endpoint is a decouple_node
-# handle, a single-node label, or an int tag. The dominant SSI case: a boundary
-# mesh node ↔ a coincident decoupled ground.
+# handle, a name selecting exactly one node (a node label — the decouple_node
+# label= included — else a physical group), or an int tag. The dominant SSI
+# case: a boundary mesh node ↔ a coincident decoupled ground.
 gnd = g.decouple_node(coords=(x, y, z), label="pile_ground")   # session-side
-ops.ndf(gnd, ndf=3)                                            # size the element-less ground
-ops.element.ZeroLength(nodes=("boundary_node", gnd),           # mesh-node label + ground handle
+ops.ndf("pile_ground", ndf=3)                                  # size the element-less ground
+ops.element.ZeroLength(nodes=("boundary_node", "pile_ground"), # mesh-node label + ground label
     mat_dirs=(ZeroLengthMatDir(material=ks, dof=1),
               ZeroLengthMatDir(material=ks, dof=2),
               ZeroLengthMatDir(material=ks, dof=3)))
@@ -220,6 +252,35 @@ ops.element.ZeroLength(nodes=("boundary_node", gnd),           # mesh-node label
   the resultant of two dirs (bidirectional / bearing spring).
 - For frequency-band damping on a group of springs, attach a `ops.damping.*`
   object by PG (`on="MyPG"`) rather than a per-element flag.
+
+### Compliant (Lysmer–Kuhlemeyer) base — `lysmer_base`
+
+`from apeGmsh.opensees.site_response import lysmer_base` builds the viscous
+base of a site-response model: one dashpot per node of the base curve (2-D) or
+face (3-D), from a fixed ground node, `C = rho Vs A_i` on the horizontal DOFs
+and `rho Vp A_i` on the vertical one (or, with no `vp`, a vertical fixity, which
+it skips on a node a `periodic` / `equal_dof` tie already slaves). The ground
+nodes are one decoupled node per base node:
+
+```python
+gnd = g.decouple_node_set("Base", label="base_ground")      # session, pre-mesh
+...
+base = lysmer_base(ops, "Base", gnd, rho=2.2, vs=760.0)      # bridge
+vel = ops.timeSeries.Path(dt=dt, values=tuple(v_outcrop))    # input VELOCITY
+with ops.pattern.Plain(series=vel) as p:                     # or s.pattern(...)
+    base.add_input(p)               # force C_i v(t) = 2 rho Vs A_i v_inc(t)
+```
+
+`add_input(p, motion="incident")` doubles the force for an incident-wave
+velocity. Declare the side ties (`g.constraints.periodic`, #2388, or
+`ops.equation_constraint` rows) BEFORE `lysmer_base`: it leaves a tied
+vertical DOF unfixed, and a tie added later meets a fixed DOF (a singular
+solve). With tied sides the base pair's master
+ends up fixed vertically while tied horizontally: OpenSees' `Transformation`
+handler (the bridge default for `equalDOF`) silently drops that tie every step
+(#2396, `PartlyFixedTieWarning`), so declare `ops.constraints.Lagrange()`. Put the input pattern in the shaking stage of a staged model, so the
+gravity stages never see it.
+<!-- verified: tests/opensees/unit/test_site_response_lysmer.py, tests/opensees/live/test_lysmer_base_live.py -->
 
 ## Boundary conditions, masses, loads — explicit / opt-in
 
@@ -607,8 +668,11 @@ ops.fix(nodes=[h.tag], dofs=(1, 1, 1, 1, 1, 1))  # after get_fem_data
 ```
 <!-- verified: tests/test_decoupled_constraint_master.py -->
 
-`ops.ndf` targets a `g.decouple_node` handle or its int tag (a `label=`/`pg=`
-grammar is deferred). It **fails loud** on a mesh node or any element-touched
+`ops.ndf` targets a `g.decouple_node` handle, its int tag, or its label (a
+`g.decouple_node_set` label sizes every node of the set). A decoupled node's
+`label=` is a node label of the snapshot (#2389): `fem.nodes.select(label=)`,
+`ops.fix(label=)`, `ops.nodes.one(label=)` and `model.h5` all carry it, and a
+name that is already a geometry label raises at `get_fem_data`. It **fails loud** on a mesh node or any element-touched
 node — inference owns those, and restating would create a two-headed model. The
 stated value is checked by three gates (all `BridgeError` at build): **G1**
 adaptive 2-node-link endpoints must agree, **G2** a `rigidDiaphragm`/`rigidLink`
@@ -809,6 +873,12 @@ material=sand)` changes a MATERIAL one — the tag rides as the trailing
 argv because the element forwards it to its GP materials, which match on
 their own tag.
 <!-- verified: tests/opensees/unit/test_stage_update_parameter.py -->
+
+`s.update_material_stage(materials=[...], stage=0|1)` flips SANISAND, the
+multi-yield soils and PM4Sand / PM4Silt between their elastic and plastic
+stage (`stage=2`, elastic with pressure-dependent moduli, for the two
+`PressureDependMultiYield` classes only); any other class is refused, since
+OpenSees would ignore the flip.
 
 Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,

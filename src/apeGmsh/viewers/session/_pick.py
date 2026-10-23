@@ -243,9 +243,6 @@ def _is_clipped(view: Any, world: Any) -> bool:
         pt = np.asarray(world, dtype=np.float64).reshape(1, 3)
     except (TypeError, ValueError):
         return False
-    specs = _specs(view)
-    if not specs:
-        return False
     return not bool(_visible_mask(view, pt)[0])
 
 
@@ -274,7 +271,8 @@ def _nearest(coords: "np.ndarray", world: Any) -> Optional[int]:
     if pts.size == 0:
         return None
     delta = pts - np.asarray(world, dtype=np.float64).reshape(1, 3)
-    return int(np.argmin(np.einsum("ij,ij->i", delta, delta)))
+    d2 = np.einsum("ij,ij->i", delta, delta)
+    return int(np.nanargmin(d2)) if np.isfinite(d2).any() else None
 
 
 def _inside_box(
