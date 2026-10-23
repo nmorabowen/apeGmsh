@@ -14,7 +14,11 @@ LadrunoMembrane::solve_linear_system`. Two bridge bugs caused it.
   label name, or a `pg=` Element spec) is filtered. An explicitly named frame
   (an int tag, or a node-pair Element spec) that falls outside the panel is
   refused. When filtering leaves a panel with no frame and no
-  `support_nodes=`, the build refuses and names the panel.
+  `support_nodes=`, the build refuses and names the panel. When it drops
+  some, but not all, of a group's frames, the build warns
+  `MembraneFramesFilteredWarning`, naming the panel, the group and up to 10
+  dropped OpenSees element tags (expected for a group that spans several
+  panels).
 - The panel's interior mesh nodes, which only the panel's gmsh cells touch,
   were emitted as `node` lines with no element, so K was singular. They are
   no longer emitted on the flat, staged and partitioned paths, nor by an
