@@ -31,7 +31,6 @@ import pytest
 from apeGmsh.opensees import OpenSeesModel, OpenSeesTarget, apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._target import BackendInfo
-from apeGmsh.opensees.emitter import h5 as h5_module
 from apeGmsh.opensees.emitter import live
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.h5_reader import (
@@ -43,29 +42,6 @@ from tests.opensees.h5.test_h5_solve_stamp import _frame_bridge
 
 _PINNED = ("fork", "stock")
 _CORPUS = Path(__file__).parents[2] / "fixtures" / "schema_corpus"
-
-
-@pytest.fixture
-def bridge_archives_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Hand ``ops.h5`` the bound target's mode.
-
-    ``apeSees._write_h5`` builds its ``H5Emitter`` with no ``target_mode``
-    until the one-line bridge change lands (``apesees.py`` is locked behind
-    #2510 and #2464, T route (a) on #2375); this stands in for exactly that
-    line: the mode of ``ops.opensees``, ``"auto"`` without a target.
-    """
-    import functools
-
-    write_h5 = apeSees._write_h5
-
-    def _write_h5(self: apeSees, *args: Any, **kwargs: Any) -> None:
-        mode = "auto" if self.opensees is None else self.opensees.mode
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(h5_module, "H5Emitter",
-                      functools.partial(H5Emitter, target_mode=mode))
-            write_h5(self, *args, **kwargs)
-
-    monkeypatch.setattr(apeSees, "_write_h5", _write_h5)
 
 
 def _pinned_frame(mode: "str | None") -> apeSees:
@@ -87,7 +63,6 @@ def _archive(ops: apeSees, path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 @pytest.mark.parametrize("mode", [None, "auto", *_PINNED])
 def test_the_archive_stores_exactly_the_pinned_mode(
     mode: "str | None", tmp_path: Path,
@@ -112,9 +87,7 @@ def test_the_writer_refuses_an_unknown_mode() -> None:
         H5Emitter(target_mode="")  # type: ignore[arg-type]
 
 
-def test_binary_and_python_are_never_archived(
-    bridge_archives_mode: None, tmp_path: Path,
-) -> None:
+def test_binary_and_python_are_never_archived(tmp_path: Path) -> None:
     ops = _frame_bridge(analysis=True)
     ops._opensees = OpenSeesTarget(
         binary=str(tmp_path / "OpenSees.exe"),
@@ -174,7 +147,6 @@ def test_a_malformed_mode_raises_naming_the_attribute(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 @pytest.mark.parametrize("kind", ["tcl", "py"])
 @pytest.mark.parametrize("mode", [None, *_PINNED])
 def test_a_pinned_replay_deck_is_the_bridge_deck(
@@ -196,7 +168,6 @@ def test_a_pinned_replay_deck_is_the_bridge_deck(
         assert stamped[0].endswith(f"; backend {mode}")
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 @pytest.mark.parametrize("mode", [None, *_PINNED])
 def test_to_h5_echoes_the_mode(mode: "str | None", tmp_path: Path) -> None:
     src = _archive(_pinned_frame(mode), tmp_path / "src.h5")
@@ -210,7 +181,6 @@ def test_to_h5_echoes_the_mode(mode: "str | None", tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 @pytest.mark.parametrize("mode", [None, *_PINNED])
 def test_only_a_fork_archive_requires_the_fork(
     mode: "str | None", tmp_path: Path,
@@ -239,7 +209,7 @@ def stock_backend(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
 
 
-@pytest.mark.usefixtures("bridge_archives_mode", "stock_backend")
+@pytest.mark.usefixtures("stock_backend")
 def test_build_live_refuses_a_fork_archive_on_stock(tmp_path: Path) -> None:
     path = _archive(_pinned_frame("fork"), tmp_path / "m.h5")
     with pytest.raises(BridgeError, match="require 'fork'") as exc:
@@ -247,7 +217,7 @@ def test_build_live_refuses_a_fork_archive_on_stock(tmp_path: Path) -> None:
     assert "/opensees@target_mode is 'fork'" in str(exc.value)
 
 
-@pytest.mark.usefixtures("bridge_archives_mode", "stock_backend")
+@pytest.mark.usefixtures("stock_backend")
 @pytest.mark.parametrize("mode", [None, "stock"])
 def test_build_live_does_not_ask_an_unpinned_or_stock_archive_for_the_fork(
     mode: "str | None", tmp_path: Path,
@@ -271,7 +241,6 @@ def _pre_fix_fork_reset(
     return routes._write(build, path, monkeypatch, pre_fix=True)
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 def test_the_bridge_refuses_the_fork_reset_only_under_a_fork_pin(
     tmp_path: Path,
 ) -> None:
@@ -286,7 +255,6 @@ def test_the_bridge_refuses_the_fork_reset_only_under_a_fork_pin(
             str(tmp_path / "auto.tcl"))
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 @pytest.mark.parametrize("target", ["tcl", "py"])
 def test_a_fork_pinned_pre_fix_archive_keeps_the_fork_reset_refusal(
     target: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
@@ -301,7 +269,6 @@ def test_a_fork_pinned_pre_fix_archive_keeps_the_fork_reset_refusal(
     assert "ManzariDafalias::mElastFlag to 0" in str(exc.value)
 
 
-@pytest.mark.usefixtures("bridge_archives_mode")
 def test_the_unpinned_twin_replays(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -322,11 +289,6 @@ def _model_hash(path: Path) -> str:
         return str(f["meta"]["lineage"].attrs["model_hash"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="needs MODEL_HASH_EXCLUDED_ATTRS in _internal/lineage.py, outside "
-           "the card's Owned files; the patch is on prog/2375-apply (#2375)")
-@pytest.mark.usefixtures("bridge_archives_mode")
 def test_model_hash_is_the_same_pinned_or_on_auto(tmp_path: Path) -> None:
     hashes = {
         mode: _model_hash(_archive(_pinned_frame(mode),

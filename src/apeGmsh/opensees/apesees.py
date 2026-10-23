@@ -10970,7 +10970,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             snapshot_id = ""
 
         name = model_name or _path_stem(path)
-        emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
+        emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id, target_mode="auto" if self._opensees is None else self._opensees.mode)
         bm.emit(emitter)
         # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
