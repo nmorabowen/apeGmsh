@@ -1582,12 +1582,12 @@ class PyEmitter:
                 self._fork_floor_at += 1
 
     def _stage_zero(self) -> None:
-        """Write the owed ManzariDafalias ``-stage 0`` lines
+        """Write the owed fresh-stage lines of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`), at a solve verb."""
-        for tag in self._stage0.due():
+        for tag, stage in self._stage0.due():
             self._lines.append(_ops_call(
-                "updateMaterialStage", "-material", tag, "-stage", 0))
+                "updateMaterialStage", "-material", tag, "-stage", stage))
 
     def _emit_hook_ramp_function(
         self,
