@@ -22,8 +22,8 @@ checks, and the emit-time class-wide check, before anything is emitted. It
 runs in `OpenSeesModel.build` for every target and in
 `compose._replay_staged_into`. Such an archive is refused by name, with the
 stage-close message. The valid archives tested here replay byte for byte.
-The replay checks the final model, while the stage close sees only the
-elements registered so far, so the replay may refuse an archive the bridge
-accepted: one whose elements were registered after a flip (#2464). An
+The replay checks the final model. The stage close sees only the elements
+registered so far, so an element registered after a flip slipped past the
+bridge; #2464 closes that gap by running the same checks at emit. An
 archive with a stage flip but no `/opensees/decl_params` (written below
 opensees 2.26.0) cannot be checked, so it is refused too.

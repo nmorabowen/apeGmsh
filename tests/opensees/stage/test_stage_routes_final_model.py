@@ -231,7 +231,7 @@ def test_the_emit_check_reads_the_model_the_stage_close_reads() -> None:
             validate_stage_routes(
                 stage_records=built.stage_records,
                 primitives=built.primitives, tag_for=built.tag_for,
-                fem=built.fem, fork=built.fork_pinned)
+                fem=built.fem, fork=lambda: built.fork_pinned)
         live = _builder._StageBuilder(ops, "probe")._route_model()
         assert seen, case
         for model in seen:
@@ -258,3 +258,122 @@ def test_a_late_carrier_the_sweep_reaches_passes() -> None:
     assert len(tri) == 2 and len(sweep) == 1
     listed = sweep[0].split("-ele ")[1].split(" materialState")[0].split()
     assert sorted(listed) == sorted(tri)
+
+
+# ---------------------------------------------------------------------------
+# The fork signal: the emit knows the fork when the replay does
+# ---------------------------------------------------------------------------
+
+
+def _fork_reset(late: bool, mode: "str | None") -> apeSees:
+    """The fork-reset model on a fork-only chain (``system Pardiso``)."""
+    return _flip_then_activate_a_late_carrier(
+        late, own_material=True, mode=mode, system="Pardiso")
+
+
+@pytest.mark.parametrize("target", ["tcl", "py", "h5"])
+@pytest.mark.parametrize("late", [False, True], ids=["early", "late"])
+@pytest.mark.parametrize("mode", [None, "auto"])
+def test_a_fork_only_chain_is_known_to_run_the_fork(
+    mode: "str | None", late: bool, target: str, tmp_path: Path,
+) -> None:
+    """An unpinned bridge whose stage chain declares a fork-only type
+    writes a deck that runs only on the fork, and its archive's replay
+    reads ``"fork"`` off that chain.  So the emit refuses the fork reset
+    (#2443) as the replay does, with the fork-pinned stage close's
+    message.  The stage close cannot see the chain's binary, so it passes
+    both orders."""
+    expected = _stage_close_message(lambda lt: _fork_reset(lt, "fork"))
+    ops = _quiet(lambda: _fork_reset(late, mode))
+    out = tmp_path / f"model.{target}"
+    with pytest.raises(BridgeError) as exc:
+        _quiet(lambda: getattr(ops, target)(str(out)))
+    assert str(exc.value) == expected
+    assert "#2444" in expected
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("system", ["Pardiso", "UmfPack"])
+def test_the_emit_reads_the_fork_off_the_chain_as_the_replay_does(
+    system: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Oracle of the fork signal: ``stage_chains_need_fork`` on the built
+    model equals the ``"fork"`` the archive's replay requires.  The
+    archive is written with the route checks off, so the refused model
+    can be written at all."""
+    from apeGmsh.opensees import OpenSeesModel
+    from apeGmsh.opensees._internal.build.stage_validate import (
+        stage_chains_need_fork,
+    )
+    from tests.opensees.h5.test_h5_stage_route_replay import _write
+
+    def build() -> apeSees:
+        return _flip_then_activate_a_late_carrier(
+            True, own_material=True, system=system)
+
+    built = _quiet(lambda: build().build())
+    emit = stage_chains_need_fork(
+        built.stage_records, tag_for=built.tag_for,
+        global_chain=lambda em: built._maybe_auto_emit_constraint_handler(
+            em, list(built.primitives)))
+    path = _write(build, tmp_path / "model.h5", monkeypatch, pre_fix=True)
+    replay = "fork" in OpenSeesModel.from_h5(str(path)).replay_requires()
+    assert emit == replay == (system == "Pardiso")
+
+
+def test_a_stock_chain_on_an_unpinned_bridge_passes() -> None:
+    """The same model on a stock chain is not known to run the fork, at
+    the emit as at the replay (``own_material_on_stock`` there)."""
+    ops = _quiet(lambda: _flip_then_activate_a_late_carrier(
+        True, own_material=True))
+    _quiet(lambda: ops.build().emit(TclEmitter()))
+
+
+# ---------------------------------------------------------------------------
+# The partitioned emit runs the same check
+# ---------------------------------------------------------------------------
+
+
+def _partitioned(late: bool) -> apeSees:
+    """:func:`_multi_element_on_a_late_quad` on two partitions."""
+    from tests.opensees.fixtures.fem_stub import (
+        _PartitionSetStub,
+        _PartitionStub,
+    )
+
+    ops = _multi_element_on_a_late_quad(late)
+    nodes = {1: range(1, 7), 2: range(7, 13), 3: range(13, 17),
+             4: range(17, 21), 5: range(21, 25), 6: range(25, 31)}
+    object.__setattr__(ops.fem, "partitions", _PartitionSetStub([
+        _PartitionStub(id=k, element_ids=tuple(eles), node_ids=tuple(
+            sorted({n for e in eles for n in nodes[e]})))
+        for k, eles in enumerate(([1, 3], [2, 4, 5, 6]))]))
+    return ops
+
+
+PARTITIONED: dict[str, Callable[[apeSees, Path], Any]] = {
+    "tcl": lambda o, d: o.tcl(str(d / "m.tcl")),
+    "py": lambda o, d: o.py(str(d / "m.py")),
+    "h5": lambda o, d: o.h5(str(d / "m.h5")),
+    "tcl per_rank": lambda o, d: o.tcl(str(d / "m.tcl"), per_rank=True),
+    "tcl per_rank stream": lambda o, d: o.tcl(
+        str(d / "m.tcl"), per_rank=True, stream=True),
+}
+
+
+@pytest.mark.parametrize("target", sorted(PARTITIONED))
+def test_the_partitioned_emit_refuses_a_late_carrier(
+    target: str, tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees._internal.build.ownership import is_partitioned
+
+    expected = _stage_close_message(_partitioned)
+    ops = _quiet(lambda: _partitioned(True))
+    assert is_partitioned(ops.fem)
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(BridgeError) as exc:
+        _quiet(lambda: PARTITIONED[target](ops, out))
+    assert str(exc.value) == expected
+    assert "but FourNodeQuad carries it" in expected
+    assert not list(out.iterdir())

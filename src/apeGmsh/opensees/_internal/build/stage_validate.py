@@ -25,7 +25,7 @@ stage close's route checks.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from ..types import Element, NDMaterial, Primitive
 from .errors import BridgeError
@@ -224,7 +224,7 @@ def validate_stage_routes(
     primitives: "Iterable[Primitive]",
     tag_for: Mapping[int, int],
     fem: "FEMData",
-    fork: bool,
+    fork: "Callable[[], bool]",
 ) -> None:
     """The stage-close route checks, run again at emit on the final model
     (#2464).
@@ -237,8 +237,11 @@ def validate_stage_routes(
     ``updateMaterialStage`` (the #2445 wrong answer).  Here each stage runs
     the same checks, in program order, on every registered primitive: the
     model the ``model.h5`` replay checks (#2465).  A refusal gives the
-    stage close's own message.  ``fork`` says whether the bridge's
-    ``OpenSeesTarget`` pins ``mode="fork"``.
+    stage close's own message.  ``fork()`` says whether the run is known to
+    be on the Ladruno fork: the bridge's ``OpenSeesTarget`` pins
+    ``mode="fork"``, or the deck needs the fork the way the replay reads it
+    (:func:`stage_chains_need_fork`).  It is called only when a stage
+    flips a stage flag.
     """
     from ...stage._builder import (
         STAGE_FLAG_PARAMETERS,
@@ -257,7 +260,7 @@ def validate_stage_routes(
         return
     model = route_model(
         primitives, tag_of=lambda prim: tag_for.get(id(prim)), fem=fem,
-        fork=fork)
+        fork=fork())
     earlier: list[tuple[int, int]] = []
     for st in stages:
         if stage_routes_due(st.update_material_stage_records,
@@ -270,6 +273,52 @@ def validate_stage_routes(
                 earlier_flips=tuple(earlier))
         earlier.extend(stage_flips(st.update_material_stage_records,
                                    st.update_parameter_records))
+
+
+def stage_chains_need_fork(
+    stage_records: "Iterable[StageRecord]",
+    *,
+    tag_for: Mapping[int, int],
+    global_chain: "Callable[[Any], None]",
+) -> bool:
+    """Whether a staged deck's analysis chains bind it to the Ladruno fork.
+
+    This is the ``"fork"`` a ``model.h5`` replay reads off the chains
+    (``caps.flat_requires``, through ``caps.needs_fork`` over the stamp's
+    chains, global and staged), so the stage route checks at emit know
+    the fork when the replay does.  Each chain is read from its own
+    primitives' ``_emit`` into a recorder.  ``global_chain`` emits what a
+    staged deck writes outside the stages: the constraint handler the
+    bridge auto-emits.  Each stage's chain is the one its block emits.
+    """
+    import warnings
+
+    from ...emitter.caps import CHAIN_ATTRS, needs_fork
+    from ...emitter.recording import RecordingEmitter
+    from ..tag_resolution import set_tag_resolver
+
+    def attrs(emit: "Callable[[Any], None]") -> dict[str, str]:
+        probe = RecordingEmitter()
+        set_tag_resolver(probe, lambda prim: tag_for[id(prim)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            emit(probe)
+        return {CHAIN_ATTRS[name]: str(args[0])
+                for name, args, _kw in probe.calls
+                if name in CHAIN_ATTRS and args}
+
+    def stage_chain(st: "StageRecord") -> "Callable[[Any], None]":
+        prims = [p for p in (st.constraints, st.numberer, st.system,
+                             st.test, st.integrator) if p is not None]
+
+        def emit(probe: Any) -> None:
+            for prim in prims:
+                prim._emit(probe, tag_for[id(prim)])
+        return emit
+
+    chains = [attrs(global_chain)]
+    chains.extend(attrs(stage_chain(st)) for st in stage_records)
+    return needs_fork(chains)
 
 
 def _check_stage(

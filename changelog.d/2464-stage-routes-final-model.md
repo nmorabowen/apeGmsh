@@ -14,5 +14,9 @@ The emit now runs the same checks again on the final model, beside
 validator V7 (`stage_validate.validate_stage_routes`). Each stage is
 checked in program order, with the stage close's own message, so the
 bridge refuses what the `model.h5` replay refuses (#2465). The stage close
-keeps its early refusal. A `BuiltModel` now records whether its bridge's
-`OpenSeesTarget` pins `mode="fork"`, which the fork-reset check reads.
+keeps its early refusal. The fork-reset check knows the run is on the fork
+when the bridge's `OpenSeesTarget` pins `mode="fork"` (a new
+`BuiltModel.fork_pinned`), or when a stage's analysis chain declares a
+fork-only type such as `system Pardiso`. The replay reads that from the
+same chains, so an unpinned model on a fork-only chain is refused at emit
+too.

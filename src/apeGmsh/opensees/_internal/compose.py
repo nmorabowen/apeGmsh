@@ -615,10 +615,10 @@ def refuse_archived_stage_routes(
     So the archived stages run the stage close's own checks
     (``stage._builder.check_archived_stage_routes``) on a
     :class:`~apeGmsh.opensees.stage._builder.RouteModel` read from the
-    archive's declarations.  The model is the final one, while the stage
-    close sees only the elements registered so far, so an archive whose
-    elements were registered after a flip may be refused here although the
-    bridge accepted it (#2464).  ``requires`` are the archive's replay requirements: a deck
+    archive's declarations.  The model is the final one, the model the
+    bridge's emit checks too (``stage_validate.validate_stage_routes``),
+    so an element registered after a flip is refused on both sides.
+    ``requires`` are the archive's replay requirements: a deck
     that needs the fork is known to run it (#2443).
     """
     from ..stage._builder import (

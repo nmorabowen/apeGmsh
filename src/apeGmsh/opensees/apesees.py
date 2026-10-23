@@ -132,6 +132,7 @@ from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
 from ._internal.build.stage_validate import (
+    stage_chains_need_fork,
     validate_class_wide_stage_flags,
     validate_stage_routes,
 )
@@ -4995,7 +4996,12 @@ class BuiltModel:
         # The stage close's route checks, again on the final model.
         validate_stage_routes(
             stage_records=self.stage_records, primitives=self.primitives,
-            tag_for=self.tag_for, fem=self.fem, fork=self.fork_pinned)
+            tag_for=self.tag_for, fem=self.fem,
+            fork=lambda: self.fork_pinned or stage_chains_need_fork(
+                self.stage_records, tag_for=self.tag_for,
+                global_chain=lambda em: (
+                    self._maybe_auto_emit_constraint_handler(
+                        em, list(self.primitives)))))
         validate_class_wide_stage_flags(
             stage_records=self.stage_records, primitives=self.primitives,
             tag_for=self.tag_for, fem=self.fem,
