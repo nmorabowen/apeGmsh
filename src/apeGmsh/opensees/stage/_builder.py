@@ -162,12 +162,11 @@ STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
 #: element after a stage flipped the group to plastic silently puts the
 #: whole group back to elastic, on the fork only (stock keeps the flag;
 #: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
-#: Fork commit ``43b235bbb`` (nmorabowen/OpenSees#1005) stops the reset,
-#: and ``FORK_PIN`` ladruno-v20261023 carries it, but every older fork
-#: build still resets (79e062367, measured).  The table stays full: no
-#: command, ``ladrunoSchema`` entry or response tells a build with the fix
-#: from one without (#2514), so the refusal cannot be version-gated the
-#: way the ``materialState`` floor is
+#: Fork commit ``43b235bbb`` stops the reset and ``FORK_PIN`` carries it,
+#: but every older fork build still resets (79e062367, measured).  The
+#: table stays full: no command, ``ladrunoSchema`` entry or response tells
+#: a build with the fix from one without, so the refusal cannot be gated
+#: on a build floor the way ``materialState`` is
 #: (``_internal/build/stage_emit.MATERIAL_STATE_FORK_FLOOR``).
 FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
@@ -579,12 +578,12 @@ class _StageBuilder:
         ``"auto"`` target is decided by the imported binary at run time,
         which this check cannot see.
 
-        The fork fixed the reset in ``43b235bbb`` (``FORK_PIN``
-        ladruno-v20261023 carries it), but a ``mode="fork"`` target does
-        not say which build runs, and no build signal names the fix, so
-        the check stays on for every fork build (#2514).  Gate it, as the
-        ``materialState`` floor is gated, once a fork command that every
-        build with the fix registers exists.
+        Fork commit ``43b235bbb`` (carried by ``FORK_PIN``) keeps the
+        flag, but a ``mode="fork"`` target does not say which build runs,
+        and no build signal names the fix, so the check stays on for every
+        fork build.  It can be gated on a build floor, as ``materialState``
+        is, once a fork command exists that every build with the fix
+        registers.
         """
         target = self._bridge.opensees
         if target is None or target.mode != "fork":
@@ -644,7 +643,7 @@ class _StageBuilder:
                 f"left the group at stage {last[group]}, so every one of "
                 "its materials would go back to elastic with no warning "
                 "(fork issue #2444; stock keeps the flag).  Fork builds "
-                "from 43b235bbb (FORK_PIN ladruno-v20261023) keep it too, "
+                "that carry commit 43b235bbb (FORK_PIN does) keep it too, "
                 "but no build signal tells them from older ones, so this "
                 "is refused on every fork target.  Flip the whole "
                 "group again in this stage, after the activation, or "
