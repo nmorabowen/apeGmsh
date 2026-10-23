@@ -179,6 +179,26 @@ def test_etabs_beam_axes_along_x() -> None:
         P * L**3 / (3 * E * IY * NO_SHEAR.Iy), rel=RTOL)
 
 
+def test_importer_vecxz_puts_i33_on_the_minor_axis() -> None:
+    """``vecxz=(1, 0, 0)``, the ETABS importer's choice for a vertical
+    member, is ETABS 2 for a default column (1 = +Z, 2 = +X, 3 = +Y), so
+    OpenSees local z = +X = ETABS 2. ``etabs(I33=0.5)`` then doubles the
+    tip displacement along ETABS 3 (+Y: bending about ETABS 2, the I22
+    axis) and leaves the one along ETABS 2 (+X) alone. The convention the
+    ``FrameModifiers.etabs`` docstring warns about."""
+    ops = _bridge()
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0)),
+        A=A, E=E, Iz=IZ, Iy=IY, G=G, J=J,
+        modifiers=FrameModifiers.etabs(I33=0.5),
+    )
+    top = _static(ops, (P, P, 0.0, 0.0, 0.0, 0.0), ndf=6)
+    assert top.read("displacement_y") == pytest.approx(
+        P * L**3 / (3 * E * IZ * 0.5), rel=RTOL)
+    assert top.read("displacement_x") == pytest.approx(
+        P * L**3 / (3 * E * IY), rel=RTOL)
+
+
 def test_gross_section_reference_3d() -> None:
     """The oracle itself, without modifiers (guards a wrong closed form)."""
     ops = _bridge()

@@ -19,7 +19,8 @@ the emitted command carries `base x modifier`:
 - `forceBeamColumn` / `dispBeamColumn` reference a modified copy of their
   `beamIntegration` and of each `ElasticSection` in it, registered by the
   bridge as synthesised declarations. The section you declared is never
-  changed. Groups that share a section and a modifier set share one copy.
+  changed. Groups of one session that share a section and a modifier set
+  share one copy; two sessions never share one.
   On a shear `ElasticSection`, `alphaY` / `alphaZ` are rescaled by
   `m_Av / m_A`, so the `A` modifier leaves the shear areas alone.
 
@@ -38,6 +39,10 @@ ignored:
 The archive keeps the values that were emitted, so `OpenSeesModel.from_h5`
 replays the modified model as it ran. There is no schema change.
 `LadrunoForceBeamColumn` / `LadrunoDispBeamColumn` take no `modifiers=`.
+The ETABS importer does not pass modifiers yet, and its `vecxz` does not
+follow the `etabs()` convention: a default member gets `vecxz` along ETABS 2,
+so `I33` would land on the minor axis. Wiring the importer to modifiers needs
+its `vecxz` along ETABS 3 first.
 
 Validated live on stock openseespy and on the Ladruno fork, at `rtol=1e-10`.
 The tests check cantilever tip displacement under axial load, bending about

@@ -22,6 +22,7 @@ from apeGmsh.opensees.element.beam_column import (
     elasticBeamColumn,
     forceBeamColumn,
 )
+from apeGmsh.opensees.element.frame_modifiers import emitted_integration
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.integration import HingeRadau, Lobatto
 from apeGmsh.opensees.section.beam import ElasticSection
@@ -139,6 +140,24 @@ class TestEtabsAxisClaim:
         y, z = self._opensees_axes(x, e3)
         np.testing.assert_allclose(y, e2v, atol=1e-15)
         np.testing.assert_allclose(z, e3, atol=1e-15)
+
+    def test_importer_vertical_vecxz_puts_i33_on_etabs_2(self) -> None:
+        """The ETABS importer's vertical-member ``vecxz=(1, 0, 0)`` is
+        ETABS 2 for a default column (1 = +Z, 2 = +X, 3 = +Y), not 3:
+        OpenSees local z is then ETABS 2, so ``etabs(I33=...)``, which
+        scales ``Iz``, lands on the minor axis. Pins the warning in the
+        ``FrameModifiers.etabs`` docstring; when the importer moves its
+        ``vecxz`` onto ETABS 3, this test and that note change together."""
+        from apeGmsh.interop.etabs_import import _VECXZ
+
+        assert _VECXZ["v"] == (1.0, 0.0, 0.0)
+        assert FrameModifiers.etabs(I33=0.5).non_unit() == {"Iz": 0.5}
+        x = np.array([0.0, 0.0, 1.0])
+        e2 = np.array([1.0, 0.0, 0.0])
+        e3 = np.cross(x, e2)
+        y, z = self._opensees_axes(x, np.asarray(_VECXZ["v"], dtype=float))
+        np.testing.assert_allclose(z, e2, atol=1e-15)      # Iz is about 2
+        np.testing.assert_allclose(y, -e3, atol=1e-15)
 
 
 # ===========================================================================
@@ -394,6 +413,51 @@ class TestSectionRouteModifiers:
         ops.register(spec)                      # idempotent
         secs = _calls(ops, "section")
         assert [s[4] for s in secs] == [IZ, IZ * 0.5]
+
+    @staticmethod
+    def _cracked_column(ops: apeSees) -> forceBeamColumn:
+        sec = ops.section.Elastic(E=E, A=A, Iz=IZ, Iy=IY, G=G, J=J)
+        return ops.element.forceBeamColumn(
+            pg="Cols", transf=ops.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0)),
+            integration=ops.beamIntegration.Lobatto(section=sec, n_ip=3),
+            modifiers=FrameModifiers(Iz=0.5),
+        )
+
+    def test_two_sessions_do_not_share_copies(self) -> None:
+        """Equal sections and modifiers in two bridges: each bridge makes,
+        registers and emits its own copies (the memo is per bridge, not
+        process-wide)."""
+        o1, o2 = _bridge(), _bridge()
+        s1, s2 = self._cracked_column(o1), self._cracked_column(o2)
+        i1, i2 = emitted_integration(s1), emitted_integration(s2)
+        assert i1 == i2 and i1 is not i2
+        assert i1.section is not i2.section     # type: ignore[attr-defined]
+        assert o1.tag_for(i1) is not None and o2.tag_for(i2) is not None
+        assert o1.tag_for(i2) is None and o2.tag_for(i1) is None
+        assert o1._frame_modifier_copies is not o2._frame_modifier_copies
+        for ops in (o1, o2):
+            secs = _calls(ops, "section")
+            assert [s[4] for s in secs] == [IZ, IZ * 0.5]
+            (elem,) = _calls(ops, "element")
+            assert elem[5] == 2                 # its own copy of the rule
+
+    def test_spec_shared_by_two_sessions_keeps_its_copy(self) -> None:
+        """One standalone spec registered on two bridges keeps the copy it
+        was bound to first (its tag is looked up by identity), and both
+        bridges register and emit that copy."""
+        o1, o2 = _bridge(), _bridge()
+        sec = ElasticSection(E=E, A=A, Iz=IZ, Iy=IY, G=G, J=J)
+        integ = Lobatto(section=sec, n_ip=3)
+        transf = Linear(vecxz=(0.0, 1.0, 0.0))
+        spec = forceBeamColumn(pg="Cols", transf=transf, integration=integ,
+                               modifiers=FrameModifiers(Iz=0.5))
+        for ops in (o1, o2):
+            for prim in (sec, integ, transf, spec):
+                ops.register(prim)
+        bound = emitted_integration(spec)
+        assert o1.tag_for(bound) is not None and o2.tag_for(bound) is not None
+        for ops in (o1, o2):
+            assert [s[4] for s in _calls(ops, "section")] == [IZ, IZ * 0.5]
 
     def test_non_elastic_section_refused(self) -> None:
         ops = _bridge()
