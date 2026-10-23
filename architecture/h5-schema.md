@@ -143,6 +143,8 @@ model.h5
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
       │   @will_solve, @solve_refusals,      the solve stamp (optional attrs,
       │   @requires                          opensees 2.24.0; see below)
+      │   @target_mode                       pinned target mode (optional,
+      │                                      opensees 2.36.0; not hashed)
       ├── /materials
       │     ├── /uniaxial/{name}           one group per material
       │     └── /nd/{name}
@@ -1281,7 +1283,9 @@ joins are recorded; the completeness marker does:
 
 The marker sits on `/opensees/decls`, not on `/opensees`. The
 attributes of `/opensees` fold into `model_hash` (`canonical_bytes`
-hashes the root group's attributes), so an attribute there would move a
+hashes the root group's attributes, all but those in
+`MODEL_HASH_EXCLUDED_ATTRS`, which is `@target_mode` alone), so an
+attribute there would move a
 rewritten legacy file's hash. `decls` is hash-excluded, and it is the
 table the joins point into: with no `decls` group there is nothing to
 join to. A rewrite echoes the source's marker with its program, so a
@@ -1424,7 +1428,42 @@ gains the value tokens its model implies). A fork *element or
 material type* rides the generic `element` / `nDMaterial` verb, whose
 row requires nothing, so it does not reach `@requires` until K4 moves
 typed fork verbs onto the command channel. Attributes of `/opensees`
-fold into `model_hash`.
+fold into `model_hash`, except `@target_mode` (below).
+
+## `/opensees@target_mode` (optional, opensees 2.36.0)
+
+```
+/opensees
+  @target_mode           vlen str ()     "fork" or "stock": the bridge's
+                                         pinned OpenSeesTarget.mode
+```
+
+The mode of the `OpenSeesTarget` the bridge was built with (#2278, ruling
+A; #2375). It is written only for a pinned target. An unpinned model
+(`mode="auto"`, or no target) writes nothing, and an absent attribute reads
+as `"auto"`, so every file below 2.36.0 keeps its meaning. Only the mode is
+kept: `binary` and `python` are machine paths and are never archived.
+
+`H5Model.target_mode()` returns `"auto"`, `"fork"` or `"stock"`. A value
+that is not one string of `TARGET_MODES` (`emitter/h5_reader.py`), the
+empty string included, raises `MalformedH5Error` naming
+`/opensees@target_mode`. `OpenSeesModel` uses it as the bridge uses the
+target:
+
+- `build('tcl' | 'py')` stamps the deck through `deck_backend`, so a pinned
+  archive's replay writes the bridge's `# apeGmsh <v>; backend <mode>`
+  line and an unpinned one writes none;
+- a `"fork"` archive adds `"fork"` to `replay_requires()`, so
+  `build('live')` refuses a stock openseespy, and the stage-close route
+  checks on replay (#2465) treat the run as on the fork, which brings back
+  the #2444 fork-reset refusal;
+- `to_h5` echoes it.
+
+The attribute is in `MODEL_HASH_EXCLUDED_ATTRS`
+(`_internal/lineage.py`), so it never reaches `model_hash`: the same
+model pinned or on auto has the same physics and the same hash, the
+carve-out `regions` and `names` already have. Two archives with one hash
+can therefore stamp different backends.
 
 ## `/opensees/decls` (optional, opensees 2.25.0)
 
@@ -2354,7 +2393,7 @@ its `/meta/lineage` into `/model/meta/lineage`. `/opensees` is that
 | Attr | Present when | Value |
 |---|---|---|
 | `fem_hash` | `/model` is embedded | the neutral zone's content hash, equal to `/model/meta/snapshot_id` |
-| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`. |
+| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`, and the attribute `/opensees@target_mode`. |
 | `results_hash` | always; stamped at close | `blake2b(model_hash ‖ /stages)`, chained on `""` when `model_hash` is absent |
 
 **Pairing rule.** A results file belongs to a given `model.h5` when its
@@ -2582,7 +2621,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.35.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.36.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -3110,6 +3149,16 @@ detail lives in the `SCHEMA_VERSION` docstring in
   with one hashes differently once. A 2.34 reader would replay the model
   untied, hence the minor. Additive minor (a 2.34.x reader refuses a
   2.35.x file, INV-4).
+- `2.36.0` — #2278 (chain K, slice #2375; the maintainer's ruling A of
+  2026-10-21): the optional attribute
+  [`/opensees@target_mode`](#openseestarget_mode-optional-opensees-2360)
+  keeps a pinned `OpenSeesTarget(mode="fork" | "stock")`, so a replay
+  deck stamps its backend as the bridge's did and a fork pin survives the
+  round trip. Written only for a pinned target, so every unpinned archive
+  keeps its bytes; absent reads as `"auto"`. It is not hashed: the same
+  model pinned or on auto has one `model_hash`. A 2.35 reader would replay
+  a fork pin as auto, hence the minor. Additive minor (a 2.35.x reader
+  refuses a 2.36.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

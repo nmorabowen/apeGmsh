@@ -33,9 +33,12 @@ import builtins
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence
+from typing import (
+    TYPE_CHECKING, Any, Iterator, Mapping, Sequence, cast, get_args,
+)
 
 from .caps import SolveStamp
+from .._target import TargetMode
 from .._internal.schema_version import (
     NEUTRAL,
     OPENSEES,
@@ -84,6 +87,7 @@ __all__ = [
     "ProgramDeclAbsentError",
     "ProgramRun",
     "SchemaVersionError",
+    "TARGET_MODES",
     "emit_index_of",
     "open",
     "records_program_decl",
@@ -523,6 +527,12 @@ _SOLVE_STAMP_ATTRS: tuple[str, ...] = (
     "will_solve", "solve_mode", "solve_refusals", "solve_refusals_flat",
     "requires",
 )
+
+
+#: The values ``/opensees@target_mode`` may hold (opensees 2.36.0):
+#: ``OpenSeesTarget.mode``. The writer stores only ``"fork"`` / ``"stock"``;
+#: an absent attribute reads as ``"auto"``.
+TARGET_MODES: frozenset[str] = frozenset(get_args(TargetMode))
 
 
 class ProgramAbsentError(RuntimeError):
@@ -1888,6 +1898,32 @@ class H5Model:
         ``stage`` (``-1`` global), from ``/opensees/program`` (ADR 0114
         Q2). See :func:`emit_index_of`."""
         return emit_index_of(self.program(), method, row, stage=stage)
+
+    def target_mode(self) -> TargetMode:
+        """Return ``/opensees@target_mode`` (opensees 2.36.0, #2375).
+
+        The bridge's pinned ``OpenSeesTarget.mode``: ``"fork"`` or
+        ``"stock"``. An absent attribute (every file below 2.36.0, and an
+        unpinned model's) reads as ``"auto"``. A value that is not one
+        string of :data:`TARGET_MODES`, the empty string included, raises
+        :class:`MalformedH5Error` naming the attribute.
+        """
+        import numpy as np
+
+        if "opensees" not in self._f:
+            return "auto"
+        attrs = self._f["opensees"].attrs
+        if "target_mode" not in attrs:
+            return "auto"
+        raw = attrs["target_mode"]
+        arr = np.asarray(raw)
+        value = _decode_bytes(arr[()]) if arr.shape == () else None
+        if not isinstance(value, str) or value not in TARGET_MODES:
+            raise MalformedH5Error(
+                f"/opensees@target_mode is {raw!r}; expected one string of "
+                f"{sorted(TARGET_MODES)} (an absent attribute reads as "
+                "'auto').")
+        return cast(TargetMode, str(value))
 
     def solve_stamp(self) -> SolveStamp | None:
         """Return the ``/opensees`` solve stamp (ADR 0114 D6, opensees 2.24.0).
