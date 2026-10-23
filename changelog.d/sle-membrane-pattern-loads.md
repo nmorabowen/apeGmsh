@@ -12,7 +12,9 @@ traction `wy e2 + wz n + wx e1` and sends it through the same tributary
 transfer as `-surfaceLoad` (`pressure * n`), so the load is exact and needs
 no fork change. `p.surface_load(ele=m)` without `pressure=` is unchanged.
 `pressure=` is refused on `label=`, on a target that is not a
-LadrunoMembrane, on a `pg=` that names no membrane, and in a 2-D model. It
+LadrunoMembrane, on a `pg=` that names no membrane, and in a 2-D model; a
+bool or string `q` is refused, and so is a handle listed twice in one
+`ele=` (it would load that panel twice). It
 never reads the element's `pressure=`, so `InertMembranePressureError`
 still refuses an element `pressure=` that only such patterns target.
 
