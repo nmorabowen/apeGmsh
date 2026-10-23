@@ -26,6 +26,7 @@ import type {
   Group as ModelGroup,
   ModelFile,
   NameAlias,
+  NeutralLoads,
   OpenSeesZone,
   OpsFamily,
   OpsObject,
@@ -318,6 +319,7 @@ class Reader {
       );
       opensees = this.readOpenSees(this.group(root, "opensees"), v);
     }
+    const loads = this.readLoads(root);
     const sequence = this.readSequence(root, metaAttrs);
 
     return {
@@ -331,10 +333,47 @@ class Reader {
       physicalGroups,
       labels,
       opensees,
+      ...(loads ? { loads } : {}),
       sequence,
       warnings: this.warnings,
       readMs: 0,
     };
+  }
+
+  private readLoads(root: H5Group): NeutralLoads | null {
+    const out: NeutralLoads = { nodal: {}, element: {}, sp: {} };
+    let any = false;
+    if (has(root, "loads")) {
+      const g = this.group(root, "loads");
+      for (const kind of ["nodal", "element", "sp"] as const) {
+        if (!has(g, kind)) continue;
+        const kg = this.group(g, kind);
+        for (const caseName of kg.keys()) {
+          const node = kg.get(caseName);
+          if (!(node instanceof this.h5.Dataset)) continue;
+          out[kind][caseName] = readTable(node as H5Dataset);
+          any = true;
+        }
+      }
+    }
+    const nodeGroups: Record<string, number[]> = {};
+    for (const rootKey of ["physical_groups", "labels"] as const) {
+      if (!has(root, rootKey)) continue;
+      const pg = this.group(root, rootKey);
+      if (!has(pg, "node_side")) continue;
+      const side = this.group(pg, "node_side");
+      for (const name of side.keys()) {
+        const e = this.group(side, name);
+        if (has(e, "node_ids")) {
+          nodeGroups[name] = Array.from(numbers(this.dataset(e, "node_ids")));
+        }
+      }
+    }
+    if (Object.keys(nodeGroups).length > 0) {
+      out.nodeGroups = nodeGroups;
+      any = true;
+    }
+    return any ? out : null;
   }
 
   private checkVersion(
@@ -641,8 +680,13 @@ class Reader {
         const fg = this.group(g, key);
         st[key] = fg.keys().map((n) => this.readDef(this.group(fg, n), key === "patterns"));
       } else if (key === "bcs") st.bcs = this.readBcs(this.group(g, key));
-      else if (STAGE_OTHER.has(key)) st.other.push(key);
-      else this.warnings.push(`unknown stage record ${g.path}/${key}; not shown`);
+      else if (STAGE_OTHER.has(key)) {
+        st.other.push(key);
+        if (key === "remove_sp") {
+          const node = g.get(key);
+          if (node instanceof this.h5.Dataset) st.removeSp = readTable(node as H5Dataset);
+        }
+      } else this.warnings.push(`unknown stage record ${g.path}/${key}; not shown`);
     }
     return st;
   }
@@ -1169,20 +1213,82 @@ export function programDecls(path: string, methods: unknown, columns: readonly s
   return out;
 }
 
+function nanFromNull(x: unknown): unknown {
+  if (x === null) return Number.NaN;
+  if (Array.isArray(x)) return x.map(nanFromNull);
+  return x;
+}
+
+const KNOWN_PAYLOAD_COLS: Readonly<Record<string, readonly string[]>> = {
+  nodal: ["node_id", "force_xyz", "moment_xyz", "name", "basis", "source"],
+  element: ["element_id", "load_type", "params_json", "name"],
+  sp: ["node_id", "dof", "value", "is_homogeneous", "name"],
+  mass: ["node_id", "mass", "name"],
+};
+
 /** A dataset as a table. Compound rows keep their field order. */
-function readTable(ds: H5Dataset): Table {
+export function readTable(ds: H5Dataset): Table {
   const dt = ds.dtype;
   const shape = ds.shape ?? [];
   if (Array.isArray(dt)) {
     const columns = (dt as unknown[]).map((m) => String((m as unknown[])[0]));
-    const rows = (ds.json_value as unknown[][]).map((r) => r.map((x) => (x === null ? Number.NaN : x)));
+    const rawRows = Array.isArray(ds.json_value) ? (ds.json_value as unknown[][]) : [];
+    if (
+      columns.length === 4 &&
+      columns[0] === "target_kind" &&
+      columns[1] === "target" &&
+      columns[2] === "payload_kind" &&
+      columns[3] === "payload"
+    ) {
+      let payloadCols: string[] | null = null;
+      const dt3 = (dt[3] as unknown[])?.[1];
+      if (Array.isArray(dt3) && dt3.every((m) => Array.isArray(m) && typeof m[0] === "string")) {
+        payloadCols = dt3.map((m) => String((m as unknown[])[0]));
+      }
+      if (!payloadCols) {
+        const metaMembers = (
+          ds as { metadata?: { compound_type?: { members?: { compound_type?: { members?: { name?: string }[] } }[] } } }
+        ).metadata?.compound_type?.members?.[3]?.compound_type?.members;
+        if (Array.isArray(metaMembers) && metaMembers.every((m) => typeof m?.name === "string")) {
+          payloadCols = metaMembers.map((m) => String(m.name));
+        }
+      }
+      if (!payloadCols && rawRows.length > 0) {
+        const p0 = rawRows[0]?.[3];
+        const kind0 = String(rawRows[0]?.[2] ?? "");
+        if (Array.isArray(p0)) {
+          const known = KNOWN_PAYLOAD_COLS[kind0];
+          payloadCols = known ? known.slice(0, p0.length) : Array.from({ length: p0.length }, (_, j) => `payload[${j}]`);
+        } else if (p0 !== null && typeof p0 === "object") {
+          payloadCols = Object.keys(p0 as Record<string, unknown>);
+        }
+      }
+      if (payloadCols) {
+        const unpackedCols = ["target_kind", "target", "payload_kind", ...payloadCols];
+        const rows = rawRows.map((r) => {
+          const p = r[3];
+          const pVals = Array.isArray(p)
+            ? p.map(nanFromNull)
+            : p !== null && typeof p === "object"
+              ? payloadCols!.map((k) => nanFromNull((p as Record<string, unknown>)[k]))
+              : [];
+          return [nanFromNull(r[0]), nanFromNull(r[1]), nanFromNull(r[2]), ...pVals];
+        });
+        return { path: ds.path, columns: unpackedCols, rows };
+      }
+    }
+    const rows = rawRows.map((r) => r.map(nanFromNull));
     return { path: ds.path, columns, rows };
   }
   const v = ds.json_value;
-  const flat = Array.isArray(v) ? (v as unknown[]) : [v];
   const width = shape.length === 2 ? shape[1]! : 1;
-  const rows: unknown[][] = [];
   if (width === 0) return { path: ds.path, columns: [], rows: [] };
+  if (shape.length === 2 && width > 0 && Array.isArray(v) && v.every((r) => Array.isArray(r) && r.length === width)) {
+    const rows = (v as unknown[][]).map((r) => r.map(nanFromNull));
+    return { path: ds.path, columns: width === 1 ? ["value"] : Array.from({ length: width }, (_, j) => `[${j}]`), rows };
+  }
+  const flat = Array.isArray(v) ? (v as unknown[]).map(nanFromNull) : [nanFromNull(v)];
+  const rows: unknown[][] = [];
   for (let i = 0; i < flat.length; i += width) rows.push(flat.slice(i, i + width));
   return { path: ds.path, columns: width === 1 ? ["value"] : Array.from({ length: width }, (_, j) => `[${j}]`), rows };
 }
