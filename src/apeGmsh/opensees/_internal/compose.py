@@ -2385,8 +2385,8 @@ def _replay_staged_into(
     emitter: Any,
     *,
     stages: "Sequence[Any]",
-    declarations: Any,
-    requires: "Sequence[str]",
+    declarations: Any = None,
+    requires: "Sequence[str]" = (),
     commands: "Sequence[Any]" = (),
     program: "Sequence[Any]" = (),
     flat: bool = False,
@@ -2414,10 +2414,11 @@ def _replay_staged_into(
     ``flat`` reaches every analysis chain, the global one and each
     stage's (see :func:`_replay_analysis_chain`).
 
-    ``declarations`` (the archive's ``/opensees/decls`` table, or
-    ``None``) and ``requires`` (its replay requirements) feed
+    ``declarations`` (the archive's ``/opensees/decls`` table) and
+    ``requires`` (its replay requirements) feed
     :func:`refuse_archived_stage_routes`, which runs before anything is
-    emitted (#2465).
+    emitted (#2465).  Without declarations a stage-flag flip is refused,
+    since it cannot be checked; a program with no such flip needs none.
     """
     from .build.records import ActivateAbsorbingRecord
     from .build.stage_emit import (
@@ -2445,11 +2446,6 @@ def _replay_staged_into(
     # exactly as the flat ``_replay_into(fem=...)`` path does.
     fem: Any = replay_kwargs.get("fem")
     order: "_ReplayOrder | None" = replay_kwargs.get("order")
-    # An archived stage flip that the stage close refuses is refused here
-    # too, before any emit.
-    refuse_archived_stage_routes(
-        stages=stages, elements=elements, declarations=declarations,
-        fem=fem, requires=requires)
 
     owned_node_tags = frozenset(
         int(t) for s in stages for t in s.owned_node_ids
@@ -2528,6 +2524,12 @@ def _replay_staged_into(
         # tags (replay_initial_stress_global, replay_activate_absorbing);
         # pre-2.27 archives only, behind the version check above.
         tags = TagAllocator()
+
+    # An archived stage flip that the stage close refuses is refused here
+    # too, before any emit.
+    refuse_archived_stage_routes(
+        stages=stages, elements=elements, declarations=declarations,
+        fem=fem, requires=requires)
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
     # out and the shared allocator threaded for any GLOBAL initial_stress.
