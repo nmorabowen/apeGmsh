@@ -1941,12 +1941,12 @@ class LiveOpsEmitter:
         return self._stage0
 
     def _write_stage_zero(self) -> None:
-        """Issue the owed ManzariDafalias ``-stage 0`` calls
+        """Issue the owed fresh-stage calls of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`): at a solve verb, and at the end of
         ``apeSees.run()``, whose caller drives the solve."""
-        for tag in self._stage_zero_ledger().due():
-            self._ops.updateMaterialStage("-material", tag, "-stage", 0)
+        for tag, stage in self._stage_zero_ledger().due():
+            self._ops.updateMaterialStage("-material", tag, "-stage", stage)
 
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
