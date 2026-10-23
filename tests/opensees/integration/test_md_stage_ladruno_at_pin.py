@@ -8,9 +8,9 @@ elements carry as::
 
 and gates it on :data:`MATERIAL_STATE_ELEMENTS`.  The Ladruno quad / brick
 classes were measured to drop the update on the local fork build 79e062367,
-so they sit in :data:`MATERIAL_STATE_UNMEASURED_AT_PIN`.  This module runs the
-same per-element measurement for every class and every formulation the
-bridge emits, on the ``live-fork`` lane (a build at ``FORK_PIN``):
+so #2446 refused them.  This module runs the same per-element measurement
+for every class and every formulation the bridge emits, on the ``live-fork``
+lane (a build at ``FORK_PIN``):
 
 * ``reference``: each element its own material tag and its own
   ``updateMaterialStage`` (each runs its own ``Elastic2Plastic()``);
