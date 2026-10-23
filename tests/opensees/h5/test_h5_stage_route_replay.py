@@ -325,11 +325,21 @@ def valid_bridge(case: str) -> apeSees:
     if case == "own_material_on_stock":
         # The fork-reset model on a stock chain: not known to run the fork.
         return _flip_then_activate(own_material=True)
+    if case == "ladruno_quads":
+        # One sand on two LadrunoQuad, flipped plastic: a
+        # MATERIAL_STATE_ELEMENTS class from the fork-floor table, so the
+        # replay's checks pass it as the stage close does.
+        ops = _ops()
+        sand = _md(ops, "sand")
+        ops.element.LadrunoQuad(pg="Q", material=sand, thickness=1.0)
+        _stage(ops, "push", lambda s: s.update_material_stage(
+            materials=[sand], stage=1))
+        return ops
     raise KeyError(case)
 
 
 VALID = ("both_routes", "beside_clay", "whole_group_elastic",
-         "reflip_on_activation", "own_material_on_stock")
+         "reflip_on_activation", "own_material_on_stock", "ladruno_quads")
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +405,26 @@ def test_a_pre_fix_archive_is_refused_on_replay(
     msg = str(exc.value)
     assert issue in msg and phrase in msg, msg
     assert not (tmp_path / "rewrite.h5").exists()
+
+
+def test_the_fork_reset_refusal_reads_the_same_on_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """One check, one text: the replay of a pre-fix fork-reset archive
+    raises the stage close's refusal byte for byte, including the
+    FORK_PIN note on fork commit 43b235bbb."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(BridgeError) as close:
+            _flip_then_activate(system="Pardiso", own_material=True,
+                                mode="fork").tcl(str(tmp_path / "deck.tcl"))
+    path = _write(
+        lambda: _flip_then_activate(system="Pardiso", own_material=True),
+        tmp_path / "pre_fix.h5", monkeypatch, pre_fix=True)
+    with pytest.raises(BridgeError) as replay:
+        _replay(path)
+    assert str(replay.value) == str(close.value)
+    assert "commit 43b235bbb (FORK_PIN does)" in str(replay.value)
 
 
 def test_the_staged_replay_refuses_on_its_own(
