@@ -37,7 +37,6 @@ from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.stage._builder import (
     FIRST_ELEMENT_ONLY_PLASTIC_INIT,
     MATERIAL_STATE_ELEMENTS,
-    MATERIAL_STATE_UNMEASURED_AT_PIN,
 )
 
 from tests.opensees.fixtures.fem_stub import (
@@ -45,6 +44,9 @@ from tests.opensees.fixtures.fem_stub import (
     _ElementGroupView,
     _ElementsStub,
     _NodesStub,
+)
+from tests.opensees.integration.test_md_stage_ladruno_at_pin import (
+    _ELEMENT_CASES as _AT_PIN_CASES,
 )
 from tests.opensees.integration.test_md_stage_all_elements import (
     MD_ARGS,
@@ -63,6 +65,9 @@ _TOKEN_OF = {
     "SixNodeTri": "tri6n", "FourNodeTetrahedron": "FourNodeTetrahedron",
     "SSPquad": "SSPquad", "SSPbrick": "SSPbrick", "BezierTri6": "BezierTri6",
     "BezierTet10": "BezierTet10", "LadrunoUP": "LadrunoUP",
+    "LadrunoQuad": "LadrunoQuad", "LadrunoCST": "LadrunoCST",
+    "LadrunoLST": "LadrunoLST", "LadrunoBrick": "LadrunoBrick",
+    "LadrunoBrick20": "LadrunoBrick20",
 }
 
 _TRI6_ARGV = (1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain")
@@ -146,6 +151,11 @@ def test_a_rank_lists_its_own_and_the_global_carriers() -> None:
     ("SSPbrick", (*range(1, 9), 7, 0.0, 0.0, -9.81), 7),
     ("LadrunoUP", (1, 2, 3, 4, 7, "-Kf", 2.2e6), 7),
     ("LadrunoUP", (*range(1, 11), 7, "-thick", 1.0, "-Kf", 2.2e6), 7),
+    ("LadrunoQuad", (1, 2, 3, 4, 7, "-formulation", "ssp", "-thick", 1.0), 7),
+    ("LadrunoCST", (1, 2, 3, 7, "-thick", 1.0), 7),
+    ("LadrunoLST", (*range(1, 7), 7, "-thick", 1.0), 7),
+    ("LadrunoBrick", (*range(1, 9), 7, "-formulation", "eas"), 7),
+    ("LadrunoBrick20", (*range(1, 21), 7, "-formulation", "uri"), 7),
 ])
 def test_the_carried_tag_is_read_from_the_grammar(
     token: str, argv: tuple[Any, ...], tag: int,
@@ -183,18 +193,50 @@ def test_the_tables() -> None:
         "ManzariDafalias", "LadrunoSANISAND"}
     assert MATERIAL_STATE_ELEMENTS == {
         "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
-        "BezierTri6", "BezierTet10", "LadrunoUP"}
-    assert MATERIAL_STATE_UNMEASURED_AT_PIN == {
+        "BezierTri6", "BezierTet10", "LadrunoUP",
         "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
         "LadrunoBrick20"}
-    assert not MATERIAL_STATE_UNMEASURED_AT_PIN & MATERIAL_STATE_ELEMENTS
-    # One emit-side token per class, and no token without its class.
-    assert {_TOKEN_OF[c] for c in MATERIAL_STATE_ELEMENTS} == set(
-        MATERIAL_STATE_ELEMENT_TOKENS)
     assert FIRST_ELEMENT_ONLY_PLASTIC_INIT is SWEPT_MATERIAL_CLASSES
-    # Every class of the table has a census row on each build it runs on.
+    # Every class of the table has a census row on each build it runs on:
+    # here, or (the Ladruno solids, every formulation) in the at-pin file.
     assert MATERIAL_STATE_ELEMENTS == (
-        {cls for cls, _builds in _FORWARDING} | {"LadrunoUP"})
+        {cls for cls, _builds in _FORWARDING} | {"LadrunoUP"}
+        | {row[0] for row in _AT_PIN_CASES.values()})
+
+
+def _emitted_token(cls: str) -> str:
+    """The ``element`` token the bridge primitive ``cls`` emits, read from
+    its ``_emit`` source; a class with no primitive (``SSPquad``,
+    ``SSPbrick``) emits its own name."""
+    import inspect
+    import re
+
+    from apeGmsh.opensees import element as element_pkg
+
+    prim = getattr(element_pkg, cls, None)
+    if prim is None:
+        return cls
+    found = set(re.findall(r'emitter\.element\(\s*"(\w+)"',
+                           inspect.getsource(prim._emit)))
+    assert len(found) == 1, (cls, found)
+    return found.pop()
+
+
+def test_the_stage_close_and_the_emit_side_list_the_same_classes() -> None:
+    """Drift guard (#2457): the stage close passes a multi-element plastic
+    flip on a :data:`MATERIAL_STATE_ELEMENTS` class, and only the emit
+    side's :data:`MATERIAL_STATE_ELEMENT_TOKENS` makes the deck list its
+    carriers.  A class on the first table without a token would pass the
+    stage close and emit the bare first-element-only flip; a token without
+    its class would never be reached.  Both directions fail here, with the
+    token read from each primitive's own ``_emit``."""
+    tokens = {cls: _emitted_token(cls) for cls in MATERIAL_STATE_ELEMENTS}
+    no_token = sorted(c for c, t in tokens.items()
+                      if t not in MATERIAL_STATE_ELEMENT_TOKENS)
+    assert not no_token, f"allowlisted, but the emit side drops: {no_token}"
+    no_class = sorted(set(MATERIAL_STATE_ELEMENT_TOKENS) - set(tokens.values()))
+    assert not no_class, f"emit-side tokens with no allowlisted class: {no_class}"
+    assert tokens == _TOKEN_OF
 
 
 def _tri6_fem() -> FEMStub:
@@ -352,23 +394,32 @@ def test_a_non_forwarding_carrier_is_refused_by_name(route: str) -> None:
     assert not ops._stage_records
 
 
-def test_a_ladruno_quad_is_refused_citing_the_pin_remeasure() -> None:
-    """Measured to drop the sweep on fork build 79e062367, not at FORK_PIN:
-    refused (fail closed), and the refusal names the re-measure issue."""
+@pytest.mark.parametrize("route", ["stage", "materialState"])
+def test_a_ladruno_quad_carrier_passes_and_is_listed(route: str) -> None:
+    """Measured to forward at FORK_PIN (#2457, live-fork run 39874892907):
+    the stage close passes a SixNodeTri + LadrunoQuad carrier pair, and the
+    deck lists both elements in the materialState update."""
     ops, mat = _bridge(pgs=("A",))
     ops.element.LadrunoQuad(pg="Q", material=mat, thickness=1.0)
-    with pytest.raises(BridgeError) as exc:
-        _flip(ops, mat)
-    msg = str(exc.value)
-    assert "LadrunoQuad carries it" in msg
-    assert "79e062367" in msg and "#2457" in msg
-
-
-def test_a_stock_class_refusal_does_not_cite_the_pin_remeasure() -> None:
-    ops, mat = _bridge(quad=True)
-    with pytest.raises(BridgeError) as exc:
-        _flip(ops, mat)
-    assert "#2457" not in str(exc.value)
+    _flip(ops, mat, route=route, pgs=("A", "Q"))
+    tcl = TclEmitter()
+    ops.build().emit(tcl)
+    lines = tcl.lines()
+    eles = [ln.split()[2] for ln in lines
+            if ln.startswith(("element tri6n", "element LadrunoQuad"))]
+    assert len(eles) == 2
+    tag = ops.tag_for(mat)
+    if route == "stage":
+        sweep = (f"setParameter -val 1.0 -ele {' '.join(eles)} "
+                 f"materialState {tag}")
+        assert lines.index(sweep) + 1 == lines.index(
+            f"updateMaterialStage -material {tag} -stage 1")
+    else:
+        # The user's own update: each target element joins a parameter.
+        reached = {ln.split()[3] for ln in lines
+                   if ln.startswith("addToParameter")
+                   and ln.endswith(f"materialState {tag}")}
+        assert reached == set(eles), lines
 
 
 def test_a_materialstate_route_must_cover_every_element() -> None:

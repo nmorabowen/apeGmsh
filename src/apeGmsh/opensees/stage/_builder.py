@@ -194,28 +194,29 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
 #: material and its own ``updateMaterialStage``), equal bit for bit, with
 #: one ``Elastic2Plastic()`` per integration point, on stock openseespy
 #: 3.8.0 (``SixNodeTri``, ``FourNodeTetrahedron``, ``SSPquad``,
-#: ``SSPbrick``) and on the fork build 79e062367 (all seven).  ``SSPquad``
-#: and ``SSPbrick`` have no bridge primitive yet (``element/solid.py``
-#: defers them), so no spec carries those names today; they are listed so
-#: the primitive that adds them is not refused.  Every other class is
-#: refused for a multi-element plastic flip.  ``FourNodeQuad``, ``Tri31``
-#: and ``stdBrick`` read any ``material*`` name as a per-point address and
-#: drop the sweep, as do the :data:`MATERIAL_STATE_UNMEASURED_AT_PIN`
-#: classes on that fork build.  ``TenNodeTetrahedron`` forwards on the
-#: fork but crashed the stock reference, so it is not proven on every
-#: build.  A new class joins only with a census row on each build it
-#: runs on.
+#: ``SSPbrick``) and on the fork build 79e062367 (the first seven).
+#: ``LadrunoQuad`` (std/bbar/ssp), ``LadrunoCST``, ``LadrunoLST``,
+#: ``LadrunoBrick`` (std/bbar/uri/ssp/eas, and corot std/bbar) and
+#: ``LadrunoBrick20`` (std/uri) are measured on the live-fork lane at
+#: ``FORK_PIN`` 100eb9ae (run 39874892907,
+#: ``tests/opensees/integration/test_md_stage_ladruno_at_pin.py``); every
+#: one dropped the sweep on 79e062367, which predates the fork fix, so a
+#: build older than the pin gives the first-element-only answer for them.
+#: ``SSPquad`` and ``SSPbrick`` have no bridge primitive yet
+#: (``element/solid.py`` defers them), so no spec carries those names
+#: today; they are listed so the primitive that adds them is not refused.
+#: Every other class is refused for a multi-element plastic flip.
+#: ``FourNodeQuad``, ``Tri31`` and ``stdBrick`` read any ``material*``
+#: name as a per-point address and drop the sweep.
+#: ``TenNodeTetrahedron`` forwards on the fork but crashed the stock
+#: reference, so it is not proven on every build.  A new class joins only
+#: with a census row on each build it runs on, and with its token in
+#: ``stage_emit.MATERIAL_STATE_ELEMENT_TOKENS`` (the emit side's carrier
+#: table; a class listed here without one would pass the stage close and
+#: emit the bare first-element-only flip).
 MATERIAL_STATE_ELEMENTS: frozenset[str] = frozenset({
     "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
     "BezierTri6", "BezierTet10", "LadrunoUP",
-})
-
-#: The fork element classes that dropped the sweep on fork build
-#: 79e062367, the build available when they were measured, while the
-#: fork source at ``FORK_PIN`` forwards ``materialState``.  They stay
-#: refused (fail closed) until a pinned build is measured; their refusal
-#: names the re-measure issue.
-MATERIAL_STATE_UNMEASURED_AT_PIN: frozenset[str] = frozenset({
     "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
     "LadrunoBrick20",
 })
@@ -740,14 +741,6 @@ class _StageBuilder:
                 if type(spec).__name__ not in MATERIAL_STATE_ELEMENTS
             })
             if refused:
-                unmeasured = sorted(
-                    set(refused) & MATERIAL_STATE_UNMEASURED_AT_PIN)
-                pin_note = (
-                    f"  ({', '.join(unmeasured)}: measured to drop it on "
-                    "fork build 79e062367, not at FORK_PIN, whose source "
-                    "forwards it; issue #2457 re-measures them at the pin.)"
-                    if unmeasured else ""
-                )
                 raise BridgeError(
                     f"Stage {self._name!r}: flips {what(tag)} to a plastic "
                     f"stage, but {', '.join(refused)} carries it, and that "
@@ -762,7 +755,6 @@ class _StageBuilder:
                     f"{', '.join(sorted(MATERIAL_STATE_ELEMENTS))}, give "
                     "each element its own material, or keep it on a single "
                     "element.  A stage 0 (elastic) flip is unaffected."
-                    + pin_note
                 )
             between = sorted(
                 carrier_via.get(tag, set()) - set(MATERIAL_STATE_WRAPPERS))
@@ -976,13 +968,6 @@ class _StageBuilder:
                 and mat_tag in carried
             })
             if hosts:
-                unmeasured = sorted(
-                    set(hosts) & MATERIAL_STATE_UNMEASURED_AT_PIN)
-                pin_note = (
-                    f"  ({', '.join(unmeasured)}: measured to drop it on "
-                    "fork build 79e062367, not at FORK_PIN; issue #2457 "
-                    "re-measures them at the pin.)" if unmeasured else ""
-                )
                 raise BridgeError(
                     f"{call} targets {', '.join(hosts)} elements, which are "
                     "not measured to hand materialState on to their "
@@ -992,7 +977,7 @@ class _StageBuilder:
                     "the flip is lost (issue #2460).  Carry the material "
                     "on one of "
                     f"{', '.join(sorted(MATERIAL_STATE_ELEMENTS))}, or use "
-                    "s.update_material_stage." + pin_note
+                    "s.update_material_stage."
                 )
             others = sorted({
                 f"{cls} (nDMaterial tag {tag})"

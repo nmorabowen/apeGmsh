@@ -693,6 +693,11 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
     "BezierTri6": 8,
     "BezierTet10": 10,
     "LadrunoUP": None,
+    "LadrunoQuad": 4,
+    "LadrunoCST": 3,
+    "LadrunoLST": 6,
+    "LadrunoBrick": 8,
+    "LadrunoBrick20": 20,
 }
 
 
@@ -706,8 +711,11 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
 #: ``PlaneStrain`` on stock 3.8.0 and the fork, ``StagedStrain`` on the
 #: fork build 79e062367.  ``LogStrain``, ``LogStrain2D`` and
 #: ``InitDefGrad`` forward ``setParameter`` in the fork source too, but
-#: are not listed: over ManzariDafalias the first two end the process on
-#: that build, and ``InitDefGrad`` takes only a finite-strain inner.  The
+#: are not listed: over ManzariDafalias the first two end the process
+#: (``ManzariDafalias::getType`` exits; on 79e062367 and at ``FORK_PIN``
+#: 100eb9ae alike, fork defect #2499), and ``InitDefGrad`` takes only a
+#: finite-strain inner (``tests/opensees/integration/
+#: test_md_stage_ladruno_at_pin.py`` pins all three outcomes).  The
 #: stage close refuses a multi-element plastic flip reached through any
 #: primitive outside this table, so it is the one resolution both sides
 #: use.
