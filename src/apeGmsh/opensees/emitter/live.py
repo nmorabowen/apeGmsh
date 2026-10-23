@@ -1037,6 +1037,9 @@ class LiveOpsEmitter:
     def uniaxialMaterial(
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
+        # A uniaxial wrapper of an nD material (the fork's Continuum)
+        # forwards setParameter to it, so it reaches a swept material too.
+        self._swept_reach().note_referrer(tag, params)
         self._ops.uniaxialMaterial(mat_type, tag, *params)
 
     def nDMaterial(

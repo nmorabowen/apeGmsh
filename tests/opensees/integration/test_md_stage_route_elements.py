@@ -1133,6 +1133,18 @@ def test_the_live_emitter_follows_a_fiber_section(member: str) -> None:
         le.update_material_stage(7, 1)
 
 
+def test_the_live_emitter_follows_a_uniaxial_wrapper() -> None:
+    """The fork's ``uniaxialMaterial Continuum`` wraps an nD material and
+    forwards setParameter to it: two trusses on it carry the MD."""
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.uniaxialMaterial("Continuum", 40, 7)
+    le.element("truss", 1, 101, 102, 0.01, 40)
+    le.element("truss", 2, 201, 202, 0.01, 40)
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+
+
 def test_the_live_emitter_reads_numpy_integer_tags() -> None:
     np = pytest.importorskip("numpy")
     le, _ops = _live()
