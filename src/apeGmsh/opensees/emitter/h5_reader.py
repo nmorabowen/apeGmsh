@@ -3117,7 +3117,7 @@ def archives_equation_constraints(version: "SchemaVersion") -> bool:
 
 
 #: First opensees-zone version whose stage blocks store their
-#: ``equationConstraint`` lines (#2448): ``/opensees/stages/stage_NNN/
+#: ``equationConstraint`` lines: ``/opensees/stages/stage_NNN/
 #: constraints/equationConstraint`` with ``equationConstraint_emit_index``,
 #: the lines of every ``enforce="equation"`` tie a stage claims. A replay
 #: of an archive below it refuses such a tie by name.

@@ -705,8 +705,8 @@ class H5RefusedVerb(NotImplementedError):
 #:     global group's columns) and ``equationConstraint_emit_index``, the
 #:     lines of every ``enforce="equation"`` tie the stage claims, stamped
 #:     from the stage's MP sequence, so a replay writes them in the stage's
-#:     own position. ``equationConstraint`` leaves the VERBS ledger (ADR
-#:     0114 amendment, #2448). Written only when a stage writes a line, so
+#:     own position. ``equationConstraint`` is no VERBS ledger verb (ADR
+#:     0114 D1 as amended). Written only when a stage writes a line, so
 #:     every other archive keeps its bytes and hash; the rows are hashed.
 #:     A 2.36 reader refuses the group by name, and a replay of a 2.36
 #:     archive refuses a stage-claimed equation tie (it stores no line),
