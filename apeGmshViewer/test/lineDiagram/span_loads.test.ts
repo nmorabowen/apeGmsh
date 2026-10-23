@@ -1029,3 +1029,243 @@ test("reconstructSpanDiagramsForStep falls back to interpolated mode with clear 
     if (e1.mode === "interpolated") assert.match(e1.reason, /section_deformation/);
   }
 });
+
+test("regression: Trig t_end & zero_shift phase formula, Path prepend_zero+time refusal, missing dt refusal, and file field", () => {
+  // 1. Trig with t_end (canonical DeclParams field) and zero_shift (OpenSees TrigSeries.cpp phase formula:
+  //    for period=1, factor=2, zero_shift=1, shift=0 -> phi = -1/(2*pi)*asin(1/2) = -1/12)
+  const trigWithZeroShift: DeclParams = {
+    row: 10,
+    type: "Trig",
+    params: { t_start: 0.0, t_end: 1.0, period: 1.0, factor: 2.0, shift: 0.0, zero_shift: 1.0 },
+    paramsNames: null,
+    refs: { transf: [], integration: [], section: [] },
+  };
+  const atStart = evaluateTimeSeriesFactor(trigWithZeroShift, 0.0);
+  assert.equal(atStart.ok, true);
+  if (atStart.ok) assert.ok(Math.abs(atStart.factor - (2.0 * Math.sin(-1.0 / 12.0) + 1.0)) <= 1e-12);
+  const atQuarter = evaluateTimeSeriesFactor(trigWithZeroShift, 0.25);
+  assert.equal(atQuarter.ok, true);
+  if (atQuarter.ok) assert.ok(Math.abs(atQuarter.factor - (2.0 * Math.sin(Math.PI / 2.0 - 1.0 / 12.0) + 1.0)) <= 1e-12);
+
+  // DefObject with -zeroShift flag
+  const trigDefObj: DefObject = {
+    path: "/opensees/time_series/Trig_1",
+    groupName: "Trig_1",
+    type: "Trig",
+    tag: 1,
+    params: [0.0, 1.0, 1.0, "-factor", 2.0, "-zeroShift", 1.0],
+    attrs: {},
+    tables: {},
+  };
+  const defStart = evaluateTimeSeriesFactor(trigDefObj, 0.0);
+  assert.equal(defStart.ok, true);
+  if (defStart.ok) assert.ok(Math.abs(defStart.factor - (2.0 * Math.sin(-1.0 / 12.0) + 1.0)) <= 1e-12);
+
+  // Invalid |zero_shift / factor| > 1 is refused
+  const badTrig: DeclParams = {
+    row: 11,
+    type: "Trig",
+    params: { t_start: 0.0, t_end: 2.0, period: 2.0, factor: 1.0, zero_shift: 2.0 },
+    paramsNames: null,
+    refs: { transf: [], integration: [], section: [] },
+  };
+  assert.equal(evaluateTimeSeriesFactor(badTrig, 0.5).ok, false);
+
+  // 2. Path with both explicit time vector and prepend_zero: true is refused (OpenSees drops -prependZero on time= route)
+  const pathPrependTime: DeclParams = {
+    row: 12,
+    type: "Path",
+    params: { time: [1.0, 2.0], values: [10.0, 20.0], prepend_zero: true },
+    paramsNames: null,
+    refs: { transf: [], integration: [], section: [] },
+  };
+  const pRes1 = evaluateTimeSeriesFactor(pathPrependTime, 0.5);
+  assert.equal(pRes1.ok, false);
+  if (!pRes1.ok) assert.match(pRes1.reason, /prepend_zero/);
+
+  // 3. Path with values and neither dt nor time is refused (never guesses dt = 1.0)
+  const pathNoDt: DeclParams = {
+    row: 13,
+    type: "Path",
+    params: { values: [10.0, 20.0] },
+    paramsNames: null,
+    refs: { transf: [], integration: [], section: [] },
+  };
+  const pRes2 = evaluateTimeSeriesFactor(pathNoDt, 0.5);
+  assert.equal(pRes2.ok, false);
+  if (!pRes2.ok) assert.match(pRes2.reason, /positive dt/);
+
+  // 4. Path with `file` attribute (canonical DeclParams field) without inline values names the file
+  const pathFile: DeclParams = {
+    row: 14,
+    type: "Path",
+    params: { file: "elcentro.txt", dt: 0.02 },
+    paramsNames: null,
+    refs: { transf: [], integration: [], section: [] },
+  };
+  const pRes3 = evaluateTimeSeriesFactor(pathFile, 0.5);
+  assert.equal(pRes3.ok, false);
+  if (!pRes3.ok) assert.match(pRes3.reason, /elcentro\.txt/);
+});
+
+test("regression: Citardauq root stability, companion shear closure gating, multi-stage root/prior pattern loadConst, and station sorting/finiteness", () => {
+  // 1. Nearly-uniform trapezoidal load (|wb - wa| << |wa|) finds exact midspan zero-shear root without catastrophic cancellation
+  const roots = findZeroShearRoots(
+    30.0,
+    6.0,
+    [{ aL: 0.0, bL: 1.0, wya: -10.0, wyb: -10.0 - 1e-13, wza: 0, wzb: 0, wxa: 0, wxb: 0 }],
+    "y",
+    +1,
+  );
+  assert.equal(roots.length, 1);
+  assert.ok(Math.abs(roots[0]! - 3.0) <= 1e-10);
+
+  // 2. Non-finite endForcesI or load intensities throw RangeError
+  assert.throws(
+    () =>
+      reconstructBeamElementDiagram({
+        length: 4.0,
+        endForcesI: { Vy0: Number.NaN },
+      }),
+    RangeError,
+  );
+  assert.throws(
+    () =>
+      reconstructBeamElementDiagram({
+        length: 4.0,
+        loads: [{ aL: 0, bL: 1, wya: Number.POSITIVE_INFINITY, wyb: 0, wza: 0, wzb: 0, wxa: 0, wxb: 0 }],
+      }),
+    RangeError,
+  );
+
+  // 3. Reconstructing N or Mz when stepByComponent includes My (non-zero) WITHOUT companion shear Vz does not falsely fail closure on My
+  {
+    const setup = makeSyntheticBeamSetup();
+    const res = reconstructSpanDiagramsForStep({
+      component: "Mz",
+      stepByComponent: {
+        Vy: makeStep("Vy", [-1, 1], [30, -30]),
+        Mz: makeStep("Mz", [-1, 1], [0, 0]),
+        // My has non-zero slope from out-of-plane shear Vz, but Vz is omitted from stepByComponent
+        My: makeStep("My", [-1, 1], [10, 70]),
+      },
+      elementLengths: new Map([[1, 6.0]]),
+      join: setup.join,
+      decls: setup.decls,
+      definitions: setup.definitions,
+      sequence: setup.sequence,
+      ndm: 2,
+      time: 1.0,
+    });
+    assert.equal(res.get(1)!.mode, "exact");
+  }
+
+  // 4. Multi-stage: root pattern with non-Constant (Linear) timeSeries is refused at stageIndex=1,
+  //    whereas root pattern with Constant timeSeries is permitted across stage boundary
+  {
+    const setup = makeSyntheticBeamSetup();
+    const stagedDefsLinearRoot: Definitions = {
+      ...setup.definitions,
+      stages: [
+        {
+          index: 0,
+          path: "/opensees/stages/stage_000",
+          name: "s0",
+          attrs: { name: "s0" },
+          analysis: null,
+          patterns: [],
+          recorders: [],
+          bcs: { fix: null, mass: null },
+          other: [],
+        },
+        {
+          index: 1,
+          path: "/opensees/stages/stage_001",
+          name: "s1",
+          attrs: { name: "s1" },
+          analysis: null,
+          patterns: [],
+          recorders: [],
+          bcs: { fix: null, mass: null },
+          other: [],
+        },
+      ],
+    };
+    const stage1LinearRes = resolveStageSpanLoads({
+      definitions: stagedDefsLinearRoot,
+      ndm: 2,
+      stageIndex: 1,
+      time: 1.0,
+    });
+    assert.equal(stage1LinearRes.ok, false);
+    if (!stage1LinearRes.ok) assert.match(stage1LinearRes.reason, /non-Constant timeSeries/);
+
+    // Now switch the root pattern's timeSeries to Constant -> permitted at stageIndex=1
+    const stagedDefsConstantRoot: Definitions = {
+      ...stagedDefsLinearRoot,
+      timeSeries: [
+        {
+          path: "/opensees/time_series/Constant_1",
+          groupName: "Constant_1",
+          type: "Constant",
+          tag: 1,
+          params: ["-factor", 1.0],
+          attrs: {},
+          tables: {},
+        },
+      ],
+      patterns: [
+        {
+          ...setup.definitions.patterns[0]!,
+          attrs: { series_ref: "/opensees/time_series/Constant_1" },
+        },
+      ],
+    };
+    const stage1ConstRes = resolveStageSpanLoads({
+      definitions: stagedDefsConstantRoot,
+      ndm: 2,
+      stageIndex: 1,
+      time: 2.0,
+    });
+    assert.equal(stage1ConstRes.ok, true);
+  }
+
+  // 5. Unsorted stations [1, -1] are sorted to [-1, 1], and non-finite interior station values fall back cleanly
+  {
+    const setup = makeSyntheticBeamSetup();
+    const resSorted = reconstructSpanDiagramsForStep({
+      component: "Mz",
+      stepByComponent: {
+        Vy: makeStep("Vy", [1, -1], [-30, 30]),
+        Mz: makeStep("Mz", [1, -1], [0, 0]),
+      },
+      elementLengths: new Map([[1, 6.0]]),
+      join: setup.join,
+      decls: setup.decls,
+      definitions: setup.definitions,
+      sequence: setup.sequence,
+      ndm: 2,
+      time: 1.0,
+    });
+    assert.equal(resSorted.get(1)!.mode, "exact");
+
+    const resNaNInterior = reconstructSpanDiagramsForStep({
+      component: "Mz",
+      stepByComponent: {
+        Vy: makeStep("Vy", [-1, 0, 1], [30, Number.NaN, -30]),
+        Mz: makeStep("Mz", [-1, 0, 1], [0, 45, 0]),
+      },
+      elementLengths: new Map([[1, 6.0]]),
+      join: setup.join,
+      decls: setup.decls,
+      definitions: setup.definitions,
+      sequence: setup.sequence,
+      ndm: 2,
+      time: 1.0,
+    });
+    const e1 = resNaNInterior.get(1)!;
+    assert.equal(e1.mode, "interpolated");
+    if (e1.mode === "interpolated") assert.match(e1.reason, /non-finite/);
+  }
+});
+

@@ -542,6 +542,43 @@ function interpolatePathSeries(
   return { ok: true, factor: factor * (v0 + alpha * (v1 - v0)) };
 }
 
+function evalTrigSeries(
+  time: number,
+  tStart: number | null,
+  tFinish: number | null,
+  period: number | null,
+  factor: number,
+  shift: number,
+  zeroShift: number,
+): TimeSeriesEvalResult {
+  if (tStart === null || tFinish === null || period === null || !(period > 0) || !(tFinish > tStart)) {
+    return { ok: false, reason: "Trig timeSeries has invalid or missing t_start, t_end/t_finish, or period" };
+  }
+  if (!Number.isFinite(factor) || !Number.isFinite(shift) || !Number.isFinite(zeroShift)) {
+    return { ok: false, reason: "Trig timeSeries has non-finite factor, shift, or zero_shift" };
+  }
+  const ratio = zeroShift === 0.0 ? 0.0 : zeroShift / factor;
+  if (!Number.isFinite(ratio) || !(Math.abs(ratio) <= 1.0)) {
+    return {
+      ok: false,
+      reason: `Trig timeSeries has invalid zero_shift/factor ratio (${String(zeroShift)} / ${String(factor)})`,
+    };
+  }
+  const eps = 1e-12 * Math.max(1.0, Math.abs(tFinish - tStart));
+  if (time < tStart - eps || time > tFinish + eps) {
+    return { ok: true, factor: 0.0 };
+  }
+  const clampedT = Math.min(Math.max(time, tStart), tFinish);
+  // Matches OpenSees TrigSeries.cpp::getFactor and src/panels/windows/plot/series.ts:
+  // phi = shift - (period / (2*pi)) * asin(zeroShift / factor)
+  // factor(t) = factor * sin(2*pi*(t - tStart)/period + phi) + zeroShift
+  const phi = shift - (period / (2.0 * Math.PI)) * Math.asin(ratio);
+  return {
+    ok: true,
+    factor: factor * Math.sin(((2.0 * Math.PI * (clampedT - tStart)) / period) + phi) + zeroShift,
+  };
+}
+
 function evalTimeSeriesFromDeclParams(rec: DeclParams, tables: Readonly<Record<string, Table>> | undefined, time: number): TimeSeriesEvalResult {
   const type = rec.type;
   const p = rec.params;
@@ -560,26 +597,16 @@ function evalTimeSeriesFromDeclParams(rec: DeclParams, tables: Readonly<Record<s
 
   if (type === "Trig" || type === "Sine") {
     const tStart = asFiniteNumber(p["t_start"] ?? p["tStart"]);
-    const tFinish = asFiniteNumber(p["t_finish"] ?? p["tFinish"]);
+    const tFinish = asFiniteNumber(p["t_end"] ?? p["tEnd"] ?? p["t_finish"] ?? p["tFinish"]);
     const period = asFiniteNumber(p["period"]);
     const factor = asFiniteNumber(p["factor"]) ?? 1.0;
     const shift = asFiniteNumber(p["shift"]) ?? 0.0;
-    if (tStart === null || tFinish === null || period === null || !(period > 0) || !(tFinish > tStart)) {
-      return { ok: false, reason: "Trig timeSeries has invalid or missing t_start, t_finish, or period" };
-    }
-    const eps = 1e-12 * Math.max(1.0, Math.abs(tFinish - tStart));
-    if (time < tStart - eps || time > tFinish + eps) {
-      return { ok: true, factor: 0.0 };
-    }
-    const clampedT = Math.min(Math.max(time, tStart), tFinish);
-    return {
-      ok: true,
-      factor: factor * Math.sin(((2.0 * Math.PI * (clampedT - tStart)) / period) + shift),
-    };
+    const zeroShift = asFiniteNumber(p["zero_shift"] ?? p["zeroShift"]) ?? 0.0;
+    return evalTrigSeries(time, tStart, tFinish, period, factor, shift, zeroShift);
   }
 
   if (type === "Path") {
-    const filePath = p["file_path"] ?? p["filePath"];
+    const filePath = p["file"] ?? p["file_path"] ?? p["filePath"];
     const fileTime = p["file_time"] ?? p["fileTime"];
     const values = asFiniteNumberArray(p["values"]) ?? flattenTableNumbers(tables?.["values"]);
     if (!values || values.length === 0) {
@@ -599,20 +626,20 @@ function evalTimeSeriesFromDeclParams(rec: DeclParams, tables: Readonly<Record<s
     const dt = asFiniteNumber(p["dt"]);
 
     if (explicitTime !== null) {
+      if (prependZero) {
+        return { ok: false, reason: "Path timeSeries cannot combine prepend_zero with an explicit time vector" };
+      }
       if (explicitTime.length !== values.length) {
         return { ok: false, reason: `Path timeSeries time (${explicitTime.length}) and values (${values.length}) lengths differ` };
       }
-      const knotsT = prependZero && explicitTime[0]! > startTime ? [startTime, ...explicitTime] : [...explicitTime];
-      const knotsV = prependZero && explicitTime[0]! > startTime ? [0.0, ...values] : [...values];
-      return interpolatePathSeries(time, knotsT, knotsV, factor, useLast);
+      return interpolatePathSeries(time, explicitTime, values, factor, useLast);
     }
 
-    const stepDt = dt ?? 1.0;
-    if (!(stepDt > 0)) {
-      return { ok: false, reason: `Path timeSeries dt must be positive, got ${String(dt)}` };
+    if (dt === null || !(dt > 0)) {
+      return { ok: false, reason: `Path timeSeries requires a positive dt or explicit time vector, got dt=${String(dt)}` };
     }
     const knotsV = prependZero ? [0.0, ...values] : [...values];
-    const knotsT = knotsV.map((_, i) => startTime + i * stepDt);
+    const knotsT = knotsV.map((_, i) => startTime + i * dt);
     return interpolatePathSeries(time, knotsT, knotsV, factor, useLast);
   }
 
@@ -658,23 +685,16 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
     if (params.length < 3) {
       return { ok: false, reason: "Trig timeSeries has fewer than 3 positional parameters (tStart, tFinish, period)" };
     }
-    const tStart = Number(params[0]);
-    const tFinish = Number(params[1]);
-    const period = Number(params[2]);
-    if (!Number.isFinite(tStart) || !Number.isFinite(tFinish) || !Number.isFinite(period) || !(period > 0) || !(tFinish > tStart)) {
-      return { ok: false, reason: "Trig timeSeries has invalid tStart, tFinish, or period" };
-    }
-    const factor = findFlagNumber("-factor") ?? 1.0;
-    const shift = findFlagNumber("-shift") ?? 0.0;
-    const eps = 1e-12 * Math.max(1.0, Math.abs(tFinish - tStart));
-    if (time < tStart - eps || time > tFinish + eps) {
-      return { ok: true, factor: 0.0 };
-    }
-    const clampedT = Math.min(Math.max(time, tStart), tFinish);
-    return {
-      ok: true,
-      factor: factor * Math.sin(((2.0 * Math.PI * (clampedT - tStart)) / period) + shift),
-    };
+    const tStart = asFiniteNumber(params[0]);
+    const tFinish = asFiniteNumber(params[1]);
+    const period = asFiniteNumber(params[2]);
+    const factor = findFlagNumber("-factor") ?? asFiniteNumber(ts.attrs["factor"]) ?? 1.0;
+    const shift = findFlagNumber("-shift") ?? asFiniteNumber(ts.attrs["shift"]) ?? 0.0;
+    const zeroShift =
+      findFlagNumber("-zeroShift") ??
+      asFiniteNumber(ts.attrs["zero_shift"] ?? ts.attrs["zeroShift"]) ??
+      0.0;
+    return evalTrigSeries(time, tStart, tFinish, period, factor, shift, zeroShift);
   }
 
   if (type === "Path") {
@@ -716,20 +736,20 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
     const prependZero = params.includes("-prependZero") || ts.attrs["prepend_zero"] === 1 || ts.attrs["prepend_zero"] === "true";
 
     if (explicitTime !== null) {
+      if (prependZero) {
+        return { ok: false, reason: "Path timeSeries cannot combine -prependZero with an explicit -time vector" };
+      }
       if (explicitTime.length !== values.length) {
         return { ok: false, reason: `Path timeSeries time (${explicitTime.length}) and values (${values.length}) lengths differ` };
       }
-      const knotsT = prependZero && explicitTime[0]! > startTime ? [startTime, ...explicitTime] : [...explicitTime];
-      const knotsV = prependZero && explicitTime[0]! > startTime ? [0.0, ...values] : [...values];
-      return interpolatePathSeries(time, knotsT, knotsV, factor, useLast);
+      return interpolatePathSeries(time, explicitTime, values, factor, useLast);
     }
 
-    const stepDt = dt ?? 1.0;
-    if (!(stepDt > 0)) {
-      return { ok: false, reason: `Path timeSeries dt must be positive, got ${String(dt)}` };
+    if (dt === null || !(dt > 0)) {
+      return { ok: false, reason: `Path timeSeries requires a positive -dt or explicit -time vector, got dt=${String(dt)}` };
     }
     const knotsV = prependZero ? [0.0, ...values] : [...values];
-    const knotsT = knotsV.map((_, i) => startTime + i * stepDt);
+    const knotsT = knotsV.map((_, i) => startTime + i * dt);
     return interpolatePathSeries(time, knotsT, knotsV, factor, useLast);
   }
 
@@ -742,6 +762,14 @@ function findDeclRecordByTag(defs: Definitions | null | undefined, kind: string,
   const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
   return run ? (defs.decls.records[run.decl] ?? null) : null;
 }
+
+const PRIMITIVE_TIME_SERIES_TYPES: ReadonlySet<string> = new Set([
+  "Constant",
+  "Linear",
+  "Trig",
+  "Sine",
+  "Path",
+]);
 
 /**
  * Evaluate an OpenSees `timeSeries` at pseudo-time / step time `time`.
@@ -762,6 +790,11 @@ export function evaluateTimeSeriesFactor(
     if (declParams) {
       const fromDecl = evalTimeSeriesFromDeclParams(declParams, ts.tables, time);
       if (fromDecl.ok) return fromDecl;
+      // Only fall back to the low-level DefObject when declParams is a generator
+      // (e.g. peer_ngawest2) rather than a primitive whose validation failed.
+      if (PRIMITIVE_TIME_SERIES_TYPES.has(declParams.type)) {
+        return fromDecl;
+      }
     }
     return evalTimeSeriesFromDefObject(ts, time);
   }
@@ -841,25 +874,6 @@ function evalShearScalar(
   return V0 + sign * acc;
 }
 
-function evalLoadIntensityScalar(
-  x: number,
-  length: number,
-  loads: readonly BeamSpanSegmentLoad[],
-  component: "y" | "z",
-): number {
-  let w = 0.0;
-  for (const ld of loads) {
-    const xa = ld.aL * length;
-    const xb = ld.bL * length;
-    if (xb > xa && x >= xa && x <= xb) {
-      const wa = component === "y" ? ld.wya : ld.wza;
-      const wb = component === "y" ? ld.wyb : ld.wzb;
-      w += wa + ((wb - wa) * (x - xa)) / (xb - xa);
-    }
-  }
-  return w;
-}
-
 function dedupeSortedCoords(coords: readonly number[], length: number, tolScale = 1e-12): number[] {
   if (coords.length === 0) return [];
   const sorted = [...coords].sort((a, b) => a - b);
@@ -877,8 +891,9 @@ function dedupeSortedCoords(coords: readonly number[], length: number, tolScale 
 /**
  * Find interior points `x \in (0, L)` where `V(x) = V0 + sign * \sum \int_0^x w(s) ds = 0`.
  * On each sub-interval between load breakpoints, `w(x)` is linear so `V(x)` is
- * at most quadratic; roots are solved analytically and polished with 2 Newton
- * steps (matching `_beam_diagrams.py::_find_zero_shear_roots`).
+ * at most quadratic; roots are solved analytically using the numerically stable
+ * Citardauq quadratic formula and polished with 2 Newton steps (matching
+ * `_beam_diagrams.py::_find_zero_shear_roots`).
  */
 export function findZeroShearRoots(
   V0: number,
@@ -921,7 +936,9 @@ export function findZeroShearRoots(
       const disc = b * b - 4.0 * a * c;
       if (disc >= 0.0) {
         const sqrtD = Math.sqrt(disc);
-        candidates.push((-b - sqrtD) / (2.0 * a), (-b + sqrtD) / (2.0 * a));
+        const q = -0.5 * (b >= 0.0 ? b + sqrtD : b - sqrtD);
+        if (Math.abs(a) > 0.0) candidates.push(q / a);
+        if (Math.abs(q) > 0.0) candidates.push(c / q);
       }
     }
 
@@ -930,8 +947,8 @@ export function findZeroShearRoots(
         let xr = Math.min(Math.max(x0 + sRaw, x0), x1);
         for (let iter = 0; iter < 2; iter++) {
           const fv = evalShearScalar(xr, V0, length, loads, component, sign);
-          const dv = sign * evalLoadIntensityScalar(xr, length, loads, component);
-          if (Math.abs(dv) > 1e-14) {
+          const dv = b + 2.0 * a * (xr - x0);
+          if (Math.abs(dv) * h > 1e-14 * scaleV) {
             const xNew = xr - fv / dv;
             if (xNew >= x0 && xNew <= x1) xr = xNew;
           }
@@ -988,10 +1005,35 @@ export function reconstructBeamElementDiagram(opts: ReconstructBeamElementDiagra
       ? nodalReactionsIToSectionForces(opts.nodalReactionsI)
       : { N0: 0, Vy0: 0, Vz0: 0, T0: 0, My0: 0, Mz0: 0 };
 
+  if (
+    !Number.isFinite(secI.N0) ||
+    !Number.isFinite(secI.Vy0) ||
+    !Number.isFinite(secI.Vz0) ||
+    !Number.isFinite(secI.T0) ||
+    !Number.isFinite(secI.My0) ||
+    !Number.isFinite(secI.Mz0)
+  ) {
+    throw new RangeError("endForcesI / nodalReactionsI contains non-finite force value");
+  }
+
   const loads = opts.loads ?? [];
   for (const ld of loads) {
-    if (!(0.0 <= ld.aL && ld.aL < ld.bL && ld.bL <= 1.0)) {
+    if (
+      !Number.isFinite(ld.aL) ||
+      !Number.isFinite(ld.bL) ||
+      !(0.0 <= ld.aL && ld.aL < ld.bL && ld.bL <= 1.0)
+    ) {
       throw new RangeError(`invalid segment load bounds aL=${ld.aL}, bL=${ld.bL}`);
+    }
+    if (
+      !Number.isFinite(ld.wxa) ||
+      !Number.isFinite(ld.wxb) ||
+      !Number.isFinite(ld.wya) ||
+      !Number.isFinite(ld.wyb) ||
+      !Number.isFinite(ld.wza) ||
+      !Number.isFinite(ld.wzb)
+    ) {
+      throw new RangeError("segment load contains non-finite intensity value");
     }
   }
 
@@ -1418,6 +1460,18 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
   let activeAnalysis: AnalysisDef | null = defs.analysis;
   const activePatterns: DefObject[] = [...defs.patterns];
 
+  const isConstantPatternTimeSeries = (pat: DefObject): boolean => {
+    const tsRes = resolvePatternTimeSeries(pat, defs);
+    if (!tsRes.ok) return false;
+    if ("groupName" in tsRes.series) {
+      const declRec = findDeclRecordByTag(defs, "timeSeries", tsRes.series.tag);
+      const declType = declRec?.params[0]?.type;
+      if (declType) return declType === "Constant";
+      return tsRes.series.type === "Constant";
+    }
+    return tsRes.series.type === "Constant";
+  };
+
   if (defs.stages.length > 0) {
     const stageIdx =
       opts.resultsStage?.name
@@ -1432,10 +1486,32 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
       };
     }
 
+    // In apeSees, every stage boundary closes with `loadConst -time 0.0`.
+    // At stage resolvedIdx > 0, any root-level pattern in `defs.patterns` with
+    // `element_loads` whose timeSeries is not `Constant` was latched at an
+    // unarchived end-of-stage freeze time.
+    if (resolvedIdx > 0) {
+      for (const rootPat of defs.patterns) {
+        const rootRows = extractElementLoadRows(rootPat.tables["element_loads"]);
+        if (rootRows.length > 0 && !isConstantPatternTimeSeries(rootPat)) {
+          return {
+            ok: false,
+            reason: `root pattern '${rootPat.groupName}' with non-Constant timeSeries has element_loads across stage boundary; multi-stage loadConst state is not archived`,
+          };
+        }
+      }
+    }
+
     // Check prior and current stages for loadConst / set_time / pattern history ambiguity
     for (let sIdx = 0; sIdx <= resolvedIdx; sIdx++) {
       const st = defs.stages[sIdx]!;
-      if (st.attrs["load_const"] !== undefined || st.attrs["loadConst"] !== undefined || st.other.includes("load_const") || st.other.includes("loadConst")) {
+      if (
+        st.attrs["load_const"] !== undefined ||
+        st.attrs["loadConst"] !== undefined ||
+        st.attrs["pre_analyze_reset"] !== undefined ||
+        st.other.includes("load_const") ||
+        st.other.includes("loadConst")
+      ) {
         return {
           ok: false,
           reason: `stage '${st.name}' invokes loadConst without archived freeze time`,
@@ -1450,10 +1526,10 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
       if (sIdx < resolvedIdx && st.patterns.length > 0) {
         for (const priorPat of st.patterns) {
           const priorRows = extractElementLoadRows(priorPat.tables["element_loads"]);
-          if (priorRows.length > 0) {
+          if (priorRows.length > 0 && !isConstantPatternTimeSeries(priorPat)) {
             return {
               ok: false,
-              reason: `prior stage '${st.name}' added element_loads pattern '${priorPat.groupName}'; multi-stage loadConst state is not archived`,
+              reason: `prior stage '${st.name}' added element_loads pattern '${priorPat.groupName}' with non-Constant timeSeries; multi-stage loadConst state is not archived`,
             };
           }
         }
@@ -1595,18 +1671,30 @@ function extractElementStations(
   if (!step) {
     return { xi: new Float64Array(0), values: new Float64Array(0) };
   }
-  const xiArr: number[] = [];
-  const valArr: number[] = [];
+  const pairs: { xi: number; val: number }[] = [];
+  let needsSort = false;
+  let allFiniteXi = true;
   for (let i = 0; i < step.elementIndex.length; i++) {
     if (step.elementIndex[i] === elementId) {
-      xiArr.push(step.stationNaturalCoord[i]!);
-      valArr.push(step.values[i]!);
+      const xVal = step.stationNaturalCoord[i]!;
+      const vVal = step.values[i]!;
+      if (!Number.isFinite(xVal)) allFiniteXi = false;
+      if (pairs.length > 0 && xVal < pairs[pairs.length - 1]!.xi) {
+        needsSort = true;
+      }
+      pairs.push({ xi: xVal, val: vVal });
     }
   }
-  return {
-    xi: new Float64Array(xiArr),
-    values: new Float64Array(valArr),
-  };
+  if (needsSort && allFiniteXi) {
+    pairs.sort((a, b) => a.xi - b.xi);
+  }
+  const xi = new Float64Array(pairs.length);
+  const values = new Float64Array(pairs.length);
+  for (let i = 0; i < pairs.length; i++) {
+    xi[i] = pairs[i]!.xi;
+    values[i] = pairs[i]!.val;
+  }
+  return { xi, values };
 }
 
 function findElementEndStations(
@@ -1640,6 +1728,16 @@ function findElementEndStations(
       values,
     };
   }
+  for (let k = 0; k < count; k++) {
+    if (!Number.isFinite(xi[k]!) || !Number.isFinite(values[k]!)) {
+      return {
+        ok: false,
+        reason: `element ${elementId} station coordinates or values are non-finite`,
+        xi,
+        values,
+      };
+    }
+  }
   const xiFirst = xi[0]!;
   const xiLast = xi[count - 1]!;
   if (Math.abs(xiFirst - -1.0) > endTol || Math.abs(xiLast - 1.0) > endTol) {
@@ -1652,14 +1750,6 @@ function findElementEndStations(
   }
   const vI = values[0]!;
   const vJ = values[count - 1]!;
-  if (!Number.isFinite(vI) || !Number.isFinite(vJ)) {
-    return {
-      ok: false,
-      reason: `element ${elementId} end station values are non-finite`,
-      xi,
-      values,
-    };
-  }
   return { ok: true, vI, vJ, xi, values };
 }
 
@@ -1948,13 +2038,16 @@ export function reconstructSpanDiagramsForStep(
       Mz0: mzEnds.ok ? mzEnds.vI : 0.0,
     };
 
+    // Only check node-j closure on My when companion shear Vz was also provided
+    // (and on Mz when companion shear Vy was also provided), since My(L) depends
+    // on Vz(0) and Mz(L) depends on Vy(0).
     const endForcesJ: BeamSectionEndForcesJ = {
       ...(nEnds.ok ? { NJ: nEnds.vJ } : {}),
       ...(vyEnds.ok ? { VyJ: vyEnds.vJ } : {}),
       ...(vzEnds.ok ? { VzJ: vzEnds.vJ } : {}),
       ...(tEnds.ok ? { TJ: tEnds.vJ } : {}),
-      ...(myEnds.ok ? { MyJ: myEnds.vJ } : {}),
-      ...(mzEnds.ok ? { MzJ: mzEnds.vJ } : {}),
+      ...(myEnds.ok && vzEnds.ok ? { MyJ: myEnds.vJ } : {}),
+      ...(mzEnds.ok && vyEnds.ok ? { MzJ: mzEnds.vJ } : {}),
     };
 
     const diagram = reconstructBeamElementDiagram({
