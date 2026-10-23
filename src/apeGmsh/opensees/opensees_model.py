@@ -918,7 +918,7 @@ class OpenSeesModel:
             _masses=tuple(emitter._masses),
             _mass_from_model=emitter._mass_from_model,
             _solve_stamp=emitter.solve_stamp(),
-            _target_mode=emitter.target_mode,
+            _target_mode=emitter._target_mode,
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),

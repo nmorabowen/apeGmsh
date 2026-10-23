@@ -1545,12 +1545,6 @@ class H5Emitter(
                         tuple(refs["section_ref"])))
         return out
 
-    @property
-    def target_mode(self) -> TargetMode:
-        """The ``OpenSeesTarget.mode`` this archive records (``"auto"``,
-        ``"fork"`` or ``"stock"``; opensees 2.36.0, #2375)."""
-        return self._target_mode
-
     def _write_target_mode(self, f: Any) -> None:
         """Persist ``/opensees@target_mode`` for a pinned target.
 
