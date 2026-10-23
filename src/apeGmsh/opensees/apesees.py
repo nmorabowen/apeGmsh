@@ -181,6 +181,7 @@ from ._internal.tag_resolution import (
     set_membrane_context,
     set_stage_owned_node_tags,
 )
+from ._internal.frame_modifier_copies import ModifiedCopies, register_frame_modifier_copies
 from .element.shell import LadrunoMembrane
 from ._internal.compose import _compose_model_h5, _path_stem
 from .._internal.provenance import ProvenanceStore
@@ -8684,6 +8685,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # synthesised provenance key. Kept out of ``_names`` so no user
         # material name can be mistaken for them.
         self._spring_bed_units: dict[str, UniaxialMaterial] = {}
+        self._frame_modifier_copies = ModifiedCopies()  # one memo per bridge
         # ADR 0112 D3 (V2d): where in the user's source each primitive
         # was declared.  Filled by ``_register`` through the shared
         # capture helper, one record per user call, keyed
@@ -11146,6 +11148,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                     "opensees", kind, name, on_existing="raise")
             self._note_decl(
                 prim, kind, name, path, synth=synthesised is not None)
+        register_frame_modifier_copies(self, prim)
         return prim
 
     def _declare_record(

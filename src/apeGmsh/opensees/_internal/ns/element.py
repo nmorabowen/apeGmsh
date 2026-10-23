@@ -22,6 +22,7 @@ from ...element.beam_column import (
     elasticBeamColumn,
     forceBeamColumn,
 )
+from ...element.frame_modifiers import FrameModifiers
 from ..._element_capabilities import REMOVED_ELEMENT_CLASSES
 from ...element.shell import (
     ASDShellQ4,
@@ -140,7 +141,10 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
         damp: Damping | None = None,
+        modifiers: FrameModifiers | None = None,
     ) -> elasticBeamColumn:
+        """``element elasticBeamColumn``; ``modifiers`` scales the emitted
+        ``A`` / ``Iz`` / ``Iy`` / ``J`` / ``-mass`` (:class:`FrameModifiers`)."""
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             elasticBeamColumn(
@@ -148,6 +152,7 @@ class _ElementNS(_BridgeNamespace):
                 A=A, E=E, Iz=Iz,
                 Iy=Iy, G=G, J=J,
                 mass=mass, c_mass=c_mass, damp=damp,
+                modifiers=modifiers,
             )
         )
 
@@ -161,6 +166,7 @@ class _ElementNS(_BridgeNamespace):
         max_iter: int | None = None,
         tol: float | None = None,
         damp: Damping | None = None,
+        modifiers: FrameModifiers | None = None,
     ) -> forceBeamColumn:
         """``element forceBeamColumn`` — force-based distributed-plasticity.
 
@@ -168,7 +174,9 @@ class _ElementNS(_BridgeNamespace):
         section=sec, n_ip=5)``) and pass it as ``integration=``.  Both
         ``transf`` and ``integration`` accept object handles or
         registered names.  ``damp`` attaches a ``damping`` object directly to
-        this element (ADR 0053 D3b) instead of via a region.
+        this element (ADR 0053 D3b) instead of via a region.  ``modifiers``
+        (:class:`FrameModifiers`) needs ``ElasticSection`` s in the rule: the
+        element references modified copies of them, registered here.
         """
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
@@ -176,6 +184,7 @@ class _ElementNS(_BridgeNamespace):
             forceBeamColumn(
                 pg=pg, transf=transf, integration=integration,
                 mass=mass, max_iter=max_iter, tol=tol, damp=damp,
+                modifiers=modifiers,
             )
         )
 
@@ -188,14 +197,18 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
         damp: Damping | None = None,
+        modifiers: FrameModifiers | None = None,
     ) -> dispBeamColumn:
-        """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
+        """``element dispBeamColumn`` — displacement-based distributed-plasticity.
+
+        ``modifiers`` works as on :meth:`forceBeamColumn`."""
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             dispBeamColumn(
                 pg=pg, transf=transf, integration=integration,
                 mass=mass, c_mass=c_mass, damp=damp,
+                modifiers=modifiers,
             )
         )
 
@@ -214,7 +227,10 @@ class _ElementNS(_BridgeNamespace):
         Avz: float | None = None,
         mass: float | None = None,
         c_mass: bool = False,
+        modifiers: FrameModifiers | None = None,
     ) -> ElasticTimoshenkoBeam:
+        """``element ElasticTimoshenkoBeam``; ``modifiers`` scales the emitted
+        section properties and ``-mass`` (:class:`FrameModifiers`)."""
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             ElasticTimoshenkoBeam(
@@ -222,6 +238,7 @@ class _ElementNS(_BridgeNamespace):
                 E=E, G=G, A=A, Iz=Iz, Avy=Avy,
                 Iy=Iy, J=J, Avz=Avz,
                 mass=mass, c_mass=c_mass,
+                modifiers=modifiers,
             )
         )
 

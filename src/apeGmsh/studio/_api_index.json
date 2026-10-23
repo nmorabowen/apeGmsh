@@ -3469,8 +3469,8 @@
       "symbol": "ops.element.CoupledZeroLength"
     },
     "ops.element.ElasticTimoshenkoBeam": {
-      "doc": "",
-      "signature": "ElasticTimoshenkoBeam(*, pg: 'str', transf: '_AnyTransf | str', E: 'float', G: 'float', A: 'float', Iz: 'float', Avy: 'float', Iy: 'float | None' = None, J: 'float | None' = None, Avz: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False) -> 'ElasticTimoshenkoBeam'",
+      "doc": "``element ElasticTimoshenkoBeam``; ``modifiers`` scales the emitted",
+      "signature": "ElasticTimoshenkoBeam(*, pg: 'str', transf: '_AnyTransf | str', E: 'float', G: 'float', A: 'float', Iz: 'float', Avy: 'float', Iy: 'float | None' = None, J: 'float | None' = None, Avz: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, modifiers: 'FrameModifiers | None' = None) -> 'ElasticTimoshenkoBeam'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ElasticTimoshenkoBeam"
     },
@@ -3614,19 +3614,19 @@
     },
     "ops.element.dispBeamColumn": {
       "doc": "``element dispBeamColumn`` — displacement-based distributed-plasticity.",
-      "signature": "dispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None) -> 'dispBeamColumn'",
+      "signature": "dispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'dispBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.dispBeamColumn"
     },
     "ops.element.elasticBeamColumn": {
-      "doc": "",
-      "signature": "elasticBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', Iy: 'float | None' = None, G: 'float | None' = None, J: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None) -> 'elasticBeamColumn'",
+      "doc": "``element elasticBeamColumn``; ``modifiers`` scales the emitted",
+      "signature": "elasticBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', Iy: 'float | None' = None, G: 'float | None' = None, J: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'elasticBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.elasticBeamColumn"
     },
     "ops.element.forceBeamColumn": {
       "doc": "``element forceBeamColumn`` — force-based distributed-plasticity.",
-      "signature": "forceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, max_iter: 'int | None' = None, tol: 'float | None' = None, damp: 'Damping | None' = None) -> 'forceBeamColumn'",
+      "signature": "forceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, max_iter: 'int | None' = None, tol: 'float | None' = None, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'forceBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.forceBeamColumn"
     },
