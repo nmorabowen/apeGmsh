@@ -27,6 +27,7 @@ from typing import (
 )
 
 from .._internal.analyze_rc import check_analyze_rc
+from .._internal.build.stage_emit import SweptMaterialReach
 from .._internal.build.stage_validate import StageZeroLedger
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
@@ -1036,6 +1037,9 @@ class LiveOpsEmitter:
     def uniaxialMaterial(
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
+        # A uniaxial wrapper of an nD material (the fork's Continuum)
+        # forwards setParameter to it, so it reaches a swept material too.
+        self._swept_reach().note_referrer(tag, params)
         self._ops.uniaxialMaterial(mat_type, tag, *params)
 
     def nDMaterial(
@@ -1050,11 +1054,13 @@ class LiveOpsEmitter:
             if refusal is not None:
                 raise RuntimeError(refusal)
         self._stage_zero_ledger().material(mat_type, tag)
+        self._swept_reach().note_material(mat_type, tag, params)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(
         self, sec_type: str, tag: int, *params: float | str,
     ) -> None:
+        self._swept_reach().note_referrer(tag, params)
         self._ops.section(sec_type, tag, *params)
 
     def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
@@ -1068,23 +1074,35 @@ class LiveOpsEmitter:
         # openseespy's ops.section(...) sets the current-section state.
         # Subsequent ops.patch / ops.layer / ops.fiber attach to this
         # section by openseespy convention.
+        self._swept_reach().note_referrer(tag, params)
+        self._open_section = int(tag)
         self._ops.section(sec_type, tag, *params)
 
     def section_close(self) -> None:
         # No-op — openseespy has no explicit close. The current-section
         # context ends implicitly when the next non-fiber/patch/layer
         # command runs.
-        pass
+        self._open_section = None
+
+    #: The fiber section a ``fiber`` / ``patch`` / ``layer`` joins.
+    _open_section: "int | None" = None
+
+    def _note_section_member(self, args: "tuple[Any, ...]") -> None:
+        if self._open_section is not None:
+            self._swept_reach().note_referrer(self._open_section, args)
 
     def patch(self, kind: str, *args: int | float) -> None:
+        self._note_section_member(args)
         self._ops.patch(kind, *args)
 
     def fiber(
         self, y: float, z: float, area: float, mat_tag: int,
     ) -> None:
+        self._note_section_member((mat_tag,))
         self._ops.fiber(y, z, area, mat_tag)
 
     def layer(self, kind: str, *args: int | float) -> None:
+        self._note_section_member(args)
         self._ops.layer(kind, *args)
 
     # -- Beam integration rules ---------------------------------------------
@@ -1092,6 +1110,7 @@ class LiveOpsEmitter:
     def beamIntegration(
         self, rule_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        self._swept_reach().note_referrer(tag, args)
         self._ops.beamIntegration(rule_type, tag, *args)
 
     # -- Topology ------------------------------------------------------------
@@ -1107,6 +1126,7 @@ class LiveOpsEmitter:
         # build that knows one fork element but not another must still be
         # gated on the second).
         self._stage_zero_ledger().owed = True
+        self._swept_reach().note_element(tag, args)
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition
@@ -1923,9 +1943,37 @@ class LiveOpsEmitter:
         self._ops.remove("sp", int(node), int(dof))
 
     def remove_element(self, tag: int) -> None:
+        self._swept_reach().note_removed(tag)
         self._ops.remove("element", int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        """``updateMaterialStage`` alone, with no carrier sweep.
+
+        The deck emitters precede a plastic flip of a swept material
+        (``ManzariDafalias`` / ``LadrunoSANISAND``) on two or more
+        carriers with ``setParameter ... materialState`` (#2445,
+        ``stage_emit.MaterialStageCarriers``); this emitter does not, so
+        it refuses that flip instead of initialising the first element
+        only.  No bridge path reaches it today (live execution refuses a
+        staged model), so the refusal guards a direct driver and any
+        future staged-live lift.
+        """
+        n = self._swept_reach().carriers(mat_tag)
+        if int(stage) >= 1 and n is not None and n >= 2:
+            from .._internal.build.errors import BridgeError
+
+            raise BridgeError(
+                f"LiveOpsEmitter.update_material_stage: nDMaterial tag "
+                f"{int(mat_tag)} is a ManzariDafalias / LadrunoSANISAND "
+                f"material that {n} elements may carry, and the flip to "
+                f"stage {int(stage)} would run Elastic2Plastic() on the "
+                "first element only (issue #2445).  The live emitter sends "
+                "a bare updateMaterialStage with no carrier sweep "
+                "(setParameter -ele <carriers> materialState <tag>), so it "
+                "refuses the flip.  Emit the deck with ops.tcl(...) / "
+                "ops.py(...), which write the sweep, or give each element "
+                "its own material."
+            )
         self._stage_zero_ledger().user_flip(mat_tag)
         self._ops.updateMaterialStage(
             "-material", int(mat_tag), "-stage", int(stage),
@@ -1934,6 +1982,12 @@ class LiveOpsEmitter:
     #: Created on first use, so an emitter built with ``__new__`` (the
     #: gate tests) still has one.
     _stage0: "StageZeroLedger | None" = None
+    _reach: "SweptMaterialReach | None" = None
+
+    def _swept_reach(self) -> SweptMaterialReach:
+        if self._reach is None:
+            self._reach = SweptMaterialReach()
+        return self._reach
 
     def _stage_zero_ledger(self) -> StageZeroLedger:
         if self._stage0 is None:
