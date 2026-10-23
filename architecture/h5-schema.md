@@ -1283,7 +1283,9 @@ joins are recorded; the completeness marker does:
 
 The marker sits on `/opensees/decls`, not on `/opensees`. The
 attributes of `/opensees` fold into `model_hash` (`canonical_bytes`
-hashes the root group's attributes), so an attribute there would move a
+hashes the root group's attributes, all but those in
+`MODEL_HASH_EXCLUDED_ATTRS`, which is `@target_mode` alone), so an
+attribute there would move a
 rewritten legacy file's hash. `decls` is hash-excluded, and it is the
 table the joins point into: with no `decls` group there is nothing to
 join to. A rewrite echoes the source's marker with its program, so a
@@ -2391,7 +2393,7 @@ its `/meta/lineage` into `/model/meta/lineage`. `/opensees` is that
 | Attr | Present when | Value |
 |---|---|---|
 | `fem_hash` | `/model` is embedded | the neutral zone's content hash, equal to `/model/meta/snapshot_id` |
-| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`. |
+| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`, and the attribute `/opensees@target_mode`. |
 | `results_hash` | always; stamped at close | `blake2b(model_hash ‖ /stages)`, chained on `""` when `model_hash` is absent |
 
 **Pairing rule.** A results file belongs to a given `model.h5` when its

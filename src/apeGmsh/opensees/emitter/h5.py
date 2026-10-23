@@ -1487,7 +1487,8 @@ class H5Emitter(
         self._write_commands(f)
         self._write_program(f)
         # ADR 0114 D6 (schema 2.24.0): the solve stamp, on ``/opensees``
-        # itself. Hashed, like every attribute of the group.
+        # itself. Hashed, like every attribute of the group except
+        # ``target_mode`` (``MODEL_HASH_EXCLUDED_ATTRS``).
         self._write_solve_stamp(f)
         # opensees 2.36.0: the pinned target mode, beside the
         # stamp; hash-excluded (``MODEL_HASH_EXCLUDED_ATTRS``).

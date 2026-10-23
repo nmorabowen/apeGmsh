@@ -1359,10 +1359,16 @@ class OpenSeesModel:
         ``OpenSeesTarget(mode="fork")`` asserts the fork on the live path
         and is known to run it at stage close (#2375, #2444).
         """
+        verbs = self._verbs_replay_requires()
+        if self._target_mode == "fork" and "fork" not in verbs:
+            return tuple(sorted((*verbs, "fork")))
+        return verbs
+
+    def _verbs_replay_requires(self) -> tuple[str, ...]:
+        """:meth:`replay_requires` without the ``target_mode`` pin: what the
+        archived verbs and chains alone need."""
         stamp = self._solve_stamp
         requires = () if stamp is None else stamp.requires
-        if self._target_mode == "fork" and "fork" not in requires:
-            requires = (*requires, "fork")
         return flat_requires(requires, chains=self._archived_chains())
 
     def _refuse_stored_solve_refusals(self, target: str) -> None:
@@ -2434,7 +2440,8 @@ class OpenSeesModel:
             stamp, get_backend_info(),
             mpi_systems=tuple(
                 s for s in self._archived_systems() if is_mpi_system(s)),
-            fork_pinned=self._target_mode == "fork")
+            pinned=tuple(t for t in requires
+                         if t not in self._verbs_replay_requires()))
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
 
@@ -2442,7 +2449,7 @@ class OpenSeesModel:
 def refuse_live_requires(
     stamp: "SolveStamp | None", backend: "BackendInfo", *,
     mpi_systems: "Sequence[str]" = (),
-    fork_pinned: bool = False,
+    pinned: "Sequence[str]" = (),
 ) -> None:
     """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
 
@@ -2455,10 +2462,11 @@ def refuse_live_requires(
     from a newer bridge must not be solved on a guess. ``build('live')``
     hands in the flat replay's tokens
     (:meth:`OpenSeesModel.replay_requires`) and the MPI systems its chain
-    declares (``mpi_systems``), which the message names, and whether the
-    archive is fork-pinned (``fork_pinned``: ``/opensees@target_mode`` is
-    ``"fork"``, opensees 2.36.0), which the message names as the source of
-    ``"fork"``.
+    declares (``mpi_systems``), which the message names. ``pinned`` are the
+    tokens only the ``/opensees@target_mode`` pin adds (``"fork"`` for a
+    fork-pinned archive whose verbs need no fork, opensees 2.36.0): the
+    message names that attribute as their source, and ``@requires`` as the
+    source of the rest.
     """
     if stamp is None or not stamp.requires:
         return
@@ -2470,10 +2478,6 @@ def refuse_live_requires(
     known = [t for t in missing if t in REQUIRES_TOKENS]
     unknown = [t for t in missing if t not in REQUIRES_TOKENS]
     hints: list[str] = []
-    if fork_pinned and "fork" in known:
-        hints.append(
-            "'fork': /opensees@target_mode is 'fork' (the bridge was built "
-            "with OpenSeesTarget(mode='fork'), which asserts the fork).")
     if any(t in ("fork", "mpco") for t in known):
         hints.append(
             "Run it with the Ladruno fork on PYTHONPATH (or "
@@ -2496,10 +2500,22 @@ def refuse_live_requires(
             "This bridge knows no backend that provides "
             + ", ".join(repr(t) for t in unknown)
             + "; the archive was written by a newer bridge.")
+    from_verbs = [t for t in missing if t not in pinned]
+    from_pin = [t for t in missing if t in pinned]
+    sources: list[str] = []
+    if from_verbs:
+        sources.append(
+            "the archive's verbs require "
+            + ", ".join(repr(t) for t in from_verbs) + " (/opensees@requires)")
+    if from_pin:
+        sources.append(
+            "the archive is pinned to "
+            + ", ".join(repr(t) for t in from_pin)
+            + " (/opensees@target_mode: the bridge was built with "
+            "OpenSeesTarget(mode='fork'), which asserts the fork)")
     raise BridgeError(
-        "OpenSeesModel.build('live'): the archive's verbs require "
-        + ", ".join(repr(t) for t in missing)
-        + f" (/opensees@requires), but the bound openseespy is a "
+        "OpenSeesModel.build('live'): " + " and ".join(sources)
+        + f", but the bound openseespy is a "
         f"{backend.kind} build ({backend.source}). " + " ".join(hints)
     )
 

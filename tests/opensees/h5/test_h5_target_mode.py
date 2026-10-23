@@ -212,9 +212,32 @@ def stock_backend(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.mark.usefixtures("stock_backend")
 def test_build_live_refuses_a_fork_archive_on_stock(tmp_path: Path) -> None:
     path = _archive(_pinned_frame("fork"), tmp_path / "m.h5")
-    with pytest.raises(BridgeError, match="require 'fork'") as exc:
+    with pytest.raises(BridgeError) as exc:
         OpenSeesModel.from_h5(str(path)).build("live")
-    assert "/opensees@target_mode is 'fork'" in str(exc.value)
+    msg = str(exc.value)
+    # The verbs need no fork: the message names the pin, not @requires.
+    assert "the archive is pinned to 'fork' (/opensees@target_mode" in msg, msg
+    assert "verbs require" not in msg and "@requires" not in msg, msg
+
+
+def test_the_live_refusal_names_each_source() -> None:
+    """``refuse_live_requires`` attributes each token to where it came
+    from: the verbs (``@requires``) or the pin (``@target_mode``)."""
+    from apeGmsh.opensees.emitter.caps import SolveStamp
+    from apeGmsh.opensees.opensees_model import refuse_live_requires
+
+    stock = BackendInfo(kind="stock", build=None, version="3.8.0", source="x")
+    with pytest.raises(BridgeError) as exc:
+        refuse_live_requires(SolveStamp(True, requires=("fork",)), stock)
+    msg = str(exc.value)
+    assert "the archive's verbs require 'fork' (/opensees@requires)" in msg
+    assert "target_mode" not in msg
+    with pytest.raises(BridgeError) as exc:
+        refuse_live_requires(SolveStamp(True, requires=("fork", "mpco")),
+                             stock, pinned=("fork",))
+    msg = str(exc.value)
+    assert ("the archive's verbs require 'mpco' (/opensees@requires) and "
+            "the archive is pinned to 'fork' (/opensees@target_mode") in msg
 
 
 @pytest.mark.usefixtures("stock_backend")
