@@ -3353,7 +3353,6 @@ class LadrunoJ2Finite(NDMaterial):
 # LogStrain — Hencky finite-strain lift wrapper (Ladruno fork)
 # ---------------------------------------------------------------------------
 
-# apegmsh-lint: comment-provenance-ok the TODO below names the fork issue whose fix lifts this gate
 #: Inner classes over which the fork's ``LogStrain`` / ``LogStrain2D`` end
 #: the OpenSees process. The wrapper's ``nDMaterial`` line asks the
 #: inner for ``getType()``; these SANISAND classes do not implement it, so
@@ -3369,10 +3368,8 @@ class LadrunoJ2Finite(NDMaterial):
 #:
 #: Keyed by the apeGmsh class; the value is the fork class that prints the
 #: exit message (``LadrunoSANISAND`` derives from ``ManzariDafalias`` in
-#: the fork and exits through it).
-#:
-#: TODO #2499: empty this table once the fork pin implements ``getType``
-#: for these classes (the probe's pinned outcomes fail first and say so).
+#: the fork and exits through it). The lift condition is in the docstring
+#: of the refusal below.
 FINITE_LIFT_ABORTING_INNERS: dict[str, str] = {
     "ManzariDafalias": "ManzariDafalias",
     "LadrunoSANISAND": "ManzariDafalias",
@@ -3381,7 +3378,12 @@ FINITE_LIFT_ABORTING_INNERS: dict[str, str] = {
 
 
 def _refuse_aborting_lift_inner(wrapper: str, inner: NDMaterial) -> None:
-    """Raise if ``wrapper`` over ``inner`` would end the fork process."""
+    """Raise if ``wrapper`` over ``inner`` would end the fork process.
+
+    TODO #2499: empty :data:`FINITE_LIFT_ABORTING_INNERS` once the fork pin
+    implements ``getType`` for these classes. The pinned live probe fails
+    first and says so.
+    """
     name = type(inner).__name__
     if name in FINITE_LIFT_ABORTING_INNERS:
         cpp = FINITE_LIFT_ABORTING_INNERS[name]
