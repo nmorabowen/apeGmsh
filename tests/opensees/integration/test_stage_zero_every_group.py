@@ -75,20 +75,22 @@ def test_the_table_is_every_class_wide_class() -> None:
     assert set(_FRESH) == set(CLASS_WIDE_STAGE_FLAG)
 
 
-def _chain(ops: apeSees) -> dict[str, object]:
+def _chain(ops: apeSees, iters: int = 100) -> dict[str, object]:
     return dict(
         constraints=ops.constraints.Plain(), numberer=ops.numberer.Plain(),
         system=ops.system.FullGeneral(),
-        test=ops.test.NormDispIncr(tol=1e-10, max_iter=100),
+        test=ops.test.NormDispIncr(tol=1e-10, max_iter=iters),
         algorithm=ops.algorithm.Newton(),
         integrator=ops.integrator.LoadControl(dlam=0.1),
         analysis=ops.analysis.Static())
 
 
-def _column(cls: str, flip: "int | None" = None) -> apeSees:
+def _column(cls: str, flip: "int | None" = None, *, steps: int = 10,
+            iters: int = 100) -> apeSees:
     """Two stacked quads as an oedometer, each quad its own ``cls``
     material, 100 on top in stage ``confine``, which first flips both
-    materials to ``flip`` when given."""
+    materials to ``flip`` when given.  ``steps``/``iters`` shorten the
+    stale run, whose only job is its flip."""
     ops = apeSees(build_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
@@ -108,8 +110,8 @@ def _column(cls: str, flip: "int | None" = None) -> apeSees:
             with s.pattern(series=ops.timeSeries.Linear()) as p:
                 for node in (5, 6):
                     p.load(node=node, forces=(0.0, -50.0))
-            s.analysis(**_chain(ops))
-            s.run(n_increments=10)
+            s.analysis(**_chain(ops, iters))
+            s.run(n_increments=steps)
     return ops
 
 
@@ -309,17 +311,10 @@ def _read(dom: Any) -> dict[str, Any]:
 
 
 def _stale_then(cls: str, tmp_path: Path) -> None:
-    """Run 1: leave the group's static at the other stage."""
-    _exec_deck(_column(cls, flip=1 - _FRESH[cls]), tmp_path, "stale")
-
-
-def _reference(cls: str, tmp_path: Path) -> dict[str, Any]:
-    """The model with its fresh stage stated by the user, after a stale
-    run: the answer a fresh process gives."""
-    _stale_then(cls, tmp_path)
-    ref = _exec_deck(_column(cls, flip=_FRESH[cls]), tmp_path, "ref")
-    assert ref["ok"]
-    return ref
+    """Run 1: leave the group's static at the other stage (the flip line
+    sets it before the solve, so one short increment is enough)."""
+    _exec_deck(_column(cls, flip=1 - _FRESH[cls], steps=1, iters=2),
+               tmp_path, "stale")
 
 
 def _check(cls: str, got: dict[str, Any], ref: dict[str, Any]) -> None:
@@ -335,38 +330,29 @@ def _check(cls: str, got: dict[str, Any], ref: dict[str, Any]) -> None:
 @pytest.mark.live
 @pytest.mark.skipif(not _backend(), reason="no OpenSees backend")
 @pytest.mark.parametrize("cls", _LIVE)
-def test_live_a_rerun_of_the_deck_starts_at_the_fresh_stage(
+def test_live_a_rerun_in_process_starts_at_the_fresh_stage(
     cls: str, tmp_path: Path,
 ) -> None:
-    from apeGmsh.opensees.emitter.live import get_ops
-
-    try:
-        ref = _reference(cls, tmp_path)
-        _stale_then(cls, tmp_path)
-        got = _exec_deck(_column(cls), tmp_path, "rerun")
-    finally:
-        get_ops().wipe()
-    assert got["ok"]
-    _check(cls, got, ref)
-
-
-@pytest.mark.live
-@pytest.mark.skipif(not _backend(), reason="no OpenSees backend")
-@pytest.mark.parametrize("cls", _LIVE)
-def test_live_in_process_analyze_after_a_stale_run_starts_at_the_fresh_stage(
-    cls: str, tmp_path: Path,
-) -> None:
-    """The live emitter's ledger: ``apeSees.analyze`` after run 1."""
+    """Each time after a stale run 1: the deck with the fresh stage stated
+    by the user (the reference), the bridge's default deck, and
+    ``apeSees.analyze`` of the unstaged model (the live emitter's
+    ledger)."""
     from apeGmsh.opensees.emitter.live import get_ops
 
     dom = get_ops()
     try:
-        ref = _reference(cls, tmp_path)
+        _stale_then(cls, tmp_path)
+        ref = _exec_deck(_column(cls, flip=_FRESH[cls]), tmp_path, "ref")
+        _stale_then(cls, tmp_path)
+        deck = _exec_deck(_column(cls), tmp_path, "rerun")
         _stale_then(cls, tmp_path)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            assert _flat(cls).analyze(steps=10) == 0
-        got = _read(dom)
+            rc = _flat(cls).analyze(steps=10)
+        live = _read(dom)
     finally:
         dom.wipe()
-    _check(cls, got, ref)
+    assert ref["ok"] and deck["ok"]
+    _check(cls, deck, ref)
+    assert rc == 0
+    _check(cls, live, ref)

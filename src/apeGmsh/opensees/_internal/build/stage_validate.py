@@ -13,11 +13,12 @@ Two things follow, and both live here.
   ``s.remove_element``: a material whose elements are all removed is not
   live, so it need not be named.
 * :class:`StageZeroLedger` is how a deck or live emitter writes
-  ``updateMaterialStage -material <tag> -stage 0`` for the ManzariDafalias
-  group.  Upstream OpenSees starts ManzariDafalias elastoplastic (the
-  static starts at 1) and the Ladruno fork starts it elastic (its
-  constructors set 0), so one deck gave two answers.  An explicit stage 0
-  makes them agree.
+  ``updateMaterialStage -material <tag> -stage <s>`` for every group, ``s``
+  being the group's :data:`FRESH_STAGE`.  The static survives
+  ``ops.wipe()``, so without the line an in-process re-run starts at the
+  stage the previous run left (#2463).  For ManzariDafalias the line also
+  makes the two builds agree: upstream starts it elastoplastic (the static
+  starts at 1) and the Ladruno fork elastic (its constructors set 0).
 """
 from __future__ import annotations
 
@@ -37,14 +38,21 @@ if TYPE_CHECKING:
     )
 
 
-def stage_zero_classes() -> frozenset[str]:
-    """The nDMaterial classes that share ``ManzariDafalias::mElastFlag``."""
-    from ...stage._builder import CLASS_WIDE_STAGE_FLAG
-
-    flag = CLASS_WIDE_STAGE_FLAG["ManzariDafalias"]
-    return frozenset(
-        cls for cls, static in CLASS_WIDE_STAGE_FLAG.items()
-        if static == flag)
+#: The stage each class-wide static holds in a fresh process, which the
+#: ledger states at the first solve so a re-run in the same process starts
+#: there too.  Measured on stock openseespy 3.8.0 and the fork (#2463,
+#: ``tests/opensees/integration/test_stage_zero_every_group.py``):
+#: SAniSandMS starts plastic on both (``mElastFlag = 1``, no constructor
+#: resets it), PM4Sand and PM4Silt elastic (``me2p = 0``).  ManzariDafalias
+#: is 0, the fork's start, which #2440 states on upstream too.  A new
+#: :data:`~apeGmsh.opensees.stage._builder.CLASS_WIDE_STAGE_FLAG` static
+#: needs its entry here, or no emitter builds.
+FRESH_STAGE: dict[str, int] = {
+    "ManzariDafalias::mElastFlag": 0,
+    "SAniSandMS::mElastFlag": 1,
+    "PM4Sand::me2p": 0,
+    "PM4Silt::me2p": 0,
+}
 
 
 def stage_flips(
@@ -74,19 +82,19 @@ def stage_flips(
 
 
 class StageZeroLedger:
-    """The ``updateMaterialStage ... -stage 0`` lines an emitter owes.
+    """The ``updateMaterialStage ... -stage <fresh>`` lines an emitter owes.
 
     ``updateMaterialStage`` acts only through elements already in the
     domain: ``MaterialStageParameter::setDomain`` walks them.  A line beside
     the ``nDMaterial`` declaration therefore does nothing.  The emitter
     instead asks :meth:`due` at each solve verb (``analyze``, ``eigen``).
-    The answer is every ManzariDafalias-group tag declared so far, when an
-    element was emitted since the last answer.  After a user
-    ``updateMaterialStage`` names one of those tags, or a user
-    ``updateParameter`` sets its stage flag, the answer is always empty,
-    because the user owns the static from then on.  So stage 0
-    comes after the elements and before any user stage line, and a user
-    stage 1 still wins.
+    The answer is every class-wide tag declared so far with its group's
+    :data:`FRESH_STAGE`, when an element was emitted since the last answer.
+    After a user ``updateMaterialStage`` names a tag of a group, or a user
+    ``updateParameter`` sets its stage flag, that group is left out of
+    every later answer, because the user owns its static from then on; the
+    other groups stay.  So the line comes after the elements and before
+    any user stage line, and a user flip still wins.
 
     The ledger reads only the emitter's own calls.  The bridge's deck and
     the deck replayed from its ``model.h5`` make the same calls, so they
@@ -94,41 +102,55 @@ class StageZeroLedger:
     ``model_hash`` does not change.
     """
 
-    __slots__ = ("_classes", "_params", "_tags", "_user", "owed")
+    __slots__ = ("_static_of", "_params", "_tags", "_user", "owed")
 
     def __init__(self) -> None:
-        from ...stage._builder import STAGE_FLAG_PARAMETERS
+        from ...stage._builder import (
+            CLASS_WIDE_STAGE_FLAG,
+            STAGE_FLAG_PARAMETERS,
+        )
 
-        self._classes = stage_zero_classes()
+        missing = sorted(set(CLASS_WIDE_STAGE_FLAG.values()) - set(FRESH_STAGE))
+        if missing:
+            raise BridgeError(
+                f"class-wide stage flag(s) {missing} have no FRESH_STAGE "
+                "entry (_internal/build/stage_validate.py): measure the "
+                "stage the static holds in a fresh process and add it.")
+        self._static_of = dict(CLASS_WIDE_STAGE_FLAG)
         self._params = STAGE_FLAG_PARAMETERS
-        self._tags: list[int] = []
-        self._user = False
+        #: Tag -> its group's static, in declaration order.
+        self._tags: dict[int, str] = {}
+        #: The statics a user flip has taken over.
+        self._user: set[str] = set()
         #: Set by the emitter's ``element``: a line is due at the next
         #: solve verb.  A bare attribute, since it is stored per element.
         self.owed = False
 
     def material(self, mat_type: str, tag: int) -> None:
         """Note an ``nDMaterial`` declaration."""
-        if mat_type in self._classes:
-            self._tags.append(int(tag))
+        if mat_type in self._static_of:
+            self._tags[int(tag)] = self._static_of[mat_type]
 
     def user_flip(self, tag: int) -> None:
-        """Note a user ``updateMaterialStage``; the group is then theirs."""
+        """Note a user ``updateMaterialStage``; the tag's group is then
+        theirs."""
         if int(tag) in self._tags:
-            self._user = True
+            self._user.add(self._tags[int(tag)])
 
     def parameter(self, args: "tuple[str | int, ...]") -> None:
         """Note a user ``parameter`` on ``args``; a stage-flag name on one
-        of the group's tags hands the group to the user too."""
+        of a group's tags hands that group to the user too."""
         if len(args) > 1 and args[0] in self._params:
             self.user_flip(int(args[1]))
 
-    def due(self) -> tuple[int, ...]:
-        """The tags to write ``-stage 0`` for now, in declaration order."""
-        if self._user or not self.owed or not self._tags:
+    def due(self) -> tuple[tuple[int, int], ...]:
+        """``(tag, stage)`` to write now, in declaration order."""
+        if not self.owed:
             return ()
         self.owed = False
-        return tuple(self._tags)
+        return tuple((tag, FRESH_STAGE[static])
+                     for tag, static in self._tags.items()
+                     if static not in self._user)
 
 
 def validate_class_wide_stage_flags(
