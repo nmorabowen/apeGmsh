@@ -1,5 +1,7 @@
 """stage_emit: part of the ``build/`` package (S2-a split of ``_internal/build.py``)."""
 from __future__ import annotations
+
+import numbers
 from typing import TYPE_CHECKING
 
 from typing import (
@@ -693,6 +695,11 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
     "BezierTri6": 8,
     "BezierTet10": 10,
     "LadrunoUP": None,
+    "LadrunoQuad": 4,
+    "LadrunoCST": 3,
+    "LadrunoLST": 6,
+    "LadrunoBrick": 8,
+    "LadrunoBrick20": 20,
 }
 
 
@@ -706,8 +713,11 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
 #: ``PlaneStrain`` on stock 3.8.0 and the fork, ``StagedStrain`` on the
 #: fork build 79e062367.  ``LogStrain``, ``LogStrain2D`` and
 #: ``InitDefGrad`` forward ``setParameter`` in the fork source too, but
-#: are not listed: over ManzariDafalias the first two end the process on
-#: that build, and ``InitDefGrad`` takes only a finite-strain inner.  The
+#: are not listed: over ManzariDafalias the first two end the process
+#: (``ManzariDafalias::getType`` exits, on 79e062367 and at ``FORK_PIN``
+#: 100eb9ae alike: a fork defect), and ``InitDefGrad`` takes only a
+#: finite-strain inner (``tests/opensees/integration/
+#: test_md_stage_ladruno_at_pin.py`` pins all three outcomes).  The
 #: stage close refuses a multi-element plastic flip reached through any
 #: primitive outside this table, so it is the one resolution both sides
 #: use.
@@ -987,6 +997,72 @@ class MaterialStageCarriers:
                 "materialState", str(tag))),
             ums,
         )
+
+
+def _int_tokens(argv: "Sequence[Any]") -> set[int]:
+    """Every integer in ``argv``, numpy integers included (not bools)."""
+    return {int(v) for v in argv
+            if isinstance(v, numbers.Integral) and not isinstance(v, bool)}
+
+
+class SweptMaterialReach:
+    """Which emitted elements MAY carry each swept material, for an emitter
+    that cannot write the carrier sweep (``LiveOpsEmitter``, #2457).
+
+    Unlike :class:`MaterialStageCarriers` it knows no grammar, so it
+    over-counts on purpose.  Any command whose argv holds a reaching tag
+    as an integer may refer to it, and its own tag then reaches too: a
+    material wrapping it (any wrapper, not only
+    :data:`MATERIAL_STATE_WRAPPERS`), a section on it or on such a
+    section, a fiber section whose ``fiber`` / ``patch`` / ``layer`` names
+    it, a beam integration on such a section.  An element whose argv holds
+    a reaching tag may carry it (a node tag equal to it counts too).
+    Material, section and integration tags share one set, since a
+    collision only over-counts.  An over-count refuses a flip that was
+    safe; it never passes one that was not.
+    """
+
+    def __init__(self) -> None:
+        # swept tag -> the tags that may reach it (itself, and wrappers).
+        self._reach: dict[int, set[int]] = {}
+        # swept tag -> element tags that may carry it.
+        self._carriers: dict[int, set[int]] = {}
+
+    def note_material(
+        self, mat_type: str, tag: int,
+        params: "Sequence[int | float | str]" = (),
+    ) -> None:
+        tag = int(tag)
+        if mat_type in SWEPT_MATERIAL_CLASSES:
+            self._reach[tag] = {tag}
+            self._carriers[tag] = set()
+            return
+        self.note_referrer(tag, params)
+
+    def note_referrer(self, tag: int, argv: "Sequence[Any]") -> None:
+        """A material, section, beam integration or fiber-section member
+        ``tag`` whose argv is ``argv``: it reaches every swept material a
+        tag in ``argv`` reaches."""
+        ints = _int_tokens(argv)
+        for reach in self._reach.values():
+            if ints & reach:
+                reach.add(int(tag))
+
+    def note_element(self, tag: int, argv: "Sequence[Any]") -> None:
+        ints = _int_tokens(argv)
+        for swept, reach in self._reach.items():
+            if ints & reach:
+                self._carriers[swept].add(int(tag))
+
+    def note_removed(self, tag: int) -> None:
+        for carriers in self._carriers.values():
+            carriers.discard(int(tag))
+
+    def carriers(self, mat_tag: int) -> int | None:
+        """How many elements may carry ``mat_tag``; ``None`` when it is
+        not a :data:`SWEPT_MATERIAL_CLASSES` material."""
+        found = self._carriers.get(int(mat_tag))
+        return None if found is None else len(found)
 
 
 #: One SP-constraint operation in a node's owner-side command stream,

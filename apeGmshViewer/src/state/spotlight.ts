@@ -134,6 +134,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFill: { kind: "expose", command: "toggle-line-diagram-fill", description: "Toggle 3-D line diagram ribbon fill" },
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
+  setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
 };
 
 // ---- Spotlight Item Model ---------------------------------------------------
@@ -569,6 +570,35 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
     });
   }
 
+  // Not results-only: the 3-D loads convert through the same target units, and they draw on the mesh.
+  if (hasMesh || s.phase.axis.some((k) => k.kind === "results")) {
+    out.push({
+      item: drillDownItem(
+        "cmd:contour-units",
+        "contour",
+        `Set Contour Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
+        "Convert contour and load values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
+        "contourUnits",
+      ),
+      keywords: "set contour loads units baseunits kn tf kgf mm kip mpa kpa",
+    });
+  }
+
+  if (hasMesh) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-loads",
+        "loads",
+        s.loads.on ? "Turn Off 3-D Structural Loads" : "Turn On 3-D Structural Loads",
+        `3-D forces, moments, distributed loads, and prescribed SPs are currently ${s.loads.on ? `ON (scale ${s.loads.scale}×)` : "OFF"}`,
+        [{ type: "setLoads", on: !s.loads.on }],
+        s.loads.on,
+        [{ type: "setLoads", on: !s.loads.on }],
+      ),
+      keywords: "set loads forces moments pressure distributed beam sp prescribed toggle",
+    });
+  }
+
   if (s.phase.axis.some((k) => k.kind === "results")) {
     out.push({
       item: drillDownItem(
@@ -609,16 +639,6 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         "contourCmap",
       ),
       keywords: `set contour cmap colormap palette ${CMAP_NAMES.join(" ")}`,
-    });
-    out.push({
-      item: drillDownItem(
-        "cmd:contour-units",
-        "contour",
-        `Set Contour Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
-        "Convert contour values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
-        "contourUnits",
-      ),
-      keywords: "set contour units baseunits kn tf kgf mm kip mpa kpa",
     });
     out.push({
       item: commandItem(
