@@ -272,7 +272,10 @@ def test_materialstate_on_four_node_quad_refuses_by_name(
     assert not ops._stage_records
 
 
-def test_materialstate_on_a_ladruno_quad_cites_the_pin_remeasure() -> None:
+def test_materialstate_on_a_ladruno_quad_passes_and_reaches_it() -> None:
+    """LadrunoQuad forwards materialState at FORK_PIN (#2457, live-fork run
+    39874892907), so the route passes and updates the quad; FourNodeQuad,
+    which drops it, is still refused (the test above)."""
     ops = apeSees(_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
@@ -280,11 +283,21 @@ def test_materialstate_on_a_ladruno_quad_cites_the_pin_remeasure() -> None:
         mat = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
     ops.element.LadrunoQuad(pg="Q", material=mat, thickness=1.0)
     ops.fix(pg="Base", dofs=(1, 1))
-    with pytest.raises(BridgeError) as exc:
-        _flip(ops, "materialState", 1.0, material=mat, pg="Q")
-    msg = str(exc.value)
-    assert "targets LadrunoQuad elements" in msg
-    assert "79e062367" in msg and "#2457" in msg
+    _flip(ops, "materialState", 1.0, material=mat, pg="Q")
+    assert len(ops._stage_records) == 1
+    from apeGmsh.opensees.emitter.tcl import TclEmitter
+
+    tcl = TclEmitter()
+    ops.build().emit(tcl)
+    lines = tcl.lines()
+    quads = [ln.split()[2] for ln in lines
+             if ln.startswith("element LadrunoQuad")]
+    assert quads
+    tag = ops.tag_for(mat)
+    reached = {ln.split()[3] for ln in lines
+               if ln.startswith("addToParameter")
+               and ln.endswith(f"materialState {tag}")}
+    assert reached == set(quads), lines
 
 
 def test_a_four_node_quad_that_does_not_carry_the_material_passes() -> None:

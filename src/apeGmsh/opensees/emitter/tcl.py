@@ -1901,15 +1901,15 @@ class TclEmitter:
                     self._open_partition = (rank, header + n)
 
     def _stage_zero(self) -> None:
-        """Write the owed ManzariDafalias ``-stage 0`` lines
+        """Write the owed fresh-stage lines of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`), at a solve verb, and guard a solve the fork's
         constructor reset would change
         (:meth:`MaterialStageCarriers.solve_fork_guards`)."""
         self._require_fork_floors(self._stage_carriers.solve_fork_guards())
-        for tag in self._stage0.due():
+        for tag, stage in self._stage0.due():
             self._lines.append(
-                f"updateMaterialStage -material {tag} -stage 0")
+                f"updateMaterialStage -material {tag} -stage {stage}")
 
     def _emit_hook_ramp_proc(
         self,
