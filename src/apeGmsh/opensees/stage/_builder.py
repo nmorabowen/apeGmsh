@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
+    MATERIAL_STATE_FORK_FLOOR,
     MATERIAL_STATE_WRAPPERS,
     SWEPT_MATERIAL_CLASSES,
 )
@@ -214,11 +215,12 @@ MATERIAL_STATE_ELEMENTS: frozenset[str] = frozenset({
 #: 79e062367, the build available when they were measured, while the
 #: fork source at ``FORK_PIN`` forwards ``materialState``.  They stay
 #: refused (fail closed) until a pinned build is measured; their refusal
-#: names the re-measure issue.
-MATERIAL_STATE_UNMEASURED_AT_PIN: frozenset[str] = frozenset({
-    "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
-    "LadrunoBrick20",
-})
+#: names the re-measure issue.  The classes of the emit side's
+#: fork-floor table (``stage_emit.MATERIAL_STATE_FORK_FLOOR``), whose
+#: elements make a deck check the running build at its start,
+#: so the two cannot name different classes.
+MATERIAL_STATE_UNMEASURED_AT_PIN: frozenset[str] = frozenset(
+    MATERIAL_STATE_FORK_FLOOR)
 
 
 # ---------------------------------------------------------------------------
