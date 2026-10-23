@@ -25,8 +25,10 @@ displacement-based element whose integration holds
 :class:`~apeGmsh.opensees.section.beam.ElasticSection` s gets a modified
 *copy* of each section (and of the integration rule). The shared section the
 user declared is never mutated, and one copy is made per distinct
-``(section, modifiers)`` value, so two element groups with the same section
-and the same modifiers share one modified section.
+``(section, modifiers)`` value within a session, so two element groups with
+the same section and the same modifiers share one modified section. Each
+bridge keeps its own copies (:class:`ModifiedCopies`); two sessions never
+share one.
 
 Fail loud: a non-unit modifier on a property the element does not have
 (``Avy`` on an Euler-Bernoulli ``elasticBeamColumn``, ``Iy`` on a 2-D
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, fields, replace
+from typing import Protocol
 
 from .._internal.types import BeamIntegration, Section
 from ..section.beam import ElasticSection
@@ -135,6 +138,15 @@ class FrameModifiers:
         For a vertical ETABS column (1 = +Z, 2 = +X, 3 = +Y) that is
         ``vecxz=(0, 1, 0)``; for a beam along +X (1 = +X, 2 = +Z,
         3 = -Y) it is ``vecxz=(0, -1, 0)``.
+
+        **The ETABS importer does not use this convention.**
+        ``interop/etabs_import.py`` (``_VECXZ``) gives a vertical member
+        ``vecxz=(1, 0, 0)`` and any other member ``(0, 0, 1)``: for a member
+        at its default orientation both are ETABS **2**, not 3, and the
+        importer ignores ``Frame.rotation``. Under that ``vecxz`` OpenSees
+        local z is ETABS 2, so ``I33`` lands on the minor axis (and ``I22``
+        on the major one). The importer passes no ``modifiers=`` today;
+        wiring it to this method needs ``vecxz`` along ETABS 3 first.
         """
         return cls(
             A=A, Avy=As2, Avz=As3, J=J, Iy=I22, Iz=I33,
@@ -214,7 +226,6 @@ def scaled_mass(
         return mass
     return scaled(mass, mods.mass)
 
-
 # ---------------------------------------------------------------------------
 # Section-side copies for the force-/displacement-based elastic route.
 # ---------------------------------------------------------------------------
@@ -229,31 +240,76 @@ def is_reference_stub(prim: object) -> bool:
     return any(not hasattr(prim, f.name) for f in fields(prim))  # type: ignore[arg-type]
 
 
-#: Value-keyed memo: one modified copy per distinct (base, modifiers)
-#: value, so specs that share a section and a modifier set reference the
-#: very same copy (the bridge deduplicates by identity).
-_SECTION_COPIES: dict[tuple[Section, FrameModifiers], Section] = {}
-_INTEGRATION_COPIES: dict[
-    tuple[BeamIntegration, FrameModifiers], BeamIntegration
-] = {}
+class ModifiedCopies:
+    """A memo of modified copies: one per distinct ``(base, modifiers)``
+    value, so specs that share a section and a modifier set reference the
+    very same copy (the bridge deduplicates by identity).
+
+    Each bridge owns one (``apeSees._frame_modifier_copies``), so two
+    sessions never share a copy and the memo dies with its session. A
+    throwaway instance serves the construction-time checks.
+    """
+
+    __slots__ = ("_sections", "_integrations")
+
+    def __init__(self) -> None:
+        self._sections: dict[tuple[Section, FrameModifiers], Section] = {}
+        self._integrations: dict[
+            tuple[BeamIntegration, FrameModifiers], BeamIntegration
+        ] = {}
+
+    def section(
+        self, owner: str, sec: Section, mods: FrameModifiers,
+    ) -> Section:
+        """A copy of the ``ElasticSection`` ``sec`` with ``mods`` applied."""
+        if not isinstance(sec, ElasticSection):
+            raise TypeError(
+                f"{owner}: modifiers reach only an ElasticSection inside the "
+                f"integration rule, but it holds a {type(sec).__name__}, "
+                "whose stiffness comes from its materials. Scale those, or "
+                "use an ElasticSection (or elasticBeamColumn) for the "
+                "modified member."
+            )
+        key = (sec, mods)
+        hit = self._sections.get(key)
+        if hit is not None:
+            return hit
+        out = _modified_elastic_section(owner, sec, mods)
+        self._sections[key] = out
+        return out
+
+    def integration(
+        self, owner: str, integ: BeamIntegration, mods: FrameModifiers,
+    ) -> BeamIntegration:
+        """A copy of ``integ`` whose every section carries ``mods``.
+
+        Every :class:`Section` field of the rule (``section`` of a uniform
+        rule, ``section_i`` / ``section_j`` / ``section_interior`` of a
+        hinge rule) must be an ``ElasticSection``; anything else is refused.
+        """
+        changes: dict[str, Section] = {}
+        for f in fields(integ):  # type: ignore[arg-type]
+            value = getattr(integ, f.name)
+            if isinstance(value, Section):
+                changes[f.name] = self.section(owner, value, mods)
+        if not changes:
+            raise TypeError(
+                f"{owner}: the integration rule {type(integ).__name__} holds "
+                "no section a modifier could reach."
+            )
+        key = (integ, mods)
+        hit = self._integrations.get(key)
+        if hit is not None:
+            return hit
+        out: BeamIntegration = replace(integ, **changes)  # type: ignore[type-var]
+        self._integrations[key] = out
+        return out
 
 
 def _modified_elastic_section(
-    owner: str, sec: Section, mods: FrameModifiers,
+    owner: str, sec: ElasticSection, mods: FrameModifiers,
 ) -> Section:
-    """A copy of the ``ElasticSection`` ``sec`` with ``mods`` applied."""
-    if not isinstance(sec, ElasticSection):
-        raise TypeError(
-            f"{owner}: modifiers reach only an ElasticSection inside the "
-            f"integration rule, but it holds a {type(sec).__name__}, whose "
-            "stiffness comes from its materials. Scale those, or use an "
-            "ElasticSection (or elasticBeamColumn) for the modified member."
-        )
-    key = (sec, mods)
-    hit = _SECTION_COPIES.get(key)
-    if hit is not None:
-        return hit
-
+    """A new ``ElasticSection``: ``sec`` with ``mods`` applied (no memo)."""
     three_d = sec._is_3d()
     if three_d:
         shear = sec.alphaY is not None or sec.alphaZ is not None
@@ -301,59 +357,69 @@ def _modified_elastic_section(
                 * mods.Avz / mods.A
             )
     out: Section = replace(sec, **changes)
-    _SECTION_COPIES[key] = out
     return out
 
 
-def modified_integration(
-    owner: str, integ: BeamIntegration, mods: FrameModifiers,
-) -> BeamIntegration:
-    """A copy of ``integ`` whose every section carries ``mods``.
+class SectionRouteSpec(Protocol):
+    """A frame spec whose ``modifiers`` reach the sections of its
+    ``integration`` (``forceBeamColumn``, ``dispBeamColumn``)."""
 
-    Every :class:`Section` field of the rule (``section`` of a uniform rule,
-    ``section_i`` / ``section_j`` / ``section_interior`` of a hinge rule) must be
-    an ``ElasticSection``; anything else is refused.
+    @property
+    def integration(self) -> BeamIntegration: ...
+
+    @property
+    def modifiers(self) -> FrameModifiers | None: ...
+
+
+#: Instance-dict slot (outside the dataclass fields, so outside equality,
+#: ``repr`` and the archive) holding the modified rule a spec references.
+_BOUND = "_frame_modifier_integration_"
+
+
+def bind_integration(
+    spec: SectionRouteSpec, copies: ModifiedCopies,
+) -> BeamIntegration | None:
+    """Fix the modified rule ``spec`` references, taken from ``copies``.
+
+    ``None`` when the spec needs no copy (no or identity modifiers, or a
+    replay reference stub). Binding happens once: a spec already bound
+    (registered on an earlier bridge, or emitted standalone) keeps its
+    copy, since an emitted tag is looked up by the copy's identity.
     """
-    changes: dict[str, Section] = {}
+    integ, mods = spec.integration, spec.modifiers
+    if mods is None or mods.is_identity or is_reference_stub(integ):
+        return None
+    slot = spec.__dict__
+    bound: BeamIntegration | None = slot.get(_BOUND)
+    if bound is None:
+        bound = copies.integration(type(spec).__name__, integ, mods)
+        slot[_BOUND] = bound
+    return bound
+
+
+def emitted_integration(spec: SectionRouteSpec) -> BeamIntegration:
+    """The rule ``spec`` references: its bound modified copy, else its
+    declared ``integration``.
+
+    The bridge binds the copy when it registers the spec; a spec never
+    registered binds its own copy here, on first use.
+    """
+    mods = spec.modifiers
+    if mods is None or mods.is_identity:
+        return spec.integration
+    bound: BeamIntegration | None = spec.__dict__.get(_BOUND)
+    if bound is None:
+        bound = bind_integration(spec, ModifiedCopies())
+    return spec.integration if bound is None else bound
+
+
+def copies_of(integ: BeamIntegration) -> tuple[Section | BeamIntegration, ...]:
+    """The modified copies a bound rule ``integ`` brings: its sections
+    first, then the rule itself, deduplicated by identity."""
+    seen: dict[int, Section | BeamIntegration] = {}
     for f in fields(integ):  # type: ignore[arg-type]
         value = getattr(integ, f.name)
         if isinstance(value, Section):
-            changes[f.name] = _modified_elastic_section(owner, value, mods)
-    if not changes:
-        raise TypeError(
-            f"{owner}: the integration rule {type(integ).__name__} holds no "
-            "section a modifier could reach."
-        )
-    key = (integ, mods)
-    hit = _INTEGRATION_COPIES.get(key)
-    if hit is not None:
-        return hit
-    out: BeamIntegration = replace(integ, **changes)  # type: ignore[type-var]
-    _INTEGRATION_COPIES[key] = out
-    return out
-
-
-def derived_primitives(
-    spec: object,
-) -> tuple[Section | BeamIntegration, ...]:
-    """The modified copies ``spec`` emits instead of its declared ones.
-
-    Sections first, then the integration rule, deduplicated by identity.
-    Empty for a spec without a non-identity modifier on an integration
-    rule. The bridge registers these (synthesised) beside the spec.
-    """
-    mods = getattr(spec, "modifiers", None)
-    integ = getattr(spec, "integration", None)
-    if (mods is None or mods.is_identity
-            or not isinstance(integ, BeamIntegration)
-            or is_reference_stub(integ)):
-        return ()
-    owner = type(spec).__name__
-    eff = modified_integration(owner, integ, mods)
-    seen: dict[int, Section | BeamIntegration] = {}
-    for f in fields(eff):  # type: ignore[arg-type]
-        value = getattr(eff, f.name)
-        if isinstance(value, Section):
             seen.setdefault(id(value), value)
-    seen.setdefault(id(eff), eff)
+    seen.setdefault(id(integ), integ)
     return tuple(seen.values())

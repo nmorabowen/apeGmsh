@@ -94,9 +94,10 @@ from .._internal.types import (
 from ..transform import Corotational, Linear, PDelta
 from .frame_modifiers import (
     FrameModifiers,
+    ModifiedCopies,
     check_frame_modifiers,
+    emitted_integration,
     is_reference_stub,
-    modified_integration,
     scaled,
     scaled_mass,
 )
@@ -207,31 +208,15 @@ def _check_integration_modifiers(
 
     The section-side checks (an ``ElasticSection`` in every slot, the
     property each non-unit modifier needs) run by building the modified
-    rule once; the copy is memoised, so this costs nothing later.
+    rule once, in a throwaway memo: the copy the element references is
+    made when a bridge registers it (``_internal/frame_modifier_copies``).
     """
     check_frame_modifiers(
         type_name, mods, lacks={}, has_mass=mass is not None,
     )
     if (mods is not None and not mods.is_identity
             and not is_reference_stub(integration)):
-        modified_integration(type_name, integration, mods)
-
-
-def _emitted_integration(
-    type_name: str,
-    integration: BeamIntegration,
-    mods: FrameModifiers | None,
-) -> BeamIntegration:
-    """The rule the element references: ``integration`` itself, or its
-    modified copy when ``mods`` is not the identity.
-
-    A reference stub (the replay dry run's field-less stand-in, which only
-    a tag lookup may use) is referenced as it is: the dry run needs the
-    slot types of the element call, not the copy's values.
-    """
-    if mods is None or mods.is_identity or is_reference_stub(integration):
-        return integration
-    return modified_integration(type_name, integration, mods)
+        ModifiedCopies().integration(type_name, integration, mods)
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +471,7 @@ class forceBeamColumn(Element):
         )
 
     def dependencies(self) -> tuple[Primitive, ...]:
-        integ = _emitted_integration(
-            "forceBeamColumn", self.integration, self.modifiers,
-        )
+        integ = emitted_integration(self)
         if self.damp is not None:
             return (integ, self.transf, self.damp)
         return (integ, self.transf)
@@ -498,9 +481,7 @@ class forceBeamColumn(Element):
         _check_two_nodes("forceBeamColumn", nodes)
         i_node, j_node = nodes
         transf_tag = resolve_tag(emitter, self.transf)
-        integ_tag = resolve_tag(emitter, _emitted_integration(
-            "forceBeamColumn", self.integration, self.modifiers,
-        ))
+        integ_tag = resolve_tag(emitter, emitted_integration(self))
 
         args: list[int | float | str] = [
             i_node, j_node, transf_tag, integ_tag,
@@ -566,9 +547,7 @@ class dispBeamColumn(Element):
         )
 
     def dependencies(self) -> tuple[Primitive, ...]:
-        integ = _emitted_integration(
-            "dispBeamColumn", self.integration, self.modifiers,
-        )
+        integ = emitted_integration(self)
         if self.damp is not None:
             return (integ, self.transf, self.damp)
         return (integ, self.transf)
@@ -578,9 +557,7 @@ class dispBeamColumn(Element):
         _check_two_nodes("dispBeamColumn", nodes)
         i_node, j_node = nodes
         transf_tag = resolve_tag(emitter, self.transf)
-        integ_tag = resolve_tag(emitter, _emitted_integration(
-            "dispBeamColumn", self.integration, self.modifiers,
-        ))
+        integ_tag = resolve_tag(emitter, emitted_integration(self))
 
         args: list[int | float | str] = [
             i_node, j_node, transf_tag, integ_tag,
