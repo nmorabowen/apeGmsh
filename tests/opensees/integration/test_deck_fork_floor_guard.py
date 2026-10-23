@@ -310,7 +310,7 @@ def test_a_streamed_deck_checks_before_the_flip(
 def test_the_message_names_the_floor() -> None:
     for floor in set(MATERIAL_STATE_FORK_FLOOR.values()):
         msg = fork_floor_message(floor)
-        assert floor.command in msg and "100eb9ae" in msg
+        assert floor.probe in msg and "100eb9ae" in msg
         assert all(cls in msg for cls in MATERIAL_STATE_FORK_FLOOR)
     assert _pin_sha().startswith("100eb9ae"), (
         "FORK_PIN moved: re-read the floor (a later pin still forwards)")

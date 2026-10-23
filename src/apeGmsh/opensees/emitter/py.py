@@ -1574,7 +1574,7 @@ class PyEmitter:
                 continue
             self._fork_floors.add(floor)
             guard = [
-                f"if not hasattr(ops, {floor.command!r}):",
+                f"if not hasattr(ops, {floor.probe!r}):",
                 f"    raise SystemExit({fork_floor_message(floor)!r})",
             ]
             for line in guard:

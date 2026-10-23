@@ -1868,7 +1868,7 @@ class TclEmitter:
                 continue
             self._fork_floors.add(floor)
             guard = [
-                f'if {{[info commands {floor.command}] eq ""}} {{',
+                f'if {{[info commands {floor.probe}] eq ""}} {{',
                 f'    error "{fork_floor_message(floor)}"',
                 "}",
             ]

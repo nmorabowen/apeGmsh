@@ -721,7 +721,7 @@ class ForkBuildFloor(NamedTuple):
     """A Ladruno fork build floor that an emitted deck checks at its start.
 
     A deck cannot order two build shas, so the floor is proven by a
-    ``command``: one that every fork build at or after the floor
+    ``probe`` command: one that every fork build at or after the floor
     registers, in the classic Tcl and the Python engines alike, while
     stock OpenSees and every older fork build lack it.  The deck that
     needs the floor stops with :func:`fork_floor_message` when the
@@ -729,7 +729,7 @@ class ForkBuildFloor(NamedTuple):
     """
 
     #: The command the running build must expose.
-    command: str
+    probe: str
     #: The floor, as the message names it.
     floor: str
     #: What goes wrong below the floor, as the message names it.
@@ -748,7 +748,7 @@ class ForkBuildFloor(NamedTuple):
 #: that registers it forwards.  A build that forwards but predates the
 #: command is refused (fail closed).
 LADRUNO_SOLID_MATERIAL_STATE_FLOOR = ForkBuildFloor(
-    command="ladrunoSchema",
+    probe="ladrunoSchema",
     floor="a Ladruno fork build at or after FORK_PIN 100eb9ae "
           "(fork PR #859)",
     failure="the switch reaches the first element or none, and the run "
@@ -779,7 +779,7 @@ def fork_floor_message(floor: ForkBuildFloor) -> str:
     message = (
         f"apeGmsh: this deck switches materialState on {classes} "
         f"elements, which hand it to their materials only on "
-        f"{floor.floor}. The running OpenSees has no {floor.command} "
+        f"{floor.floor}. The running OpenSees has no {floor.probe} "
         "command, so it is stock OpenSees or an older fork build, where "
         f"{floor.failure}. Rebuild the Ladruno fork at or after FORK_PIN."
     )
