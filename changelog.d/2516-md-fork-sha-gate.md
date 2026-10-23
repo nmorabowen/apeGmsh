@@ -20,10 +20,13 @@ today is `FORK_PIN` bdb69cea5. Otherwise the deck stops with a message naming
 the flag, the fix and the ways out. An unmeasured or unanswering fork build is
 refused too: a sha cannot be ordered, so a newer build joins the table once it
 is measured. The check applies to every target mode. It sits before every rank
-block, or right before the solve in a streamed deck. The archive replay
+block, or right before the solve in a streamed deck. The flag is per process,
+so a flip inside one rank's block clears only that rank's reset. The archive replay
 carries it, and `model_hash` does not change.
 
-The stage close no longer refuses the pattern on any target. A staged model
+The stage close no longer refuses the pattern on any target, and neither does
+the `model.h5` replay's route check (#2465): a fork-reset archive replays, and
+its deck carries the same check. A staged model
 runs only as a deck (`ops.analyze`, `ops.run` and `OpenSeesModel.build("live")`
 refuse stages), so the deck is the only place that sees the build. The deck's
 check replaces the stage-close refusal: it lifts the refusal at `FORK_PIN` and
