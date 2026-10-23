@@ -767,31 +767,38 @@ def test_a_stage_claimed_equation_tie_replays_its_lines(tmp_path):
 
 
 #: A stage claim of each kind: ``(claim method, stream, named record)``.
-#: The mixed corpus row ties node 4 once per DOF (the tie on 1-3, the
-#: equalDOF on 4-5, the distributing tie on 6), so its decks solve.
+#: The mixed corpus row ties each DOF once (node 4: the tie on 1-3; node
+#: 2: the equalDOF on 4-5 and the distributing tie on 1-2), so its decks
+#: solve. Every equation tie crosses the ranks (the equalDOF stays on rank
+#: 1: Lagrange refuses a replicated one), and none ghosts the fixed base
+#: node 1, which only rank 1 holds: a partitioned stage that ghosts a fixed
+#: node re-fixes it inside the stage, and the flat replay of that archive
+#: writes the fix twice, for every MP kind (a stage equalDOF from node 1
+#: to node 4 does it on main too; reported on the #2448 PR, not this
+#: slice's).
 _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
     "tie_equation": ("tie", "surface_constraints", InterpolationRecord(
-        kind="tie", name="st_tie", slave_node=4, master_nodes=[1, 2, 3],
-        weights=np.array([0.25, 0.5, 0.25]), dofs=[1, 2, 3],
+        kind="tie", name="st_tie", slave_node=4, master_nodes=[2, 3],
+        weights=np.array([0.75, 0.25]), dofs=[1, 2, 3],
         enforce="equation")),
     "distributing_equation": ("distributing", "surface_constraints",
                               InterpolationRecord(
         kind="distributing", name="st_dist", slave_node=4,
-        master_nodes=[1, 2, 3], weights=np.array([0.25, 0.5, 0.25]),
+        master_nodes=[2, 3], weights=np.array([0.75, 0.25]),
         dofs=[1, 2], enforce="equation")),
     "embedded_equation": ("embedded", "surface_constraints",
                           InterpolationRecord(
         kind="embedded", name="st_emb", slave_node=4,
-        master_nodes=[1, 2, 3], weights=np.array([0.25, 0.5, 0.25]),
+        master_nodes=[2, 3], weights=np.array([0.75, 0.25]),
         dofs=[1, 2, 3], enforce="equation")),
     "rot_equal_dof": ("equal_dof", "node_constraints", NodePairRecord(
-        kind="equal_dof", name="st_rot", master_node=2, slave_node=4,
+        kind="equal_dof", name="st_rot", master_node=1, slave_node=2,
         dofs=[4, 5])),
-    "rotz_distributing": ("distributing", "surface_constraints",
-                          InterpolationRecord(
-        kind="distributing", name="st_rz", slave_node=4,
-        master_nodes=[1, 2, 3], weights=np.array([0.25, 0.5, 0.25]),
-        dofs=[6], enforce="equation")),
+    "top_a_distributing": ("distributing", "surface_constraints",
+                           InterpolationRecord(
+        kind="distributing", name="st_top_a", slave_node=2,
+        master_nodes=[3, 4], weights=np.array([0.5, 0.5]),
+        dofs=[1, 2], enforce="equation")),
 }
 
 
@@ -823,7 +830,7 @@ def _staged_mp_bridge(stages: str = "tie_equation",
 
 
 _STAGED_ROWS = ("tie_equation", "distributing_equation", "embedded_equation",
-                "tie_equation,rot_equal_dof;rotz_distributing")
+                "tie_equation,rot_equal_dof;top_a_distributing")
 
 
 def _staged_archive(stages: str, partitioned: bool,
@@ -832,7 +839,7 @@ def _staged_archive(stages: str, partitioned: bool,
         warnings.simplefilter("ignore")
         ops = _staged_mp_bridge(stages, partitioned)
         deck = tmp_path / "bridge.tcl"
-        ops.tcl(str(deck), flat=True)
+        ops.tcl(str(deck), flat=True, progress=False)
         path = tmp_path / "model.h5"
         ops.h5(str(path))
     return deck.read_text(encoding="utf-8"), path
@@ -890,8 +897,8 @@ def test_the_stage_merge_keeps_the_bridge_order(tmp_path):
     # the five MP kinds by the stage's emit index, so the lines come back
     # in the bridge's order, not in a fixed kind order.
     fwd, path = _staged_archive(
-        "tie_equation,rot_equal_dof;rotz_distributing", False, tmp_path)
-    assert _stage_rows(path) == [3, 1]
+        "tie_equation,rot_equal_dof;top_a_distributing", False, tmp_path)
+    assert _stage_rows(path) == [3, 2]
     assert _mp_lines(_replay(path)) == _mp_lines(fwd)
 
 
@@ -899,7 +906,7 @@ def test_to_h5_rewrite_keeps_the_stage_lines(tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import open as open_h5
 
     fwd, path = _staged_archive(
-        "tie_equation,rot_equal_dof;rotz_distributing", False, tmp_path)
+        "tie_equation,rot_equal_dof;top_a_distributing", False, tmp_path)
     rewrite = tmp_path / "rewrite.h5"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

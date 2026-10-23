@@ -1832,15 +1832,17 @@ class OpenSeesModel:
         return _ReplayOrder(self._program, self._declarations)
 
     def _equation_tie_rows(self) -> "tuple[Any, ...]":
-        """The archived global equation-tie lines: the
+        """The archived equation-tie lines: the global
         ``equationConstraint`` rows of :attr:`_mp_constraints` without the
-        ``apeSees.equation_constraint`` rows, which are the last ones."""
+        ``apeSees.equation_constraint`` rows, which are the last ones, then
+        every stage block's (opensees 2.37.0; a user row is never staged)."""
         from .emitter.h5_reader import EquationConstraintRecordRO
 
         rows = [r for _i, r in self._mp_constraints
                 if isinstance(r, EquationConstraintRecordRO)]
-        return tuple(rows[:len(rows) - _user_equation_count(
-            self._declarations)])
+        staged = [r for st in self._stages for r in st.equation_constraints]
+        return (*rows[:len(rows) - _user_equation_count(self._declarations)],
+                *staged)
 
     def _stores_equation_lines(self) -> bool:
         """Whether the source archive stores its ``equationConstraint``

@@ -456,8 +456,10 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     """The keys of every MP line the stage blocks of ``stages`` re-emit,
     counted: a multiset, so N equal records need N lines.
 
-    A key is ``(bucket, *what it ties)`` over the four ``StageRecordRO``
-    MP buckets; :func:`_constraint_stage_keys` builds the matching side.
+    A key is ``(bucket, *what it ties)`` over the five ``StageRecordRO``
+    MP buckets (the ``equationConstraint`` lines from opensees 2.37.0);
+    :func:`_constraint_stage_keys` / :func:`_interpolation_stage_keys`
+    build the matching side.
     Keys carry the bucket and the tied nodes, not the declaration name.
     The archived name is no identity: a ``tied_contact`` slave row has
     ``name=None`` (only its parent is named), and a ``rigid_body`` group
@@ -466,7 +468,8 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     keys: "Counter[tuple[Any, ...]]" = Counter()
     for s in stages:
         keys += _mp_row_keys((*s.equal_dofs, *s.rigid_links,
-                              *s.rigid_diaphragms, *s.embedded_nodes))
+                              *s.rigid_diaphragms, *s.embedded_nodes,
+                              *s.equation_constraints))
     return keys
 
 
@@ -980,11 +983,11 @@ def refuse_unreplayable_streams(
       archive does not store (#2411);
     - an interpolation on the ``enforce="equation"`` route whose
       ``equationConstraint`` lines are not all among ``equation_rows``,
-      the archive's global equation-tie rows (opensees 2.35.0, the
-      ``apeSees.equation_constraint`` rows taken off). An archive below
-      2.35.0 stores none (#2416), and a stage-claimed tie's lines are not
-      archived yet (#2448). A matched record consumes its lines, so N
-      equal ties need N sets of rows.
+      the archive's equation-tie rows: the global ones (opensees 2.35.0,
+      the ``apeSees.equation_constraint`` rows taken off) and the stage
+      blocks' (2.37.0). An archive below 2.35.0 stores no line (#2416),
+      and one below 2.37.0 no stage-claimed tie's line (#2448). A matched
+      record consumes its lines, so N equal ties need N sets of rows.
 
     :meth:`OpenSeesModel.build` calls it for the ``tcl`` / ``py`` /
     ``live`` targets before any emitter is made, so a refused live build
@@ -1021,8 +1024,8 @@ def refuse_unreplayable_streams(
                   "(#2411)"),
         (equation, "are equationConstraint lines the archive does not "
                    "store (an archive below opensees 2.35.0 stores none, "
-                   "#2416; a stage-claimed tie's lines are not archived "
-                   "yet, #2448)"),
+                   "#2416; one below opensees 2.37.0 stores none of a "
+                   "stage-claimed tie's, #2448)"),
     ):
         if found:
             detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
@@ -2771,12 +2774,15 @@ def _replay_staged_into(
         # equal_dofs[kinematic] → embedded_nodes), so a kinematic
         # equalDOF straddles rigidDiaphragm.  Merge-sort by the captured
         # emit_index to reproduce that exactly; fall back to the fixed
-        # kind order for pre-P2.3 archives that carry no seq.
+        # kind order for pre-P2.3 archives that carry no seq. A stage's
+        # equationConstraint lines (opensees 2.37.0) are the fifth kind;
+        # the reader holds their seq to their rows.
         mp_groups = (
             (st.rigid_links, st.rigid_link_seq),
             (st.equal_dofs, st.equal_dof_seq),
             (st.rigid_diaphragms, st.rigid_diaphragm_seq),
             (st.embedded_nodes, st.embedded_node_seq),
+            (st.equation_constraints, st.equation_constraint_seq),
         )
         have_seq = all(
             len(seq) == len(recs) for recs, seq in mp_groups

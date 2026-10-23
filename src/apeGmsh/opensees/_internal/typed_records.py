@@ -80,9 +80,12 @@ See also
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from .tag_resolution import MISSING_FEM_ELEMENT_ID
+
+if TYPE_CHECKING:
+    from ..emitter.h5_reader import EquationConstraintRecordRO
 
 
 __all__ = [
@@ -709,6 +712,12 @@ class StageRecordRO:
     rigid_link_seq: tuple[int, ...] = ()
     rigid_diaphragm_seq: tuple[int, ...] = ()
     embedded_node_seq: tuple[int, ...] = ()
+    #: The stage's ``equationConstraint`` lines (opensees 2.37.0): a
+    #: stage-claimed ``enforce="equation"`` tie's, one per tied DOF, with
+    #: their per-stage emit_index, merged with the four buckets above.
+    #: Empty for an archive below 2.37.0, which stores none.
+    equation_constraints: "tuple[EquationConstraintRecordRO, ...]" = ()
+    equation_constraint_seq: tuple[int, ...] = ()
     patterns: tuple[PatternRecord, ...] = ()
     pattern_seq: tuple[int, ...] = ()
     recorders: tuple[RecorderRecord, ...] = ()

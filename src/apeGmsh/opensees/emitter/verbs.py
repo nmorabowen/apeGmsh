@@ -146,10 +146,10 @@ _ROWS: Final[tuple[Verb, ...]] = (
     _p("embedded_rebar", "embed", "global", "archive",
        "{scope}/constraints/embeddedRebar", requires=_FORK,
        seq=("add", "constraint"), decl=True),
-    # Global lines archive (opensees 2.35.0); a stage's lines are still
-    # dropped, so the row stays ``ledger`` and its stage store is empty.
-    _p("equationConstraint", "constraint", "both", "ledger",
-       "{scope}/constraints/equationConstraint|",
+    # Global lines archive from opensees 2.35.0 (#2447), a stage's from
+    # 2.37.0 (#2448, ADR 0114 amendment reversing #1341 Q3 for it).
+    _p("equationConstraint", "constraint", "both", "archive",
+       "{scope}/constraints/equationConstraint",
        seq=("add", "constraint"), decl=True),
     _p("embedded_node", "embed", "global", "ledger", "",
        requires=_FORK, seq=("add", "constraint"), decl=True),

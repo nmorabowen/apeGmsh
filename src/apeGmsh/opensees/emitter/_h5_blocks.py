@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from .._internal.typed_records import (
     EmbeddedNodeRecord as _EmbeddedNodeRecord,
@@ -16,6 +16,9 @@ from .._internal.typed_records import (
     RigidDiaphragmRecord as _RigidDiaphragmRecord,
     RigidLinkRecord as _RigidLinkRecord,
 )
+
+if TYPE_CHECKING:
+    from .h5_reader import EquationConstraintRecordRO
 
 # ---------------------------------------------------------------------------
 # Partition emission (ADR 0027, schema 2.10.0)
@@ -129,6 +132,12 @@ class _StageEmitBlock:
     embedded_nodes: "list[_EmbeddedNodeRecord]" = field(
         default_factory=list,
     )
+    # Opensees 2.37.0: the stage's ``equationConstraint`` lines (a
+    # stage-claimed ``enforce="equation"`` tie's), stamped from the same
+    # per-stage sequence as the four kinds above.
+    equation_constraints: "list[EquationConstraintRecordRO]" = field(
+        default_factory=list,
+    )
     # ADR 0055 P2.3: per-MP-record emit_index. The bridge interleaves
     # the four MP kinds across one emit pass — crucially a
     # kinematic_coupling emits its equalDOF AFTER rigidDiaphragm
@@ -141,6 +150,7 @@ class _StageEmitBlock:
     rigid_link_seq: list[int] = field(default_factory=list)
     rigid_diaphragm_seq: list[int] = field(default_factory=list)
     embedded_node_seq: list[int] = field(default_factory=list)
+    equation_constraint_seq: list[int] = field(default_factory=list)
     patterns_complete: "list[_PatternRecord]" = field(default_factory=list)
     open_pattern: "_PatternRecord | None" = None
     recorders: "list[_RecorderRecord]" = field(default_factory=list)
@@ -450,6 +460,8 @@ def _stage_block_to_ro(blk: "_StageEmitBlock") -> "Any":
         rigid_link_seq=tuple(blk.rigid_link_seq),
         rigid_diaphragm_seq=tuple(blk.rigid_diaphragm_seq),
         embedded_node_seq=tuple(blk.embedded_node_seq),
+        equation_constraints=tuple(blk.equation_constraints),
+        equation_constraint_seq=tuple(blk.equation_constraint_seq),
         patterns=tuple(blk.patterns_complete),
         pattern_seq=tuple(blk.pattern_seq),
         recorders=tuple(blk.recorders),
@@ -504,6 +516,8 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
     blk.rigid_link_seq = list(ro.rigid_link_seq)
     blk.rigid_diaphragm_seq = list(ro.rigid_diaphragm_seq)
     blk.embedded_node_seq = list(ro.embedded_node_seq)
+    blk.equation_constraints = list(ro.equation_constraints)
+    blk.equation_constraint_seq = list(ro.equation_constraint_seq)
     blk.patterns_complete = list(ro.patterns)
     blk.pattern_seq = list(ro.pattern_seq)
     blk.recorders = list(ro.recorders)

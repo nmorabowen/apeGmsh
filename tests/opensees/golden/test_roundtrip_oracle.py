@@ -244,7 +244,7 @@ CORPUS: tuple[Model, ...] = (
     *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge", stages=s,
          partitioned=p)
       for s in ("tie_equation", "distributing_equation", "embedded_equation",
-                "tie_equation,rot_equal_dof;rotz_distributing")
+                "tie_equation,rot_equal_dof;top_a_distributing")
       for p in _B),
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before

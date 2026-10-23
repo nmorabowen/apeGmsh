@@ -944,22 +944,30 @@ class _H5WriteModelMixin(_H5Host):
         if self._embedded_rebars:
             self._write_constraints_embedded_rebar(constraints)
         if self._equation_constraints:
-            self._write_constraints_equation_constraint(constraints)
+            self._write_constraints_equation_constraint(
+                constraints, self._equation_constraints)
 
-    def _write_constraints_equation_constraint(self, parent: Any) -> None:
-        """Persist ``/opensees/constraints/equationConstraint`` (2.35.0).
+    def _write_constraints_equation_constraint(
+        self, parent: Any, recs: "Sequence[EquationConstraintRecordRO]",
+    ) -> None:
+        """Persist ``<parent>/equationConstraint``: the global lines under
+        ``/opensees/constraints`` (2.35.0), a stage's under its block's
+        ``constraints`` (2.37.0).
 
-        One row per global ``equationConstraint`` line, in emit order:
+        One row per ``equationConstraint`` line of ``recs``, in emit order:
         ``cnode`` (int64), ``cdof`` (int32), ``ccoef`` (f8) and ``name``
         (the line's comment label, ``""`` when none), with the ragged
         retained terms ``ret_offsets`` (n + 1, int32) over ``ret_node``
-        (int64), ``ret_dof`` (int32) and ``ret_coef`` (f8). Written only
-        when a line exists, so other files keep their bytes.
+        (int64), ``ret_dof`` (int32) and ``ret_coef`` (f8). The callers
+        write it only when a line exists, so other files keep their bytes.
         """
         import h5py
         import numpy as np
 
-        recs = self._equation_constraints
+        if not recs:
+            raise RuntimeError(
+                "H5Emitter: an equationConstraint group needs one line at "
+                "least; the reader refuses an empty one.")
         offsets = [0]
         for rec in recs:
             offsets.append(offsets[-1] + len(rec.retained))

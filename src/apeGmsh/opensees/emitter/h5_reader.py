@@ -1447,16 +1447,40 @@ class H5Model:
                     region_seq.append(int(rattrs["emit_index"]))
 
             # -- MP constraints ----------------------------------------
-            if "constraints" in g and "equationConstraint" in g["constraints"]:
-                # The writer stores global lines only; a stage-claimed
-                # equation tie is ledgered (VERBS store ``...|``).
-                raise MalformedH5Error(
-                    f"/opensees/stages/{gname}/constraints/equationConstraint "
-                    "exists; no writer stores a stage's equationConstraint "
-                    "lines.")
             equal_dofs, rigid_links, rigid_diaphragms, embedded_nodes = (
                 _read_mp_rows(g["constraints"]) if "constraints" in g
                 else ([], [], [], []))
+            # Opensees 2.37.0: a stage-claimed equation tie's lines, each
+            # with its per-stage emit_index (both or neither; the group
+            # below 2.37.0, which no writer made, is refused by name).
+            equation_constraints: "tuple[EquationConstraintRecordRO, ...]" = ()
+            equation_constraint_seq: "tuple[int, ...]" = ()
+            cons_g = g["constraints"] if "constraints" in g else {}
+            has_eq = "equationConstraint" in cons_g
+            has_eq_seq = "equationConstraint_emit_index" in cons_g
+            if has_eq or has_eq_seq:
+                where = f"/opensees/stages/{gname}/constraints/equationConstraint"
+                version = self.opensees_zone_version()
+                if not archives_stage_equation_constraints(version):
+                    raise MalformedH5Error(
+                        f"{where} is in an opensees {version} file; the "
+                        "writer stores a stage's equationConstraint lines "
+                        "from opensees "
+                        f"{'.'.join(map(str, STAGE_EQUATION_CONSTRAINT_FROM))}"
+                        " on.")
+                if not (has_eq and has_eq_seq):
+                    raise MalformedH5Error(
+                        f"{where}: the rows and equationConstraint_emit_index "
+                        "come together; the file holds only one of them.")
+                equation_constraints = _read_equation_constraint_rows(
+                    cons_g["equationConstraint"], where)
+                equation_constraint_seq = tuple(
+                    int(v) for v in cons_g["equationConstraint_emit_index"][:])
+                if len(equation_constraint_seq) != len(equation_constraints):
+                    raise MalformedH5Error(
+                        f"{where}: {len(equation_constraint_seq)} "
+                        "equationConstraint_emit_index entries for "
+                        f"{len(equation_constraints)} rows.")
 
             # -- MP emit_index seqs (ADR 0055 P2.3; absent pre-P2.3 →
             # empty → replay falls back to the fixed kind order) -------
@@ -1621,6 +1645,8 @@ class H5Model:
                 rigid_link_seq=rigid_link_seq,
                 rigid_diaphragm_seq=rigid_diaphragm_seq,
                 embedded_node_seq=embedded_node_seq,
+                equation_constraints=equation_constraints,
+                equation_constraint_seq=equation_constraint_seq,
                 patterns=tuple(p for _, p in pattern_pairs),
                 pattern_seq=tuple(s for s, _ in pattern_pairs),
                 recorders=tuple(recorders_ro),
@@ -2121,9 +2147,6 @@ class H5Model:
         ops = self._f["opensees"]
         if "constraints" not in ops or "equationConstraint" not in ops["constraints"]:
             return ()
-        import h5py
-        import numpy as np
-
         where = "/opensees/constraints/equationConstraint"
         version = self.opensees_zone_version()
         if not archives_equation_constraints(version):
@@ -2131,47 +2154,8 @@ class H5Model:
                 f"{where} is in an opensees {version} file; the writer "
                 "stores equationConstraint lines from opensees "
                 f"{'.'.join(map(str, EQUATION_CONSTRAINT_FROM))} on.")
-        g = ops["constraints"]["equationConstraint"]
-        if not isinstance(g, h5py.Group):
-            raise MalformedH5Error(f"{where} is a dataset; the writer stores a group.")
-        missing = sorted(set(_EQUATION_CONSTRAINT_COLUMNS) - set(g.keys()))
-        if missing:
-            raise MalformedH5Error(f"{where} lacks the column(s) {missing}.")
-        col = {k: _dataset_values(g, k) for k in _EQUATION_CONSTRAINT_COLUMNS}
-        cnode = [int(v) for v in col["cnode"]]
-        cdof = [int(v) for v in col["cdof"]]
-        ccoef = [float(v) for v in col["ccoef"]]
-        names = [str(_decode_bytes(v)) for v in col["name"]]
-        offsets = [int(v) for v in col["ret_offsets"]]
-        rnode = [int(v) for v in col["ret_node"]]
-        rdof = [int(v) for v in col["ret_dof"]]
-        rcoef = [float(v) for v in col["ret_coef"]]
-        n, m = len(cnode), len(rnode)
-        if n == 0:
-            raise MalformedH5Error(
-                f"{where} holds no row; the writer writes the group only "
-                "when a line exists.")
-        if not (len(cdof) == len(ccoef) == len(names) == n
-                and len(offsets) == n + 1 and offsets[0] == 0
-                and offsets[-1] == m == len(rdof) == len(rcoef)
-                and all(a < b for a, b in zip(offsets, offsets[1:]))):
-            raise MalformedH5Error(
-                f"{where} columns disagree in length, or a row holds no "
-                "retained term.")
-        coefs = np.asarray([*ccoef, *rcoef], dtype=np.float64)
-        if (not bool(np.all(np.isfinite(coefs))) or bool(np.any(coefs == 0.0))
-                or min(cdof + rdof) < 1):
-            raise MalformedH5Error(
-                f"{where} holds a DOF below 1 or a zero or non-finite "
-                "coefficient, which no writer stores.")
-        return tuple(
-            EquationConstraintRecordRO(
-                cnode=cnode[i], cdof=cdof[i], ccoef=ccoef[i],
-                retained=tuple(
-                    (rnode[j], rdof[j], rcoef[j])
-                    for j in range(offsets[i], offsets[i + 1])),
-                name=names[i])
-            for i in range(n))
+        return _read_equation_constraint_rows(
+            ops["constraints"]["equationConstraint"], where)
 
     def mp_constraints(
         self,
@@ -3130,6 +3114,78 @@ def archives_equation_constraints(version: "SchemaVersion") -> bool:
     ``equationConstraint`` lines (``>= EQUATION_CONSTRAINT_FROM``)."""
     return ((version.major, version.minor, version.patch)
             >= EQUATION_CONSTRAINT_FROM)
+
+
+#: First opensees-zone version whose stage blocks store their
+#: ``equationConstraint`` lines (#2448): ``/opensees/stages/stage_NNN/
+#: constraints/equationConstraint`` with ``equationConstraint_emit_index``,
+#: the lines of every ``enforce="equation"`` tie a stage claims. A replay
+#: of an archive below it refuses such a tie by name.
+STAGE_EQUATION_CONSTRAINT_FROM: tuple[int, int, int] = (2, 37, 0)
+
+
+def archives_stage_equation_constraints(version: "SchemaVersion") -> bool:
+    """True iff an archive at opensees-zone ``version`` stores its stage
+    blocks' ``equationConstraint`` lines
+    (``>= STAGE_EQUATION_CONSTRAINT_FROM``)."""
+    return ((version.major, version.minor, version.patch)
+            >= STAGE_EQUATION_CONSTRAINT_FROM)
+
+
+def _read_equation_constraint_rows(
+    g: Any, where: str,
+) -> tuple[EquationConstraintRecordRO, ...]:
+    """The rows of one ``equationConstraint`` group at ``where`` (the
+    global one or a stage block's), in write order.
+
+    Raises :class:`MalformedH5Error` on a dataset in place of the group,
+    a missing column, an empty group, columns that disagree, a row with no
+    retained term, and a DOF below 1 or a zero or non-finite coefficient,
+    which no writer stores and OpenSees rejects.
+    """
+    import h5py
+    import numpy as np
+
+    if not isinstance(g, h5py.Group):
+        raise MalformedH5Error(f"{where} is a dataset; the writer stores a group.")
+    missing = sorted(set(_EQUATION_CONSTRAINT_COLUMNS) - set(g.keys()))
+    if missing:
+        raise MalformedH5Error(f"{where} lacks the column(s) {missing}.")
+    col = {k: _dataset_values(g, k) for k in _EQUATION_CONSTRAINT_COLUMNS}
+    cnode = [int(v) for v in col["cnode"]]
+    cdof = [int(v) for v in col["cdof"]]
+    ccoef = [float(v) for v in col["ccoef"]]
+    names = [str(_decode_bytes(v)) for v in col["name"]]
+    offsets = [int(v) for v in col["ret_offsets"]]
+    rnode = [int(v) for v in col["ret_node"]]
+    rdof = [int(v) for v in col["ret_dof"]]
+    rcoef = [float(v) for v in col["ret_coef"]]
+    n, m = len(cnode), len(rnode)
+    if n == 0:
+        raise MalformedH5Error(
+            f"{where} holds no row; the writer writes the group only "
+            "when a line exists.")
+    if not (len(cdof) == len(ccoef) == len(names) == n
+            and len(offsets) == n + 1 and offsets[0] == 0
+            and offsets[-1] == m == len(rdof) == len(rcoef)
+            and all(a < b for a, b in zip(offsets, offsets[1:]))):
+        raise MalformedH5Error(
+            f"{where} columns disagree in length, or a row holds no "
+            "retained term.")
+    coefs = np.asarray([*ccoef, *rcoef], dtype=np.float64)
+    if (not bool(np.all(np.isfinite(coefs))) or bool(np.any(coefs == 0.0))
+            or min(cdof + rdof) < 1):
+        raise MalformedH5Error(
+            f"{where} holds a DOF below 1 or a zero or non-finite "
+            "coefficient, which no writer stores.")
+    return tuple(
+        EquationConstraintRecordRO(
+            cnode=cnode[i], cdof=cdof[i], ccoef=ccoef[i],
+            retained=tuple(
+                (rnode[j], rdof[j], rcoef[j])
+                for j in range(offsets[i], offsets[i + 1])),
+            name=names[i])
+        for i in range(n))
 
 
 def archives_embedded_rebar(version: "SchemaVersion") -> bool:

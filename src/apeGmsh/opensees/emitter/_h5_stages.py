@@ -21,10 +21,18 @@ from ._h5_host import _H5Host
 
 if TYPE_CHECKING:
     from .base import StrategySpec
+    from .h5_reader import EquationConstraintRecordRO
 
 
 class _H5StagesMixin(_H5Host):
     """Mixin: holds no state, no ``__init__``; see the module docstring."""
+
+    if TYPE_CHECKING:
+        # ``_H5WriteModelMixin`` defines it (opensees 2.35.0; the stage
+        # blocks write through it from 2.37.0).
+        def _write_constraints_equation_constraint(
+            self, parent: Any, recs: "Sequence[EquationConstraintRecordRO]",
+        ) -> None: ...
 
     def recorder_declaration_begin(
         self,
@@ -759,6 +767,7 @@ class _H5StagesMixin(_H5Host):
             if (
                 blk.equal_dofs or blk.rigid_links
                 or blk.rigid_diaphragms or blk.embedded_nodes
+                or blk.equation_constraints
             ):
                 cons = g.create_group("constraints")
                 if blk.equal_dofs:
@@ -773,15 +782,23 @@ class _H5StagesMixin(_H5Host):
                     self._write_constraints_embedded_node(
                         cons, blk.embedded_nodes,
                     )
+                # Opensees 2.37.0: a stage-claimed equation tie's lines,
+                # in the global group's columns.
+                if blk.equation_constraints:
+                    self._write_constraints_equation_constraint(
+                        cons, blk.equation_constraints,
+                    )
                 # ADR 0055 P2.3: per-MP-kind emit_index so replay
                 # reproduces the genuine-vs-kinematic equalDOF order
                 # straddling rigidDiaphragm.  Parallel int64 datasets
-                # (one per kind, row-aligned with the compound above).
+                # (one per kind, row-aligned with the rows above).
                 for nm, seq in (
                     ("equalDOF_emit_index", blk.equal_dof_seq),
                     ("rigidLink_emit_index", blk.rigid_link_seq),
                     ("rigidDiaphragm_emit_index", blk.rigid_diaphragm_seq),
                     ("embeddedNode_emit_index", blk.embedded_node_seq),
+                    ("equationConstraint_emit_index",
+                     blk.equation_constraint_seq),
                 ):
                     if seq:
                         cons.create_dataset(
