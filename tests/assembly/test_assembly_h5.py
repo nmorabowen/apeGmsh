@@ -333,19 +333,25 @@ def test_inv10_every_reader_opens_the_archive_as_the_plain_file(built):
                for ln in a_deck.splitlines()) == 54
 
 
-def test_inv10_a_stage_claimed_equation_tie_still_refuses(tmp_path):
-    # The interim scope of #2447: a stage block stores no
-    # equationConstraint line yet, so a tie a stage claims refuses by name
-    # (#2448 adds the stage rows).
-    from apeGmsh.opensees._internal.build.errors import BridgeError
+def test_inv10_a_stage_claimed_equation_tie_replays_its_lines(tmp_path):
+    # Opensees 2.37.0 (#2448): a stage block stores the lines of the
+    # equation tie it claims, so the replay writes them, nothing skipped.
+    import warnings
+
+    from apeGmsh.opensees._internal.compose import ReplaySkippedStreamWarning
     from apeGmsh.opensees.opensees_model import OpenSeesModel
     from tests.opensees.h5.test_h5_mp_constraints_replay import (
         _staged_equation_tie_archive,
     )
 
     path = _staged_equation_tie_archive(tmp_path)
-    with pytest.raises(BridgeError, match=r"#2448"):
-        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warnings.simplefilter("error", ReplaySkippedStreamWarning)
+        deck = OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    assert isinstance(deck, str)
+    assert sum(ln.startswith("equationConstraint ")
+               for ln in deck.splitlines()) == 3
 
 
 def test_inv10_penalty_ties_replay_the_same_deck_from_both_readers(

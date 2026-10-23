@@ -1760,19 +1760,39 @@ exists; hashed.
   `/opensees/decl_params` records must equal those rows, or the reader
   raises `MalformedH5Error`. From this minor the rows are the replay's
   only source for every line.
-- **Stage scope (interim).** A stage-claimed equation tie's lines are not
-  stored yet: the `VERBS` row stays `ledger` with an empty stage store
-  (`{scope}/constraints/equationConstraint|`), and the replay refuses such
-  a tie by name, citing #2448, which adds the stage rows.
-- **Reader refusals** (`H5Model.equation_constraints`, all
-  `MalformedH5Error`): the group in a file below 2.35.0
-  (`h5_reader.EQUATION_CONSTRAINT_FROM`), a missing column, columns that
-  disagree in length, a row with no retained term, a DOF below 1, a zero
-  or non-finite coefficient, and the group inside a stage.
+- **Stage scope (opensees 2.37.0).** The lines of an equation tie a
+  stage claims are rows of that stage block, in the same columns, beside
+  a row-aligned stage MP sequence (#2448; a 2.35 or 2.36 writer dropped
+  them):
+
+  ```
+  /opensees/stages/stage_NNN/constraints/
+      equationConstraint/               the columns above, one row per line the stage wrote
+      equationConstraint_emit_index     i8 (N,)   the stage's MP emit_index of each row
+  ```
+
+  The emit index comes from the stage's one sequence, which also stamps
+  `equalDOF_emit_index`, `rigidLink_emit_index`,
+  `rigidDiaphragm_emit_index` and `embeddedNode_emit_index`, so the
+  replay merges the five kinds back into the bridge's order inside the
+  stage. Their `/opensees/program` calls carry the stage's ordinal and the
+  same store template. A partitioned stage captures each line once.
+  Written only when a stage writes a line; hashed. `equationConstraint`
+  is no `ledger` verb any more (ADR 0114, amendment of 2026-10-23).
+- **Reader refusals** (`H5Model.equation_constraints` and
+  `H5Model.stages`, all `MalformedH5Error`): the global group in a file
+  below 2.35.0 (`h5_reader.EQUATION_CONSTRAINT_FROM`), a stage group in a
+  file below 2.37.0 (`h5_reader.STAGE_EQUATION_CONSTRAINT_FROM`), a stage
+  group without its `equationConstraint_emit_index` or the reverse, an
+  emit-index length that differs from the rows, a missing column, columns
+  that disagree in length, a row with no retained term, a DOF below 1,
+  and a zero or non-finite coefficient.
 - **Replay refusal.** An `enforce="equation"` record of the neutral zone
-  whose lines are not all among the stored tie rows (matched as a
-  multiset) refuses with `BridgeError`: every archive below 2.35.0 (#2416),
-  a stage-claimed tie (#2448), and a 2.35 file that lost rows.
+  whose lines are not all among the stored tie rows, global and stage
+  (matched as a multiset), refuses with `BridgeError`: every archive below
+  2.35.0 (#2416), a stage-claimed tie in an archive below 2.37.0 (#2448),
+  and a file that lost rows. A pre-2.37 archive stores nothing a
+  stage-claimed tie's lines could be rebuilt from, so it never replays.
 - **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
   pre-2.35 archive stores its `apeSees.equation_constraint` rows and links
   the source's last `K` global `equationConstraint` calls to them; its
@@ -2621,7 +2641,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.36.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.37.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -3159,6 +3179,18 @@ detail lives in the `SCHEMA_VERSION` docstring in
   model pinned or on auto has one `model_hash`. A 2.35 reader would replay
   a fork pin as auto, hence the minor. Additive minor (a 2.35.x reader
   refuses a 2.36.x file, INV-4).
+- `2.37.0` — #2448 (chain K; the maintainer's ruling (a) on #2447, the
+  ADR 0114 amendment of 2026-10-23 that reverses #1341 Q3 for
+  `equationConstraint`): a stage block's `constraints` group gains
+  [`equationConstraint`](#opensees-constraints-equationconstraint-optional-opensees-2350)
+  and `equationConstraint_emit_index`, the lines of every
+  `enforce="equation"` tie the stage claims, so a replay writes them in
+  the stage's own position. `equationConstraint` leaves the `VERBS`
+  ledger. Below this minor the replay refuses a stage-claimed tie by
+  name. The group is written only when a stage writes a line, so every
+  other archive keeps its bytes and hash. A 2.36 reader refuses the stage
+  group by name, hence the minor. Additive minor (a 2.36.x reader refuses
+  a 2.37.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

@@ -171,11 +171,19 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * differently. It is not hashed, so model_hash and the results pairing are
  * unchanged.
  *
+ * opensees 2.37.0 (#2448, h5-schema.md "Stage scope (opensees 2.37.0)"): a
+ * stage block's `constraints` group may hold `equationConstraint` (the
+ * global group's columns) and `equationConstraint_emit_index`, the lines of
+ * the equation ties the stage claims. Replay data the app does not read, so
+ * nothing here reads differently. The rows are hashed: a 2.37 re-emit of a
+ * model with such a tie has a new model_hash, which the results pairing
+ * shows as a plain mismatch.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 36 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 37 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;

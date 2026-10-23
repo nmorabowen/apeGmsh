@@ -379,12 +379,13 @@ def _ledgered_frame() -> apeSees:
     return ops
 
 
-def _tie_ledgered_frame() -> apeSees:
-    """The frame plus an ``enforce="equation"`` tie that a stage claims:
-    its ``equationConstraint`` row is a ledger call deck replay skips. From
-    opensees 2.35.0 a global tie's lines are archived; a stage's are not
-    yet (#2448). (The bridge-level row of :func:`_ledgered_frame` is
-    archived and replayed, so it is not ledgered.)"""
+def _stage_tied_frame() -> apeSees:
+    """The frame plus an ``enforce="equation"`` tie that a stage claims.
+    Its ``equationConstraint`` lines were the last ledger calls a plain
+    model could make; from opensees 2.37.0 the stage block stores them
+    (#2448), as the global ones are from 2.35.0. (The bridge-level row of
+    :func:`_ledgered_frame` is archived and replayed, so it is not
+    ledgered either.)"""
     from apeGmsh._kernel.records._constraints import InterpolationRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
     from tests.opensees.h5.test_h5_stages_writer import _chain
@@ -417,10 +418,29 @@ def test_no_ledger_no_warning(tmp_path: Path) -> None:
         _frame(rayleigh=True, modal=True).h5(str(tmp_path / "m.h5"))
 
 
-def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
-    """The stage-claimed equation tie's dropped row warns once across
-    every category: one ledger warning, no deferred warning."""
-    ops = _tie_ledgered_frame()
+def test_a_stage_claimed_equation_tie_is_not_ledgered(tmp_path: Path) -> None:
+    """Opensees 2.37.0 (#2448): the stage-claimed tie's lines are stage
+    rows, so ``h5()`` drops nothing and raises no ledger warning."""
+    ops = _stage_tied_frame()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warnings.simplefilter("error", H5LedgerWarning)
+        warnings.simplefilter("error", H5FeatureDeferredWarning)
+        ops.h5(str(tmp_path / "m.h5"))
+    with h5py.File(tmp_path / "m.h5", "r") as f:
+        cons = f["opensees/stages/stage_000/constraints"]
+        assert len(cons["equationConstraint/cnode"]) == 1
+
+
+def test_one_dropped_row_is_one_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One dropped ledger row warns once across every category: one ledger
+    warning, no deferred warning. A plain model makes no ledger call since
+    the stage equationConstraint lines archive (#2448), so the contact
+    row is added the way :func:`_with_ledger` does."""
+    ops = _frame(rayleigh=False, modal=False)
+    _with_ledger(monkeypatch, {"contact": 1})
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         ops.h5(str(tmp_path / "m.h5"))
@@ -430,7 +450,7 @@ def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
     ]
     assert [w.category for w in about_archive] == [H5LedgerWarning], [
         (w.category.__name__, str(w.message)[:80]) for w in rec]
-    assert "equationConstraint x1" in str(about_archive[0].message)
+    assert "contact x1" in str(about_archive[0].message)
     others = [w for w in rec if w not in about_archive]
     assert all(issubclass(w.category, OpenSeesAutoEmitWarning)
                for w in others), [(w.category.__name__, str(w.message)[:80])
@@ -441,12 +461,13 @@ def test_automatic_write_warns_once_about_the_dropped_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The automatic write silences ``H5FeatureDeferredWarning``; the
-    ledger warning still carries the stage-claimed tie's
-    ``equationConstraint`` there: one warning, not zero."""
+    ledger warning still carries the dropped row there: one warning, not
+    zero."""
     art = tmp_path / "artifacts"
     art.mkdir()
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(art))
-    ops = _tie_ledgered_frame()
+    ops = _frame(rayleigh=False, modal=False)
+    _with_ledger(monkeypatch, {"contact": 1})
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         ops.tcl(str(tmp_path / "a.tcl"))
@@ -457,7 +478,7 @@ def test_automatic_write_warns_once_about_the_dropped_row(
     ]
     assert [w.category for w in about_archive] == [H5LedgerWarning], [
         (w.category.__name__, str(w.message)[:80]) for w in rec]
-    assert "equationConstraint x1" in str(about_archive[0].message)
+    assert "contact x1" in str(about_archive[0].message)
     assert Path(about_archive[0].filename).resolve() == Path(__file__).resolve()
     others = [w for w in rec if w not in about_archive]
     assert all(issubclass(w.category, OpenSeesAutoEmitWarning)

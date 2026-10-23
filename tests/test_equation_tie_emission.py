@@ -284,15 +284,19 @@ def test_h5_deck_emitter_equation_tie_no_deviation_warning(recwarn):
         e, rec, emit_tags(stub_fem(interpolations=[rec])))
     # Opensees 2.35.0: one stored deck row per tied DOF, none ledgered, and
     # NO deviation warning.
-    assert e._skipped_equation_constraints == 0
+    assert "equationConstraint" not in e.ledger_counts
     assert [r.cdof for r in e._equation_constraints] == [1, 2, 3]
-    # A stage-claimed tie's lines are still ledgered (stage rows: #2448).
+    # Opensees 2.37.0 (#2448): a stage-claimed tie's lines are stage rows.
     e.stage_open("s0")
     _emit_one_interpolation(
         e, rec, emit_tags(stub_fem(interpolations=[rec])))
+    blk = e._stage_current
     e.stage_close()
-    assert e._skipped_equation_constraints == 3
+    assert "equationConstraint" not in e.ledger_counts
     assert len(e._equation_constraints) == 3
+    assert blk is not None
+    assert [r.cdof for r in blk.equation_constraints] == [1, 2, 3]
+    assert blk.equation_constraint_seq == [1, 2, 3]
     assert not [
         w for w in recwarn.list
         if issubclass(w.category, H5EquationConstraintDeviationWarning)
