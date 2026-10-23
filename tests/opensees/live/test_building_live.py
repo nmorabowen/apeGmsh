@@ -127,6 +127,67 @@ def test_mp_constraint_across_a_cut_refuses() -> None:
         B.StoryForces(LEVELS)
 
 
+_EQ_CHILD = r"""
+import sys
+from apeGmsh.opensees import building as B
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees.emitter.live import get_ops
+
+ops = get_ops()
+ops.wipe()
+ops.model("basic", "-ndm", 3, "-ndf", 6)
+ops.node(1, 0.0, 0.0, 0.0)
+ops.node(2, 0.0, 0.0, 1.0)
+ops.node(3, 0.0, 0.0, 2.0)
+ops.fix(1, 1, 1, 1, 1, 1, 1)
+ops.geomTransf("Linear", 1, 1.0, 0.0, 0.0)
+ops.element("elasticBeamColumn", 1, 1, 2, 0.1, 2e8, 8e7, 1e-3, 1e-3, 1e-3, 1)
+for dof in range(1, 7):                  # node 3 (z = 2) tied to node 2 (z = 1)
+    ops.equationConstraint(3, dof, 1.0, 2, dof, -1.0)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.load(3, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+ops.constraints("Lagrange")
+ops.numberer("RCM")
+ops.system("UmfPack")
+ops.test("NormDispIncr", 1e-12, 10)
+ops.algorithm("Linear")
+ops.integrator("LoadControl", 1.0)
+ops.analysis("Static")
+assert ops.analyze(1) == 0
+assert abs(ops.nodeDisp(3, 1) - ops.nodeDisp(2, 1)) < 1e-12
+try:
+    t = B.story_forces((0.0, 1.0, 2.0))
+except BridgeError as e:
+    print("REFUSED", " ".join(str(e).split()))
+else:
+    print("VALUES", t.row("Story1")[0], t.row("Story2")[0])
+"""
+
+
+def test_eq_constraint_across_a_cut_refuses() -> None:
+    """Node 3 (z = 2) carries a 10 kN load and is tied to node 2 (z = 1)
+    by equationConstraint rows: no element lies above z = 1, so the element
+    free body of Story2 reads VX = 0 where the true shear is 10.
+
+    Run in a child interpreter: stock openseespy keeps EQ rows across
+    ``wipe()``, so an in-process run would poison every later live test.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[3] / "src"
+    env = dict(os.environ, PYTHONPATH=str(src))
+    out = subprocess.run([sys.executable, "-c", _EQ_CHILD], capture_output=True,
+                         text=True, env=env, check=False, timeout=300)
+    assert out.returncode == 0, out.stderr[-2000:]
+    last = out.stdout.strip().splitlines()[-1]
+    assert last.startswith("REFUSED"), last
+    assert "6 EQ constraint" in last, last
+
+
 # ---------------------------------------------------------------------------
 # Pier forces
 # ---------------------------------------------------------------------------
@@ -232,7 +293,7 @@ def test_joint_drifts_match_nodedisp_differences() -> None:
     d = B.StoryDrifts(LEVELS)
     v = d.table()
     by_xyz = {c: t for t, c in b.coords.items()}
-    want_max = np.zeros((3, 4))           # max |DX|, |DY|, then the means
+    want_max = np.zeros((3, 4))   # max |DX|, |DY|, then (|max| + |min|) / 2
     n_joints = 0
     for i in range(1, 4):
         h = LEVELS[i] - LEVELS[i - 1]
@@ -243,10 +304,11 @@ def test_joint_drifts_match_nodedisp_differences() -> None:
             bot = by_xyz[(x, y, LEVELS[i - 1])]
             want = (np.array(ops.nodeDisp(t)[:2]) - np.array(ops.nodeDisp(bot)[:2])) / h
             np.testing.assert_allclose(v.row(f"Story{i}:{t}"), want, rtol=1e-13)
-            story.append(np.abs(want))
+            story.append(want)
             n_joints += 1
-        want_max[i - 1, :2] = np.max(story, axis=0)
-        want_max[i - 1, 2:] = np.mean(story, axis=0)
+        want_max[i - 1, :2] = np.max(np.abs(story), axis=0)
+        want_max[i - 1, 2:] = 0.5 * (np.abs(np.max(story, axis=0))
+                                     + np.abs(np.min(story, axis=0)))
     assert len(v.rows) == n_joints
     np.testing.assert_allclose(d.story_max().values, want_max, rtol=1e-13)
     np.testing.assert_allclose(B.story_drifts(LEVELS).values, want_max, rtol=1e-13)
@@ -300,7 +362,7 @@ def test_story_displacements_match_nodedisp() -> None:
         for n, d in zip(level, disp):
             np.testing.assert_allclose(t.row(f"Story{k}:{n}"), d, rtol=1e-14)
         want[k - 1, :2] = np.abs(disp).max(axis=0)
-        want[k - 1, 2:] = np.abs(disp).mean(axis=0)
+        want[k - 1, 2:] = 0.5 * (np.abs(disp.max(axis=0)) + np.abs(disp.min(axis=0)))
     assert len(t.rows) == sum(1 for c in b.coords.values() if c[2] > 0 and c[2] in LEVELS)
     np.testing.assert_allclose(u.story_max().values, want, rtol=1e-14)
     corner = next(n for n, c in b.coords.items() if c == (6.0, 4.0, 9.0))

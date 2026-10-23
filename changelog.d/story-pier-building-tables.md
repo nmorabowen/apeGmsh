@@ -14,14 +14,18 @@ of Mass*. It takes its module from `ops=` or `get_ops()`.
   `base_shear_from_reactions(z_base)` (`-sum(R)`) cross-checks the base.
 - `StoryDrifts(levels, *, points=None, method="nearest"|"rigid", max_offset=)`
   gives drift ratios `(u_top - u_bottom) / h`. With no `points`, it covers
-  every joint that has a node directly below it, and `.story_max()` gives
-  the ETABS story maximum in X and Y, with the story average beside it
-  (`AvgX`, `AvgY`: the max/avg pair of the torsional irregularity ratio). With `points=`, it reads the nearest
-  node, or the in-plane rigid fit of the level, at each plan point.
+  every joint that has a node directly below it (a story with no such
+  joint raises, naming it), and `.story_max()` gives the ETABS story
+  maximum in X and Y, with the ASCE 7 average beside it (`AvgX`, `AvgY`:
+  `(|max| + |min|) / 2`, the average at the two extreme points, the
+  denominator of the torsional irregularity ratio). With `points=`, it
+  reads the nearest node, or the in-plane rigid fit of the level, at each
+  plan point.
 - `StoryDisplacements(levels, *, points=None, method=, max_offset=)` gives
   the level displacements `UX, UY` (every node on each level, or plan
-  points). Its `.story_max()` gives each level's largest and average
-  `|UX|` and `|UY|`: the max/avg pair a torsional-amplification check reads.
+  points). Its `.story_max()` gives each level's largest `|UX|`, `|UY|`
+  and the same ASCE 7 extreme-point average: the max/avg pair of the
+  torsional amplification factor `Ax`.
 - `Pier(name, elements, bottom=, top=, axis2=)`, `Pier.from_pg(bridge, pg)`,
   `piers_by_story(pier, levels)` and `PierForces(piers)` give
   `P, V2, V3, T, M2, M3` at the bottom and top of each pier. These are in
@@ -39,10 +43,12 @@ the current domain state. A modal driver can evaluate one at each mode and
 combine the results entry by entry; `.table(values)` reshapes the combined
 vector.
 
-The module refuses three cases rather than return a partial free body: a
+The module refuses four cases rather than return a partial free body: a
 cut that crosses an element without a node on it, an MP constraint that
-joins the two sides of a cut, and an element whose `forces` vector is not
-one value per node DOF.
+joins the two sides of a cut, any EQ constraint in the domain
+(`equationConstraint`, `LadrunoTie`: OpenSees does not report their nodes,
+so `StoryForces` reads their count from a `printModel` dump), and an
+element whose `forces` vector is not one value per node DOF.
 
 Validated live, on stock openseespy and on the fork, on a 3-storey frame +
 wall building. Story forces, both top and bottom, match hand statics to
