@@ -88,17 +88,45 @@ def test_the_writer_refuses_an_unknown_mode() -> None:
 
 
 def test_binary_and_python_are_never_archived(tmp_path: Path) -> None:
+    # The tools live apart from the archive: ``/provenance@base_dir`` holds
+    # the archive's own directory by design, so the archive's directory is
+    # not the needle. Distinct basenames also catch a path relativised
+    # against ``base_dir`` (``../tools/<name>``) or reduced to its name.
+    tools = tmp_path / "tools"
+    binary = tools / "fake-OpenSees-2375.exe"
+    python = tools / "fake-python-2375.exe"
+    out = tmp_path / "out"
+    out.mkdir()
     ops = _frame_bridge(analysis=True)
     ops._opensees = OpenSeesTarget(
-        binary=str(tmp_path / "OpenSees.exe"),
-        python=str(tmp_path / "python.exe"), mode="fork")
-    path = _archive(ops, tmp_path / "m.h5")
+        binary=str(binary), python=str(python), mode="fork")
+    path = _archive(ops, out / "m.h5")
+    needles = {str(tools), tools.as_posix(), binary.name, python.name}
+    seen: list[str] = []
+
+    def texts(value: Any) -> Iterator[str]:
+        # One string per element: ``str()`` of a list would double a Windows
+        # path's backslashes and hide the needle.
+        for item in np.ravel(np.asarray(value, dtype=object)):
+            yield (item.decode("utf-8", "replace")
+                   if isinstance(item, bytes) else str(item))
+
+    def check(name: str, obj: Any) -> None:
+        values = list(obj.attrs.values())
+        if (isinstance(obj, h5py.Dataset)
+                and h5py.check_string_dtype(obj.dtype) is not None):
+            values.append(obj[()])
+        seen.append(name)
+        for value in values:
+            for text in texts(value):
+                for needle in needles:
+                    assert needle not in text, (name, needle, text)
+
     with h5py.File(path, "r") as f:
-        def visit(name: str, obj: Any) -> None:
-            for value in obj.attrs.values():
-                assert str(tmp_path) not in str(value), (name, value)
-        f.visititems(visit)
+        check("/", f)
+        f.visititems(check)
         assert f["opensees"].attrs["target_mode"] == "fork"
+    assert "provenance" in seen  # the group that once tripped this test
 
 
 # ---------------------------------------------------------------------------
