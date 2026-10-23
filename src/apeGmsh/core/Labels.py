@@ -1088,6 +1088,18 @@ def _is_bound(dim: int, tag: int) -> bool:
 _HELD_MARK = "apeGmsh.heldLabels"
 
 
+def _current_mark() -> list[str]:
+    """The current model's ``_HELD_MARK``, ``[]`` when it has none.
+
+    Read through ``getAttributeNames`` first: in gmsh 4.15
+    ``getAttribute`` on a missing name creates an empty entry, which a
+    ``.msh`` write then saves as a section of its own.
+    """
+    if _HELD_MARK not in gmsh.model.getAttributeNames():
+        return []
+    return list(gmsh.model.getAttribute(_HELD_MARK))
+
+
 def bind_held_labels() -> None:
     """Bind the held labels of the session whose model is current.
 
@@ -1192,7 +1204,7 @@ class Labels(_HasLogging):
         """
         return (
             self._parent.is_active
-            and gmsh.model.getAttribute(_HELD_MARK) == [self._mark]
+            and _current_mark() == [self._mark]
         )
 
     def _bind_held(self) -> None:
@@ -1289,7 +1301,7 @@ class Labels(_HasLogging):
             # them yet, and gmsh would drop the group silently.  Hold the
             # label until the next synchronising apeGmsh call, marking
             # the model it is held in (``_HELD_MARK``).
-            mark = gmsh.model.getAttribute(_HELD_MARK)
+            mark = _current_mark()
             if mark != [self._mark]:
                 if mark or self._held:
                     raise RuntimeError(

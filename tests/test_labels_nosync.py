@@ -213,6 +213,8 @@ def test_holding_in_another_sessions_model_is_refused():
         with apeGmsh(model_name="refuse_s2", verbose=False):
             with pytest.raises(RuntimeError, match="another session"):
                 s1.labels.add(2, [gmsh.model.occ.addRectangle(0, 0, 0, 1, 1)], name="B")
+            # the refused hold leaves no mark on s2's model
+            assert "apeGmsh.heldLabels" not in gmsh.model.getAttributeNames()
         gmsh.model.setCurrent("refuse_s1")
     finally:
         s1.end()
@@ -308,3 +310,25 @@ def test_a_failed_bind_keeps_the_labels_not_yet_bound(g, monkeypatch):
     g.model.sync()
     assert g.labels.entities("A", dim=2) == [a]
     assert g.labels.entities("B", dim=2) == [b]
+
+def test_a_non_holding_sessions_msh_carries_no_held_mark(tmp_path):
+    """Probing a model for the held-label mark adds nothing to it: in gmsh
+    4.15 getAttribute on a missing name creates an entry that a .msh
+    write saves as its own section."""
+    from apeGmsh import apeGmsh
+
+    a = apeGmsh(model_name="mark_a", verbose=False)
+    a.begin()
+    try:
+        a.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="X", sync=False)
+        with apeGmsh(model_name="mark_b", verbose=False, _artifacts=False) as b:
+            b.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+            with pytest.warns(UserWarning, match="X"):
+                a.model.sync()          # probes b's model, which is current
+            b.model.sync()
+            out = tmp_path / "b.msh"
+            gmsh.write(str(out))
+        assert "$apeGmsh.heldLabels" not in out.read_text(errors="ignore")
+        gmsh.model.setCurrent("mark_a")
+    finally:
+        a.end()
