@@ -779,7 +779,9 @@ def _reset_expected(cls: str) -> bool:
     from apeGmsh.opensees.emitter.live import get_backend_info
 
     info = get_backend_info()
-    if info.kind != "fork":
+    if info.kind != "fork" or cls not in FORK_RESETS_STAGE_STATIC:
+        # Stock never resets; neither does a class whose constructor
+        # keeps the flag (SAniSandMS), on any fork build.
         return False
     if info.build not in _FORK_BUILD_HAS_MD_STATIC_FIX:
         pytest.skip(
@@ -787,7 +789,7 @@ def _reset_expected(cls: str) -> bool:
             f"reset: add it to _FORK_BUILD_HAS_MD_STATIC_FIX (does it "
             f"descend from {_MD_STATIC_FIX[:9]}?)")
     fixed = _FORK_BUILD_HAS_MD_STATIC_FIX[info.build]
-    return not fixed and cls in FORK_RESETS_STAGE_STATIC
+    return not fixed
 
 
 def test_the_fork_pin_is_measured_for_the_reset() -> None:

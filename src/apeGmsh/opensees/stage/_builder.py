@@ -164,10 +164,13 @@ STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
 #: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
 #: Fork commit ``43b235bbb`` stops the reset and ``FORK_PIN`` carries it,
 #: but every older fork build still resets (79e062367, measured).  The
-#: table stays full: no command, ``ladrunoSchema`` entry or response tells
-#: a build with the fix from one without, so the refusal cannot be gated
-#: on a build floor the way ``materialState`` is
-#: (``_internal/build/stage_emit.MATERIAL_STATE_FORK_FLOOR``).
+#: table stays full and the refusal fails closed.  It runs at stage close,
+#: before any engine is bound, so it cannot see the build a deck will run
+#: on; and ``ladrunoBuild()``'s bare sha cannot prove the build descends
+#: from the fix.  It can be gated once the fork registers a capability
+#: marker for the fix, as the ``materialState`` floor is
+#: (``_internal/build/stage_emit.MATERIAL_STATE_FORK_FLOOR``), or once
+#: the live route checks the bound build against an allowlist.
 FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
 )
@@ -579,11 +582,12 @@ class _StageBuilder:
         which this check cannot see.
 
         Fork commit ``43b235bbb`` (carried by ``FORK_PIN``) keeps the
-        flag, but a ``mode="fork"`` target does not say which build runs,
-        and no build signal names the fix, so the check stays on for every
-        fork build.  It can be gated on a build floor, as ``materialState``
-        is, once a fork command exists that every build with the fix
-        registers.
+        flag, but the check stays on for every fork build, failing closed:
+        it runs before any engine is bound, so a deck's build is unknown
+        here, and the sha ``ladrunoBuild()`` returns in-process cannot by
+        itself prove the build descends from the fix.  It can be gated on
+        a fork capability marker for the fix, as ``materialState`` is on
+        ``ladrunoSchema``, or on a live-route allowlist of bound builds.
         """
         target = self._bridge.opensees
         if target is None or target.mode != "fork":
@@ -644,7 +648,8 @@ class _StageBuilder:
                 "its materials would go back to elastic with no warning "
                 "(fork issue #2444; stock keeps the flag).  Fork builds "
                 "that carry commit 43b235bbb (FORK_PIN does) keep it too, "
-                "but no build signal tells them from older ones, so this "
+                "but this check runs at stage close, before any engine is "
+                "bound, and a build sha cannot prove that ancestry, so it "
                 "is refused on every fork target.  Flip the whole "
                 "group again in this stage, after the activation, or "
                 "activate these elements before the flip."
