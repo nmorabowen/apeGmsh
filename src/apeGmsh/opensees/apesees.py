@@ -128,7 +128,7 @@ from ._internal.build.interfaces import (
     _register_interface_phantoms,
     _validate_interface_records,
 )
-from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
+from ._internal.build.membrane_load_guard import guard_membrane_interior, refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
 from ._internal.build.stage_validate import (
@@ -2128,6 +2128,7 @@ class BuiltModel:
         to the non-staged path.
         """
         staged = bool(self.stage_records)
+        membrane_skip = guard_membrane_interior(self, elements, archival=emitter.caps.archival)
 
         # Phase SSI-2.B: compute element / node ownership maps when
         # stages are declared.  Stage-bound topology (nodes + elements
@@ -2179,7 +2180,7 @@ class BuiltModel:
         # token is sourced from the broker when a declaration covers
         # the node; otherwise the model envelope wins.
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
-            if int(nid) in node_owner_stage:
+            if int(nid) in node_owner_stage or int(nid) in membrane_skip:
                 continue
             _emit_node_with_inferred_ndf(
                 emitter, inferred_ndf, int(nid),
@@ -3082,6 +3083,7 @@ class BuiltModel:
                 "or run in-process."
             )
         staged = bool(self.stage_records)
+        membrane_skip = guard_membrane_interior(self, elements, archival=emitter.caps.archival)
 
         # g.reinforce ties and g.rebar auto-emitted bars are routed per rank
         # (see _plan_partitioned_reinforcement / step 7c-ter).
@@ -3763,14 +3765,12 @@ class BuiltModel:
                 # pass below (INV-2).
                 _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
                 # Skipped: stage-bound nodes (Phase SSI-2.C, they emit
-                # inside their stage's block) and nodes this rank's
-                # hoisted gated block already declared (ADR 0099 S5,
-                # step 1b).  S2 (ADR 0033): per-node ndf via broker.
-                # The helper resolves the rank's ids in one vectorised
-                # lookup and emits them in ascending id order.
-                _exclude: "list[Any]" = [_hoisted] if _hoisted else []
-                if staged and node_owner_stage:
-                    _exclude.append(node_owner_stage)
+                # inside their stage's block), nodes this rank's hoisted
+                # gated block already declared (ADR 0099 S5, step 1b) and
+                # pg= membrane interior nodes.  S2 (ADR 0033): per-node ndf
+                # via broker.  The helper resolves the rank's ids in one
+                # vectorised lookup and emits them in ascending id order.
+                _exclude: "list[Any]" = [s for s in (_hoisted, node_owner_stage, membrane_skip) if s]
                 emit_owned_nodes_with_inferred_ndf(
                     emitter, inferred_ndf, part.node_ids,
                     node_idx_lookup, self.fem.nodes.coords, self.ndf,
