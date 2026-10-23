@@ -21,6 +21,9 @@ archive's `/opensees/decls` and `/opensees/decl_params`, then runs the same
 checks, and the emit-time class-wide check, before anything is emitted. It
 runs in `OpenSeesModel.build` for every target and in
 `compose._replay_staged_into`. Such an archive is refused by name, with the
-stage-close message. An archive the stage close accepts replays byte for
-byte. An archive with a stage flip but no `/opensees/decl_params` (written
-below opensees 2.26.0) cannot be checked, so it is refused too.
+stage-close message. The valid archives tested here replay byte for byte.
+The replay checks the final model, while the stage close sees only the
+elements registered so far, so the replay may refuse an archive the bridge
+accepted: one whose elements were registered after a flip (#2464). An
+archive with a stage flip but no `/opensees/decl_params` (written below
+opensees 2.26.0) cannot be checked, so it is refused too.

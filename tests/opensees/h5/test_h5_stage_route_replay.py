@@ -6,8 +6,11 @@ An archive written before those checks landed can still hold such a flip,
 and ``OpenSeesModel.from_h5(...).build`` re-emitted it silently.  The
 replay now builds the same ``RouteModel`` from the archive's declarations
 and runs the same checks (``stage._builder.check_archived_stage_routes``),
-so such an archive is refused by name, and an archive the stage close
-accepts replays byte for byte (the R1b oracle).
+so such an archive is refused by name.  The valid archives here replay
+byte for byte (the R1b oracle).  The replay checks the final model, so it
+may refuse an archive the bridge accepted, whose elements were registered
+after a flip (#2464); ``test_a_carrier_registered_after_the_flip_...``
+pins that case.
 
 A pre-fix archive is written here with the checks switched off, the way
 the bridge wrote it before them: ``check_stage_routes`` at stage close and,
@@ -500,6 +503,41 @@ def test_a_valid_archive_replays_byte_for_byte(
 
     _check(_m("tests.opensees.h5.test_h5_stage_route_replay",
               "valid_bridge", case=case), None, tmp_path)
+
+
+def test_a_carrier_registered_after_the_flip_passes_the_bridge_but_not_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The known gap between the two sides (#2464), pinned so it stays in
+    view.  The stage close sees only the elements registered so far: a sand
+    on one SixNodeTri flipped plastic passes, and a FourNodeQuad on the
+    same sand registered after the stage is never checked.  The deck emits
+    all three carriers globally, before the stage, with a bare
+    ``updateMaterialStage`` and no sweep: the #2445 wrong answer.  The
+    replay checks the final model and refuses it.  Replay is the correct
+    side; when #2464 closes the bridge hole, the bridge half of this test
+    flips to a refusal."""
+    def build() -> apeSees:
+        ops = _ops()
+        sand = _md(ops, "sand")
+        _host(ops, "A", sand)
+        _stage(ops, "push", lambda s: s.update_material_stage(
+            materials=[sand], stage=1))
+        _host(ops, "Q", sand)          # registered after the flip
+        return ops
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        build().tcl(str(tmp_path / "bridge.tcl"), flat=True)
+    deck = (tmp_path / "bridge.tcl").read_text(encoding="utf-8")
+    assert deck.count("element quad") == 2
+    assert "setParameter" not in deck
+    path = _write(build, tmp_path / "late.h5", monkeypatch, pre_fix=False)
+    with pytest.raises(BridgeError) as exc:
+        _replay(path)
+    msg = str(exc.value)
+    assert "#2445" in msg and "but FourNodeQuad carries it" in msg
+    assert "(3 elements)" in msg
 
 
 # ---------------------------------------------------------------------------
