@@ -1005,6 +1005,8 @@ class MaterialStageCarriers:
     materials before its first stage block.  A flip of the group after
     the construction, and before the solve, makes every build agree
     (``Elastic2Plastic()`` runs on each flip, whatever the flag held).
+    The flag is per process, so the watch keeps each partition rank
+    apart: a flip inside one rank's block heals that rank only.
     """
 
     def __init__(self) -> None:
@@ -1023,20 +1025,41 @@ class MaterialStageCarriers:
             STAGE_FLAG_PARAMETERS,
         )
         # The constructor-reset watch: the class-wide group of each
-        # FORK_RESETS_STAGE_STATIC class, the stage a user flip left each
-        # group at, and the groups a construction reset since.
+        # FORK_RESETS_STAGE_STATIC class; the stage a user flip left each
+        # group at, and the groups a construction reset since, both keyed
+        # by (group, rank).  The static is per process, so a line inside
+        # a partition block acts on that rank only; rank None is a line
+        # outside every block, which every rank runs.
         self._reset_classes: dict[str, str] = {
             cls: CLASS_WIDE_STAGE_FLAG[cls] for cls in FORK_RESETS_STAGE_STATIC}
         self._flag_params = STAGE_FLAG_PARAMETERS
         self._reset_group: dict[int, str] = {}
-        self._group_stage: dict[str, int] = {}
-        self._reset_pending: set[str] = set()
+        self._group_stage: dict[tuple[str, int | None], int] = {}
+        self._reset_pending: set[tuple[str, int | None]] = set()
 
     def _note_construction(self) -> None:
         """An ``element`` or ``nDMaterial``: on a resetting build every
-        group a user flip left non-zero is now elastic."""
-        self._reset_pending.update(
-            g for g, stage in self._group_stage.items() if stage != 0)
+        group a user flip left non-zero, on the ranks that run the line,
+        is now elastic there."""
+        rank = self._rank
+        for (group, at), stage in self._group_stage.items():
+            if stage != 0 and (rank is None or at is None or at == rank):
+                self._reset_pending.add((group, rank))
+
+    def _set_group_stage(self, group: str, stage: int) -> None:
+        """A flip of ``group`` to ``stage``: it sets the flag on the ranks
+        that run the line.  A flip on every rank heals every pending
+        reset of the group; a flip on one rank heals only that rank's,
+        never one every rank owes (fail closed)."""
+        rank = self._rank
+        if rank is None:
+            for key in [k for k in self._group_stage if k[0] == group]:
+                del self._group_stage[key]
+            self._reset_pending = {
+                k for k in self._reset_pending if k[0] != group}
+        else:
+            self._reset_pending.discard((group, rank))
+        self._group_stage[(group, rank)] = int(stage)
 
     def note_flip(self, mat_tag: int, stage: int) -> None:
         """A user flip of ``mat_tag`` to ``stage`` (``updateMaterialStage``
@@ -1044,8 +1067,7 @@ class MaterialStageCarriers:
         every build."""
         group = self._reset_group.get(int(mat_tag))
         if group is not None:
-            self._group_stage[group] = int(stage)
-            self._reset_pending.discard(group)
+            self._set_group_stage(group, int(stage))
 
     def note_parameter(
         self, args: "Sequence[int | float | str]", value: float,
@@ -1061,7 +1083,7 @@ class MaterialStageCarriers:
             return
         if int(value) != 0:
             for group in set(self._reset_group.values()):
-                self._group_stage[group] = int(value)
+                self._group_stage[(group, self._rank)] = int(value)
 
     def solve_fork_guards(self) -> tuple[ForkBuildGuard, ...]:
         """The guards a solve verb needs: :data:`MD_STATIC_RESET_GUARD`

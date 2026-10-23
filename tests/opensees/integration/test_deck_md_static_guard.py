@@ -364,6 +364,64 @@ def test_a_streamed_deck_checks_before_the_solve(tmp_path: Path) -> None:
                    if not ln.startswith("#"))
 
 
+def _quad(em: Any, tag: int, *, rank: "int | None" = None) -> None:
+    if rank is not None:
+        em.partition_open(rank)
+    em.element("quad", tag, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
+    if rank is not None:
+        em.partition_close()
+
+
+def test_a_flip_on_another_rank_does_not_heal() -> None:
+    """The static is per process: a re-flip on rank 0 does not set it again
+    on rank 1, where an element was built after the flip (the review's
+    F4 probe)."""
+    for em in (TclEmitter(), PyEmitter()):
+        em.model(ndm=2, ndf=2)
+        em.nDMaterial("ManzariDafalias", 1, *_MD_ARGS)
+        _quad(em, 1)
+        em.update_material_stage(1, 1)
+        _quad(em, 10, rank=1)
+        em.partition_open(0)
+        em.update_parameter(9, (1,), ("materialState", 1), 1.0)
+        em.partition_close()
+        em.analyze(steps=1)
+        assert _guards(em.lines()) == 1, type(em).__name__
+
+
+@pytest.mark.parametrize("flip_rank", [1, None])
+def test_a_flip_on_the_same_rank_or_every_rank_heals(
+    flip_rank: "int | None",
+) -> None:
+    for em in (TclEmitter(), PyEmitter()):
+        em.model(ndm=2, ndf=2)
+        em.nDMaterial("ManzariDafalias", 1, *_MD_ARGS)
+        _quad(em, 1)
+        em.update_material_stage(1, 1)
+        _quad(em, 10, rank=1)
+        if flip_rank is not None:
+            em.partition_open(flip_rank)
+        em.update_parameter(9, (1,), ("materialState", 1), 1.0)
+        if flip_rank is not None:
+            em.partition_close()
+        em.analyze(steps=1)
+        assert _guards(em.lines()) == 0, type(em).__name__
+
+
+def test_a_rank_flip_never_heals_a_construction_on_every_rank() -> None:
+    em = TclEmitter()
+    em.model(ndm=2, ndf=2)
+    em.nDMaterial("ManzariDafalias", 1, *_MD_ARGS)
+    _quad(em, 1)
+    em.update_material_stage(1, 1)
+    _quad(em, 10)                      # every rank builds it
+    em.partition_open(0)
+    em.update_material_stage(1, 1)     # rank 0 sets it again; rank 1 not
+    em.partition_close()
+    em.analyze(steps=1)
+    assert _guards(em.lines()) == 1
+
+
 def test_no_solve_no_guard_and_a_flip_heals() -> None:
     for em in (TclEmitter(), PyEmitter()):
         _flip_then_build(em, solve=False)
@@ -424,16 +482,21 @@ def _env() -> "dict[str, str]":
 
 
 def _run_py_deck(tmp_path: Path, *, fork_module: bool) -> None:
-    """Run the guarded deck up to its first command and check the verdict
-    against the build the child bound: the guard is the question, not
-    the analysis after it."""
-    import json
-
     deck = tmp_path / "deck.py"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         _bridge(mode="auto").py(str(deck))
-    text = deck.read_text(encoding="utf-8")
+    run_guarded_head(deck.read_text(encoding="utf-8"), tmp_path,
+                     fork_module=fork_module)
+
+
+def run_guarded_head(text: str, tmp_path: Path, *, fork_module: bool) -> None:
+    """Run the guarded py deck ``text`` up to its first command and check
+    the verdict against the build the child bound: the guard is the
+    question, not the analysis after it.  The replay tests run it too."""
+    import json
+
+    deck = tmp_path / "deck.py"
     assert _STOCK_IMPORT in text and _PY_GUARD[0] in text
     import_line = _FORK_IMPORT if fork_module else _STOCK_IMPORT
     head, _, _rest = text.partition("ops.wipe()")
