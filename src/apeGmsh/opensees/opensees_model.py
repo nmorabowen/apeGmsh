@@ -2433,7 +2433,8 @@ class OpenSeesModel:
         refuse_live_requires(
             stamp, get_backend_info(),
             mpi_systems=tuple(
-                s for s in self._archived_systems() if is_mpi_system(s)))
+                s for s in self._archived_systems() if is_mpi_system(s)),
+            fork_pinned=self._target_mode == "fork")
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
 
@@ -2441,6 +2442,7 @@ class OpenSeesModel:
 def refuse_live_requires(
     stamp: "SolveStamp | None", backend: "BackendInfo", *,
     mpi_systems: "Sequence[str]" = (),
+    fork_pinned: bool = False,
 ) -> None:
     """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
 
@@ -2453,7 +2455,10 @@ def refuse_live_requires(
     from a newer bridge must not be solved on a guess. ``build('live')``
     hands in the flat replay's tokens
     (:meth:`OpenSeesModel.replay_requires`) and the MPI systems its chain
-    declares (``mpi_systems``), which the message names.
+    declares (``mpi_systems``), which the message names, and whether the
+    archive is fork-pinned (``fork_pinned``: ``/opensees@target_mode`` is
+    ``"fork"``, opensees 2.36.0), which the message names as the source of
+    ``"fork"``.
     """
     if stamp is None or not stamp.requires:
         return
@@ -2465,6 +2470,10 @@ def refuse_live_requires(
     known = [t for t in missing if t in REQUIRES_TOKENS]
     unknown = [t for t in missing if t not in REQUIRES_TOKENS]
     hints: list[str] = []
+    if fork_pinned and "fork" in known:
+        hints.append(
+            "'fork': /opensees@target_mode is 'fork' (the bridge was built "
+            "with OpenSeesTarget(mode='fork'), which asserts the fork).")
     if any(t in ("fork", "mpco") for t in known):
         hints.append(
             "Run it with the Ladruno fork on PYTHONPATH (or "
