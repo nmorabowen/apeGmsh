@@ -712,8 +712,8 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
 #: fork build 79e062367.  ``LogStrain``, ``LogStrain2D`` and
 #: ``InitDefGrad`` forward ``setParameter`` in the fork source too, but
 #: are not listed: over ManzariDafalias the first two end the process
-#: (``ManzariDafalias::getType`` exits; on 79e062367 and at ``FORK_PIN``
-#: 100eb9ae alike, fork defect #2499), and ``InitDefGrad`` takes only a
+#: (``ManzariDafalias::getType`` exits, on 79e062367 and at ``FORK_PIN``
+#: 100eb9ae alike: a fork defect), and ``InitDefGrad`` takes only a
 #: finite-strain inner (``tests/opensees/integration/
 #: test_md_stage_ladruno_at_pin.py`` pins all three outcomes).  The
 #: stage close refuses a multi-element plastic flip reached through any
