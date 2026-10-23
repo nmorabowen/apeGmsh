@@ -169,12 +169,18 @@ def test_h5_legacy_counters_read_the_ledger() -> None:
     e.embedded_node(3, 4)
     e.contact_surface(5, 6)
     e.contact_surface(7, 8)
+    # Opensees 2.35.0: a global equationConstraint line archives, so only
+    # the stage's is ledgered (stage rows: #2448).
     e.equationConstraint(1, 1, 1.0, [(2, 1, -1.0)])
+    e.stage_open("s0")
+    e.equationConstraint(1, 1, 1.0, [(2, 1, -1.0)])
+    e.stage_close()
     # K2b: embedded_rebar archives (opensees 2.29.0), so it counts nowhere.
     e.embedded_rebar(1, 2)
     assert (e._skipped_embed_ties, e._skipped_contacts,
             e._skipped_equation_constraints) == (1, 2, 1)
     assert "embedded_rebar" not in e.ledger_counts
+    assert len(e._equation_constraints) == 1  # the global line, stored
 
 
 def test_h5_helpers_refuse_a_row_of_the_wrong_kind() -> None:

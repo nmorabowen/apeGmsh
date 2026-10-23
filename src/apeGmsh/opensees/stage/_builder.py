@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
+    MATERIAL_STATE_FORK_FLOOR,
     MATERIAL_STATE_WRAPPERS,
     SWEPT_MATERIAL_CLASSES,
 )
@@ -200,8 +201,11 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
 #: ``LadrunoBrick20`` (std/uri) are measured on the live-fork lane at
 #: ``FORK_PIN`` 100eb9ae (run 39874892907,
 #: ``tests/opensees/integration/test_md_stage_ladruno_at_pin.py``); every
-#: one dropped the sweep on 79e062367, which predates the fork fix, so a
-#: build older than the pin gives the first-element-only answer for them.
+#: one dropped the sweep on 79e062367, which predates the fork fix.  They
+#: join from the emit side's fork-floor table
+#: (``stage_emit.MATERIAL_STATE_FORK_FLOOR``), so one table names them
+#: here and in the deck guard that stops a deck by name on a fork build
+#: older than the floor.
 #: ``SSPquad`` and ``SSPbrick`` have no bridge primitive yet
 #: (``element/solid.py`` defers them), so no spec carries those names
 #: today; they are listed so the primitive that adds them is not refused.
@@ -217,9 +221,7 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
 MATERIAL_STATE_ELEMENTS: frozenset[str] = frozenset({
     "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
     "BezierTri6", "BezierTet10", "LadrunoUP",
-    "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
-    "LadrunoBrick20",
-})
+}) | frozenset(MATERIAL_STATE_FORK_FLOOR)
 
 
 # ---------------------------------------------------------------------------

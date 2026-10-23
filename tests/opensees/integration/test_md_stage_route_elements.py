@@ -237,6 +237,17 @@ def test_the_stage_close_and_the_emit_side_list_the_same_classes() -> None:
     no_class = sorted(set(MATERIAL_STATE_ELEMENT_TOKENS) - set(tokens.values()))
     assert not no_class, f"emit-side tokens with no allowlisted class: {no_class}"
     assert tokens == _TOKEN_OF
+    # The fork-floor table: each class is allowlisted (it is where the
+    # allowlist takes them from), and the deck guard looks floors up by
+    # the element token, so each class must emit its own name.
+    from apeGmsh.opensees._internal.build.stage_emit import (
+        MATERIAL_STATE_FORK_FLOOR,
+    )
+
+    assert set(MATERIAL_STATE_FORK_FLOOR) <= MATERIAL_STATE_ELEMENTS
+    renamed = sorted(c for c in MATERIAL_STATE_FORK_FLOOR
+                     if _emitted_token(c) != c)
+    assert not renamed, f"fork-floor classes the deck guard would miss: {renamed}"
 
 
 def _tri6_fem() -> FEMStub:

@@ -23,8 +23,10 @@ updateMaterialStage -material <tag> -stage 1
 
 and `s.update_parameter("materialState", ...)` on their elements passes.
 
-On a fork build older than the pin, these classes still drop the update, and
-only the first element is initialised.
+These classes still drop the update on a fork build older than the pin. On
+such a build, a deck that sweeps them stops at its start and names the fork
+floor (the #2504 guard), so the wrong answer is never reached. The five
+classes come from that guard's table, `MATERIAL_STATE_FORK_FLOOR`.
 
 `LogStrain`, `LogStrain2D` and `InitDefGrad` over `ManzariDafalias` stay
 refused for a multi-element plastic flip:
