@@ -62,6 +62,8 @@ if TYPE_CHECKING:
         ConstraintRecord,
         InterfaceRecord,
     )
+    from apeGmsh.mesh.FEMData import FEMData
+
     from ..analysis.strategy import Ladder
     from ..apesees import apeSees
     from ..pattern.pattern import Plain
@@ -404,6 +406,89 @@ class ArchivedStageRoutes:
     parameter_records: "tuple[UpdateParameterRecord, ...]"
     activated_pgs: "tuple[str, ...]"
     removed_eids: "frozenset[int]"
+
+
+def stage_routes_due(
+    mat_stage_records: "Sequence[MaterialStageRecord]",
+    parameter_records: "Sequence[UpdateParameterRecord]",
+    activated_pgs: "Sequence[str]",
+) -> bool:
+    """Whether :func:`check_stage_routes` has anything to check in a stage:
+    a flip by either route, or an activation."""
+    return bool(mat_stage_records or activated_pgs or any(
+        p.name in STAGE_FLAG_PARAMETERS for p in parameter_records))
+
+
+def route_model(
+    primitives: "Iterable[Primitive]", *,
+    tag_of: "Callable[[Primitive], int | None]", fem: "FEMData",
+) -> RouteModel:
+    """The :class:`RouteModel` of a bridge's registered ``primitives``.
+
+    The stage close builds it from the primitives registered so far, and
+    the emit from the final ones (``stage_validate.validate_stage_routes``).
+    Every element spec counts, whichever stage activates it, and so does
+    every nDMaterial an element or another primitive depends on.
+    ``tag_of`` gives a primitive's tag, or ``None``.
+    """
+    from .._internal.build.pg_expand import (
+        expand_pg_to_elements,
+        expand_spec_to_elements,
+    )
+
+    prims = tuple(primitives)
+
+    def fanout_of(spec: Element) -> "Callable[[], Iterable[int]]":
+        return lambda: expand_spec_to_elements(fem, spec).eids
+
+    nd_class: dict[int, str] = {}
+    seen: set[int] = set()
+    frontier: list[Primitive] = list(prims)
+    while frontier:
+        prim = frontier.pop()
+        if id(prim) in seen:
+            continue
+        seen.add(id(prim))
+        frontier.extend(prim.dependencies())
+        if isinstance(prim, NDMaterial):
+            tag = tag_of(prim)
+            if tag is not None:
+                nd_class.setdefault(int(tag), type(prim).__name__)
+    specs: list[RouteSpec] = []
+    for spec in prims:
+        if not isinstance(spec, Element):
+            continue
+        nd_tags: set[int] = set()
+        blind: list[tuple[str, int | None]] = []
+        first_only: dict[int, set[str]] = {}
+        walked: set[int] = set()
+        todo: list[tuple[Primitive, tuple[str, ...]]] = [
+            (dep, ()) for dep in spec.dependencies()]
+        while todo:
+            dep, via = todo.pop()
+            if id(dep) in walked:
+                continue
+            walked.add(id(dep))
+            cls = type(dep).__name__
+            todo.extend((d, (*via, cls)) for d in dep.dependencies())
+            tag = tag_of(dep)
+            if tag is not None and isinstance(dep, NDMaterial):
+                nd_tags.add(int(tag))
+            if cls in TAG_BLIND_STAGE_PARAMETER:
+                blind.append((cls, None if tag is None else int(tag)))
+            if cls in FIRST_ELEMENT_ONLY_PLASTIC_INIT and tag is not None:
+                first_only.setdefault(int(tag), set()).update(via)
+        specs.append(RouteSpec(
+            cls=type(spec).__name__, pg=getattr(spec, "pg", None),
+            nd_tags=frozenset(nd_tags),
+            blind=tuple(blind),
+            first_only={t: frozenset(v) for t, v in first_only.items()},
+            fanout=fanout_of(spec),
+        ))
+    return RouteModel(
+        specs=tuple(specs), nd_class=nd_class,
+        expand_pg=lambda pg: expand_pg_to_elements(fem, pg).eids,
+    )
 
 
 def check_stage_routes(
@@ -1093,8 +1178,8 @@ class _StageBuilder:
         """The stage-flag route checks of :func:`check_stage_routes`, on
         this stage and the model registered so far."""
         records = self._update_parameter_records
-        if not (self._update_material_stage_records or self._activated_pgs
-                or any(p.name in STAGE_FLAG_PARAMETERS for p in records)):
+        if not stage_routes_due(self._update_material_stage_records,
+                                records, self._activated_pgs):
             return
         earlier = [
             flip for stage in self._bridge._stage_records
@@ -1111,72 +1196,11 @@ class _StageBuilder:
         )
 
     def _route_model(self) -> RouteModel:
-        """The model registered so far, as the route checks read it.
-
-        Every element spec registered so far counts, whichever stage
-        activates it, and so does every nDMaterial an element or another
-        registered primitive depends on.  Only a bridge whose
-        ``OpenSeesTarget`` pins ``mode="fork"`` is known to run the fork.
-        """
-        from .._internal.build.pg_expand import (
-            expand_pg_to_elements,
-            expand_spec_to_elements,
-        )
-
+        """The model registered so far, as the route checks read it
+        (:func:`route_model`)."""
         bridge = self._bridge
-        fem = bridge.fem
-
-        def fanout_of(spec: Element) -> "Callable[[], Iterable[int]]":
-            return lambda: expand_spec_to_elements(fem, spec).eids
-
-        nd_class: dict[int, str] = {}
-        seen: set[int] = set()
-        frontier: list[Primitive] = list(bridge._primitives)
-        while frontier:
-            prim = frontier.pop()
-            if id(prim) in seen:
-                continue
-            seen.add(id(prim))
-            frontier.extend(prim.dependencies())
-            if isinstance(prim, NDMaterial):
-                tag = bridge.tag_for(prim)
-                if tag is not None:
-                    nd_class.setdefault(int(tag), type(prim).__name__)
-        specs: list[RouteSpec] = []
-        for spec in bridge._primitives:
-            if not isinstance(spec, Element):
-                continue
-            nd_tags: set[int] = set()
-            blind: list[tuple[str, int | None]] = []
-            first_only: dict[int, set[str]] = {}
-            walked: set[int] = set()
-            todo: list[tuple[Primitive, tuple[str, ...]]] = [
-                (dep, ()) for dep in spec.dependencies()]
-            while todo:
-                dep, via = todo.pop()
-                if id(dep) in walked:
-                    continue
-                walked.add(id(dep))
-                cls = type(dep).__name__
-                todo.extend((d, (*via, cls)) for d in dep.dependencies())
-                tag = bridge.tag_for(dep)
-                if tag is not None and isinstance(dep, NDMaterial):
-                    nd_tags.add(int(tag))
-                if cls in TAG_BLIND_STAGE_PARAMETER:
-                    blind.append((cls, None if tag is None else int(tag)))
-                if cls in FIRST_ELEMENT_ONLY_PLASTIC_INIT and tag is not None:
-                    first_only.setdefault(int(tag), set()).update(via)
-            specs.append(RouteSpec(
-                cls=type(spec).__name__, pg=getattr(spec, "pg", None),
-                nd_tags=frozenset(nd_tags),
-                blind=tuple(blind),
-                first_only={t: frozenset(v) for t, v in first_only.items()},
-                fanout=fanout_of(spec),
-            ))
-        return RouteModel(
-            specs=tuple(specs), nd_class=nd_class,
-            expand_pg=lambda pg: expand_pg_to_elements(fem, pg).eids,
-        )
+        return route_model(
+            bridge._primitives, tag_of=bridge.tag_for, fem=bridge.fem)
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.

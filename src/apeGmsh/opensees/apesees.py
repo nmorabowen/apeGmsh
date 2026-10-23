@@ -131,7 +131,10 @@ from ._internal.build.interfaces import (
 from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
-from ._internal.build.stage_validate import validate_class_wide_stage_flags
+from ._internal.build.stage_validate import (
+    validate_class_wide_stage_flags,
+    validate_stage_routes,
+)
 from ._internal.build.transforms import emit_transform_specs
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
@@ -4986,6 +4989,9 @@ class BuiltModel:
             else FemToOpsTagMap.from_plan(()),
         )
         self._validate_material_stage_targets(element_owner_stage or {})
+        validate_stage_routes(
+            stage_records=self.stage_records, primitives=self.primitives,
+            tag_for=self.tag_for, fem=self.fem)
         validate_class_wide_stage_flags(
             stage_records=self.stage_records, primitives=self.primitives,
             tag_for=self.tag_for, fem=self.fem,
