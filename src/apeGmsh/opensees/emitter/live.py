@@ -247,12 +247,16 @@ def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
         return
     py_out, py_err = io.StringIO(), io.StringIO()
     files = ExitStack()
+    no_temp_file = False
     try:
         f_out = files.enter_context(tempfile.TemporaryFile())
         f_err = files.enter_context(tempfile.TemporaryFile())
     except OSError:
+        no_temp_file = True
+    if no_temp_file:
         # No temp file to capture into: run uncaptured (unreadable), so the
-        # caller judges the engine call itself, not this failure.
+        # caller judges the engine call itself, not this failure. Yielded
+        # outside the ``except`` so an engine error does not chain to it.
         files.close()
         os.close(fds[0])
         os.close(fds[1])
@@ -283,15 +287,21 @@ def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
 
 
 #: The line a Ladruno build prints when it knows a class but not one of its
-#: options, e.g. ``WARNING LadrunoIMKBeam (2D) -- unknown option '-shear'``.
-_UNKNOWN_OPTION = re.compile(r"unknown option '([^']+)'")
+#: options. At ladruno-v20261023 (bdb69cea5) these read
+#: ``WARNING LadrunoIMKBeam (2D) -- unknown option '-shear'``,
+#: ``WARNING LadrunoDispBeamColumn2d: unknown option '-foo'`` (also ``3d``,
+#: and ``LadrunoForceBeamColumn2d`` / ``3d``), and
+#: ``ERROR LadrunoUP 5 -- unknown flag '-foo' (unknown flags are fatal ...)``.
+_UNKNOWN_OPTION = re.compile(r"unknown (?:option|flag) '([^']+)'")
 
 
 def _rejected_option(ele_type: str, text: str) -> "tuple[str, str] | None":
     """``(option, line)`` when the build printed that ``ele_type`` rejects an
-    option; ``None`` otherwise (no such line, or nothing readable)."""
+    option; ``None`` otherwise (no such line, or nothing readable). The
+    class may print its name with a ``2d`` / ``3d`` suffix
+    (``LadrunoDispBeamColumn2d``); any other suffix is another class."""
     for line in text.splitlines():
-        if re.search(rf"\b{re.escape(ele_type)}\b", line):
+        if re.search(rf"\b{re.escape(ele_type)}(?:2d|3d)?\b", line):
             m = _UNKNOWN_OPTION.search(line)
             if m:
                 return m.group(1), line.strip()

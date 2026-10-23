@@ -1,13 +1,19 @@
 ### FIXED — a live fork element whose option the build rejects says so, not "requires the Ladruno fork"; the post-pin fork tests run unconditionally (#2498, #2503)
 
 A Ladruno build can know an element class but not one of its options. It
-prints `unknown option '-shear'` and fails the call. The live emitter's
-fork-element gate used to answer with "element X requires the Ladruno fork
-build", which is wrong for that build. The gate now reads the build's line,
-from `sys.stderr` and from file descriptor 2. It raises "option -shear is not
-supported by this build", quoting that line, and the user still sees the
-line itself. An unknown class, or output this process cannot read, still
-gets the fork-required message.
+prints a line naming the option and fails the call. At
+`ladruno-v20261023` those lines are `unknown option '-shear'`
+(`LadrunoIMKBeam`, and `LadrunoDispBeamColumn2d` / `3d` and
+`LadrunoForceBeamColumn2d` / `3d`) and `unknown flag '-x'` (`LadrunoUP`).
+The live emitter's fork-element gate used to answer "element X requires the
+Ladruno fork build", which is wrong for that build.
+
+The gate now captures what the engine prints during the call: `sys.stdout`
+and `sys.stderr`, and file descriptors 1 and 2. When the captured text holds
+such a line for the element's class, the gate raises "option -shear is not
+supported by this build" and quotes the line. The captured text is echoed
+back, so the user still sees everything the build printed. An unknown class,
+or output this process cannot read, still gets the fork-required message.
 
 The gate verifies each element type once per option set, so a second
 element that adds an option the first one lacked is checked again.
