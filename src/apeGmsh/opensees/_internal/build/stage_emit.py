@@ -839,33 +839,20 @@ class ForkBuildAllowlist(NamedTuple):
 ForkBuildGuard: TypeAlias = "ForkBuildFloor | ForkBuildAllowlist"
 
 
-def _md_static_reset_message() -> str:
-    message = (
-        "apeGmsh: this deck builds an element or material after a stage "
-        "flipped the class-wide stage flag ManzariDafalias::mElastFlag of "
-        "ManzariDafalias and LadrunoSANISAND, and solves before flipping "
-        "it again. A Ladruno fork build without fork commit "
-        f"{MD_STATIC_FIX_COMMIT[:9]} resets that flag in the material "
-        "constructor, so every one of these materials would go back to "
-        "elastic with no warning (apeGmsh issues #2444, #2516). The "
-        "running OpenSees is a fork build whose ladrunoBuild sha is not "
-        "one measured to carry the fix. Rebuild the Ladruno fork at "
-        "FORK_PIN, flip the whole group again after the activation, or "
-        "activate these elements before the flip."
-    )
-    _refuse_tcl_syntax("MD_STATIC_RESET_GUARD", message)
-    return message
-
-
-def _known_fixed_builds() -> tuple[str, ...]:
-    builds = tuple(sorted(
-        sha for sha, fixed in FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed))
-    for sha in builds:
-        if len(sha) != 40 or set(sha) - set("0123456789abcdef"):
-            raise BridgeError(
-                f"FORK_BUILD_HAS_MD_STATIC_FIX: {sha!r} is not a 40-hex "
-                "ladrunoBuild sha.")
-    return builds
+#: The error :data:`MD_STATIC_RESET_GUARD` stops a deck with.
+MD_STATIC_RESET_MESSAGE = (
+    "apeGmsh: this deck builds an element or material after a stage "
+    "flipped the class-wide stage flag ManzariDafalias::mElastFlag of "
+    "ManzariDafalias and LadrunoSANISAND, and solves before flipping "
+    "it again. A Ladruno fork build without fork commit "
+    f"{MD_STATIC_FIX_COMMIT[:9]} resets that flag in the material "
+    "constructor, so every one of these materials would go back to "
+    "elastic with no warning (apeGmsh issues #2444, #2516). The "
+    "running OpenSees is a fork build whose ladrunoBuild sha is not "
+    "one measured to carry the fix. Rebuild the Ladruno fork at "
+    "FORK_PIN, flip the whole group again after the activation, or "
+    "activate these elements before the flip."
+)
 
 
 #: The guard a deck whose solve could see the ManzariDafalias constructor
@@ -874,7 +861,9 @@ def _known_fixed_builds() -> tuple[str, ...]:
 #: registers one, this becomes a :class:`ForkBuildFloor` on that command
 #: (with its own message) and the sha table goes.
 MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
-    builds=_known_fixed_builds(), message=_md_static_reset_message())
+    builds=tuple(sorted(
+        sha for sha, fixed in FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed)),
+    message=MD_STATIC_RESET_MESSAGE)
 
 
 def fork_guard_lines(
@@ -896,6 +885,12 @@ def fork_guard_lines(
         return [f"if not hasattr(ops, {guard.probe!r}):",
                 f"    raise SystemExit({message!r})"]
     if isinstance(guard, ForkBuildAllowlist):
+        _refuse_tcl_syntax("ForkBuildAllowlist", guard.message)
+        for sha in guard.builds:
+            if len(sha) != 40 or set(sha) - set("0123456789abcdef"):
+                raise BridgeError(
+                    f"ForkBuildAllowlist: {sha!r} is not a 40-hex "
+                    "ladrunoBuild sha.")
         if dialect == "tcl":
             return ['if {[info commands ladrunoBuild] ne ""} {',
                     "    if {[catch {ladrunoBuild} _apesees_build] || "

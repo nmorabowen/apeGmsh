@@ -176,6 +176,16 @@ def test_the_message_names_the_flag_and_the_fix() -> None:
         assert name in _MESSAGE, name
 
 
+def test_a_malformed_allowlist_raises_at_emit() -> None:
+    bad_sha = stage_emit.ForkBuildAllowlist(builds=("bdb69cea5",),
+                                           message="m")
+    bad_msg = stage_emit.ForkBuildAllowlist(
+        builds=MD_STATIC_RESET_GUARD.builds, message="m [x]")
+    for guard, match in ((bad_sha, "40-hex"), (bad_msg, "Tcl syntax")):
+        with pytest.raises(BridgeError, match=match):
+            fork_guard_lines(guard, "py")
+
+
 def test_an_unknown_guard_kind_raises() -> None:
     with pytest.raises(BridgeError, match="not a fork build guard"):
         fork_guard_lines(object(), "tcl")  # type: ignore[arg-type]
