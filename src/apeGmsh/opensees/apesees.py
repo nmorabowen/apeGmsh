@@ -56,7 +56,6 @@ from ._internal.build.ndf import (
     emit_owned_nodes_with_inferred_ndf,
     validate_node_ndf_element_compat,
     infer_node_ndf,
-    guard_membrane_interior,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
@@ -129,7 +128,7 @@ from ._internal.build.interfaces import (
     _register_interface_phantoms,
     _validate_interface_records,
 )
-from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
+from ._internal.build.membrane_load_guard import guard_membrane_interior, refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
 from ._internal.build.stage_validate import validate_class_wide_stage_flags
@@ -1872,9 +1871,6 @@ class BuiltModel:
                 r for st in self.stage_records for r in st.support_records
             ),
         )
-        # LadrunoMembrane(pg=...) interior nodes: never emitted, never targeted.
-        membrane_skip = guard_membrane_interior(
-            self, elements, archival=_emitter_is_archival)
 
         # G4 — a STATIC u-p deck whose pressure DOFs are all free is
         # singular in p and factorises through round-off with rc = 0 and an
@@ -2066,7 +2062,6 @@ class BuiltModel:
                 transforms=transforms,
                 elements=elements,
                 inferred_ndf=effective_ndf,
-                membrane_skip=membrane_skip,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -2082,7 +2077,6 @@ class BuiltModel:
                 transforms=transforms,
                 elements=elements,
                 inferred_ndf=effective_ndf,
-                membrane_skip=membrane_skip,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -2116,7 +2110,6 @@ class BuiltModel:
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
-        membrane_skip: "frozenset[int]",
     ) -> None:
         """Pre-ADR 0027 flat emit path.
 
@@ -2132,6 +2125,7 @@ class BuiltModel:
         to the non-staged path.
         """
         staged = bool(self.stage_records)
+        membrane_skip = guard_membrane_interior(self, elements, archival=emitter.caps.archival)
 
         # Phase SSI-2.B: compute element / node ownership maps when
         # stages are declared.  Stage-bound topology (nodes + elements
@@ -3035,7 +3029,6 @@ class BuiltModel:
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
-        membrane_skip: "frozenset[int]",
     ) -> None:
         """Per-rank fan-out implementing ADR 0027 (cross-partition MP-constraint
         emission policy).
@@ -3087,6 +3080,7 @@ class BuiltModel:
                 "or run in-process."
             )
         staged = bool(self.stage_records)
+        membrane_skip = guard_membrane_interior(self, elements, archival=emitter.caps.archival)
 
         # g.reinforce ties and g.rebar auto-emitted bars are routed per rank
         # (see _plan_partitioned_reinforcement / step 7c-ter).
@@ -3768,14 +3762,12 @@ class BuiltModel:
                 # pass below (INV-2).
                 _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
                 # Skipped: stage-bound nodes (Phase SSI-2.C, they emit
-                # inside their stage's block) and nodes this rank's
-                # hoisted gated block already declared (ADR 0099 S5,
-                # step 1b).  S2 (ADR 0033): per-node ndf via broker.
-                # The helper resolves the rank's ids in one vectorised
-                # lookup and emits them in ascending id order.
-                _exclude: "list[Any]" = [s for s in (_hoisted, membrane_skip) if s]
-                if staged and node_owner_stage:
-                    _exclude.append(node_owner_stage)
+                # inside their stage's block), nodes this rank's hoisted
+                # gated block already declared (ADR 0099 S5, step 1b) and
+                # pg= membrane interior nodes.  S2 (ADR 0033): per-node ndf
+                # via broker.  The helper resolves the rank's ids in one
+                # vectorised lookup and emits them in ascending id order.
+                _exclude: "list[Any]" = [s for s in (_hoisted, node_owner_stage, membrane_skip) if s]
                 emit_owned_nodes_with_inferred_ndf(
                     emitter, inferred_ndf, part.node_ids,
                     node_idx_lookup, self.fem.nodes.coords, self.ndf,

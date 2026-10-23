@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from ...emitter.base import Emitter
     from .ownership import SortedIntToInt
     from apeGmsh.mesh.FEMData import FEMData
-    from ...apesees import BuiltModel
 
 
 def validate_node_ndf_element_compat(
@@ -664,69 +663,6 @@ def validate_membrane_interior_untargeted(
                 what, hit,
                 "Record the panel's boundary / frame nodes, or the "
                 "membrane's own element responses.")
-
-
-def guard_membrane_interior(
-    bm: "BuiltModel", elements: "Sequence[Element]", *, archival: bool,
-) -> "frozenset[int]":
-    """The nodes :func:`membrane_interior_nodes` keeps out of ``bm``'s deck,
-    after checking that nothing targets one.
-
-    Warns on a free hole node (:func:`warn_membrane_hole_nodes_free`,
-    skipped for an ``archival`` emit, which never solves), then refuses
-    every record that targets an interior node
-    (:func:`validate_membrane_interior_untargeted`): the global and staged
-    ``fix`` / support / ``mass`` records, every ``Plain``'s loads, sps and
-    ``from_model`` cases, the broker constraints and interfaces, the
-    staged constraints, ``mass_from_model`` and the recorders' node lists.
-    """
-    from ...pattern.pattern import Plain
-    from ..types import Recorder
-    from .recorders import recorder_node_targets
-
-    fem = bm.fem
-    skip = membrane_interior_nodes(fem, elements)
-    if not archival:
-        warn_membrane_hole_nodes_free(fem, elements)
-    if not skip:
-        return skip
-    stages = bm.stage_records
-    # A stage-claimed Plain is in bm.primitives too: dedup by id.
-    plains_by_id: dict[int, Plain] = {
-        id(p): p for p in bm.primitives if isinstance(p, Plain)}
-    for st in stages:
-        for p in st.pattern_specs:
-            plains_by_id[id(p)] = p
-    plains = list(plains_by_id.values())
-    recorders = (
-        *(p for p in bm.primitives if isinstance(p, Recorder)),
-        *(r for st in stages for r in st.recorder_specs),
-    )
-    validate_membrane_interior_untargeted(
-        fem, skip,
-        fix_records=(
-            *bm.fix_records,
-            *(r for st in stages for r in st.fix_records),
-            *(r for st in stages for r in st.support_records),
-        ),
-        mass_records=(
-            *bm.mass_records,
-            *(r for st in stages for r in st.mass_records),
-        ),
-        load_records=tuple(ld for p in plains for ld in p.loads),
-        sp_records=tuple(sp for p in plains for sp in p.sps),
-        constraint_records=(
-            *fem.nodes.constraints,
-            *fem.elements.constraints,
-            *fem.elements.interfaces,
-            *(r for st in stages for r in st.stage_constraint_records),
-        ),
-        from_model_cases=tuple(c for p in plains for c in p.from_model_cases),
-        mass_from_model=bm.mass_from_model,
-        node_targets=tuple(
-            t for r in recorders for t in recorder_node_targets(r, fem)),
-    )
-    return skip
 
 
 def validate_adaptive_element_endpoints(
