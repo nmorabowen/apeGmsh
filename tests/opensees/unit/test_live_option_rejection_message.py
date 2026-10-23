@@ -13,7 +13,9 @@ These tests pin it with stub engines, without importing openseespy:
 * the patterns do not cross (``-shearHinge`` is not ``-shear``);
 * a post-pin skip stays a skip in the fork lane only for a warrant row that
   names the feature in ``post_pin``, and its member never turns green;
-* every gated test asks for its features by name (AST).
+* every gated test asks for its features by name (AST);
+* every gate expires with the ``FORK_PIN`` sha it predates: a bumped pin
+  fails the lock, naming each stale gate.
 """
 from __future__ import annotations
 
@@ -189,6 +191,29 @@ def test_a_post_pin_skip_the_row_does_not_name_fails_the_lane(
         apply_warrant_rule(_item("live", "ladruno_fork"), report)
         assert report.failed, (lane, nodeid, why)
         assert "fails the lane" in str(report.longrepr)
+
+
+def test_every_gate_predates_the_current_fork_pin() -> None:
+    """The gates expire with their pin (#2498 review F1). Once ``FORK_PIN``
+    moves, the bump slice re-probes each gate on the new build and either
+    re-stamps its ``predates`` (still absent) or removes it (now present)."""
+    pin = wr.fork_pin_sha((ROOT / "FORK_PIN").read_text(encoding="utf-8"))
+    stale = wr.stale_gates(pin)
+    assert not stale, (
+        "FORK_PIN moved; re-justify or remove these post-pin gates "
+        "(tests/opensees/warrant_rows.py POST_PIN_FEATURES): " + "; ".join(stale)
+    )
+
+
+def test_a_bumped_pin_names_every_stale_gate() -> None:
+    bumped = "tag=x\nsha=" + "f" * 40 + "\nrepo=r\nasset=a\n"
+    stale = wr.stale_gates(wr.fork_pin_sha(bumped))
+    assert len(stale) == len(wr.POST_PIN_FEATURES)
+    for name in wr.POST_PIN_FEATURES:
+        assert any(repr(name) in s for s in stale), name
+    for bad in ("tag=x\n", "sha=a\nsha=b\n", " sha=a\n"):
+        with pytest.raises(ValueError, match="exactly one sha="):
+            wr.fork_pin_sha(bad)
 
 
 def test_post_pin_names_are_registered() -> None:

@@ -226,12 +226,17 @@ class PostPinFeature:
 
     ``declare`` issues the one-line probe declaration on a freshly wiped
     domain; ``absent`` matches the line the fork prints when it lacks the
-    feature. Only that line is evidence of absence.
+    feature. Only that line is evidence of absence. ``predates`` is the
+    ``FORK_PIN`` sha the gate was justified against: once the pin moves,
+    ``test_every_gate_predates_the_current_fork_pin`` fails until the bump
+    re-justifies (re-stamps) or removes the gate, so no gate outlives its
+    pin unexamined.
     """
 
     name: str
     declare: Callable[[Any], None]
     absent: "re.Pattern[str]"
+    predates: str
 
 
 def _two_nodes_2d(ops: Any) -> None:
@@ -263,6 +268,9 @@ def _force_beam_column(ops: Any) -> None:
     ops.element("LadrunoForceBeamColumn", 1, 1, 2, 1, 1)
 
 
+#: ``FORK_PIN`` ``sha`` of ladruno-v20261017, the build these gates predate.
+_PIN_20261017 = "100eb9ae11a92bbcf623a44181a39304a697dcbb"
+
 #: Every post-pin feature a test may require, by name. The patterns are the
 #: lines ladruno-v20261017 printed on the live-fork lane (run 39773542334).
 POST_PIN_FEATURES: dict[str, PostPinFeature] = {
@@ -270,21 +278,44 @@ POST_PIN_FEATURES: dict[str, PostPinFeature] = {
         PostPinFeature(
             "LadrunoIMKBeam -shear", _imk_with("-shear", 8.0e10, 0.03),
             re.compile(r"LadrunoIMKBeam.*unknown option '-shear'"),
+            predates=_PIN_20261017,
         ),
         PostPinFeature(
             "LadrunoIMKBeam -shearHinge", _imk_with("-shearHinge", 1),
             re.compile(r"LadrunoIMKBeam.*unknown option '-shearHinge'"),
+            predates=_PIN_20261017,
         ),
         PostPinFeature(
             "LadrunoCohesiveHinge -implex", _cohesive_hinge_implex,
             re.compile(r"LadrunoCohesiveHinge.*unknown option '-implex'"),
+            predates=_PIN_20261017,
         ),
         PostPinFeature(
             "LadrunoForceBeamColumn", _force_beam_column,
             re.compile(r"element type LadrunoForceBeamColumn is unknown"),
+            predates=_PIN_20261017,
         ),
     )
 }
+
+
+def fork_pin_sha(text: str) -> str:
+    """The ``sha`` of a ``FORK_PIN`` file's ``text``, read as the live-fork
+    lane reads it (``grep -E '^sha=' FORK_PIN | cut -d= -f2-``): the rest of
+    the one line that starts with ``sha=``. None, or several, raises."""
+    shas = [line.split("=", 1)[1] for line in text.splitlines()
+            if line.startswith("sha=")]
+    if len(shas) != 1:
+        raise ValueError(f"FORK_PIN must hold exactly one sha= line, found {len(shas)}")
+    return shas[0]
+
+
+def stale_gates(pin_sha: str) -> list[str]:
+    """Each post-pin gate whose ``predates`` is not ``pin_sha``, described."""
+    return [
+        f"{f.name!r} predates {f.predates[:12]}, FORK_PIN is now {pin_sha[:12]}"
+        for f in POST_PIN_FEATURES.values() if f.predates != pin_sha
+    ]
 
 
 @contextlib.contextmanager
