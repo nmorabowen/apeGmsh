@@ -412,6 +412,7 @@ export function loadModel(
     provenance: provenance ? provenanceEntries(provenance) : [],
     provenanceOrigin: provenance?.originColumn ?? false,
     definitions: model.opensees ? model.opensees.definitions : null,
+    ...(model.loads ? { neutralLoads: model.loads } : {}),
     sequence: model.sequence,
     lineage: results.lineage,
     stageElements: results.stageElements,

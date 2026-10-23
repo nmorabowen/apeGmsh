@@ -8,13 +8,13 @@
 // returns and fails on a TypedArray, an ArrayBuffer, a Map or a Set.
 
 import type { Field } from "../chain/resolve.ts";
-import type { Definitions, OpsFamily, Param, ProgramDecls, SequenceZone } from "../model/types.ts";
+import type { Definitions, NeutralLoads, OpsFamily, Param, ProgramDecls, SequenceZone } from "../model/types.ts";
 
 // Panels import their chain types from here, never from src/chain (the
 // panel allow-list: state/store, state/selectors, state/types, ui/).
 export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 // The model-definition data, as the reader read it (plain data: no typed array).
-export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, OpsFamily, ProgramDecls, SequenceZone, StageDef, Table } from "../model/types.ts";
+export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, NeutralLoads, OpsFamily, ProgramDecls, SequenceZone, StageDef, Table } from "../model/types.ts";
 
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
@@ -568,6 +568,23 @@ export interface LineDiagramState {
   notice: string | null;
 }
 
+/** 3-D structural loading and prescribed-SP visualization state. */
+export interface LoadsState {
+  readonly on: boolean;
+  /** User glyph scale multiplier (default 1, > 0). */
+  readonly scale: number;
+  readonly showNodalForces: boolean;
+  readonly showNodalMoments: boolean;
+  readonly showElementLoads: boolean;
+  readonly showSp: boolean;
+  /** Include support-reaction HOLD patterns (`@role = "support_reaction"` and `sp_holds`). */
+  readonly includeSupportReactions: boolean;
+  /** Scale load magnitudes by the pattern's timeSeries factor λ(t) on a results step (default false: nominal). */
+  readonly scaleBySeries: boolean;
+  /** null = all active patterns/cases for current phase/stage; string[] = explicit pattern h5 paths or `neutral:<case>` keys */
+  readonly selectedPatterns: readonly string[] | null;
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
@@ -717,6 +734,8 @@ export interface State {
   view: { frameSeq: number };
   /** the model's definition data (decls, decl_params, analysis, series, patterns, recorders, stages); null with no model or no /opensees */
   definitions: Definitions | null;
+  /** the model's neutral `/loads/{nodal,element,sp}/{case}` tables; null when the file has none */
+  neutralLoads: NeutralLoads | null;
   /** the model's root /sequence zone; `absent` when the file has none (or no model is loaded) */
   sequence: SequenceZone;
   /**
@@ -747,6 +766,8 @@ export interface State {
   clip: ClipState;
   /** 1-D beam line diagram state */
   lineDiagram: LineDiagramState;
+  /** 3-D structural loading and prescribed-SP visualization state */
+  loads: LoadsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
   /** Search window query builder and text filter */
@@ -766,6 +787,8 @@ export interface ModelLoad {
   provenanceOrigin: boolean;
   /** the opensees zone's definition data; null when the file has no /opensees */
   definitions: Definitions | null;
+  /** neutral `/loads/{nodal,element,sp}/{case}` tables; null when the file has none */
+  neutralLoads?: NeutralLoads | null;
   sequence: SequenceZone;
   lineage: Lineage | null;
   stageElements: StageElements;
@@ -887,6 +910,20 @@ export type Event =
   | { type: "setLineDiagramRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "lineDiagramStepRange"; key: string; min: number | null; max: number | null; notice?: string | null }
   | { type: "lineDiagramScan"; scan: ContourScan }
+  /** 3-D structural loading and prescribed-SP visualization controls */
+  | {
+      type: "setLoads";
+      on?: boolean;
+      scale?: number;
+      showNodalForces?: boolean;
+      showNodalMoments?: boolean;
+      showElementLoads?: boolean;
+      showSp?: boolean;
+      includeSupportReactions?: boolean;
+      scaleBySeries?: boolean;
+      selectedPatterns?: readonly string[] | null;
+      togglePattern?: string;
+    }
   /** Spotlight (`Ctrl+K`): open, close, navigate drill-down modes, edit query or filter chips */
   | { type: "openSpotlight"; mode?: SpotlightMode; query?: string }
   | { type: "closeSpotlight" }
