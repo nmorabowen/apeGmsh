@@ -330,6 +330,18 @@ def test_wip_gated_approved_green_does_not_count():
     assert "wip-over-cap" not in _kinds([_wip_pr(n) for n in range(8)] + [gated])
 
 
+def test_wip_draft_does_not_count_and_ready_does():
+    from scripts import program_probe as pp  # noqa: F401
+    base = [_wip_pr(n) for n in range(8)]
+    draft = _wip_pr(98)
+    draft["isDraft"] = True
+    ready = _wip_pr(99)
+    counted, excluded = pp.wip_count(base + [draft])
+    assert len(counted) == 8 and [p["number"] for p, _ in excluded] == [98]
+    assert "wip-over-cap" not in _kinds(base + [draft])
+    assert "wip-over-cap" in _kinds(base + [ready])
+
+
 def _hist(n, created, closed=None, gate=False):
     return {"number": n, "title": f"h{n}", "createdAt": _iso(created),
             "closedAt": _iso(closed) if closed is not None else None, "mergedAt": None,
