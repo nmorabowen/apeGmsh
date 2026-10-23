@@ -10,7 +10,10 @@ and ``-pressure`` is read on two of its paths only:
   (``rho`` from ``-rho``, else from the ``-mat`` material), and falls back
   to ``-pressure`` only when it has not;
 * ``-beamUniform`` loads the membrane from its own ``w`` values and never
-  reads ``-pressure``.
+  reads ``-pressure``.  ``p.surface_load(..., pressure=q)`` (the
+  ``membranePressure`` record) emits exactly that, ``-beamUniform 0 q 0``:
+  the pattern carries its own magnitude, so it never activates the
+  element's ``pressure=`` either.
 
 A membrane that sets ``pressure=`` with no pattern reaching it on one of
 those paths applies none of it: with no other load, ``analyze`` returns 0
@@ -68,7 +71,8 @@ __all__ = [
 
 #: Every element-load type ``Plain`` records today; an unknown one fails
 #: closed below, since it must be classed before it can count.
-_KNOWN_TYPES: frozenset[str] = frozenset({"surfaceLoad", "selfWeight", "beamUniform"})
+_KNOWN_TYPES: frozenset[str] = frozenset(
+    {"surfaceLoad", "selfWeight", "beamUniform", "membranePressure"})
 
 
 class InertMembranePressureError(BridgeError):
@@ -118,7 +122,8 @@ def _reads_pressure(
     load_type: str, vector: tuple[float, ...], m: LadrunoMembrane,
 ) -> bool:
     """True iff a ``load_type`` load with ``vector`` reaches ``m``'s
-    ``-pressure`` (the paths in the module docstring)."""
+    ``-pressure`` (the paths in the module docstring); ``membranePressure``
+    and ``beamUniform`` never do."""
     if load_type == "surfaceLoad":
         return True
     if load_type == "selfWeight":
@@ -210,12 +215,15 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
     raise InertMembranePressureError(
         f"LadrunoMembrane({where}) sets pressure={membrane.pressure!r}, but no "
         "Plain pattern activates it, so it applies no load: the fork reads "
-        "-pressure only inside LadrunoMembrane::addLoad, on a surface_load, or "
+        "-pressure only inside LadrunoMembrane::addLoad, on a surface_load "
+        "without pressure=, or "
         "on a nonzero self_weight when the membrane has no rho x thickness; "
-        "beam_uniform never reads it. Target the membrane from a pattern: "
+        "beam_uniform and surface_load(pressure=...) never read it. Target "
+        "the membrane from a pattern: "
         "`with ops.pattern.Plain(series=...) as p: "
         f"p.surface_load({target})`, or drop pressure= if the model is modal "
-        "or stiffness only. A stage's s.pattern(...) counts too; label= does "
+        "or stiffness only, or when every pattern gives its own magnitude "
+        "with surface_load(..., pressure=q). A stage's s.pattern(...) counts too; label= does "
         f"not, since it resolves to mesh cells and a membrane has none.{more}"
     )
 
