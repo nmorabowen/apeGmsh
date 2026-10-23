@@ -238,6 +238,14 @@ CORPUS: tuple[Model, ...] = (
                 # #2416: the equation-route ties (equationConstraint lines).
                 "tie_equation", "distributing_equation", "embedded_equation")
       for p in _B),
+    # #2448: the same equation-route ties claimed by a stage, whose block
+    # stores their lines (opensees 2.37.0); the last row mixes them with a
+    # stage equalDOF over two stages, so the stage merge order is seen.
+    *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge", stages=s,
+         partitioned=p)
+      for s in ("tie_equation", "distributing_equation", "embedded_equation",
+                "tie_equation,rot_equal_dof;rotz_distributing")
+      for p in _B),
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before
     # the analyze of the stage that adds the upper quad, then the user's 1.

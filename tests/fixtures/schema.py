@@ -10,8 +10,8 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.36.0"  # #2375 (a pinned OpenSeesTarget.mode is /opensees@target_mode)
-OPENSEES_PRIOR_MINOR = "2.35.0"  # #2416 (global equationConstraint lines are /opensees/constraints/equationConstraint rows)
+OPENSEES_CURRENT     = "2.37.0"  # #2448 (a stage's equationConstraint lines are rows of its stage block)
+OPENSEES_PRIOR_MINOR = "2.36.0"  # #2375 (a pinned OpenSeesTarget.mode is /opensees@target_mode)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_PARAM_TAGS_FROM = "2.27.0"  # the minor whose archives store every parameter tag (K1-8 #1465); fixed history
 OPENSEES_EMBEDDED_REBAR_FROM = "2.29.0"  # the minor whose archives store every reinforce tie (K2b #1795); fixed history
@@ -21,6 +21,8 @@ OPENSEES_LARGE_ARRAY_DATASETS_FROM = "2.34.0"  # the minor whose oversized param
 OPENSEES_EQUATION_CONSTRAINT_FROM = "2.35.0"  # the minor whose archives store every global equationConstraint line (K #2447); fixed history
 OPENSEES_BEFORE_EQUATION_CONSTRAINT = "2.34.0"  # the minor just below it, which stores none (K #2447); fixed history
 OPENSEES_TARGET_MODE_FROM = "2.36.0"  # the minor whose /opensees@target_mode keeps a pinned target (K #2375); fixed history
+OPENSEES_STAGE_EQUATION_CONSTRAINT_FROM = "2.37.0"  # the minor whose stage blocks store their equationConstraint lines (K #2448); fixed history
+OPENSEES_BEFORE_STAGE_EQUATION_CONSTRAINT = "2.36.0"  # the minor just below it, whose stage blocks store none (K #2448); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
 NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)

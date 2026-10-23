@@ -744,16 +744,254 @@ def _staged_equation_tie_archive(tmp_path: Path) -> Path:
     return path
 
 
-def test_a_stage_claimed_equation_tie_still_refuses(tmp_path):
-    # The interim scope (#2447): global lines only. A stage block stores no
-    # equationConstraint row yet (#2448), so the tie refuses by name.
-    from apeGmsh.opensees._internal.build.errors import BridgeError
-
+def test_a_stage_claimed_equation_tie_replays_its_lines(tmp_path):
+    # Opensees 2.37.0 (#2448): the stage block stores the tie's lines, so
+    # the replay writes them inside the stage, where the bridge did.
     path = _staged_equation_tie_archive(tmp_path)
     with h5py.File(path, "r") as f:
         assert "equationConstraint" not in f["opensees"].get(
             "constraints", {})
+        cons = f["opensees/stages/stage_000/constraints"]
+        assert len(cons["equationConstraint/cnode"]) == 3
+        assert len(cons["equationConstraint_emit_index"]) == 3
+    deck = _replay(path)
+    assert sum(ln.startswith("equationConstraint ")
+               for ln in deck.splitlines()) == 3
+
+
+# ---------------------------------------------------------------------------
+# Stage-claimed equation-route ties (#2448, opensees 2.37.0): each stage
+# block stores its equationConstraint lines with their emit index, and the
+# replay writes them in the stage's own position
+# ---------------------------------------------------------------------------
+
+
+#: A stage claim of each kind: ``(claim method, stream, named record)``.
+#: The mixed corpus row ties node 4 once per DOF (the tie on 1-3, the
+#: equalDOF on 4-5, the distributing tie on 6), so its decks solve.
+_STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
+    "tie_equation": ("tie", "surface_constraints", InterpolationRecord(
+        kind="tie", name="st_tie", slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.25, 0.5, 0.25]), dofs=[1, 2, 3],
+        enforce="equation")),
+    "distributing_equation": ("distributing", "surface_constraints",
+                              InterpolationRecord(
+        kind="distributing", name="st_dist", slave_node=4,
+        master_nodes=[1, 2, 3], weights=np.array([0.25, 0.5, 0.25]),
+        dofs=[1, 2], enforce="equation")),
+    "embedded_equation": ("embedded", "surface_constraints",
+                          InterpolationRecord(
+        kind="embedded", name="st_emb", slave_node=4,
+        master_nodes=[1, 2, 3], weights=np.array([0.25, 0.5, 0.25]),
+        dofs=[1, 2, 3], enforce="equation")),
+    "rot_equal_dof": ("equal_dof", "node_constraints", NodePairRecord(
+        kind="equal_dof", name="st_rot", master_node=2, slave_node=4,
+        dofs=[4, 5])),
+    "rotz_distributing": ("distributing", "surface_constraints",
+                          InterpolationRecord(
+        kind="distributing", name="st_rz", slave_node=4,
+        master_nodes=[1, 2, 3], weights=np.array([0.25, 0.5, 0.25]),
+        dofs=[6], enforce="equation")),
+}
+
+
+def _staged_mp_bridge(stages: str = "tie_equation",
+                      partitioned: bool = False) -> apeSees:
+    """The bridge on :func:`_fem` whose stages claim the
+    :data:`_STAGE_CLAIMS` kinds named by ``stages``: stages split on
+    ``;``, the kinds of one stage on ``,``. Each stage declares the
+    EQ-capable Lagrange handler. The R1b oracle's stage corpus rows
+    (#2448)."""
+    from tests.opensees.h5.test_h5_stages_writer import _chain
+
+    plan = [s.split(",") for s in stages.split(";")]
+    streams: "dict[str, list[Any]]" = {}
+    for kinds in plan:
+        for k in kinds:
+            _claim, stream, rec = _STAGE_CLAIMS[k]
+            streams.setdefault(stream, []).append(rec)
+    ops = _bridge(_fem(partitioned=partitioned, **streams))
+    for i, kinds in enumerate(plan):
+        with ops.stage(name=f"s{i}") as st:
+            for k in kinds:
+                claim, _stream, rec = _STAGE_CLAIMS[k]
+                getattr(st, claim)(name=rec.name)
+            st.analysis(**{**_chain(ops),
+                           "constraints": ops.constraints.Lagrange()})
+            st.run(n_increments=1, dt=1.0)
+    return ops
+
+
+_STAGED_ROWS = ("tie_equation", "distributing_equation", "embedded_equation",
+                "tie_equation,rot_equal_dof;rotz_distributing")
+
+
+def _staged_archive(stages: str, partitioned: bool,
+                    tmp_path: Path) -> "tuple[str, Path]":
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = _staged_mp_bridge(stages, partitioned)
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True)
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return deck.read_text(encoding="utf-8"), path
+
+
+def _stage_rows(path: Path) -> "list[int]":
+    """The number of stored stage equationConstraint rows, per stage."""
+    with h5py.File(path, "r") as f:
+        stages = f["opensees/stages"]
+        out = []
+        for name in sorted(stages):
+            cons = stages[name].get("constraints", {})
+            n = (len(cons["equationConstraint/cnode"])
+                 if "equationConstraint" in cons else 0)
+            seq = (len(cons["equationConstraint_emit_index"])
+                   if "equationConstraint_emit_index" in cons else 0)
+            assert n == seq, f"{name}: {n} rows, {seq} emit indices"
+            out.append(n)
+    return out
+
+
+@pytest.mark.parametrize("partitioned", [False, True],
+                         ids=["flat", "partitioned"])
+@pytest.mark.parametrize("stages", _STAGED_ROWS)
+def test_staged_replay_is_the_bridge_deck(stages, partitioned, tmp_path):
+    fwd, path = _staged_archive(stages, partitioned, tmp_path)
+    eq = [ln for ln in _mp_lines(fwd) if ln.startswith("equationConstraint")]
+    assert eq, "the bridge deck carries no equationConstraint line"
+    # Every line is a stage row: none is global, none is lost.
+    with h5py.File(path, "r") as f:
+        assert "equationConstraint" not in f["opensees"].get(
+            "constraints", {})
+    assert sum(_stage_rows(path)) == len(eq)
+    assert _replay(path) == fwd
+
+
+def test_a_stage_stores_its_lines_once_per_partition_replica(tmp_path):
+    # A partitioned emit writes the cross-rank tie on both ranks (ADR 0068
+    # Open item 2); the stage block captures each line once (ADR 0027
+    # INV-1), as the flat emit does.
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    (tmp_path / "f").mkdir()
+    (tmp_path / "p").mkdir()
+    _ff, flat = _staged_archive("tie_equation", False, tmp_path / "f")
+    _pf, part = _staged_archive("tie_equation", True, tmp_path / "p")
+    with open_h5(str(flat)) as a, open_h5(str(part)) as b:
+        sa, sb = a.stages(), b.stages()
+        assert len(sa[0].equation_constraints) == 3
+        assert sb[0].equation_constraints == sa[0].equation_constraints
+
+
+def test_the_stage_merge_keeps_the_bridge_order(tmp_path):
+    # Stage s0 claims an equation tie and an equalDOF: the replay merges
+    # the five MP kinds by the stage's emit index, so the lines come back
+    # in the bridge's order, not in a fixed kind order.
+    fwd, path = _staged_archive(
+        "tie_equation,rot_equal_dof;rotz_distributing", False, tmp_path)
+    assert _stage_rows(path) == [3, 1]
+    assert _mp_lines(_replay(path)) == _mp_lines(fwd)
+
+
+def test_to_h5_rewrite_keeps_the_stage_lines(tmp_path):
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    fwd, path = _staged_archive(
+        "tie_equation,rot_equal_dof;rotz_distributing", False, tmp_path)
+    rewrite = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        OpenSeesModel.from_h5(str(path)).to_h5(str(rewrite))
+    with open_h5(str(path)) as a, open_h5(str(rewrite)) as b:
+        assert b.stages() == a.stages()
+    assert _replay(rewrite) == fwd
+
+
+def _as_pre_2_37(path: Path) -> None:
+    """Make the 2.37 archive ``path`` read as one below opensees 2.37.0, as
+    its writer would have left it: no stage ``equationConstraint`` store,
+    the program's stage ``equationConstraint`` calls linked to no store
+    (the verb ledgered a stage call then), and the zone stamped 2.36.0."""
+    from tests.fixtures.schema import (
+        OPENSEES_BEFORE_STAGE_EQUATION_CONSTRAINT,
+    )
+
+    with h5py.File(path, "r+") as f:
+        for st in f["opensees/stages"].values():
+            if "constraints" not in st:
+                continue
+            cons = st["constraints"]
+            for key in ("equationConstraint", "equationConstraint_emit_index"):
+                if key in cons:
+                    del cons[key]
+            if len(cons.keys()) == 0:
+                del st["constraints"]
+        program = f["opensees/program"]
+        methods = [m.decode() if isinstance(m, bytes) else str(m)
+                   for m in program.attrs["methods"]]
+        stores = [m.decode() if isinstance(m, bytes) else str(m)
+                  for m in program.attrs["stores"]]
+        rows = program[()]
+        for r in rows:
+            if (methods[int(r["method"])] == "equationConstraint"
+                    and int(r["stage"]) >= 0):
+                r["store"], r["row"] = -1, -1
+        used = {int(r["store"]) for r in rows}
+        store = "{scope}/constraints/equationConstraint"
+        if store in stores and stores.index(store) not in used:
+            gone = stores.index(store)
+            for r in rows:
+                if int(r["store"]) > gone:
+                    r["store"] = int(r["store"]) - 1
+            del stores[gone]
+            program.attrs["stores"] = np.array(stores, dtype=object)
+        program[...] = rows
+        f["meta"].attrs["opensees_schema_version"] = (
+            OPENSEES_BEFORE_STAGE_EQUATION_CONSTRAINT)
+
+
+@pytest.mark.parametrize("stages", _STAGED_ROWS[:3])
+def test_a_pre_2_37_stage_claimed_tie_still_refuses(stages, tmp_path):
+    # A 2.35 / 2.36 writer ledgered a stage's lines: the archive holds
+    # nothing to write them from, so the replay refuses by name rather
+    # than run the stage untied.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    _fwd, path = _staged_archive(stages, False, tmp_path)
+    _as_pre_2_37(path)
+    kind = _STAGE_CLAIMS[stages][2].kind
     with pytest.raises(BridgeError) as caught:
         OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
-    assert "embedded (enforce='equation'): 1" in str(caught.value)
-    assert "#2448" in str(caught.value)
+    msg = str(caught.value)
+    assert f"{kind} (enforce='equation'): 1" in msg
+    assert "below opensees 2.37.0" in msg
+
+
+@pytest.mark.parametrize("damage", ["below_2_37", "seq_length",
+                                    "seq_missing", "zero_coef"])
+def test_a_malformed_stage_store_raises(damage, tmp_path):
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+    from tests.fixtures.schema import (
+        OPENSEES_BEFORE_STAGE_EQUATION_CONSTRAINT,
+    )
+
+    _fwd, path = _staged_archive("tie_equation", False, tmp_path)
+    with h5py.File(path, "r+") as f:
+        cons = f["opensees/stages/stage_000/constraints"]
+        if damage == "below_2_37":
+            f["meta"].attrs["opensees_schema_version"] = (
+                OPENSEES_BEFORE_STAGE_EQUATION_CONSTRAINT)
+        elif damage == "seq_length":
+            seq = cons["equationConstraint_emit_index"][()][:-1]
+            del cons["equationConstraint_emit_index"]
+            cons.create_dataset("equationConstraint_emit_index", data=seq)
+        elif damage == "seq_missing":
+            del cons["equationConstraint_emit_index"]
+        else:
+            coef = cons["equationConstraint/ret_coef"][()]
+            coef[0] = 0.0
+            cons["equationConstraint/ret_coef"][...] = coef
+    with pytest.raises(MalformedH5Error, match="equationConstraint"):
+        OpenSeesModel.from_h5(str(path))
