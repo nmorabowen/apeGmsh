@@ -9,8 +9,9 @@
   WP-206): its tip lateral stiffness under axial compression matches
   ``elasticBeamColumn`` on the same transformation and mesh, and the exact
   beam-column value; ``basicForce`` answers ``(N, Mz1, Mz2, My1, My2, T)``.
-* ``responseSpectrumAnalysis -scale`` (fork WP-202) multiplies ``Sa`` under
-  ``-combine``: ``scale=2`` doubles the combined displacement.
+* ``response_spectrum_analysis(scale=)`` multiplies ``Sa`` (the bridge scales
+  the ``-Sa`` ordinates; WP-202's ``-scale`` is not emitted): ``scale=2``
+  doubles the combined displacement.
 * ``modalProperties`` after ``eigen -feast`` (fork WP-203), with and without
   ``-traceStop``: the band's participation factors equal the ARPACK ones.
 
@@ -218,7 +219,7 @@ def test_timoshenko_beam_honours_the_pdelta_transformation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# responseSpectrumAnalysis -scale and FEAST + modalProperties
+# response_spectrum_analysis(scale=) and FEAST + modalProperties
 # ---------------------------------------------------------------------------
 
 
