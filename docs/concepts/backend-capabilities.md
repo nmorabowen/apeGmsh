@@ -121,7 +121,9 @@ all emit elements from this list.
 `f22=` / `f12=` (`-f11` / `-f22` / `-f12`) need fork build `c83ee812e` or
 later. From that build on, every node of the panel (outer loop, holes,
 supports and diaphragm nodes) gets in-plane stiffness. An older build
-condenses the diaphragm onto the outer loop only.
+condenses the diaphragm onto the outer loop only. The diaphragm passes the
+constant-strain patch test from fork build `b6d3e3d2` on; on `c83ee812e` its
+in-plane stiffness reads about a quarter low.
 
 ### Integrators
 

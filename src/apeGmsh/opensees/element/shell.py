@@ -470,7 +470,7 @@ class LadrunoMembrane(Element):
     horizontal slab), as ``LadrunoShellModifier`` does; the mass is not
     scaled. ``mesh_size=`` also sets the diaphragm mesh, and point
     connections depend on it. These need fork build ``c83ee812e`` or
-    later.
+    later, and an exact in-plane stiffness needs ``b6d3e3d2`` or later.
 
     The element answers ``membraneForces`` (``N11, N22, N12`` per diaphragm
     triangle), ``meanMembraneForce``, ``diaphragmForces`` (the in-plane

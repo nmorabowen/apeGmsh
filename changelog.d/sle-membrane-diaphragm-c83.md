@@ -24,6 +24,8 @@ force responses (`membraneForces`, `meanMembraneForce`, `diaphragmForces`,
 `diaphragmVertices`, `diaphragmTriangles`) answer `eleResponse` and element
 recorders.
 
-Known fork defect: at `c83ee812e` the condensed diaphragm fails the
-constant-strain patch test. A uniform stretch reads 0.72 to 0.74 of
-`E t eps S`. A strict `xfail` holds it.
+A displacement-controlled uniform stretch reproduces the exact linear field
+(`R = E t eps S` to 1e-9, at `nu = 0` and `0.2`). That needs fork build
+`b6d3e3d2` (fork WP-208, which keeps the slab edge straight between loop
+nodes). On `c83ee812e` the same stretch read 0.72 to 0.74 of the exact
+reaction.

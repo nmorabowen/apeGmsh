@@ -8,9 +8,9 @@ prescribed displacement on two opposite edges and is free to contract.
   x stretch exactly as ``f22`` acts on a y stretch, and each softens its own
   axis (``< 0.6`` at 0.5) far more than the other (``> 0.9``).
 * The uniform stretch is a linear field, which a condensed CST mesh must
-  reproduce exactly (``R = E t eps S``). Build ``c83ee812e`` reads 0.72 to
-  0.74 of it, with nonuniform membrane forces. A strict ``xfail`` holds that
-  fork defect, and it flips when the fork fixes it.
+  reproduce exactly: ``R = E t eps S`` and ``u = eps x``, ``v = -nu eps y``
+  at every boundary node, at ``nu = 0`` and ``0.2``. This needs fork build
+  ``b6d3e3d2`` (fork WP-208); ``c83ee812e`` read 0.72 to 0.74.
 * A centre node in ``diaphragm_nodes=`` gets the same in-plane stiffness as
   the same node in ``support_nodes=`` (equal displacements under a load on it,
   to 1e-9), but no gravity share: its vertical reaction under a
@@ -113,7 +113,8 @@ def _run(ops: apeSees) -> Any:
 
 
 def _stretch(
-    direction: int, *, out: "Path | None" = None, **mods: float,
+    direction: int, *, out: "Path | None" = None, nu: float = _NU,
+    **mods: float,
 ) -> "dict[str, Any]":
     """Stretch the panel by a uniform strain ``_EPS`` along x (1) or y (2).
 
@@ -126,7 +127,7 @@ def _stretch(
     ops = apeSees(cast(Any, fem))
     ops.model(ndm=3, ndf=6)
     ops.element.LadrunoMembrane(
-        nodes=tuple(ids), stiff=(_E, _NU, _T), mesh_size=_H, **mods,
+        nodes=tuple(ids), stiff=(_E, nu, _T), mesh_size=_H, **mods,
     )
     axis = direction - 1
     lo = [n for n, p in zip(ids, xy) if abs(p[axis]) < 1e-12]
@@ -161,6 +162,11 @@ def _stretch(
         res: dict[str, Any] = {
             "R": abs(sum(float(lv.nodeReaction(n, direction)) for n in hi)),
             "hi": [ids.index(n) for n in hi],
+            "xy": xy,
+            "u": np.asarray(
+                [[lv.nodeDisp(n, 1), lv.nodeDisp(n, 2)] for n in ids],
+                dtype=float,
+            ),
         }
         tag = int(np.atleast_1d(lv.getEleTags())[0])
         for tok in ("meanMembraneForce", "membraneForces", "diaphragmForces",
@@ -197,15 +203,19 @@ def test_f11_and_f22_soften_their_own_axis() -> None:
     assert x_f11 < 0.6 and y_f11 > 0.9
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fork c83ee812e: the condensed diaphragm fails the constant-strain "
-           "patch test (a uniform stretch reads 0.72-0.74 of E t eps S)",
-)
-def test_uniform_stretch_is_exact() -> None:
+@pytest.mark.parametrize("nu", [0.0, 0.2])
+def test_uniform_stretch_is_exact(nu: float) -> None:
     """A displacement-controlled uniform stretch is a linear field, which a
-    CST mesh condensed onto its boundary must reproduce exactly."""
-    assert _ratio(1) == pytest.approx(1.0, rel=1e-6)
+    CST mesh condensed onto its boundary must reproduce exactly: the edge
+    reaction is ``E t eps S`` and every boundary node sits on
+    ``u = eps x``, ``v = -nu eps y`` (fork WP-208 keeps the slab edge straight
+    between loop nodes; build ``c83ee812e`` read 0.72 to 0.74)."""
+    res = _stretch(1, nu=nu)
+    assert res["R"] / (_E * _T * _EPS * _S) == pytest.approx(1.0, rel=1e-9)
+    x, y = res["xy"][:, 0], res["xy"][:, 1]
+    scale = _EPS * _S
+    np.testing.assert_allclose(res["u"][:, 0], _EPS * x, atol=1e-9 * scale)
+    np.testing.assert_allclose(res["u"][:, 1], -nu * _EPS * y, atol=1e-9 * scale)
 
 
 def _centre_panel(role: str, *, load: str) -> "tuple[np.ndarray, float]":
