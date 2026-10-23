@@ -177,7 +177,15 @@ def _tags(values: Sequence[int], what: str) -> tuple[int, ...]:
 
 @dataclass(frozen=True, slots=True)
 class NodeDisp:
-    """Nodal displacements, node-major: ``[(n1, d1), (n1, d2), …]``."""
+    """Nodal displacements, node-major: ``[(n1, d1), (n1, d2), …]``.
+
+    Reads the TRIAL displacement, ``nodeDisp`` (committed) plus
+    ``nodeResponse(n, d, 4)`` (the increment trial − committed): after a
+    solve the two agree, and on the fork's ``-increment`` path the trial
+    state is gravity + mode while the committed one stays at gravity.
+    (``nodeResponse(n, d, 1)`` is the committed displacement, on stock and
+    on the fork.)
+    """
 
     nodes: tuple[int, ...]
     dofs: tuple[int, ...]
@@ -192,7 +200,8 @@ class NodeDisp:
 
     def __call__(self, ops: Any) -> np.ndarray:
         return np.asarray(
-            [ops.nodeDisp(n, d) for n in self.nodes for d in self.dofs],
+            [float(ops.nodeDisp(n, d)) + float(ops.nodeResponse(n, d, 4))
+             for n in self.nodes for d in self.dofs],
             dtype=np.float64,
         )
 

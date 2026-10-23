@@ -106,6 +106,19 @@ fork option that adds the modal displacement to the committed state and does
 not commit would let the driver impose `u_g ± u_k` directly; it is requested in
 the fork-request notes, and the solve route stays the reference.
 
+**Amendment (2026-10-23): the `-increment` route.** The fork added that option
+(WP-207, PR #1015, ladruno `a8bcc07e`): `responseSpectrumAnalysis dir -Tn T_k
+-Sa Sa -mode k -increment -sign ±1` leaves `committed ± u_k` as an updated,
+uncommitted trial state, and `-revert` returns to the committed gravity state.
+Where the build takes it, the driver uses it in place of the static legs (no
+solves), with `Sa_d(T_k)` evaluated and scaled in Python and passed as a
+one-value table. The capability probe is `responseSpectrumAnalysis -revert` at
+the committed state: success means available, any refusal is inconclusive
+(`None`) and the static path runs, so stock and older fork builds are
+unchanged. Extractors read the trial state on both paths (`NodeDisp` is
+`nodeDisp + nodeResponse(n, d, 4)`, since `nodeResponse(n, d, 1)` is the
+committed displacement).
+
 ### D5 — Response extractors are opaque callables
 
 An extractor is any callable `extractor(ops) -> 1-D float array` of fixed

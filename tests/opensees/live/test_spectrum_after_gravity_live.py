@@ -239,8 +239,14 @@ def test_a_per_mode_and_cqc_meet_the_numpy_reference() -> None:
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("transf", ["Linear", "PDelta"])
-def test_c_per_mode_base_shear_is_effective_mass_times_sa(transf: str) -> None:
+@pytest.mark.parametrize(("transf", "rtol"), [("Linear", 1e-9), ("PDelta", 2e-6)])
+def test_c_per_mode_base_shear_is_effective_mass_times_sa(
+    transf: str, rtol: float,
+) -> None:
+    """Exact on the static path (the solve is in equilibrium with
+    ``Γ Sa M φ``). On the fork's ``-increment`` path the state is imposed,
+    not solved, so a PDelta frame's reactions carry the gap between the
+    element forces' true linearisation and the eigen tangent (~7e-7)."""
     res = _run(transf)
     props = res.modal.modal
     meff = props.properties["partiMassMX"]
@@ -249,7 +255,7 @@ def test_c_per_mode_base_shear_is_effective_mass_times_sa(transf: str) -> None:
     shear = base[:, 0::3].sum(axis=1)
     want = -np.asarray(meff) * sa
     np.testing.assert_allclose(
-        shear, want, rtol=1e-9, atol=1e-12 * float(np.max(np.abs(want))))
+        shear, want, rtol=rtol, atol=1e-12 * float(np.max(np.abs(want))))
 
 
 @pytest.mark.live
@@ -398,3 +404,63 @@ def test_scale_to_base_shear_lifts_forces_only_below_the_target() -> None:
     assert float(scaled["base_shear"][0][0]) == pytest.approx(1.3 * v_t)
     factors, _ = res.scale_to_base_shear(0.5 * v_t, ["cols"], damping=XI)
     assert float(factors[0]) == 1.0
+
+
+# -- the fork's -increment fast path (fork WP-207) ----------------------------
+
+def _increment_build() -> bool:
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    ops = _frame().modal_after_gravity(1, solver="-fullGenLapack")._live.ops
+    return gm._rsa_increment_available(ops) is True
+
+
+def _static_run(monkeypatch: pytest.MonkeyPatch, transf: str) -> Any:
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    with monkeypatch.context() as m:
+        m.setattr(gm, "_rsa_increment_available", lambda ops: None)
+        return _run(transf)
+
+
+@pytest.mark.live
+def test_increment_probe_is_none_or_true() -> None:
+    """The probe never answers False: a build without the flag is
+    inconclusive (``None``) and takes the static path."""
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    ops = _frame().modal_after_gravity(1, solver="-fullGenLapack")._live.ops
+    assert gm._rsa_increment_available(ops) in (None, True)
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+@pytest.mark.parametrize(("transf", "tol"), [("Linear", 1e-9), ("PDelta", 1e-6)])
+def test_increment_path_equals_the_static_path(
+    monkeypatch: pytest.MonkeyPatch, transf: str, tol: float,
+) -> None:
+    """``-increment`` imposes ``u_g ± φ Γ Sa / λ`` directly; the static path
+    solves for it. Linear: the same to 1e-9. PDelta: the static legs use the
+    full linearisation and ``-increment`` the eigen tangent, a gap of the
+    order of the third-order residue (measured ~3e-7)."""
+    if not _increment_build():
+        pytest.skip("this fork build has no responseSpectrumAnalysis "
+                    "-increment (fork WP-207, ladruno a8bcc07e)")
+    fast = _run(transf)
+    slow = _static_run(monkeypatch, transf)
+    for name in ("disp", "base", "cols", "base_shear"):
+        assert _rel(fast.modes(name), slow.modes(name)) < tol, name
+    assert fast.restore_drift[0] < 1e-12 and fast.restore_drift[1] < 1e-12
+    assert fast.modal.gravity_drift()[0] < 1e-12
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_increment_path_meets_the_numpy_reference() -> None:
+    if not _increment_build():
+        pytest.skip("this fork build has no responseSpectrumAnalysis "
+                    "-increment (fork WP-207, ladruno a8bcc07e)")
+    res = _run()
+    ref = _numpy_reference()
+    for name in ("disp", "base", "cols"):
+        assert _rel(res.modes(name), ref[name]) < 1e-10, name

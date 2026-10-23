@@ -418,6 +418,21 @@ class _GravityModalMixin(_ProcedureHost):
             for name, v in ref_values.items()
         }
 
+        if _rsa_increment_available(ops):
+            self._per_mode_by_increment(
+                ops, coef, periods, spectra, extractors, ref_values,
+                per_mode, context=context,
+            )
+            drift = state_drift(reference, snapshot_state(ops))
+            if max(drift) > _RESTORE_TOL:
+                raise RuntimeError(
+                    f"{context}: the domain is not back at its reference "
+                    "state after responseSpectrumAnalysis -increment "
+                    f"-revert (relative drift: displacement {drift[0]:.3e}, "
+                    f"reaction {drift[1]:.3e})."
+                )
+            return ref_values, per_mode, labels, drift
+
         ts_tag = 1 + max(
             (int(tag) for p in self._primitives if isinstance(p, TimeSeries)
              for tag in (self.tag_for(p),) if tag is not None),
@@ -476,6 +491,51 @@ class _GravityModalMixin(_ProcedureHost):
             )
         return ref_values, per_mode, labels, drift
 
+    def _per_mode_by_increment(
+        self,
+        ops: Any,
+        coef: "np.ndarray",
+        periods: "np.ndarray",
+        spectra: "tuple[DesignSpectrum, ...]",
+        extractors: "Mapping[str, ResponseExtractor]",
+        ref_values: "Mapping[str, np.ndarray]",
+        per_mode: "dict[str, np.ndarray]",
+        *,
+        context: str,
+    ) -> None:
+        """The fork's fast path (fork WP-207, ADR 0124 amendment):
+        ``responseSpectrumAnalysis dir -Tn T_k -Sa Sa -mode k -increment
+        -sign ±1`` leaves ``committed ± u_k`` as the trial state, updated
+        and uncommitted, so the extractors read gravity ± mode k with no
+        solve; ``-revert`` returns to the committed gravity state. The
+        spectrum is passed as the one value ``Sa_d(T_k)`` already scaled in
+        Python, along the direction ``d`` with the largest ``|Γ_kd Sa_d|``;
+        the central difference is then shared out over the spectra exactly
+        as on the static path."""
+        import numpy as np
+
+        for k in range(coef.shape[1]):
+            d = int(np.argmax(np.abs(coef[:, k])))
+            a = float(coef[d, k])          # Γ_kd Sa_d(T_k), signed
+            if a == 0.0:
+                continue
+            sa = float(spectra[d].sa(periods[k]))
+            legs: list[dict[str, np.ndarray]] = []
+            for sign in (1, -1):
+                ops.responseSpectrumAnalysis(
+                    int(spectra[d].direction), "-Tn", float(periods[k]),
+                    "-Sa", sa, "-mode", k + 1, "-increment", "-sign", sign,
+                )
+                legs.append({
+                    name: _evaluate(ex, ops, name, ref_values[name].size,
+                                    context)
+                    for name, ex in extractors.items()
+                })
+            ops.responseSpectrumAnalysis("-revert")
+            for name in extractors:
+                unit = (legs[0][name] - legs[1][name]) / (2.0 * a)
+                per_mode[name][:, k, :] = coef[:, k, None] * unit[None, :]
+
 
     def _gravity_steps(self, context: str) -> int:
         """The step count of the declared gravity ``LoadControl``.
@@ -523,6 +583,22 @@ class _GravityModalMixin(_ProcedureHost):
                 "λ = 1 in a whole number of steps; declare dlam = 1/N."
             )
         return steps
+
+
+def _rsa_increment_available(ops: Any) -> "bool | None":
+    """Whether the bound build takes ``responseSpectrumAnalysis -increment``
+    (fork WP-207). Probed by ``responseSpectrumAnalysis -revert`` at the
+    committed state, a no-op where the flag exists and a parse error
+    (fewer than two arguments) on stock and older fork builds. ``True``
+    only on success; any failure is inconclusive (``None``, ADR 0110 D5),
+    and the caller then takes the static-solve path."""
+    try:
+        ops.responseSpectrumAnalysis("-revert")
+    except Exception:
+        # A refusal (or a module without the command) is not a "no": the
+        # static path is correct on every build, so it runs.
+        return None
+    return True
 
 
 def _evaluate(
