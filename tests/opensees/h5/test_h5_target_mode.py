@@ -12,8 +12,9 @@ target. Each test names its oracle:
 * a pinned archive's replay deck equals the bridge's deck byte for byte,
   stamp line included (the bridge deck is the oracle);
 * a ``"fork"`` archive needs the fork on replay: ``build('live')`` refuses a
-  stock openseespy, and the stage-close route checks apply the #2444
-  fork-reset refusal the bridge applies under ``mode="fork"``;
+  stock openseespy.  The #2444 fork reset is checked by the deck on the
+  build it runs on (#2516, ``MD_STATIC_RESET_GUARD``), so the bridge's deck
+  and the replayed deck of a fork-pinned archive both carry that check;
 * ``model_hash`` is the same pinned or on auto (ruling A: same physics, same
   hash).
 """
@@ -30,6 +31,10 @@ import pytest
 
 from apeGmsh.opensees import OpenSeesModel, OpenSeesTarget, apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.stage_emit import (
+    MD_STATIC_RESET_GUARD,
+    fork_guard_lines,
+)
 from apeGmsh.opensees._target import BackendInfo
 from apeGmsh.opensees.emitter import live
 from apeGmsh.opensees.emitter.h5 import H5Emitter
@@ -282,9 +287,8 @@ def _pre_fix_fork_reset(
     mode: "str | None", path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
     """The #2444 model (a second ManzariDafalias activated after a plastic
-    flip, on a serial system) archived as the bridge did before the stage
-    close refused it: under ``mode="fork"`` the current bridge refuses it,
-    and its archive must not replay."""
+    flip, on a serial system) archived with the stage-close route checks
+    off, as an archive written before them was."""
     from tests.opensees.h5 import test_h5_stage_route_replay as routes
 
     build: Callable[[], apeSees] = lambda: routes._flip_then_activate(
@@ -292,32 +296,48 @@ def _pre_fix_fork_reset(
     return routes._write(build, path, monkeypatch, pre_fix=True)
 
 
-def test_the_bridge_refuses_the_fork_reset_only_under_a_fork_pin(
-    tmp_path: Path,
-) -> None:
-    from tests.opensees.h5 import test_h5_stage_route_replay as routes
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        with pytest.raises(BridgeError, match="#2444"):
-            routes._flip_then_activate(own_material=True, mode="fork").tcl(
-                str(tmp_path / "fork.tcl"))
-        routes._flip_then_activate(own_material=True).tcl(
-            str(tmp_path / "auto.tcl"))
+def _guard_at(lines: "list[str]", target: str) -> int:
+    """Where the deck's #2516 build check starts; it comes before the
+    deck's first command (only comments and the py import precede it)."""
+    guard = fork_guard_lines(MD_STATIC_RESET_GUARD, target)  # type: ignore[arg-type]
+    assert lines.count(guard[0]) == 1
+    at = lines.index(guard[0])
+    assert lines[at:at + len(guard)] == guard
+    assert all(ln.startswith(("#", "import ")) for ln in lines[:at])
+    return at
 
 
 @pytest.mark.parametrize("target", ["tcl", "py"])
-def test_a_fork_pinned_pre_fix_archive_keeps_the_fork_reset_refusal(
+@pytest.mark.parametrize("mode", ["fork", None])
+def test_the_bridge_deck_carries_the_fork_reset_check(
+    mode: "str | None", target: str, tmp_path: Path,
+) -> None:
+    """No stage close refuses the fork reset, pinned or not: the deck
+    checks the build it runs on instead."""
+    from tests.opensees.h5 import test_h5_stage_route_replay as routes
+
+    deck = tmp_path / f"deck.{target}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        getattr(routes._flip_then_activate(own_material=True, mode=mode),
+                target)(str(deck))
+    _guard_at(deck.read_text(encoding="utf-8").splitlines(), target)
+
+
+@pytest.mark.parametrize("target", ["tcl", "py"])
+def test_a_fork_pinned_archive_replays_with_the_fork_reset_check(
     target: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    """The fork-pinned archive keeps its pin and replays; its deck carries
+    the build check, as the bridge's deck does."""
     path = _pre_fix_fork_reset("fork", tmp_path / "fork.h5", monkeypatch)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model = OpenSeesModel.from_h5(str(path))
         assert model.target_mode == "fork"
-        with pytest.raises(BridgeError, match="#2444") as exc:
-            model.build(target)
-    assert "ManzariDafalias::mElastFlag to 0" in str(exc.value)
+        deck = model.build(target)
+    assert isinstance(deck, str)
+    _guard_at(deck.splitlines(), target)
 
 
 def test_the_unpinned_twin_replays(

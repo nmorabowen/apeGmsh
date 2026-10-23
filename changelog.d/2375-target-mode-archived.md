@@ -4,9 +4,7 @@ A model built with `OpenSeesTarget(mode="fork")` or `mode="stock"` wrote
 `# apeGmsh <v>; backend <mode>` in its deck, but `model.h5` dropped the
 mode. A replay (`OpenSeesModel.from_h5(path).build(...)`) wrote an
 unstamped deck. A fork-pinned archive with no fork-only verb also replayed
-on any backend: `build('live')` did not assert the fork, and the
-stage-close route checks did not apply the #2444 fork-reset refusal that
-the bridge applies under `mode="fork"`.
+on any backend: `build('live')` did not assert the fork.
 
 - The writer stores the pinned mode as `/opensees@target_mode` (`"fork"`
   or `"stock"`). An unpinned model writes nothing, and an absent attribute
@@ -15,8 +13,7 @@ the bridge applies under `mode="fork"`.
 - A pinned archive's replay deck equals the bridge's deck byte for byte,
   stamp line included. A `"fork"` archive adds `"fork"` to
   `OpenSeesModel.replay_requires()`, so `build('live')` refuses a stock
-  openseespy and names the pin, and the replay's stage-route checks apply
-  the #2444 refusal. `to_h5` echoes the mode.
+  openseespy and names the pin. `to_h5` echoes the mode.
 - The reader (`H5Model.target_mode()`, `OpenSeesModel.target_mode`)
   refuses a value that is not `"auto"`, `"fork"` or `"stock"`, the empty
   string included, with `MalformedH5Error` naming the attribute.
