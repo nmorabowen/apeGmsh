@@ -36,7 +36,6 @@ import h5py
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel
-from apeGmsh.opensees._internal.build import stage_validate
 from apeGmsh.opensees._internal.build.stage_validate import StageZeroLedger
 from apeGmsh.opensees._internal.lineage import read_stored_lineage
 from apeGmsh.opensees.apesees import apeSees
@@ -239,17 +238,14 @@ def _stage_zero_tags(em: Any) -> list[int]:
     return tags
 
 
-def test_a_group_without_a_manzari_class_owes_nothing() -> None:
+def test_a_class_outside_the_class_wide_table_owes_nothing() -> None:
+    """A per-tag stage flag (the multi-yield soils) needs no line; every
+    class-wide group gets its own (#2463,
+    ``test_stage_zero_every_group.py``)."""
     led = StageZeroLedger()
-    led.material("SAniSandMS", 1)
     led.material("PressureDependMultiYield", 2)
     led.owed = True
     assert led.due() == ()
-
-
-def test_the_group_is_the_table_entries_sharing_the_manzari_static() -> None:
-    assert stage_validate.stage_zero_classes() == frozenset(
-        {"ManzariDafalias", "LadrunoSANISAND"})
 
 
 # ---------------------------------------------------------------------------
@@ -348,13 +344,17 @@ def test_a_stage_that_adds_elements_writes_it_again(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(("cls", "n"), [
-    ("ManzariDafalias", 1), ("LadrunoSANISAND", 1), ("SAniSandMS", 0),
+    ("ManzariDafalias", 1), ("LadrunoSANISAND", 1), ("SAniSandMS", 1),
     ("ElasticIsotropic", 0)])
-def test_only_the_manzari_group_gets_the_line(
+def test_only_a_class_wide_group_gets_the_line(
     cls: str, n: int, tmp_path: Path,
 ) -> None:
+    """SAniSandMS has its own static and its own line, at its fresh stage
+    1 (#2463)."""
     rows = _stage_lines(_tcl(_md_column(second=False, cls=cls), tmp_path))
     assert len(rows) == n
+    assert all(r[1].endswith("-stage 1" if cls == "SAniSandMS"
+                             else "-stage 0") for r in rows)
 
 
 # ---------------------------------------------------------------------------

@@ -18,15 +18,20 @@ Code elsewhere that talks to the same domain calls :func:`get_ops`.
 """
 from __future__ import annotations
 
+import io
 import os
+import re
+import sys
+import tempfile
 import warnings
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import (
     TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Sequence,
     cast,
 )
 
 from .._internal.analyze_rc import check_analyze_rc
+from .._internal.build.stage_emit import SweptMaterialReach
 from .._internal.build.stage_validate import StageZeroLedger
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
@@ -189,6 +194,144 @@ _FORK_ONLY_INTEGRATORS = frozenset(
      "LadrunoArcLength", "LadrunoDynamicRelaxation", "LadrunoIndirectControl",
      "LadrunoLoadControl", "LadrunoHHT", "LadrunoGeneralizedAlpha",
      "CentralDifferenceSMS", "ExplicitBatheSMS", "ExplicitBatheLNVDSMS"})
+
+
+class EngineOutput:
+    """What the engine printed inside :func:`captured_engine_output`.
+
+    ``readable`` is False when this process could not redirect its streams
+    (no fd 1/2, as under ``pythonw``): the text is then empty, which is no
+    evidence of anything.
+    """
+
+    def __init__(self) -> None:
+        self.out = ""
+        self.err = ""
+        self.readable = False
+
+    @property
+    def text(self) -> str:
+        return f"{self.out}\n{self.err}"
+
+
+def _dup_std_fds(streams: "tuple[Any, Any]") -> "tuple[int, int] | None":
+    """Flush ``streams`` and duplicate fds 1 and 2; ``None`` when this
+    process has no usable standard descriptors."""
+    try:
+        for stream in streams:
+            if stream is not None:
+                stream.flush()
+        fd_out = os.dup(1)
+    except (OSError, ValueError):
+        return None
+    try:
+        return fd_out, os.dup(2)
+    except OSError:
+        os.close(fd_out)
+        return None
+
+
+@contextmanager
+def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
+    """Collect what the engine prints, through ``sys.stdout`` /
+    ``sys.stderr`` and through file descriptors 1 and 2 (the C streams the
+    OpenSees ``opserr`` reaches). With ``echo``, the text is written back to
+    the original streams on exit, so the user still sees it. A stream this
+    process cannot see (a ``.pyd`` with its own C runtime) reads as nothing.
+    """
+    got = EngineOutput()
+    saved = sys.stdout, sys.stderr
+    fds = _dup_std_fds(saved)
+    if fds is None:
+        yield got
+        return
+    py_out, py_err = io.StringIO(), io.StringIO()
+    files = ExitStack()
+    no_temp_file = False
+    try:
+        f_out = files.enter_context(tempfile.TemporaryFile())
+        f_err = files.enter_context(tempfile.TemporaryFile())
+    except OSError:
+        no_temp_file = True
+    if no_temp_file:
+        # No temp file to capture into: run uncaptured (unreadable), so the
+        # caller judges the engine call itself, not this failure. Yielded
+        # outside the ``except`` so an engine error does not chain to it.
+        files.close()
+        os.close(fds[0])
+        os.close(fds[1])
+        yield got
+        return
+    with files:
+        os.dup2(f_out.fileno(), 1)
+        os.dup2(f_err.fileno(), 2)
+        sys.stdout, sys.stderr = py_out, py_err
+        try:
+            yield got
+        finally:
+            sys.stdout, sys.stderr = saved
+            os.dup2(fds[0], 1)
+            os.dup2(fds[1], 2)
+            os.close(fds[0])
+            os.close(fds[1])
+            f_out.seek(0)
+            f_err.seek(0)
+            got.out = f_out.read().decode("utf-8", errors="replace") + py_out.getvalue()
+            got.err = f_err.read().decode("utf-8", errors="replace") + py_err.getvalue()
+            got.readable = True
+            if echo:
+                for stream, text in ((sys.stdout, got.out), (sys.stderr, got.err)):
+                    if text and stream is not None:
+                        stream.write(text)
+                        stream.flush()
+
+
+#: The line a Ladruno build prints when it knows a class but not one of its
+#: options. At ladruno-v20261023 (bdb69cea5) these read
+#: ``WARNING LadrunoIMKBeam (2D) -- unknown option '-shear'``,
+#: ``WARNING LadrunoDispBeamColumn2d: unknown option '-foo'`` (also ``3d``,
+#: and ``LadrunoForceBeamColumn2d`` / ``3d``), and
+#: ``ERROR LadrunoUP 5 -- unknown flag '-foo' (unknown flags are fatal ...)``.
+_UNKNOWN_OPTION = re.compile(r"unknown (?:option|flag) '([^']+)'")
+
+
+def _rejected_option(ele_type: str, text: str) -> "tuple[str, str] | None":
+    """``(option, line)`` when the build printed that ``ele_type`` rejects an
+    option; ``None`` otherwise (no such line, or nothing readable). The
+    class may print its name with a ``2d`` / ``3d`` suffix
+    (``LadrunoDispBeamColumn2d``); any other suffix is another class."""
+    for line in text.splitlines():
+        if re.search(rf"\b{re.escape(ele_type)}(?:2d|3d)?\b", line):
+            m = _UNKNOWN_OPTION.search(line)
+            if m:
+                return m.group(1), line.strip()
+    return None
+
+
+def _fork_signature(
+    ele_type: str, args: "tuple[int | float | str, ...]",
+) -> str:
+    """The fork gate's verification key: the type name followed by the
+    sorted ``-option`` flags the call carries (``"LadrunoIMKBeam -shear"``),
+    or the bare type name for a call without options. A build can know a
+    class but reject one of its options, so a type verified without
+    ``-shear`` is not verified with it (#2498)."""
+    flags = sorted({
+        a for a in args
+        if isinstance(a, str) and a[:1] == "-" and a[1:2].isalpha()
+    })
+    return " ".join([ele_type, *flags])
+
+
+def _fork_option_rejected(ele_type: str, option: str, line: str) -> str:
+    return (
+        f"element {ele_type}: option {option} is not supported by this build. "
+        f"The live build knows {ele_type} but rejected {option!r} "
+        f"(it printed: {line!r}), so the option is newer than this OpenSees "
+        f"build. Run on a Ladruno build that carries it (compare "
+        f"ops.ladrunoBuild() with the release that added it), or drop the "
+        f"option. Deck emission (ops.tcl(...) / ops.py(...)) is unaffected."
+    )
 
 
 def _fork_element_required(ele_type: str) -> str:
@@ -842,7 +985,9 @@ class LiveOpsEmitter:
         # LadrunoUP) but shipping another (LadrunoQuad) would otherwise let
         # the first success wave the second element through the verification,
         # and openseespy would fail on it with a cryptic error instead of the
-        # curated fork-required message. Each type is verified once, then O(1).
+        # curated fork-required message. Each type is verified once per
+        # option set (the key is :func:`_fork_signature`: the bare type name
+        # for a call without ``-options``), then O(1).
         self._fork_verified_types: set[str] = set()
         # ADR 0057 Phase A: live harvest of strategy-ladder escalations —
         # one ``(label, increment, rung_index, rung_args)`` per escalation
@@ -1036,6 +1181,9 @@ class LiveOpsEmitter:
     def uniaxialMaterial(
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
+        # A uniaxial wrapper of an nD material (the fork's Continuum)
+        # forwards setParameter to it, so it reaches a swept material too.
+        self._swept_reach().note_referrer(tag, params)
         self._ops.uniaxialMaterial(mat_type, tag, *params)
 
     def nDMaterial(
@@ -1050,11 +1198,13 @@ class LiveOpsEmitter:
             if refusal is not None:
                 raise RuntimeError(refusal)
         self._stage_zero_ledger().material(mat_type, tag)
+        self._swept_reach().note_material(mat_type, tag, params)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(
         self, sec_type: str, tag: int, *params: float | str,
     ) -> None:
+        self._swept_reach().note_referrer(tag, params)
         self._ops.section(sec_type, tag, *params)
 
     def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
@@ -1068,23 +1218,35 @@ class LiveOpsEmitter:
         # openseespy's ops.section(...) sets the current-section state.
         # Subsequent ops.patch / ops.layer / ops.fiber attach to this
         # section by openseespy convention.
+        self._swept_reach().note_referrer(tag, params)
+        self._open_section = int(tag)
         self._ops.section(sec_type, tag, *params)
 
     def section_close(self) -> None:
         # No-op — openseespy has no explicit close. The current-section
         # context ends implicitly when the next non-fiber/patch/layer
         # command runs.
-        pass
+        self._open_section = None
+
+    #: The fiber section a ``fiber`` / ``patch`` / ``layer`` joins.
+    _open_section: "int | None" = None
+
+    def _note_section_member(self, args: "tuple[Any, ...]") -> None:
+        if self._open_section is not None:
+            self._swept_reach().note_referrer(self._open_section, args)
 
     def patch(self, kind: str, *args: int | float) -> None:
+        self._note_section_member(args)
         self._ops.patch(kind, *args)
 
     def fiber(
         self, y: float, z: float, area: float, mat_tag: int,
     ) -> None:
+        self._note_section_member((mat_tag,))
         self._ops.fiber(y, z, area, mat_tag)
 
     def layer(self, kind: str, *args: int | float) -> None:
+        self._note_section_member(args)
         self._ops.layer(kind, *args)
 
     # -- Beam integration rules ---------------------------------------------
@@ -1092,6 +1254,7 @@ class LiveOpsEmitter:
     def beamIntegration(
         self, rule_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        self._swept_reach().note_referrer(tag, args)
         self._ops.beamIntegration(rule_type, tag, *args)
 
     # -- Topology ------------------------------------------------------------
@@ -1103,17 +1266,20 @@ class LiveOpsEmitter:
         # element instead of letting it fail later with a cryptic openseespy
         # error. Skipped while a non-zero partition block is open (the
         # ``_NoOpOps`` stand-in has no real domain to probe) and once THIS
-        # element TYPE has been verified (per-type, not a single flag — a
-        # build that knows one fork element but not another must still be
-        # gated on the second).
+        # element TYPE with THESE options has been verified (per-type, not a
+        # single flag — a build that knows one fork element but not another
+        # must still be gated on the second; per option set — a build that
+        # knows the type but not ``-shear`` must still be gated on it).
         self._stage_zero_ledger().owed = True
+        self._swept_reach().note_element(tag, args)
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition
-            and ele_type not in self._fork_verified_types
         ):
-            self._element_fork_gated(ele_type, tag, args)
-            return
+            key = _fork_signature(ele_type, args)
+            if key not in self._fork_verified_types:
+                self._element_fork_gated(ele_type, tag, args, key)
+                return
         if (
             ele_type == "TenNodeTetrahedron"
             and not self._in_partition
@@ -1133,26 +1299,41 @@ class LiveOpsEmitter:
 
     def _element_fork_gated(
         self, ele_type: str, tag: int, args: "tuple[int | float | str, ...]",
+        key: str,
     ) -> None:
         """Create a fork-only element, raising a clear fork-build error if
         the live build rejects it (by raising) or silently drops it (no
-        element created — stock openseespy warns and returns)."""
+        element created — stock openseespy warns and returns).
+
+        The call runs once per type and option set (``key``, from
+        :func:`_fork_signature`) under :func:`captured_engine_output`
+        (echoed, so the user still sees the build's lines). When the build
+        printed that it knows the element but not one of its options, the
+        error names that option instead of claiming the element is unknown
+        (#2498)."""
         try:
-            self._ops.element(ele_type, tag, *args)
+            with captured_engine_output(echo=True) as printed:
+                self._ops.element(ele_type, tag, *args)
         except Exception as e:
+            rejected = _rejected_option(ele_type, printed.text)
+            if rejected is not None:
+                raise RuntimeError(_fork_option_rejected(ele_type, *rejected)) from e
             raise RuntimeError(_fork_element_required(ele_type)) from e
         try:
             tags = self._ops.getEleTags()
         except Exception:
             # Build lacks getEleTags — don't false-positive; the element
             # call did not raise, so trust it.
-            self._fork_verified_types.add(ele_type)
+            self._fork_verified_types.add(key)
             return
         if isinstance(tags, int):  # some builds return a bare int for 1 elem
             tags = [tags]
         if tag not in (tags or []):
+            rejected = _rejected_option(ele_type, printed.text)
+            if rejected is not None:
+                raise RuntimeError(_fork_option_rejected(ele_type, *rejected))
             raise RuntimeError(_fork_element_required(ele_type))
-        self._fork_verified_types.add(ele_type)
+        self._fork_verified_types.add(key)
 
     def _stock_build_gate(self, message: str) -> None:
         """Raise ``message`` when the bound backend is not the Ladruno fork.
@@ -1935,9 +2116,37 @@ class LiveOpsEmitter:
         self._ops.remove("sp", int(node), int(dof))
 
     def remove_element(self, tag: int) -> None:
+        self._swept_reach().note_removed(tag)
         self._ops.remove("element", int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        """``updateMaterialStage`` alone, with no carrier sweep.
+
+        The deck emitters precede a plastic flip of a swept material
+        (``ManzariDafalias`` / ``LadrunoSANISAND``) on two or more
+        carriers with ``setParameter ... materialState`` (#2445,
+        ``stage_emit.MaterialStageCarriers``); this emitter does not, so
+        it refuses that flip instead of initialising the first element
+        only.  No bridge path reaches it today (live execution refuses a
+        staged model), so the refusal guards a direct driver and any
+        future staged-live lift.
+        """
+        n = self._swept_reach().carriers(mat_tag)
+        if int(stage) >= 1 and n is not None and n >= 2:
+            from .._internal.build.errors import BridgeError
+
+            raise BridgeError(
+                f"LiveOpsEmitter.update_material_stage: nDMaterial tag "
+                f"{int(mat_tag)} is a ManzariDafalias / LadrunoSANISAND "
+                f"material that {n} elements may carry, and the flip to "
+                f"stage {int(stage)} would run Elastic2Plastic() on the "
+                "first element only (issue #2445).  The live emitter sends "
+                "a bare updateMaterialStage with no carrier sweep "
+                "(setParameter -ele <carriers> materialState <tag>), so it "
+                "refuses the flip.  Emit the deck with ops.tcl(...) / "
+                "ops.py(...), which write the sweep, or give each element "
+                "its own material."
+            )
         self._stage_zero_ledger().user_flip(mat_tag)
         self._ops.updateMaterialStage(
             "-material", int(mat_tag), "-stage", int(stage),
@@ -1946,6 +2155,12 @@ class LiveOpsEmitter:
     #: Created on first use, so an emitter built with ``__new__`` (the
     #: gate tests) still has one.
     _stage0: "StageZeroLedger | None" = None
+    _reach: "SweptMaterialReach | None" = None
+
+    def _swept_reach(self) -> SweptMaterialReach:
+        if self._reach is None:
+            self._reach = SweptMaterialReach()
+        return self._reach
 
     def _stage_zero_ledger(self) -> StageZeroLedger:
         if self._stage0 is None:
@@ -1953,12 +2168,12 @@ class LiveOpsEmitter:
         return self._stage0
 
     def _write_stage_zero(self) -> None:
-        """Issue the owed ManzariDafalias ``-stage 0`` calls
+        """Issue the owed fresh-stage calls of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`): at a solve verb, and at the end of
         ``apeSees.run()``, whose caller drives the solve."""
-        for tag in self._stage_zero_ledger().due():
-            self._ops.updateMaterialStage("-material", tag, "-stage", 0)
+        for tag, stage in self._stage_zero_ledger().due():
+            self._ops.updateMaterialStage("-material", tag, "-stage", stage)
 
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 

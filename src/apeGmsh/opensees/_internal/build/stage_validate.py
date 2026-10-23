@@ -4,7 +4,8 @@ The stage flag of every class in
 :data:`~apeGmsh.opensees.stage._builder.CLASS_WIDE_STAGE_FLAG` is a C++
 ``static``.  It holds one value per process, so
 ``updateMaterialStage -material A`` switches every material of A's group.
-Two things follow, and both live here.
+Two things follow, and both live here, beside the emit-time run of the
+stage close's route checks.
 
 * :func:`validate_class_wide_stage_flags` runs at emit, beside validator
   V7.  It refuses a stage flip that names some of a group's live
@@ -12,12 +13,16 @@ Two things follow, and both live here.
   registered after the stage block counts, and it models
   ``s.remove_element``: a material whose elements are all removed is not
   live, so it need not be named.
+* :func:`validate_stage_routes` runs the stage close's route checks
+  again at emit, on the final model, so an element registered after a
+  stage is checked too.
 * :class:`StageZeroLedger` is how a deck or live emitter writes
-  ``updateMaterialStage -material <tag> -stage 0`` for the ManzariDafalias
-  group.  Upstream OpenSees starts ManzariDafalias elastoplastic (the
-  static starts at 1) and the Ladruno fork starts it elastic (its
-  constructors set 0), so one deck gave two answers.  An explicit stage 0
-  makes them agree.
+  ``updateMaterialStage -material <tag> -stage <s>`` for every group, ``s``
+  being the group's :data:`FRESH_STAGE`.  The static survives
+  ``ops.wipe()``, so without the line an in-process re-run starts at the
+  stage the previous run left.  For ManzariDafalias the line also
+  makes the two builds agree: upstream starts it elastoplastic (the static
+  starts at 1) and the Ladruno fork elastic (its constructors set 0).
 """
 from __future__ import annotations
 
@@ -37,14 +42,21 @@ if TYPE_CHECKING:
     )
 
 
-def stage_zero_classes() -> frozenset[str]:
-    """The nDMaterial classes that share ``ManzariDafalias::mElastFlag``."""
-    from ...stage._builder import CLASS_WIDE_STAGE_FLAG
-
-    flag = CLASS_WIDE_STAGE_FLAG["ManzariDafalias"]
-    return frozenset(
-        cls for cls, static in CLASS_WIDE_STAGE_FLAG.items()
-        if static == flag)
+#: The stage each class-wide static holds in a fresh process, which the
+#: ledger states at the first solve so a re-run in the same process starts
+#: there too.  Measured on stock openseespy 3.8.0 and the fork
+#: (``tests/opensees/integration/test_stage_zero_every_group.py``):
+#: SAniSandMS starts plastic on both (``mElastFlag = 1``, no constructor
+#: resets it), PM4Sand and PM4Silt elastic (``me2p = 0``).  ManzariDafalias
+#: is 0, the fork's start, which the line states on upstream too.  A new
+#: :data:`~apeGmsh.opensees.stage._builder.CLASS_WIDE_STAGE_FLAG` static
+#: needs its entry here, or no emitter builds.
+FRESH_STAGE: dict[str, int] = {
+    "ManzariDafalias::mElastFlag": 0,
+    "SAniSandMS::mElastFlag": 1,
+    "PM4Sand::me2p": 0,
+    "PM4Silt::me2p": 0,
+}
 
 
 def stage_flips(
@@ -74,19 +86,19 @@ def stage_flips(
 
 
 class StageZeroLedger:
-    """The ``updateMaterialStage ... -stage 0`` lines an emitter owes.
+    """The ``updateMaterialStage ... -stage <fresh>`` lines an emitter owes.
 
     ``updateMaterialStage`` acts only through elements already in the
     domain: ``MaterialStageParameter::setDomain`` walks them.  A line beside
     the ``nDMaterial`` declaration therefore does nothing.  The emitter
     instead asks :meth:`due` at each solve verb (``analyze``, ``eigen``).
-    The answer is every ManzariDafalias-group tag declared so far, when an
-    element was emitted since the last answer.  After a user
-    ``updateMaterialStage`` names one of those tags, or a user
-    ``updateParameter`` sets its stage flag, the answer is always empty,
-    because the user owns the static from then on.  So stage 0
-    comes after the elements and before any user stage line, and a user
-    stage 1 still wins.
+    The answer is every class-wide tag declared so far with its group's
+    :data:`FRESH_STAGE`, when an element was emitted since the last answer.
+    After a user ``updateMaterialStage`` names a tag of a group, or a user
+    ``updateParameter`` sets its stage flag, that group is left out of
+    every later answer, because the user owns its static from then on; the
+    other groups stay.  So the line comes after the elements and before
+    any user stage line, and a user flip still wins.
 
     The ledger reads only the emitter's own calls.  The bridge's deck and
     the deck replayed from its ``model.h5`` make the same calls, so they
@@ -94,41 +106,55 @@ class StageZeroLedger:
     ``model_hash`` does not change.
     """
 
-    __slots__ = ("_classes", "_params", "_tags", "_user", "owed")
+    __slots__ = ("_static_of", "_params", "_tags", "_user", "owed")
 
     def __init__(self) -> None:
-        from ...stage._builder import STAGE_FLAG_PARAMETERS
+        from ...stage._builder import (
+            CLASS_WIDE_STAGE_FLAG,
+            STAGE_FLAG_PARAMETERS,
+        )
 
-        self._classes = stage_zero_classes()
+        missing = sorted(set(CLASS_WIDE_STAGE_FLAG.values()) - set(FRESH_STAGE))
+        if missing:
+            raise BridgeError(
+                f"class-wide stage flag(s) {missing} have no FRESH_STAGE "
+                "entry (_internal/build/stage_validate.py): measure the "
+                "stage the static holds in a fresh process and add it.")
+        self._static_of = dict(CLASS_WIDE_STAGE_FLAG)
         self._params = STAGE_FLAG_PARAMETERS
-        self._tags: list[int] = []
-        self._user = False
+        #: Tag -> its group's static, in declaration order.
+        self._tags: dict[int, str] = {}
+        #: The statics a user flip has taken over.
+        self._user: set[str] = set()
         #: Set by the emitter's ``element``: a line is due at the next
         #: solve verb.  A bare attribute, since it is stored per element.
         self.owed = False
 
     def material(self, mat_type: str, tag: int) -> None:
         """Note an ``nDMaterial`` declaration."""
-        if mat_type in self._classes:
-            self._tags.append(int(tag))
+        if mat_type in self._static_of:
+            self._tags[int(tag)] = self._static_of[mat_type]
 
     def user_flip(self, tag: int) -> None:
-        """Note a user ``updateMaterialStage``; the group is then theirs."""
+        """Note a user ``updateMaterialStage``; the tag's group is then
+        theirs."""
         if int(tag) in self._tags:
-            self._user = True
+            self._user.add(self._tags[int(tag)])
 
     def parameter(self, args: "tuple[str | int, ...]") -> None:
         """Note a user ``parameter`` on ``args``; a stage-flag name on one
-        of the group's tags hands the group to the user too."""
+        of a group's tags hands that group to the user too."""
         if len(args) > 1 and args[0] in self._params:
             self.user_flip(int(args[1]))
 
-    def due(self) -> tuple[int, ...]:
-        """The tags to write ``-stage 0`` for now, in declaration order."""
-        if self._user or not self.owed or not self._tags:
+    def due(self) -> tuple[tuple[int, int], ...]:
+        """``(tag, stage)`` to write now, in declaration order."""
+        if not self.owed:
             return ()
         self.owed = False
-        return tuple(self._tags)
+        return tuple((tag, FRESH_STAGE[static])
+                     for tag, static in self._tags.items()
+                     if static not in self._user)
 
 
 def validate_class_wide_stage_flags(
@@ -212,6 +238,68 @@ def validate_class_wide_stage_flags(
             live.update(mats)
         _check_stage(stage.name, flips[idx], live, group_of,
                      CLASS_WIDE_STAGE_FLAG)
+
+
+def validate_stage_routes(
+    *,
+    stage_records: "Iterable[StageRecord]",
+    primitives: "Iterable[Primitive]",
+    tag_for: Mapping[int, int],
+    fem: "FEMData",
+) -> None:
+    """The stage-close route checks, run again at emit on the final model.
+
+    A stage close checks only the elements registered so far
+    (``stage._builder.check_stage_routes``).  The deck emits every element
+    spec, one registered after the stage included, before that stage's
+    flip lines.  So a carrier registered late, such as a FourNodeQuad on a
+    flipped ManzariDafalias, passed the stage close and emitted a bare
+    ``updateMaterialStage``, the wrong answer the #2445 check refuses.
+    Here each stage runs the same checks, in program order, on every
+    registered primitive: the model the ``model.h5`` replay checks.  A
+    refusal gives the stage close's own message.  A carrier counts
+    whichever stage activates it, as at the stage close.
+    """
+    from ...stage._builder import (
+        STAGE_FLAG_PARAMETERS,
+        check_stage_routes,
+        route_model,
+        stage_routes_due,
+    )
+
+    stages = tuple(stage_records)
+    if not any(
+        st.update_material_stage_records
+        or any(p.name in STAGE_FLAG_PARAMETERS
+               for p in st.update_parameter_records)
+        for st in stages
+    ):
+        return
+
+    def tag_of(prim: Primitive) -> int:
+        try:
+            return int(tag_for[id(prim)])
+        except KeyError as e:
+            raise BridgeError(
+                f"primitive {type(prim).__name__}({prim!r}) is referenced "
+                "as a dependency but was not registered with the "
+                "bridge. Per P11, register all standalone "
+                "primitives via ops.register(prim) before build()."
+            ) from e
+
+    model = route_model(primitives, tag_of=tag_of, fem=fem)
+    earlier: list[tuple[int, int]] = []
+    for st in stages:
+        if stage_routes_due(st.update_material_stage_records,
+                            st.update_parameter_records, st.activated_pgs):
+            check_stage_routes(
+                st.name, model,
+                mat_stage_records=st.update_material_stage_records,
+                parameter_records=st.update_parameter_records,
+                activated_pgs=st.activated_pgs,
+                earlier_flips=tuple(earlier))
+        earlier.extend(stage_flips(st.update_material_stage_records,
+                                   st.update_parameter_records))
 
 
 def _check_stage(
