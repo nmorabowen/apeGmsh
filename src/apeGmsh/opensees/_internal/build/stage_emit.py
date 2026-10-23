@@ -880,9 +880,9 @@ MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
     message=MD_STATIC_RESET_MESSAGE)
 
 
-#: The Ladruno fork merge that completes fork WP-202, WP-203 and WP-205
-#: (fork PR #1010): ASD shell ``-pDelta``, ``responseSpectrumAnalysis
-#: -scale`` and ``modalProperties`` after ``eigen -feast``.
+#: The Ladruno fork merge that completes fork WP-202, WP-203 and WP-205:
+#: ASD shell ``-pDelta``, ``responseSpectrumAnalysis -scale`` and
+#: ``modalProperties`` after ``eigen -feast``.
 C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 
 #: Fork builds measured for :data:`C83_FORK_COMMIT`, by exact
@@ -896,7 +896,7 @@ FORK_BUILD_HAS_C83: dict[str, bool] = {
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # The maintainer's venv build, which predates it: -pDelta runs without
     # the geometric stiffness, and modalProperties after eigen -feast exits
-    # the process (apeGmsh PR #2493 review).
+    # the process.
     "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
 }
 
