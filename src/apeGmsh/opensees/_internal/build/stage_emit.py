@@ -799,7 +799,7 @@ def _refuse_tcl_syntax(who: str, message: str) -> None:
 
 
 #: The Ladruno fork commit that stops the ManzariDafalias constructors
-#: resetting their class-wide stage flag (fork PR #1005, apeGmsh #2444).
+#: resetting their class-wide stage flag.
 MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
 #: Fork builds measured for that reset, by exact ``ladrunoBuild()`` sha:
@@ -811,7 +811,7 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 #: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
 #: otherwise).
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261023, the merge of fork PR #1005: no reset.
+    # FORK_PIN ladruno-v20261023, which merges the fix: no reset.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # The maintainer's venv build, an ancestor of the fix: resets.
     "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
@@ -870,8 +870,8 @@ def _known_fixed_builds() -> tuple[str, ...]:
 
 #: The guard a deck whose solve could see the ManzariDafalias constructor
 #: reset runs (:meth:`MaterialStageCarriers.solve_fork_guards`).  The one
-#: hook for the fork's capability marker of the fix (#2518): when the fork
-#: registers it, this becomes a :class:`ForkBuildFloor` on that command
+#: hook for a fork capability marker of the fix: when the fork
+#: registers one, this becomes a :class:`ForkBuildFloor` on that command
 #: (with its own message) and the sha table goes.
 MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
     builds=_known_fixed_builds(), message=_md_static_reset_message())
