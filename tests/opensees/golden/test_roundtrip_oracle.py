@@ -230,7 +230,9 @@ CORPUS: tuple[Model, ...] = (
          partitioned=p)
       for k in ("equal_dof", "named_equal_dof", "rigid_beam", "rigid_rod",
                 "rigid_diaphragm", "rigid_body", "embedded",
-                "equal_dof,rigid_beam,rigid_diaphragm,embedded")
+                "equal_dof,rigid_beam,rigid_diaphragm,embedded",
+                # #2416: the equation-route ties (equationConstraint lines).
+                "tie_equation", "distributing_equation", "embedded_equation")
       for p in _B),
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before
