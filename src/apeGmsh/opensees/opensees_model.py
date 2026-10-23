@@ -114,7 +114,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
 
     from ._internal.build.records import InitialStressRecord
     from ._internal.compose import _ReplayOrder
-    from ._target import BackendInfo
+    from ._target import BackendInfo, TargetMode
     from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
 
@@ -570,6 +570,11 @@ class OpenSeesModel:
     #: refusal; ``build('live')`` refuses on stock openseespy when
     #: ``requires`` names the fork; ``to_h5`` echoes the stamp.
     _solve_stamp: "SolveStamp | None" = None
+    #: ``/opensees@target_mode`` (opensees 2.36.0, #2375): the bridge's
+    #: ``OpenSeesTarget.mode``; ``"auto"`` when absent. A pinned mode
+    #: stamps the replay deck as the bridge does, and ``"fork"`` joins
+    #: :meth:`replay_requires`; ``to_h5`` echoes it.
+    _target_mode: "TargetMode" = "auto"
     #: ``/opensees/decls`` (ADR 0114 R5, K1-6, opensees 2.25.0) as the
     #: reader's ``DeclarationTable``, or ``None`` for a file without it
     #: (below 2.25.0, or written by no bridge emit).
@@ -725,6 +730,7 @@ class OpenSeesModel:
             commands = model.commands()
             embedded_rebars = model.embedded_rebars()
             solve_stamp = model.solve_stamp()
+            target_mode = model.target_mode()
             declarations = model.declarations()
             mp_constraints = _mp_rows_in_bridge_order(
                 model.mp_constraints(), program,
@@ -806,6 +812,7 @@ class OpenSeesModel:
             _program=program,
             _commands=commands,
             _solve_stamp=solve_stamp,
+            _target_mode=target_mode,
             _declarations=declarations,
             _embedded_rebars=embedded_rebars,
             _mp_constraints=mp_constraints,
@@ -911,6 +918,7 @@ class OpenSeesModel:
             _masses=tuple(emitter._masses),
             _mass_from_model=emitter._mass_from_model,
             _solve_stamp=emitter.solve_stamp(),
+            _target_mode=emitter.target_mode,
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
@@ -1314,6 +1322,12 @@ class OpenSeesModel:
         ``None`` for a file that carries none (below 2.24.0)."""
         return self._solve_stamp
 
+    @property
+    def target_mode(self) -> "TargetMode":
+        """The archive's ``/opensees@target_mode`` (opensees 2.36.0): the
+        bridge's ``OpenSeesTarget.mode``, ``"auto"`` when absent."""
+        return self._target_mode
+
     #: The partition mode every tcl / py / live replay emits: the read
     #: side is partition-blind (the flat single-domain degrade), so the
     #: stored verdict it answers to is the flat one.
@@ -1340,10 +1354,15 @@ class OpenSeesModel:
         declares a fork-only type
         (:func:`~apeGmsh.opensees.emitter.caps.flat_requires`), also for an
         archive without a stamp (below 2.24.0), whose stored chain is all
-        that is known.
+        that is known. ``"fork"`` is added too for a fork-pinned archive
+        (``target_mode == "fork"``, opensees 2.36.0): the bridge's
+        ``OpenSeesTarget(mode="fork")`` asserts the fork on the live path
+        and is known to run it at stage close (#2375, #2444).
         """
         stamp = self._solve_stamp
         requires = () if stamp is None else stamp.requires
+        if self._target_mode == "fork" and "fork" not in requires:
+            requires = (*requires, "fork")
         return flat_requires(requires, chains=self._archived_chains())
 
     def _refuse_stored_solve_refusals(self, target: str) -> None:
@@ -2289,6 +2308,7 @@ class OpenSeesModel:
         emitter_fresh: "H5Emitter" = type(emitter)(
             model_name=self._model_name,
             snapshot_id=self._snapshot_id,
+            target_mode=self._target_mode,
         )
         # K1-8: the parameter tags the rewrite stores (a 2.27.0 file stores
         # every one): the source's own, or for a pre-2.27 source the tags
@@ -2356,11 +2376,12 @@ class OpenSeesModel:
         Returns the deck as a string; if ``out=`` is given, writes it
         to that path as well.
         """
+        from ._target import OpenSeesTarget
         from .emitter.tcl import deck_backend
 
-        # An archive carries no OpenSeesTarget: the rebuilt deck is the
-        # ``mode="auto"`` case, which ``deck_backend`` leaves unstamped.
-        backend = deck_backend(None)
+        # The archive keeps the target's mode, never its machine paths
+        # (opensees 2.36.0): the rebuilt deck stamps as the bridge's did.
+        backend = deck_backend(OpenSeesTarget(mode=self._target_mode))
         emitter: "Emitter"
         if kind == "tcl":
             from .emitter.tcl import TclEmitter
