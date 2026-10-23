@@ -34,9 +34,11 @@ class FakeOps:
         self.disp: dict[int, list[float]] = {n: [0.0] * ndf for n in self.nodes}
         self.n_eq = 0                 # EQ constraints printModel reports
         self.print_eq_line = True
+        self.n_print = 0              # printModel calls
 
     def printModel(self, flag: str, path: str) -> None:
         assert flag == "-file"
+        self.n_print += 1
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("MP_Constraints: numConstraints: 0\n")
             if self.print_eq_line:
@@ -152,6 +154,17 @@ class EqBuild(FakeOps):
         raise AssertionError("not called")
 
 
+def test_the_eq_count_is_read_once_at_construction_not_per_call() -> None:
+    fake = FakeOps()
+    _column_forces(fake, np.ones(3), np.zeros(3))
+    sf = B.StoryForces((0.0, 3.0), ops=_mod(fake))
+    assert fake.n_print == 1
+    for _ in range(3):                     # e.g. one call per mode
+        sf(_mod(fake))
+    sf.table(ops=_mod(fake))
+    assert fake.n_print == 1
+
+
 def test_an_unreadable_eq_count_refuses_when_the_build_has_eq() -> None:
     fake = EqBuild()
     fake.print_eq_line = False
@@ -186,7 +199,8 @@ def test_drift_joints_and_story_max() -> None:
     np.testing.assert_allclose(d(_mod(fake)), [0.01, -0.02, 0.01, 0.03])
     t = d.story_max(ops=_mod(fake))
     assert t.columns == ("DriftX", "DriftY", "AvgX", "AvgY")
-    np.testing.assert_allclose(t.values, [[0.01, 0.03, 0.01, 0.025]])
+    # AvgY: the signed ends (x = 0 and x = 4) average |-0.02 + 0.03| / 2
+    np.testing.assert_allclose(t.values, [[0.01, 0.03, 0.01, 0.005]])
 
 
 def test_story_displacements_joints_points_and_story_max() -> None:
@@ -198,7 +212,9 @@ def test_story_displacements_joints_points_and_story_max() -> None:
     np.testing.assert_allclose(u(_mod(fake)), [0.03, -0.06, -0.01, 0.09])
     t = u.story_max(ops=_mod(fake))
     assert t.columns == ("MaxX", "MaxY", "AvgX", "AvgY")
-    np.testing.assert_allclose(t.values, [[0.03, 0.09, 0.02, 0.075]])
+    # both nodes lie at y = 0, one end for X: AvgX = |0.03 - 0.01| / 2;
+    # AvgY = |-0.06 + 0.09| / 2 over the ends x = 0 and x = 4
+    np.testing.assert_allclose(t.values, [[0.03, 0.09, 0.01, 0.015]])
     p = B.StoryDisplacements((0.0, 3.0), points=[(4.0, 0.0)], ops=_mod(fake))
     assert p.table(ops=_mod(fake)).rows == ("Story1:P0",)
     np.testing.assert_allclose(p(_mod(fake)), [-0.01, 0.09])
@@ -211,7 +227,7 @@ def test_a_drift_story_without_a_joint_refuses_naming_it() -> None:
     fake.nodes[5] = [2.0, 0.0, 6.0]
     fake.eles[4] = [4, 5]
     fake.disp[5] = [0.49 * 3.0, 0, 0, 0, 0, 0]
-    with pytest.raises(BridgeError, match="story 'Story2' has no joint"):
+    with pytest.raises(BridgeError, match=r"story 'Story2': node\(s\) \[5\]"):
         B.StoryDrifts((0.0, 3.0, 6.0), ops=_mod(fake))
     # a point read still answers, and the story is not zero
     d = B.StoryDrifts((0.0, 3.0, 6.0), points=[(2.0, 0.0)], method="nearest",
@@ -219,41 +235,67 @@ def test_a_drift_story_without_a_joint_refuses_naming_it() -> None:
     assert d.table(ops=_mod(fake)).row("Story2:P0")[0] == pytest.approx(0.49)
 
 
-def _rotated_level(xs: tuple[float, ...], x0: float, theta: float) -> FakeOps:
-    """Joints at ``x`` (y = 0) on z = 0 (fixed) and z = 3, the top level
-    rotated rigidly by ``theta`` about the plan point ``(x0, 0)``."""
+def test_a_cantilever_tip_without_a_node_below_refuses_naming_it() -> None:
+    """Base nodes at x = 0, 10; the level adds a cantilever tip at x = 14.
+    Under a rigid rotation (uy = 1e-3 x) the tip drifts 4.67e-3; dropping
+    it read the story maximum as the x = 10 joint's 3.33e-3."""
+    fake = _rotated_level((0.0, 10.0), 0.0, 1e-3)
+    fake.nodes[103] = [14.0, 0.0, 3.0]
+    fake.disp[103] = [0.0, 14e-3, 0, 0, 0, 1e-3]
+    with pytest.raises(BridgeError, match=r"story 'Story1': node\(s\) \[103\]"):
+        B.StoryDrifts((0.0, 3.0), ops=_mod(fake))
+    # the rigid read of the tip over the base gives the true drift
+    d = B.StoryDrifts((0.0, 3.0), points=[(14.0, 0.0)], method="rigid",
+                      ops=_mod(fake))
+    assert d.table(ops=_mod(fake)).row("Story1:P0")[1] == pytest.approx(14e-3 / 3)
+
+
+def _rotated_level(xs: tuple[float, ...], x0: float, theta: float,
+                   axis: str = "x") -> FakeOps:
+    """Joints at ``c in xs`` along ``axis`` on z = 0 (fixed) and z = 3, the
+    top level rotated rigidly by ``theta`` about the plan point ``c = x0``
+    on that axis: ``uy = theta (x - x0)`` along x, ``ux = -theta (y - x0)``
+    along y."""
     fake = FakeOps()
     fake.nodes = {}
     fake.eles = {}
     fake.disp = {}
-    for k, x in enumerate(xs):
-        fake.nodes[1 + k] = [x, 0.0, 0.0]
+    for k, c in enumerate(xs):
+        xy = [c, 0.0] if axis == "x" else [0.0, c]
+        u = [0.0, theta * (c - x0)] if axis == "x" else [-theta * (c - x0), 0.0]
+        fake.nodes[1 + k] = [*xy, 0.0]
         fake.disp[1 + k] = [0.0] * 6
-        fake.nodes[101 + k] = [x, 0.0, 3.0]
-        fake.disp[101 + k] = [0.0, theta * (x - x0), 0, 0, 0, theta]
+        fake.nodes[101 + k] = [*xy, 3.0]
+        fake.disp[101 + k] = [*u, 0, 0, 0, theta]
     return fake
 
 
+@pytest.mark.parametrize("axis", ["x", "y"])
 @pytest.mark.parametrize(("xs", "x0", "ratio"), [
-    # rotation about one end: the extreme points move 0 and 10 theta, so
-    # ASCE's average is 5 theta and max/avg = 2.0 (a mean over the five
-    # joints gives 10 / 2.12 = 4.72)
+    # rotation about one end: the ends move 0 and 10 theta, so ASCE's
+    # average is 5 theta and max/avg = 2.0 (a mean over the five joints
+    # gives 10 / 2.12 = 4.72)
     ((0.0, 0.1, 0.2, 0.3, 10.0), 0.0, 2.0),
-    # about an interior point: the ends move -2 and +8 theta, avg 5 theta
-    ((0.0, 2.0, 10.0), 2.0, 1.6),
+    # about an interior point the ends move in opposite directions:
+    # -2 and +8 theta, signed average 3 theta, ratio 8 / 3
+    ((0.0, 2.0, 10.0), 2.0, 8.0 / 3.0),
+    # the review's repro: ends -3.33 and +6.67 theta (drifts -1.11e-3 and
+    # +2.22e-3), signed average 1.67 theta, ratio 4.0 (not 1.33)
+    ((0.0, 10.0), 10.0 / 3.0, 4.0),
 ])
-def test_story_average_is_the_asce_extreme_point_average(
-        xs: tuple[float, ...], x0: float, ratio: float) -> None:
+def test_story_average_is_the_asce_signed_end_average(
+        xs: tuple[float, ...], x0: float, ratio: float, axis: str) -> None:
     theta = 1e-3
-    fake = _rotated_level(xs, x0, theta)
+    fake = _rotated_level(xs, x0, theta, axis)
+    col = [1, 3] if axis == "x" else [0, 2]   # loaded direction: Y, then X
     u = B.StoryDisplacements((0.0, 3.0), ops=_mod(fake)).story_max(ops=_mod(fake))
-    max_y, avg_y = u.row("Story1")[[1, 3]]
-    assert max_y == pytest.approx(theta * max(abs(x - x0) for x in xs))
-    assert max_y / avg_y == pytest.approx(ratio)
+    max_u, avg_u = u.row("Story1")[col]
+    assert max_u == pytest.approx(theta * max(abs(c - x0) for c in xs))
+    assert max_u / avg_u == pytest.approx(ratio)
     d = B.StoryDrifts((0.0, 3.0), ops=_mod(fake)).story_max(ops=_mod(fake))
-    drift_y, davg_y = d.row("Story1")[[1, 3]]
-    assert drift_y == pytest.approx(max_y / 3.0)
-    assert drift_y / davg_y == pytest.approx(ratio)
+    drift, davg = d.row("Story1")[col]
+    assert drift == pytest.approx(max_u / 3.0)
+    assert drift / davg == pytest.approx(ratio)
 
 
 def test_story_table_accessors() -> None:
