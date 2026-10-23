@@ -523,7 +523,7 @@ class TclEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
-        # The fork build floors this deck already checks (#2504).
+        # The fork build floors this deck already checks.
         self._fork_floors: set[ForkBuildFloor] = set()
         # Tracks the type token of the currently-open pattern (for
         # pattern_close to decide whether to emit ``\\}``). None means

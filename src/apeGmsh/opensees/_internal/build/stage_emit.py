@@ -737,16 +737,16 @@ class ForkBuildFloor(NamedTuple):
 
 
 #: The ``materialState`` forwarding of the Ladruno continuum solids.  Fork
-#: PR #859 (``64a0341a6``, 2026-09-27, WP-124 C10) let ``materialState``
-#: through ``LadrunoShell::isMaterialPointToken`` to
-#: ``forwardToMaterials``.  Before it, these elements read the name as a
-#: per-point address and drop it, so a flip reached the first element
-#: only (``updateMaterialStage``) or none (``setParameter``,
-#: ``updateParameter``): measured on fork build 79e062367, forwarding bit
-#: for bit at ``FORK_PIN`` 100eb9ae (#2457).  ``ladrunoSchema`` is fork PR
-#: #972 (``c50a281a0``, 2026-10-11); its first commit ``d9ff64c03``
-#: descends from ``64a0341a6``, so every build that registers it forwards.
-#: A build between the two forwards but is refused (fail closed).
+#: commit ``64a0341a6`` (WP-124 C10) lets ``materialState`` through
+#: ``LadrunoShell::isMaterialPointToken`` to ``forwardToMaterials``.
+#: Without it these elements read the name as a per-point address and
+#: drop it, so a flip reaches the first element only
+#: (``updateMaterialStage``) or none (``setParameter``,
+#: ``updateParameter``): measured on fork build 79e062367, and forwarding
+#: bit for bit at ``FORK_PIN`` 100eb9ae.  ``ladrunoSchema`` enters the
+#: fork in ``d9ff64c03``, a descendant of ``64a0341a6``, so every build
+#: that registers it forwards.  A build that forwards but predates the
+#: command is refused (fail closed).
 LADRUNO_SOLID_MATERIAL_STATE_FLOOR = ForkBuildFloor(
     command="ladrunoSchema",
     floor="a Ladruno fork build at or after FORK_PIN 100eb9ae "

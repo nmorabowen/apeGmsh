@@ -626,7 +626,7 @@ class PyEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
-        # The fork build floors this deck already checks (#2504), and
+        # The fork build floors this deck already checks, and
         # where their checks go: after the import, before ``ops.wipe()``.
         self._fork_floors: set[ForkBuildFloor] = set()
         self._fork_floor_at = len(header) - 1
