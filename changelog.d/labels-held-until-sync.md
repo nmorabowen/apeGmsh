@@ -8,11 +8,14 @@ and creates it, after one `synchronize`, at the next of:
 
 - `g.model.sync()`;
 - any `g.labels` query;
-- a boolean or transform;
+- a boolean or transform, and `g.model.queries.make_conformal()`;
 - `generate`, `get_fem_data` and the session or `Part` `end()`.
 
-A held entity that is gone by then is reported with a `UserWarning`.
-`g.labels.add` returns `0` for a held label.
+A label binds only while its own session's model is the current gmsh
+model, so a nested session never picks up another session's held
+labels. A held entity that is gone by then, or a label still held when
+its session ends with another model current, is reported with a
+`UserWarning`. `g.labels.add` returns `0` for a held label.
 
 The batched pattern (`sync=False` with `label=` on every `add_*`, then
 one `g.model.sync()`) now gives the same labels as `sync=True`, without

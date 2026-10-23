@@ -65,6 +65,7 @@ from apeGmsh._types import DimTag
 
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
+    from apeGmsh._session import _SessionBase as _Session
 
 # The internal ``_label:`` prefix predicates were RELOCATED to
 # apeGmsh._kernel._label_prefix (selection-unification-v2 P1-K, HT4):
@@ -1078,9 +1079,40 @@ def _is_bound(dim: int, tag: int) -> bool:
 
 
 def bind_held_labels() -> None:
-    """Bind every held label (one ``synchronize`` when any is held)."""
+    """Bind the held labels of the session whose model is current.
+
+    ``_HOLDERS`` spans every session in the process, but a held tag
+    means an entity of its own session's model: each holder binds only
+    while that model is the current gmsh model (``Labels._bind_held``),
+    so a nested session's call never binds another session's labels.
+    """
     for labels in list(_HOLDERS):
         labels._bind_held()
+
+
+def release_held_labels(session: "_Session") -> None:
+    """At ``session.end()``: bind the session's held labels, or warn.
+
+    A label still held after the bind is one whose model was not the
+    current gmsh model when the session ended (another session's was),
+    so it cannot be created and is dropped with a warning naming it.
+    """
+    for labels in list(_HOLDERS):
+        if labels._parent is not session:
+            continue
+        labels._bind_held()
+        if labels._held:
+            names = sorted({name for _, name in labels._held})
+            labels._held = {}
+            _HOLDERS.discard(labels)
+            warnings.warn(
+                f"Labels {names} of session {session.name!r} were asked "
+                f"for with sync=False and never bound: the session's gmsh "
+                f"model was not the current model when it ended, so they "
+                f"are dropped.  Call g.model.sync() while the session's "
+                f"model is current.",
+                stacklevel=3,
+            )
 
 
 class Labels(_HasLogging):
@@ -1115,21 +1147,39 @@ class Labels(_HasLogging):
         )
         self._bind_held()
 
+    def _owns_current_model(self) -> bool:
+        """True when the current gmsh model is this session's own.
+
+        gmsh names models, and apeGmsh switches between them by name
+        (``gmsh.model.setCurrent``), so a name two models share cannot
+        say which one is current: that case is not owned, and the
+        labels stay held (``release_held_labels`` reports them).
+        """
+        name = self._parent.name
+        return (
+            self._parent.is_active
+            and gmsh.model.getCurrent() == name
+            and gmsh.model.list().count(name) == 1
+        )
+
     def _bind_held(self) -> None:
         """Synchronise once and create every held label.
 
-        A held tag the model no longer has when the label is bound (the
-        entity was removed or consumed first) is reported, never
-        dropped silently.
+        Only while this session's model is the current gmsh model: the
+        held tags name entities of that model, and the same tags exist
+        in any other.  A held tag the model no longer has when the label
+        is bound (the entity was removed or consumed first) is reported,
+        never dropped silently.  Each label leaves ``_held`` only once
+        it is bound, so an error part-way loses none of the rest.
         """
-        if not self._held:
+        if not self._held or not self._owns_current_model():
             return
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(self._parent, "g.labels (binding labels held from sync=False)")
-        held, self._held = self._held, {}
-        _HOLDERS.discard(self)
         gmsh.model.occ.synchronize()
-        for (dim, name), tags in held.items():
+        for key in list(self._held):
+            dim, name = key
+            tags = self._held[key]
             live = [t for t in tags if _is_bound(dim, t)]
             gone = sorted(set(tags) - set(live))
             if gone:
@@ -1143,6 +1193,8 @@ class Labels(_HasLogging):
                 )
             if live:
                 self._add_bound(dim, live, name, record=False)
+            del self._held[key]
+        _HOLDERS.discard(self)
 
     # ------------------------------------------------------------------
     # Create / update

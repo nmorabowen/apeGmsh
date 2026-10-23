@@ -321,10 +321,10 @@ class _SessionBase:
         """
         if self._active:
             try:
-                # Labels held on sync=False entities reach the artifacts.
-                labels = getattr(self, 'labels', None)
-                if labels is not None:
-                    labels._bind_held()
+                # Labels held on sync=False entities reach the artifacts
+                # (or, when this model is not current, are reported lost).
+                from .core.Labels import release_held_labels
+                release_held_labels(self)
                 if self._writes_artifacts:
                     self._write_artifacts()
             finally:

@@ -146,7 +146,8 @@ def test_held_label_does_not_leak_into_another_session():
             s2.mesh.generation.generate(dim=3)
             assert "LEAK" not in s2.labels.get_all()
             fem = s2.mesh.queries.get_fem_data(dim=3)
-            assert len(fem.elements.select(label="LEAK").ids) == 0
+            with pytest.raises(KeyError, match="LEAK"):
+                fem.elements.select(label="LEAK")
         # s2's end() leaves its model current; s1 binds in its own model.
         gmsh.model.setCurrent("leak_s1")
         s1.model.sync()
