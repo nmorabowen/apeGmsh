@@ -763,10 +763,14 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias",
     t=1 elastic, flip, then on to t=2; returns their stresses.
     ``wrapper``: ``(token, argv after the wrapped tag)``; each element then
     carries that wrapper (tag ``10 + t``) over the material (tag ``t``)."""
-    pytest.importorskip("openseespy.opensees")
     from apeGmsh.opensees.emitter.live import get_ops
 
-    ops = Deck(get_ops())
+    # The resolved backend, not openseespy by name: the live-fork lane binds
+    # the fork as ``opensees`` with no openseespy (#2498, as #2503).
+    try:
+        ops = Deck(get_ops())
+    except ImportError as e:
+        pytest.skip(f"no OpenSees backend: {e}")
     token, ndm, coords, argv = _CLASSES[cls]
     eps = (-1e-2, -1.5e-2, 0.0)[:ndm]
     ops.wipe()
