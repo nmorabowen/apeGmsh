@@ -1,7 +1,7 @@
 """#2465: an archived stage flip runs the stage close's route checks on replay.
 
 The stage close refuses a stage-flag update that reaches nothing, the wrong
-material, or only part of what it must (#2442, #2443, #2445, #2458, #2460).
+material, or only part of what it must (#2442, #2445, #2458, #2460).
 An archive written before those checks landed can still hold such a flip,
 and ``OpenSeesModel.from_h5(...).build`` re-emitted it silently.  The
 replay now builds the same ``RouteModel`` from the archive's declarations
@@ -11,6 +11,10 @@ byte for byte (the R1b oracle).  The replay checks the final model, so it
 may refuse an archive the bridge accepted, whose elements were registered
 after a flip (#2464); ``test_a_carrier_registered_after_the_flip_...``
 pins that case.
+
+The fork's constructor reset (#2443) is not a route check: the deck checks
+the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``), and the
+replayed deck carries that check as the bridge's deck does.
 
 A pre-fix archive is written here with the checks switched off, the way
 the bridge wrote it before them: ``check_stage_routes`` at stage close and,
@@ -40,6 +44,10 @@ from apeGmsh.mesh.FEMData import (
 from apeGmsh.opensees import OpenSeesModel
 from apeGmsh.opensees import apesees as _apesees
 from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.stage_emit import (
+    MD_STATIC_RESET_GUARD,
+    fork_guard_lines,
+)
 from apeGmsh.opensees._target import OpenSeesTarget
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.stage import _builder
@@ -54,6 +62,8 @@ _DP = dict(
     K=1e5, G=5e4, sigmaY=10.0, rho=0.0, rhoBar=0.0, Kinf=10.0, Ko=10.0,
     delta1=0.0, delta2=0.0, H=1000.0, theta=1.0,
 )
+_TCL_GUARD = fork_guard_lines(MD_STATIC_RESET_GUARD, "tcl")
+_PY_GUARD = fork_guard_lines(MD_STATIC_RESET_GUARD, "py")
 _TRI6 = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 0.0), (0.5, 0.5),
          (0.0, 0.5)]
 _QUAD4 = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
@@ -273,11 +283,15 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
         _flip_then_activate, "#2445",
         "SixNodeTri on pg 'C' carries nDMaterial tag 1, whose stage flag "
         "an earlier stage left plastic"),
-    "fork constructor reset": (
-        lambda: _flip_then_activate(system="Pardiso", own_material=True),
-        "#2444", "reset the class-wide C++ static "
-        "ManzariDafalias::mElastFlag to 0"),
 }
+
+
+def _fork_reset(mode: "str | None" = None) -> apeSees:
+    """The fork's constructor reset (#2443): a second ManzariDafalias
+    activated after the plastic flip, on a fork-only chain (Pardiso), so
+    the archive requires the fork."""
+    return _flip_then_activate(system="Pardiso", own_material=True,
+                               mode=mode)
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +337,8 @@ def valid_bridge(case: str) -> apeSees:
     if case == "reflip_on_activation":
         return _flip_then_activate(reflip=True)
     if case == "own_material_on_stock":
-        # The fork-reset model on a stock chain: not known to run the fork.
+        # The fork-reset model on a stock chain: it replays byte for byte,
+        # the deck's build check included.
         return _flip_then_activate(own_material=True)
     if case == "ladruno_quads":
         # One sand on two LadrunoQuad, flipped plastic: a
@@ -376,13 +391,8 @@ def _replay(path: Path, target: str = "tcl", **kwargs: Any) -> Any:
 def test_the_bridge_refuses_each_case(case: str, tmp_path: Path) -> None:
     """Each REFUSED model is one the current bridge refuses, at stage close
     or (the class-wide group) at emit, with the message the replay gives:
-    the archive is pre-fix by construction.  The bridge knows it runs the
-    fork only under a pinned ``mode="fork"``."""
+    the archive is pre-fix by construction."""
     build, issue, phrase = REFUSED[case]
-    if case == "fork constructor reset":
-        def build() -> apeSees:
-            return _flip_then_activate(system="Pardiso", own_material=True,
-                                       mode="fork")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(BridgeError) as exc:
@@ -407,24 +417,107 @@ def test_a_pre_fix_archive_is_refused_on_replay(
     assert not (tmp_path / "rewrite.h5").exists()
 
 
-def test_the_fork_reset_refusal_reads_the_same_on_replay(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    """One check, one text: the replay of a pre-fix fork-reset archive
-    raises the stage close's refusal byte for byte, including the
-    FORK_PIN note on fork commit 43b235bbb."""
+def _deck(build: "Callable[[], apeSees]", path: Path) -> list[str]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with pytest.raises(BridgeError) as close:
-            _flip_then_activate(system="Pardiso", own_material=True,
-                                mode="fork").tcl(str(tmp_path / "deck.tcl"))
-    path = _write(
-        lambda: _flip_then_activate(system="Pardiso", own_material=True),
-        tmp_path / "pre_fix.h5", monkeypatch, pre_fix=True)
-    with pytest.raises(BridgeError) as replay:
-        _replay(path)
-    assert str(replay.value) == str(close.value)
-    assert "commit 43b235bbb (FORK_PIN does)" in str(replay.value)
+        if path.suffix == ".py":
+            build().py(str(path))
+        else:
+            build().tcl(str(path), flat=True, progress=False)
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize("mode", ["fork", "auto", None])
+def test_the_bridge_guards_the_fork_reset_deck(
+    mode: "str | None", tmp_path: Path,
+) -> None:
+    """#2516: no stage close refuses the fork reset, on any target; the
+    deck checks the build it runs on instead."""
+    for name, guard in (("deck.tcl", _TCL_GUARD), ("deck.py", _PY_GUARD)):
+        lines = _deck(lambda: _fork_reset(mode), tmp_path / name)
+        assert lines.count(guard[0]) == 1, name
+
+
+@pytest.mark.parametrize("target", ["tcl", "py", "h5"])
+def test_the_fork_reset_archive_replays_with_the_guard(
+    target: str, tmp_path: Path,
+) -> None:
+    """The archive of the fork-reset model replays on every target; the
+    replayed deck carries the build check where the bridge's does, before
+    its first command."""
+    path = tmp_path / "reset.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _fork_reset("fork").h5(str(path))
+    if target == "h5":
+        _replay(path, "h5", out=str(tmp_path / "rewrite.h5"))
+        assert (tmp_path / "rewrite.h5").exists()
+        return
+    replay = _replay(path, target, **({"flat": True} if target == "tcl"
+                                      else {})).splitlines()
+    bridge = _deck(lambda: _fork_reset("fork"), tmp_path / f"deck.{target}")
+    guard = _TCL_GUARD if target == "tcl" else _PY_GUARD
+    for lines in (replay, bridge):
+        assert lines.count(guard[0]) == 1
+        at = lines.index(guard[0])
+        assert lines[at:at + len(guard)] == guard
+        # Before the first command: nothing but comments (and, in py, the
+        # import) comes first.
+        assert all(ln.startswith(("#", "import ")) for ln in lines[:at])
+
+
+def _guard_block(lines: "list[str]", guard: "list[str]") -> str:
+    at = lines.index(guard[0])
+    assert lines[at:at + len(guard)] == guard
+    return chr(10).join(guard)
+
+
+def test_the_replayed_guard_runs_at_the_pin_and_stops_on_stale(
+    tmp_path: Path,
+) -> None:
+    """The replayed deck's check, on stub engines: the pin and stock run
+    on, the stale fork build 79e062367 stops by name."""
+    import types
+
+    path = tmp_path / "reset.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _fork_reset("fork").h5(str(path))
+    pin = MD_STATIC_RESET_GUARD.builds[0]
+    stale = "79e0623670c61c768357a01dff1477a4a0ef7e06"
+    py = compile(_guard_block(_replay(path, "py").splitlines(), _PY_GUARD),
+                 "<guard>", "exec")
+    exec(py, {"ops": types.SimpleNamespace()})
+    exec(py, {"ops": types.SimpleNamespace(ladrunoBuild=lambda: pin)})
+    with pytest.raises(SystemExit) as stop:
+        exec(py, {"ops": types.SimpleNamespace(ladrunoBuild=lambda: stale)})
+    assert stop.value.code == MD_STATIC_RESET_GUARD.message
+    tkinter = pytest.importorskip("tkinter")
+    tcl, block = tkinter.Tcl(), _guard_block(
+        _replay(path, "tcl", flat=True).splitlines(), _TCL_GUARD)
+    tcl.eval(block)
+    tcl.eval(f"proc ladrunoBuild {{}} {{ return {pin} }}")
+    tcl.eval(block)
+    tcl.eval(f"proc ladrunoBuild {{}} {{ return {stale} }}")
+    with pytest.raises(tkinter.TclError) as err:
+        tcl.eval(block)
+    assert str(err.value) == MD_STATIC_RESET_GUARD.message
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_the_replayed_fork_reset_deck_on_the_fork(tmp_path: Path) -> None:
+    """``live-fork``: the replayed deck passes its check at FORK_PIN; on the
+    stale fork build (the local 79e062367) it stops by name."""
+    from tests.opensees.integration.test_deck_md_static_guard import (
+        run_guarded_head,
+    )
+
+    path = tmp_path / "reset.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _fork_reset("fork").h5(str(path))
+    run_guarded_head(_replay(path, "py"), tmp_path, fork_module=True)
 
 
 def test_the_staged_replay_refuses_on_its_own(
@@ -482,7 +575,7 @@ def test_a_stage_without_a_flip_needs_no_declarations(
 
 def _facts(model: Any) -> list[tuple[Any, ...]]:
     return sorted(
-        (spec.cls, spec.pg, sorted(spec.nd_tags), sorted(spec.dep_classes),
+        (spec.cls, spec.pg, sorted(spec.nd_tags),
          sorted(spec.blind, key=repr),
          sorted((t, sorted(v)) for t, v in spec.first_only.items()),
          sorted(spec.eids))
@@ -490,9 +583,9 @@ def _facts(model: Any) -> list[tuple[Any, ...]]:
 
 
 @pytest.mark.parametrize("build", [
-    *(v[0] for v in REFUSED.values()),
+    *(v[0] for v in REFUSED.values()), _fork_reset,
     *(lambda c=c: valid_bridge(c) for c in VALID),
-], ids=[*REFUSED, *VALID])
+], ids=[*REFUSED, "fork constructor reset", *VALID])
 def test_the_archive_reads_the_model_the_stage_close_reads(
     build: "Callable[[], apeSees]", monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -515,8 +608,7 @@ def test_the_archive_reads_the_model_the_stage_close_reads(
     model = OpenSeesModel.from_h5(str(path))
     archived = compose._archived_route_model(
         stages=model.stages(), elements=model.elements(),
-        declarations=model.declarations, fem=model.fem,
-        fork=live.fork)
+        declarations=model.declarations, fem=model.fem)
     assert _facts(archived) == _facts(live)
     assert dict(archived.nd_class) == dict(live.nd_class)
     assert archived.group_of_tag() == live.group_of_tag()

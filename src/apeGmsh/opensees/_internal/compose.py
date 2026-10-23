@@ -614,7 +614,7 @@ def refuse_archived_stage_routes(
 ) -> None:
     """The stage-close route checks on the replay path (#2465).
 
-    An archive written before #2442, #2443, #2445, #2458 or #2460 landed can
+    An archive written before #2442, #2445, #2458 or #2460 landed can
     hold a stage flip that the stage close now refuses: an
     ``updateMaterialStage`` through ``updateParameter``, a ``materialState``
     through a host that drops it, a tag-blind neighbour, a target that
@@ -626,8 +626,10 @@ def refuse_archived_stage_routes(
     archive's declarations.  The model is the final one, while the stage
     close sees only the elements registered so far, so an archive whose
     elements were registered after a flip may be refused here although the
-    bridge accepted it (#2464).  ``requires`` are the archive's replay requirements: a deck
-    that needs the fork is known to run it (#2443).
+    bridge accepted it (#2464).  ``requires`` (the archive's replay
+    requirements) is read by no check: the fork's constructor reset is
+    checked by the replayed deck itself, on the build it runs on
+    (``stage_emit.MD_STATIC_RESET_GUARD``), as the bridge's deck is.
     """
     from ..stage._builder import (
         STAGE_FLAG_PARAMETERS,
@@ -644,7 +646,7 @@ def refuse_archived_stage_routes(
         return
     model = _archived_route_model(
         stages=stages, elements=elements, declarations=declarations,
-        fem=fem, fork="fork" in requires)
+        fem=fem)
     fem_eid_of = {int(r.tag): int(r.fem_eid) for r in elements}
     check_archived_stage_routes(model, tuple(
         ArchivedStageRoutes(
@@ -663,7 +665,7 @@ def refuse_archived_stage_routes(
 
 def _archived_route_model(
     *, stages: "Sequence[Any]", elements: "Sequence[Any]",
-    declarations: Any, fem: Any, fork: bool,
+    declarations: Any, fem: Any,
 ) -> Any:
     """The :class:`~apeGmsh.opensees.stage._builder.RouteModel` of an
     archive, read from ``/opensees/decls`` and ``/opensees/decl_params``.
@@ -776,7 +778,6 @@ def _archived_route_model(
                 f"element {d.key!r} ({cls}) declares tags {lost} that no "
                 "archived element row holds")
         nd_tags: set[int] = set()
-        dep_classes: set[str] = set()
         blind: list[tuple[str, int | None]] = []
         first_only: dict[int, set[str]] = {}
         walked: set[int] = set()
@@ -790,7 +791,6 @@ def _archived_route_model(
             dep = type_of(j)
             todo.extend((c, (*via, dep)) for c in children(j))
             tag = nd_tag.get(j) if decls[j].family == "nDMaterial" else None
-            dep_classes.add(dep)
             if tag is not None:
                 nd_tags.add(tag)
             if dep in TAG_BLIND_STAGE_PARAMETER:
@@ -801,7 +801,7 @@ def _archived_route_model(
         eids = tuple(int(record_of[t].fem_eid) for t in tags)
         specs.append(RouteSpec(
             cls=cls, pg=None if pg is None else str(pg),
-            nd_tags=frozenset(nd_tags), dep_classes=frozenset(dep_classes),
+            nd_tags=frozenset(nd_tags),
             blind=tuple(blind),
             first_only={t: frozenset(v) for t, v in first_only.items()},
             fanout=functools.partial(tuple, eids),
@@ -811,7 +811,6 @@ def _archived_route_model(
     return RouteModel(
         specs=tuple(specs), nd_class=nd_class,
         expand_pg=lambda pg: expand_pg_to_elements(fem, pg).eids,
-        fork=fork,
     )
 
 

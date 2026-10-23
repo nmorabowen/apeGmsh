@@ -35,9 +35,9 @@ from __future__ import annotations
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
-    ForkBuildFloor,
+    ForkBuildGuard,
     MaterialStageCarriers,
-    fork_floor_message,
+    fork_guard_lines,
 )
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
@@ -525,7 +525,7 @@ class TclEmitter:
         self._stage_carriers = MaterialStageCarriers()
         # The fork build floors this deck already checks, with the rank
         # whose block checks it (None: the whole deck).
-        self._fork_floors: set[tuple[ForkBuildFloor, int | None]] = set()
+        self._fork_floors: set[tuple[ForkBuildGuard, int | None]] = set()
         # The rank of the open partition block, None outside one.
         self._partition_rank: int | None = None
         # Tracks the type token of the currently-open pattern (for
@@ -1678,6 +1678,7 @@ class TclEmitter:
         value: float,
     ) -> None:
         self._stage0.parameter(args)
+        self._stage_carriers.note_parameter(args, value)
         if args and args[0] == "materialState":
             self._require_fork_floors(
                 self._stage_carriers.fork_floors(ele_tags))
@@ -1845,6 +1846,7 @@ class TclEmitter:
         self._stage0.user_flip(mat_tag)
         self._require_fork_floors(
             self._stage_carriers.flip_fork_floors(mat_tag, stage))
+        self._stage_carriers.note_flip(mat_tag, stage)
         # A plastic flip of a swept material also updates each of its
         # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
@@ -1855,13 +1857,13 @@ class TclEmitter:
         self._lines.indent = prev_indent
 
     def _require_fork_floors(
-        self, floors: "Sequence[ForkBuildFloor]",
+        self, floors: "Sequence[ForkBuildGuard]",
     ) -> None:
-        """Make the deck check each new fork build floor at its start.
+        """Make the deck check each new fork build guard at its start.
 
-        The check goes before the first command, after the leading
-        comments, and stops the deck with :func:`fork_floor_message`
-        when the running build lacks the floor's command (#2504).  The
+        The check (:func:`fork_guard_lines`) goes before the first
+        command, after the leading comments, and stops the deck when the
+        running build fails it (#2504, #2516).  The
         recorded partition spans move down with it.  A streamed deck has
         its start on disk already, so it checks here, before the line
         that needs the floor; inside a partition block that check runs
@@ -1873,11 +1875,7 @@ class TclEmitter:
             if {(floor, None), (floor, rank)} & self._fork_floors:
                 continue
             self._fork_floors.add((floor, rank))
-            guard = [
-                f'if {{[info commands {floor.probe}] eq ""}} {{',
-                f'    error "{fork_floor_message(floor)}"',
-                "}",
-            ]
+            guard = fork_guard_lines(floor, "tcl")
             if self._stream is not None:
                 prev_indent = self._lines.indent
                 self._lines.indent = ""
@@ -1905,7 +1903,10 @@ class TclEmitter:
     def _stage_zero(self) -> None:
         """Write the owed fresh-stage lines of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
-        StageZeroLedger`), at a solve verb."""
+        StageZeroLedger`), at a solve verb, and guard a solve the fork's
+        constructor reset would change
+        (:meth:`MaterialStageCarriers.solve_fork_guards`)."""
+        self._require_fork_floors(self._stage_carriers.solve_fork_guards())
         for tag, stage in self._stage0.due():
             self._lines.append(
                 f"updateMaterialStage -material {tag} -stage {stage}")

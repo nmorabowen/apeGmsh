@@ -8,6 +8,7 @@ from typing import (
     Any,
     Callable,
     Iterable,
+    Literal,
     Mapping,
     NamedTuple,
     Protocol,
@@ -793,12 +794,131 @@ def fork_floor_message(floor: ForkBuildFloor) -> str:
         "command, so it is stock OpenSees or an older fork build, where "
         f"{floor.failure}. Rebuild the Ladruno fork at or after FORK_PIN."
     )
+    _refuse_tcl_syntax("fork_floor_message", message)
+    return message
+
+
+def _refuse_tcl_syntax(who: str, message: str) -> None:
+    """Raise when ``message`` holds a character Tcl would substitute:
+    both targets quote a guard message as is."""
     bad = sorted(set(message) & set('[]{}$"\\\n'))
     if bad:
         raise BridgeError(
-            f"fork_floor_message: {bad!r} in the guard message would be "
-            "read as Tcl syntax; reword the ForkBuildFloor.")
-    return message
+            f"{who}: {bad!r} in the guard message would be read as Tcl "
+            "syntax; reword it.")
+
+
+#: The Ladruno fork commit that stops the ManzariDafalias constructors
+#: resetting their class-wide stage flag.
+MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
+
+#: Fork builds measured for that reset, by exact ``ladrunoBuild()`` sha:
+#: does the build carry :data:`MD_STATIC_FIX_COMMIT`?  Ancestry checked on
+#: the fork (GitHub compare); each row is measured by the live reset test
+#: (``tests/opensees/stage/test_class_wide_stage_flag.py``).  A sha cannot
+#: be ordered, so a build joins only once it is measured, and the deck
+#: guard (:data:`MD_STATIC_RESET_GUARD`) refuses every fork build not
+#: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
+#: otherwise).
+FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
+    # FORK_PIN ladruno-v20261023, which merges the fix: no reset.
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # The maintainer's venv build, an ancestor of the fix: resets.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
+
+
+class ForkBuildAllowlist(NamedTuple):
+    """Ladruno fork builds that an emitted deck accepts by exact sha.
+
+    The deck asks the running build for ``ladrunoBuild``.  A build without
+    the command runs on: stock OpenSees, which this guard says is right.
+    A build with it must answer one of :attr:`builds`, else the deck stops
+    with :attr:`message`: an unknown, unmeasured or unanswering fork build
+    is refused (fail closed).  Used where no command marks the fix, so no
+    :class:`ForkBuildFloor` probe can (#2516).
+    """
+
+    #: The accepted ``ladrunoBuild()`` answers, 40 lowercase hex each.
+    builds: tuple[str, ...]
+    #: The error the deck stops with.
+    message: str
+
+
+#: A check an emitted deck runs on the build at its start.
+ForkBuildGuard: TypeAlias = "ForkBuildFloor | ForkBuildAllowlist"
+
+
+#: The error :data:`MD_STATIC_RESET_GUARD` stops a deck with.
+MD_STATIC_RESET_MESSAGE = (
+    "apeGmsh: this deck builds an element or material after a stage "
+    "flipped the class-wide stage flag ManzariDafalias::mElastFlag of "
+    "ManzariDafalias and LadrunoSANISAND, and solves before flipping "
+    "it again. A Ladruno fork build without fork commit "
+    f"{MD_STATIC_FIX_COMMIT[:9]} resets that flag in the material "
+    "constructor, so every one of these materials would go back to "
+    "elastic with no warning (apeGmsh issues #2444, #2516). The "
+    "running OpenSees is a fork build whose ladrunoBuild sha is not "
+    "one measured to carry the fix. Rebuild the Ladruno fork at "
+    "FORK_PIN, flip the whole group again after the activation, or "
+    "activate these elements before the flip."
+)
+
+
+#: The guard a deck whose solve could see the ManzariDafalias constructor
+#: reset runs (:meth:`MaterialStageCarriers.solve_fork_guards`).  The one
+#: hook for a fork capability marker of the fix: when the fork
+#: registers one, this becomes a :class:`ForkBuildFloor` on that command
+#: (with its own message) and the sha table goes.
+MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, fixed in FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed)),
+    message=MD_STATIC_RESET_MESSAGE)
+
+
+def fork_guard_lines(
+    guard: ForkBuildGuard, dialect: 'Literal["py", "tcl"]',
+) -> list[str]:
+    """The deck lines that run ``guard`` in ``dialect``, unindented.
+
+    A :class:`ForkBuildFloor` stops the deck when the build lacks its
+    probe command; a :class:`ForkBuildAllowlist` when the build has
+    ``ladrunoBuild`` and it does not answer a listed sha.  Any other
+    object raises.
+    """
+    if isinstance(guard, ForkBuildFloor):
+        message = fork_floor_message(guard)
+        if dialect == "tcl":
+            return [f'if {{[info commands {guard.probe}] eq ""}} {{',
+                    f'    error "{message}"',
+                    "}"]
+        return [f"if not hasattr(ops, {guard.probe!r}):",
+                f"    raise SystemExit({message!r})"]
+    if isinstance(guard, ForkBuildAllowlist):
+        _refuse_tcl_syntax("ForkBuildAllowlist", guard.message)
+        for sha in guard.builds:
+            if len(sha) != 40 or set(sha) - set("0123456789abcdef"):
+                raise BridgeError(
+                    f"ForkBuildAllowlist: {sha!r} is not a 40-hex "
+                    "ladrunoBuild sha.")
+        if dialect == "tcl":
+            return ['if {[info commands ladrunoBuild] ne ""} {',
+                    "    if {[catch {ladrunoBuild} _apesees_build] || "
+                    f"[lsearch -exact {{{' '.join(guard.builds)}}} "
+                    "[string trim $_apesees_build]] < 0} {",
+                    f'        error "{guard.message}"',
+                    "    }",
+                    "}"]
+        return ["if hasattr(ops, 'ladrunoBuild'):",
+                "    try:",
+                "        _apesees_build = str(ops.ladrunoBuild()).strip()",
+                "    except Exception:",
+                "        _apesees_build = ''",
+                f"    if _apesees_build not in {tuple(guard.builds)!r}:",
+                f"        raise SystemExit({guard.message!r})"]
+    raise BridgeError(
+        f"fork_guard_lines: {type(guard).__name__} is not a fork build "
+        "guard (ForkBuildFloor or ForkBuildAllowlist).")
 
 
 def _carried_material_tag(
@@ -870,6 +990,23 @@ class MaterialStageCarriers:
     needs, and the deck emitters check each at the deck's start
     (#2504).  The check is derived from the calls, like the lines it
     guards, so ``model_hash`` does not see it.
+
+    And it watches for the ManzariDafalias constructor reset (#2516).
+    On a fork build without :data:`MD_STATIC_FIX_COMMIT` the constructor
+    of a ``FORK_RESETS_STAGE_STATIC`` class sets the class-wide stage
+    flag to elastic, and every new element copies its material through
+    it.  So an ``element`` or ``nDMaterial`` emitted after a user flip
+    left the group at a non-zero stage, with no flip of the group again
+    before the next solve verb, gives that build's answer and no other.
+    :meth:`solve_fork_guards` then names :data:`MD_STATIC_RESET_GUARD`.
+    Every element counts, whatever it carries: an element of an
+    unknown grammar could copy the material, so the watch never misses
+    one (fail closed), and a staged deck builds its sections and
+    materials before its first stage block.  A flip of the group after
+    the construction, and before the solve, makes every build agree
+    (``Elastic2Plastic()`` runs on each flip, whatever the flag held).
+    The flag is per process, so the watch keeps each partition rank
+    apart: a flip inside one rank's block heals that rank only.
     """
 
     def __init__(self) -> None:
@@ -882,12 +1019,88 @@ class MaterialStageCarriers:
         self._rank: int | None = None
         # element tag -> its MATERIAL_STATE_FORK_FLOOR floor.
         self._floors: dict[int, ForkBuildFloor] = {}
+        from ...stage._builder import (
+            CLASS_WIDE_STAGE_FLAG,
+            FORK_RESETS_STAGE_STATIC,
+            STAGE_FLAG_PARAMETERS,
+        )
+        # The constructor-reset watch: the class-wide group of each
+        # FORK_RESETS_STAGE_STATIC class; the stage a user flip left each
+        # group at, and the groups a construction reset since, both keyed
+        # by (group, rank).  The static is per process, so a line inside
+        # a partition block acts on that rank only; rank None is a line
+        # outside every block, which every rank runs.
+        self._reset_classes: dict[str, str] = {
+            cls: CLASS_WIDE_STAGE_FLAG[cls] for cls in FORK_RESETS_STAGE_STATIC}
+        self._flag_params = STAGE_FLAG_PARAMETERS
+        self._reset_group: dict[int, str] = {}
+        self._group_stage: dict[tuple[str, int | None], int] = {}
+        self._reset_pending: set[tuple[str, int | None]] = set()
+
+    def _note_construction(self) -> None:
+        """An ``element`` or ``nDMaterial``: on a resetting build every
+        group a user flip left non-zero, on the ranks that run the line,
+        is now elastic there."""
+        rank = self._rank
+        for (group, at), stage in self._group_stage.items():
+            if stage != 0 and (rank is None or at is None or at == rank):
+                self._reset_pending.add((group, rank))
+
+    def _set_group_stage(self, group: str, stage: int) -> None:
+        """A flip of ``group`` to ``stage``: it sets the flag on the ranks
+        that run the line.  A flip on every rank heals every pending
+        reset of the group; a flip on one rank heals only that rank's,
+        never one every rank owes (fail closed)."""
+        rank = self._rank
+        if rank is None:
+            for key in [k for k in self._group_stage if k[0] == group]:
+                del self._group_stage[key]
+            self._reset_pending = {
+                k for k in self._reset_pending if k[0] != group}
+        else:
+            self._reset_pending.discard((group, rank))
+        self._group_stage[(group, rank)] = int(stage)
+
+    def note_flip(self, mat_tag: int, stage: int) -> None:
+        """A user flip of ``mat_tag`` to ``stage`` (``updateMaterialStage``
+        or a stage-flag ``updateParameter``): it sets its group's flag on
+        every build."""
+        group = self._reset_group.get(int(mat_tag))
+        if group is not None:
+            self._set_group_stage(group, int(stage))
+
+    def note_parameter(
+        self, args: "Sequence[int | float | str]", value: float,
+    ) -> None:
+        """An ``updateParameter`` on ``args``: a stage-flag name sets the
+        flag of the material it names.  One with no material tag reaches
+        every material of its elements, so it may set any group's flag
+        and heals none."""
+        if not args or args[0] not in self._flag_params:
+            return
+        if len(args) > 1:
+            self.note_flip(int(args[1]), int(value))
+            return
+        if int(value) != 0:
+            for group in set(self._reset_group.values()):
+                self._group_stage[(group, self._rank)] = int(value)
+
+    def solve_fork_guards(self) -> tuple[ForkBuildGuard, ...]:
+        """The guards a solve verb needs: :data:`MD_STATIC_RESET_GUARD`
+        once a construction reset a group on a resetting build and no
+        flip set it again."""
+        return (MD_STATIC_RESET_GUARD,) if self._reset_pending else ()
 
     def note_material(
         self, mat_type: str, tag: int,
         params: "Sequence[int | float | str]" = (),
     ) -> None:
         tag = int(tag)
+        self._note_construction()
+        if mat_type in self._reset_classes:
+            self._reset_group[tag] = self._reset_classes[mat_type]
+        else:
+            self._reset_group.pop(tag, None)
         self._wraps.pop(tag, None)
         if mat_type in SWEPT_MATERIAL_CLASSES:
             self._swept.add(tag)
@@ -918,6 +1131,7 @@ class MaterialStageCarriers:
     def note_element(
         self, token: str, tag: int, argv: "Sequence[int | float | str]",
     ) -> None:
+        self._note_construction()
         floor = MATERIAL_STATE_FORK_FLOOR.get(token)
         if floor is not None:
             self._floors[int(tag)] = floor

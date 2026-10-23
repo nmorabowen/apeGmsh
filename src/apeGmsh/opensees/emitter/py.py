@@ -18,9 +18,9 @@ from __future__ import annotations
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
-    ForkBuildFloor,
+    ForkBuildGuard,
     MaterialStageCarriers,
-    fork_floor_message,
+    fork_guard_lines,
 )
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
@@ -628,7 +628,7 @@ class PyEmitter:
         self._stage_carriers = MaterialStageCarriers()
         # The fork build floors this deck already checks, and
         # where their checks go: after the import, before ``ops.wipe()``.
-        self._fork_floors: set[ForkBuildFloor] = set()
+        self._fork_floors: set[ForkBuildGuard] = set()
         self._fork_floor_at = len(header) - 1
         # Partition-emission state (ADR 0027 / P4). On the first
         # ``partition_open`` call across the emitter's lifetime, emit a
@@ -1405,6 +1405,7 @@ class PyEmitter:
         value: float,
     ) -> None:
         self._stage0.parameter(args)
+        self._stage_carriers.note_parameter(args, value)
         if args and args[0] == "materialState":
             self._require_fork_floors(
                 self._stage_carriers.fork_floors(ele_tags))
@@ -1549,6 +1550,7 @@ class PyEmitter:
         self._stage0.user_flip(mat_tag)
         self._require_fork_floors(
             self._stage_carriers.flip_fork_floors(mat_tag, stage))
+        self._stage_carriers.note_flip(mat_tag, stage)
         # A plastic flip of a swept material also updates each of its
         # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
@@ -1559,24 +1561,20 @@ class PyEmitter:
         self._lines.indent = prev_indent
 
     def _require_fork_floors(
-        self, floors: "Sequence[ForkBuildFloor]",
+        self, floors: "Sequence[ForkBuildGuard]",
     ) -> None:
-        """Make the deck check each new fork build floor at its start.
+        """Make the deck check each new fork build guard at its start.
 
-        The check goes right after the ``openseespy`` import, before
-        ``ops.wipe()``, and stops the deck with
-        :func:`fork_floor_message` when the running build lacks the
-        floor's command (#2504).  A deck that needs no floor is
-        unchanged.
+        The check (:func:`fork_guard_lines`) goes right after the
+        ``openseespy`` import, before ``ops.wipe()``, and stops the deck
+        when the running build fails it (#2504, #2516).  A deck that
+        needs no guard is unchanged.
         """
         for floor in floors:
             if floor in self._fork_floors:
                 continue
             self._fork_floors.add(floor)
-            guard = [
-                f"if not hasattr(ops, {floor.probe!r}):",
-                f"    raise SystemExit({fork_floor_message(floor)!r})",
-            ]
+            guard = fork_guard_lines(floor, "py")
             for line in guard:
                 self._lines.insert(self._fork_floor_at, line)
                 self._fork_floor_at += 1
@@ -1584,7 +1582,10 @@ class PyEmitter:
     def _stage_zero(self) -> None:
         """Write the owed fresh-stage lines of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
-        StageZeroLedger`), at a solve verb."""
+        StageZeroLedger`), at a solve verb, and guard a solve the fork's
+        constructor reset would change
+        (:meth:`MaterialStageCarriers.solve_fork_guards`)."""
+        self._require_fork_floors(self._stage_carriers.solve_fork_guards())
         for tag, stage in self._stage0.due():
             self._lines.append(_ops_call(
                 "updateMaterialStage", "-material", tag, "-stage", stage))
