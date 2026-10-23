@@ -149,6 +149,16 @@ Standalone recorder declaration helper. Recorder declarations live on
 
 ::: apeGmsh.opensees.recorder
 
+## Building tables
+
+Story forces, story drifts, pier forces and story masses (the ETABS
+*Story Forces*, *Story Drifts*, *Pier Forces* and *Mass Summary by
+Story* tables), read in-process from the live domain. The extractor
+classes are callables `extractor(ops) -> ndarray` with a `labels`
+tuple, so a modal driver can evaluate them at each mode.
+
+::: apeGmsh.opensees.building
+
 ## Numberer
 
 ::: apeGmsh.mesh._numberer.Numberer
