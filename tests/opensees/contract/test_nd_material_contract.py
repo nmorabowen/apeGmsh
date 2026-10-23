@@ -25,6 +25,11 @@ from apeGmsh.opensees.material.nd import (
     LadrunoJ2Finite,
     LadrunoSANISAND,
     ManzariDafalias,
+    PM4Sand,
+    PM4Silt,
+    PressureDependMultiYield,
+    PressureDependMultiYield02,
+    PressureIndependMultiYield,
     SAniSandMS,
 )
 
@@ -38,6 +43,11 @@ ALL_ND: list[type[NDMaterial]] = [
     ManzariDafalias,
     SAniSandMS,
     LadrunoSANISAND,
+    PressureIndependMultiYield,
+    PressureDependMultiYield,
+    PressureDependMultiYield02,
+    PM4Sand,
+    PM4Silt,
 ]
 
 
@@ -136,6 +146,30 @@ _MINIMAL_KWARGS: dict[type[NDMaterial], Callable[[], dict[str, Any]]] = {
         "z_max": 12.5,
         "cz": 1100.0,
         "rho": 2.0,
+    },
+    # Site-response soils, kPa / t / m (the OpenSees manual's examples).
+    PressureIndependMultiYield: lambda: {
+        "nd": 2, "rho": 1.8, "ref_shear_modulus": 6.0e4,
+        "ref_bulk_modulus": 3.0e5, "cohesion": 40.0,
+    },
+    PressureDependMultiYield: lambda: {
+        "nd": 2, "rho": 2.0, "ref_shear_modulus": 9.0e4,
+        "ref_bulk_modulus": 2.2e5, "friction_angle": 32.0,
+        "peak_shear_strain": 0.1, "ref_pressure": 80.0,
+        "press_depend_coe": 0.5, "pt_angle": 26.0, "contrac": 0.21,
+        "dilat1": 0.0, "dilat2": 0.0, "liquefac1": 10.0,
+        "liquefac2": 0.02, "liquefac4": 1.0,
+    },
+    PressureDependMultiYield02: lambda: {
+        "nd": 2, "rho": 2.0, "ref_shear_modulus": 9.0e4,
+        "ref_bulk_modulus": 2.2e5, "friction_angle": 32.0,
+        "peak_shear_strain": 0.1, "ref_pressure": 101.0,
+        "press_depend_coe": 0.5, "pt_angle": 26.0, "contrac1": 0.067,
+        "contrac3": 0.23, "dilat1": 0.06, "dilat3": 0.27,
+    },
+    PM4Sand: lambda: {"Dr": 0.55, "G0": 677.0, "hpo": 0.4, "rho": 1.7},
+    PM4Silt: lambda: {
+        "Su": 0.0, "Su_rate": 0.25, "G0": 500.0, "hpo": 0.1, "rho": 1.7,
     },
 }
 
