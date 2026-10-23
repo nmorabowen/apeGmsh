@@ -8,14 +8,17 @@ columns, with one shear wall (``ASDShellT3``) under the x = 12 edge:
 * ``Panel_1`` [6, 12] x [0, 5] - four edge beams plus an interior beam at
   x = 9 that splits the panel;
 * ``Panel_2`` [0, 6] x [5, 10] - four edge beams and a 2 x 2 hole framed
-  by four beams.
+  by four beams, with two trimmer beams tying the frame to the x = 0 and
+  x = 6 edge beams.
 
 Before the per-panel frame filter every panel received every beam of the
 floor (and the kernel went singular, ``sum Rz = 0``), and before the
 interior-node skip the panels' interior mesh nodes were emitted with no
 element (K singular, every eigenvalue undetermined).  Here gravity
-``q = 5`` kPa must reach the base exactly, ``sum Rz = q * sum(A_i)``, and
-the eigen solve must give finite positive periods.
+``q = 5`` kPa must reach the base exactly, ``sum Rz = q * sum(A_i)``, the
+gravity sag must stay below 0.05, every period must be below 1 s, and mode 1
+must carry more than 90 % of the X mass. ``sum Rz`` alone cannot see a
+mechanism, because a singular K still balances the loads.
 """
 from __future__ import annotations
 
@@ -46,6 +49,11 @@ BEAMS = [
     # own (MembraneHoleNodeFreeWarning).
     ((2, 6.5), (4, 6.5)), ((4, 6.5), (4, 8.5)), ((4, 8.5), (2, 8.5)),
     ((2, 8.5), (2, 6.5)),
+    # Trimmers frame the opening into the edge beams. Without them the hole
+    # ring reaches no support: the membrane holds it in its plane only, so
+    # its uz / rx / ry are three rigid-body modes (T ~ 1e6 s) and gravity
+    # solves a singular K (|uz| ~ 1e12 m) with sum Rz still exact.
+    ((0, 6.5), (2, 6.5)), ((4, 8.5), (6, 8.5)),
 ]
 COLS = [(0, 0), (6, 0), (12, 0), (0, 5), (6, 5), (0, 10), (6, 10)]
 
@@ -195,11 +203,18 @@ def test_gravity_reaches_the_base_exactly_and_eigen_is_regular(fem: Any) -> None
     o.reactions()
     rz = sum(o.nodeReaction(int(n), 3) for n in o.getNodeTags())
     assert rz == pytest.approx(Q * AREA, rel=1e-9)
+    # sum Rz cannot see a mechanism (a singular K still balances the loads):
+    # bound the gravity sag, the periods, and the first mode's X mass.
+    uz = max(abs(float(o.nodeDisp(int(n), 3))) for n in o.getNodeTags())
+    assert uz < 0.05, f"gravity max |uz| = {uz:.3e}: a mechanism"
     o.loadConst("-time", 0.0)
     res = ops.eigen(4)
     periods = np.asarray(res.periods, dtype=float)
     assert np.all(np.isfinite(periods)) and np.all(periods > 0.0), periods
     assert all(math.isfinite(float(lam)) and lam > 0 for lam in res.eigenvalues)
+    assert np.all(periods < 1.0), f"periods {periods}: a mechanism"
+    mx = list(o.modalProperties("-return")["partiMassRatiosMX"])
+    assert mx[0] > 90.0, f"mode 1 MX = {mx[0]:.3f} %"
 
 
 def test_archive_replay_skips_the_same_nodes(fem: Any, tmp_path: Path) -> None:
