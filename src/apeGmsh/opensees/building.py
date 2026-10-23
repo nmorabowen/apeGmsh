@@ -52,6 +52,13 @@ Refusals
 - an MP constraint (rigid link, equalDOF, ...) joining a node of the part
   above to a node of the part below: it carries force past the elements,
   so the element free body would miss it;
+- any EQ constraint in the domain (``equationConstraint``, the fork's
+  ``LadrunoTie``): OpenSees does not report their nodes, so whether one
+  crosses a cut cannot be checked. The count comes from a ``printModel``
+  dump to a temporary file, which :class:`StoryForces` writes once at
+  construction (about 30 µs per node and element);
+- in :class:`StoryDrifts` joint mode, a story none of whose joints has a
+  node directly below it;
 - an element whose ``forces`` vector is not one value per DOF of its nodes
   (``eleType`` is named);
 - nodes with an ``ndf`` other than 3 or 6, and 2-D models.
@@ -59,7 +66,11 @@ Refusals
 Code checks
 -----------
 The tables carry what an ASCE 7 check reads; naming columns is the
-caller's. For example, apeETABS's ``TorsionCheck`` drifts frame::
+caller's. ``AvgX`` / ``AvgY`` are the ASCE 7 average of the values at the
+two extreme points, ``(|max| + |min|) / 2`` of the story's (or level's)
+signed entries, not a mean over every joint, so the max/avg ratio of
+Table 12.3-1 and ``Ax`` (Eq. 12.8-14) do not move with the mesh. For
+example, apeETABS's ``TorsionCheck`` drifts frame::
 
     t = drifts.story_max(combined).to_frame().rename_axis("Story").reset_index()
     h = dict(zip(drifts.stories, drifts.heights))
@@ -73,6 +84,8 @@ with ``MaxX, AvgX`` renamed ``Maximum, Average``.
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 from dataclasses import dataclass
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Sequence
@@ -249,6 +262,38 @@ def _mp_pairs(ops: ModuleType, dom: _Domain) -> IntArray:
         for r in retained:
             out.append((c, dom.row_of[int(r)]))
     return np.asarray(out, dtype=np.int64).reshape(-1, 2)
+
+
+#: The line ``Domain::Print`` writes before the EQ constraints (openseespy
+#: >= 3.8 and the fork).
+_EQ_HEADER = "EQ_Constraints: numConstraints:"
+
+
+def _eq_constraint_count(ops: ModuleType, where: str) -> int:
+    """The number of EQ constraints (``equationConstraint``, the fork's
+    ``LadrunoTie``) in the live domain.
+
+    OpenSees has no query for them (``getRetainedNodes`` sees MP
+    constraints only), so the count is read from the ``printModel`` dump,
+    the one place the domain reports it. A build without
+    ``equationConstraint`` cannot hold one; any other build whose dump
+    lacks the count raises.
+    """
+    with tempfile.TemporaryDirectory(prefix="apegmsh_eq_") as d:
+        path = os.path.join(d, "domain.txt")
+        ops.printModel("-file", path)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if line.startswith(_EQ_HEADER):
+                        return int(line[len(_EQ_HEADER):].split()[0])
+    if not hasattr(ops, "equationConstraint"):
+        return 0
+    raise BridgeError(
+        f"{where}: printModel did not report the domain's EQ constraint "
+        f"count ({_EQ_HEADER!r}), so an equationConstraint across a cut "
+        "cannot be ruled out."
+    )
 
 
 def _check_levels(levels: Sequence[float], where: str) -> FloatArray:
@@ -486,6 +531,17 @@ class StoryForces:
         self._ref_xy = (float(reference[0]), float(reference[1]))
         module = _resolve_ops(ops)
         self._dom = _capture(module, tol, where)
+        n_eq = _eq_constraint_count(module, where)
+        if n_eq:
+            raise BridgeError(
+                f"{where}: the domain holds {n_eq} EQ constraint(s) "
+                "(equationConstraint, LadrunoTie, or an enforce='equation' "
+                "tie). OpenSees does not report their nodes, so a cut "
+                "cannot tell whether one carries force past the elements, "
+                "which the element free body would miss. Story forces "
+                "refuse any EQ constraint; tie with equalDOF / rigid links "
+                "inside a level, or read the forces from a model without them."
+            )
         mp = _mp_pairs(module, self._dom)
         self._gather = _Gatherer()
         cuts: list[_Cut] = []
@@ -592,7 +648,7 @@ class StoryDrifts:
         *joint*: each node at a level that has a node at the same plan
         position (within ``tol``) on the level below — ETABS *Joint
         Drifts*, whose maximum per story (:meth:`story_max`) is ETABS
-        *Story Drifts*.
+        *Story Drifts*. A story with no such joint raises.
     method
         How a point reads a level's displacement. ``"nearest"``: the
         nearest node of the level in plan, which must lie within
@@ -646,6 +702,7 @@ class StoryDrifts:
                 top, bot = on_level[i], on_level[i - 1]
                 d = np.linalg.norm(dom.coords[top, None, :2]
                                    - dom.coords[None, bot, :2], axis=2)
+                n_before = len(self._story)
                 for a, row in enumerate(top):
                     b = int(np.argmin(d[a]))
                     if d[a, b] > dom.tol:
@@ -654,6 +711,15 @@ class StoryDrifts:
                     tag = int(dom.node_tags[row])
                     labels += [f"{self.stories[i-1]}:{tag}:DX",
                                f"{self.stories[i-1]}:{tag}:DY"]
+                if len(self._story) == n_before:
+                    raise BridgeError(
+                        f"{where}: story {self.stories[i-1]!r} has no joint: "
+                        f"no node on level {level_names[i]!r} (z={z[i]:g}) has "
+                        f"a node at the same plan position on level "
+                        f"{level_names[i-1]!r} (z={z[i-1]:g}), as at a transfer "
+                        "level or an offset column. Its drift would read zero; "
+                        "pass points= (method='rigid' for a rigid diaphragm)."
+                    )
         else:
             pts = [(float(p[0]), float(p[1])) for p in points]
             if not pts:
@@ -673,10 +739,7 @@ class StoryDrifts:
                     self._add(i - 1, per_level[i][j], per_level[i - 1][j])
                     labels += [f"{self.stories[i-1]}:P{j}:DX",
                                f"{self.stories[i-1]}:P{j}:DY"]
-        if not labels:
-            raise BridgeError(f"{where}: no joint has a node directly below it "
-                              "on the next level down; pass points= instead.")
-        need = sorted({int(r) for op in self._ops_top + self._ops_bot for r in op[0]})
+        need =sorted({int(r) for op in self._ops_top + self._ops_bot for r in op[0]})
         self._need = np.asarray(need, dtype=np.int64)
         pos = {r: k for k, r in enumerate(need)}
         self._top_idx = [np.asarray([pos[int(r)] for r in op[0]], dtype=np.int64)
@@ -716,20 +779,41 @@ class StoryDrifts:
     def story_max(self, values: FloatArray | None = None, *,
                   ops: ModuleType | None = None) -> StoryTable:
         """The largest ``|DX|`` and ``|DY|`` of each story (ETABS *Story
-        Drifts*), and beside them the mean over the story's entries
-        (``AvgX``, ``AvgY``; the max/avg pair of a torsional irregularity
-        ratio). For a modal combination, pass the combined vector: the
-        maximum of the combined joint drifts, not the combination of maxima."""
+        Drifts*), and beside them ``AvgX``, ``AvgY``: the ASCE 7 average of
+        the story drifts at the two extreme points, ``(|max| + |min|) / 2``
+        of the story's entries (:func:`_max_avg`), the denominator of the
+        Table 12.3-1 torsional irregularity ratio. For a modal combination,
+        pass the combined vector: the maximum of the combined joint drifts,
+        not the combination of maxima."""
         v = self(ops) if values is None else _check_len(values, self.labels)
-        a = np.abs(v.reshape(-1, 2))
-        story = np.asarray(self._story)
-        out = np.zeros((len(self.stories), 4))
-        for s in range(len(self.stories)):
-            sel = a[story == s]
-            if sel.size:
-                out[s, :2] = sel.max(axis=0)
-                out[s, 2:] = sel.mean(axis=0)
-        return StoryTable(self.stories, ("DriftX", "DriftY", "AvgX", "AvgY"), out)
+        return StoryTable(self.stories, ("DriftX", "DriftY", "AvgX", "AvgY"),
+                          _max_avg(v, self._story, len(self.stories)))
+
+
+def _max_avg(values: FloatArray, story: Sequence[int], n: int) -> FloatArray:
+    """``(n, 4)``: per story ``max|v|`` in X and Y, then the ASCE 7 average.
+
+    The average is that of the two extreme-point values, the largest and
+    the smallest signed value of the story's entries:
+    ``(|max v| + |min v|) / 2``. Under a rigid diaphragm a level's
+    in-plane displacement is linear in plan, so these are the values at
+    the structure's two extreme points, whatever the number of points
+    between them; a mean over every entry would move with the mesh.
+    With all values of one sign (a combined vector) it is
+    ``(max|v| + min|v|) / 2``.
+    """
+    v = values.reshape(-1, 2)
+    st = np.asarray(story)
+    out = np.empty((n, 4))
+    for s in range(n):
+        sel = v[st == s]
+        if sel.shape[0] == 0:
+            raise BridgeError(f"story index {s} has no entry.")
+        hi = sel.max(axis=0)
+        lo = sel.min(axis=0)
+        out[s, :2] = np.abs(sel).max(axis=0)
+        out[s, 2:] = 0.5 * (np.abs(hi) + np.abs(lo))
+    return out
 
 
 def _pick(row: int) -> tuple[IntArray, FloatArray]:
@@ -792,8 +876,9 @@ class StoryDisplacements:
 
     Every node on each level above the base (``points=None``), or the
     given plan points read as :class:`StoryDrifts` reads them (``method``,
-    ``max_offset``). :meth:`story_max` gives each level's largest and
-    average ``|UX|``, ``|UY|``: the input of a torsional-irregularity or
+    ``max_offset``). :meth:`story_max` gives each level's largest
+    ``|UX|``, ``|UY|`` and the ASCE 7 extreme-point average
+    ``(|max| + |min|) / 2``: the input of a torsional-irregularity or
     torsional-amplification check. ``labels`` read ``"<story>:<node>:UX"``
     or ``"<story>:P<j>:UX"``; the other parameters are as for
     :class:`StoryDrifts`.
@@ -862,18 +947,14 @@ class StoryDisplacements:
 
     def story_max(self, values: FloatArray | None = None, *,
                   ops: ModuleType | None = None) -> StoryTable:
-        """Per level ``MaxX, MaxY, AvgX, AvgY``: the largest and the mean
-        ``|UX|``, ``|UY|`` over its entries (of a combined vector, for a
-        modal combination)."""
+        """Per level ``MaxX, MaxY, AvgX, AvgY``: the largest ``|UX|``,
+        ``|UY|`` over its entries, and the ASCE 7 average of the
+        displacements at the two extreme points, ``(|max| + |min|) / 2``
+        (:func:`_max_avg`; ``delta_avg`` of Eq. 12.8-14). Pass a combined
+        vector for a modal combination."""
         v = self(ops) if values is None else _check_len(values, self.labels)
-        a = np.abs(v.reshape(-1, 2))
-        story = np.asarray(self._story)
-        out = np.zeros((len(self.stories), 4))
-        for s in range(len(self.stories)):
-            sel = a[story == s]
-            out[s, :2] = sel.max(axis=0)
-            out[s, 2:] = sel.mean(axis=0)
-        return StoryTable(self.stories, ("MaxX", "MaxY", "AvgX", "AvgY"), out)
+        return StoryTable(self.stories, ("MaxX", "MaxY", "AvgX", "AvgY"),
+                          _max_avg(v, self._story, len(self.stories)))
 
 
 # ---------------------------------------------------------------------------
