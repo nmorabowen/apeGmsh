@@ -17,10 +17,12 @@ model by name rather than run the stage untied.
 - `equationConstraint` leaves the `VERBS` ledger (9 to 8 rows). The ADR 0114
   amendment of 2026-10-23 reverses #1341 Q3 for it: no `H5LedgerWarning`
   fires for an equation tie any more.
-- A partitioned archive whose stage ties a node with equationConstraint
-  lines and repeats that node's fix (the ghost replay on a rank that does
-  not own it) refuses by name: its flat replay would fix the node twice
-  (#2530). The refusal lifts when #2530 is fixed.
+- A partitioned archive whose stage holds equationConstraint lines and
+  repeats a fix still in force (the ghost replay on a rank that does not
+  own the node, a zero-weight master's included) refuses by name: its flat
+  replay would fix the node twice (#2530). A re-fix after a full
+  `remove_sp` release still replays. The refusal lifts when #2530 is
+  fixed.
 - An archive below 2.37.0, or a `to_h5` rewrite of one, stores no stage's
   line, so a stage-claimed equation tie in it still refuses by name
   ("below opensees 2.37.0, or a rewrite of one"). The
