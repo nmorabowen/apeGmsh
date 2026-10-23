@@ -523,8 +523,11 @@ class TclEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
-        # The fork build floors this deck already checks.
-        self._fork_floors: set[ForkBuildFloor] = set()
+        # The fork build floors this deck already checks, with the rank
+        # whose block checks it (None: the whole deck).
+        self._fork_floors: set[tuple[ForkBuildFloor, int | None]] = set()
+        # The rank of the open partition block, None outside one.
+        self._partition_rank: int | None = None
         # Tracks the type token of the currently-open pattern (for
         # pattern_close to decide whether to emit ``\\}``). None means
         # no pattern open or the open pattern is single-line.
@@ -1861,12 +1864,15 @@ class TclEmitter:
         when the running build lacks the floor's command (#2504).  The
         recorded partition spans move down with it.  A streamed deck has
         its start on disk already, so it checks here, before the line
-        that needs the floor.  A deck that needs no floor is unchanged.
+        that needs the floor; inside a partition block that check runs
+        on that rank only, so each rank's block checks for itself.  A
+        deck that needs no floor is unchanged.
         """
+        rank = self._partition_rank if self._stream is not None else None
         for floor in floors:
-            if floor in self._fork_floors:
+            if {(floor, None), (floor, rank)} & self._fork_floors:
                 continue
-            self._fork_floors.add(floor)
+            self._fork_floors.add((floor, rank))
             guard = [
                 f'if {{[info commands {floor.probe}] eq ""}} {{',
                 f'    error "{fork_floor_message(floor)}"',
@@ -1976,6 +1982,7 @@ class TclEmitter:
         rank 0's submodel (run-verified under ``mpiexec -n 8``).
         """
         self._stage_carriers.partition_open(rank)
+        self._partition_rank = int(rank)
         if not self._partition_shim_emitted:
             # Emit at indent 0 (the shim is global, not per-rank).
             # In stream mode the active sink is the driver here, so the
@@ -2038,6 +2045,7 @@ class TclEmitter:
     def partition_close(self) -> None:
         """Close the current per-rank block; emit trailing blank line."""
         self._stage_carriers.partition_close()
+        self._partition_rank = None
         # Drop one indent level.
         if self._lines.indent.endswith("    "):
             self._lines.indent = self._lines.indent[:-4]

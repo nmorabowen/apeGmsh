@@ -25,7 +25,6 @@ evaluates the guard in ``tkinter.Tcl`` on every lane.
 """
 from __future__ import annotations
 
-import io
 import os
 import shutil
 import subprocess
@@ -281,7 +280,7 @@ def test_a_removed_element_needs_no_check(joined: None) -> None:
     _two_floor_elements(em)
     em.remove_element(3)
     em.remove_element(4)
-    em.update_parameter(9, (5,), ("materialState", 1), 1.0)
+    em.update_parameter(9, (3, 4), ("materialState", 1), 1.0)
     assert not any("ladrunoSchema" in ln for ln in em.lines())
 
 
@@ -457,6 +456,83 @@ def test_the_streamed_bridge_deck(joined: None, tmp_path: Path) -> None:
     lines = path.read_text(encoding="utf-8").splitlines()
     at = lines.index(_TCL_GUARD[0])
     assert lines[at + 3].startswith("setParameter -val 1.0 -ele")
-    buf = io.StringIO()
-    buf.write("\n".join(_tcl(_bridge())))
-    assert _TCL_GUARD[0] in buf.getvalue()
+    assert at > next(i for i, ln in enumerate(lines)
+                     if ln.startswith("element LadrunoQuad"))
+
+
+def _ranked_deck(em: TclEmitter) -> None:
+    """Two LadrunoQuad on each of ranks 0 and 1, then each rank's block
+    flips the material, as a partitioned stage emits it."""
+    em.model(ndm=2, ndf=2)
+    em.nDMaterial("ManzariDafalias", 1, *_MD_ARGS)
+    for rank, tags in ((0, (3, 4)), (1, (5, 6))):
+        em.partition_open(rank)
+        for t in tags:
+            em.element("LadrunoQuad", t, 1, 2, 3, 4, 1, "-thick", 1.0)
+        em.partition_close()
+    for rank in (0, 1):
+        em.partition_open(rank)
+        em.update_material_stage(1, 1)
+        em.partition_close()
+
+
+_SWEEP = {0: "setParameter -val 1.0 -ele 3 4",
+          1: "setParameter -val 1.0 -ele 5 6"}
+
+
+@pytest.mark.parametrize("per_rank", [False, True])
+def test_a_listed_partitioned_deck_checks_every_rank(
+    joined: None, tmp_path: Path, per_rank: bool,
+) -> None:
+    """The check sits in the driver before any rank block, so every rank
+    runs it before its own flip, whether the blocks stay inline or move to
+    per-rank fragments."""
+    from apeGmsh.opensees.apesees import _write_per_rank_tcl
+
+    em = TclEmitter()
+    _ranked_deck(em)
+    if per_rank:
+        path = tmp_path / "d.tcl"
+        _write_per_rank_tcl(str(path), em.line_buffer(), em.partition_spans())
+        lines = path.read_text(encoding="utf-8").splitlines()
+        blocks = [i for i, ln in enumerate(lines)
+                  if "[getPID] ==" in ln and "source" in ln]
+        for rank in (0, 1):
+            frag = (tmp_path / "ranks" / f"rank{rank}_1.tcl").read_text(
+                encoding="utf-8")
+            assert _SWEEP[rank] in frag
+            assert _TCL_GUARD[0] not in frag
+    else:
+        lines = em.lines()
+        blocks = [i for i, ln in enumerate(lines)
+                  if ln.startswith("if {[getPID] ==")]
+    at = lines.index(_TCL_GUARD[0])
+    assert lines[at:at + 3] == _TCL_GUARD
+    assert lines.count(_TCL_GUARD[0]) == 1
+    assert len(blocks) == 4 and at < min(blocks)
+
+
+@pytest.mark.parametrize("per_rank", [False, True])
+def test_a_streamed_partitioned_deck_checks_every_rank(
+    joined: None, tmp_path: Path, per_rank: bool,
+) -> None:
+    """Streamed, each rank's block checks right before its own flip: a
+    check in rank 0's block never runs on rank 1."""
+    path = tmp_path / "s.tcl"
+    em = TclEmitter()
+    em.stream_to(str(path), per_rank=per_rank)
+    _ranked_deck(em)
+    em.stream_finish()
+    text = path.read_text(encoding="utf-8").splitlines()
+    for rank in (0, 1):
+        if per_rank:
+            lines = (tmp_path / "ranks" / f"rank{rank}_1.tcl").read_text(
+                encoding="utf-8").splitlines()
+        else:
+            start = [i for i, ln in enumerate(text)
+                     if ln == f"if {{[getPID] == {rank}}} {{"][1]
+            lines = text[start:start + 8]
+        at = next(i for i, ln in enumerate(lines)
+                  if ln.strip().startswith(_SWEEP[rank]))
+        assert [ln.strip() for ln in lines[at - 3:at]] == [
+            g.strip() for g in _TCL_GUARD], (rank, lines)
