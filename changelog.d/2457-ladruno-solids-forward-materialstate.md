@@ -32,3 +32,8 @@ refused for a multi-element plastic flip:
 - `LogStrain` and `LogStrain2D` end the process at the pin
   (`ManzariDafalias::getType`, fork defect #2499).
 - `InitDefGrad` refuses a small-strain inner.
+
+`LiveOpsEmitter.update_material_stage` sends a bare `updateMaterialStage`
+with no carrier sweep. It now raises `BridgeError` for a stage ≥ 1 flip of a
+swept material that two or more elements may carry, on any build. No bridge
+path reaches it today, because live execution refuses staged models.
