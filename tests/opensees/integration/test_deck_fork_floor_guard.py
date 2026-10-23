@@ -11,11 +11,10 @@ first command, and stops by name when the build lacks ``ladrunoSchema``
 (fork PR #972; its first commit descends from fork PR #859).  Stock
 OpenSees lacks it too.
 
-**The join with #2457.**  On ``main`` the stage close still refuses a
-multi-element flip on these classes, and their tokens are not in
-``MATERIAL_STATE_ELEMENT_TOKENS``; #2457 adds both.  The :func:`joined`
-fixture makes that change for one test, so the guard is exercised as it
-will run once #2457 lands; after it lands the fixture changes nothing.
+**The join with #2457.**  The floor classes are on ``MATERIAL_STATE_ELEMENTS``
+(built from :data:`MATERIAL_STATE_FORK_FLOOR`) and their carrier tokens are
+in ``MATERIAL_STATE_ELEMENT_TOKENS``, so the stage close passes their flip and
+the deck sweeps them; :func:`test_the_floor_classes_are_swept` holds that.
 
 The live cases run the deck in a child process on the bound build: on stock
 (``live-stock``) and on a fork build older than the pin it stops by name,
@@ -87,16 +86,13 @@ def _pin_sha() -> str:
     raise AssertionError("FORK_PIN has no sha= line")
 
 
-@pytest.fixture
-def joined(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#2457's change: the floor classes carry the sweep and pass the
-    stage close."""
+def test_the_floor_classes_are_swept() -> None:
+    """Every floor class passes the stage close and has its carrier token
+    at the argv index of its nDMaterial tag."""
     assert set(_TOKEN_TAG_AT) == set(MATERIAL_STATE_FORK_FLOOR)
+    assert set(MATERIAL_STATE_FORK_FLOOR) <= _builder.MATERIAL_STATE_ELEMENTS
     for token, at in _TOKEN_TAG_AT.items():
-        monkeypatch.setitem(stage_emit.MATERIAL_STATE_ELEMENT_TOKENS, token, at)
-    monkeypatch.setattr(
-        _builder, "MATERIAL_STATE_ELEMENTS",
-        _builder.MATERIAL_STATE_ELEMENTS | set(MATERIAL_STATE_FORK_FLOOR))
+        assert stage_emit.MATERIAL_STATE_ELEMENT_TOKENS[token] == at
 
 
 def _bridge(*, route: str = "stage",
@@ -149,7 +145,7 @@ def _py(ops: apeSees) -> list[str]:
 
 @pytest.mark.parametrize("route", ["stage", "materialState"])
 def test_the_tcl_deck_checks_before_its_first_command(
-    joined: None, route: str,
+    route: str,
 ) -> None:
     lines = _tcl(_bridge(route=route))
     assert lines[0].startswith("#")
@@ -162,7 +158,7 @@ def test_the_tcl_deck_checks_before_its_first_command(
 
 
 @pytest.mark.parametrize("route", ["stage", "materialState"])
-def test_the_py_deck_checks_after_its_import(joined: None, route: str) -> None:
+def test_the_py_deck_checks_after_its_import(route: str) -> None:
     lines = _py(_bridge(route=route))
     at = lines.index("import openseespy.opensees as ops")
     assert lines[at + 1:at + 3] == _PY_GUARD
@@ -170,7 +166,7 @@ def test_the_py_deck_checks_after_its_import(joined: None, route: str) -> None:
     assert lines.count(_PY_GUARD[0]) == 1
 
 
-def test_one_carrier_needs_no_check(joined: None) -> None:
+def test_one_carrier_needs_no_check() -> None:
     """On one element the bare updateMaterialStage reaches it on any
     build, so the deck is not guarded."""
     for lines in (_tcl(_bridge(pgs=("Rock",))), _py(_bridge(pgs=("Rock",)))):
@@ -185,7 +181,7 @@ def _without(lines: "list[str]", guard: "list[str]") -> "list[str]":
 
 
 def test_the_guard_is_the_only_difference(
-    joined: None, monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With the floor table empty the deck is today's deck: the guard adds
     its lines and nothing else."""
@@ -198,7 +194,7 @@ def test_the_guard_is_the_only_difference(
 
 
 def test_model_hash_and_replay(
-    joined: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The guard is derived from the emit calls: ``model_hash`` does not
     see it, and the deck replayed from the archive carries it as the
@@ -236,7 +232,7 @@ def _two_floor_elements(em: Any, *, rank: "int | None" = None) -> None:
         em.partition_close()
 
 
-def test_the_partition_spans_move_with_the_guard(joined: None) -> None:
+def test_the_partition_spans_move_with_the_guard() -> None:
     """A per-rank Tcl deck is sliced by its recorded spans, so the spans
     move down with the guard: closed ones, and the one open at the flip."""
     em = TclEmitter()
@@ -257,7 +253,7 @@ def test_the_partition_spans_move_with_the_guard(joined: None) -> None:
                for ln in lines[spans[1].body_start:spans[1].body_end])
 
 
-def test_each_floor_is_checked_once(joined: None) -> None:
+def test_each_floor_is_checked_once() -> None:
     for em in (TclEmitter(), PyEmitter()):
         _two_floor_elements(em)
         em.update_material_stage(1, 1)
@@ -267,7 +263,7 @@ def test_each_floor_is_checked_once(joined: None) -> None:
         assert lines.count(_TCL_GUARD[0]) + lines.count(_PY_GUARD[0]) == 1
 
 
-def test_an_elastic_flip_and_other_names_need_no_check(joined: None) -> None:
+def test_an_elastic_flip_and_other_names_need_no_check() -> None:
     for em in (TclEmitter(), PyEmitter()):
         _two_floor_elements(em)
         em.update_material_stage(1, 0)
@@ -275,7 +271,7 @@ def test_an_elastic_flip_and_other_names_need_no_check(joined: None) -> None:
         assert not any("ladrunoSchema" in ln for ln in em.lines())
 
 
-def test_a_removed_element_needs_no_check(joined: None) -> None:
+def test_a_removed_element_needs_no_check() -> None:
     em = TclEmitter()
     _two_floor_elements(em)
     em.remove_element(3)
@@ -285,7 +281,7 @@ def test_a_removed_element_needs_no_check(joined: None) -> None:
 
 
 def test_a_streamed_deck_checks_before_the_flip(
-    joined: None, tmp_path: Path,
+    tmp_path: Path,
 ) -> None:
     """A streamed deck's start is on disk already, so it checks right
     before the line that needs the floor."""
@@ -402,7 +398,7 @@ def _run_py_deck(tmp_path: Path, *, fork_module: bool) -> None:
 
 @pytest.mark.live
 def test_the_py_deck_on_the_bound_openseespy(
-    joined: None, tmp_path: Path,
+    tmp_path: Path,
 ) -> None:
     """``live-stock``: stock openseespy stops the deck by name."""
     _run_py_deck(tmp_path, fork_module=False)
@@ -410,7 +406,7 @@ def test_the_py_deck_on_the_bound_openseespy(
 
 @pytest.mark.live
 @pytest.mark.ladruno_fork
-def test_the_py_deck_on_the_fork(joined: None, tmp_path: Path) -> None:
+def test_the_py_deck_on_the_fork(tmp_path: Path) -> None:
     """``live-fork``: at FORK_PIN the deck runs; on an older fork build
     (the local 79e062367) it stops by name."""
     _run_py_deck(tmp_path, fork_module=True)
@@ -418,7 +414,7 @@ def test_the_py_deck_on_the_fork(joined: None, tmp_path: Path) -> None:
 
 @pytest.mark.live
 @pytest.mark.ladruno_fork
-def test_the_tcl_deck_on_opensees_exe(joined: None, tmp_path: Path) -> None:
+def test_the_tcl_deck_on_opensees_exe(tmp_path: Path) -> None:
     """The Tcl deck on an OpenSees Tcl binary, which no CI lane has.
     ``OpenSees.exe`` exits 0 on a Tcl error, so the marker after the deck
     is the proof it ran."""
@@ -449,7 +445,7 @@ def test_the_tcl_deck_on_opensees_exe(joined: None, tmp_path: Path) -> None:
         assert "DECK_RAN" not in proc.stdout
 
 
-def test_the_streamed_bridge_deck(joined: None, tmp_path: Path) -> None:
+def test_the_streamed_bridge_deck(tmp_path: Path) -> None:
     """``ops.tcl(stream=True)`` keeps the check, before the flip."""
     path = tmp_path / "s.tcl"
     _bridge().tcl(str(path), stream=True)
@@ -482,7 +478,7 @@ _SWEEP = {0: "setParameter -val 1.0 -ele 3 4",
 
 @pytest.mark.parametrize("per_rank", [False, True])
 def test_a_listed_partitioned_deck_checks_every_rank(
-    joined: None, tmp_path: Path, per_rank: bool,
+    tmp_path: Path, per_rank: bool,
 ) -> None:
     """The check sits in the driver before any rank block, so every rank
     runs it before its own flip, whether the blocks stay inline or move to
@@ -514,7 +510,7 @@ def test_a_listed_partitioned_deck_checks_every_rank(
 
 @pytest.mark.parametrize("per_rank", [False, True])
 def test_a_streamed_partitioned_deck_checks_every_rank(
-    joined: None, tmp_path: Path, per_rank: bool,
+    tmp_path: Path, per_rank: bool,
 ) -> None:
     """Streamed, each rank's block checks right before its own flip: a
     check in rank 0's block never runs on rank 1."""
