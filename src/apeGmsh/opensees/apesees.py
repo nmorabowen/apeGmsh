@@ -946,7 +946,8 @@ class BuiltModel:
     # declaration order) or ``"fem"`` (each physical-group element keeps
     # its FEM element id as its OpenSees tag; see ``emit``).
     element_tags:            ElementTagMode = "sequential"
-    # #2464 — the bridge's ``OpenSeesTarget`` pins ``mode="fork"``.
+    # The bridge's ``OpenSeesTarget`` pins ``mode="fork"``: the stage
+    # route checks at emit then know the run is on the fork.
     fork_pinned:             bool = False
     # ADR 0062 — per-build cache of resolved moment-tensor ``(node, force)``
     # pairs, keyed by ``id(rec)``. The host search in
@@ -4991,7 +4992,8 @@ class BuiltModel:
             else FemToOpsTagMap.from_plan(()),
         )
         self._validate_material_stage_targets(element_owner_stage or {})
-        validate_stage_routes(  # #2464: the stage close's, final model
+        # The stage close's route checks, again on the final model.
+        validate_stage_routes(
             stage_records=self.stage_records, primitives=self.primitives,
             tag_for=self.tag_for, fem=self.fem, fork=self.fork_pinned)
         validate_class_wide_stage_flags(
