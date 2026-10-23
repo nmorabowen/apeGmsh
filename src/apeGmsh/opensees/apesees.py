@@ -131,7 +131,10 @@ from ._internal.build.interfaces import (
 from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
-from ._internal.build.stage_validate import validate_class_wide_stage_flags
+from ._internal.build.stage_validate import (
+    validate_class_wide_stage_flags,
+    validate_stage_routes,
+)
 from ._internal.build.transforms import emit_transform_specs
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
@@ -943,6 +946,8 @@ class BuiltModel:
     # declaration order) or ``"fem"`` (each physical-group element keeps
     # its FEM element id as its OpenSees tag; see ``emit``).
     element_tags:            ElementTagMode = "sequential"
+    # #2464 — the bridge's ``OpenSeesTarget`` pins ``mode="fork"``.
+    fork_pinned:             bool = False
     # ADR 0062 — per-build cache of resolved moment-tensor ``(node, force)``
     # pairs, keyed by ``id(rec)``. The host search in
     # ``resolve_moment_tensor_pairs`` runs against the full FEM snapshot and is
@@ -4986,6 +4991,9 @@ class BuiltModel:
             else FemToOpsTagMap.from_plan(()),
         )
         self._validate_material_stage_targets(element_owner_stage or {})
+        validate_stage_routes(  # #2464: the stage close's, final model
+            stage_records=self.stage_records, primitives=self.primitives,
+            tag_for=self.tag_for, fem=self.fem, fork=self.fork_pinned)
         validate_class_wide_stage_flags(
             stage_records=self.stage_records, primitives=self.primitives,
             tag_for=self.tag_for, fem=self.fem,
@@ -11419,6 +11427,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             },
             mass_from_model=self._mass_from_model,
             element_tags=self._element_tags,
+            fork_pinned=(self._opensees is not None
+                         and self._opensees.mode == "fork"),
             _decls=decls,
             _decl_owners={
                 oid: owner for oid, (owner, _decl) in self._decls.items()},

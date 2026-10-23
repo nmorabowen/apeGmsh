@@ -7,14 +7,14 @@ and ``OpenSeesModel.from_h5(...).build`` re-emitted it silently.  The
 replay now builds the same ``RouteModel`` from the archive's declarations
 and runs the same checks (``stage._builder.check_archived_stage_routes``),
 so such an archive is refused by name.  The valid archives here replay
-byte for byte (the R1b oracle).  The replay checks the final model, so it
-may refuse an archive the bridge accepted, whose elements were registered
-after a flip (#2464); ``test_a_carrier_registered_after_the_flip_...``
-pins that case.
+byte for byte (the R1b oracle).  The replay checks the final model, and
+since #2464 so does the bridge's emit: an element registered after a flip
+is refused by both (``test_a_carrier_registered_after_the_flip_...``).
 
 A pre-fix archive is written here with the checks switched off, the way
-the bridge wrote it before them: ``check_stage_routes`` at stage close and,
-for the class-wide group, ``validate_class_wide_stage_flags`` at emit.
+the bridge wrote it before them: ``check_stage_routes`` off at stage close
+and at emit (#2464 runs it there too), and, for the class-wide group,
+``validate_class_wide_stage_flags`` off at emit.
 
 The live tests run the replayed openseespy deck: a valid archive gives the
 bridge deck's answer, and the tag-blind neighbour archive, replayed with the
@@ -505,18 +505,18 @@ def test_a_valid_archive_replays_byte_for_byte(
               "valid_bridge", case=case), None, tmp_path)
 
 
-def test_a_carrier_registered_after_the_flip_passes_the_bridge_but_not_replay(
+def test_a_carrier_registered_after_the_flip_is_refused_by_the_bridge_and_replay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """The known gap between the two sides (#2464), pinned so it stays in
-    view.  The stage close sees only the elements registered so far: a sand
-    on one SixNodeTri flipped plastic passes, and a FourNodeQuad on the
-    same sand registered after the stage is never checked.  The deck emits
-    all three carriers globally, before the stage, with a bare
+    """The gap #2465's review found, closed by #2464.  The stage close sees
+    only the elements registered so far: a sand on one SixNodeTri flipped
+    plastic passes it, and a FourNodeQuad on the same sand registered after
+    the stage is not yet there.  The deck emits all three carriers
+    globally, before the stage, so without a check it carries a bare
     ``updateMaterialStage`` and no sweep: the #2445 wrong answer.  The
-    replay checks the final model and refuses it.  Replay is the correct
-    side; when #2464 closes the bridge hole, the bridge half of this test
-    flips to a refusal."""
+    bridge's emit now checks the final model, as the replay does, so every
+    target refuses it with the replay's message; a pre-fix archive of it is
+    refused on replay."""
     def build() -> apeSees:
         ops = _ops()
         sand = _md(ops, "sand")
@@ -526,18 +526,22 @@ def test_a_carrier_registered_after_the_flip_passes_the_bridge_but_not_replay(
         _host(ops, "Q", sand)          # registered after the flip
         return ops
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        build().tcl(str(tmp_path / "bridge.tcl"), flat=True)
-    deck = (tmp_path / "bridge.tcl").read_text(encoding="utf-8")
-    assert deck.count("element quad") == 2
-    assert "setParameter" not in deck
-    path = _write(build, tmp_path / "late.h5", monkeypatch, pre_fix=False)
+    def phrase(msg: str) -> None:
+        assert "#2445" in msg and "but FourNodeQuad carries it" in msg, msg
+        assert "(3 elements)" in msg, msg
+
+    for emit in ("tcl", "py", "h5"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ops = build()
+            with pytest.raises(BridgeError) as exc:
+                getattr(ops, emit)(str(tmp_path / f"bridge.{emit}"))
+        phrase(str(exc.value))
+        assert not (tmp_path / f"bridge.{emit}").exists()
+    path = _write(build, tmp_path / "late.h5", monkeypatch, pre_fix=True)
     with pytest.raises(BridgeError) as exc:
         _replay(path)
-    msg = str(exc.value)
-    assert "#2445" in msg and "but FourNodeQuad carries it" in msg
-    assert "(3 elements)" in msg
+    phrase(str(exc.value))
 
 
 # ---------------------------------------------------------------------------
