@@ -32,6 +32,7 @@ class FakeOps:
         self.forces: dict[int, list[float]] = {}
         self.retained: dict[int, list[int]] = {}
         self.disp: dict[int, list[float]] = {n: [0.0] * ndf for n in self.nodes}
+        self.incr: dict[int, list[float]] = {}   # trial - committed per node
 
     def getNodeTags(self) -> list[int]:
         return list(self.nodes)
@@ -59,6 +60,10 @@ class FakeOps:
 
     def nodeDisp(self, n: int) -> list[float]:
         return self.disp[n]
+
+    def nodeResponse(self, n: int, dof: int, response: int) -> float:
+        assert response == 4                 # IncrDisp: trial - committed
+        return self.incr.get(n, [0.0] * 6)[dof - 1]
 
 
 def _mod(fake: FakeOps) -> ModuleType:
@@ -167,6 +172,8 @@ def test_story_displacements_joints_points_and_story_max() -> None:
     p = B.StoryDisplacements((0.0, 3.0), points=[(4.0, 0.0)], ops=_mod(fake))
     assert p.table(ops=_mod(fake)).rows == ("Story1:P0",)
     np.testing.assert_allclose(p(_mod(fake)), [-0.01, 0.09])
+    fake.incr[4] = [0.02, -0.01, 0, 0, 0, 0]          # an uncommitted trial
+    np.testing.assert_allclose(p(_mod(fake)), [0.01, 0.08])
 
 
 def test_story_table_accessors() -> None:

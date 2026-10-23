@@ -33,6 +33,12 @@ of Mass*. It takes its module from `ops=` or `get_ops()`.
   every element class that has mass). `levels_from_pgs(fem, pgs)` reads
   the level elevations from horizontal physical groups.
 
+Forces and displacements are read at the trial state. Forces come from
+`eleForce`; displacements are `nodeDisp` plus `nodeResponse` `IncrDisp`
+(trial minus committed). This reads the uncommitted gravity + mode state
+that `responseSpectrumAnalysis -increment` leaves, and it matches
+`nodeDisp` after a committed solve.
+
 `StoryForces`, `StoryDrifts` and `PierForces` are extractors:
 `extractor(ops) -> ndarray` with a fixed-length `labels` tuple, read from
 the current domain state. A modal driver can evaluate one at each mode and

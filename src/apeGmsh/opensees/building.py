@@ -16,7 +16,12 @@ Extractors
 with a matching ``labels`` tuple (the :class:`Extractor` protocol). The
 domain is scanned once, at construction (node coordinates, element
 connectivity, the elements and nodes each cut needs, the checks below);
-a call only reads ``eleForce`` / ``nodeDisp`` for those. A modal driver
+a call only reads element forces and node displacements for those, both
+at the **trial** state (``eleForce`` is the trial resisting force; a
+displacement is ``nodeDisp``, the committed value, plus ``nodeResponse``
+``IncrDisp``, trial minus committed). After a committed solve the two
+states agree; an uncommitted trial state, such as gravity plus one mode
+left by ``responseSpectrumAnalysis -increment``, is read as is. A modal driver
 evaluates an extractor at each mode and combines each entry of the
 vector across modes; :meth:`StoryForces.table` (and the other ``table``
 methods) reshapes any such vector, combined or not, into a
@@ -602,8 +607,8 @@ class StoryDrifts:
 
     A call returns ``[DX, DY]`` per entry, entries per story in level
     order; ``labels`` reads ``"<story>:<node>:DX"`` (joints) or
-    ``"<story>:P<j>:DX"`` (points). Displacements are ``nodeDisp``
-    (the committed state).
+    ``"<story>:P<j>:DX"`` (points). Displacements are the trial
+    displacements (see the module notes).
     """
 
     def __init__(
@@ -696,9 +701,7 @@ class StoryDrifts:
         module = _resolve_ops(ops)
         u = np.empty((self._need.size, 2))
         for k, r in enumerate(self._need):
-            d = module.nodeDisp(int(self._dom.node_tags[r]))
-            u[k, 0] = float(d[0])
-            u[k, 1] = float(d[1])
+            u[k] = _trial_xy(module, int(self._dom.node_tags[r]))
         out = np.empty((len(self._story), 2))
         for e in range(len(self._story)):
             ut = self._ops_top[e][1] @ u[self._top_idx[e]].ravel()
@@ -730,6 +733,20 @@ class StoryDrifts:
                 out[s, :2] = sel.max(axis=0)
                 out[s, 2:] = sel.mean(axis=0)
         return StoryTable(self.stories, ("DriftX", "DriftY", "AvgX", "AvgY"), out)
+
+
+#: ``NodeResponseType::IncrDisp`` (trial minus committed displacement); OPS_Globals.h.
+_INCR_DISP = 4
+
+
+def _trial_xy(ops: ModuleType, tag: int) -> tuple[float, float]:
+    """Trial ``(ux, uy)`` of node ``tag``. ``nodeDisp`` (and ``nodeResponse``
+    ``Disp``) answer the committed value; ``IncrDisp`` adds trial - committed,
+    which ``setTrialDisp``, ``incrTrialDisp``, ``commitState`` and
+    ``revertToLastCommit`` all keep current (``Node.cpp``)."""
+    d = ops.nodeDisp(tag)
+    return (float(d[0]) + float(ops.nodeResponse(tag, 1, _INCR_DISP)),
+            float(d[1]) + float(ops.nodeResponse(tag, 2, _INCR_DISP)))
 
 
 def _pick(row: int) -> tuple[IntArray, FloatArray]:
@@ -848,8 +865,7 @@ class StoryDisplacements:
         tags = self._dom.node_tags
         out = np.empty((len(self._ops), 2))
         for e, (rows, mat) in enumerate(self._ops):
-            u = np.array([[float(c) for c in module.nodeDisp(int(tags[r]))[:2]]
-                          for r in rows])
+            u = np.array([_trial_xy(module, int(tags[r])) for r in rows])
             out[e] = mat @ u.ravel()
         return out.ravel()
 

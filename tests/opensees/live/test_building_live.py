@@ -309,6 +309,42 @@ def test_story_displacements_match_nodedisp() -> None:
                                rtol=1e-14)
 
 
+def test_drifts_and_displacements_read_an_uncommitted_trial_state() -> None:
+    """``responseSpectrumAnalysis -increment`` leaves gravity + mode k as a
+    trial state that ``nodeDisp`` does not show; the extractors read it."""
+    ops = get_ops()
+    b = build(ops)                                 # a committed solve
+    d = B.StoryDrifts(LEVELS)
+    u = B.StoryDisplacements(LEVELS)
+    committed_d, committed_u = d(ops), u(ops)
+    # after a committed solve the trial state is the committed one
+    for n in ops.getNodeTags():
+        assert ops.nodeResponse(n, 1, 4) == 0.0
+    trial = {}
+    for t, (x, y, z) in b.coords.items():
+        if z == 0.0:
+            continue
+        # setNodeDisp without -commit sets trial = committed with one DOF
+        # changed (OPS_setNodeDisp starts from getDisp), so perturb UX only
+        trial[t] = (ops.nodeDisp(t, 1) + 1e-3 * z + 2e-4 * y + 1e-4 * x,
+                    ops.nodeDisp(t, 2))
+        ops.setNodeDisp(t, 1, trial[t][0])
+    tu = u.table()
+    for t, (x, y, z) in b.coords.items():
+        if z in LEVELS[1:]:
+            np.testing.assert_allclose(tu.row(f"Story{LEVELS.index(z)}:{t}"),
+                                       trial[t], rtol=1e-13)
+    by_xyz = {c: t for t, c in b.coords.items()}
+    td = d.table()
+    for i in (1, 2, 3):
+        top = by_xyz[(6.0, 4.0, LEVELS[i])]
+        want = (np.array(trial[top]) - np.array(
+            trial.get(by_xyz[(6.0, 4.0, LEVELS[i - 1])], (0.0, 0.0)))) / 3.0
+        np.testing.assert_allclose(td.row(f"Story{i}:{top}"), want, rtol=1e-12)
+    assert not np.allclose(d(ops), committed_d)
+    assert not np.allclose(u(ops), committed_u)
+
+
 # ---------------------------------------------------------------------------
 # Masses
 # ---------------------------------------------------------------------------
