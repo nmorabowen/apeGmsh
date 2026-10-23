@@ -231,7 +231,7 @@ _CHAINS: dict[str, tuple[str, int, list[Any], list[str]]] = {
 _LEAVES = (*_ABORTING, *_RUNNING)
 
 #: What each pair did at FORK_PIN 100eb9ae (live-fork runs 39883289925 and
-#: PROBE_RUN; the leaves in _RUNNING never abort):
+#: 39889480615; the leaves in _RUNNING never abort):
 #: ``abort`` the process exits at the first wrapper line with
 #: ``<inner>::getType -- subclass responsibility``; ``refused`` the fork
 #: raises an OpenSeesError at a wrapper line (InitDefGrad wants a
