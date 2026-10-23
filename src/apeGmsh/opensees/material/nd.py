@@ -3353,6 +3353,39 @@ class LadrunoJ2Finite(NDMaterial):
 # LogStrain — Hencky finite-strain lift wrapper (Ladruno fork)
 # ---------------------------------------------------------------------------
 
+#: Inner classes over which the fork's ``LogStrain`` / ``LogStrain2D`` end
+#: the OpenSees process (#2499). The wrapper's ``nDMaterial`` line asks the
+#: inner for ``getType()``; these SANISAND classes do not implement it, so
+#: the ``NDMaterial`` base prints ``<Class>::getType -- subclass
+#: responsibility`` and exits (rc 255), taking an in-process session with
+#: it. Measured per pair at FORK_PIN 100eb9ae by the live probe in
+#: ``tests/opensees/unit/test_finite_wrapper_over_md_refused.py``. Only the
+#: **direct** inner aborts: a ``StagedStrain`` between the lift and the
+#: sand answers ``getType`` itself and runs, and ``InitDefGrad`` over the
+#: sand is refused by the fork with an error (not an exit), so neither is
+#: refused here. ``InitDefGrad(LogStrain(<sand>))`` aborts at its inner
+#: ``LogStrain`` line, which this set already refuses.
+#:
+#: TODO #2499: empty this set once the fork pin implements ``getType`` for
+#: these classes (the probe's pinned outcomes fail first and say so).
+FINITE_LIFT_ABORTING_INNERS: frozenset[str] = frozenset({
+    "ManzariDafalias", "LadrunoSANISAND", "SAniSandMS",
+})
+
+
+def _refuse_aborting_lift_inner(wrapper: str, inner: NDMaterial) -> None:
+    """Raise if ``wrapper`` over ``inner`` would end the fork process."""
+    name = type(inner).__name__
+    if name in FINITE_LIFT_ABORTING_INNERS:
+        raise ValueError(
+            f"{wrapper}: inner {name} ends the OpenSees process on the "
+            f"Ladruno fork: the {wrapper} line asks it for getType(), which "
+            f"{name} does not implement, and the fork exits with "
+            f"'{name}::getType -- subclass responsibility' (rc 255). Refused "
+            f"until the fork is fixed (#2499). Use LadrunoJ2Finite or an "
+            f"isotropic inner such as ElasticIsotropic or DruckerPrager."
+        )
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class LogStrain(NDMaterial):
@@ -3382,6 +3415,11 @@ class LogStrain(NDMaterial):
        parser rejects a non-3-D inner. Emission works on any build; errors
        at ``ops.run()`` on stock ``openseespy``.
 
+    .. warning::
+       A ``ManzariDafalias``, ``LadrunoSANISAND`` or ``SAniSandMS`` inner
+       is refused at construction: over them the fork exits the process
+       at the wrapper's line (#2499, :data:`FINITE_LIFT_ABORTING_INNERS`).
+
     Parameters
     ----------
     inner
@@ -3400,6 +3438,7 @@ class LogStrain(NDMaterial):
                 "LogStrain: inner must be an NDMaterial primitive, got "
                 f"{type(self.inner).__name__!r}."
             )
+        _refuse_aborting_lift_inner("LogStrain", self.inner)
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         inner_tag = resolve_tag(emitter, self.inner)
@@ -3433,7 +3472,9 @@ class LogStrain2D(NDMaterial):
 
     The inner is still a **3-D (order-6)** small-strain ``nDMaterial``; the
     wrapper condenses it to the plane view. Same isotropy caveat as
-    :class:`LogStrain`: exact and objective only for an isotropic inner.
+    :class:`LogStrain`: exact and objective only for an isotropic inner,
+    and the same refusal of the inners over which the fork exits (#2499,
+    :data:`FINITE_LIFT_ABORTING_INNERS`).
 
     .. note::
        Fork-only. Emission works on any build; errors at ``ops.run()`` on
@@ -3489,6 +3530,7 @@ class LogStrain2D(NDMaterial):
                 "LogStrain2D: inner must be an NDMaterial primitive, got "
                 f"{type(self.inner).__name__!r}."
             )
+        _refuse_aborting_lift_inner("LogStrain2D", self.inner)
         if self.plane_type not in _PLANE_TYPES_2D:
             raise ValueError(
                 f"LogStrain2D: plane_type must be one of {_PLANE_TYPES_2D}, "
