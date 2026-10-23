@@ -331,7 +331,6 @@ def test_wip_gated_approved_green_does_not_count():
 
 
 def test_wip_draft_does_not_count_and_ready_does():
-    from scripts import program_probe as pp  # noqa: F401
     base = [_wip_pr(n) for n in range(8)]
     draft = _wip_pr(98)
     draft["isDraft"] = True
