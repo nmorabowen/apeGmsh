@@ -94,7 +94,10 @@ def _fem() -> FEMStub:
     return fem
 
 
-def _bridge(frames: Any = "Beams", **mem: Any) -> "tuple[apeSees, Any, list[Any]]":
+def _bridge(
+    frames: Any = "Beams", *, staged: bool = False, **mem: Any,
+) -> "tuple[apeSees, Any, list[Any]]":
+    """``staged=True`` leaves the panels' load pattern to the caller's stage."""
     fem = _fem()
     ops = apeSees(cast("object", fem))
     ops.model(ndm=3, ndf=6)
@@ -110,9 +113,10 @@ def _bridge(frames: Any = "Beams", **mem: Any) -> "tuple[apeSees, Any, list[Any]
         for pg in ("PanelA", "PanelB")
     ]
     ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
-    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        for m in mems:
-            p.surface_load(ele=m)
+    if not staged:
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            for m in mems:
+                p.surface_load(ele=m)
     return ops, beams, mems
 
 
@@ -217,11 +221,18 @@ class TestFrameFilter:
         assert len(_frames_of(args)) == 8
 
     def test_support_nodes_keep_a_frameless_panel_legal(self) -> None:
+        """Legal, but not silent: the whole "Col" group is dropped."""
         ops, _beams, _mems = _bridge(frames="Col", support_nodes="Corners")
         rec = RecordingEmitter()
-        ops.build().emit(rec)
+        with pytest.warns(MembraneFramesFilteredWarning) as caught:
+            ops.build().emit(rec)
         for args in _membrane_args(rec):
             assert "-frames" not in args
+        msgs = [str(w.message) for w in caught
+                if issubclass(w.category, MembraneFramesFilteredWarning)]
+        for pg in ("PanelA", "PanelB"):
+            (msg,) = [m for m in msgs if f"pg={pg!r}" in m]
+            assert "frames= group 'Col': all 1 frame element(s)" in msg
 
 
 class TestInteriorNodes:
@@ -261,10 +272,36 @@ class TestInteriorNodes:
         emitted = {int(args[0]) for name, args, _kw in rec.calls if name == "node"}
         assert emitted == {int(n) for n in fem.nodes.ids}
 
-    @pytest.mark.parametrize("verb", ["fix", "mass", "load", "sp", "recorder"])
+    @pytest.mark.parametrize("verb", [
+        "fix", "mass", "load", "sp", "recorder",
+        "stage_fix", "stage_support", "stage_mass", "stage_recorder",
+    ])
     def test_a_record_on_an_interior_node_is_refused(self, verb: str) -> None:
-        ops, _beams, _mems = _bridge()
-        if verb == "fix":
+        ops, _beams, mems = _bridge(staged=verb.startswith("stage_"))
+        if verb.startswith("stage_"):
+            rec_spec = (
+                ops.recorder.Node(file="d.out", response="disp", pg="PanelA", dofs=(3,))
+                if verb == "stage_recorder" else None)
+            with ops.stage(name="s1") as s:
+                with s.pattern(series=ops.timeSeries.Linear()) as sp:
+                    for m in mems:
+                        sp.surface_load(ele=m)
+                if verb == "stage_fix":
+                    s.fix(nodes=(INTERIOR[0],), dofs=(0, 0, 1, 0, 0, 0))
+                    hint = "support_nodes="
+                elif verb == "stage_support":
+                    s.support(pg="PanelA", dofs=(0, 0, 1, 0, 0, 0))
+                    hint = "support_nodes="
+                elif verb == "stage_mass":
+                    s.mass(pg="PanelA", values=(1.0, 1.0, 1.0, 0.0, 0.0, 0.0))
+                    hint = "rho="
+                else:
+                    assert rec_spec is not None
+                    s.recorder(rec_spec)
+                    hint = "Record the panel's boundary"
+                s.analysis(**_chain(ops))
+                s.run(n_increments=1, dt=1.0)
+        elif verb == "fix":
             ops.fix(nodes=(INTERIOR[0],), dofs=(0, 0, 1, 0, 0, 0))
             hint = "support_nodes="
         elif verb == "mass":

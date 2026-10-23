@@ -847,7 +847,7 @@ _PANEL_REL_TOL = 1e-6
 
 
 class MembraneFramesFilteredWarning(UserWarning):
-    """A ``LadrunoMembrane`` ``frames=`` group lost some, not all, of its
+    """A ``LadrunoMembrane`` ``frames=`` group lost some or all of its
     frames to the per-panel filter (:func:`resolve_ladruno_membrane_context`).
 
     Expected for a group that spans several panels (a storey's beams); a
@@ -1208,11 +1208,15 @@ def resolve_ladruno_membrane_context(
                     f"name a group (PG / label) and let the bridge keep the "
                     f"panel's own frames."
                 )
-            if not explicit and 0 < int(np.count_nonzero(inside)) < len(inside):
+            if not explicit and int(np.count_nonzero(inside)) < len(inside):
                 dropped = tags_arr[~inside].tolist()
+                share = (
+                    f"all {len(inside)}" if len(dropped) == len(inside)
+                    else f"{len(dropped)} of its {len(inside)}"
+                )
                 warnings.warn(
                     f"{_membrane_panel_name(spec)}: frames= {source}: "
-                    f"{len(dropped)} of its {len(inside)} frame element(s) do "
+                    f"{share} frame element(s) do "
                     f"not lie in this panel and are not passed to it "
                     f"(OpenSees element(s) {dropped[:10]}"
                     f"{' ...' if len(dropped) > 10 else ''}). Expected when "

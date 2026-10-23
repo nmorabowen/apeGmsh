@@ -15,7 +15,7 @@ LadrunoMembrane::solve_linear_system`. Two bridge bugs caused it.
   (an int tag, or a node-pair Element spec) that falls outside the panel is
   refused. When filtering leaves a panel with no frame and no
   `support_nodes=`, the build refuses and names the panel. When it drops
-  some, but not all, of a group's frames, the build warns
+  some or all of a group's frames, the build warns
   `MembraneFramesFilteredWarning`, naming the panel, the group and up to 10
   dropped OpenSees element tags (expected for a group that spans several
   panels).
