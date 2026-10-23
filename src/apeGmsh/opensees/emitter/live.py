@@ -1057,6 +1057,7 @@ class LiveOpsEmitter:
     def section(
         self, sec_type: str, tag: int, *params: float | str,
     ) -> None:
+        self._swept_reach().note_referrer(tag, params)
         self._ops.section(sec_type, tag, *params)
 
     def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
@@ -1070,23 +1071,35 @@ class LiveOpsEmitter:
         # openseespy's ops.section(...) sets the current-section state.
         # Subsequent ops.patch / ops.layer / ops.fiber attach to this
         # section by openseespy convention.
+        self._swept_reach().note_referrer(tag, params)
+        self._open_section = int(tag)
         self._ops.section(sec_type, tag, *params)
 
     def section_close(self) -> None:
         # No-op — openseespy has no explicit close. The current-section
         # context ends implicitly when the next non-fiber/patch/layer
         # command runs.
-        pass
+        self._open_section = None
+
+    #: The fiber section a ``fiber`` / ``patch`` / ``layer`` joins.
+    _open_section: "int | None" = None
+
+    def _note_section_member(self, args: "tuple[Any, ...]") -> None:
+        if self._open_section is not None:
+            self._swept_reach().note_referrer(self._open_section, args)
 
     def patch(self, kind: str, *args: int | float) -> None:
+        self._note_section_member(args)
         self._ops.patch(kind, *args)
 
     def fiber(
         self, y: float, z: float, area: float, mat_tag: int,
     ) -> None:
+        self._note_section_member((mat_tag,))
         self._ops.fiber(y, z, area, mat_tag)
 
     def layer(self, kind: str, *args: int | float) -> None:
+        self._note_section_member(args)
         self._ops.layer(kind, *args)
 
     # -- Beam integration rules ---------------------------------------------
@@ -1094,6 +1107,7 @@ class LiveOpsEmitter:
     def beamIntegration(
         self, rule_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        self._swept_reach().note_referrer(tag, args)
         self._ops.beamIntegration(rule_type, tag, *args)
 
     # -- Topology ------------------------------------------------------------

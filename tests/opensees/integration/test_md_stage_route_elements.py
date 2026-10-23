@@ -1096,3 +1096,85 @@ def test_the_live_emitter_counts_carriers_without_a_grammar() -> None:
     le.element("tri6n", 2, 21, 22, 23, 24, 25, 26, 1.0, "PlaneStrain", 17)
     with pytest.raises(BridgeError, match="#2445"):
         le.update_material_stage(7, 1)
+
+
+def test_the_live_emitter_follows_a_shell_section() -> None:
+    """The review's model: MD -> PlateFiber -> LayeredShell -> two
+    ShellMITC4 elements on the section."""
+    le, ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.nDMaterial("PlateFiber", 17, 7)
+    le.section("LayeredShell", 30, 3, 17, 0.1, 17, 0.1, 17, 0.1)
+    le.element("ShellMITC4", 1, 101, 102, 103, 104, 30)
+    le.element("ShellMITC4", 2, 201, 202, 203, 204, 30)
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+    assert not _live_flips(ops)
+
+
+@pytest.mark.parametrize("member", ["fiber", "patch", "layer"])
+def test_the_live_emitter_follows_a_fiber_section(member: str) -> None:
+    """MD named by a fiber-section member, the section by a beam
+    integration, the integration by two beam elements."""
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", 7, *MD_ARGS)
+    le.section_open("NDFiber", 40)
+    if member == "fiber":
+        le.fiber(0.0, 0.0, 0.01, 7)
+    elif member == "patch":
+        le.patch("rect", 7, 2, 2, -0.1, -0.1, 0.1, 0.1)
+    else:
+        le.layer("straight", 7, 3, 0.01, -0.1, 0.0, 0.1, 0.0)
+    le.section_close()
+    le.beamIntegration("Lobatto", 50, 40, 3)
+    le.element("dispBeamColumn", 1, 101, 102, 60, 50)
+    le.element("dispBeamColumn", 2, 201, 202, 60, 50)
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+
+
+def test_the_live_emitter_reads_numpy_integer_tags() -> None:
+    np = pytest.importorskip("numpy")
+    le, _ops = _live()
+    le.nDMaterial("ManzariDafalias", np.int64(7), *MD_ARGS)
+    le.element("tri6n", 1, *_TRI6_ARGV, np.int64(7))
+    le.element("tri6n", 2, *_TRI6_ARGV, np.int32(7))
+    with pytest.raises(BridgeError, match="2 elements may carry"):
+        le.update_material_stage(7, 1)
+
+
+def _shell_fem() -> FEMStub:
+    """Two disconnected quads ``S`` (eids 1, 2), base nodes fixed."""
+    coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+              (3, 0, 0), (4, 0, 0), (4, 1, 0), (3, 1, 0)]
+    return FEMStub(
+        nodes=_NodesStub(
+            ids=list(range(1, 9)), coords=coords,
+            node_pgs={"S": list(range(1, 9)), "Base": [1, 2, 5, 6]}),
+        elements=_ElementsStub(elem_pgs={"S": _ElementGroupView(
+            ids=(1, 2), connectivity=((1, 2, 3, 4), (5, 6, 7, 8)))}),
+    )
+
+
+def test_a_shell_section_carrier_is_refused_at_the_stage_close() -> None:
+    """The deck path for the same model: ShellMITC4 is not a
+    MATERIAL_STATE_ELEMENTS class, so the stage close refuses the flip by
+    name instead of emitting a sweep that misses the shells."""
+    from apeGmsh.opensees.section.plate import ShellLayer
+
+    ops = apeSees(_shell_fem(), default_orientation=None)
+    ops.model(ndm=3, ndf=6)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sand = ops.nDMaterial.ManzariDafalias(name="sand", **_MD)
+    plate = ops.nDMaterial.PlateFiber(material=sand)
+    sec = ops.section.LayeredShell(layers=tuple(
+        ShellLayer(material=plate, thickness=0.1) for _ in range(3)))
+    ops.element.ShellMITC4(pg="S", section=sec)
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    with pytest.raises(BridgeError) as exc:
+        _flip(ops, sand, pgs=("S",))
+    msg = str(exc.value)
+    assert "ShellMITC4 carries it" in msg and "#2445" in msg
+    assert f"nDMaterial tag {ops.tag_for(sand)} (2 elements)" in msg
+    assert not ops._stage_records

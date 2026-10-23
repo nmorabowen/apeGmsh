@@ -1,5 +1,7 @@
 """stage_emit: part of the ``build/`` package (S2-a split of ``_internal/build.py``)."""
 from __future__ import annotations
+
+import numbers
 from typing import TYPE_CHECKING
 
 from typing import (
@@ -881,9 +883,10 @@ class MaterialStageCarriers:
         )
 
 
-def _int_tokens(argv: "Sequence[int | float | str]") -> set[int]:
+def _int_tokens(argv: "Sequence[Any]") -> set[int]:
+    """Every integer in ``argv``, numpy integers included (not bools)."""
     return {int(v) for v in argv
-            if isinstance(v, int) and not isinstance(v, bool)}
+            if isinstance(v, numbers.Integral) and not isinstance(v, bool)}
 
 
 class SweptMaterialReach:
@@ -891,12 +894,16 @@ class SweptMaterialReach:
     that cannot write the carrier sweep (``LiveOpsEmitter``, #2457).
 
     Unlike :class:`MaterialStageCarriers` it knows no grammar, so it
-    over-counts on purpose: a material whose argv holds a reaching tag as
-    an integer may wrap it (any wrapper, not only
-    :data:`MATERIAL_STATE_WRAPPERS`), and an element whose argv holds a
-    reaching tag may carry it (a node tag equal to it counts too).  An
-    over-count refuses a flip that was safe; it never passes one that was
-    not.
+    over-counts on purpose.  Any command whose argv holds a reaching tag
+    as an integer may refer to it, and its own tag then reaches too: a
+    material wrapping it (any wrapper, not only
+    :data:`MATERIAL_STATE_WRAPPERS`), a section on it or on such a
+    section, a fiber section whose ``fiber`` / ``patch`` / ``layer`` names
+    it, a beam integration on such a section.  An element whose argv holds
+    a reaching tag may carry it (a node tag equal to it counts too).
+    Material, section and integration tags share one set, since a
+    collision only over-counts.  An over-count refuses a flip that was
+    safe; it never passes one that was not.
     """
 
     def __init__(self) -> None:
@@ -914,14 +921,18 @@ class SweptMaterialReach:
             self._reach[tag] = {tag}
             self._carriers[tag] = set()
             return
-        ints = _int_tokens(params)
+        self.note_referrer(tag, params)
+
+    def note_referrer(self, tag: int, argv: "Sequence[Any]") -> None:
+        """A material, section, beam integration or fiber-section member
+        ``tag`` whose argv is ``argv``: it reaches every swept material a
+        tag in ``argv`` reaches."""
+        ints = _int_tokens(argv)
         for reach in self._reach.values():
             if ints & reach:
-                reach.add(tag)
+                reach.add(int(tag))
 
-    def note_element(
-        self, tag: int, argv: "Sequence[int | float | str]",
-    ) -> None:
+    def note_element(self, tag: int, argv: "Sequence[Any]") -> None:
         ints = _int_tokens(argv)
         for swept, reach in self._reach.items():
             if ints & reach:
