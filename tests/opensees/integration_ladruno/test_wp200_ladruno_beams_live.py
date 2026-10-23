@@ -38,8 +38,24 @@ from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
+from tests.opensees.warrant_rows import require_fork_features
 
 pytestmark = pytest.mark.ladruno_fork
+
+#: The post-pin fork features each test needs (#2498). FORK_PIN
+#: ladruno-v20261017 reports all of them missing; each test skips naming
+#: them until the pin moves, and runs on any build that has them.
+NEEDS = {
+    "test_ladruno_disp_beam_column_wp200_2d_and_3d_live": (
+        "LadrunoCohesiveHinge -implex",
+    ),
+    "test_ladruno_imk_beam_wp200_options_and_3d_line_stations_live": (
+        "LadrunoIMKBeam -shear",
+    ),
+    "test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live": (
+        "LadrunoIMKBeam -shearHinge", "LadrunoForceBeamColumn",
+    ),
+}
 
 RTOL = 1e-10
 L = 4.0
@@ -77,6 +93,7 @@ def _fem_to_ops(model_h5: str) -> dict[int, int]:
 def test_ladruno_disp_beam_column_wp200_2d_and_3d_live(tmp_path: Path) -> None:
     """Exercise 2-D and 3-D ``LadrunoDispBeamColumn`` with numeric ``lch=0.25``,
     ``hinge_ij``, ``hinge_loc``, ``pm``, and ``implex=True`` on the live fork."""
+    require_fork_features(*NEEDS["test_ladruno_disp_beam_column_wp200_2d_and_3d_live"])
     # --- 2-D model ---
     fem2 = _two_element_cantilever_fem("wp200_ldbc_2d")
     ops2 = apeSees(fem2, default_orientation=None)
@@ -209,6 +226,9 @@ def test_ladruno_imk_beam_wp200_options_and_3d_line_stations_live(tmp_path: Path
     """Exercise ``LadrunoIMKBeam`` with ``shear``, ``end_zones``, ``c_mass``,
     ``pm``, ``implex``, and verify 3-D ``localForce`` and ``basicForce``
     line-station synthesis on both MPCO and ``.ladruno`` against the closed form."""
+    require_fork_features(
+        *NEEDS["test_ladruno_imk_beam_wp200_options_and_3d_line_stations_live"]
+    )
     # --- 2-D LadrunoIMKBeam with shear, end_zones, c_mass, pm, implex ---
     fem2 = _two_element_cantilever_fem("wp200_imk_2d")
     ops2 = apeSees(fem2, default_orientation=None)
@@ -421,6 +441,9 @@ def test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live(
     """Exercise ``LadrunoIMKBeam`` with ``shear_hinge`` (2-D & 3-D tuple) and
     ``shear_hinge_y`` / ``shear_hinge_z`` (3-D), plus single-hinge ``hinge_loc``
     and 2-tuple ``subdivide`` on ``LadrunoDispBeamColumn`` / ``LadrunoForceBeamColumn``."""
+    require_fork_features(
+        *NEEDS["test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live"]
+    )
     # 1. 2-D LadrunoIMKBeam with shear_hinge
     fem2 = _two_element_cantilever_fem("wp200_imk_sh2d")
     ops2 = apeSees(fem2, default_orientation=None)
