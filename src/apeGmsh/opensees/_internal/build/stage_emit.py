@@ -717,6 +717,80 @@ MATERIAL_STATE_WRAPPERS: dict[str, int] = {
 }
 
 
+class ForkBuildFloor(NamedTuple):
+    """A Ladruno fork build floor that an emitted deck checks at its start.
+
+    A deck cannot order two build shas, so the floor is proven by a
+    ``command``: one that every fork build at or after the floor
+    registers, in the classic Tcl and the Python engines alike, while
+    stock OpenSees and every older fork build lack it.  The deck that
+    needs the floor stops with :func:`fork_floor_message` when the
+    running build has no such command (#2504).
+    """
+
+    #: The command the running build must expose.
+    command: str
+    #: The floor, as the message names it.
+    floor: str
+    #: What goes wrong below the floor, as the message names it.
+    failure: str
+
+
+#: The ``materialState`` forwarding of the Ladruno continuum solids.  Fork
+#: PR #859 (``64a0341a6``, 2026-09-27, WP-124 C10) let ``materialState``
+#: through ``LadrunoShell::isMaterialPointToken`` to
+#: ``forwardToMaterials``.  Before it, these elements read the name as a
+#: per-point address and drop it, so a flip reached the first element
+#: only (``updateMaterialStage``) or none (``setParameter``,
+#: ``updateParameter``): measured on fork build 79e062367, forwarding bit
+#: for bit at ``FORK_PIN`` 100eb9ae (#2457).  ``ladrunoSchema`` is fork PR
+#: #972 (``c50a281a0``, 2026-10-11); its first commit ``d9ff64c03``
+#: descends from ``64a0341a6``, so every build that registers it forwards.
+#: A build between the two forwards but is refused (fail closed).
+LADRUNO_SOLID_MATERIAL_STATE_FLOOR = ForkBuildFloor(
+    command="ladrunoSchema",
+    floor="a Ladruno fork build at or after FORK_PIN 100eb9ae "
+          "(fork PR #859)",
+    failure="the switch reaches the first element or none, and the run "
+            "gives a wrong answer without a warning (apeGmsh issues #2445, "
+            "#2504)",
+)
+
+#: Element class -> the fork build floor a ``materialState`` update of
+#: one of its elements needs.  The five classes emit their class name as
+#: their ``element`` token, so the key is both.  One table for both sides:
+#: ``stage/_builder.py`` derives its fork-floor classes from it, and the
+#: deck emitters guard on it (:class:`MaterialStageCarriers`).
+MATERIAL_STATE_FORK_FLOOR: dict[str, ForkBuildFloor] = {
+    cls: LADRUNO_SOLID_MATERIAL_STATE_FLOOR
+    for cls in ("LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
+                "LadrunoBrick20")
+}
+
+
+def fork_floor_message(floor: ForkBuildFloor) -> str:
+    """The error a deck stops with below ``floor``.
+
+    One line of plain text, so both targets quote it as is: no Tcl
+    substitution character and no backslash.
+    """
+    classes = ", ".join(sorted(
+        cls for cls, f in MATERIAL_STATE_FORK_FLOOR.items() if f == floor))
+    message = (
+        f"apeGmsh: this deck switches materialState on {classes} "
+        f"elements, which hand it to their materials only on "
+        f"{floor.floor}. The running OpenSees has no {floor.command} "
+        "command, so it is stock OpenSees or an older fork build, where "
+        f"{floor.failure}. Rebuild the Ladruno fork at or after FORK_PIN."
+    )
+    bad = sorted(set(message) & set('[]{}$"\\\n'))
+    if bad:
+        raise BridgeError(
+            f"fork_floor_message: {bad!r} in the guard message would be "
+            "read as Tcl syntax; reword the ForkBuildFloor.")
+    return message
+
+
 def _carried_material_tag(
     token: str, argv: "Sequence[int | float | str]",
 ) -> int:
@@ -779,6 +853,13 @@ class MaterialStageCarriers:
     The carriers are the elements emitted before the flip, so an element
     a later stage activates is not listed; the archive replays the same
     calls in the same order, so its deck lists the same elements.
+
+    It also notes each element of a :data:`MATERIAL_STATE_FORK_FLOOR`
+    class.  :meth:`flip_fork_floors` and :meth:`fork_floors` name the
+    floors a sweep or a ``materialState`` update of such an element
+    needs, and the deck emitters check each at the deck's start
+    (#2504).  The check is derived from the calls, like the lines it
+    guards, so ``model_hash`` does not see it.
     """
 
     def __init__(self) -> None:
@@ -789,6 +870,8 @@ class MaterialStageCarriers:
         # element tags, in emission order.
         self._carriers: dict[int, dict[int | None, dict[int, None]]] = {}
         self._rank: int | None = None
+        # element tag -> its MATERIAL_STATE_FORK_FLOOR floor.
+        self._floors: dict[int, ForkBuildFloor] = {}
 
     def note_material(
         self, mat_type: str, tag: int,
@@ -825,6 +908,9 @@ class MaterialStageCarriers:
     def note_element(
         self, token: str, tag: int, argv: "Sequence[int | float | str]",
     ) -> None:
+        floor = MATERIAL_STATE_FORK_FLOOR.get(token)
+        if floor is not None:
+            self._floors[int(tag)] = floor
         if token not in MATERIAL_STATE_ELEMENT_TOKENS:
             return
         mat = self._resolve(_carried_material_tag(token, argv))
@@ -833,6 +919,7 @@ class MaterialStageCarriers:
             by_rank.setdefault(self._rank, {})[int(tag)] = None
 
     def note_removed(self, tag: int) -> None:
+        self._floors.pop(int(tag), None)
         for by_rank in self._carriers.values():
             for tags in by_rank.values():
                 tags.pop(int(tag), None)
@@ -854,6 +941,35 @@ class MaterialStageCarriers:
             out.update(by_rank.get(rank, {}))
         return tuple(out)
 
+    def _sweep(self, tag: int, value: int) -> tuple[int, ...]:
+        """The carriers a flip of ``tag`` to ``value`` updates one by
+        one; empty when the flip is the bare ``updateMaterialStage``."""
+        carriers = self._carriers_of(tag)
+        if value < 1 or tag not in self._swept or len(carriers) < 2:
+            return ()
+        return carriers
+
+    def fork_floors(
+        self, ele_tags: "Iterable[int]",
+    ) -> tuple[ForkBuildFloor, ...]:
+        """The floors a ``materialState`` update of ``ele_tags`` needs
+        (:data:`MATERIAL_STATE_FORK_FLOOR`), each once, in first-seen
+        order."""
+        out: dict[ForkBuildFloor, None] = {}
+        for et in ele_tags:
+            floor = self._floors.get(int(et))
+            if floor is not None:
+                out[floor] = None
+        return tuple(out)
+
+    def flip_fork_floors(
+        self, mat_tag: int, stage: int,
+    ) -> tuple[ForkBuildFloor, ...]:
+        """The floors the flip :meth:`flip_commands` emits needs: those
+        of its swept carriers.  The bare ``updateMaterialStage`` needs
+        none: on one carrier it reaches the only element on any build."""
+        return self.fork_floors(self._sweep(int(mat_tag), int(stage)))
+
     def flip_commands(
         self, mat_tag: int, stage: int,
     ) -> tuple[tuple[str, tuple[int | float | str, ...]], ...]:
@@ -862,8 +978,8 @@ class MaterialStageCarriers:
         tag = int(mat_tag)
         value = int(stage)
         ums = ("updateMaterialStage", ("-material", tag, "-stage", value))
-        carriers = self._carriers_of(tag)
-        if value < 1 or tag not in self._swept or len(carriers) < 2:
+        carriers = self._sweep(tag, value)
+        if not carriers:
             return (ums,)
         return (
             ("setParameter", (

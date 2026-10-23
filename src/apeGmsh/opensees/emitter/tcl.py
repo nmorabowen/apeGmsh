@@ -34,7 +34,11 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
-from .._internal.build.stage_emit import MaterialStageCarriers
+from .._internal.build.stage_emit import (
+    ForkBuildFloor,
+    MaterialStageCarriers,
+    fork_floor_message,
+)
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
@@ -519,6 +523,8 @@ class TclEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
+        # The fork build floors this deck already checks (#2504).
+        self._fork_floors: set[ForkBuildFloor] = set()
         # Tracks the type token of the currently-open pattern (for
         # pattern_close to decide whether to emit ``\\}``). None means
         # no pattern open or the open pattern is single-line.
@@ -1669,6 +1675,9 @@ class TclEmitter:
         value: float,
     ) -> None:
         self._stage0.parameter(args)
+        if args and args[0] == "materialState":
+            self._require_fork_floors(
+                self._stage_carriers.fork_floors(ele_tags))
         self._lines.append(_join("parameter", int(pid)))
         for et in ele_tags:
             self._lines.append(
@@ -1831,6 +1840,8 @@ class TclEmitter:
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
         self._stage0.user_flip(mat_tag)
+        self._require_fork_floors(
+            self._stage_carriers.flip_fork_floors(mat_tag, stage))
         # A plastic flip of a swept material also updates each of its
         # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
@@ -1839,6 +1850,51 @@ class TclEmitter:
                 mat_tag, stage):
             self._lines.append(_join(command, *argv))
         self._lines.indent = prev_indent
+
+    def _require_fork_floors(
+        self, floors: "Sequence[ForkBuildFloor]",
+    ) -> None:
+        """Make the deck check each new fork build floor at its start.
+
+        The check goes before the first command, after the leading
+        comments, and stops the deck with :func:`fork_floor_message`
+        when the running build lacks the floor's command (#2504).  The
+        recorded partition spans move down with it.  A streamed deck has
+        its start on disk already, so it checks here, before the line
+        that needs the floor.  A deck that needs no floor is unchanged.
+        """
+        for floor in floors:
+            if floor in self._fork_floors:
+                continue
+            self._fork_floors.add(floor)
+            guard = [
+                f'if {{[info commands {floor.command}] eq ""}} {{',
+                f'    error "{fork_floor_message(floor)}"',
+                "}",
+            ]
+            if self._stream is not None:
+                prev_indent = self._lines.indent
+                self._lines.indent = ""
+                for line in guard:
+                    self._lines.append(line)
+                self._lines.indent = prev_indent
+                continue
+            at = next(
+                (i for i, line in enumerate(self._lines)
+                 if not line.startswith("#")), len(self._lines))
+            for i, line in enumerate(guard):
+                self._lines.insert(at + i, line)
+            n = len(guard)
+            self._partition_spans = [
+                span if span.header < at else span._replace(
+                    header=span.header + n, body_start=span.body_start + n,
+                    body_end=span.body_end + n, end=span.end + n)
+                for span in self._partition_spans
+            ]
+            if self._open_partition is not None:
+                rank, header = self._open_partition
+                if header >= at:
+                    self._open_partition = (rank, header + n)
 
     def _stage_zero(self) -> None:
         """Write the owed ManzariDafalias ``-stage 0`` lines
