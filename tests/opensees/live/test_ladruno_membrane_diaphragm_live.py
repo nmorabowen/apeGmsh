@@ -4,9 +4,10 @@ A square panel with a node every ``_H`` on its boundary is stretched by a
 prescribed displacement on two opposite edges and is free to contract.
 
 * ``f11 = f22 = f12 = f`` scales the whole plane-stress modulus, so every
-  reaction scales by ``f`` exactly. On the symmetric panel ``f11`` acts on an
-  x stretch exactly as ``f22`` acts on a y stretch, and each softens its own
-  axis (``< 0.6`` at 0.5) far more than the other (``> 0.9``).
+  reaction scales by ``f`` exactly. Under the uniform stretch the e1
+  uniaxial modulus is ``f11 * E`` whatever ``f22`` (and e2 is ``f22 * E``),
+  so ``f11 = 0.5`` halves the x reaction and leaves the y one, to 1e-9;
+  ``f12`` (shear) leaves both.
 * The uniform stretch is a linear field, which a condensed CST mesh must
   reproduce exactly: ``R = E t eps S`` and ``u = eps x``, ``v = -nu eps y``
   at every boundary node, at ``nu = 0`` and ``0.2``. This needs fork build
@@ -191,16 +192,19 @@ def test_uniform_modifier_scales_the_stiffness_exactly() -> None:
             0.5 * base, rel=1e-9)
 
 
-def test_f11_and_f22_soften_their_own_axis() -> None:
-    """The square panel is symmetric: ``f11`` acts on an x stretch as ``f22``
-    on a y stretch, and each softens its own axis more than the other."""
-    rx, ry = _ratio(1), _ratio(2)
-    assert rx == pytest.approx(ry, rel=1e-9)
-    x_f11, y_f11 = _ratio(1, f11=0.5) / rx, _ratio(2, f11=0.5) / ry
-    x_f22, y_f22 = _ratio(1, f22=0.5) / rx, _ratio(2, f22=0.5) / ry
-    assert x_f11 == pytest.approx(y_f22, rel=1e-9)
-    assert y_f11 == pytest.approx(x_f22, rel=1e-9)
-    assert x_f11 < 0.6 and y_f11 > 0.9
+@pytest.mark.parametrize("nu", [0.0, 0.2])
+def test_f11_and_f22_scale_their_own_axis_only(nu: float) -> None:
+    """Under a uniform stretch the e1 uniaxial modulus is
+    ``D'11 - D'12**2 / D'22 = f11 * E`` whatever ``f22``, and the e2 one is
+    ``f22 * E``: the hand ratio is exact."""
+    for direction, mods, want in (
+        (1, {"f11": 0.5}, 0.5), (2, {"f11": 0.5}, 1.0),
+        (2, {"f22": 0.5}, 0.5), (1, {"f22": 0.5}, 1.0),
+        (1, {"f11": 0.5, "f22": 0.25}, 0.5),
+        (1, {"f12": 0.3}, 1.0),
+    ):
+        got = _stretch(direction, nu=nu, **mods)["R"] / (_E * _T * _EPS * _S)
+        assert got == pytest.approx(want, rel=1e-9), (direction, mods)
 
 
 @pytest.mark.parametrize("nu", [0.0, 0.2])
@@ -272,7 +276,12 @@ def test_force_responses_and_recorder(tmp_path: Path) -> None:
     n_vert = res["diaphragmVertices"].size // 3
     assert tri.size == 3 * n_tri and n_tri >= 2
     assert int(tri.min()) >= 0 and int(tri.max()) < n_vert
-    assert res["membraneForces"].reshape(-1, 3).shape == (n_tri, 3)
+    forces = res["membraneForces"].reshape(-1, 3)
+    assert forces.shape == (n_tri, 3)
+    # The field is uniform: N11 = f11 E t eps in every triangle, N22 = N12 = 0.
+    n11 = 0.5 * _E * _T * _EPS
+    np.testing.assert_allclose(forces[:, 0], n11, rtol=1e-9)
+    np.testing.assert_allclose(forces[:, 1:], 0.0, atol=1e-9 * n11)
     # Any equilibrated field: the area integral of N11 is the virtual work of
     # the edge reactions, sum(f_x * x) = R * S, so the mean N11 is R / S.
     mean = res["meanMembraneForce"]
