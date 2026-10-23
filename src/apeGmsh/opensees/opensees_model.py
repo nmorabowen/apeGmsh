@@ -570,7 +570,7 @@ class OpenSeesModel:
     #: refusal; ``build('live')`` refuses on stock openseespy when
     #: ``requires`` names the fork; ``to_h5`` echoes the stamp.
     _solve_stamp: "SolveStamp | None" = None
-    #: ``/opensees@target_mode`` (opensees 2.36.0, #2375): the bridge's
+    #: ``/opensees@target_mode`` (opensees 2.36.0): the bridge's
     #: ``OpenSeesTarget.mode``; ``"auto"`` when absent. A pinned mode
     #: stamps the replay deck as the bridge does, and ``"fork"`` joins
     #: :meth:`replay_requires`; ``to_h5`` echoes it.

@@ -529,7 +529,7 @@ _SOLVE_STAMP_ATTRS: tuple[str, ...] = (
 )
 
 
-#: The values ``/opensees@target_mode`` may hold (opensees 2.36.0, #2375):
+#: The values ``/opensees@target_mode`` may hold (opensees 2.36.0):
 #: ``OpenSeesTarget.mode``. The writer stores only ``"fork"`` / ``"stock"``;
 #: an absent attribute reads as ``"auto"``.
 TARGET_MODES: frozenset[str] = frozenset(get_args(TargetMode))

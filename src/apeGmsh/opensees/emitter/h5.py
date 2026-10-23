@@ -690,7 +690,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     file.
 #:   * 2.36.0 — the target mode: additive — ``/opensees@target_mode``, a
 #:     string ``"fork"`` or ``"stock"``, is the bridge's pinned
-#:     ``OpenSeesTarget.mode`` (#2278 ruling A, #2375). Written only for a
+#:     ``OpenSeesTarget.mode``. Written only for a
 #:     pinned target; an absent attribute reads as ``"auto"``, so every
 #:     older archive and every unpinned one keeps its bytes and meaning.
 #:     ``binary`` / ``python`` are machine paths and are never archived.
@@ -1035,7 +1035,7 @@ class H5Emitter(
         self._model_name: str = model_name or "model"
         self._apegmsh_version: str = apegmsh_version or "unknown"
         self._snapshot_id: str = snapshot_id or ""
-        # opensees 2.36.0 (#2375): the bridge's ``OpenSeesTarget.mode``,
+        # opensees 2.36.0: the bridge's ``OpenSeesTarget.mode``,
         # written as ``/opensees@target_mode`` when pinned. Only the mode:
         # ``binary`` / ``python`` are machine paths, never archived.
         if target_mode not in TARGET_MODES:
@@ -1489,7 +1489,7 @@ class H5Emitter(
         # ADR 0114 D6 (schema 2.24.0): the solve stamp, on ``/opensees``
         # itself. Hashed, like every attribute of the group.
         self._write_solve_stamp(f)
-        # opensees 2.36.0 (#2375): the pinned target mode, beside the
+        # opensees 2.36.0: the pinned target mode, beside the
         # stamp; hash-excluded (``MODEL_HASH_EXCLUDED_ATTRS``).
         self._write_target_mode(f)
         # ADR 0114 R5 (K1-6, schema 2.25.0): the declarations. A label,
