@@ -754,30 +754,86 @@ def _run_reset(cls: str, *, add: bool) -> "tuple[int, float]":
         ops.wipe()
 
 
+#: The fork commit that stops the constructor reset (nmorabowen/OpenSees
+#: #1005, merged as ``bdb69cea5``).
+_MD_STATIC_FIX = "43b235bbb753113c3fdee7922e6e037c9ed138df"
+
+#: Fork builds measured with :func:`_run_reset`: does the build carry
+#: :data:`_MD_STATIC_FIX`?  Ancestry checked on the fork (GitHub compare).
+#: The bridge cannot read this from a running build (no command or
+#: ``ladrunoSchema`` entry names the fix), which is why
+#: ``FORK_RESETS_STAGE_STATIC`` stays full; the tests can, by sha.
+_FORK_BUILD_HAS_MD_STATIC_FIX = {
+    # FORK_PIN ladruno-v20261023, the merge of #1005: no reset (live-fork).
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # The maintainer's venv build, an ancestor of the fix: resets.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
+
+
+def _reset_expected(cls: str) -> bool:
+    """Whether the bound build resets ``cls``'s static on a new element:
+    a fork build without :data:`_MD_STATIC_FIX`, for the classes of
+    ``FORK_RESETS_STAGE_STATIC`` only.  An unmeasured fork build skips by
+    name rather than guess."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    info = get_backend_info()
+    if info.kind != "fork":
+        return False
+    if info.build not in _FORK_BUILD_HAS_MD_STATIC_FIX:
+        pytest.skip(
+            f"fork build {info.build!r} is not measured for the #2444 "
+            f"reset: add it to _FORK_BUILD_HAS_MD_STATIC_FIX (does it "
+            f"descend from {_MD_STATIC_FIX[:9]}?)")
+    fixed = _FORK_BUILD_HAS_MD_STATIC_FIX[info.build]
+    return not fixed and cls in FORK_RESETS_STAGE_STATIC
+
+
+def test_the_fork_pin_is_measured_for_the_reset() -> None:
+    """A FORK_PIN bump re-measures the reset: the live-fork lane runs
+    only the pinned build, so it must be in the table."""
+    from pathlib import Path
+
+    pin = Path(__file__).resolve().parents[3] / "FORK_PIN"
+    shas = [line.split("=", 1)[1] for line in
+            pin.read_text(encoding="utf-8").splitlines()
+            if line.startswith("sha=")]
+    assert len(shas) == 1, shas
+    assert shas[0] in _FORK_BUILD_HAS_MD_STATIC_FIX, (
+        "FORK_PIN moved: measure the #2444 reset on the new build "
+        "(test_live_reset_follows_the_fork_build) and add it")
+
+
 @pytest.mark.live
 @pytest.mark.parametrize("cls", ["ManzariDafalias", "SAniSandMS"])
 def test_live_reset_happens_exactly_where_the_table_says(cls: str) -> None:
-    """A new element after ``-stage 1`` resets the static on the fork for
-    the FORK_RESETS_STAGE_STATIC classes, and nowhere else (stock: never)."""
+    """A new element after ``-stage 1`` resets the static on a fork build
+    older than the fix, for the FORK_RESETS_STAGE_STATIC classes, and
+    nowhere else (stock: never; a fork build with the fix: never)."""
     pytest.importorskip("openseespy.opensees")
-    from apeGmsh.opensees.emitter.live import get_backend_name
-
-    on_fork = get_backend_name() == "ladruno-fork"
+    expected = _reset_expected(cls)
     code_f, uy_flipped = _run_reset(cls, add=False)
     code_a, uy_added = _run_reset(cls, add=True)
     assert (code_f, code_a) == (0, 0)
     reset = abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
-    assert reset == (on_fork and cls in FORK_RESETS_STAGE_STATIC)
+    assert reset == expected
 
 
 @pytest.mark.live
 @pytest.mark.ladruno_fork
-def test_live_reset_ladruno_sanisand_on_the_fork() -> None:
+@pytest.mark.parametrize("cls", ["ManzariDafalias", "LadrunoSANISAND"])
+def test_live_reset_follows_the_fork_build(cls: str) -> None:
+    """On the fork lane: reset on a fork build older than the fix
+    (79e062367), kept at FORK_PIN (the #2444 plastic answer).
+    LadrunoSANISAND inherits ManzariDafalias's static."""
     pytest.importorskip("openseespy.opensees")
-    code_f, uy_flipped = _run_reset("LadrunoSANISAND", add=False)
-    code_a, uy_added = _run_reset("LadrunoSANISAND", add=True)
+    expected = _reset_expected(cls)
+    code_f, uy_flipped = _run_reset(cls, add=False)
+    code_a, uy_added = _run_reset(cls, add=True)
     assert (code_f, code_a) == (0, 0)
-    assert abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
+    reset = abs(uy_added - uy_flipped) > 1e-3 * abs(uy_flipped)
+    assert reset == expected, (uy_flipped, uy_added)
 
 
 # ---------------------------------------------------------------------------
