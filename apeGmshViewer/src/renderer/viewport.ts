@@ -25,6 +25,7 @@ import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
+import { LoadsLayer } from "./loads.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -113,6 +114,7 @@ export class Viewport {
   /** 3-D line diagram step data from effects (effects.currentLineDiagram). */
   private lineDiagramSource: () => { key: string; step: LadrunoLineStationStep } | null = () => null;
   readonly lineDiagram: LineDiagramLayer;
+  readonly loads = new LoadsLayer();
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -171,7 +173,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -239,6 +241,7 @@ export class Viewport {
     this.keyLight.intensity = mode === "light" ? 0.95 : 1.4;
     this.halo.setTheme(mode);
     this.lineDiagram.setTheme(mode);
+    this.loads.setTheme(mode);
     const s = this.store.get();
     if (this.geometryInfo) {
       this.setGeometry(this.geometryInfo);
@@ -249,6 +252,7 @@ export class Viewport {
       this.rebuild(s, s.mesh);
       if (s.selection.decls.length) this.setHighlight(s, false);
       this.syncLineDiagram(s);
+      this.syncLoads(s);
     }
     this.notifyView();
     this.requestRender();
@@ -349,6 +353,7 @@ export class Viewport {
     this.gizmos.dispose();
     this.caps.dispose();
     this.lineDiagram.dispose();
+    this.loads.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -364,6 +369,7 @@ export class Viewport {
     if (!prev || s.clip !== prev.clip) {
       if (this.clip.sync(s.clip)) {
         this.lineDiagram.setClippingPlanes(this.clip.planes);
+        this.loads.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
     }
@@ -375,6 +381,7 @@ export class Viewport {
       this.applyVisibility(s);
       this.setHighlight(s);
       this.syncLineDiagram(s);
+      this.syncLoads(s);
       return;
     }
     if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
@@ -383,6 +390,7 @@ export class Viewport {
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
     this.syncLineDiagram(s);
+    this.syncLoads(s);
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
@@ -402,6 +410,12 @@ export class Viewport {
         this.drawn?.lineMap,
       )
     ) {
+      this.requestRender();
+    }
+  }
+
+  private syncLoads(s: State = this.store.get()): void {
+    if (this.loads.sync(s, this.blobs, this.full)) {
       this.requestRender();
     }
   }
@@ -441,6 +455,7 @@ export class Viewport {
     const s = this.store.get();
     this.redeform(s);
     this.syncLineDiagram(s);
+    this.syncLoads(s);
   }
 
   /** The ghost shows behind a deformed mesh, when the user asked for it. */

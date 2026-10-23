@@ -5,7 +5,7 @@
 
 Refuses when the body has no ``Slice: #<n>`` line, when a ``gh`` read fails, or
 when the program WIP count is 8 or more. The count is
-``program_probe.wip_count``: open ``program`` PRs, except those labelled
+``program_probe.wip_count``: open ``program`` PRs, except drafts (ruling 2026-10-23) and those labelled
 ``human-gate`` that are green and approved (maintainer ruling on #2200).
 Always adds the ``program`` label, and always uses ``--base main``.
 ``--count`` lists each counted and excluded PR with its reason.

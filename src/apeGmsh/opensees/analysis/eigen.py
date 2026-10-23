@@ -49,6 +49,21 @@ class RotationSlotUnresolvedWarning(UserWarning):
     nodes and the reason."""
 
 
+def _deck_node_ids(bridge: "apeSees") -> np.ndarray:
+    """The fem node ids the bridge's deck declares: every node except the
+    interior of a ``LadrunoMembrane(pg=...)`` panel, which is not part of
+    the OpenSees model (:func:`~apeGmsh.opensees._internal.build.ndf.membrane_interior_nodes`)."""
+    from .._internal.build.ndf import membrane_interior_nodes
+    from .._internal.types import Element
+
+    ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+    skip = membrane_interior_nodes(
+        bridge.fem, [p for p in bridge._primitives if isinstance(p, Element)])
+    if not skip:
+        return ids
+    return ids[~np.isin(ids, np.fromiter(skip, dtype=np.int64))]
+
+
 @dataclass(frozen=True, slots=True)
 class EigenResult:
     """Eigenvalues + lazy mode-shape access from one ``eigen`` call.
@@ -323,8 +338,10 @@ class EigenResult:
         check_target(out_path, archive)
 
         ops = self._live.ops
-        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+        all_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
         coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
+        # The deck's nodes: a LadrunoMembrane(pg=) interior is not one.
+        node_ids = _deck_node_ids(bridge)
         n_modes = len(self.eigenvalues)
         # One nodeEigenvector call per node and mode; a node's vector is
         # as long as ITS ndf, so its length is the node's own DOF count.
@@ -349,10 +366,12 @@ class EigenResult:
             # same lineage), so a refused or failed write leaves no
             # archive behind; the archive follows them into place.
             out = write_modes(
-                out_path, model_h5=staged, node_ids=node_ids,
+                out_path, model_h5=staged, node_ids=all_ids,
                 coords=coords, ndm=ndm,
                 eigenvalues=self.eigenvalues,
                 fields=lambda k: shapes[k - 1], rotations=rotations,
+                record_ids=(None if len(node_ids) == len(all_ids)
+                            else node_ids),
                 source="eigen", stacklevel=3,
             )
             if place:
@@ -380,7 +399,8 @@ class EigenResult:
         bridge, ndm, _ = self._checked_solve("to_native")
         ops = self._live.ops
         backend = _backend_of(ops)
-        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+        # The deck's nodes: a LadrunoMembrane(pg=) interior is not one.
+        node_ids = _deck_node_ids(bridge)
         if model_h5 is not None:
             _deck_archive(model_h5, [int(n) for n in node_ids], ndm,
                           where=where)

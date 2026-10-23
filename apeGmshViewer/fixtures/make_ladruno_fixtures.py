@@ -591,6 +591,10 @@ def frame3d() -> None:
             nodes_grp.create_dataset("COORDINATES", data=node_coords)
             elems_grp = model_grp.create_group("ELEMENTS")
             fbc_model = elems_grp.create_group("20-ForceBeamColumn3d[0]")
+            # Schema v1 §3: the BASIS attributes sit beside every QUADRATURE, in
+            # the fork's form (a (1,) array of fixed-length bytes, as portal3d has).
+            for attr, text in (("PARAM_DOMAIN", b"[-1,1]"), ("TOPOLOGY", b"line"), ("FAMILY", b"lagrange")):
+                fbc_model.attrs[attr] = np.array([text])
             quad_grp = fbc_model.create_group("QUADRATURE")
             quad_grp.create_dataset("GP_PARAM", data=xi.reshape(3, 1))
 

@@ -92,10 +92,15 @@ class Deck:
 
 
 def _ops() -> Deck:
-    pytest.importorskip("openseespy.opensees")
+    """The resolved backend: the fork where it imports (the live-fork lane
+    binds it as ``opensees``, with no openseespy), else stock openseespy
+    (#2503). Skips only when no backend imports at all."""
     from apeGmsh.opensees.emitter.live import get_ops
 
-    return Deck(get_ops())
+    try:
+        return Deck(get_ops())
+    except ImportError as e:
+        pytest.skip(f"no OpenSees backend: {e}")
 
 
 def flip(ops: Deck, how: str, tags: "list[int]") -> None:
