@@ -13,7 +13,7 @@ import {
   lineDiagramKeysOf,
 } from "./lineDiagram.ts";
 import { elementsOfDecl } from "./search.ts";
-import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
+import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import {
   LINE_STATION_COMPONENTS,
@@ -232,16 +232,30 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
           stepRange: null,
           scan: null,
           notice,
+          drawnBeams: [],
+          chains: [],
+          hover: null,
         },
       };
     }
-    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null) return s;
+    if (
+      s.lineDiagram.stepRange === null &&
+      s.lineDiagram.scan === null &&
+      s.lineDiagram.drawnBeams.length === 0 &&
+      s.lineDiagram.chains.length === 0 &&
+      s.lineDiagram.hover === null
+    ) {
+      return s;
+    }
     return {
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: null,
         scan: null,
+        drawnBeams: [],
+        chains: [],
+        hover: null,
       },
     };
   }
@@ -250,16 +264,19 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
     const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
     const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
     const nextNotice = keepStep || preserveNotice ? s.lineDiagram.notice : null;
-    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return s;
-    return {
+    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return syncLineDiagramDerived(s);
+    return syncLineDiagramDerived({
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: keepStep ? s.lineDiagram.stepRange : null,
         scan: keepScan ? s.lineDiagram.scan : null,
         notice: nextNotice,
+        drawnBeams: keepStep ? s.lineDiagram.drawnBeams : [],
+        chains: keepStep ? s.lineDiagram.chains : [],
+        hover: keepStep ? s.lineDiagram.hover : null,
       },
-    };
+    });
   }
   const prevComp = s.lineDiagram.component;
   const picked = defaultLineDiagramComponent(avail);
@@ -269,7 +286,7 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
         ? `Stage ${stage.name || stage.id} has no ${prevComp} line stations; switched to ${picked}.`
         : `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`
       : null;
-  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return s;
+  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return syncLineDiagramDerived(s);
   return {
     ...s,
     lineDiagram: {
@@ -279,6 +296,9 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
       stepRange: null,
       scan: null,
       notice,
+      drawnBeams: [],
+      chains: [],
+      hover: null,
     },
   };
 }
@@ -293,7 +313,9 @@ export function reduce(s: State, e: Event): State {
       const clearedResults = e.artifact === "results" && !(prev && prev.path === e.path);
       const results = clearedResults ? null : s.results;
       const contour = clearedResults ? syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready") : s.contour;
-      const lineDiagram = clearedResults ? { ...s.lineDiagram, stepRange: null, scan: null } : s.lineDiagram;
+      const lineDiagram = clearedResults
+        ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
+        : s.lineDiagram;
       return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram });
     }
     case "fileLoaded": {
@@ -369,7 +391,7 @@ export function reduce(s: State, e: Event): State {
           artifacts: { ...s.artifacts, results: info },
           results: null,
           contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
-          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null },
+          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         });
       }
       // The model is gone with its derivations; the failure is shown instead.
@@ -389,7 +411,7 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
-        lineDiagram: s.lineDiagram,
+        lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
     }
@@ -402,7 +424,7 @@ export function reduce(s: State, e: Event): State {
           artifacts: { ...s.artifacts, results: null },
           results: null,
           contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
-          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null },
+          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         });
       }
       return withPhase({
@@ -420,7 +442,7 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
-        lineDiagram: s.lineDiagram,
+        lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
     }
@@ -443,15 +465,20 @@ export function reduce(s: State, e: Event): State {
     }
     case "select":
       if (!(e.pick.decl in s.decls)) throw new Error(`select: ${e.pick.decl} is not a declaration of the loaded model`);
-      return { ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } };
+      return syncLineDiagramDerived({ ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } });
     case "selectAdd": {
       if (!(e.pick.decl in s.decls)) throw new Error(`selectAdd: ${e.pick.decl} is not a declaration of the loaded model`);
       if (s.selection.decls.includes(e.pick.decl)) {
         const decls = s.selection.decls.filter((d) => d !== e.pick.decl);
         const picks = s.selection.picks.filter((p) => p.decl !== e.pick.decl);
-        return decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } };
+        return syncLineDiagramDerived(
+          decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } },
+        );
       }
-      return { ...s, selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] } };
+      return syncLineDiagramDerived({
+        ...s,
+        selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] },
+      });
     }
     case "selectDecls": {
       for (const d of e.decls) {
@@ -459,12 +486,12 @@ export function reduce(s: State, e: Event): State {
       }
       const next = uniq(e.add ? [...s.selection.decls, ...e.decls] : e.decls);
       const picks = next.map((decl) => s.selection.picks.find((p) => p.decl === decl) ?? { decl, at: null, nodes: null });
-      return { ...s, selection: { decls: next, picks } };
+      return syncLineDiagramDerived({ ...s, selection: { decls: next, picks } });
     }
     case "clearSelection":
-      return s.selection.decls.length === 0 ? s : { ...s, selection: NO_SELECTION };
+      return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: NO_SELECTION });
     case "hover":
-      return { ...s, hover: e.at };
+      return syncLineDiagramDerived({ ...s, hover: e.at });
     case "setHidden": {
       const hidden = e.hidden
         ? uniq([...s.visibility.hidden, ...e.decls])
@@ -575,6 +602,9 @@ export function reduce(s: State, e: Event): State {
             stepRange: null,
             scan: null,
             notice: lineSwitchNotice,
+            drawnBeams: [],
+            chains: [],
+            hover: null,
           },
         },
         lineSwitchNotice !== null,
@@ -725,7 +755,9 @@ export function reduce(s: State, e: Event): State {
     case "setLineDiagram": {
       const on: unknown = e.on;
       if (typeof on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(on)}`);
-      return s.lineDiagram.on === on ? s : withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on } });
+      return s.lineDiagram.on === on
+        ? s
+        : syncLineDiagramDerived(withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on } }));
     }
     case "setLineDiagramComponent": {
       if (!LINE_STATION_COMPONENTS.includes(e.component)) {
@@ -745,6 +777,9 @@ export function reduce(s: State, e: Event): State {
           stepRange: null,
           scan: null,
           notice: null,
+          drawnBeams: [],
+          chains: [],
+          hover: null,
         },
       };
     }
@@ -752,7 +787,9 @@ export function reduce(s: State, e: Event): State {
       if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
         throw new RangeError(`setLineDiagramScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
       }
-      return s.lineDiagram.scale === e.scale ? s : { ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } };
+      return s.lineDiagram.scale === e.scale
+        ? s
+        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } });
     case "setLineDiagramPlane":
       if (e.plane !== "local" && e.plane !== "screen") {
         throw new RangeError(`setLineDiagramPlane: ${JSON.stringify(e.plane)}`);
@@ -772,7 +809,9 @@ export function reduce(s: State, e: Event): State {
       if (e.flipSign !== null && typeof e.flipSign !== "boolean") {
         throw new RangeError(`setLineDiagramFlipSign: ${JSON.stringify(e.flipSign)}`);
       }
-      return s.lineDiagram.flipSign === e.flipSign ? s : { ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } };
+      return s.lineDiagram.flipSign === e.flipSign
+        ? s
+        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } });
     case "setLineDiagramRange": {
       if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") {
         throw new RangeError(`setLineDiagramRange: ${JSON.stringify(e.range)}`);
@@ -801,14 +840,34 @@ export function reduce(s: State, e: Event): State {
               ? prevNotice
               : `${prevNotice} ${e.notice}`
             : e.notice;
-      return {
+      const drawnBeams =
+        e.drawnBeams !== undefined
+          ? e.drawnBeams.map((b) => ({
+              decl: b.decl,
+              elementId: b.elementId,
+              nodeStart: b.nodeStart,
+              nodeEnd: b.nodeEnd,
+              pStart: [b.pStart[0], b.pStart[1], b.pStart[2]] as [number, number, number],
+              pEnd: [b.pEnd[0], b.pEnd[1], b.pEnd[2]] as [number, number, number],
+              length: b.length,
+              xLocal: [b.xLocal[0], b.xLocal[1], b.xLocal[2]] as [number, number, number],
+              extrudeDir: [b.extrudeDir[0], b.extrudeDir[1], b.extrudeDir[2]] as [number, number, number],
+              xi: [...b.xi],
+              values: [...b.values],
+              autoScale: b.autoScale,
+            }))
+          : e.min === null
+            ? []
+            : s.lineDiagram.drawnBeams;
+      return syncLineDiagramDerived({
         ...s,
         lineDiagram: {
           ...s.lineDiagram,
           stepRange: { key: e.key, min: e.min, max: e.max },
           notice: nextNotice,
+          drawnBeams,
         },
-      };
+      });
     }
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;

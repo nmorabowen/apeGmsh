@@ -272,6 +272,8 @@ export class Viewport {
    * reaches it untouched. A click on a gizmo goes to the same pick as a click
    * anywhere else (`selectAt`).
    */
+  private hoverCleanup: (() => void) | null = null;
+
   private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
     const element = this.renderer.domElement;
     const self = this;
@@ -331,7 +333,49 @@ export class Viewport {
         this.requestRender();
       },
     });
+    const onPointerMove = (ev: PointerEvent) => {
+      if (ev.buttons !== 0 || this.gizmoInput?.dragging || this.sliding) return;
+      const top = typeof document === "undefined" ? element : document.elementFromPoint(ev.clientX, ev.clientY);
+      if (top !== null && top !== element) {
+        if (this.store.get().hover !== null) this.store.dispatch({ type: "hover", at: null });
+        return;
+      }
+      this.hoverAt(ev.clientX, ev.clientY);
+    };
+    const onPointerLeave = () => {
+      if (this.store.get().hover !== null) this.store.dispatch({ type: "hover", at: null });
+    };
+    element.addEventListener("pointermove", onPointerMove);
+    element.addEventListener("pointerleave", onPointerLeave);
+    this.hoverCleanup = () => {
+      element.removeEventListener("pointermove", onPointerMove);
+      element.removeEventListener("pointerleave", onPointerLeave);
+    };
     return { gizmo, nav };
+  }
+
+  /** Project a hover raycast at a client point when line diagrams are active and update `s.hover`. */
+  hoverAt(x: number, y: number): void {
+    const s = this.store.get();
+    if (!s.lineDiagram.on) {
+      if (s.hover !== null) this.store.dispatch({ type: "hover", at: null });
+      return;
+    }
+    const pick = this.pickAt(x, y);
+    const prev = s.hover;
+    if (pick === null && prev === null) return;
+    if (
+      pick !== null &&
+      prev !== null &&
+      typeof prev !== "string" &&
+      prev.decl === pick.decl &&
+      prev.at?.[0] === pick.at?.[0] &&
+      prev.at?.[1] === pick.at?.[1] &&
+      prev.at?.[2] === pick.at?.[2]
+    ) {
+      return;
+    }
+    this.store.dispatch({ type: "hover", at: pick });
   }
 
   /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks; on a plain miss, clear the selection. */
@@ -348,6 +392,8 @@ export class Viewport {
   dispose(): void {
     this.unsubscribe();
     this.observer.disconnect();
+    this.hoverCleanup?.();
+    this.hoverCleanup = null;
     this.nav.dispose();
     this.gizmoInput.dispose();
     this.gizmos.dispose();

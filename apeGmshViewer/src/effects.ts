@@ -20,11 +20,11 @@ import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isN
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements } from "./state/lineDiagram.ts";
-import { contourView, deformView, elementJoinKey, lineDiagramKeysOf, resultsPairing, sourceFor } from "./state/selectors.ts";
+import { contourView, deformView, elementJoinKey, lineDiagramKeysOf, resultsPairing, sourceFor, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
-import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineStationComponent, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -415,7 +415,9 @@ export class Effects {
           this.lineRangeFor = { key: rangeContextKey, data };
           const key = ldKeys.step;
           const notice = data.lineDiagramError;
-          queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: null, max: null, notice }));
+          queueMicrotask(() =>
+            this.store.dispatch({ type: "lineDiagramStepRange", key, min: null, max: null, notice, drawnBeams: [] }),
+          );
         }
       } else if (data.lineDiagram && data.lineDiagram.component === s.lineDiagram.component) {
         const dv = deformView(s);
@@ -427,6 +429,7 @@ export class Effects {
           this.lineRangeFor = { key: rangeContextKey, data };
           let r: { min: number; max: number } | null;
           let notice: string | null = null;
+          let drawnBeams: LineDiagramBeamSummary[] = [];
           if (s.mesh && s.results && resultsPairing(s).state === "paired") {
             const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results.elementIndexSpace);
             if (!join.ok) {
@@ -459,17 +462,18 @@ export class Effects {
                   this.blobs.i32(s.mesh.triGroup),
                   elementMaskOf(s, s.mesh, this.blobs),
                 ).lineMap;
+                const lineNodes = this.blobs.get(s.mesh.vertexNodes.line) as Float64Array;
                 const geom = buildLineDiagram3D({
                   decls: s.decls,
                   meshElements: s.mesh.elements,
                   lineElement: this.blobs.i32(s.mesh.lineElement),
                   drawnLinePositions,
-                  lineNodes: this.blobs.get(s.mesh.vertexNodes.line) as Float64Array,
+                  lineNodes,
                   visibleLineMap: visibleIndices,
                   stepData: data.lineDiagram,
                   join,
                   ndm: s.ndm.ndm,
-                  charLength: 2 * s.mesh.radius,
+                  charLength: 0.8 * s.mesh.radius,
                   deformed: deformApplied,
                   scale: s.lineDiagram.scale,
                   flipSign: s.lineDiagram.flipSign,
@@ -479,6 +483,7 @@ export class Effects {
                 });
                 r = geom.beams.length > 0 ? finiteRangeOf(geom.beams.map((b) => b.values)) : null;
                 notice = geom.notice;
+                drawnBeams = summarizeDrawnBeams(geom, lineNodes);
               }
             }
           } else {
@@ -491,7 +496,16 @@ export class Effects {
             }
           }
           const key = ldKeys.step;
-          queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: r?.min ?? null, max: r?.max ?? null, notice }));
+          queueMicrotask(() =>
+            this.store.dispatch({
+              type: "lineDiagramStepRange",
+              key,
+              min: r?.min ?? null,
+              max: r?.max ?? null,
+              notice,
+              drawnBeams,
+            }),
+          );
         }
       }
     }

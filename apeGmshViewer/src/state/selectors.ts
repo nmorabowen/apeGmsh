@@ -128,6 +128,22 @@ export {
   type LineDiagramFieldName,
   type ZRecSource,
 };
+export {
+  buildBeamChainPlotModel,
+  computeLineDiagramHover,
+  formatHoverReadout,
+  pickChainPlotAtS,
+  summarizeDrawnBeams,
+  syncLineDiagramDerived,
+  type BeamChainExtremaPlot,
+  type BeamChainHoverPlot,
+  type BeamChainJointPlot,
+  type BeamChainPlotModel,
+  type BeamChainSpanPlotModel,
+  type BeamChainStationDotPlot,
+  type BeamChainUnknownGapPlot,
+  type BuildBeamChainPlotOptions,
+} from "./lineDiagramChainSvg.ts";
 
 export type { Activation } from "./activation.ts";
 export type { ResultsPairing } from "./results.ts";

@@ -11,15 +11,18 @@ import type { BlobStore } from "../state/blobs.ts";
 import {
   buildLineDiagram3D,
   colorForValue,
+  effectiveFlipSign,
   joinLadrunoElements,
   lineDiagramClimOf,
   lineDiagramKeysOf,
+  projectHoverNeedle,
   type BeamDiagramSpan3D,
 } from "../state/lineDiagram.ts";
 import { deformView, resultsPairing } from "../state/selectors.ts";
 import type { LineDiagramCmap, State } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { toLinear } from "./contour.ts";
+import { SELECTION_COLOUR } from "./selection.ts";
 import { elementMaskOf, visibleMaps } from "./visible.ts";
 
 /** Unselected beam dimming multiplier in linear space (matches viewport.ts). */
@@ -92,10 +95,12 @@ export class LineDiagramLayer {
   readonly mesh: THREE.Mesh;
   readonly profileLines: THREE.LineSegments;
   readonly riserLines: THREE.LineSegments;
+  readonly hoverNeedle: THREE.LineSegments;
 
   private readonly meshMaterial: THREE.MeshBasicMaterial;
   private readonly profileMaterial: THREE.LineBasicMaterial;
   private readonly riserMaterial: THREE.LineBasicMaterial;
+  private readonly hoverMaterial: THREE.LineBasicMaterial;
   private camera: THREE.Camera | null;
   private theme: ThemeMode = "dark";
 
@@ -104,7 +109,10 @@ export class LineDiagramLayer {
   private lastStep: { key: string; step: LadrunoLineStationStep } | null = null;
   private lastDeform: LineDiagramDeformInput = null;
   private lastVisibleLineMap: Int32Array | undefined = undefined;
+  private lastBeams: readonly BeamDiagramSpan3D[] = [];
+  private lastEffectiveScale = 0;
   private appliedKey: string | null = null;
+  private appliedHoverKey: string | null = null;
 
   constructor(camera: THREE.Camera | null = null) {
     this.camera = camera;
@@ -126,12 +134,19 @@ export class LineDiagramLayer {
       transparent: true,
       opacity: 0.65,
     });
+    this.hoverMaterial = new THREE.LineBasicMaterial({
+      color: SELECTION_COLOUR,
+      depthTest: false,
+    });
 
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.meshMaterial);
     this.profileLines = new THREE.LineSegments(new THREE.BufferGeometry(), this.profileMaterial);
     this.riserLines = new THREE.LineSegments(new THREE.BufferGeometry(), this.riserMaterial);
+    this.hoverNeedle = new THREE.LineSegments(new THREE.BufferGeometry(), this.hoverMaterial);
+    this.hoverNeedle.renderOrder = 2;
+    this.hoverNeedle.visible = false;
 
-    this.root.add(this.mesh, this.profileLines, this.riserLines);
+    this.root.add(this.mesh, this.profileLines, this.riserLines, this.hoverNeedle);
     this.root.visible = false;
   }
 
@@ -147,6 +162,100 @@ export class LineDiagramLayer {
     if (!this.camera) return [0, 0, -1];
     const d = this.camera.getWorldDirection(new THREE.Vector3());
     return [d.x, d.y, d.z];
+  }
+
+  private hoverKeyOf(s: State): string {
+    const h = s.lineDiagram.hover;
+    const roPart = h ? `ro:${h.decl}|${h.elementId}|${h.xRel}|${h.value}|${h.pBase.join(",")}|${h.pTop.join(",")}` : "ro:none";
+    const pickPart =
+      s.hover && typeof s.hover !== "string" && s.hover.at
+        ? `pick:${s.hover.decl}|${s.hover.at[0]},${s.hover.at[1]},${s.hover.at[2]}`
+        : "pick:none";
+    return `${roPart}|${pickPart}`;
+  }
+
+  private syncHoverNeedle(s: State, beams: readonly BeamDiagramSpan3D[], effectiveScale: number): void {
+    let pBase: readonly [number, number, number] | null = null;
+    let pTop: readonly [number, number, number] | null = null;
+
+    if (s.lineDiagram.hover) {
+      const h = s.lineDiagram.hover;
+      const beam =
+        beams.find((b) => b.decl === h.decl && b.elementId === h.elementId) ??
+        beams.find((b) => b.decl === h.decl);
+      if (beam) {
+        const xRel = Math.max(0, Math.min(1, h.xRel));
+        const p0: [number, number, number] = [
+          beam.pStart[0] + xRel * (beam.pEnd[0] - beam.pStart[0]),
+          beam.pStart[1] + xRel * (beam.pEnd[1] - beam.pStart[1]),
+          beam.pStart[2] + xRel * (beam.pEnd[2] - beam.pStart[2]),
+        ];
+        const signMult = effectiveFlipSign(s.lineDiagram) ? -1 : 1;
+        const offset = signMult * h.value * effectiveScale;
+        pBase = p0;
+        pTop = [
+          p0[0] + offset * beam.extrudeDir[0],
+          p0[1] + offset * beam.extrudeDir[1],
+          p0[2] + offset * beam.extrudeDir[2],
+        ];
+      } else {
+        pBase = h.pBase;
+        pTop = h.pTop;
+      }
+    } else if (s.hover && typeof s.hover !== "string" && s.hover.at) {
+      const hoverDecl = s.hover.decl;
+      const hitPoint = s.hover.at;
+      const candidates = beams.filter((b) => b.decl === hoverDecl);
+      if (candidates.length > 0) {
+        let beam = candidates[0]!;
+        if (candidates.length > 1) {
+          let bestDist = Infinity;
+          for (const c of candidates) {
+            const dx = c.pEnd[0] - c.pStart[0];
+            const dy = c.pEnd[1] - c.pStart[1];
+            const dz = c.pEnd[2] - c.pStart[2];
+            const lenSq = dx * dx + dy * dy + dz * dz;
+            const t =
+              lenSq > 1e-24
+                ? Math.max(0, Math.min(1, ((hitPoint[0] - c.pStart[0]) * dx + (hitPoint[1] - c.pStart[1]) * dy + (hitPoint[2] - c.pStart[2]) * dz) / lenSq))
+                : 0;
+            const qx = c.pStart[0] + t * dx - hitPoint[0];
+            const qy = c.pStart[1] + t * dy - hitPoint[1];
+            const qz = c.pStart[2] + t * dz - hitPoint[2];
+            const d = qx * qx + qy * qy + qz * qz;
+            if (d < bestDist) {
+              bestDist = d;
+              beam = c;
+            }
+          }
+        }
+        const needle = projectHoverNeedle(beam, hitPoint, effectiveScale, effectiveFlipSign(s.lineDiagram));
+        pBase = needle.pBase;
+        pTop = needle.pTop;
+      }
+    }
+
+    const needleGeom = new THREE.BufferGeometry();
+    if (pBase && pTop) {
+      const pos = new Float32Array([
+        pBase[0],
+        pBase[1],
+        pBase[2],
+        pTop[0],
+        pTop[1],
+        pTop[2],
+      ]);
+      needleGeom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      needleGeom.computeBoundingSphere();
+      this.hoverNeedle.geometry.dispose();
+      this.hoverNeedle.geometry = needleGeom;
+      this.hoverNeedle.visible = true;
+    } else {
+      needleGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(0), 3));
+      this.hoverNeedle.geometry.dispose();
+      this.hoverNeedle.geometry = needleGeom;
+      this.hoverNeedle.visible = false;
+    }
   }
 
   sync(
@@ -176,7 +285,10 @@ export class LineDiagramLayer {
     ) {
       const wasVisible = this.root.visible;
       this.root.visible = false;
+      this.hoverNeedle.visible = false;
+      this.lastBeams = [];
       this.appliedKey = null;
+      this.appliedHoverKey = null;
       return wasVisible;
     }
 
@@ -184,7 +296,10 @@ export class LineDiagramLayer {
     if (!join.ok) {
       const wasVisible = this.root.visible;
       this.root.visible = false;
+      this.hoverNeedle.visible = false;
+      this.lastBeams = [];
       this.appliedKey = null;
+      this.appliedHoverKey = null;
       return wasVisible;
     }
 
@@ -270,9 +385,15 @@ export class LineDiagramLayer {
       deformKey,
       this.theme,
     ].join("|");
+    const hoverKey = this.hoverKeyOf(s);
 
     if (!forceCamera && this.root.visible && this.appliedKey === nextKey) {
-      return false;
+      if (this.appliedHoverKey === hoverKey) {
+        return false;
+      }
+      this.syncHoverNeedle(s, this.lastBeams, this.lastEffectiveScale);
+      this.appliedHoverKey = hoverKey;
+      return true;
     }
 
     const visibleIndices =
@@ -312,9 +433,15 @@ export class LineDiagramLayer {
     if (geom.beams.length === 0) {
       const wasVisible = this.root.visible;
       this.root.visible = false;
+      this.hoverNeedle.visible = false;
+      this.lastBeams = [];
+      this.lastEffectiveScale = 0;
       this.appliedKey = null;
+      this.appliedHoverKey = null;
       return wasVisible;
     }
+    this.lastBeams = geom.beams;
+    this.lastEffectiveScale = geom.effectiveScale;
 
     const ribbonColors = buildTriLinearColors(
       geom.triColors,
@@ -363,13 +490,15 @@ export class LineDiagramLayer {
     this.riserLines.geometry.dispose();
     this.riserLines.geometry = riserGeom;
 
+    this.syncHoverNeedle(s, geom.beams, geom.effectiveScale);
     this.root.visible = true;
     this.appliedKey = nextKey;
+    this.appliedHoverKey = hoverKey;
     return true;
   }
 
   setClippingPlanes(planes: THREE.Plane[]): void {
-    for (const mat of [this.meshMaterial, this.profileMaterial, this.riserMaterial]) {
+    for (const mat of [this.meshMaterial, this.profileMaterial, this.riserMaterial, this.hoverMaterial]) {
       mat.clippingPlanes = planes;
       mat.needsUpdate = true;
     }
@@ -385,8 +514,10 @@ export class LineDiagramLayer {
     this.mesh.geometry.dispose();
     this.profileLines.geometry.dispose();
     this.riserLines.geometry.dispose();
+    this.hoverNeedle.geometry.dispose();
     this.meshMaterial.dispose();
     this.profileMaterial.dispose();
     this.riserMaterial.dispose();
+    this.hoverMaterial.dispose();
   }
 }

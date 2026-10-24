@@ -22,12 +22,18 @@ import { DARK, hexToRgb, themeTokens, type ThemeMode } from "../theme/tokens.ts"
 import { CMAP_NAMES, climOf, rampT, sampleCmap, type Clim } from "./contour.ts";
 import type { ResultsPairing } from "./results.ts";
 import type {
+  BeamChain,
+  BeamChainJoint,
+  BeamChainSpan,
+  BeamChainStationPoint,
   ContourCmap,
   ContourRange,
   ContourScan,
   Decl,
   DeclPath,
+  LineDiagramBeamSummary,
   LineDiagramCmap,
+  LineDiagramHoverReadout,
   LineDiagramPlane,
   LineDiagramState,
   State,
@@ -37,7 +43,13 @@ export {
   LINE_STATION_COMPONENTS,
   normalizeLineStationComponent,
   quaternionToZRec,
+  type BeamChain,
+  type BeamChainJoint,
+  type BeamChainSpan,
+  type BeamChainStationPoint,
+  type LineDiagramBeamSummary,
   type LineDiagramCmap,
+  type LineDiagramHoverReadout,
   type LineDiagramPlane,
   type LineDiagramState,
   type LineStationComponent,
@@ -232,6 +244,9 @@ export const initialLineDiagramState: LineDiagramState = {
   stepRange: null,
   scan: null,
   notice: null,
+  drawnBeams: [],
+  chains: [],
+  hover: null,
 };
 
 /** Default auto-picked component for a stage's `lineStations` (`Mz, My, Vy, Vz, N, T, ...`), or null when none is available. */
@@ -1282,6 +1297,8 @@ export interface HoverNeedleResult {
   xi: number;
   /** Linearly interpolated station value at xi. */
   value: number;
+  /** True when xi lies within the recorded station range [xiMin, xiMax] (or single-station constant span); false in unmeasured Gauss end zones. */
+  withinStationSpan: boolean;
   /** Projected point on the beam chord. */
   pBase: [number, number, number];
   /** Corresponding point on the diagram profile. */
@@ -1289,6 +1306,19 @@ export interface HoverNeedleResult {
   /** 6 floats: `[pBase.x, pBase.y, pBase.z, pTop.x, pTop.y, pTop.z]`. */
   needlePositions: Float32Array;
 }
+
+export type HoverableBeamSpan = {
+  readonly decl: DeclPath;
+  readonly elementId: number;
+  readonly pStart: readonly [number, number, number];
+  readonly pEnd: readonly [number, number, number];
+  readonly length: number;
+  readonly extrudeDir: readonly [number, number, number];
+  readonly xi: ArrayLike<number>;
+  readonly values: ArrayLike<number>;
+};
+
+const ENDPOINT_XI_TOL = 1e-6;
 
 /** Piecewise-linear interpolation of `value(xi)` across sorted stations `(xiArr, valArr)`. */
 export function interpolateStationValue(xiArr: ArrayLike<number>, valArr: ArrayLike<number>, xi: number): number {
@@ -1311,10 +1341,10 @@ export function interpolateStationValue(xiArr: ArrayLike<number>, valArr: ArrayL
 /**
  * Project a 3-D `hoverPoint` onto `beam`'s chord `pStart -> pEnd`, returning
  * `xRel = x / L` in `[0, 1]`, `xi = 2 * xRel - 1`, the linearly interpolated
- * value `v(xi)`, and the 3-D needle segment `pBase -> pTop`.
+ * value `v(xi)`, `withinStationSpan`, and the 3-D needle segment `pBase -> pTop`.
  */
 export function projectHoverNeedle(
-  beam: BeamDiagramSpan3D,
+  beam: HoverableBeamSpan,
   hoverPoint: readonly [number, number, number],
   effectiveScale: number,
   flipSign: boolean,
@@ -1333,6 +1363,24 @@ export function projectHoverNeedle(
   const xRel = Math.min(1, Math.max(0, rawT));
   const x = xRel * beam.length;
   const xi = 2 * xRel - 1;
+  const nStations = beam.xi.length;
+  let xiMin = -1;
+  let xiMax = 1;
+  if (nStations >= 2) {
+    xiMin = Number.POSITIVE_INFINITY;
+    xiMax = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < nStations; i++) {
+      const v = beam.xi[i]!;
+      if (v < xiMin) xiMin = v;
+      if (v > xiMax) xiMax = v;
+    }
+  } else if (nStations === 0) {
+    xiMin = Number.POSITIVE_INFINITY;
+    xiMax = Number.NEGATIVE_INFINITY;
+  }
+  const withinStationSpan =
+    nStations === 1 ||
+    (nStations >= 2 && xi >= xiMin - ENDPOINT_XI_TOL && xi <= xiMax + ENDPOINT_XI_TOL);
   const value = interpolateStationValue(beam.xi, beam.values, xi);
   const pBase: [number, number, number] = [
     beam.pStart[0] + xRel * cx,
@@ -1354,6 +1402,7 @@ export function projectHoverNeedle(
     length: beam.length,
     xi,
     value,
+    withinStationSpan,
     pBase,
     pTop,
     needlePositions: new Float32Array([pBase[0], pBase[1], pBase[2], pTop[0], pTop[1], pTop[2]]),
@@ -1396,47 +1445,6 @@ function spanUnitDirection(span: BeamChainInputSpan, reversed: boolean): [number
   if (!Number.isFinite(norm) || norm < 1e-12) return null;
   const s = reversed ? -1 / norm : 1 / norm;
   return [dx * s, dy * s, dz * s];
-}
-
-export interface BeamChainStationPoint {
-  /** Natural coordinate in the span's original orientation (`[-1, +1]`). */
-  xi: number;
-  /** Cumulative distance `x` along the chain `[0, totalLength]`. */
-  x: number;
-  /** Raw physical value at this station. */
-  value: number;
-}
-
-export interface BeamChainSpan {
-  decl: DeclPath;
-  elementId: number;
-  /** Entry node ID in chain walk order. */
-  nodeStart: number;
-  /** Exit node ID in chain walk order. */
-  nodeEnd: number;
-  /** True when the beam's element orientation (`nodeEnd -> nodeStart`) was reversed to keep the chain contiguous. */
-  reversed: boolean;
-  /** Start cumulative distance along the chain. */
-  xStart: number;
-  /** End cumulative distance along the chain (`xStart + length`). */
-  xEnd: number;
-  length: number;
-  /** Stations ordered by increasing cumulative `x` along the chain. */
-  stations: BeamChainStationPoint[];
-}
-
-export interface BeamChainJoint {
-  nodeId: number;
-  x: number;
-}
-
-export interface BeamChain {
-  spans: BeamChainSpan[];
-  /** Joint markers at span boundaries (`[0, L_1, L_1 + L_2, ..., totalLength]`). */
-  joints: BeamChainJoint[];
-  totalLength: number;
-  /** True when all input beams formed a single contiguous node-to-node chain. */
-  contiguous: boolean;
 }
 
 const COLINEAR_DOT_THRESHOLD = 0.95;
@@ -1612,14 +1620,35 @@ export function buildBeamChains(inputSpans: readonly BeamChainInputSpan[]): Beam
       prevDir = spanUnitDirection(raw, reversed);
 
       // Expand single-station (xi = 0) to [-1, +1] so a flat span covers [xStart, xEnd].
+      // For multi-station spans (e.g. Legendre or Radau interior Gauss points), record
+      // `xiMin`, `xiMax`, `startEndKnown`, and `endEndKnown` without clamping interior
+      // stations onto the unmeasured beam ends.
       const rawPairs: { xi: number; value: number }[] = [];
+      let xiMin = -1;
+      let xiMax = 1;
+      let startEndKnown = true;
+      let endEndKnown = true;
       if (raw.xi.length === 1) {
         const v0 = raw.values[0]!;
         rawPairs.push({ xi: -1, value: v0 }, { xi: 1, value: v0 });
-      } else {
+      } else if (raw.xi.length >= 2) {
+        xiMin = Number.POSITIVE_INFINITY;
+        xiMax = Number.NEGATIVE_INFINITY;
         for (let i = 0; i < raw.xi.length; i++) {
-          rawPairs.push({ xi: raw.xi[i]!, value: raw.values[i]! });
+          const xiVal = raw.xi[i]!;
+          if (xiVal < xiMin) xiMin = xiVal;
+          if (xiVal > xiMax) xiMax = xiVal;
+          rawPairs.push({ xi: xiVal, value: raw.values[i]! });
         }
+        const elemStartKnown = xiMin <= -1 + ENDPOINT_XI_TOL;
+        const elemEndKnown = xiMax >= 1 - ENDPOINT_XI_TOL;
+        startEndKnown = reversed ? elemEndKnown : elemStartKnown;
+        endEndKnown = reversed ? elemStartKnown : elemEndKnown;
+      } else {
+        xiMin = Number.NaN;
+        xiMax = Number.NaN;
+        startEndKnown = false;
+        endEndKnown = false;
       }
 
       const stations: BeamChainStationPoint[] = rawPairs
@@ -1642,6 +1671,10 @@ export function buildBeamChains(inputSpans: readonly BeamChainInputSpan[]): Beam
         xStart,
         xEnd,
         length: raw.length,
+        xiMin,
+        xiMax,
+        startEndKnown,
+        endEndKnown,
         stations,
       });
       xCursor = xEnd;
@@ -1664,26 +1697,42 @@ export function buildBeamChains(inputSpans: readonly BeamChainInputSpan[]): Beam
   return chains;
 }
 
+export type ChainableBeamSpan = {
+  readonly decl: DeclPath;
+  readonly elementId: number;
+  readonly segmentIndex?: number;
+  readonly endSegmentIndex?: number;
+  readonly nodeStart?: number;
+  readonly nodeEnd?: number;
+  readonly pStart: readonly [number, number, number];
+  readonly pEnd: readonly [number, number, number];
+  readonly length: number;
+  readonly xLocal: readonly [number, number, number];
+  readonly xi: ArrayLike<number>;
+  readonly values: ArrayLike<number>;
+};
+
 /**
- * Convenience helper to build the primary `BeamChain` from `State` and `lineNodes`
- * (2 node tags per drawn line segment, `MeshInfo.vertexNodes.line`).
+ * Build the selected `BeamChain` list from `State.selection.decls` and `diagram3D.beams`.
+ * Returns `[]` when no drawn 1-D beam is selected (never falls back to every beam in the model).
  */
 export function buildSelectedBeamChainsFromState(
   s: Pick<State, "selection">,
-  diagram3D: LineDiagram3DGeometry,
-  lineNodes: Float64Array,
+  diagram3D: { readonly beams: readonly ChainableBeamSpan[] },
+  lineNodes?: ArrayLike<number>,
 ): BeamChain[] {
-  const byDecl = new Map<DeclPath, BeamDiagramSpan3D>();
+  const byDecl = new Map<DeclPath, ChainableBeamSpan>();
   for (const b of diagram3D.beams) byDecl.set(b.decl, b);
   const selected = s.selection.decls.filter((d) => byDecl.has(d));
-  const targetDecls = selected.length > 0 ? selected : diagram3D.beams.map((b) => b.decl);
+  if (selected.length === 0) return [];
   const spans: BeamChainInputSpan[] = [];
-  for (const decl of targetDecls) {
+  for (const decl of selected) {
     const b = byDecl.get(decl);
     if (!b) continue;
-    const endSeg = b.endSegmentIndex ?? b.segmentIndex;
-    const nodeStart = b.nodeStart ?? lineNodes[b.segmentIndex * 2]!;
-    const nodeEnd = b.nodeEnd ?? lineNodes[endSeg * 2 + 1]!;
+    const segIdx = b.segmentIndex ?? 0;
+    const endSeg = b.endSegmentIndex ?? segIdx;
+    const nodeStart = b.nodeStart ?? (lineNodes ? lineNodes[segIdx * 2]! : 0);
+    const nodeEnd = b.nodeEnd ?? (lineNodes ? lineNodes[endSeg * 2 + 1]! : 0);
     spans.push({
       decl: b.decl,
       elementId: b.elementId,
