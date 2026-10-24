@@ -29,6 +29,7 @@ from ...element.shell import (
     ASDShellT3,
     LadrunoMembrane,
     ShellDKGQ,
+    ShellNLDKGQ,
     ShellMITC4,
 )
 from ...element.solid import (
@@ -795,6 +796,15 @@ class _ElementNS(_BridgeNamespace):
         section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
             ShellDKGQ(pg=pg, section=section_r, damp=damp)
+        )
+
+    def ShellNLDKGQ(
+        self, *, pg: str, section: _ShellSection | str,
+        damp: Damping | None = None,
+    ) -> ShellNLDKGQ:
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
+        return self._bridge._register(
+            ShellNLDKGQ(pg=pg, section=section_r, damp=damp)
         )
 
     def ASDShellQ4(

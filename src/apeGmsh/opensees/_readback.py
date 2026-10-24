@@ -61,6 +61,7 @@ from .element.shell import (
     ASDShellT3,
     LadrunoMembrane,
     ShellDKGQ,
+    ShellNLDKGQ,
     ShellMITC4,
 )
 from .element.solid import (
@@ -102,7 +103,8 @@ _ROTATIONAL_FAMILIES: tuple[type, ...] = (
     elasticBeamColumn, forceBeamColumn, dispBeamColumn,
     ElasticTimoshenkoBeam, LadrunoDispBeamColumn, LadrunoForceBeamColumn,
     LadrunoIMKBeam,
-    ShellMITC4, ShellDKGQ, ASDShellQ4, ASDShellT3, LadrunoMembrane,
+    ShellMITC4, ShellDKGQ, ShellNLDKGQ, ASDShellQ4, ASDShellT3,
+    LadrunoMembrane,
     ZeroLength, ZeroLengthSection, CoupledZeroLength, TwoNodeLink,
 )
 
@@ -278,6 +280,7 @@ _CLASS_FOR_TOKEN: "dict[str, type]" = _TokenTable({
     "LadrunoIMKBeam": LadrunoIMKBeam,
     "ShellMITC4": ShellMITC4,
     "ShellDKGQ": ShellDKGQ,
+    "ShellNLDKGQ": ShellNLDKGQ,
     "ASDShellQ4": ASDShellQ4,
     "ASDShellT3": ASDShellT3,
     "LadrunoMembrane": LadrunoMembrane,

@@ -22,6 +22,7 @@ from apeGmsh.opensees._element_capabilities import (
         ("tri31", 2, 2),
         ("ShellMITC4", 3, 6),
         ("ShellDKGQ", 3, 6),
+        ("ShellNLDKGQ", 3, 6),
         # ── multi-ndm registry elements: floor from the ndf_required map ──
         ("elasticBeamColumn", 2, 3),   # ux, uy, rz
         ("elasticBeamColumn", 3, 6),   # 3 disp + 3 rot

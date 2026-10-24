@@ -821,6 +821,9 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 #: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
 #: otherwise).
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
+    "6aba420db31711092a4e038c24eeff21dc9fe46c": True,
+    "dd1658f8ee570494fdd832e9f3d73fd2d67084bf": True,
+    "0f2e73c2ef205a94511799a01d2d1ecbff097f68": True,
     # FORK_PIN ladruno-v20261023, which merges the fix: no reset.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # The maintainer's venv build, an ancestor of the fix: resets.
@@ -892,6 +895,9 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
+    "6aba420db31711092a4e038c24eeff21dc9fe46c": True,
+    "dd1658f8ee570494fdd832e9f3d73fd2d67084bf": True,
+    "0f2e73c2ef205a94511799a01d2d1ecbff097f68": True,
     # FORK_PIN ladruno-v20261023: c83ee812e is its ancestor.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # The maintainer's venv build, which predates it: -pDelta runs without

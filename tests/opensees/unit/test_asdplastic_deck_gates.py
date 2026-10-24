@@ -133,6 +133,7 @@ class TestCapabilityFlag:
         assert unvalued == {
             # Section-based shells / membrane macro-element — outside PR #838 roster.
             "ASDShellQ4", "LadrunoMembrane", "ShellDKGQ", "ShellMITC4",
+            "ShellNLDKGQ",
             # Uniaxial trusses / beams.
             "ElasticTimoshenkoBeam", "LadrunoIMKBeam", "corotTruss",
             "elasticBeamColumn", "truss",

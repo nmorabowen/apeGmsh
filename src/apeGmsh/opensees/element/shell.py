@@ -2,10 +2,12 @@
 Shell element primitives — typed wrappers over the OpenSees ``element
 Shell*`` family.
 
-Four element types live here:
+Five element types live here:
 
 * :class:`ShellMITC4` — 4-node MITC shell (membrane + bending).
 * :class:`ShellDKGQ` — 4-node Discrete Kirchhoff (Quadrilateral) shell.
+* :class:`ShellNLDKGQ` — its geometrically nonlinear (updated Lagrangian)
+  twin, whose tangent carries the initial-stress stiffness.
 * :class:`ASDShellQ4` — 4-node ASD shell (Petracca/ASDEA Software).
 * :class:`ASDShellT3` — 3-node ASD shell.
 
@@ -13,6 +15,7 @@ The OpenSees commands per the manual:
 
 * ``element ShellMITC4 tag i j k l secTag``
 * ``element ShellDKGQ  tag i j k l secTag``
+* ``element ShellNLDKGQ tag i j k l secTag``
 * ``element ASDShellQ4 tag i j k l secTag [-corotational]``
   ``[-drillingNT alpha] [-localCS x1 x2 x3 y1 y2 y3]``
 * ``element ASDShellT3 tag i j k secTag [-corotational]``
@@ -66,6 +69,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ShellMITC4",
     "ShellDKGQ",
+    "ShellNLDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
     "LadrunoMembrane",
@@ -196,6 +200,51 @@ class ShellDKGQ(Element):
         sec_tag = resolve_tag(emitter, self.section)
         emitter.element(
             "ShellDKGQ", tag, *nodes, sec_tag,
+            *damp_args(emitter, self.damp),
+        )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.section, self.damp)
+        return (self.section,)
+
+
+# ---------------------------------------------------------------------------
+# ShellNLDKGQ — geometrically nonlinear Discrete Kirchhoff quadrilateral
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellNLDKGQ(Element):
+    """``element ShellNLDKGQ`` — geometrically nonlinear 4-node DKGQ shell.
+
+    The updated-Lagrangian twin of :class:`ShellDKGQ`: its tangent carries
+    the initial-stress (geometric) stiffness of the current membrane
+    forces, so an ``eigen`` after a gravity preload sees the P-Delta
+    softening of a wall (ADR 0124). Under ``algorithm Linear`` its nodal
+    forces read stale (``shell_probe``); solve with ``Newton``.
+
+    Parameters
+    ----------
+    pg
+        Physical group whose surface (quadrilateral) cells receive
+        this element.
+    section
+        The plate / shell :class:`Section`.
+    """
+
+    pg: str
+    section: Section
+    damp: Damping | None = None
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 4:
+            raise ValueError(
+                f"ShellNLDKGQ: expected 4 node tags, got {len(nodes)}."
+            )
+        sec_tag = resolve_tag(emitter, self.section)
+        emitter.element(
+            "ShellNLDKGQ", tag, *nodes, sec_tag,
             *damp_args(emitter, self.damp),
         )
 
