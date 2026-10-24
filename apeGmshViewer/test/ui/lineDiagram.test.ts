@@ -216,9 +216,10 @@ test("Step 4 UI: renderLineDiagram renders empty note, single-span and multi-spa
       const ptsAfter = svgAfterFlip.findAll("line-diagram-chain-curve")[0]!.getAttribute("points")!;
       assert.notEqual(ptsAfter, ptsBefore);
 
-      // 5. Pointer move on `.line-diagram-chain-svg` dispatches `hover` and renders `.line-diagram-hover-readout` + `.line-diagram-chain-hover-needle`:
+      // 5. Pointer move on `.line-diagram-chain-svg` dispatches `hover` and updates `.line-diagram-hover-readout` + `.line-diagram-chain-hover-needle` in place (preserving SVG DOM node identity):
       assert.equal(aside.find("line-diagram-hover-readout"), undefined);
       svgAfterFlip.trigger("pointermove", { offsetX: 80 });
+      assert.equal(aside.find("line-diagram-chain-svg"), svgAfterFlip);
       const readout = aside.find("line-diagram-hover-readout");
       assert.ok(readout !== undefined, "pointermove on chain SVG populates hover readout");
       assert.match(readout.textContent, /E\d+ · ξ =/);
@@ -227,8 +228,9 @@ test("Step 4 UI: renderLineDiagram renders empty note, single-span and multi-spa
       assert.ok(needle !== undefined, "hover needle rendered in chain SVG");
       assert.ok(aside.find("line-diagram-chain-hover-dot") !== undefined);
 
-      // Pointer leave clears hover readout and needle:
+      // Pointer leave clears hover readout and needle in place:
       aside.find("line-diagram-chain-svg")!.trigger("pointerleave");
+      assert.equal(aside.find("line-diagram-chain-svg"), svgAfterFlip);
       assert.equal(aside.find("line-diagram-hover-readout"), undefined);
       assert.equal(aside.find("line-diagram-chain-hover-needle"), undefined);
 

@@ -75,21 +75,115 @@ function svgEl(tag: string, cls?: string, attrs?: Record<string, string>, text?:
 const currentTheme = (): "dark" | "light" =>
   typeof document !== "undefined" && document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
 
+interface ChainHoverSlot {
+  layer: HTMLElement;
+  chain: BeamChain;
+  chainIndex: number;
+}
+
+function syncHoverReadoutSlot(slot: HTMLElement, s: State): void {
+  const ld = s.lineDiagram;
+  if (!ld.on || ld.hover === null) {
+    slot.hidden = true;
+    slot.replaceChildren();
+    return;
+  }
+  const readout = el(
+    "div",
+    "line-diagram-hover-readout",
+    formatHoverReadout(ld.hover, ld.component),
+  );
+  readout.dataset["elementId"] = String(ld.hover.elementId);
+  readout.dataset["xi"] = ld.hover.xi.toFixed(4);
+  readout.dataset["s"] = ld.hover.s.toFixed(4);
+  readout.dataset["value"] = String(ld.hover.value);
+  readout.dataset["withinStationSpan"] = String(ld.hover.withinStationSpan);
+  slot.hidden = false;
+  slot.replaceChildren(readout);
+}
+
+function syncChainHoverLayer(
+  layer: HTMLElement,
+  chain: BeamChain,
+  chainIndex: number,
+  s: State,
+): void {
+  const ld = s.lineDiagram;
+  const model = buildBeamChainPlotModel(chain, chainIndex, ld.chains.length, {
+    flipSign: effectiveFlipSign(ld),
+    fill: ld.fill,
+    component: ld.component,
+    hover: ld.hover,
+  });
+  if (model.hoverMarker === null) {
+    layer.replaceChildren();
+    return;
+  }
+  layer.replaceChildren(
+    svgEl("line", "line-diagram-chain-hover-needle", {
+      x1: String(model.hoverMarker.x),
+      y1: String(model.hoverMarker.zeroY),
+      x2: String(model.hoverMarker.x),
+      y2: String(model.hoverMarker.y),
+      "data-element-id": String(model.hoverMarker.elementId),
+      "data-xi": String(model.hoverMarker.xi),
+      "data-s": String(model.hoverMarker.s),
+      "data-value": String(model.hoverMarker.value),
+    }),
+    svgEl("circle", "line-diagram-chain-hover-dot", {
+      cx: String(model.hoverMarker.x),
+      cy: String(model.hoverMarker.y),
+      r: "3.5",
+      "data-element-id": String(model.hoverMarker.elementId),
+    }),
+  );
+}
+
 export function mountLineDiagram(store: Store, subscribeTheme?: (fn: () => void) => () => void): () => void {
   const panel = byId("line-diagram");
   let unlisten: (() => void)[] = [];
   let lastSig = "";
   let lastTheme = "";
+  let lastDrawnBeams: State["lineDiagram"]["drawnBeams"] | null = null;
+  let lastHover: State["lineDiagram"]["hover"] = null;
+  let hoverSlot: HTMLElement | null = null;
+  let chainHoverSlots: ChainHoverSlot[] = [];
 
   const render = (s: State, prev: State | null) => {
     const theme = currentTheme();
     const sig = lineDiagramSignature(s);
-    if (prev && theme === lastTheme && sig === lastSig) return;
+    if (
+      prev &&
+      theme === lastTheme &&
+      sig === lastSig &&
+      s.lineDiagram.drawnBeams === lastDrawnBeams
+    ) {
+      if (s.lineDiagram.hover !== lastHover) {
+        lastHover = s.lineDiagram.hover;
+        if (hoverSlot) syncHoverReadoutSlot(hoverSlot, s);
+        for (const item of chainHoverSlots) {
+          syncChainHoverLayer(item.layer, item.chain, item.chainIndex, s);
+        }
+      }
+      return;
+    }
     lastTheme = theme;
     lastSig = sig;
+    lastDrawnBeams = s.lineDiagram.drawnBeams;
+    lastHover = s.lineDiagram.hover;
     for (const u of unlisten) u();
     unlisten = [];
-    const content = renderLineDiagram(s, (e) => store.dispatch(e), unlisten);
+    hoverSlot = null;
+    chainHoverSlots = [];
+    const content = renderLineDiagram(
+      s,
+      (e) => store.dispatch(e),
+      unlisten,
+      (slot) => {
+        hoverSlot = slot;
+      },
+      chainHoverSlots,
+    );
     panel.hidden = content === null;
     panel.replaceChildren(...(content ? [...content.children] : []));
   };
@@ -113,6 +207,7 @@ function renderChainCard(
   flipped: boolean,
   dispatch: (e: Event) => void,
   unlisten: (() => void)[],
+  chainHoverSlots?: ChainHoverSlot[],
 ): HTMLElement {
   const ld = s.lineDiagram;
   const model = buildBeamChainPlotModel(chain, chainIndex, ld.chains.length, {
@@ -302,26 +397,10 @@ function renderChainCard(
     }
   }
 
-  if (model.hoverMarker !== null) {
-    svg.append(
-      svgEl("line", "line-diagram-chain-hover-needle", {
-        x1: String(model.hoverMarker.x),
-        y1: String(model.hoverMarker.zeroY),
-        x2: String(model.hoverMarker.x),
-        y2: String(model.hoverMarker.y),
-        "data-element-id": String(model.hoverMarker.elementId),
-        "data-xi": String(model.hoverMarker.xi),
-        "data-s": String(model.hoverMarker.s),
-        "data-value": String(model.hoverMarker.value),
-      }),
-      svgEl("circle", "line-diagram-chain-hover-dot", {
-        cx: String(model.hoverMarker.x),
-        cy: String(model.hoverMarker.y),
-        r: "3.5",
-        "data-element-id": String(model.hoverMarker.elementId),
-      }),
-    );
-  }
+  const hoverLayer = svgEl("g", "line-diagram-chain-hover-layer");
+  syncChainHoverLayer(hoverLayer, chain, chainIndex, s);
+  svg.append(hoverLayer);
+  chainHoverSlots?.push({ layer: hoverLayer, chain, chainIndex });
 
   unlisten.push(
     listen(svg, "pointermove", (ev: PointerEvent) => {
@@ -354,6 +433,8 @@ export function renderLineDiagram(
   s: State,
   dispatch: (e: Event) => void = () => {},
   unlisten: (() => void)[] = [],
+  onHoverSlot?: (slot: HTMLElement) => void,
+  chainHoverSlots?: ChainHoverSlot[],
 ): HTMLElement | null {
   if (s.phase.at?.kind !== "results" || !s.results) return null;
   const st = s.results.stages[s.phase.at.stage];
@@ -524,19 +605,10 @@ export function renderLineDiagram(
     );
     box.append(cm);
 
-    if (ld.hover !== null) {
-      const readout = el(
-        "div",
-        "line-diagram-hover-readout",
-        formatHoverReadout(ld.hover, ld.component),
-      );
-      readout.dataset["elementId"] = String(ld.hover.elementId);
-      readout.dataset["xi"] = ld.hover.xi.toFixed(4);
-      readout.dataset["s"] = ld.hover.s.toFixed(4);
-      readout.dataset["value"] = String(ld.hover.value);
-      readout.dataset["withinStationSpan"] = String(ld.hover.withinStationSpan);
-      box.append(readout);
-    }
+    const hoverSlot = el("div", "line-diagram-hover-slot");
+    syncHoverReadoutSlot(hoverSlot, s);
+    onHoverSlot?.(hoverSlot);
+    box.append(hoverSlot);
 
     const chainsBox = el("div", "line-diagram-chains");
     if (ld.chains.length === 0) {
@@ -549,7 +621,7 @@ export function renderLineDiagram(
       );
     } else {
       ld.chains.forEach((chain, idx) => {
-        chainsBox.append(renderChainCard(chain, idx, s, flipped, dispatch, unlisten));
+        chainsBox.append(renderChainCard(chain, idx, s, flipped, dispatch, unlisten, chainHoverSlots));
       });
     }
     box.append(chainsBox);
@@ -560,9 +632,26 @@ export function renderLineDiagram(
 
 function lineDiagramSignature(s: State): string {
   const st = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined;
+  const ld = s.lineDiagram;
+  const chainsKey = ld.chains
+    .map((c) => `${c.spans.map((sp) => `${sp.decl}:${sp.elementId}:${sp.reversed ? 1 : 0}`).join(">")}:${c.totalLength}`)
+    .join("|");
   return JSON.stringify([
     st?.lineStations ?? [],
-    s.lineDiagram,
-    s.lineDiagram.on ? lineDiagramClimOf(s) : null,
+    ld.on,
+    ld.component,
+    ld.scale,
+    ld.plane,
+    ld.cmap,
+    ld.fill,
+    ld.flipSign,
+    ld.range,
+    ld.fixed,
+    ld.stepRange,
+    ld.scan,
+    ld.notice,
+    ld.drawnBeams.length,
+    chainsKey,
+    ld.on ? lineDiagramClimOf(s) : null,
   ]);
 }

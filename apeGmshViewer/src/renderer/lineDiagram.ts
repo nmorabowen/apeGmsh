@@ -165,21 +165,44 @@ export class LineDiagramLayer {
   }
 
   private hoverKeyOf(s: State): string {
-    if (!s.hover || typeof s.hover === "string" || !s.hover.at) {
-      if (s.lineDiagram.hover) {
-        const h = s.lineDiagram.hover;
-        return `ro:${h.decl}|${h.pBase.join(",")}|${h.pTop.join(",")}`;
-      }
-      return "none";
-    }
-    return `pick:${s.hover.decl}|${s.hover.at[0]},${s.hover.at[1]},${s.hover.at[2]}`;
+    const h = s.lineDiagram.hover;
+    const roPart = h ? `ro:${h.decl}|${h.elementId}|${h.xRel}|${h.value}|${h.pBase.join(",")}|${h.pTop.join(",")}` : "ro:none";
+    const pickPart =
+      s.hover && typeof s.hover !== "string" && s.hover.at
+        ? `pick:${s.hover.decl}|${s.hover.at[0]},${s.hover.at[1]},${s.hover.at[2]}`
+        : "pick:none";
+    return `${roPart}|${pickPart}`;
   }
 
   private syncHoverNeedle(s: State, beams: readonly BeamDiagramSpan3D[], effectiveScale: number): void {
     let pBase: readonly [number, number, number] | null = null;
     let pTop: readonly [number, number, number] | null = null;
 
-    if (s.hover && typeof s.hover !== "string" && s.hover.at) {
+    if (s.lineDiagram.hover) {
+      const h = s.lineDiagram.hover;
+      const beam =
+        beams.find((b) => b.decl === h.decl && b.elementId === h.elementId) ??
+        beams.find((b) => b.decl === h.decl);
+      if (beam) {
+        const xRel = Math.max(0, Math.min(1, h.xRel));
+        const p0: [number, number, number] = [
+          beam.pStart[0] + xRel * (beam.pEnd[0] - beam.pStart[0]),
+          beam.pStart[1] + xRel * (beam.pEnd[1] - beam.pStart[1]),
+          beam.pStart[2] + xRel * (beam.pEnd[2] - beam.pStart[2]),
+        ];
+        const signMult = effectiveFlipSign(s.lineDiagram) ? -1 : 1;
+        const offset = signMult * h.value * effectiveScale;
+        pBase = p0;
+        pTop = [
+          p0[0] + offset * beam.extrudeDir[0],
+          p0[1] + offset * beam.extrudeDir[1],
+          p0[2] + offset * beam.extrudeDir[2],
+        ];
+      } else {
+        pBase = h.pBase;
+        pTop = h.pTop;
+      }
+    } else if (s.hover && typeof s.hover !== "string" && s.hover.at) {
       const hoverDecl = s.hover.decl;
       const hitPoint = s.hover.at;
       const candidates = beams.filter((b) => b.decl === hoverDecl);
@@ -210,9 +233,6 @@ export class LineDiagramLayer {
         pBase = needle.pBase;
         pTop = needle.pTop;
       }
-    } else if (s.lineDiagram.hover) {
-      pBase = s.lineDiagram.hover.pBase;
-      pTop = s.lineDiagram.hover.pTop;
     }
 
     const needleGeom = new THREE.BufferGeometry();
