@@ -237,3 +237,128 @@ class TestRecordToEmitArgs:
         assert args[1] == 8 and args[2:10] == HEX_IDS   # nHost + host nodes
         assert "-shape" in args and "-bond" in args
         assert args[args.index("-bond") + 1] == 5
+
+
+class TestEffectiveRebarLch:
+    """Grassl et al. (2018) effective characteristic length floor lch_eff."""
+
+    def test_lch_eff_coarse_mesh_keeps_element_size(self) -> None:
+        # Unit hex has l_ch = 1.0. d_b = 0.02 -> 1.5*d_b = 0.03 < 1.0
+        recs = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8, diameter=0.02,
+        )
+        for r in recs:
+            assert r.lch_eff == pytest.approx(1.0)
+            assert r.effective_lch == pytest.approx(1.0)
+
+    def test_lch_eff_fine_mesh_floored_at_one_point_five_db(self) -> None:
+        # Unit hex has l_ch = 1.0. d_b = 1.0 -> 1.5*d_b = 1.5 > 1.0
+        recs = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8, diameter=1.0,
+        )
+        for r in recs:
+            assert r.lch_eff == pytest.approx(1.5)
+            assert r.effective_lch == pytest.approx(1.5)
+
+    def test_lch_eff_derived_from_bar_area(self) -> None:
+        # bar_area = pi * 1.0^2 = pi -> d_b = 2.0 -> 1.5 * d_b = 3.0
+        recs = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8, bar_area=float(np.pi),
+        )
+        for r in recs:
+            assert r.lch_eff == pytest.approx(3.0)
+            assert r.effective_lch == pytest.approx(3.0)
+
+    def test_lch_eff_explicit_nominal_lch(self) -> None:
+        recs = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8, diameter=0.2, lch=0.1,
+        )
+        # max(0.1, 1.5 * 0.2) = 0.3
+        for r in recs:
+            assert r.lch_eff == pytest.approx(0.3)
+
+    def test_lch_eff_np_scalar_lch(self) -> None:
+        # np.float32 is not an instance of Python's float; must not raise IndexError
+        recs = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8, diameter=0.2, lch=np.float32(0.1),
+        )
+        for r in recs:
+            assert r.lch_eff == pytest.approx(0.3)
+
+    def test_rotation_invariance_lch_eff(self) -> None:
+        # A 1.0 unit cube rotated 45 deg around z axis
+        theta = np.pi / 4.0
+        R = np.array([
+            [np.cos(theta), -np.sin(theta), 0.0],
+            [np.sin(theta), np.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ])
+        rot_hex_xyz = HEX_XYZ @ R.T
+        rot_bar_xyz = BAR_XYZ @ R.T
+        recs = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=rot_bar_xyz,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[rot_hex_xyz], host_kinds=["hex8"],
+            perfect=1.0e8, diameter=0.02,
+        )
+        for r in recs:
+            assert r.lch_eff == pytest.approx(1.0)
+            assert r.effective_lch == pytest.approx(1.0)
+
+    def test_diameter_and_bar_area_validation(self) -> None:
+        # Negative / zero diameter
+        with pytest.raises(ValueError, match="diameter must be > 0"):
+            resolve_reinforce(
+                bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+                bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+                host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+                perfect=1.0e8, diameter=-1.0,
+            )
+        with pytest.raises(ValueError, match="diameter must be > 0"):
+            resolve_reinforce(
+                bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+                bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+                host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+                perfect=1.0e8, diameter=0.0,
+            )
+        # Negative / zero bar_area
+        with pytest.raises(ValueError, match="bar_area must be > 0"):
+            resolve_reinforce(
+                bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+                bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+                host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+                perfect=1.0e8, bar_area=-5.0,
+            )
+        # Conflicting diameter and bar_area
+        with pytest.raises(ValueError, match="conflicting diameter"):
+            resolve_reinforce(
+                bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+                bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+                host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+                perfect=1.0e8, diameter=10.0, bar_area=10.0,
+            )
+
+    def test_reinforce_tie_record_conflicting_lch_raises(self) -> None:
+        from apeGmsh._kernel.records._constraints import ReinforceTieRecord
+        with pytest.raises(ValueError, match="conflicting lch_eff"):
+            ReinforceTieRecord(
+                kind="reinforce",
+                rebar_node=1,
+                lch_eff=1.0,
+                effective_lch=2.0,
+            )

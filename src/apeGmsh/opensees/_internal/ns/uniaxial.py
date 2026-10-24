@@ -147,6 +147,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         lch_ref: float | None = None,
         eta: float = 0.0,
         implex: bool = False,
+        units: str = "MPa-mm-N",
         name: str | None = None,
     ) -> _ASDConcrete1DCls:
         """``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage (1-D).
@@ -160,7 +161,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         return self._bridge._register(
             _ASDConcrete1DCls.from_fc(
                 E=E, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
-                eta=eta, implex=implex,
+                eta=eta, implex=implex, units=units,
             ),
             name=name,
         )

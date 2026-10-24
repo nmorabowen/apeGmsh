@@ -1627,6 +1627,7 @@ class ASDConcrete1D(UniaxialMaterial):
         lch_ref: float | None = None,
         eta: float = 0.0,
         implex: bool = False,
+        units: str = "MPa-mm-N",
     ) -> "ASDConcrete1D":
         """Build an **unconfined** 1-D law from physical inputs.
 
@@ -1646,7 +1647,7 @@ class ASDConcrete1D(UniaxialMaterial):
                     f"got {val!r}"
                 )
         ft_ = ft if ft is not None else _laws.default_ft(fc)
-        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
+        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc, units=units)
         Gc_ = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_, Gf_)
         lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
             E, fc, ft_, Gf_, Gc_)

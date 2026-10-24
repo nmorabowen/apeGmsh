@@ -13,7 +13,7 @@ Pure NumPy — no Gmsh, no OpenSees imports.
 """
 from __future__ import annotations
 
-from math import pi
+from math import pi, sqrt
 
 import numpy as np
 from numpy import ndarray
@@ -25,7 +25,45 @@ from apeGmsh._kernel.geometry._inverse_map import (
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 
 
-__all__ = ["resolve_reinforce", "tributary_lengths", "node_directions"]
+__all__ = [
+    "resolve_reinforce",
+    "tributary_lengths",
+    "node_directions",
+    "effective_rebar_lch",
+]
+
+
+def effective_rebar_lch(l_ch: float, d_b: float) -> float:
+    r"""Effective crack-band characteristic length floor near discrete rebar.
+
+    Implements the Grassl, Johansson & Leppänen (2018) regularization floor:
+
+    .. math::
+        l_{ch,\text{eff}} = \max(l_{ch}, 1.5 d_b)
+
+    When the mesh size :math:`h < 1.5 d_b`, a 1D line element embedded in a
+    3D continuum violates Saint-Venant equivalence inside :math:`r \le 0.75 d_b`,
+    causing spurious mesh-dependent shear-tension localization in the element
+    ring adjacent to the bar. Flooring :math:`l_{ch}` at :math:`1.5 d_b` prevents
+    overly brittle fracture energy dissipation :math:`g_f = G_f / l_{ch}`.
+
+    Parameters
+    ----------
+    l_ch : float
+        Nominal element characteristic length (:math:`> 0`).
+    d_b : float
+        Reinforcing bar diameter (:math:`> 0`).
+
+    Returns
+    -------
+    float
+        Effective characteristic length :math:`\max(l_{ch}, 1.5 d_b)`.
+    """
+    if l_ch <= 0:
+        raise ValueError(f"effective_rebar_lch: l_ch must be > 0, got {l_ch!r}")
+    if d_b <= 0:
+        raise ValueError(f"effective_rebar_lch: d_b must be > 0, got {d_b!r}")
+    return max(float(l_ch), 1.5 * float(d_b))
 
 
 def _point_b_weights(
@@ -151,6 +189,8 @@ def resolve_reinforce(
     bond: str | None = None,
     perfect: float | None = None,
     diameter: float | None = None,
+    bar_area: float | None = None,
+    lch: float | list[float] | None = None,
     kt: float | None = None,
     kt_alpha: float | None = None,
     enforce: str = "penalty",
@@ -161,7 +201,7 @@ def resolve_reinforce(
     snap: bool = False,
     name: str | None = None,
 ) -> list[ReinforceTieRecord]:
-    """Resolve a rebar line PG into ``LadrunoEmbeddedRebar`` tie records.
+    r"""Resolve a rebar line PG into ``LadrunoEmbeddedRebar`` tie records.
 
     Parameters
     ----------
@@ -175,9 +215,11 @@ def resolve_reinforce(
         and kind (``"hex8"`` / ``"tet4"`` / ``"quad4"`` / ``"tri3"``). For a
         straight-sided higher-order host pass its **corner** subset + the
         corner kind (the weights then couple to the corner nodes).
-    bond, perfect, diameter, kt, kt_alpha, enforce
-        Tie parameters (pass-through to the emit). ``diameter`` is required
-        for ``bond`` (``bondScale = π·d·L_trib``).
+    bond, perfect, diameter, bar_area, lch, kt, kt_alpha, enforce
+        Tie parameters (pass-through to the emit). ``diameter`` (or derived
+        from ``bar_area``) is required for ``bond`` (``bondScale = π·d·L_trib``)
+        and used to compute the Grassl et al. (2018) crack-band floor
+        :math:`l_{ch,\text{eff}} = \max(l_{ch}, 1.5 d_b)`.
     corot
         ``True`` ⇒ also compute each node's point-B shape weights
         (``shape_b`` / ``-shapeB``) for the co-rotated bar axis (ADR 20
@@ -192,7 +234,26 @@ def resolve_reinforce(
         raise ValueError(
             "resolve_reinforce: supply exactly one axial law (bond or perfect)"
         )
-    if bond is not None and diameter is None:
+    d_b: float | None = None
+    if diameter is not None:
+        if diameter <= 0:
+            raise ValueError(f"resolve_reinforce: diameter must be > 0, got {diameter!r}")
+        d_b = float(diameter)
+        if bar_area is not None:
+            if bar_area <= 0:
+                raise ValueError(f"resolve_reinforce: bar_area must be > 0, got {bar_area!r}")
+            d_from_area = float(2.0 * sqrt(bar_area / pi))
+            if abs(d_b - d_from_area) > 1e-4 * d_b:
+                raise ValueError(
+                    f"resolve_reinforce: conflicting diameter={diameter!r} and "
+                    f"bar_area={bar_area!r} (derived d_b={d_from_area!r})"
+                )
+    elif bar_area is not None:
+        if bar_area <= 0:
+            raise ValueError(f"resolve_reinforce: bar_area must be > 0, got {bar_area!r}")
+        d_b = float(2.0 * sqrt(bar_area / pi))
+
+    if bond is not None and d_b is None:
         raise ValueError(
             "resolve_reinforce: a bond law needs `diameter` for bondScale"
         )
@@ -218,10 +279,32 @@ def resolve_reinforce(
                 f"produced {len(res.weights)} weights"
             )
         if bond is not None:
-            assert diameter is not None  # guaranteed by the validation above
-            bond_scale: float | None = pi * float(diameter) * Ltrib[nid]
+            assert d_b is not None  # guaranteed by the validation above
+            bond_scale: float | None = pi * float(d_b) * Ltrib[nid]
         else:
             bond_scale = None
+
+        eff_lch: float | None = None
+        if d_b is not None:
+            if lch is not None:
+                nominal_lch = (
+                    float(lch)
+                    if isinstance(lch, (int, float, np.number))
+                    else float(lch[res.host_index])
+                )
+            else:
+                h_coords = np.asarray(host_node_coords[res.host_index], dtype=float)
+                n = len(h_coords)
+                if n >= 2:
+                    nominal_lch = min(
+                        float(np.linalg.norm(h_coords[i] - h_coords[j]))
+                        for i in range(n)
+                        for j in range(i + 1, n)
+                    )
+                else:
+                    nominal_lch = 1.0
+            eff_lch = effective_rebar_lch(nominal_lch, d_b)
+
         # Co-rotated bar axis (ADR 20 §10.5): compute the point-B weights in
         # THIS rebar node's host so the fork can co-rotate d̂ each step.
         shape_b = (
@@ -251,5 +334,7 @@ def resolve_reinforce(
             dtcr=dtcr,
             excess=res.excess,
             in_bounds=res.in_bounds,
+            lch_eff=eff_lch,
+            effective_lch=eff_lch,
         ))
     return records

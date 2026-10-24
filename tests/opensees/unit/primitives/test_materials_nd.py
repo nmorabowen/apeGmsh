@@ -675,7 +675,8 @@ class TestLadrunoConcrete3D:
         m = self._base()
         assert (m.fc, m.ft, m.Gf, m.Gc) == (30e6, 3e6, 120.0, 12000.0)
         assert m.e is None and m.kupfer == 1.16
-        assert m.Df == 1.0 and m.As == 2.0 and m.rho == 0.0
+        assert m.Df == 0.85 and m.As == 2.0 and m.rho == 0.0
+        assert m.hardening == (0.3, 0.01)
         assert m.ct_temper == "none" and m.auto_regularize is False
 
     def test_emit_minimal_is_just_required(self) -> None:

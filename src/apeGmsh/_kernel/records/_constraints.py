@@ -374,6 +374,20 @@ class ReinforceTieRecord(ConstraintRecord):
     dtcr: float | None = None
     excess: float | None = None
     in_bounds: bool = True
+    lch_eff: float | None = None
+    effective_lch: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.effective_lch is not None and self.lch_eff is None:
+            self.lch_eff = self.effective_lch
+        elif self.lch_eff is not None and self.effective_lch is None:
+            self.effective_lch = self.lch_eff
+        elif self.lch_eff is not None and self.effective_lch is not None:
+            if abs(self.lch_eff - self.effective_lch) > 1e-12:
+                raise ValueError(
+                    f"ReinforceTieRecord: conflicting lch_eff={self.lch_eff!r} and "
+                    f"effective_lch={self.effective_lch!r}"
+                )
 
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": ("rebar_node",),
