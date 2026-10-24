@@ -861,6 +861,7 @@ class _ElementNS(_BridgeNamespace):
         frames: Sequence[int | str | Element] | int | str | Element | None = None,
         support_nodes: Sequence[int | str | Node | NodeSet] | int | str | Node | NodeSet | None = None,
         holes: Sequence[Sequence[int | str | Node] | str] | str | None = None,
+        diaphragm_nodes: Sequence[int | str | Node | NodeSet] | int | str | Node | NodeSet | None = None,
         method: str = "tributary",
         span_axis: Sequence[float] | None = None,
         ortho_ratio: float | None = None,
@@ -875,6 +876,9 @@ class _ElementNS(_BridgeNamespace):
         rho: float | None = None,
         lumped: bool = False,
         mesh_size: float | None = None,
+        f11: float | None = None,
+        f22: float | None = None,
+        f12: float | None = None,
         damp: Damping | None = None,
     ) -> LadrunoMembrane:
         """``element LadrunoMembrane`` — polygon floor/wall diaphragm and load distributor.
@@ -902,6 +906,7 @@ class _ElementNS(_BridgeNamespace):
                 frames=frames,  # type: ignore[arg-type]
                 support_nodes=support_nodes,  # type: ignore[arg-type]
                 holes=holes,  # type: ignore[arg-type]
+                diaphragm_nodes=diaphragm_nodes,  # type: ignore[arg-type]
                 method=method,
                 span_axis=tuple(span_axis) if span_axis is not None else None,
                 ortho_ratio=ortho_ratio,
@@ -916,6 +921,9 @@ class _ElementNS(_BridgeNamespace):
                 rho=rho,
                 lumped=lumped,
                 mesh_size=mesh_size,
+                f11=f11,
+                f22=f22,
+                f12=f12,
                 damp=damp,
             )
         )

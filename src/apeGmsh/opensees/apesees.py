@@ -143,6 +143,7 @@ from ._internal.build.pg_expand import (
     ElementPlanRows,
     resolve_element_node_pair,
     resolve_ladruno_membrane_context,
+    resolve_ladruno_membrane_diaphragm_nodes,
 )
 from ._internal.build.topo import topological_order
 from ._internal.build.validators.mesh import validate_absorbing_quad_geometry
@@ -2262,8 +2263,11 @@ class BuiltModel:
             if is_membrane:
                 set_membrane_context(
                     emitter,
-                    resolve_ladruno_membrane_context(
-                        self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
+                    (
+                        *resolve_ladruno_membrane_context(
+                            self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
+                        ),
+                        resolve_ladruno_membrane_diaphragm_nodes(self.fem, spec),
                     ),
                 )
             try:
@@ -2654,8 +2658,13 @@ class BuiltModel:
                 if is_membrane:
                     set_membrane_context(
                         emitter,
-                        resolve_ladruno_membrane_context(
-                            self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
+                        (
+                            *resolve_ladruno_membrane_context(
+                                self.fem, spec, element_plan or (),
+                                fem_eid_to_ops_tag,
+                            ),
+                            resolve_ladruno_membrane_diaphragm_nodes(
+                                self.fem, spec),
                         ),
                     )
                 try:
@@ -3259,6 +3268,7 @@ class BuiltModel:
                     *(int(n) for n in fan.conn[0]),
                     *supp_tags,
                     *(int(n) for h in hole_loops for n in h),
+                    *resolve_ladruno_membrane_diaphragm_nodes(self.fem, spec),
                 ]
                 node_pair_owner[id(spec)] = {
                     MISSING_FEM_ELEMENT_ID: macro_element_rank(

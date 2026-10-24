@@ -439,6 +439,36 @@ def _normalize_node_ref(cls_name: str, field_name: str, val: object) -> int | st
     return tag
 
 
+def _normalize_node_list(
+    cls_name: str, field_name: str, value: object,
+) -> tuple[int | str, ...]:
+    """A node ref, ``NodeSet`` or sequence of them, as tags and names."""
+    if isinstance(value, (int, str, Node, NodeSet)) and not isinstance(value, bool):
+        raw: tuple[object, ...] = (value,)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        raw = tuple(value)
+    else:
+        raise TypeError(
+            f"{cls_name}: {field_name}= must be a node tag, Node, NodeSet, "
+            f"PG/label name, or sequence thereof."
+        )
+    if not raw:
+        raise ValueError(f"{cls_name}: {field_name}= must not be empty.")
+    out: list[int | str] = []
+    for idx, item in enumerate(raw):
+        where = f"{field_name}[{idx}]"
+        if isinstance(item, NodeSet):
+            out.extend(_normalize_node_ref(cls_name, where, int(t)) for t in item.tags)
+        elif isinstance(item, bool) or not isinstance(item, (int, str, Node)):
+            raise TypeError(
+                f"{cls_name}: {where} must be an int tag, Node, NodeSet, or "
+                f"PG/label name, got {type(item).__name__}."
+            )
+        else:
+            out.append(_normalize_node_ref(cls_name, where, item))
+    return tuple(out)
+
+
 def _resolve_node_ref(cls_name: str, field_name: str, val: object) -> int:
     norm = _normalize_node_ref(cls_name, field_name, val)
     if isinstance(norm, str):
@@ -457,10 +487,30 @@ class LadrunoMembrane(Element):
     panel rather than fanning out per Gmsh cell:
 
     ``element LadrunoMembrane $tag -nodes $n1 $n2 $n3 ... [-frames $f1 ...]``
-    ``[-supportNodes $sn1 ...] [-hole $h1 $h2 $h3 ...] [-method $method]``
+    ``[-supportNodes $sn1 ...] [-hole $h1 $h2 $h3 ...]``
+    ``[-diaphragmNodes $d1 ...] [-method $method]``
     ``[-spanAxis $dx $dy [$dz]] [-orthoRatio $eta] [-pressure $q]``
-    ``[-thick $t -mat $matTag | -stiff $E $nu $t] [-rho $rho] [-lumped]``
-    ``[-meshSize $hMax] [-damp $dampTag]``
+    ``[-thick $t -mat $matTag | -stiff $E $nu $t] [-f11 $v] [-f22 $v]``
+    ``[-f12 $v] [-rho $rho] [-lumped] [-meshSize $hMax] [-damp $dampTag]``
+
+    With a stiffness (``stiff=``, ``E=``/``nu=``/``thickness=``, ``mat=``
+    with ``thickness=``, or ``section=``), every outer, hole and support
+    node gets the panel's condensed in-plane (diaphragm) stiffness and
+    mass. ``diaphragm_nodes=`` adds nodes that get that stiffness and mass
+    but no gravity share, such as the nodes of an edge beam or of a wall
+    along an opening. It takes the forms ``support_nodes=`` takes (tags,
+    ``Node``, ``NodeSet``, PG or label names). ``f11=``, ``f22=`` and
+    ``f12=`` scale the plane-stress modulus as ``D_ij * sqrt(f_i * f_j)``
+    in the element's local axes (e1 = global X and e2 = global Y for a
+    horizontal slab), as ``LadrunoShellModifier`` does; the mass is not
+    scaled. ``mesh_size=`` also sets the diaphragm mesh, and point
+    connections depend on it. These need fork build ``c83ee812e`` or
+    later, and an exact in-plane stiffness needs ``b6d3e3d2`` or later.
+
+    The element answers ``membraneForces`` (``N11, N22, N12`` per diaphragm
+    triangle), ``meanMembraneForce``, ``diaphragmForces`` (the in-plane
+    force on each element node), ``diaphragmVertices`` and
+    ``diaphragmTriangles``, through ``eleResponse`` and element recorders.
 
     ``pressure=`` does not load the slab by itself. The fork reads it only
     inside ``LadrunoMembrane::addLoad``, as the reference value that a
@@ -492,6 +542,7 @@ class LadrunoMembrane(Element):
     frames: tuple[int | str | Element, ...] | None = None
     support_nodes: tuple[int | str | Node | NodeSet, ...] | None = None
     holes: tuple[tuple[MembraneNodeRef, ...] | str, ...] | None = None
+    diaphragm_nodes: tuple[int | str | Node | NodeSet, ...] | None = None
     method: str = "tributary"
     span_axis: tuple[float, ...] | None = None
     ortho_ratio: float | None = None
@@ -506,6 +557,9 @@ class LadrunoMembrane(Element):
     rho: float | None = None
     lumped: bool = False
     mesh_size: float | None = None
+    f11: float | None = None
+    f22: float | None = None
+    f12: float | None = None
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
@@ -607,6 +661,14 @@ class LadrunoMembrane(Element):
                         )
                     )
             object.__setattr__(self, "support_nodes", tuple(norm_sn))
+
+        if self.diaphragm_nodes is not None:
+            object.__setattr__(
+                self, "diaphragm_nodes",
+                _normalize_node_list(
+                    "LadrunoMembrane", "diaphragm_nodes", self.diaphragm_nodes,
+                ),
+            )
 
         if self.holes is not None:
             if isinstance(self.holes, str):
@@ -816,6 +878,31 @@ class LadrunoMembrane(Element):
                 )
             object.__setattr__(self, "mesh_size", ms_val)
 
+        for f_name in ("f11", "f22", "f12"):
+            f_raw = getattr(self, f_name)
+            if f_raw is None:
+                continue
+            f_val = float(f_raw)
+            if not (math.isfinite(f_val) and f_val > 0.0):
+                raise ValueError(
+                    f"LadrunoMembrane: {f_name}= must be finite and > 0, got "
+                    f"{f_raw!r}."
+                )
+            object.__setattr__(self, f_name, f_val)
+        if self.stiff is None and self.mat is None and self.section is None:
+            given = [
+                n for n in ("diaphragm_nodes", "f11", "f22", "f12")
+                if getattr(self, n) is not None
+            ]
+            if given:
+                names = ", ".join(f"{n}=" for n in given)
+                raise ValueError(
+                    f"LadrunoMembrane: {names} act on the in-plane stiffness, "
+                    f"and this membrane has none. Give it one (stiff=, "
+                    f"E=/nu=/thickness=, mat= with thickness=, or section=), "
+                    f"or drop {names}."
+                )
+
     def _resolve_standalone_context(
         self,
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]]:
@@ -860,6 +947,18 @@ class LadrunoMembrane(Element):
                 )
         return tuple(frames_out), tuple(supp_out), tuple(holes_out)
 
+    def _resolve_standalone_diaphragm_nodes(self) -> tuple[int, ...]:
+        """``diaphragm_nodes=`` as tags outside the bridge build pipeline."""
+        out: list[int] = []
+        for dn in self.diaphragm_nodes or ():
+            if isinstance(dn, str):
+                raise RuntimeError(
+                    "LadrunoMembrane: diaphragm_nodes= containing PG/label "
+                    "names requires emitting through ops.build().emit(...)."
+                )
+            out.append(_resolve_node_ref("LadrunoMembrane", "diaphragm_nodes", dn))
+        return tuple(out)
+
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         if getattr(emitter, ATTR_ELEMENT_NODES, None) is not None:
             nodes = current_element_nodes(emitter)
@@ -878,9 +977,10 @@ class LadrunoMembrane(Element):
 
         ctx = current_membrane_context(emitter)
         if ctx is not None:
-            frames_tags, support_node_tags, hole_loops = ctx
+            frames_tags, support_node_tags, hole_loops, diaphragm_tags = ctx
         else:
             frames_tags, support_node_tags, hole_loops = self._resolve_standalone_context()
+            diaphragm_tags = self._resolve_standalone_diaphragm_nodes()
 
         args: list[int | float | str] = ["-nodes", *(int(n) for n in nodes)]
         if frames_tags:
@@ -889,6 +989,8 @@ class LadrunoMembrane(Element):
             args.extend(["-supportNodes", *(int(sn) for sn in support_node_tags)])
         for hole_loop in hole_loops:
             args.extend(["-hole", *(int(h) for h in hole_loop)])
+        if diaphragm_tags:
+            args.extend(["-diaphragmNodes", *(int(d) for d in diaphragm_tags)])
         args.extend(["-method", self.method])
         if self.span_axis is not None:
             args.extend(["-spanAxis", *(float(c) for c in self.span_axis)])
@@ -908,6 +1010,10 @@ class LadrunoMembrane(Element):
                 float(self.section.nu),
                 float(self.section.h),
             ])
+        for f_name in ("f11", "f22", "f12"):
+            f_val = getattr(self, f_name)
+            if f_val is not None:
+                args.extend([f"-{f_name}", float(f_val)])
         eff_rho = self.rho
         if (
             eff_rho is None

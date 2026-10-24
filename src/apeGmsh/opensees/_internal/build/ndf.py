@@ -23,6 +23,7 @@ from .pg_expand import (
     expand_pg_to_nodes,
     expand_spec_to_elements,
     resolve_ladruno_membrane_context,
+    resolve_ladruno_membrane_diaphragm_nodes,
 )
 
 
@@ -323,6 +324,7 @@ def infer_node_ndf(
             extra_ids = [
                 *supp_tags,
                 *(n for h in hole_loops for n in h),
+                *resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
             ]
             if extra_ids:
                 blocks.append(np.asarray([extra_ids], dtype=np.int64))

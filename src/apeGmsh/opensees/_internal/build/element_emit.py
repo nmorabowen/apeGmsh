@@ -23,6 +23,7 @@ from .pg_expand import (
     _describe_pg_cells,
     expand_spec_to_elements,
     resolve_ladruno_membrane_context,
+    resolve_ladruno_membrane_diaphragm_nodes,
 )
 from .ownership import SortedIntToInt, _EMPTY_INT64
 from .transforms import _element_transf
@@ -464,11 +465,14 @@ def emit_element_spec_partitioned(
     if isinstance(spec, LadrunoMembrane):
         set_membrane_context(
             emitter,
-            resolve_ladruno_membrane_context(
-                fem,
-                spec,
-                element_plan=element_plan,
-                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            (
+                *resolve_ladruno_membrane_context(
+                    fem,
+                    spec,
+                    element_plan=element_plan,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                ),
+                resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
             ),
         )
 
