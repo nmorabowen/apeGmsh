@@ -202,7 +202,12 @@ _TRANSFORMS = ("Linear", "PDelta", "Corotational")
 #: translates; a tag or a type token is frame-free. :func:`_plan` refuses a
 #: record with a field missing here, so a new transform field (a joint
 #: offset, say) is classified before an instance can carry it.
-_TRANSFORM_FIELDS = {"type_token": "token", "tag": "tag", "vec": "direction"}
+_TRANSFORM_FIELDS = {
+    "type_token": "token", "tag": "tag", "vec": "direction",
+    # -jntOffset: two global vectors (node -> element end), so each half
+    # turns by R v and never translates, like vecxz.
+    "jnt_offset": "direction",
+}
 
 #: Uniform-section quadrature rules: args ``(secTag, nIP)``.
 _INTEGRATIONS = ("Legendre", "Lobatto", "NewtonCotes", "Radau", "Trapezoidal")
@@ -213,6 +218,7 @@ _WINDOW = {"-activateTime": 1, "-deactivateTime": 1}
 def _transform(
     token: str, vec: tuple[float, ...], name: "str | None", what: str,
     rotate: "tuple[float, float, float, float] | None",
+    jnt: tuple[float, ...] = (),
 ) -> _Make:
     if len(vec) not in (0, 3):
         raise AssemblyError(f"{what}: archived vecxz {vec!r} is not a 3-vector.")
@@ -224,8 +230,30 @@ def _transform(
             translate=(0.0, 0.0, 0.0), rotate=rotate,
         )[0]
         vecxz = (float(turned[0]), float(turned[1]), float(turned[2]))
+    jnt_offset: Any = None
+    if jnt:
+        if len(jnt) not in (4, 6):
+            raise AssemblyError(
+                f"{what}: archived jnt_offset {jnt!r} is not 4 (2-D) or 6 "
+                "(3-D) components.")
+        w = len(jnt) // 2
+        # Two directions (node -> element end): R v each, never + t. A
+        # 2-D pair lifts to z = 0 and must stay in plane.
+        halves = np.zeros((2, 3), dtype=np.float64)
+        halves[0, :w] = jnt[:w]
+        halves[1, :w] = jnt[w:]
+        turned2 = _apply_geometric_transform(
+            halves, translate=(0.0, 0.0, 0.0), rotate=rotate)
+        if w == 2 and np.any(np.abs(turned2[:, 2]) > 1e-12 * max(
+                1.0, float(np.abs(turned2).max()))):
+            raise AssemblyError(
+                f"{what}: the instance rotation turns a 2-D jnt_offset out "
+                "of the XY plane.")
+        jnt_offset = tuple(
+            tuple(float(c) for c in turned2[k, :w]) for k in range(2))
     # ``token`` is one of _TRANSFORMS, each a public ``ops.geomTransf`` verb.
-    return lambda ops, ref: getattr(ops.geomTransf, token)(vecxz=vecxz, name=name)
+    return lambda ops, ref: getattr(ops.geomTransf, token)(
+        vecxz=vecxz, jnt_offset=jnt_offset, name=name)
 
 
 def _integration(
@@ -624,7 +652,8 @@ def _plan(
             )
         plan.append(_Decl(("geomTransf", tr.tag), (), _transform(
             tr.type_token, tr.vec, prefixed("geomTransf", tr.tag),
-            what("geomTransf", tr.type_token, tr.tag), rotate)))
+            what("geomTransf", tr.type_token, tr.tag), rotate,
+            tuple(tr.jnt_offset))))
 
     for bi in sorted(model.beam_integration(), key=lambda r: r.tag):
         if bi.type_token not in _INTEGRATIONS:

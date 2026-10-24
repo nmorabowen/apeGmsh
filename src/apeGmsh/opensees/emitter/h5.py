@@ -675,6 +675,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     reader would read a dataset-form pair as no arguments, hence the
 #:     bump: a 2.34 reader opens 2.12 through 2.34 and refuses a dataset
 #:     form below 2.34.0; a 2.33.x reader REFUSES a 2.34.x file.
+<<<<<<< HEAD
 #:   * 2.35.0 — equationConstraint lines archived: additive — a new
 #:     ``/opensees/constraints/equationConstraint`` group holds one row
 #:     per global ``equationConstraint`` line, an ``enforce="equation"``

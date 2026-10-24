@@ -292,7 +292,7 @@ def owner_tags(bm: Any, plan: TagPlan) -> dict[Any, Any]:
     fanout = plan.transforms.fanout
     assert fanout is not None
     for transf, lines in fanout.specs:
-        for tag, vecxz in lines or ():
+        for tag, vecxz, *_ in lines or ():
             put(("geomTransf", tuple(round(v, 9) for v in vecxz)), tag)
     for (_tid, eid), tag in fanout.overrides.items():
         put(("geomTransf of element", eid), tag)

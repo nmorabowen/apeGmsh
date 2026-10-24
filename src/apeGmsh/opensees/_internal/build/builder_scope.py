@@ -363,8 +363,9 @@ def replay_builder_scoped_declarations(
     on the first pass — the orientation fan-out ALLOCATES per-vecxz tags,
     so a re-run cannot reproduce it; a log of the emitted lines can.
     Entries are ``("spec", transf, tag)`` (re-run the primitive's own
-    deterministic ``_emit``) or ``("line", type_token, tag, vec)`` (the
-    bare-2D and fan-out forms, re-emitted verbatim).
+    deterministic ``_emit``) or ``("line", type_token, tag, vec, jnt)``
+    (the bare-2D and fan-out forms, ``jnt`` the ``-jntOffset`` tail or
+    ``()``, re-emitted verbatim).
     """
     for p in scoped_primitives:
         p._emit(emitter, tag_for[id(p)])
@@ -373,5 +374,7 @@ def replay_builder_scoped_declarations(
             _kind, transf, tag = entry
             transf._emit(emitter, tag)
         else:
-            _kind, type_token, tag, vec = entry
-            emitter.geomTransf(type_token, tag, *vec)
+            _kind, type_token, tag, vec, jnt = entry
+            emitter.geomTransf(
+                type_token, tag, *vec,
+                **({"jnt_offset": jnt} if jnt else {}))

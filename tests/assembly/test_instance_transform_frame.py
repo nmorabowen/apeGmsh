@@ -152,7 +152,10 @@ def test_every_transform_field_is_classified():
 
     names = {f.name for f in dataclasses.fields(TransformRecord)}
     assert names == set(_TRANSFORM_FIELDS), names ^ set(_TRANSFORM_FIELDS)
-    assert {k for k, v in _TRANSFORM_FIELDS.items() if v == "direction"} == {"vec"}
+    # vecxz and the -jntOffset pair (two node -> element-end vectors) are
+    # the directions: each turns by R v and never translates.
+    assert {k for k, v in _TRANSFORM_FIELDS.items() if v == "direction"} == {
+        "vec", "jnt_offset"}
     assert set(_TRANSFORMS) == set(COLUMNS)
 
 

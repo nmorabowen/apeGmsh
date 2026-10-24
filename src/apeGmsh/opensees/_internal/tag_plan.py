@@ -285,7 +285,7 @@ class TransformTagPlan(FamilyTagPlan):
             if not lines:
                 continue
             token = _TRANSF_TYPE_TOKEN[type(transf)]
-            rows.extend((f"geomTransf:{token}", tag) for tag, _ in lines[1:])
+            rows.extend((f"geomTransf:{token}", tag) for tag, *_ in lines[1:])
         return tuple(rows)
 
     def fanout_for(
