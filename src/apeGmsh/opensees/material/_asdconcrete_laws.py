@@ -24,6 +24,12 @@ native ``-fc`` curve unchanged.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+import dataclasses
+from dataclasses import dataclass
+import math
+from typing import Any
+
 
 __all__ = [
     "default_ft",
@@ -33,7 +39,89 @@ __all__ = [
     "make_tension",
     "make_compression",
     "l_max",
+    "UNIT_PRESETS",
+    "AGGREGATE_FACTORS",
+    "ConcreteMC2010Params",
+    "fib_mc2010_concrete_params",
 ]
+
+
+UNIT_PRESETS: dict[str, tuple[float, float]] = {
+    "MPa-mm-N": (1.0, 1.0),
+    "MPa-mm": (1.0, 1.0),
+    "Pa-m-N": (1.0e6, 1.0e-3),
+    "Pa-m": (1.0e6, 1.0e-3),
+    "kPa-m-kN": (1.0e3, 1.0e-3),
+    "kPa-m": (1.0e3, 1.0e-3),
+    "psi-in-lbf": (145.03773773, 1.0 / 25.4),
+    "psi-in": (145.03773773, 1.0 / 25.4),
+    "ksi-in-kip": (0.14503773773, 1.0 / 25.4),
+    "ksi-in": (0.14503773773, 1.0 / 25.4),
+}
+
+AGGREGATE_FACTORS: dict[str, float] = {
+    "basalt": 1.2,
+    "quartzite": 1.0,
+    "limestone": 0.9,
+    "sandstone": 0.7,
+}
+
+
+@dataclass(frozen=True)
+class ConcreteMC2010Params(Mapping[str, Any]):
+    r"""fib Model Code 2010 / Eurocode 2 / CDPM2 calibrated concrete parameters."""
+
+    E: float
+    nu: float
+    fc: float
+    ft: float
+    Gf: float
+    Gc: float
+    ec: float
+    Df: float
+    hardening: tuple[float, float]
+    ductility: tuple[float, float, float, float]
+    As: float
+    e: float
+    kupfer: float
+    units: str
+    d_max: float
+    aggregate: str
+    fck: float
+    fcm: float
+    l_max_t: float
+    l_max_c: float
+
+    @property
+    def Gt(self) -> float:
+        """Alias for Gf."""
+        return self.Gf
+
+    @property
+    def eps_c1(self) -> float:
+        """Alias for ec."""
+        return self.ec
+
+    @property
+    def epsc0(self) -> float:
+        """Alias for ec (for RC models)."""
+        return self.ec
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def __iter__(self) -> Iterator[str]:
+        fields = [f.name for f in dataclasses.fields(self)]
+        yield from fields
+        yield "Gt"
+        yield "eps_c1"
+        yield "epsc0"
+
+    def __len__(self) -> int:
+        return len(dataclasses.fields(self)) + 3
 
 
 def default_ft(fc: float) -> float:
@@ -41,14 +129,157 @@ def default_ft(fc: float) -> float:
     return 0.1 * fc
 
 
-def ceb_fip_Gf(fc: float) -> float:
-    """CEB-FIP tensile fracture energy per area: ``Gf = 0.073 fc^0.18``."""
-    return float(0.073 * fc ** 0.18)
+def ceb_fip_Gf(
+    fc: float,
+    *,
+    units: str = "MPa-mm-N",
+    stress_scale: float | None = None,
+    length_scale: float | None = None,
+) -> float:
+    r"""CEB-FIP / fib MC2010 tensile fracture energy per area.
+
+    In fib MC2010 Eq. 5.1-9: :math:`G_f = 0.073 f_{cm}^{0.18}\text{ [N/mm]}`.
+    Converted to user units via ``stress_scale * length_scale``
+    (:math:`\text{N/mm} \to \text{user force} / \text{user length}`).
+    """
+    if stress_scale is None or length_scale is None:
+        if units in ("MPa-mm-N", "MPa-mm") and fc > 1.0e5:
+            units = "Pa-m-N"
+        if units not in UNIT_PRESETS:
+            raise ValueError(
+                f"Unknown units {units!r}, supported: {sorted(UNIT_PRESETS)}"
+            )
+        s_sig, s_len = UNIT_PRESETS[units]
+        stress_scale = s_sig if stress_scale is None else stress_scale
+        length_scale = s_len if length_scale is None else length_scale
+
+    fc_mpa = fc / stress_scale
+    gf_n_mm = 0.073 * (fc_mpa ** 0.18)
+    return float(gf_n_mm * stress_scale * length_scale)
 
 
 def ceb_fip_Gc(fc: float, ft: float, Gf: float) -> float:
     """Compressive fracture energy per area: ``Gc = 2 Gf (fc/ft)^2``."""
     return 2.0 * Gf * (fc * fc) / (ft * ft)
+
+
+def fib_mc2010_concrete_params(
+    fc: float,
+    *,
+    units: str = "MPa-mm-N",
+    d_max: float | None = None,
+    aggregate: str = "quartzite",
+) -> ConcreteMC2010Params:
+    r"""Derive fib Model Code 2010 / Eurocode 2 / CDPM2 calibrated parameters from fc.
+
+    Parameters
+    ----------
+    fc : float
+        Mean uniaxial compressive cylinder strength in user units (> 0).
+    units : str
+        Unit system preset ('MPa-mm-N', 'Pa-m-N', 'kPa-m-kN', 'ksi-in-kip', 'psi-in-lbf').
+    d_max : float, optional
+        Maximum aggregate size in user length units (default 16 mm in user units).
+    aggregate : str
+        Aggregate type ('quartzite', 'basalt', 'limestone', 'sandstone').
+    """
+    if fc <= 0:
+        raise ValueError(f"fib_mc2010_concrete_params: fc must be > 0, got {fc!r}")
+    if units not in UNIT_PRESETS:
+        raise ValueError(
+            f"fib_mc2010_concrete_params: unknown units {units!r}, supported: {sorted(UNIT_PRESETS)}"
+        )
+    # If units is default "MPa-mm-N" or alias "MPa-mm" and fc > 1e5, fc is in Pa ("Pa-m-N").
+    if units in ("MPa-mm-N", "MPa-mm") and fc > 1.0e5:
+        units = "Pa-m-N"
+    if aggregate not in AGGREGATE_FACTORS:
+        raise ValueError(
+            f"fib_mc2010_concrete_params: unknown aggregate {aggregate!r}, supported: {sorted(AGGREGATE_FACTORS)}"
+        )
+    if d_max is not None and d_max <= 0:
+        raise ValueError(f"fib_mc2010_concrete_params: d_max must be > 0, got {d_max!r}")
+
+    s_sig, s_len = UNIT_PRESETS[units]
+    s_gf = s_sig * s_len
+    alpha_E = AGGREGATE_FACTORS[aggregate]
+
+    # Convert fc to MPa and d_max to mm
+    f_cm_mpa = fc / s_sig
+    d_max_mm = (d_max / s_len) if d_max is not None else 16.0
+
+    # Characteristic compressive strength fck (MPa)
+    f_ck_mpa = max(f_cm_mpa - 8.0, 0.75 * f_cm_mpa)
+
+    # Tensile strength fctm (MPa) per fib MC2010 Eq. 5.1-3a/b
+    if f_ck_mpa <= 50.0:
+        ft_mpa = 0.30 * (f_ck_mpa ** (2.0 / 3.0))
+    else:
+        ft_mpa = 2.12 * math.log(1.0 + 0.10 * (f_ck_mpa + 8.0))
+
+    # Young's modulus Eci (MPa) per fib MC2010 Eq. 5.1-20
+    ec_mpa = 21500.0 * alpha_E * ((f_cm_mpa / 10.0) ** (1.0 / 3.0))
+
+    # Tensile fracture energy Gf (N/mm) per fib MC2010 Eq. 5.1-9 + aggregate correction
+    gf_n_mm = 0.073 * (f_cm_mpa ** 0.18) * ((d_max_mm / 16.0) ** 0.15)
+
+    # Compressive fracture energy Gc (N/mm) per Nakamura & Higai / fib MC2010
+    gc_n_mm = 250.0 * gf_n_mm
+
+    # Convert to user units
+    fc_u = f_cm_mpa * s_sig
+    fck_u = f_ck_mpa * s_sig
+    ft_u = ft_mpa * s_sig
+    ec_u = ec_mpa * s_sig
+    nu = 0.20
+    gf_u = gf_n_mm * s_gf
+    gc_u = gc_n_mm * s_gf
+
+    # Peak compressive strain eps_c1 (fib MC2010 Table 5.1-8)
+    eps0 = fc_u / ec_u
+    eps_c1 = max(0.0007 * (f_cm_mpa ** 0.31), 1.6 * eps0)
+
+    # CDPM2 defaults
+    Df = 0.85
+    hardening = (0.3, 0.01)
+    As = 15.0
+    kupfer = 1.16
+    Bh = max(0.001, eps_c1 - eps0)
+    ductility = (0.08, Bh, 2.0, 1.0e-6)
+
+    # Kupfer biaxial eccentricity e in (0.5, 1.0]
+    eps_ratio = ft_u / fc_u
+    denom = kupfer * kupfer - eps_ratio * eps_ratio
+    eps_ecc = eps_ratio * (kupfer * kupfer - 1.0) / denom if denom > 0 else 0.025
+    e_ecc = (1.0 + eps_ecc) / (2.0 - eps_ecc)
+    e_ecc = max(0.5001, min(1.0, e_ecc))
+
+    # Snap-back ceilings
+    hp = hardening[1]  # 0.01
+    l_max_t = (20.0 / 21.0) * ec_u * gf_u / (ft_u * ft_u)
+    l_max_c = 2.0 * ec_u * gc_u / ((fc_u * fc_u) * (1.0 + hp))
+
+    return ConcreteMC2010Params(
+        E=ec_u,
+        nu=nu,
+        fc=fc_u,
+        ft=ft_u,
+        Gf=gf_u,
+        Gc=gc_u,
+        ec=eps_c1,
+        Df=Df,
+        hardening=hardening,
+        ductility=ductility,
+        As=As,
+        e=e_ecc,
+        kupfer=kupfer,
+        units=units,
+        d_max=d_max_mm * s_len,
+        aggregate=aggregate,
+        fck=fck_u,
+        fcm=fc_u,
+        l_max_t=l_max_t,
+        l_max_c=l_max_c,
+    )
 
 
 def auto_lch_ref(
@@ -131,7 +362,8 @@ def make_tension(
         xi, si, xipl = Te[i], Ts[i], Tpl[i]
         xipl = min(xipl, xi - si / E)
         qi = (xi - xipl) * E
-        Td[i] = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        d = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        Td[i] = min(1.0 - 1e-12, d) if d >= 1.0 else d
     return Te, Ts, Td
 
 
@@ -182,7 +414,8 @@ def make_compression(
         xi, si, xipl = Ce[i], Cs[i], Cpl[i]
         xipl = min(xipl, xi - si / E)
         qi = (xi - xipl) * E
-        Cd[i] = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        d = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        Cd[i] = min(1.0 - 1e-12, d) if d >= 1.0 else d
     return Ce, Cs, Cd
 
 
