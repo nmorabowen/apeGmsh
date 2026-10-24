@@ -2007,6 +2007,10 @@ export function buildLoads3D(
               if (hasTransverse) {
                 if (is2D) {
                   const axes = beamLocalAxes(xLocal, [0, 0, 1]);
+                  if (!axes) {
+                    skippedBeamSet.add(decl);
+                    continue;
+                  }
                   yLocal = axes.yLocal;
                   zLocal = axes.zLocal;
                 } else {
@@ -2033,6 +2037,10 @@ export function buildLoads3D(
                     continue;
                   }
                   const axes = beamLocalAxes(xLocal, vecxz);
+                  if (!axes) {
+                    skippedBeamSet.add(decl);
+                    continue;
+                  }
                   yLocal = axes.yLocal;
                   zLocal = axes.zLocal;
                 }
