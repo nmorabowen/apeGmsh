@@ -44,13 +44,13 @@ const closeVec = (a: readonly number[], b: readonly number[], tol = 1e-9) =>
 
 test("beamLocalAxes matches Python compute_beam_local_axes for 2D and 3D chords", () => {
   // 2D horizontal beam along +X: x = (1, 0, 0), defaultVecxz = (0, 0, 1) -> y = (0, 1, 0), z = (0, 0, 1)
-  const f2dH = beamLocalAxes([1, 0, 0], defaultVecxz([1, 0, 0]));
+  const f2dH = beamLocalAxes([1, 0, 0], defaultVecxz([1, 0, 0]))!;
   assert.ok(closeVec(f2dH.xLocal, [1, 0, 0]));
   assert.ok(closeVec(f2dH.yLocal, [0, 1, 0]));
   assert.ok(closeVec(f2dH.zLocal, [0, 0, 1]));
 
   // 2D vertical column along +Y: x = (0, 1, 0), defaultVecxz = (0, 0, 1) -> y = (-1, 0, 0), z = (0, 0, 1)
-  const f2dV = beamLocalAxes([0, 1, 0], defaultVecxz([0, 1, 0]));
+  const f2dV = beamLocalAxes([0, 1, 0], defaultVecxz([0, 1, 0]))!;
   assert.ok(closeVec(f2dV.xLocal, [0, 1, 0]));
   assert.ok(closeVec(f2dV.yLocal, [-1, 0, 0]));
   assert.ok(closeVec(f2dV.zLocal, [0, 0, 1]));
@@ -59,21 +59,21 @@ test("beamLocalAxes matches Python compute_beam_local_axes for 2D and 3D chords"
   // y = (1,0,0) x (0,0,1) = (0, -1, 0); z = (1, 0, 0)
   const vDefZ = defaultVecxz([0, 0, 1]);
   assert.ok(closeVec(vDefZ, [1, 0, 0]));
-  const f3dZ = beamLocalAxes([0, 0, 1], vDefZ);
+  const f3dZ = beamLocalAxes([0, 0, 1], vDefZ)!;
   assert.ok(closeVec(f3dZ.xLocal, [0, 0, 1]));
   assert.ok(closeVec(f3dZ.yLocal, [0, -1, 0]));
   assert.ok(closeVec(f3dZ.zLocal, [1, 0, 0]));
 
   // 3D inclined chord (0.6, 0.8, 0) with custom vecxz = (0, 0, 1):
   // x = (0.6, 0.8, 0), y = (0,0,1) x (0.6,0.8,0) = (-0.8, 0.6, 0), z = (0, 0, 1)
-  const f3dInc = beamLocalAxes([0.6, 0.8, 0], [0, 0, 1]);
+  const f3dInc = beamLocalAxes([0.6, 0.8, 0], [0, 0, 1])!;
   assert.ok(closeVec(f3dInc.xLocal, [0.6, 0.8, 0]));
   assert.ok(closeVec(f3dInc.yLocal, [-0.8, 0.6, 0]));
   assert.ok(closeVec(f3dInc.zLocal, [0, 0, 1]));
 
   // Deformed chord re-orthogonalization against recorded zRec = (0, 0, 1):
   const s = Math.hypot(1, 0.1);
-  const fDef = beamLocalAxes([1 / s, 0, 0.1 / s], [0, 0, 1]);
+  const fDef = beamLocalAxes([1 / s, 0, 0.1 / s], [0, 0, 1])!;
   assert.ok(closeVec(fDef.yLocal, [0, 1, 0]));
   assert.ok(closeVec(fDef.xLocal, [1 / s, 0, 0.1 / s]));
   assert.ok(closeVec(fDef.zLocal, [-0.1 / s, 0, 1 / s]));
