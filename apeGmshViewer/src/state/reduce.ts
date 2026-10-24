@@ -855,6 +855,8 @@ export function reduce(s: State, e: Event): State {
               xi: [...b.xi],
               values: [...b.values],
               autoScale: b.autoScale,
+              ...(b.spanMode !== undefined ? { spanMode: b.spanMode } : {}),
+              ...(b.spanReason !== undefined ? { spanReason: b.spanReason } : {}),
             }))
           : e.min === null
             ? []

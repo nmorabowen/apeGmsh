@@ -250,12 +250,21 @@ export class LadrunoPartSet {
     return [];
   }
 
-  readLineStations(stageId: string, component: string): LadrunoLineStationSlab {
+  readLineStations(
+    stageId: string,
+    component: string,
+    _options?: { elementIds?: ArrayLike<number>; step?: number; stepRange?: readonly [number, number]; warningsOut?: string[] },
+  ): LadrunoLineStationSlab {
     // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, line stations ${component}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
-  readLineStationStep(stageId: string, component: string): LadrunoLineStationStep {
+  readLineStationStep(
+    stageId: string,
+    component: string,
+    _step?: number,
+    _options?: { elementIds?: ArrayLike<number>; warningsOut?: string[]; skipCompanion?: boolean },
+  ): LadrunoLineStationStep {
     // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, line stations ${component}: ${PART_SET_ELEMENTS_UNREAD}`);
   }

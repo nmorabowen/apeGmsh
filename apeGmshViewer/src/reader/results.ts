@@ -498,12 +498,13 @@ export class ResultsFile {
 
   /**
    * Read one canonical (or raw) line-station component across all `line_stations`
-   * groups in `stageId`, either for all steps or for a single `options.step`.
+   * groups in `stageId`, either for all steps, a single `options.step`, or a
+   * `options.stepRange: [k0, k1)` hyperslab.
    */
   readLineStations(
     stageId: string,
     component: string,
-    options?: { step?: number },
+    options?: { step?: number; stepRange?: readonly [number, number] },
   ): LadrunoLineStationSlab {
     const canon = normalizeLineStationComponent(component);
     if (!canon) {
@@ -514,9 +515,23 @@ export class ResultsFile {
     }
     const s = this.stage(stageId);
     const step = options?.step;
+    const stepRange = options?.stepRange;
     if (step !== undefined) checkStep(s, step);
-    const nStepsRead = step !== undefined ? 1 : s.nSteps;
-    const timeOut = step !== undefined ? Float64Array.of(s.time[step]!) : Float64Array.from(s.time);
+    if (stepRange !== undefined) {
+      const [k0, k1] = stepRange;
+      if (!Number.isInteger(k0) || !Number.isInteger(k1) || k0 < 0 || k1 > s.nSteps || k0 >= k1) {
+        throw new ResultsError("argument", `steps ${k0}..${k1} are not a range inside stage ${s.id} (0..${s.nSteps})`);
+      }
+    }
+    const sliceRange: readonly [number, number] | undefined =
+      step !== undefined ? [step, step + 1] : stepRange;
+    const nStepsRead = sliceRange !== undefined ? sliceRange[1] - sliceRange[0] : s.nSteps;
+    const timeOut =
+      step !== undefined
+        ? Float64Array.of(s.time[step]!)
+        : stepRange !== undefined
+          ? s.time.slice(stepRange[0], stepRange[1])
+          : Float64Array.from(s.time);
 
     const groupChunks: {
       g: LineStationGroupInfo;
@@ -534,8 +549,8 @@ export class ResultsFile {
       const eids = intsAsNumbers(this.dataset(grp, "_element_index"));
       const ds = this.component(g.path, g.components, dsName);
       const raw =
-        step !== undefined
-          ? toFloat64(ds.slice([[step, step + 1], [], []]), ds.path)
+        sliceRange !== undefined
+          ? toFloat64(ds.slice([[sliceRange[0], sliceRange[1]], [], []]), ds.path)
           : toFloat64(ds.value, ds.path);
       let quats: Float64Array | null = null;
       if (g.localAxes && grp.keys().includes("_local_axes_quaternion")) {
@@ -631,8 +646,43 @@ export class ResultsFile {
   }
 
   /** Read one step of a canonical (or raw) line-station component in `stageId`. */
-  readLineStationStep(stageId: string, component: string, step: number): LadrunoLineStationStep {
+  readLineStationStep(
+    stageId: string,
+    component: string,
+    step: number,
+    options?: { skipCompanion?: boolean },
+  ): LadrunoLineStationStep {
     const slab = this.readLineStations(stageId, component, { step });
+    let companionStep: LadrunoLineStationStep | null | undefined;
+    const companionComp =
+      slab.component === "Mz"
+        ? "Vy"
+        : slab.component === "My"
+          ? "Vz"
+          : slab.component === "Vy"
+            ? "Mz"
+            : slab.component === "Vz"
+              ? "My"
+              : null;
+    if (companionComp !== null && !options?.skipCompanion) {
+      try {
+        const compSlab = this.readLineStations(stageId, companionComp, { step });
+        if (compSlab.elementIndex.length > 0) {
+          companionStep = {
+            component: compSlab.component,
+            values: compSlab.values,
+            elementIndex: compSlab.elementIndex,
+            stationNaturalCoord: compSlab.stationNaturalCoord,
+            time: compSlab.time[0] ?? 0,
+            localAxesQuaternion: compSlab.localAxesQuaternion,
+            localAxesZRec: compSlab.localAxesZRec,
+            localAxesSources: compSlab.localAxesSources ?? null,
+          };
+        }
+      } catch {
+        companionStep = null;
+      }
+    }
     return {
       component: slab.component,
       values: slab.values,
@@ -642,6 +692,7 @@ export class ResultsFile {
       localAxesQuaternion: slab.localAxesQuaternion,
       localAxesZRec: slab.localAxesZRec,
       localAxesSources: slab.localAxesSources ?? null,
+      ...(companionStep !== undefined ? { companionStep } : {}),
     };
   }
 

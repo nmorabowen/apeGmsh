@@ -238,6 +238,8 @@ export interface LadrunoLineStationStep {
   localAxesSources?: readonly (LocalAxesSource | null)[] | null;
   /** (nStationsTotal * 2,) solver element end nodes `[iNode, jNode]` per station from `MODEL/ELEMENTS/<group>/CONNECTIVITY`, or null when unrecorded. */
   elementNodes?: Float64Array | null;
+  /** Companion shear step (`Vy` for `Mz`, `Vz` for `My`) when available on the stage for exact span-load reconstruction. */
+  companionStep?: LadrunoLineStationStep | null;
 }
 
 /** Per-element local frames from `.ladruno` (`RESULTS/ON_ELEMENTS/LOCAL_AXES` and `MODEL/LOCAL_AXES`). */
@@ -565,14 +567,19 @@ export class LadrunoFile {
   }
 
   /**
-   * Read a line-station slab from `stageId` for `component` (either all steps or a
-   * single `step`), applying the rank 0 > rank 1 > rank 2 > rank 3 per-element
-   * source precedence and `local_force_station_signs`.
+   * Read a line-station slab from `stageId` for `component` (either all steps, a
+   * single `step`, or a `stepRange: [k0, k1)` hyperslab), applying the rank 0 >
+   * rank 1 > rank 2 > rank 3 per-element source precedence and `local_force_station_signs`.
    */
   readLineStations(
     stageId: string,
     component: string,
-    options?: { elementIds?: ArrayLike<number>; step?: number; warningsOut?: string[] },
+    options?: {
+      elementIds?: ArrayLike<number>;
+      step?: number;
+      stepRange?: readonly [number, number];
+      warningsOut?: string[];
+    },
   ): LadrunoLineStationSlab {
     const s = this.stage(stageId);
     if (s.kind === "mode") {
@@ -583,7 +590,14 @@ export class LadrunoFile {
       throw new LadrunoError("argument", `unknown line-station component ${JSON.stringify(component)}; expected one of ${LINE_STATION_COMPONENTS.join(", ")}`);
     }
     const step = options?.step;
+    const stepRange = options?.stepRange;
     if (step !== undefined) checkStep(s, step);
+    if (stepRange !== undefined) {
+      const [k0, k1] = stepRange;
+      if (!Number.isInteger(k0) || !Number.isInteger(k1) || k0 < 0 || k1 > s.nSteps || k0 >= k1) {
+        throw new LadrunoError("argument", `steps ${k0}..${k1} are not a range inside stage ${s.id} (0..${s.nSteps})`);
+      }
+    }
     const hostGrp = this.group(this.f, s.name);
     const onElements = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS"]);
     if (!onElements || onElements.keys().length === 0) {
@@ -605,7 +619,9 @@ export class LadrunoFile {
     }
     const found: BucketPart[] = [];
     const nStepsTotal = s.nSteps;
-    const nStepsRead = step !== undefined ? 1 : nStepsTotal;
+    const sliceRange: readonly [number, number] | undefined =
+      step !== undefined ? [step, step + 1] : stepRange;
+    const nStepsRead = sliceRange !== undefined ? sliceRange[1] - sliceRange[0] : nStepsTotal;
 
     // Pass 1: Rank 0 (section.*, LEVELS == 2) buckets that actually resolve `canon`.
     const sectionIds: Float64Array[] = [];
@@ -632,7 +648,7 @@ export class LadrunoFile {
           continue;
         }
         sectionIds.push(parsed.ids);
-        const part = this.readSectionBucketStations(parsed, canon, key, token, ndm, modelElements, filterIds, step, nStepsTotal, options?.warningsOut);
+        const part = this.readSectionBucketStations(parsed, canon, key, token, ndm, modelElements, filterIds, sliceRange, nStepsTotal, options?.warningsOut);
         if (part) found.push({ rank: 0, perElement: part, nStepsRead });
       }
     }
@@ -673,7 +689,7 @@ export class LadrunoFile {
           ndm,
           filterIds,
           sectionServed,
-          step,
+          sliceRange,
           nStepsTotal,
           options?.warningsOut,
         );
@@ -686,7 +702,12 @@ export class LadrunoFile {
     const taken = firstListing(ordered.map((part) => Float64Array.from(part.perElement, (e) => e.eid)));
     const chosen = ordered.flatMap((part, k) => part.perElement.filter((_, i) => taken[k]![i] === 1));
 
-    const timeSlice = step !== undefined ? new Float64Array([s.time[step] ?? 0]) : s.time;
+    const timeSlice =
+      step !== undefined
+        ? new Float64Array([s.time[step] ?? 0])
+        : stepRange !== undefined
+          ? s.time.slice(stepRange[0], stepRange[1])
+          : s.time;
     if (chosen.length === 0) {
       return {
         component: canon,
@@ -746,9 +767,43 @@ export class LadrunoFile {
     stageId: string,
     component: string,
     step: number,
-    options?: { elementIds?: ArrayLike<number>; warningsOut?: string[] },
+    options?: { elementIds?: ArrayLike<number>; warningsOut?: string[]; skipCompanion?: boolean },
   ): LadrunoLineStationStep {
     const slab = this.readLineStations(stageId, component, { ...options, step });
+    let companionStep: LadrunoLineStationStep | null | undefined;
+    const companionComp =
+      slab.component === "Mz"
+        ? "Vy"
+        : slab.component === "My"
+          ? "Vz"
+          : slab.component === "Vy"
+            ? "Mz"
+            : slab.component === "Vz"
+              ? "My"
+              : null;
+    if (companionComp !== null && !options?.skipCompanion) {
+      try {
+        const compSlab = this.readLineStations(stageId, companionComp, {
+          ...(options?.elementIds ? { elementIds: options.elementIds } : {}),
+          step,
+        });
+        if (compSlab.elementIndex.length > 0) {
+          companionStep = {
+            component: compSlab.component,
+            values: compSlab.values,
+            elementIndex: compSlab.elementIndex,
+            stationNaturalCoord: compSlab.stationNaturalCoord,
+            time: compSlab.time[0] ?? 0,
+            localAxesQuaternion: compSlab.localAxesQuaternion,
+            localAxesZRec: compSlab.localAxesZRec,
+            localAxesSources: compSlab.localAxesSources,
+            elementNodes: compSlab.elementNodes ?? null,
+          };
+        }
+      } catch {
+        companionStep = null;
+      }
+    }
     return {
       component: slab.component,
       values: slab.values,
@@ -759,6 +814,7 @@ export class LadrunoFile {
       localAxesZRec: slab.localAxesZRec,
       localAxesSources: slab.localAxesSources,
       elementNodes: slab.elementNodes ?? null,
+      ...(companionStep !== undefined ? { companionStep } : {}),
     };
   }
 
@@ -1394,7 +1450,7 @@ export class LadrunoFile {
     ndm: number | null,
     modelElements: LGroup | null,
     filterIds: Float64Array | null,
-    step: number | undefined,
+    sliceRange: readonly [number, number] | undefined,
     nStepsTotal: number,
     warningsOut?: string[],
   ): { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] | null {
@@ -1408,7 +1464,7 @@ export class LadrunoFile {
     const stations = this.sectionStations(parsed.blocks, component, bucketKey, token, ndm, modelElements);
     if (stations === null) return null;
     if (stations.warning !== null) warningsOut?.push(stations.warning);
-    return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, stations.cols, stations.xi, null, step, nStepsTotal);
+    return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, stations.cols, stations.xi, null, sliceRange, nStepsTotal);
   }
 
   private readElementBucketStations(
@@ -1420,7 +1476,7 @@ export class LadrunoFile {
     ndm: number | null,
     filterIds: Float64Array | null,
     sectionServed: Float64Array,
-    step: number | undefined,
+    sliceRange: readonly [number, number] | undefined,
     nStepsTotal: number,
     warningsOut?: string[],
   ): { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] | null {
@@ -1465,12 +1521,10 @@ export class LadrunoFile {
     }
     const nSt = stations.length;
     const cols = stations.map((st) => stationToCol.get(st)!);
-    // One element-level value is constant along the beam, and two are its end values (xi -1 and +1);
-    // more than two have no recorded positions, so evenly spaced is a guess and says so.
     const xi = evenlySpacedXi(nSt);
     if (nSt > 2) warningsOut?.push(`${token} bucket ${JSON.stringify(bucketKey)}: ${JSON.stringify(component)} has ${nSt} element-level stations [${stations.join(", ")}] and the file records no position for them, so they are drawn evenly spaced along the beam (xi = linspace(-1, 1)).`);
     const signs = (rank === 1 || rank === 2) && nSt === 2 ? (LOCAL_FORCE_STATION_SIGNS[component] ?? null) : null;
-    return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, cols, xi, signs, step, nStepsTotal);
+    return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, cols, xi, signs, sliceRange, nStepsTotal);
   }
 
   private sliceElementStationColumns(
@@ -1481,14 +1535,14 @@ export class LadrunoFile {
     cols: readonly number[],
     xi: Float64Array,
     signs: readonly [number, number] | null,
-    step: number | undefined,
+    sliceRange: readonly [number, number] | undefined,
     nStepsTotal: number,
   ): { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] {
     const nSt = cols.length;
-    const nStepsRead = step !== undefined ? 1 : nStepsTotal;
+    const nStepsRead = sliceRange !== undefined ? sliceRange[1] - sliceRange[0] : nStepsTotal;
     const raw =
-      step !== undefined
-        ? toFloat64(dataDs.slice([[step, step + 1], [], []]), dataDs.path)
+      sliceRange !== undefined
+        ? toFloat64(dataDs.slice([[sliceRange[0], sliceRange[1]], [], []]), dataDs.path)
         : toFloat64(dataDs.value, dataDs.path);
     const elemStride = width;
     const stepStride = nElementsInBucket * width;

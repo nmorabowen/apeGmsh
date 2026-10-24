@@ -16,6 +16,8 @@ import {
   lineDiagramClimOf,
   lineDiagramKeysOf,
   projectHoverNeedle,
+  stateObjectDigest,
+  visibleLineDigest,
   type BeamDiagramSpan3D,
 } from "../state/lineDiagram.ts";
 import { deformView, resultsPairing } from "../state/selectors.ts";
@@ -111,8 +113,13 @@ export class LineDiagramLayer {
   private lastVisibleLineMap: Int32Array | undefined = undefined;
   private lastBeams: readonly BeamDiagramSpan3D[] = [];
   private lastEffectiveScale = 0;
+  private lastStepKey: string | null = null;
+  private lastClim: readonly [number, number] | null = null;
+  private lastViewDirKey = "";
   private appliedKey: string | null = null;
   private appliedHoverKey: string | null = null;
+  private cameraDirty = false;
+  private cameraRafId: ReturnType<typeof setTimeout> | number | null = null;
 
   constructor(camera: THREE.Camera | null = null) {
     this.camera = camera;
@@ -156,6 +163,16 @@ export class LineDiagramLayer {
 
   setTheme(mode: ThemeMode): void {
     this.theme = mode;
+  }
+
+  private cancelPendingCameraFrame(): void {
+    if (this.cameraRafId === null) return;
+    if (typeof globalThis.cancelAnimationFrame === "function" && typeof this.cameraRafId === "number") {
+      globalThis.cancelAnimationFrame(this.cameraRafId);
+    } else {
+      clearTimeout(this.cameraRafId as ReturnType<typeof setTimeout>);
+    }
+    this.cameraRafId = null;
   }
 
   private getViewDir(): [number, number, number] {
@@ -266,6 +283,8 @@ export class LineDiagramLayer {
     forceCamera = false,
     visibleLineMap?: Int32Array,
   ): boolean {
+    this.cancelPendingCameraFrame();
+    this.cameraDirty = false;
     this.lastState = s;
     this.lastBlobs = blobs;
     this.lastStep = step;
@@ -287,6 +306,8 @@ export class LineDiagramLayer {
       this.root.visible = false;
       this.hoverNeedle.visible = false;
       this.lastBeams = [];
+      this.lastStepKey = null;
+      this.lastClim = null;
       this.appliedKey = null;
       this.appliedHoverKey = null;
       return wasVisible;
@@ -298,6 +319,8 @@ export class LineDiagramLayer {
       this.root.visible = false;
       this.hoverNeedle.visible = false;
       this.lastBeams = [];
+      this.lastStepKey = null;
+      this.lastClim = null;
       this.appliedKey = null;
       this.appliedHoverKey = null;
       return wasVisible;
@@ -359,32 +382,59 @@ export class LineDiagramLayer {
       if (!deformApplied) {
         const wasVisible = this.root.visible;
         this.root.visible = false;
+        this.hoverNeedle.visible = false;
+        this.lastBeams = [];
+        this.lastStepKey = null;
+        this.lastClim = null;
         this.appliedKey = null;
+        this.appliedHoverKey = null;
         return wasVisible;
       }
     }
 
+    const lineElementArr = blobs.i32(s.mesh.lineElement);
+    const visibleIndices =
+      visibleLineMap ??
+      visibleMaps(
+        s.mesh.legend,
+        s.visibility.hidden,
+        blobs.i32(s.mesh.lineGroup),
+        blobs.i32(s.mesh.triGroup),
+        elementMaskOf(s, s.mesh, blobs),
+      ).lineMap;
+    const visDigest = visibleLineDigest(visibleIndices, lineElementArr.length);
+
     const viewDir = this.getViewDir();
+    const viewDirStr = `${viewDir[0].toFixed(5)},${viewDir[1].toFixed(5)},${viewDir[2].toFixed(5)}`;
+    const viewKey = s.lineDiagram.plane === "screen" ? viewDirStr : s.lineDiagram.plane;
     const clim = lineDiagramClimOf(s);
-    const viewKey =
-      s.lineDiagram.plane === "screen"
-        ? `${viewDir[0].toFixed(5)},${viewDir[1].toFixed(5)},${viewDir[2].toFixed(5)}`
-        : s.lineDiagram.plane;
-    const nextKey = [
+    const climTuple: readonly [number, number] | null =
+      clim.mode !== "step" && clim.min !== null && clim.max !== null ? [clim.min, clim.max] : null;
+    const climKey =
+      clim.mode === "step"
+        ? "step-auto"
+        : climTuple
+          ? `${climTuple[0]}|${climTuple[1]}`
+          : "null|null";
+    const defsKey = `defs:${stateObjectDigest(s.decls, s.definitions, s.sequence)}`;
+
+    const nextKeyPrefix = [
       step.key,
+      `st:${s.phase.at.stage}`,
+      `t:${step.step.time}`,
       s.mesh.linePositions.id,
-      s.visibility.hidden.join(","),
+      visDigest,
+      defsKey,
       s.selection.decls.join(","),
       viewKey,
       s.lineDiagram.scale,
       s.lineDiagram.cmap,
       s.lineDiagram.fill ? "fill" : "nofill",
       String(s.lineDiagram.flipSign),
-      String(clim.min),
-      String(clim.max),
       deformKey,
       this.theme,
     ].join("|");
+    const nextKey = `${nextKeyPrefix}|${climKey}`;
     const hoverKey = this.hoverKeyOf(s);
 
     if (!forceCamera && this.root.visible && this.appliedKey === nextKey) {
@@ -396,23 +446,15 @@ export class LineDiagramLayer {
       return true;
     }
 
-    const visibleIndices =
-      visibleLineMap ??
-      visibleMaps(
-        s.mesh.legend,
-        s.visibility.hidden,
-        blobs.i32(s.mesh.lineGroup),
-        blobs.i32(s.mesh.triGroup),
-        elementMaskOf(s, s.mesh, blobs),
-      ).lineMap;
-
-    const climTuple: readonly [number, number] | null =
-      clim.min !== null && clim.max !== null ? [clim.min, clim.max] : null;
-
     const geom = buildLineDiagram3D({
       decls: s.decls,
+      definitions: s.definitions,
+      sequence: s.sequence,
+      resultsStage: s.results.stages[s.phase.at.stage] ?? null,
+      stageIndex: s.phase.at.stage,
+      stepTime: step.step.time,
       meshElements: s.mesh.elements,
-      lineElement: blobs.i32(s.mesh.lineElement),
+      lineElement: lineElementArr,
       drawnLinePositions,
       lineNodes: blobs.get(s.mesh.vertexNodes.line) as Float64Array,
       visibleLineMap: visibleIndices,
@@ -436,12 +478,17 @@ export class LineDiagramLayer {
       this.hoverNeedle.visible = false;
       this.lastBeams = [];
       this.lastEffectiveScale = 0;
+      this.lastStepKey = null;
+      this.lastClim = null;
       this.appliedKey = null;
       this.appliedHoverKey = null;
       return wasVisible;
     }
     this.lastBeams = geom.beams;
     this.lastEffectiveScale = geom.effectiveScale;
+    this.lastStepKey = step.key;
+    this.lastClim = geom.clim;
+    this.lastViewDirKey = viewDirStr;
 
     const ribbonColors = buildTriLinearColors(
       geom.triColors,
@@ -504,13 +551,53 @@ export class LineDiagramLayer {
     }
   }
 
+  /**
+   * Mark the screen-plane extrusion dirty on camera orbit and schedule at most
+   * one geometry rebuild per animation frame (`flushCameraChange`).
+   */
   onCameraChange(): boolean {
     if (!this.root.visible || !this.lastState || !this.lastBlobs || !this.lastStep) return false;
     if (this.lastState.lineDiagram.plane !== "screen") return false;
-    return this.sync(this.lastState, this.lastBlobs, this.lastStep, this.lastDeform, true, this.lastVisibleLineMap);
+    const viewDir = this.getViewDir();
+    const viewDirStr = `${viewDir[0].toFixed(5)},${viewDir[1].toFixed(5)},${viewDir[2].toFixed(5)}`;
+    if (viewDirStr === this.lastViewDirKey) {
+      this.cancelPendingCameraFrame();
+      this.cameraDirty = false;
+      return false;
+    }
+    this.cameraDirty = true;
+    if (this.cameraRafId === null) {
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        this.cameraRafId = globalThis.requestAnimationFrame(() => {
+          this.cameraRafId = null;
+          this.flushCameraChange();
+        });
+      } else {
+        this.cameraRafId = setTimeout(() => {
+          this.cameraRafId = null;
+          this.flushCameraChange();
+        }, 16);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Flush a pending screen-plane camera rebuild immediately (called once per
+   * animation frame by `Viewport.renderNow` or the scheduled frame callback).
+   */
+  flushCameraChange(): boolean {
+    this.cancelPendingCameraFrame();
+    if (!this.cameraDirty) return false;
+    this.cameraDirty = false;
+    if (!this.root.visible || !this.lastState || !this.lastBlobs || !this.lastStep) return false;
+    if (this.lastState.lineDiagram.plane !== "screen") return false;
+    return this.sync(this.lastState, this.lastBlobs, this.lastStep, this.lastDeform, false, this.lastVisibleLineMap);
   }
 
   dispose(): void {
+    this.cancelPendingCameraFrame();
+    this.cameraDirty = false;
     this.mesh.geometry.dispose();
     this.profileLines.geometry.dispose();
     this.riserLines.geometry.dispose();

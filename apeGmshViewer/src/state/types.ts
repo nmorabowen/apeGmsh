@@ -613,6 +613,10 @@ export interface LineDiagramBeamSummary {
   xi: readonly number[];
   values: readonly number[];
   autoScale: number;
+  /** Whether the span curve was reconstructed analytically from model loads (`"exact"`) or station-interpolated (`"interpolated"`). */
+  spanMode?: "exact" | "interpolated";
+  /** Fallback reason when `spanMode === "interpolated"` (`null` when `"exact"`). */
+  spanReason?: string | null;
 }
 
 export interface LineDiagramHoverReadout {

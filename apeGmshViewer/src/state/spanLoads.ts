@@ -14,7 +14,7 @@
 import { ELEMENT_SYNTAX } from "../chain/signatures.ts";
 import type { Param } from "../model/types.ts";
 import type { LadrunoLineStationStep, LadrunoProvenance, LineStationComponent } from "../reader/ladruno.ts";
-import { joinLadrunoElements, type LadrunoElementJoin } from "./lineDiagram.ts";
+import type { ResultsPairing } from "./results.ts";
 import type {
   AnalysisDef,
   Decl,
@@ -30,6 +30,78 @@ import type {
   State,
   Table,
 } from "./types.ts";
+
+export type LadrunoElementJoin =
+  | {
+      ok: true;
+      space: "ops_tag" | "fem";
+      /** Map from `.ladruno` element ID to `DeclPath` in `s.decls`. */
+      byLadrunoId: Map<number, DeclPath>;
+      /** Inverse map from `DeclPath` to `.ladruno` element ID. */
+      byDeclPath: Map<DeclPath, number>;
+    }
+  | {
+      ok: false;
+      reason: string;
+    };
+
+export function joinLadrunoElements(
+  decls: Readonly<Record<DeclPath, Decl>>,
+  pairing: ResultsPairing,
+  provenance?: LadrunoProvenance | string | null,
+): LadrunoElementJoin {
+  if (pairing.state !== "paired") {
+    return { ok: false, reason: `results are not paired with the model (${pairing.state})` };
+  }
+  const isFemSpace =
+    typeof provenance === "string"
+      ? provenance === "fem"
+      : provenance?.state === "present" &&
+        provenance.attrs.element_index_space?.state === "present" &&
+        provenance.attrs.element_index_space.value === "fem";
+
+  if (pairing.by === "fem_hash") {
+    if (!isFemSpace) {
+      return {
+        ok: false,
+        reason:
+          'paired by fem_hash only and INFO/PROVENANCE@element_index_space is not "fem": .ladruno element IDs are OpenSees tags and cannot be joined without /opensees/element_meta',
+      };
+    }
+    const byLadrunoId = new Map<number, DeclPath>();
+    const byDeclPath = new Map<DeclPath, number>();
+    for (const [path, d] of Object.entries(decls)) {
+      if (d.kind === "element" && d.element?.femId !== null && d.element?.femId !== undefined) {
+        byLadrunoId.set(d.element.femId, path);
+        byDeclPath.set(path, d.element.femId);
+      }
+    }
+    return { ok: true, space: "fem", byLadrunoId, byDeclPath };
+  }
+
+  if (isFemSpace) {
+    const byLadrunoId = new Map<number, DeclPath>();
+    const byDeclPath = new Map<DeclPath, number>();
+    for (const [path, d] of Object.entries(decls)) {
+      if (d.kind === "element" && d.element?.femId !== null && d.element?.femId !== undefined) {
+        byLadrunoId.set(d.element.femId, path);
+        byDeclPath.set(path, d.element.femId);
+      }
+    }
+    return { ok: true, space: "fem", byLadrunoId, byDeclPath };
+  }
+
+  const byLadrunoId = new Map<number, DeclPath>();
+  const byDeclPath = new Map<DeclPath, number>();
+  for (const [path, d] of Object.entries(decls)) {
+    if (d.kind !== "element" || !d.element) continue;
+    for (const m of d.element.metas) {
+      byLadrunoId.set(m.tag, path);
+      if (!byDeclPath.has(path)) byDeclPath.set(path, m.tag);
+    }
+  }
+  return { ok: true, space: "ops_tag", byLadrunoId, byDeclPath };
+}
 
 /** The 6 internal-force components supported by exact span equilibrium reconstruction. */
 export type BeamForceComponent = "N" | "Vy" | "Vz" | "T" | "My" | "Mz";
@@ -342,8 +414,6 @@ export function parseEleLoadRow(tokens: readonly (string | number)[], ndm: 2 | 3
       aL = vals[2]!;
       bL = vals[3]!;
     } else if (vals.length === 6) {
-      // Canonical h5-schema.md / pattern.py / _beam_diagrams.py order:
-      // (wya, wxa, aL, bL, wyb, wxb)
       wya = vals[0]!;
       wxa = vals[1]!;
       aL = vals[2]!;
@@ -373,11 +443,6 @@ export function parseEleLoadRow(tokens: readonly (string | number)[], ndm: 2 | 3
       aL = vals[3]!;
       bL = vals[4]!;
     } else if (vals.length === 8) {
-      // Canonical h5-schema.md / pattern.py / _beam_diagrams.py order has
-      // (wya, wza, wxa, aL, bL, wyb, wzb, wxb) with aL, bL at indices [3, 4].
-      // Raw OpenSees Tcl C++ command order has (Wya, Wzb, aL, bL, Wyb, Wza, Wxa, Wxb)
-      // with aL, bL at indices [2, 3]. Detect if [3, 4] is not a valid [aL, bL]
-      // interval in [0, 1] while [2, 3] is.
       const canonicalValid = 0.0 <= vals[3]! && vals[3]! < vals[4]! && vals[4]! <= 1.0;
       const tclCppValid = 0.0 <= vals[2]! && vals[2]! < vals[3]! && vals[3]! <= 1.0;
       if (!canonicalValid && tclCppValid) {
@@ -409,12 +474,7 @@ export function parseEleLoadRow(tokens: readonly (string | number)[], ndm: 2 | 3
       };
     }
   } else {
-    return {
-      kind: "unsupported_load",
-      loadType,
-      eleTags,
-      reason: `ndm must be 2 or 3, got ${String(ndm)}`,
-    };
+    return { kind: "unsupported_load", loadType, eleTags, reason: `ndm must be 2 or 3, got ${String(ndm)}` };
   }
 
   if (!(0.0 <= aL && aL < bL && bL <= 1.0)) {
@@ -426,12 +486,7 @@ export function parseEleLoadRow(tokens: readonly (string | number)[], ndm: 2 | 3
     };
   }
 
-  return {
-    kind: "beamUniform",
-    eleTags,
-    load: { aL, bL, wya, wyb, wza, wzb, wxa, wxb },
-    tokenOrder,
-  };
+  return { kind: "beamUniform", eleTags, load: { aL, bL, wya, wyb, wza, wzb, wxa, wxb }, tokenOrder };
 }
 
 /**
@@ -444,9 +499,7 @@ export function parseEleLoadBeamUniform(
   ndm: 2 | 3,
 ): { eleTags: number[]; load: BeamSpanSegmentLoad; tokenOrder: "canonical" | "tcl_cpp_3d8" } {
   const res = parseEleLoadRow(tokens, ndm);
-  if (res.kind !== "beamUniform") {
-    throw new RangeError(res.reason);
-  }
+  if (res.kind !== "beamUniform") throw new RangeError(res.reason);
   return { eleTags: res.eleTags, load: res.load, tokenOrder: res.tokenOrder };
 }
 
@@ -510,23 +563,13 @@ function interpolatePathSeries(
   }
   const tFirst = knotsT[0]!;
   const tLast = knotsT[n - 1]!;
-  const span = Math.max(1.0, Math.abs(tLast - tFirst));
-  const eps = 1e-12 * span;
+  const eps = 1e-12 * Math.max(1.0, Math.abs(tLast - tFirst));
 
-  if (time < tFirst - eps) {
-    return { ok: true, factor: 0.0 };
-  }
-  if (time <= tFirst + eps) {
-    return { ok: true, factor: factor * knotsV[0]! };
-  }
-  if (time > tLast + eps) {
-    return { ok: true, factor: useLast ? factor * knotsV[n - 1]! : 0.0 };
-  }
-  if (time >= tLast - eps) {
-    return { ok: true, factor: factor * knotsV[n - 1]! };
-  }
+  if (time < tFirst - eps) return { ok: true, factor: 0.0 };
+  if (time <= tFirst + eps) return { ok: true, factor: factor * knotsV[0]! };
+  if (time > tLast + eps) return { ok: true, factor: useLast ? factor * knotsV[n - 1]! : 0.0 };
+  if (time >= tLast - eps) return { ok: true, factor: factor * knotsV[n - 1]! };
 
-  // Binary search for segment [knotsT[k], knotsT[k + 1]] containing `time`
   let lo = 0;
   let hi = n - 1;
   while (hi - lo > 1) {
@@ -538,8 +581,7 @@ function interpolatePathSeries(
   const t1 = knotsT[hi]!;
   const v0 = knotsV[lo]!;
   const v1 = knotsV[hi]!;
-  const alpha = (time - t0) / (t1 - t0);
-  return { ok: true, factor: factor * (v0 + alpha * (v1 - v0)) };
+  return { ok: true, factor: factor * (v0 + ((time - t0) / (t1 - t0)) * (v1 - v0)) };
 }
 
 function evalTrigSeries(
@@ -559,52 +601,35 @@ function evalTrigSeries(
   }
   const ratio = zeroShift === 0.0 ? 0.0 : zeroShift / factor;
   if (!Number.isFinite(ratio) || !(Math.abs(ratio) <= 1.0)) {
-    return {
-      ok: false,
-      reason: `Trig timeSeries has invalid zero_shift/factor ratio (${String(zeroShift)} / ${String(factor)})`,
-    };
+    return { ok: false, reason: `Trig timeSeries has invalid zero_shift/factor ratio (${String(zeroShift)} / ${String(factor)})` };
   }
   const eps = 1e-12 * Math.max(1.0, Math.abs(tFinish - tStart));
-  if (time < tStart - eps || time > tFinish + eps) {
-    return { ok: true, factor: 0.0 };
-  }
+  if (time < tStart - eps || time > tFinish + eps) return { ok: true, factor: 0.0 };
   const clampedT = Math.min(Math.max(time, tStart), tFinish);
-  // Matches OpenSees TrigSeries.cpp::getFactor and src/panels/windows/plot/series.ts:
-  // phi = shift - (period / (2*pi)) * asin(zeroShift / factor)
-  // factor(t) = factor * sin(2*pi*(t - tStart)/period + phi) + zeroShift
   const phi = shift - (period / (2.0 * Math.PI)) * Math.asin(ratio);
-  return {
-    ok: true,
-    factor: factor * Math.sin(((2.0 * Math.PI * (clampedT - tStart)) / period) + phi) + zeroShift,
-  };
+  return { ok: true, factor: factor * Math.sin(((2.0 * Math.PI * (clampedT - tStart)) / period) + phi) + zeroShift };
 }
 
 function evalTimeSeriesFromDeclParams(rec: DeclParams, tables: Readonly<Record<string, Table>> | undefined, time: number): TimeSeriesEvalResult {
   const type = rec.type;
   const p = rec.params;
-
-  if (type === "Constant") {
-    const factor = asFiniteNumber(p["factor"]) ?? 1.0;
-    return { ok: true, factor };
-  }
-
+  if (type === "Constant") return { ok: true, factor: asFiniteNumber(p["factor"]) ?? 1.0 };
   if (type === "Linear") {
     const factor = asFiniteNumber(p["factor"]) ?? 1.0;
     const tStart = asFiniteNumber(p["t_start"] ?? p["tStart"]) ?? 0.0;
-    if (time < tStart - 1e-12) return { ok: true, factor: 0.0 };
-    return { ok: true, factor: factor * time };
+    return { ok: true, factor: time < tStart - 1e-12 ? 0.0 : factor * time };
   }
-
   if (type === "Trig" || type === "Sine") {
-    const tStart = asFiniteNumber(p["t_start"] ?? p["tStart"]);
-    const tFinish = asFiniteNumber(p["t_end"] ?? p["tEnd"] ?? p["t_finish"] ?? p["tFinish"]);
-    const period = asFiniteNumber(p["period"]);
-    const factor = asFiniteNumber(p["factor"]) ?? 1.0;
-    const shift = asFiniteNumber(p["shift"]) ?? 0.0;
-    const zeroShift = asFiniteNumber(p["zero_shift"] ?? p["zeroShift"]) ?? 0.0;
-    return evalTrigSeries(time, tStart, tFinish, period, factor, shift, zeroShift);
+    return evalTrigSeries(
+      time,
+      asFiniteNumber(p["t_start"] ?? p["tStart"]),
+      asFiniteNumber(p["t_end"] ?? p["tEnd"] ?? p["t_finish"] ?? p["tFinish"]),
+      asFiniteNumber(p["period"]),
+      asFiniteNumber(p["factor"]) ?? 1.0,
+      asFiniteNumber(p["shift"]) ?? 0.0,
+      asFiniteNumber(p["zero_shift"] ?? p["zeroShift"]) ?? 0.0,
+    );
   }
-
   if (type === "Path") {
     const filePath = p["file"] ?? p["file_path"] ?? p["filePath"];
     const fileTime = p["file_time"] ?? p["fileTime"];
@@ -626,15 +651,12 @@ function evalTimeSeriesFromDeclParams(rec: DeclParams, tables: Readonly<Record<s
     const dt = asFiniteNumber(p["dt"]);
 
     if (explicitTime !== null) {
-      if (prependZero) {
-        return { ok: false, reason: "Path timeSeries cannot combine prepend_zero with an explicit time vector" };
-      }
+      if (prependZero) return { ok: false, reason: "Path timeSeries cannot combine prepend_zero with an explicit time vector" };
       if (explicitTime.length !== values.length) {
         return { ok: false, reason: `Path timeSeries time (${explicitTime.length}) and values (${values.length}) lengths differ` };
       }
       return interpolatePathSeries(time, explicitTime, values, factor, useLast);
     }
-
     if (dt === null || !(dt > 0)) {
       return { ok: false, reason: `Path timeSeries requires a positive dt or explicit time vector, got dt=${String(dt)}` };
     }
@@ -642,14 +664,12 @@ function evalTimeSeriesFromDeclParams(rec: DeclParams, tables: Readonly<Record<s
     const knotsT = knotsV.map((_, i) => startTime + i * dt);
     return interpolatePathSeries(time, knotsT, knotsV, factor, useLast);
   }
-
   return { ok: false, reason: `unsupported timeSeries type '${type}'` };
 }
 
 function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEvalResult {
   const type = ts.type;
   const params = ts.params;
-
   const findFlagNumber = (flag: string): number | null => {
     const idx = params.indexOf(flag);
     if (idx >= 0 && idx + 1 < params.length) {
@@ -662,47 +682,32 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
   if (type === "Constant") {
     const byFlag = findFlagNumber("-factor");
     if (byFlag !== null) return { ok: true, factor: byFlag };
-    if (params.length > 0 && typeof params[0] === "number" && Number.isFinite(params[0])) {
-      return { ok: true, factor: params[0] };
-    }
+    if (params.length > 0 && typeof params[0] === "number" && Number.isFinite(params[0])) return { ok: true, factor: params[0] };
     return { ok: true, factor: 1.0 };
   }
-
   if (type === "Linear") {
     const byFlag = findFlagNumber("-factor");
     const tStart = findFlagNumber("-tStart") ?? 0.0;
-    const factor =
-      byFlag !== null
-        ? byFlag
-        : params.length > 0 && typeof params[0] === "number" && Number.isFinite(params[0])
-          ? params[0]
-          : 1.0;
-    if (time < tStart - 1e-12) return { ok: true, factor: 0.0 };
-    return { ok: true, factor: factor * time };
+    const factor = byFlag ?? (params.length > 0 && typeof params[0] === "number" && Number.isFinite(params[0]) ? params[0] : 1.0);
+    return { ok: true, factor: time < tStart - 1e-12 ? 0.0 : factor * time };
   }
-
   if (type === "Trig" || type === "Sine") {
     if (params.length < 3) {
       return { ok: false, reason: "Trig timeSeries has fewer than 3 positional parameters (tStart, tFinish, period)" };
     }
-    const tStart = asFiniteNumber(params[0]);
-    const tFinish = asFiniteNumber(params[1]);
-    const period = asFiniteNumber(params[2]);
-    const factor = findFlagNumber("-factor") ?? asFiniteNumber(ts.attrs["factor"]) ?? 1.0;
-    const shift = findFlagNumber("-shift") ?? asFiniteNumber(ts.attrs["shift"]) ?? 0.0;
-    const zeroShift =
-      findFlagNumber("-zeroShift") ??
-      asFiniteNumber(ts.attrs["zero_shift"] ?? ts.attrs["zeroShift"]) ??
-      0.0;
-    return evalTrigSeries(time, tStart, tFinish, period, factor, shift, zeroShift);
+    return evalTrigSeries(
+      time,
+      asFiniteNumber(params[0]),
+      asFiniteNumber(params[1]),
+      asFiniteNumber(params[2]),
+      findFlagNumber("-factor") ?? asFiniteNumber(ts.attrs["factor"]) ?? 1.0,
+      findFlagNumber("-shift") ?? asFiniteNumber(ts.attrs["shift"]) ?? 0.0,
+      findFlagNumber("-zeroShift") ?? asFiniteNumber(ts.attrs["zero_shift"] ?? ts.attrs["zeroShift"]) ?? 0.0,
+    );
   }
-
   if (type === "Path") {
-    if (params.includes("-filePath") || params.includes("-fileTime")) {
-      const tableVals = flattenTableNumbers(ts.tables["values"]);
-      if (!tableVals) {
-        return { ok: false, reason: "Path timeSeries uses external -filePath/-fileTime without archived table values" };
-      }
+    if ((params.includes("-filePath") || params.includes("-fileTime")) && !flattenTableNumbers(ts.tables["values"])) {
+      return { ok: false, reason: "Path timeSeries uses external -filePath/-fileTime without archived table values" };
     }
     const readNumberRunAfterFlag = (flag: string): number[] | null => {
       const idx = params.indexOf(flag);
@@ -717,18 +722,9 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
       }
       return out.length > 0 ? out : null;
     };
-
-    const values =
-      flattenTableNumbers(ts.tables["values"]) ??
-      asFiniteNumberArray(ts.attrs["values"]) ??
-      readNumberRunAfterFlag("-values");
-    if (!values || values.length === 0) {
-      return { ok: false, reason: "Path timeSeries has no inline or archived values" };
-    }
-    const explicitTime =
-      flattenTableNumbers(ts.tables["time"]) ??
-      asFiniteNumberArray(ts.attrs["time"]) ??
-      readNumberRunAfterFlag("-time");
+    const values = flattenTableNumbers(ts.tables["values"]) ?? asFiniteNumberArray(ts.attrs["values"]) ?? readNumberRunAfterFlag("-values");
+    if (!values || values.length === 0) return { ok: false, reason: "Path timeSeries has no inline or archived values" };
+    const explicitTime = flattenTableNumbers(ts.tables["time"]) ?? asFiniteNumberArray(ts.attrs["time"]) ?? readNumberRunAfterFlag("-time");
     const dt = findFlagNumber("-dt") ?? asFiniteNumber(ts.attrs["dt"]);
     const factor = findFlagNumber("-factor") ?? asFiniteNumber(ts.attrs["factor"]) ?? 1.0;
     const startTime = findFlagNumber("-startTime") ?? asFiniteNumber(ts.attrs["start_time"] ?? ts.attrs["startTime"]) ?? 0.0;
@@ -736,15 +732,12 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
     const prependZero = params.includes("-prependZero") || ts.attrs["prepend_zero"] === 1 || ts.attrs["prepend_zero"] === "true";
 
     if (explicitTime !== null) {
-      if (prependZero) {
-        return { ok: false, reason: "Path timeSeries cannot combine -prependZero with an explicit -time vector" };
-      }
+      if (prependZero) return { ok: false, reason: "Path timeSeries cannot combine -prependZero with an explicit -time vector" };
       if (explicitTime.length !== values.length) {
         return { ok: false, reason: `Path timeSeries time (${explicitTime.length}) and values (${values.length}) lengths differ` };
       }
       return interpolatePathSeries(time, explicitTime, values, factor, useLast);
     }
-
     if (dt === null || !(dt > 0)) {
       return { ok: false, reason: `Path timeSeries requires a positive -dt or explicit -time vector, got dt=${String(dt)}` };
     }
@@ -752,49 +745,30 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
     const knotsT = knotsV.map((_, i) => startTime + i * dt);
     return interpolatePathSeries(time, knotsT, knotsV, factor, useLast);
   }
-
   return { ok: false, reason: `unsupported timeSeries type '${type}'` };
 }
 
-/** Find a `DeclRecord` in `Definitions.decls` by allocator kind and integer tag. */
 function findDeclRecordByTag(defs: Definitions | null | undefined, kind: string, tag: number | null): DeclRecord | null {
   if (!defs?.decls || tag === null) return null;
   const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
   return run ? (defs.decls.records[run.decl] ?? null) : null;
 }
 
-const PRIMITIVE_TIME_SERIES_TYPES: ReadonlySet<string> = new Set([
-  "Constant",
-  "Linear",
-  "Trig",
-  "Sine",
-  "Path",
-]);
+const PRIMITIVE_TIME_SERIES_TYPES: ReadonlySet<string> = new Set(["Constant", "Linear", "Trig", "Sine", "Path"]);
 
-/**
- * Evaluate an OpenSees `timeSeries` at pseudo-time / step time `time`.
- * Accepts a `DefObject` (from `Definitions.timeSeries`), a `DeclParams` record
- * (from `Definitions.decls`), or both (via `Definitions`).
- */
+/** Evaluate an OpenSees `timeSeries` at pseudo-time / step time `time`. */
 export function evaluateTimeSeriesFactor(
   ts: DefObject | DeclParams,
   time: number,
   defs?: Definitions | null,
 ): TimeSeriesEvalResult {
-  if (!Number.isFinite(time)) {
-    return { ok: false, reason: `step time is non-finite (${String(time)})` };
-  }
+  if (!Number.isFinite(time)) return { ok: false, reason: `step time is non-finite (${String(time)})` };
   if ("groupName" in ts) {
     const declRec = findDeclRecordByTag(defs, "timeSeries", ts.tag);
     const declParams = declRec?.params[0];
     if (declParams) {
       const fromDecl = evalTimeSeriesFromDeclParams(declParams, ts.tables, time);
-      if (fromDecl.ok) return fromDecl;
-      // Only fall back to the low-level DefObject when declParams is a generator
-      // (e.g. peer_ngawest2) rather than a primitive whose validation failed.
-      if (PRIMITIVE_TIME_SERIES_TYPES.has(declParams.type)) {
-        return fromDecl;
-      }
+      if (fromDecl.ok || PRIMITIVE_TIME_SERIES_TYPES.has(declParams.type)) return fromDecl;
     }
     return evalTimeSeriesFromDefObject(ts, time);
   }
@@ -803,14 +777,7 @@ export function evaluateTimeSeriesFactor(
 
 // -- 3. Exact analytical integration & zero-shear root finding ----------------
 
-/**
- * Analytical single integral
- *
- *   I_1(x) = \int_0^x w(s) ds
- *
- * for a trapezoidal segment load on `[x_a, x_b] = [aL * L, bL * L]` with
- * linear variation from `wa` at `x_a` to `wb` at `x_b`.
- */
+/** Analytical single integral `I_1(x) = \int_0^x w(s) ds` for a trapezoidal segment load on `[aL * L, bL * L]`. */
 export function integrateSegmentLoadSingle(
   x: number,
   length: number,
@@ -828,13 +795,7 @@ export function integrateSegmentLoadSingle(
   return wa * xiEnd + 0.5 * slope * xiEnd * xiEnd;
 }
 
-/**
- * Analytical double integral
- *
- *   I_2(x) = \int_0^x \int_0^s w(u) du ds = \int_{x_a}^{\min(x, x_b)} (x - u) w(u) du
- *
- * for a trapezoidal segment load on `[x_a, x_b] = [aL * L, bL * L]`.
- */
+/** Analytical double integral `I_2(x) = \int_0^x \int_0^s w(u) du ds` for a trapezoidal segment load on `[aL * L, bL * L]`. */
 export function integrateSegmentLoadDouble(
   x: number,
   length: number,
@@ -881,20 +842,12 @@ function dedupeSortedCoords(coords: readonly number[], length: number, tolScale 
   const out: number[] = [sorted[0]!];
   for (let i = 1; i < sorted.length; i++) {
     const v = sorted[i]!;
-    if (v - out[out.length - 1]! > tol) {
-      out.push(v);
-    }
+    if (v - out[out.length - 1]! > tol) out.push(v);
   }
   return out;
 }
 
-/**
- * Find interior points `x \in (0, L)` where `V(x) = V0 + sign * \sum \int_0^x w(s) ds = 0`.
- * On each sub-interval between load breakpoints, `w(x)` is linear so `V(x)` is
- * at most quadratic; roots are solved analytically using the numerically stable
- * Citardauq quadratic formula and polished with 2 Newton steps (matching
- * `_beam_diagrams.py::_find_zero_shear_roots`).
- */
+/** Find interior points `x \in (0, L)` where `V(x) = V0 + sign * \sum \int_0^x w(s) ds = 0`. */
 export function findZeroShearRoots(
   V0: number,
   length: number,
@@ -903,9 +856,7 @@ export function findZeroShearRoots(
   sign: 1 | -1,
 ): number[] {
   const rawBp: number[] = [0.0, length];
-  for (const ld of loads) {
-    rawBp.push(ld.aL * length, ld.bL * length);
-  }
+  for (const ld of loads) rawBp.push(ld.aL * length, ld.bL * length);
   const bp = dedupeSortedCoords(rawBp, length);
   const roots: number[] = [];
   const epsX = 1e-11 * Math.max(1.0, length);
@@ -920,18 +871,14 @@ export function findZeroShearRoots(
     const vm = evalShearScalar(xm, V0, length, loads, component, sign);
     const v1 = evalShearScalar(x1, V0, length, loads, component, sign);
 
-    // Quadratic coefficients in s = x - x0 \in [0, h]: V(x0 + s) = c + b*s + a*s^2
     const c = v0;
     const a = (2.0 * (v0 - 2.0 * vm + v1)) / (h * h);
     const b = (v1 - v0 - a * h * h) / h;
-
     const scaleV = Math.max(1.0, Math.abs(v0), Math.abs(vm), Math.abs(v1));
     const candidates: number[] = [];
 
     if (Math.abs(a) * h * h <= 1e-12 * scaleV) {
-      if (Math.abs(b) * h > 1e-14 * scaleV) {
-        candidates.push(-c / b);
-      }
+      if (Math.abs(b) * h > 1e-14 * scaleV) candidates.push(-c / b);
     } else {
       const disc = b * b - 4.0 * a * c;
       if (disc >= 0.0) {
@@ -953,9 +900,7 @@ export function findZeroShearRoots(
             if (xNew >= x0 && xNew <= x1) xr = xNew;
           }
         }
-        if (xr > epsX && xr < length - epsX) {
-          roots.push(xr);
-        }
+        if (xr > epsX && xr < length - epsX) roots.push(xr);
       }
     }
   }
@@ -965,22 +910,16 @@ export function findZeroShearRoots(
 export interface ReconstructBeamElementDiagramOptions {
   readonly elementId?: number;
   readonly length: number;
-  /** Section forces at `x = 0` (`xi = -1`), already in `.ladruno` `LOCAL_FORCE_STATION_SIGNS` convention. */
   readonly endForcesI?: BeamSectionEndForcesI;
-  /** Optional raw OpenSees nodal end reactions at node `i` (if `endForcesI` is not provided). */
   readonly nodalReactionsI?: BeamNodalReactionsI;
-  /** Scaled `-beamUniform` segment loads acting on this element. */
   readonly loads?: readonly BeamSpanSegmentLoad[];
-  /** Number of subdivisions per critical interval (default `16`). */
   readonly nSub?: number;
-  /** Optional extra natural coordinates `xi \in [-1, 1]` to preserve in the output grid. */
   readonly extraXi?: ArrayLike<number>;
 }
 
 /**
  * Reconstruct exact internal force diagrams `(N, Vy, Vz, T, My, Mz)` along a
- * 1-D beam element from node-`i` section forces and scaled `-beamUniform` loads
- * (`src/apeGmsh/results/_beam_diagrams.py::reconstruct_beam_element_diagram`).
+ * 1-D beam element from node-`i` section forces and scaled `-beamUniform` loads.
  */
 export function reconstructBeamElementDiagram(opts: ReconstructBeamElementDiagramOptions): BeamSpanDiagram {
   const L = opts.length;
@@ -1018,11 +957,7 @@ export function reconstructBeamElementDiagram(opts: ReconstructBeamElementDiagra
 
   const loads = opts.loads ?? [];
   for (const ld of loads) {
-    if (
-      !Number.isFinite(ld.aL) ||
-      !Number.isFinite(ld.bL) ||
-      !(0.0 <= ld.aL && ld.aL < ld.bL && ld.bL <= 1.0)
-    ) {
+    if (!Number.isFinite(ld.aL) || !Number.isFinite(ld.bL) || !(0.0 <= ld.aL && ld.aL < ld.bL && ld.bL <= 1.0)) {
       throw new RangeError(`invalid segment load bounds aL=${ld.aL}, bL=${ld.bL}`);
     }
     if (
@@ -1038,10 +973,7 @@ export function reconstructBeamElementDiagram(opts: ReconstructBeamElementDiagra
   }
 
   const rawCrit: number[] = [0.0, L];
-  for (const ld of loads) {
-    rawCrit.push(ld.aL * L, ld.bL * L);
-  }
-  // Exact zero-shear roots (stationary points of Mz and My)
+  for (const ld of loads) rawCrit.push(ld.aL * L, ld.bL * L);
   for (const r of findZeroShearRoots(secI.Vy0, L, loads, "y", +1)) rawCrit.push(r);
   for (const r of findZeroShearRoots(secI.Vz0, L, loads, "z", -1)) rawCrit.push(r);
 
@@ -1060,12 +992,9 @@ export function reconstructBeamElementDiagram(opts: ReconstructBeamElementDiagra
     const c0 = crit[k]!;
     const c1 = crit[k + 1]!;
     const limit = k + 2 < crit.length ? nSub : nSub + 1;
-    for (let j = 0; j < limit; j++) {
-      denseRaw.push(c0 + ((c1 - c0) * j) / nSub);
-    }
+    for (let j = 0; j < limit; j++) denseRaw.push(c0 + ((c1 - c0) * j) / nSub);
   }
   const xCoords = dedupeSortedCoords(denseRaw, L, 1e-12);
-  // Guarantee exact endpoints
   if (xCoords.length === 0) {
     xCoords.push(0.0, L);
   } else {
@@ -1110,26 +1039,16 @@ export function reconstructBeamElementDiagram(opts: ReconstructBeamElementDiagra
     My[i] = secI.My0 + secI.Vz0 * xv - iintWz;
   }
 
-  return {
-    elementId: opts.elementId ?? 0,
-    length: L,
-    xi,
-    x,
-    N,
-    Vy,
-    Vz,
-    T,
-    My,
-    Mz,
-  };
+  return { elementId: opts.elementId ?? 0, length: L, xi, x, N, Vy, Vz, T, My, Mz };
 }
+
+/** Alias for `reconstructBeamElementDiagram` used by `buildLineDiagram3D` / E2b callers. */
+export const reconstructElementSpanDiagram = reconstructBeamElementDiagram;
 
 // -- 4. Node-`j` equilibrium closure check ------------------------------------
 
 export interface BeamClosureCheckOptions {
-  /** Relative tolerance (default `1e-4`). */
   readonly rtol?: number;
-  /** Absolute tolerance (default `1e-5`). */
   readonly atol?: number;
 }
 
@@ -1145,15 +1064,7 @@ export type BeamClosureCheckResult =
       readonly reason: string;
     };
 
-/**
- * Verify that the reconstructed right-end (`x = L`, `xi = +1`) section forces
- * match the recorded `.ladruno` station forces at `xi = +1`.
- *
- * A mismatch indicates unarchived span loads (e.g. `-beamPoint`, `-beamThermal`,
- * `-selfWeight`), a nonlinear `PDelta` / `Corotational` geometric moment
- * difference, or an untracked `loadConst` load history, and triggers a clean
- * fallback to station interpolation.
- */
+/** Verify that reconstructed right-end (`x = L`, `xi = +1`) section forces match recorded `.ladruno` station forces. */
 export function checkBeamSpanClosure(
   diagram: BeamSpanDiagram,
   endForcesJ: BeamSectionEndForcesJ,
@@ -1208,65 +1119,48 @@ export function checkBeamSpanClosure(
 
 // -- 5. Resolving transform, active patterns, and span loads from `State` -----
 
-function candidateElementTransfTags(elementDecl: Decl): number[] {
+function candidateElementFamilyTags(elementDecl: Decl, family: string): number[] {
   const out: number[] = [];
   for (const m of elementDecl.element?.metas ?? []) {
     const decoder = ELEMENT_SYNTAX[m.type];
-    if (decoder) {
-      const dec = decoder(m.args as Param[]);
-      if (!("reason" in dec)) {
-        for (const s of dec.slots) {
-          if (s.family === "geomTransf") {
-            const tag = m.args[s.slot];
-            if (typeof tag === "number" && Number.isInteger(tag)) out.push(tag);
-          }
-        }
+    if (!decoder) continue;
+    const dec = decoder(m.args as Param[]);
+    if ("reason" in dec) continue;
+    for (const s of dec.slots) {
+      if (s.family === family) {
+        const tag = m.args[s.slot];
+        if (typeof tag === "number" && Number.isInteger(tag)) out.push(tag);
       }
     }
   }
   return out;
 }
 
-/**
- * Resolve the OpenSees `geomTransf` type (`"Linear" | "PDelta" | "Corotational"`)
- * for a 1-D element `Decl`. Returns `null` when no transform can be uniquely
- * resolved (e.g. a truss element or unlinked transform).
- */
+/** Resolve the OpenSees `geomTransf` type (`"Linear" | "PDelta" | "Corotational"`) for a 1-D element `Decl`. */
 export function resolveElementGeomTransfType(
   decls: Readonly<Record<DeclPath, Decl>>,
   elementDecl: Decl,
   defs?: Definitions | null,
 ): string | null {
   const transfPath = elementDecl.refs["transfTag"];
-  if (transfPath && decls[transfPath]?.kind === "geomTransf") {
-    return decls[transfPath]!.type;
-  }
-  const tags = candidateElementTransfTags(elementDecl);
+  if (transfPath && decls[transfPath]?.kind === "geomTransf") return decls[transfPath]!.type;
+  const tags = candidateElementFamilyTags(elementDecl, "geomTransf");
   if (tags.length === 0) return null;
 
   const matchedTypes = new Set<string>();
   for (const d of Object.values(decls)) {
     if (d.kind !== "geomTransf") continue;
-    if (d.tag !== null && tags.includes(d.tag)) {
-      matchedTypes.add(d.type);
-      continue;
-    }
-    if (d.vecxz?.some((p) => tags.includes(p.tag))) {
+    if ((d.tag !== null && tags.includes(d.tag)) || d.vecxz?.some((p) => tags.includes(p.tag))) {
       matchedTypes.add(d.type);
     }
   }
-  if (matchedTypes.size === 1) {
-    return [...matchedTypes][0]!;
-  }
+  if (matchedTypes.size === 1) return [...matchedTypes][0]!;
   if (defs?.decls) {
     for (const tag of tags) {
-      const rec = findDeclRecordByTag(defs, "geomTransf", tag);
-      const t = rec?.params[0]?.type;
+      const t = findDeclRecordByTag(defs, "geomTransf", tag)?.params[0]?.type;
       if (t) matchedTypes.add(t);
     }
-    if (matchedTypes.size === 1) {
-      return [...matchedTypes][0]!;
-    }
+    if (matchedTypes.size === 1) return [...matchedTypes][0]!;
   }
   return null;
 }
@@ -1278,61 +1172,28 @@ const INTERIOR_ONLY_BEAM_INTEGRATIONS: ReadonlySet<string> = new Set([
   "Chebyshev",
 ]);
 
-function candidateElementIntegrationTags(elementDecl: Decl): number[] {
-  const out: number[] = [];
-  for (const m of elementDecl.element?.metas ?? []) {
-    const decoder = ELEMENT_SYNTAX[m.type];
-    if (decoder) {
-      const dec = decoder(m.args as Param[]);
-      if (!("reason" in dec)) {
-        for (const s of dec.slots) {
-          if (s.family === "beamIntegration") {
-            const tag = m.args[s.slot];
-            if (typeof tag === "number" && Number.isInteger(tag)) out.push(tag);
-          }
-        }
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * Resolve the OpenSees `beamIntegration` type (`"Lobatto" | "Legendre" | ...`)
- * for a 1-D beam-column `Decl` (`forceBeamColumn`, `dispBeamColumn`). Returns
- * `null` when the element does not reference a `beamIntegration` (e.g.
- * `elasticBeamColumn`).
- */
+/** Resolve the OpenSees `beamIntegration` type (`"Lobatto" | "Legendre" | ...`) for a 1-D beam-column `Decl`. */
 export function resolveElementBeamIntegrationType(
   decls: Readonly<Record<DeclPath, Decl>>,
   elementDecl: Decl,
   defs?: Definitions | null,
 ): string | null {
   const intPath = elementDecl.refs["integrationTag"];
-  if (intPath && decls[intPath]?.kind === "beamIntegration") {
-    return decls[intPath]!.type;
-  }
-  const tags = candidateElementIntegrationTags(elementDecl);
+  if (intPath && decls[intPath]?.kind === "beamIntegration") return decls[intPath]!.type;
+  const tags = candidateElementFamilyTags(elementDecl, "beamIntegration");
   if (tags.length === 0) return null;
 
   const matchedTypes = new Set<string>();
   for (const d of Object.values(decls)) {
-    if (d.kind === "beamIntegration" && d.tag !== null && tags.includes(d.tag)) {
-      matchedTypes.add(d.type);
-    }
+    if (d.kind === "beamIntegration" && d.tag !== null && tags.includes(d.tag)) matchedTypes.add(d.type);
   }
-  if (matchedTypes.size === 1) {
-    return [...matchedTypes][0]!;
-  }
+  if (matchedTypes.size === 1) return [...matchedTypes][0]!;
   if (defs?.decls) {
     for (const tag of tags) {
-      const rec = findDeclRecordByTag(defs, "beamIntegration", tag);
-      const t = rec?.params[0]?.type;
+      const t = findDeclRecordByTag(defs, "beamIntegration", tag)?.params[0]?.type;
       if (t) matchedTypes.add(t);
     }
-    if (matchedTypes.size === 1) {
-      return [...matchedTypes][0]!;
-    }
+    if (matchedTypes.size === 1) return [...matchedTypes][0]!;
   }
   return null;
 }
@@ -1340,9 +1201,7 @@ export function resolveElementBeamIntegrationType(
 function resolvePatternFactor(pattern: DefObject, defs: Definitions | null | undefined): number {
   const declRec = findDeclRecordByTag(defs, "pattern", pattern.tag);
   const p = declRec?.params[0]?.params;
-  if (p && typeof p["factor"] === "number" && Number.isFinite(p["factor"])) {
-    return p["factor"];
-  }
+  if (p && typeof p["factor"] === "number" && Number.isFinite(p["factor"])) return p["factor"];
   const idx = pattern.params.indexOf("-factor");
   if (idx >= 0 && idx + 1 < pattern.params.length) {
     const v = Number(pattern.params[idx + 1]);
@@ -1366,12 +1225,7 @@ function resolvePatternTimeSeries(
   const declRec = findDeclRecordByTag(defs, "pattern", pattern.tag);
   const seriesVal: DeclValue | undefined =
     declRec?.params[0]?.params["series"] ?? declRec?.params[0]?.params["time_series"];
-  if (
-    typeof seriesVal === "object" &&
-    seriesVal !== null &&
-    !Array.isArray(seriesVal) &&
-    typeof seriesVal["$decl"] === "string"
-  ) {
+  if (typeof seriesVal === "object" && seriesVal !== null && !Array.isArray(seriesVal) && typeof seriesVal["$decl"] === "string") {
     const key = seriesVal["$decl"];
     const tsDecl = defs.decls?.records.find((r) => r.key === key);
     if (tsDecl) {
@@ -1390,18 +1244,13 @@ function resolvePatternTimeSeries(
     const tsDecl = findDeclRecordByTag(defs, "timeSeries", tsTag);
     if (tsDecl?.params[0]) return { ok: true, series: tsDecl.params[0] };
   }
-  return {
-    ok: false,
-    reason: `pattern '${pattern.groupName}' (tag ${String(pattern.tag)}) has no resolvable timeSeries`,
-  };
+  return { ok: false, reason: `pattern '${pattern.groupName}' (tag ${String(pattern.tag)}) has no resolvable timeSeries` };
 }
 
 export type ResolvedStageSpanLoads =
   | {
       readonly ok: true;
-      /** Scaled `-beamUniform` segment loads per OpenSees element tag at `time`. */
       readonly loadsByElementTag: Map<number, BeamSpanSegmentLoad[]>;
-      /** Per-element refusal reason when an element carries a non-`-beamUniform` load (`-beamPoint`, `-beamThermal`, etc.). */
       readonly unsupportedByElementTag: Map<number, string>;
     }
   | {
@@ -1413,37 +1262,20 @@ export interface ResolveStageSpanLoadsOptions {
   readonly definitions: Definitions | null | undefined;
   readonly sequence?: SequenceZone | null;
   readonly ndm: 2 | 3 | null | undefined | SpatialNdm;
-  /** Results stage metadata or stage index (default `0`). */
   readonly resultsStage?: Pick<ResultsStage, "id" | "name" | "kind"> | null;
   readonly stageIndex?: number;
-  /** Analysis step pseudo-time `TIME` at which to evaluate `\lambda(t)`. */
   readonly time: number;
 }
 
-/**
- * Resolve all active patterns and their scaled `-beamUniform` element loads at
- * step `time` for a results stage, verifying the stage/analysis preconditions
- * from Slice E1/E2:
- * 1. `ndm` is `2` or `3`.
- * 2. Results stage is `"static"` (not `"transient"` or `"mode"`), and the
- *    archived analysis chain uses `Static` analysis with `LoadControl`.
- * 3. No unarchived `loadConst` / `set_time` / pattern-removal ambiguity exists
- *    across stages.
- * 4. Every pattern that applies element loads has a computable `\lambda(t)` at
- *    `time`.
- */
+/** Resolve all active patterns and their scaled `-beamUniform` element loads at step `time` for a results stage. */
 export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): ResolvedStageSpanLoads {
   const defs = opts.definitions;
-  if (!defs) {
-    return { ok: false, reason: "model has no /opensees definitions" };
-  }
+  if (!defs) return { ok: false, reason: "model has no /opensees definitions" };
   const ndm = unwrapSpatialNdm(opts.ndm);
   if (ndm !== 2 && ndm !== 3) {
     return { ok: false, reason: `model spatial dimension ndm must be 2 or 3, got ${String(ndm)}` };
   }
-  if (!Number.isFinite(opts.time)) {
-    return { ok: false, reason: `step time is non-finite (${String(opts.time)})` };
-  }
+  if (!Number.isFinite(opts.time)) return { ok: false, reason: `step time is non-finite (${String(opts.time)})` };
   if (opts.resultsStage && opts.resultsStage.kind !== "static") {
     return {
       ok: false,
@@ -1451,10 +1283,7 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
     };
   }
   if (defs.program?.["loadConst"] !== undefined) {
-    return {
-      ok: false,
-      reason: "model program invokes 'loadConst' with unarchived freeze time",
-    };
+    return { ok: false, reason: "model program invokes 'loadConst' with unarchived freeze time" };
   }
 
   let activeAnalysis: AnalysisDef | null = defs.analysis;
@@ -1486,10 +1315,6 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
       };
     }
 
-    // In apeSees, every stage boundary closes with `loadConst -time 0.0`.
-    // At stage resolvedIdx > 0, any root-level pattern in `defs.patterns` with
-    // `element_loads` whose timeSeries is not `Constant` was latched at an
-    // unarchived end-of-stage freeze time.
     if (resolvedIdx > 0) {
       for (const rootPat of defs.patterns) {
         const rootRows = extractElementLoadRows(rootPat.tables["element_loads"]);
@@ -1502,7 +1327,6 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
       }
     }
 
-    // Check prior and current stages for loadConst / set_time / pattern history ambiguity
     for (let sIdx = 0; sIdx <= resolvedIdx; sIdx++) {
       const st = defs.stages[sIdx]!;
       if (
@@ -1512,10 +1336,7 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
         st.other.includes("load_const") ||
         st.other.includes("loadConst")
       ) {
-        return {
-          ok: false,
-          reason: `stage '${st.name}' invokes loadConst without archived freeze time`,
-        };
+        return { ok: false, reason: `stage '${st.name}' invokes loadConst without archived freeze time` };
       }
       if (st.attrs["set_time"] !== undefined) {
         return {
@@ -1539,7 +1360,6 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
     activeAnalysis = stage.analysis ?? defs.analysis;
   }
 
-  // Check /sequence changes for pattern removal if /sequence is ready
   if (opts.sequence?.status === "ready") {
     const changes = opts.sequence.changes;
     const opIdx = changes.columns.indexOf("op");
@@ -1547,30 +1367,20 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
     if (opIdx >= 0 && whatIdx >= 0) {
       for (const row of changes.rows) {
         if (row[opIdx] === "remove" && row[whatIdx] === "pattern") {
-          return {
-            ok: false,
-            reason: "/sequence records a 'remove pattern' operation; active pattern history is ambiguous",
-          };
+          return { ok: false, reason: "/sequence records a 'remove pattern' operation; active pattern history is ambiguous" };
         }
       }
     }
   }
 
-  // Verify Static + LoadControl analysis chain when analysis attributes are present
   if (activeAnalysis) {
     const analysisType = activeAnalysis.attrs["analysis"];
     if (typeof analysisType === "string" && analysisType !== "" && analysisType !== "Static") {
-      return {
-        ok: false,
-        reason: `analysis type is '${analysisType}' (exact span reconstruction requires 'Static')`,
-      };
+      return { ok: false, reason: `analysis type is '${analysisType}' (exact span reconstruction requires 'Static')` };
     }
     const integrator = activeAnalysis.attrs["integrator"];
     if (typeof integrator === "string" && integrator !== "" && integrator !== "LoadControl") {
-      return {
-        ok: false,
-        reason: `analysis integrator is '${integrator}' (exact span reconstruction requires 'LoadControl')`,
-      };
+      return { ok: false, reason: `analysis integrator is '${integrator}' (exact span reconstruction requires 'LoadControl')` };
     }
   }
 
@@ -1580,23 +1390,14 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
   for (const pat of activePatterns) {
     const rows = extractElementLoadRows(pat.tables["element_loads"]);
     if (rows.length === 0) {
-      // Pattern has no element_loads (e.g. nodal load pattern or synthesised hold pattern).
       if (pat.type !== "Plain") {
-        return {
-          ok: false,
-          reason: `active pattern '${pat.groupName}' has type '${pat.type}' (requires 'Plain')`,
-        };
+        return { ok: false, reason: `active pattern '${pat.groupName}' has type '${pat.type}' (requires 'Plain')` };
       }
       continue;
     }
-
     if (pat.type !== "Plain") {
-      return {
-        ok: false,
-        reason: `pattern '${pat.groupName}' with element_loads has type '${pat.type}' (requires 'Plain')`,
-      };
+      return { ok: false, reason: `pattern '${pat.groupName}' with element_loads has type '${pat.type}' (requires 'Plain')` };
     }
-
     const tsRes = resolvePatternTimeSeries(pat, defs);
     if (!tsRes.ok) return tsRes;
     const factorRes = evaluateTimeSeriesFactor(tsRes.series, opts.time, defs);
@@ -1611,13 +1412,9 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
     for (const row of rows) {
       const parsed = parseEleLoadRow(row, ndm);
       if (parsed.kind === "unsupported_load") {
-        if (parsed.eleTags.length === 0) {
-          return { ok: false, reason: parsed.reason };
-        }
+        if (parsed.eleTags.length === 0) return { ok: false, reason: parsed.reason };
         for (const tag of parsed.eleTags) {
-          if (!unsupportedByElementTag.has(tag)) {
-            unsupportedByElementTag.set(tag, parsed.reason);
-          }
+          if (!unsupportedByElementTag.has(tag)) unsupportedByElementTag.set(tag, parsed.reason);
         }
         continue;
       }
@@ -1641,7 +1438,6 @@ export type ElementSpanDiagramReconstruction =
       readonly elementId: number;
       readonly decl: DeclPath | null;
       readonly diagram: BeamSpanDiagram;
-      /** Extracted `xi` in `[-1, +1]` and `values` for the requested `component`. */
       readonly xi: Float64Array;
       readonly values: Float64Array;
     }
@@ -1650,7 +1446,6 @@ export type ElementSpanDiagramReconstruction =
       readonly elementId: number;
       readonly decl: DeclPath | null;
       readonly reason: string;
-      /** Original recorded station `xi` and `values` from `.ladruno` (for fallback linear interpolation). */
       readonly xi: Float64Array;
       readonly values: Float64Array;
     };
@@ -1668,9 +1463,7 @@ function extractElementStations(
   step: LadrunoLineStationStep | undefined,
   elementId: number,
 ): { xi: Float64Array; values: Float64Array } {
-  if (!step) {
-    return { xi: new Float64Array(0), values: new Float64Array(0) };
-  }
+  if (!step) return { xi: new Float64Array(0), values: new Float64Array(0) };
   const pairs: { xi: number; val: number }[] = [];
   let needsSort = false;
   let allFiniteXi = true;
@@ -1679,15 +1472,11 @@ function extractElementStations(
       const xVal = step.stationNaturalCoord[i]!;
       const vVal = step.values[i]!;
       if (!Number.isFinite(xVal)) allFiniteXi = false;
-      if (pairs.length > 0 && xVal < pairs[pairs.length - 1]!.xi) {
-        needsSort = true;
-      }
+      if (pairs.length > 0 && xVal < pairs[pairs.length - 1]!.xi) needsSort = true;
       pairs.push({ xi: xVal, val: vVal });
     }
   }
-  if (needsSort && allFiniteXi) {
-    pairs.sort((a, b) => a.xi - b.xi);
-  }
+  if (needsSort && allFiniteXi) pairs.sort((a, b) => a.xi - b.xi);
   const xi = new Float64Array(pairs.length);
   const values = new Float64Array(pairs.length);
   for (let i = 0; i < pairs.length; i++) {
@@ -1703,22 +1492,12 @@ function findElementEndStations(
   endTol = 1e-3,
 ): { ok: true; vI: number; vJ: number; xi: Float64Array; values: Float64Array } | { ok: false; reason: string; xi: Float64Array; values: Float64Array } {
   if (!step) {
-    return {
-      ok: false,
-      reason: "component step data is not available",
-      xi: new Float64Array(0),
-      values: new Float64Array(0),
-    };
+    return { ok: false, reason: "component step data is not available", xi: new Float64Array(0), values: new Float64Array(0) };
   }
   const { xi, values } = extractElementStations(step, elementId);
   const count = xi.length;
   if (count === 0) {
-    return {
-      ok: false,
-      reason: `element ${elementId} is not present in .ladruno step data`,
-      xi,
-      values,
-    };
+    return { ok: false, reason: `element ${elementId} is not present in .ladruno step data`, xi, values };
   }
   if (count < 2) {
     return {
@@ -1730,12 +1509,7 @@ function findElementEndStations(
   }
   for (let k = 0; k < count; k++) {
     if (!Number.isFinite(xi[k]!) || !Number.isFinite(values[k]!)) {
-      return {
-        ok: false,
-        reason: `element ${elementId} station coordinates or values are non-finite`,
-        xi,
-        values,
-      };
+      return { ok: false, reason: `element ${elementId} station coordinates or values are non-finite`, xi, values };
     }
   }
   const xiFirst = xi[0]!;
@@ -1748,18 +1522,13 @@ function findElementEndStations(
       values,
     };
   }
-  const vI = values[0]!;
-  const vJ = values[count - 1]!;
-  return { ok: true, vI, vJ, xi, values };
+  return { ok: true, vI: values[0]!, vJ: values[count - 1]!, xi, values };
 }
 
 export interface ReconstructStepSpanDiagramsOptions {
   readonly component: LineStationComponent;
-  /** `.ladruno` step data for `component`, plus any companion `section_force` components (`Vy` for `Mz`, `Vz` for `My`). */
   readonly stepByComponent: Readonly<Partial<Record<LineStationComponent, LadrunoLineStationStep>>>;
-  /** Element lengths by `.ladruno` `elementId`. */
   readonly elementLengths: ReadonlyMap<number, number>;
-  /** Element declaration join (`joinLadrunoElements`), or `null` if unpaired. */
   readonly join?: LadrunoElementJoin | null;
   readonly decls?: Readonly<Record<DeclPath, Decl>>;
   readonly definitions?: Definitions | null;
@@ -1768,7 +1537,6 @@ export interface ReconstructStepSpanDiagramsOptions {
   readonly resultsStage?: Pick<ResultsStage, "id" | "name" | "kind"> | null;
   readonly stageIndex?: number;
   readonly time: number;
-  /** Subdivisions per critical interval (default `16`). */
   readonly nSub?: number;
   readonly closureTolerance?: BeamClosureCheckOptions;
 }
@@ -1776,22 +1544,6 @@ export interface ReconstructStepSpanDiagramsOptions {
 /**
  * Reconstruct exact or fallback-interpolated span diagrams for every element in
  * `stepByComponent[component]` at analysis `time`.
- *
- * Preconditions enforced (falling back to `{ mode: "interpolated", reason }`
- * whenever any precondition or equilibrium closure check fails):
- * 1. `component` is a `section_force` component (`N, Vy, Vz, T, My, Mz`);
- *    `section_deformation` components (`eps, gammaY, gammaZ, theta, kappaY, kappaZ`)
- *    always use recorded station interpolation.
- * 2. Model and results are paired (`join.ok === true`) so `.ladruno` element IDs
- *    map to OpenSees element tags and `geomTransf` declarations.
- * 3. Active stage / analysis / pattern / timeSeries preconditions hold
- *    (`resolveStageSpanLoads`).
- * 4. Every load acting on the element is `-beamUniform` (no `-beamPoint`,
- *    `-beamThermal`, `-selfWeight`, etc.).
- * 5. The element's `geomTransf` is `"Linear"` or `"PDelta"` (not `"Corotational"`).
- * 6. The element has recorded end stations at `xi = -1` and `xi = +1` (plus
- *    companion shear `Vy` for `Mz` or `Vz` for `My`), and passes the node-`j`
- *    equilibrium closure check (`checkBeamSpanClosure`).
  */
 export function reconstructSpanDiagramsForStep(
   opts: ReconstructStepSpanDiagramsOptions,
@@ -1815,6 +1567,12 @@ export function reconstructSpanDiagramsForStep(
         reason: `component '${opts.component}' is a section_deformation quantity (exact equilibrium integration applies to section_force only)`,
       };
 
+  const companionStep = primaryStep.companionStep ?? undefined;
+  const stepVy = opts.stepByComponent.Vy ?? (companionStep?.component === "Vy" ? companionStep : undefined);
+  const stepVz = opts.stepByComponent.Vz ?? (companionStep?.component === "Vz" ? companionStep : undefined);
+  const stepMy = opts.stepByComponent.My ?? (companionStep?.component === "My" ? companionStep : undefined);
+  const stepMz = opts.stepByComponent.Mz ?? (companionStep?.component === "Mz" ? companionStep : undefined);
+
   const seenElementIds = new Set<number>();
   const elementIds: number[] = [];
   for (let i = 0; i < primaryStep.elementIndex.length; i++) {
@@ -1827,74 +1585,36 @@ export function reconstructSpanDiagramsForStep(
 
   for (const elementId of elementIds) {
     const { xi: rawXi, values: rawValues } = extractElementStations(primaryStep, elementId);
-
-    const declPath =
-      opts.join && opts.join.ok ? (opts.join.byLadrunoId.get(elementId) ?? null) : null;
+    const declPath = opts.join && opts.join.ok ? (opts.join.byLadrunoId.get(elementId) ?? null) : null;
+    const setInterpolated = (decl: DeclPath | null, reason: string): void => {
+      out.set(elementId, { mode: "interpolated", elementId, decl, reason, xi: rawXi, values: rawValues });
+    };
 
     if (!isForce) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: stageLoadsRes.ok ? "" : stageLoadsRes.reason,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, stageLoadsRes.ok ? "" : stageLoadsRes.reason);
       continue;
     }
-
     if (!opts.join || !opts.join.ok) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: null,
-        reason: opts.join ? opts.join.reason : "results are not paired with model declarations",
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(null, opts.join ? opts.join.reason : "results are not paired with model declarations");
       continue;
     }
-
     if (!stageLoadsRes.ok) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: stageLoadsRes.reason,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, stageLoadsRes.reason);
       continue;
     }
 
     const elemDecl = declPath && opts.decls ? opts.decls[declPath] : undefined;
     if (!elemDecl) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} has no matching declaration in model.h5`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `element ${elementId} has no matching declaration in model.h5`);
       continue;
     }
 
-    // Resolve OpenSees element tag(s) for this element declaration
     const opsTags = elemDecl.element?.metas.map((m) => m.tag) ?? (opts.join.space === "ops_tag" ? [elementId] : []);
     if (opsTags.length === 0) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} (${declPath}) has no OpenSees element_meta tag`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `element ${elementId} (${declPath}) has no OpenSees element_meta tag`);
       continue;
     }
 
-    // Check if any OpenSees tag for this element has an unsupported load
     let unsupportedReason: string | null = null;
     for (const t of opsTags) {
       const r = stageLoadsRes.unsupportedByElementTag.get(t);
@@ -1904,130 +1624,74 @@ export function reconstructSpanDiagramsForStep(
       }
     }
     if (unsupportedReason !== null) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: unsupportedReason,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, unsupportedReason);
       continue;
     }
 
-    // Check geomTransf precondition: must be Linear or PDelta (not Corotational)
     const transfType = resolveElementGeomTransfType(opts.decls ?? {}, elemDecl, opts.definitions);
     if (!transfType) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} (${declPath}) has no resolved geomTransf`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `element ${elementId} (${declPath}) has no resolved geomTransf`);
       continue;
     }
     if (/^corot/i.test(transfType)) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} uses '${transfType}' geomTransf (large-displacement); exact span reconstruction requires 'Linear' or 'PDelta'`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(
+        declPath,
+        `element ${elementId} uses '${transfType}' geomTransf (large-displacement); exact span reconstruction requires 'Linear' or 'PDelta'`,
+      );
       continue;
     }
     if (transfType !== "Linear" && transfType !== "PDelta") {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} uses unsupported geomTransf '${transfType}' (requires 'Linear' or 'PDelta')`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `element ${elementId} uses unsupported geomTransf '${transfType}' (requires 'Linear' or 'PDelta')`);
       continue;
     }
 
-    // Check beamIntegration precondition: interior-only quadrature rules (Legendre, Radau, MidDistance, Chebyshev)
-    // do not place section integration stations at both element ends xi = -1 and xi = +1 (even when .ladruno
-    // min/max-normalizes QUADRATURE/GP_PARAM to [-1, +1]).
     const integrationType = resolveElementBeamIntegrationType(opts.decls ?? {}, elemDecl, opts.definitions);
     if (integrationType !== null && INTERIOR_ONLY_BEAM_INTEGRATIONS.has(integrationType)) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} uses '${integrationType}' beamIntegration whose section stations do not include element ends xi = -1 and xi = +1`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(
+        declPath,
+        `element ${elementId} uses '${integrationType}' beamIntegration whose section stations do not include element ends xi = -1 and xi = +1`,
+      );
       continue;
     }
 
     const L = opts.elementLengths.get(elementId);
     if (L === undefined || !(L > 0) || !Number.isFinite(L)) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `element ${elementId} has invalid or missing length (${String(L)})`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `element ${elementId} has invalid or missing length (${String(L)})`);
       continue;
     }
 
-    // Gather end stations for the primary component and any available companion force components
     const primaryEnds = findElementEndStations(primaryStep, elementId);
     if (!primaryEnds.ok) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: primaryEnds.reason,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, primaryEnds.reason);
       continue;
     }
 
-    // Bending moments require their companion shear (`Vy` for `Mz`, `Vz` for `My`)
+    const elemTag = opsTags[0]!;
+    const elemLoads = stageLoadsRes.loadsByElementTag.get(elemTag) ?? [];
+
     const nEnds = findElementEndStations(opts.stepByComponent.N, elementId);
-    const vyEnds = findElementEndStations(opts.stepByComponent.Vy, elementId);
-    const vzEnds = findElementEndStations(opts.stepByComponent.Vz, elementId);
+    const vyEnds = findElementEndStations(stepVy, elementId);
+    const vzEnds = findElementEndStations(stepVz, elementId);
     const tEnds = findElementEndStations(opts.stepByComponent.T, elementId);
-    const myEnds = findElementEndStations(opts.stepByComponent.My, elementId);
-    const mzEnds = findElementEndStations(opts.stepByComponent.Mz, elementId);
+    const myEnds = findElementEndStations(stepMy, elementId);
+    const mzEnds = findElementEndStations(stepMz, elementId);
 
     if (opts.component === "Mz" && !vyEnds.ok) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `exact Mz reconstruction on element ${elementId} requires companion shear Vy end stations (${vyEnds.reason})`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `exact Mz reconstruction on element ${elementId} requires companion shear Vy end stations (${vyEnds.reason})`);
       continue;
     }
     if (opts.component === "My" && !vzEnds.ok) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: `exact My reconstruction on element ${elementId} requires companion shear Vz end stations (${vzEnds.reason})`,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, `exact My reconstruction on element ${elementId} requires companion shear Vz end stations (${vzEnds.reason})`);
       continue;
     }
-
-    // Collect scaled `-beamUniform` loads for this element's OpenSees tag
-    const elemTag = opsTags[0]!;
-    const elemLoads = stageLoadsRes.loadsByElementTag.get(elemTag) ?? [];
+    if (opts.component === "Vy" && elemLoads.length > 0 && !mzEnds.ok) {
+      setInterpolated(declPath, `exact Vy reconstruction on loaded element ${elementId} requires companion moment Mz end stations (${mzEnds.reason})`);
+      continue;
+    }
+    if (opts.component === "Vz" && elemLoads.length > 0 && !myEnds.ok) {
+      setInterpolated(declPath, `exact Vz reconstruction on loaded element ${elementId} requires companion moment My end stations (${myEnds.reason})`);
+      continue;
+    }
 
     const endForcesI: BeamSectionEndForcesI = {
       N0: nEnds.ok ? nEnds.vI : 0.0,
@@ -2038,9 +1702,6 @@ export function reconstructSpanDiagramsForStep(
       Mz0: mzEnds.ok ? mzEnds.vI : 0.0,
     };
 
-    // Only check node-j closure on My when companion shear Vz was also provided
-    // (and on Mz when companion shear Vy was also provided), since My(L) depends
-    // on Vz(0) and Mz(L) depends on Vy(0).
     const endForcesJ: BeamSectionEndForcesJ = {
       ...(nEnds.ok ? { NJ: nEnds.vJ } : {}),
       ...(vyEnds.ok ? { VyJ: vyEnds.vJ } : {}),
@@ -2061,14 +1722,7 @@ export function reconstructSpanDiagramsForStep(
 
     const closure = checkBeamSpanClosure(diagram, endForcesJ, opts.closureTolerance);
     if (!closure.ok) {
-      out.set(elementId, {
-        mode: "interpolated",
-        elementId,
-        decl: declPath,
-        reason: closure.reason,
-        xi: rawXi,
-        values: rawValues,
-      });
+      setInterpolated(declPath, closure.reason);
       continue;
     }
 
@@ -2102,10 +1756,7 @@ export interface StateForSpanReconstruction {
   readonly phase: State["phase"];
 }
 
-/**
- * Convenience helper to reconstruct span diagrams directly from a `State`
- * snapshot (or compatible subset) and a map of `.ladruno` step data.
- */
+/** Convenience helper to reconstruct span diagrams directly from a `State` snapshot and a map of `.ladruno` step data. */
 export function reconstructSpanDiagramsFromState(
   state: StateForSpanReconstruction,
   stepByComponent: Readonly<Partial<Record<LineStationComponent, LadrunoLineStationStep>>>,

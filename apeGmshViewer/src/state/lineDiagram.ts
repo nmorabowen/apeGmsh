@@ -15,12 +15,18 @@ import {
   normalizeLineStationComponent,
   quaternionToZRec,
   type LadrunoLineStationStep,
-  type LadrunoProvenance,
   type LineStationComponent,
 } from "../reader/ladruno.ts";
 import { DARK, hexToRgb, themeTokens, type ThemeMode } from "../theme/tokens.ts";
 import { CMAP_NAMES, climOf, rampT, sampleCmap, type Clim } from "./contour.ts";
-import type { ResultsPairing } from "./results.ts";
+import {
+  isBeamForceComponent,
+  joinLadrunoElements,
+  reconstructElementSpanDiagram,
+  reconstructSpanDiagramsForStep,
+  type BeamClosureCheckOptions,
+  type LadrunoElementJoin,
+} from "./spanLoads.ts";
 import type {
   BeamChain,
   BeamChainJoint,
@@ -31,13 +37,25 @@ import type {
   ContourScan,
   Decl,
   DeclPath,
+  Definitions,
   LineDiagramBeamSummary,
   LineDiagramCmap,
   LineDiagramHoverReadout,
   LineDiagramPlane,
   LineDiagramState,
+  ResultsStage,
+  SequenceZone,
   State,
 } from "./types.ts";
+
+export {
+  isBeamForceComponent,
+  joinLadrunoElements,
+  reconstructElementSpanDiagram,
+  reconstructSpanDiagramsForStep,
+  type BeamClosureCheckOptions,
+  type LadrunoElementJoin,
+};
 
 export {
   LINE_STATION_COMPONENTS,
@@ -322,8 +340,21 @@ export function lineDiagramClimOf(s: State): Clim {
   const keys = lineDiagramKeysOf(s);
   const ld = s.lineDiagram;
   if (!keys) return climOf(ld, null, null, "");
-  const measured = ld.stepRange !== null && ld.stepRange.key === keys.step;
-  return climOf(ld, measured ? ld.stepRange : null, ld.scan, keys.scan);
+  const stepRange = ld.stepRange !== null && ld.stepRange.key === keys.step ? ld.stepRange : null;
+  const clim = climOf(ld, stepRange, ld.scan, keys.scan);
+  if (
+    clim.mode === "history" &&
+    stepRange !== null &&
+    clim.min !== null &&
+    clim.max !== null &&
+    stepRange.min !== null &&
+    stepRange.max !== null &&
+    Number.isFinite(stepRange.min) &&
+    Number.isFinite(stepRange.max)
+  ) {
+    return { ...clim, min: Math.min(clim.min, stepRange.min), max: Math.max(clim.max, stepRange.max) };
+  }
+  return clim;
 }
 
 /** Local beam axis (`"y"` or `"z"`) along which `component` is extruded when `plane === "local"`. */
@@ -516,7 +547,7 @@ export function elementTransformVecxzFromState(
   explicitByTag?: ReadonlyMap<number, readonly [number, number, number]>,
 ): [number, number, number] | null {
   const transfTags = candidateElementTransfTags(elementDecl);
-  const transfPath = elementDecl.refs["transfTag"];
+  const transfPath = elementDecl.refs?.["transfTag"];
   if (transfPath) {
     const transfDecl = decls[transfPath];
     if (transfDecl) {
@@ -564,87 +595,6 @@ export function elementTransformVecxzFromState(
   return null;
 }
 
-// -- Element-ID space join (ops_tag / femId -> DeclPath) ----------------------
-
-export type LadrunoElementJoin =
-  | {
-      ok: true;
-      space: "ops_tag" | "fem";
-      /** Map from `.ladruno` element ID to `DeclPath` in `s.decls`. */
-      byLadrunoId: Map<number, DeclPath>;
-      /** Inverse map from `DeclPath` to `.ladruno` element ID. */
-      byDeclPath: Map<DeclPath, number>;
-    }
-  | {
-      ok: false;
-      reason: string;
-    };
-
-/**
- * Join `.ladruno` element IDs to `DeclPath` keys in `decls`:
- * - When paired by `model_hash` (and `/opensees/element_meta` rows exist on
- *   `Decl.element.metas`), joins `.ladruno` `ops_tag` -> `Decl.element.metas[].tag` -> `DeclPath`.
- *   If `INFO/PROVENANCE@element_index_space === "fem"`, also supports direct `femId` join.
- * - When paired by `fem_hash` only, requires `INFO/PROVENANCE@element_index_space === "fem"`
- *   and joins by `Decl.element.femId` -> `mesh/element/<femId>`.
- */
-export function joinLadrunoElements(
-  decls: Readonly<Record<DeclPath, Decl>>,
-  pairing: ResultsPairing,
-  provenance?: LadrunoProvenance | string | null,
-): LadrunoElementJoin {
-  if (pairing.state !== "paired") {
-    return { ok: false, reason: `results are not paired with the model (${pairing.state})` };
-  }
-  const isFemSpace =
-    typeof provenance === "string"
-      ? provenance === "fem"
-      : provenance?.state === "present" && provenance.attrs.element_index_space?.state === "present" && provenance.attrs.element_index_space.value === "fem";
-
-  if (pairing.by === "fem_hash") {
-    if (!isFemSpace) {
-      return {
-        ok: false,
-        reason:
-          'paired by fem_hash only and INFO/PROVENANCE@element_index_space is not "fem": .ladruno element IDs are OpenSees tags and cannot be joined without /opensees/element_meta',
-      };
-    }
-    const byLadrunoId = new Map<number, DeclPath>();
-    const byDeclPath = new Map<DeclPath, number>();
-    for (const [path, d] of Object.entries(decls)) {
-      if (d.kind === "element" && d.element?.femId !== null && d.element?.femId !== undefined) {
-        byLadrunoId.set(d.element.femId, path);
-        byDeclPath.set(path, d.element.femId);
-      }
-    }
-    return { ok: true, space: "fem", byLadrunoId, byDeclPath };
-  }
-
-  // Paired by `model_hash`: if stamped `element_index_space === "fem"`, use femId; otherwise join via `element.metas[].tag`.
-  if (isFemSpace) {
-    const byLadrunoId = new Map<number, DeclPath>();
-    const byDeclPath = new Map<DeclPath, number>();
-    for (const [path, d] of Object.entries(decls)) {
-      if (d.kind === "element" && d.element?.femId !== null && d.element?.femId !== undefined) {
-        byLadrunoId.set(d.element.femId, path);
-        byDeclPath.set(path, d.element.femId);
-      }
-    }
-    return { ok: true, space: "fem", byLadrunoId, byDeclPath };
-  }
-
-  const byLadrunoId = new Map<number, DeclPath>();
-  const byDeclPath = new Map<DeclPath, number>();
-  for (const [path, d] of Object.entries(decls)) {
-    if (d.kind !== "element" || !d.element) continue;
-    for (const m of d.element.metas) {
-      byLadrunoId.set(m.tag, path);
-      if (!byDeclPath.has(path)) byDeclPath.set(path, m.tag);
-    }
-  }
-  return { ok: true, space: "ops_tag", byLadrunoId, byDeclPath };
-}
-
 // -- 3-D Quad-Strip, Profile & Riser Builder ----------------------------------
 
 export type ZRecSource = "step_local_axes" | "model_local_axes" | "model_transform" | "default_vecxz" | "screen";
@@ -669,6 +619,10 @@ export interface BeamDiagramSpan3D {
   xi: Float64Array;
   /** Raw physical values at `xi`. */
   values: Float64Array;
+  /** Whether the span curve was reconstructed analytically (`"exact"`) or station-interpolated (`"interpolated"`). */
+  spanMode?: "exact" | "interpolated";
+  /** Fallback reason when `spanMode === "interpolated"` (`null` when `"exact"`). */
+  spanReason?: string | null;
 }
 
 export interface DiagramLabelAnchor {
@@ -722,11 +676,33 @@ export interface LineDiagram3DGeometry {
   skippedBeamDecls: DeclPath[];
   /** User-facing notice when beams were skipped or nothing could be drawn. */
   notice: string | null;
+  /** Count of drawn beams whose span curve was reconstructed analytically (`spanMode === "exact"`). */
+  exactSpanCount: number;
+  /** Count of drawn beams using station interpolation (`spanMode === "interpolated"`). */
+  interpolatedSpanCount: number;
+  /** Distinct non-empty fallback reasons across station-interpolated beams. */
+  spanReasons: readonly string[];
 }
 
 export interface BuildLineDiagram3DOptions {
   /** Current state (or minimal subset: `decls`, `mesh`, `visibility`, `ndm`). */
   decls: Readonly<Record<DeclPath, Decl>>;
+  /** Optional `/opensees` model definitions used for exact span-load reconstruction (`E2b`). */
+  definitions?: Definitions | null;
+  /** Optional `/sequence` zone used for staged load activation during exact span-load reconstruction (`E2b`). */
+  sequence?: SequenceZone | null;
+  /** Optional active results stage metadata used to match stage index for exact span-load reconstruction (`E2b`). */
+  resultsStage?: Pick<ResultsStage, "id" | "name" | "kind"> | null;
+  /** Optional fallback stage index into `definitions.stages` when `resultsStage` is omitted. */
+  stageIndex?: number;
+  /** Optional step pseudo-time `t` for evaluating time series (defaults to `stepData.time`). */
+  stepTime?: number;
+  /** Optional map of line-station steps by component (`Vy`/`Vz` companion shear for `Mz`/`My`). */
+  stepByComponent?: Readonly<Partial<Record<LineStationComponent, LadrunoLineStationStep>>>;
+  /** Optional closure tolerance overrides for exact span-load reconstruction (`E2b`). */
+  closureTolerance?: BeamClosureCheckOptions;
+  /** Optional number of sample stations per sub-interval for exact span-load reconstruction (`E2b`). */
+  samplesPerSegment?: number;
   /** `MeshInfo.elements` (decl path per drawn primitive). */
   meshElements: readonly DeclPath[];
   /** `lineElement` blob (`Int32Array` index into `meshElements` per drawn line segment). */
@@ -763,6 +739,114 @@ export interface BuildLineDiagram3DOptions {
   cameraViewDir?: readonly [number, number, number];
   clim?: readonly [number, number] | null;
   theme?: ThemeMode;
+}
+
+/**
+ * Deterministic digest of `visibleLineMap` so cache keys in `Effects.syncLineDiagram`,
+ * `LineDiagramLayer.sync`, and `buildLineDiagram3D` reflect `hidden`, `isolate`, and
+ * stage element activation (`elementMaskOf`).
+ */
+export function visibleLineDigest(visibleLineMap: Int32Array | undefined, totalSegments?: number): string {
+  if (!visibleLineMap) return totalSegments !== undefined ? `all:${totalSegments}` : "all";
+  const n = visibleLineMap.length;
+  if (totalSegments !== undefined && n === totalSegments) {
+    let identity = true;
+    for (let i = 0; i < n; i++) {
+      if (visibleLineMap[i] !== i) {
+        identity = false;
+        break;
+      }
+    }
+    if (identity) return `all:${totalSegments}`;
+  }
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < n; i++) {
+    const v = visibleLineMap[i]! | 0;
+    h1 = Math.imul(h1 ^ v, 0x01000193);
+    h2 = Math.imul(h2 ^ (v + i), 0x811c9dc5);
+  }
+  return `${n}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
+}
+
+function arrayDigest(arr: ArrayLike<number> | undefined | null): string {
+  if (!arr) return "null";
+  const n = arr.length;
+  let h1 = 0x811c9dc5 ^ n;
+  let h2 = 0x01000193 ^ n;
+  if (ArrayBuffer.isView(arr) && arr.byteLength >= 4) {
+    const u32 = new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+    const step = u32.length > 16384 ? Math.floor(u32.length / 8192) : 1;
+    for (let i = 0; i < u32.length; i += step) {
+      const v = u32[i]! | 0;
+      h1 = Math.imul(h1 ^ v, 0x01000193);
+      h2 = Math.imul(h2 ^ (v + i), 0x811c9dc5);
+    }
+  } else {
+    for (let i = 0; i < n; i++) {
+      const v = Number(arr[i]) || 0;
+      const bits = Math.imul((v * 1e6) | 0, 2654435761);
+      h1 = Math.imul(h1 ^ bits, 0x01000193);
+      h2 = Math.imul(h2 ^ (bits + i), 0x811c9dc5);
+    }
+  }
+  return `${n}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
+}
+
+const objIds = new WeakMap<object, number>();
+let nextObjId = 1;
+
+export function stateObjectDigest(...objs: readonly (object | null | undefined)[]): string {
+  return objs
+    .map((o) => {
+      if (!o) return "0";
+      let id = objIds.get(o);
+      if (id === undefined) {
+        id = nextObjId++;
+        objIds.set(o, id);
+      }
+      return String(id);
+    })
+    .join(":");
+}
+
+function sameStepByComponent(
+  a: Readonly<Partial<Record<LineStationComponent, LadrunoLineStationStep>>> | undefined,
+  b: Readonly<Partial<Record<LineStationComponent, LadrunoLineStationStep>>> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ka = Object.keys(a) as LineStationComponent[];
+  const kb = Object.keys(b) as LineStationComponent[];
+  return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
+}
+
+interface LineDiagram3DCacheEntry {
+  key: string;
+  decls: Readonly<Record<DeclPath, Decl>>;
+  definitions: Definitions | null;
+  sequence: SequenceZone | null;
+  stepLocalAxesZRec: ReadonlyMap<number, readonly [number, number, number]> | undefined;
+  modelLocalAxesZRec: ReadonlyMap<number, readonly [number, number, number]> | undefined;
+  modelTransformVecxzByTag: ReadonlyMap<number, readonly [number, number, number]> | undefined;
+  elementNodesById: ReadonlyMap<number, readonly [number, number]> | undefined;
+  stepByComponent: Readonly<Partial<Record<LineStationComponent, LadrunoLineStationStep>>> | undefined;
+  autoClim: boolean;
+  geom: LineDiagram3DGeometry;
+}
+
+let lastLineDiagram3DCache: LineDiagram3DCacheEntry | null = null;
+let lineDiagram3DBuildCount = 0;
+
+/** Total number of non-cached `buildLineDiagram3D` geometry builds executed. */
+export function getLineDiagram3DBuildCount(): number {
+  return lineDiagram3DBuildCount;
+}
+
+/** Reset the `buildLineDiagram3D` build counter and memoization cache (for tests). */
+export function resetLineDiagram3DBuildCount(): void {
+  lineDiagram3DBuildCount = 0;
+  lastLineDiagram3DCache = null;
 }
 
 export const SIGN_POS_RGB: readonly [number, number, number] = hexToRgb(DARK.ok);
@@ -820,6 +904,71 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
   const axisChoice = localAxisForComponent(component);
   const needs3dFrame = requires3dFrame(component);
   const is2D = opts.ndm === 2;
+
+  const viewDirKey =
+    plane === "screen" && opts.cameraViewDir
+      ? `${opts.cameraViewDir[0].toFixed(5)},${opts.cameraViewDir[1].toFixed(5)},${opts.cameraViewDir[2].toFixed(5)}`
+      : "local";
+  const cacheKey = [
+    component,
+    opts.stepTime ?? opts.stepData.time,
+    opts.resultsStage?.id ?? "",
+    opts.stageIndex ?? -1,
+    opts.ndm ?? "null",
+    opts.charLength ?? "auto",
+    Boolean(opts.deformed),
+    userScale,
+    flipSign,
+    cmap,
+    plane,
+    viewDirKey,
+    theme,
+    opts.samplesPerSegment ?? 16,
+    opts.closureTolerance?.rtol ?? "def",
+    opts.closureTolerance?.atol ?? "def",
+    opts.join.space,
+    opts.join.byDeclPath.size,
+    opts.meshElements.length,
+    visibleLineDigest(opts.visibleLineMap, opts.lineElement.length),
+    arrayDigest(opts.lineElement),
+    arrayDigest(opts.drawnLinePositions),
+    arrayDigest(opts.lineNodes),
+    arrayDigest(opts.stepData.elementIndex),
+    arrayDigest(opts.stepData.stationNaturalCoord),
+    arrayDigest(opts.stepData.values),
+    arrayDigest(opts.stepData.localAxesZRec),
+    arrayDigest(opts.stepData.localAxesQuaternion),
+    opts.stepData.localAxesSources ? opts.stepData.localAxesSources.join(",") : "null",
+    arrayDigest(opts.stepData.elementNodes),
+    opts.stepData.companionStep?.component ?? "null",
+    arrayDigest(opts.stepData.companionStep?.elementIndex),
+    arrayDigest(opts.stepData.companionStep?.stationNaturalCoord),
+    arrayDigest(opts.stepData.companionStep?.values),
+  ].join("|");
+
+  const cached = lastLineDiagram3DCache;
+  if (
+    cached &&
+    cached.key === cacheKey &&
+    cached.decls === opts.decls &&
+    cached.definitions === (opts.definitions ?? null) &&
+    cached.sequence === (opts.sequence ?? null) &&
+    cached.stepLocalAxesZRec === opts.stepLocalAxesZRec &&
+    cached.modelLocalAxesZRec === opts.modelLocalAxesZRec &&
+    cached.modelTransformVecxzByTag === opts.modelTransformVecxzByTag &&
+    cached.elementNodesById === opts.elementNodesById &&
+    sameStepByComponent(cached.stepByComponent, opts.stepByComponent)
+  ) {
+    const climMatches =
+      opts.clim == null
+        ? cached.autoClim
+        : opts.clim[0] === cached.geom.clim[0] && opts.clim[1] === cached.geom.clim[1];
+    if (climMatches) {
+      return cached.geom;
+    }
+  }
+
+  lineDiagram3DBuildCount++;
 
   // Group station rows in `stepData` by element ID.
   const stationsByEid = new Map<
@@ -915,6 +1064,7 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
   let skippedZeroLengthBeams = 0;
   let skippedOrientationBeams = 0;
   const lengths: number[] = [];
+  const elementLengths = new Map<number, number>();
   let maxAbsVal = 0;
   let minVal = Infinity;
   let maxVal = -Infinity;
@@ -1067,15 +1217,8 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       valArr = Float64Array.from(pairs.map((p) => p.v));
     }
 
-    for (let i = 0; i < valArr.length; i++) {
-      const v = valArr[i]!;
-      const av = Math.abs(v);
-      if (av > maxAbsVal) maxAbsVal = av;
-      if (v < minVal) minVal = v;
-      if (v > maxVal) maxVal = v;
-    }
-
     lengths.push(length);
+    elementLengths.set(eid, length);
     beams.push({
       decl,
       elementId: eid,
@@ -1092,6 +1235,76 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       xi: xiArr,
       values: valArr,
     });
+  }
+
+  // E2b: Exact span-load reconstruction from `/opensees/patterns/*/loads/elements`
+  // when `component` is a force/moment (`N`, `Vy`, `Vz`, `T`, `My`, `Mz`).
+  let exactSpanCount = 0;
+  let interpolatedSpanCount = 0;
+  const spanReasonSet = new Set<string>();
+  if (beams.length > 0) {
+    if (isBeamForceComponent(component) && opts.definitions) {
+      const stepByComp: Partial<Record<LineStationComponent, LadrunoLineStationStep>> = {
+        ...opts.stepByComponent,
+        [component]: opts.stepData,
+      };
+      if (opts.stepData.companionStep && !stepByComp[opts.stepData.companionStep.component]) {
+        stepByComp[opts.stepData.companionStep.component] = opts.stepData.companionStep;
+      }
+      const reconstructions = reconstructSpanDiagramsForStep({
+        component,
+        stepByComponent: stepByComp,
+        elementLengths,
+        join: opts.join,
+        decls: opts.decls,
+        definitions: opts.definitions,
+        sequence: opts.sequence ?? null,
+        ndm: opts.ndm,
+        resultsStage: opts.resultsStage ?? null,
+        stageIndex: opts.stageIndex,
+        time: opts.stepTime ?? opts.stepData.time,
+        nSub: opts.samplesPerSegment,
+        closureTolerance: opts.closureTolerance,
+      });
+      for (const b of beams) {
+        const rec = reconstructions.get(b.elementId);
+        if (rec && rec.mode === "exact") {
+          b.xi = rec.xi;
+          b.values = rec.values;
+          b.spanMode = "exact";
+          b.spanReason = null;
+          exactSpanCount++;
+        } else {
+          const reason = rec && rec.mode === "interpolated" ? rec.reason : "end stations do not span [-1, +1]";
+          b.spanMode = "interpolated";
+          b.spanReason = reason;
+          interpolatedSpanCount++;
+          if (reason) spanReasonSet.add(reason);
+        }
+      }
+    } else {
+      for (const b of beams) {
+        b.spanMode = "interpolated";
+        const reason = !isBeamForceComponent(component)
+          ? `section deformation (${component}) uses recorded stations`
+          : b.xi.length > 2 && b.xi.some((x) => Math.abs(x) < 1 - 1e-3)
+            ? "interior Gauss stations recorded"
+            : "no /opensees load definitions";
+        b.spanReason = reason;
+        interpolatedSpanCount++;
+        spanReasonSet.add(reason);
+      }
+    }
+  }
+
+  for (const b of beams) {
+    for (let i = 0; i < b.values.length; i++) {
+      const v = b.values[i]!;
+      const av = Math.abs(v);
+      if (av > maxAbsVal) maxAbsVal = av;
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
+    }
   }
 
   const clim: [number, number] = opts.clim
@@ -1256,7 +1469,7 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
   }
   const notice = reasons.length > 0 ? reasons.join(" ") : null;
 
-  return {
+  const geom: LineDiagram3DGeometry = {
     component,
     triPositions: new Float32Array(triPos),
     triValues: new Float32Array(triVal),
@@ -1279,7 +1492,26 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
     skippedOrientationMismatchBeams: skippedOrientationBeams,
     skippedBeamDecls,
     notice,
+    exactSpanCount,
+    interpolatedSpanCount,
+    spanReasons: [...spanReasonSet],
   };
+
+  lastLineDiagram3DCache = {
+    key: cacheKey,
+    decls: opts.decls,
+    definitions: opts.definitions ?? null,
+    sequence: opts.sequence ?? null,
+    stepLocalAxesZRec: opts.stepLocalAxesZRec,
+    modelLocalAxesZRec: opts.modelLocalAxesZRec,
+    modelTransformVecxzByTag: opts.modelTransformVecxzByTag,
+    elementNodesById: opts.elementNodesById,
+    stepByComponent: opts.stepByComponent,
+    autoClim: opts.clim == null,
+    geom,
+  };
+
+  return geom;
 }
 
 // -- 3-D Hover Needle Helper --------------------------------------------------
