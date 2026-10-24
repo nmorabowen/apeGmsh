@@ -165,6 +165,8 @@ export function summarizeDrawnBeams(
       xi: Array.from(b.xi, (v) => Number(v)),
       values: Array.from(b.values, (v) => Number(v)),
       autoScale: geom.autoScale,
+      ...(b.spanMode !== undefined ? { spanMode: b.spanMode } : {}),
+      ...(b.spanReason !== undefined ? { spanReason: b.spanReason } : {}),
     });
   }
   return out;

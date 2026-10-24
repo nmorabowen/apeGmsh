@@ -1061,6 +1061,7 @@ export class Viewport {
 
   renderNow(): void {
     const t = performance.now();
+    this.lineDiagram?.flushCameraChange();
     this.clip.beforeRender(this.scene);
     this.renderer.render(this.scene, this.camera);
     if (this.highlight.children.length) this.halo.render(this.scene, this.camera);

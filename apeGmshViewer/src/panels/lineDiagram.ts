@@ -539,6 +539,42 @@ export function renderLineDiagram(
     const titleText = meta ? `${meta.field} · ${meta.key} (${meta.canonical})` : "Line diagram";
     box.append(el("div", "contour-title line-diagram-title", titleText));
 
+    if (ld.drawnBeams.length > 0) {
+      let exactCount = 0;
+      let interpCount = 0;
+      const reasonSet = new Set<string>();
+      for (const b of ld.drawnBeams) {
+        if (b.spanMode === "exact") {
+          exactCount++;
+        } else if (b.spanMode === "interpolated") {
+          interpCount++;
+          if (b.spanReason) reasonSet.add(b.spanReason);
+        }
+      }
+      if (exactCount > 0 || interpCount > 0) {
+        const reasons = [...reasonSet];
+        const reasonSuffix = reasons.length > 0 ? ` (${reasons.join("; ")})` : "";
+        let badgeText: string;
+        let modeCls: string;
+        if (interpCount === 0) {
+          badgeText = `Span: exact (${exactCount} beam${exactCount === 1 ? "" : "s"})`;
+          modeCls = "exact";
+        } else if (exactCount === 0) {
+          badgeText = `Span: interpolated (${interpCount} beam${interpCount === 1 ? "" : "s"})${reasonSuffix}`;
+          modeCls = "interpolated";
+        } else {
+          badgeText = `Span: ${exactCount} exact, ${interpCount} interpolated${reasonSuffix}`;
+          modeCls = "mixed";
+        }
+        const badge = el("div", `legend-note line-diagram-span-badge ${modeCls}`, badgeText);
+        badge.dataset["spanMode"] = modeCls;
+        badge.dataset["exactCount"] = String(exactCount);
+        badge.dataset["interpolatedCount"] = String(interpCount);
+        if (reasons.length > 0) badge.title = reasons.join("; ");
+        box.append(badge);
+      }
+    }
+
     const clim = lineDiagramClimOf(s);
     const ramp = el("div", "contour-ramp line-diagram-ramp");
     ramp.style.backgroundImage = ld.cmap === "sign" ? signRampCss(currentTheme()) : rampCss(ld.cmap);
@@ -633,8 +669,14 @@ export function renderLineDiagram(
 function lineDiagramSignature(s: State): string {
   const st = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined;
   const ld = s.lineDiagram;
+  const drawnBeamsKey = ld.drawnBeams
+    .map((b) => `${b.decl}:${b.elementId}:${b.spanMode ?? ""}:${b.spanReason ?? ""}`)
+    .join("|");
   const chainsKey = ld.chains
-    .map((c) => `${c.spans.map((sp) => `${sp.decl}:${sp.elementId}:${sp.reversed ? 1 : 0}`).join(">")}:${c.totalLength}`)
+    .map(
+      (c) =>
+        `${c.spans.map((sp) => `${sp.decl}:${sp.elementId}:${sp.reversed ? 1 : 0}:${sp.stations.length}`).join(">")}:${c.totalLength}`,
+    )
     .join("|");
   return JSON.stringify([
     st?.lineStations ?? [],
@@ -650,7 +692,7 @@ function lineDiagramSignature(s: State): string {
     ld.stepRange,
     ld.scan,
     ld.notice,
-    ld.drawnBeams.length,
+    drawnBeamsKey,
     chainsKey,
     ld.on ? lineDiagramClimOf(s) : null,
   ]);

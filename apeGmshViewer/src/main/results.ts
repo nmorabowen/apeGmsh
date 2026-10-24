@@ -596,7 +596,9 @@ export class ResultsHost {
 
   /**
    * The line-station history range (.ladruno or verified results.h5): one 1-D beam
-   * line-station component across all steps of `st.id`. Runs inside `scan`.
+   * line-station component across all steps of `st.id`, read in chunks of steps
+   * via hyperslab (`stepRange: [k0, k1)`) so transient stages never allocate the
+   * full `nSteps × nStations` slab at once. Runs inside `scan`.
    */
   private async scanLine(
     req: ScanRequest,
@@ -615,9 +617,10 @@ export class ResultsHost {
     const comp = req.components[0]!;
     const T = st.nSteps;
     if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+    if (T === 0) return { ok: true, scanId: id, min: null, max: null, steps: 0, ms: performance.now() - t };
     this.armIdle();
-    const slab = first.readLineStations(st.id, comp);
-    const nRows = slab.elementIndex.length;
+    const probe = first.readLineStations(st.id, comp, { stepRange: [0, 1] });
+    const nRows = probe.elementIndex.length;
     const chunk = opts.chunkSteps ?? Math.max(1, Math.floor(4e6 / (8 * Math.max(1, nRows))));
     let lo = Infinity;
     let hi = -Infinity;
@@ -628,9 +631,11 @@ export class ResultsHost {
       if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
       this.armIdle();
       const k1 = Math.min(T, k0 + chunk);
-      const start = k0 * nRows;
-      const end = k1 * nRows;
-      for (let i = start; i < end; i++) {
+      const slab =
+        k0 === 0 && k1 === 1
+          ? probe
+          : rf.readLineStations(st.id, comp, { stepRange: [k0, k1] });
+      for (let i = 0; i < slab.values.length; i++) {
         const v = slab.values[i]!;
         if (!Number.isFinite(v)) continue;
         if (v < lo) lo = v;
