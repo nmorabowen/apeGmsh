@@ -176,7 +176,7 @@ const uniq = (a: readonly DeclPath[]): DeclPath[] => [...new Set(a)];
  * shown stays where it was while it is still on the axis; otherwise it is the
  * mesh, or the geometry when there is no mesh.
  */
-function withPhase(s: State): State {
+function withPhase(s: State, preserveLineNotice = false): State {
   const axis: PhaseKey[] = [];
   if (geometryPairing(s).draw) axis.push({ kind: "geometry" });
   if (s.mesh) axis.push({ kind: "mesh" });
@@ -195,7 +195,7 @@ function withPhase(s: State): State {
     else if (at.step >= n) at = { ...at, step: n - 1 };
   }
   const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
-  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }));
+  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }), preserveLineNotice);
 }
 
 /** The stage a contour pick is checked against: the results stage shown. */
@@ -216,18 +216,32 @@ function withContourPick(s: State): State {
  * Auto-pick a line-station component when landing on a results stage with
  * `lineStations` and `lineDiagram.component` is null or absent from the stage.
  */
-function withLineDiagramPick(s: State): State {
+function withLineDiagramPick(s: State, preserveNotice = false): State {
   const stage = shownStage(s);
   const avail = stage?.lineStations;
   if (!avail || avail.length === 0) {
-    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null && s.lineDiagram.notice === null) return s;
+    if (stage !== undefined && s.lineDiagram.component !== null) {
+      const prevComp = s.lineDiagram.component;
+      const notice = `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`;
+      return {
+        ...s,
+        lineDiagram: {
+          ...s.lineDiagram,
+          component: null,
+          flipSign: null,
+          stepRange: null,
+          scan: null,
+          notice,
+        },
+      };
+    }
+    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null) return s;
     return {
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: null,
         scan: null,
-        notice: null,
       },
     };
   }
@@ -235,19 +249,27 @@ function withLineDiagramPick(s: State): State {
     const keys = lineDiagramKeysOf(s);
     const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
     const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
-    if (keepStep && keepScan) return s;
+    const nextNotice = keepStep || preserveNotice ? s.lineDiagram.notice : null;
+    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return s;
     return {
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: keepStep ? s.lineDiagram.stepRange : null,
         scan: keepScan ? s.lineDiagram.scan : null,
-        notice: keepStep ? s.lineDiagram.notice : null,
+        notice: nextNotice,
       },
     };
   }
+  const prevComp = s.lineDiagram.component;
   const picked = defaultLineDiagramComponent(avail);
-  if (picked === s.lineDiagram.component) return s;
+  const notice =
+    prevComp !== null && prevComp !== picked
+      ? picked !== null
+        ? `Stage ${stage.name || stage.id} has no ${prevComp} line stations; switched to ${picked}.`
+        : `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`
+      : null;
+  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return s;
   return {
     ...s,
     lineDiagram: {
@@ -256,7 +278,7 @@ function withLineDiagramPick(s: State): State {
       flipSign: null,
       stepRange: null,
       scan: null,
-      notice: null,
+      notice,
     },
   };
 }
@@ -475,7 +497,11 @@ export function reduce(s: State, e: Event): State {
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
-      return withPhase({ ...s, phase: { ...s.phase, at: e.at } });
+      return withPhase({
+        ...s,
+        phase: { ...s.phase, at: e.at },
+        ...(e.at.kind !== "results" ? { lineDiagram: { ...s.lineDiagram, notice: null } } : {}),
+      });
     case "setResultStep": {
       if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error("setResultStep: the phase axis has no results");
       const at = s.phase.at;
@@ -508,6 +534,10 @@ export function reduce(s: State, e: Event): State {
       const curComp = s.lineDiagram.component;
       const validOnAny =
         curComp !== null && e.info.stages.some((st) => st.lineStations?.includes(curComp));
+      // Mixed continuum + beam stages (`gauss.length > 0`, e.g. 3-D floor slabs
+      // on horizontal girders with `vecxz = +Z`, #2142) carry vertical gravity
+      // bending in `My` (bending about local y in the XZ plane) rather than
+      // weak-axis `Mz`, so initial load prefers `My` when both are recorded.
       const preferSlabMy =
         (firstLineStage?.gauss.length ?? 0) > 0 &&
         Boolean(firstLineStage?.lineStations?.includes("My")) &&
@@ -517,28 +547,38 @@ export function reduce(s: State, e: Event): State {
         : preferSlabMy
           ? "My"
           : defaultLineDiagramComponent(firstLineStage?.lineStations);
+      const fileName = e.info.path.split(/[\\/]/).pop() ?? e.info.path;
+      const lineSwitchNotice =
+        curComp !== null && nextLineComp !== curComp
+          ? nextLineComp !== null
+            ? `${fileName} has no ${curComp} line stations; switched to ${nextLineComp}.`
+            : `${fileName} has no ${curComp} line stations; the line-diagram pick was cleared.`
+          : null;
       // V4c1: a re-read invalidates the measured ranges (the same path, other
       // data); a pick the re-read stage no longer has is cleared, with a notice.
-      const next = withPhase({
-        ...s,
-        artifacts: { ...s.artifacts, results: info },
-        results: e.info,
-        phase: keep ? s.phase : { ...s.phase, at: null },
-        // V4c2a: the element join is checked again on the re-read's rows.
-        contour: syncContourUnits(
-          { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
-          declaredUnits,
-          rereadResults || s.artifacts.model?.status === "ready",
-        ),
-        lineDiagram: {
-          ...s.lineDiagram,
-          component: nextLineComp,
-          flipSign: nextLineComp === curComp ? s.lineDiagram.flipSign : null,
-          stepRange: null,
-          scan: null,
-          notice: null,
+      const next = withPhase(
+        {
+          ...s,
+          artifacts: { ...s.artifacts, results: info },
+          results: e.info,
+          phase: keep ? s.phase : { ...s.phase, at: null },
+          // V4c2a: the element join is checked again on the re-read's rows.
+          contour: syncContourUnits(
+            { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
+            declaredUnits,
+            rereadResults || s.artifacts.model?.status === "ready",
+          ),
+          lineDiagram: {
+            ...s.lineDiagram,
+            component: nextLineComp,
+            flipSign: nextLineComp === curComp ? s.lineDiagram.flipSign : null,
+            stepRange: null,
+            scan: null,
+            notice: lineSwitchNotice,
+          },
         },
-      });
+        lineSwitchNotice !== null,
+      );
       const c = next.contour;
       if (c.field === null || c.component === null) return next;
       const field = c.field, component = c.component;
@@ -746,16 +786,30 @@ export function reduce(s: State, e: Event): State {
       }
       return { ...s, lineDiagram: { ...s.lineDiagram, range: e.range, fixed } };
     }
-    case "lineDiagramStepRange":
+    case "lineDiagramStepRange": {
       if (lineDiagramKeysOf(s)?.step !== e.key) return s;
+      const prevNotice = s.lineDiagram.notice;
+      const keepSwitchNotice =
+        s.lineDiagram.stepRange === null &&
+        prevNotice !== null &&
+        prevNotice.includes(" line stations; switched to ");
+      const nextNotice =
+        e.notice === undefined
+          ? prevNotice
+          : keepSwitchNotice
+            ? e.notice === null || prevNotice.includes(e.notice)
+              ? prevNotice
+              : `${prevNotice} ${e.notice}`
+            : e.notice;
       return {
         ...s,
         lineDiagram: {
           ...s.lineDiagram,
           stepRange: { key: e.key, min: e.min, max: e.max },
-          notice: e.notice !== undefined ? e.notice : s.lineDiagram.notice,
+          notice: nextNotice,
         },
       };
+    }
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };

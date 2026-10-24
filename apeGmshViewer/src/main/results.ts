@@ -167,6 +167,7 @@ export type StepAnswer =
       nodal: Record<string, Float64Array>;
       gauss: Record<string, Float64Array>;
       lineDiagram?: LadrunoLineStationStep | null;
+      lineDiagramError?: string;
     }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
@@ -478,16 +479,22 @@ export class ResultsHost {
         if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
       }
       let lineDiagram: LadrunoLineStationStep | null | undefined;
+      let lineDiagramError: string | undefined;
       if (req.lineDiagram !== undefined) {
-        if (isLadruno(rf)) {
-          // No warningsOut here (#2348): each warning this read can give (a MODEL/LOCAL_AXES group it does not read,
-          // a basicForce bucket it refuses) was given once at open, by metaOf's availableLineStations for this stage,
-          // and a malformed step LOCAL_AXES bucket is refused, not warned (#2349). Passing it would repeat them each step.
-          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
-        } else {
-          const v = rf.elementIndexVerdict();
-          if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
-          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+        try {
+          if (isLadruno(rf)) {
+            // No warningsOut here (#2348): each warning this read can give (a MODEL/LOCAL_AXES group it does not read,
+            // a basicForce bucket it refuses) was given once at open, by metaOf's availableLineStations for this stage,
+            // and a malformed step LOCAL_AXES bucket is refused, not warned (#2349). Passing it would repeat them each step.
+            lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+          } else {
+            const v = rf.elementIndexVerdict();
+            if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
+            lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+          }
+        } catch (err) {
+          lineDiagram = null;
+          lineDiagramError = message(err);
         }
       }
       return {
@@ -498,6 +505,7 @@ export class ResultsHost {
         nodal,
         gauss,
         ...(lineDiagram !== undefined ? { lineDiagram } : {}),
+        ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
       };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
