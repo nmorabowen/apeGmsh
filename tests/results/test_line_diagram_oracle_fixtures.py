@@ -17,17 +17,16 @@ wall). Checks:
    statics resultant at ``rtol=1e-9``, and the headline analytical values from
    ``#2471`` are pinned explicitly.
 5. ``Results.from_ladruno(ladruno, model_h5=model_h5)`` reproduces the golden
-   station values, element FEM ids and natural coordinates across all six
-   fixtures, and ``Results.from_ladruno(ladruno)`` (``r_raw``) reproduces the
-   ``MODEL/LOCAL_AXES`` quaternions and asymmetric rotation matrices (asserted
-   on ``r_raw`` until ``_ladruno.py:1359`` — ``_line_station_quaternions``
-   receiving ``fem_index`` instead of ``element_index``, ``#2485`` — is fixed
-   in its own Python slice).
+   station values, element FEM ids, natural coordinates and ``MODEL/LOCAL_AXES``
+   frame quaternions across all six fixtures (including ``line_oracle_ss_udl``
+   where ``fem_id != ops_tag``), alongside ``Results.from_ladruno(ladruno)``
+   (``r_raw``, keyed by ``ops_tag``).
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +40,8 @@ from apeGmsh.mesh.FEMData import ElementComposite, FEMData, MeshInfo, NodeCompos
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._response_catalog import _LOCAL_FORCE_END_I_SIGN
 from apeGmsh.results import Results
+from apeGmsh.results.readers._ladruno import LadrunoReader
+from apeGmsh.results.readers._tag_translation import ElementTagTranslator
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "apeGmshViewer" / "fixtures"
@@ -256,20 +257,45 @@ def test_headline_closed_form_pins() -> None:
 def test_results_from_ladruno_matches_golden_stations_and_frames(stem: str) -> None:
     golden = _load_golden(stem)
     r_raw = Results.from_ladruno(FIXTURES / golden["ladruno"])
-    la = r_raw.elements.local_axes()
-    assert la.element_ids.tolist() == [el["ops_tag"] for el in golden["elements"]]
+    la_raw = r_raw.elements.local_axes()
+    assert la_raw.element_ids.tolist() == [el["ops_tag"] for el in golden["elements"]]
     for idx, el in enumerate(golden["elements"]):
         assert el["frame_quaternion_rows"] == "local x, y, z axes (R rows, global components)"
-        np.testing.assert_allclose(la.quaternions[idx], el["frame_quaternion_wxyz"], atol=1e-12)
+        np.testing.assert_allclose(la_raw.quaternions[idx], el["frame_quaternion_wxyz"], atol=1e-12)
         want_rows = np.array([el["frame"]["x"], el["frame"]["y"], el["frame"]["z"]])
-        np.testing.assert_allclose(la.matrices[idx], want_rows, atol=1e-12)
+        np.testing.assert_allclose(la_raw.matrices[idx], want_rows, atol=1e-12)
         if stem == "line_oracle_column3d":
-            assert not np.allclose(la.matrices[idx], la.matrices[idx].T)
+            assert not np.allclose(la_raw.matrices[idx], la_raw.matrices[idx].T)
 
     r = Results.from_ladruno(
         FIXTURES / golden["ladruno"],
         model_h5=FIXTURES / golden["model_h5"],
     )
+    la = r.elements.local_axes()
+    assert la.element_ids.tolist() == [el["fem_id"] for el in golden["elements"]]
+    np.testing.assert_allclose(la.quaternions, la_raw.quaternions, atol=1e-12)
+    for el in golden["elements"]:
+        la_one = r.elements.local_axes(ids=[el["fem_id"]])
+        assert la_one.element_ids.tolist() == [el["fem_id"]]
+        np.testing.assert_allclose(la_one.quaternions[0], el["frame_quaternion_wxyz"], atol=1e-12)
+
+    if stem == "line_oracle_ss_udl":
+        la_rev = r.elements.local_axes(pg="Rev")
+        assert la_rev.element_ids.tolist() == [6, 7]
+        np.testing.assert_allclose(
+            la_rev.quaternions,
+            [el["frame_quaternion_wxyz"] for el in golden["elements"][2:]],
+            atol=1e-12,
+        )
+        slab_rev = r.elements.line_stations.get(component="bending_moment_z", pg="Rev")
+        assert slab_rev.element_index.tolist() == [6, 6, 7, 7]
+        assert slab_rev.local_axes_quaternion is not None
+        np.testing.assert_allclose(
+            slab_rev.local_axes_quaternion,
+            [el["frame_quaternion_wxyz"] for el in golden["elements"][2:] for _ in range(2)],
+            atol=1e-12,
+        )
+
     # Components across the recorded buckets, ranked section.force -> localForce -> basicForce.
     all_comps: list[str] = []
     for resp in golden["responses"]:
@@ -279,9 +305,8 @@ def test_results_from_ladruno_matches_golden_stations_and_frames(stem: str) -> N
 
     for comp in all_comps:
         slab = r.elements.line_stations.get(component=comp)
-        # Assert local_axes_quaternion on r_raw (no model_h5) until #2485 fixes
-        # _ladruno.py:1359 passing fem_index instead of element_index to _line_station_quaternions.
         slab_raw = r_raw.elements.line_stations.get(component=comp)
+        assert slab.local_axes_quaternion is not None
         assert slab_raw.local_axes_quaternion is not None
         want_eids: list[int] = []
         want_tags: list[int] = []
@@ -310,4 +335,171 @@ def test_results_from_ladruno_matches_golden_stations_and_frames(stem: str) -> N
         assert slab_raw.element_index.tolist() == want_tags
         np.testing.assert_allclose(slab.station_natural_coord, want_xi, atol=1e-12)
         np.testing.assert_allclose(slab.values, np.concatenate(want_vals, axis=1), rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(slab.local_axes_quaternion, want_quats, atol=1e-12)
         np.testing.assert_allclose(slab_raw.local_axes_quaternion, want_quats, atol=1e-12)
+
+
+def _write_four_beam_ladruno(
+    dst: Path,
+    ops_tags: np.ndarray,
+    frames: np.ndarray,
+    *,
+    part_info: tuple[int, int] | None = None,
+) -> Path:
+    """Build a 4-beam (or N-beam) .ladruno from committed ladruno_portal3d.ladruno."""
+    shutil.copyfile(FIXTURES / "ladruno_portal3d.ladruno", dst)
+    n = int(ops_tags.size)
+    with h5py.File(dst, "r+") as f:
+        if part_info is not None:
+            pid, nparts = part_info
+            f["INFO"].attrs["PARTITIONED"] = 1
+            f["INFO"].attrs["PARTITION_ID"] = pid
+            f["INFO"].attrs["NUM_PARTITIONS"] = nparts
+        stg = f["MODEL_STAGE[1]"]
+        del stg["MODEL/SECTION_ASSIGNMENTS"]
+        del stg["RESULTS/ON_ELEMENTS/section.force"]
+        for grp in stg["MODEL/ELEMENTS"].values():
+            del grp["CONNECTIVITY"], grp["GLOBAL_GP_COORDS"]
+            conn = np.column_stack([
+                ops_tags.astype(np.int32),
+                np.ones((n, 1), dtype=np.int32),
+                np.full((n, 1), 2, dtype=np.int32),
+            ])
+            grp.create_dataset("CONNECTIVITY", data=conn)
+        for grp in stg["MODEL/LOCAL_AXES"].values():
+            del grp["ID"], grp["FRAME"]
+            grp.create_dataset("ID", data=ops_tags.astype(np.int64))
+            grp.create_dataset("FRAME", data=np.asarray(frames, dtype=np.float64))
+        for bkt in stg["RESULTS/ON_ELEMENTS/localForce"].values():
+            if isinstance(bkt, h5py.Group) and "ID" in bkt:
+                base_data = bkt["DATA"][:, :1, :]
+                del bkt["ID"], bkt["DATA"]
+                bkt.create_dataset("ID", data=ops_tags.astype(np.int32).reshape(n, 1))
+                bkt.create_dataset("DATA", data=np.repeat(base_data, n, axis=1))
+    return dst
+
+
+def test_ladruno_line_station_quaternions_disjoint_and_offset_tag_maps(tmp_path: Path) -> None:
+    """Pin #2485 across offset, disjoint, partial, LOCAL_AXES-only, and partitioned tag maps."""
+    from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
+
+    elem_quats = np.array([
+        [1.0, 0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+        [0.5, 0.5, 0.5, 0.5],
+    ], dtype=np.float64)
+    want_quats = np.repeat(elem_quats, 2, axis=0)
+
+    # 1. Offset overlapping tags (fem_id = [4, 5, 6, 7] vs ops_tag = [3, 4, 5, 6]):
+    # fem_id=5 (ops_tag=4, +x) must NOT receive ops_tag=5's -x quaternion,
+    # and fem_id=7 (ops_tag=6) must NOT receive NaN.
+    offset_path = _write_four_beam_ladruno(
+        tmp_path / "offset_tags.ladruno",
+        np.array([3, 4, 5, 6], dtype=np.int64),
+        elem_quats,
+    )
+    offset_f2o = {4: 3, 5: 4, 6: 5, 7: 6}
+    offset_o2f = {t: e for e, t in offset_f2o.items()}
+    with LadrunoReader(offset_path) as reader:
+        reader.attach_tag_map(ElementTagTranslator(offset_f2o, offset_o2f))
+        stage_id = reader.stages()[0].id
+        slab_off = reader.read_line_stations(stage_id, "bending_moment_z")
+        assert slab_off.element_index.tolist() == [4, 4, 5, 5, 6, 6, 7, 7]
+        assert slab_off.local_axes_quaternion is not None
+        np.testing.assert_allclose(slab_off.local_axes_quaternion, want_quats, atol=1e-12)
+
+    # 2. Disjoint tags (fem_id = [1, 2, 3, 4] vs ops_tag = [101, 102, 103, 104]).
+    path = _write_four_beam_ladruno(
+        tmp_path / "disjoint_tags.ladruno",
+        np.array([101, 102, 103, 104], dtype=np.int64),
+        elem_quats,
+    )
+    fem_to_ops = {1: 101, 2: 102, 3: 103, 4: 104}
+    ops_to_fem = {t: e for e, t in fem_to_ops.items()}
+    with LadrunoReader(path) as reader:
+        reader.attach_tag_map(ElementTagTranslator(fem_to_ops, ops_to_fem))
+        stage_id = reader.stages()[0].id
+        slab = reader.read_line_stations(stage_id, "bending_moment_z")
+        assert slab.element_index.tolist() == [1, 1, 2, 2, 3, 3, 4, 4]
+        assert slab.local_axes_quaternion is not None
+        assert not np.isnan(slab.local_axes_quaternion).any()
+        np.testing.assert_allclose(slab.local_axes_quaternion, want_quats, atol=1e-12)
+
+        la = reader.read_local_axes(stage_id)
+        assert la.element_ids.tolist() == [1, 2, 3, 4]
+        np.testing.assert_allclose(la.quaternions, elem_quats, atol=1e-12)
+        la_rev = reader.read_local_axes(stage_id, element_ids=np.array([3, 4]))
+        assert la_rev.element_ids.tolist() == [3, 4]
+        np.testing.assert_allclose(la_rev.quaternions, elem_quats[2:], atol=1e-12)
+
+    # 3. Unrelated stub translator (does not describe the file): IDs pass through as ops_tag,
+    # including when a file records element tags only under MODEL/LOCAL_AXES.
+    with LadrunoReader(path) as reader:
+        reader.attach_tag_map(ElementTagTranslator({10: 999}, {999: 10}))
+        stage_id = reader.stages()[0].id
+        slab_stub = reader.read_line_stations(stage_id, "bending_moment_z")
+        assert slab_stub.element_index.tolist() == [101, 101, 102, 102, 103, 103, 104, 104]
+        assert slab_stub.local_axes_quaternion is not None
+        np.testing.assert_allclose(slab_stub.local_axes_quaternion, want_quats, atol=1e-12)
+        la_stub = reader.read_local_axes(stage_id)
+        assert la_stub.element_ids.tolist() == [101, 102, 103, 104]
+
+    axes_only_path = tmp_path / "axes_only.ladruno"
+    shutil.copyfile(path, axes_only_path)
+    with h5py.File(axes_only_path, "r+") as f:
+        del f["MODEL_STAGE[1]/MODEL/ELEMENTS"]
+        del f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+    with LadrunoReader(axes_only_path) as reader:
+        reader.attach_tag_map(ElementTagTranslator({10: 101}, {101: 10}))
+        la_axes_only = reader.read_local_axes(reader.stages()[0].id)
+        assert la_axes_only.element_ids.tolist() == [101, 102, 103, 104]
+
+    # 4. Partial LOCAL_AXES (element 104 / fem_id 4 has no recorded frame):
+    # its station rows get NaN quaternions and read_local_axes(element_ids=[1, 4]) pads identity.
+    partial_path = tmp_path / "partial_axes.ladruno"
+    shutil.copyfile(path, partial_path)
+    with h5py.File(partial_path, "r+") as f:
+        for grp in f["MODEL_STAGE[1]/MODEL/LOCAL_AXES"].values():
+            ids_3 = grp["ID"][:3]
+            frames_3 = grp["FRAME"][:3]
+            del grp["ID"], grp["FRAME"]
+            grp.create_dataset("ID", data=ids_3)
+            grp.create_dataset("FRAME", data=frames_3)
+
+    with LadrunoReader(partial_path) as reader:
+        reader.attach_tag_map(ElementTagTranslator(fem_to_ops, ops_to_fem))
+        stage_id = reader.stages()[0].id
+        slab_part = reader.read_line_stations(stage_id, "bending_moment_z")
+        assert slab_part.element_index.tolist() == [1, 1, 2, 2, 3, 3, 4, 4]
+        assert slab_part.local_axes_quaternion is not None
+        np.testing.assert_allclose(slab_part.local_axes_quaternion[:6], want_quats[:6], atol=1e-12)
+        assert np.isnan(slab_part.local_axes_quaternion[6:]).all()
+
+        la_part = reader.read_local_axes(stage_id)
+        assert la_part.element_ids.tolist() == [1, 2, 3]
+        la_padded = reader.read_local_axes(stage_id, element_ids=np.array([1, 4]))
+        assert la_padded.element_ids.tolist() == [1, 4]
+        np.testing.assert_allclose(la_padded.quaternions[0], elem_quats[0], atol=1e-12)
+        np.testing.assert_allclose(la_padded.quaternions[1], [1.0, 0.0, 0.0, 0.0], atol=1e-12)
+
+    # 5. Multi-partition .ladruno (LadrunoMultiPartitionReader) with non-identity translator.
+    part0 = _write_four_beam_ladruno(
+        tmp_path / "mp.part-0.ladruno",
+        np.array([101, 102], dtype=np.int64),
+        elem_quats[:2],
+        part_info=(0, 2),
+    )
+    part1 = _write_four_beam_ladruno(
+        tmp_path / "mp.part-1.ladruno",
+        np.array([103, 104], dtype=np.int64),
+        elem_quats[2:],
+        part_info=(1, 2),
+    )
+    with LadrunoMultiPartitionReader([part0, part1]) as mp_reader:
+        mp_reader.attach_tag_map(ElementTagTranslator(fem_to_ops, ops_to_fem))
+        stage_id = mp_reader.stages()[0].id
+        slab_mp = mp_reader.read_line_stations(stage_id, "bending_moment_z")
+        assert slab_mp.element_index.tolist() == [1, 1, 2, 2, 3, 3, 4, 4]
+        assert slab_mp.local_axes_quaternion is not None
+        np.testing.assert_allclose(slab_mp.local_axes_quaternion, want_quats, atol=1e-12)
