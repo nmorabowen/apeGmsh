@@ -40,6 +40,7 @@
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
+import { evenlySpacedXi, lineGpParamXi, sectionStationXi } from "./ladrunoGauss.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
@@ -472,6 +473,9 @@ export class LadrunoFile {
     if (!onElements) return [];
     const ndm = this.inferSpatialDim();
     const found = new Set<LineStationComponent>();
+    // The section stations' xi is checked here, at open, as a read would place them: the app's
+    // per-step reads pass no warningsOut, so an evenly spaced fallback or a refusal is said here (#2472).
+    const modelElements = this.optionalSubgroup(hostGrp, ["MODEL", "ELEMENTS"]);
     for (const token of onElements.keys()) {
       const rank = tokenRank(token);
       if (rank === null) continue;
@@ -496,21 +500,34 @@ export class LadrunoFile {
           continue;
         }
         const elementStations = new Map<LineStationComponent, number[]>();
+        const sectionComps = new Set<LineStationComponent>();
         for (const b of blocks) {
           for (const name of b.compNames) {
             if (b.level === 2 && rank === 0) {
               const c = sectionComponentOf(name, token, ndm);
-              if (c !== null) found.add(c);
+              if (c !== null) sectionComps.add(c);
             } else if (b.level === 0 && rank >= 1) {
               const bc = elementStationComponentOf(name, token, gate.alias2d);
               if (bc !== null) {
                 const list = elementStations.get(bc.component);
                 const st = bc.station ?? 1;
-                if (list) list.push(st);
-                else elementStations.set(bc.component, [st]);
+                if (!list) elementStations.set(bc.component, [st]);
+                else if (!list.includes(st)) list.push(st);
               }
             }
           }
+        }
+        const sectionWarnings = new Set<string>();
+        try {
+          for (const comp of sectionComps) {
+            const warning = this.sectionStations(blocks, comp, key, token, ndm, modelElements)?.warning ?? null;
+            if (warning !== null) sectionWarnings.add(warning);
+          }
+          for (const comp of sectionComps) found.add(comp);
+          for (const warning of sectionWarnings) warningsOut?.push(warning);
+        } catch (e) {
+          if (!(e instanceof LadrunoError)) throw e;
+          warningsOut?.push(`${e.message} The line stations of section bucket ${JSON.stringify(key)} are left out.`);
         }
         for (const [comp, stations] of elementStations) {
           stations.sort((a, b) => a - b);
@@ -521,6 +538,7 @@ export class LadrunoFile {
               continue;
             }
           }
+          if (stations.length > 2) warningsOut?.push(`${token} bucket ${JSON.stringify(key)}: ${JSON.stringify(comp)} has ${stations.length} element-level stations and the file records no position for them, so they are drawn evenly spaced along the beam (xi = linspace(-1, 1)).`);
           found.add(comp);
         }
       }
@@ -595,7 +613,7 @@ export class LadrunoFile {
           continue;
         }
         sectionIds.push(parsed.ids);
-        const part = this.readSectionBucketStations(parsed, canon, key, token, ndm, modelElements, filterIds, step, nStepsTotal);
+        const part = this.readSectionBucketStations(parsed, canon, key, token, ndm, modelElements, filterIds, step, nStepsTotal, options?.warningsOut);
         if (part) found.push({ rank: 0, perElement: part, nStepsRead });
       }
     }
@@ -1218,37 +1236,43 @@ export class LadrunoFile {
     };
   }
 
-  /** The first natural coordinate of each GP_PARAM row of the bucket's element group (`modelGroupFor`), or null. */
-  private gpParamFor(modelElements: LGroup | null, bucketKey: string): Float64Array | null {
+  /**
+   * The first natural coordinate of each GP_PARAM row of the bucket's element group
+   * (`modelGroupFor`) as line-station xi, or null when the group has none. A missing
+   * or unknown PARAM_DOMAIN, or a row that is not a finite xi in [-1, 1], is refused
+   * (reader/ladrunoGauss.ts `lineGpParamXi`).
+   */
+  private gpParamFor(modelElements: LGroup | null, bucketKey: string): { path: string; xi: Float64Array } | null {
     const grp = modelGroupFor(modelElements, bucketKey, (n) => this.optionalGroup(modelElements!, n));
     const quad = grp ? this.optionalGroup(grp, "QUADRATURE") : null;
-    if (!quad || !quad.keys().includes("GP_PARAM")) return null;
+    if (!grp || !quad || !quad.keys().includes("GP_PARAM")) return null;
     const ds = this.dataset(quad, "GP_PARAM");
     const shape = ds.shape ?? [];
     const cols = shape.length === 2 ? shape[1]! : 1;
     const nRows = shape[0] ?? 0;
     if (nRows === 0 || cols === 0) return null;
     const raw = toFloat64(ds.value, ds.path);
-    if (cols === 1) return raw;
-    const firstCol = new Float64Array(nRows);
-    for (let i = 0; i < nRows; i++) firstCol[i] = raw[i * cols]!;
-    return firstCol;
+    const firstCol = cols === 1 ? raw : Float64Array.from({ length: nRows }, (_, i) => raw[i * cols]!);
+    const rows = { path: ds.path, group: grp.path, paramDomain: optionalText(grp, "PARAM_DOMAIN"), xi: firstCol };
+    return { path: ds.path, xi: lineGpParamXi(rows, (m) => new LadrunoError("layout", `${this.f.filename}: ${m}`)) };
   }
 
-  private readSectionBucketStations(
-    parsed: { ids: Float64Array; dataDs: LDataset; width: number; blocks: BucketBlock[] },
+  /**
+   * The DATA column and xi of each section station of `component` in a LEVELS == 2
+   * bucket, sorted by xi, and the warning when they are evenly spaced (null when
+   * no block carries `component`).
+   */
+  private sectionStations(
+    blocks: readonly BucketBlock[],
     component: LineStationComponent,
     bucketKey: string,
     token: string,
     ndm: number | null,
     modelElements: LGroup | null,
-    filterIds: Float64Array | null,
-    step: number | undefined,
-    nStepsTotal: number,
-  ): { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] | null {
+  ): { cols: number[]; xi: Float64Array; warning: string | null } | null {
     const stationEntries: { gid: number; col: number; seq: number }[] = [];
     let seqIdx = 0;
-    for (const b of parsed.blocks) {
+    for (const b of blocks) {
       if (b.level !== 2 || b.multiplicity <= 0) continue;
       for (let off = 0; off < b.compNames.length; off++) {
         if (sectionComponentOf(b.compNames[off]!, token, ndm) === component) {
@@ -1274,14 +1298,6 @@ export class LadrunoFile {
       }
     }
     if (stationEntries.length === 0) return null;
-
-    const selectedRows: { row: number; eid: number }[] = [];
-    for (let row = 0; row < parsed.ids.length; row++) {
-      const eid = parsed.ids[row]!;
-      if (!filterIds || rowOf(filterIds, eid) >= 0) selectedRows.push({ row, eid });
-    }
-    if (selectedRows.length === 0) return null;
-
     const gpParam = this.gpParamFor(modelElements, bucketKey);
     const nSt = stationEntries.length;
     const distinctNonNegGids =
@@ -1291,32 +1307,37 @@ export class LadrunoFile {
     const orderedEntries = [...stationEntries].sort((a, b) =>
       distinctNonNegGids ? a.gid - b.gid : a.seq - b.seq,
     );
-    const gaussIds = orderedEntries.map((s) => s.gid);
-    const fallback = stationXi(nSt);
-    const allZeroBased =
-      distinctNonNegGids &&
-      gpParam !== null &&
-      gaussIds.every((gid) => gid >= 0 && gid < gpParam.length);
-    const allOneBased =
-      distinctNonNegGids &&
-      !allZeroBased &&
-      gpParam !== null &&
-      gaussIds.every((gid) => gid >= 1 && gid <= gpParam.length);
-    const rawStations = orderedEntries.map((entry, sIdx) => ({
-      gid: entry.gid,
-      col: entry.col,
-      xi: allZeroBased
-        ? gpParam![entry.gid]!
-        : allOneBased
-          ? gpParam![entry.gid - 1]!
-          : fallback[sIdx]!,
-    }));
+    const cls = classNameOfBucket(bucketKey) || bucketKey;
+    const placed = sectionStationXi(bucketKey, orderedEntries.map((s) => s.gid), distinctNonNegGids, gpParam, `QUADRATURE/GP_PARAM on the ${JSON.stringify(cls)} MODEL/ELEMENTS group`, token);
+    const rawStations = orderedEntries.map((entry, sIdx) => ({ col: entry.col, xi: placed.xi[sIdx]! }));
     // Sort stations by ascending xi so GP_PARAM order is always respected left-to-right.
     rawStations.sort((a, b) => a.xi - b.xi);
-    const xi = Float64Array.from(rawStations.map((s) => s.xi));
-    const cols = rawStations.map((s) => s.col);
+    return { cols: rawStations.map((s) => s.col), xi: Float64Array.from(rawStations.map((s) => s.xi)), warning: placed.warning };
+  }
 
-    return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, cols, xi, null, step, nStepsTotal);
+  private readSectionBucketStations(
+    parsed: { ids: Float64Array; dataDs: LDataset; width: number; blocks: BucketBlock[] },
+    component: LineStationComponent,
+    bucketKey: string,
+    token: string,
+    ndm: number | null,
+    modelElements: LGroup | null,
+    filterIds: Float64Array | null,
+    step: number | undefined,
+    nStepsTotal: number,
+    warningsOut?: string[],
+  ): { eid: number; nSt: number; xi: Float64Array; values: Float64Array }[] | null {
+    const selectedRows: { row: number; eid: number }[] = [];
+    for (let row = 0; row < parsed.ids.length; row++) {
+      const eid = parsed.ids[row]!;
+      if (!filterIds || rowOf(filterIds, eid) >= 0) selectedRows.push({ row, eid });
+    }
+    if (selectedRows.length === 0) return null;
+
+    const stations = this.sectionStations(parsed.blocks, component, bucketKey, token, ndm, modelElements);
+    if (stations === null) return null;
+    if (stations.warning !== null) warningsOut?.push(stations.warning);
+    return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, stations.cols, stations.xi, null, step, nStepsTotal);
   }
 
   private readElementBucketStations(
@@ -1373,7 +1394,10 @@ export class LadrunoFile {
     }
     const nSt = stations.length;
     const cols = stations.map((st) => stationToCol.get(st)!);
-    const xi = stationXi(nSt);
+    // One element-level value is constant along the beam, and two are its end values (xi -1 and +1);
+    // more than two have no recorded positions, so evenly spaced is a guess and says so.
+    const xi = evenlySpacedXi(nSt);
+    if (nSt > 2) warningsOut?.push(`${token} bucket ${JSON.stringify(bucketKey)}: ${JSON.stringify(component)} has ${nSt} element-level stations [${stations.join(", ")}] and the file records no position for them, so they are drawn evenly spaced along the beam (xi = linspace(-1, 1)).`);
     const signs = (rank === 1 || rank === 2) && nSt === 2 ? (LOCAL_FORCE_STATION_SIGNS[component] ?? null) : null;
     return this.sliceElementStationColumns(parsed.dataDs, parsed.ids.length, parsed.width, selectedRows, cols, xi, signs, step, nStepsTotal);
   }
@@ -1774,7 +1798,6 @@ function basicForceRefusal(bucketKey: string, component: LineStationComponent, s
     `only the end moments ["My", "Mz"] at stations [1, 2] map to the section convention. Its ${JSON.stringify(component)} line stations are left out.`
   );
 }
-
 /** `lists` end to end, in one typed array. */
 function concatIds(lists: readonly Float64Array[]): Float64Array {
   const all = new Float64Array(lists.reduce((n, l) => n + l.length, 0));
@@ -1805,14 +1828,4 @@ export function firstListing(lists: readonly Float64Array[]): Uint8Array[] {
     }
     return take;
   });
-}
-
-function stationXi(nStations: number): Float64Array {
-  if (nStations <= 0) return new Float64Array(0);
-  if (nStations === 1) return new Float64Array([0]);
-  const out = new Float64Array(nStations);
-  for (let i = 0; i < nStations; i++) {
-    out[i] = -1 + (2 * i) / (nStations - 1);
-  }
-  return out;
 }

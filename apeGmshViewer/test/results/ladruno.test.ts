@@ -640,6 +640,7 @@ test("line station precedence (section.force > localForce > basicForce > axialFo
 
     const modelElements = stage.get("MODEL/ELEMENTS") as h5wasm.Group;
     const fbcModel = modelElements.create_group("20-ForceBeamColumn2d[0]");
+    fbcModel.create_attribute("PARAM_DOMAIN", "[-1,1]");
     const quad = fbcModel.create_group("QUADRATURE");
     quad.create_dataset({ name: "GP_PARAM", data: new Float64Array([-0.7746, 0.0, 0.7746]), shape: [3, 1] });
   });
@@ -1333,6 +1334,7 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     m1.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
     m1.create_dataset({ name: "GAUSS_ID", data: new Int32Array([1, 2, 3]), shape: [3] });
     const fbcModel1 = modelElements.create_group("20-ForceBeamColumn2d[0]");
+    fbcModel1.create_attribute("PARAM_DOMAIN", "[-1,1]");
     fbcModel1.create_group("QUADRATURE").create_dataset({
       name: "GP_PARAM",
       data: new Float64Array([-0.7746, 0.0, 0.7746]),
@@ -1350,6 +1352,7 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     m2.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
     m2.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0, 1, 99]), shape: [3] });
     const fbcModel2 = modelElements.create_group("21-DispBeamColumn2d[0]");
+    fbcModel2.create_attribute("PARAM_DOMAIN", "[-1,1]");
     fbcModel2.create_group("QUADRATURE").create_dataset({
       name: "GP_PARAM",
       data: new Float64Array([-0.7746, 0.0, 0.7746]),
@@ -1371,6 +1374,7 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     m3.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
     m3.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1, -1, -1]), shape: [3] });
     const fbcModel3 = modelElements.create_group("22-ElasticBeam2d[0]");
+    fbcModel3.create_attribute("PARAM_DOMAIN", "[-1,1]");
     fbcModel3.create_group("QUADRATURE").create_dataset({
       name: "GP_PARAM",
       data: new Float64Array([-0.90618, -0.538469, 0.0, 0.538469, 0.90618]),
@@ -1690,4 +1694,137 @@ test("readColumnsBySlab reads each dataset once, over the asked columns only, an
     () => readColumnsBySlab([{ path: "A", col: 0 }, { path: "A", col: 1 }], () => new Float64Array(3), err),
     (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && /A: a read of columns 0\.\.2 returned 3 values/.test(e.message),
   );
+});
+
+// -- #2472: section station xi honours PARAM_DOMAIN; the linspace fallback warns -------------
+//
+// A scratch truss copy gets one force-based beam's section.force bucket (element 1,
+// three stations of N) and, unless `gp` is null, its MODEL/ELEMENTS group with a
+// three-point Gauss-Legendre GP_PARAM (xi = -sqrt(3/5), 0, sqrt(3/5)).
+
+const LEGENDRE_3 = [-Math.sqrt(3 / 5), 0, Math.sqrt(3 / 5)];
+
+function sectionBeam(opts: { gp: number[] | null; domain?: string | null; gaussIds?: number[] }): string {
+  return edited(TRUSS, (f) => {
+    const stage = f.get("MODEL_STAGE[1]") as h5wasm.Group;
+    const sf = (stage.get("RESULTS/ON_ELEMENTS") as h5wasm.Group).create_group("section.force");
+    const b = sf.create_group("20-ForceBeamColumn2d[0]");
+    b.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    b.create_dataset({ name: "TIME", data: new Float64Array([0.25, 0.5, 0.75, 1.0]) });
+    b.create_dataset({ name: "STEP", data: new Int32Array([0, 1, 2, 3]) });
+    const data = new Float64Array(4 * 3);
+    for (let k = 0; k < 4; k++) data.set([1, 2, 3], k * 3);
+    b.create_dataset({ name: "DATA", data, shape: [4, 1, 3] });
+    const m = b.create_group("COLUMN_MAP");
+    m.create_attribute("COMP_NAMES", "P\nP\nP");
+    m.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
+    m.create_dataset({ name: "GAUSS_ID", data: new Int32Array(opts.gaussIds ?? [0, 1, 2]), shape: [3] });
+    if (opts.gp === null) return;
+    const g = (stage.get("MODEL/ELEMENTS") as h5wasm.Group).create_group("20-ForceBeamColumn2d[0]");
+    const domain = opts.domain === undefined ? "[-1,1]" : opts.domain;
+    if (domain !== null) g.create_attribute("PARAM_DOMAIN", domain);
+    g.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: new Float64Array(opts.gp), shape: [opts.gp.length, 1] });
+  });
+}
+
+const refusedByName = (pattern: RegExp) => (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message);
+
+test("#2472: Legendre GP_PARAM with PARAM_DOMAIN [-1,1] places the section stations at its points, with no warning", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3 }), (r) => {
+    const openWarnings: string[] = [];
+    assert.deepEqual(r.availableLineStations("stage_0", openWarnings), ["N"]);
+    assert.deepEqual(openWarnings, []);
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), LEGENDRE_3);
+    assert.deepEqual(Array.from(slab.values.subarray(0, 3)), [1, 2, 3]);
+    assert.deepEqual(warnings, []);
+  });
+});
+
+test("#2472: Legendre GP_PARAM without PARAM_DOMAIN is refused by name, never drawn evenly spaced", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3, domain: null }), (r) => {
+    const named = /MODEL\/ELEMENTS\/20-ForceBeamColumn2d\[0\] carries QUADRATURE\/GP_PARAM but no PARAM_DOMAIN attribute/;
+    assert.throws(() => r.readLineStations("stage_0", "N"), refusedByName(named));
+    assert.throws(() => r.readLineStationStep("stage_0", "N", 0), refusedByName(named));
+    // At open the bucket is left out, and says why.
+    const openWarnings: string[] = [];
+    assert.deepEqual(r.availableLineStations("stage_0", openWarnings), ["N"]); // the truss's basicForce still serves N
+    assert.equal(openWarnings.length, 1);
+    assert.match(openWarnings[0]!, named);
+    assert.match(openWarnings[0]!, /line stations of section bucket "20-ForceBeamColumn2d\[0\]" are left out/);
+  });
+});
+
+test("#2472: a PARAM_DOMAIN a line station does not read ([0,1], bary, anything else) is refused by name", () => {
+  for (const domain of ["[0,1]", "bary", "unit"]) {
+    withFile(sectionBeam({ gp: [0.1, 0.5, 0.9], domain }), (r) => {
+      const named = new RegExp(`20-ForceBeamColumn2d\\[0\\]: PARAM_DOMAIN ${escapedRe(JSON.stringify(domain))} is not one a line station reads`);
+      assert.throws(() => r.readLineStations("stage_0", "N"), refusedByName(named), domain);
+    });
+  }
+});
+
+test("#2472: a GP_PARAM row that is not a finite xi in [-1, 1] is refused by name", () => {
+  for (const [bad, shown] of [[1.5, "1.5"], [-1.000001, "-1.000001"], [Number.NaN, "NaN"], [Number.POSITIVE_INFINITY, "Infinity"]] as const) {
+    withFile(sectionBeam({ gp: [-1, bad, 1] }), (r) => {
+      const named = new RegExp(`QUADRATURE/GP_PARAM\\[1\\] = ${escapedRe(shown)} is not a natural coordinate on the beam`);
+      assert.throws(() => r.readLineStations("stage_0", "N"), refusedByName(named), shown);
+    });
+  }
+});
+
+test("#2472: GAUSS_IDs that do not index GP_PARAM fall back to evenly spaced stations, and warn by name", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3, gaussIds: [0, 1, 99] }), (r) => {
+    const named = /section\.force bucket "20-ForceBeamColumn2d\[0\]": its GAUSS_IDs \[0, 1, 99\] do not index the 3 row\(s\) of \S+\/QUADRATURE\/GP_PARAM, so its 3 section station\(s\) are drawn evenly spaced/;
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 0, 1]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, named);
+    const openWarnings: string[] = [];
+    r.availableLineStations("stage_0", openWarnings);
+    assert.equal(openWarnings.length, 1);
+    assert.match(openWarnings[0]!, named);
+  });
+});
+
+test("#2472: GAUSS_IDs that repeat fall back to evenly spaced stations, and warn by name", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3, gaussIds: [-1, -1, -1] }), (r) => {
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 0, 1]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /section\.force bucket "20-ForceBeamColumn2d\[0\]": its GAUSS_IDs \[-1, -1, -1\] are not distinct non-negative integers, so its 3 section station\(s\) are drawn evenly spaced/);
+  });
+});
+
+test("#2472: a section bucket whose element group has no GP_PARAM is drawn evenly spaced, and warns by name", () => {
+  withFile(sectionBeam({ gp: null }), (r) => {
+    const named = /section\.force bucket "20-ForceBeamColumn2d\[0\]": there is no QUADRATURE\/GP_PARAM on the "ForceBeamColumn2d" MODEL\/ELEMENTS group, so its 3 section station\(s\) are drawn evenly spaced/;
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 0, 1]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, named);
+    const openWarnings: string[] = [];
+    r.availableLineStations("stage_0", openWarnings);
+    assert.equal(openWarnings.length, 1);
+    assert.match(openWarnings[0]!, named);
+  });
+});
+
+test("#2472: the committed beam fixtures read their stations from GP_PARAM, with no warning", () => {
+  for (const [path, gp] of [[PORTAL3D, [-1, 0, 1]], [FRAME3D, [-1, 0, 1]]] as const) {
+    withFile(path, (r) => {
+      const openWarnings: string[] = [];
+      const comps = r.availableLineStations("stage_0", openWarnings);
+      assert.ok(comps.includes("N"), path);
+      assert.deepEqual(openWarnings.filter((w) => /evenly spaced|PARAM_DOMAIN|GP_PARAM/.test(w)), [], path);
+      const warnings: string[] = [];
+      const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+      assert.deepEqual(Array.from(slab.stationNaturalCoord), gp, path);
+      assert.deepEqual(warnings.filter((w) => /evenly spaced|PARAM_DOMAIN|GP_PARAM/.test(w)), [], path);
+    });
+  }
 });
