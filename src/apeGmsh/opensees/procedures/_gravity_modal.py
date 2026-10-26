@@ -64,13 +64,13 @@ _ELEMENT_FLOOR = 1e-6
 #: A mode that fails the kink check is probed again at this multiple of its
 #: amplitude, and the second probe decides. A kink's ratio is the same at
 #: every amplitude (first order in the probe), a smooth element's grows
-#: with it (1.3e-4 for the Corotational frame at this size, below
+#: with it (2.2e-6 to 2.0e-4 for the Corotational live frames, below
 #: ``_KINK_TOL``), and round-off shrinks with it: its second difference is a
 #: fixed size, set by the element's stiffness times the round-off in its
 #: nodal displacements. A near-rigid link (``I`` x 1e6 under 30 times the
 #: gravity) carries no gravity force, so no ``eps |N|`` floor reaches it,
-#: but it read 1.48e-3 here and 1.2e-5 at this multiple (#2545). It stays
-#: at 100: 1e3 would lift the Corotational frame to ~1.3e-3.
+#: but it reads 1.48e-3 at the probe and 1.2e-5 at this multiple. It stays
+#: at 100: 1e3 would lift the Corotational frames to ~2e-3.
 _REPROBE = 100.0
 
 #: Before each leg the domain is settled with unloaded Linear steps until a
@@ -252,7 +252,7 @@ class _GravityModalMixin(_ProcedureHost):
             # The hook settles the gravity state with unloaded Linear steps
             # and returns the domain there, so the snapshot is retaken:
             # ``gravity`` is the state the domain is left at, and
-            # ``gravity_drift()`` reads 0.0 until something moves it (#2545).
+            # ``gravity_drift()`` reads 0.0 until something moves it.
             gravity = snapshot_state(ops)
 
         live_plan = bm._tag_plan(emit_mode(
@@ -850,7 +850,7 @@ def _judge_kink(
     ``_KINK_TOL``, of the legs at ``_REPROBE`` times it instead. A kink
     keeps its ratio at every amplitude, so it is refused either way;
     round-off, whose second difference does not grow with the probe, falls
-    below the limit (#2545). Returns ``(worst, ratio, scale, legs)`` of the
+    below the limit. Returns ``(worst, ratio, scale, legs)`` of the
     legs that decided; the caller refuses when ``ratio`` exceeds
     ``_KINK_TOL`` and otherwise takes its values from those legs.
     """
@@ -869,9 +869,9 @@ def _imposed_leg(
 ) -> _T:
     """One ``-increment`` leg: ``impose`` it, ``read`` the trial state, and
     always return to the committed state with ``responseSpectrumAnalysis
-    -revert``, also when the imposition or a read raises. Otherwise a failed
-    leg (an imposed state off the mode, an extractor raising) left the
-    domain at its trial state (#2545)."""
+    -revert``, also when the imposition or a read raises, so a failed leg
+    (an imposed state off the mode, an extractor raising) does not leave
+    the domain at its trial state."""
     try:
         impose()
         return read()
