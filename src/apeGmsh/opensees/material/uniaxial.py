@@ -52,6 +52,8 @@ __all__ = [
     "LadrunoUniaxialJ2",
     "LadrunoRebarBuckling",
     "LadrunoCohesiveHinge",
+    "Bilin",
+    "ModIMKPeakOriented",
 ]
 
 
@@ -2190,7 +2192,7 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
 
         uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf \
             [-penalty K] [-penaltyRatio r] [-exp | -linear] \
-            [-pm P0 [alpha]] [-implex]
+            [-pm P0 [alpha]] [-pmBal P0c P0t Pbal Mbal_ratio] [-implex]
 
     The discrete cohesive rotation-jump law ``M([[theta]])`` that carries a
     fracture energy ``Gf`` per hinge, used as the embedded strong-discontinuity
@@ -2221,8 +2223,14 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
         Softening envelope shape: ``"exponential"`` (default, ``-exp``) or
         ``"linear"`` (``-linear``).
     pm
-        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
-        (``-pm P0 [alpha]``, ``P0 > 0``).
+        Optional symmetric parabolic axial-moment interaction ``P0`` or
+        ``(P0, alpha)`` (``-pm P0 [alpha]``, ``P0 > 0``). Mutually exclusive
+        with ``pm_bal``.
+    pm_bal
+        Optional asymmetric RC balanced-point axial-moment interaction
+        4-tuple ``(P0c, P0t, Pbal, Mbal_ratio)`` (``-pmBal P0c P0t Pbal
+        Mbal_ratio``, with ``P0c > 0``, ``P0t > 0``, ``0 < Pbal < P0c``, and
+        ``Mbal_ratio >= 1.0``). Mutually exclusive with ``pm``.
     implex
         If ``True``, append ``-implex`` for IMPLEX integration.
     """
@@ -2235,6 +2243,7 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
     penalty_ratio: float = 1000.0
     softening: str = "exponential"
     pm: float | tuple[float, float] | None = None
+    pm_bal: tuple[float, float, float, float] | None = None
     implex: bool = False
 
     def __post_init__(self) -> None:
@@ -2289,6 +2298,46 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
                         "LadrunoCohesiveHinge: pm P0 must be finite and > 0, "
                         f"got {self.pm!r}"
                     )
+        if self.pm_bal is not None:
+            if self.pm is not None:
+                raise ValueError(
+                    "LadrunoCohesiveHinge: pm and pm_bal are mutually exclusive."
+                )
+            if not isinstance(self.pm_bal, tuple) or len(self.pm_bal) != 4:
+                raise ValueError(
+                    "LadrunoCohesiveHinge: pm_bal must be a 4-tuple "
+                    f"(P0c, P0t, Pbal, Mbal_ratio), got {self.pm_bal!r}"
+                )
+            for val in self.pm_bal:
+                if (
+                    isinstance(val, bool)
+                    or not isinstance(val, (int, float))
+                    or not (val == val)
+                    or val in (float("inf"), float("-inf"))
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHinge: pm_bal values must be finite "
+                        f"numbers, got {self.pm_bal!r}"
+                    )
+            p0c, p0t, pbal, mbal_ratio = self.pm_bal
+            if not (p0c > 0):
+                raise ValueError(
+                    f"LadrunoCohesiveHinge: pm_bal P0c must be > 0, got {p0c!r}"
+                )
+            if not (p0t > 0):
+                raise ValueError(
+                    f"LadrunoCohesiveHinge: pm_bal P0t must be > 0, got {p0t!r}"
+                )
+            if not (0.0 < pbal < p0c):
+                raise ValueError(
+                    "LadrunoCohesiveHinge: pm_bal Pbal must satisfy "
+                    f"0 < Pbal < P0c, got Pbal={pbal!r}, P0c={p0c!r}"
+                )
+            if not (mbal_ratio >= 1.0):
+                raise ValueError(
+                    "LadrunoCohesiveHinge: pm_bal Mbal_ratio must be >= 1.0, "
+                    f"got {mbal_ratio!r}"
+                )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | str] = [self.Mc, self.Gf]
@@ -2303,9 +2352,542 @@ class LadrunoCohesiveHinge(UniaxialMaterial):
                 args += ["-pm", float(self.pm[0]), float(self.pm[1])]
             else:
                 args += ["-pm", float(self.pm)]
+        if self.pm_bal is not None:
+            args += [
+                "-pmBal",
+                float(self.pm_bal[0]),
+                float(self.pm_bal[1]),
+                float(self.pm_bal[2]),
+                float(self.pm_bal[3]),
+            ]
         if self.implex:
             args.append("-implex")
         emitter.uniaxialMaterial("LadrunoCohesiveHinge", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
+
+
+# ---------------------------------------------------------------------------
+# Modified Ibarra-Medina-Krawinkler (IMK) deteriorating hinge laws
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Bilin(UniaxialMaterial):
+    r"""``uniaxialMaterial Bilin`` — Modified IMK bilinear hysteretic hinge law.
+
+    OpenSees command (Ladruno fork ``Bilin.cpp`` lines 71–118)::
+
+        uniaxialMaterial Bilin tag Ke AsPos AsNeg My_pos My_neg \
+            LamdaS LamdaD LamdaA LamdaK Cs Cd Ca Ck \
+            Thetap_pos Thetap_neg Thetapc_pos Thetapc_neg \
+            KPos KNeg Thetau_pos Thetau_neg PDPlus PDNeg \
+            [nFactor] [-implex]
+
+    Notes
+    -----
+    - ``My_neg`` MUST be negative (``< 0.0``).
+    - ``AsPos`` and ``AsNeg`` are the **hinge-level** strain-hardening ratios
+      relative to ``Ke`` (``fPeakPos = My_pos + Ke * AsPos * Thetap_pos``). When
+      ``Ke`` is a penalty stiffness (:math:`K_0 = n_{\text{pen}} K_{e,\text{member}}`),
+      compute ``AsPos = (Mc/My - 1) * My / (Ke * Thetap_pos)`` via
+      :meth:`from_lignos_ratios`.
+    - ``LamdaS``, ``LamdaD``, ``LamdaA``, ``LamdaK`` are reference rotation
+      capacities in radians (``Enrgts = LamdaS * My_pos``).
+    - **Fork OpenSeesPy guard (`FB-4`):** Pre-`FB-4` builds of ``Bilin.cpp:91``
+      called ``strcmp(opt, "-implex")`` without checking ``opt != NULL`` when a
+      float ``nFactor`` was passed in OpenSeesPy (now fixed in ``Bilin.cpp``).
+      Since ``nFactor = 0.0`` is the C++ default and is mandatory inside
+      ``LadrunoIMKBeam`` (which performs true series condensation), ``_emit``
+      omits ``nFactor`` whenever it is ``None`` or ``0.0``.
+    """
+
+    Ke: float
+    AsPos: float
+    AsNeg: float
+    My_pos: float
+    My_neg: float
+    LamdaS: float
+    LamdaD: float
+    LamdaA: float
+    LamdaK: float
+    Cs: float = 1.0
+    Cd: float = 1.0
+    Ca: float = 1.0
+    Ck: float = 1.0
+    Thetap_pos: float
+    Thetap_neg: float
+    Thetapc_pos: float
+    Thetapc_neg: float
+    KPos: float
+    KNeg: float
+    Thetau_pos: float
+    Thetau_neg: float
+    PDPlus: float = 1.0
+    PDNeg: float = 1.0
+    nFactor: float | None = None
+    implex: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.implex, bool):
+            raise ValueError(f"Bilin: implex must be a bool, got {self.implex!r}")
+        for fname in (
+            "Ke", "AsPos", "AsNeg", "My_pos", "My_neg",
+            "LamdaS", "LamdaD", "LamdaA", "LamdaK",
+            "Cs", "Cd", "Ca", "Ck",
+            "Thetap_pos", "Thetap_neg", "Thetapc_pos", "Thetapc_neg",
+            "KPos", "KNeg", "Thetau_pos", "Thetau_neg",
+            "PDPlus", "PDNeg",
+        ):
+            fval = getattr(self, fname)
+            if (
+                isinstance(fval, bool)
+                or not isinstance(fval, (int, float))
+                or not math.isfinite(float(fval))
+            ):
+                raise ValueError(
+                    f"Bilin: {fname} must be a finite number, got {fval!r}"
+                )
+        if self.nFactor is not None and (
+            isinstance(self.nFactor, bool)
+            or not isinstance(self.nFactor, (int, float))
+            or not math.isfinite(float(self.nFactor))
+        ):
+            raise ValueError(
+                f"Bilin: nFactor must be a finite number or None, got {self.nFactor!r}"
+            )
+        if self.Ke <= 0.0:
+            raise ValueError(f"Bilin: Ke must be > 0, got {self.Ke!r}")
+        if self.My_pos <= 0.0:
+            raise ValueError(f"Bilin: My_pos must be > 0, got {self.My_pos!r}")
+        if self.My_neg >= 0.0:
+            raise ValueError(
+                f"Bilin: My_neg must be < 0 (OpenSees convention), got {self.My_neg!r}"
+            )
+        for name in (
+            "Thetap_pos",
+            "Thetap_neg",
+            "Thetapc_pos",
+            "Thetapc_neg",
+            "Thetau_pos",
+            "Thetau_neg",
+        ):
+            val = getattr(self, name)
+            if val <= 0.0:
+                raise ValueError(f"Bilin: {name} must be > 0, got {val!r}")
+
+    @classmethod
+    def from_lignos_ratios(
+        cls,
+        *,
+        Ke: float,
+        My_pos: float,
+        My_neg: float | None = None,
+        AsPos: float | None = None,
+        AsNeg: float | None = None,
+        mc_my_ratio_pos: float | None = None,
+        mc_my_ratio_neg: float | None = None,
+        LamdaS: float,
+        LamdaC: float,
+        LamdaA: float,
+        LamdaK: float,
+        Thetap_pos: float,
+        Thetap_neg: float | None = None,
+        Thetapc_pos: float,
+        Thetapc_neg: float | None = None,
+        KPos: float,
+        KNeg: float | None = None,
+        Thetau_pos: float,
+        Thetau_neg: float | None = None,
+        K_core: float | None = None,
+        apply_series_core_correction: bool = False,
+        Cs: float = 1.0,
+        Cd: float = 1.0,
+        Ca: float = 1.0,
+        Ck: float = 1.0,
+        PDPlus: float = 1.0,
+        PDNeg: float = 1.0,
+        nFactor: float | None = None,
+        implex: bool = False,
+    ) -> Bilin:
+        r"""Construct :class:`Bilin` from Lignos & Krawinkler (2011) parameters.
+
+        Either supply ``AsPos``/``AsNeg`` directly (already scaled to ``Ke``) OR
+        supply ``mc_my_ratio_pos`` (capping-to-yield moment ratio :math:`M_c/M_y > 1`),
+        in which case the hinge hardening ratio is computed from the hinge
+        elastic rotation :math:`\theta_{y,\text{hinge}} = M_y / K_e`:
+
+        .. math::
+
+            \alpha_{s,\text{hinge}} = \frac{(M_c/M_y - 1)\,M_y}{K_e\,\theta_{p,h}}
+
+        When ``apply_series_core_correction=True`` and ``K_core`` (:math:`6EI/L_c`
+        or :math:`3EI/L_c`) is provided, member-level plastic rotations
+        :math:`(\theta_p, \theta_{pc})` are converted to pure-hinge rotations via
+        series subtraction/addition of the elastic core rotation change:
+          - :math:`\theta_{p,h} = \theta_p - (M_c - M_y)/K_{\text{core}}`
+          - :math:`\theta_{pc,h} = \theta_{pc} + M_c/K_{\text{core}}`
+        """
+        my_neg_abs = abs(My_neg) if My_neg is not None else My_pos
+        tp_pos = Thetap_pos
+        tp_neg = Thetap_neg if Thetap_neg is not None else Thetap_pos
+        tpc_pos = Thetapc_pos
+        tpc_neg = Thetapc_neg if Thetapc_neg is not None else Thetapc_pos
+        k_neg = KNeg if KNeg is not None else KPos
+        tu_neg = Thetau_neg if Thetau_neg is not None else Thetau_pos
+
+        if mc_my_ratio_pos is not None:
+            mc_my_neg = (
+                mc_my_ratio_neg if mc_my_ratio_neg is not None else mc_my_ratio_pos
+            )
+            mc_pos = mc_my_ratio_pos * My_pos
+            mc_neg = mc_my_neg * my_neg_abs
+            if apply_series_core_correction:
+                if K_core is None or K_core <= 0.0:
+                    raise ValueError(
+                        "Bilin.from_lignos_ratios: K_core > 0 is required when "
+                        "apply_series_core_correction=True"
+                    )
+                tp_pos = max(1.0e-6, tp_pos - (mc_pos - My_pos) / K_core)
+                tp_neg = max(1.0e-6, tp_neg - (mc_neg - my_neg_abs) / K_core)
+                tpc_pos = tpc_pos + mc_pos / K_core
+                tpc_neg = tpc_neg + mc_neg / K_core
+            as_pos = (mc_my_ratio_pos - 1.0) * (My_pos / Ke) / tp_pos
+            as_neg = (mc_my_neg - 1.0) * (my_neg_abs / Ke) / tp_neg
+        else:
+            if AsPos is None:
+                raise ValueError(
+                    "Bilin.from_lignos_ratios: supply either AsPos or mc_my_ratio_pos"
+                )
+            as_pos = AsPos
+            as_neg = AsNeg if AsNeg is not None else AsPos
+            if apply_series_core_correction:
+                if K_core is None or K_core <= 0.0:
+                    raise ValueError(
+                        "Bilin.from_lignos_ratios: K_core > 0 is required when "
+                        "apply_series_core_correction=True"
+                    )
+                mc_pos = My_pos + Ke * as_pos * tp_pos
+                mc_neg = my_neg_abs + Ke * as_neg * tp_neg
+                tp_pos = max(1.0e-6, tp_pos - (mc_pos - My_pos) / K_core)
+                tp_neg = max(1.0e-6, tp_neg - (mc_neg - my_neg_abs) / K_core)
+                tpc_pos = tpc_pos + mc_pos / K_core
+                tpc_neg = tpc_neg + mc_neg / K_core
+                as_pos = (mc_pos - My_pos) / (Ke * tp_pos)
+                as_neg = (mc_neg - my_neg_abs) / (Ke * tp_neg)
+
+        return cls(
+            Ke=Ke,
+            AsPos=as_pos,
+            AsNeg=as_neg,
+            My_pos=My_pos,
+            My_neg=-my_neg_abs,
+            LamdaS=LamdaS,
+            LamdaD=LamdaC,
+            LamdaA=LamdaA,
+            LamdaK=LamdaK,
+            Cs=Cs,
+            Cd=Cd,
+            Ca=Ca,
+            Ck=Ck,
+            Thetap_pos=tp_pos,
+            Thetap_neg=tp_neg,
+            Thetapc_pos=tpc_pos,
+            Thetapc_neg=tpc_neg,
+            KPos=KPos,
+            KNeg=k_neg,
+            Thetau_pos=Thetau_pos,
+            Thetau_neg=tu_neg,
+            PDPlus=PDPlus,
+            PDNeg=PDNeg,
+            nFactor=nFactor,
+            implex=implex,
+        )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float | str] = [
+            self.Ke,
+            self.AsPos,
+            self.AsNeg,
+            self.My_pos,
+            self.My_neg,
+            self.LamdaS,
+            self.LamdaD,
+            self.LamdaA,
+            self.LamdaK,
+            self.Cs,
+            self.Cd,
+            self.Ca,
+            self.Ck,
+            self.Thetap_pos,
+            self.Thetap_neg,
+            self.Thetapc_pos,
+            self.Thetapc_neg,
+            self.KPos,
+            self.KNeg,
+            self.Thetau_pos,
+            self.Thetau_neg,
+            self.PDPlus,
+            self.PDNeg,
+        ]
+        # Omit nFactor when None or 0.0 (C++ default is 0.0; avoids pre-FB-4
+        # Bilin.cpp:91 null-pointer dereference in OpenSeesPy when nFactor is a float).
+        if self.nFactor is not None and self.nFactor != 0.0:
+            params.append(self.nFactor)
+        if self.implex:
+            params.append("-implex")
+        emitter.uniaxialMaterial("Bilin", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ModIMKPeakOriented(UniaxialMaterial):
+    r"""``uniaxialMaterial ModIMKPeakOriented`` — Modified IMK peak-oriented hinge law.
+
+    OpenSees command (Ladruno fork ``ModIMKPeakOriented.cpp`` lines 70–124)::
+
+        uniaxialMaterial ModIMKPeakOriented tag Ke alfaPos alfaNeg My_pos My_neg \
+            Ls Ld La Lk Cs Cd Ca Ck \
+            thetaPpos thetaPneg thetaPCpos thetaPCneg \
+            ResfacPos ResfacNeg fracDispPos fracDispNeg \
+            DPos DNeg [nFactor] [-implex]
+
+    Notes
+    -----
+    - ``My_neg`` MUST be negative (``< 0.0``).
+    - ``alfaPos`` and ``alfaNeg`` are the **hinge-level** strain-hardening ratios
+      relative to ``Ke`` (``fPeakPos = My_pos + Ke * alfaPos * thetaPpos``), so
+      ``alfaPos = (Mc/My - 1) * (My_pos / Ke) / thetaPpos``.
+    - ``Ls``, ``Ld``, ``La``, ``Lk`` in ``ModIMKPeakOriented.cpp`` are multiplied
+      directly by ``My_pos`` (``Enrgts = Ls * My_pos``), so when starting from
+      Haselton et al. (2008/2016) dimensionless ratio ``gamma``
+      (:math:`E_t = \gamma M_y \theta_{y,\text{member}}`), use
+      :meth:`from_haselton_gamma` which sets ``Ls = gamma * theta_y_member`` while
+      computing ``alfaPos`` from ``My_pos / Ke``.
+    """
+
+    Ke: float
+    alfaPos: float
+    alfaNeg: float
+    My_pos: float
+    My_neg: float
+    Ls: float
+    Ld: float
+    La: float
+    Lk: float
+    Cs: float = 1.0
+    Cd: float = 1.0
+    Ca: float = 1.0
+    Ck: float = 1.0
+    thetaPpos: float
+    thetaPneg: float
+    thetaPCpos: float
+    thetaPCneg: float
+    ResfacPos: float
+    ResfacNeg: float
+    fracDispPos: float
+    fracDispNeg: float
+    DPos: float = 1.0
+    DNeg: float = 1.0
+    nFactor: float | None = None
+    implex: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.implex, bool):
+            raise ValueError(
+                f"ModIMKPeakOriented: implex must be a bool, got {self.implex!r}"
+            )
+        for fname in (
+            "Ke", "alfaPos", "alfaNeg", "My_pos", "My_neg",
+            "Ls", "Ld", "La", "Lk",
+            "Cs", "Cd", "Ca", "Ck",
+            "thetaPpos", "thetaPneg", "thetaPCpos", "thetaPCneg",
+            "ResfacPos", "ResfacNeg", "fracDispPos", "fracDispNeg",
+            "DPos", "DNeg",
+        ):
+            fval = getattr(self, fname)
+            if (
+                isinstance(fval, bool)
+                or not isinstance(fval, (int, float))
+                or not math.isfinite(float(fval))
+            ):
+                raise ValueError(
+                    f"ModIMKPeakOriented: {fname} must be a finite number, got {fval!r}"
+                )
+        if self.nFactor is not None and (
+            isinstance(self.nFactor, bool)
+            or not isinstance(self.nFactor, (int, float))
+            or not math.isfinite(float(self.nFactor))
+        ):
+            raise ValueError(
+                "ModIMKPeakOriented: nFactor must be a finite number or None, "
+                f"got {self.nFactor!r}"
+            )
+        if self.Ke <= 0.0:
+            raise ValueError(f"ModIMKPeakOriented: Ke must be > 0, got {self.Ke!r}")
+        if self.My_pos <= 0.0:
+            raise ValueError(
+                f"ModIMKPeakOriented: My_pos must be > 0, got {self.My_pos!r}"
+            )
+        if self.My_neg >= 0.0:
+            raise ValueError(
+                "ModIMKPeakOriented: My_neg must be < 0 (OpenSees convention), "
+                f"got {self.My_neg!r}"
+            )
+        for name in (
+            "thetaPpos",
+            "thetaPneg",
+            "thetaPCpos",
+            "thetaPCneg",
+            "fracDispPos",
+            "fracDispNeg",
+        ):
+            val = getattr(self, name)
+            if val <= 0.0:
+                raise ValueError(
+                    f"ModIMKPeakOriented: {name} must be > 0, got {val!r}"
+                )
+
+    @classmethod
+    def from_haselton_gamma(
+        cls,
+        *,
+        Ke: float,
+        My_pos: float,
+        My_neg: float | None = None,
+        mc_my_ratio_pos: float = 1.13,
+        mc_my_ratio_neg: float | None = None,
+        gamma_haselton: float,
+        theta_y_member: float,
+        thetaPpos: float,
+        thetaPneg: float | None = None,
+        thetaPCpos: float,
+        thetaPCneg: float | None = None,
+        K_core: float | None = None,
+        apply_series_core_correction: bool = False,
+        ResfacPos: float = 0.01,
+        ResfacNeg: float | None = None,
+        fracDispPos: float = 0.20,
+        fracDispNeg: float | None = None,
+        Cs: float = 1.0,
+        Cd: float = 1.0,
+        Ca: float = 1.0,
+        Ck: float = 1.0,
+        DPos: float = 1.0,
+        DNeg: float = 1.0,
+        nFactor: float | None = None,
+        implex: bool = False,
+    ) -> ModIMKPeakOriented:
+        r"""Construct :class:`ModIMKPeakOriented` from Haselton et al. (2008/2016)
+        dimensionless cyclic energy ratio ``gamma_haselton``.
+
+        Crucial distinction:
+          1. ``alfaPos`` / ``alfaNeg`` use the **hinge** elastic yield rotation
+             :math:`\theta_{y,\text{hinge}} = M_y / K_e` so that C++
+             ``fPeakPos = My + Ke * alfaPos * thetaPpos = Mc`` is exact for any
+             penalty stiffness :math:`K_e = K_0 = n_{\text{pen}} K_{\text{core}}`.
+          2. ``Ls = Ld = La = Lk`` use the **member** chord yield rotation
+             ``theta_y_member`` (:math:`\Lambda_{\text{OpenSees}} = \gamma_{\text{Haselton}} \cdot \theta_{y,\text{member}}`)
+             so that ``Enrgts = Ls * My = gamma_haselton * My * theta_y_member``.
+        """
+        if theta_y_member <= 0.0:
+            raise ValueError(
+                "ModIMKPeakOriented.from_haselton_gamma: theta_y_member must be > 0, "
+                f"got {theta_y_member!r}"
+            )
+        my_neg_abs = abs(My_neg) if My_neg is not None else My_pos
+        mc_my_neg = (
+            mc_my_ratio_neg if mc_my_ratio_neg is not None else mc_my_ratio_pos
+        )
+        tp_pos = thetaPpos
+        tp_neg = thetaPneg if thetaPneg is not None else thetaPpos
+        tpc_pos = thetaPCpos
+        tpc_neg = thetaPCneg if thetaPCneg is not None else thetaPCpos
+        res_neg = ResfacNeg if ResfacNeg is not None else ResfacPos
+        tu_neg = fracDispNeg if fracDispNeg is not None else fracDispPos
+
+        if apply_series_core_correction:
+            if K_core is None or K_core <= 0.0:
+                raise ValueError(
+                    "ModIMKPeakOriented.from_haselton_gamma: K_core > 0 is required "
+                    "when apply_series_core_correction=True"
+                )
+            mc_pos = mc_my_ratio_pos * My_pos
+            mc_neg = mc_my_neg * my_neg_abs
+            tp_pos = max(1.0e-6, tp_pos - (mc_pos - My_pos) / K_core)
+            tp_neg = max(1.0e-6, tp_neg - (mc_neg - my_neg_abs) / K_core)
+            tpc_pos = tpc_pos + mc_pos / K_core
+            tpc_neg = tpc_neg + mc_neg / K_core
+
+        theta_y_hinge_pos = My_pos / Ke
+        theta_y_hinge_neg = my_neg_abs / Ke
+        alfa_pos = (mc_my_ratio_pos - 1.0) * theta_y_hinge_pos / tp_pos
+        alfa_neg = (mc_my_neg - 1.0) * theta_y_hinge_neg / tp_neg
+
+        lambda_rad = gamma_haselton * theta_y_member
+
+        return cls(
+            Ke=Ke,
+            alfaPos=alfa_pos,
+            alfaNeg=alfa_neg,
+            My_pos=My_pos,
+            My_neg=-my_neg_abs,
+            Ls=lambda_rad,
+            Ld=lambda_rad,
+            La=lambda_rad,
+            Lk=lambda_rad,
+            Cs=Cs,
+            Cd=Cd,
+            Ca=Ca,
+            Ck=Ck,
+            thetaPpos=tp_pos,
+            thetaPneg=tp_neg,
+            thetaPCpos=tpc_pos,
+            thetaPCneg=tpc_neg,
+            ResfacPos=ResfacPos,
+            ResfacNeg=res_neg,
+            fracDispPos=fracDispPos,
+            fracDispNeg=tu_neg,
+            DPos=DPos,
+            DNeg=DNeg,
+            nFactor=nFactor,
+            implex=implex,
+        )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float | str] = [
+            self.Ke,
+            self.alfaPos,
+            self.alfaNeg,
+            self.My_pos,
+            self.My_neg,
+            self.Ls,
+            self.Ld,
+            self.La,
+            self.Lk,
+            self.Cs,
+            self.Cd,
+            self.Ca,
+            self.Ck,
+            self.thetaPpos,
+            self.thetaPneg,
+            self.thetaPCpos,
+            self.thetaPCneg,
+            self.ResfacPos,
+            self.ResfacNeg,
+            self.fracDispPos,
+            self.fracDispNeg,
+            self.DPos,
+            self.DNeg,
+        ]
+        if self.nFactor is not None and self.nFactor != 0.0:
+            params.append(self.nFactor)
+        if self.implex:
+            params.append("-implex")
+        emitter.uniaxialMaterial("ModIMKPeakOriented", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
