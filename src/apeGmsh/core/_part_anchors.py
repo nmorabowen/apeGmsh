@@ -326,6 +326,7 @@ def rebind_physical_groups(
     #    assignment. ---------------------------------------------------
     scored: list[tuple[float, float, int, int, int]] = []
     #   (com_dist, bbox_dist, anchor_idx, dim, candidate_tag)
+    com_arrays: dict[int, np.ndarray] = {}
 
     for ai, anchor in enumerate(anchors):
         dim = int(anchor['dim'])
@@ -359,15 +360,20 @@ def rebind_physical_groups(
             ]
 
         candidates = imported_info.get(dim, [])
-        for tag, cand_com, cand_bbox in candidates:
-            com_dist = float(np.linalg.norm(cand_com - expected_com))
-            if com_dist > abs_tol:
-                continue
+        if not candidates:
+            continue
+        # One vectorised distance pass per anchor: a Python norm per
+        # (anchor, candidate) pair made ``parts.add`` O(anchors x entities).
+        if dim not in com_arrays:
+            com_arrays[dim] = np.array([c for _, c, _ in candidates], dtype=float)
+        com_dists = np.linalg.norm(com_arrays[dim] - expected_com, axis=1)
+        for i in np.flatnonzero(com_dists <= abs_tol):
+            tag, _cand_com, cand_bbox = candidates[i]
             # Bbox tiebreaker: compare only when both sides have data
             bbox_dist = 0.0
             if expected_bbox is not None and cand_bbox is not None:
                 bbox_dist = _bbox_distance(expected_bbox, cand_bbox)
-            scored.append((com_dist, bbox_dist, ai, dim, tag))
+            scored.append((float(com_dists[i]), bbox_dist, ai, dim, tag))
 
     # Sort by (com_dist, bbox_dist) — best overall match first
     scored.sort()
