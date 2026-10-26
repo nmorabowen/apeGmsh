@@ -21,7 +21,7 @@ permissions:
   pull-requests: read
   checks: read      # statusCheckRollup: check runs on the PR head
   statuses: read    # statusCheckRollup: commit statuses
-  actions: read     # gh run list: last scheduled runs of the watched lanes (red-lane)
+  actions: read     # gh run list: last scheduled runs of the watched lanes (red-lane, lane issues #2556)
 
 jobs:
   probe:
@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Probe program PRs and lock labels
+      - name: Probe program PRs, lock labels and red lanes
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

@@ -278,10 +278,16 @@ def test_red_then_green_is_silent():
     assert not _lane_findings(_lane(_run(1, "success"), _run(2)))
 
 
-def test_single_run_or_in_progress_or_cancelled_is_silent():
+def test_single_run_or_in_progress_is_silent():
     assert not _lane_findings(_lane(_run(1)))
     assert not _lane_findings(_lane(_run(1, None, "in_progress"), _run(2)))
-    assert not _lane_findings(_lane(_run(1, "cancelled"), _run(2)))
+
+
+def test_cancelled_counts_as_non_green():
+    # lesson #2556: a job at its own timeout-minutes concludes cancelled, and
+    # Deps canary sat cancelled 7/7 nights; until #2556 this asserted silence
+    found = _lane_findings(_lane(_run(1, "cancelled"), _run(2)))
+    assert len(found) == 1 and "cancelled" in found[0]["detail"]
 
 
 def test_unlabelled_slice_pr_is_flagged():
@@ -369,3 +375,161 @@ def test_wip_peak_drops_human_gate_now_and_old_prs_count_from_window_start():
     assert _peak_kinds([_hist(n, 10, closed=8, gate=(n == 0)) for n in range(9)]) == []
     # opened 3 days ago, still open: present at the window start
     assert len(_peak_kinds([_hist(n, 72) for n in range(9)])) == 1
+
+
+# 8. one issue per red lane (lesson #2556) ---------------------------------------
+
+def _night(days_ago, conclusion, wf):
+    run = _run(days_ago, conclusion)
+    run["url"] = f"https://example/{wf}/{days_ago}"
+    return run
+
+
+def _runs_1026():
+    """The 10-26 triage, newest first: live-fork F,F,F; Benchmarks red 5
+    nights; Deps canary cancelled 7/7; orphans green."""
+    return {
+        "live-fork.yml": [_night(d, "failure", "lf") for d in (1, 2, 3)]
+                         + [_night(4, "success", "lf")],
+        "benchmarks.yml": [_night(d, "failure", "bm") for d in range(1, 6)]
+                          + [_night(6, "success", "bm"), _night(7, "success", "bm")],
+        "deps-canary.yml": [_night(d, "cancelled", "dc") for d in range(1, 8)],
+        "orphans.yml": [_night(d, "success", "or") for d in range(1, 8)],
+    }
+
+
+class LaneGh:
+    """Fake ``gh``: ``issue list`` returns the given open issues."""
+
+    def __init__(self, open_issues=()):
+        self.open_issues = list(open_issues)
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args):
+        self.calls.append(args)
+        if args[:2] == ["issue", "list"]:
+            return json.dumps(self.open_issues)
+        return ""
+
+    def verb(self, name):
+        return [c for c in self.calls if c[:2] == ["issue", name]]
+
+
+def _flag(call, flag):
+    return [call[i + 1] for i, a in enumerate(call) if a == flag]
+
+
+def test_lane_issues_replay_1026_opens_exactly_three():
+    gh = LaneGh()
+    actions = pp.sync_lane_issues(gh, "o/r", _runs_1026(), NOW)
+    created = gh.verb("create")
+    assert len(created) == 3 and not gh.verb("comment") and not gh.verb("close")
+    by_title = {_flag(c, "--title")[0]: _flag(c, "--label") for c in created}
+    assert by_title == {
+        pp.lane_title("live-fork.yml"): ["program", "chain:F"],
+        pp.lane_title("benchmarks.yml"): ["program", "chain:S"],
+        pp.lane_title("deps-canary.yml"): ["program", "chain:C"],
+    }
+    body = {_flag(c, "--title")[0]: _flag(c, "--body")[0] for c in created}
+    assert "7 consecutive" in body[pp.lane_title("deps-canary.yml")]
+    assert "5 consecutive" in body[pp.lane_title("benchmarks.yml")]
+    assert "bm/6" not in body[pp.lane_title("benchmarks.yml")]  # green ends the streak
+    assert sorted(actions) == ["benchmarks.yml: created", "deps-canary.yml: created",
+                               "live-fork.yml: created"]
+    # the tracking-issue finding agrees: three red lanes
+    reds = _lane_findings({"prs": [], "issues": [], "runs": _runs_1026()})
+    assert sorted(f["ref"] for f in reds) == ["benchmarks.yml", "deps-canary.yml",
+                                              "live-fork.yml"]
+
+
+def test_lane_issue_next_night_bumps_instead_of_duplicating():
+    runs = {"deps-canary.yml": _runs_1026()["deps-canary.yml"]}
+    title = pp.lane_title("deps-canary.yml")
+    # the decoy sorts first: only the exact title may be bumped
+    gh = LaneGh([{"number": 40, "title": title + " (old)"},
+                 {"number": 41, "title": title}])
+    assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == ["deps-canary.yml: bumped #41"]
+    assert not gh.verb("create") and not gh.verb("close")
+    assert [c[2] for c in gh.verb("comment")] == ["41"]
+    listed = gh.verb("list")[0]
+    assert title in _flag(listed, "--search")[0] and _flag(listed, "--label") == ["program"]
+
+
+def test_lane_issue_duplicates_collapse_to_the_lowest_number():
+    runs = {"deps-canary.yml": _runs_1026()["deps-canary.yml"]}
+    title = pp.lane_title("deps-canary.yml")
+    gh = LaneGh([{"number": 44, "title": title}, {"number": 41, "title": title},
+                 {"number": 40, "title": "other"}])
+    assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == [
+        "deps-canary.yml: bumped #41; closed duplicates #44"]
+    assert [c[2] for c in gh.verb("close")] == ["44"]
+    assert "Duplicate of #41" in _flag(gh.verb("close")[0], "--comment")[0]
+    assert [c[2] for c in gh.verb("comment")] == ["41"]
+
+
+def test_lane_missing_chain_label_retries_and_keeps_later_lanes():
+    class NoChainGh(LaneGh):
+        def __call__(self, args):
+            if args[:2] == ["issue", "create"] and "chain:S" in args:
+                self.calls.append(args)
+                raise RuntimeError("could not add label: 'chain:S' not found")
+            return super().__call__(args)
+
+    gh = NoChainGh()
+    actions = pp.sync_lane_issues(gh, "o/r", _runs_1026(), NOW)
+    labels = {_flag(c, "--title")[0]: _flag(c, "--label") for c in gh.verb("create")}
+    # benchmarks sorts first: the failed attempt, then a retry with program
+    # only; the later lanes still get their issues
+    assert [_flag(c, "--label") for c in gh.verb("create")
+            if _flag(c, "--title")[0] == pp.lane_title("benchmarks.yml")] == [
+        ["program", "chain:S"], ["program"]]
+    assert labels[pp.lane_title("deps-canary.yml")] == ["program", "chain:C"]
+    assert labels[pp.lane_title("live-fork.yml")] == ["program", "chain:F"]
+    assert any(a.startswith("benchmarks.yml: created without `chain:S`") for a in actions)
+    assert len(actions) == 3
+
+
+def test_lane_one_red_night_then_green_opens_nothing():
+    for runs in ([_night(1, "success", "x"), _night(2, "failure", "x")],   # red, then green
+                 [_night(1, "failure", "x"), _night(2, "success", "x")],   # one red so far
+                 [_night(1, "cancelled", "x")]):                           # one night only
+        gh = LaneGh()
+        assert pp.sync_lane_issues(gh, "o/r", {"benchmarks.yml": runs}, NOW) == []
+        assert not gh.verb("create") and not gh.verb("comment")
+
+
+def test_lane_green_closes_the_open_issue_and_never_reopens():
+    title = pp.lane_title("live-fork.yml")
+    runs = {"live-fork.yml": [_night(1, "success", "lf"), _night(2, "failure", "lf"),
+                              _night(3, "failure", "lf")]}
+    gh = LaneGh([{"number": 50, "title": title}])
+    assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == ["live-fork.yml: closed #50"]
+    assert [c[2] for c in gh.verb("close")] == ["50"]
+    assert not gh.verb("reopen")
+    # a green lane with no open issue only looks
+    gh = LaneGh()
+    assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == []
+    assert [c[:2] for c in gh.calls] == [["issue", "list"]]
+
+
+def test_lane_without_completed_runs_makes_no_call():
+    gh = LaneGh()
+    runs = {"live-fork.yml": [_run(1, None, "in_progress")], "orphans.yml": []}
+    assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == []
+    assert gh.calls == []
+
+
+def test_every_watched_lane_has_a_chain_label():
+    assert set(pp.WATCHED_WORKFLOWS) == set(pp.LANE_CHAINS)
+    assert all(v.startswith("chain:") for v in pp.LANE_CHAINS.values())
+
+
+def test_cli_issue_runs_lane_sync(monkeypatch, capsys):
+    gh = LaneGh()
+    monkeypatch.setattr(pp, "fetch", lambda g, repo: {
+        "prs": [], "issues": [], "open_prs": [], "history": [], "runs": _runs_1026()})
+    assert pp.main(["--issue", "--repo", "o/r"], gh=gh) == 0
+    assert capsys.readouterr().out.count("lane issue:") == 3
+    lane_creates = [c for c in gh.verb("create")
+                    if _flag(c, "--title")[0].startswith(pp.LANE_TITLE_PREFIX)]
+    assert len(lane_creates) == 3
