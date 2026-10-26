@@ -1983,7 +1983,7 @@ def _card_gh(body, comments):
 def test_check_card_prints_owned_set_and_negated_amendment_with_its_word(monkeypatch, capsys):
     monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [POSITIVE_AMENDMENT, NEGATED_AMENDMENT]))
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
-    assert land_pr.main(["--check-card", "2000"]) == 0
+    assert land_pr.main(["--check-card", "2000"]) == 1  # a skipped amendment path is loud (#2326)
     out = capsys.readouterr().out
     assert "  scripts/a.py" in out and "  scripts/b.py" in out
     assert "  scripts/c.py" not in out
@@ -2023,7 +2023,7 @@ def test_check_card_survives_a_cp1252_stdout_with_a_sigma_2057(monkeypatch):
     raw = io.BytesIO()
     wrapper = io.TextIOWrapper(raw, encoding="cp1252", newline="")
     monkeypatch.setattr(sys, "stdout", wrapper)
-    assert land_pr.main(["--check-card", "2000"]) == 0
+    assert land_pr.main(["--check-card", "2000"]) == 1  # the skipped amendment line exits 1 (#2326)
     wrapper.flush()
     assert b"sigma ?" in raw.getvalue()
 
@@ -2130,3 +2130,50 @@ def test_fork_pin_renamed_or_deleted_with_no_run_is_refused(row):
     gh.responses[_pin_call(HEAD_2138)] = "[]"
     with pytest.raises(land_pr.LandError, match="check 12"):
         _run(1218, gh, git)
+
+
+# --- #2326: check 9 scopes a negation to its own line -------------------------------------
+
+AMENDMENT_2410 = (
+    "**Card amendment (2026-10-21, after the builder's diagnosis).** The rows are written but never "
+    "read globally, and `_replay_into` has no MP slot. `emitter/h5.py` is not needed. "
+    "These paths join Owned:\n\n"
+    "- `src/apeGmsh/opensees/_internal/compose.py`\n"
+    "- `tests/opensees/h5/test_replay_skipped_streams.py`\n"
+)
+CARD_2290 = (
+    "### Owned files\n- `scripts/a.py`\n"
+    "- Refuse at `__enter__` a record that has no `nodal_resisting_*` component; the split keeps `scripts/b.py` apart.\n"
+    "- `scripts/c.py`\n"
+)
+
+
+def test_a_negation_in_an_earlier_sentence_does_not_open_the_list_2410():
+    assert land_pr._amendment_paths(AMENDMENT_2410, 2410) == [
+        "src/apeGmsh/opensees/_internal/compose.py",
+        "tests/opensees/h5/test_replay_skipped_streams.py",
+    ]
+
+
+def test_a_prose_note_without_a_path_in_an_owned_section_neither_refuses_nor_drops_bullets_2298(capsys):
+    card = "### Owned files\n- `scripts/a.py`\n- A split note: no `nodal_resisting_*` here.\n- `scripts/c.py`\n"
+    assert land_pr._card_paths(card) == ["scripts/a.py", "scripts/c.py"]
+    assert "non-path line in Owned: '- A split note: no `nodal_resisting_*` here.'" in capsys.readouterr().out
+
+
+def test_a_prose_note_that_names_a_path_still_refuses_2298():
+    with pytest.raises(land_pr.LandError, match="an Owned line negates"):
+        land_pr._card_paths(CARD_2290)
+
+
+def test_an_owned_path_with_a_space_is_read_2339():
+    card = "### Owned files\n- `examples/EOS Examples/run one.py`\n- `scripts/a.py`\n"
+    assert land_pr._card_paths(card) == ["examples/EOS Examples/run one.py", "scripts/a.py"]
+
+
+def test_check_card_exits_1_when_an_amendment_path_is_skipped_2412(monkeypatch, capsys):
+    skipped = {"body": "**Card amendment (T):** also edit `scripts/b.py`; never touch `scripts/c.py`.\n"}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [skipped]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 1
+    assert "skipped (negation 'never')" in capsys.readouterr().out
