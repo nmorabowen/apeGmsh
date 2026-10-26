@@ -977,8 +977,12 @@ class TclEmitter:
     ) -> None:
         self._lines.append(_join("section", sec_type, tag, *params))
 
-    def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
-        self._lines.append(_join("geomTransf", t_type, tag, *vec))
+    def geomTransf(
+        self, t_type: str, tag: int, *vec: float,
+        jnt_offset: tuple[float, ...] = (),
+    ) -> None:
+        jnt = ("-jntOffset", *jnt_offset) if jnt_offset else ()
+        self._lines.append(_join("geomTransf", t_type, tag, *vec, *jnt))
 
     # -- Sections that take blocks (Fiber) ----------------------------------
 

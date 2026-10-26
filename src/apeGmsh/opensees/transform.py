@@ -8,7 +8,32 @@ replace the legacy ``add_geom_transf`` flow.
 
 OpenSees command shape::
 
-    geomTransf <Linear|PDelta|Corotational> tag <vecxzX vecxzY vecxzZ>
+    geomTransf <Linear|PDelta|Corotational> tag <vecxzX vecxzY vecxzZ> \
+        <-jntOffset dXi dYi dZi dXj dYj dZj>
+
+``jnt_offset=`` (all three types) adds the rigid joint offsets, in global
+coordinates (2-D: ``-jntOffset dXi dYi dXj dYj``): a constant pair, or an
+:class:`~apeGmsh.opensees.joint_offset.InsertionPoint` rule the bridge
+resolves per element (see :mod:`apeGmsh.opensees.joint_offset`). A 3-D
+``Corotational`` refuses one: ``CorotCrdTransf3d`` zeroes the offsets
+with a warning ("rigid joint zones not implemented yet").
+
+Members: ETABS puts a frame object's end offsets at its two ends. The mesh
+alone cannot tell a member meshed into several elements from a continuous
+girder of several members, so an offset that is not the same transverse
+shift at both ends (an end length, an axial component, unequal ends)
+refuses where any two of a transform's elements meet at a node turning
+outside 30-150 deg (a straight or faceted member, one running through a
+joint, a fold-back) until elements carry their source curve (#2551).
+One-element members, corners of 30-150 deg, and an equal transverse shift
+on every element are unaffected.
+
+Loads on an offset beam: a ``Plain.from_model`` line load (global,
+``beamUniform`` / ``line_load``) covers the full node-to-node length, as
+ETABS/CSI load a frame object: the share over each rigid end zone goes
+to its joint as a force plus its moment, the rest to the flexible span.
+``Plain.beam_uniform`` is OpenSees' own ``eleLoad -beamUniform`` and,
+like it, loads only the flexible element between the offset ends.
 
 In 3D, ``vecxz`` is required: a vector in the local x-z plane that
 fixes the section's strong axis. In 2D, ``vecxz`` is omitted and
@@ -57,6 +82,12 @@ from ._orientation import (
 )
 
 from ._internal.types import GeomTransf, Primitive
+from .joint_offset import (
+    InsertionPoint,
+    JntOffset,
+    flatten_jnt_offset,
+    insertion_point_offsets,
+)
 
 if TYPE_CHECKING:
     from .emitter.base import Emitter
@@ -74,6 +105,10 @@ __all__ = [
     "Linear",
     "PDelta",
     "Corotational",
+    # Joint offsets (-jntOffset)
+    "JntOffset",
+    "InsertionPoint",
+    "insertion_point_offsets",
 ]
 
 
@@ -92,6 +127,7 @@ def _check_transform_args(
     orientation: Orientation | None,
     vecxz: tuple[float, float, float] | None,
     roll_deg: float,
+    jnt_offset: "JntOffset | InsertionPoint | None" = None,
 ) -> None:
     """Validate transform construction arguments.
 
@@ -123,6 +159,42 @@ def _check_transform_args(
             "about each beam's tangent, or set roll_deg=0 if vecxz= "
             "is the correct constant direction."
         )
+    flat: tuple[float, ...] = ()
+    if jnt_offset is not None and not isinstance(jnt_offset, InsertionPoint):
+        flat = flatten_jnt_offset(jnt_offset, type_name)
+    # Only a 3-component pair is visibly 3-D here: a 2-D model may carry
+    # vecxz=(0, 0, 1) (the bridge accepts global Z), so a vecxz or an
+    # orientation alone defers the 3-D refusal to the build, which knows
+    # ndm (``_check_jnt_offset``).
+    if type_name == "Corotational" and len(flat) == 6:
+        raise ValueError(
+            "Corotational: jnt_offset= is not supported in 3-D. OpenSees' "
+            "CorotCrdTransf3d (stock and Ladruno) prints \"rigid joint zones "
+            "not implemented yet\" and zeroes the offsets, so the element "
+            "would solve without them. Use Linear or PDelta, or model the "
+            "offsets with explicit nodes and rigidLink beam."
+        )
+
+
+def _jnt_kwargs(
+    jnt_offset: "JntOffset | InsertionPoint | None", where: str,
+) -> dict[str, tuple[float, ...]]:
+    """``{"jnt_offset": flat}`` for a constant non-zero pair, else ``{}``.
+
+    An all-zero pair emits no ``-jntOffset`` (the deck of an offset-free
+    transform). An :class:`InsertionPoint` rule is resolved per element
+    by the bridge fan-out; a primitive emitted on its own cannot.
+    """
+    if jnt_offset is None:
+        return {}
+    if isinstance(jnt_offset, InsertionPoint):
+        raise NotImplementedError(
+            f"{where}: an InsertionPoint jnt_offset is resolved per element "
+            "by the bridge build pipeline; emit through apeSees, or pass a "
+            "constant ((dXi, dYi, dZi), (dXj, dYj, dZj)) pair."
+        )
+    flat = flatten_jnt_offset(jnt_offset, where)
+    return {"jnt_offset": flat} if any(v != 0.0 for v in flat) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -160,14 +232,24 @@ class Linear(GeomTransf):
         element's per-element tangent, which only the orientation path
         knows. Combined with an explicit ``vecxz=`` it raises
         :class:`ValueError`.
+    jnt_offset
+        Rigid joint offsets, ``-jntOffset``: a constant global pair
+        ``((dXi, dYi, dZi), (dXj, dYj, dZj))`` (2-D: 2-tuples) from each
+        node to its element end, or an
+        :class:`~apeGmsh.opensees.joint_offset.InsertionPoint` rule (ETABS
+        cardinal point, joint and end-length offsets) resolved per
+        element at build, one ``geomTransf`` per distinct result. An
+        all-zero pair emits no flag.
     """
 
     orientation: Orientation | None = None
     vecxz: tuple[float, float, float] | None = None
     roll_deg: float = 0.0
+    jnt_offset: JntOffset | InsertionPoint | None = None
 
     def __post_init__(self) -> None:
-        _check_transform_args("Linear", self.orientation, self.vecxz, self.roll_deg)
+        _check_transform_args(
+            "Linear", self.orientation, self.vecxz, self.roll_deg, self.jnt_offset)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         # Phase 1D scope: ``_emit`` requires an explicit ``vecxz``.
@@ -183,7 +265,9 @@ class Linear(GeomTransf):
                 "(Phase 4). For Phase 1D unit tests, construct with "
                 "explicit vecxz=."
             )
-        emitter.geomTransf("Linear", tag, *self.vecxz)
+        emitter.geomTransf(
+            "Linear", tag, *self.vecxz,
+            **_jnt_kwargs(self.jnt_offset, "Linear._emit"))
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -205,9 +289,11 @@ class PDelta(GeomTransf):
     orientation: Orientation | None = None
     vecxz: tuple[float, float, float] | None = None
     roll_deg: float = 0.0
+    jnt_offset: JntOffset | InsertionPoint | None = None
 
     def __post_init__(self) -> None:
-        _check_transform_args("PDelta", self.orientation, self.vecxz, self.roll_deg)
+        _check_transform_args(
+            "PDelta", self.orientation, self.vecxz, self.roll_deg, self.jnt_offset)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         if self.vecxz is None:
@@ -217,7 +303,9 @@ class PDelta(GeomTransf):
                 "(Phase 4). For Phase 1D unit tests, construct with "
                 "explicit vecxz=."
             )
-        emitter.geomTransf("PDelta", tag, *self.vecxz)
+        emitter.geomTransf(
+            "PDelta", tag, *self.vecxz,
+            **_jnt_kwargs(self.jnt_offset, "PDelta._emit"))
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -239,9 +327,12 @@ class Corotational(GeomTransf):
     orientation: Orientation | None = None
     vecxz: tuple[float, float, float] | None = None
     roll_deg: float = 0.0
+    jnt_offset: JntOffset | InsertionPoint | None = None
 
     def __post_init__(self) -> None:
-        _check_transform_args("Corotational", self.orientation, self.vecxz, self.roll_deg)
+        _check_transform_args(
+            "Corotational", self.orientation, self.vecxz, self.roll_deg,
+            self.jnt_offset)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         if self.vecxz is None:
@@ -251,7 +342,9 @@ class Corotational(GeomTransf):
                 "responsibility (Phase 4). For Phase 1D unit tests, "
                 "construct with explicit vecxz=."
             )
-        emitter.geomTransf("Corotational", tag, *self.vecxz)
+        emitter.geomTransf(
+            "Corotational", tag, *self.vecxz,
+            **_jnt_kwargs(self.jnt_offset, "Corotational._emit"))
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

@@ -700,7 +700,19 @@ class H5RefusedVerb(NotImplementedError):
 #:     2.35 reader would replay a fork pin as auto, hence the bump: a 2.36
 #:     reader opens 2.12 through 2.36; a 2.35.x reader REFUSES a 2.36.x
 #:     file.
-SCHEMA_VERSION: str = "2.36.0"
+#:   * 2.37.0 — joint offsets: additive — a ``/opensees/transforms/*``
+#:     group whose ``geomTransf`` line carries ``-jntOffset`` gains a
+#:     float64 ``jnt_offset`` dataset, ``(1, 6)`` in 3-D and ``(1, 4)`` in
+#:     2-D, the line's global ``dXi dYi [dZi] dXj dYj [dZj]``. A line
+#:     without offsets writes no dataset. Every transform's
+#:     ``/opensees/decl_params`` row does gain a ``"jnt_offset"`` field
+#:     (``null`` when none was declared), so an archive with a transform
+#:     changes bytes, but not ``model_hash`` (``decl_params`` is in
+#:     ``MODEL_HASH_EXCLUDED_CHILDREN``) nor the deck it replays. A 2.36
+#:     reader would replay an offset line without its offsets, hence the
+#:     bump: a 2.37 reader opens 2.12 through 2.37; a 2.36.x reader
+#:     REFUSES a 2.37.x file.
+SCHEMA_VERSION: str = "2.37.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but

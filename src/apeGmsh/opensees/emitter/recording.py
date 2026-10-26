@@ -173,8 +173,12 @@ class RecordingEmitter:
     ) -> None:
         self.calls.append(("section", (sec_type, tag, *params), {}))
 
-    def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
-        self.calls.append(("geomTransf", (t_type, tag, *vec), {}))
+    def geomTransf(
+        self, t_type: str, tag: int, *vec: float,
+        jnt_offset: tuple[float, ...] = (),
+    ) -> None:
+        kw = {"jnt_offset": tuple(jnt_offset)} if jnt_offset else {}
+        self.calls.append(("geomTransf", (t_type, tag, *vec), kw))
 
     # -- Sections that take blocks ---------------------------------------
     def section_open(

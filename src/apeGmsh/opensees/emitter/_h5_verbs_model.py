@@ -535,11 +535,15 @@ class _H5ModelVerbsMixin(_H5Host):
             )
         )
 
-    def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
+    def geomTransf(
+        self, t_type: str, tag: int, *vec: float,
+        jnt_offset: tuple[float, ...] = (),
+    ) -> None:
         self._transforms.append(
             _TransformRecord(
                 type_token=t_type, tag=int(tag),
                 vec=tuple(float(v) for v in vec),
+                jnt_offset=tuple(float(v) for v in jnt_offset),
             )
         )
 

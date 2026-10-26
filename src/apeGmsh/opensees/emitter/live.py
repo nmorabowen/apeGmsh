@@ -1215,8 +1215,12 @@ class LiveOpsEmitter:
         self._swept_reach().note_referrer(tag, params)
         self._ops.section(sec_type, tag, *params)
 
-    def geomTransf(self, t_type: str, tag: int, *vec: float) -> None:
-        self._ops.geomTransf(t_type, tag, *vec)
+    def geomTransf(
+        self, t_type: str, tag: int, *vec: float,
+        jnt_offset: tuple[float, ...] = (),
+    ) -> None:
+        jnt = ("-jntOffset", *jnt_offset) if jnt_offset else ()
+        self._ops.geomTransf(t_type, tag, *vec, *jnt)
 
     # -- Sections that take blocks (Fiber) ----------------------------------
 

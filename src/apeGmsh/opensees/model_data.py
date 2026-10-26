@@ -577,9 +577,17 @@ class ModelData:
                     )
                     # Append the same record-shape the writer produces.
                     from ._internal.typed_records import TransformRecord as _TransformRecord  # local
+                    # Carry the line's -jntOffset (opensees 2.37.0) so a
+                    # ModelData.write() of this archive keeps it.
+                    jnt: tuple[float, ...] = ()
+                    if "jnt_offset" in g:
+                        jnt = tuple(
+                            float(v) for v in
+                            np.asarray(g["jnt_offset"][...]).reshape(-1))
                     md._em._transforms.append(
                         _TransformRecord(
                             type_token=ttype, tag=ttag, vec=vec,
+                            jnt_offset=jnt,
                         )
                     )
                     # Keep the orientation tag counter ahead of any

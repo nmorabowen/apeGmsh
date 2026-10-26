@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_36_0() -> None:
-    """Schema 2.36.0 — a pinned ``OpenSeesTarget.mode`` is
-    ``/opensees@target_mode`` (#2375)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 36, 0)
+def test_opensees_reader_version_is_2_37_0() -> None:
+    """Schema 2.37.0 — a ``geomTransf`` line with ``-jntOffset`` stores
+    it as a ``jnt_offset`` dataset of its transform group (#2470)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 37, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

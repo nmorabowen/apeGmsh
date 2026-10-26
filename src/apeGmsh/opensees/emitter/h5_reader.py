@@ -865,8 +865,8 @@ class H5Model:
         return _attrs_as_dict(self._f[f"opensees/materials/{family}/{name}"])
 
     def transform_arrays(self, name: str) -> dict[str, Any]:
-        """Return ``{per_element_vecxz?, per_element_emitted_tag?}`` for
-        one ``/opensees/transforms/{name}`` group.
+        """Return ``{per_element_vecxz?, per_element_emitted_tag?,
+        jnt_offset?}`` for one ``/opensees/transforms/{name}`` group.
 
         Companion to :meth:`transforms` (which exposes only attrs).
         Raises ``KeyError`` if the transform group is missing.  The H5
@@ -881,6 +881,8 @@ class H5Model:
             out["per_element_vecxz"] = sub["per_element_vecxz"][:]
         if "per_element_emitted_tag" in sub:
             out["per_element_emitted_tag"] = sub["per_element_emitted_tag"][:]
+        if "jnt_offset" in sub:  # opensees 2.37.0
+            out["jnt_offset"] = sub["jnt_offset"][:]
         return out
 
     def elements(self) -> dict[str, dict[str, Any]]:
@@ -2351,10 +2353,20 @@ class H5Model:
         # Each emitted call produces a single-row ``per_element_vecxz``
         # (1, 3); the first three values are the vecxz tuple.
         vec = tuple(float(v) for v in vec_arr[:3])
+        jnt: tuple[float, ...] = ()
+        if "jnt_offset" in g:  # opensees 2.37.0; absent = no -jntOffset
+            jnt_arr = np.asarray(g["jnt_offset"][:])
+            if jnt_arr.shape not in ((1, 4), (1, 6)):
+                raise MalformedH5Error(
+                    f"{g.name}/jnt_offset has shape {jnt_arr.shape}; the "
+                    "bridge writes (1, 4) in 2-D or (1, 6) in 3-D."
+                )
+            jnt = tuple(float(v) for v in jnt_arr.reshape(-1))
         return TransformRecord(
             type_token=str(attrs.get("type", "")),
             tag=int(attrs.get("tag", 0)),
             vec=vec,
+            jnt_offset=jnt,
         )
 
     def _pattern_record(self, g: Any) -> PatternRecord:
