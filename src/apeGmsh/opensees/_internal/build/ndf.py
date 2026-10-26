@@ -476,9 +476,9 @@ def warn_membrane_hole_nodes_free(
     and only along the panel's own axes: the out-of-plane translation and
     the rotations get nothing (``LadrunoMembrane::resolveAndBuildTransfer``
     scatters the condensed 2-D block through ``e1``/``e2`` only, at fork
-    pin bdb69cea).  Before WP-204 the
-    condensation kept the outer loop alone.  A hole node that no other
-    element touches therefore has free DOFs: K is singular (``analyze``
+    pin bdb69cea).  Before WP-204 the condensation kept the outer loop
+    alone.  A hole node that no other element touches therefore has free
+    DOFs: K is singular (``analyze``
     fails, ``eigen`` returns undetermined values) unless a ``fix`` holds
     them.  A warning, not a refusal: a fixed hole node is legal.
     """
