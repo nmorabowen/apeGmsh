@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .._internal.build.errors import BridgeError
 
@@ -60,6 +60,18 @@ _KINK_TOL = 1e-3
 #: fraction of the largest element's, so an element the mode barely
 #: deforms is not judged on round-off.
 _ELEMENT_FLOOR = 1e-6
+
+#: A mode that fails the kink check is probed again at this multiple of its
+#: amplitude, and the second probe decides. A kink's ratio is the same at
+#: every amplitude (first order in the probe), a smooth element's grows
+#: with it (1.3e-4 for the Corotational frame at this size, below
+#: ``_KINK_TOL``), and round-off shrinks with it: its second difference is a
+#: fixed size, set by the element's stiffness times the round-off in its
+#: nodal displacements. A near-rigid link (``I`` x 1e6 under 30 times the
+#: gravity) carries no gravity force, so no ``eps |N|`` floor reaches it,
+#: but it read 1.48e-3 here and 1.2e-5 at this multiple (#2545). It stays
+#: at 100: 1e3 would lift the Corotational frame to ~1.3e-3.
+_REPROBE = 100.0
 
 #: Before each leg the domain is settled with unloaded Linear steps until a
 #: step moves no node by more than this fraction of the probe, at most
@@ -237,6 +249,11 @@ class _GravityModalMixin(_ProcedureHost):
         if p_delta and hook is not None:
             hook(live_emitter, np.asarray(values, dtype=np.float64),
                  properties)
+            # The hook settles the gravity state with unloaded Linear steps
+            # and returns the domain there, so the snapshot is retaken:
+            # ``gravity`` is the state the domain is left at, and
+            # ``gravity_drift()`` reads 0.0 until something moves it (#2545).
+            gravity = snapshot_state(ops)
 
         live_plan = bm._tag_plan(emit_mode(
             bm, split=False,
@@ -290,17 +307,25 @@ class _GravityModalMixin(_ProcedureHost):
         element: a second difference of an element's resisting force above
         ``1e-3`` of its first difference (a no-tension brace or a gap at zero
         strain, a material that loads and unloads on different branches,
-        such as ``Concrete01`` on its backbone) raises. Combine the result
+        such as ``Concrete01`` on its backbone) raises. A mode that fails
+        that check is probed again at 100 times the amplitude and judged
+        there: a kink's ratio does not depend on the amplitude, while
+        round-off (a near-rigid link, whose force is a large stiffness times
+        a tiny deformation) shrinks with it. Combine the result
         with :meth:`SpectrumModalResult.combine` (CQC / SRSS) and
         :meth:`SpectrumModalResult.directional` (100/30 / SRSS); the gravity
         values are kept apart (:func:`~apeGmsh.opensees.analysis.spectrum.seismic_envelope`).
 
         The reference state is the gravity state with ``p_delta=True`` and
         the unloaded state with ``p_delta=False`` (modes and per-mode
-        responses on ``K``, gravity run afterwards). The domain ends at the
-        settled gravity state either way, checked against its snapshot; with
-        a loose declared test that is nearer equilibrium than the state the
-        gravity analysis stopped at.
+        responses on ``K``, gravity run afterwards). With ``p_delta=True``
+        the domain ends at the settled gravity state, checked against the
+        snapshot taken after settling; with a loose declared test that is
+        nearer equilibrium than the state the gravity analysis stopped at.
+        With ``p_delta=False`` it ends where the gravity analysis stopped.
+        Either way ``result.modal.gravity`` is the state the domain is left
+        at, so ``result.modal.gravity_drift()`` reads ``0.0`` right after the
+        call.
 
         ``responseSpectrumAnalysis -mode k`` is not used: it replaces the
         committed displacement with the modal one and commits, so the gravity
@@ -601,6 +626,70 @@ class _GravityModalMixin(_ProcedureHost):
         )
         gamma_peak = np.argmax(np.abs(gamma), axis=0)
 
+        def mode_legs(
+            k: int, phi: "dict[int, np.ndarray]", amp: float, scale: float,
+        ) -> "tuple[list[dict[str, np.ndarray]], list[dict[int, np.ndarray]]]":
+            """Mode ``k``'s two legs at ``scale`` times its amplitude: each
+            leg's change in every extractor and every element's resisting
+            force, from its own settled start."""
+            a = scale * amp
+            loads = {t: a * masses[t] * phi[t] for t in massed}
+            legs: list[dict[str, np.ndarray]] = []
+            forces: list[dict[int, np.ndarray]] = []
+            for sign in (1.0, -1.0):
+                where = f"mode {k + 1} {'+' if sign > 0 else '-'}"
+                start = {
+                    name: _evaluate(ex, ops, name, ref_values[name].size,
+                                    context)
+                    for name, ex in extractors.items()
+                }
+                start_forces = element_forces()
+
+                def read() -> "tuple[dict[str, np.ndarray], dict[int, np.ndarray]]":
+                    return (
+                        {name: _evaluate(ex, ops, name,
+                                         ref_values[name].size, context)
+                         - start[name]
+                         for name, ex in extractors.items()},
+                        {e: f - start_forces[e]
+                         for e, f in element_forces().items()},
+                    )
+
+                if increment:
+                    # The same ± a φ / λ, imposed: the fork sets the trial
+                    # state to committed + sign_cmd Γ_d Sa φ / λ, so Sa is
+                    # the probe's amplitude over |Γ_d| (not the design Sa:
+                    # the legs stay at the probe size, where the kink check
+                    # below separates a tangent from a secant). The leg is
+                    # reverted to the committed (settled) reference exactly,
+                    # also when it or a read raises.
+                    d = int(gamma_peak[k])
+                    g = float(gamma[d, k])
+                    leg, force = _imposed_leg(ops, lambda: _impose_mode(
+                        ops, int(spectra[d].direction), float(periods[k]),
+                        a / abs(g), k + 1, sign * math.copysign(1.0, g),
+                        {t: sign * a * phi[t] / float(lam[k]) for t in tags},
+                        ndm, scale * probe, f"{context}: {where} leg",
+                    ), read)
+                else:
+                    pattern = 1 + max(
+                        (int(p) for p in ops.getPatterns()), default=0)
+                    ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
+                    for t, f in loads.items():
+                        ops.load(t, *f.tolist())
+                    # One step on the current tangent, the one the modes
+                    # were solved on: the leg moves the domain by exactly
+                    # ± a φ / λ, whether or not the element's tangent is
+                    # consistent with its forces (the PDelta
+                    # transformation's is not).
+                    solve(f"{where} leg")
+                    leg, force = read()
+                    ops.remove("loadPattern", pattern)
+                    settle(f"{where} return")
+                legs.append(leg)
+                forces.append(force)
+            return legs, forces
+
         for k in range(n_modes):
             if not active[k] or not np.any(coef[:, k]):
                 continue  # the mode takes no part in any spectrum
@@ -614,85 +703,25 @@ class _GravityModalMixin(_ProcedureHost):
                     "translates in it."
                 )
             amp = probe * float(lam[k]) / peak
-            loads = {t: amp * masses[t] * phi[t] for t in massed}
-            # Each leg is an increment from its own settled start.
-            legs: list[dict[str, np.ndarray]] = []
-            forces: list[dict[int, np.ndarray]] = []
-            for sign in (1.0, -1.0):
-                where = f"mode {k + 1} {'+' if sign > 0 else '-'}"
-                start = {
-                    name: _evaluate(ex, ops, name, ref_values[name].size,
-                                    context)
-                    for name, ex in extractors.items()
-                }
-                start_forces = element_forces()
-                if increment:
-                    # The same ± a φ / λ, imposed: the fork sets the trial
-                    # state to committed + sign_cmd Γ_d Sa φ / λ, so Sa is
-                    # the probe's amplitude over |Γ_d| (not the design Sa:
-                    # the legs stay at the probe size, where the kink check
-                    # below separates a tangent from a secant).
-                    d = int(gamma_peak[k])
-                    g = float(gamma[d, k])
-                    _impose_mode(
-                        ops, int(spectra[d].direction), float(periods[k]),
-                        amp / abs(g), k + 1, sign * math.copysign(1.0, g),
-                        {t: sign * amp * phi[t] / float(lam[k])
-                         for t in tags},
-                        ndm, probe, f"{context}: {where} leg",
-                    )
-                else:
-                    pattern = 1 + max(
-                        (int(p) for p in ops.getPatterns()), default=0)
-                    ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
-                    for t, f in loads.items():
-                        ops.load(t, *f.tolist())
-                    # One step on the current tangent, the one the modes
-                    # were solved on: the leg moves the domain by exactly
-                    # ± a φ / λ, whether or not the element's tangent is
-                    # consistent with its forces (the PDelta
-                    # transformation's is not).
-                    solve(f"{where} leg")
-                legs.append({
-                    name: _evaluate(ex, ops, name, ref_values[name].size,
-                                    context) - start[name]
-                    for name, ex in extractors.items()
-                })
-                forces.append({e: f - start_forces[e]
-                               for e, f in element_forces().items()})
-                if increment:
-                    # Back to the committed (settled) reference exactly.
-                    ops.responseSpectrumAnalysis("-revert")
-                else:
-                    ops.remove("loadPattern", pattern)
-                    settle(f"{where} return")
-            # Per element, the second difference of its resisting force
-            # against the first: second order in the probe for a smooth
-            # element, first order for one whose stiffness differs between
-            # the two legs (a no-tension brace at zero strain, a material
-            # that loads and unloads on different branches). Per element,
-            # so a slender kinked member is not hidden by stiff ones.
-            odd = {e: float(np.max(np.abs(forces[0][e] - forces[1][e]),
-                                   initial=0.0)) for e in elements}
-            floor = _ELEMENT_FLOOR * max(odd.values(), default=0.0)
-            worst, ratio = None, 0.0
-            for e in elements:
-                even = float(np.max(np.abs(forces[0][e] + forces[1][e]),
-                                    initial=0.0))
-                r = even / max(odd[e], floor) if even > 0.0 else 0.0
-                if r > ratio:
-                    worst, ratio = e, r
+            legs, forces = mode_legs(k, phi, amp, 1.0)
+            # Called before the loop moves on, so the closure's k, phi and
+            # amp are this mode's.
+            worst, ratio = _judge_kink(
+                elements, forces,
+                lambda: mode_legs(k, phi, amp, _REPROBE)[1],
+            )
             if ratio > _KINK_TOL:
                 raise RuntimeError(
                     f"{context}: mode {k + 1}'s two probe legs met different "
                     f"stiffnesses in element {worst} (second difference of "
-                    f"its resisting force {ratio:.3e} of the first, limit "
-                    f"{_KINK_TOL:g}): a member changes stiffness at the "
-                    "reference state, such as a no-tension brace or a gap at "
-                    "zero strain, or a material that loads and unloads on "
-                    "different branches (Concrete01, Steel02 on their "
-                    "backbone). The response spectrum is linear about that "
-                    "state and is refused."
+                    f"its resisting force {ratio:.3e} of the first at "
+                    f"{_REPROBE:g} times the probe, limit {_KINK_TOL:g}, and "
+                    "above it at the probe): a member changes stiffness at "
+                    "the reference state, such as a no-tension brace or a "
+                    "gap at zero strain, or a material that loads and "
+                    "unloads on different branches (Concrete01, Steel02 on "
+                    "their backbone). The response spectrum is linear about "
+                    "that state and is refused."
                 )
             for name in extractors:
                 unit = (legs[0][name] - legs[1][name]) / (2.0 * amp)
@@ -775,6 +804,72 @@ def _rsa_increment_available(ops: Any) -> "bool | None":
         # static path is correct on every build, so it runs.
         return None
     return True
+
+
+def _kink_ratio(
+    elements: "Sequence[int]",
+    forces: "Sequence[Mapping[int, np.ndarray]]",
+) -> "tuple[int | None, float]":
+    """The element whose two legs differ most in stiffness, and by how much.
+
+    ``forces`` holds each leg's change in every element's resisting force.
+    Per element, the second difference (``f⁺ + f⁻``) against the first
+    (``f⁺ - f⁻``): second order in the probe for a smooth element, first
+    order for one whose stiffness differs between the two legs (a
+    no-tension brace at zero strain, a material that loads and unloads on
+    different branches). Per element, so a slender kinked member is not
+    hidden by stiff ones; the first difference is floored at
+    ``_ELEMENT_FLOOR`` of the largest element's, so an element the mode
+    barely deforms is not judged on round-off.
+    """
+    import numpy as np
+
+    plus, minus = forces
+    odd = {e: float(np.max(np.abs(plus[e] - minus[e]), initial=0.0))
+           for e in elements}
+    floor = _ELEMENT_FLOOR * max(odd.values(), default=0.0)
+    worst, ratio = None, 0.0
+    for e in elements:
+        even = float(np.max(np.abs(plus[e] + minus[e]), initial=0.0))
+        r = even / max(odd[e], floor) if even > 0.0 else 0.0
+        if r > ratio:
+            worst, ratio = e, r
+    return worst, ratio
+
+
+def _judge_kink(
+    elements: "Sequence[int]",
+    forces: "Sequence[Mapping[int, np.ndarray]]",
+    reprobe: "Callable[[], Sequence[Mapping[int, np.ndarray]]]",
+) -> "tuple[int | None, float]":
+    """The kink verdict for one mode: :func:`_kink_ratio` of its legs, and
+    where that exceeds ``_KINK_TOL``, of the legs ``reprobe`` takes at
+    ``_REPROBE`` times the amplitude instead. A kink keeps its ratio at
+    every amplitude, so it is refused either way; round-off, whose second
+    difference does not grow with the probe, falls below the limit (#2545).
+    The caller refuses when the returned ratio exceeds ``_KINK_TOL``."""
+    worst, ratio = _kink_ratio(elements, forces)
+    if ratio <= _KINK_TOL:
+        return worst, ratio
+    return _kink_ratio(elements, reprobe())
+
+
+_T = TypeVar("_T")
+
+
+def _imposed_leg(
+    ops: Any, impose: "Callable[[], None]", read: "Callable[[], _T]",
+) -> _T:
+    """One ``-increment`` leg: ``impose`` it, ``read`` the trial state, and
+    always return to the committed state with ``responseSpectrumAnalysis
+    -revert``, also when the imposition or a read raises. Otherwise a failed
+    leg (an imposed state off the mode, an extractor raising) left the
+    domain at its trial state (#2545)."""
+    try:
+        impose()
+        return read()
+    finally:
+        ops.responseSpectrumAnalysis("-revert")
 
 
 def _impose_mode(
