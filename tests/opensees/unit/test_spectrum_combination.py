@@ -69,6 +69,10 @@ class _FakeOps:
     def nodeDisp(self, n: int, d: int) -> float:
         return 10.0 * n + d
 
+    def nodeResponse(self, n: int, d: int, kind: int) -> float:
+        assert kind == 4          # IncrDisp: trial - committed
+        return 0.5
+
     def reactions(self) -> None:
         self.reactions_called += 1
 
@@ -82,7 +86,7 @@ class _FakeOps:
 def test_built_in_extractors_read_the_module() -> None:
     ops = _FakeOps()
     np.testing.assert_array_equal(
-        NodeDisp(nodes=[1, 2], dofs=(1, 3))(ops), [11.0, 13.0, 21.0, 23.0])
+        NodeDisp(nodes=[1, 2], dofs=(1, 3))(ops), [11.5, 13.5, 21.5, 23.5])
     np.testing.assert_array_equal(
         NodeReaction(nodes=[2], dofs=(2,))(ops), [-22.0])
     assert ops.reactions_called == 1

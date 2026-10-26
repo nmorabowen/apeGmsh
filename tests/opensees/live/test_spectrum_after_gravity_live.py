@@ -19,6 +19,7 @@ The P-Delta variant runs the same checks where they still hold exactly
 """
 from __future__ import annotations
 
+import functools
 import math
 from typing import Any, cast
 
@@ -168,6 +169,43 @@ def _column_extractor() -> Any:
     EXTRACTORS.pop("cols", None)
 
 
+@functools.lru_cache(maxsize=1)
+def _increment_build() -> bool:
+    """Whether the bound build takes ``responseSpectrumAnalysis
+    -increment`` (fork WP-207, ladruno ``a8bcc07e``)."""
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    ops = _frame().modal_after_gravity(1, solver="-fullGenLapack")._live.ops
+    return gm._rsa_increment_available(ops) is True
+
+
+@pytest.fixture(params=[
+    "static", pytest.param("increment", marks=pytest.mark.ladruno_fork)])
+def rsa_route(request: pytest.FixtureRequest,
+              monkeypatch: pytest.MonkeyPatch) -> str:
+    """Runs a test on each per-mode route: the static legs (the probe
+    forced inconclusive) and the fork's ``-increment`` legs, where the probe
+    must answer ``True`` (a silent fall-back to the static route would make
+    the second run a copy of the first)."""
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    if request.param == "static":
+        monkeypatch.setattr(gm, "_rsa_increment_available", lambda ops: None)
+        return "static"
+    if not _increment_build():
+        pytest.skip("this fork build has no responseSpectrumAnalysis "
+                    "-increment (fork WP-207, ladruno a8bcc07e)")
+    probe = gm._rsa_increment_available
+
+    def must_take_it(ops: Any) -> "bool | None":
+        got = probe(ops)
+        assert got is True, "the -increment probe fell back on a fork build"
+        return got
+
+    monkeypatch.setattr(gm, "_rsa_increment_available", must_take_it)
+    return "increment"
+
+
 def _run(transf: str = "Linear", **kw: Any) -> Any:
     spec = DesignSpectrum(TN, SA, direction=1, scale=SCALE)
     return _frame(transf).spectrum_after_gravity(
@@ -244,6 +282,7 @@ def _rel(a: np.ndarray, b: np.ndarray) -> float:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_a_per_mode_and_cqc_meet_the_numpy_reference() -> None:
     res = _run()
     ref = _numpy_reference()
@@ -268,6 +307,7 @@ def test_a_per_mode_and_cqc_meet_the_numpy_reference() -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 @pytest.mark.parametrize("transf", ["Linear", "PDelta"])
 def test_c_per_mode_base_shear_is_effective_mass_times_sa(transf: str) -> None:
     """Exact on a linear frame. On a PDelta frame the leg sits at the modal
@@ -288,6 +328,7 @@ def test_c_per_mode_base_shear_is_effective_mass_times_sa(transf: str) -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 @pytest.mark.parametrize("transf", ["Linear", "PDelta"])
 def test_d_gravity_state_is_restored(transf: str) -> None:
     res = _run(transf)
@@ -305,6 +346,7 @@ def test_d_gravity_state_is_restored(transf: str) -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_p_delta_false_responses_are_those_of_k() -> None:
     lin = _run("Linear")
     pd_off = _run("PDelta", p_delta=False)
@@ -323,6 +365,7 @@ def test_p_delta_false_responses_are_those_of_k() -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_two_directions_combine_100_30_and_srss() -> None:
     ex = {"disp": EXTRACTORS["disp"]}
     sx = DesignSpectrum(TN, SA, direction=1, scale=SCALE)
@@ -402,6 +445,7 @@ def test_b_python_cqc_matches_the_commands_combine_pdelta() -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_base_shear_is_the_combined_total_reaction() -> None:
     """The driver's ``base_shear`` per mode is the summed support reaction;
     ``V_t`` is its CQC (not the sum of combined reactions)."""
@@ -453,6 +497,7 @@ ROOF_EX = {"roof": NodeDisp(nodes=[ROOF], dofs=(1, 2))}
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_ent_braces_give_the_tangent_response_at_design_amplitude() -> None:
     """The X-brace is compressed by gravity, so the modes see both
     diagonals. At the design amplitude (``scale=9.81``) one diagonal would
@@ -468,6 +513,7 @@ def test_ent_braces_give_the_tangent_response_at_design_amplitude() -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 @pytest.mark.parametrize(("transf", "gravity"), [
     ("PDelta", 2.0), ("PDelta", 8.0), ("Corotational", 3.0)])
 def test_elastic_p_delta_frames_give_the_modal_displacement(
@@ -490,6 +536,7 @@ def test_elastic_p_delta_frames_give_the_modal_displacement(
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 @pytest.mark.parametrize(("braces", "p_delta"), [
     ("ENT", False), ("Concrete01", True)])
 def test_a_member_that_changes_stiffness_at_the_reference_is_refused(
@@ -507,6 +554,7 @@ def test_a_member_that_changes_stiffness_at_the_reference_is_refused(
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_a_slender_kinked_member_is_refused() -> None:
     """No-tension braces a thousand times lighter (``A = 2e-6``) barely
     change the frame's forces, so a global norm let them through and the
@@ -521,6 +569,7 @@ def test_a_slender_kinked_member_is_refused() -> None:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 @pytest.mark.parametrize("transf", ["Linear", "PDelta"])
 def test_a_loose_gravity_tolerance_is_not_a_kink(transf: str) -> None:
     """``NormUnbalance 1.0`` under 2e5 N floor loads leaves the gravity
@@ -579,6 +628,7 @@ def _diaphragm(transf: str, dx: float) -> apeSees:
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 @pytest.mark.parametrize("dx", [0.0, 1e-9])
 @pytest.mark.parametrize("transf", ["Linear", "PDelta"])
 def test_torsion_mode_at_a_centred_mass_node(transf: str, dx: float) -> None:
@@ -603,3 +653,153 @@ def test_torsion_mode_at_a_centred_mass_node(transf: str, dx: float) -> None:
             assert np.max(np.abs(got[k] - want)) <= 1e-9 * max(
                 float(np.max(np.abs(got))), 1e-300), (comp, k)
     assert max(res.restore_drift) < 1e-9
+
+
+# -- the fork's -increment route (fork WP-207, ADR 0124 amendment) ------------
+
+def _route(monkeypatch: pytest.MonkeyPatch, route: str, run: Any) -> Any:
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    with monkeypatch.context() as m:
+        if route == "static":
+            m.setattr(gm, "_rsa_increment_available", lambda ops: None)
+        return run()
+
+
+def _per_mode_rel(fast: Any, slow: Any, name: str) -> np.ndarray:
+    """Per mode, the largest difference between the routes relative to the
+    largest per-mode value of that quantity."""
+    a, b = fast.per_mode[name], slow.per_mode[name]
+    scale = float(np.max(np.abs(b)))
+    return cast("np.ndarray", np.max(np.abs(a - b), axis=(0, 2)) / scale)
+
+
+_FRAMES: dict[str, Any] = {
+    "linear": lambda: _frame("Linear"),
+    "pdelta": lambda: _frame("PDelta"),
+    "pdelta-braced-x2": lambda: _frame("PDelta", braces="Elastic",
+                                       gravity=2.0),
+}
+
+
+def _need_increment() -> None:
+    if not _increment_build():
+        pytest.skip("this fork build has no responseSpectrumAnalysis "
+                    "-increment (fork WP-207, ladruno a8bcc07e)")
+
+
+@pytest.mark.live
+def test_increment_probe_is_none_or_true() -> None:
+    """The probe never answers False: a build without the flag is
+    inconclusive (``None``) and takes the static route."""
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    ops = _frame().modal_after_gravity(1, solver="-fullGenLapack")._live.ops
+    assert gm._rsa_increment_available(ops) in (None, True)
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+@pytest.mark.parametrize("frame", sorted(_FRAMES))
+def test_increment_route_equals_the_static_route(
+        monkeypatch: pytest.MonkeyPatch, frame: str) -> None:
+    """Both routes move the domain by the same ``± a φ / λ`` about the same
+    settled reference, one by a Linear step on the eigen tangent and one by
+    imposing it, so every per-mode value agrees to round-off."""
+    _need_increment()
+    spec = DesignSpectrum(TN, SA, direction=1, scale=SCALE)
+    # The column tags are read off the unbraced frame; the braced one
+    # numbers its elements differently, so it is compared on the nodes.
+    names = ("disp", "base", "base_shear") + (
+        ("cols",) if frame in ("linear", "pdelta") else ())
+    ex = {n: EXTRACTORS[n] for n in names if n != "base_shear"}
+
+    def run() -> Any:
+        return _FRAMES[frame]().spectrum_after_gravity(
+            N_MODES, spectra=[spec], extractors=ex,
+            solver="-fullGenLapack")
+
+    fast = _route(monkeypatch, "increment", run)
+    slow = _route(monkeypatch, "static", run)
+    for name in names:
+        rel = _per_mode_rel(fast, slow, name)
+        assert float(np.max(rel)) < 1e-9, (name, rel.tolist())
+    assert max(fast.restore_drift) < 1e-12
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+@pytest.mark.parametrize("transf", ["Linear", "PDelta"])
+def test_increment_route_equals_the_static_route_torsion(
+        monkeypatch: pytest.MonkeyPatch, transf: str) -> None:
+    """The diaphragm frame: two sway modes in two directions, the
+    negligible torsion mode skipped on both routes."""
+    _need_increment()
+    spec = [DesignSpectrum((0.0, 2.0), (5.0, 5.0), direction=d)
+            for d in (1, 2)]
+    ex = {"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))}
+
+    def run() -> Any:
+        return _diaphragm(transf, 0.0).spectrum_after_gravity(
+            3, spectra=spec, extractors=ex, solver="-fullGenLapack")
+
+    fast = _route(monkeypatch, "increment", run)
+    slow = _route(monkeypatch, "static", run)
+    for name in ("c", "base_shear"):
+        rel = _per_mode_rel(fast, slow, name)
+        assert float(np.max(rel)) < 1e-9, (name, rel.tolist())
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_an_opaque_extractor_keeps_the_static_route(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A user callable may read ``nodeDisp``, the committed displacement,
+    which the ``-increment`` legs leave at the reference: it would return
+    zero for every mode. Such an extractor keeps the static route, and its
+    per-mode value is the modal one."""
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    _need_increment()
+    imposed: list[int] = []
+    real = gm._impose_mode
+
+    def counted(*a: Any) -> None:
+        imposed.append(1)
+        real(*a)
+
+    monkeypatch.setattr(gm, "_impose_mode", counted)
+
+    def roof(ops: Any) -> np.ndarray:
+        return np.asarray([ops.nodeDisp(ROOF, 1), ops.nodeDisp(ROOF, 2)])
+
+    spec = DesignSpectrum(TN, SA, direction=1, scale=SCALE)
+    res = _frame().spectrum_after_gravity(
+        N_MODES, spectra=[spec], extractors={"roof": roof},
+        solver="-fullGenLapack")
+    assert not imposed
+    assert _rel(res.modes("roof"), _modal_roof(res, spec)) < 1e-9
+    _frame().spectrum_after_gravity(
+        N_MODES, spectra=[spec], extractors=ROOF_EX, solver="-fullGenLapack")
+    assert imposed, "a built-in extractor should take the -increment route"
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_an_imposed_state_off_the_mode_is_refused(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """The imposed displacement is checked against ``± a φ / λ``: a build
+    whose participation factor or spectrum lookup differed (here, ``Sa``
+    off by 1e-4) raises instead of scaling every mode."""
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    _need_increment()
+    real = gm._impose_mode
+
+    def off(ops: Any, direction: int, period: float, sa: float,
+            *rest: Any) -> None:
+        real(ops, direction, period, sa * (1.0 + 1e-4), *rest)
+
+    monkeypatch.setattr(gm, "_impose_mode", off)
+    with pytest.raises(RuntimeError, match="imposed a displacement"):
+        _run()

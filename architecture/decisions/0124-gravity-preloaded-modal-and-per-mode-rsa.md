@@ -159,6 +159,40 @@ fork option that adds the modal displacement to the committed state and does
 not commit would let the driver impose `u_g ± u_k` directly; it is requested in
 the fork-request notes, and the solve route stays the reference.
 
+**Amendment (2026-10-23): the `-increment` route.** The fork added that option
+(WP-207, PR #1015, ladruno `a8bcc07e`): `responseSpectrumAnalysis dir -Tn T_k
+-Sa Sa -mode k -increment -sign ±1` leaves `committed ± u_k` as an updated,
+uncommitted trial state, and `-revert` returns to the committed gravity state.
+Where the build takes it, the driver uses it in place of each static leg and
+its return settling, and changes nothing else:
+
+- **The same probe.** Each leg imposes the static leg's `± a_k φ_k / λ_k`, the
+  probe amplitude, not the design one: the driver passes `-Sa a_k / |Γ_kd|`
+  along the direction `d` with the largest `|Γ_kd|` and `-sign ±sgn(Γ_kd)`.
+  At the design amplitude a no-tension brace returns its secant, and the kink
+  check would refuse smooth Corotational frames.
+- **The same guarantees.** The reference is settled before either route; the
+  effective-mass skip, the per-element kink check on `eleForce` (trial minus
+  committed) and the recorder refusal are shared. The fork's `-increment`
+  calls the domain's recorders on each trial state, so the refusal still
+  applies. `-revert` after each leg returns to the committed (settled)
+  reference exactly.
+- **Checked at the seam.** Every imposed nodal translation (`IncrDisp`) must
+  equal `± a_k φ_k / λ_k` to `1e-6` of the probe, or the driver raises: a
+  build whose participation factor, eigenvector scaling or table lookup
+  differs from `modalProperties` cannot scale the modes silently.
+- **Built-in extractors only.** The imposed state is a trial state.
+  `NodeDisp` reads `nodeDisp + nodeResponse(n, d, 4)` (`nodeDisp` is the
+  committed displacement), and `NodeReaction` and `ElementResponse` read
+  trial forces. An opaque callable might read `nodeDisp` and return zero for
+  every mode, so any other extractor keeps the static route.
+
+The capability probe is `responseSpectrumAnalysis -revert` at the settled
+reference: success means available. Any refusal is inconclusive (`None`) and
+the static route runs, so stock and older fork builds are unchanged. On the
+item-6 frames (Linear, PDelta, braced PDelta, torsion) the two routes agree
+per mode to round-off (the PR's differential).
+
 ### D5 — Response extractors are opaque callables
 
 An extractor is any callable `extractor(ops) -> 1-D float array` of fixed

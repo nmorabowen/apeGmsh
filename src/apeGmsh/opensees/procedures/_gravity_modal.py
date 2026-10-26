@@ -10,6 +10,7 @@ spectrum about that gravity state (ADR 0124 D4).
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
@@ -71,6 +72,10 @@ _SETTLE_STEPS = 10
 #: A mode whose effective mass is below this fraction of the largest, in
 #: every requested direction, is not probed.
 _NEGLIGIBLE_MASS = 1e-12
+
+#: On the fork's ``-increment`` route, every imposed nodal translation must
+#: equal the static leg's ``± a φ / λ`` to this fraction of the probe.
+_IMPOSED_TOL = 1e-6
 
 
 class _GravityModalMixin(_ProcedureHost):
@@ -299,7 +304,15 @@ class _GravityModalMixin(_ProcedureHost):
 
         ``responseSpectrumAnalysis -mode k`` is not used: it replaces the
         committed displacement with the modal one and commits, so the gravity
-        state is lost (ADR 0124, Context).
+        state is lost (ADR 0124, Context). Where the build takes the fork's
+        ``-increment`` flag (WP-207, ADR 0124 amendment) and every extractor
+        is a built-in one (``NodeDisp``, ``NodeReaction``,
+        ``ElementResponse``: they read the trial state), each leg is imposed
+        with ``responseSpectrumAnalysis -mode k -increment`` at the same
+        probe amplitude and returned with ``-revert``, instead of the load
+        step and the return settling: the settled reference, the mode skip,
+        the kink check and the recorder refusal are the same on both routes,
+        and the imposed displacement is checked against ``± a_k φ_k / λ_k``.
 
         **Nodal mass only.** The modal force is ``M φ`` built from the nodal
         masses, so a model whose mass sits in its elements (a section or
@@ -307,9 +320,10 @@ class _GravityModalMixin(_ProcedureHost):
         the nodes (``g.masses`` on the session, or ``ops.mass`` /
         ``mass_from_model``): that is the supported route.
 
-        **No recorders.** Each probe leg and each return solve commits, so a
-        declared recorder would write extra rows for every mode that are
-        not states of the structure. A model with a declared recorder is
+        **No recorders.** Each probe leg and each return solve commits, and
+        on the ``-increment`` route each leg calls the domain's recorders on
+        its trial state, so a declared recorder would write extra rows for
+        every mode that are not states of the structure. A model with a declared recorder is
         refused; the gravity state is in
         :attr:`SpectrumModalResult.gravity_values` and in ``Node.read`` on
         the bridge afterwards.
@@ -566,6 +580,27 @@ class _GravityModalMixin(_ProcedureHost):
             for name, v in ref_values.items()
         }
 
+        # The fork's -increment route (WP-207, ADR 0124 amendment) imposes
+        # each leg's displacement instead of solving for it; probed here, at
+        # the settled (committed) reference, where -revert is a no-op. The
+        # imposed state is a trial state: only the built-in extractors are
+        # known to read it (an opaque callable reading nodeDisp would see
+        # the committed reference on both legs and return zero), so any
+        # other extractor keeps the static route.
+        from ..analysis.spectrum import (
+            ElementResponse,
+            NodeDisp,
+            NodeReaction,
+            _TotalReaction,
+        )
+
+        trial_reads = (NodeDisp, NodeReaction, ElementResponse, _TotalReaction)
+        increment = (
+            all(type(ex) in trial_reads for ex in extractors.values())
+            and _rsa_increment_available(ops) is True
+        )
+        gamma_peak = np.argmax(np.abs(gamma), axis=0)
+
         for k in range(n_modes):
             if not active[k] or not np.any(coef[:, k]):
                 continue  # the mode takes no part in any spectrum
@@ -591,16 +626,33 @@ class _GravityModalMixin(_ProcedureHost):
                     for name, ex in extractors.items()
                 }
                 start_forces = element_forces()
-                pattern = 1 + max(
-                    (int(p) for p in ops.getPatterns()), default=0)
-                ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
-                for t, f in loads.items():
-                    ops.load(t, *f.tolist())
-                # One step on the current tangent, the one the modes were
-                # solved on: the leg moves the domain by exactly ± a φ / λ,
-                # whether or not the element's tangent is consistent with
-                # its forces (the PDelta transformation's is not).
-                solve(f"{where} leg")
+                if increment:
+                    # The same ± a φ / λ, imposed: the fork sets the trial
+                    # state to committed + sign_cmd Γ_d Sa φ / λ, so Sa is
+                    # the probe's amplitude over |Γ_d| (not the design Sa:
+                    # the legs stay at the probe size, where the kink check
+                    # below separates a tangent from a secant).
+                    d = int(gamma_peak[k])
+                    g = float(gamma[d, k])
+                    _impose_mode(
+                        ops, int(spectra[d].direction), float(periods[k]),
+                        amp / abs(g), k + 1, sign * math.copysign(1.0, g),
+                        {t: sign * amp * phi[t] / float(lam[k])
+                         for t in tags},
+                        ndm, probe, f"{context}: {where} leg",
+                    )
+                else:
+                    pattern = 1 + max(
+                        (int(p) for p in ops.getPatterns()), default=0)
+                    ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
+                    for t, f in loads.items():
+                        ops.load(t, *f.tolist())
+                    # One step on the current tangent, the one the modes
+                    # were solved on: the leg moves the domain by exactly
+                    # ± a φ / λ, whether or not the element's tangent is
+                    # consistent with its forces (the PDelta
+                    # transformation's is not).
+                    solve(f"{where} leg")
                 legs.append({
                     name: _evaluate(ex, ops, name, ref_values[name].size,
                                     context) - start[name]
@@ -608,8 +660,12 @@ class _GravityModalMixin(_ProcedureHost):
                 })
                 forces.append({e: f - start_forces[e]
                                for e, f in element_forces().items()})
-                ops.remove("loadPattern", pattern)
-                settle(f"{where} return")
+                if increment:
+                    # Back to the committed (settled) reference exactly.
+                    ops.responseSpectrumAnalysis("-revert")
+                else:
+                    ops.remove("loadPattern", pattern)
+                    settle(f"{where} return")
             # Per element, the second difference of its resisting force
             # against the first: second order in the probe for a smooth
             # element, first order for one whose stiffness differs between
@@ -703,6 +759,64 @@ class _GravityModalMixin(_ProcedureHost):
                 "λ = 1 in a whole number of steps; declare dlam = 1/N."
             )
         return steps
+
+
+def _rsa_increment_available(ops: Any) -> "bool | None":
+    """Whether the bound build takes ``responseSpectrumAnalysis -increment``
+    (fork WP-207). Probed by ``responseSpectrumAnalysis -revert`` at the
+    committed state, a no-op where the flag exists and a parse error
+    (fewer than two arguments) on stock and older fork builds. ``True``
+    only on success; any failure is inconclusive (``None``, ADR 0110 D5),
+    and the caller then takes the static-solve path."""
+    try:
+        ops.responseSpectrumAnalysis("-revert")
+    except Exception:
+        # A refusal (or a module without the command) is not a "no": the
+        # static path is correct on every build, so it runs.
+        return None
+    return True
+
+
+def _impose_mode(
+    ops: Any,
+    direction: int,
+    period: float,
+    sa: float,
+    mode: int,
+    sign: float,
+    want: "Mapping[int, np.ndarray]",
+    ndm: int,
+    probe: float,
+    where: str,
+) -> None:
+    """One ``-increment`` leg: ``responseSpectrumAnalysis direction -Tn T
+    -Sa sa -mode k -increment -sign ±1`` sets the trial state to the
+    committed one plus ``sign Γ sa φ_k / λ_k`` and updates the elements
+    without committing. The imposed translations are checked against
+    ``want`` (the static leg's ``± a φ / λ``) to ``1e-6`` of the probe, so
+    a build whose ``Γ``, eigenvector scaling or spectrum lookup differs
+    from ``modalProperties`` raises instead of scaling every mode wrong."""
+    import numpy as np
+
+    ops.responseSpectrumAnalysis(
+        direction, "-Tn", period, "-Sa", sa, "-mode", mode,
+        "-increment", "-sign", sign,
+    )
+    worst = 0.0
+    for t, u in want.items():
+        for i in range(min(ndm, u.size)):
+            # nodeDisp is the committed displacement; IncrDisp (response
+            # 4) is trial - committed, the leg itself.
+            got = float(ops.nodeResponse(t, i + 1, 4))
+            worst = max(worst, abs(got - float(u[i])))
+    if not np.isfinite(worst) or worst > _IMPOSED_TOL * probe:
+        raise RuntimeError(
+            f"{where}: responseSpectrumAnalysis -increment imposed a "
+            f"displacement {worst:.3e} away from the modal one (limit "
+            f"{_IMPOSED_TOL * probe:.3e}): the build's participation factor, "
+            "eigenvector scaling or spectrum lookup differs from "
+            "modalProperties."
+        )
 
 
 def _evaluate(
