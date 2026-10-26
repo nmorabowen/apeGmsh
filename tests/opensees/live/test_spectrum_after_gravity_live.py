@@ -87,7 +87,9 @@ ROOF = _tag(N_STORY, 0)
 
 
 def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
-           braces: str | None = None, gravity: float = 1.0) -> apeSees:
+           braces: str | None = None, gravity: float = 1.0,
+           brace_area: float = 2e-3,
+           unbalance_tol: float | None = None) -> apeSees:
     """The test frame; ``braces`` adds the X-brace in ``"ENT"``
     (elastic-no-tension), ``"Elastic"`` or ``"Concrete01"``, and
     ``gravity`` scales the gravity loads."""
@@ -123,7 +125,7 @@ def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
             "Concrete01": lambda: ops.uniaxialMaterial.Concrete01(
                 fpc=-30e6, epsc0=-0.0004, fpcu=-20e6, epsU=-0.004),
         }[braces]()
-        ops.element.Truss(pg="Braces", A=2e-3, material=mat)
+        ops.element.Truss(pg="Braces", A=brace_area, material=mat)
     ops.fix(pg="Base", dofs=(1, 1, 1))
     ops.mass(pg="Floor", values=(M_FLOOR, M_FLOOR, 0.0))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
@@ -132,7 +134,10 @@ def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
     ops.constraints.Transformation()
     ops.numberer.RCM()
     ops.system.UmfPack()
-    ops.test.NormDispIncr(tol=1e-12, max_iter=25)
+    if unbalance_tol is None:
+        ops.test.NormDispIncr(tol=1e-12, max_iter=25)
+    else:
+        ops.test.NormUnbalance(tol=unbalance_tol, max_iter=25)
     ops.algorithm.Newton()
     ops.integrator.LoadControl(dlam=0.1)
     ops.analysis.Static()
@@ -499,6 +504,35 @@ def test_a_member_that_changes_stiffness_at_the_reference_is_refused(
         _frame(braces=braces).spectrum_after_gravity(
             N_MODES, spectra=[spec], extractors=ROOF_EX, p_delta=p_delta,
             solver="-fullGenLapack")
+
+
+@pytest.mark.live
+def test_a_slender_kinked_member_is_refused() -> None:
+    """No-tension braces a thousand times lighter (``A = 2e-6``) barely
+    change the frame's forces, so a global norm let them through and the
+    brace's per-mode force came out as the average of its slack and
+    compressed legs. Each element is judged on its own forces."""
+    spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
+    with pytest.raises(RuntimeError, match="met different stiffnesses in "
+                                           "element"):
+        _frame(braces="ENT", brace_area=2e-6).spectrum_after_gravity(
+            N_MODES, spectra=[spec], extractors=ROOF_EX, p_delta=False,
+            solver="-fullGenLapack")
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("transf", ["Linear", "PDelta"])
+def test_a_loose_gravity_tolerance_is_not_a_kink(transf: str) -> None:
+    """``NormUnbalance 1.0`` under 2e5 N floor loads leaves the gravity
+    state with a residual larger than the probe's forces. Each Linear leg
+    cleared it and the kink check counted it twice (refused at 0.1). The
+    legs now start from the settled equilibrium."""
+    spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
+    res = _frame(transf, unbalance_tol=1.0).spectrum_after_gravity(
+        N_MODES, spectra=[spec], extractors=ROOF_EX, solver="-fullGenLapack")
+    # The fourth mode is vertical (Γ ~ 0): judged against the largest mode.
+    assert _rel(res.modes("roof"), _modal_roof(res, spec)) < 1e-9
+    assert max(res.restore_drift) < 1e-9
 
 
 # -- a torsion mode about a centred mass node ---------------------------------

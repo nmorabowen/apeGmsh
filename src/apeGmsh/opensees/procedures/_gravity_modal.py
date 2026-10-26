@@ -46,14 +46,27 @@ _RESTORE_TOL = 1e-6
 #: live test frame: 3.5e-11 here, 2.6e-10 at 1e-9).
 _PROBE_REL = 1e-8
 
-#: The two probe legs must meet the same stiffness: the second difference
-#: of the nodal resisting forces about the reference, relative to their
-#: first difference, stays below this. It grows with the probe for any
-#: smooth element (live frames: 2e-8 PDelta, 2e-6 Corotational) and does
-#: not for a member whose stiffness differs between the legs (5.5e-2 for
-#: Concrete01 braces on their backbone, 0.6 for no-tension braces at zero
-#: strain).
+#: The two probe legs must meet the same stiffness in every element: the
+#: second difference of its resisting force over the legs, relative to the
+#: first difference, stays below this. It grows with the probe for a smooth
+#: element (live frames: 1e-8 PDelta, 1.3e-6 Corotational) and does not for
+#: a member whose stiffness differs between the legs (9.5e-2 for Concrete01
+#: braces on their backbone, 1.0 for a no-tension brace at zero strain,
+#: whatever its area).
 _KINK_TOL = 1e-3
+
+#: An element is judged against its own first difference, floored at this
+#: fraction of the largest element's, so an element the mode barely
+#: deforms is not judged on round-off.
+_ELEMENT_FLOOR = 1e-6
+
+#: Before each leg the domain is settled with unloaded Linear steps until a
+#: step moves no node by more than this fraction of the probe, at most
+#: ``_SETTLE_STEPS`` steps: the legs start from the equilibrium, not from
+#: wherever the declared test stopped (``NormUnbalance 1.0`` under 2e5 N
+#: leaves a residual larger than the probe's forces).
+_SETTLE_REL = 1e-6
+_SETTLE_STEPS = 10
 
 #: A mode whose effective mass is below this fraction of the largest, in
 #: every requested direction, is not probed.
@@ -250,24 +263,27 @@ class _GravityModalMixin(_ProcedureHost):
     ) -> "SpectrumModalResult":
         """Per-mode response spectrum about the gravity state (ADR 0124 D4).
 
-        Runs :meth:`modal_after_gravity`'s sequence, then, on the same
-        domain and for each mode ``k`` and each sign, applies the probe
+        Runs :meth:`modal_after_gravity`'s sequence, then settles the
+        reference state with unloaded ``Linear`` steps (so it is the
+        equilibrium, not wherever the declared test stopped). On the same
+        domain, for each mode ``k`` and each sign, it applies the probe
         force ``± a_k M φ_k`` as a nodal-load pattern, takes one ``Linear``
         step on the current tangent at ``dλ = 0`` (the tangent the modes
         were solved on, so the domain moves by exactly ``± a_k φ_k / λ_k``),
-        calls every extractor there, removes the pattern and solves back to
-        the reference state with the declared algorithm. The per-mode value
-        under spectrum ``d`` is ``Γ_kd Sa_d(T_k) (r⁺ - r⁻) / (2 a_k)``: the
-        state ``responseSpectrumAnalysis -mode k`` imposes, about the
-        reference state instead of in place of it. Displacements are the
-        modal ones to round-off, PDelta included; element forces and
-        reactions are those of the elements at that state. The probe
-        amplitude ``a_k`` does not depend on the spectrum: the largest nodal
-        translation moves by ``1e-8`` of the model's extent. A mode whose
-        effective mass is below ``1e-12`` of the largest in every requested
-        direction is skipped (left at zero). The two legs must meet the same
-        stiffness: a second difference of the nodal resisting forces above
-        ``1e-3`` of the first difference (a no-tension brace or a gap at zero
+        calls every extractor there, removes the pattern and settles back.
+        The per-mode value under spectrum ``d`` is
+        ``Γ_kd Sa_d(T_k) (Δr⁺ - Δr⁻) / (2 a_k)``, each ``Δr`` the leg's
+        change from its settled start: the state
+        ``responseSpectrumAnalysis -mode k`` imposes, about the reference
+        state instead of in place of it. Displacements are the modal ones to
+        round-off, PDelta included; element forces and reactions are those of
+        the elements at that state. The probe amplitude ``a_k`` does not
+        depend on the spectrum: the largest nodal translation moves by
+        ``1e-8`` of the model's extent. A mode whose effective mass is below
+        ``1e-12`` of the largest in every requested direction is skipped
+        (left at zero). The two legs must meet the same stiffness in every
+        element: a second difference of an element's resisting force above
+        ``1e-3`` of its first difference (a no-tension brace or a gap at zero
         strain, a material that loads and unloads on different branches,
         such as ``Concrete01`` on its backbone) raises. Combine the result
         with :meth:`SpectrumModalResult.combine` (CQC / SRSS) and
@@ -277,7 +293,9 @@ class _GravityModalMixin(_ProcedureHost):
         The reference state is the gravity state with ``p_delta=True`` and
         the unloaded state with ``p_delta=False`` (modes and per-mode
         responses on ``K``, gravity run afterwards). The domain ends at the
-        gravity state either way, checked against the snapshot.
+        settled gravity state either way, checked against its snapshot; with
+        a loose declared test that is nearer equilibrium than the state the
+        gravity analysis stopped at.
 
         ``responseSpectrumAnalysis -mode k`` is not used: it replaces the
         committed displacement with the modal one and commits, so the gravity
@@ -290,7 +308,7 @@ class _GravityModalMixin(_ProcedureHost):
         ``mass_from_model``): that is the supported route.
 
         **No recorders.** Each probe leg and each return solve commits, so a
-        declared recorder would write four extra rows per mode that are
+        declared recorder would write extra rows for every mode that are
         not states of the structure. A model with a declared recorder is
         refused; the gravity state is in
         :attr:`SpectrumModalResult.gravity_values` and in ``Node.read`` on
@@ -340,7 +358,7 @@ class _GravityModalMixin(_ProcedureHost):
             raise BridgeError(
                 f"{context}: the model declares recorders ({', '.join(recorders)}). "
                 "Every per-mode probe leg and return solve commits, so they "
-                "would record four rows per mode that are not states of the "
+                "would record rows for every mode that are not states of the "
                 "structure. Remove the recorders; the gravity state is in "
                 "SpectrumModalResult.gravity_values and Node.read afterwards, "
                 "and modal_after_gravity records the gravity run on its own."
@@ -465,18 +483,6 @@ class _GravityModalMixin(_ProcedureHost):
             )
         massed = [t for t in tags if np.any(masses[t] != 0.0)]
 
-        reference = snapshot_state(ops)
-        ref_values = {
-            name: _evaluate(ex, ops, name, None, context)
-            for name, ex in extractors.items()
-        }
-        labels = {name: _labels(ex) for name, ex in extractors.items()}
-        n_modes = lam.size
-        per_mode = {
-            name: np.zeros((len(spectra), n_modes, v.size))
-            for name, v in ref_values.items()
-        }
-
         ts_tag = 1 + max(
             (int(tag) for p in self._primitives if isinstance(p, TimeSeries)
              for tag in (self.tag_for(p),) if tag is not None),
@@ -515,14 +521,51 @@ class _GravityModalMixin(_ProcedureHost):
             meff > _NEGLIGIBLE_MASS * np.max(meff, axis=1, keepdims=True),
             axis=0)
 
-        def nodal_forces() -> "dict[int, np.ndarray]":
-            # After ``reactions``, every node's reaction is its resisting
-            # force minus its applied load (the unbalance at a free node).
-            ops.reactions()
-            return {t: np.asarray(ops.nodeReaction(t), dtype=np.float64)
+        elements = [int(e) for e in ops.getEleTags()]
+
+        def element_forces() -> "dict[int, np.ndarray]":
+            return {e: np.asarray(ops.eleForce(e), dtype=np.float64)
+                    for e in elements}
+
+        def disp() -> "dict[int, np.ndarray]":
+            return {t: np.asarray(ops.nodeDisp(t), dtype=np.float64)
                     for t in tags}
 
-        ref_forces = nodal_forces()
+        def settle(where: str) -> None:
+            # Unloaded Linear steps (Newton iterations on the current
+            # tangent) until a step moves no node by more than a millionth
+            # of the probe: the legs then start from the equilibrium itself,
+            # not from wherever the declared test stopped, whose residual
+            # each leg would otherwise clear and count as a response.
+            before = disp()
+            for _ in range(_SETTLE_STEPS):
+                solve(where)
+                after = disp()
+                moved = max(float(np.max(np.abs(after[t] - before[t]),
+                                         initial=0.0)) for t in tags)
+                if moved <= _SETTLE_REL * probe:
+                    return
+                before = after
+            raise RuntimeError(
+                f"{context}: the {where} did not settle: {_SETTLE_STEPS} "
+                "Linear steps about the reference state still move it by "
+                f"{moved:.3e} (limit {_SETTLE_REL * probe:.3e})."
+            )
+
+        live_emitter.algorithm("Linear")
+        settle("settling of the reference state")
+        reference = snapshot_state(ops)
+        ref_values = {
+            name: _evaluate(ex, ops, name, None, context)
+            for name, ex in extractors.items()
+        }
+        labels = {name: _labels(ex) for name, ex in extractors.items()}
+        n_modes = lam.size
+        per_mode = {
+            name: np.zeros((len(spectra), n_modes, v.size))
+            for name, v in ref_values.items()
+        }
+
         for k in range(n_modes):
             if not active[k] or not np.any(coef[:, k]):
                 continue  # the mode takes no part in any spectrum
@@ -537,10 +580,17 @@ class _GravityModalMixin(_ProcedureHost):
                 )
             amp = probe * float(lam[k]) / peak
             loads = {t: amp * masses[t] * phi[t] for t in massed}
+            # Each leg is an increment from its own settled start.
             legs: list[dict[str, np.ndarray]] = []
             forces: list[dict[int, np.ndarray]] = []
             for sign in (1.0, -1.0):
                 where = f"mode {k + 1} {'+' if sign > 0 else '-'}"
+                start = {
+                    name: _evaluate(ex, ops, name, ref_values[name].size,
+                                    context)
+                    for name, ex in extractors.items()
+                }
+                start_forces = element_forces()
                 pattern = 1 + max(
                     (int(p) for p in ops.getPatterns()), default=0)
                 ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
@@ -550,43 +600,49 @@ class _GravityModalMixin(_ProcedureHost):
                 # solved on: the leg moves the domain by exactly ± a φ / λ,
                 # whether or not the element's tangent is consistent with
                 # its forces (the PDelta transformation's is not).
-                live_emitter.algorithm("Linear")
                 solve(f"{where} leg")
                 legs.append({
                     name: _evaluate(ex, ops, name, ref_values[name].size,
-                                    context)
+                                    context) - start[name]
                     for name, ex in extractors.items()
                 })
-                forces.append(nodal_forces())
+                forces.append({e: f - start_forces[e]
+                               for e, f in element_forces().items()})
                 ops.remove("loadPattern", pattern)
-                algorithm._emit(live_emitter, self.tag_for(algorithm) or 0)
-                solve(f"{where} return")
-            # The second difference of the resisting forces about the
-            # reference: second order in the probe for any smooth element,
-            # first order where a member's stiffness differs between the
-            # two legs (a no-tension brace at zero strain, a material that
-            # loads and unloads on different branches).
-            even = max(float(np.max(np.abs(
-                forces[0][t] + forces[1][t] - 2.0 * ref_forces[t]),
-                initial=0.0)) for t in tags)
-            odd = max(float(np.max(np.abs(
-                forces[0][t] - forces[1][t]
-                + (2.0 * loads[t] if t in loads else 0.0)), initial=0.0))
-                for t in tags)
-            if even > _KINK_TOL * odd:
+                settle(f"{where} return")
+            # Per element, the second difference of its resisting force
+            # against the first: second order in the probe for a smooth
+            # element, first order for one whose stiffness differs between
+            # the two legs (a no-tension brace at zero strain, a material
+            # that loads and unloads on different branches). Per element,
+            # so a slender kinked member is not hidden by stiff ones.
+            odd = {e: float(np.max(np.abs(forces[0][e] - forces[1][e]),
+                                   initial=0.0)) for e in elements}
+            floor = _ELEMENT_FLOOR * max(odd.values(), default=0.0)
+            worst, ratio = None, 0.0
+            for e in elements:
+                even = float(np.max(np.abs(forces[0][e] + forces[1][e]),
+                                    initial=0.0))
+                r = even / max(odd[e], floor) if even > 0.0 else 0.0
+                if r > ratio:
+                    worst, ratio = e, r
+            if ratio > _KINK_TOL:
                 raise RuntimeError(
                     f"{context}: mode {k + 1}'s two probe legs met different "
-                    f"stiffnesses (second difference of the resisting forces "
-                    f"{even / odd:.3e} of the first, limit {_KINK_TOL:g}): a "
-                    "member changes stiffness at the reference state, such "
-                    "as a no-tension brace or a gap at zero strain, or a "
-                    "material that loads and unloads on different branches "
-                    "(Concrete01, Steel02 on their backbone). The response "
-                    "spectrum is linear about that state and is refused."
+                    f"stiffnesses in element {worst} (second difference of "
+                    f"its resisting force {ratio:.3e} of the first, limit "
+                    f"{_KINK_TOL:g}): a member changes stiffness at the "
+                    "reference state, such as a no-tension brace or a gap at "
+                    "zero strain, or a material that loads and unloads on "
+                    "different branches (Concrete01, Steel02 on their "
+                    "backbone). The response spectrum is linear about that "
+                    "state and is refused."
                 )
             for name in extractors:
                 unit = (legs[0][name] - legs[1][name]) / (2.0 * amp)
                 per_mode[name][:, k, :] = coef[:, k, None] * unit[None, :]
+
+        algorithm._emit(live_emitter, self.tag_for(algorithm) or 0)
 
         if declared is not None:
             live_emitter.integrator(str(declared[0]), *declared[1:])

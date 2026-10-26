@@ -4,12 +4,13 @@
 `modal_after_gravity` sequence and then, on the same domain, applies each mode's probe force
 `± a_k M φ_k` as a nodal pattern, takes one `Linear` step on the tangent the modes came from (so each
 leg moves the domain by exactly `± a_k φ_k / λ_k`, the state `responseSpectrumAnalysis -mode k` imposes,
-PDelta included), calls every response extractor on the committed state, and solves back to the gravity
-state with the declared algorithm. The probe moves the largest nodal translation by `1e-8` of the model
-extent whatever the spectrum; modes with negligible effective mass are skipped; a mode whose two legs
-meet different stiffnesses (second difference of the resisting forces above `1e-3` of the first: a
-no-tension brace at zero strain, `Concrete01` on its backbone) is refused, and so is a model with
-declared recorders (every leg commits). The per-mode value is the
+PDelta included), calls every response extractor on the committed state, and settles back to the
+gravity equilibrium with unloaded `Linear` steps (the reference is settled the same way first, so a
+loose declared test does not count as a response). The probe moves the largest nodal translation by
+`1e-8` of the model extent whatever the spectrum; modes with negligible effective mass are skipped; a
+mode whose two legs meet different stiffnesses in any element (second difference of its resisting force
+above `1e-3` of the first: a no-tension brace at zero strain however slender, `Concrete01` on its
+backbone) is refused, and so is a model with declared recorders (every leg commits). The per-mode value is the
 central difference about the gravity state scaled by `Γ_k Sa(T_k)` for each `DesignSpectrum`: a
 `(T, Sa)` table, any object with a vectorised `.at(T)` (a codeSpectra `Spectrum`, never imported) or a
 vectorised callable, plus a g-to-model-units scale and a direction (the scale is applied in Python). An extractor is any `extractor(ops) -> 1-D array` of fixed length,

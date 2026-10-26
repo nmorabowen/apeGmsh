@@ -81,14 +81,23 @@ eigen solve uses.
 
 ### D4 — Per-mode responses come from a static modal-force solve on the preloaded domain (PR 2)
 
-For each mode `k` and each sign the driver applies the probe force
-`±a_k M φ_k` as a nodal-load pattern on the gravity domain, takes one `Linear`
-step at `dλ = 0` on the current tangent, and evaluates the user's response
-extractors at that committed state. The pattern is then removed and the domain
-solved back to the gravity equilibrium with the declared algorithm. The
-per-mode quantity is the central difference `(r⁺ - r⁻) / (2 a_k)` scaled by
-`Γ_kd Sa_d(T_k)` for each direction `d`: an increment about the gravity state,
-linear in the spectrum.
+The driver first settles the gravity state: unloaded `Linear` steps at
+`dλ = 0` until a step moves no node by more than `1e-6` of the probe, so the
+reference is the equilibrium itself, not wherever the declared test stopped.
+For each mode `k` and each sign it then applies the probe force `±a_k M φ_k`
+as a nodal-load pattern, takes one `Linear` step on the current tangent, and
+evaluates the user's response extractors at that committed state. The pattern
+is then removed and the domain settled back the same way. The per-mode
+quantity is the central difference `(Δr⁺ - Δr⁻) / (2 a_k)`, each `Δr` the
+leg's change from its settled start, scaled by `Γ_kd Sa_d(T_k)` for each
+direction `d`: an increment about the gravity state, linear in the spectrum.
+
+Settling matters with a loose declared test. `test NormUnbalance 1.0` under
+2e5 N floor loads stops the gravity analysis with a residual larger than the
+probe's forces; a leg from that state clears the residual too and counts it
+as a response (the review's repro was refused at `0.1`). From the settled
+state the same frame passes, and its per-mode displacements are the modal ones
+to `1e-9`.
 
 **The legs step on the eigen tangent.** The `Linear` step factors the tangent
 the modes were solved on, and `K_t φ_k = λ_k M φ_k`, so each leg moves the
@@ -117,23 +126,29 @@ effective mass is below `1e-12` of the largest in every requested direction is
 skipped and left at zero (a pure-torsion mode about a centred mass node has
 `Γ ~ 1e-12` and almost no translation at that node).
 
-**The legs must meet the same stiffness.** The driver forms the second
-difference of every node's resisting force about the reference,
-`F⁺ + F⁻ - 2 F_ref`, against the first difference. For a smooth element it is
-second order and shrinks with the probe (on the live frames: `2e-8` PDelta,
-`2e-6` Corotational, round-off on Linear). Where a member's stiffness differs
-between the two legs it is first order and does not shrink, and above `1e-3` the
-mode is refused: no-tension braces at zero strain (`p_delta=False`) give `0.6`;
-`Concrete01` braces compressed by gravity give `5.5e-2`, because they sit on
-their backbone, so one leg loads along it and the other unloads on the stiffer
-branch. Any material that loads and unloads on different branches at the
-gravity state (concrete or steel models on their backbone, a gap, a yield
-point) is refused the same way: the response spectrum is linear about that
-state, and such a member has no single tangent there.
+**The legs must meet the same stiffness, element by element.** For every
+element the driver forms the second difference of its resisting force
+(`eleForce`) over the two legs, `ΔF⁺ + ΔF⁻`, against the first difference
+`ΔF⁺ - ΔF⁻`, the latter floored at `1e-6` of the largest element's so an
+element the mode barely deforms is not judged on round-off. For a smooth
+element the ratio is second order and shrinks with the probe (on the live
+frames: `1e-8` PDelta, `1.3e-6` Corotational, round-off on Linear, unchanged by
+a loose declared test). Where a member's stiffness differs between the two
+legs it is first order and does not shrink, and above `1e-3` the mode is
+refused, naming the element: a no-tension brace at zero strain
+(`p_delta=False`) gives `1.0`, whether its area is `2e-3` or `2e-6` (a norm
+over the whole model let the slender one through, and its per-mode force came
+out as the average of its slack and compressed legs); `Concrete01` braces
+compressed by gravity give `9.5e-2`, because they sit on their backbone, so
+one leg loads along it and the other unloads on the stiffer branch. Any
+material that loads and unloads on different branches at the gravity state
+(concrete or steel models on their backbone, a gap, a yield point) is refused
+the same way: the response spectrum is linear about that state, and such a
+member has no single tangent there.
 
-Every probe leg and return solve commits, so a declared recorder would log four
-rows per mode that are not states of the structure; a model with a declared
-recorder is refused.
+Every probe leg and settling step commits, so a declared recorder would log
+rows for every mode that are not states of the structure; a model with a
+declared recorder is refused.
 
 `M` is the nodal mass (`nodeMass`). A model whose `modalProperties` total mass
 exceeds the nodal mass (element mass: `rho` in a section, `-mass` on a beam) is
@@ -203,10 +218,12 @@ response.
 - `modal_after_gravity` (PR 1) and the spectrum driver (PR 2) run on stock
   openseespy; nothing here is fork-only. `-combine` stays the fork's, used only
   as a cross-check of the Python combination.
-- The per-mode cost is four static solves per mode on the full model (two
-  `Linear` legs, two returns). The tangent is refactorised for each solve.
-- Accuracy is bounded by the declared convergence test: the gravity state is
-  restored to that tolerance, not bit for bit, and the driver checks it.
+- The per-mode cost is two `Linear` legs plus the settling steps after each
+  (at least two, more where the tangent is inconsistent, as on PDelta, which
+  settles at the rate of its tangent gap), all static solves on the full model. The tangent is refactorised for each
+  solve.
+- The settled gravity state is the equilibrium, not bit for bit the state the
+  declared test stopped at; the driver ends there and checks it.
 
 ## Cross-references
 
