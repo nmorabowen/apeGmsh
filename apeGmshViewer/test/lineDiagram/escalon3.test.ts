@@ -59,14 +59,22 @@ test("defaultLineDiagramComponent prefers Mz > My > Vy > Vz > N > T", () => {
   assert.equal(defaultLineDiagramComponent([]), null);
 });
 
-test("effectiveFlipSign defaults to true for bending moments (My, Mz) and false otherwise, with user override", () => {
+test("effectiveFlipSign defaults to true for bending moments (My, Mz) and curvatures (kappaY, kappaZ) and false otherwise, with user override", () => {
   assert.equal(effectiveFlipSign("Mz", null), true);
   assert.equal(effectiveFlipSign("My", null), true);
+  assert.equal(effectiveFlipSign("kappaZ", null), true);
+  assert.equal(effectiveFlipSign("kappaY", null), true);
+  assert.equal(effectiveFlipSign("eps", null), false);
+  assert.equal(effectiveFlipSign("gammaY", null), false);
+  assert.equal(effectiveFlipSign("gammaZ", null), false);
+  assert.equal(effectiveFlipSign("theta", null), false);
   assert.equal(effectiveFlipSign("Vy", null), false);
   assert.equal(effectiveFlipSign("N", null), false);
   assert.equal(effectiveFlipSign("Mz", false), false);
+  assert.equal(effectiveFlipSign("kappaZ", false), false);
   assert.equal(effectiveFlipSign("Vy", true), true);
   assert.equal(effectiveFlipSign({ component: "Mz", flipSign: null }), true);
+  assert.equal(effectiveFlipSign({ component: "kappaZ", flipSign: null }), true);
   assert.equal(effectiveFlipSign({ component: "Mz", flipSign: false }), false);
 });
 

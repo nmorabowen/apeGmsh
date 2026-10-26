@@ -52,7 +52,9 @@ with ``_label:`` so the two tiers do not interfere.
 """
 from __future__ import annotations
 
+import uuid
 import warnings
+import weakref
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Iterator
 
@@ -64,6 +66,7 @@ from apeGmsh._types import DimTag
 
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
+    from apeGmsh._session import _SessionBase as _Session
 
 # The internal ``_label:`` prefix predicates were RELOCATED to
 # apeGmsh._kernel._label_prefix (selection-unification-v2 P1-K, HT4):
@@ -409,6 +412,8 @@ def snapshot_physical_groups() -> list[dict]:
     """Capture every physical group (both ``_label:*`` and user PGs).
 
     Call this **before** any OCC boolean + synchronize sequence.
+    Held labels (see :meth:`Labels.add`) are bound first, so the
+    boolean remaps them like any other.
 
     Each entry carries per-entity geometric signatures
     (``entity_signatures``) so the post-op remap can fall back to
@@ -425,6 +430,7 @@ def snapshot_physical_groups() -> list[dict]:
         be computed (zero-extent, unknown surface type) are omitted
         — the geometric fallback simply skips them.
     """
+    bind_held_labels()
     snapshot: list[dict] = []
     for dim, pg_tag in gmsh.model.getPhysicalGroups():
         name = gmsh.model.getPhysicalName(dim, pg_tag)
@@ -1041,6 +1047,120 @@ def reconcile_label_pgs() -> None:
             gmsh.model.setPhysicalName(dim, new_pg, name)
 
 
+# ---------------------------------------------------------------------
+# Held labels: a label on entities created with ``sync=False``
+# ---------------------------------------------------------------------
+#
+# A physical group can only name entities the gmsh model already knows,
+# and an OCC entity reaches the model at the next ``synchronize``.  A
+# label asked for before that is held on its ``Labels`` and bound at the
+# next synchronising apeGmsh call: ``g.model.sync()``, a label query,
+# a boolean / transform (``snapshot_physical_groups``), ``generate`` and
+# ``get_fem_data``.  Before, gmsh dropped it without a word.
+
+_HOLDERS: "weakref.WeakSet[Labels]" = weakref.WeakSet()
+
+
+def _is_bound(dim: int, tag: int) -> bool:
+    """True when the gmsh model knows entity ``(dim, tag)``.
+
+    ``getType`` raises for an entity OCC holds but the model does not
+    yet; gmsh prints that as an error, so the terminal is muted for the
+    probe.
+    """
+    terminal = gmsh.option.getNumber("General.Terminal")
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        gmsh.model.getType(int(dim), int(tag))
+        return True
+    except Exception:
+        return False
+    finally:
+        gmsh.option.setNumber("General.Terminal", terminal)
+
+
+#: gmsh model attribute naming the ``Labels`` whose held labels belong to
+#: that model.  gmsh names models, and names repeat (every unnamed
+#: session's model is ``''``, as is gmsh's default model), so the model a
+#: label was held in is told by this mark, never by its name.  It is set
+#: on the first held label and removed once all are bound, so a session
+#: that never holds one (``sync=True``) never carries it.
+_HELD_MARK = "apeGmsh.heldLabels"
+
+
+def _current_mark() -> list[str]:
+    """The current model's ``_HELD_MARK``, ``[]`` when it has none.
+
+    Read through ``getAttributeNames`` first: in gmsh 4.15
+    ``getAttribute`` on a missing name creates an empty entry, which a
+    ``.msh`` write then saves as a section of its own.
+    """
+    if _HELD_MARK not in gmsh.model.getAttributeNames():
+        return []
+    return list(gmsh.model.getAttribute(_HELD_MARK))
+
+
+def bind_held_labels() -> None:
+    """Bind the held labels of the session whose model is current.
+
+    ``_HOLDERS`` spans every session in the process, but a held tag
+    means an entity of its own session's model: each holder binds only
+    while that model is the current gmsh model (``Labels._bind_held``),
+    so a nested session's call never binds another session's labels.
+    """
+    for labels in list(_HOLDERS):
+        labels._bind_held()
+
+
+def _still_held(session: "_SessionBase | _Session") -> list[str]:
+    """Names of the labels ``session`` holds after a bind attempt."""
+    names: set[str] = set()
+    for labels in list(_HOLDERS):
+        if labels._parent is session:
+            names.update(name for _, name in labels._held)
+    return sorted(names)
+
+
+def sync_held_labels(session: "_SessionBase") -> None:
+    """``g.model.sync()``: bind held labels; warn for the session's own
+    labels it cannot bind because another session's model is current."""
+    bind_held_labels()
+    names = _still_held(session)
+    if names:
+        warnings.warn(
+            f"g.model.sync() did not bind labels {names} of session "
+            f"{session.name!r}: they were asked for with sync=False and "
+            f"the current gmsh model is another session's, whose entities "
+            f"carry the same tags.  They stay held; call g.model.sync() "
+            f"before beginning another session.",
+            stacklevel=3,
+        )
+
+
+def release_held_labels(session: "_Session") -> None:
+    """At ``session.end()``: bind the session's held labels, or warn.
+
+    A label still held after the bind is one whose model was not the
+    current gmsh model when the session ended (another session's was),
+    so it cannot be created and is dropped with a warning naming it.
+    """
+    bind_held_labels()
+    names = _still_held(session)
+    if not names:
+        return
+    for labels in list(_HOLDERS):
+        if labels._parent is session:
+            labels._held = {}
+            _HOLDERS.discard(labels)
+    warnings.warn(
+        f"Labels {names} of session {session.name!r} were asked for with "
+        f"sync=False and are dropped: when the session ended, the current "
+        f"gmsh model was another session's, so they could not be bound.  "
+        f"Call g.model.sync() before beginning another session.",
+        stacklevel=3,
+    )
+
+
 class Labels(_HasLogging):
     """Geometry-time entity naming composite (``g.labels``).
 
@@ -1061,6 +1181,11 @@ class Labels(_HasLogging):
 
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
+        # (dim, name) -> tags of labels asked for before their entities
+        # were synchronised; bound by ``_bind_held``.
+        self._held: dict[tuple[int, str], list[int]] = {}
+        # This composite's mark (``_HELD_MARK``) on the model it holds in.
+        self._mark = uuid.uuid4().hex
 
     def _require_kernel(self, verb: str) -> None:
         """Refuse a query that would read the absent gmsh kernel."""
@@ -1068,6 +1193,54 @@ class Labels(_HasLogging):
         raise_if_no_live_kernel(
             self._parent, verb, alternative=self._H5_ALTERNATIVE,
         )
+        self._bind_held()
+
+    def _owns_current_model(self) -> bool:
+        """True when the current gmsh model is the one this composite
+        holds labels in: it carries this composite's ``_HELD_MARK``.
+
+        The mark, not the model's name, says so: names repeat (an
+        unnamed session's model shares ``''`` with gmsh's default one).
+        """
+        return (
+            self._parent.is_active
+            and _current_mark() == [self._mark]
+        )
+
+    def _bind_held(self) -> None:
+        """Synchronise once and create every held label.
+
+        Only while this session's model is the current gmsh model: the
+        held tags name entities of that model, and the same tags exist
+        in any other.  A held tag the model no longer has when the label
+        is bound (the entity was removed or consumed first) is reported,
+        never dropped silently.  Each label leaves ``_held`` only once
+        it is bound, so an error part-way loses none of the rest.
+        """
+        if not self._held or not self._owns_current_model():
+            return
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(self._parent, "g.labels (binding labels held from sync=False)")
+        gmsh.model.occ.synchronize()
+        for key in list(self._held):
+            dim, name = key
+            tags = self._held[key]
+            live = [t for t in tags if _is_bound(dim, t)]
+            gone = sorted(set(tags) - set(live))
+            if gone:
+                warnings.warn(
+                    f"Label {name!r} (dim={dim}): entities {gone} were "
+                    f"created with sync=False and no longer exist when "
+                    f"the label is bound, so the label does not cover "
+                    f"them.  Synchronise (g.model.sync()) before removing "
+                    f"or consuming them.",
+                    stacklevel=3,
+                )
+            if live:
+                self._add_bound(dim, live, name, record=False)
+            del self._held[key]
+        _HOLDERS.discard(self)
+        gmsh.model.removeAttribute(_HELD_MARK)
 
     # ------------------------------------------------------------------
     # Create / update
@@ -1092,7 +1265,11 @@ class Labels(_HasLogging):
         Returns
         -------
         int
-            The Gmsh physical-group tag backing this label.
+            The Gmsh physical-group tag backing this label, or ``0``
+            when any of *tags* is not synchronised yet (an entity made
+            with ``sync=False``): the label is then held and created at
+            the next ``g.model.sync()``, label query, boolean /
+            transform, ``generate`` or ``get_fem_data``.
 
         Raises
         ------
@@ -1119,6 +1296,40 @@ class Labels(_HasLogging):
                 f"entities to label, so the label would not exist.  Check "
                 f"the selection or query that produced the tags."
             )
+        if not all(_is_bound(dim, t) for t in tags):
+            # Entities created with sync=False: the model does not know
+            # them yet, and gmsh would drop the group silently.  Hold the
+            # label until the next synchronising apeGmsh call, marking
+            # the model it is held in (``_HELD_MARK``).
+            mark = _current_mark()
+            if mark != [self._mark]:
+                if mark or self._held:
+                    raise RuntimeError(
+                        f"g.labels.add({name!r}) on entities made with "
+                        f"sync=False: the current gmsh model is not the one "
+                        f"this session holds labels in (another session's "
+                        f"model is current), so the label cannot be held "
+                        f"for the right entities.  Call g.model.sync() "
+                        f"before beginning another session."
+                    )
+                gmsh.model.setAttribute(_HELD_MARK, [self._mark])
+            first = (dim, name) not in self._held
+            self._held.setdefault((dim, name), []).extend(tags)
+            _HOLDERS.add(self)
+            if first:
+                from apeGmsh._internal.provenance import capture
+                capture(self._parent, "neutral", "labels", name)
+            self._log(f"add({name!r}, dim={dim}, tags={tags}) held until sync")
+            return 0
+        # Held labels are bound first, so a merge keeps the call order.
+        self._bind_held()
+        return self._add_bound(dim, tags, name)
+
+    def _add_bound(
+        self, dim: int, tags: list[int], name: str, *, record: bool = True,
+    ) -> int:
+        """``add`` on entities the gmsh model knows (``record``: capture
+        the provenance record of a new label)."""
         prefixed = add_prefix(name)
 
         # Build a name→(dim, pg_tag) index in one pass over all label
@@ -1141,7 +1352,7 @@ class Labels(_HasLogging):
                     f"{len(existing_ents)} entity(ies). Merging "
                     f"{len(truly_new)} new tag(s) into it. If this is "
                     f"unintentional, use a different label name.",
-                    stacklevel=3,
+                    stacklevel=4,
                 )
             merged = sorted(set(existing_ents) | new_tags)
             gmsh.model.removePhysicalGroups([(dim, existing_tag)])
@@ -1160,7 +1371,7 @@ class Labels(_HasLogging):
                     f"Label {name!r} already exists at dim={other_dim}, "
                     f"now also being created at dim={dim}. This may "
                     f"cause ambiguous lookups when dim= is not specified.",
-                    stacklevel=3,
+                    stacklevel=4,
                 )
                 break
 
@@ -1168,9 +1379,11 @@ class Labels(_HasLogging):
         gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
         self._log(f"add({name!r}, dim={dim}, tags={tags}) -> pg_tag={pg_tag}")
         # ADR 0112 D3: the label's creation is its declaration.  A merge
-        # into an existing label (above) keeps the creating record.
-        from apeGmsh._internal.provenance import capture
-        capture(self._parent, "neutral", "labels", name)
+        # into an existing label (above) keeps the creating record; a held
+        # label recorded when it was held.
+        if record:
+            from apeGmsh._internal.provenance import capture
+            capture(self._parent, "neutral", "labels", name)
         return pg_tag
 
     @staticmethod
@@ -1355,6 +1568,7 @@ class Labels(_HasLogging):
         # here would leave the two disagreeing about what exists.
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(self._parent, f"g.labels.remove({name!r})")
+        self._bind_held()
         prefixed = add_prefix(name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         removed = False
@@ -1393,6 +1607,7 @@ class Labels(_HasLogging):
         chain_phase_guard(
             self._parent, f"g.labels.rename({old_name!r} -> {new_name!r})",
         )
+        self._bind_held()
         old_prefixed = add_prefix(old_name)
         new_prefixed = add_prefix(new_name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]

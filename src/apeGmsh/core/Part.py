@@ -216,6 +216,10 @@ class Part(_SessionBase):
         always runs.
         """
         try:
+            if self._active:
+                # Labels held on sync=False entities (one synchronise)
+                # must exist before the STEP and its anchors are written.
+                self.labels._bind_held()
             if (
                 self._active
                 and self._auto_persist

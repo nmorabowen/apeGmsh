@@ -193,6 +193,7 @@ const EVERY: Record<EventType, Event> = {
   addSearchClause: { type: "addSearchClause", clause: { join: "and", negate: false, field: "group", op: ":", value: "Arch" } },
   removeSearchClause: { type: "removeSearchClause", id: "q-1" },
   clearSearch: { type: "clearSearch" },
+  setLoads: { type: "setLoads", on: true, scale: 1.5 },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -210,8 +211,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    74,
-    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, and the 12 Spotlight/Search/selectDecls events",
+    75,
+    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, and setLoads",
   );
 });
 

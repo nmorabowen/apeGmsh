@@ -228,8 +228,16 @@ export interface ResolvedLocalAxes {
   sources: (LocalAxesSource | null)[];
 }
 
+/** `ids` sorted ascending with each repeat dropped, as a new typed array: the id lookup a Set would be, past V8's 2^24 cap (search it with rowOf). */
+export function sortedUniqueIds(ids: ArrayLike<number>): Float64Array {
+  const sorted = Float64Array.from(ids).sort();
+  let u = 0;
+  for (let i = 0; i < sorted.length; i++) if (u === 0 || sorted[i] !== sorted[u - 1]) sorted[u++] = sorted[i]!;
+  return sorted.slice(0, u);
+}
+
 /** The index of `n` in the ascending `sorted`, or -1 (a binary search). */
-function rowOf(sorted: Float64Array, n: number): number {
+export function rowOf(sorted: Float64Array, n: number): number {
   let [lo, hi] = [0, sorted.length - 1];
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
@@ -264,10 +272,8 @@ export function resolveLocalAxes(groups: readonly FrameRows[], elementIds?: Arra
       }
     }
   }
-  const sorted = framed.subarray(0, m).sort();
-  let u = 0;
-  for (let i = 0; i < m; i++) if (u === 0 || sorted[i] !== sorted[u - 1]) sorted[u++] = sorted[i]!;
-  const ids = sorted.slice(0, u);
+  const ids = sortedUniqueIds(framed.subarray(0, m));
+  const u = ids.length;
   // Each id's frame: the last row that decodes.
   const winGroup = new Uint32Array(u);
   const winRow = new Uint32Array(u);

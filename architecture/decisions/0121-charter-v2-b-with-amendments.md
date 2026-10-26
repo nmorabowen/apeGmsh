@@ -456,3 +456,67 @@ Two wording clarifications; the text above is left as accepted (ADRs are append-
 
 - Invariant 13: "Holds" means "true since acceptance".
 - D3, "raises at build, emit or live-construction time" (the Refused state): this refers to live emit. Emission of decks is never gated.
+
+## Amendment (2026-10-23) — D3: a post-pin skip counts for the lane, on ruling 3's terms
+
+The maintainer ruled option (a) on #2498 (relayed by T). This is a
+dated amendment under D5; the text above stands, and the maintainer
+ratifies this section in the PR that lands it (`human-gate`).
+
+**Why.** The nightly `live-fork` lane was red at `FORK_PIN`
+`ladruno-v20261017` (`sha=100eb9ae11a9…`). Its warrant and WP-200 tests
+exercised fork features newer than that build: `LadrunoIMKBeam -shear` /
+`-shearHinge`, `LadrunoCohesiveHinge -implex`, and the
+`LadrunoForceBeamColumn` class. D3 makes a warrant test that skips in its
+own lane fail that lane. Ruling 3 exempts only the `ladruno_mkl`
+(Pardiso) skip. So the `LadrunoForceBeamColumn` row failed the lane every
+night for a feature the pinned build does not have.
+
+**Decision.** D3's lane exemption, the `ladruno_mkl` precedent of ruling 3,
+extends to a warrant row's `post_pin` features (`WarrantRow.post_pin` in
+`tests/opensees/warrant_rows.py`). A fork-lane row test that skips for a
+post-pin feature stays a skip, without failing the lane, only when all of
+these hold:
+
+1. **The build itself prints that it lacks the named feature.** The gate
+   (`require_fork_features`) issues a one-line probe declaration and skips
+   only when the build's own rejection line matches, for example `unknown
+   option '-shear'` or `element type LadrunoForceBeamColumn is unknown`. The
+   skip reason quotes that line. An accepted declaration is no evidence of
+   absence, and neither is a failure for another reason or no readable
+   output. In those cases the test runs and fails loudly if it is wrong.
+2. **The skip names only the row's own `post_pin` features.** A post-pin
+   reason that names any feature outside `row.post_pin`, a row with no
+   `post_pin`, the stock lane, an xfail, or a hand-written `post_pin:`
+   reason still fails the lane, as D3 states.
+3. **Every gate's `predates` is locked to `FORK_PIN`.** Each feature in
+   `POST_PIN_FEATURES` records the `FORK_PIN` sha it was justified against.
+   A `suite`-lane test fails, naming each stale gate, once `FORK_PIN`'s
+   `sha` differs from a gate's `predates`
+   (`tests/opensees/unit/test_live_option_rejection_message.py::test_every_gate_predates_the_current_fork_pin`,
+   which reads `FORK_PIN` as the lane does). A pin bump therefore re-probes
+   each gate on the new build. It either re-stamps the gate (still absent)
+   or removes it (now present). No gate outlives its pin unexamined.
+4. **The member is never green on a skip.** The lane summary reports the
+   member's fork side as "NOT green (skipped)", and it stays Inventory.
+   Nothing claims it passes. This is ruling 3's split between lane green
+   and member green, unchanged.
+
+Declined: option (b), no exemption, under which the lane stays red until
+the pin moves.
+
+**Related.** The fork rows that skipped on the lane only because they
+imported `openseespy` by name now take their backend from `get_ops()`
+(#2503, folded into #2498). The remaining sibling sites are carded as
+#2506.
+
+**Status at landing (2026-10-23).** The pin advanced before this section
+landed: #2514 moved `FORK_PIN` to `ladruno-v20261023`
+(`sha=bdb69cea5a9f…`), and that build has all four features. Point 3's
+"removes it (now present)" therefore applied to every gate at once, so none
+is left. The code that implemented points 1–3 did not land with them:
+`require_fork_features`, `POST_PIN_FEATURES`, `WarrantRow.post_pin` and
+the `predates` lock. The four tests run unconditionally on the fork lane
+and fail it if the build lacks a feature. The ruling stands. The next time
+a fork test needs a feature newer than `FORK_PIN`, the gate is rebuilt on
+these four terms.
