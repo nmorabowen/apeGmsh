@@ -470,6 +470,13 @@ jobs:
           # being importorskip'd (they stay skipped in every other lane).
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
+      - name: Runner hardware (#2544)
+        run: |
+          nproc
+          lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|L3'
+          free -m
+          python -c "import numpy; numpy.show_config()" 2>&1 | grep -iE 'name|openblas|threading|num' | head -20
+
       - name: Run curated suite
         run: |
           # `not qt` must be repeated here even though pyproject's
@@ -482,7 +489,8 @@ jobs:
           # blocking one. They belong to the qt lane, which gives each
           # file its own X server and a 300 s cap.
           pytest tests -q -p no:cacheprovider \
-            -m "not live and not subprocess and not bench and not qt"
+            -m "not live and not subprocess and not bench and not qt" \
+            --durations=60 --durations-min=2
 
   # The `subprocess`-marked tests, which `suite` and `live-stock` both
   # deselect. They spawn fresh interpreters (or the standalone OPENSEES
