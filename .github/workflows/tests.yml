@@ -440,8 +440,13 @@ jobs:
     # it. The qt lane already learned this and caps each file at 300 s.
     # 40, not 25: suite wall time on main ran 950-1467 s over 7 runs and
     # run 39168105807 was cancelled at teardown after passing (#2166).
-    # TEMP (#2544): runner variance puts green runs at 37-39 min; restore to 40 once the slow-runner cause is fixed.
-    timeout-minutes: 60
+    # #2544: green runs were bimodal, 22-25 or 37-39 min. Two causes: the
+    # runners differ (the slow mode is ~1.7x slower on every test,
+    # pure-Python ones included; a slow one logged AMD EPYC 7763), and four tests/test_phase_3f_1.py cases
+    # spent 140 s each in a quadratic emit-index join (fixed in
+    # opensees_model._emit_indices). "Runner hardware" below logs the CPU,
+    # and --durations lists any test over 5 s, so the next drift is visible.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -471,11 +476,7 @@ jobs:
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
       - name: Runner hardware (#2544)
-        run: |
-          nproc
-          lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|L3'
-          free -m
-          python -c "import numpy; numpy.show_config()" 2>&1 | grep -iE 'name|openblas|threading|num' | head -20
+        run: lscpu | grep -E 'Model name|^CPU\(s\)'
 
       - name: Run curated suite
         run: |
@@ -490,7 +491,7 @@ jobs:
           # file its own X server and a 300 s cap.
           pytest tests -q -p no:cacheprovider \
             -m "not live and not subprocess and not bench and not qt" \
-            --durations=60 --durations-min=2
+            --durations=30 --durations-min=5
 
   # The `subprocess`-marked tests, which `suite` and `live-stock` both
   # deselect. They spawn fresh interpreters (or the standalone OPENSEES
