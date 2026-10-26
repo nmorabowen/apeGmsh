@@ -233,7 +233,7 @@ def element_jnt_offset(
 # ETABS applies a frame object's end offsets at the object's two ends. A
 # member meshed into several elements is a straight collinear run of line
 # elements, and so is a continuous girder of several members; without each
-# element's source curve (#2551) the two cannot be told apart. So an offset
+# element's source curve the two cannot be told apart. So an offset
 # that is not the same pure transverse shift at both ends (an end length, an
 # axial component, unequal ends) refuses on any collinear run of the
 # transform's elements. One-element members, chains that turn a corner, and
@@ -449,7 +449,7 @@ def plan_transform_specs(
             constant = _constant_jnt(transf)
             if constant:
                 # One line for every element; still refuse it where only
-                # the members' curves could place it (#2551).
+                # the members' source curves could place it.
                 rows = _transform_rows(
                     transf, elems_by_transf.get(id(transf), []), fem, ndm)
                 _refuse_ambiguous_members(
