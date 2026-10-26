@@ -81,21 +81,74 @@ eigen solve uses.
 
 ### D4 — Per-mode responses come from a static modal-force solve on the preloaded domain (PR 2)
 
-For each mode `k` the driver applies the modal inertia force `±c M φ_k` (with
-`c = max_d |Γ_kd Sa_d(T_k)|` over the requested directions) as a nodal-load
-pattern on the gravity domain, solves with the declared algorithm at `dλ = 0`,
-and evaluates the user's response extractors at `u_g + u_k` and `u_g - u_k`.
-The pattern is then removed and the domain solved back to the gravity
-equilibrium. The per-mode quantity is the central difference
-`(r⁺ - r⁻) / (2c)` scaled by `Γ_kd Sa_d(T_k)` for each direction `d`: an
-increment about the gravity state, linear in the spectrum, and exact to
-third order for elements whose forces are quadratic in the displacements
-(PDelta), exact for linear ones. Because `K_t φ_k = λ_k M φ_k`, the solve
-reproduces the command's modal displacement `φ_k Γ_k Sa / λ_k` on a linear
-model to round-off (`1e-14`). On a PDelta model the two differ by about `3e-7`
-relative: the PDelta transformation's tangent omits the term from the change
-of axial force across the existing gravity sway, and the Newton solve uses the
-true linearization of the element forces.
+The driver first settles the gravity state: unloaded `Linear` steps at
+`dλ = 0` until a step moves no node by more than `1e-6` of the probe, so the
+reference is the equilibrium itself, not wherever the declared test stopped.
+For each mode `k` and each sign it then applies the probe force `±a_k M φ_k`
+as a nodal-load pattern, takes one `Linear` step on the current tangent, and
+evaluates the user's response extractors at that committed state. The pattern
+is then removed and the domain settled back the same way. The per-mode
+quantity is the central difference `(Δr⁺ - Δr⁻) / (2 a_k)`, each `Δr` the
+leg's change from its settled start, scaled by `Γ_kd Sa_d(T_k)` for each
+direction `d`: an increment about the gravity state, linear in the spectrum.
+
+Settling matters with a loose declared test. `test NormUnbalance 1.0` under
+2e5 N floor loads stops the gravity analysis with a residual larger than the
+probe's forces; a leg from that state clears the residual too and counts it
+as a response (the review's repro was refused at `0.1`). From the settled
+state the same frame passes, and its per-mode displacements are the modal ones
+to `1e-9`.
+
+**The legs step on the eigen tangent.** The `Linear` step factors the tangent
+the modes were solved on, and `K_t φ_k = λ_k M φ_k`, so each leg moves the
+domain by exactly `± a_k φ_k / λ_k`: the state `responseSpectrumAnalysis -mode
+k` imposes, here about the gravity state instead of in place of it. The
+per-mode displacements are the modal ones to round-off on every element,
+PDelta included, and the Python CQC of the displacements meets the command's
+`-combine CQC` to `4e-14` on the PDelta frame. A Newton leg would not: the
+PDelta transformation's tangent omits the change of axial force across the
+existing gravity sway, so its equilibrium lands off `a_k φ_k / λ_k` by a
+first-order gap that does not shrink with the probe and grows with the sway
+(on the live frame with an elastic X-brace: `1.3e-6` in mode 1 and `1.2e-3` in
+mode 4 at twice the gravity, `5.8e-3` at eight times; `3e-10` with
+`Corotational` columns, whose tangent is consistent). The element forces and
+reactions at the leg are the elements' own at that displacement, so on a PDelta
+model the summed support reaction misses `M_eff Sa` by the same term (`7.5e-7`
+in mode 1 of the live PDelta frame), as the command's does.
+
+**The probe is small and spectrum-independent.** `a_k` moves the largest nodal
+translation by `1e-8` of the model's extent. A probe at the design amplitude
+would return the secant wherever a member changes stiffness between the
+gravity state and the design displacement: an elastic-no-tension X-brace,
+compressed by gravity and slack at the design drift, put the per-mode roof
+displacement 8 %, 38 % and 96 % off in the review's repro. A mode whose
+effective mass is below `1e-12` of the largest in every requested direction is
+skipped and left at zero (a pure-torsion mode about a centred mass node has
+`Γ ~ 1e-12` and almost no translation at that node).
+
+**The legs must meet the same stiffness, element by element.** For every
+element the driver forms the second difference of its resisting force
+(`eleForce`) over the two legs, `ΔF⁺ + ΔF⁻`, against the first difference
+`ΔF⁺ - ΔF⁻`, the latter floored at `1e-6` of the largest element's so an
+element the mode barely deforms is not judged on round-off. For a smooth
+element the ratio is second order and shrinks with the probe (on the live
+frames: `1e-8` PDelta, `1.3e-6` Corotational, round-off on Linear, unchanged by
+a loose declared test). Where a member's stiffness differs between the two
+legs it is first order and does not shrink, and above `1e-3` the mode is
+refused, naming the element: a no-tension brace at zero strain
+(`p_delta=False`) gives `1.0`, whether its area is `2e-3` or `2e-6` (a norm
+over the whole model let the slender one through, and its per-mode force came
+out as the average of its slack and compressed legs); `Concrete01` braces
+compressed by gravity give `9.5e-2`, because they sit on their backbone, so
+one leg loads along it and the other unloads on the stiffer branch. Any
+material that loads and unloads on different branches at the gravity state
+(concrete or steel models on their backbone, a gap, a yield point) is refused
+the same way: the response spectrum is linear about that state, and such a
+member has no single tangent there.
+
+Every probe leg and settling step commits, so a declared recorder would log
+rows for every mode that are not states of the structure; a model with a
+declared recorder is refused.
 
 `M` is the nodal mass (`nodeMass`). A model whose `modalProperties` total mass
 exceeds the nodal mass (element mass: `rho` in a section, `-mass` on a beam) is
@@ -110,14 +163,35 @@ the fork-request notes, and the solve route stays the reference.
 (WP-207, PR #1015, ladruno `a8bcc07e`): `responseSpectrumAnalysis dir -Tn T_k
 -Sa Sa -mode k -increment -sign ±1` leaves `committed ± u_k` as an updated,
 uncommitted trial state, and `-revert` returns to the committed gravity state.
-Where the build takes it, the driver uses it in place of the static legs (no
-solves), with `Sa_d(T_k)` evaluated and scaled in Python and passed as a
-one-value table. The capability probe is `responseSpectrumAnalysis -revert` at
-the committed state: success means available, any refusal is inconclusive
-(`None`) and the static path runs, so stock and older fork builds are
-unchanged. Extractors read the trial state on both paths (`NodeDisp` is
-`nodeDisp + nodeResponse(n, d, 4)`, since `nodeResponse(n, d, 1)` is the
-committed displacement).
+Where the build takes it, the driver uses it in place of each static leg and
+its return settling, and changes nothing else:
+
+- **The same probe.** Each leg imposes the static leg's `± a_k φ_k / λ_k`, the
+  probe amplitude, not the design one: the driver passes `-Sa a_k / |Γ_kd|`
+  along the direction `d` with the largest `|Γ_kd|` and `-sign ±sgn(Γ_kd)`.
+  At the design amplitude a no-tension brace returns its secant, and the kink
+  check would refuse smooth Corotational frames.
+- **The same guarantees.** The reference is settled before either route; the
+  effective-mass skip, the per-element kink check on `eleForce` (trial minus
+  committed) and the recorder refusal are shared. The fork's `-increment`
+  calls the domain's recorders on each trial state, so the refusal still
+  applies. `-revert` after each leg returns to the committed (settled)
+  reference exactly.
+- **Checked at the seam.** Every imposed nodal translation (`IncrDisp`) must
+  equal `± a_k φ_k / λ_k` to `1e-6` of the probe, or the driver raises: a
+  build whose participation factor, eigenvector scaling or table lookup
+  differs from `modalProperties` cannot scale the modes silently.
+- **Built-in extractors only.** The imposed state is a trial state.
+  `NodeDisp` reads `nodeDisp + nodeResponse(n, d, 4)` (`nodeDisp` is the
+  committed displacement), and `NodeReaction` and `ElementResponse` read
+  trial forces. An opaque callable might read `nodeDisp` and return zero for
+  every mode, so any other extractor keeps the static route.
+
+The capability probe is `responseSpectrumAnalysis -revert` at the settled
+reference: success means available. Any refusal is inconclusive (`None`) and
+the static route runs, so stock and older fork builds are unchanged. On the
+item-6 frames (Linear, PDelta, braced PDelta, torsion) the two routes agree
+per mode to round-off (the PR's differential).
 
 ### D5 — Response extractors are opaque callables
 
@@ -178,10 +252,12 @@ response.
 - `modal_after_gravity` (PR 1) and the spectrum driver (PR 2) run on stock
   openseespy; nothing here is fork-only. `-combine` stays the fork's, used only
   as a cross-check of the Python combination.
-- The per-mode cost is three static solves per mode on the full model. The
-  tangent is refactorised for each solve.
-- Accuracy is bounded by the declared convergence test: the gravity state is
-  restored to that tolerance, not bit for bit, and the driver checks it.
+- The per-mode cost is two `Linear` legs plus the settling steps after each
+  (at least two, more where the tangent is inconsistent, as on PDelta, which
+  settles at the rate of its tangent gap), all static solves on the full model. The tangent is refactorised for each
+  solve.
+- The settled gravity state is the equilibrium, not bit for bit the state the
+  declared test stopped at; the driver ends there and checks it.
 
 ## Cross-references
 

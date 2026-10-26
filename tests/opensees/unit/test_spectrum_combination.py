@@ -203,3 +203,14 @@ def test_spectrum_takes_a_callable_sa() -> None:
         DesignSpectrum(code_sa, [1.0], direction=1)
     with pytest.raises(ValueError, match="vectorised"):
         DesignSpectrum(lambda t: 1.0, direction=1).sa([0.1, 0.2])
+
+
+def test_driver_refuses_declared_recorders() -> None:
+    """Every probe leg and return solve commits; a recorder would log
+    rows per mode that are not states of the structure."""
+    ops = _bridge()
+    ops.recorder.Node(file="roof.out", response="disp", nodes=(2,), dofs=(1,))
+    spec = DesignSpectrum([0.0, 1.0], [1.0, 1.0], direction=1)
+    with pytest.raises(BridgeError, match="declares recorders"):
+        ops.spectrum_after_gravity(
+            1, spectra=[spec], extractors={"d": NodeDisp(nodes=[2], dofs=(1,))})

@@ -13,8 +13,9 @@ without re-running the eigen solve. :meth:`to_native` persists the modes
 as ``kind="mode"`` stages of a native results file (the
 modes route on pip ``openseespy``), and :meth:`results` opens that file.
 :meth:`to_ladruno` writes the same modes as a stamped ``.ladruno`` (ADR
-0122), the format the native file retires into. No modal-mass /
-participation calculations live here.
+0122), the format the native file retires into.
+:meth:`EigenResult.modal_properties` hands the solve to ``modalProperties``;
+no modal-mass / participation calculations live here.
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from ..apesees import apeSees
     from ..emitter.live import LiveOpsEmitter
     from ..node import Node
+    from .modal import ModalPropertiesResult
 
 
 __all__ = ["EigenResult", "RotationSlotUnresolvedWarning"]
@@ -47,6 +49,21 @@ class RotationSlotUnresolvedWarning(UserWarning):
     hold a rotation or a pore pressure (an element-less node beside a u-p
     element, a node no beam or shell touches). The message names the
     nodes and the reason."""
+
+
+def _deck_node_ids(bridge: "apeSees") -> np.ndarray:
+    """The fem node ids the bridge's deck declares: every node except the
+    interior of a ``LadrunoMembrane(pg=...)`` panel, which is not part of
+    the OpenSees model (:func:`~apeGmsh.opensees._internal.build.ndf.membrane_interior_nodes`)."""
+    from .._internal.build.ndf import membrane_interior_nodes
+    from .._internal.types import Element
+
+    ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+    skip = membrane_interior_nodes(
+        bridge.fem, [p for p in bridge._primitives if isinstance(p, Element)])
+    if not skip:
+        return ids
+    return ids[~np.isin(ids, np.fromiter(skip, dtype=np.int64))]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +103,9 @@ class EigenResult:
     _ndm: int | None = None
     _ndf: int | None = None
     _epoch: int | None = None
+    # ``True`` when ``apeSees.eigen_feast`` solved: :meth:`modal_properties`
+    # then needs a fork build that carries ``C83_FORK_COMMIT``.
+    _feast: bool = False
 
     @property
     def omega(self) -> np.ndarray:
@@ -323,8 +343,10 @@ class EigenResult:
         check_target(out_path, archive)
 
         ops = self._live.ops
-        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+        all_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
         coords = np.asarray(bridge.fem.nodes.coords, dtype=np.float64)
+        # The deck's nodes: a LadrunoMembrane(pg=) interior is not one.
+        node_ids = _deck_node_ids(bridge)
         n_modes = len(self.eigenvalues)
         # One nodeEigenvector call per node and mode; a node's vector is
         # as long as ITS ndf, so its length is the node's own DOF count.
@@ -349,10 +371,12 @@ class EigenResult:
             # same lineage), so a refused or failed write leaves no
             # archive behind; the archive follows them into place.
             out = write_modes(
-                out_path, model_h5=staged, node_ids=node_ids,
+                out_path, model_h5=staged, node_ids=all_ids,
                 coords=coords, ndm=ndm,
                 eigenvalues=self.eigenvalues,
                 fields=lambda k: shapes[k - 1], rotations=rotations,
+                record_ids=(None if len(node_ids) == len(all_ids)
+                            else node_ids),
                 source="eigen", stacklevel=3,
             )
             if place:
@@ -380,7 +404,8 @@ class EigenResult:
         bridge, ndm, _ = self._checked_solve("to_native")
         ops = self._live.ops
         backend = _backend_of(ops)
-        node_ids = np.asarray(bridge.fem.nodes.ids, dtype=np.int64)
+        # The deck's nodes: a LadrunoMembrane(pg=) interior is not one.
+        node_ids = _deck_node_ids(bridge)
         if model_h5 is not None:
             _deck_archive(model_h5, [int(n) for n in node_ids], ndm,
                           where=where)
@@ -430,6 +455,41 @@ class EigenResult:
             finally:
                 writer.close()
         return out_path
+
+    def modal_properties(self, *, unorm: bool = False) -> "ModalPropertiesResult":
+        """Run ``modalProperties -return`` on this solve's modes.
+
+        The participation factors and modal masses of the eigenpairs this
+        result holds, on the domain that solved them, as a
+        :class:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult`.
+        After :meth:`apeSees.eigen_feast` this needs a fork build at or
+        after ``c83ee812e`` (fork WP-203: ``modalProperties`` after
+        ``eigen -feast``); an older build ends the process there, so any
+        build not measured to carry it
+        (``stage_emit.FORK_BUILD_HAS_C83``) is refused before the call.
+        :meth:`apeSees.modal_properties` remains the one-call route for an
+        ARPACK / LAPACK solve.
+
+        Raises what :meth:`to_native` raises for an empty band, a result
+        built by hand, or a domain rebuilt since the solve, and
+        ``RuntimeError`` for a FEAST solve on such a build.
+        """
+        from .._internal.build.stage_emit import (
+            FEAST_MODAL_PROPERTIES_MESSAGE,
+            fork_build_has_c83,
+        )
+        from ..emitter.live import get_backend_info
+        from .modal import ModalPropertiesResult
+
+        self._checked_solve("modal_properties")
+        if self._feast and not fork_build_has_c83(get_backend_info().build):
+            raise RuntimeError(FEAST_MODAL_PROPERTIES_MESSAGE)
+        properties = self._live.modal_properties(unorm=unorm)
+        return ModalPropertiesResult(
+            eigenvalues=np.asarray(self.eigenvalues, dtype=np.float64),
+            properties=properties,
+            _live=self._live,
+        )
 
     def results(
         self, model_h5: "str | os.PathLike[str] | None" = None,

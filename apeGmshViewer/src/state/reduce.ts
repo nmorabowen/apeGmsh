@@ -13,7 +13,7 @@ import {
   lineDiagramKeysOf,
 } from "./lineDiagram.ts";
 import { elementsOfDecl } from "./search.ts";
-import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
+import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import {
   LINE_STATION_COMPONENTS,
@@ -25,6 +25,7 @@ import {
   type DeformState,
   type Event,
   type LineDiagramState,
+  type LoadsState,
   type PhaseKey,
   type SpatialNdm,
   type State,
@@ -36,6 +37,18 @@ import { UNIT_SYSTEM_IDS } from "./units.ts";
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
 
 export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
+
+export const initialLoads: LoadsState = {
+  on: false,
+  scale: 1,
+  showNodalForces: true,
+  showNodalMoments: true,
+  showElementLoads: true,
+  showSp: true,
+  includeSupportReactions: false,
+  scaleBySeries: false,
+  selectedPatterns: null,
+};
 
 /** No model, no dimension. */
 const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
@@ -92,6 +105,7 @@ export const initialState: State = {
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
   definitions: null,
+  neutralLoads: null,
   sequence: { status: "absent" },
   stage: null,
   lineage: null,
@@ -104,6 +118,7 @@ export const initialState: State = {
   deform: initialDeform,
   clip: initialClip,
   lineDiagram: initialLineDiagram,
+  loads: initialLoads,
   spotlight: initialSpotlight,
   search: initialSearch,
 };
@@ -161,7 +176,7 @@ const uniq = (a: readonly DeclPath[]): DeclPath[] => [...new Set(a)];
  * shown stays where it was while it is still on the axis; otherwise it is the
  * mesh, or the geometry when there is no mesh.
  */
-function withPhase(s: State): State {
+function withPhase(s: State, preserveLineNotice = false): State {
   const axis: PhaseKey[] = [];
   if (geometryPairing(s).draw) axis.push({ kind: "geometry" });
   if (s.mesh) axis.push({ kind: "mesh" });
@@ -180,7 +195,7 @@ function withPhase(s: State): State {
     else if (at.step >= n) at = { ...at, step: n - 1 };
   }
   const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
-  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }));
+  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }), preserveLineNotice);
 }
 
 /** The stage a contour pick is checked against: the results stage shown. */
@@ -201,18 +216,46 @@ function withContourPick(s: State): State {
  * Auto-pick a line-station component when landing on a results stage with
  * `lineStations` and `lineDiagram.component` is null or absent from the stage.
  */
-function withLineDiagramPick(s: State): State {
+function withLineDiagramPick(s: State, preserveNotice = false): State {
   const stage = shownStage(s);
   const avail = stage?.lineStations;
   if (!avail || avail.length === 0) {
-    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null && s.lineDiagram.notice === null) return s;
+    if (stage !== undefined && s.lineDiagram.component !== null) {
+      const prevComp = s.lineDiagram.component;
+      const notice = `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`;
+      return {
+        ...s,
+        lineDiagram: {
+          ...s.lineDiagram,
+          component: null,
+          flipSign: null,
+          stepRange: null,
+          scan: null,
+          notice,
+          drawnBeams: [],
+          chains: [],
+          hover: null,
+        },
+      };
+    }
+    if (
+      s.lineDiagram.stepRange === null &&
+      s.lineDiagram.scan === null &&
+      s.lineDiagram.drawnBeams.length === 0 &&
+      s.lineDiagram.chains.length === 0 &&
+      s.lineDiagram.hover === null
+    ) {
+      return s;
+    }
     return {
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: null,
         scan: null,
-        notice: null,
+        drawnBeams: [],
+        chains: [],
+        hover: null,
       },
     };
   }
@@ -220,19 +263,30 @@ function withLineDiagramPick(s: State): State {
     const keys = lineDiagramKeysOf(s);
     const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
     const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
-    if (keepStep && keepScan) return s;
-    return {
+    const nextNotice = keepStep || preserveNotice ? s.lineDiagram.notice : null;
+    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return syncLineDiagramDerived(s);
+    return syncLineDiagramDerived({
       ...s,
       lineDiagram: {
         ...s.lineDiagram,
         stepRange: keepStep ? s.lineDiagram.stepRange : null,
         scan: keepScan ? s.lineDiagram.scan : null,
-        notice: keepStep ? s.lineDiagram.notice : null,
+        notice: nextNotice,
+        drawnBeams: keepStep ? s.lineDiagram.drawnBeams : [],
+        chains: keepStep ? s.lineDiagram.chains : [],
+        hover: keepStep ? s.lineDiagram.hover : null,
       },
-    };
+    });
   }
+  const prevComp = s.lineDiagram.component;
   const picked = defaultLineDiagramComponent(avail);
-  if (picked === s.lineDiagram.component) return s;
+  const notice =
+    prevComp !== null && prevComp !== picked
+      ? picked !== null
+        ? `Stage ${stage.name || stage.id} has no ${prevComp} line stations; switched to ${picked}.`
+        : `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`
+      : null;
+  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return syncLineDiagramDerived(s);
   return {
     ...s,
     lineDiagram: {
@@ -241,7 +295,10 @@ function withLineDiagramPick(s: State): State {
       flipSign: null,
       stepRange: null,
       scan: null,
-      notice: null,
+      notice,
+      drawnBeams: [],
+      chains: [],
+      hover: null,
     },
   };
 }
@@ -256,7 +313,9 @@ export function reduce(s: State, e: Event): State {
       const clearedResults = e.artifact === "results" && !(prev && prev.path === e.path);
       const results = clearedResults ? null : s.results;
       const contour = clearedResults ? syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready") : s.contour;
-      const lineDiagram = clearedResults ? { ...s.lineDiagram, stepRange: null, scan: null } : s.lineDiagram;
+      const lineDiagram = clearedResults
+        ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
+        : s.lineDiagram;
       return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram });
     }
     case "fileLoaded": {
@@ -293,12 +352,14 @@ export function reduce(s: State, e: Event): State {
         provenance,
         provenanceOrigin,
         definitions,
+        neutralLoads: e.load.neutralLoads ?? null,
         sequence,
         lineage,
         stageElements,
         ndm: e.load.ndm ?? { ndm: null, reason: "the model's /meta/ndm was not read" },
         units: modelUnits,
         contour: syncContourUnits(s.contour, declaredUnits, reread || s.results !== null),
+        loads: reread ? s.loads : { ...s.loads, selectedPatterns: null },
         stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
@@ -330,7 +391,7 @@ export function reduce(s: State, e: Event): State {
           artifacts: { ...s.artifacts, results: info },
           results: null,
           contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
-          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null },
+          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         });
       }
       // The model is gone with its derivations; the failure is shown instead.
@@ -350,7 +411,8 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
-        lineDiagram: s.lineDiagram,
+        lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
+        loads: { ...s.loads, selectedPatterns: null },
       });
     }
     case "fileClosed": {
@@ -362,7 +424,7 @@ export function reduce(s: State, e: Event): State {
           artifacts: { ...s.artifacts, results: null },
           results: null,
           contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
-          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null },
+          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         });
       }
       return withPhase({
@@ -380,7 +442,8 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
-        lineDiagram: s.lineDiagram,
+        lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
+        loads: { ...s.loads, selectedPatterns: null },
       });
     }
     case "fileChanged": {
@@ -402,15 +465,20 @@ export function reduce(s: State, e: Event): State {
     }
     case "select":
       if (!(e.pick.decl in s.decls)) throw new Error(`select: ${e.pick.decl} is not a declaration of the loaded model`);
-      return { ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } };
+      return syncLineDiagramDerived({ ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } });
     case "selectAdd": {
       if (!(e.pick.decl in s.decls)) throw new Error(`selectAdd: ${e.pick.decl} is not a declaration of the loaded model`);
       if (s.selection.decls.includes(e.pick.decl)) {
         const decls = s.selection.decls.filter((d) => d !== e.pick.decl);
         const picks = s.selection.picks.filter((p) => p.decl !== e.pick.decl);
-        return decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } };
+        return syncLineDiagramDerived(
+          decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } },
+        );
       }
-      return { ...s, selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] } };
+      return syncLineDiagramDerived({
+        ...s,
+        selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] },
+      });
     }
     case "selectDecls": {
       for (const d of e.decls) {
@@ -418,12 +486,12 @@ export function reduce(s: State, e: Event): State {
       }
       const next = uniq(e.add ? [...s.selection.decls, ...e.decls] : e.decls);
       const picks = next.map((decl) => s.selection.picks.find((p) => p.decl === decl) ?? { decl, at: null, nodes: null });
-      return { ...s, selection: { decls: next, picks } };
+      return syncLineDiagramDerived({ ...s, selection: { decls: next, picks } });
     }
     case "clearSelection":
-      return s.selection.decls.length === 0 ? s : { ...s, selection: NO_SELECTION };
+      return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: NO_SELECTION });
     case "hover":
-      return { ...s, hover: e.at };
+      return syncLineDiagramDerived({ ...s, hover: e.at });
     case "setHidden": {
       const hidden = e.hidden
         ? uniq([...s.visibility.hidden, ...e.decls])
@@ -456,7 +524,11 @@ export function reduce(s: State, e: Event): State {
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
-      return withPhase({ ...s, phase: { ...s.phase, at: e.at } });
+      return withPhase({
+        ...s,
+        phase: { ...s.phase, at: e.at },
+        ...(e.at.kind !== "results" ? { lineDiagram: { ...s.lineDiagram, notice: null } } : {}),
+      });
     case "setResultStep": {
       if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error("setResultStep: the phase axis has no results");
       const at = s.phase.at;
@@ -489,6 +561,10 @@ export function reduce(s: State, e: Event): State {
       const curComp = s.lineDiagram.component;
       const validOnAny =
         curComp !== null && e.info.stages.some((st) => st.lineStations?.includes(curComp));
+      // Mixed continuum + beam stages (`gauss.length > 0`, e.g. 3-D floor slabs
+      // on horizontal girders with `vecxz = +Z`, #2142) carry vertical gravity
+      // bending in `My` (bending about local y in the XZ plane) rather than
+      // weak-axis `Mz`, so initial load prefers `My` when both are recorded.
       const preferSlabMy =
         (firstLineStage?.gauss.length ?? 0) > 0 &&
         Boolean(firstLineStage?.lineStations?.includes("My")) &&
@@ -498,28 +574,41 @@ export function reduce(s: State, e: Event): State {
         : preferSlabMy
           ? "My"
           : defaultLineDiagramComponent(firstLineStage?.lineStations);
+      const fileName = e.info.path.split(/[\\/]/).pop() ?? e.info.path;
+      const lineSwitchNotice =
+        curComp !== null && nextLineComp !== curComp
+          ? nextLineComp !== null
+            ? `${fileName} has no ${curComp} line stations; switched to ${nextLineComp}.`
+            : `${fileName} has no ${curComp} line stations; the line-diagram pick was cleared.`
+          : null;
       // V4c1: a re-read invalidates the measured ranges (the same path, other
       // data); a pick the re-read stage no longer has is cleared, with a notice.
-      const next = withPhase({
-        ...s,
-        artifacts: { ...s.artifacts, results: info },
-        results: e.info,
-        phase: keep ? s.phase : { ...s.phase, at: null },
-        // V4c2a: the element join is checked again on the re-read's rows.
-        contour: syncContourUnits(
-          { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
-          declaredUnits,
-          rereadResults || s.artifacts.model?.status === "ready",
-        ),
-        lineDiagram: {
-          ...s.lineDiagram,
-          component: nextLineComp,
-          flipSign: nextLineComp === curComp ? s.lineDiagram.flipSign : null,
-          stepRange: null,
-          scan: null,
-          notice: null,
+      const next = withPhase(
+        {
+          ...s,
+          artifacts: { ...s.artifacts, results: info },
+          results: e.info,
+          phase: keep ? s.phase : { ...s.phase, at: null },
+          // V4c2a: the element join is checked again on the re-read's rows.
+          contour: syncContourUnits(
+            { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
+            declaredUnits,
+            rereadResults || s.artifacts.model?.status === "ready",
+          ),
+          lineDiagram: {
+            ...s.lineDiagram,
+            component: nextLineComp,
+            flipSign: nextLineComp === curComp ? s.lineDiagram.flipSign : null,
+            stepRange: null,
+            scan: null,
+            notice: lineSwitchNotice,
+            drawnBeams: [],
+            chains: [],
+            hover: null,
+          },
         },
-      });
+        lineSwitchNotice !== null,
+      );
       const c = next.contour;
       if (c.field === null || c.component === null) return next;
       const field = c.field, component = c.component;
@@ -583,17 +672,21 @@ export function reduce(s: State, e: Event): State {
     case "contourScan":
       if (contourKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, contour: { ...s.contour, scan: e.scan } };
-    case "setDeform":
-      if (typeof e.on !== "boolean") throw new RangeError(`setDeform: ${JSON.stringify(e.on)}`);
-      return s.deform.on === e.on ? s : { ...s, deform: { ...s.deform, on: e.on } };
+    case "setDeform": {
+      const on: unknown = e.on;
+      if (typeof on !== "boolean") throw new RangeError(`setDeform: ${JSON.stringify(on)}`);
+      return s.deform.on === on ? s : { ...s, deform: { ...s.deform, on } };
+    }
     case "setDeformScale":
       if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
         throw new RangeError(`setDeformScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
       }
       return s.deform.scale === e.scale ? s : { ...s, deform: { ...s.deform, scale: e.scale } };
-    case "setReferenceGhost":
-      if (typeof e.on !== "boolean") throw new RangeError(`setReferenceGhost: ${JSON.stringify(e.on)}`);
-      return s.deform.ghost === e.on ? s : { ...s, deform: { ...s.deform, ghost: e.on } };
+    case "setReferenceGhost": {
+      const on: unknown = e.on;
+      if (typeof on !== "boolean") throw new RangeError(`setReferenceGhost: ${JSON.stringify(on)}`);
+      return s.deform.ghost === on ? s : { ...s, deform: { ...s.deform, ghost: on } };
+    }
     case "deformMeasured": {
       // A count for anything but what is shown now (another step, a re-read, another hidden set) is stale.
       const d = deformOf(s);
@@ -659,9 +752,13 @@ export function reduce(s: State, e: Event): State {
       const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
       return clip === s.clip ? s : { ...s, clip };
     }
-    case "setLineDiagram":
-      if (typeof e.on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(e.on)}`);
-      return s.lineDiagram.on === e.on ? s : withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on: e.on } });
+    case "setLineDiagram": {
+      const on: unknown = e.on;
+      if (typeof on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(on)}`);
+      return s.lineDiagram.on === on
+        ? s
+        : syncLineDiagramDerived(withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on } }));
+    }
     case "setLineDiagramComponent": {
       if (!LINE_STATION_COMPONENTS.includes(e.component)) {
         throw new RangeError(`setLineDiagramComponent: ${JSON.stringify(e.component)}`);
@@ -680,6 +777,9 @@ export function reduce(s: State, e: Event): State {
           stepRange: null,
           scan: null,
           notice: null,
+          drawnBeams: [],
+          chains: [],
+          hover: null,
         },
       };
     }
@@ -687,7 +787,9 @@ export function reduce(s: State, e: Event): State {
       if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
         throw new RangeError(`setLineDiagramScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
       }
-      return s.lineDiagram.scale === e.scale ? s : { ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } };
+      return s.lineDiagram.scale === e.scale
+        ? s
+        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } });
     case "setLineDiagramPlane":
       if (e.plane !== "local" && e.plane !== "screen") {
         throw new RangeError(`setLineDiagramPlane: ${JSON.stringify(e.plane)}`);
@@ -707,7 +809,9 @@ export function reduce(s: State, e: Event): State {
       if (e.flipSign !== null && typeof e.flipSign !== "boolean") {
         throw new RangeError(`setLineDiagramFlipSign: ${JSON.stringify(e.flipSign)}`);
       }
-      return s.lineDiagram.flipSign === e.flipSign ? s : { ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } };
+      return s.lineDiagram.flipSign === e.flipSign
+        ? s
+        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } });
     case "setLineDiagramRange": {
       if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") {
         throw new RangeError(`setLineDiagramRange: ${JSON.stringify(e.range)}`);
@@ -721,19 +825,125 @@ export function reduce(s: State, e: Event): State {
       }
       return { ...s, lineDiagram: { ...s.lineDiagram, range: e.range, fixed } };
     }
-    case "lineDiagramStepRange":
+    case "lineDiagramStepRange": {
       if (lineDiagramKeysOf(s)?.step !== e.key) return s;
-      return {
+      const prevNotice = s.lineDiagram.notice;
+      const keepSwitchNotice =
+        s.lineDiagram.stepRange === null &&
+        prevNotice !== null &&
+        prevNotice.includes(" line stations; switched to ");
+      const nextNotice =
+        e.notice === undefined
+          ? prevNotice
+          : keepSwitchNotice
+            ? e.notice === null || prevNotice.includes(e.notice)
+              ? prevNotice
+              : `${prevNotice} ${e.notice}`
+            : e.notice;
+      const drawnBeams =
+        e.drawnBeams !== undefined
+          ? e.drawnBeams.map((b) => ({
+              decl: b.decl,
+              elementId: b.elementId,
+              nodeStart: b.nodeStart,
+              nodeEnd: b.nodeEnd,
+              pStart: [b.pStart[0], b.pStart[1], b.pStart[2]] as [number, number, number],
+              pEnd: [b.pEnd[0], b.pEnd[1], b.pEnd[2]] as [number, number, number],
+              length: b.length,
+              xLocal: [b.xLocal[0], b.xLocal[1], b.xLocal[2]] as [number, number, number],
+              extrudeDir: [b.extrudeDir[0], b.extrudeDir[1], b.extrudeDir[2]] as [number, number, number],
+              xi: [...b.xi],
+              values: [...b.values],
+              autoScale: b.autoScale,
+              ...(b.spanMode !== undefined ? { spanMode: b.spanMode } : {}),
+              ...(b.spanReason !== undefined ? { spanReason: b.spanReason } : {}),
+            }))
+          : e.min === null
+            ? []
+            : s.lineDiagram.drawnBeams;
+      return syncLineDiagramDerived({
         ...s,
         lineDiagram: {
           ...s.lineDiagram,
           stepRange: { key: e.key, min: e.min, max: e.max },
-          notice: e.notice !== undefined ? e.notice : s.lineDiagram.notice,
+          notice: nextNotice,
+          drawnBeams,
         },
-      };
+      });
+    }
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setLoads": {
+      if (e.on !== undefined && typeof e.on !== "boolean") {
+        throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
+      }
+      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
+        throw new RangeError(`setLoads: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
+      }
+      const cur = s.loads;
+      let on = e.on ?? cur.on;
+      const scale = e.scale ?? cur.scale;
+      const showNodalForces = e.showNodalForces ?? cur.showNodalForces;
+      const showNodalMoments = e.showNodalMoments ?? cur.showNodalMoments;
+      const showElementLoads = e.showElementLoads ?? cur.showElementLoads;
+      const showSp = e.showSp ?? cur.showSp;
+      const includeSupportReactions = e.includeSupportReactions ?? cur.includeSupportReactions;
+      const scaleBySeries = e.scaleBySeries ?? cur.scaleBySeries;
+      let selectedPatterns = cur.selectedPatterns;
+      if (e.selectedPatterns !== undefined) {
+        selectedPatterns = e.selectedPatterns === null ? null : [...new Set(e.selectedPatterns)];
+      } else if (e.togglePattern !== undefined) {
+        const key = e.togglePattern;
+        if (!cur.on || cur.selectedPatterns === null) {
+          on = e.on ?? true;
+          selectedPatterns = [key];
+        } else if (cur.selectedPatterns.includes(key)) {
+          const rest = cur.selectedPatterns.filter((p) => p !== key);
+          if (rest.length === 0) {
+            on = e.on ?? false;
+            selectedPatterns = null;
+          } else {
+            selectedPatterns = rest;
+          }
+        } else {
+          selectedPatterns = [...cur.selectedPatterns, key];
+        }
+      }
+      const samePatterns =
+        selectedPatterns === cur.selectedPatterns ||
+        (selectedPatterns !== null &&
+          cur.selectedPatterns !== null &&
+          selectedPatterns.length === cur.selectedPatterns.length &&
+          selectedPatterns.every((p, i) => p === cur.selectedPatterns![i]));
+      if (
+        on === cur.on &&
+        scale === cur.scale &&
+        showNodalForces === cur.showNodalForces &&
+        showNodalMoments === cur.showNodalMoments &&
+        showElementLoads === cur.showElementLoads &&
+        showSp === cur.showSp &&
+        includeSupportReactions === cur.includeSupportReactions &&
+        scaleBySeries === cur.scaleBySeries &&
+        samePatterns
+      ) {
+        return s;
+      }
+      return {
+        ...s,
+        loads: {
+          on,
+          scale,
+          showNodalForces,
+          showNodalMoments,
+          showElementLoads,
+          showSp,
+          includeSupportReactions,
+          scaleBySeries,
+          selectedPatterns,
+        },
+      };
+    }
     case "openSpotlight": {
       const mode = e.mode ?? "root";
       const query = e.query ?? s.spotlight.query;

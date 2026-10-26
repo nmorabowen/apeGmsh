@@ -69,6 +69,7 @@ __all__ = [
     "compute_results_hash",
     "read_stored_lineage",
     "write_lineage_attrs",
+    "MODEL_HASH_EXCLUDED_ATTRS",
     "MODEL_HASH_EXCLUDED_CHILDREN",
 ]
 
@@ -101,6 +102,13 @@ MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
     {"cuts", "sweeps", "regions", "names", "computed_sections", "decls",
      "decl_params"}
 )
+
+#: Attributes of ``/opensees`` itself excluded from :func:`compute_model_hash`.
+#: ``target_mode`` (opensees 2.36.0) is the bridge's pinned
+#: ``OpenSeesTarget.mode``: the same model pinned or on auto has the same
+#: physics, so it must hash equal (the carve-out ``regions`` and ``names``
+#: have).
+MODEL_HASH_EXCLUDED_ATTRS: frozenset[str] = frozenset({"target_mode"})
 
 #: blake2b digest size — matches today's ``snapshot_id`` (16 bytes ⇒
 #: 32 hex chars).
@@ -190,6 +198,7 @@ def canonical_bytes(
     group: "h5py.Group",
     *,
     exclude_children: Iterable[str] = (),
+    exclude_attrs: Iterable[str] = (),
 ) -> bytes:
     """Return a deterministic byte string for ``group``.
 
@@ -217,6 +226,9 @@ def canonical_bytes(
         Names of direct children to skip.  Used by
         :func:`compute_model_hash` to elide ``cuts`` / ``sweeps``
         (INV-4).  Sub-children of the excluded names are also skipped.
+    exclude_attrs
+        Names of ``group``'s own attributes to skip, as if absent.  Used by
+        :func:`compute_model_hash` to elide ``/opensees@target_mode``.
 
     Returns
     -------
@@ -227,7 +239,8 @@ def canonical_bytes(
     excluded = frozenset(exclude_children)
 
     h = hashlib.blake2b(digest_size=64)
-    _canonical_walk(group, h, excluded=excluded, is_root=True)
+    _canonical_walk(group, h, excluded=excluded, is_root=True,
+                    excluded_attrs=frozenset(exclude_attrs))
     return h.digest()
 
 
@@ -237,13 +250,14 @@ def _canonical_walk(
     *,
     excluded: frozenset[str],
     is_root: bool,
+    excluded_attrs: frozenset[str] = frozenset(),
 ) -> None:
     """Inner walk: feed ``node`` deterministically into ``h``."""
     import h5py
 
     # Walk attributes first (sorted by name) so structural changes to
     # attrs are detectable.
-    _hash_attrs(node.attrs, h)
+    _hash_attrs(node.attrs, h, skip=excluded_attrs if is_root else frozenset())
 
     if isinstance(node, h5py.Dataset):
         h.update(b"D|")
@@ -276,9 +290,13 @@ def _canonical_walk(
     h.update(b"E|")
 
 
-def _hash_attrs(attrs: "h5py.AttributeManager", h: "hashlib._Hash") -> None:
-    """Feed sorted ``(name, value)`` attrs into ``h``."""
-    names = sorted(attrs.keys())
+def _hash_attrs(
+    attrs: "h5py.AttributeManager", h: "hashlib._Hash", *,
+    skip: frozenset[str] = frozenset(),
+) -> None:
+    """Feed sorted ``(name, value)`` attrs into ``h``, those in ``skip``
+    left out as if absent."""
+    names = sorted(n for n in attrs.keys() if n not in skip)
     h.update(b"A|")
     h.update(np.int64(len(names)).tobytes())
     for name in names:
@@ -536,6 +554,7 @@ def compute_model_hash(
     h.update(b"|")
     h.update(canonical_bytes(
         opensees_group, exclude_children=MODEL_HASH_EXCLUDED_CHILDREN,
+        exclude_attrs=MODEL_HASH_EXCLUDED_ATTRS,
     ))
     return h.hexdigest()
 

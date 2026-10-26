@@ -176,7 +176,12 @@ def _capture(
     facts = LiveDomainFacts(ops, archive)
     ndm = facts.ndm
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
-    # Every fem node is in the live domain, at the FEM coordinates.
+    # A LadrunoMembrane(pg=) panel's interior is not part of the deck the
+    # archive describes (OpenSeesModel.membrane_interior_nodes).
+    skip = archive.membrane_interior_nodes()
+    if skip:
+        node_ids = node_ids[~np.isin(node_ids, np.fromiter(skip, dtype=np.int64))]
+    # Every other fem node is in the live domain, at the FEM coordinates.
     ndf_of = facts.nodes_ndf(node_ids, where=_WHERE)
 
     call = ("" if solver is None else f"{solver!r}, ") + str(n_modes)

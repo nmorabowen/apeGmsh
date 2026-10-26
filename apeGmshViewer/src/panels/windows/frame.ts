@@ -27,7 +27,8 @@ export const changed = (s: State, p: State): boolean =>
   s.visibility !== p.visibility ||
   s.search !== p.search ||
   s.stage !== p.stage ||
-  s.source !== p.source;
+  s.source !== p.source ||
+  s.loads !== p.loads;
 
 /**
  * The highlight of a selected row: the office accent, as the selection is drawn

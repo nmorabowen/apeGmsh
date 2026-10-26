@@ -2,13 +2,12 @@
 Typed primitives for OpenSees ``nDMaterial`` commands.
 
 Phase 1B ships the priority-1 set: ``ElasticIsotropic``,
-``J2Plasticity``, ``DruckerPrager``. The exotic soil and ASD damage
-models (``PressureIndepMultiYield``, ``PM4Sand``, ``ASDConcrete3D``)
-are deferred — their parameter sets are large, version-dependent,
-and would benefit from an OpenSees expert sign-off before being
-locked in. The critical-state sand pair ``ManzariDafalias``
-(SANISAND-2004) and ``SAniSandMS`` (SANISAND-MS memory surface) is
-the exception: both are exposed here with their parameter sets
+``J2Plasticity``, ``DruckerPrager``. The site-response soil family
+(``PressureIndependMultiYield``, ``PressureDependMultiYield(02)``,
+``PM4Sand``, ``PM4Silt``) lives in :mod:`.nd_soil` and is re-exported
+here. The critical-state sand pair ``ManzariDafalias``
+(SANISAND-2004) and ``SAniSandMS`` (SANISAND-MS memory surface) are
+exposed here, with their parameter sets
 audited against the vanilla C++ parsers.
 
 Per P12, every user-facing parameter is a fully typed keyword on the
@@ -53,6 +52,15 @@ from .._internal.types import NDMaterial, Primitive, UniaxialMaterial
 # beside the other build floors. Set the floor in ``_rc_c2_flags``.
 from .._rc_c2_flags import LADRUNO_RC_C2_MIN_BUILD, LadrunoRCBuildWarning
 from ..emitter.base import Emitter
+# The site-response soil family lives in its own module; re-exported here
+# so ``material.nd`` stays the one import path for nD materials.
+from .nd_soil import (
+    PM4Sand,
+    PM4Silt,
+    PressureDependMultiYield,
+    PressureDependMultiYield02,
+    PressureIndependMultiYield,
+)
 
 
 __all__ = [
@@ -96,6 +104,11 @@ __all__ = [
     "LogStrain2D",
     "InitDefGrad",
     "StagedStrain",
+    "PressureIndependMultiYield",
+    "PressureDependMultiYield",
+    "PressureDependMultiYield02",
+    "PM4Sand",
+    "PM4Silt",
 ]
 
 
@@ -3340,6 +3353,51 @@ class LadrunoJ2Finite(NDMaterial):
 # LogStrain — Hencky finite-strain lift wrapper (Ladruno fork)
 # ---------------------------------------------------------------------------
 
+#: Inner classes over which the fork's ``LogStrain`` / ``LogStrain2D`` end
+#: the OpenSees process. The wrapper's ``nDMaterial`` line asks the
+#: inner for ``getType()``; these classes do not implement it, so the fork
+#: prints ``<Class>::getType -- subclass responsibility`` and exits
+#: (rc 255), taking an in-process session with it. Measured per pair at
+#: FORK_PIN 100eb9ae by the live probe in
+#: ``tests/opensees/unit/test_finite_wrapper_over_md_refused.py``. Only the
+#: **direct** inner aborts: a ``StagedStrain`` between the lift and the
+#: inner answers ``getType`` itself and runs, and ``InitDefGrad`` over the
+#: inner is refused by the fork with an error (not an exit), so neither is
+#: refused here. ``InitDefGrad(LogStrain(<inner>))`` aborts at its inner
+#: ``LogStrain`` line, which this table already refuses.
+#:
+#: Keyed by the apeGmsh class, matched with ``isinstance`` so a subclass is
+#: refused too; the value is the fork class that prints the exit message
+#: (``LadrunoSANISAND`` derives from ``ManzariDafalias`` in the fork and
+#: exits through it). The lift condition is in the docstring of the
+#: refusal below.
+FINITE_LIFT_ABORTING_INNERS: dict[type[NDMaterial], str] = {
+    ManzariDafalias: "ManzariDafalias",
+    LadrunoSANISAND: "ManzariDafalias",
+    SAniSandMS: "SAniSandMS",
+    DruckerPrager: "DruckerPrager",
+}
+
+
+def _refuse_aborting_lift_inner(wrapper: str, inner: NDMaterial) -> None:
+    """Raise if ``wrapper`` over ``inner`` would end the fork process.
+
+    TODO #2499: empty :data:`FINITE_LIFT_ABORTING_INNERS` once the fork pin
+    implements ``getType`` for these classes. The pinned live probe fails
+    first and says so.
+    """
+    for cls, cpp in FINITE_LIFT_ABORTING_INNERS.items():
+        if isinstance(inner, cls):
+            name = type(inner).__name__
+            raise ValueError(
+                f"{wrapper}: inner {name} ends the OpenSees process on the "
+                f"Ladruno fork: the {wrapper} line asks it for getType(), "
+                f"which it does not implement, and the fork exits with "
+                f"'{cpp}::getType -- subclass responsibility' (rc 255). "
+                f"Refused until the fork is fixed (#2499). An inner the "
+                f"fork runs under {wrapper}: ElasticIsotropic or LadrunoJ2."
+            )
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class LogStrain(NDMaterial):
@@ -3359,15 +3417,20 @@ class LogStrain(NDMaterial):
     consumable by ``LadrunoBrick ... -geom finite``.
 
     Exact and objective only for the **isotropic** spine: pair it with an
-    isotropic inner (e.g. ``LadrunoJ2(-kin 0)``, ``ElasticIsotropic``,
-    ``DruckerPrager``). For combined (kinematic) hardening at finite strain
-    use the native :class:`LadrunoJ2Finite` instead (the backstress doesn't
+    isotropic inner (e.g. ``LadrunoJ2(-kin 0)`` or ``ElasticIsotropic``;
+    not ``DruckerPrager``, see the warning below). For combined (kinematic)
+    hardening at finite strain use the native :class:`LadrunoJ2Finite` instead (the backstress doesn't
     co-rotate through the wrapper — dSNPO §14.11).
 
     .. note::
        Fork-only. The inner must yield a 3-D (order-6) copy — the fork
        parser rejects a non-3-D inner. Emission works on any build; errors
        at ``ops.run()`` on stock ``openseespy``.
+
+    .. warning::
+       A ``ManzariDafalias``, ``LadrunoSANISAND``, ``SAniSandMS`` or
+       ``DruckerPrager`` inner (or a subclass) is refused at construction:
+       over them the fork exits the process at the wrapper's line (#2499, :data:`FINITE_LIFT_ABORTING_INNERS`).
 
     Parameters
     ----------
@@ -3387,6 +3450,7 @@ class LogStrain(NDMaterial):
                 "LogStrain: inner must be an NDMaterial primitive, got "
                 f"{type(self.inner).__name__!r}."
             )
+        _refuse_aborting_lift_inner("LogStrain", self.inner)
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         inner_tag = resolve_tag(emitter, self.inner)
@@ -3420,7 +3484,9 @@ class LogStrain2D(NDMaterial):
 
     The inner is still a **3-D (order-6)** small-strain ``nDMaterial``; the
     wrapper condenses it to the plane view. Same isotropy caveat as
-    :class:`LogStrain`: exact and objective only for an isotropic inner.
+    :class:`LogStrain`: exact and objective only for an isotropic inner,
+    and the same refusal of the inners over which the fork exits (#2499,
+    :data:`FINITE_LIFT_ABORTING_INNERS`).
 
     .. note::
        Fork-only. Emission works on any build; errors at ``ops.run()`` on
@@ -3456,8 +3522,9 @@ class LogStrain2D(NDMaterial):
     ----------
     inner
         The wrapped small-strain **3-D (order-6)** :class:`NDMaterial` —
-        e.g. :class:`ElasticIsotropic`, :class:`LadrunoJ2`,
-        :class:`DruckerPrager`. Held by reference; its tag is resolved at
+        e.g. :class:`ElasticIsotropic` or :class:`LadrunoJ2` (not
+        :class:`DruckerPrager`, see :data:`FINITE_LIFT_ABORTING_INNERS`).
+        Held by reference; its tag is resolved at
         emit time and the bridge emits it **before** the wrapper (via
         :meth:`dependencies`). See the warning above about
         :class:`PlaneStrain`.
@@ -3476,6 +3543,7 @@ class LogStrain2D(NDMaterial):
                 "LogStrain2D: inner must be an NDMaterial primitive, got "
                 f"{type(self.inner).__name__!r}."
             )
+        _refuse_aborting_lift_inner("LogStrain2D", self.inner)
         if self.plane_type not in _PLANE_TYPES_2D:
             raise ValueError(
                 f"LogStrain2D: plane_type must be one of {_PLANE_TYPES_2D}, "
@@ -4337,7 +4405,7 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
 
         nDMaterial LadrunoCohesiveHingeBiaxial tag Mcz Gfz Mcy Gfy \
             [-exp | -linear] [-penaltyRatio r] [-bk eta] \
-            [-pm P0 [alpha]] [-implex]
+            [-pm P0 [alpha]] [-pmBal P0c P0t Pbal Mbal_ratio] [-implex]
 
     The coupled strong-axis/weak-axis (Mz–My) cohesive interaction surface
     that drives the biaxial embedded hinge of
@@ -4370,8 +4438,14 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
         Benzeggagh-Kenane mode-mix exponent (``-bk``; default 1.0, must be
         > 0).
     pm
-        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
-        (``-pm P0 [alpha]``, ``P0 > 0``).
+        Optional symmetric parabolic axial-moment interaction ``P0`` or
+        ``(P0, alpha)`` (``-pm P0 [alpha]``, ``P0 > 0``). Mutually exclusive
+        with ``pm_bal``.
+    pm_bal
+        Optional asymmetric RC balanced-point axial-moment interaction
+        4-tuple ``(P0c, P0t, Pbal, Mbal_ratio)`` (``-pmBal P0c P0t Pbal
+        Mbal_ratio``, with ``P0c > 0``, ``P0t > 0``, ``0 < Pbal < P0c``, and
+        ``Mbal_ratio >= 1.0``). Mutually exclusive with ``pm``.
     implex
         If ``True``, append ``-implex`` for IMPLEX integration.
     """
@@ -4386,6 +4460,7 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
     penalty_ratio: float = 1000.0
     bk_eta: float = 1.0
     pm: float | tuple[float, float] | None = None
+    pm_bal: tuple[float, float, float, float] | None = None
     implex: bool = False
 
     def __post_init__(self) -> None:
@@ -4443,6 +4518,49 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
                         "LadrunoCohesiveHingeBiaxial: pm P0 must be finite and > 0, "
                         f"got {self.pm!r}"
                     )
+        if self.pm_bal is not None:
+            if self.pm is not None:
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm and pm_bal are mutually "
+                    "exclusive."
+                )
+            if not isinstance(self.pm_bal, tuple) or len(self.pm_bal) != 4:
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal must be a 4-tuple "
+                    f"(P0c, P0t, Pbal, Mbal_ratio), got {self.pm_bal!r}"
+                )
+            for val in self.pm_bal:
+                if (
+                    isinstance(val, bool)
+                    or not isinstance(val, (int, float))
+                    or not (val == val)
+                    or val in (float("inf"), float("-inf"))
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHingeBiaxial: pm_bal values must be "
+                        f"finite numbers, got {self.pm_bal!r}"
+                    )
+            p0c, p0t, pbal, mbal_ratio = self.pm_bal
+            if not (p0c > 0):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal P0c must be > 0, "
+                    f"got {p0c!r}"
+                )
+            if not (p0t > 0):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal P0t must be > 0, "
+                    f"got {p0t!r}"
+                )
+            if not (0.0 < pbal < p0c):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal Pbal must satisfy "
+                    f"0 < Pbal < P0c, got Pbal={pbal!r}, P0c={p0c!r}"
+                )
+            if not (mbal_ratio >= 1.0):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal Mbal_ratio must be "
+                    f">= 1.0, got {mbal_ratio!r}"
+                )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | str] = [self.Mcz, self.Gfz, self.Mcy, self.Gfy]
@@ -4457,6 +4575,14 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
                 args += ["-pm", float(self.pm[0]), float(self.pm[1])]
             else:
                 args += ["-pm", float(self.pm)]
+        if self.pm_bal is not None:
+            args += [
+                "-pmBal",
+                float(self.pm_bal[0]),
+                float(self.pm_bal[1]),
+                float(self.pm_bal[2]),
+                float(self.pm_bal[3]),
+            ]
         if self.implex:
             args.append("-implex")
         emitter.nDMaterial("LadrunoCohesiveHingeBiaxial", tag, *args)

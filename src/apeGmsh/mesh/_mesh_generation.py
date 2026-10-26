@@ -40,6 +40,9 @@ class _Generation:
         # the FEMData snapshot from the live gmsh model.
         from apeGmsh.core._compose_errors import chain_phase_guard
         chain_phase_guard(self._mesh._parent, "g.mesh.generation.generate")
+        # Bind labels held on sync=False entities before the mesh reads them.
+        from apeGmsh.core.Labels import bind_held_labels
+        bind_held_labels()
         self._validate_pre_mesh()
         session = self._mesh._parent
         # ADR 0112 D2a: a failed generate leaves no stale capture behind;

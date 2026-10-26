@@ -380,6 +380,115 @@ class TestAnchorRebinding:
         assert a.label_names == ["col_0"]
         assert b.label_names == ["col_1"]
 
+    def test_translated_instance_tracks_live_sub_entities(self, g):
+        """Regression: a translated instance's dim<top tags must be live.
+
+        OCC keeps the moved shapes' tags but rebinds their faces, edges
+        and points under new tags, so ``entities`` recorded from the
+        import went stale (a later ``fragment_pair`` died with "Unknown
+        OpenCASCADE entity of dimension 0").
+        """
+        p = Part("storey")
+        with p:
+            p.model.geometry.add_rectangle(0, 0, 1, 2, 2, label="slab")
+            p.model.geometry.add_rectangle(0, 0, 0, 2, 1, plane="xz", label="wall")
+        try:
+            g.parts.add(p, label="s1")
+            g.parts.add(p, label="s2", translate=(0.0, 0.0, 1.0))
+            for label in ("s1", "s2"):
+                inst = g.parts.get(label)
+                for d, tags in inst.entities.items():
+                    live = {t for _, t in gmsh.model.getEntities(d)}
+                    assert tags and set(tags) <= live, (label, d)
+            for d in (0, 1, 2):
+                assert len(g.parts.get("s2").entities[d]) == len(g.parts.get("s1").entities[d])
+        finally:
+            p.cleanup()
+
+    def test_coincident_instances_rebind_their_own_entities(self, simple_labeled_part, g):
+        """Each instance's sidecar labels bind to its OWN import.
+
+        The rebind used to match anchors against every model entity, so
+        a second placement at the same spot could claim the first
+        instance's coincident box (and each ``add`` cost O(model)).
+        """
+        a = g.parts.add(simple_labeled_part, label="a")
+        b = g.parts.add(simple_labeled_part, label="b")
+        a_core = set(g.labels.entities("a.core"))
+        b_core = set(g.labels.entities("b.core"))
+        assert a_core and b_core and not (a_core & b_core)
+        assert a_core <= set(a.entities[3])
+        assert b_core <= set(b.entities[3])
+
+
+@pytest.fixture
+def storey_part():
+    """A slab at z=1 plus an xz wall below it: one storey of a tower.
+
+    List it before ``g``: a Part built inside a live session leaves the
+    Part's own gmsh model current.
+    """
+    p = Part("storey")
+    with p:
+        p.model.geometry.add_rectangle(0, 0, 1, 2, 2, label="slab")
+        p.model.geometry.add_rectangle(0, 0, 0, 2, 1, plane="xz", label="wall")
+    yield p
+    p.cleanup()
+
+
+def _stack(g, p, n, **add_kw):
+    """Place *n* storeys ``s0..`` with ``translate=(0, 0, i)``."""
+    assert gmsh.model.getCurrent() == "test"
+    for i in range(n):
+        g.parts.add(p, label=f"s{i}", translate=(0.0, 0.0, float(i)), **add_kw)
+
+
+def _fragment_mesh(g, n):
+    """``fragment_pair`` each neighbour storey pair, mesh in 2-D, check.
+
+    Oracle: a conformal stack has no coincident duplicate mesh nodes
+    (each wall's bottom edge must share the slab below's nodes; an
+    unfragmented stack duplicates them), and every instance names only
+    live entities.
+    """
+    for i in range(n - 1):
+        g.parts.fragment_pair(f"s{i}", f"s{i + 1}")
+    for i in range(n):
+        inst = g.parts.get(f"s{i}")
+        for d, tags in inst.entities.items():
+            live = {t for _, t in gmsh.model.getEntities(d)}
+            assert tags and set(tags) <= live, (inst.label, d)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(2)
+    _, coords, _ = gmsh.model.mesh.getNodes()
+    xyz = np.asarray(coords).reshape(-1, 3)
+    assert len(xyz) and len(np.unique(np.round(xyz, 9), axis=0)) == len(xyz)
+    return len(xyz)
+
+
+class TestStackedStoreys:
+    """``fragment_pair`` on Part instances placed with ``translate=``.
+
+    Only ``highest_dim_only=True`` is covered: with the default flags
+    the auto-dim ``fragment_pair`` hands OCC each instance's edges and
+    points too, and fails ("Could not fix wire in surface 2"), a
+    failure older than the ``translate=`` fix.
+    """
+
+    def test_highest_dim_only_translate_keeps_top_dim(self, storey_part, g):
+        """``highest_dim_only=True`` + ``translate=``: a moved instance
+        records only its top dim, like an unmoved one, and the chained
+        ``fragment_pair`` meshes ("Could not fix wire in surface 4"
+        when the move re-derived edges and points into ``entities``)."""
+        _stack(g, storey_part, 3, highest_dim_only=True)
+        for i in range(3):
+            assert set(g.parts.get(f"s{i}").entities) == {2}
+        # 186 nodes: the same stack on origin/main, before the
+        # ``translate=`` fix.
+        assert _fragment_mesh(g, 3) == 186
+        for i in range(3):
+            assert set(g.parts.get(f"s{i}").entities) == {2}
+
 
 # =====================================================================
 # Group 5: End-to-End Assembly Workflow

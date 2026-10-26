@@ -22,6 +22,7 @@ from ...element.beam_column import (
     elasticBeamColumn,
     forceBeamColumn,
 )
+from ...element.frame_modifiers import FrameModifiers
 from ..._element_capabilities import REMOVED_ELEMENT_CLASSES
 from ...element.shell import (
     ASDShellQ4,
@@ -141,7 +142,10 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
         damp: Damping | None = None,
+        modifiers: FrameModifiers | None = None,
     ) -> elasticBeamColumn:
+        """``element elasticBeamColumn``; ``modifiers`` scales the emitted
+        ``A`` / ``Iz`` / ``Iy`` / ``J`` / ``-mass`` (:class:`FrameModifiers`)."""
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             elasticBeamColumn(
@@ -149,6 +153,7 @@ class _ElementNS(_BridgeNamespace):
                 A=A, E=E, Iz=Iz,
                 Iy=Iy, G=G, J=J,
                 mass=mass, c_mass=c_mass, damp=damp,
+                modifiers=modifiers,
             )
         )
 
@@ -162,6 +167,7 @@ class _ElementNS(_BridgeNamespace):
         max_iter: int | None = None,
         tol: float | None = None,
         damp: Damping | None = None,
+        modifiers: FrameModifiers | None = None,
     ) -> forceBeamColumn:
         """``element forceBeamColumn`` — force-based distributed-plasticity.
 
@@ -169,7 +175,9 @@ class _ElementNS(_BridgeNamespace):
         section=sec, n_ip=5)``) and pass it as ``integration=``.  Both
         ``transf`` and ``integration`` accept object handles or
         registered names.  ``damp`` attaches a ``damping`` object directly to
-        this element (ADR 0053 D3b) instead of via a region.
+        this element (ADR 0053 D3b) instead of via a region.  ``modifiers``
+        (:class:`FrameModifiers`) needs ``ElasticSection`` s in the rule: the
+        element references modified copies of them, registered here.
         """
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
@@ -177,6 +185,7 @@ class _ElementNS(_BridgeNamespace):
             forceBeamColumn(
                 pg=pg, transf=transf, integration=integration,
                 mass=mass, max_iter=max_iter, tol=tol, damp=damp,
+                modifiers=modifiers,
             )
         )
 
@@ -189,14 +198,18 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
         damp: Damping | None = None,
+        modifiers: FrameModifiers | None = None,
     ) -> dispBeamColumn:
-        """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
+        """``element dispBeamColumn`` — displacement-based distributed-plasticity.
+
+        ``modifiers`` works as on :meth:`forceBeamColumn`."""
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             dispBeamColumn(
                 pg=pg, transf=transf, integration=integration,
                 mass=mass, c_mass=c_mass, damp=damp,
+                modifiers=modifiers,
             )
         )
 
@@ -215,7 +228,10 @@ class _ElementNS(_BridgeNamespace):
         Avz: float | None = None,
         mass: float | None = None,
         c_mass: bool = False,
+        modifiers: FrameModifiers | None = None,
     ) -> ElasticTimoshenkoBeam:
+        """``element ElasticTimoshenkoBeam``; ``modifiers`` scales the emitted
+        section properties and ``-mass`` (:class:`FrameModifiers`)."""
         transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             ElasticTimoshenkoBeam(
@@ -223,6 +239,7 @@ class _ElementNS(_BridgeNamespace):
                 E=E, G=G, A=A, Iz=Iz, Avy=Avy,
                 Iy=Iy, J=J, Avz=Avz,
                 mass=mass, c_mass=c_mass,
+                modifiers=modifiers,
             )
         )
 
@@ -238,7 +255,7 @@ class _ElementNS(_BridgeNamespace):
         c_mass: bool = False,
         lch: str | float = "ip",
         nl: bool = False,
-        span_load: bool = True,
+        span_load: bool | None = None,
         hinge: UniaxialMaterial | str | None = None,
         hinge_i: UniaxialMaterial | str | None = None,
         hinge_j: UniaxialMaterial | str | None = None,
@@ -268,6 +285,8 @@ class _ElementNS(_BridgeNamespace):
         ) = None,
         hinge_loc: float | tuple[float, float] | None = None,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
+        axial_release: bool = False,
         implex: bool = False,
         damp: Damping | None = None,
     ) -> LadrunoDispBeamColumn:
@@ -275,13 +294,14 @@ class _ElementNS(_BridgeNamespace):
 
         Ladruno fork (``ELE_TAG`` 33013/33014); the :class:`dispBeamColumn`
         shape plus per-IP crack-band ``lch`` regularization, ``-nl`` bowing,
-        ``span_load`` (``-spanLoad`` / ``-noSpanLoad``), and embedded cohesive
-        rotation hinges (single-hinge ``hinge``/``hinge_y``/``hinge_biaxial``
-        or dual-end ``hinge_i``/``hinge_j``/``hinge_ij``,
-        ``hinge_yi``/``hinge_yj``/``hinge_yij``, ``hinge_biaxial_i``/
-        ``hinge_biaxial_j``/``hinge_biaxial_ij`` with ``hinge_loc``, ``pm``,
-        and ``implex``). All material arguments accept a registered handle or
-        its name. See :class:`LadrunoDispBeamColumn`.
+        ``span_load`` (``-spanLoad`` / ``-noSpanLoad``), ``axial_release``
+        (``-axialRelease``), and embedded cohesive rotation hinges
+        (single-hinge ``hinge``/``hinge_y``/``hinge_biaxial`` or dual-end
+        ``hinge_i``/``hinge_j``/``hinge_ij``, ``hinge_yi``/``hinge_yj``/
+        ``hinge_yij``, ``hinge_biaxial_i``/``hinge_biaxial_j``/
+        ``hinge_biaxial_ij`` with ``hinge_loc``, ``pm``, ``pm_bal``, and
+        ``implex``). All material arguments accept a registered handle or its
+        name. See :class:`LadrunoDispBeamColumn`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -351,6 +371,8 @@ class _ElementNS(_BridgeNamespace):
                 hinge_biaxial_ij=_res_nd_pair(hinge_biaxial_ij),
                 hinge_loc=hinge_loc,
                 pm=pm,
+                pm_bal=pm_bal,
+                axial_release=axial_release,
                 implex=implex,
                 damp=damp,
             )
@@ -368,6 +390,7 @@ class _ElementNS(_BridgeNamespace):
         tol: float | None = None,
         subdivide: int | tuple[int, float] | None = None,
         lch: str | float = "ip",
+        span_load: bool | None = None,
         hinge: UniaxialMaterial | str | None = None,
         hinge_i: UniaxialMaterial | str | None = None,
         hinge_j: UniaxialMaterial | str | None = None,
@@ -397,6 +420,8 @@ class _ElementNS(_BridgeNamespace):
         ) = None,
         hinge_loc: float | tuple[float, float] | None = None,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
+        axial_release: bool = False,
         shear: float | tuple[float, float] | None = None,
         implex: bool = False,
         damp: Damping | None = None,
@@ -405,11 +430,12 @@ class _ElementNS(_BridgeNamespace):
 
         Ladruno fork (``ELE_TAG`` 33024/33025); the :class:`forceBeamColumn`
         flexibility formulation plus per-IP crack-band ``lch`` regularization,
-        embedded cohesive rotation hinges (``hinge*``, ``hinge_y*``,
-        ``hinge_biaxial*``, ``hinge_loc``, ``pm``, ``implex``), element-level
-        linear Timoshenko ``shear``, and ``subdivide`` step subdivision. All
-        material arguments accept a registered handle or its name. See
-        :class:`LadrunoForceBeamColumn`.
+        ``span_load`` (``-spanLoad`` / ``-noSpanLoad``), ``axial_release``
+        (``-axialRelease``), embedded cohesive rotation hinges (``hinge*``,
+        ``hinge_y*``, ``hinge_biaxial*``, ``hinge_loc``, ``pm``, ``pm_bal``,
+        ``implex``), element-level linear Timoshenko ``shear``, and ``subdivide``
+        step subdivision. All material arguments accept a registered handle or
+        its name. See :class:`LadrunoForceBeamColumn`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -467,6 +493,7 @@ class _ElementNS(_BridgeNamespace):
                 mass=mass, c_mass=c_mass,
                 max_iter=max_iter, tol=tol, subdivide=subdivide,
                 lch=lch,
+                span_load=span_load,
                 hinge=_res_uni(hinge),
                 hinge_i=_res_uni(hinge_i),
                 hinge_j=_res_uni(hinge_j),
@@ -481,6 +508,8 @@ class _ElementNS(_BridgeNamespace):
                 hinge_biaxial_ij=_res_nd_pair(hinge_biaxial_ij),
                 hinge_loc=hinge_loc,
                 pm=pm,
+                pm_bal=pm_bal,
+                axial_release=axial_release,
                 shear=shear,
                 implex=implex,
                 damp=damp,
@@ -527,6 +556,7 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
         implex: bool = False,
     ) -> LadrunoIMKBeam:
         """``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam.
@@ -536,7 +566,8 @@ class _ElementNS(_BridgeNamespace):
         (uniaxial ``mat_z*``/``mat_y*`` or 3-D coupled ``hinge_biaxial*``),
         optional series inelastic shear hinges (``shear_hinge`` in 2-D;
         ``shear_hinge_y``/``shear_hinge_z`` in 3-D), optional rigid end offsets
-        (``end_zones``), parabolic axial-moment interaction (``pm``), and
+        (``end_zones``), symmetric parabolic (``pm``) or asymmetric RC
+        balanced-point (``pm_bal``) axial-moment interaction, and
         element-level ``implex``. Supply ``G``/``Jx``/``Iy`` for the 3-D
         variant. All material arguments accept a registered handle or name. See
         :class:`LadrunoIMKBeam`.
@@ -604,7 +635,7 @@ class _ElementNS(_BridgeNamespace):
                 shear_hinge_y=_res(shear_hinge_y),
                 shear_hinge_z=_res(shear_hinge_z),
                 end_zones=end_zones,
-                mass=mass, c_mass=c_mass, pm=pm, implex=implex,
+                mass=mass, c_mass=c_mass, pm=pm, pm_bal=pm_bal, implex=implex,
             )
         )
 
@@ -796,6 +827,7 @@ class _ElementNS(_BridgeNamespace):
         pg: str,
         section: _ShellSection | str,
         corotational: bool = False,
+        p_delta: bool = False,
         no_eas: bool = False,
         drilling_stab: float | None = None,
         drilling_nl: bool = False,
@@ -809,6 +841,7 @@ class _ElementNS(_BridgeNamespace):
                 pg=pg,
                 section=section_r,
                 corotational=corotational,
+                p_delta=p_delta,
                 no_eas=no_eas,
                 drilling_stab=drilling_stab,
                 drilling_nl=drilling_nl,
@@ -824,6 +857,7 @@ class _ElementNS(_BridgeNamespace):
         pg: str,
         section: _ShellSection | str,
         corotational: bool = False,
+        p_delta: bool = False,
         drilling_nl: bool = False,
         drilling_dof: int | None = None,
         local_cs: tuple[float, ...] | None = None,
@@ -835,6 +869,7 @@ class _ElementNS(_BridgeNamespace):
                 pg=pg,
                 section=section_r,
                 corotational=corotational,
+                p_delta=p_delta,
                 drilling_nl=drilling_nl,
                 drilling_dof=drilling_dof,
                 local_cs=local_cs,
