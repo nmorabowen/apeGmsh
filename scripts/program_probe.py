@@ -13,11 +13,12 @@ Seven findings over open ``program`` PRs, open issues and scheduled runs:
    no activity for more than ``--lock-hours``; with no linked PR, the issue's
    own last activity is used.
 4. ``double-lock``: one ``lock:<file>`` label on more than one open issue.
-5. ``red-lane``: a watched scheduled workflow (``WATCHED_WORKFLOWS``) whose last
-   two completed ``schedule`` runs on ``main`` both concluded ``failure``,
-   ``timed_out`` or ``startup_failure``. ``cancelled`` and ``skipped`` do not
-   count: a cancel is a concurrency or manual act, not the lane being broken.
-   Fewer than two completed runs is not a finding.
+5. ``red-lane``: a watched scheduled workflow (``LANE_CHAINS``) whose last
+   two completed ``schedule`` runs on ``main`` are both non-green: ``failure``,
+   ``cancelled``, ``timed_out`` or ``startup_failure``. A cancel counts: a job
+   that hits its own ``timeout-minutes`` concludes ``cancelled``, and Deps
+   canary gave no signal for 7 nights that way (lesson #2556). Fewer than two
+   completed runs is not a finding.
 6. ``unlabelled-slice``: an open PR whose body has ``Slice: #<n>`` but no
    ``program`` label, so it escapes the program-wide WIP count (#2012).
 7. ``wip-over-cap``: more than ``WIP_CAP`` (8) counted open program PRs now, or a
@@ -30,6 +31,13 @@ Seven findings over open ``program`` PRs, open issues and scheduled runs:
 
     python scripts/program_probe.py            # report, exit 0
     python scripts/program_probe.py --issue    # open/update/close the tracking issue
+
+With ``--issue`` the probe also keeps one issue per red lane (lesson #2556):
+after 2 consecutive non-green scheduled runs it opens
+``[Program probe] lane <workflow> non-green``, labelled ``program`` and the
+lane's chain, or comments on the open one. Once the lane's latest completed
+run is green it closes that issue with a comment; a later red streak opens a
+new one. The T coordinator reads the open lane issues at boot.
 
 All GitHub reads go through ``gh`` (JSON). ``--from-json FILE`` reads
 ``{"prs": [...], "issues": [...]}`` in the same shape instead, and ``--now``
@@ -64,12 +72,20 @@ ISSUE_FIELDS = "number,title,labels,updatedAt"
 ALL_PR_FIELDS = "number,title,body,labels"
 LIMIT = "200"
 
-# Scheduled lanes nobody watches (Benchmarks sat red 10-15..10-18, #2144).
-WATCHED_WORKFLOWS: tuple[str, ...] = (
-    "live-fork.yml", "benchmarks.yml", "deps-canary.yml", "orphans.yml",
-)
-RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+# Scheduled lanes nobody watches (Benchmarks sat red 10-15..10-18, #2144), each
+# with the chain that owns it: the lane issue carries that label (#2556).
+LANE_CHAINS: dict[str, str] = {
+    "live-fork.yml": "chain:F",
+    "benchmarks.yml": "chain:S",
+    "deps-canary.yml": "chain:C",
+    "orphans.yml": "chain:A",
+}
+WATCHED_WORKFLOWS: tuple[str, ...] = tuple(LANE_CHAINS)
+RED_CONCLUSIONS = frozenset({"failure", "cancelled", "timed_out", "startup_failure"})
+RED_STREAK = 2
+RUN_HISTORY = "7"
 RUN_FIELDS = "conclusion,status,createdAt,url,headSha"
+LANE_TITLE_PREFIX = "[Program probe] lane "
 
 _VERDICT = re.compile(
     r"^Review-verdict:\s*(?P<model>.+?)\s+(?P<verdict>approve|changes)\s+"
@@ -116,7 +132,7 @@ def fetch(gh: Runner, repo: str) -> dict[str, list[dict]]:
     runs = {
         wf: json.loads(gh(["run", "list", "--repo", repo, "--workflow", wf,
                            "--branch", "main", "--event", "schedule",
-                           "--limit", "2", "--json", RUN_FIELDS]))
+                           "--limit", RUN_HISTORY, "--json", RUN_FIELDS]))
         for wf in WATCHED_WORKFLOWS
     }
     history = json.loads(gh(["pr", "list", "--repo", repo, "--state", "all",
@@ -216,6 +232,30 @@ def wip_peak(history: list[dict], now: datetime, *, hours: float = 24.0) -> tupl
     return best
 
 
+def lane_state(runs: list[dict]) -> tuple[int, list[dict]]:
+    """Leading non-green streak of completed runs, newest first, and those runs.
+
+    A streak of 0 means the latest completed run is green, or there is none.
+    """
+    done = sorted((r for r in runs if r.get("status") == "completed"),
+                  key=lambda r: r["createdAt"], reverse=True)
+    streak = []
+    for r in done:
+        if r.get("conclusion") not in RED_CONCLUSIONS:
+            break
+        streak.append(r)
+    return len(streak), streak
+
+
+def _streak_detail(streak: list[dict]) -> str:
+    return "; ".join(f"{r['conclusion']} {_ts(r['createdAt']):%Y-%m-%d} ({r['url']})"
+                     for r in streak)
+
+
+def lane_title(wf: str) -> str:
+    return f"{LANE_TITLE_PREFIX}{wf} non-green"
+
+
 def _linked_issues(pr: dict) -> set[int]:
     nums = {int(n) for n in _SLICE.findall(pr.get("body") or "")}
     nums |= {ref["number"] for ref in pr.get("closingIssuesReferences") or []}
@@ -276,16 +316,12 @@ def probe(data: dict, now: datetime, *, approved_hours: float = 4.0,
             })
 
     for wf in sorted(data.get("runs") or {}):
-        done = [r for r in data["runs"][wf] if r.get("status") == "completed"]
-        done.sort(key=lambda r: r["createdAt"], reverse=True)
-        last2 = done[:2]
-        if len(last2) == 2 and all(r.get("conclusion") in RED_CONCLUSIONS for r in last2):
-            detail = "; ".join(
-                f"{r['conclusion']} {_ts(r['createdAt']):%Y-%m-%d} ({r['url']})"
-                for r in last2)
+        n, streak = lane_state(data["runs"][wf])
+        if n >= RED_STREAK:
             findings.append({
-                "kind": "red-lane", "ref": wf, "title": f"{wf} red two scheduled runs",
-                "detail": detail,
+                "kind": "red-lane", "ref": wf,
+                "title": f"{wf} non-green {n} scheduled runs",
+                "detail": _streak_detail(streak[:RED_STREAK]),
             })
 
     for pr in data.get("open_prs") or []:
@@ -360,6 +396,52 @@ def sync_issue(gh: Runner, repo: str, findings: list[dict], now: datetime) -> st
     return "nothing to do"
 
 
+def sync_lane_issues(gh: Runner, repo: str, runs: dict[str, list[dict]],
+                     now: datetime) -> list[str]:
+    """Open or bump one issue per lane with ``RED_STREAK`` non-green runs.
+
+    The issue is found by its exact title among open ``program`` issues, so the
+    next night comments instead of opening a duplicate. A lane whose latest
+    completed run is green has its open issue closed; a closed issue is never
+    reopened, and a later red streak opens a new one. A lane with one
+    non-green run, or no completed run, is left alone.
+    """
+    actions = []
+    for wf in sorted(runs):
+        n, streak = lane_state(runs[wf])
+        if 0 < n < RED_STREAK:
+            continue
+        if n == 0 and not any(r.get("status") == "completed" for r in runs[wf]):
+            continue
+        title = lane_title(wf)
+        chain = LANE_CHAINS.get(wf, "chain:T")
+        rows = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open",
+                              "--label", "program", "--search", f'"{title}" in:title',
+                              "--json", "number,title"]))
+        matches = sorted(r["number"] for r in rows if r["title"] == title)
+        if n == 0:
+            for num in matches:
+                gh(["issue", "close", str(num), "--repo", repo, "--comment",
+                    f"`{wf}` green on its latest scheduled run "
+                    f"(probe {now:%Y-%m-%d %H:%M} UTC); closing."])
+                actions.append(f"{wf}: closed #{num}")
+            continue
+        note = (f"Probe {now:%Y-%m-%d %H:%M} UTC: `{wf}` has {n} consecutive "
+                f"non-green scheduled runs on main (failure, cancelled and timed "
+                f"out all count).\n\n{_streak_detail(streak)}\n")
+        if matches:
+            gh(["issue", "comment", str(matches[0]), "--repo", repo, "--body", note])
+            actions.append(f"{wf}: bumped #{matches[0]}")
+            continue
+        body = (note + f"\nOpened by `scripts/program_probe.py` (lesson #2556). "
+                f"Owner: `{chain}`. The probe comments here each night the lane "
+                f"stays non-green and closes this issue once it is green.\n")
+        gh(["issue", "create", "--repo", repo, "--title", title, "--label", "program",
+            "--label", chain, "--body", body])
+        actions.append(f"{wf}: created")
+    return actions
+
+
 def main(argv: list[str] | None = None, gh: Runner = run_gh) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
@@ -390,6 +472,8 @@ def main(argv: list[str] | None = None, gh: Runner = run_gh) -> int:
         print(render_md(findings), end="")
     if args.issue:
         print(f"tracking issue: {sync_issue(gh, args.repo, findings, now)}")
+        for line in sync_lane_issues(gh, args.repo, data.get("runs") or {}, now):
+            print(f"lane issue: {line}")
     return 0
 
 

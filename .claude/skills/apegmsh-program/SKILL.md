@@ -162,7 +162,9 @@ the 2026-10-07 → 13 batches (#1202).
 
 **Boot.** Read the last coordinator handoff on #1202 and the latest comment on
 board #1203. They hold the lock holders, the queue, the open gates and the
-link prompts. Then run `ListAgents`: if another session titled "T coordinator"
+link prompts. Read the open `[Program probe] lane` issues too: each is a
+scheduled lane with 2 or more non-green nights, labelled with its owning chain
+(#2556). Then run `ListAgents`: if another session titled "T coordinator"
 is live, stop. Announce yourself to every live program session
 and ask each to report to you at every landing, blocker, maintainer question,
 lock handover and handoff.
