@@ -25,13 +25,13 @@ ETABS puts a frame object's end offsets at its two ends, but the mesh alone
 cannot tell a member meshed into several elements from a continuous girder
 of several members. So an offset that is not the same transverse shift at
 both ends (an end length, an axial component, unequal ends) refuses where
-two of a transform's elements meet turning less than 30 deg (a straight
-member, even with rounded coordinates, or a faceted curve), naming the
-elements, the node and the turn; mesh each member as one element and give
-members that continue each other separate transforms. Member ends by curve
-are #2551. One-element members, corners of 30 deg or more, nodes where
-three or more of its elements meet, and an equal transverse shift on every
-element work as before.
+any two of a transform's elements meet at a node turning outside 30-150 deg
+(a straight member, even with rounded coordinates or running through a
+joint, a faceted curve, or a fold-back), naming the elements, the node and
+the turn; mesh each member as one element and give members that continue
+each other separate transforms. Member ends by curve are #2551.
+One-element members, corners of 30-150 deg, and an equal transverse shift
+on every element work as before.
 
 Offsets are per transform, not per element spec: a `geomTransf` is OpenSees'
 offset group, and the element ↔ transform join in `model.h5` stays one tag

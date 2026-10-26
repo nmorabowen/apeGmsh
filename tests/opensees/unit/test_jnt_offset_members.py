@@ -36,7 +36,7 @@ from tests.opensees.fixtures.fem_stub import (
 RULE = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
                       end_offset_i=0.3, end_offset_j=0.3)
 SHIFT_ONLY = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z")
-REFUSAL = r"meet at node \d+ turning .* deg, under the 30 deg.*source curve.*#2551"
+REFUSAL = r"meet at node \d+ turning .* deg, outside the 30-150 deg.*source curve.*#2551"
 
 
 def stub(coords: dict[int, tuple[float, float, float]],
@@ -190,7 +190,7 @@ def test_a_faceted_arc_refuses() -> None:
     import math
     pts = [(50.0 * math.cos(math.radians(3 * k)), 50.0 * math.sin(math.radians(3 * k)), 3.0)
            for k in range(5)]
-    with pytest.raises(BridgeError, match=r"turning 3 deg, under the 30 deg"):
+    with pytest.raises(BridgeError, match=r"turning 3 deg, outside the 30-150 deg"):
         bridge(_chain(pts)).build().emit(RecordingEmitter())
 
 
@@ -198,7 +198,7 @@ def test_a_20_deg_kink_refuses_naming_the_threshold() -> None:
     import math
     t = math.radians(20.0)
     pts = [(0.0, 0.0, 3.0), (4.0, 0.0, 3.0), (4.0 + 4.0 * math.cos(t), 4.0 * math.sin(t), 3.0)]
-    with pytest.raises(BridgeError, match=r"node 2 turning 20 deg, under the 30 deg that marks a frame corner"):
+    with pytest.raises(BridgeError, match=r"node 2 turning 20 deg, outside the 30-150 deg that marks a frame corner"):
         bridge(_chain(pts)).build().emit(RecordingEmitter())
 
 
@@ -214,16 +214,40 @@ def test_a_45_deg_knee_is_a_corner() -> None:
     assert got[102] == pytest.approx((c, c, -0.3, -c, -c, -0.3))
 
 
-def test_three_elements_at_a_node_each_end_there() -> None:
-    """A node where three of the transform's elements meet is a joint:
-    each element is its own member, collinear pair included."""
+def test_a_branch_does_not_hide_a_straight_pass_through() -> None:
+    """The reviewer's repro: girder 1-2-3 straight along X plus a secondary
+    beam 2-4 along Y, all on one transform. The girder runs straight
+    through node 2, so it may be one member; it refuses."""
     coords = {1: (0.0, 0.0, 3.0), 2: (4.0, 0.0, 3.0), 3: (8.0, 0.0, 3.0), 4: (4.0, 4.0, 3.0)}
     fem = stub(coords, {"M": ((101, 102, 103), ((1, 2), (2, 3), (2, 4)))})
+    with pytest.raises(BridgeError, match=r"elements 101 and 102.*node 2 turning 0 deg"):
+        bridge(fem).build().emit(RecordingEmitter())
+
+
+def test_a_hairpin_refuses() -> None:
+    """Element 102 folds back over 101 (turn 180 deg): no frame corner."""
+    coords = {1: (0.0, 0.0, 3.0), 2: (4.0, 0.0, 3.0), 3: (2.0, 0.0, 3.0)}
+    fem = stub(coords, {"M": ((101, 102), ((1, 2), (2, 3)))})
+    with pytest.raises(BridgeError, match=r"turning 180 deg, outside the 30-150 deg"):
+        bridge(fem).build().emit(RecordingEmitter())
+
+
+def test_a_y_node_at_120_deg_is_accepted() -> None:
+    """Three elements meeting at 120 deg pairwise: every pair is a corner,
+    so each element is its own member with end zones at both ends."""
+    import math
+    def arm(deg: float) -> tuple[float, float, float]:
+        t = math.radians(deg)
+        return (4.0 * math.cos(t), 4.0 * math.sin(t), 3.0)
+    coords = {1: (0.0, 0.0, 3.0), 2: arm(0.0), 3: arm(120.0), 4: arm(240.0)}
+    fem = stub(coords, {"M": ((101, 102, 103), ((1, 2), (1, 3), (1, 4)))})
     rec = RecordingEmitter()
     bridge(fem).build().emit(rec)
     got = element_offsets(rec)
-    assert got[101] == got[102] == pytest.approx((0.3, 0.0, -0.3, -0.3, 0.0, -0.3))
-    assert got[103] == pytest.approx((0.0, 0.3, -0.3, 0.0, -0.3, -0.3))
+    for eid, deg in ((101, 0.0), (102, 120.0), (103, 240.0)):
+        t = math.radians(deg)
+        c, s_ = 0.3 * math.cos(t), 0.3 * math.sin(t)
+        assert got[eid] == pytest.approx((c, s_, -0.3, -c, -s_, -0.3), abs=1e-12)
 
 
 def test_a_corner_chain_is_accepted_with_each_element_its_own_member() -> None:

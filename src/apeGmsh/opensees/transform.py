@@ -22,11 +22,11 @@ Members: ETABS puts a frame object's end offsets at its two ends. The mesh
 alone cannot tell a member meshed into several elements from a continuous
 girder of several members, so an offset that is not the same transverse
 shift at both ends (an end length, an axial component, unequal ends)
-refuses where two of a transform's elements meet turning less than 30 deg
-(a straight or faceted member) until elements carry their source curve
-(#2551). One-element members, corners of 30 deg or more, nodes where three
-or more of its elements meet, and an equal transverse shift on every
-element are unaffected.
+refuses where any two of a transform's elements meet at a node turning
+outside 30-150 deg (a straight or faceted member, one running through a
+joint, a fold-back) until elements carry their source curve (#2551).
+One-element members, corners of 30-150 deg, and an equal transverse shift
+on every element are unaffected.
 
 Loads on an offset beam: a ``Plain.from_model`` line load (global,
 ``beamUniform`` / ``line_load``) covers the full node-to-node length, as
