@@ -48,6 +48,7 @@ from .shell import (
     ASDShellT3,
     LadrunoMembrane,
     ShellDKGQ,
+    ShellNLDKGQ,
     ShellMITC4,
 )
 from .solid import (
@@ -101,6 +102,7 @@ __all__ = [
     # shell
     "ShellMITC4",
     "ShellDKGQ",
+    "ShellNLDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
     "LadrunoMembrane",

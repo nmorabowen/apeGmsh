@@ -581,6 +581,14 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "secTag"),
         has_gauss=True, has_layers=True,
     ),
+    "ShellNLDKGQ": _ElemSpec(
+        mat_family="section", needs_transf=False,
+        ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
+        gmsh_etypes=frozenset({3}),
+        node_reorder={3: (0,1,2,3)},
+        slots=("nodes", "secTag"),
+        has_gauss=True, has_layers=True,
+    ),
     "ASDShellQ4": _ElemSpec(
         mat_family="section", needs_transf=False,
         ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
