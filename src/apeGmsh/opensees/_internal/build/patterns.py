@@ -89,14 +89,19 @@ def emit_pattern_spec(
         _emit_from_model_case(case, emitter, fem, ndf_of, ndm)
     for mt_rec in spec.moment_tensors:
         _emit_moment_tensor_record(mt_rec, emitter, fem, ndf_of, ndm)
+    end_zone_loads: list[tuple[int, tuple[float, ...]]] = []
     for ele_args in resolve_ele_load_commands(
         spec,
         fem,
         ndm,
         element_plan=element_plan,
         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        nodal_loads=end_zone_loads,
     ):
         emitter.eleLoad(*ele_args)
+    for node, comps in end_zone_loads:
+        emitter.load(node, *fit_dof_vector(
+            comps, ndf_of(node), kind="end-zone line load", node=node))
     emitter.pattern_close()
 
 
@@ -529,7 +534,7 @@ def _resolve_beam_vecxz(
     return np.asarray(vecxz, dtype=float)
 
 
-def _refuse_tilting_jnt_offset(
+def _offset_line_load(
     el_spec: Element | None,
     p_i: np.ndarray,
     p_j: np.ndarray,
@@ -538,40 +543,122 @@ def _refuse_tilting_jnt_offset(
     fem: "FEMData",
     eid: int,
     pattern: object,
-) -> None:
-    """Refuse a global line load on a beam whose joint offsets tilt its axis.
+) -> "tuple[float, float, np.ndarray] | None":
+    """Where a global line load on the node chord meets a joint-offset beam.
 
-    The load is projected on the local axes of the node chord; OpenSees
-    builds them between the offset ends. Offsets that shift both ends
-    alike (a cardinal point) or run along the axis (end lengths) leave
-    the direction alone; any other pair would project the load on the
-    wrong axes, silently.
+    ``None`` when the element has no offsets. Otherwise
+    ``(s_i, s_j, t)``: the flexible element runs from ``s_i`` to ``s_j``
+    along the node chord (``0`` and ``L`` without end zones), shifted by
+    the transverse offset ``t`` (a 3-vector).
+
+    Refuses offsets that tilt the axis away from the chord, or leave no
+    flexible length: the load is projected on the chord's local axes,
+    and OpenSees builds them between the offset ends, so any other pair
+    would project the load on the wrong axes, silently. Offsets that shift
+    both ends alike (a cardinal point) or run along the axis (end lengths)
+    leave the direction alone.
     """
     transf = _element_transf(el_spec) if el_spec is not None else None
     if transf is None or getattr(transf, "jnt_offset", None) is None:
-        return
+        return None
     vecxz = None
     if ndm == 3:
         vecxz = tuple(float(c) for c in _resolve_beam_vecxz(
             el_spec, p_i, p_j, fem, eid))
     jnt = element_jnt_offset(transf, p_i, p_j, vecxz, ndm)  # type: ignore[arg-type]
     if not jnt:
-        return
+        return None
     w = len(jnt) // 2
     d_i = np.zeros(3)
     d_j = np.zeros(3)
     d_i[:w] = jnt[:w]
     d_j[:w] = jnt[w:]
-    chord = (p_j + d_j) - (p_i + d_i)
-    n = float(np.linalg.norm(chord))
-    if n <= 0.0 or float(np.linalg.norm(np.cross(chord / n, e_x))) > 1e-9:
+    length = float(np.linalg.norm(p_j - p_i))
+    s_i = float(np.dot(d_i, e_x))
+    s_j = length + float(np.dot(d_j, e_x))
+    t_i = d_i - s_i * e_x
+    t_j = d_j - (s_j - length) * e_x
+    if s_j - s_i <= 0.0 or float(np.linalg.norm(t_j - t_i)) > 1e-9 * max(
+            length, 1.0):
         raise BridgeError(
             f"from_model({pattern!r}): beamUniform on element {eid}: its "
             "geomTransf jnt_offset turns the element axis away from the node "
-            "chord, so a global line load cannot be projected on the axes "
-            "OpenSees uses. Declare the load in local components with "
-            "Plain.beam_uniform, or give both ends the same transverse offset."
+            "chord (or leaves no flexible length), so a global line load "
+            "cannot be projected on the axes OpenSees uses. Declare the load "
+            "in local components with Plain.beam_uniform, or give both ends "
+            "the same transverse offset."
         )
+    return s_i, s_j, t_i
+
+
+def _segment_resultant(
+    q_a: np.ndarray, q_b: np.ndarray, a: float, b: float, u: float, v: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(∫ q ds, ∫ s q ds)`` over ``[u, v]`` of the load linear in ``s``
+    from ``q_a`` at ``a`` to ``q_b`` at ``b``."""
+    beta = (q_b - q_a) / (b - a)
+    alpha = q_a - beta * a
+    force = alpha * (v - u) + beta * (v * v - u * u) / 2.0
+    first = alpha * (v * v - u * u) / 2.0 + beta * (v ** 3 - u ** 3) / 3.0
+    return force, first
+
+
+def _split_end_zone_line_load(
+    q1: np.ndarray,
+    q2: np.ndarray,
+    a_l: float,
+    b_l: float,
+    length: float,
+    e_x: np.ndarray,
+    s_i: float,
+    s_j: float,
+    t: np.ndarray,
+    node_i: int,
+    node_j: int,
+    ndm: int,
+) -> "tuple[tuple[np.ndarray, np.ndarray, float, float] | None, list[tuple[int, tuple[float, ...]]]]":
+    """Split a global line load on the node chord over a beam's end zones.
+
+    The load runs linearly from ``q1`` at ``a_l * length`` to ``q2`` at
+    ``b_l * length`` along the node chord, on the element axis (shifted
+    by ``t``), as ETABS/CSI load a frame object over its full length.
+    OpenSees' ``-beamUniform`` loads only the flexible element between
+    the offset ends (``s_i`` to ``s_j``), so the part over each rigid end
+    zone goes to that zone's joint as a force and the moment of that
+    force about the joint (the zone is rigid, so this is exact).
+
+    Returns ``(flexible, nodal)``: ``flexible`` is ``(q_a, q_b, aL, bL)``
+    for the flexible element (fractions of its length; ``None`` when the
+    load lies wholly on the end zones), and ``nodal`` the
+    ``(node, components)`` loads, ``(Fx, Fy, Mz)`` in 2-D and
+    ``(Fx, Fy, Fz, Mx, My, Mz)`` in 3-D.
+    """
+    a = a_l * length
+    b = b_l * length
+    nodal: list[tuple[int, tuple[float, ...]]] = []
+    for node, lo, hi, s0 in (
+        (node_i, a, min(b, s_i), 0.0),
+        (node_j, max(a, s_j), b, length),
+    ):
+        if hi <= lo:
+            continue
+        force, first = _segment_resultant(q1, q2, a, b, lo, hi)
+        # r(s) - p_node = t + (s - s0) e_x on the element axis.
+        moment = np.cross(t, force) + np.cross(e_x, first - s0 * force)
+        comps = (
+            (force[0], force[1], moment[2]) if ndm == 2
+            else (*force, *moment)
+        )
+        nodal.append((node, tuple(_clean_zero(float(c)) for c in comps)))
+    lo, hi = max(a, s_i), min(b, s_j)
+    if hi <= lo:
+        return None, nodal
+
+    def q_at(s: float) -> np.ndarray:
+        return np.asarray(q1 + (q2 - q1) * (s - a) / (b - a), dtype=float)
+
+    flex = s_j - s_i
+    return (q_at(lo), q_at(hi), (lo - s_i) / flex, (hi - s_i) / flex), nodal
 
 
 def _translate_fem_eids_for_ele_load(
@@ -664,9 +751,18 @@ def resolve_ele_load_commands(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     element_owner: "SortedIntToInt | Mapping[int, int] | None" = None,
     partition_rank: int | None = None,
+    nodal_loads: "list[tuple[int, tuple[float, ...]]]",
 ) -> list[tuple[int | float | str, ...]]:
     """Expand ``spec.ele_loads`` and element-form ``spec.from_model_cases``
     into ``emitter.eleLoad(*args)`` argument tuples.
+
+    ``nodal_loads`` (required, so no caller can drop them) receives the
+    ``(node, components)`` joint loads of a ``from_model`` line load's
+    share over a beam's rigid end zones (``geomTransf -jntOffset``): the
+    caller emits each as ``load`` in the same pattern, fitted to the
+    node's ndf, so the beam carries the load over its full node-to-node
+    length, as ETABS/CSI do. Components are ``(Fx, Fy, Mz)`` in 2-D and
+    ``(Fx, Fy, Fz, Mx, My, Mz)`` in 3-D.
     """
     cmds: list[tuple[int | float | str, ...]] = []
 
@@ -937,15 +1033,30 @@ def resolve_ele_load_commands(
                     "has zero length."
                 )
             e_x = edge / length
-            _refuse_tilting_jnt_offset(
+            if ndm == 2 and (wz1 != 0.0 or wz2 != 0.0):
+                raise _BridgeValueError(
+                    f"from_model({rec.pattern!r}): beamUniform on element {eid} "
+                    f"has non-zero out-of-plane wz=({wz1}, {wz2}) in a 2D "
+                    "model (ndm=2)."
+                )
+            offset = _offset_line_load(
                 elem_spec, p_i, p_j, e_x, ndm, fem, eid, rec.pattern)
+            if offset is not None:
+                # The load covers the node chord (ETABS); the end zones'
+                # share goes to the joints, the rest to the flexible span.
+                flexible, end_loads = _split_end_zone_line_load(
+                    np.array([wx1, wy1, wz1], dtype=float),
+                    np.array([wx2, wy2, wz2], dtype=float),
+                    a_l, b_l, length, e_x, *offset,
+                    int(conn[0]), int(conn[1]), ndm,
+                )
+                nodal_loads.extend(end_loads)
+                if flexible is None:
+                    continue
+                q_a, q_b, a_l, b_l = flexible
+                wx1, wy1, wz1 = (float(c) for c in q_a)
+                wx2, wy2, wz2 = (float(c) for c in q_b)
             if ndm == 2:
-                if wz1 != 0.0 or wz2 != 0.0:
-                    raise _BridgeValueError(
-                        f"from_model({rec.pattern!r}): beamUniform on element {eid} "
-                        f"has non-zero out-of-plane wz=({wz1}, {wz2}) in a 2D "
-                        "model (ndm=2)."
-                    )
                 e_y = np.array([-e_x[1], e_x[0], 0.0], dtype=float)
                 q1 = np.array([wx1, wy1, 0.0], dtype=float)
                 q2 = np.array([wx2, wy2, 0.0], dtype=float)

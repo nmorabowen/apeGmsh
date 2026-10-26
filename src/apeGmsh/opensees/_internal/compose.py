@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     import h5py
 
     from ..._internal.provenance import ProvenanceTable
+    from .typed_records import TransformRecord
 
 
 __all__ = [
@@ -421,10 +422,10 @@ def _path_stem(path: str) -> str:
     return stem or "model"
 
 
-def _jnt_kw(rec: Any) -> "dict[str, tuple[float, ...]]":
+def _jnt_kw(rec: "TransformRecord") -> "dict[str, tuple[float, ...]]":
     """A ``TransformRecord``'s ``-jntOffset`` tail as the emitter kwarg;
     ``{}`` when the archived line had none, so its replay is unchanged."""
-    jnt = tuple(getattr(rec, "jnt_offset", ()))
+    jnt = tuple(rec.jnt_offset)
     return {"jnt_offset": jnt} if jnt else {}
 
 

@@ -316,3 +316,100 @@ def test_2d_jnt_offset_matches_rigid_link_reference(transf_type: str, rule: bool
                          gravity=gravity, lateral=lateral, masses=masses)
     _assert_same(disp_a, disp_b, f"2-D {transf_type} joint displacements")
     _assert_same(per_a[:4], per_b[:4], f"2-D {transf_type} periods")
+
+
+# ---------------------------------------------------------------------------
+# A from_model line load covers the rigid end zones (ETABS), #2470 review 1
+# ---------------------------------------------------------------------------
+#
+# Oracle: the same fixed-fixed beam with its end zones modelled as explicit
+# elements 1e6 times stiffer than the beam, every segment on the element
+# axis carrying the load, so the load covers the full node-to-node length.
+# Reactions must agree to the stiff zones' compliance (~1e-6). Without the
+# end-zone transfer OpenSees loads only the flexible length: 6 of the 40 kN
+# of the 2-D case go missing.
+
+_STIFF = 1e6
+_PROPS_2D = dict(A=0.01, E=200e9, Iz=1e-4)
+_PROPS_3D = dict(A=0.01, E=200e9, G=80e9, J=1e-4, Iy=1e-4, Iz=1e-4)
+
+
+def _static_reactions(o: Any, nodes: tuple[int, ...]) -> np.ndarray:
+    o.constraints("Plain")
+    o.numberer("RCM")
+    o.system("UmfPack")
+    o.test("NormDispIncr", 1e-12, 10, 0)
+    o.algorithm("Linear")
+    o.integrator("LoadControl", 1.0)
+    o.analysis("Static")
+    assert o.analyze(1) == 0
+    o.reactions()
+    return np.array([o.nodeReaction(n) for n in nodes], dtype=float)
+
+
+def _stiff_zone_reference(o: Any, ndm: int, chain: list[tuple[float, float, float]],
+                          loaded: list[bool], w: tuple[float, ...]) -> np.ndarray:
+    """Joints 1 and 2 are ``chain[0]`` and ``chain[-1]``; the segments
+    between consecutive points are elastic beams, the longest at the beam's
+    properties and the rest ``_STIFF`` times stiffer; each ``loaded``
+    segment carries ``-beamUniform *w``."""
+    o.wipe()
+    ndf = 3 if ndm == 2 else 6
+    o.model("basic", "-ndm", ndm, "-ndf", ndf)
+    tags = [1] + [100 + k for k in range(1, len(chain) - 1)] + [2]
+    for t, xyz in zip(tags, chain):
+        o.node(t, *xyz[:ndm])
+    for t in (1, 2):
+        o.fix(t, *([1] * ndf))
+    lengths = [float(np.linalg.norm(np.subtract(b, a))) for a, b in zip(chain, chain[1:])]
+    flex = int(np.argmax(lengths))
+    o.timeSeries("Linear", 1)
+    o.pattern("Plain", 1, 1)
+    for k, (a, b) in enumerate(zip(tags, tags[1:])):
+        scale = 1.0 if k == flex else _STIFF
+        if ndm == 2:
+            o.geomTransf("Linear", 10 + k)
+            p2 = _PROPS_2D
+            o.element("elasticBeamColumn", 10 + k, a, b, p2["A"], p2["E"] * scale,
+                      p2["Iz"], 10 + k)
+        else:
+            axis = np.subtract(chain[k + 1], chain[k])
+            vecxz = (1.0, 0.0, 0.0) if abs(axis[0]) < 1e-12 else (0.0, 0.0, 1.0)
+            o.geomTransf("Linear", 10 + k, *vecxz)
+            p3 = _PROPS_3D
+            o.element("elasticBeamColumn", 10 + k, a, b, p3["A"], p3["E"] * scale,
+                      p3["G"] * scale, p3["J"], p3["Iy"], p3["Iz"], 10 + k)
+        if loaded[k]:
+            o.eleLoad("-ele", 10 + k, "-type", "-beamUniform", *w)
+    return _static_reactions(o, (1, 2))
+
+
+@pytest.mark.parametrize("ndm", [2, 3])
+def test_line_load_over_end_zones_matches_stiff_zone_reference(ndm: int) -> None:
+    pytest.importorskip("openseespy.opensees")
+    from tests.opensees.unit.test_jnt_offset import _loaded_beam
+
+    chain: list[tuple[float, float, float]]
+    if ndm == 2:
+        jnt: Any = ((0.3, 0.0), (-0.3, 0.0))
+        params = {"wx": 0.0, "wy": -10.0, "wz": 0.0}
+        chain = [(0.0, 0.0, 0.0), (0.3, 0.0, 0.0), (3.7, 0.0, 0.0), (4.0, 0.0, 0.0)]
+        loaded = [True, True, True]
+        w: tuple[float, ...] = (-10.0, 0.0)            # Wy Wx; local = global here
+    else:   # hung 0.3 m below the joints, 0.3 m end zones, vecxz = +Z
+        jnt = ((0.3, 0.0, -0.3), (-0.3, 0.0, -0.3))
+        params = {"wx": 1.0, "wy": 3.0, "wz": -10.0}
+        chain = [(0.0, 0.0, 0.0), (0.0, 0.0, -0.3), (0.3, 0.0, -0.3),
+                 (3.7, 0.0, -0.3), (4.0, 0.0, -0.3), (4.0, 0.0, 0.0)]
+        loaded = [False, True, True, True, False]
+        w = (3.0, -10.0, 1.0)                          # Wy Wz Wx: y = +Y, z = +Z
+    emitter = LiveOpsEmitter(wipe=True)
+    _loaded_beam(jnt, ndm=ndm, params=params).build().emit(emitter)
+    o = emitter.ops
+    react_a = _static_reactions(o, (1, 2))
+    total = 4.0 * np.array([params["wx"], params["wy"], params["wz"]][:ndm])
+    np.testing.assert_allclose(-react_a[:, :ndm].sum(axis=0), total, rtol=1e-9)
+    react_b = _stiff_zone_reference(o, ndm, chain, loaded, w)
+    scale = float(np.max(np.abs(react_b)))
+    err = float(np.max(np.abs(react_a - react_b))) / scale
+    assert err < 1e-5, f"{ndm}-D reactions: max |a - b| / max |b| = {err:.3e}"

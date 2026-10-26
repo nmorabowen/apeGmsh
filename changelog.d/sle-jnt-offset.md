@@ -25,15 +25,22 @@ Offsets are per transform, not per element spec: a `geomTransf` is OpenSees'
 offset group, and the element ↔ transform join in `model.h5` stays one tag
 per element.
 
-A global line load (`from_model` `beamUniform`) on a beam whose offsets turn
-its axis away from the node chord refuses: the load would be projected on the
-wrong axes.
+A global line load (`from_model` `beamUniform`) on an offset beam covers its
+full node-to-node length, as ETABS/CSI load a frame object: the share over
+each rigid end zone goes to its joint as a nodal force plus moment, the rest
+stays a `-beamUniform` on the flexible span (OpenSees alone would load only
+the flexible length, losing `w` times the end-zone lengths). `Plain.beam_uniform`
+stays OpenSees' own `eleLoad`, on the flexible element. A global line load on
+a beam whose offsets turn its axis away from the node chord, or leave it no
+flexible length, refuses: the load would be projected on the wrong axes.
 
 Schema: opensees **2.37.0**. A transform group whose line carries
 `-jntOffset` gains a `jnt_offset` dataset, `(1, 6)` in 3-D and `(1, 4)` in
-2-D; lines without offsets write none, so older archives keep their bytes and
-hash. H5 replay, `ModelData`, and a rotated `Assembly` instance (each half
-turns by `R d`) carry the offsets.
+2-D; lines without offsets write none. Each transform's `decl_params` row
+gains a `jnt_offset` field (`null` without offsets), so an archive with a
+transform changes bytes, but not its `model_hash` or replayed deck. H5
+replay (staged brackets included), `ModelData`, and a rotated `Assembly`
+instance (each half turns by `R d`) carry the offsets.
 
 Validated live on stock openseespy and the Ladruno fork against explicit
 offset nodes tied with `rigidLink beam`: static joint displacements agree to

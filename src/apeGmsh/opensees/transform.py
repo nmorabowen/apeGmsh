@@ -18,6 +18,13 @@ resolves per element (see :mod:`apeGmsh.opensees.joint_offset`). A 3-D
 ``Corotational`` refuses one: ``CorotCrdTransf3d`` zeroes the offsets
 with a warning ("rigid joint zones not implemented yet").
 
+Loads on an offset beam: a ``Plain.from_model`` line load (global,
+``beamUniform`` / ``line_load``) covers the full node-to-node length, as
+ETABS/CSI load a frame object: the share over each rigid end zone goes
+to its joint as a force plus its moment, the rest to the flexible span.
+``Plain.beam_uniform`` is OpenSees' own ``eleLoad -beamUniform`` and,
+like it, loads only the flexible element between the offset ends.
+
 In 3D, ``vecxz`` is required: a vector in the local x-z plane that
 fixes the section's strong axis. In 2D, ``vecxz`` is omitted and
 local axes are derived from the element's node order: the build
@@ -145,8 +152,11 @@ def _check_transform_args(
     flat: tuple[float, ...] = ()
     if jnt_offset is not None and not isinstance(jnt_offset, InsertionPoint):
         flat = flatten_jnt_offset(jnt_offset, type_name)
-    if type_name == "Corotational" and jnt_offset is not None and (
-            len(flat) == 6 or orientation is not None or vecxz is not None):
+    # Only a 3-component pair is visibly 3-D here: a 2-D model may carry
+    # vecxz=(0, 0, 1) (the bridge accepts global Z), so a vecxz or an
+    # orientation alone defers the 3-D refusal to the build, which knows
+    # ndm (``_check_jnt_offset``).
+    if type_name == "Corotational" and len(flat) == 6:
         raise ValueError(
             "Corotational: jnt_offset= is not supported in 3-D. OpenSees' "
             "CorotCrdTransf3d (stock and Ladruno) prints \"rigid joint zones "

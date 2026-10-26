@@ -7719,6 +7719,7 @@ class BuiltModel:
             load_nodes=primary_nodes,
             inferred_ndf=eff,
         )
+        end_zone_loads: list[tuple[int, tuple[float, ...]]] = []
         ele_load_cmds = resolve_ele_load_commands(
             p,
             self.fem,
@@ -7727,10 +7728,12 @@ class BuiltModel:
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             element_owner=element_owner,
             partition_rank=partition_rank,
+            nodal_loads=end_zone_loads,
         )
         if (not owned_loads and not owned_sps
                 and not fm_loads and not fm_sps
-                and not mt_loads and not ele_load_cmds):
+                and not mt_loads and not ele_load_cmds
+                and not end_zone_loads):
             return False
         emitter.pattern_open("Plain", tag, ts_tag)
         for load_rec in owned_loads:
@@ -7749,6 +7752,11 @@ class BuiltModel:
             emitter.load(node_id, *comps)
         for ele_args in ele_load_cmds:
             emitter.eleLoad(*ele_args)
+        # A line load's rigid end-zone share, from the element's owner rank
+        # (one rank per element, so each lands once).
+        for node, comps in end_zone_loads:
+            emitter.load(node, *fit_dof_vector(
+                comps, ndf_of(node), kind="end-zone line load", node=node))
         emitter.pattern_close()
         return True
 
@@ -7804,6 +7812,7 @@ class BuiltModel:
                 inferred_ndf=inferred_ndf,
             ):
                 return True
+            end_zone_loads: list[tuple[int, tuple[float, ...]]] = []
             if resolve_ele_load_commands(
                 p,
                 self.fem,
@@ -7812,7 +7821,8 @@ class BuiltModel:
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 element_owner=element_owner,
                 partition_rank=partition_rank,
-            ):
+                nodal_loads=end_zone_loads,
+            ) or end_zone_loads:
                 return True
         return False
 
