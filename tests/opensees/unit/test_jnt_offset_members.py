@@ -36,7 +36,7 @@ from tests.opensees.fixtures.fem_stub import (
 RULE = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
                       end_offset_i=0.3, end_offset_j=0.3)
 SHIFT_ONLY = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z")
-REFUSAL = r"run collinear through node \d+.*source curve.*#2551"
+REFUSAL = r"meet at node \d+ turning .* deg, under the 30 deg.*source curve.*#2551"
 
 
 def stub(coords: dict[int, tuple[float, float, float]],
@@ -164,6 +164,66 @@ def test_an_equal_transverse_shift_stays_on_every_element_of_a_run(rule: Any) ->
     got = element_offsets(rec)
     want = (0.0, 0.0, -0.3) * 2 if rule is SHIFT_ONLY else (0.0, 0.1, -0.3) * 2
     assert got[101] == got[102] == pytest.approx(want)
+
+
+def _chain(points: list[tuple[float, float, float]]) -> FEMStub:
+    """A chain of line elements 101.. through ``points`` (nodes 1..n)."""
+    coords = {k + 1: p for k, p in enumerate(points)}
+    conn = tuple((k + 1, k + 2) for k in range(len(points) - 1))
+    return stub(coords, {"M": (tuple(101 + k for k in range(len(conn))), conn)})
+
+
+def test_a_straight_member_with_rounded_coordinates_refuses() -> None:
+    """The reviewer's repro: a straight member along (1, 0.3)/sqrt(1.09),
+    3 elements of 1.7, coordinates rounded to the mm (an ETABS or DXF
+    import). Its nodes are off a line by far more than round-off, so an
+    exact-collinearity test let every element take end zones."""
+    import math
+    u = (1.0 / math.sqrt(1.09), 0.3 / math.sqrt(1.09))
+    pts = [(round(1.7 * k * u[0], 3), round(1.7 * k * u[1], 3), 3.0) for k in range(4)]
+    with pytest.raises(BridgeError, match=REFUSAL):
+        bridge(_chain(pts)).build().emit(RecordingEmitter())
+
+
+def test_a_faceted_arc_refuses() -> None:
+    """R = 50 m, 3 deg per element: one curved member, not 4 members."""
+    import math
+    pts = [(50.0 * math.cos(math.radians(3 * k)), 50.0 * math.sin(math.radians(3 * k)), 3.0)
+           for k in range(5)]
+    with pytest.raises(BridgeError, match=r"turning 3 deg, under the 30 deg"):
+        bridge(_chain(pts)).build().emit(RecordingEmitter())
+
+
+def test_a_20_deg_kink_refuses_naming_the_threshold() -> None:
+    import math
+    t = math.radians(20.0)
+    pts = [(0.0, 0.0, 3.0), (4.0, 0.0, 3.0), (4.0 + 4.0 * math.cos(t), 4.0 * math.sin(t), 3.0)]
+    with pytest.raises(BridgeError, match=r"node 2 turning 20 deg, under the 30 deg that marks a frame corner"):
+        bridge(_chain(pts)).build().emit(RecordingEmitter())
+
+
+def test_a_45_deg_knee_is_a_corner() -> None:
+    import math
+    t = math.radians(45.0)
+    pts = [(0.0, 0.0, 3.0), (4.0, 0.0, 3.0), (4.0 + 4.0 * math.cos(t), 4.0 * math.sin(t), 3.0)]
+    rec = RecordingEmitter()
+    bridge(_chain(pts)).build().emit(rec)
+    got = element_offsets(rec)
+    assert got[101] == pytest.approx((0.3, 0.0, -0.3, -0.3, 0.0, -0.3))
+    c = math.cos(t) * 0.3
+    assert got[102] == pytest.approx((c, c, -0.3, -c, -c, -0.3))
+
+
+def test_three_elements_at_a_node_each_end_there() -> None:
+    """A node where three of the transform's elements meet is a joint:
+    each element is its own member, collinear pair included."""
+    coords = {1: (0.0, 0.0, 3.0), 2: (4.0, 0.0, 3.0), 3: (8.0, 0.0, 3.0), 4: (4.0, 4.0, 3.0)}
+    fem = stub(coords, {"M": ((101, 102, 103), ((1, 2), (2, 3), (2, 4)))})
+    rec = RecordingEmitter()
+    bridge(fem).build().emit(rec)
+    got = element_offsets(rec)
+    assert got[101] == got[102] == pytest.approx((0.3, 0.0, -0.3, -0.3, 0.0, -0.3))
+    assert got[103] == pytest.approx((0.0, 0.3, -0.3, 0.0, -0.3, -0.3))
 
 
 def test_a_corner_chain_is_accepted_with_each_element_its_own_member() -> None:

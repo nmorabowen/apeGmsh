@@ -425,7 +425,8 @@ class InsertionPoint:
     the transform, with that element's joints and ``vecxz``, and emits
     one ``geomTransf`` per distinct ``(vecxz, offsets)`` (the ADR 0010
     fan-out). End lengths, axial joint offsets and unequal joint offsets
-    refuse on a collinear run of the transform's elements (a member
+    refuse where two of the transform's elements meet turning less than
+    30 deg (a member
     meshed into several elements looks like a girder of several members
     until elements carry their source curve, #2551); mesh each member as
     one element. Beams of one section running in different directions can

@@ -235,9 +235,10 @@ def element_jnt_offset(
 # elements, and so is a continuous girder of several members; without each
 # element's source curve the two cannot be told apart. So an offset
 # that is not the same pure transverse shift at both ends (an end length, an
-# axial component, unequal ends) refuses on any collinear run of the
-# transform's elements. One-element members, chains that turn a corner, and
-# an equal transverse shift on every element are unaffected.
+# axial component, unequal ends) refuses where two of the transform's
+# elements meet without a clear corner (MEMBER_CORNER_DEG). One-element
+# members, corners, nodes where three or more of its elements meet, and an
+# equal transverse shift on every element are unaffected.
 
 #: One element of a transform: ``(eid, node_i, node_j, p_i, p_j, vecxz)``.
 _ElementRow: TypeAlias = (
@@ -272,41 +273,59 @@ def _transverse_only(
             and abs(float(d_i @ axis)) / length <= tol)
 
 
+#: Below this turn between two elements at a node, they may be one member
+#: (a straight member meshed with rounded coordinates turns by far less than
+#: a degree; a faceted arc by its facet angle, a few degrees), so end
+#: offsets refuse there. A frame corner turns by far more (a knee, 45 deg
+#: or more), so it ends the member. 30 deg sits between the two.
+MEMBER_CORNER_DEG: float = 30.0
+
+
+def _turn_deg(a: "_ElementRow", b: "_ElementRow", node: int) -> float:
+    """The turn between elements ``a`` and ``b`` at their shared ``node``:
+    0 for a straight run, 90 for a right-angle corner."""
+    def away(r: "_ElementRow") -> np.ndarray:
+        far = r[4] - r[3] if r[1] == node else r[3] - r[4]
+        return np.asarray(far / np.linalg.norm(far), dtype=float)
+    cos = float(np.clip(away(a) @ away(b), -1.0, 1.0))
+    return 180.0 - float(np.degrees(np.arccos(cos)))
+
+
 def _refuse_ambiguous_members(
     transf: GeomTransf,
     rows: "list[_ElementRow]",
     jnt_of: "dict[int, tuple[float, ...]]",
 ) -> None:
-    """Refuse end-sensitive offsets on a collinear run of the transform's
-    elements: a meshed member and a continuous girder look alike there."""
+    """Refuse end-sensitive offsets where two of the transform's elements
+    meet without a clear corner: a meshed member (straight or a faceted
+    curve) and a girder of several members look alike there. A node where
+    three or more of them meet ends each one."""
     by_node: dict[int, list[int]] = {}
     for k, r in enumerate(rows):
         by_node.setdefault(r[1], []).append(k)
         by_node.setdefault(r[2], []).append(k)
     for node, ks in by_node.items():
-        for x, ka in enumerate(ks):
-            for kb in ks[x + 1:]:
-                a, b = rows[ka], rows[kb]
-                u = (a[4] - a[3]) / np.linalg.norm(a[4] - a[3])
-                v = (b[4] - b[3]) / np.linalg.norm(b[4] - b[3])
-                if float(np.linalg.norm(np.cross(u, v))) > VECXZ_TOL:
-                    continue   # a corner ends the member there
-                bad = [r for r in (a, b)
-                       if not _transverse_only(jnt_of[r[0]], r[3], r[4])]
-                if bad:
-                    raise BridgeError(
-                        f"geomTransf {type(transf).__name__}: jnt_offset with "
-                        "end lengths, an axial component or unequal end "
-                        f"offsets on elements {a[0]} and {b[0]}, which run "
-                        f"collinear through node {node}. Without each "
-                        "element's source curve apeGmsh cannot tell a member "
-                        "meshed into several elements from a continuous "
-                        "girder of several members, so it cannot put the "
-                        "offsets at the member's ends, as ETABS does "
-                        f"(member ends by curve: {MEMBER_CURVES_ISSUE}). Mesh "
-                        "each member as one element and give collinear "
-                        "members separate transforms, or use offsets that "
-                        "are the same transverse shift at both ends.")
+        if len(ks) != 2:
+            continue
+        a, b = rows[ks[0]], rows[ks[1]]
+        if all(_transverse_only(jnt_of[r[0]], r[3], r[4]) for r in (a, b)):
+            continue
+        turn = _turn_deg(a, b, node)
+        if turn >= MEMBER_CORNER_DEG:
+            continue   # a corner ends the member there
+        raise BridgeError(
+            f"geomTransf {type(transf).__name__}: jnt_offset with end "
+            "lengths, an axial component or unequal end offsets on elements "
+            f"{a[0]} and {b[0]}, which meet at node {node} turning "
+            f"{turn:.3g} deg, under the {MEMBER_CORNER_DEG:g} deg that marks "
+            "a frame corner. Without each element's source curve apeGmsh "
+            "cannot tell a member meshed into several elements (or a "
+            "faceted curve) from a girder of several members, so it cannot "
+            "put the offsets at the member's ends, as ETABS does (member "
+            f"ends by curve: {MEMBER_CURVES_ISSUE}). Mesh each member as one "
+            "element and give members that continue each other separate "
+            "transforms, or use offsets that are the same transverse shift "
+            "at both ends.")
 
 
 def _transform_rows(
