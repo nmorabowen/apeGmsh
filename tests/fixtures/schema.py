@@ -21,6 +21,7 @@ OPENSEES_LARGE_ARRAY_DATASETS_FROM = "2.34.0"  # the minor whose oversized param
 OPENSEES_EQUATION_CONSTRAINT_FROM = "2.35.0"  # the minor whose archives store every global equationConstraint line (K #2447); fixed history
 OPENSEES_BEFORE_EQUATION_CONSTRAINT = "2.34.0"  # the minor just below it, which stores none (K #2447); fixed history
 OPENSEES_TARGET_MODE_FROM = "2.36.0"  # the minor whose /opensees@target_mode keeps a pinned target (K #2375); fixed history
+OPENSEES_BEFORE_TARGET_MODE = "2.35.0"  # the minor just below it, which has no @target_mode (K #2375); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
 NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
