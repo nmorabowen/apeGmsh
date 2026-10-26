@@ -240,47 +240,92 @@ _MD_ARGS = [125.0, 0.05, 0.8, 1.25, 0.712, 0.019, 0.934, 0.7, 100.0, 0.01,
             7.05, 0.968, 1.1, 0.704, 3.5, 4.0, 600.0, 1.42]
 
 
+#: The child that runs one neighbour.  A subprocess, because the plastic
+#: leg of ``StressDensityModel`` on the stock Linux wheel (openseespylinux
+#: 3.8.0) ends in a Fortran ``STOP``, which is ``exit(0)``: run in the
+#: pytest process it ended the ``live-stock`` job mid-run with no summary
+#: and a green status (#2537).  The child prints ``BACKEND`` first and
+#: ``RESULT`` last, so a run that died in between is visible as such.
+_NEIGHBOUR_CHILD = r"""
+import json, sys
+from apeGmsh.opensees.emitter.live import get_backend_name, get_ops
+
+spec = json.loads(sys.argv[1])
+cls, args, amp, named = spec["cls"], spec["args"], spec["amp"], spec["named"]
+ops = get_ops()
+print("BACKEND", get_backend_name(), flush=True)
+ops.wipe()
+ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.nDMaterial("ManzariDafalias", 1, *spec["md_args"])  # the "sand" tag
+ops.nDMaterial(cls, 2, *args)
+ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0, "-values", 0.0, 1.0, 2.0)
+ops.pattern("Plain", 1, 1)
+for n, (x, y) in enumerate(spec["tri6"], 1):
+    ops.node(n, x, y)
+    ops.sp(n, 1, amp * (1e-2 * y - 2e-3 * x))
+    ops.sp(n, 2, amp * (-2e-3 * y))
+ops.element("tri6n", 1, 1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain", 2)
+ops.constraints("Penalty", 1.0e12, 1.0e12)
+ops.numberer("Plain")
+ops.system("FullGeneral")
+ops.test("NormUnbalance", 1e-8, 20, 0)
+ops.algorithm("Linear")
+ops.integrator("LoadControl", 0.05)
+ops.analysis("Static")
+code = int(ops.analyze(20))
+if named is not None:
+    # What s.update_parameter("materialState", 1.0, material=<tag named>)
+    # emits for an element of its targets.
+    ops.parameter(1)
+    ops.addToParameter(1, "element", 1, "materialState", named)
+    ops.updateParameter(1, 1.0)
+    ops.remove("parameter", 1)
+    print("FLIPPED", flush=True)
+code = code or int(ops.analyze(20))
+tau = float(ops.eleResponse(1, "stresses")[2])
+ops.wipe()
+print("RESULT", code, repr(tau), flush=True)
+"""
+
+#: What the stress-density Fortran (``SDM-UC.f``) writes before each of its
+#: ``STOP`` statements.  Only the plastic leg (stage 1) calls that Fortran.
+_SDM_STOP = "Stop in S-D model"
+
+
 def _run_neighbour(cls: str, args: "list[float]", amp: float, *,
-                   named: "int | None") -> "tuple[int, float]":
+                   named: "int | None") -> "tuple[str, str, int | None, float | None]":
     """One tri6n of ``cls`` (tag 2) in simple shear to t=1; then, when
     ``named`` is given, ``materialState 1`` on that element naming tag
-    ``named``; then on to t=2.  Returns (analyze code, the third component
-    of its first ``stresses`` row)."""
-    from apeGmsh.opensees.emitter.live import get_ops
+    ``named``; then on to t=2, in a child process.  Returns (the child's
+    backend, its output, the analyze code, the third component of the
+    first ``stresses`` row); the last two are ``None`` when the child
+    ended before its ``RESULT`` line."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
 
-    ops = get_ops()
-    ops.wipe()
-    try:
-        ops.model("basic", "-ndm", 2, "-ndf", 2)
-        ops.nDMaterial("ManzariDafalias", 1, *_MD_ARGS)  # the "sand" tag
-        ops.nDMaterial(cls, 2, *args)
-        ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0,
-                       "-values", 0.0, 1.0, 2.0)
-        ops.pattern("Plain", 1, 1)
-        for n, (x, y) in enumerate(_TRI6, 1):
-            ops.node(n, x, y)
-            ops.sp(n, 1, amp * (1e-2 * y - 2e-3 * x))
-            ops.sp(n, 2, amp * (-2e-3 * y))
-        ops.element("tri6n", 1, 1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain", 2)
-        ops.constraints("Penalty", 1.0e12, 1.0e12)
-        ops.numberer("Plain")
-        ops.system("FullGeneral")
-        ops.test("NormUnbalance", 1e-8, 20, 0)
-        ops.algorithm("Linear")
-        ops.integrator("LoadControl", 0.05)
-        ops.analysis("Static")
-        code = int(ops.analyze(20))
-        if named is not None:
-            # What s.update_parameter("materialState", 1.0, material=<tag
-            # named>) emits for an element of its targets.
-            ops.parameter(1)
-            ops.addToParameter(1, "element", 1, "materialState", named)
-            ops.updateParameter(1, 1.0)
-            ops.remove("parameter", 1)
-        code = code or int(ops.analyze(20))
-        return code, float(ops.eleResponse(1, "stresses")[2])
-    finally:
-        ops.wipe()
+    src = Path(__file__).resolve().parents[3] / "src"
+    env = {**os.environ, "LADRUNO_OPENSEES_QUIET": "1",
+           "PYTHONPATH": os.pathsep.join(
+               [str(src), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)}
+    spec = {"cls": cls, "args": args, "amp": amp, "named": named,
+            "md_args": _MD_ARGS, "tri6": _TRI6}
+    proc = subprocess.run(
+        [sys.executable, "-c", _NEIGHBOUR_CHILD, json.dumps(spec)],
+        capture_output=True, text=True, timeout=300, env=env,
+    )
+    out = f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    backend = [ln.split()[1] for ln in proc.stdout.splitlines()
+               if ln.startswith("BACKEND ")]
+    assert backend, f"the child never resolved a backend:\n{out}"
+    result = [ln.split() for ln in proc.stdout.splitlines()
+              if ln.startswith("RESULT ")]
+    if not result:
+        return backend[0], out, None, None
+    assert proc.returncode == 0, out
+    return backend[0], out, int(result[0][1]), float(result[0][2])
 
 
 @pytest.mark.live
@@ -290,13 +335,28 @@ def test_live_a_flip_naming_another_tag_switches_the_neighbour(
     cls: str, args: "list[float]", amp: float,
 ) -> None:
     """Stock and fork: ``materialState`` naming tag 1 switches the tag-2
-    neighbour, and the bridge refuses exactly that selection."""
+    neighbour, and the bridge refuses exactly that selection.
+
+    The stock Linux wheel cannot run ``StressDensityModel``'s plastic leg:
+    the model's own Fortran ``strcon`` is answered by LAPACK's ``strcon_``
+    ("Parameter 1 to routine STRCON was incorrect"), and the model then
+    ``STOP``s in ``cnjpnt``.  There the switch shows as the child reaching
+    that ``STOP`` after the flip, which the unflipped run never does."""
     ops, sand, _clay = _bridge()
     with pytest.raises(BridgeError, match="#2458"):
         _flip(ops, elements=[1, 3], material=sand)
-    code_n, tau_n = _run_neighbour(cls, args, amp, named=None)
-    code_s, tau_s = _run_neighbour(cls, args, amp, named=1)
-    assert (code_n, code_s) == (0, 0)
+    _b, out_n, code_n, tau_n = _run_neighbour(cls, args, amp, named=None)
+    backend, out_s, code_s, tau_s = _run_neighbour(cls, args, amp, named=1)
+    assert code_n == 0 and tau_n is not None, out_n
+    assert _SDM_STOP not in out_n, out_n
+    if code_s is None:
+        # Only the plastic leg calls the stress-density Fortran, so its STOP
+        # after the flip is the switch; nothing else may end the child early.
+        assert cls == "StressDensityModel" and backend == "stock-openseespy", out_s
+        assert "FLIPPED" in out_s and _SDM_STOP in out_s, out_s
+        return
+    assert tau_s is not None
+    assert code_s == 0, out_s
     assert abs(tau_s - tau_n) > 1e-2 * abs(tau_n)
     if cls == "DruckerPrager":
         # mElastFlag=1 is elastic: the plastic leg's capped stress
