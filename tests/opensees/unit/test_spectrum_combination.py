@@ -202,7 +202,7 @@ def test_spectrum_takes_a_callable_sa() -> None:
 
 
 def test_driver_refuses_declared_recorders() -> None:
-    """Every probe leg and return solve commits; a recorder would log three
+    """Every probe leg and return solve commits; a recorder would log four
     rows per mode that are not states of the structure."""
     ops = _bridge()
     ops.recorder.Node(file="roof.out", response="disp", nodes=(2,), dofs=(1,))

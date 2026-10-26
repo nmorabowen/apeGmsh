@@ -87,7 +87,10 @@ ROOF = _tag(N_STORY, 0)
 
 
 def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
-           ent_braces: bool = False) -> apeSees:
+           braces: str | None = None, gravity: float = 1.0) -> apeSees:
+    """The test frame; ``braces`` adds the X-brace in ``"ENT"``
+    (elastic-no-tension), ``"Elastic"`` or ``"Concrete01"``, and
+    ``gravity`` scales the gravity loads."""
     nodes = _NodesStub(
         ids=list(range(1, len(COORDS) + 1)),
         coords=[(x, y, 0.0) for x, y in COORDS],
@@ -100,7 +103,7 @@ def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
         "Beams": _ElementGroupView(ids=BEAM_IDS, connectivity=tuple(
             ELEMS[i - 1][:2] for i in BEAM_IDS)),
     }
-    if ent_braces:
+    if braces is not None:
         groups["Braces"] = _ElementGroupView(ids=BRACE_IDS,
                                              connectivity=BRACES)
     fem = FEMStub(nodes=nodes, elements=_ElementsStub(elem_pgs=groups))
@@ -111,15 +114,21 @@ def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
     ops.element.elasticBeamColumn(pg="Cols", transf=tc, A=A_COL, E=E, Iz=I_COL)
     ops.element.elasticBeamColumn(pg="Beams", transf=tb, A=A_BM, E=E,
                                   Iz=I_BM, mass=beam_mass)
-    if ent_braces:
-        # Elastic-no-tension: stiff in compression, slack in tension.
-        ent = ops.uniaxialMaterial.ENT(E=200e9)
-        ops.element.Truss(pg="Braces", A=2e-3, material=ent)
+    if braces is not None:
+        mat = {
+            # Elastic-no-tension: stiff in compression, slack in tension.
+            "ENT": lambda: ops.uniaxialMaterial.ENT(E=200e9),
+            "Elastic": lambda: ops.uniaxialMaterial.ElasticMaterial(E=200e9),
+            # Loads along its backbone, unloads on a stiffer branch.
+            "Concrete01": lambda: ops.uniaxialMaterial.Concrete01(
+                fpc=-30e6, epsc0=-0.0004, fpcu=-20e6, epsU=-0.004),
+        }[braces]()
+        ops.element.Truss(pg="Braces", A=2e-3, material=mat)
     ops.fix(pg="Base", dofs=(1, 1, 1))
     ops.mass(pg="Floor", values=(M_FLOOR, M_FLOOR, 0.0))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        p.load(pg="Floor", forces=(0.0, -2.0 * G_LOAD, 0.0))
-        p.load(pg="Mid", forces=(0.0, -2.0 * G_LOAD, 0.0))
+        p.load(pg="Floor", forces=(0.0, -2.0 * gravity * G_LOAD, 0.0))
+        p.load(pg="Mid", forces=(0.0, -2.0 * gravity * G_LOAD, 0.0))
     ops.constraints.Transformation()
     ops.numberer.RCM()
     ops.system.UmfPack()
@@ -234,13 +243,16 @@ def test_a_per_mode_and_cqc_meet_the_numpy_reference() -> None:
     res = _run()
     ref = _numpy_reference()
     np.testing.assert_allclose(res.omega, ref["omega"], rtol=1e-10)
+    # The probe moves the frame by 1e-8 of its extent about a gravity state
+    # ~1e3 times larger, so the central difference carries that much
+    # round-off: 3.5e-11 measured.
     for name in ("disp", "base", "cols"):
         got = res.modes(name)
-        assert _rel(got, ref[name]) < 1e-10, name
+        assert _rel(got, ref[name]) < 1e-9, name
         cqc = res.combine(name, rule="CQC", damping=XI)[0]
         want = combine_modes(ref[name], rule="CQC", omega=ref["omega"],
                              damping=XI)
-        assert _rel(cqc, want) < 1e-10, name
+        assert _rel(cqc, want) < 1e-9, name
     # The kernel itself against a hand loop.
     rho = cqc_correlation(ref["omega"], XI)
     r = ref["cols"][:, 0]
@@ -253,6 +265,11 @@ def test_a_per_mode_and_cqc_meet_the_numpy_reference() -> None:
 @pytest.mark.live
 @pytest.mark.parametrize("transf", ["Linear", "PDelta"])
 def test_c_per_mode_base_shear_is_effective_mass_times_sa(transf: str) -> None:
+    """Exact on a linear frame. On a PDelta frame the leg sits at the modal
+    displacement of the PDelta tangent, and the element forces there carry
+    the axial-force change across the gravity sway that the tangent omits,
+    so the support reactions miss ``M_eff Sa`` by that term (7.5e-7 here),
+    as ``responseSpectrumAnalysis -mode k`` does."""
     res = _run(transf)
     props = res.modal.modal
     meff = props.properties["partiMassMX"]
@@ -260,8 +277,9 @@ def test_c_per_mode_base_shear_is_effective_mass_times_sa(transf: str) -> None:
     base = res.modes("base")                     # (modes, 3 * n_base)
     shear = base[:, 0::3].sum(axis=1)
     want = -np.asarray(meff) * sa
+    rtol = 1e-9 if transf == "Linear" else 2e-6
     np.testing.assert_allclose(
-        shear, want, rtol=1e-9, atol=1e-12 * float(np.max(np.abs(want))))
+        shear, want, rtol=rtol, atol=rtol * float(np.max(np.abs(want))))
 
 
 @pytest.mark.live
@@ -365,9 +383,8 @@ def test_b_python_cqc_matches_the_commands_combine_linear() -> None:
 @pytest.mark.ladruno_fork
 def test_b_python_cqc_matches_the_commands_combine_pdelta() -> None:
     """On the preloaded PDelta domain the command combines
-    ``φ_k Γ_k Sa / λ_k`` with ``λ_k`` of the PDelta tangent; the Newton
-    solve uses the full linearisation of the element forces, which adds the
-    axial-force change across the gravity sway. The gap is that term."""
+    ``φ_k Γ_k Sa / λ_k`` with ``λ_k`` of the PDelta tangent; the probe legs
+    step on that tangent, so the two agree to round-off."""
     res = _run("PDelta")
     cqc = res.combine("disp", damping=XI)[0]
     ops = res.modal._live.ops
@@ -376,7 +393,7 @@ def test_b_python_cqc_matches_the_commands_combine_pdelta() -> None:
         "-combine", "CQC", "-damp", XI)
     nodes = [_tag(s, 0) for s in range(1, N_STORY + 1)]
     cmd = np.asarray([ops.nodeDisp(n, d) for n in nodes for d in (1, 2, 3)])
-    assert _rel(cqc, cmd) < 1e-5
+    assert _rel(cqc, cmd) < 1e-12
 
 
 @pytest.mark.live
@@ -427,31 +444,128 @@ def _modal_roof(res: Any, spec: DesignSpectrum) -> np.ndarray:
         for k in range(N_MODES)])
 
 
+ROOF_EX = {"roof": NodeDisp(nodes=[ROOF], dofs=(1, 2))}
+
+
 @pytest.mark.live
 def test_ent_braces_give_the_tangent_response_at_design_amplitude() -> None:
     """The X-brace is compressed by gravity, so the modes see both
     diagonals. At the design amplitude (``scale=9.81``) one diagonal would
-    go slack; a probe at that amplitude returns the secant, 7-82 % off per
+    go slack; a probe at that amplitude returns the secant, 8-96 % off per
     mode (the review's repro). The per-mode value must be the modal one."""
     spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
-    res = _frame(ent_braces=True).spectrum_after_gravity(
-        N_MODES, spectra=[spec],
-        extractors={"roof": NodeDisp(nodes=[ROOF], dofs=(1, 2))},
-        solver="-fullGenLapack")
+    res = _frame(braces="ENT").spectrum_after_gravity(
+        N_MODES, spectra=[spec], extractors=ROOF_EX, solver="-fullGenLapack")
     want = _modal_roof(res, spec)
     got = res.modes("roof")
     for k in range(N_MODES):
-        assert _rel(got[k], want[k]) < 1e-6, k
+        assert _rel(got[k], want[k]) < 1e-10, k
 
 
 @pytest.mark.live
-def test_a_member_that_changes_stiffness_at_the_reference_is_refused() -> None:
-    """Unloaded (``p_delta=False``), the no-tension braces sit at zero
-    strain: the modes see them slack, each probe leg compresses one. No
-    amplitude gives the modal response, so the driver refuses."""
+@pytest.mark.parametrize(("transf", "gravity"), [
+    ("PDelta", 2.0), ("PDelta", 8.0), ("Corotational", 3.0)])
+def test_elastic_p_delta_frames_give_the_modal_displacement(
+        transf: str, gravity: float) -> None:
+    """The PDelta transformation's tangent omits the axial-force change
+    across the gravity sway, so a Newton leg lands off ``a φ / λ`` by a
+    first-order gap that grows with the sway (1.2e-3 at twice the gravity,
+    5.8e-3 at eight times, the same at every probe size); the review's
+    repro refused these elastic frames. The legs step on the tangent the
+    modes came from, so the per-mode displacement is the modal one."""
     spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
-    with pytest.raises(RuntimeError, match="did not see the tangent"):
-        _frame(ent_braces=True).spectrum_after_gravity(
-            N_MODES, spectra=[spec],
-            extractors={"roof": NodeDisp(nodes=[ROOF], dofs=(1, 2))},
-            p_delta=False, solver="-fullGenLapack")
+    res = _frame(transf, braces="Elastic", gravity=gravity).spectrum_after_gravity(
+        N_MODES, spectra=[spec], extractors=ROOF_EX, solver="-fullGenLapack")
+    want = _modal_roof(res, spec)
+    got = res.modes("roof")
+    # Round-off grows as the probe shrinks against the gravity state;
+    # 1.3e-8 measured for the Corotational frame's third mode.
+    for k in range(N_MODES):
+        assert _rel(got[k], want[k]) < 1e-7, k
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(("braces", "p_delta"), [
+    ("ENT", False), ("Concrete01", True)])
+def test_a_member_that_changes_stiffness_at_the_reference_is_refused(
+        braces: str, p_delta: bool) -> None:
+    """Unloaded (``p_delta=False``), the no-tension braces sit at zero
+    strain: each probe leg compresses a different one. Concrete01 braces
+    compressed by gravity sit on their backbone: one leg loads along it,
+    the other unloads on the stiffer branch. Either way the two legs meet
+    different stiffnesses, and no amplitude gives a linear response."""
+    spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
+    with pytest.raises(RuntimeError, match="met different stiffnesses"):
+        _frame(braces=braces).spectrum_after_gravity(
+            N_MODES, spectra=[spec], extractors=ROOF_EX, p_delta=p_delta,
+            solver="-fullGenLapack")
+
+
+# -- a torsion mode about a centred mass node ---------------------------------
+
+_CORNERS = ((-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0))
+
+
+def _diaphragm(transf: str, dx: float) -> apeSees:
+    """Four columns, their tops tied by stiff links to one centre node that
+    carries the floor's translational and rotational mass (the review's
+    repro). Its pure-torsion mode barely moves the centre node."""
+    coords = ([(x, y, 0.0) for x, y in _CORNERS]
+              + [(x, y, 3.0) for x, y in _CORNERS] + [(dx, 0.0, 3.0)])
+    nodes = _NodesStub(ids=list(range(1, 10)), coords=coords,
+                       node_pgs={"Base": [1, 2, 3, 4], "Tops": [5, 6, 7, 8],
+                                 "Centre": [9]})
+    groups = {
+        "Cols": _ElementGroupView(ids=(1, 2, 3, 4), connectivity=tuple(
+            (i, i + 4) for i in range(1, 5))),
+        "Links": _ElementGroupView(ids=(5, 6, 7, 8), connectivity=tuple(
+            (9, i) for i in range(5, 9))),
+    }
+    fem = FEMStub(nodes=nodes, elements=_ElementsStub(elem_pgs=groups))
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    tc = getattr(ops.geomTransf, transf)(vecxz=(1.0, 0.0, 0.0))
+    tl = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+    ops.element.elasticBeamColumn(pg="Cols", transf=tc, A=0.25, E=30e9,
+                                  G=12e9, J=0.01, Iy=0.0052, Iz=0.0052)
+    ops.element.elasticBeamColumn(pg="Links", transf=tl, A=10.0, E=30e9,
+                                  G=12e9, J=10.0, Iy=10.0, Iz=10.0)
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    ops.mass(pg="Centre", values=(8e4, 8e4, 0.0, 0.0, 0.0, 8e4 * 6.0))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(pg="Tops", forces=(0.0, 0.0, -2e5, 0.0, 0.0, 0.0))
+    ops.constraints.Transformation()
+    ops.numberer.RCM()
+    ops.system.UmfPack()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=25)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.1)
+    ops.analysis.Static()
+    return ops
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("dx", [0.0, 1e-9])
+@pytest.mark.parametrize("transf", ["Linear", "PDelta"])
+def test_torsion_mode_at_a_centred_mass_node(transf: str, dx: float) -> None:
+    """The torsion mode's Γ is ~1e-12, not 0, and the centre node barely
+    translates in it; a probe scaled on that node's translation blew up
+    (rc -3). It is skipped as negligible, and the two sway modes are the
+    modal ones."""
+    spec = [DesignSpectrum((0.0, 2.0), (5.0, 5.0), direction=d)
+            for d in (1, 2)]
+    res = _diaphragm(transf, dx).spectrum_after_gravity(
+        3, spectra=spec, extractors={"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))},
+        solver="-fullGenLapack")
+    ops = res.modal._live.ops
+    props = res.modal.modal.properties
+    lam = np.asarray(res.modal.eigenvalues)
+    for d, comp in enumerate(("MX", "MY")):
+        gamma = np.asarray(props[f"partiFactor{comp}"])
+        got = res.modes("c", d)
+        for k in range(3):
+            want = gamma[k] * 5.0 / lam[k] * np.asarray(
+                ops.nodeEigenvector(9, k + 1))[[0, 1, 5]]
+            assert np.max(np.abs(got[k] - want)) <= 1e-9 * max(
+                float(np.max(np.abs(got))), 1e-300), (comp, k)
+    assert max(res.restore_drift) < 1e-9

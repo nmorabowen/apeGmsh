@@ -81,34 +81,59 @@ eigen solve uses.
 
 ### D4 — Per-mode responses come from a static modal-force solve on the preloaded domain (PR 2)
 
-For each mode `k` the driver applies the probe force `±a_k M φ_k` as a
-nodal-load pattern on the gravity domain, solves with the declared algorithm at
-`dλ = 0`, and evaluates the user's response extractors at `u_g + u_k` and
-`u_g - u_k`. The pattern is then removed and the domain solved back to the
-gravity equilibrium. The per-mode quantity is the central difference
-`(r⁺ - r⁻) / (2 a_k)` scaled by `Γ_kd Sa_d(T_k)` for each direction `d`: an
-increment about the gravity state, linear in the spectrum.
+For each mode `k` and each sign the driver applies the probe force
+`±a_k M φ_k` as a nodal-load pattern on the gravity domain, takes one `Linear`
+step at `dλ = 0` on the current tangent, and evaluates the user's response
+extractors at that committed state. The pattern is then removed and the domain
+solved back to the gravity equilibrium with the declared algorithm. The
+per-mode quantity is the central difference `(r⁺ - r⁻) / (2 a_k)` scaled by
+`Γ_kd Sa_d(T_k)` for each direction `d`: an increment about the gravity state,
+linear in the spectrum.
 
-The probe amplitude `a_k` does not depend on the spectrum: it moves the
-largest translation of a massed node by `1e-6` of the model's extent. A probe
-at the design amplitude would return the secant, not the tangent the modes
-were solved on, wherever a member changes stiffness between the gravity state
-and the design displacement; an elastic-no-tension X-brace, compressed by
-gravity and slack at the design drift, put the per-mode roof displacement 8 %,
-38 % and 96 % off in the review's repro. Because `K_t φ_k = λ_k M φ_k`, the
-probe moves the domain by `a_k φ_k / λ_k`; the driver checks that to `1e-3`
-relative and refuses a mode that misses it (a member whose stiffness changes
-at the reference state itself, such as a no-tension brace at zero strain,
-misses it by about `8e-2`). On a linear model the solve reproduces the
-command's modal displacement `φ_k Γ_k Sa / λ_k` to round-off (`1e-13`). On a
-PDelta model the two differ by about `6e-7` relative: the PDelta
-transformation's tangent omits the term from the change of axial force across
-the existing gravity sway, and the Newton solve uses the true linearization of
-the element forces.
+**The legs step on the eigen tangent.** The `Linear` step factors the tangent
+the modes were solved on, and `K_t φ_k = λ_k M φ_k`, so each leg moves the
+domain by exactly `± a_k φ_k / λ_k`: the state `responseSpectrumAnalysis -mode
+k` imposes, here about the gravity state instead of in place of it. The
+per-mode displacements are the modal ones to round-off on every element,
+PDelta included, and the Python CQC of the displacements meets the command's
+`-combine CQC` to `4e-14` on the PDelta frame. A Newton leg would not: the
+PDelta transformation's tangent omits the change of axial force across the
+existing gravity sway, so its equilibrium lands off `a_k φ_k / λ_k` by a
+first-order gap that does not shrink with the probe and grows with the sway
+(on the live frame with an elastic X-brace: `1.3e-6` in mode 1 and `1.2e-3` in
+mode 4 at twice the gravity, `5.8e-3` at eight times; `3e-10` with
+`Corotational` columns, whose tangent is consistent). The element forces and
+reactions at the leg are the elements' own at that displacement, so on a PDelta
+model the summed support reaction misses `M_eff Sa` by the same term (`7.5e-7`
+in mode 1 of the live PDelta frame), as the command's does.
 
-Every probe leg and return solve commits, so a declared recorder would log
-three rows per mode that are not states of the structure; a model with a
-declared recorder is refused.
+**The probe is small and spectrum-independent.** `a_k` moves the largest nodal
+translation by `1e-8` of the model's extent. A probe at the design amplitude
+would return the secant wherever a member changes stiffness between the
+gravity state and the design displacement: an elastic-no-tension X-brace,
+compressed by gravity and slack at the design drift, put the per-mode roof
+displacement 8 %, 38 % and 96 % off in the review's repro. A mode whose
+effective mass is below `1e-12` of the largest in every requested direction is
+skipped and left at zero (a pure-torsion mode about a centred mass node has
+`Γ ~ 1e-12` and almost no translation at that node).
+
+**The legs must meet the same stiffness.** The driver forms the second
+difference of every node's resisting force about the reference,
+`F⁺ + F⁻ - 2 F_ref`, against the first difference. For a smooth element it is
+second order and shrinks with the probe (on the live frames: `2e-8` PDelta,
+`2e-6` Corotational, round-off on Linear). Where a member's stiffness differs
+between the two legs it is first order and does not shrink, and above `1e-3` the
+mode is refused: no-tension braces at zero strain (`p_delta=False`) give `0.6`;
+`Concrete01` braces compressed by gravity give `5.5e-2`, because they sit on
+their backbone, so one leg loads along it and the other unloads on the stiffer
+branch. Any material that loads and unloads on different branches at the
+gravity state (concrete or steel models on their backbone, a gap, a yield
+point) is refused the same way: the response spectrum is linear about that
+state, and such a member has no single tangent there.
+
+Every probe leg and return solve commits, so a declared recorder would log four
+rows per mode that are not states of the structure; a model with a declared
+recorder is refused.
 
 `M` is the nodal mass (`nodeMass`). A model whose `modalProperties` total mass
 exceeds the nodal mass (element mass: `rho` in a section, `-mass` on a beam) is
@@ -178,8 +203,8 @@ response.
 - `modal_after_gravity` (PR 1) and the spectrum driver (PR 2) run on stock
   openseespy; nothing here is fork-only. `-combine` stays the fork's, used only
   as a cross-check of the Python combination.
-- The per-mode cost is three static solves per mode on the full model. The
-  tangent is refactorised for each solve.
+- The per-mode cost is four static solves per mode on the full model (two
+  `Linear` legs, two returns). The tangent is refactorised for each solve.
 - Accuracy is bounded by the declared convergence test: the gravity state is
   restored to that tolerance, not bit for bit, and the driver checks it.
 
