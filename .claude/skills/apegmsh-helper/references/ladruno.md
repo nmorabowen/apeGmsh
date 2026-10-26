@@ -179,7 +179,9 @@ those before relying on exact kwargs.
 J2 — no damage/regularization), `LadrunoConcrete3D` (:1290, plastic-damage
 concrete, `E`/`nu`/`fc`/`ft`/`Gf`/`Gc` + regularization + `-implex`),
 `LadrunoRCConcrete` / `LadrunoRCFiniteStrain` (:1807/:1833, RC plastic-damage
-+ MCFT), `LadrunoCohesiveHingeBiaxial` (:1861, `-pm` P-M coupling, `-implex`).
++ MCFT), `LadrunoCohesiveHingeBiaxial` (:1861, `-pm` steel P-M coupling or
+`pm_bal=(P0c, P0t, Pbal, Mbal_ratio)` → `-pmBal` asymmetric RC P-M envelope,
+`-implex`).
 These follow the ASDConcrete "apeGmsh owns the curve, always
 `-autoRegularization $lch_ref`" idiom.
 
@@ -310,19 +312,83 @@ name now warns `GaussColumnDroppedWarning` once per bucket — naming the
 bucket, the unmapped column labels, and the element class — instead of
 vanishing silently.
 
-**Beam-column elements** (`element/beam_column.py`, `ops.element.<Type>`):
-`LadrunoDispBeamColumn` (displacement-based + crack-band `lch`, optional
-`-nl` bowing strain, single-hinge `-hinge`/`-hingeY`/`-hingeBiaxial` or
-dual-end `-hingeI`/`-hingeJ`/`-hingeIJ`, `-hingeYI`/`-hingeYJ`/`-hingeYIJ`,
-`-hingeBiaxialI`/`-hingeBiaxialJ`/`-hingeBiaxialIJ` + `-hingeLoc xiI [xiJ]`,
-`-pm` P-M coupling, `-implex`), `LadrunoForceBeamColumn` (force-based +
-crack-band `lch`, `-subdivide maxSubLevels [subdivideFactor]`, `-shear`,
-and the same single/dual-end hinge + `-hingeLoc xiI [xiJ]` + `-pm` + `-implex`
-options), and `LadrunoIMKBeam` (concentrated-plasticity IMK with
-`ends="both"|"i"|"j"|"none"`, `-shear`, `-shearHinge`/`-shearHingeY`/`-shearHingeZ`
-— one shear hinge per axis, `-endZones dI dJ`, `-cMass`, `-pm`, `-implex`).
-All take `pg=` + `transf=` like any beam; `LadrunoCohesiveHinge` (`uniaxial.py`)
-also accepts `pm=` and `implex=`.
+**Beam-column elements & IMK hinges** (`element/beam_column.py`, `ops.element.<Type>`; `material/uniaxial.py`, `ops.uniaxialMaterial.<Type>`):
+`LadrunoDispBeamColumn` (tags `33013`/`33014`, displacement-based + crack-band `lch`, optional
+`-nl` bowing strain, `span_load: bool | None = None` → `-spanLoad`/`-noSpanLoad` [defaults to
+`spanLoadMode=0`; `span_load=True` activates the coupled $(\beta_P, \beta_Z)$ quartic span-load
+bubble `DR-1`], `axial_release: bool = False` → `-axialRelease` [releases basic axial force
+$N = 0$ by iterating $\varepsilon_0(x_i)$ at each IP and statically condensing the section axial
+stiffness `ks(idxMZ, idxP)*ks(idxP, idxMZ)/kPP` while preserving full fiber flexural behavior],
+single-hinge `-hinge`/`-hingeY`/`-hingeBiaxial` or dual-end `-hingeI`/`-hingeJ`/`-hingeIJ`,
+`-hingeYI`/`-hingeYJ`/`-hingeYIJ`, `-hingeBiaxialI`/`-hingeBiaxialJ`/`-hingeBiaxialIJ` +
+`-hingeLoc xiI [xiJ]`, `-pm` steel P-M coupling or `pm_bal=(P0c, P0t, Pbal, Mbal_ratio)` →
+`-pmBal` 4-parameter $C^1$ asymmetric RC balance-point P-M spline `DR-3`, `-implex`),
+`LadrunoForceBeamColumn` (tags `33024`/`33025`, force-based + crack-band `lch`,
+`-subdivide maxSubLevels [subdivideFactor]`, `-shear`, `span_load: bool | None = None` →
+`-spanLoad`/`-noSpanLoad` [fork defaults to `spanLoadMode=1` so distributed/partial-span/thermal
+element loads enter interior Gauss-point fiber sections; pass `span_load=False` for fixed-end
+nodal reactions only, `DR-1`], `axial_release: bool = False` → `-axialRelease` [enforces
+basic axial force $N = 0$ inside the flexibility state determination while preserving fiber
+flexure], and the same single/dual-end hinge + `-hingeLoc xiI [xiJ]` + `-pm` / `pm_bal=` +
+`-implex` options), and `LadrunoIMKBeam` (tags `33003` 3D / `33004` 2D, concentrated-plasticity
+IMK with `ends="both"|"i"|"j"|"none"`, `-shear`, `-shearHinge`/`-shearHingeY`/`-shearHingeZ` —
+one shear hinge per axis, `-endZones dI dJ`, `-cMass`, `-pm` or `pm_bal=(P0c, P0t, Pbal, Mbal_ratio)`,
+`-implex`). All take `pg=` + `transf=` like any beam.
+`LadrunoCohesiveHinge` (`uniaxial.py`, tag `33003`) and `LadrunoCohesiveHingeBiaxial` (`nd.py`,
+tag `33004`) also accept `pm=`, `pm_bal=(P0c, P0t, Pbal, Mbal_ratio)` (mutually exclusive with
+`pm`), and `implex=`.
+Concentrated IMK hinge uniaxials (`ops.uniaxialMaterial.Bilin` and
+`ops.uniaxialMaterial.ModIMKPeakOriented`) are first-class primitives (with
+`implex=True` → `-implex` on the Ladruno fork and H5 replay registration) and
+expose unit-safe factory classmethods:
+- `Bilin.from_lignos_ratios(Ke, AsPos=None, My_pos=..., Thetap_pos=..., Thetapc_pos=..., Thetau_pos=..., LamdaS_ratio=..., *, mc_my_ratio_pos=None, apply_series_core_correction=False, K_core=None, ..., nFactor=None, implex=False)` converts Lignos & Krawinkler (2011) dimensionless $\Lambda_S = E_t/(M_y \theta_p)$ to OpenSees `Bilin.cpp`'s absolute rotation capacity `LamdaS = LamdaS_ratio * Thetap_pos` [rad], and when `apply_series_core_correction=True` (with `K_core = 6*(n+1)/n * EI / L`), converts member-level plastic rotations to isolated hinge parameters $\theta_{p,\text{hinge}} = \theta_{p,\text{member}} - (M_c - M_y)/K_{\text{core}}$ and $\theta_{pc,\text{hinge}} = \theta_{pc,\text{member}} + M_c/K_{\text{core}}$ (`G7-F03-4`).
+- `ModIMKPeakOriented.from_haselton_gamma(Ke, EI_eff, L_member, My_pos, Mc_My_pos, thetaPpos, thetaPCpos, gamma_haselton, *, ..., nFactor=0.0, implex=False)` converts Haselton / PEER 2007/103 $\gamma = E_t/(M_y \theta_{y,\text{member}})$ to `Ls = gamma_haselton * theta_y_member` [rad] (`Enrgts = Ls * My_pos` in `ModIMKPeakOriented.cpp`, with $\theta_{y,\text{member}} = M_y L / (6 EI_{\text{eff}})$) and scales `alfaPos = (Mc_My_pos - 1.0) * (My_pos / Ke) / thetaPpos` against the **hinge** yield rotation `My_pos / Ke` (`FB-5`).
+
+### 10 Validated Frame & Hinge Modeling Rules (`executive_validation_summary.md` §4)
+
+1. **Concentrated Hinges on `LadrunoIMKBeam` (Lignos Steel vs. Haselton RC):**
+   - Always use `Bilin.from_lignos_ratios(...)` for steel W-sections (where $\Lambda = \Lambda_{\text{ratio}} \cdot \theta_p$ [rad]) and `ModIMKPeakOriented.from_haselton_gamma(...)` for RC members (where $\Lambda = \gamma \cdot \theta_{y,\text{member}}$ [rad] with $\theta_{y,\text{member}} = M_y L / (6 EI_{\text{eff}})$, and `alfaPos = (Mc/My - 1) * (My_pos / Ke) / thetaPpos`, `FB-5`).
+   - When using a series-spring stiffness factor $n = 10$ ($K_e = 60 EI_{\text{eff}} / L$ or $(n+1)\frac{6EI}{L} = 66\frac{EI}{L}$ with interior beam $EI$ scaled by $\frac{n+1}{n} = 1.10$ and `nFactor=0.0` in the uniaxial hinge), pass `apply_series_core_correction=True` and `K_core = 6 * (n + 1) / n * EI / L` so member-level plastic rotations are converted to isolated hinge parameters: $\theta_{p,\text{hinge}} = \theta_{p,\text{member}} - (M_c - M_y)/K_{\text{core}}$ and $\theta_{pc,\text{hinge}} = \theta_{pc,\text{member}} + M_c/K_{\text{core}}$ (`G7-F03-4`).
+2. **Rigid End Offsets Under Gravity Span Loads (`FB-3`):**
+   - On `LadrunoIMKBeam`, pass `end_zones=(d_i, d_j)` (`-endZones dI dJ`). Fixed-end moments ($-w L_c^2 / 12$) and rigid-arm shear transfers are integrated over the clear span $L_c = L - d_I - d_J$ automatically (`FB-3`).
+3. **Span-Loaded Displacement-Based Beams (`DR-1`):**
+   - Always set `span_load=True` (`-spanLoad`) on `LadrunoDispBeamColumn` when distributed gravity loads (`beam_uniform`), partial-span loads, or thermal loads act on coarse 1- or 2-element spans, activating the coupled $(\beta_P, \beta_Z)$ quartic span-load bubble (`DR-1`). (`LadrunoForceBeamColumn` defaults to `spanLoadMode=1`; pass `span_load=False` / `-noSpanLoad` for fixed-end nodal reactions only.) Note that 2D `eleLoad -type -beamPoint` takes only transverse $P_y$, location $x/L$, and optional axial $P_x$ (no concentrated mid-span moment $M_z$; split the member at the load point instead).
+4. **Tier-2 Cohesive Hinges on `LadrunoDispBeamColumn` / `LadrunoForceBeamColumn` (`FB-1`, `FB-2`, `DR-2`):**
+   - Always specify explicit end hinges `hinge_i=...` / `hinge_j=...` (`-hingeI` / `-hingeJ`) rather than a single `hinge=...` without `hinge_loc`: legacy single `-hinge` uses `dualHingeMode = 0` (constant mode $G = -1/L$, projecting the element-average moment $VL/2$ and overpredicting 1-element cantilever yield by $2\times$, `FB-2`).
+   - When combining a softening fiber section with a Tier-2 embedded cohesive hinge (`33003`/`33004`), enforce the **Double-Localization Guard** (`DR-2`): $\eta = \frac{M_c \cdot f_{\text{pm}}(N)}{M_{\text{peak,fib}}(N)} \le 0.90$, keeping fiber Gauss points strictly pre-peak while post-peak softening localizes in the fracture-energy-calibrated cohesive hinge ($G_f$).
+5. **RC Column $P\text{--}M$ Interaction (`DR-3`):**
+   - For steel columns, use symmetric AISC H1-1 `pm=(P_0, alpha)` (`-pm P0 alpha`).
+   - For RC columns below/near the balanced point $P_{\text{bal}}$, use the 4-parameter $C^1$ Hermite spline `pm_bal=(P_0c, P_0t, P_bal, M_bal_ratio)` (`-pmBal P0c P0t Pbal Mbal_ratio`, `DR-3`) on `LadrunoIMKBeam`, `LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `LadrunoCohesiveHinge`, and `LadrunoCohesiveHingeBiaxial`, capturing compression-induced flexural enhancement up to $M_{\text{bal}} = \mu_{\text{bal}} M_0$ at $P = -P_{\text{bal}}$.
+6. **RC Fiber Beams Under Rigid Diaphragm / Axial Restraint (`-axialRelease`):**
+   - When modeling T-beams or floor beams with `LadrunoForceBeamColumn` or `LadrunoDispBeamColumn` inside a diaphragm-constrained frame (`equalDOF` / `rigidDiaphragm`) where artificial neutral-axis-shift axial restraint is undesired, pass `axial_release=True` (`-axialRelease`) to release basic axial force ($N = 0$) while preserving full fiber flexural behavior ($M_z, M_y$).
+7. **2D Slab-to-Beam Load Transfer & Span Diagrams:**
+   - Use `ops.element.LadrunoMembrane(..., method="tributary" | "oneway" | "fea_poisson" | "fea_plate")` (`33022`) to distribute floor pressures onto supporting frame elements as exact sub-segment trapezoidal `Beam3dPartialUniformLoad` objects, and call `reconstruct_beam_span_diagrams(res, step=-1)` to recover exact piecewise-cubic $V(x)$ and $M(x)$ span diagrams.
+8. **Rayleigh Damping on Nonlinear Hinges:**
+   - Never apply initial-stiffness Rayleigh damping ($\beta K_0$) to models with penalty/concentrated hinges (causes $11\times$ artificial viscous force spikes upon yielding). Always use committed tangent stiffness damping `ops.rayleigh(alphaM, 0.0, 0.0, betaKc)` (`stiffness="committed"`). `LadrunoIMKBeam` and `LadrunoForceBeamColumn` call `Element::commitState()` so `betaKc` updates at every committed step.
+9. **Rebar Buckling & Menegotto-Pinto Calibration (`FB-6`, `FB-7`, `FB-9`):**
+   - Use `calibrate_dhakal_maekawa_buckling(fy, Es, Fu, eps_sh, eps_u, L_s, d_b)` for `LadrunoRebarBuckling` (`33001`, where `FB-7` fixed intra-step Newton `TmaxTenStrain` trial-anchor drift and `FB-9` notes the retained `BR_RESTRAIGHTEN` tensile overshoot at $L_{\text{eff}}/d_b \ge 10$), and set `Hiso=0.0` in `LadrunoUniaxialJ2` (`33000`, where `FB-6` wired `ops_TheActiveElement->getCharacteristicLength()`) when matching pure kinematic hardening (`Steel02`).
+10. **IMPL-EX & OpenMP Scaling (`FB-4`, `FB-10`, `FB-11`, `WP-192`):**
+    - Enable `implex=True` (`-implex`) on `LadrunoIMKBeam`, `LadrunoForceBeamColumn`, `LadrunoDispBeamColumn`, `LadrunoCohesiveHinge*`, `Bilin`, and `ModIMKPeakOriented` during non-smooth multi-story pushover or IDA collapse runs to guarantee 1-iteration step completion (`FB-4` fixed the OpenSeesPy `OPS_Bilin` numeric `nFactor` `SIGSEGV`; `FB-10` auto-disables inner `matImplex` when element-level `useImplex` is active; `FB-11` restored exact $\mathbf{K}_{c,0}$ tangent symmetry on uniaxial `LadrunoIMKBeam -implex`). Keep $\Delta t$ uniform ($\Delta t \le T_1/200$ in dynamics).
+    - Enable `ops.ladrunoThreads(n)` (`WP-192`) on large 3D fiber frames ($\ge 50$ elements) for up to $1.62\times$ element state-determination speedup.
+
+### Canonical `FB-1`–`FB-11` & `DR-1`–`DR-3` Ledger (`executive_validation_summary.md` §3 & `opus_review_report.md` §2/§9)
+
+| ID | Component | Bug / Design Limitation & Resolution |
+|---|---|---|
+| **`FB-1`** | `LadrunoDispBeamColumn` & `LadrunoForceBeamColumn` (`2d`/`3d`) | **Interior `-hingeLoc` kinematically admissible projection:** Fixed sign error $\beta_k = +(1-\xi_k) \to -(1-\xi_k)$ in $\mathbf{W}_k = (-(1-\xi_k), +\xi_k)$ (`computeHingeWeight2d`), which previously gave $M_{\text{proj}}(0.5) = 0$ under uniform bending. |
+| **`FB-2`** | `LadrunoDispBeamColumn2d/3d` | **Single `-hinge` vs. explicit `-hingeI`/`-hingeJ` (`dualHingeMode`):** Legacy single `-hinge $tag` without `-hingeLoc` uses `dualHingeMode = 0` ($G = -1/L$, projecting average moment $VL/2$ and overpredicting 1-element cantilever yield by $2\times$). Use explicit `-hingeI`/`-hingeJ` (`hinge_i=`/`hinge_j=`) to activate `dualHingeMode = 1` at the endpoint ($M(0) = M_c$). |
+| **`FB-3`** | `LadrunoIMKBeam2d/3d` (`LadrunoIMKHinge.h`) | **Simultaneous `-endZones` + `-beamUniform` equilibrium:** `ladrunoIMKClearSpanBeamUniformReactions2d/3d` integrates fixed-end moments ($-w L_c^2/12$) over the clear span $L_c = L - d_I - d_J$ and transfers clear-span shear across rigid offsets $d_I, d_J$, eliminating the pre-fix $(L/L_c)^2$ magnification. |
+| **`FB-4`** | `Bilin.cpp:90-91` (`OPS_Bilin`) | **OpenSeesPy numeric `nFactor` null-pointer dereference (`SIGSEGV`):** Added `if (opt != 0 && strcmp(opt, "-implex") == 0)` guard and `OPS_GetDoubleInput` fallback when the 24th argument is a numeric `nFactor` in Python. |
+| **`FB-5`** | `ModIMKPeakOriented.cpp` (`:581, 616, 1084, 1117`) | **Capping deterioration guard & Haselton $\Lambda$ unit conversion:** Fixed inverted guard `if (Enrgtd == 0.0 && Enrgts != 0.0)` $\to$ `if (Enrgtd != 0.0 && Enrgts != 0.0)` and provided `ModIMKPeakOriented.from_haselton_gamma(...)` so $\Lambda = \gamma \cdot \theta_{y,\text{member}}$ [rad] and `alfaPos` scales by hinge $\theta_{y,\text{hinge}} = M_y/K_e$. |
+| **`FB-6`** | `LadrunoDispBeamColumn` & `LadrunoForceBeamColumn` (`2d`/`3d`), `LadrunoUniaxialJ2` | **Consistent $\partial M_{\text{coh}}/\partial N$ tangent column & `LadrunoUniaxialJ2` `-lch`:** Assembled `getPMDerivative()` into basic axial column 0 of the condensed tangent matrix (matching `LadrunoIMKBeam`) and wired `ops_TheActiveElement->getCharacteristicLength()` into `LadrunoUniaxialJ2` (`33000`). |
+| **`FB-7`** | `LadrunoRebarBuckling.cpp` (`33001`) | **Intra-step Newton trial-anchor leak in `e_cross_live`:** `copyCommittedToTrial()` now resets `TmaxTenStrain = CmaxTenStrain` at the start of every `setTrialStrain()`, eliminating non-convergent Newton steps from polluting the tensile unloading anchor. |
+| **`FB-8`** | `OPS_LadrunoForceBeamColumn` & `OPS_LadrunoDispBeamColumn` | **OpenSeesPy numeric `-lch` parser:** Updated `-lch` parsing to try `OPS_GetDoubleInput` first and fall back to `OPS_GetString` (`"ip"`, `"element"`, or numeric strings), fixing silent rejection of float `-lch` in OpenSeesPy. |
+| **`FB-9`** | `LadrunoRebarBuckling.cpp` (`restraightenBranch`) | **Tensile overshoot in `BR_RESTRAIGHTEN` (retained by design, ADR 14 §9):** During cyclic re-straightening from deep compressive buckling at high slenderness ($L_{\text{eff}}/d_b \ge 10$), `Tstress = sBare + g_rev` adds $+g_{\text{rev}}$ onto $+f_y$; cross-check high-slenderness cyclic reversals against `Steel02` / `LadrunoUniaxialJ2`. |
+| **`FB-10`** | `LadrunoIMKHinge.h` (`ladrunoIMKSolveAxis`, `ladrunoIMKSolveBiaxial`) | **Dual-flag `-implex` silent deterioration loss:** When element-level `useImplex == true`, `setImplex(false)` is automatically called on the element's private hinge clones so element-level plastic-rotation extrapolation $\Delta\theta_p^{\text{ex}} = (\Delta t_n/\Delta t_{n-1})\Delta\theta_{p,n-1}$ is never bypassed by `matImplex`. |
+| **`FB-11`** | `LadrunoIMKHinge.h` (`ladrunoIMKSolveAxis`) | **Uniaxial vs. biaxial `LadrunoIMKBeam -implex` tangent asymmetry:** Added `ladrunoIMKInitAxis(EI_over_L, phi, dI, dJ, L, Kb)` before returning in the uniaxial `useImplex` branch (matching `ladrunoIMKSolveBiaxial`), restoring the exact initial elastic core tangent $\mathbf{K}_{c,0} = \partial\mathbf{q}_{\text{ex}}/\partial\mathbf{v}_c$. |
+| **`DR-1`** | `LadrunoDispBeamColumn` & `LadrunoForceBeamColumn` (`2d`/`3d`) | **Enhancement A (`-spanLoad` / `-noSpanLoad`):** Coupled $(\beta_P, \beta_Z)$ quartic span-load bubble in `LadrunoDispBeamColumn -spanLoad` (including composition with Tier-2 `dualHingeMode` via $q_0^{\text{eff}} = q_0 + q_0^{\text{part}}$) and `LadrunoForceBeamColumn -spanLoad` (default `1`) / `-noSpanLoad` (`0`). |
+| **`DR-2`** | `LadrunoDispBeamColumn` & `LadrunoForceBeamColumn` + Tier-2 hinge (`33003`/`33004`) | **Double-localization guard:** When pairing a softening fiber section with an embedded cohesive hinge, enforce $\eta = M_c f_{\text{pm}}(N) / M_{\text{peak,fib}}(N) \le 0.90$ so fiber Gauss points remain pre-peak while softening localizes in the cohesive hinge. |
+| **`DR-3`** | `LadrunoIMKHinge.h` (`ladrunoIMKScalePMBal`), `33003`/`33004`/`33013`/`33014`/`33024`/`33025` | **Enhancement B (`-pmBal P0c P0t Pbal Mbal_ratio`):** 4-parameter $C^1$ Hermite spline for asymmetric RC column $P\text{--}M$ interaction: linear tension decay $1 - P/P_{0t}$ ($P \ge 0$), quadratic compression rise $1 + (\mu_{\text{bal}}-1)(1 - u^2)$ with $u = (P + P_{\text{bal}})/P_{\text{bal}}$ ($-P_{\text{bal}} \le P < 0$), and compression cap decay $\mu_{\text{bal}}(1 - u^2)$ with $u = (P + P_{\text{bal}})/(P_{0c} - P_{\text{bal}})$ ($P < -P_{\text{bal}}$), clamped to $[0.05, 3.0]$. |
 
 **`LadrunoMembrane` (slab tributary load distribution & in-plane membrane, tag 33022, WP-098)** (`element/shell.py`, `ops.element.LadrunoMembrane`):
 Distributes a uniform surface pressure or self-weight onto supporting 1-D frame elements (`frames=`, emitting sub-segment trapezoidal `Beam3dPartialUniformLoad` objects internally) and/or point supports (`support_nodes=`), with optional in-plane CST membrane stiffness (`section=`, `mat=` + `thickness=`, or `E=`/`nu=`/`thickness=`). Accepts either a 2-D surface `pg=` (automatically extracting the CCW outer boundary node loop and CW interior hole loops from the mesh) or an explicit `nodes=` boundary loop + `holes=`.

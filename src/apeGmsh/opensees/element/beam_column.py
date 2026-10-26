@@ -783,6 +783,68 @@ def _pm_args(pm: float | tuple[float, float] | None) -> list[float | str]:
     return ["-pm", float(pm)]
 
 
+def _check_optional_pm_bal(
+    type_name: str,
+    pm_bal: tuple[float, float, float, float] | None,
+    pm: float | tuple[float, float] | None = None,
+) -> None:
+    if pm_bal is None:
+        return
+    if pm is not None:
+        raise ValueError(
+            f"{type_name}: pm and pm_bal are mutually exclusive."
+        )
+    if not isinstance(pm_bal, tuple) or len(pm_bal) != 4:
+        raise ValueError(
+            f"{type_name}: pm_bal must be a 4-tuple "
+            f"(P0c, P0t, Pbal, Mbal_ratio), got {pm_bal!r}."
+        )
+    for val in pm_bal:
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not (val == val)
+            or val in (float("inf"), float("-inf"))
+        ):
+            raise ValueError(
+                f"{type_name}: pm_bal values must be finite numbers, "
+                f"got {pm_bal!r}."
+            )
+    p0c, p0t, pbal, mbal_ratio = pm_bal
+    if not (p0c > 0):
+        raise ValueError(
+            f"{type_name}: pm_bal P0c must be > 0, got {p0c!r}."
+        )
+    if not (p0t > 0):
+        raise ValueError(
+            f"{type_name}: pm_bal P0t must be > 0, got {p0t!r}."
+        )
+    if not (0.0 < pbal < p0c):
+        raise ValueError(
+            f"{type_name}: pm_bal Pbal must satisfy 0 < Pbal < P0c, "
+            f"got Pbal={pbal!r}, P0c={p0c!r}."
+        )
+    if not (mbal_ratio >= 1.0):
+        raise ValueError(
+            f"{type_name}: pm_bal Mbal_ratio must be >= 1.0, "
+            f"got {mbal_ratio!r}."
+        )
+
+
+def _pm_bal_args(
+    pm_bal: tuple[float, float, float, float] | None,
+) -> list[float | str]:
+    if pm_bal is None:
+        return []
+    return [
+        "-pmBal",
+        float(pm_bal[0]),
+        float(pm_bal[1]),
+        float(pm_bal[2]),
+        float(pm_bal[3]),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # LadrunoDispBeamColumn — disp-based beam-column with fork regularization +
 # embedded cohesive hinges (Ladruno fork).
@@ -797,26 +859,28 @@ class LadrunoDispBeamColumn(Element):
 
         element LadrunoDispBeamColumn tag iNode jNode transfTag integrationTag \
             [-mass m] [-cMass] [-damp dampTag] [-lch ip|element|<value>] \
-            [-nl] [-spanLoad | -noSpanLoad] \
+            [-nl] [-spanLoad | -noSpanLoad] [-axialRelease] \
             [-hinge matTag] [-hingeI matTagI] [-hingeJ matTagJ] \
             [-hingeIJ matTagI [matTagJ]] \
             [-hingeY matTag] [-hingeYI matTagYI] [-hingeYJ matTagYJ] \
             [-hingeYIJ matTagYI [matTagYJ]] \
             [-hingeBiaxial ndMatTag] [-hingeBiaxialI ndMatTagI] \
             [-hingeBiaxialJ ndMatTagJ] [-hingeBiaxialIJ ndMatTagI [ndMatTagJ]] \
-            [-hingeLoc xiI [xiJ]] [-implex] [-pm P0 [alpha]]
+            [-hingeLoc xiI [xiJ]] [-implex] [-pm P0 [alpha]] \
+            [-pmBal P0c P0t Pbal Mbal_ratio]
 
     A displacement-based distributed-plasticity beam-column (the
     :class:`dispBeamColumn` shape: a :class:`BeamIntegration` rule places the
-    integration points and composes the sections) extended with the fork's
+    integration points and composing sections) extended with the fork's
     Tier-1 per-IP crack-band regularization (``-lch``), the optional ``-nl``
     bowing strain, exact span-load curvature recovery + discrete-orthogonalized
     quartic bubble enhancement (``-spanLoad`` default; ``-noSpanLoad`` for
-    classic cubic Hermite interpolation), and the Tier-2 embedded
+    classic cubic Hermite interpolation), axial-moment coupling release for RC
+    floor beams (``-axialRelease``), and the Tier-2 embedded
     strong-discontinuity rotation hinges (single-hinge ``-hinge`` / ``-hingeY`` /
     ``-hingeBiaxial`` or dual-end ``-hingeI`` / ``-hingeJ`` / ``-hingeIJ`` /
-    ``-hingeY*`` / ``-hingeBiaxial*`` with ``-hingeLoc``, ``-pm``, and
-    ``-implex``).
+    ``-hingeY*`` / ``-hingeBiaxial*`` with ``-hingeLoc``, ``-pm``, ``-pmBal``,
+    and ``-implex``).
 
     .. note::
        Fork-only. Emission produces a deck line on any build; the element is
@@ -842,9 +906,9 @@ class LadrunoDispBeamColumn(Element):
         If ``True``, append ``-nl`` (½θ² bowing strain — ½(θy²+θz²) in 3D).
         Mutually exclusive with any hinge.
     span_load
-        If ``True`` (default), use exact fixed-end internal strain +
-        discrete-orthogonalized quartic bubble enhancement under member loads
-        (C++ default). If ``False``, append ``-noSpanLoad`` (classic cubic
+        If ``None`` (default), omit the flag and rely on the C++ default
+        (span-load enhancement enabled). If ``True``, explicitly emit
+        ``-spanLoad``. If ``False``, emit ``-noSpanLoad`` (classic cubic
         Hermite interpolation).
     hinge
         Single-hinge strong-axis (Mz) embedded cohesive rotation hinge — a
@@ -874,8 +938,19 @@ class LadrunoDispBeamColumn(Element):
         Normalized hinge location(s) in ``[0, 1]`` (``-hingeLoc xiI
         [xiJ]``). Requires at least one hinge (single or dual-end).
     pm
-        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
-        (``-pm P0 [alpha]``, ``P0 > 0``).
+        Optional symmetric parabolic axial-moment interaction ``P0`` or
+        ``(P0, alpha)`` (``-pm P0 [alpha]``, ``P0 > 0``). Mutually exclusive
+        with ``pm_bal``.
+    pm_bal
+        Optional asymmetric RC balanced-point axial-moment interaction
+        4-tuple ``(P0c, P0t, Pbal, Mbal_ratio)`` (``-pmBal P0c P0t Pbal
+        Mbal_ratio``, with ``P0c > 0``, ``P0t > 0``, ``0 < Pbal < P0c``, and
+        ``Mbal_ratio >= 1.0``). Mutually exclusive with ``pm``.
+    axial_release
+        If ``True``, append ``-axialRelease`` to release basic axial force
+        (:math:`N = 0`, solving for the neutral-axis strain :math:`\varepsilon_0(x_i)`
+        at each IP and statically condensing the section axial-flexural coupling,
+        eliminating spurious frame axial-elongation restraint in RC beams).
     implex
         If ``True``, append ``-implex`` for element-level IMPLEX hinge
         extrapolation.
@@ -888,7 +963,7 @@ class LadrunoDispBeamColumn(Element):
     c_mass: bool = False
     lch: str | float = "ip"
     nl: bool = False
-    span_load: bool = True
+    span_load: bool | None = None
     hinge: UniaxialMaterial | None = None
     hinge_i: UniaxialMaterial | None = None
     hinge_j: UniaxialMaterial | None = None
@@ -903,6 +978,8 @@ class LadrunoDispBeamColumn(Element):
     hinge_biaxial_ij: NDMaterial | tuple[NDMaterial, NDMaterial] | None = None
     hinge_loc: float | tuple[float, float] | None = None
     pm: float | tuple[float, float] | None = None
+    pm_bal: tuple[float, float, float, float] | None = None
+    axial_release: bool = False
     implex: bool = False
     damp: Damping | None = None
 
@@ -910,6 +987,15 @@ class LadrunoDispBeamColumn(Element):
         if not self.pg:
             raise ValueError("LadrunoDispBeamColumn: pg must be a non-empty name.")
         _check_optional_mass("LadrunoDispBeamColumn", self.mass)
+
+        if self.span_load is not None and not isinstance(self.span_load, bool):
+            raise ValueError(
+                f"LadrunoDispBeamColumn: span_load must be a bool or None, got {self.span_load!r}."
+            )
+        if not isinstance(self.axial_release, bool):
+            raise ValueError(
+                f"LadrunoDispBeamColumn: axial_release must be a bool, got {self.axial_release!r}."
+            )
 
         if isinstance(self.lch, str):
             if self.lch not in ("ip", "element"):
@@ -1049,6 +1135,7 @@ class LadrunoDispBeamColumn(Element):
                     )
 
         _check_optional_pm("LadrunoDispBeamColumn", self.pm)
+        _check_optional_pm_bal("LadrunoDispBeamColumn", self.pm_bal, self.pm)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         deps: list[Primitive] = [self.integration, self.transf]
@@ -1086,7 +1173,9 @@ class LadrunoDispBeamColumn(Element):
             args.extend(["-lch", str(self.lch)])
         if self.nl:
             args.append("-nl")
-        if not self.span_load:
+        if self.span_load is True:
+            args.append("-spanLoad")
+        elif self.span_load is False:
             args.append("-noSpanLoad")
         if self.hinge is not None:
             args.extend(["-hinge", resolve_tag(emitter, self.hinge)])
@@ -1152,6 +1241,9 @@ class LadrunoDispBeamColumn(Element):
             else:
                 args.extend(["-hingeLoc", float(self.hinge_loc)])
         args.extend(_pm_args(self.pm))
+        args.extend(_pm_bal_args(self.pm_bal))
+        if self.axial_release:
+            args.append("-axialRelease")
         if self.implex:
             args.append("-implex")
         args.extend(damp_args(emitter, self.damp))
@@ -1174,22 +1266,25 @@ class LadrunoForceBeamColumn(Element):
         element LadrunoForceBeamColumn tag iNode jNode transfTag integrationTag \
             [-mass m] [-cMass] [-damp dampTag] [-iter maxIter tol] \
             [-subdivide maxSubLevels [subdivideFactor]] [-lch ip|element|<value>] \
+            [-spanLoad | -noSpanLoad] [-axialRelease] \
             [-hinge matTag] [-hingeI matTagI] [-hingeJ matTagJ] \
             [-hingeIJ matTagI [matTagJ]] \
             [-hingeY matTag] [-hingeYI matTagYI] [-hingeYJ matTagYJ] \
             [-hingeYIJ matTagYI [matTagYJ]] \
             [-hingeBiaxial ndMatTag] [-hingeBiaxialI ndMatTagI] \
             [-hingeBiaxialJ ndMatTagJ] [-hingeBiaxialIJ ndMatTagI [ndMatTagJ]] \
-            [-hingeLoc xiI [xiJ]] [-pm P0 [alpha]] [-shear GAvy [GAvz]] \
+            [-hingeLoc xiI [xiJ]] [-pm P0 [alpha]] \
+            [-pmBal P0c P0t Pbal Mbal_ratio] [-shear GAvy [GAvz]] \
             [-implex]
 
     A force-based (flexibility) distributed-plasticity beam-column (exact linear
     moment interpolation ``s(xi) = b(xi) q + s_p(xi)`` with full-span and partial
     trapezoidal ``beamUniform`` + ``beamPoint`` member loads) extended with the
-    fork's Tier-1 per-IP crack-band regularization (``-lch``), Tier-2 embedded
+    fork's Tier-1 per-IP crack-band regularization (``-lch``), axial-moment
+    coupling release for RC floor beams (``-axialRelease``), Tier-2 embedded
     strong-discontinuity rotation hinges (``-hinge*``, ``-hingeY*``,
-    ``-hingeBiaxial*``, ``-hingeLoc``, ``-pm``, ``-implex``), and additive
-    element-level linear Timoshenko shear flexibility (``-shear``).
+    ``-hingeBiaxial*``, ``-hingeLoc``, ``-pm``, ``-pmBal``, ``-implex``), and
+    additive element-level linear Timoshenko shear flexibility (``-shear``).
 
     .. note::
        Fork-only. Emission produces a deck line on any build; the element is
@@ -1218,6 +1313,10 @@ class LadrunoForceBeamColumn(Element):
         Crack-band characteristic-length mode (``-lch``): ``"ip"`` (default,
         per-IP ``w_i * L``), ``"element"`` (debug, ``L``), or a positive numeric
         band width. Tier-1 regularization.
+    span_load
+        If ``None`` (default), omit the flag and rely on the C++ default
+        (exact internal member-load force interpolation enabled). If ``True``,
+        explicitly emit ``-spanLoad``. If ``False``, emit ``-noSpanLoad``.
     hinge, hinge_i, hinge_j, hinge_ij
         Strong-axis (Mz) embedded cohesive rotation hinges.
     hinge_y, hinge_yi, hinge_yj, hinge_yij
@@ -1228,8 +1327,18 @@ class LadrunoForceBeamColumn(Element):
         Normalized hinge location(s) in ``[0, 1]`` (``-hingeLoc xiI [xiJ]``).
         Requires at least one hinge (single or dual-end).
     pm
-        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
-        (``-pm P0 [alpha]``, ``P0 > 0``).
+        Optional symmetric parabolic axial-moment interaction ``P0`` or
+        ``(P0, alpha)`` (``-pm P0 [alpha]``, ``P0 > 0``). Mutually exclusive
+        with ``pm_bal``.
+    pm_bal
+        Optional asymmetric RC balanced-point axial-moment interaction
+        4-tuple ``(P0c, P0t, Pbal, Mbal_ratio)`` (``-pmBal P0c P0t Pbal
+        Mbal_ratio``, with ``P0c > 0``, ``P0t > 0``, ``0 < Pbal < P0c``, and
+        ``Mbal_ratio >= 1.0``). Mutually exclusive with ``pm``.
+    axial_release
+        If ``True``, append ``-axialRelease`` to release basic axial force
+        (:math:`N = 0` at every section IP while preserving full fiber flexural
+        response, eliminating spurious frame axial-elongation restraint in RC beams).
     shear
         Optional additive linear Timoshenko shear rigidity (``-shear GAvy`` in
         2-D or ``-shear GAvy [GAvz]`` in 3-D; finite and ``> 0``).
@@ -1249,6 +1358,7 @@ class LadrunoForceBeamColumn(Element):
     tol: float | None = None
     subdivide: int | tuple[int, float] | None = None
     lch: str | float = "ip"
+    span_load: bool | None = None
     hinge: UniaxialMaterial | None = None
     hinge_i: UniaxialMaterial | None = None
     hinge_j: UniaxialMaterial | None = None
@@ -1263,6 +1373,8 @@ class LadrunoForceBeamColumn(Element):
     hinge_biaxial_ij: NDMaterial | tuple[NDMaterial, NDMaterial] | None = None
     hinge_loc: float | tuple[float, float] | None = None
     pm: float | tuple[float, float] | None = None
+    pm_bal: tuple[float, float, float, float] | None = None
+    axial_release: bool = False
     shear: float | tuple[float, float] | None = None
     implex: bool = False
     damp: Damping | None = None
@@ -1271,6 +1383,15 @@ class LadrunoForceBeamColumn(Element):
         if not self.pg:
             raise ValueError("LadrunoForceBeamColumn: pg must be a non-empty name.")
         _check_optional_mass("LadrunoForceBeamColumn", self.mass)
+
+        if self.span_load is not None and not isinstance(self.span_load, bool):
+            raise ValueError(
+                f"LadrunoForceBeamColumn: span_load must be a bool or None, got {self.span_load!r}."
+            )
+        if not isinstance(self.axial_release, bool):
+            raise ValueError(
+                f"LadrunoForceBeamColumn: axial_release must be a bool, got {self.axial_release!r}."
+            )
 
         if (self.max_iter is None) != (self.tol is None):
             raise ValueError(
@@ -1457,6 +1578,7 @@ class LadrunoForceBeamColumn(Element):
                     )
 
         _check_optional_pm("LadrunoForceBeamColumn", self.pm)
+        _check_optional_pm_bal("LadrunoForceBeamColumn", self.pm_bal, self.pm)
 
         if self.shear is not None:
             if isinstance(self.shear, tuple):
@@ -1520,6 +1642,10 @@ class LadrunoForceBeamColumn(Element):
                 args.extend(["-subdivide", int(self.subdivide)])
         if self.lch != "ip":
             args.extend(["-lch", str(self.lch)])
+        if self.span_load is True:
+            args.append("-spanLoad")
+        elif self.span_load is False:
+            args.append("-noSpanLoad")
         if self.hinge is not None:
             args.extend(["-hinge", resolve_tag(emitter, self.hinge)])
         if self.hinge_i is not None:
@@ -1584,6 +1710,9 @@ class LadrunoForceBeamColumn(Element):
             else:
                 args.extend(["-hingeLoc", float(self.hinge_loc)])
         args.extend(_pm_args(self.pm))
+        args.extend(_pm_bal_args(self.pm_bal))
+        if self.axial_release:
+            args.append("-axialRelease")
         if self.shear is not None:
             if isinstance(self.shear, tuple):
                 args.extend(["-shear", float(self.shear[0]), float(self.shear[1])])
@@ -1612,7 +1741,8 @@ class LadrunoIMKBeam(Element):
         element LadrunoIMKBeam tag iNode jNode A E Iz transfTag \
             [-hinge both|i|j|none] [-matZ tag] [-matZi tag] [-matZj tag] \
             [-shear GAvy | -shear G Avy] [-shearHinge matTag] \
-            [-endZones dI dJ] [-mass rho] [-cMass] [-pm P0 [alpha]] [-implex]
+            [-endZones dI dJ] [-mass rho] [-cMass] [-pm P0 [alpha]] \
+            [-pmBal P0c P0t Pbal Mbal_ratio] [-implex]
         # 3D:
         element LadrunoIMKBeam tag iNode jNode A E G Jx Iy Iz transfTag \
             [-hinge both|i|j|none] [-matZ tag] [-matY tag] \
@@ -1622,14 +1752,16 @@ class LadrunoIMKBeam(Element):
             [-shear GAvy GAvz | -shear G Avy Avz] \
             [-shearHinge matTagVy [matTagVz]] \
             [-shearHingeY matTagVy] [-shearHingeZ matTagVz] \
-            [-endZones dI dJ] [-mass rho] [-cMass] [-pm P0 [alpha]] [-implex]
+            [-endZones dI dJ] [-mass rho] [-cMass] [-pm P0 [alpha]] \
+            [-pmBal P0c P0t Pbal Mbal_ratio] [-implex]
 
     A 2-node elastic Euler-Bernoulli / Timoshenko beam carrying concentrated
     moment-rotation hinges at its ends (uniaxial Mz/My or 3-D coupled Mz–My
     biaxial ``NDMaterial``), optional series inelastic shear hinges
     (``-shearHinge`` in 2-D or 3-D; ``-shearHingeY`` / ``-shearHingeZ`` in 3-D),
-    optional rigid end zones (``-endZones``), optional parabolic axial-moment
-    interaction (``-pm``), and element-level IMPLEX extrapolation (``-implex``).
+    optional rigid end zones (``-endZones``), optional symmetric parabolic or
+    asymmetric RC balanced-point axial-moment interaction (``-pm`` / ``-pmBal``),
+    and element-level IMPLEX extrapolation (``-implex``).
 
     The 3-D variant is selected by supplying any of the 3-D-only properties
     ``G`` / ``Jx`` / ``Iy`` (all three then required), mirroring
@@ -1682,8 +1814,14 @@ class LadrunoIMKBeam(Element):
     c_mass
         If ``True``, append ``-cMass`` (consistent Hermite beam mass matrix).
     pm
-        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
-        (``-pm P0 [alpha]``, ``P0 > 0``).
+        Optional symmetric parabolic axial-moment interaction ``P0`` or
+        ``(P0, alpha)`` (``-pm P0 [alpha]``, ``P0 > 0``). Mutually exclusive
+        with ``pm_bal``.
+    pm_bal
+        Optional asymmetric RC balanced-point axial-moment interaction
+        4-tuple ``(P0c, P0t, Pbal, Mbal_ratio)`` (``-pmBal P0c P0t Pbal
+        Mbal_ratio``, with ``P0c > 0``, ``P0t > 0``, ``0 < Pbal < P0c``, and
+        ``Mbal_ratio >= 1.0``). Mutually exclusive with ``pm``.
     implex
         If ``True``, append ``-implex`` for element-level IMPLEX hinge
         extrapolation.
@@ -1716,6 +1854,7 @@ class LadrunoIMKBeam(Element):
     mass: float | None = None
     c_mass: bool = False
     pm: float | tuple[float, float] | None = None
+    pm_bal: tuple[float, float, float, float] | None = None
     implex: bool = False
 
     def __post_init__(self) -> None:
@@ -1893,6 +2032,7 @@ class LadrunoIMKBeam(Element):
 
         _check_optional_mass("LadrunoIMKBeam", self.mass)
         _check_optional_pm("LadrunoIMKBeam", self.pm)
+        _check_optional_pm_bal("LadrunoIMKBeam", self.pm_bal, self.pm)
 
     def _is_3d(self) -> bool:
         return any(v is not None for v in (self.G, self.Jx, self.Iy))
@@ -1994,6 +2134,7 @@ class LadrunoIMKBeam(Element):
         if self.c_mass:
             args.append("-cMass")
         args.extend(_pm_args(self.pm))
+        args.extend(_pm_bal_args(self.pm_bal))
         if self.implex:
             args.append("-implex")
 

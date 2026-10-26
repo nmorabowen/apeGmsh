@@ -23,6 +23,7 @@ from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.uniaxial import (
     ENT,
     ASDSteel1D,
+    Bilin,
     Concrete01,
     Concrete02,
     ElasticMaterial,
@@ -35,6 +36,7 @@ from apeGmsh.opensees.material.uniaxial import (
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
+    ModIMKPeakOriented,
     MultiLinear,
     Parallel,
     PySimple1,
@@ -1821,4 +1823,229 @@ class TestLadrunoCohesiveHinge:
         m = ops.uniaxialMaterial.LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0)
         assert isinstance(m, LadrunoCohesiveHinge)
         assert ops.tag_for(m) == 1
+
+    def test_emit_with_pm_bal_and_rejects_mutual_exclusion(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHinge(
+            Mc=5e5, Gf=1200.0, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+        )._emit(rec, tag=4)
+        assert rec.calls[0][1] == (
+            "LadrunoCohesiveHinge", 4, 5e5, 1200.0,
+            "-pmBal", 3.0e6, 0.8e6, 1.2e6, 1.35,
+        )
+        with pytest.raises(ValueError, match="pm and pm_bal are mutually exclusive"):
+            LadrunoCohesiveHinge(
+                Mc=5e5, Gf=1200.0, pm=2.0e6, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+            )
+
+    @pytest.mark.parametrize(
+        "bad_pm_bal",
+        [
+            (3.0e6, 0.8e6, 1.2e6),
+            (0.0, 0.8e6, 1.2e6, 1.35),
+            (3.0e6, 0.0, 1.2e6, 1.35),
+            (3.0e6, 0.8e6, 0.0, 1.35),
+            (3.0e6, 0.8e6, 3.0e6, 1.35),
+            (3.0e6, 0.8e6, 1.2e6, 0.95),
+            (True, 0.8e6, 0.5, 1.35),
+            (3.0e6, 0.8e6, 1.2e6, float("nan")),
+        ],
+    )
+    def test_rejects_bad_pm_bal(self, bad_pm_bal: object) -> None:
+        with pytest.raises(ValueError, match="pm_bal"):
+            LadrunoCohesiveHinge(
+                Mc=5e5, Gf=1200.0, pm_bal=bad_pm_bal,  # type: ignore[arg-type]
+            )
+
+
+# ---------------------------------------------------------------------------
+# Bilin & ModIMKPeakOriented (Modified IMK deteriorating hinge laws)
+# ---------------------------------------------------------------------------
+
+class TestBilin:
+    def test_from_lignos_ratios_and_emit(self) -> None:
+        m = Bilin.from_lignos_ratios(
+            Ke=2.0e8,
+            My_pos=4.0e5,
+            mc_my_ratio_pos=1.10,
+            LamdaS=1.2,
+            LamdaC=1.2,
+            LamdaA=1.2,
+            LamdaK=1.2,
+            Thetap_pos=0.025,
+            Thetapc_pos=0.15,
+            KPos=0.40,
+            Thetau_pos=0.08,
+            nFactor=10.0,
+            implex=True,
+        )
+        assert m.My_neg == -4.0e5
+        theta_y = 4.0e5 / 2.0e8
+        assert pytest.approx(m.AsPos) == 0.10 * theta_y / 0.025
+        assert m.LamdaS == 1.2
+        assert m.dependencies() == ()
+        assert "Bilin" in repr(m)
+
+        rec = RecordingEmitter()
+        m._emit(rec, tag=11)
+        assert rec.calls[0][0] == "uniaxialMaterial"
+        assert rec.calls[0][1][:2] == ("Bilin", 11)
+        assert len(rec.calls[0][1]) == 2 + 25
+        assert rec.calls[0][1][-2:] == (10.0, "-implex")
+
+    def test_emit_omits_zero_or_none_nfactor(self) -> None:
+        m = Bilin.from_lignos_ratios(
+            Ke=2.0e8,
+            My_pos=4.0e5,
+            mc_my_ratio_pos=1.10,
+            LamdaS=1.2,
+            LamdaC=1.2,
+            LamdaA=1.2,
+            LamdaK=1.2,
+            Thetap_pos=0.025,
+            Thetapc_pos=0.15,
+            KPos=0.40,
+            Thetau_pos=0.08,
+            K_core=2.0e7,
+            apply_series_core_correction=True,
+            nFactor=0.0,
+        )
+        rec = RecordingEmitter()
+        m._emit(rec, tag=12)
+        assert len(rec.calls[0][1]) == 2 + 23
+
+    def test_validation_rejects_bad_inputs(self) -> None:
+        base = dict(
+            Ke=1e8, AsPos=0.01, AsNeg=0.01,
+            My_pos=500e3, My_neg=-500e3,
+            LamdaS=1.0, LamdaD=1.0, LamdaA=1.0, LamdaK=1.0,
+            Thetap_pos=0.03, Thetap_neg=0.03,
+            Thetapc_pos=0.15, Thetapc_neg=0.15,
+            KPos=0.4, KNeg=0.4,
+            Thetau_pos=0.10, Thetau_neg=0.10,
+        )
+        with pytest.raises(ValueError, match="Ke must be > 0"):
+            Bilin(**{**base, "Ke": 0.0})
+        with pytest.raises(ValueError, match="My_pos must be > 0"):
+            Bilin(**{**base, "My_pos": 0.0})
+        with pytest.raises(ValueError, match="My_neg must be < 0"):
+            Bilin(**{**base, "My_neg": 500e3})
+        with pytest.raises(ValueError, match="Thetap_pos must be > 0"):
+            Bilin(**{**base, "Thetap_pos": 0.0})
+        with pytest.raises(ValueError, match="Ke must be a finite number"):
+            Bilin(**{**base, "Ke": float("nan")})
+        with pytest.raises(ValueError, match="AsPos must be a finite number"):
+            Bilin(**{**base, "AsPos": float("inf")})
+        with pytest.raises(ValueError, match="implex must be a bool"):
+            Bilin(**{**base, "implex": "yes"})  # type: ignore[arg-type]
+
+    def test_from_lignos_ratios_as_pos_with_series_core_correction(self) -> None:
+        m = Bilin.from_lignos_ratios(
+            Ke=2.0e8,
+            My_pos=4.0e5,
+            AsPos=0.008,
+            LamdaS=1.2,
+            LamdaC=1.2,
+            LamdaA=1.2,
+            LamdaK=1.2,
+            Thetap_pos=0.025,
+            Thetapc_pos=0.15,
+            KPos=0.40,
+            Thetau_pos=0.08,
+            K_core=2.0e7,
+            apply_series_core_correction=True,
+        )
+        mc_expected = 4.0e5 + 2.0e8 * 0.008 * 0.025
+        tp_expected = 0.025 - (mc_expected - 4.0e5) / 2.0e7
+        tpc_expected = 0.15 + mc_expected / 2.0e7
+        assert pytest.approx(m.Thetap_pos) == tp_expected
+        assert pytest.approx(m.Thetapc_pos) == tpc_expected
+        assert pytest.approx(4.0e5 + m.Ke * m.AsPos * m.Thetap_pos) == mc_expected
+
+    def test_via_namespace_returns_typed_instance(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        m = ops.uniaxialMaterial.Bilin(
+            Ke=1e8, AsPos=0.01, AsNeg=0.01,
+            My_pos=500e3, My_neg=-500e3,
+            LamdaS=1.0, LamdaD=1.0, LamdaA=1.0, LamdaK=1.0,
+            Thetap_pos=0.03, Thetap_neg=0.03,
+            Thetapc_pos=0.15, Thetapc_neg=0.15,
+            KPos=0.4, KNeg=0.4,
+            Thetau_pos=0.10, Thetau_neg=0.10,
+        )
+        assert isinstance(m, Bilin)
+        assert ops.tag_for(m) == 1
+
+
+class TestModIMKPeakOriented:
+    def test_from_haselton_gamma_and_emit(self) -> None:
+        m = ModIMKPeakOriented.from_haselton_gamma(
+            Ke=2.0e8,
+            My_pos=4.0e5,
+            mc_my_ratio_pos=1.13,
+            gamma_haselton=80.0,
+            theta_y_member=0.008,
+            thetaPpos=0.03,
+            thetaPCpos=0.12,
+            ResfacPos=0.20,
+            fracDispPos=0.08,
+            implex=True,
+        )
+        assert m.My_neg == -4.0e5
+        assert pytest.approx(m.Ls) == 80.0 * 0.008
+        assert pytest.approx(m.alfaPos) == 0.13 * (4.0e5 / 2.0e8) / 0.03
+        assert m.dependencies() == ()
+        assert "ModIMKPeakOriented" in repr(m)
+
+        rec = RecordingEmitter()
+        m._emit(rec, tag=21)
+        assert rec.calls[0][0] == "uniaxialMaterial"
+        assert rec.calls[0][1][:2] == ("ModIMKPeakOriented", 21)
+        assert len(rec.calls[0][1]) == 2 + 24
+        assert rec.calls[0][1][-1] == "-implex"
+
+    def test_validation_rejects_bad_inputs(self) -> None:
+        base = dict(
+            Ke=1e8, alfaPos=0.01, alfaNeg=0.01,
+            My_pos=500e3, My_neg=-500e3,
+            Ls=1.0, Ld=1.0, La=1.0, Lk=1.0,
+            thetaPpos=0.03, thetaPneg=0.03,
+            thetaPCpos=0.15, thetaPCneg=0.15,
+            ResfacPos=0.2, ResfacNeg=0.2,
+            fracDispPos=0.10, fracDispNeg=0.10,
+        )
+        with pytest.raises(ValueError, match="Ke must be > 0"):
+            ModIMKPeakOriented(**{**base, "Ke": 0.0})
+        with pytest.raises(ValueError, match="My_neg must be < 0"):
+            ModIMKPeakOriented(**{**base, "My_neg": 0.0})
+        with pytest.raises(ValueError, match="thetaPpos must be > 0"):
+            ModIMKPeakOriented(**{**base, "thetaPpos": 0.0})
+        with pytest.raises(ValueError, match="Ls must be a finite number"):
+            ModIMKPeakOriented(**{**base, "Ls": float("nan")})
+        with pytest.raises(ValueError, match="implex must be a bool"):
+            ModIMKPeakOriented(**{**base, "implex": 1})  # type: ignore[arg-type]
+
+    def test_via_namespace_returns_typed_instance(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        m = ops.uniaxialMaterial.ModIMKPeakOriented(
+            Ke=1e8, alfaPos=0.01, alfaNeg=0.01,
+            My_pos=500e3, My_neg=-500e3,
+            Ls=1.0, Ld=1.0, La=1.0, Lk=1.0,
+            thetaPpos=0.03, thetaPneg=0.03,
+            thetaPCpos=0.15, thetaPCneg=0.15,
+            ResfacPos=0.2, ResfacNeg=0.2,
+            fracDispPos=0.10, fracDispNeg=0.10,
+        )
+        assert isinstance(m, ModIMKPeakOriented)
+        assert ops.tag_for(m) == 1
+
+
 

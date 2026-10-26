@@ -255,7 +255,7 @@ class _ElementNS(_BridgeNamespace):
         c_mass: bool = False,
         lch: str | float = "ip",
         nl: bool = False,
-        span_load: bool = True,
+        span_load: bool | None = None,
         hinge: UniaxialMaterial | str | None = None,
         hinge_i: UniaxialMaterial | str | None = None,
         hinge_j: UniaxialMaterial | str | None = None,
@@ -285,6 +285,8 @@ class _ElementNS(_BridgeNamespace):
         ) = None,
         hinge_loc: float | tuple[float, float] | None = None,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
+        axial_release: bool = False,
         implex: bool = False,
         damp: Damping | None = None,
     ) -> LadrunoDispBeamColumn:
@@ -292,13 +294,14 @@ class _ElementNS(_BridgeNamespace):
 
         Ladruno fork (``ELE_TAG`` 33013/33014); the :class:`dispBeamColumn`
         shape plus per-IP crack-band ``lch`` regularization, ``-nl`` bowing,
-        ``span_load`` (``-spanLoad`` / ``-noSpanLoad``), and embedded cohesive
-        rotation hinges (single-hinge ``hinge``/``hinge_y``/``hinge_biaxial``
-        or dual-end ``hinge_i``/``hinge_j``/``hinge_ij``,
-        ``hinge_yi``/``hinge_yj``/``hinge_yij``, ``hinge_biaxial_i``/
-        ``hinge_biaxial_j``/``hinge_biaxial_ij`` with ``hinge_loc``, ``pm``,
-        and ``implex``). All material arguments accept a registered handle or
-        its name. See :class:`LadrunoDispBeamColumn`.
+        ``span_load`` (``-spanLoad`` / ``-noSpanLoad``), ``axial_release``
+        (``-axialRelease``), and embedded cohesive rotation hinges
+        (single-hinge ``hinge``/``hinge_y``/``hinge_biaxial`` or dual-end
+        ``hinge_i``/``hinge_j``/``hinge_ij``, ``hinge_yi``/``hinge_yj``/
+        ``hinge_yij``, ``hinge_biaxial_i``/``hinge_biaxial_j``/
+        ``hinge_biaxial_ij`` with ``hinge_loc``, ``pm``, ``pm_bal``, and
+        ``implex``). All material arguments accept a registered handle or its
+        name. See :class:`LadrunoDispBeamColumn`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -368,6 +371,8 @@ class _ElementNS(_BridgeNamespace):
                 hinge_biaxial_ij=_res_nd_pair(hinge_biaxial_ij),
                 hinge_loc=hinge_loc,
                 pm=pm,
+                pm_bal=pm_bal,
+                axial_release=axial_release,
                 implex=implex,
                 damp=damp,
             )
@@ -385,6 +390,7 @@ class _ElementNS(_BridgeNamespace):
         tol: float | None = None,
         subdivide: int | tuple[int, float] | None = None,
         lch: str | float = "ip",
+        span_load: bool | None = None,
         hinge: UniaxialMaterial | str | None = None,
         hinge_i: UniaxialMaterial | str | None = None,
         hinge_j: UniaxialMaterial | str | None = None,
@@ -414,6 +420,8 @@ class _ElementNS(_BridgeNamespace):
         ) = None,
         hinge_loc: float | tuple[float, float] | None = None,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
+        axial_release: bool = False,
         shear: float | tuple[float, float] | None = None,
         implex: bool = False,
         damp: Damping | None = None,
@@ -422,11 +430,12 @@ class _ElementNS(_BridgeNamespace):
 
         Ladruno fork (``ELE_TAG`` 33024/33025); the :class:`forceBeamColumn`
         flexibility formulation plus per-IP crack-band ``lch`` regularization,
-        embedded cohesive rotation hinges (``hinge*``, ``hinge_y*``,
-        ``hinge_biaxial*``, ``hinge_loc``, ``pm``, ``implex``), element-level
-        linear Timoshenko ``shear``, and ``subdivide`` step subdivision. All
-        material arguments accept a registered handle or its name. See
-        :class:`LadrunoForceBeamColumn`.
+        ``span_load`` (``-spanLoad`` / ``-noSpanLoad``), ``axial_release``
+        (``-axialRelease``), embedded cohesive rotation hinges (``hinge*``,
+        ``hinge_y*``, ``hinge_biaxial*``, ``hinge_loc``, ``pm``, ``pm_bal``,
+        ``implex``), element-level linear Timoshenko ``shear``, and ``subdivide``
+        step subdivision. All material arguments accept a registered handle or
+        its name. See :class:`LadrunoForceBeamColumn`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -484,6 +493,7 @@ class _ElementNS(_BridgeNamespace):
                 mass=mass, c_mass=c_mass,
                 max_iter=max_iter, tol=tol, subdivide=subdivide,
                 lch=lch,
+                span_load=span_load,
                 hinge=_res_uni(hinge),
                 hinge_i=_res_uni(hinge_i),
                 hinge_j=_res_uni(hinge_j),
@@ -498,6 +508,8 @@ class _ElementNS(_BridgeNamespace):
                 hinge_biaxial_ij=_res_nd_pair(hinge_biaxial_ij),
                 hinge_loc=hinge_loc,
                 pm=pm,
+                pm_bal=pm_bal,
+                axial_release=axial_release,
                 shear=shear,
                 implex=implex,
                 damp=damp,
@@ -544,6 +556,7 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
         implex: bool = False,
     ) -> LadrunoIMKBeam:
         """``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam.
@@ -553,7 +566,8 @@ class _ElementNS(_BridgeNamespace):
         (uniaxial ``mat_z*``/``mat_y*`` or 3-D coupled ``hinge_biaxial*``),
         optional series inelastic shear hinges (``shear_hinge`` in 2-D;
         ``shear_hinge_y``/``shear_hinge_z`` in 3-D), optional rigid end offsets
-        (``end_zones``), parabolic axial-moment interaction (``pm``), and
+        (``end_zones``), symmetric parabolic (``pm``) or asymmetric RC
+        balanced-point (``pm_bal``) axial-moment interaction, and
         element-level ``implex``. Supply ``G``/``Jx``/``Iy`` for the 3-D
         variant. All material arguments accept a registered handle or name. See
         :class:`LadrunoIMKBeam`.
@@ -621,7 +635,7 @@ class _ElementNS(_BridgeNamespace):
                 shear_hinge_y=_res(shear_hinge_y),
                 shear_hinge_z=_res(shear_hinge_z),
                 end_zones=end_zones,
-                mass=mass, c_mass=c_mass, pm=pm, implex=implex,
+                mass=mass, c_mass=c_mass, pm=pm, pm_bal=pm_bal, implex=implex,
             )
         )
 

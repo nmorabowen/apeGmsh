@@ -1324,6 +1324,7 @@ class _NDMaterialNS(_BridgeNamespace):
         penalty_ratio: float = 1000.0,
         bk_eta: float = 1.0,
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
         implex: bool = False,
         name: str | None = None,
     ) -> LadrunoCohesiveHingeBiaxial:
@@ -1332,9 +1333,9 @@ class _NDMaterialNS(_BridgeNamespace):
         Ladruno fork (``ND_TAG`` 33004); the coupled Mz–My cohesive
         interaction surface for ``LadrunoDispBeamColumn -hingeBiaxial*``. Each
         axis carries its own ``Mc``/``Gf``; ``bk_eta`` is the
-        Benzeggagh-Kenane mode-mix exponent; ``pm`` enables parabolic P–M
-        scaling and ``implex`` enables IMPLEX integration. See
-        :class:`LadrunoCohesiveHingeBiaxial`.
+        Benzeggagh-Kenane mode-mix exponent; ``pm`` / ``pm_bal`` enable
+        symmetric or asymmetric RC balanced-point P–M scaling and ``implex``
+        enables IMPLEX integration. See :class:`LadrunoCohesiveHingeBiaxial`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -1343,7 +1344,7 @@ class _NDMaterialNS(_BridgeNamespace):
             LadrunoCohesiveHingeBiaxial(
                 Mcz=Mcz, Gfz=Gfz, Mcy=Mcy, Gfy=Gfy, softening=softening,
                 penalty_ratio=penalty_ratio, bk_eta=bk_eta, pm=pm,
-                implex=implex,
+                pm_bal=pm_bal, implex=implex,
             ),
             name=name,
         )

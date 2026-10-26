@@ -1019,6 +1019,52 @@ class TestLadrunoDispBeamColumn:
             "LadrunoDispBeamColumn", 9, 10, 20, 2, 7, "-noSpanLoad",
         )
 
+    def test_emit_span_load_true_pm_bal_axial_release(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ,
+            span_load=True, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+            axial_release=True,
+        )
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=11)
+        assert rec.calls[0][1] == (
+            "LadrunoDispBeamColumn", 11, 10, 20, 2, 7,
+            "-spanLoad", "-pmBal", 3.0e6, 0.8e6, 1.2e6, 1.35, "-axialRelease",
+        )
+
+    def test_rejects_pm_and_pm_bal_together(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="pm and pm_bal are mutually exclusive"):
+            LadrunoDispBeamColumn(
+                pg="C", transf=t, integration=integ,
+                pm=2.0e6, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+            )
+
+    @pytest.mark.parametrize(
+        "bad_pm_bal",
+        [
+            (3.0e6, 0.8e6, 1.2e6),
+            (0.0, 0.8e6, 1.2e6, 1.35),
+            (3.0e6, 0.0, 1.2e6, 1.35),
+            (3.0e6, 0.8e6, 0.0, 1.35),
+            (3.0e6, 0.8e6, 3.0e6, 1.35),
+            (3.0e6, 0.8e6, 1.2e6, 0.99),
+            (True, 0.8e6, 0.5, 1.35),
+            (3.0e6, 0.8e6, 1.2e6, float("nan")),
+            (3.0e6, 0.8e6, 1.2e6, float("inf")),
+        ],
+    )
+    def test_rejects_bad_pm_bal(self, bad_pm_bal: object) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="pm_bal"):
+            LadrunoDispBeamColumn(
+                pg="C", transf=t, integration=integ,
+                pm_bal=bad_pm_bal,  # type: ignore[arg-type]
+            )
+
 
 # ===========================================================================
 # LadrunoForceBeamColumn (Ladruno fork — force-based + fork hinges)
@@ -1124,6 +1170,41 @@ class TestLadrunoForceBeamColumn:
         with pytest.raises(ValueError, match="max_iter and tol must be supplied together"):
             LadrunoForceBeamColumn(pg="C", transf=t, integration=integ, max_iter=15)
 
+    def test_emit_span_load_pm_bal_axial_release(self) -> None:
+        integ, t = self._bits()
+        spec_true = LadrunoForceBeamColumn(
+            pg="C", transf=t, integration=integ,
+            span_load=True, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+            axial_release=True,
+        )
+        rec_true = RecordingEmitter()
+        set_tag_resolver(rec_true, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec_true, (10, 20))
+        spec_true._emit(rec_true, tag=5)
+        assert rec_true.calls[0][1] == (
+            "LadrunoForceBeamColumn", 5, 10, 20, 2, 7,
+            "-spanLoad", "-pmBal", 3.0e6, 0.8e6, 1.2e6, 1.35, "-axialRelease",
+        )
+
+        spec_false = LadrunoForceBeamColumn(
+            pg="C", transf=t, integration=integ, span_load=False,
+        )
+        rec_false = RecordingEmitter()
+        set_tag_resolver(rec_false, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec_false, (10, 20))
+        spec_false._emit(rec_false, tag=6)
+        assert rec_false.calls[0][1] == (
+            "LadrunoForceBeamColumn", 6, 10, 20, 2, 7, "-noSpanLoad",
+        )
+
+    def test_rejects_pm_and_pm_bal_together(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="pm and pm_bal are mutually exclusive"):
+            LadrunoForceBeamColumn(
+                pg="C", transf=t, integration=integ,
+                pm=2.0e6, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+            )
+
 
 # ===========================================================================
 # LadrunoIMKBeam (Ladruno fork — concentrated-plasticity IMK beam)
@@ -1200,6 +1281,26 @@ class TestLadrunoIMKBeam:
             "-shear", 8e10, 0.03, 0.025,
             "-pm", 1.5e6,
         )
+
+    def test_emit_pm_bal_and_rejects_pm_plus_pm_bal(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        spec = LadrunoIMKBeam(
+            pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+            pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+        )
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=8)
+        assert rec.calls[0][1] == (
+            "LadrunoIMKBeam", 8, 10, 20, 0.04, 2e11, 2e-4, 2,
+            "-pmBal", 3.0e6, 0.8e6, 1.2e6, 1.35,
+        )
+        with pytest.raises(ValueError, match="pm and pm_bal are mutually exclusive"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                pm=1.5e6, pm_bal=(3.0e6, 0.8e6, 1.2e6, 1.35),
+            )
 
     def test_emit_shear_hinges_and_biaxial_hinges(self) -> None:
         t = Linear(vecxz=(0, 0, 1))
