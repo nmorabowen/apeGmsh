@@ -384,6 +384,38 @@ def _stiff_zone_reference(o: Any, ndm: int, chain: list[tuple[float, float, floa
     return _static_reactions(o, (1, 2))
 
 
+def _tip_disp(n: int, reverse: bool) -> np.ndarray:
+    """A cantilever member (fixed at x = 0) meshed into ``n`` elements, its
+    offsets from ``RULE`` (cardinal 8, 0.3 m end zones), under a uniform
+    global line load and a tip load: the tip's six displacements."""
+    from tests.opensees.unit.test_jnt_offset_members import member_bridge, member_fem
+
+    loads = {"wx": 2.0, "wy": 3.0, "wz": -10.0}
+    ops = member_bridge(member_fem(n, reverse=reverse, loads=loads), loaded=True,
+                        tip=(5.0, -4.0, -20.0, 1.0, 2.0, -3.0))
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    o = emitter.ops
+    _static_reactions(o, (1,))
+    return np.array([o.nodeDisp(n + 1, k + 1) for k in range(6)], dtype=float)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["along_x", "reversed"])
+@pytest.mark.parametrize("n", [2, 5])
+def test_meshed_member_matches_the_one_element_member(n: int, reverse: bool) -> None:
+    """#2470 review (34f0bf3c) 1, maintainer ruling 2026-10-26: end offsets
+    sit at the member's ends only, so an n-element member is the same
+    member as one element with the same offsets: its tip moves alike
+    (elastic beam elements are exact at the nodes under uniform load).
+    Repeating the end zones on every element made it far too stiff."""
+    pytest.importorskip("openseespy.opensees")
+    one = _tip_disp(1, reverse)
+    many = _tip_disp(n, reverse)
+    scale = float(np.max(np.abs(one)))
+    err = float(np.max(np.abs(many - one))) / scale
+    assert err < 1e-9, f"n={n}: max |a - b| / max |b| = {err:.3e}"
+
+
 @pytest.mark.parametrize("ndm", [2, 3])
 def test_line_load_over_end_zones_matches_stiff_zone_reference(ndm: int) -> None:
     pytest.importorskip("openseespy.opensees")

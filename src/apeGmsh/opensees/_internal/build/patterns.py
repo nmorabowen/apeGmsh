@@ -26,8 +26,8 @@ from .ndf import _load_dof_layout, fit_dof_vector
 from .transforms import (
     _element_transf,
     compute_vecxz_for_element,
-    element_jnt_offset,
     is_orientation_transform,
+    transform_element_offsets,
 )
 
 
@@ -90,18 +90,21 @@ def emit_pattern_spec(
     for mt_rec in spec.moment_tensors:
         _emit_moment_tensor_record(mt_rec, emitter, fem, ndf_of, ndm)
     end_zone_loads: list[tuple[int, tuple[float, ...]]] = []
-    for ele_args in resolve_ele_load_commands(
+    ele_load_cmds = resolve_ele_load_commands(
         spec,
         fem,
         ndm,
         element_plan=element_plan,
         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         nodal_loads=end_zone_loads,
-    ):
-        emitter.eleLoad(*ele_args)
+    )
+    # The end-zone joint loads go before the eleLoads: an H5 replay writes
+    # a pattern's nodal loads first, so the replayed deck is the same.
     for node, comps in end_zone_loads:
         emitter.load(node, *fit_dof_vector(
             comps, ndf_of(node), kind="end-zone line load", node=node))
+    for ele_args in ele_load_cmds:
+        emitter.eleLoad(*ele_args)
     emitter.pattern_close()
 
 
@@ -535,18 +538,17 @@ def _resolve_beam_vecxz(
 
 
 def _offset_line_load(
-    el_spec: Element | None,
+    jnt: tuple[float, ...],
     p_i: np.ndarray,
     p_j: np.ndarray,
     e_x: np.ndarray,
-    ndm: int,
-    fem: "FEMData",
     eid: int,
     pattern: object,
 ) -> "tuple[float, float, np.ndarray] | None":
     """Where a global line load on the node chord meets a joint-offset beam.
 
-    ``None`` when the element has no offsets. Otherwise
+    ``jnt`` is the element's ``-jntOffset`` tail as the fan-out emitted
+    it (member ends included). ``None`` when it is empty. Otherwise
     ``(s_i, s_j, t)``: the flexible element runs from ``s_i`` to ``s_j``
     along the node chord (``0`` and ``L`` without end zones), shifted by
     the transverse offset ``t`` (a 3-vector).
@@ -558,14 +560,6 @@ def _offset_line_load(
     both ends alike (a cardinal point) or run along the axis (end lengths)
     leave the direction alone.
     """
-    transf = _element_transf(el_spec) if el_spec is not None else None
-    if transf is None or getattr(transf, "jnt_offset", None) is None:
-        return None
-    vecxz = None
-    if ndm == 3:
-        vecxz = tuple(float(c) for c in _resolve_beam_vecxz(
-            el_spec, p_i, p_j, fem, eid))
-    jnt = element_jnt_offset(transf, p_i, p_j, vecxz, ndm)  # type: ignore[arg-type]
     if not jnt:
         return None
     w = len(jnt) // 2
@@ -917,6 +911,25 @@ def resolve_ele_load_commands(
         return cmds
 
     target_eids = {int(r.element_id) for r in case_records}
+
+    # Each transform's per-element -jntOffset, as the fan-out emitted it
+    # (a member's end offsets sit on its end elements only).
+    offsets_by_transf: dict[int, dict[int, tuple[float, ...]]] = {}
+
+    def _jnt_of(el_spec: Element | None, eid: int) -> tuple[float, ...]:
+        transf = _element_transf(el_spec) if el_spec is not None else None
+        if transf is None or getattr(transf, "jnt_offset", None) is None:
+            return ()
+        if id(transf) not in offsets_by_transf:
+            assert element_plan is not None  # el_spec came from it
+            offsets_by_transf[id(transf)] = transform_element_offsets(
+                transf, [spec for spec, _sub in element_plan], fem, ndm)
+        by_id = offsets_by_transf[id(transf)]
+        if eid not in by_id:
+            raise BridgeError(
+                f"line load on element {eid}: its transform "
+                f"{type(transf).__name__} has no resolved joint offset for it.")
+        return by_id[eid]
     plan_info: dict[int, tuple[Element | None, tuple[int, ...], int]] = {}
     if element_plan is not None:
         for el_spec, sub in element_plan:
@@ -1040,7 +1053,7 @@ def resolve_ele_load_commands(
                     "model (ndm=2)."
                 )
             offset = _offset_line_load(
-                elem_spec, p_i, p_j, e_x, ndm, fem, eid, rec.pattern)
+                _jnt_of(elem_spec, eid), p_i, p_j, e_x, eid, rec.pattern)
             if offset is not None:
                 # The load covers the node chord (ETABS); the end zones'
                 # share goes to the joints, the rest to the flexible span.

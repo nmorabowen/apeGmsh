@@ -171,8 +171,10 @@ def test_2d_tokens(token: str, tmp_path: Path) -> None:
 
 
 def test_2d_insertion_point_fans_out(tmp_path: Path) -> None:
-    """Cardinal 8 on a 0.6 deep beam: both beams run along +X, so one
-    line; 2-D local 2 is local y (x turned +90 deg = +Y)."""
+    """Cardinal 8 on a 0.6 deep beam; 2-D local 2 is local y (x turned
+    +90 deg = +Y). The two beam elements are collinear and nothing else
+    meets node 3, so they are one member: the end length sits on its
+    i-end element only, the cardinal shift on both (ETABS member ends)."""
     ops = _bridge(
         2,
         lambda o: o.geomTransf.Linear(),
@@ -182,6 +184,7 @@ def test_2d_insertion_point_fans_out(tmp_path: Path) -> None:
     assert _deck(ops, tmp_path, "tcl") == [
         "geomTransf Linear 1",
         "geomTransf Linear 2 -jntOffset 0.2 -0.3 0.0 -0.3",
+        "geomTransf Linear 3 -jntOffset 0.0 -0.3 0.0 -0.3",
     ]
 
 
@@ -410,7 +413,7 @@ def test_global_line_load_on_a_tilted_offset_axis_refuses() -> None:
 
 def test_global_line_load_with_overlapping_end_zones_refuses() -> None:
     ops = _loaded_beam(((2.5, 0.0), (-2.5, 0.0)))   # zones longer than the beam
-    with pytest.raises(BridgeError, match="no flexible length"):
+    with pytest.raises(BridgeError, match="no longer than the end offsets"):
         ops.build().emit(RecordingEmitter())
 
 
@@ -423,11 +426,12 @@ def test_global_line_load_on_end_zones_loads_the_full_length() -> None:
     rec = RecordingEmitter()
     _loaded_beam(jnt).build().emit(rec)
     calls = _load_calls(rec)
-    assert calls[0][1][3:] == ("-beamUniform", -10.0, 0.0)
-    assert calls[1:] == [
+    # The joint loads precede the eleLoad, the order an H5 replay writes.
+    assert calls[:2] == [
         ("load", (1, 0.0, pytest.approx(-3.0), pytest.approx(-0.45))),
         ("load", (2, 0.0, pytest.approx(-3.0), pytest.approx(0.45))),
     ]
+    assert calls[2][0] == "eleLoad" and calls[2][1][3:] == ("-beamUniform", -10.0, 0.0)
     force, moment = _emitted_resultant(rec.calls, jnt, 2)
     assert force[1] == pytest.approx(-40.0, rel=1e-12)       # w L, not w (L - 0.6)
     assert moment[2] == pytest.approx(-80.0, rel=1e-12)      # -w L^2 / 2 about node 1
@@ -483,7 +487,7 @@ def test_3d_line_load_over_end_zones_keeps_the_full_resultant(
     want_f, want_m = _full_length_resultant(jnt, params)
     np.testing.assert_allclose(force, want_f, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(moment, want_m, rtol=1e-12, atol=1e-12)
-    assert [name for name, _a in _load_calls(rec)] == ["eleLoad", "load", "load"]
+    assert [name for name, _a in _load_calls(rec)] == ["load", "load", "eleLoad"]
 
 
 def _staged_gated_with_offsets() -> apeSees:
@@ -559,7 +563,7 @@ def test_partitioned_end_zone_loads_land_once_on_the_owner_rank(staged: bool) ->
         elif name in ("eleLoad", "load"):
             by_rank.append((rank, name))
             beam_calls.append((name, args, kw))
-    assert by_rank == [(1, "eleLoad"), (1, "load"), (1, "load")]
+    assert by_rank == [(1, "load"), (1, "load"), (1, "eleLoad")]
     force, moment = _emitted_resultant(beam_calls, jnt, 2)
     assert force[1] == pytest.approx(-40.0, rel=1e-12)
     assert moment[2] == pytest.approx(-80.0, rel=1e-12)

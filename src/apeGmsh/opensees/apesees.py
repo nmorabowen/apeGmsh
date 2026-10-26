@@ -7750,13 +7750,14 @@ class BuiltModel:
             emitter.sp(node_id, dof, value)
         for node_id, comps in mt_loads:
             emitter.load(node_id, *comps)
-        for ele_args in ele_load_cmds:
-            emitter.eleLoad(*ele_args)
         # A line load's rigid end-zone share, from the element's owner rank
-        # (one rank per element, so each lands once).
+        # (one rank per element, so each lands once), before the eleLoads
+        # as an H5 replay writes them.
         for node, comps in end_zone_loads:
             emitter.load(node, *fit_dof_vector(
                 comps, ndf_of(node), kind="end-zone line load", node=node))
+        for ele_args in ele_load_cmds:
+            emitter.eleLoad(*ele_args)
         emitter.pattern_close()
         return True
 

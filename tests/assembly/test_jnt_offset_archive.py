@@ -78,7 +78,9 @@ def test_h5_replay_writes_the_offset_lines(tmp_path: Path) -> None:
     from apeGmsh.opensees import OpenSeesModel
 
     path, src = _archive(tmp_path)
-    assert len(src) == 3 and all("-jntOffset" in ln for ln in src)
+    # gmsh meshes each line into 2 elements: every member's end element
+    # and interior element differ (ETABS member ends), so 2 lines each.
+    assert len(src) == 6 and all("-jntOffset" in ln for ln in src)
     replayed = _transf_lines(OpenSeesModel.from_h5(str(path)).build("tcl"))
     assert replayed == src
 
