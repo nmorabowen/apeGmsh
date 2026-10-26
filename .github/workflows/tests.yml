@@ -619,8 +619,8 @@ jobs:
           # `exit(0)` (a Fortran STOP in stock StressDensityModel) once ended
           # pytest at 66% with status 0 and no summary, and the job went
           # green (#2537). pytest writes the JUnit report only at session
-          # end, so the step requires that report, with a nonzero total
-          # and no failure or error in it.
+          # end, so the step requires that report, with at least one
+          # passed test and no failure or error in it.
           rm -f live-stock-junit.xml
           pytest tests -q -p no:cacheprovider -rs \
             -m "live and not qt and not subprocess and not bench" \
@@ -636,7 +636,11 @@ jobs:
           suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
           total = sum(int(s.get("tests", 0)) for s in suites)
           bad = sum(int(s.get(k, 0)) for s in suites for k in ("failures", "errors"))
-          print(f"JUnit: {total} tests, {bad} failures+errors")
-          if total == 0 or bad:
-              sys.exit("the JUnit report does not account for a finished, green run")
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          passed = total - skipped - bad
+          print(f"JUnit: {total} tests, {passed} passed, {skipped} skipped, "
+                f"{bad} failures+errors")
+          if passed <= 0 or bad:
+              sys.exit("the JUnit report does not account for a finished, green "
+                       "run with at least one passing test")
           EOF

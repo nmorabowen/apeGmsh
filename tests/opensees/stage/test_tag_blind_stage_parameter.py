@@ -13,7 +13,7 @@ and shows it is exactly the one that switches the neighbour.
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -292,14 +292,22 @@ print("RESULT", code, repr(tau), flush=True)
 _SDM_STOP = "Stop in S-D model"
 
 
+class _Child(NamedTuple):
+    backend: str
+    returncode: int
+    stdout: str
+    log: str  # return code, stdout and stderr, for assertion messages
+    code: "int | None"  # the analyze code; None when RESULT never printed
+    tau: "float | None"
+
+
 def _run_neighbour(cls: str, args: "list[float]", amp: float, *,
-                   named: "int | None") -> "tuple[str, str, int | None, float | None]":
+                   named: "int | None") -> _Child:
     """One tri6n of ``cls`` (tag 2) in simple shear to t=1; then, when
     ``named`` is given, ``materialState 1`` on that element naming tag
-    ``named``; then on to t=2, in a child process.  Returns (the child's
-    backend, its output, the analyze code, the third component of the
-    first ``stresses`` row); the last two are ``None`` when the child
-    ended before its ``RESULT`` line."""
+    ``named``; then on to t=2, in a child process.  ``code`` and ``tau``
+    (the third component of the first ``stresses`` row) are ``None`` when
+    the child ended before its ``RESULT`` line."""
     import json
     import os
     import subprocess
@@ -322,10 +330,9 @@ def _run_neighbour(cls: str, args: "list[float]", amp: float, *,
     assert backend, f"the child never resolved a backend:\n{out}"
     result = [ln.split() for ln in proc.stdout.splitlines()
               if ln.startswith("RESULT ")]
-    if not result:
-        return backend[0], out, None, None
-    assert proc.returncode == 0, out
-    return backend[0], out, int(result[0][1]), float(result[0][2])
+    code, tau = ((int(result[0][1]), float(result[0][2])) if result
+                 else (None, None))
+    return _Child(backend[0], proc.returncode, proc.stdout, out, code, tau)
 
 
 @pytest.mark.live
@@ -345,20 +352,69 @@ def test_live_a_flip_naming_another_tag_switches_the_neighbour(
     ops, sand, _clay = _bridge()
     with pytest.raises(BridgeError, match="#2458"):
         _flip(ops, elements=[1, 3], material=sand)
-    _b, out_n, code_n, tau_n = _run_neighbour(cls, args, amp, named=None)
-    backend, out_s, code_s, tau_s = _run_neighbour(cls, args, amp, named=1)
-    assert code_n == 0 and tau_n is not None, out_n
-    assert _SDM_STOP not in out_n, out_n
-    if code_s is None:
+    n = _run_neighbour(cls, args, amp, named=None)
+    s = _run_neighbour(cls, args, amp, named=1)
+    assert n.returncode == 0 and n.code == 0 and n.tau is not None, n.log
+    assert _SDM_STOP not in n.log, n.log
+    if s.code is None:
         # Only the plastic leg calls the stress-density Fortran, so its STOP
         # after the flip is the switch; nothing else may end the child early.
-        assert cls == "StressDensityModel" and backend == "stock-openseespy", out_s
-        assert "FLIPPED" in out_s and _SDM_STOP in out_s, out_s
+        # A Fortran STOP exits 0: a signal or a nonzero code is a crash.
+        assert cls == "StressDensityModel" and s.backend == "stock-openseespy", s.log
+        assert s.returncode == 0, s.log
+        assert "FLIPPED" in s.stdout and _SDM_STOP in s.stdout, s.log
+        assert s.stdout.index("FLIPPED") < s.stdout.index(_SDM_STOP), s.log
         return
-    assert tau_s is not None
-    assert code_s == 0, out_s
+    assert s.returncode == 0 and s.code == 0 and s.tau is not None, s.log
+    tau_s, tau_n = s.tau, n.tau
     assert abs(tau_s - tau_n) > 1e-2 * abs(tau_n)
     if cls == "DruckerPrager":
         # mElastFlag=1 is elastic: the plastic leg's capped stress
         # (-18.3) becomes an elastic one (-1115.4) on both builds.
         assert abs(tau_s) > 10.0 * abs(tau_n)
+
+
+# ---------------------------------------------------------------------------
+# The live test's early-death path, against stubbed children (review of #2542)
+# ---------------------------------------------------------------------------
+
+_STOP_LINE = " ### / Stop in S-D model / ### cnjpnt: no conjugate point(1)\n"
+_GOOD_DEATH = (0, "BACKEND stock-openseespy\nFLIPPED\n" + _STOP_LINE, "")
+
+
+@pytest.mark.parametrize(("flipped", "accepted"), [
+    (_GOOD_DEATH, True),
+    # A signal or a nonzero code is a crash, whatever it printed.
+    ((-11, _GOOD_DEATH[1], ""), False),
+    ((1, _GOOD_DEATH[1], ""), False),
+    # The STOP must follow the flip, on stdout.
+    ((0, "BACKEND stock-openseespy\n" + _STOP_LINE + "FLIPPED\n", ""), False),
+    ((0, "BACKEND stock-openseespy\nFLIPPED\n", _STOP_LINE), False),
+    # Only stock may die this way.
+    ((0, _GOOD_DEATH[1].replace("stock-openseespy", "ladruno-fork"), ""),
+     False),
+], ids=["stock-stop-after-flip", "signal", "nonzero", "stop-before-flip",
+        "stop-on-stderr", "fork"])
+def test_the_early_death_path_accepts_only_a_clean_stop_after_the_flip(
+    monkeypatch: pytest.MonkeyPatch,
+    flipped: "tuple[int, str, str]", accepted: bool,
+) -> None:
+    import json
+    import subprocess
+
+    def fake_run(argv: "list[str]", **_kw: Any) -> "subprocess.CompletedProcess[str]":
+        named = json.loads(argv[-1])["named"]
+        backend = flipped[1].split()[1]
+        rc, out, err = ((0, f"BACKEND {backend}\nRESULT 0 1.0\n", "")
+                        if named is None else flipped)
+        return subprocess.CompletedProcess(argv, rc, out, err)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    cls, args, amp = _NEIGHBOURS[1]
+    assert cls == "StressDensityModel"
+    if accepted:
+        test_live_a_flip_naming_another_tag_switches_the_neighbour(cls, args, amp)
+    else:
+        with pytest.raises(AssertionError):
+            test_live_a_flip_naming_another_tag_switches_the_neighbour(
+                cls, args, amp)
