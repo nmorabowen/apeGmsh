@@ -19,10 +19,12 @@ from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_GUARD,
+    MEMBRANE_WP208_GUARD,
     ForkBuildGuard,
     MaterialStageCarriers,
     fork_guard_lines,
     is_asdshell_p_delta,
+    is_membrane_wp208,
 )
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
@@ -965,6 +967,8 @@ class PyEmitter:
         self._stage_carriers.note_element(ele_type, tag, args)
         if is_asdshell_p_delta(ele_type, args):
             self._require_fork_floors((ASDSHELL_PDELTA_GUARD,))
+        if is_membrane_wp208(ele_type, args):
+            self._require_fork_floors((MEMBRANE_WP208_GUARD,))
         self._lines.append(_ops_call("element", ele_type, tag, *args))
 
     # -- Time series --------------------------------------------------------

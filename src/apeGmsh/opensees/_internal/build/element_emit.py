@@ -22,7 +22,7 @@ from .pg_expand import (
     ElementPlanRows,
     _describe_pg_cells,
     expand_spec_to_elements,
-    resolve_ladruno_membrane_context,
+    resolve_ladruno_membrane_emit_context,
 )
 from .ownership import SortedIntToInt, _EMPTY_INT64
 from .transforms import _element_transf
@@ -464,7 +464,7 @@ def emit_element_spec_partitioned(
     if isinstance(spec, LadrunoMembrane):
         set_membrane_context(
             emitter,
-            resolve_ladruno_membrane_context(
+            resolve_ladruno_membrane_emit_context(
                 fem,
                 spec,
                 element_plan=element_plan,

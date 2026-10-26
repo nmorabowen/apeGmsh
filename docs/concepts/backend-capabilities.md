@@ -117,6 +117,16 @@ Reached through `ops.element.*`, and also indirectly:
 `g.constraints.kinematic_coupling` / `distributing_coupling` (RBE2 / RBE3)
 all emit elements from this list.
 
+`LadrunoMembrane`'s `diaphragm_nodes=` (`-diaphragmNodes`) and `f11=` /
+`f22=` / `f12=` (`-f11` / `-f22` / `-f12`) need fork build `c83ee812e` or
+later. From that build on, every node of the panel (outer loop, holes,
+supports and diaphragm nodes) gets in-plane stiffness. An older build
+condenses the diaphragm onto the outer loop only. The diaphragm passes the
+constant-strain patch test from fork build `b6d3e3d2` on; on `c83ee812e` its
+in-plane stiffness reads about a quarter low. So the live route and every
+emitted deck refuse these options on a build not measured to carry
+`b6d3e3d2`.
+
 ### Integrators
 
 <!-- capability-map:integrators -->

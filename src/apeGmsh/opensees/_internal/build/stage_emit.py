@@ -956,6 +956,80 @@ FEAST_MODAL_PROPERTIES_MESSAGE = (
 )
 
 
+#: The Ladruno fork commit (fork WP-208) from which a
+#: ``LadrunoMembrane`` with ``-diaphragmNodes`` or ``-f11``/``-f22``/
+#: ``-f12`` passes the patch test: on ``c83ee812e``, which first parses
+#: them, a uniform stretch reads ``R / (E t eps S)`` = 0.72 to 0.74.
+MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
+
+#: Fork builds measured for :data:`MEMBRANE_WP208_FORK_COMMIT`, by exact
+#: ``ladrunoBuild()`` sha.  No command marks WP-208, so no
+#: :class:`ForkBuildFloor` probe can, and a sha cannot be ordered: a build
+#: joins once its ancestry is checked on the fork (GitHub compare), and
+#: every fork build not listed ``True`` is refused (fail closed).  A
+#: ``FORK_PIN`` bump adds its row (a unit lock fails otherwise).
+FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
+    # The floor commit itself.
+    MEMBRANE_WP208_FORK_COMMIT: True,
+    # FORK_PIN ladruno-v20261023: b6d3e3d21 is its ancestor.
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # A ladruno build after the floor (compare: ahead 15, behind 0).
+    "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
+    # A local build of fork wp/209 (0f2e73c2e, ahead 17 of the floor).
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
+    # The maintainer's venv build, which predates c83ee812e.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
+
+
+def fork_build_has_membrane_wp208(build: "str | None") -> bool:
+    """Whether the build that answers ``ladrunoBuild()`` with ``build`` is
+    measured to carry :data:`MEMBRANE_WP208_FORK_COMMIT`.
+
+    ``None`` (stock, or a fork build without the stamp) and every unlisted
+    sha are ``False``.
+    """
+    return FORK_BUILD_HAS_MEMBRANE_WP208.get(build or "", False)
+
+
+#: The ``LadrunoMembrane`` options that need
+#: :data:`MEMBRANE_WP208_FORK_COMMIT`.
+MEMBRANE_WP208_OPTIONS = ("-diaphragmNodes", "-f11", "-f22", "-f12")
+
+#: The error a ``LadrunoMembrane`` with :data:`MEMBRANE_WP208_OPTIONS`
+#: stops with below the floor: the live route raises it and
+#: :data:`MEMBRANE_WP208_GUARD` stops a deck with it.
+MEMBRANE_WP208_MESSAGE = (
+    "apeGmsh: this LadrunoMembrane uses diaphragm_nodes= or f11=, f22=, "
+    "f12=, which give the right in-plane stiffness only on a Ladruno fork "
+    "build at or after fork commit "
+    f"{MEMBRANE_WP208_FORK_COMMIT[:9]} (fork WP-208). Fork build "
+    "c83ee812e accepts them with an in-plane stiffness 26 to 28 percent "
+    "low, a wrong answer with no warning, and older builds and stock "
+    "OpenSees refuse them. The running OpenSees has no ladrunoBuild "
+    "command, or its ladrunoBuild sha is not one measured to carry that "
+    "commit. Rebuild the Ladruno fork at FORK_PIN."
+)
+
+#: The guard a deck with such a membrane runs: stock is refused too, since
+#: it has no ``LadrunoMembrane``.
+MEMBRANE_WP208_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, ok in FORK_BUILD_HAS_MEMBRANE_WP208.items() if ok)),
+    message=MEMBRANE_WP208_MESSAGE,
+    stock_runs=False)
+
+
+def is_membrane_wp208(
+    ele_type: str, args: "Sequence[int | float | str]",
+) -> bool:
+    """Whether ``element ele_type ... *args`` is a ``LadrunoMembrane`` with
+    one of :data:`MEMBRANE_WP208_OPTIONS`: the element the live route and
+    :data:`MEMBRANE_WP208_GUARD` hold to :data:`MEMBRANE_WP208_FORK_COMMIT`."""
+    return ele_type == "LadrunoMembrane" and any(
+        a in MEMBRANE_WP208_OPTIONS for a in args if isinstance(a, str))
+
+
 def fork_guard_lines(
     guard: ForkBuildGuard, dialect: 'Literal["py", "tcl"]',
 ) -> list[str]:
