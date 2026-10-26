@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import warnings
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Any, Callable, Iterable, Iterator, Literal, Mapping
 
 import numpy as np
@@ -147,7 +148,11 @@ def fixed_dof_map(built: Any, inferred_ndf: "Mapping[int, int] | None") -> Fixed
     from ..types import Analysis, ConstraintHandler
     from .ndf import fit_fix_mask
 
-    eff = dict(inferred_ndf or {})
+    # A read-only view, not ``dict(...)``: the emit's per-node ndf map is
+    # never mutated after inference, and a copy held in ``FixedDofs.ndf``
+    # stays resident into the rank blocks at a dict entry per global node
+    # (48.5 B/gn; #2527, the emit-profile smoke's residency guard).
+    eff = MappingProxyType(inferred_ndf or {})
     default = int(built.ndf)
     fixed: dict[int, set[int]] = {}
     owner: dict[int, object] = {}
