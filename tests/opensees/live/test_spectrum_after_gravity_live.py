@@ -287,8 +287,8 @@ def test_p_delta_false_responses_are_those_of_k() -> None:
     pd_off = _run("PDelta", p_delta=False)
     pd_on = _run("PDelta")
     # The modes are those of K exactly; the per-mode legs still run on
-    # PDelta elements, whose forces past the quadratic term leave a
-    # third-order residue at the spectrum amplitude.
+    # PDelta elements, whose forces past the linear term leave a small
+    # residue at the probe amplitude.
     np.testing.assert_allclose(pd_off.periods, lin.periods, rtol=1e-12)
     for name in ("disp", "base", "cols"):
         assert _rel(pd_off.modes(name), lin.modes(name)) < 1e-6, name

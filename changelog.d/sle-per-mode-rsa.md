@@ -1,9 +1,13 @@
 ### ADDED — `spectrum_after_gravity`: per-mode response spectrum about the gravity state, combined per quantity (ADR 0124 D4–D7)
 
 `apeSees.spectrum_after_gravity(num_modes, *, spectra, extractors, p_delta=True, solver=...)` runs the
-`modal_after_gravity` sequence and then, on the same domain, applies each mode's inertia force
-`± c M φ_k` as a nodal pattern, solves with the declared algorithm at `dλ = 0`, calls every response
-extractor on the committed state, and solves back to the gravity state. The per-mode value is the
+`modal_after_gravity` sequence and then, on the same domain, applies each mode's probe force
+`± a_k M φ_k` as a nodal pattern, solves with the declared algorithm at `dλ = 0`, calls every response
+extractor on the committed state, and solves back to the gravity state. The probe moves the largest
+massed-node translation by `1e-6` of the model extent whatever the spectrum, so the legs see the tangent
+the modes came from; a probe that does not move the domain by `a_k φ_k / λ_k` to `1e-3` (a member that
+changes stiffness at the gravity state) is refused, and so is a model with declared recorders (every
+leg commits). The per-mode value is the
 central difference about the gravity state scaled by `Γ_k Sa(T_k)` for each `DesignSpectrum`: a
 `(T, Sa)` table, any object with a vectorised `.at(T)` (a codeSpectra `Spectrum`, never imported) or a
 vectorised callable, plus a g-to-model-units scale and a direction (the scale is applied in Python). An extractor is any `extractor(ops) -> 1-D array` of fixed length,

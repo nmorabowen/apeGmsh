@@ -81,21 +81,34 @@ eigen solve uses.
 
 ### D4 — Per-mode responses come from a static modal-force solve on the preloaded domain (PR 2)
 
-For each mode `k` the driver applies the modal inertia force `±c M φ_k` (with
-`c = max_d |Γ_kd Sa_d(T_k)|` over the requested directions) as a nodal-load
-pattern on the gravity domain, solves with the declared algorithm at `dλ = 0`,
-and evaluates the user's response extractors at `u_g + u_k` and `u_g - u_k`.
-The pattern is then removed and the domain solved back to the gravity
-equilibrium. The per-mode quantity is the central difference
-`(r⁺ - r⁻) / (2c)` scaled by `Γ_kd Sa_d(T_k)` for each direction `d`: an
-increment about the gravity state, linear in the spectrum, and exact to
-third order for elements whose forces are quadratic in the displacements
-(PDelta), exact for linear ones. Because `K_t φ_k = λ_k M φ_k`, the solve
-reproduces the command's modal displacement `φ_k Γ_k Sa / λ_k` on a linear
-model to round-off (`1e-14`). On a PDelta model the two differ by about `3e-7`
-relative: the PDelta transformation's tangent omits the term from the change
-of axial force across the existing gravity sway, and the Newton solve uses the
-true linearization of the element forces.
+For each mode `k` the driver applies the probe force `±a_k M φ_k` as a
+nodal-load pattern on the gravity domain, solves with the declared algorithm at
+`dλ = 0`, and evaluates the user's response extractors at `u_g + u_k` and
+`u_g - u_k`. The pattern is then removed and the domain solved back to the
+gravity equilibrium. The per-mode quantity is the central difference
+`(r⁺ - r⁻) / (2 a_k)` scaled by `Γ_kd Sa_d(T_k)` for each direction `d`: an
+increment about the gravity state, linear in the spectrum.
+
+The probe amplitude `a_k` does not depend on the spectrum: it moves the
+largest translation of a massed node by `1e-6` of the model's extent. A probe
+at the design amplitude would return the secant, not the tangent the modes
+were solved on, wherever a member changes stiffness between the gravity state
+and the design displacement; an elastic-no-tension X-brace, compressed by
+gravity and slack at the design drift, put the per-mode roof displacement 8 %,
+38 % and 96 % off in the review's repro. Because `K_t φ_k = λ_k M φ_k`, the
+probe moves the domain by `a_k φ_k / λ_k`; the driver checks that to `1e-3`
+relative and refuses a mode that misses it (a member whose stiffness changes
+at the reference state itself, such as a no-tension brace at zero strain,
+misses it by about `8e-2`). On a linear model the solve reproduces the
+command's modal displacement `φ_k Γ_k Sa / λ_k` to round-off (`1e-13`). On a
+PDelta model the two differ by about `6e-7` relative: the PDelta
+transformation's tangent omits the term from the change of axial force across
+the existing gravity sway, and the Newton solve uses the true linearization of
+the element forces.
+
+Every probe leg and return solve commits, so a declared recorder would log
+three rows per mode that are not states of the structure; a model with a
+declared recorder is refused.
 
 `M` is the nodal mass (`nodeMass`). A model whose `modalProperties` total mass
 exceeds the nodal mass (element mass: `rho` in a section, `-mass` on a beam) is
