@@ -3941,6 +3941,15 @@ in them is fork-only. See <a href="#stock-engine-defects">Stock engine defects</
 <code>g.reinforce</code> (embedded rebar), <code>g.embed</code> (embedded node), and
 <code>g.constraints.kinematic_coupling</code> / <code>distributing_coupling</code> (RBE2 / RBE3)
 all emit elements from this list.</p>
+<p><code>LadrunoMembrane</code>'s <code>diaphragm_nodes=</code> (<code>-diaphragmNodes</code>) and <code>f11=</code> /
+<code>f22=</code> / <code>f12=</code> (<code>-f11</code> / <code>-f22</code> / <code>-f12</code>) need fork build <code>c83ee812e</code> or
+later. From that build on, every node of the panel (outer loop, holes,
+supports and diaphragm nodes) gets in-plane stiffness. An older build
+condenses the diaphragm onto the outer loop only. The diaphragm passes the
+constant-strain patch test from fork build <code>b6d3e3d2</code> on; on <code>c83ee812e</code> its
+in-plane stiffness reads about a quarter low. So the live route and every
+emitted deck refuse these options on a build not measured to carry
+<code>b6d3e3d2</code>.</p>
 <h3 id="integrators">Integrators<a class="headerlink" href="#integrators" title="Permanent link">&para;</a></h3>
 <!-- capability-map:integrators -->
 <p><code>CentralDifferenceLadruno</code>, <code>CentralDifferenceSMS</code>, <code>ExplicitBathe</code>,
