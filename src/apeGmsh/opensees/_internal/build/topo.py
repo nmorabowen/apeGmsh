@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+from heapq import merge
 from typing import Iterable
 
 from ..types import Element, Primitive
@@ -46,51 +47,55 @@ def topological_order(
     for p in primitives:
         _collect_reachable(p, seen)
 
-    # Every LadrunoMembrane is emitted after every other element (it reads their tags). That is
-    # one BARRIER node, after all non-membrane elements and before all membranes, not an edge
-    # from each membrane to each element: O(M + E) instead of O(M x E) (82 s per call on a
-    # 20-storey building with 2,000 membranes, 0.1 s with the barrier; same order).
-    barrier = _BARRIER_ID
-    deps: dict[int, list[int]] = {barrier: []}
-    for i, p in seen.items():
-        p_deps = [id(d) for d in p.dependencies()]
-        if type(p).__name__ == "LadrunoMembrane":
-            p_deps.append(barrier)
-        elif isinstance(p, Element):
-            deps[barrier].append(i)
-        deps[i] = p_deps
-    order = list(seen) + [barrier]
-    in_degree: dict[int, int] = {i: 0 for i in order}
-    for i, ds in deps.items():
-        for d in ds:
-            # d may not be in seen if a primitive returns dependencies()
-            # that are not transitively reachable — should not happen,
-            # but guard anyway.
-            if d in in_degree:
-                in_degree[i] += 1
+    # Every LadrunoMembrane is emitted after every other element (it reads their tags). The old
+    # encoding was one edge from each membrane to each non-membrane element: O(M x E), 82 s per
+    # call on a 20-storey building with 2,000 membranes. Here each membrane carries ONE extra
+    # in-degree, released inline when the last non-membrane element is dequeued, with the
+    # membranes merged by ``seen`` position into that element's children. That is where the edge
+    # encoding put them (the last element's children list held every membrane, in ``seen``
+    # order), so the order, and with it the sequential element tags, is unchanged; O(M + E).
+    # With no non-membrane element there is nothing to wait for and no extra in-degree.
+    pos = {i: k for k, i in enumerate(seen)}
+    is_membrane = {i: type(p).__name__ == "LadrunoMembrane" for i, p in seen.items()}
+    is_element = {
+        i: isinstance(p, Element) and not is_membrane[i] for i, p in seen.items()
+    }
+    membranes = [i for i in seen if is_membrane[i]]
+    remaining = sum(is_element.values())
 
     # The "depends-on" graph: edges go child -> parent (a child depends
     # on its parent). For Kahn's algorithm we want parents (in-degree
-    # 0) emitted first. With the encoding above, a primitive's
-    # in-degree counts how many parents it has; we emit in-degree-0
-    # primitives, then "remove" their outbound edges (edges from
-    # CHILDREN that point at them). To do that, build an inverted
-    # index: parent_id -> list of child_ids that depend on it.
-    children_of: dict[int, list[int]] = {i: [] for i in order}
-    for child_id in order:
-        for parent_id in deps[child_id]:
-            if parent_id in children_of:
-                children_of[parent_id].append(child_id)
+    # 0) emitted first. A primitive's in-degree counts how many parents
+    # it has; we emit in-degree-0 primitives, then "remove" their
+    # outbound edges (edges from CHILDREN that point at them). To do
+    # that, build an inverted index: parent_id -> list of child_ids that
+    # depend on it, in ``seen`` order.
+    in_degree: dict[int, int] = {i: 0 for i in seen}
+    children_of: dict[int, list[int]] = {i: [] for i in seen}
+    for i, p in seen.items():
+        for d in (id(x) for x in p.dependencies()):
+            # d may not be in seen if a primitive returns dependencies()
+            # that are not transitively reachable — should not happen,
+            # but guard anyway.
+            if d in seen:
+                in_degree[i] += 1
+                children_of[d].append(i)
+        if is_membrane[i] and remaining:
+            in_degree[i] += 1  # released by the last non-membrane element
 
     # Stable insertion order — iterate seen.values() in their first-
     # encounter order, but pick only primitives whose in-degree is 0.
-    queue: deque[int] = deque(i for i in order if in_degree[i] == 0)
+    queue: deque[int] = deque(i for i in seen if in_degree[i] == 0)
     out: list[Primitive] = []
     while queue:
         node = queue.popleft()
-        if node != barrier:
-            out.append(seen[node])
-        for child in children_of[node]:
+        out.append(seen[node])
+        children: Iterable[int] = children_of[node]
+        if is_element[node]:
+            remaining -= 1
+            if remaining == 0:
+                children = merge(children_of[node], membranes, key=pos.__getitem__)
+        for child in children:
             in_degree[child] -= 1
             if in_degree[child] == 0:
                 queue.append(child)
@@ -101,10 +106,6 @@ def topological_order(
             f"graph. Reached {len(out)} of {len(seen)} primitives."
         )
     return tuple(out)
-
-
-#: Key of the membrane barrier node: never an ``id()`` of a live object (ids are positive)
-_BARRIER_ID = -1
 
 
 def _collect_reachable(
