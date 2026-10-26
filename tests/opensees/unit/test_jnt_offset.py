@@ -171,21 +171,32 @@ def test_2d_tokens(token: str, tmp_path: Path) -> None:
 
 
 def test_2d_insertion_point_fans_out(tmp_path: Path) -> None:
-    """Cardinal 8 on a 0.6 deep beam; 2-D local 2 is local y (x turned
-    +90 deg = +Y). The two beam elements are collinear and nothing else
-    meets node 3, so they are one member: the end length sits on its
-    i-end element only, the cardinal shift on both (ETABS member ends)."""
+    """Cardinal 8 on a 0.6 deep beam: both beams run along +X, so one
+    line; 2-D local 2 is local y (x turned +90 deg = +Y). A pure cardinal
+    shift is the same at both ends, so a collinear run takes it."""
+    ops = _bridge(
+        2,
+        lambda o: o.geomTransf.Linear(),
+        lambda o: o.geomTransf.Linear(jnt_offset=InsertionPoint(
+            cardinal_point=8, depth=0.6)),
+    )
+    assert _deck(ops, tmp_path, "tcl") == [
+        "geomTransf Linear 1",
+        "geomTransf Linear 2 -jntOffset 0.0 -0.3 0.0 -0.3",
+    ]
+
+
+def test_2d_end_length_on_a_collinear_run_refuses(tmp_path: Path) -> None:
+    """The two beam elements are collinear through node 3: a member meshed
+    in two or a girder of two members (#2551)."""
     ops = _bridge(
         2,
         lambda o: o.geomTransf.Linear(),
         lambda o: o.geomTransf.Linear(jnt_offset=InsertionPoint(
             cardinal_point=8, depth=0.6, end_offset_i=0.2)),
     )
-    assert _deck(ops, tmp_path, "tcl") == [
-        "geomTransf Linear 1",
-        "geomTransf Linear 2 -jntOffset 0.2 -0.3 0.0 -0.3",
-        "geomTransf Linear 3 -jntOffset 0.0 -0.3 0.0 -0.3",
-    ]
+    with pytest.raises(BridgeError, match=r"run collinear through node 3.*#2551"):
+        ops.tcl(str(tmp_path / "m.tcl"))
 
 
 def test_3d_insertion_point_fans_out_per_direction(tmp_path: Path) -> None:
@@ -413,7 +424,7 @@ def test_global_line_load_on_a_tilted_offset_axis_refuses() -> None:
 
 def test_global_line_load_with_overlapping_end_zones_refuses() -> None:
     ops = _loaded_beam(((2.5, 0.0), (-2.5, 0.0)))   # zones longer than the beam
-    with pytest.raises(BridgeError, match="no longer than the end offsets"):
+    with pytest.raises(BridgeError, match="no flexible length"):
         ops.build().emit(RecordingEmitter())
 
 

@@ -424,10 +424,11 @@ class InsertionPoint:
     evaluates :func:`insertion_point_offsets` on every element that uses
     the transform, with that element's joints and ``vecxz``, and emits
     one ``geomTransf`` per distinct ``(vecxz, offsets)`` (the ADR 0010
-    fan-out). End lengths and unequal joint offsets are evaluated per
-    member instead (a straight chain of elements between joints, as an
-    ETABS frame object): only the member's end elements take them, and
-    interior elements keep the cardinal shift. Beams of one section running in different directions can
+    fan-out). End lengths, axial joint offsets and unequal joint offsets
+    refuse on a collinear run of the transform's elements (a member
+    meshed into several elements looks like a girder of several members
+    until elements carry their source curve, #2551); mesh each member as
+    one element. Beams of one section running in different directions can
     share one rule: their left/right cardinal points and end-length
     offsets resolve per element. Fields are those of
     :func:`insertion_point_offsets` without the per-element inputs.

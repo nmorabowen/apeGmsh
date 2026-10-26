@@ -132,8 +132,12 @@ def _model_3d(transf_type: str, case: str, explicit: bool,
     nodes = _NodesStub(ids=ids, coords=[coords[n] for n in ids],
                        node_pgs={"Base": [1, 2, 3, 4]})
     elements = _ElementsStub(elem_pgs={
-        "Cols": _ElementGroupView(ids=tuple(range(1, 9)),
-                                  connectivity=tuple(col_conn)),
+        # One PG (and transform) per storey: a column line of collinear
+        # members with end offsets needs its curves (#2551) otherwise.
+        "Cols1": _ElementGroupView(ids=tuple(range(1, 5)),
+                                   connectivity=tuple(col_conn[:4])),
+        "Cols2": _ElementGroupView(ids=tuple(range(5, 9)),
+                                   connectivity=tuple(col_conn[4:])),
         "Beams": _ElementGroupView(ids=tuple(range(9, 17)),
                                    connectivity=tuple(beam_conn)),
     })
@@ -149,12 +153,13 @@ def _model_3d(transf_type: str, case: str, explicit: bool,
     ops.model(ndm=3, ndf=6)
     make = getattr(ops.geomTransf, transf_type)
     if explicit or not offsets:
-        tc = make(vecxz=(1.0, 0.0, 0.0))
+        tcs = [make(vecxz=(1.0, 0.0, 0.0)) for _ in range(2)]
         tb = make(vecxz=(0.0, 0.0, 1.0))
     else:
-        tc = make(vecxz=(1.0, 0.0, 0.0), jnt_offset=COL_JNT)
+        tcs = [make(vecxz=(1.0, 0.0, 0.0), jnt_offset=COL_JNT) for _ in range(2)]
         tb = make(vecxz=(0.0, 0.0, 1.0), jnt_offset=_beam_rule(case))
-    ops.element.elasticBeamColumn(pg="Cols", transf=tc, **COL)
+    for pg, tc in zip(("Cols1", "Cols2"), tcs):
+        ops.element.elasticBeamColumn(pg=pg, transf=tc, **COL)
     ops.element.elasticBeamColumn(pg="Beams", transf=tb, **BEAM)
     ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
     ops.constraints.Transformation()
@@ -273,7 +278,8 @@ def _model_2d(transf_type: str, explicit: bool, rule: bool) -> LiveOpsEmitter:
     nodes = _NodesStub(ids=ids, coords=[coords[n] for n in ids],
                        node_pgs={"Base": [1, 2]})
     elements = _ElementsStub(elem_pgs={
-        "Cols": _ElementGroupView(ids=(1, 2, 3, 4), connectivity=tuple(col_conn)),
+        "Cols1": _ElementGroupView(ids=(1, 2), connectivity=tuple(col_conn[:2])),
+        "Cols2": _ElementGroupView(ids=(3, 4), connectivity=tuple(col_conn[2:])),
         "Beams": _ElementGroupView(ids=(5, 6), connectivity=tuple(beam_conn)),
     })
     fem = FEMStub(nodes=nodes, elements=elements)
@@ -286,14 +292,15 @@ def _model_2d(transf_type: str, explicit: bool, rule: bool) -> LiveOpsEmitter:
     ops.model(ndm=2, ndf=3)
     make = getattr(ops.geomTransf, transf_type)
     if explicit:
-        tc, tb = make(), make()
+        tcs, tb = [make(), make()], make()
     else:
-        tc = make(jnt_offset=COL2_JNT)
+        tcs = [make(jnt_offset=COL2_JNT) for _ in range(2)]
         tb = make(jnt_offset=(
             InsertionPoint(cardinal_point=8, depth=DEPTH, width=WIDTH,
                            end_offset_i=0.2, end_offset_j=0.2)
             if rule else BEAM2_JNT))
-    ops.element.elasticBeamColumn(pg="Cols", transf=tc, A=0.25, E=E, Iz=5.2e-3)
+    for pg, tc in zip(("Cols1", "Cols2"), tcs):
+        ops.element.elasticBeamColumn(pg=pg, transf=tc, A=0.25, E=E, Iz=5.2e-3)
     ops.element.elasticBeamColumn(pg="Beams", transf=tb, A=0.18, E=E, Iz=5.4e-3)
     ops.fix(pg="Base", dofs=(1, 1, 1))
     ops.constraints.Transformation()
@@ -382,38 +389,6 @@ def _stiff_zone_reference(o: Any, ndm: int, chain: list[tuple[float, float, floa
         if loaded[k]:
             o.eleLoad("-ele", 10 + k, "-type", "-beamUniform", *w)
     return _static_reactions(o, (1, 2))
-
-
-def _tip_disp(n: int, reverse: bool) -> np.ndarray:
-    """A cantilever member (fixed at x = 0) meshed into ``n`` elements, its
-    offsets from ``RULE`` (cardinal 8, 0.3 m end zones), under a uniform
-    global line load and a tip load: the tip's six displacements."""
-    from tests.opensees.unit.test_jnt_offset_members import member_bridge, member_fem
-
-    loads = {"wx": 2.0, "wy": 3.0, "wz": -10.0}
-    ops = member_bridge(member_fem(n, reverse=reverse, loads=loads), loaded=True,
-                        tip=(5.0, -4.0, -20.0, 1.0, 2.0, -3.0))
-    emitter = LiveOpsEmitter(wipe=True)
-    ops.build().emit(emitter)
-    o = emitter.ops
-    _static_reactions(o, (1,))
-    return np.array([o.nodeDisp(n + 1, k + 1) for k in range(6)], dtype=float)
-
-
-@pytest.mark.parametrize("reverse", [False, True], ids=["along_x", "reversed"])
-@pytest.mark.parametrize("n", [2, 5])
-def test_meshed_member_matches_the_one_element_member(n: int, reverse: bool) -> None:
-    """#2470 review (34f0bf3c) 1, maintainer ruling 2026-10-26: end offsets
-    sit at the member's ends only, so an n-element member is the same
-    member as one element with the same offsets: its tip moves alike
-    (elastic beam elements are exact at the nodes under uniform load).
-    Repeating the end zones on every element made it far too stiff."""
-    pytest.importorskip("openseespy.opensees")
-    one = _tip_disp(1, reverse)
-    many = _tip_disp(n, reverse)
-    scale = float(np.max(np.abs(one)))
-    err = float(np.max(np.abs(many - one))) / scale
-    assert err < 1e-9, f"n={n}: max |a - b| / max |b| = {err:.3e}"
 
 
 @pytest.mark.parametrize("ndm", [2, 3])

@@ -37,7 +37,9 @@ def _frame_fem():
         g.physical.add(1, [col], name="Col")
         g.physical.add(1, [bx, by], name="Beams")
         g.physical.add(0, [p0], name="Base")
-        g.mesh.sizing.set_global_size(100.0)
+        # One element per curve: a meshed member with end offsets refuses
+        # until elements carry their source curve (#2551).
+        g.mesh.structured.set_transfinite_curve([col, bx, by], 2)
         g.mesh.generation.generate(1)
         return g.mesh.queries.get_fem_data(dim=1)
 
@@ -78,9 +80,7 @@ def test_h5_replay_writes_the_offset_lines(tmp_path: Path) -> None:
     from apeGmsh.opensees import OpenSeesModel
 
     path, src = _archive(tmp_path)
-    # gmsh meshes each line into 2 elements: every member's end element
-    # and interior element differ (ETABS member ends), so 2 lines each.
-    assert len(src) == 6 and all("-jntOffset" in ln for ln in src)
+    assert len(src) == 3 and all("-jntOffset" in ln for ln in src)
     replayed = _transf_lines(OpenSeesModel.from_h5(str(path)).build("tcl"))
     assert replayed == src
 
