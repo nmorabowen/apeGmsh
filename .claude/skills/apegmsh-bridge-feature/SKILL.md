@@ -121,6 +121,10 @@ the quoted heading. Paths are from the repo root; `architecture/` is
 - [ ] Warn-as-contract code is run with `-W error::<Category>`
       (AGENTS.md "Build and test").
 - [ ] `python scripts/check_quirks.py`.
+- [ ] A fix that turns an existing test red: classify that test as pinning
+      wrong behaviour or as a real contract before you edit it, and own the
+      file in the slice card first (#2217: two fixes had to amend their
+      cards).
 - [ ] The curated `suite` lane locally, since boundary tests live outside
       the package you touched. Add a CHANGELOG section per
       `internal_docs/changelog_workflow.md`.
