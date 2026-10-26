@@ -42,11 +42,13 @@ from .beam_column import (
     forceBeamColumn,
 )
 from .embedded_rebar import embedded_rebar_args
+from .frame_modifiers import FrameModifiers
 from .shell import (
     ASDShellQ4,
     ASDShellT3,
     LadrunoMembrane,
     ShellDKGQ,
+    ShellNLDKGQ,
     ShellMITC4,
 )
 from .solid import (
@@ -85,6 +87,7 @@ __all__ = [
     "LadrunoDispBeamColumn",
     "LadrunoForceBeamColumn",
     "LadrunoIMKBeam",
+    "FrameModifiers",
     # truss
     "Truss",
     "CorotTruss",
@@ -99,6 +102,7 @@ __all__ = [
     # shell
     "ShellMITC4",
     "ShellDKGQ",
+    "ShellNLDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
     "LadrunoMembrane",

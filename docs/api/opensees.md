@@ -140,6 +140,15 @@ primitives (``Linear`` / ``PDelta`` / ``Corotational``).
 
 ::: apeGmsh.opensees.Spherical
 
+## Frame property modifiers
+
+Passed as ``modifiers=`` on ``elasticBeamColumn``,
+``ElasticTimoshenkoBeam``, ``forceBeamColumn`` and ``dispBeamColumn``. The
+emitted section properties are the declared ones times the modifiers, in the
+way ETABS frame property modifiers work.
+
+::: apeGmsh.opensees.FrameModifiers
+
 ## Recorders
 
 Standalone recorder declaration helper. Recorder declarations live on
@@ -148,6 +157,16 @@ Standalone recorder declaration helper. Recorder declarations live on
 ``ops.recorder.declare(...)``).
 
 ::: apeGmsh.opensees.recorder
+
+## Building tables
+
+Story forces, story drifts, pier forces and story masses (the ETABS
+*Story Forces*, *Story Drifts*, *Pier Forces* and *Mass Summary by
+Story* tables), read in-process from the live domain. The extractor
+classes are callables `extractor(ops) -> ndarray` with a `labels`
+tuple, so a modal driver can evaluate them at each mode.
+
+::: apeGmsh.opensees.building
 
 ## Numberer
 

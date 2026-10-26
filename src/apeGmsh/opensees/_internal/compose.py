@@ -473,9 +473,10 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
 def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     """The keys of archived MP rows (``EqualDOFRecord`` /
     ``RigidLinkRecord`` / ``RigidDiaphragmRecord`` /
-    ``EmbeddedNodeRecord``), counted, shaped as
+    ``EmbeddedNodeRecord`` / ``EquationConstraintRecordRO``), counted, shaped as
     :func:`_constraint_stage_keys` / :func:`_interpolation_stage_keys`
     build them for the FEMData side. An unknown row type raises."""
+    from ..emitter.h5_reader import EquationConstraintRecordRO
     from .typed_records import (
         EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
         RigidLinkRecord,
@@ -483,7 +484,9 @@ def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
 
     keys: "Counter[tuple[Any, ...]]" = Counter()
     for r in rows:
-        if isinstance(r, EqualDOFRecord):
+        if isinstance(r, EquationConstraintRecordRO):
+            keys[_equation_line_key(r.cnode, r.cdof, r.ccoef, r.retained)] += 1
+        elif isinstance(r, EqualDOFRecord):
             keys[("equal_dof", int(r.master), int(r.slave),
                   tuple(int(d) for d in r.dofs))] += 1
         elif isinstance(r, RigidLinkRecord):
@@ -504,17 +507,22 @@ def _mp_row_keys(rows: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
 def _emit_mp_row(emitter: Any, r: Any) -> None:
     """Re-emit one archived MP row, its ``name`` label first, as the
     bridge wrote it. An unknown row type raises."""
+    from ..emitter.h5_reader import EquationConstraintRecordRO
     from .typed_records import (
         EmbeddedNodeRecord, EqualDOFRecord, RigidDiaphragmRecord,
         RigidLinkRecord,
     )
 
     if not isinstance(r, (EqualDOFRecord, RigidLinkRecord,
-                          RigidDiaphragmRecord, EmbeddedNodeRecord)):
+                          RigidDiaphragmRecord, EmbeddedNodeRecord,
+                          EquationConstraintRecordRO)):
         raise TypeError(f"replay: {type(r).__name__} is no MP-constraint row.")
     if r.name:
         emitter.mp_constraint_comment(r.name)
-    if isinstance(r, EqualDOFRecord):
+    if isinstance(r, EquationConstraintRecordRO):
+        emitter.equationConstraint(
+            int(r.cnode), int(r.cdof), float(r.ccoef), list(r.retained))
+    elif isinstance(r, EqualDOFRecord):
         emitter.equalDOF(int(r.master), int(r.slave),
                          *(int(d) for d in r.dofs))
     elif isinstance(r, RigidLinkRecord):
@@ -600,6 +608,212 @@ def refuse_archived_partly_fixed_diaphragms(
                      *(x for st in stages for x in sps(st.patterns))])
 
 
+def refuse_archived_stage_routes(
+    *, stages: "Sequence[Any]", elements: "Sequence[Any]",
+    declarations: Any, fem: Any, requires: "Sequence[str]",
+) -> None:
+    """The stage-close route checks on the replay path (#2465).
+
+    An archive written before #2442, #2445, #2458 or #2460 landed can
+    hold a stage flip that the stage close now refuses: an
+    ``updateMaterialStage`` through ``updateParameter``, a ``materialState``
+    through a host that drops it, a tag-blind neighbour, a target that
+    carries no material, a multi-element plastic flip, or part of a
+    class-wide group.  Replaying it would emit that silent wrong answer.
+    So the archived stages run the stage close's own checks
+    (``stage._builder.check_archived_stage_routes``) on a
+    :class:`~apeGmsh.opensees.stage._builder.RouteModel` read from the
+    archive's declarations.  The model is the final one, the model the
+    bridge's emit checks too (``stage_validate.validate_stage_routes``),
+    so an element registered after a flip is refused on both sides.
+    ``requires`` (the archive's replay
+    requirements) is read by no check: the fork's constructor reset is
+    checked by the replayed deck itself, on the build it runs on
+    (``stage_emit.MD_STATIC_RESET_GUARD``), as the bridge's deck is.
+    """
+    from ..stage._builder import (
+        STAGE_FLAG_PARAMETERS,
+        ArchivedStageRoutes,
+        check_archived_stage_routes,
+    )
+    from .build.records import MaterialStageRecord
+
+    if not any(
+        st.update_material_stages
+        or any(p.name in STAGE_FLAG_PARAMETERS for p in st.update_parameters)
+        for st in stages
+    ):
+        return
+    model = _archived_route_model(
+        stages=stages, elements=elements, declarations=declarations,
+        fem=fem)
+    fem_eid_of = {int(r.tag): int(r.fem_eid) for r in elements}
+    check_archived_stage_routes(model, tuple(
+        ArchivedStageRoutes(
+            name=str(st.name),
+            mat_stage_records=tuple(
+                MaterialStageRecord(mat_tags=(int(tag),), stage=int(stage))
+                for tag, stage in st.update_material_stages),
+            parameter_records=tuple(st.update_parameters),
+            activated_pgs=tuple(str(pg) for pg in st.activated_pgs),
+            removed_eids=frozenset(
+                fem_eid_of[int(t)] for t in st.remove_elements
+                if fem_eid_of.get(int(t), -1) >= 0),
+        )
+        for st in stages))
+
+
+def _archived_route_model(
+    *, stages: "Sequence[Any]", elements: "Sequence[Any]",
+    declarations: Any, fem: Any,
+) -> Any:
+    """The :class:`~apeGmsh.opensees.stage._builder.RouteModel` of an
+    archive, read from ``/opensees/decls`` and ``/opensees/decl_params``.
+
+    Each element declaration is one spec.  Its class, ``pg`` and the
+    declarations it references come from its ``decl_params`` row.  Its
+    elements are the archived element rows of its tags, and its owner is
+    the stage whose ``owned_element_ids`` hold them.  That is the graph the
+    stage close walks through ``Primitive.dependencies()``.  An archive
+    without the rows cannot be checked, so it is refused: it may hold a
+    flip the checks refuse.
+    """
+    import functools
+    from collections.abc import Mapping
+
+    from ..emitter.h5_reader import DeclRef, DeclStruct
+    from ..stage._builder import (
+        FIRST_ELEMENT_ONLY_PLASTIC_INIT,
+        TAG_BLIND_STAGE_PARAMETER,
+        RouteModel,
+        RouteSpec,
+    )
+    from .build.errors import BridgeError
+    from .build.pg_expand import expand_pg_to_elements
+
+    def refuse(why: str) -> BridgeError:
+        return BridgeError(
+            "OpenSeesModel replay: this archive flips a stage flag "
+            f"(updateMaterialStage or materialState), but {why}, so the "
+            "replay cannot tell which elements carry each flipped "
+            "material.  The stage-close checks of issues #2442, #2443, "
+            "#2445, #2458 and #2460 cannot run, and an archive written "
+            "before them can hold a flip they refuse, a silent wrong "
+            "answer (issue #2465).  Rebuild the model with the current "
+            "bridge and archive it again."
+        )
+
+    if declarations is None or not declarations.params:
+        raise refuse(
+            "it records no /opensees/decl_params (a file written below "
+            "opensees 2.26.0, or one no bridge emit wrote)")
+    decls = declarations.decls
+    index = {d.key: i for i, d in enumerate(decls)}
+    nd_tag: dict[int, int] = {}
+    ele_tags: dict[int, list[int]] = {}
+    for kind, first, count, decl in declarations.tags:
+        if kind == "nDMaterial":
+            if int(count) != 1:
+                raise refuse(
+                    f"nDMaterial {decls[decl].key!r} holds {count} tags")
+            nd_tag[int(decl)] = int(first)
+        elif kind == "element":
+            ele_tags.setdefault(int(decl), []).extend(
+                range(int(first), int(first) + int(count)))
+
+    def entry(i: int) -> Any:
+        rows = declarations.params.get(i, ())
+        if len(rows) != 1:
+            if decls[i].family in ("element", "nDMaterial"):
+                raise refuse(
+                    f"{decls[i].key!r} has {len(rows)} /opensees/decl_params "
+                    "rows, not one")
+            return None
+        return rows[0]
+
+    def type_of(i: int) -> str:
+        e = entry(i)
+        return f"<unrecorded {decls[i].family}>" if e is None else str(e.type)
+
+    def refs(value: Any, out: "list[str]") -> None:
+        if isinstance(value, DeclRef):
+            out.append(value.key)
+        elif isinstance(value, DeclStruct):
+            for v in value.fields.values():
+                refs(v, out)
+        elif isinstance(value, (tuple, list)):
+            for v in value:
+                refs(v, out)
+        elif isinstance(value, Mapping):
+            for v in value.values():
+                refs(v, out)
+
+    def children(i: int) -> "list[int]":
+        e = entry(i)
+        if e is None:
+            return []
+        out: "list[str]" = []
+        for v in e.params.values():
+            refs(v, out)
+        out.extend((*e.transf_ref, *e.integration_ref, *e.section_ref))
+        return [index[k] for k in dict.fromkeys(out)]
+
+    nd_class = {
+        nd_tag[i]: type_of(i) for i, d in enumerate(decls)
+        if d.family == "nDMaterial" and i in nd_tag
+    }
+    record_of = {int(r.tag): r for r in elements}
+    owner_of = {
+        int(t): k for k, st in enumerate(stages) for t in st.owned_element_ids
+    }
+    specs: "list[Any]" = []
+    for i, d in enumerate(decls):
+        if d.family != "element":
+            continue
+        cls = type_of(i)
+        tags = ele_tags.get(i, [])
+        lost = [t for t in tags if t not in record_of]
+        if lost:
+            raise refuse(
+                f"element {d.key!r} ({cls}) declares tags {lost} that no "
+                "archived element row holds")
+        nd_tags: set[int] = set()
+        blind: list[tuple[str, int | None]] = []
+        first_only: dict[int, set[str]] = {}
+        walked: set[int] = set()
+        todo: "list[tuple[int, tuple[str, ...]]]" = [
+            (c, ()) for c in children(i)]
+        while todo:
+            j, via = todo.pop()
+            if j in walked:
+                continue
+            walked.add(j)
+            dep = type_of(j)
+            todo.extend((c, (*via, dep)) for c in children(j))
+            tag = nd_tag.get(j) if decls[j].family == "nDMaterial" else None
+            if tag is not None:
+                nd_tags.add(tag)
+            if dep in TAG_BLIND_STAGE_PARAMETER:
+                blind.append((dep, tag))
+            if dep in FIRST_ELEMENT_ONLY_PLASTIC_INIT and tag is not None:
+                first_only.setdefault(tag, set()).update(via)
+        pg = entry(i).params.get("pg")
+        eids = tuple(int(record_of[t].fem_eid) for t in tags)
+        specs.append(RouteSpec(
+            cls=cls, pg=None if pg is None else str(pg),
+            nd_tags=frozenset(nd_tags),
+            blind=tuple(blind),
+            first_only={t: frozenset(v) for t, v in first_only.items()},
+            fanout=functools.partial(tuple, eids),
+            owner=min((owner_of[t] for t in tags if t in owner_of),
+                      default=-1),
+        ))
+    return RouteModel(
+        specs=tuple(specs), nd_class=nd_class,
+        expand_pg=lambda pg: expand_pg_to_elements(fem, pg).eids,
+    )
+
+
 def _pair_stage_keys(rec: Any, kind_cls: Any) -> "list[tuple[Any, ...]]":
     """Stage-bucket keys of one ``NodePairRecord`` (empty: no bucket)."""
     if rec.kind == kind_cls.EQUAL_DOF:
@@ -643,8 +857,9 @@ def _constraint_stage_keys(
 
 
 def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
-    """Stage-bucket key of one non-element interpolation row: its
-    ``embeddedNode`` line (none on the equation route, a ledger verb).
+    """Stage-bucket keys of one non-element interpolation row: its
+    ``embeddedNode`` line, or on the equation route its
+    ``equationConstraint`` lines (:func:`_equation_tie_keys`).
 
     The key carries the retained nodes the forward emit writes
     (``_embedded_retained_nodes``): a quad tie goes out on the triangle of
@@ -652,9 +867,31 @@ def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
     from .build.constraints import _embedded_retained_nodes
 
     if rec.enforce == "equation":
-        return []
+        return _equation_tie_keys(rec)
     return [("embedded_node", int(rec.slave_node),
              tuple(int(n) for n in _embedded_retained_nodes(rec)))]
+
+
+def _equation_line_key(
+    cnode: Any, cdof: Any, ccoef: Any, retained: Any,
+) -> "tuple[Any, ...]":
+    """The key of one ``equationConstraint`` line, from either side."""
+    return ("equation", int(cnode), int(cdof), float(ccoef),
+            tuple((int(n), int(d), float(c)) for n, d, c in retained))
+
+
+def _equation_tie_keys(rec: Any) -> "list[tuple[Any, ...]]":
+    """The keys of the ``equationConstraint`` lines an ``enforce="equation"``
+    interpolation writes, in order: the bridge's own expansion
+    (``_emit_equation_tie``) run on a recording emitter, so the zero-weight
+    filter and the DOF order are the bridge's."""
+    from ..emitter.recording import RecordingEmitter
+    from .build.constraints import _emit_equation_tie
+
+    rec_em = RecordingEmitter()
+    _emit_equation_tie(rec_em, rec)
+    return [_equation_line_key(*args) for method, args, _kw in rec_em.calls
+            if method == "equationConstraint"]
 
 
 def _skipped_replay_streams(
@@ -697,10 +934,12 @@ def _skipped_replay_streams(
 
     # interpolations() expands tied_contact / mortar into their slave rows,
     # as the forward emit does, so each slave is matched on its own.
+    # With no row left to match, a record is skipped without expanding its
+    # lines (an equation tie's expansion refuses a record with no weights).
     surface_skipped: "Counter[str]" = Counter(
         str(rec.kind) for rec in fem.elements.constraints.interpolations()
         if not _interpolation_replays_as_element(rec, kind_cls)
-        and not _staged(_interpolation_stage_keys(rec))
+        and not (+available and _staged(_interpolation_stage_keys(rec)))
     )
     if surface_skipped:
         out["fem.elements.constraints"] = surface_skipped
@@ -728,7 +967,9 @@ def _skipped_replay_streams(
     return out
 
 
-def refuse_unreplayable_streams(fem: Any) -> None:
+def refuse_unreplayable_streams(
+    fem: Any, *, equation_rows: "Sequence[Any]" = (),
+) -> None:
     """Raise :class:`BridgeError` iff ``fem`` carries a stream the deck
     replay cannot write, so it would run untied. Each kind is named, with
     its count and the issue that tracks it:
@@ -736,8 +977,13 @@ def refuse_unreplayable_streams(fem: Any) -> None:
     - a ``node_to_surface`` / ``node_to_surface_spring`` coupling or a
       mixed-ndf interface, whose lines tie through phantom nodes the
       archive does not store (#2411);
-    - an interpolation on the ``enforce="equation"`` route, whose
-      ``equationConstraint`` lines the archive does not store (#2416).
+    - an interpolation on the ``enforce="equation"`` route whose
+      ``equationConstraint`` lines are not all among ``equation_rows``,
+      the archive's global equation-tie rows (opensees 2.35.0, the
+      ``apeSees.equation_constraint`` rows taken off). An archive below
+      2.35.0 stores none (#2416), and a stage-claimed tie's lines are not
+      archived yet (#2448). A matched record consumes its lines, so N
+      equal ties need N sets of rows.
 
     :meth:`OpenSeesModel.build` calls it for the ``tcl`` / ``py`` /
     ``live`` targets before any emitter is made, so a refused live build
@@ -753,16 +999,29 @@ def refuse_unreplayable_streams(fem: Any) -> None:
     phantom.update(
         f"{rec.kind} (mixed-ndf)" for rec in fem.elements.interfaces
         if rec.phantom_node is not None)
+    available: "Counter[tuple[Any, ...]]" = _mp_row_keys(equation_rows)
+
+    def _archived(rec: Any) -> bool:
+        if not +available:
+            return False
+        need = Counter(_equation_tie_keys(rec))
+        if any(available[k] < n for k, n in need.items()):
+            return False
+        available.subtract(need)
+        return True
+
     equation: "Counter[str]" = Counter(
         f"{rec.kind} (enforce='equation')"
         for rec in fem.elements.constraints.interpolations()
-        if rec.enforce == "equation")
+        if rec.enforce == "equation" and not _archived(rec))
     parts = []
     for found, why in (
         (phantom, "tie through phantom nodes the archive does not store "
                   "(#2411)"),
         (equation, "are equationConstraint lines the archive does not "
-                   "store (#2416)"),
+                   "store (an archive below opensees 2.35.0 stores none, "
+                   "#2416; a stage-claimed tie's lines are not archived "
+                   "yet, #2448)"),
     ):
         if found:
             detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
@@ -1398,7 +1657,9 @@ def _replay_into(
           bridge's order; #2405): its slot 7b, one unit keyed by the first
           row's index
       9b''. ``emitter.equationConstraint`` for ``equation_constraints``,
-          in call order
+          in call order: an archive below opensees 2.35.0, whose user rows
+          live only in ``/opensees/decl_params``. From 2.35.0 they are
+          ``mp_constraints`` rows (9b')
       9c'. the g.reinforce ``LadrunoEmbeddedRebar`` ties: the stored
           ``embedded_rebars`` rows (opensees 2.29.0), else, for an older
           archive, re-derived from the neutral-zone ``fem``; the bridge's
@@ -1775,10 +2036,37 @@ def _replay_into(
         lambda rec: emitter.region(int(rec.tag), *rec.args),
     )
 
+    # The ndf each node replays with (``None`` = the envelope), for the
+    # equationConstraint node and DOF checks below.
+    eq_node_ndf: "dict[int, int]" = {}
+    for entry in nodes:
+        entry_ndf = entry[2] if len(entry) == 3 else None
+        if entry_ndf is not None:
+            eq_node_ndf[int(entry[0])] = int(entry_ndf)
+
     # 9b'. The global MP rows, at the bridge's slot 7b: after the
     # regions, before the equation constraints. One unit, keyed by its
     # first row's emit index; the caller passes the rows in bridge order.
+    # From opensees 2.35.0 they include every global equationConstraint
+    # line (a tie's and a user row's), each checked here against the
+    # replayed nodes by the bridge's own helper before a deck is written.
     if mp_constraints:
+        from ..emitter.h5_reader import EquationConstraintRecordRO
+
+        eq_rows = [row for _i, row in mp_constraints
+                   if isinstance(row, EquationConstraintRecordRO)]
+        # The H5 rewrite passes no fem and writes no deck: it echoes them.
+        if eq_rows and fem is not None:
+            from ..emitter.recording import RecordingEmitter
+            from .build.constraints import emit_equation_constraints
+            from .build.records import EquationConstraintRecord
+
+            emit_equation_constraints(
+                RecordingEmitter(), fem,
+                [EquationConstraintRecord(
+                    cnode=r.cnode, cdof=r.cdof, ccoef=r.ccoef,
+                    retained=r.retained) for r in eq_rows],
+                node_ndf=eq_node_ndf, default_ndf=int(ndf))
         first_mp = min((int(i) for i, _r in mp_constraints if i is not None),
                        default=None)
 
@@ -1803,12 +2091,6 @@ def _replay_into(
             )
         from .build.constraints import emit_equation_constraints
 
-        # The ndf each node replays with (``None`` = the envelope).
-        eq_node_ndf: "dict[int, int]" = {}
-        for entry in nodes:
-            entry_ndf = entry[2] if len(entry) == 3 else None
-            if entry_ndf is not None:
-                eq_node_ndf[int(entry[0])] = int(entry_ndf)
         units.append((
             _key(lambda o: o.first("equationConstraint")),
             "equation_constraints",
@@ -2180,6 +2462,8 @@ def _replay_staged_into(
     emitter: Any,
     *,
     stages: "Sequence[Any]",
+    declarations: Any = None,
+    requires: "Sequence[str]" = (),
     commands: "Sequence[Any]" = (),
     program: "Sequence[Any]" = (),
     flat: bool = False,
@@ -2206,6 +2490,12 @@ def _replay_staged_into(
 
     ``flat`` reaches every analysis chain, the global one and each
     stage's (see :func:`_replay_analysis_chain`).
+
+    ``declarations`` (the archive's ``/opensees/decls`` table) and
+    ``requires`` (its replay requirements) feed
+    :func:`refuse_archived_stage_routes`, which runs before anything is
+    emitted (#2465).  Without declarations a stage-flag flip is refused,
+    since it cannot be checked; a program with no such flip needs none.
     """
     from .build.records import ActivateAbsorbingRecord
     from .build.stage_emit import (
@@ -2311,6 +2601,12 @@ def _replay_staged_into(
         # tags (replay_initial_stress_global, replay_activate_absorbing);
         # pre-2.27 archives only, behind the version check above.
         tags = TagAllocator()
+
+    # An archived stage flip that the stage close refuses is refused here
+    # too, before any emit.
+    refuse_archived_stage_routes(
+        stages=stages, elements=elements, declarations=declarations,
+        fem=fem, requires=requires)
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
     # out and the shared allocator threaded for any GLOBAL initial_stress.

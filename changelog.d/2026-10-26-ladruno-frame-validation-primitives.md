@@ -1,0 +1,3 @@
+### ADDED — `Bilin`, `ModIMKPeakOriented`, `-axialRelease`, 4-parameter `-pmBal`, and `LadrunoForceBeamColumn -spanLoad`
+
+Added first-class `Bilin` and `ModIMKPeakOriented` uniaxial materials (with `from_lignos_ratios` series-core flexibility correction, `from_haselton_gamma` energy conversion, and `-implex` support), `axial_release` (`-axialRelease`), 4-parameter $C^1$ balanced-point P-M interaction `pm_bal=(P0c, P0t, Pbal, Mbal_ratio)` (`-pmBal`), and `LadrunoForceBeamColumn(span_load=...)` (`-spanLoad` / `-noSpanLoad`), along with the 10 Ladruno frame/hinge/buckling validation modeling rules in the `apegmsh` skill.

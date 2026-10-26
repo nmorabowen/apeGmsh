@@ -2,10 +2,12 @@
 Shell element primitives — typed wrappers over the OpenSees ``element
 Shell*`` family.
 
-Four element types live here:
+Five element types live here:
 
 * :class:`ShellMITC4` — 4-node MITC shell (membrane + bending).
 * :class:`ShellDKGQ` — 4-node Discrete Kirchhoff (Quadrilateral) shell.
+* :class:`ShellNLDKGQ` — its geometrically nonlinear (updated Lagrangian)
+  twin, whose tangent carries the initial-stress stiffness.
 * :class:`ASDShellQ4` — 4-node ASD shell (Petracca/ASDEA Software).
 * :class:`ASDShellT3` — 3-node ASD shell.
 
@@ -13,6 +15,7 @@ The OpenSees commands per the manual:
 
 * ``element ShellMITC4 tag i j k l secTag``
 * ``element ShellDKGQ  tag i j k l secTag``
+* ``element ShellNLDKGQ tag i j k l secTag``
 * ``element ASDShellQ4 tag i j k l secTag [-corotational]``
   ``[-drillingNT alpha] [-localCS x1 x2 x3 y1 y2 y3]``
 * ``element ASDShellT3 tag i j k secTag [-corotational]``
@@ -66,6 +69,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ShellMITC4",
     "ShellDKGQ",
+    "ShellNLDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
     "LadrunoMembrane",
@@ -106,6 +110,19 @@ def _check_local_cs(type_name: str, local_cs: tuple[float, ...]) -> None:
         raise ValueError(
             f"{type_name}: local_cs= must not be the zero vector (the element "
             f"reads a zero -local vector as 'use the default frame')."
+        )
+
+
+def _check_p_delta(type_name: str, p_delta: bool, corotational: bool) -> None:
+    """``-pDelta`` and ``-corotational`` are exclusive (the fork refuses
+    the element when both are given)."""
+    if p_delta and corotational:
+        raise ValueError(
+            f"{type_name}: p_delta=True and corotational=True are mutually "
+            f"exclusive (the parser refuses -pDelta with -corotational). "
+            f"-pDelta is linear kinematics plus the initial-stress "
+            f"stiffness; -corotational already carries the geometric "
+            f"nonlinearity."
         )
 
 
@@ -193,6 +210,51 @@ class ShellDKGQ(Element):
 
 
 # ---------------------------------------------------------------------------
+# ShellNLDKGQ — geometrically nonlinear Discrete Kirchhoff quadrilateral
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellNLDKGQ(Element):
+    """``element ShellNLDKGQ`` — geometrically nonlinear 4-node DKGQ shell.
+
+    The updated-Lagrangian twin of :class:`ShellDKGQ`: its tangent carries
+    the initial-stress (geometric) stiffness of the current membrane
+    forces, so an ``eigen`` after a gravity preload sees the P-Delta
+    softening of a wall (ADR 0124). Under ``algorithm Linear`` its nodal
+    forces read stale (``shell_probe``); solve with ``Newton``.
+
+    Parameters
+    ----------
+    pg
+        Physical group whose surface (quadrilateral) cells receive
+        this element.
+    section
+        The plate / shell :class:`Section`.
+    """
+
+    pg: str
+    section: Section
+    damp: Damping | None = None
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 4:
+            raise ValueError(
+                f"ShellNLDKGQ: expected 4 node tags, got {len(nodes)}."
+            )
+        sec_tag = resolve_tag(emitter, self.section)
+        emitter.element(
+            "ShellNLDKGQ", tag, *nodes, sec_tag,
+            *damp_args(emitter, self.damp),
+        )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.section, self.damp)
+        return (self.section,)
+
+
+# ---------------------------------------------------------------------------
 # ASDShellQ4 — 4-node ASD shell
 # ---------------------------------------------------------------------------
 
@@ -200,9 +262,9 @@ class ShellDKGQ(Element):
 class ASDShellQ4(Element):
     """``element ASDShellQ4`` — 4-node ASD shell.
 
-    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``,
-    ``-noeas``, ``-drillingStab $v`` / ``-drillingNL`` (mutually
-    exclusive) and ``-local $x1 $x2 $x3``.
+    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``
+    / ``-pDelta`` (mutually exclusive), ``-noeas``, ``-drillingStab $v`` /
+    ``-drillingNL`` (mutually exclusive) and ``-local $x1 $x2 $x3``.
 
     Parameters
     ----------
@@ -213,6 +275,17 @@ class ASDShellQ4(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    p_delta
+        Append ``-pDelta`` (**Ladruno fork**, at or after
+        ``stage_emit.C83_FORK_COMMIT`` c83ee812e): linear kinematics
+        plus the initial-stress (geometric) stiffness of the current
+        membrane forces, the shell analogue of ``geomTransf PDelta``, for a
+        gravity, ``loadConst``, ``eigen`` sequence. Refused with
+        ``corotational=True`` (the fork refuses the pair). Stock OpenSees
+        and older fork builds accept the token and drop the stiffness, so
+        the live route refuses any build not measured to carry c83ee812e
+        (``stage_emit.FORK_BUILD_HAS_C83``) and a Tcl / py deck checks
+        ``ladrunoBuild`` at its start (``ASDSHELL_PDELTA_GUARD``).
     no_eas
         Append ``-noeas``: turn off the enhanced membrane (the AGQI
         incompatible modes and their EAS parameters), leaving the plain
@@ -238,6 +311,7 @@ class ASDShellQ4(Element):
     pg: str
     section: Section
     corotational: bool = False
+    p_delta: bool = False
     no_eas: bool = False
     drilling_stab: float | None = None
     drilling_nl: bool = False
@@ -246,6 +320,7 @@ class ASDShellQ4(Element):
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_p_delta("ASDShellQ4", self.p_delta, self.corotational)
         if self.local_cs is not None:
             _check_local_cs("ASDShellQ4", self.local_cs)
         if self.drilling_nt_alpha is not None:
@@ -278,6 +353,8 @@ class ASDShellQ4(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.p_delta:
+            args.append("-pDelta")
         if self.no_eas:
             args.append("-noeas")
         if self.drilling_stab is not None:
@@ -306,9 +383,9 @@ class ASDShellT3(Element):
     """``element ASDShellT3`` — 3-node ASD shell.
 
     Phase 2γ scope ships the canonical positional arguments plus the
-    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``,
-    ``-drillingNL`` and ``-local $x1 $x2 $x3``. ``-reducedIntegration`` is
-    not exposed.
+    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``
+    / ``-pDelta`` (mutually exclusive), ``-drillingNL`` and ``-local $x1
+    $x2 $x3``. ``-reducedIntegration`` is not exposed.
 
     Parameters
     ----------
@@ -319,6 +396,9 @@ class ASDShellT3(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    p_delta
+        Append ``-pDelta`` (**Ladruno fork**; see ``ASDShellQ4``).
+        Refused with ``corotational=True``.
     drilling_nl
         Append ``-drillingNL`` (nonlinear drilling DOF treatment).
     drilling_dof
@@ -334,12 +414,14 @@ class ASDShellT3(Element):
     pg: str
     section: Section
     corotational: bool = False
+    p_delta: bool = False
     drilling_nl: bool = False
     drilling_dof: int | None = None
     local_cs: tuple[float, ...] | None = None
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_p_delta("ASDShellT3", self.p_delta, self.corotational)
         if self.local_cs is not None:
             _check_local_cs("ASDShellT3", self.local_cs)
         if self.drilling_dof is not None:
@@ -360,6 +442,8 @@ class ASDShellT3(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.p_delta:
+            args.append("-pDelta")
         if self.drilling_nl:
             args.append("-drillingNL")
         if self.local_cs is not None:

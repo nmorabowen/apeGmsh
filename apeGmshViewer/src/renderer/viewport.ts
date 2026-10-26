@@ -25,6 +25,7 @@ import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
+import { LoadsLayer } from "./loads.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -113,6 +114,7 @@ export class Viewport {
   /** 3-D line diagram step data from effects (effects.currentLineDiagram). */
   private lineDiagramSource: () => { key: string; step: LadrunoLineStationStep } | null = () => null;
   readonly lineDiagram: LineDiagramLayer;
+  readonly loads = new LoadsLayer();
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -171,7 +173,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -239,6 +241,7 @@ export class Viewport {
     this.keyLight.intensity = mode === "light" ? 0.95 : 1.4;
     this.halo.setTheme(mode);
     this.lineDiagram.setTheme(mode);
+    this.loads.setTheme(mode);
     const s = this.store.get();
     if (this.geometryInfo) {
       this.setGeometry(this.geometryInfo);
@@ -249,6 +252,7 @@ export class Viewport {
       this.rebuild(s, s.mesh);
       if (s.selection.decls.length) this.setHighlight(s, false);
       this.syncLineDiagram(s);
+      this.syncLoads(s);
     }
     this.notifyView();
     this.requestRender();
@@ -268,6 +272,8 @@ export class Viewport {
    * reaches it untouched. A click on a gizmo goes to the same pick as a click
    * anywhere else (`selectAt`).
    */
+  private hoverCleanup: (() => void) | null = null;
+
   private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
     const element = this.renderer.domElement;
     const self = this;
@@ -327,7 +333,49 @@ export class Viewport {
         this.requestRender();
       },
     });
+    const onPointerMove = (ev: PointerEvent) => {
+      if (ev.buttons !== 0 || this.gizmoInput?.dragging || this.sliding) return;
+      const top = typeof document === "undefined" ? element : document.elementFromPoint(ev.clientX, ev.clientY);
+      if (top !== null && top !== element) {
+        if (this.store.get().hover !== null) this.store.dispatch({ type: "hover", at: null });
+        return;
+      }
+      this.hoverAt(ev.clientX, ev.clientY);
+    };
+    const onPointerLeave = () => {
+      if (this.store.get().hover !== null) this.store.dispatch({ type: "hover", at: null });
+    };
+    element.addEventListener("pointermove", onPointerMove);
+    element.addEventListener("pointerleave", onPointerLeave);
+    this.hoverCleanup = () => {
+      element.removeEventListener("pointermove", onPointerMove);
+      element.removeEventListener("pointerleave", onPointerLeave);
+    };
     return { gizmo, nav };
+  }
+
+  /** Project a hover raycast at a client point when line diagrams are active and update `s.hover`. */
+  hoverAt(x: number, y: number): void {
+    const s = this.store.get();
+    if (!s.lineDiagram.on) {
+      if (s.hover !== null) this.store.dispatch({ type: "hover", at: null });
+      return;
+    }
+    const pick = this.pickAt(x, y);
+    const prev = s.hover;
+    if (pick === null && prev === null) return;
+    if (
+      pick !== null &&
+      prev !== null &&
+      typeof prev !== "string" &&
+      prev.decl === pick.decl &&
+      prev.at?.[0] === pick.at?.[0] &&
+      prev.at?.[1] === pick.at?.[1] &&
+      prev.at?.[2] === pick.at?.[2]
+    ) {
+      return;
+    }
+    this.store.dispatch({ type: "hover", at: pick });
   }
 
   /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks; on a plain miss, clear the selection. */
@@ -344,11 +392,14 @@ export class Viewport {
   dispose(): void {
     this.unsubscribe();
     this.observer.disconnect();
+    this.hoverCleanup?.();
+    this.hoverCleanup = null;
     this.nav.dispose();
     this.gizmoInput.dispose();
     this.gizmos.dispose();
     this.caps.dispose();
     this.lineDiagram.dispose();
+    this.loads.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -364,6 +415,7 @@ export class Viewport {
     if (!prev || s.clip !== prev.clip) {
       if (this.clip.sync(s.clip)) {
         this.lineDiagram.setClippingPlanes(this.clip.planes);
+        this.loads.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
     }
@@ -375,6 +427,7 @@ export class Viewport {
       this.applyVisibility(s);
       this.setHighlight(s);
       this.syncLineDiagram(s);
+      this.syncLoads(s);
       return;
     }
     if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
@@ -383,6 +436,7 @@ export class Viewport {
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
     this.syncLineDiagram(s);
+    this.syncLoads(s);
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
@@ -402,6 +456,12 @@ export class Viewport {
         this.drawn?.lineMap,
       )
     ) {
+      this.requestRender();
+    }
+  }
+
+  private syncLoads(s: State = this.store.get()): void {
+    if (this.loads.sync(s, this.blobs, this.full)) {
       this.requestRender();
     }
   }
@@ -441,6 +501,7 @@ export class Viewport {
     const s = this.store.get();
     this.redeform(s);
     this.syncLineDiagram(s);
+    this.syncLoads(s);
   }
 
   /** The ghost shows behind a deformed mesh, when the user asked for it. */
@@ -1000,6 +1061,7 @@ export class Viewport {
 
   renderNow(): void {
     const t = performance.now();
+    this.lineDiagram?.flushCameraChange();
     this.clip.beforeRender(this.scene);
     this.renderer.render(this.scene, this.camera);
     if (this.highlight.children.length) this.halo.render(this.scene, this.camera);

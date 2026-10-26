@@ -128,10 +128,13 @@ from ._internal.build.interfaces import (
     _register_interface_phantoms,
     _validate_interface_records,
 )
-from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
+from ._internal.build.membrane_load_guard import guard_membrane_interior, refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
-from ._internal.build.stage_validate import validate_class_wide_stage_flags
+from ._internal.build.stage_validate import (
+    validate_class_wide_stage_flags,
+    validate_stage_routes,
+)
 from ._internal.build.transforms import emit_transform_specs
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
@@ -179,6 +182,7 @@ from ._internal.tag_resolution import (
     set_membrane_context,
     set_stage_owned_node_tags,
 )
+from ._internal.frame_modifier_copies import ModifiedCopies, register_frame_modifier_copies
 from .element.shell import LadrunoMembrane
 from ._internal.compose import _compose_model_h5, _path_stem
 from .._internal.provenance import ProvenanceStore
@@ -261,6 +265,7 @@ from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin, no_live_domain_error
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
 from .procedures._frf import _FrfMixin
+from .procedures._gravity_modal import _GravityModalMixin
 from .procedures._modal import _ModalMixin
 from .stage._builder import _StageBuilder, _build_initial_stress_record
 from .stage._chain import algorithm_needs_test
@@ -2126,6 +2131,7 @@ class BuiltModel:
         to the non-staged path.
         """
         staged = bool(self.stage_records)
+        membrane_skip = guard_membrane_interior(self, elements, archival=emitter.caps.archival)
 
         # Phase SSI-2.B: compute element / node ownership maps when
         # stages are declared.  Stage-bound topology (nodes + elements
@@ -2177,7 +2183,7 @@ class BuiltModel:
         # token is sourced from the broker when a declaration covers
         # the node; otherwise the model envelope wins.
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
-            if int(nid) in node_owner_stage:
+            if int(nid) in node_owner_stage or int(nid) in membrane_skip:
                 continue
             _emit_node_with_inferred_ndf(
                 emitter, inferred_ndf, int(nid),
@@ -3088,6 +3094,7 @@ class BuiltModel:
                 "or run in-process."
             )
         staged = bool(self.stage_records)
+        membrane_skip = guard_membrane_interior(self, elements, archival=emitter.caps.archival)
 
         # g.reinforce ties and g.rebar auto-emitted bars are routed per rank
         # (see _plan_partitioned_reinforcement / step 7c-ter).
@@ -3770,14 +3777,12 @@ class BuiltModel:
                 # pass below (INV-2).
                 _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
                 # Skipped: stage-bound nodes (Phase SSI-2.C, they emit
-                # inside their stage's block) and nodes this rank's
-                # hoisted gated block already declared (ADR 0099 S5,
-                # step 1b).  S2 (ADR 0033): per-node ndf via broker.
-                # The helper resolves the rank's ids in one vectorised
-                # lookup and emits them in ascending id order.
-                _exclude: "list[Any]" = [_hoisted] if _hoisted else []
-                if staged and node_owner_stage:
-                    _exclude.append(node_owner_stage)
+                # inside their stage's block), nodes this rank's hoisted
+                # gated block already declared (ADR 0099 S5, step 1b) and
+                # pg= membrane interior nodes.  S2 (ADR 0033): per-node ndf
+                # via broker.  The helper resolves the rank's ids in one
+                # vectorised lookup and emits them in ascending id order.
+                _exclude: "list[Any]" = [s for s in (_hoisted, node_owner_stage, membrane_skip) if s]
                 emit_owned_nodes_with_inferred_ndf(
                     emitter, inferred_ndf, part.node_ids,
                     node_idx_lookup, self.fem.nodes.coords, self.ndf,
@@ -4996,6 +5001,9 @@ class BuiltModel:
             else FemToOpsTagMap.from_plan(()),
         )
         self._validate_material_stage_targets(element_owner_stage or {})
+        validate_stage_routes(
+            stage_records=self.stage_records, primitives=self.primitives,
+            tag_for=self.tag_for, fem=self.fem)
         validate_class_wide_stage_flags(
             stage_records=self.stage_records, primitives=self.primitives,
             tag_for=self.tag_for, fem=self.fem,
@@ -8572,7 +8580,10 @@ def _merge_homogeneous_fixes(
     return tuple(out) if changed else records
 
 
-class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
+class apeSees(
+    _ContactQueryMixin, _ModalMixin, _GravityModalMixin, _FrfMixin,
+    _ExplicitMixin,
+):
     """The OpenSees bridge.
 
     Construct with a :class:`~apeGmsh.mesh.FEMData` snapshot:
@@ -8688,6 +8699,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # synthesised provenance key. Kept out of ``_names`` so no user
         # material name can be mistaken for them.
         self._spring_bed_units: dict[str, UniaxialMaterial] = {}
+        self._frame_modifier_copies = ModifiedCopies()  # one memo per bridge
         # ADR 0112 D3 (V2d): where in the user's source each primitive
         # was declared.  Filled by ``_register`` through the shared
         # capture helper, one record per user call, keyed
@@ -10980,7 +10992,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             snapshot_id = ""
 
         name = model_name or _path_stem(path)
-        emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
+        emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id, target_mode="auto" if self._opensees is None else self._opensees.mode)
         bm.emit(emitter)
         # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
@@ -11033,23 +11045,17 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             nodes_ndf=_nodes_ndf,
             provenance=self._provenance.snapshot(),
         )
-        # The emitter ledgers every ``equationConstraint`` call, but a
-        # bridge-level ``apeSees.equation_constraint`` row IS archived: its
-        # ``EquationConstraintRecord`` is a ``/opensees/decl_params`` row and
-        # deck replay re-emits it. Only the remainder (an
-        # ``enforce="equation"`` interface tie, which replay skips) is dropped.
-        counts = dict(emitter.ledger_counts)
-        counts["equationConstraint"] = (
-            counts.get("equationConstraint", 0)
-            - len(bm.equation_constraint_records)
-        )
-        self._warn_ledger(counts)
+        # From opensees 2.35.0 every global ``equationConstraint`` line (an
+        # ``apeSees.equation_constraint`` row and an ``enforce="equation"``
+        # tie's alike) is a ``/opensees/constraints/equationConstraint`` row;
+        # the emitter ledgers only the lines of a tie a stage claims.
+        self._warn_ledger(emitter.ledger_counts)
 
     def _warn_ledger(self, counts: "Mapping[str, int]") -> None:
         """Warn once per distinct set of ``ledger`` verbs ``h5()`` dropped.
 
-        ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed,
-        ``equationConstraint`` from an ``enforce="equation"`` tie) leaves
+        ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed, a stage-claimed
+        ``enforce="equation"`` tie's ``equationConstraint``) leaves
         no ``/opensees`` record, so a deck replayed from the file omits it.
         The guard is per instance and per verb set, so a model that writes
         on every emit warns once, and again only when a new ledgered verb
@@ -11156,6 +11162,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                     "opensees", kind, name, on_existing="raise")
             self._note_decl(
                 prim, kind, name, path, synth=synthesised is not None)
+        register_frame_modifier_copies(self, prim)
         return prim
 
     def _declare_record(

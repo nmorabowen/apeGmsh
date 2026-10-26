@@ -41,8 +41,8 @@ class RecordingEmitter:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-        # The ManzariDafalias ``-stage 0`` lines a deck owes before a solve
-        # verb, recorded as the ``update_material_stage`` calls the deck
+        # The class-wide groups' fresh-stage lines a deck owes before a
+        # solve verb, recorded as the ``update_material_stage`` calls the deck
         # emitters write for them, so a parity sweep compares like with like.
         self._stage0 = StageZeroLedger()
 
@@ -357,11 +357,13 @@ class RecordingEmitter:
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         self._stage_zero()
-        self.calls.append(
-            ("eigen_feast", (f_min, f_max), {"certify": certify}),
-        )
+        kw: dict[str, bool] = {"certify": certify}
+        if trace_stop:
+            kw["trace_stop"] = True
+        self.calls.append(("eigen_feast", (f_min, f_max), kw))
         return []
 
     def modal_response_history(
@@ -502,5 +504,5 @@ class RecordingEmitter:
         )
 
     def _stage_zero(self) -> None:
-        for tag in self._stage0.due():
-            self.calls.append(("update_material_stage", (tag, 0), {}))
+        for tag, stage in self._stage0.due():
+            self.calls.append(("update_material_stage", (tag, stage), {}))

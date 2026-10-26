@@ -640,6 +640,7 @@ test("line station precedence (section.force > localForce > basicForce > axialFo
 
     const modelElements = stage.get("MODEL/ELEMENTS") as h5wasm.Group;
     const fbcModel = modelElements.create_group("20-ForceBeamColumn2d[0]");
+    fbcModel.create_attribute("PARAM_DOMAIN", "[-1,1]");
     const quad = fbcModel.create_group("QUADRATURE");
     quad.create_dataset({ name: "GP_PARAM", data: new Float64Array([-0.7746, 0.0, 0.7746]), shape: [3, 1] });
   });
@@ -1116,7 +1117,10 @@ test("#2348: readLineStations, with a filter and per step, builds no Set or Map 
   });
 });
 
-// #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (schema §5; the fork at
+// #2451 ruled the layout: one class bucket {ID, DATA[steps, nE, w], STEP?, TIME?} (fork
+// schema §7.0 in §7.2's buckets); §5's DATA/STEP_<k> and anything on LOCAL_AXES itself
+// are refused by name.
+// #2349: a per-step RESULTS/ON_ELEMENTS/LOCAL_AXES bucket (the fork at
 // FORK_PIN does not write it) that could not be paired with its ids or the stage's
 // steps used to be dropped with no word, so a step read drew the MODEL (reference)
 // frame in its place. Every such bucket is now refused by name, with no fallback. The
@@ -1142,6 +1146,17 @@ const stepBucket = (la: h5wasm.Group, name: string, ids: number[] | null, shape:
   if (ids) b.create_dataset({ name: "ID", data: Int32Array.from(ids), shape: [ids.length] });
   if (shape) b.create_dataset({ name: "DATA", data: quarterTurns(shape), shape });
 };
+/** STEP and TIME of `n` values each on the bucket `name` (either left out with null). */
+const stepAxes = (la: h5wasm.Group, name: string, nStep: number | null, nTime: number | null) => {
+  const b = la.get(name) as h5wasm.Group;
+  if (nStep !== null) b.create_dataset({ name: "STEP", data: Int32Array.from({ length: nStep }, (_, i) => i), shape: [nStep] });
+  if (nTime !== null) b.create_dataset({ name: "TIME", data: Float64Array.from({ length: nTime }, (_, i) => i + 1), shape: [nTime] });
+};
+/** Schema §5's per-step form under `g`: DATA as a group of STEP_<k> datasets, `steps` of them, 3 rows of quaternions. */
+const schema5Data = (g: h5wasm.Group, steps: number) => {
+  const d = g.create_group("DATA");
+  for (let k = 0; k < steps; k++) d.create_dataset({ name: `STEP_${k}`, data: quarterTurns([3, 4]), shape: [3, 4] });
+};
 const zOf = (z: Float64Array | null) => Array.from(z ?? []).map((v) => +v.toFixed(12) + 0);
 const refusesStep = (read: () => unknown, pattern: RegExp) =>
   assert.throws(read, (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message), "a malformed step LOCAL_AXES bucket is refused by name");
@@ -1165,6 +1180,14 @@ test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in
       assert.deepEqual(zOf(r.readLocalAxes("stage_0").zRec), PORTAL_MODEL_Z, "a step-less read keeps the MODEL frame");
     });
   }
+  // #2451's full layout: the class bucket with its STEP and TIME axes reads the same frames.
+  const axed = withStepLa((la) => {
+    stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [1, 2, 3], [3, 3, 4]);
+    stepAxes(la, "74-ForceBeamColumn3d[1000:1:0]", 3, 3);
+  });
+  withFile(axed, (r) => {
+    for (const step of [0, 1, 2]) assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step }).zRec), [0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  });
   // Empty ID beside empty DATA holds no frame for anyone: the step reads the MODEL frames, silently.
   const empty = withStepLa((la) => stepBucket(la, "74-ForceBeamColumn3d[1000:1:0]", [], [3, 0, 4]));
   withFile(empty, (r) => assert.deepEqual(zOf(r.readLocalAxes("stage_0", { step: 1 }).zRec), PORTAL_MODEL_Z));
@@ -1186,10 +1209,23 @@ test("#2349: a well-formed step LOCAL_AXES bucket reads the stored step frame in
     ["a DATA that is not 3-D", (la) => stepBucket(la, B, [1, 2, 3], [3, 12]), PORTAL_BUCKET, "has DATA of shape (3, 12), not (steps, elements, components)"],
     ["an ID and no DATA", (la) => stepBucket(la, B, [1, 2, 3], null), PORTAL_BUCKET, "holds an ID but no DATA"],
     ["a DATA and no ID", (la) => stepBucket(la, B, null, [3, 3, 4]), PORTAL_BUCKET, "holds a DATA but no ID"],
-    ["a flat DATA and no ID", (la) => la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }), STEP_LA, "holds a DATA but no ID"],
+    // #2451: nothing on LOCAL_AXES itself; the flat form and §5's form are named.
+    ["a flat DATA and no ID", (la) => la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }), STEP_LA, "holds DATA on itself (a flat layout this reader does not take; a step bucket is one <classTag>-<ClassName> group"],
+    ["a flat ID and DATA", (la) => { la.create_dataset({ name: "ID", data: Int32Array.from([1, 2, 3]), shape: [3] }); la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }); }, STEP_LA, "holds DATA, ID on itself (a flat layout this reader does not take; a step bucket is"],
+    ["schema §5's ID and DATA/STEP_<k> on LOCAL_AXES itself", (la) => { la.create_dataset({ name: "ID", data: Int32Array.from([1, 2, 3]), shape: [3] }); schema5Data(la, 3); }, STEP_LA, "holds DATA, ID on itself (the per-step DATA/STEP_<k> form schema §5 draws, which §7.0's chunked DATA superseded; a step bucket is"],
+    ["a STEP on LOCAL_AXES itself beside a good bucket", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_dataset({ name: "STEP", data: Int32Array.from([0, 1, 2]), shape: [3] }); }, STEP_LA, "holds STEP on itself (a flat layout this reader does not take"],
+    ["a STEP of 2 values", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); stepAxes(la, B, 2, null); }, PORTAL_BUCKET, "has STEP of shape (2), not (3), one value for each of its DATA's 3 step(s)"],
+    ["a TIME of 4 values", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); stepAxes(la, B, 3, 4); }, PORTAL_BUCKET, "has TIME of shape (4), not (3), one value for each of its DATA's 3 step(s)"],
+    ["a STEP of shape (3, 1)", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); (la.get(B) as h5wasm.Group).create_dataset({ name: "STEP", data: Int32Array.from([0, 1, 2]), shape: [3, 1] }); }, PORTAL_BUCKET, "has STEP of shape (3, 1), not (3)"],
+    ["a TIME on LOCAL_AXES itself beside a good bucket", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_dataset({ name: "TIME", data: Float64Array.from([1, 2, 3]), shape: [3] }); }, STEP_LA, "holds TIME on itself (a flat layout this reader does not take"],
+    ["§5's STEP_<k> datasets on LOCAL_AXES itself", (la) => { for (let k = 0; k < 3; k++) la.create_dataset({ name: `STEP_${k}`, data: quarterTurns([3, 4]), shape: [3, 4] }); }, STEP_LA, "holds STEP_0, STEP_1, STEP_2 on itself (the per-step DATA/STEP_<k> form schema §5 draws"],
+    ["a FRAME on LOCAL_AXES itself", (la) => la.create_dataset({ name: "FRAME", data: quarterTurns([3, 4]), shape: [3, 4] }), STEP_LA, "holds FRAME on itself (a flat layout this reader does not take"],
+    // The open-time id census does not count the flat ID (#2451 review): the file opens, and the step read names the layout.
+    ["a flat ID and DATA beside a class bucket of the same ids", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_dataset({ name: "ID", data: Int32Array.from([1, 2, 3]), shape: [3] }); la.create_dataset({ name: "DATA", data: quarterTurns([3, 3, 4]), shape: [3, 3, 4] }); }, STEP_LA, "holds DATA, ID on itself (a flat layout this reader does not take"],
+    ["a TIME that is a group", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); (la.get(B) as h5wasm.Group).create_group("TIME"); }, PORTAL_BUCKET, "holds a TIME that is not a dataset (a step bucket is"],
     ["an ID that is a group", (la) => { stepBucket(la, B, null, [3, 3, 4]); (la.get(B) as h5wasm.Group).create_group("ID"); }, PORTAL_BUCKET, "holds an ID that is not a dataset"],
-    // The literal §5 layout, DATA as a group of per-step datasets, is not the layout this reader takes.
-    ["a DATA that is a group", (la) => { stepBucket(la, B, [1, 2, 3], null); (la.get(B) as h5wasm.Group).create_group("DATA").create_dataset({ name: "STEP_0", data: quarterTurns([3, 4]), shape: [3, 4] }); }, PORTAL_BUCKET, "holds a DATA that is not a dataset (a step bucket is one ID[nE] dataset and one DATA[steps, nE, 3|4|9] dataset"],
+    // §5's DATA as a group of per-step datasets, in a class bucket, is named as §5's form (#2451).
+    ["a DATA that is a group of STEP_<k>", (la) => { stepBucket(la, B, [1, 2, 3], null); schema5Data(la.get(B) as h5wasm.Group, 3); }, PORTAL_BUCKET, "holds a DATA group, not a DATA dataset (the per-step DATA/STEP_<k> form schema §5 draws, which §7.0's chunked DATA superseded; a step bucket is"],
     ["neither an ID nor a DATA", (la) => { stepBucket(la, B, [1, 2, 3], [3, 3, 4]); la.create_group("COLUMN_MAP"); }, `${STEP_LA}/COLUMN_MAP`, "holds neither an ID nor a DATA (a step bucket is"],
   ];
   for (const [label, edit, at, what] of cases) {
@@ -1333,6 +1369,7 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     m1.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
     m1.create_dataset({ name: "GAUSS_ID", data: new Int32Array([1, 2, 3]), shape: [3] });
     const fbcModel1 = modelElements.create_group("20-ForceBeamColumn2d[0]");
+    fbcModel1.create_attribute("PARAM_DOMAIN", "[-1,1]");
     fbcModel1.create_group("QUADRATURE").create_dataset({
       name: "GP_PARAM",
       data: new Float64Array([-0.7746, 0.0, 0.7746]),
@@ -1350,6 +1387,7 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     m2.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
     m2.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0, 1, 99]), shape: [3] });
     const fbcModel2 = modelElements.create_group("21-DispBeamColumn2d[0]");
+    fbcModel2.create_attribute("PARAM_DOMAIN", "[-1,1]");
     fbcModel2.create_group("QUADRATURE").create_dataset({
       name: "GP_PARAM",
       data: new Float64Array([-0.7746, 0.0, 0.7746]),
@@ -1371,6 +1409,7 @@ test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-b
     m3.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
     m3.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1, -1, -1]), shape: [3] });
     const fbcModel3 = modelElements.create_group("22-ElasticBeam2d[0]");
+    fbcModel3.create_attribute("PARAM_DOMAIN", "[-1,1]");
     fbcModel3.create_group("QUADRATURE").create_dataset({
       name: "GP_PARAM",
       data: new Float64Array([-0.90618, -0.538469, 0.0, 0.538469, 0.90618]),
@@ -1690,4 +1729,137 @@ test("readColumnsBySlab reads each dataset once, over the asked columns only, an
     () => readColumnsBySlab([{ path: "A", col: 0 }, { path: "A", col: 1 }], () => new Float64Array(3), err),
     (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && /A: a read of columns 0\.\.2 returned 3 values/.test(e.message),
   );
+});
+
+// -- #2472: section station xi honours PARAM_DOMAIN; the linspace fallback warns -------------
+//
+// A scratch truss copy gets one force-based beam's section.force bucket (element 1,
+// three stations of N) and, unless `gp` is null, its MODEL/ELEMENTS group with a
+// three-point Gauss-Legendre GP_PARAM (xi = -sqrt(3/5), 0, sqrt(3/5)).
+
+const LEGENDRE_3 = [-Math.sqrt(3 / 5), 0, Math.sqrt(3 / 5)];
+
+function sectionBeam(opts: { gp: number[] | null; domain?: string | null; gaussIds?: number[] }): string {
+  return edited(TRUSS, (f) => {
+    const stage = f.get("MODEL_STAGE[1]") as h5wasm.Group;
+    const sf = (stage.get("RESULTS/ON_ELEMENTS") as h5wasm.Group).create_group("section.force");
+    const b = sf.create_group("20-ForceBeamColumn2d[0]");
+    b.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    b.create_dataset({ name: "TIME", data: new Float64Array([0.25, 0.5, 0.75, 1.0]) });
+    b.create_dataset({ name: "STEP", data: new Int32Array([0, 1, 2, 3]) });
+    const data = new Float64Array(4 * 3);
+    for (let k = 0; k < 4; k++) data.set([1, 2, 3], k * 3);
+    b.create_dataset({ name: "DATA", data, shape: [4, 1, 3] });
+    const m = b.create_group("COLUMN_MAP");
+    m.create_attribute("COMP_NAMES", "P\nP\nP");
+    m.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
+    m.create_dataset({ name: "GAUSS_ID", data: new Int32Array(opts.gaussIds ?? [0, 1, 2]), shape: [3] });
+    if (opts.gp === null) return;
+    const g = (stage.get("MODEL/ELEMENTS") as h5wasm.Group).create_group("20-ForceBeamColumn2d[0]");
+    const domain = opts.domain === undefined ? "[-1,1]" : opts.domain;
+    if (domain !== null) g.create_attribute("PARAM_DOMAIN", domain);
+    g.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: new Float64Array(opts.gp), shape: [opts.gp.length, 1] });
+  });
+}
+
+const refusedByName = (pattern: RegExp) => (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && pattern.test(e.message);
+
+test("#2472: Legendre GP_PARAM with PARAM_DOMAIN [-1,1] places the section stations at its points, with no warning", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3 }), (r) => {
+    const openWarnings: string[] = [];
+    assert.deepEqual(r.availableLineStations("stage_0", openWarnings), ["N"]);
+    assert.deepEqual(openWarnings, []);
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), LEGENDRE_3);
+    assert.deepEqual(Array.from(slab.values.subarray(0, 3)), [1, 2, 3]);
+    assert.deepEqual(warnings, []);
+  });
+});
+
+test("#2472: Legendre GP_PARAM without PARAM_DOMAIN is refused by name, never drawn evenly spaced", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3, domain: null }), (r) => {
+    const named = /MODEL\/ELEMENTS\/20-ForceBeamColumn2d\[0\] carries QUADRATURE\/GP_PARAM but no PARAM_DOMAIN attribute/;
+    assert.throws(() => r.readLineStations("stage_0", "N"), refusedByName(named));
+    assert.throws(() => r.readLineStationStep("stage_0", "N", 0), refusedByName(named));
+    // At open the bucket is left out, and says why.
+    const openWarnings: string[] = [];
+    assert.deepEqual(r.availableLineStations("stage_0", openWarnings), ["N"]); // the truss's basicForce still serves N
+    assert.equal(openWarnings.length, 1);
+    assert.match(openWarnings[0]!, named);
+    assert.match(openWarnings[0]!, /line stations of section bucket "20-ForceBeamColumn2d\[0\]" are left out/);
+  });
+});
+
+test("#2472: a PARAM_DOMAIN a line station does not read ([0,1], bary, anything else) is refused by name", () => {
+  for (const domain of ["[0,1]", "bary", "unit"]) {
+    withFile(sectionBeam({ gp: [0.1, 0.5, 0.9], domain }), (r) => {
+      const named = new RegExp(`20-ForceBeamColumn2d\\[0\\]: PARAM_DOMAIN ${escapedRe(JSON.stringify(domain))} is not one a line station reads`);
+      assert.throws(() => r.readLineStations("stage_0", "N"), refusedByName(named), domain);
+    });
+  }
+});
+
+test("#2472: a GP_PARAM row that is not a finite xi in [-1, 1] is refused by name", () => {
+  for (const [bad, shown] of [[1.5, "1.5"], [-1.000001, "-1.000001"], [Number.NaN, "NaN"], [Number.POSITIVE_INFINITY, "Infinity"]] as const) {
+    withFile(sectionBeam({ gp: [-1, bad, 1] }), (r) => {
+      const named = new RegExp(`QUADRATURE/GP_PARAM\\[1\\] = ${escapedRe(shown)} is not a natural coordinate on the beam`);
+      assert.throws(() => r.readLineStations("stage_0", "N"), refusedByName(named), shown);
+    });
+  }
+});
+
+test("#2472: GAUSS_IDs that do not index GP_PARAM fall back to evenly spaced stations, and warn by name", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3, gaussIds: [0, 1, 99] }), (r) => {
+    const named = /section\.force bucket "20-ForceBeamColumn2d\[0\]": its GAUSS_IDs \[0, 1, 99\] do not index the 3 row\(s\) of \S+\/QUADRATURE\/GP_PARAM, so its 3 section station\(s\) are drawn evenly spaced/;
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 0, 1]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, named);
+    const openWarnings: string[] = [];
+    r.availableLineStations("stage_0", openWarnings);
+    assert.equal(openWarnings.length, 1);
+    assert.match(openWarnings[0]!, named);
+  });
+});
+
+test("#2472: GAUSS_IDs that repeat fall back to evenly spaced stations, and warn by name", () => {
+  withFile(sectionBeam({ gp: LEGENDRE_3, gaussIds: [-1, -1, -1] }), (r) => {
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 0, 1]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /section\.force bucket "20-ForceBeamColumn2d\[0\]": its GAUSS_IDs \[-1, -1, -1\] are not distinct non-negative integers, so its 3 section station\(s\) are drawn evenly spaced/);
+  });
+});
+
+test("#2472: a section bucket whose element group has no GP_PARAM is drawn evenly spaced, and warns by name", () => {
+  withFile(sectionBeam({ gp: null }), (r) => {
+    const named = /section\.force bucket "20-ForceBeamColumn2d\[0\]": there is no QUADRATURE\/GP_PARAM on the "ForceBeamColumn2d" MODEL\/ELEMENTS group, so its 3 section station\(s\) are drawn evenly spaced/;
+    const warnings: string[] = [];
+    const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [-1, 0, 1]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, named);
+    const openWarnings: string[] = [];
+    r.availableLineStations("stage_0", openWarnings);
+    assert.equal(openWarnings.length, 1);
+    assert.match(openWarnings[0]!, named);
+  });
+});
+
+test("#2472: the committed beam fixtures read their stations from GP_PARAM, with no warning", () => {
+  for (const [path, gp] of [[PORTAL3D, [-1, 0, 1]], [FRAME3D, [-1, 0, 1]]] as const) {
+    withFile(path, (r) => {
+      const openWarnings: string[] = [];
+      const comps = r.availableLineStations("stage_0", openWarnings);
+      assert.ok(comps.includes("N"), path);
+      assert.deepEqual(openWarnings.filter((w) => /evenly spaced|PARAM_DOMAIN|GP_PARAM/.test(w)), [], path);
+      const warnings: string[] = [];
+      const slab = r.readLineStations("stage_0", "N", { elementIds: [1], warningsOut: warnings });
+      assert.deepEqual(Array.from(slab.stationNaturalCoord), gp, path);
+      assert.deepEqual(warnings.filter((w) => /evenly spaced|PARAM_DOMAIN|GP_PARAM/.test(w)), [], path);
+    });
+  }
 });

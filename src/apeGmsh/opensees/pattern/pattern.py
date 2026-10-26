@@ -37,6 +37,8 @@ patterns-vs-flat split mirrors that).
 """
 from __future__ import annotations
 
+import math
+
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 import numbers
@@ -239,6 +241,20 @@ def _beam_uniform_args(rec: _EleLoadRecord, ndm: int) -> tuple[float, ...]:
     if is_uniform:
         return (wy_a, wz_a, wx_a, a_l, b_l)
     return (wy_a, wz_a, wx_a, a_l, b_l, wy_b, wz_b, wx_b)
+
+
+def _membrane_pressure_args(rec: _EleLoadRecord, ndm: int) -> tuple[float, ...]:
+    """Trailing args of a ``surface_load(pressure=q)`` on a LadrunoMembrane:
+    ``-beamUniform 0.0 q 0.0`` (``wy wz wx``; the fork reads ``wz`` along the
+    membrane normal)."""
+    if ndm != 3:
+        raise _BridgeValueError(
+            "Plain.surface_load(pressure=...): a per-pattern membrane "
+            f"pressure needs a 3-D model (ndm=3); got ndm={ndm}. In 2-D the "
+            "fork reads -beamUniform as an in-plane load."
+        )
+    q = rec.wz[0] if rec.wz is not None else 0.0
+    return (0.0, float(q), 0.0)
 
 
 def _self_weight_args(rec: _EleLoadRecord, ndm: int) -> tuple[float, ...]:
@@ -532,16 +548,90 @@ class Plain(Pattern):
         pg: str | None = None,
         label: str | None = None,
         ele: "int | Element | Sequence[int | Element] | None" = None,
+        pressure: float | None = None,
     ) -> None:
-        """Record a surface-load activation (``eleLoad -type -surfaceLoad``)."""
+        """Record a surface-load activation (``eleLoad -type -surfaceLoad``).
+
+        Without ``pressure=`` the targeted elements apply their own reference
+        load (a ``LadrunoMembrane``'s ``pressure=``), scaled by the pattern's
+        time series.
+
+        ``pressure=q`` gives this pattern its own magnitude, so one panel can
+        carry D, SD and L in three patterns with three values (an ETABS shell
+        uniform load set). It is for ``LadrunoMembrane`` targets only
+        (``ele=`` handles or the membrane's ``pg=``) and 3-D models. ``q``
+        has the sign and normal of the element's ``pressure=``: the traction
+        is ``q * n``, with ``n`` the membrane's normal (from its boundary
+        loop's winding), exactly as ``pressure=q`` on the element would
+        give. The bridge emits ``eleLoad -ele <m> -type -beamUniform 0.0 q
+        0.0``: the fork's ``LadrunoMembrane::addLoad`` reads a
+        ``-beamUniform`` load as the traction ``wy e2 + wz n + wx e1`` and
+        distributes it through the same tributary transfer as
+        ``-surfaceLoad`` (``qz = wz n``), so the load is exact. It never
+        reads the element's ``pressure=``.
+        """
         target_kind, target = _resolve_ele_target(
             "Plain.surface_load", pg=pg, label=label, ele=ele,
         )
+        if pressure is None:
+            self._ele_loads_.append(
+                _EleLoadRecord(
+                    load_type="surfaceLoad",
+                    target_kind=target_kind,
+                    target=target,
+                )
+            )
+            return
+        # A bool is an Integral (True would emit 1.0) and a str would
+        # float() quietly; refuse both, as ele= refuses a bool tag.
+        if isinstance(pressure, bool) or not isinstance(pressure, numbers.Real):
+            raise ValueError(
+                "Plain.surface_load: pressure must be a real number, got "
+                f"{pressure!r} ({type(pressure).__name__})."
+            )
+        q = float(pressure)
+        if not math.isfinite(q):
+            raise ValueError(
+                f"Plain.surface_load: pressure must be finite, got {pressure!r}."
+            )
+        if target_kind == "label":
+            raise ValueError(
+                "Plain.surface_load(pressure=...): label= resolves to mesh "
+                "cells, and pressure= loads LadrunoMembrane macro-elements, "
+                "which have none. Target the membrane by its handle (ele=) or "
+                "its pg=."
+            )
+        if target_kind == "ele":
+            assert isinstance(target, tuple)
+            for item in target:
+                if type(item).__name__ != "LadrunoMembrane":
+                    raise ValueError(
+                        "Plain.surface_load(pressure=...): pressure= is for "
+                        "LadrunoMembrane targets only (it emits -beamUniform, "
+                        "which another element reads as a beam load); got "
+                        f"{item!r}. Pass the membrane handle."
+                    )
+            # The fork adds one -beamUniform per listed tag, so a repeated
+            # handle loads that panel twice. Refused rather than deduplicated:
+            # a repeat is a mapping error (one panel assigned twice in a load
+            # set), and dropping it silently would hide which of q or 2q the
+            # caller meant. Two loads on one panel stay expressible as two
+            # surface_load calls.
+            seen: set[int] = set()
+            for item in target:
+                if id(item) in seen:
+                    raise ValueError(
+                        "Plain.surface_load(pressure=...): ele= lists "
+                        f"{item!r} more than once, which would apply its "
+                        "pressure once per listing. List each membrane once."
+                    )
+                seen.add(id(item))
         self._ele_loads_.append(
             _EleLoadRecord(
-                load_type="surfaceLoad",
+                load_type="membranePressure",
                 target_kind=target_kind,
                 target=target,
+                wz=(q, q),
             )
         )
 
@@ -798,6 +888,15 @@ class Plain(Pattern):
                     "-type",
                     "-selfWeight",
                     *_self_weight_args(erec, ndm),
+                )
+            else:
+                # membranePressure lands here: only the bridge can check
+                # that a tag is a LadrunoMembrane, and on anything else
+                # its -beamUniform is a beam load.
+                raise NotImplementedError(
+                    f"Plain._emit: a {erec.load_type!r} element load is "
+                    "resolved by the bridge build pipeline only. Emit via "
+                    "the bridge (ops.tcl/py/build), not the primitive directly."
                 )
         emitter.pattern_close()
 

@@ -167,6 +167,7 @@ export type StepAnswer =
       nodal: Record<string, Float64Array>;
       gauss: Record<string, Float64Array>;
       lineDiagram?: LadrunoLineStationStep | null;
+      lineDiagramError?: string;
     }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
@@ -478,16 +479,22 @@ export class ResultsHost {
         if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
       }
       let lineDiagram: LadrunoLineStationStep | null | undefined;
+      let lineDiagramError: string | undefined;
       if (req.lineDiagram !== undefined) {
-        if (isLadruno(rf)) {
-          // No warningsOut here (#2348): each warning this read can give (a MODEL/LOCAL_AXES group it does not read,
-          // a basicForce bucket it refuses) was given once at open, by metaOf's availableLineStations for this stage,
-          // and a malformed step LOCAL_AXES bucket is refused, not warned (#2349). Passing it would repeat them each step.
-          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
-        } else {
-          const v = rf.elementIndexVerdict();
-          if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
-          lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+        try {
+          if (isLadruno(rf)) {
+            // No warningsOut here (#2348): each warning this read can give (a MODEL/LOCAL_AXES group it does not read,
+            // a basicForce bucket it refuses) was given once at open, by metaOf's availableLineStations for this stage,
+            // and a malformed step LOCAL_AXES bucket is refused, not warned (#2349). Passing it would repeat them each step.
+            lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+          } else {
+            const v = rf.elementIndexVerdict();
+            if (!v.verified) throw new Error(`line-station results of ${req.path} are refused: ${v.reason}`);
+            lineDiagram = rf.readLineStationStep(s.id, req.lineDiagram, req.step);
+          }
+        } catch (err) {
+          lineDiagram = null;
+          lineDiagramError = message(err);
         }
       }
       return {
@@ -498,6 +505,7 @@ export class ResultsHost {
         nodal,
         gauss,
         ...(lineDiagram !== undefined ? { lineDiagram } : {}),
+        ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
       };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
@@ -588,7 +596,9 @@ export class ResultsHost {
 
   /**
    * The line-station history range (.ladruno or verified results.h5): one 1-D beam
-   * line-station component across all steps of `st.id`. Runs inside `scan`.
+   * line-station component across all steps of `st.id`, read in chunks of steps
+   * via hyperslab (`stepRange: [k0, k1)`) so transient stages never allocate the
+   * full `nSteps × nStations` slab at once. Runs inside `scan`.
    */
   private async scanLine(
     req: ScanRequest,
@@ -607,9 +617,10 @@ export class ResultsHost {
     const comp = req.components[0]!;
     const T = st.nSteps;
     if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+    if (T === 0) return { ok: true, scanId: id, min: null, max: null, steps: 0, ms: performance.now() - t };
     this.armIdle();
-    const slab = first.readLineStations(st.id, comp);
-    const nRows = slab.elementIndex.length;
+    const probe = first.readLineStations(st.id, comp, { stepRange: [0, 1] });
+    const nRows = probe.elementIndex.length;
     const chunk = opts.chunkSteps ?? Math.max(1, Math.floor(4e6 / (8 * Math.max(1, nRows))));
     let lo = Infinity;
     let hi = -Infinity;
@@ -620,9 +631,11 @@ export class ResultsHost {
       if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
       this.armIdle();
       const k1 = Math.min(T, k0 + chunk);
-      const start = k0 * nRows;
-      const end = k1 * nRows;
-      for (let i = start; i < end; i++) {
+      const slab =
+        k0 === 0 && k1 === 1
+          ? probe
+          : rf.readLineStations(st.id, comp, { stepRange: [k0, k1] });
+      for (let i = 0; i < slab.values.length; i++) {
         const v = slab.values[i]!;
         if (!Number.isFinite(v)) continue;
         if (v < lo) lo = v;

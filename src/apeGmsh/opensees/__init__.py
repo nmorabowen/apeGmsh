@@ -33,6 +33,7 @@ from ._internal.stage_window import (
     SeriesOutsideStageWindowWarning,
 )
 from .stage._chain import InertStaticDtWarning
+from .element.frame_modifiers import FrameModifiers
 from .model_data import ModelData
 from .node import Node, NodeSet
 from .opensees_model import OpenSeesModel
@@ -41,6 +42,7 @@ from ._target import OpenSeesCapabilities, OpenSeesTarget
 
 __all__ = [
     "apeSees",
+    "FrameModifiers",
     "ModelData",
     "OpenSeesModel",
     "Node",

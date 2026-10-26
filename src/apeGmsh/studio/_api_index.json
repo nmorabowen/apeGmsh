@@ -126,6 +126,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ComplexEigenResult.from_flat"
     },
+    "EigenResult.modal_properties": {
+      "doc": "Run ``modalProperties -return`` on this solve's modes.",
+      "signature": "modal_properties(*, unorm: 'bool' = False) -> \"'ModalPropertiesResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.modal_properties"
+    },
     "EigenResult.mode_shape": {
       "doc": "Return the mode shape for ``node`` in ``mode`` (1-indexed).",
       "signature": "mode_shape(node: \"'int | Node'\", mode: 'int') -> 'np.ndarray'",
@@ -3410,7 +3416,7 @@
     },
     "ops.eigen_feast": {
       "doc": "Band-targeted FEAST eigensolve via the live emitter.",
-      "signature": "eigen_feast(f_min: 'float', f_max: 'float', *, certify: 'bool' = False) -> \"'EigenResult'\"",
+      "signature": "eigen_feast(f_min: 'float', f_max: 'float', *, certify: 'bool' = False, trace_stop: 'bool' = False) -> \"'EigenResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.eigen_feast"
     },
@@ -3428,13 +3434,13 @@
     },
     "ops.element.ASDShellQ4": {
       "doc": "",
-      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
+      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, p_delta: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ASDShellQ4"
     },
     "ops.element.ASDShellT3": {
       "doc": "",
-      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
+      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, p_delta: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ASDShellT3"
     },
@@ -3463,8 +3469,8 @@
       "symbol": "ops.element.CoupledZeroLength"
     },
     "ops.element.ElasticTimoshenkoBeam": {
-      "doc": "",
-      "signature": "ElasticTimoshenkoBeam(*, pg: 'str', transf: '_AnyTransf | str', E: 'float', G: 'float', A: 'float', Iz: 'float', Avy: 'float', Iy: 'float | None' = None, J: 'float | None' = None, Avz: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False) -> 'ElasticTimoshenkoBeam'",
+      "doc": "``element ElasticTimoshenkoBeam``; ``modifiers`` scales the emitted",
+      "signature": "ElasticTimoshenkoBeam(*, pg: 'str', transf: '_AnyTransf | str', E: 'float', G: 'float', A: 'float', Iz: 'float', Avy: 'float', Iy: 'float | None' = None, J: 'float | None' = None, Avz: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, modifiers: 'FrameModifiers | None' = None) -> 'ElasticTimoshenkoBeam'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ElasticTimoshenkoBeam"
     },
@@ -3506,19 +3512,19 @@
     },
     "ops.element.LadrunoDispBeamColumn": {
       "doc": "``element LadrunoDispBeamColumn`` — disp-based beam with fork hinges.",
-      "signature": "LadrunoDispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, lch: 'str | float' = 'ip', nl: 'bool' = False, span_load: 'bool' = True, hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoDispBeamColumn'",
+      "signature": "LadrunoDispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, lch: 'str | float' = 'ip', nl: 'bool' = False, span_load: 'bool | None' = None, hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, axial_release: 'bool' = False, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoDispBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoDispBeamColumn"
     },
     "ops.element.LadrunoForceBeamColumn": {
       "doc": "``element LadrunoForceBeamColumn`` — force-based beam with fork hinges.",
-      "signature": "LadrunoForceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, max_iter: 'int | None' = None, tol: 'float | None' = None, subdivide: 'int | tuple[int, float] | None' = None, lch: 'str | float' = 'ip', hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, shear: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoForceBeamColumn'",
+      "signature": "LadrunoForceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, max_iter: 'int | None' = None, tol: 'float | None' = None, subdivide: 'int | tuple[int, float] | None' = None, lch: 'str | float' = 'ip', span_load: 'bool | None' = None, hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, axial_release: 'bool' = False, shear: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoForceBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoForceBeamColumn"
     },
     "ops.element.LadrunoIMKBeam": {
       "doc": "``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam.",
-      "signature": "LadrunoIMKBeam(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', G: 'float | None' = None, Jx: 'float | None' = None, Iy: 'float | None' = None, ends: 'str' = 'both', mat_z: 'UniaxialMaterial | str | None' = None, mat_y: 'UniaxialMaterial | str | None' = None, mat_zi: 'UniaxialMaterial | str | None' = None, mat_zj: 'UniaxialMaterial | str | None' = None, mat_yi: 'UniaxialMaterial | str | None' = None, mat_yj: 'UniaxialMaterial | str | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, shear: 'float | tuple[float, float] | tuple[float, float, float] | None' = None, shear_hinge: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, shear_hinge_y: 'UniaxialMaterial | str | None' = None, shear_hinge_z: 'UniaxialMaterial | str | None' = None, end_zones: 'tuple[float, float] | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False) -> 'LadrunoIMKBeam'",
+      "signature": "LadrunoIMKBeam(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', G: 'float | None' = None, Jx: 'float | None' = None, Iy: 'float | None' = None, ends: 'str' = 'both', mat_z: 'UniaxialMaterial | str | None' = None, mat_y: 'UniaxialMaterial | str | None' = None, mat_zi: 'UniaxialMaterial | str | None' = None, mat_zj: 'UniaxialMaterial | str | None' = None, mat_yi: 'UniaxialMaterial | str | None' = None, mat_yj: 'UniaxialMaterial | str | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, shear: 'float | tuple[float, float] | tuple[float, float, float] | None' = None, shear_hinge: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, shear_hinge_y: 'UniaxialMaterial | str | None' = None, shear_hinge_z: 'UniaxialMaterial | str | None' = None, end_zones: 'tuple[float, float] | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, implex: 'bool' = False) -> 'LadrunoIMKBeam'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoIMKBeam"
     },
@@ -3557,6 +3563,12 @@
       "signature": "ShellMITC4(*, pg: 'str', section: '_ShellSection | str', damp: 'Damping | None' = None) -> 'ShellMITC4'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ShellMITC4"
+    },
+    "ops.element.ShellNLDKGQ": {
+      "doc": "",
+      "signature": "ShellNLDKGQ(*, pg: 'str', section: '_ShellSection | str', damp: 'Damping | None' = None) -> 'ShellNLDKGQ'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.element.ShellNLDKGQ"
     },
     "ops.element.SixNodeTri": {
       "doc": "",
@@ -3608,19 +3620,19 @@
     },
     "ops.element.dispBeamColumn": {
       "doc": "``element dispBeamColumn`` — displacement-based distributed-plasticity.",
-      "signature": "dispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None) -> 'dispBeamColumn'",
+      "signature": "dispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'dispBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.dispBeamColumn"
     },
     "ops.element.elasticBeamColumn": {
-      "doc": "",
-      "signature": "elasticBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', Iy: 'float | None' = None, G: 'float | None' = None, J: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None) -> 'elasticBeamColumn'",
+      "doc": "``element elasticBeamColumn``; ``modifiers`` scales the emitted",
+      "signature": "elasticBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', Iy: 'float | None' = None, G: 'float | None' = None, J: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'elasticBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.elasticBeamColumn"
     },
     "ops.element.forceBeamColumn": {
       "doc": "``element forceBeamColumn`` — force-based distributed-plasticity.",
-      "signature": "forceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, max_iter: 'int | None' = None, tol: 'float | None' = None, damp: 'Damping | None' = None) -> 'forceBeamColumn'",
+      "signature": "forceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, max_iter: 'int | None' = None, tol: 'float | None' = None, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'forceBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.forceBeamColumn"
     },
@@ -3870,6 +3882,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.mass_from_model"
     },
+    "ops.modal_after_gravity": {
+      "doc": "Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``",
+      "signature": "modal_after_gravity(num_modes: 'int', *, p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'GravityModalResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.modal_after_gravity"
+    },
     "ops.modal_deck": {
       "doc": "Emit a distributed modal deck (ADR 0077 Tier 1) — two backends.",
       "signature": "modal_deck(path: 'str', *, solver: 'str' = 'feast', band: \"'tuple[float, float] | None'\" = None, num_modes: 'int | None' = None, certify: 'bool' = False, target: 'str' = 'tcl', out: 'str' = 'eigenvalues.out') -> 'None'",
@@ -3944,7 +3962,7 @@
     },
     "ops.nDMaterial.LadrunoCohesiveHingeBiaxial": {
       "doc": "Register a :class:`LadrunoCohesiveHingeBiaxial` coupled hinge surface.",
-      "signature": "LadrunoCohesiveHingeBiaxial(*, Mcz: 'float', Gfz: 'float', Mcy: 'float', Gfy: 'float', softening: 'str' = 'exponential', penalty_ratio: 'float' = 1000.0, bk_eta: 'float' = 1.0, pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHingeBiaxial'",
+      "signature": "LadrunoCohesiveHingeBiaxial(*, Mcz: 'float', Gfz: 'float', Mcy: 'float', Gfy: 'float', softening: 'str' = 'exponential', penalty_ratio: 'float' = 1000.0, bk_eta: 'float' = 1.0, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHingeBiaxial'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.LadrunoCohesiveHingeBiaxial"
     },
@@ -4256,7 +4274,7 @@
     },
     "ops.response_spectrum_analysis": {
       "doc": "Run a response-spectrum analysis with native combination.",
-      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack') -> \"'ResponseSpectrumResult'\"",
+      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack', scale: 'float | None' = None) -> \"'ResponseSpectrumResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.response_spectrum_analysis"
     },
@@ -4337,6 +4355,12 @@
       "signature": "W_fiber(*, bf: 'float', tf: 'float', hw: 'float', tw: 'float', material: 'UniaxialMaterial | str', ny_flange: 'int' = 2, nz_flange: 'int' = 8, ny_web: 'int' = 8, nz_web: 'int' = 1, GJ: 'float | None' = None, name: 'str | None' = None) -> '_FiberCls'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.section.W_fiber"
+    },
+    "ops.spectrum_after_gravity": {
+      "doc": "Per-mode response spectrum about the gravity state (ADR 0124 D4).",
+      "signature": "spectrum_after_gravity(num_modes: 'int', *, spectra: \"'Sequence[DesignSpectrum]'\", extractors: \"'Mapping[str, ResponseExtractor]'\", p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'SpectrumModalResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.spectrum_after_gravity"
     },
     "ops.spring_bed": {
       "doc": "A grounded zeroLength spring (and dashpot) on every node of a",
@@ -4590,6 +4614,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.ASDSteel1D"
     },
+    "ops.uniaxialMaterial.Bilin": {
+      "doc": "``uniaxialMaterial Bilin`` — Modified IMK bilinear hinge law.",
+      "signature": "Bilin(*, Ke: 'float', AsPos: 'float', AsNeg: 'float', My_pos: 'float', My_neg: 'float', LamdaS: 'float', LamdaD: 'float', LamdaA: 'float', LamdaK: 'float', Cs: 'float' = 1.0, Cd: 'float' = 1.0, Ca: 'float' = 1.0, Ck: 'float' = 1.0, Thetap_pos: 'float', Thetap_neg: 'float', Thetapc_pos: 'float', Thetapc_neg: 'float', KPos: 'float', KNeg: 'float', Thetau_pos: 'float', Thetau_neg: 'float', PDPlus: 'float' = 1.0, PDNeg: 'float' = 1.0, nFactor: 'float | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'Bilin'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.Bilin"
+    },
     "ops.uniaxialMaterial.Concrete01": {
       "doc": "",
       "signature": "Concrete01(*, fpc: 'float', epsc0: 'float', fpcu: 'float', epsU: 'float', name: 'str | None' = None) -> 'Concrete01'",
@@ -4652,7 +4682,7 @@
     },
     "ops.uniaxialMaterial.LadrunoCohesiveHinge": {
       "doc": "``uniaxialMaterial LadrunoCohesiveHinge`` — cohesive moment-rotation hinge.",
-      "signature": "LadrunoCohesiveHinge(*, Mc: 'float', Gf: 'float', penalty: 'float | None' = None, penalty_ratio: 'float' = 1000.0, softening: 'str' = 'exponential', pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHinge'",
+      "signature": "LadrunoCohesiveHinge(*, Mc: 'float', Gf: 'float', penalty: 'float | None' = None, penalty_ratio: 'float' = 1000.0, softening: 'str' = 'exponential', pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHinge'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.LadrunoCohesiveHinge"
     },
@@ -4673,6 +4703,12 @@
       "signature": "Maxwell(*, K: 'float', C: 'float', alpha: 'float', length: 'float', name: 'str | None' = None) -> 'Maxwell'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.Maxwell"
+    },
+    "ops.uniaxialMaterial.ModIMKPeakOriented": {
+      "doc": "``uniaxialMaterial ModIMKPeakOriented`` — Modified IMK peak-oriented hinge law.",
+      "signature": "ModIMKPeakOriented(*, Ke: 'float', alfaPos: 'float', alfaNeg: 'float', My_pos: 'float', My_neg: 'float', Ls: 'float', Ld: 'float', La: 'float', Lk: 'float', Cs: 'float' = 1.0, Cd: 'float' = 1.0, Ca: 'float' = 1.0, Ck: 'float' = 1.0, thetaPpos: 'float', thetaPneg: 'float', thetaPCpos: 'float', thetaPCneg: 'float', ResfacPos: 'float', ResfacNeg: 'float', fracDispPos: 'float', fracDispNeg: 'float', DPos: 'float' = 1.0, DNeg: 'float' = 1.0, nFactor: 'float | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'ModIMKPeakOriented'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.ModIMKPeakOriented"
     },
     "ops.uniaxialMaterial.MultiLinear": {
       "doc": "``uniaxialMaterial MultiLinear`` — piecewise-linear backbone.",

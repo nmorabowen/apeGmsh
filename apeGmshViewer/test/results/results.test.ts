@@ -738,3 +738,48 @@ test("line_stations partial write and unknown _ dataset are refused as gauss gro
   refuses(badIndex, "layout", /frame_ElasticBeam3d\/_weights: not a line_stations index dataset/);
 });
 
+test("H1: ResultsHost.readStep isolates readLineStationStep refusals so nodal step reads succeed and lineDiagramError carries the reason", async () => {
+  const lobatto = fileURLToPath(new URL("../../fixtures/line_oracle_fbc_lobatto.ladruno", import.meta.url));
+  const p = join(mkdtempSync(join(tmpdir(), "agv-results-h1-")), "edited.ladruno");
+  copyFileSync(lobatto, p);
+  const f = new h5wasm.File(p, "a");
+  try {
+    const onElems = f.get("MODEL_STAGE[1]/RESULTS/ON_ELEMENTS") as h5wasm.Group;
+    const stepLa = onElems.create_group("LOCAL_AXES").create_group("73-ForceBeamColumn2d[1000:1:0]");
+    stepLa.create_dataset({ name: "ID", data: new Int32Array([2]), shape: [1] });
+    // Malformed step LOCAL_AXES (all-zero quaternion row at step 1) throws in readLineStationStep(step=1)
+    stepLa.create_dataset({
+      name: "DATA",
+      data: new Float64Array([1, 0, 0, 0, 0, 0, 0, 0]),
+      shape: [2, 1, 4],
+    });
+  } finally {
+    f.close();
+  }
+
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const openAns = await host.open(p);
+    assert.ok(openAns.ok);
+    const stageId = openAns.meta.stages[0]!.id;
+    assert.ok(openAns.meta.stages[0]!.lineStations?.includes("Mz"));
+
+    const stepAns = host.readStep({
+      path: p,
+      stage: stageId,
+      step: 1,
+      seq: 1,
+      lineDiagram: "Mz",
+    });
+    assert.equal(stepAns.ok, true, "step read succeeds so nodal contour and deformed shape still work");
+    if (stepAns.ok) {
+      assert.ok(Object.keys(stepAns.nodal).length > 0, "nodal step columns are returned intact");
+      assert.equal(stepAns.lineDiagram, null, "lineDiagram is null when readLineStationStep throws");
+      assert.match(stepAns.lineDiagramError ?? "", /holds at step 1 a DATA row that is not a frame/);
+    }
+  } finally {
+    host.close();
+  }
+});
+
+

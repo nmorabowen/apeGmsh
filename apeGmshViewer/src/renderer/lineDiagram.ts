@@ -11,15 +11,20 @@ import type { BlobStore } from "../state/blobs.ts";
 import {
   buildLineDiagram3D,
   colorForValue,
+  effectiveFlipSign,
   joinLadrunoElements,
   lineDiagramClimOf,
   lineDiagramKeysOf,
+  projectHoverNeedle,
+  stateObjectDigest,
+  visibleLineDigest,
   type BeamDiagramSpan3D,
 } from "../state/lineDiagram.ts";
 import { deformView, resultsPairing } from "../state/selectors.ts";
 import type { LineDiagramCmap, State } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { toLinear } from "./contour.ts";
+import { SELECTION_COLOUR } from "./selection.ts";
 import { elementMaskOf, visibleMaps } from "./visible.ts";
 
 /** Unselected beam dimming multiplier in linear space (matches viewport.ts). */
@@ -92,10 +97,12 @@ export class LineDiagramLayer {
   readonly mesh: THREE.Mesh;
   readonly profileLines: THREE.LineSegments;
   readonly riserLines: THREE.LineSegments;
+  readonly hoverNeedle: THREE.LineSegments;
 
   private readonly meshMaterial: THREE.MeshBasicMaterial;
   private readonly profileMaterial: THREE.LineBasicMaterial;
   private readonly riserMaterial: THREE.LineBasicMaterial;
+  private readonly hoverMaterial: THREE.LineBasicMaterial;
   private camera: THREE.Camera | null;
   private theme: ThemeMode = "dark";
 
@@ -104,7 +111,15 @@ export class LineDiagramLayer {
   private lastStep: { key: string; step: LadrunoLineStationStep } | null = null;
   private lastDeform: LineDiagramDeformInput = null;
   private lastVisibleLineMap: Int32Array | undefined = undefined;
+  private lastBeams: readonly BeamDiagramSpan3D[] = [];
+  private lastEffectiveScale = 0;
+  private lastStepKey: string | null = null;
+  private lastClim: readonly [number, number] | null = null;
+  private lastViewDirKey = "";
   private appliedKey: string | null = null;
+  private appliedHoverKey: string | null = null;
+  private cameraDirty = false;
+  private cameraRafId: ReturnType<typeof setTimeout> | number | null = null;
 
   constructor(camera: THREE.Camera | null = null) {
     this.camera = camera;
@@ -126,12 +141,19 @@ export class LineDiagramLayer {
       transparent: true,
       opacity: 0.65,
     });
+    this.hoverMaterial = new THREE.LineBasicMaterial({
+      color: SELECTION_COLOUR,
+      depthTest: false,
+    });
 
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.meshMaterial);
     this.profileLines = new THREE.LineSegments(new THREE.BufferGeometry(), this.profileMaterial);
     this.riserLines = new THREE.LineSegments(new THREE.BufferGeometry(), this.riserMaterial);
+    this.hoverNeedle = new THREE.LineSegments(new THREE.BufferGeometry(), this.hoverMaterial);
+    this.hoverNeedle.renderOrder = 2;
+    this.hoverNeedle.visible = false;
 
-    this.root.add(this.mesh, this.profileLines, this.riserLines);
+    this.root.add(this.mesh, this.profileLines, this.riserLines, this.hoverNeedle);
     this.root.visible = false;
   }
 
@@ -143,10 +165,114 @@ export class LineDiagramLayer {
     this.theme = mode;
   }
 
+  private cancelPendingCameraFrame(): void {
+    if (this.cameraRafId === null) return;
+    if (typeof globalThis.cancelAnimationFrame === "function" && typeof this.cameraRafId === "number") {
+      globalThis.cancelAnimationFrame(this.cameraRafId);
+    } else {
+      clearTimeout(this.cameraRafId as ReturnType<typeof setTimeout>);
+    }
+    this.cameraRafId = null;
+  }
+
   private getViewDir(): [number, number, number] {
     if (!this.camera) return [0, 0, -1];
     const d = this.camera.getWorldDirection(new THREE.Vector3());
     return [d.x, d.y, d.z];
+  }
+
+  private hoverKeyOf(s: State): string {
+    const h = s.lineDiagram.hover;
+    const roPart = h ? `ro:${h.decl}|${h.elementId}|${h.xRel}|${h.value}|${h.pBase.join(",")}|${h.pTop.join(",")}` : "ro:none";
+    const pickPart =
+      s.hover && typeof s.hover !== "string" && s.hover.at
+        ? `pick:${s.hover.decl}|${s.hover.at[0]},${s.hover.at[1]},${s.hover.at[2]}`
+        : "pick:none";
+    return `${roPart}|${pickPart}`;
+  }
+
+  private syncHoverNeedle(s: State, beams: readonly BeamDiagramSpan3D[], effectiveScale: number): void {
+    let pBase: readonly [number, number, number] | null = null;
+    let pTop: readonly [number, number, number] | null = null;
+
+    if (s.lineDiagram.hover) {
+      const h = s.lineDiagram.hover;
+      const beam =
+        beams.find((b) => b.decl === h.decl && b.elementId === h.elementId) ??
+        beams.find((b) => b.decl === h.decl);
+      if (beam) {
+        const xRel = Math.max(0, Math.min(1, h.xRel));
+        const p0: [number, number, number] = [
+          beam.pStart[0] + xRel * (beam.pEnd[0] - beam.pStart[0]),
+          beam.pStart[1] + xRel * (beam.pEnd[1] - beam.pStart[1]),
+          beam.pStart[2] + xRel * (beam.pEnd[2] - beam.pStart[2]),
+        ];
+        const signMult = effectiveFlipSign(s.lineDiagram) ? -1 : 1;
+        const offset = signMult * h.value * effectiveScale;
+        pBase = p0;
+        pTop = [
+          p0[0] + offset * beam.extrudeDir[0],
+          p0[1] + offset * beam.extrudeDir[1],
+          p0[2] + offset * beam.extrudeDir[2],
+        ];
+      } else {
+        pBase = h.pBase;
+        pTop = h.pTop;
+      }
+    } else if (s.hover && typeof s.hover !== "string" && s.hover.at) {
+      const hoverDecl = s.hover.decl;
+      const hitPoint = s.hover.at;
+      const candidates = beams.filter((b) => b.decl === hoverDecl);
+      if (candidates.length > 0) {
+        let beam = candidates[0]!;
+        if (candidates.length > 1) {
+          let bestDist = Infinity;
+          for (const c of candidates) {
+            const dx = c.pEnd[0] - c.pStart[0];
+            const dy = c.pEnd[1] - c.pStart[1];
+            const dz = c.pEnd[2] - c.pStart[2];
+            const lenSq = dx * dx + dy * dy + dz * dz;
+            const t =
+              lenSq > 1e-24
+                ? Math.max(0, Math.min(1, ((hitPoint[0] - c.pStart[0]) * dx + (hitPoint[1] - c.pStart[1]) * dy + (hitPoint[2] - c.pStart[2]) * dz) / lenSq))
+                : 0;
+            const qx = c.pStart[0] + t * dx - hitPoint[0];
+            const qy = c.pStart[1] + t * dy - hitPoint[1];
+            const qz = c.pStart[2] + t * dz - hitPoint[2];
+            const d = qx * qx + qy * qy + qz * qz;
+            if (d < bestDist) {
+              bestDist = d;
+              beam = c;
+            }
+          }
+        }
+        const needle = projectHoverNeedle(beam, hitPoint, effectiveScale, effectiveFlipSign(s.lineDiagram));
+        pBase = needle.pBase;
+        pTop = needle.pTop;
+      }
+    }
+
+    const needleGeom = new THREE.BufferGeometry();
+    if (pBase && pTop) {
+      const pos = new Float32Array([
+        pBase[0],
+        pBase[1],
+        pBase[2],
+        pTop[0],
+        pTop[1],
+        pTop[2],
+      ]);
+      needleGeom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      needleGeom.computeBoundingSphere();
+      this.hoverNeedle.geometry.dispose();
+      this.hoverNeedle.geometry = needleGeom;
+      this.hoverNeedle.visible = true;
+    } else {
+      needleGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(0), 3));
+      this.hoverNeedle.geometry.dispose();
+      this.hoverNeedle.geometry = needleGeom;
+      this.hoverNeedle.visible = false;
+    }
   }
 
   sync(
@@ -157,6 +283,8 @@ export class LineDiagramLayer {
     forceCamera = false,
     visibleLineMap?: Int32Array,
   ): boolean {
+    this.cancelPendingCameraFrame();
+    this.cameraDirty = false;
     this.lastState = s;
     this.lastBlobs = blobs;
     this.lastStep = step;
@@ -176,7 +304,12 @@ export class LineDiagramLayer {
     ) {
       const wasVisible = this.root.visible;
       this.root.visible = false;
+      this.hoverNeedle.visible = false;
+      this.lastBeams = [];
+      this.lastStepKey = null;
+      this.lastClim = null;
       this.appliedKey = null;
+      this.appliedHoverKey = null;
       return wasVisible;
     }
 
@@ -184,81 +317,82 @@ export class LineDiagramLayer {
     if (!join.ok) {
       const wasVisible = this.root.visible;
       this.root.visible = false;
+      this.hoverNeedle.visible = false;
+      this.lastBeams = [];
+      this.lastStepKey = null;
+      this.lastClim = null;
       this.appliedKey = null;
+      this.appliedHoverKey = null;
       return wasVisible;
     }
 
     const basePos = blobs.f32(s.mesh.linePositions);
     let deformKey = "undeformed";
     let drawnLinePositions = basePos;
-    if (s.deform.on && deform) {
-      if ("dispKey" in deform) {
-        const rawKey = deform.dispKey;
-        const rawLine = deform.line;
-        const dv = deformView(s);
-        const validDeform =
-          dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
-            ? rawKey === dv.keys.disp
-            : rawKey.length > 0;
-        if (validDeform && rawLine.length === basePos.length) {
-          deformKey = `${rawKey}|${s.deform.scale}`;
-          drawnLinePositions = new Float32Array(basePos.length);
-          const scale = s.deform.scale;
-          for (let i = 0; i < basePos.length; i++) {
-            drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+    let deformApplied = false;
+    if (s.deform.on) {
+      const dv = deformView(s);
+      if (deform) {
+        if ("dispKey" in deform) {
+          const rawKey = deform.dispKey;
+          const rawLine = deform.line;
+          const validDeform =
+            dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
+              ? rawKey === dv.keys.disp
+              : false;
+          if (validDeform && rawLine.length === basePos.length) {
+            deformKey = `${rawKey}|${s.deform.scale}`;
+            drawnLinePositions = new Float32Array(basePos.length);
+            const scale = s.deform.scale;
+            for (let i = 0; i < basePos.length; i++) {
+              drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+            }
+            deformApplied = true;
           }
-        }
-      } else if (deform.line instanceof Float32Array) {
-        // Pre-deformed full-mesh positions from Viewport (`this.full`)
-        if (deform.line.length === basePos.length) {
-          deformKey = deform.key;
-          drawnLinePositions = deform.line;
-        }
-      } else {
-        const rawKey = deform.key;
-        const rawLine = deform.line.d;
-        const dv = deformView(s);
-        const validDeform =
-          dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
-            ? rawKey === dv.keys.disp
-            : rawKey.length > 0;
-        if (validDeform && rawLine.length === basePos.length) {
-          deformKey = `${rawKey}|${s.deform.scale}`;
-          drawnLinePositions = new Float32Array(basePos.length);
-          const scale = s.deform.scale;
-          for (let i = 0; i < basePos.length; i++) {
-            drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+        } else if (deform.line instanceof Float32Array) {
+          // Pre-deformed full-mesh positions from Viewport (`this.full`)
+          const validDeform =
+            deform.key !== "base" &&
+            (dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
+              ? deform.key === dv.keys.disp || deform.key === `${dv.keys.disp}|scale ${s.deform.scale}`
+              : false);
+          if (validDeform && deform.line.length === basePos.length) {
+            deformKey = deform.key;
+            drawnLinePositions = deform.line;
+            deformApplied = true;
+          }
+        } else {
+          const rawKey = deform.key;
+          const rawLine = deform.line.d;
+          const validDeform =
+            dv.state === "ready" || dv.state === "partial" || dv.state === "loading"
+              ? rawKey === dv.keys.disp
+              : false;
+          if (validDeform && rawLine.length === basePos.length) {
+            deformKey = `${rawKey}|${s.deform.scale}`;
+            drawnLinePositions = new Float32Array(basePos.length);
+            const scale = s.deform.scale;
+            for (let i = 0; i < basePos.length; i++) {
+              drawnLinePositions[i] = basePos[i]! + scale * rawLine[i]!;
+            }
+            deformApplied = true;
           }
         }
       }
+      if (!deformApplied) {
+        const wasVisible = this.root.visible;
+        this.root.visible = false;
+        this.hoverNeedle.visible = false;
+        this.lastBeams = [];
+        this.lastStepKey = null;
+        this.lastClim = null;
+        this.appliedKey = null;
+        this.appliedHoverKey = null;
+        return wasVisible;
+      }
     }
 
-    const viewDir = this.getViewDir();
-    const clim = lineDiagramClimOf(s);
-    const viewKey =
-      s.lineDiagram.plane === "screen"
-        ? `${viewDir[0].toFixed(5)},${viewDir[1].toFixed(5)},${viewDir[2].toFixed(5)}`
-        : s.lineDiagram.plane;
-    const nextKey = [
-      step.key,
-      s.mesh.linePositions.id,
-      s.visibility.hidden.join(","),
-      s.selection.decls.join(","),
-      viewKey,
-      s.lineDiagram.scale,
-      s.lineDiagram.cmap,
-      s.lineDiagram.fill ? "fill" : "nofill",
-      String(s.lineDiagram.flipSign),
-      String(clim.min),
-      String(clim.max),
-      deformKey,
-      this.theme,
-    ].join("|");
-
-    if (!forceCamera && this.root.visible && this.appliedKey === nextKey) {
-      return false;
-    }
-
+    const lineElementArr = blobs.i32(s.mesh.lineElement);
     const visibleIndices =
       visibleLineMap ??
       visibleMaps(
@@ -268,20 +402,67 @@ export class LineDiagramLayer {
         blobs.i32(s.mesh.triGroup),
         elementMaskOf(s, s.mesh, blobs),
       ).lineMap;
+    const visDigest = visibleLineDigest(visibleIndices, lineElementArr.length);
 
+    const viewDir = this.getViewDir();
+    const viewDirStr = `${viewDir[0].toFixed(5)},${viewDir[1].toFixed(5)},${viewDir[2].toFixed(5)}`;
+    const viewKey = s.lineDiagram.plane === "screen" ? viewDirStr : s.lineDiagram.plane;
+    const clim = lineDiagramClimOf(s);
     const climTuple: readonly [number, number] | null =
-      clim.min !== null && clim.max !== null ? [clim.min, clim.max] : null;
+      clim.mode !== "step" && clim.min !== null && clim.max !== null ? [clim.min, clim.max] : null;
+    const climKey =
+      clim.mode === "step"
+        ? "step-auto"
+        : climTuple
+          ? `${climTuple[0]}|${climTuple[1]}`
+          : "null|null";
+    const defsKey = `defs:${stateObjectDigest(s.decls, s.definitions, s.sequence)}`;
+
+    const nextKeyPrefix = [
+      step.key,
+      `st:${s.phase.at.stage}`,
+      `t:${step.step.time}`,
+      s.mesh.linePositions.id,
+      visDigest,
+      defsKey,
+      s.selection.decls.join(","),
+      viewKey,
+      s.lineDiagram.scale,
+      s.lineDiagram.cmap,
+      s.lineDiagram.fill ? "fill" : "nofill",
+      String(s.lineDiagram.flipSign),
+      deformKey,
+      this.theme,
+    ].join("|");
+    const nextKey = `${nextKeyPrefix}|${climKey}`;
+    const hoverKey = this.hoverKeyOf(s);
+
+    if (!forceCamera && this.root.visible && this.appliedKey === nextKey) {
+      if (this.appliedHoverKey === hoverKey) {
+        return false;
+      }
+      this.syncHoverNeedle(s, this.lastBeams, this.lastEffectiveScale);
+      this.appliedHoverKey = hoverKey;
+      return true;
+    }
 
     const geom = buildLineDiagram3D({
       decls: s.decls,
+      definitions: s.definitions,
+      sequence: s.sequence,
+      resultsStage: s.results.stages[s.phase.at.stage] ?? null,
+      stageIndex: s.phase.at.stage,
+      stepTime: step.step.time,
       meshElements: s.mesh.elements,
-      lineElement: blobs.i32(s.mesh.lineElement),
+      lineElement: lineElementArr,
       drawnLinePositions,
+      lineNodes: blobs.get(s.mesh.vertexNodes.line) as Float64Array,
       visibleLineMap: visibleIndices,
       stepData: step.step,
       join,
       ndm: s.ndm.ndm,
       charLength: 0.8 * s.mesh.radius,
+      deformed: deformApplied,
       scale: s.lineDiagram.scale,
       flipSign: s.lineDiagram.flipSign,
       cmap: s.lineDiagram.cmap,
@@ -294,9 +475,20 @@ export class LineDiagramLayer {
     if (geom.beams.length === 0) {
       const wasVisible = this.root.visible;
       this.root.visible = false;
+      this.hoverNeedle.visible = false;
+      this.lastBeams = [];
+      this.lastEffectiveScale = 0;
+      this.lastStepKey = null;
+      this.lastClim = null;
       this.appliedKey = null;
+      this.appliedHoverKey = null;
       return wasVisible;
     }
+    this.lastBeams = geom.beams;
+    this.lastEffectiveScale = geom.effectiveScale;
+    this.lastStepKey = step.key;
+    this.lastClim = geom.clim;
+    this.lastViewDirKey = viewDirStr;
 
     const ribbonColors = buildTriLinearColors(
       geom.triColors,
@@ -345,30 +537,74 @@ export class LineDiagramLayer {
     this.riserLines.geometry.dispose();
     this.riserLines.geometry = riserGeom;
 
+    this.syncHoverNeedle(s, geom.beams, geom.effectiveScale);
     this.root.visible = true;
     this.appliedKey = nextKey;
+    this.appliedHoverKey = hoverKey;
     return true;
   }
 
   setClippingPlanes(planes: THREE.Plane[]): void {
-    for (const mat of [this.meshMaterial, this.profileMaterial, this.riserMaterial]) {
+    for (const mat of [this.meshMaterial, this.profileMaterial, this.riserMaterial, this.hoverMaterial]) {
       mat.clippingPlanes = planes;
       mat.needsUpdate = true;
     }
   }
 
+  /**
+   * Mark the screen-plane extrusion dirty on camera orbit and schedule at most
+   * one geometry rebuild per animation frame (`flushCameraChange`).
+   */
   onCameraChange(): boolean {
     if (!this.root.visible || !this.lastState || !this.lastBlobs || !this.lastStep) return false;
     if (this.lastState.lineDiagram.plane !== "screen") return false;
-    return this.sync(this.lastState, this.lastBlobs, this.lastStep, this.lastDeform, true, this.lastVisibleLineMap);
+    const viewDir = this.getViewDir();
+    const viewDirStr = `${viewDir[0].toFixed(5)},${viewDir[1].toFixed(5)},${viewDir[2].toFixed(5)}`;
+    if (viewDirStr === this.lastViewDirKey) {
+      this.cancelPendingCameraFrame();
+      this.cameraDirty = false;
+      return false;
+    }
+    this.cameraDirty = true;
+    if (this.cameraRafId === null) {
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        this.cameraRafId = globalThis.requestAnimationFrame(() => {
+          this.cameraRafId = null;
+          this.flushCameraChange();
+        });
+      } else {
+        this.cameraRafId = setTimeout(() => {
+          this.cameraRafId = null;
+          this.flushCameraChange();
+        }, 16);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Flush a pending screen-plane camera rebuild immediately (called once per
+   * animation frame by `Viewport.renderNow` or the scheduled frame callback).
+   */
+  flushCameraChange(): boolean {
+    this.cancelPendingCameraFrame();
+    if (!this.cameraDirty) return false;
+    this.cameraDirty = false;
+    if (!this.root.visible || !this.lastState || !this.lastBlobs || !this.lastStep) return false;
+    if (this.lastState.lineDiagram.plane !== "screen") return false;
+    return this.sync(this.lastState, this.lastBlobs, this.lastStep, this.lastDeform, false, this.lastVisibleLineMap);
   }
 
   dispose(): void {
+    this.cancelPendingCameraFrame();
+    this.cameraDirty = false;
     this.mesh.geometry.dispose();
     this.profileLines.geometry.dispose();
     this.riserLines.geometry.dispose();
+    this.hoverNeedle.geometry.dispose();
     this.meshMaterial.dispose();
     this.profileMaterial.dispose();
     this.riserMaterial.dispose();
+    this.hoverMaterial.dispose();
   }
 }

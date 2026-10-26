@@ -17,7 +17,13 @@ from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
-from .._internal.build.stage_emit import MaterialStageCarriers
+from .._internal.build.stage_emit import (
+    ASDSHELL_PDELTA_GUARD,
+    ForkBuildGuard,
+    MaterialStageCarriers,
+    fork_guard_lines,
+    is_asdshell_p_delta,
+)
 from .._internal.build.stage_validate import StageZeroLedger
 from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
@@ -622,6 +628,10 @@ class PyEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
+        # The fork build floors this deck already checks, and
+        # where their checks go: after the import, before ``ops.wipe()``.
+        self._fork_floors: set[ForkBuildGuard] = set()
+        self._fork_floor_at = len(header) - 1
         # Partition-emission state (ADR 0027 / P4). On the first
         # ``partition_open`` call across the emitter's lifetime, emit a
         # one-shot runtime shim that pulls ``getPID`` from openseespy
@@ -953,6 +963,8 @@ class PyEmitter:
     ) -> None:
         self._stage0.owed = True
         self._stage_carriers.note_element(ele_type, tag, args)
+        if is_asdshell_p_delta(ele_type, args):
+            self._require_fork_floors((ASDSHELL_PDELTA_GUARD,))
         self._lines.append(_ops_call("element", ele_type, tag, *args))
 
     # -- Time series --------------------------------------------------------
@@ -1346,11 +1358,14 @@ class PyEmitter:
 
     def eigen_feast(
         self, f_min: float, f_max: float, *, certify: bool = False,
+        trace_stop: bool = False,
     ) -> list[float]:
         self._stage_zero()
         args: list[float | str] = ["-feast", float(f_min), float(f_max)]
         if certify:
             args.append("-certify")
+        if trace_stop:
+            args.append("-traceStop")
         self._lines.append(_ops_call("eigen", *args))
         return []
 
@@ -1397,6 +1412,10 @@ class PyEmitter:
         value: float,
     ) -> None:
         self._stage0.parameter(args)
+        self._stage_carriers.note_parameter(args, value)
+        if args and args[0] == "materialState":
+            self._require_fork_floors(
+                self._stage_carriers.fork_floors(ele_tags))
         self._lines.append(_ops_call("parameter", int(pid)))
         for et in ele_tags:
             self._lines.append(
@@ -1536,6 +1555,9 @@ class PyEmitter:
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
         self._stage0.user_flip(mat_tag)
+        self._require_fork_floors(
+            self._stage_carriers.flip_fork_floors(mat_tag, stage))
+        self._stage_carriers.note_flip(mat_tag, stage)
         # A plastic flip of a swept material also updates each of its
         # elements; MaterialStageCarriers says why.
         prev_indent = self._lines.indent
@@ -1545,13 +1567,35 @@ class PyEmitter:
             self._lines.append(_ops_call(command, *argv))
         self._lines.indent = prev_indent
 
+    def _require_fork_floors(
+        self, floors: "Sequence[ForkBuildGuard]",
+    ) -> None:
+        """Make the deck check each new fork build guard at its start.
+
+        The check (:func:`fork_guard_lines`) goes right after the
+        ``openseespy`` import, before ``ops.wipe()``, and stops the deck
+        when the running build fails it (#2504, #2516).  A deck that
+        needs no guard is unchanged.
+        """
+        for floor in floors:
+            if floor in self._fork_floors:
+                continue
+            self._fork_floors.add(floor)
+            guard = fork_guard_lines(floor, "py")
+            for line in guard:
+                self._lines.insert(self._fork_floor_at, line)
+                self._fork_floor_at += 1
+
     def _stage_zero(self) -> None:
-        """Write the owed ManzariDafalias ``-stage 0`` lines
+        """Write the owed fresh-stage lines of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
-        StageZeroLedger`), at a solve verb."""
-        for tag in self._stage0.due():
+        StageZeroLedger`), at a solve verb, and guard a solve the fork's
+        constructor reset would change
+        (:meth:`MaterialStageCarriers.solve_fork_guards`)."""
+        self._require_fork_floors(self._stage_carriers.solve_fork_guards())
+        for tag, stage in self._stage0.due():
             self._lines.append(_ops_call(
-                "updateMaterialStage", "-material", tag, "-stage", 0))
+                "updateMaterialStage", "-material", tag, "-stage", stage))
 
     def _emit_hook_ramp_function(
         self,

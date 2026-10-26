@@ -1526,6 +1526,20 @@ class PartsRegistry(_PartsFragmentationMixin):
         top_dim = max(entities) if entities else -1
         self._apply_transforms(shape_dimtags, translate, rotate)
         dx, dy, dz = translate
+        if rotate is not None or any(v != 0.0 for v in (dx, dy, dz)):
+            # OCC keeps the tags of the transformed shapes but rebinds
+            # their sub-entities under new tags, so the imported tags
+            # below the shapes are stale: re-derive them from the
+            # moved shapes' boundary closure, kept to the dims the
+            # import recorded (``highest_dim_only=True`` records only
+            # the top dim, and must stay that way after a move).
+            from ._model_boolean import _boundary_closure
+            kept_dims = set(entities)
+            entities = {}
+            for d, t in sorted(_boundary_closure(shape_dimtags)):
+                if d in kept_dims:
+                    entities.setdefault(d, []).append(t)
+            dimtags_all = [(d, t) for d, tags in entities.items() for t in tags]
 
         # Rebind labels from the sidecar (if present).
         # For each label defined in the Part, re-create it as a
@@ -1549,21 +1563,21 @@ class PartsRegistry(_PartsFragmentationMixin):
             payload = read_sidecar(file_path)
             if payload is not None:
                 anchors = payload.get('anchors', [])
-                # For rebinding, we need ALL entities in the model
-                # (including sub-entities like surfaces of volumes)
-                # because the sidecar may carry anchors at any dim.
-                # ``entities`` from importShapes may be incomplete
-                # when ``highest_dim_only=True`` was used.
-                all_model_entities: dict[int, list[int]] = {}
-                for d in range(4):
-                    tags_at_d = [
-                        t for _, t in gmsh.model.getEntities(d)
-                    ]
-                    if tags_at_d:
-                        all_model_entities[d] = tags_at_d
+                # Rebind against every entity of THIS import, sub-
+                # entities included (the sidecar may carry anchors at
+                # any dim, and ``entities`` from importShapes is only
+                # the top dim when ``highest_dim_only=True``): the
+                # boundary closure of the imported shapes.  Matching
+                # against the whole model made each ``add`` O(model)
+                # and let an anchor claim another instance's
+                # coincident entity.
+                from ._model_boolean import _boundary_closure
+                own_entities: dict[int, list[int]] = {}
+                for d, t in sorted(_boundary_closure(shape_dimtags)):
+                    own_entities.setdefault(d, []).append(t)
                 pg_matches = rebind_physical_groups(
                     anchors=anchors,
-                    imported_entities=all_model_entities,
+                    imported_entities=own_entities,
                     translate=(dx, dy, dz),
                     rotate=rotate,
                     gmsh_module=gmsh,
