@@ -68,6 +68,10 @@ the quoted heading. `decisions/` is
       "Build and test").
 - [ ] `python scripts/check_quirks.py`, plus a CHANGELOG section per
       `internal_docs/changelog_workflow.md`.
+- [ ] A fix that turns an existing test red: classify that test as pinning
+      wrong behaviour or as a real contract before you edit it, and own the
+      file in the slice card first (#2217: two fixes had to amend their
+      cards).
 - [ ] Never construct a real `QtInteractor`/`ViewerWindow` in the shared
       pytest process: under offscreen Qt on Windows it killed the run, so
       `viewers/ui/viewer_window.py` now raises there instead. Use a
