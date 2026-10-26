@@ -4405,7 +4405,7 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
 
         nDMaterial LadrunoCohesiveHingeBiaxial tag Mcz Gfz Mcy Gfy \
             [-exp | -linear] [-penaltyRatio r] [-bk eta] \
-            [-pm P0 [alpha]] [-implex]
+            [-pm P0 [alpha]] [-pmBal P0c P0t Pbal Mbal_ratio] [-implex]
 
     The coupled strong-axis/weak-axis (Mz–My) cohesive interaction surface
     that drives the biaxial embedded hinge of
@@ -4438,8 +4438,14 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
         Benzeggagh-Kenane mode-mix exponent (``-bk``; default 1.0, must be
         > 0).
     pm
-        Optional axial-moment interaction ``P0`` or ``(P0, alpha)``
-        (``-pm P0 [alpha]``, ``P0 > 0``).
+        Optional symmetric parabolic axial-moment interaction ``P0`` or
+        ``(P0, alpha)`` (``-pm P0 [alpha]``, ``P0 > 0``). Mutually exclusive
+        with ``pm_bal``.
+    pm_bal
+        Optional asymmetric RC balanced-point axial-moment interaction
+        4-tuple ``(P0c, P0t, Pbal, Mbal_ratio)`` (``-pmBal P0c P0t Pbal
+        Mbal_ratio``, with ``P0c > 0``, ``P0t > 0``, ``0 < Pbal < P0c``, and
+        ``Mbal_ratio >= 1.0``). Mutually exclusive with ``pm``.
     implex
         If ``True``, append ``-implex`` for IMPLEX integration.
     """
@@ -4454,6 +4460,7 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
     penalty_ratio: float = 1000.0
     bk_eta: float = 1.0
     pm: float | tuple[float, float] | None = None
+    pm_bal: tuple[float, float, float, float] | None = None
     implex: bool = False
 
     def __post_init__(self) -> None:
@@ -4511,6 +4518,49 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
                         "LadrunoCohesiveHingeBiaxial: pm P0 must be finite and > 0, "
                         f"got {self.pm!r}"
                     )
+        if self.pm_bal is not None:
+            if self.pm is not None:
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm and pm_bal are mutually "
+                    "exclusive."
+                )
+            if not isinstance(self.pm_bal, tuple) or len(self.pm_bal) != 4:
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal must be a 4-tuple "
+                    f"(P0c, P0t, Pbal, Mbal_ratio), got {self.pm_bal!r}"
+                )
+            for val in self.pm_bal:
+                if (
+                    isinstance(val, bool)
+                    or not isinstance(val, (int, float))
+                    or not (val == val)
+                    or val in (float("inf"), float("-inf"))
+                ):
+                    raise ValueError(
+                        "LadrunoCohesiveHingeBiaxial: pm_bal values must be "
+                        f"finite numbers, got {self.pm_bal!r}"
+                    )
+            p0c, p0t, pbal, mbal_ratio = self.pm_bal
+            if not (p0c > 0):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal P0c must be > 0, "
+                    f"got {p0c!r}"
+                )
+            if not (p0t > 0):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal P0t must be > 0, "
+                    f"got {p0t!r}"
+                )
+            if not (0.0 < pbal < p0c):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal Pbal must satisfy "
+                    f"0 < Pbal < P0c, got Pbal={pbal!r}, P0c={p0c!r}"
+                )
+            if not (mbal_ratio >= 1.0):
+                raise ValueError(
+                    "LadrunoCohesiveHingeBiaxial: pm_bal Mbal_ratio must be "
+                    f">= 1.0, got {mbal_ratio!r}"
+                )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | str] = [self.Mcz, self.Gfz, self.Mcy, self.Gfy]
@@ -4525,6 +4575,14 @@ class LadrunoCohesiveHingeBiaxial(NDMaterial):
                 args += ["-pm", float(self.pm[0]), float(self.pm[1])]
             else:
                 args += ["-pm", float(self.pm)]
+        if self.pm_bal is not None:
+            args += [
+                "-pmBal",
+                float(self.pm_bal[0]),
+                float(self.pm_bal[1]),
+                float(self.pm_bal[2]),
+                float(self.pm_bal[3]),
+            ]
         if self.implex:
             args.append("-implex")
         emitter.nDMaterial("LadrunoCohesiveHingeBiaxial", tag, *args)

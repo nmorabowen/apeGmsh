@@ -3512,19 +3512,19 @@
     },
     "ops.element.LadrunoDispBeamColumn": {
       "doc": "``element LadrunoDispBeamColumn`` — disp-based beam with fork hinges.",
-      "signature": "LadrunoDispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, lch: 'str | float' = 'ip', nl: 'bool' = False, span_load: 'bool' = True, hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoDispBeamColumn'",
+      "signature": "LadrunoDispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, lch: 'str | float' = 'ip', nl: 'bool' = False, span_load: 'bool | None' = None, hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, axial_release: 'bool' = False, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoDispBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoDispBeamColumn"
     },
     "ops.element.LadrunoForceBeamColumn": {
       "doc": "``element LadrunoForceBeamColumn`` — force-based beam with fork hinges.",
-      "signature": "LadrunoForceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, max_iter: 'int | None' = None, tol: 'float | None' = None, subdivide: 'int | tuple[int, float] | None' = None, lch: 'str | float' = 'ip', hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, shear: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoForceBeamColumn'",
+      "signature": "LadrunoForceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, max_iter: 'int | None' = None, tol: 'float | None' = None, subdivide: 'int | tuple[int, float] | None' = None, lch: 'str | float' = 'ip', span_load: 'bool | None' = None, hinge: 'UniaxialMaterial | str | None' = None, hinge_i: 'UniaxialMaterial | str | None' = None, hinge_j: 'UniaxialMaterial | str | None' = None, hinge_ij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_y: 'UniaxialMaterial | str | None' = None, hinge_yi: 'UniaxialMaterial | str | None' = None, hinge_yj: 'UniaxialMaterial | str | None' = None, hinge_yij: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, hinge_loc: 'float | tuple[float, float] | None' = None, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, axial_release: 'bool' = False, shear: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, damp: 'Damping | None' = None) -> 'LadrunoForceBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoForceBeamColumn"
     },
     "ops.element.LadrunoIMKBeam": {
       "doc": "``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam.",
-      "signature": "LadrunoIMKBeam(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', G: 'float | None' = None, Jx: 'float | None' = None, Iy: 'float | None' = None, ends: 'str' = 'both', mat_z: 'UniaxialMaterial | str | None' = None, mat_y: 'UniaxialMaterial | str | None' = None, mat_zi: 'UniaxialMaterial | str | None' = None, mat_zj: 'UniaxialMaterial | str | None' = None, mat_yi: 'UniaxialMaterial | str | None' = None, mat_yj: 'UniaxialMaterial | str | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, shear: 'float | tuple[float, float] | tuple[float, float, float] | None' = None, shear_hinge: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, shear_hinge_y: 'UniaxialMaterial | str | None' = None, shear_hinge_z: 'UniaxialMaterial | str | None' = None, end_zones: 'tuple[float, float] | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False) -> 'LadrunoIMKBeam'",
+      "signature": "LadrunoIMKBeam(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', G: 'float | None' = None, Jx: 'float | None' = None, Iy: 'float | None' = None, ends: 'str' = 'both', mat_z: 'UniaxialMaterial | str | None' = None, mat_y: 'UniaxialMaterial | str | None' = None, mat_zi: 'UniaxialMaterial | str | None' = None, mat_zj: 'UniaxialMaterial | str | None' = None, mat_yi: 'UniaxialMaterial | str | None' = None, mat_yj: 'UniaxialMaterial | str | None' = None, hinge_biaxial: 'NDMaterial | str | None' = None, hinge_biaxial_i: 'NDMaterial | str | None' = None, hinge_biaxial_j: 'NDMaterial | str | None' = None, hinge_biaxial_ij: 'NDMaterial | str | tuple[NDMaterial | str, NDMaterial | str] | None' = None, shear: 'float | tuple[float, float] | tuple[float, float, float] | None' = None, shear_hinge: 'UniaxialMaterial | str | tuple[UniaxialMaterial | str, UniaxialMaterial | str] | None' = None, shear_hinge_y: 'UniaxialMaterial | str | None' = None, shear_hinge_z: 'UniaxialMaterial | str | None' = None, end_zones: 'tuple[float, float] | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, implex: 'bool' = False) -> 'LadrunoIMKBeam'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoIMKBeam"
     },
@@ -3962,7 +3962,7 @@
     },
     "ops.nDMaterial.LadrunoCohesiveHingeBiaxial": {
       "doc": "Register a :class:`LadrunoCohesiveHingeBiaxial` coupled hinge surface.",
-      "signature": "LadrunoCohesiveHingeBiaxial(*, Mcz: 'float', Gfz: 'float', Mcy: 'float', Gfy: 'float', softening: 'str' = 'exponential', penalty_ratio: 'float' = 1000.0, bk_eta: 'float' = 1.0, pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHingeBiaxial'",
+      "signature": "LadrunoCohesiveHingeBiaxial(*, Mcz: 'float', Gfz: 'float', Mcy: 'float', Gfy: 'float', softening: 'str' = 'exponential', penalty_ratio: 'float' = 1000.0, bk_eta: 'float' = 1.0, pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHingeBiaxial'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.LadrunoCohesiveHingeBiaxial"
     },
@@ -4608,6 +4608,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.ASDSteel1D"
     },
+    "ops.uniaxialMaterial.Bilin": {
+      "doc": "``uniaxialMaterial Bilin`` — Modified IMK bilinear hinge law.",
+      "signature": "Bilin(*, Ke: 'float', AsPos: 'float', AsNeg: 'float', My_pos: 'float', My_neg: 'float', LamdaS: 'float', LamdaD: 'float', LamdaA: 'float', LamdaK: 'float', Cs: 'float' = 1.0, Cd: 'float' = 1.0, Ca: 'float' = 1.0, Ck: 'float' = 1.0, Thetap_pos: 'float', Thetap_neg: 'float', Thetapc_pos: 'float', Thetapc_neg: 'float', KPos: 'float', KNeg: 'float', Thetau_pos: 'float', Thetau_neg: 'float', PDPlus: 'float' = 1.0, PDNeg: 'float' = 1.0, nFactor: 'float | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'Bilin'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.Bilin"
+    },
     "ops.uniaxialMaterial.Concrete01": {
       "doc": "",
       "signature": "Concrete01(*, fpc: 'float', epsc0: 'float', fpcu: 'float', epsU: 'float', name: 'str | None' = None) -> 'Concrete01'",
@@ -4670,7 +4676,7 @@
     },
     "ops.uniaxialMaterial.LadrunoCohesiveHinge": {
       "doc": "``uniaxialMaterial LadrunoCohesiveHinge`` — cohesive moment-rotation hinge.",
-      "signature": "LadrunoCohesiveHinge(*, Mc: 'float', Gf: 'float', penalty: 'float | None' = None, penalty_ratio: 'float' = 1000.0, softening: 'str' = 'exponential', pm: 'float | tuple[float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHinge'",
+      "signature": "LadrunoCohesiveHinge(*, Mc: 'float', Gf: 'float', penalty: 'float | None' = None, penalty_ratio: 'float' = 1000.0, softening: 'str' = 'exponential', pm: 'float | tuple[float, float] | None' = None, pm_bal: 'tuple[float, float, float, float] | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'LadrunoCohesiveHinge'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.LadrunoCohesiveHinge"
     },
@@ -4691,6 +4697,12 @@
       "signature": "Maxwell(*, K: 'float', C: 'float', alpha: 'float', length: 'float', name: 'str | None' = None) -> 'Maxwell'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.Maxwell"
+    },
+    "ops.uniaxialMaterial.ModIMKPeakOriented": {
+      "doc": "``uniaxialMaterial ModIMKPeakOriented`` — Modified IMK peak-oriented hinge law.",
+      "signature": "ModIMKPeakOriented(*, Ke: 'float', alfaPos: 'float', alfaNeg: 'float', My_pos: 'float', My_neg: 'float', Ls: 'float', Ld: 'float', La: 'float', Lk: 'float', Cs: 'float' = 1.0, Cd: 'float' = 1.0, Ca: 'float' = 1.0, Ck: 'float' = 1.0, thetaPpos: 'float', thetaPneg: 'float', thetaPCpos: 'float', thetaPCneg: 'float', ResfacPos: 'float', ResfacNeg: 'float', fracDispPos: 'float', fracDispNeg: 'float', DPos: 'float' = 1.0, DNeg: 'float' = 1.0, nFactor: 'float | None' = None, implex: 'bool' = False, name: 'str | None' = None) -> 'ModIMKPeakOriented'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.ModIMKPeakOriented"
     },
     "ops.uniaxialMaterial.MultiLinear": {
       "doc": "``uniaxialMaterial MultiLinear`` — piecewise-linear backbone.",
