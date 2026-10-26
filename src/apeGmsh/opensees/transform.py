@@ -18,6 +18,15 @@ resolves per element (see :mod:`apeGmsh.opensees.joint_offset`). A 3-D
 ``Corotational`` refuses one: ``CorotCrdTransf3d`` zeroes the offsets
 with a warning ("rigid joint zones not implemented yet").
 
+Members (ETABS frame objects): a straight chain of the transform's
+elements between joints (a node not shared by exactly two of them, one
+any other element touches, or a corner) is one member. Offsets that
+differ between its ends (end lengths, unequal joint offsets, a constant
+pair whose ends differ) sit on its end elements only: the i-end element
+takes the i-offset, the j-end element the j-offset, interior elements only
+the transverse part. The i-end is where its elements' node order (the
+gmsh curve) starts. Offsets equal at both ends go on every element.
+
 Loads on an offset beam: a ``Plain.from_model`` line load (global,
 ``beamUniform`` / ``line_load``) covers the full node-to-node length, as
 ETABS/CSI load a frame object: the share over each rigid end zone goes

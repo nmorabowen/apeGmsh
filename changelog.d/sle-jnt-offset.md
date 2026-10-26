@@ -21,6 +21,17 @@ ETABS 2 onto OpenSees local `y` or `z`; the centroid sits at minus the cardinal
 point's section position, so cardinal 8 on a 0.6 m beam hangs its axis 0.3 m
 below the joint.
 
+A frame member meshed into several elements keeps its end offsets at its
+ends, as ETABS applies them to a frame object: the member's i-end element
+takes the i-offset, its j-end element the j-offset, and interior elements
+only the transverse part (the cardinal-point shift), so an n-element member
+behaves as the one-element member. A member is a straight chain of the
+transform's elements between joints; its i-end follows the elements' node
+order (the gmsh curve's direction). Ambiguous members refuse: elements
+running both ways, a closed loop, end lengths with unequal transverse
+offsets, or an end element no longer than its end zone. Offsets equal at
+both ends go on every element.
+
 Offsets are per transform, not per element spec: a `geomTransf` is OpenSees'
 offset group, and the element ↔ transform join in `model.h5` stays one tag
 per element.
