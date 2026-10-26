@@ -430,15 +430,27 @@ def sync_lane_issues(gh: Runner, repo: str, runs: dict[str, list[dict]],
                 f"non-green scheduled runs on main (failure, cancelled and timed "
                 f"out all count).\n\n{_streak_detail(streak)}\n")
         if matches:
-            gh(["issue", "comment", str(matches[0]), "--repo", repo, "--body", note])
-            actions.append(f"{wf}: bumped #{matches[0]}")
+            keep, extras = matches[0], matches[1:]
+            for num in extras:
+                gh(["issue", "close", str(num), "--repo", repo, "--comment",
+                    f"Duplicate of #{keep}; the probe tracks `{wf}` there."])
+            gh(["issue", "comment", str(keep), "--repo", repo, "--body", note])
+            dup = (f"; closed duplicates {', '.join(f'#{x}' for x in extras)}"
+                   if extras else "")
+            actions.append(f"{wf}: bumped #{keep}{dup}")
             continue
         body = (note + f"\nOpened by `scripts/program_probe.py` (lesson #2556). "
                 f"Owner: `{chain}`. The probe comments here each night the lane "
                 f"stays non-green and closes this issue once it is green.\n")
-        gh(["issue", "create", "--repo", repo, "--title", title, "--label", "program",
-            "--label", chain, "--body", body])
-        actions.append(f"{wf}: created")
+        create = ["issue", "create", "--repo", repo, "--title", title,
+                  "--label", "program", "--body", body]
+        try:
+            gh(create + ["--label", chain])
+            actions.append(f"{wf}: created")
+        except RuntimeError as exc:
+            # A missing chain label must not cost the issue or the later lanes.
+            gh(create)
+            actions.append(f"{wf}: created without `{chain}` ({exc})")
     return actions
 
 

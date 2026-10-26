@@ -445,13 +445,48 @@ def test_lane_issues_replay_1026_opens_exactly_three():
 def test_lane_issue_next_night_bumps_instead_of_duplicating():
     runs = {"deps-canary.yml": _runs_1026()["deps-canary.yml"]}
     title = pp.lane_title("deps-canary.yml")
-    gh = LaneGh([{"number": 41, "title": title},
-                 {"number": 42, "title": title + " (old)"}])
+    # the decoy sorts first: only the exact title may be bumped
+    gh = LaneGh([{"number": 40, "title": title + " (old)"},
+                 {"number": 41, "title": title}])
     assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == ["deps-canary.yml: bumped #41"]
-    assert not gh.verb("create")
+    assert not gh.verb("create") and not gh.verb("close")
     assert [c[2] for c in gh.verb("comment")] == ["41"]
     listed = gh.verb("list")[0]
     assert title in _flag(listed, "--search")[0] and _flag(listed, "--label") == ["program"]
+
+
+def test_lane_issue_duplicates_collapse_to_the_lowest_number():
+    runs = {"deps-canary.yml": _runs_1026()["deps-canary.yml"]}
+    title = pp.lane_title("deps-canary.yml")
+    gh = LaneGh([{"number": 44, "title": title}, {"number": 41, "title": title},
+                 {"number": 40, "title": "other"}])
+    assert pp.sync_lane_issues(gh, "o/r", runs, NOW) == [
+        "deps-canary.yml: bumped #41; closed duplicates #44"]
+    assert [c[2] for c in gh.verb("close")] == ["44"]
+    assert "Duplicate of #41" in _flag(gh.verb("close")[0], "--comment")[0]
+    assert [c[2] for c in gh.verb("comment")] == ["41"]
+
+
+def test_lane_missing_chain_label_retries_and_keeps_later_lanes():
+    class NoChainGh(LaneGh):
+        def __call__(self, args):
+            if args[:2] == ["issue", "create"] and "chain:S" in args:
+                self.calls.append(args)
+                raise RuntimeError("could not add label: 'chain:S' not found")
+            return super().__call__(args)
+
+    gh = NoChainGh()
+    actions = pp.sync_lane_issues(gh, "o/r", _runs_1026(), NOW)
+    labels = {_flag(c, "--title")[0]: _flag(c, "--label") for c in gh.verb("create")}
+    # benchmarks sorts first: the failed attempt, then a retry with program
+    # only; the later lanes still get their issues
+    assert [_flag(c, "--label") for c in gh.verb("create")
+            if _flag(c, "--title")[0] == pp.lane_title("benchmarks.yml")] == [
+        ["program", "chain:S"], ["program"]]
+    assert labels[pp.lane_title("deps-canary.yml")] == ["program", "chain:C"]
+    assert labels[pp.lane_title("live-fork.yml")] == ["program", "chain:F"]
+    assert any(a.startswith("benchmarks.yml: created without `chain:S`") for a in actions)
+    assert len(actions) == 3
 
 
 def test_lane_one_red_night_then_green_opens_nothing():
