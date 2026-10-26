@@ -141,9 +141,9 @@ from ._internal.build.pg_expand import (
     expand_pg_to_nodes,
     expand_spec_to_elements,
     ElementPlanRows,
+    ladruno_membrane_named_nodes,
     resolve_element_node_pair,
-    resolve_ladruno_membrane_context,
-    resolve_ladruno_membrane_diaphragm_nodes,
+    resolve_ladruno_membrane_emit_context,
 )
 from ._internal.build.topo import topological_order
 from ._internal.build.validators.mesh import validate_absorbing_quad_geometry
@@ -2264,11 +2264,8 @@ class BuiltModel:
             if is_membrane:
                 set_membrane_context(
                     emitter,
-                    (
-                        *resolve_ladruno_membrane_context(
-                            self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
-                        ),
-                        resolve_ladruno_membrane_diaphragm_nodes(self.fem, spec),
+                    resolve_ladruno_membrane_emit_context(
+                        self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
                     ),
                 )
             try:
@@ -2659,13 +2656,8 @@ class BuiltModel:
                 if is_membrane:
                     set_membrane_context(
                         emitter,
-                        (
-                            *resolve_ladruno_membrane_context(
-                                self.fem, spec, element_plan or (),
-                                fem_eid_to_ops_tag,
-                            ),
-                            resolve_ladruno_membrane_diaphragm_nodes(
-                                self.fem, spec),
+                        resolve_ladruno_membrane_emit_context(
+                            self.fem, spec, element_plan or (), fem_eid_to_ops_tag,
                         ),
                     )
                 try:
@@ -3262,14 +3254,9 @@ class BuiltModel:
                 fan = expand_spec_to_elements(self.fem, spec)
                 if not len(fan):
                     continue
-                _fr, supp_tags, hole_loops = resolve_ladruno_membrane_context(
-                    self.fem, spec, include_frames=False,
-                )
                 all_nodes = [
                     *(int(n) for n in fan.conn[0]),
-                    *supp_tags,
-                    *(int(n) for h in hole_loops for n in h),
-                    *resolve_ladruno_membrane_diaphragm_nodes(self.fem, spec),
+                    *ladruno_membrane_named_nodes(self.fem, spec),
                 ]
                 node_pair_owner[id(spec)] = {
                     MISSING_FEM_ELEMENT_ID: macro_element_rank(

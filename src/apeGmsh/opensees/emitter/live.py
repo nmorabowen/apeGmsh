@@ -33,9 +33,12 @@ from typing import (
 from .._internal.analyze_rc import check_analyze_rc
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_MESSAGE,
+    MEMBRANE_WP208_MESSAGE,
     SweptMaterialReach,
     fork_build_has_c83,
+    fork_build_has_membrane_wp208,
     is_asdshell_p_delta,
+    is_membrane_wp208,
 )
 from .._internal.build.stage_validate import StageZeroLedger
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
@@ -1277,6 +1280,9 @@ class LiveOpsEmitter:
         # knows the type but not ``-shear`` must still be gated on it).
         self._stage_zero_ledger().owed = True
         self._swept_reach().note_element(tag, args)
+        if is_membrane_wp208(ele_type, args) and not (
+                fork_build_has_membrane_wp208(self._backend().build)):
+            raise RuntimeError(MEMBRANE_WP208_MESSAGE)
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition

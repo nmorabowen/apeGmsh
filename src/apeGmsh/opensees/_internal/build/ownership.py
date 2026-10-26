@@ -14,8 +14,7 @@ from .pg_expand import (
     ElementPlanRows,
     expand_pg_to_elements,
     expand_spec_to_elements,
-    resolve_ladruno_membrane_context,
-    resolve_ladruno_membrane_diaphragm_nodes,
+    ladruno_membrane_named_nodes,
 )
 
 
@@ -1111,13 +1110,7 @@ def compute_stage_ownership(
                 else:
                     node_stages.setdefault(int(node_id), set()).add(owner_idx)
         if type(spec).__name__ == "LadrunoMembrane":
-            _fr, supp_tags, hole_loops = resolve_ladruno_membrane_context(
-                fem, spec, include_frames=False,
-            )
-            for node_id in (
-                *supp_tags, *(n for h in hole_loops for n in h),
-                *resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
-            ):
+            for node_id in ladruno_membrane_named_nodes(fem, spec):
                 if owner_idx is None:
                     global_nodes.add(int(node_id))
                 else:

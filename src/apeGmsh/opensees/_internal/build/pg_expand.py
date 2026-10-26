@@ -1250,9 +1250,17 @@ def resolve_ladruno_membrane_diaphragm_nodes(
 
     The forms of ``support_nodes=``: int tags, ``Node`` handles and PG or
     label names (a PG first, then a node label), in order, first
-    occurrence kept. ``()`` when the spec has none.
+    occurrence kept. ``()`` when the spec has none.  Any other spec
+    raises: only a membrane has diaphragm nodes.
     """
-    raw = getattr(spec, "diaphragm_nodes", None)
+    from ...element.shell import LadrunoMembrane
+
+    if not isinstance(spec, LadrunoMembrane):
+        raise BridgeError(
+            f"resolve_ladruno_membrane_diaphragm_nodes: {type(spec).__name__} "
+            "is not a LadrunoMembrane."
+        )
+    raw = spec.diaphragm_nodes
     out: list[int] = []
     seen: set[int] = set()
 
@@ -1277,6 +1285,47 @@ def resolve_ladruno_membrane_diaphragm_nodes(
         else:
             _add(_resolve_membrane_node_ref(fem, item, "diaphragm_nodes"))
     return tuple(out)
+
+
+def resolve_ladruno_membrane_emit_context(
+    fem: "FEMData",
+    spec: Element,
+    element_plan: "Iterable[tuple[Element, ElementPlanRows]]" = (),
+    fem_eid_to_ops_tag: "Any" = None,
+) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], tuple[int, ...]]":
+    """The ``(frames, support_nodes, holes, diaphragm_nodes)`` context a
+    :class:`LadrunoMembrane` emits with
+    (:func:`~apeGmsh.opensees._internal.tag_resolution.set_membrane_context`):
+    :func:`resolve_ladruno_membrane_context` and
+    :func:`resolve_ladruno_membrane_diaphragm_nodes`.
+    """
+    return (
+        *resolve_ladruno_membrane_context(
+            fem, spec, element_plan, fem_eid_to_ops_tag,
+        ),
+        resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
+    )
+
+
+def ladruno_membrane_named_nodes(
+    fem: "FEMData", spec: Element,
+) -> "tuple[int, ...]":
+    """Every node a :class:`LadrunoMembrane` names besides its outer loop:
+    its ``support_nodes=``, hole loops and ``diaphragm_nodes=``, in that
+    order (repeats kept).
+
+    The fork gives each one stiffness, so each one is emitted, takes the
+    membrane's ndf, joins its stage and its rank, and is never skipped as
+    a ``pg=`` panel's interior node.
+    """
+    _fr, supp, holes = resolve_ladruno_membrane_context(
+        fem, spec, include_frames=False,
+    )
+    return (
+        *supp,
+        *(n for h in holes for n in h),
+        *resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
+    )
 
 
 def expand_spec_to_elements(
