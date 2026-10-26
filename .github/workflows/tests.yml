@@ -614,5 +614,33 @@ jobs:
           # (same trap the `suite` lane documents). `-rs` prints the
           # skip reasons, so a case that quietly stops running here is
           # visible in the log instead of hiding in the skip count.
+          #
+          # A clean exit code is not proof the run finished: a native
+          # `exit(0)` (a Fortran STOP in stock StressDensityModel) once ended
+          # pytest at 66% with status 0 and no summary, and the job went
+          # green (#2537). pytest writes the JUnit report only at session
+          # end, so the step requires that report, with at least one
+          # passed test and no failure or error in it.
+          rm -f live-stock-junit.xml
           pytest tests -q -p no:cacheprovider -rs \
-            -m "live and not qt and not subprocess and not bench"
+            -m "live and not qt and not subprocess and not bench" \
+            --junitxml=live-stock-junit.xml
+          python - <<'EOF'
+          import os, sys
+          import xml.etree.ElementTree as ET
+          path = "live-stock-junit.xml"
+          if not os.path.exists(path):
+              sys.exit("pytest exited 0 without writing its JUnit report: "
+                       "the session never finished (#2537)")
+          root = ET.parse(path).getroot()
+          suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+          total = sum(int(s.get("tests", 0)) for s in suites)
+          bad = sum(int(s.get(k, 0)) for s in suites for k in ("failures", "errors"))
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          passed = total - skipped - bad
+          print(f"JUnit: {total} tests, {passed} passed, {skipped} skipped, "
+                f"{bad} failures+errors")
+          if passed <= 0 or bad:
+              sys.exit("the JUnit report does not account for a finished, green "
+                       "run with at least one passing test")
+          EOF
