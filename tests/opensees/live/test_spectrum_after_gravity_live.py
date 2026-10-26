@@ -80,9 +80,14 @@ BASE = [_tag(0, c) for c in range(N_BAY + 1)]
 FLOOR = [_tag(s, c) for s in range(1, N_STORY + 1) for c in range(N_BAY + 1)]
 COL_IDS = tuple(i + 1 for i, e in enumerate(ELEMS) if e[2] == "col")
 BEAM_IDS = tuple(i + 1 for i, e in enumerate(ELEMS) if e[2] == "beam")
+#: An X-brace in the first bay of the first story.
+BRACES = ((_tag(0, 0), _tag(1, 1)), (_tag(0, 1), _tag(1, 0)))
+BRACE_IDS = (len(ELEMS) + 1, len(ELEMS) + 2)
+ROOF = _tag(N_STORY, 0)
 
 
-def _frame(transf: str = "Linear", *, beam_mass: float | None = None) -> apeSees:
+def _frame(transf: str = "Linear", *, beam_mass: float | None = None,
+           ent_braces: bool = False) -> apeSees:
     nodes = _NodesStub(
         ids=list(range(1, len(COORDS) + 1)),
         coords=[(x, y, 0.0) for x, y in COORDS],
@@ -95,6 +100,9 @@ def _frame(transf: str = "Linear", *, beam_mass: float | None = None) -> apeSees
         "Beams": _ElementGroupView(ids=BEAM_IDS, connectivity=tuple(
             ELEMS[i - 1][:2] for i in BEAM_IDS)),
     }
+    if ent_braces:
+        groups["Braces"] = _ElementGroupView(ids=BRACE_IDS,
+                                             connectivity=BRACES)
     fem = FEMStub(nodes=nodes, elements=_ElementsStub(elem_pgs=groups))
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
@@ -103,6 +111,10 @@ def _frame(transf: str = "Linear", *, beam_mass: float | None = None) -> apeSees
     ops.element.elasticBeamColumn(pg="Cols", transf=tc, A=A_COL, E=E, Iz=I_COL)
     ops.element.elasticBeamColumn(pg="Beams", transf=tb, A=A_BM, E=E,
                                   Iz=I_BM, mass=beam_mass)
+    if ent_braces:
+        # Elastic-no-tension: stiff in compression, slack in tension.
+        ent = ops.uniaxialMaterial.ENT(E=200e9)
+        ops.element.Truss(pg="Braces", A=2e-3, material=ent)
     ops.fix(pg="Base", dofs=(1, 1, 1))
     ops.mass(pg="Floor", values=(M_FLOOR, M_FLOOR, 0.0))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
@@ -398,3 +410,48 @@ def test_scale_to_base_shear_lifts_forces_only_below_the_target() -> None:
     assert float(scaled["base_shear"][0][0]) == pytest.approx(1.3 * v_t)
     factors, _ = res.scale_to_base_shear(0.5 * v_t, ["cols"], damping=XI)
     assert float(factors[0]) == 1.0
+
+
+# -- the probe sees the tangent the modes were solved on ----------------------
+
+def _modal_roof(res: Any, spec: DesignSpectrum) -> np.ndarray:
+    """``Γ_k Sa(T_k) φ_k / λ_k`` at the roof, from the live domain's own
+    modes: the per-mode roof displacement a response spectrum means."""
+    ops = res.modal._live.ops
+    gamma = np.asarray(res.modal.modal.properties["partiFactorMX"])
+    lam = np.asarray(res.modal.eigenvalues)
+    sa = spec.sa(res.periods)
+    return np.stack([
+        gamma[k] * sa[k] / lam[k]
+        * np.asarray(ops.nodeEigenvector(ROOF, k + 1))[:2]
+        for k in range(N_MODES)])
+
+
+@pytest.mark.live
+def test_ent_braces_give_the_tangent_response_at_design_amplitude() -> None:
+    """The X-brace is compressed by gravity, so the modes see both
+    diagonals. At the design amplitude (``scale=9.81``) one diagonal would
+    go slack; a probe at that amplitude returns the secant, 7-82 % off per
+    mode (the review's repro). The per-mode value must be the modal one."""
+    spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
+    res = _frame(ent_braces=True).spectrum_after_gravity(
+        N_MODES, spectra=[spec],
+        extractors={"roof": NodeDisp(nodes=[ROOF], dofs=(1, 2))},
+        solver="-fullGenLapack")
+    want = _modal_roof(res, spec)
+    got = res.modes("roof")
+    for k in range(N_MODES):
+        assert _rel(got[k], want[k]) < 1e-6, k
+
+
+@pytest.mark.live
+def test_a_member_that_changes_stiffness_at_the_reference_is_refused() -> None:
+    """Unloaded (``p_delta=False``), the no-tension braces sit at zero
+    strain: the modes see them slack, each probe leg compresses one. No
+    amplitude gives the modal response, so the driver refuses."""
+    spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
+    with pytest.raises(RuntimeError, match="did not see the tangent"):
+        _frame(ent_braces=True).spectrum_after_gravity(
+            N_MODES, spectra=[spec],
+            extractors={"roof": NodeDisp(nodes=[ROOF], dofs=(1, 2))},
+            p_delta=False, solver="-fullGenLapack")

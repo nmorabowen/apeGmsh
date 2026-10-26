@@ -39,6 +39,20 @@ _UNIT_LAMBDA_TOL = 1e-9
 #: state they started from.
 _RESTORE_TOL = 1e-6
 
+#: Each mode's probe moves the largest translation of a massed node by this
+#: fraction of the model's extent: small enough that the legs see the
+#: tangent the modes were solved on, whatever the spectrum's amplitude.
+_PROBE_REL = 1e-6
+
+#: The probe's displacement must match the modal one, ``a φ_k / λ_k``, to
+#: this relative tolerance; a larger gap means the legs did not see the
+#: tangent the eigen solve used (a member that changes stiffness at the
+#: reference state), and the per-mode value would be a secant, not the
+#: modal response. A no-tension brace at zero strain gives a gap of order 1;
+#: the PDelta transformation, whose tangent omits the axial-force change
+#: across the gravity sway, about 6e-7 on the live test frame.
+_TANGENT_TOL = 1e-3
+
 
 class _GravityModalMixin(_ProcedureHost):
     if TYPE_CHECKING:
@@ -231,14 +245,21 @@ class _GravityModalMixin(_ProcedureHost):
         """Per-mode response spectrum about the gravity state (ADR 0124 D4).
 
         Runs :meth:`modal_after_gravity`'s sequence, then, on the same
-        domain and for each mode ``k``, applies the modal inertia force
-        ``± c M φ_k`` as a nodal-load pattern, solves it with the declared
+        domain and for each mode ``k``, applies the probe force
+        ``± a_k M φ_k`` as a nodal-load pattern, solves it with the declared
         algorithm at ``dλ = 0``, calls every extractor at ``u_ref ± u_k``,
         removes the pattern and solves back to the reference state. The
         per-mode value under spectrum ``d`` is
-        ``Γ_kd Sa_d(T_k) (r⁺ - r⁻) / (2c)``, ``c = max_d |Γ_kd Sa_d(T_k)|``:
-        an increment about the reference state, exact for linear elements
-        and to third order for P-Delta ones. Combine it with
+        ``Γ_kd Sa_d(T_k) (r⁺ - r⁻) / (2 a_k)``: the modal response on the
+        tangent the modes were solved on, exact for linear elements. The
+        probe amplitude ``a_k`` does not depend on the spectrum: it moves
+        the largest translation of a massed node by ``1e-6`` of the model's
+        extent, so a member whose stiffness changes past the reference state
+        (a no-tension brace, a gap) cannot turn the result into a secant at
+        the design amplitude. The probe's displacement must equal the modal
+        one, ``a_k φ_k / λ_k``, to ``1e-3``; a larger gap (a member that
+        changes stiffness at the reference state itself) raises. Combine it
+        with
         :meth:`SpectrumModalResult.combine` (CQC / SRSS) and
         :meth:`SpectrumModalResult.directional` (100/30 / SRSS); the gravity
         values are kept apart (:func:`~apeGmsh.opensees.analysis.spectrum.seismic_envelope`).
@@ -257,6 +278,13 @@ class _GravityModalMixin(_ProcedureHost):
         material ``rho``, an element ``mass=``) is refused. Lump the mass to
         the nodes (``g.masses`` on the session, or ``ops.mass`` /
         ``mass_from_model``): that is the supported route.
+
+        **No recorders.** Each probe leg and each return solve commits, so a
+        declared recorder would write three extra rows per mode that are
+        not states of the structure. A model with a declared recorder is
+        refused; the gravity state is in
+        :attr:`SpectrumModalResult.gravity_values` and in ``Node.read`` on
+        the bridge afterwards.
 
         The driver always adds the extractor ``"base_shear"`` (the total
         support reaction per translational direction), so
@@ -283,17 +311,31 @@ class _GravityModalMixin(_ProcedureHost):
         ------
         BridgeError
             The model carries element mass (refused: the modal force is
-            built from nodal masses), or a spectrum names a direction outside
-            ``1..ndm``.
+            built from nodal masses), declares a recorder, or a spectrum
+            names a direction outside ``1..ndm``.
         ValueError
             No spectra or extractors, or an extractor's length changed.
         RuntimeError
-            A per-mode solve failed, a mode has a non-positive eigenvalue, or
-            the domain did not return to the reference state.
+            A per-mode solve failed, a mode has a non-positive eigenvalue, a
+            probe's displacement is not the modal one (the legs did not see
+            the eigen tangent), or the domain did not return to the
+            reference state.
         """
+        from .._internal.types import Recorder
         from ..analysis.spectrum import SpectrumModalResult
 
         context = "apeSees.spectrum_after_gravity"
+        recorders = sorted({type(p).__name__ for p in self._primitives
+                            if isinstance(p, Recorder)})
+        if recorders:
+            raise BridgeError(
+                f"{context}: the model declares recorders ({', '.join(recorders)}). "
+                "Every per-mode probe leg and return solve commits, so they "
+                "would record three rows per mode that are not states of the "
+                "structure. Remove the recorders; the gravity state is in "
+                "SpectrumModalResult.gravity_values and Node.read afterwards, "
+                "and modal_after_gravity records the gravity run on its own."
+            )
         spectra_t = tuple(spectra)
         if not spectra_t:
             raise ValueError(f"{context}: give at least one DesignSpectrum.")
@@ -436,32 +478,59 @@ class _GravityModalMixin(_ProcedureHost):
                     "step about the gravity state."
                 )
 
+        # The probe size is a length, independent of the spectrum (ADR 0124
+        # D4): the model's largest extent, so a probe is a fixed small
+        # fraction of the geometry whatever the units.
+        xyz = np.asarray([ops.nodeCoord(t) for t in tags], dtype=np.float64)
+        extent = float(np.max(np.ptp(xyz, axis=0))) if xyz.size else 0.0
+        probe = _PROBE_REL * (extent if extent > 0.0 else 1.0)
+
         for k in range(n_modes):
-            c = float(np.max(np.abs(coef[:, k])))
-            if c == 0.0:
+            if not np.any(coef[:, k]):
                 continue  # the mode takes no part in any spectrum
-            loads = {
-                t: c * masses[t] * np.asarray(
-                    ops.nodeEigenvector(t, k + 1), dtype=np.float64)
-                for t in massed
-            }
+            phi = {t: np.asarray(ops.nodeEigenvector(t, k + 1),
+                                 dtype=np.float64) for t in massed}
+            # Γ_kd != 0 needs a massed node that translates in the mode.
+            peak = max(float(np.max(np.abs(v[:ndm]))) for v in phi.values())
+            amp = probe * float(lam[k]) / peak
             legs: list[dict[str, np.ndarray]] = []
+            moved: list[dict[int, np.ndarray]] = []
             for sign in (1.0, -1.0):
                 pattern = 1 + max(
                     (int(p) for p in ops.getPatterns()), default=0)
                 ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
-                for t, f in loads.items():
-                    ops.load(t, *f.tolist())
+                for t in massed:
+                    ops.load(t, *(amp * masses[t] * phi[t]).tolist())
                 solve(f"mode {k + 1} {'+' if sign > 0 else '-'} leg")
                 legs.append({
                     name: _evaluate(ex, ops, name, ref_values[name].size,
                                     context)
                     for name, ex in extractors.items()
                 })
+                moved.append({t: np.asarray(ops.nodeDisp(t), dtype=np.float64)
+                              for t in massed})
                 ops.remove("loadPattern", pattern)
             solve(f"mode {k + 1} return")
+            # K_t φ = λ M φ, so the probe a M φ moves the domain by a φ / λ
+            # on the tangent the modes came from.
+            scale = amp / float(lam[k])
+            gap = max(float(np.max(np.abs(
+                0.5 * (moved[0][t] - moved[1][t]) - scale * phi[t])))
+                for t in massed)
+            ref = scale * max(float(np.max(np.abs(phi[t]))) for t in massed)
+            if gap > _TANGENT_TOL * ref:
+                raise RuntimeError(
+                    f"{context}: mode {k + 1}'s probe moved the domain "
+                    f"{gap / ref:.3e} (relative) away from the modal "
+                    f"displacement a φ / λ (limit {_TANGENT_TOL:g}): the "
+                    "probe legs did not see the tangent the modes were "
+                    "solved on, so a member changes stiffness at the "
+                    "reference state (a no-tension brace or a gap at zero "
+                    "strain, a yield point). The response spectrum is a "
+                    "linear method about that state and is refused here."
+                )
             for name in extractors:
-                unit = (legs[0][name] - legs[1][name]) / (2.0 * c)
+                unit = (legs[0][name] - legs[1][name]) / (2.0 * amp)
                 per_mode[name][:, k, :] = coef[:, k, None] * unit[None, :]
 
         if declared is not None:
