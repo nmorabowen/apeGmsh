@@ -1,6 +1,6 @@
 """Open a program PR: the documented way (lesson #2200, slice #2211).
 
-    python scripts/open_program_pr.py --title T --body-file F [--label X ...]
+    python scripts/open_program_pr.py --title T --body-file F [--head BRANCH] [--label X ...]
     python scripts/open_program_pr.py --count     # print the WIP count, exit 0
 
 Refuses when the body has no ``Slice: #<n>`` line, when a ``gh`` read fails, or
@@ -8,6 +8,9 @@ when the program WIP count is 8 or more. The count is
 ``program_probe.wip_count``: open ``program`` PRs, except drafts (ruling 2026-10-23) and those labelled
 ``human-gate`` that are green and approved (maintainer ruling on #2200).
 Always adds the ``program`` label, and always uses ``--base main``.
+The PR head is always named (``gh pr create --head``; lesson #2325): ``--head``,
+or else the current branch from ``git rev-parse --abbrev-ref HEAD``. It refuses
+a detached HEAD, and a branch that is not on the remote, naming the branch.
 ``--count`` lists each counted and excluded PR with its reason.
 """
 
@@ -17,6 +20,7 @@ import argparse
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
@@ -47,6 +51,27 @@ def read_count(gh: Runner, repo: str) -> tuple[list, list]:
     return _probe.wip_count(prs)
 
 
+def run_git(args: list[str]) -> str:
+    proc = subprocess.run(["git", *args], capture_output=True, text=True,
+                          encoding="utf-8", check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+    return proc.stdout
+
+
+def resolve_head(head: str | None, gh: Runner, git: Runner, repo: str) -> str:
+    """The branch to open the PR from; raises ``ValueError`` (the refusal text)."""
+    if not head:
+        head = git(["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        if not head or head == "HEAD":
+            raise ValueError("HEAD is detached; check out the slice branch or pass --head <branch>")
+    try:
+        gh(["api", f"repos/{repo}/git/ref/heads/{head}"])
+    except RuntimeError as exc:
+        raise ValueError(f"branch {head!r} is not on the remote {repo}; push it first ({exc})")
+    return head
+
+
 def describe(counted: list, excluded: list) -> str:
     lines = [f"WIP count: {len(counted)} of {WIP_CAP} (cap)"]
     lines += [f"  counted  #{p['number']} {p['title']}: {why}" for p, why in counted]
@@ -54,11 +79,13 @@ def describe(counted: list, excluded: list) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None, gh: Runner = _probe.run_gh) -> int:
+def main(argv: list[str] | None = None, gh: Runner = _probe.run_gh,
+         git: Runner = run_git) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
     ap.add_argument("--title")
     ap.add_argument("--body-file", type=Path)
+    ap.add_argument("--head", help="branch to open the PR from (default: the current branch)")
     ap.add_argument("--label", action="append", default=[])
     ap.add_argument("--draft", action="store_true")
     ap.add_argument("--count", action="store_true",
@@ -85,7 +112,12 @@ def main(argv: list[str] | None = None, gh: Runner = _probe.run_gh) -> int:
     if len(counted) >= WIP_CAP:
         print(f"refused: WIP is full\n{report}", file=sys.stderr)
         return 1
-    cmd = ["pr", "create", "--repo", args.repo, "--base", "main",
+    try:
+        head = resolve_head(args.head, gh, git, args.repo)
+    except (RuntimeError, ValueError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    cmd = ["pr", "create", "--repo", args.repo, "--base", "main", "--head", head,
            "--body-file", str(args.body_file), "--title", args.title,
            "--label", "program"]
     for label in args.label:

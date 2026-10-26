@@ -49,8 +49,9 @@ def _pr(n, *, gate=False, green=False, approved=False, decision="", created=3.0)
 
 
 class FakeGh:
-    def __init__(self, prs=(), fail_list=False, fail_create=False):
+    def __init__(self, prs=(), fail_list=False, fail_create=False, remote=("slice-branch",)):
         self.prs, self.fail_list, self.fail_create = list(prs), fail_list, fail_create
+        self.remote = set(remote)  # branches that exist on the remote
         self.created = []
 
     def __call__(self, args):
@@ -63,7 +64,19 @@ class FakeGh:
                 raise RuntimeError("gh pr create failed")
             self.created.append(args)
             return "https://github.com/x/y/pull/9\n"
+        if args[0] == "api":
+            branch = args[1].split("/git/ref/heads/", 1)[1]
+            if branch not in self.remote:
+                raise RuntimeError("gh api failed: HTTP 404 Not Found")
+            return "{}"
         raise AssertionError(args)
+
+
+def fake_git(branch="slice-branch"):
+    def git(args):
+        assert args == ["rev-parse", "--abbrev-ref", "HEAD"], args
+        return branch + "\n"
+    return git
 
 
 @pytest.fixture
@@ -73,8 +86,9 @@ def body(tmp_path):
     return f
 
 
-def _open(gh, body):
-    return op.main(["--title", "t", "--body-file", str(body)], gh=gh)
+def _open(gh, body, *extra, git=None):
+    return op.main(["--title", "t", "--body-file", str(body), *extra], gh=gh,
+                   git=git or fake_git())
 
 
 def test_seven_counted_opens(body):
@@ -168,3 +182,36 @@ def test_cp1252_console_with_arrow_title(monkeypatch):
     pr["title"] = "A \u2192 B"
     assert op.main(["--count"], gh=FakeGh([pr])) == 0
     out.flush()
+
+
+def _head_of(gh):
+    cmd = gh.created[0]
+    return cmd[cmd.index("--head") + 1]
+
+
+def test_head_flag_is_passed_even_when_checkout_is_another_branch(body):
+    """Lesson #2325, occurrence 2: the worktree holds a different branch than the slice's."""
+    gh = FakeGh([], remote=("k-2195-twin",))
+    assert _open(gh, body, "--head", "k-2195-twin", git=fake_git("worktree-agent-x")) == 0
+    assert _head_of(gh) == "k-2195-twin"
+
+
+def test_head_derived_from_current_branch(body):
+    gh = FakeGh([])
+    assert _open(gh, body) == 0 and _head_of(gh) == "slice-branch"
+
+
+def test_detached_head_refuses_by_name(body, capsys):
+    gh = FakeGh([])
+    assert _open(gh, body, git=fake_git("HEAD")) == 1
+    assert gh.created == [] and "detached" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("extra,cur", [(("--head", "nope"), "slice-branch"), ((), "unpushed")])
+def test_unpushed_branch_refuses_naming_it(body, capsys, extra, cur):
+    """Lesson #2325, occurrence 1: the head is not on the remote."""
+    gh = FakeGh([])
+    assert _open(gh, body, *extra, git=fake_git(cur)) == 1
+    assert gh.created == []
+    err = capsys.readouterr().err
+    assert (extra[1] if extra else cur) in err and "not on the remote" in err
