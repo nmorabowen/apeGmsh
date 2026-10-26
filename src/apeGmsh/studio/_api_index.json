@@ -3914,7 +3914,7 @@
     },
     "ops.nDMaterial.ASDConcrete3D": {
       "doc": "Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.",
-      "signature": "ASDConcrete3D(*, E: 'float', v: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, rho: 'float' = 0.0, Kc: 'float' = 0.6666666666666666, eta: 'float' = 0.0, cdf: 'float' = 0.0, implex: 'bool' = False, tangent: 'str' = 'secant', units: 'str' = 'MPa-mm-N', name: 'str | None' = None) -> 'ASDConcrete3D'",
+      "signature": "ASDConcrete3D(*, E: 'float', v: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, rho: 'float' = 0.0, Kc: 'float' = 0.6666666666666666, eta: 'float' = 0.0, cdf: 'float' = 0.0, implex: 'bool' = False, tangent: 'str' = 'secant', name: 'str | None' = None) -> 'ASDConcrete3D'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.ASDConcrete3D"
     },
@@ -3968,7 +3968,7 @@
     },
     "ops.nDMaterial.LadrunoConcrete3D": {
       "doc": "Register a :class:`LadrunoConcrete3D` CDPM2-grade solid concrete.",
-      "signature": "LadrunoConcrete3D(*, E: 'float', nu: 'float', fc: 'float', ft: 'float', Gf: 'float', Gc: 'float', e: 'float | None' = None, kupfer: 'float' = 1.16, Df: 'float' = 0.85, As: 'float' = 2.0, rho: 'float' = 0.0, hardening: 'tuple[float, float]' = (0.3, 0.01), ductility: 'tuple[float, float, float, float]' = (0.08, 0.003, 2.0, 1e-06), lch: 'float' = 1.0, auto_regularize: 'bool' = False, implex: 'bool' = False, eta: 'float' = 0.0, ct_temper: 'str' = 'none', hoop_k: 'float' = 0.0, hoop_fy: 'float' = 1e+30, tension_law: 'str | None' = None, eps_fc: 'float | None' = None, gc_legacy: 'bool' = False, flow_potential: 'str | None' = None, sym_tangent: 'bool' = False, cyclic_hysteresis: 'bool' = False, ec: 'float | None' = None, name: 'str | None' = None) -> 'LadrunoConcrete3D'",
+      "signature": "LadrunoConcrete3D(*, E: 'float', nu: 'float', fc: 'float', ft: 'float', Gf: 'float', Gc: 'float', e: 'float | None' = None, kupfer: 'float' = 1.16, Df: 'float' = 1.0, As: 'float' = 2.0, rho: 'float' = 0.0, hardening: 'tuple[float, float]' = (0.3, 0.5), ductility: 'tuple[float, float, float, float]' = (0.08, 0.003, 2.0, 1e-06), lch: 'float' = 1.0, auto_regularize: 'bool' = False, implex: 'bool' = False, eta: 'float' = 0.0, ct_temper: 'str' = 'none', hoop_k: 'float' = 0.0, hoop_fy: 'float' = 1e+30, tension_law: 'str | None' = None, eps_fc: 'float | None' = None, gc_legacy: 'bool' = False, flow_potential: 'str | None' = None, name: 'str | None' = None) -> 'LadrunoConcrete3D'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.LadrunoConcrete3D"
     },
@@ -4598,7 +4598,7 @@
     },
     "ops.uniaxialMaterial.ASDConcrete1D": {
       "doc": "``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage (1-D).",
-      "signature": "ASDConcrete1D(*, E: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, eta: 'float' = 0.0, implex: 'bool' = False, units: 'str' = 'MPa-mm-N', name: 'str | None' = None) -> '_ASDConcrete1DCls'",
+      "signature": "ASDConcrete1D(*, E: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, eta: 'float' = 0.0, implex: 'bool' = False, name: 'str | None' = None) -> '_ASDConcrete1DCls'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.ASDConcrete1D"
     },
