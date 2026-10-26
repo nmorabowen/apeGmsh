@@ -30,6 +30,7 @@ from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.uniaxial import (
     ENT,
     ASDSteel1D,
+    Bilin,
     Concrete01,
     Concrete02,
     ElasticMaterial,
@@ -41,6 +42,7 @@ from apeGmsh.opensees.material.uniaxial import (
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
+    ModIMKPeakOriented,
     MultiLinear,
     Parallel,
     PySimple1,
@@ -81,6 +83,8 @@ ALL_UNIAXIAL: list[type[UniaxialMaterial]] = [
     LadrunoBondSlip,
     LadrunoUniaxialJ2,
     LadrunoRebarBuckling,
+    Bilin,
+    ModIMKPeakOriented,
 ]
 
 
@@ -133,6 +137,24 @@ _MINIMAL_PARAMS: dict[type[UniaxialMaterial], dict[str, Any]] = {
     # lsr=0 (identity gate) keeps the minimal smoke free of the E/fy
     # requirements the fork imposes only when the overlay is active.
     LadrunoRebarBuckling: {"material": _INITIAL_STRESS_BASE},
+    Bilin: {
+        "Ke": 1e8, "AsPos": 0.01, "AsNeg": 0.01,
+        "My_pos": 500e3, "My_neg": -500e3,
+        "LamdaS": 1.0, "LamdaD": 1.0, "LamdaA": 1.0, "LamdaK": 1.0,
+        "Thetap_pos": 0.03, "Thetap_neg": 0.03,
+        "Thetapc_pos": 0.15, "Thetapc_neg": 0.15,
+        "KPos": 0.4, "KNeg": 0.4,
+        "Thetau_pos": 0.10, "Thetau_neg": 0.10,
+    },
+    ModIMKPeakOriented: {
+        "Ke": 1e8, "alfaPos": 0.01, "alfaNeg": 0.01,
+        "My_pos": 500e3, "My_neg": -500e3,
+        "Ls": 1.0, "Ld": 1.0, "La": 1.0, "Lk": 1.0,
+        "thetaPpos": 0.03, "thetaPneg": 0.03,
+        "thetaPCpos": 0.15, "thetaPCneg": 0.15,
+        "ResfacPos": 0.2, "ResfacNeg": 0.2,
+        "fracDispPos": 0.10, "fracDispNeg": 0.10,
+    },
 }
 
 

@@ -505,7 +505,8 @@ class LadrunoReader:
         """Ops tags of every element the file records, over all stages:
         the ``MODEL/ELEMENTS`` listing (column 0 of each class group's
         ``CONNECTIVITY``; a recorder ``-R`` region writes only its
-        elements there) and each ``RESULTS/ON_ELEMENTS`` bucket ``ID``."""
+        elements there), ``MODEL/LOCAL_AXES``, and each
+        ``RESULTS/ON_ELEMENTS`` bucket ``ID``."""
         import h5py
 
         if self._stage_cache is None:
@@ -519,6 +520,11 @@ class LadrunoReader:
                     conn = grp["CONNECTIVITY"]
                     if conn.ndim == 2 and conn.shape[0]:
                         parts.append(np.asarray(conn[:, 0], dtype=np.int64))
+            local_axes = _child(stage, "MODEL/LOCAL_AXES")
+            for sub in local_axes.values() if isinstance(local_axes, h5py.Group) else ():
+                if isinstance(sub, h5py.Group) and "ID" in sub:
+                    parts.append(np.asarray(
+                        sub["ID"][...], dtype=np.int64).ravel())
             on_elements = _child(stage, "RESULTS/ON_ELEMENTS")
             for token in on_elements.values() if on_elements is not None else ():
                 for bucket in token.values() if isinstance(token, h5py.Group) else ():
@@ -1065,6 +1071,27 @@ class LadrunoReader:
 
     # -- local axes (beam/shell orientation — Ladruno-only extension) --
 
+    def _raw_local_axes(self, stage_id: str) -> dict[int, ndarray]:
+        """Recorded ``{ops_tag: quaternion}`` map from ``MODEL/LOCAL_AXES``."""
+        import h5py
+
+        grp = self._resolve_stage_group(stage_id)
+        la = _child(grp, "MODEL/LOCAL_AXES")
+        id_to_quat: dict[int, ndarray] = {}
+        if isinstance(la, h5py.Group):
+            for cls_name in la:
+                sub = la[cls_name]
+                if (not isinstance(sub, h5py.Group) or "ID" not in sub
+                        or "FRAME" not in sub):
+                    continue
+                ids = np.asarray(sub["ID"][...]).flatten().astype(np.int64)
+                frames = np.asarray(
+                    sub["FRAME"][...], dtype=np.float64,
+                ).reshape(-1, 4)
+                for eid, frame in zip(ids, frames):
+                    id_to_quat[int(eid)] = frame
+        return id_to_quat
+
     def read_local_axes(
         self,
         stage_id: str,
@@ -1075,26 +1102,31 @@ class LadrunoReader:
 
         Ladruno groups frames by class (``<classTag>-<ClassName>/{ID,
         FRAME}``); this flattens them into one ``{element_id: quaternion}``
-        lookup. ``element_ids=None`` returns every recorded frame (sorted
+        lookup, relabelled to ``fem_eid`` when a tag translator is
+        attached. ``element_ids=None`` returns every recorded frame (sorted
         by id); an explicit list returns those ids with an identity-frame
         fallback for any element without a recorded frame.
+
+        The reference frame only: the per-step co-rotational stream
+        ``RESULTS/ON_ELEMENTS/LOCAL_AXES`` is not read here. Its layout
+        (#2451) is one class bucket ``{ID[nE], DATA[T, nE, 3|4|9]}`` with
+        optional ``STEP[T]`` and ``TIME[T]`` (the fork writes 4-wide
+        quaternions), fork schema §7.0, not §5's ``DATA/STEP_<k>``; the
+        viewer's ``reader/ladrunoLocalAxes.ts`` reads it.
         """
         from .._slabs import LocalAxes
 
-        grp = self._resolve_stage_group(stage_id)
-        la = _child(grp, "MODEL/LOCAL_AXES")
-        id_to_quat: dict[int, ndarray] = {}
-        if la is not None:
-            for cls_name in la:
-                sub = la[cls_name]
-                if "ID" not in sub or "FRAME" not in sub:
-                    continue
-                ids = np.asarray(sub["ID"][...]).flatten().astype(np.int64)
-                frames = np.asarray(
-                    sub["FRAME"][...], dtype=np.float64,
-                ).reshape(-1, 4)
-                for i, eid in enumerate(ids):
-                    id_to_quat[int(eid)] = frames[i]
+        _, index_to_fem = self._element_read_translation(None)
+        raw = self._raw_local_axes(stage_id)
+        if raw:
+            raw_ids = np.fromiter(raw.keys(), dtype=np.int64, count=len(raw))
+            fem_ids = index_to_fem(raw_ids)
+            id_to_quat = {
+                int(fid): raw[int(oid)]
+                for fid, oid in zip(fem_ids, raw_ids)
+            }
+        else:
+            id_to_quat = {}
         if element_ids is None:
             out_ids = np.array(sorted(id_to_quat), dtype=np.int64)
         else:
@@ -1357,7 +1389,7 @@ class LadrunoReader:
             element_index=fem_index,
             station_natural_coord=station_coord, time=time[t_idx],
             local_axes_quaternion=self._line_station_quaternions(
-                stage_id, fem_index,
+                stage_id, element_index,
             ),
         )
 
@@ -1366,19 +1398,15 @@ class LadrunoReader:
     ) -> "Optional[ndarray]":
         """Per-row beam quaternion for a line-station slab, or ``None``.
 
-        Maps each row's element to its ``MODEL/LOCAL_AXES`` frame. Returns
-        ``None`` when the stage records no frames at all (the diagram then
-        falls back to node geometry); otherwise a ``(sum_S, 4)`` array with
-        NaN rows for elements that have no recorded frame (per-element
-        fallback).
+        Maps each row's element tag to its ``MODEL/LOCAL_AXES`` frame.
+        Returns ``None`` when the stage records no frames at all (the
+        diagram then falls back to node geometry); otherwise a ``(sum_S, 4)``
+        array with NaN rows for elements that have no recorded frame
+        (per-element fallback).
         """
-        recorded = self.read_local_axes(stage_id)  # only recorded ids
-        if recorded.element_ids.size == 0:
+        id_to_quat = self._raw_local_axes(stage_id)
+        if not id_to_quat:
             return None
-        id_to_quat = {
-            int(e): recorded.quaternions[k]
-            for k, e in enumerate(recorded.element_ids)
-        }
         nan_row = np.full(4, np.nan, dtype=np.float64)
         return np.stack([
             id_to_quat.get(int(e), nan_row) for e in element_index

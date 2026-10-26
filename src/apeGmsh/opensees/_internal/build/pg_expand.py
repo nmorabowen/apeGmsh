@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import warnings
 import weakref
 from typing import Any, Iterable, Iterator, Sequence
 
@@ -9,6 +10,7 @@ import numpy as np
 
 from ..types import Element
 from ..tag_resolution import MISSING_FEM_ELEMENT_ID
+from .._stacklevel import _stacklevel_outside_package
 from .errors import BridgeError
 from .records import FixRecord, MassRecord, SupportRecord
 
@@ -384,8 +386,10 @@ def resolve_element_node_pair(
     * a ``DecoupledNodeDef`` handle (from ``g.decouple_node``) → its
       ``.tag`` (fail-loud if the handle was never materialized by the FEM
       factory, i.e. ``.tag is None``);
-    * a node-label ``str`` → exactly one node via
-      :func:`_expand_label_to_nodes` (0 or ≥2 matches fail loud);
+    * a ``str`` → exactly one node of the node label (a
+      ``g.decouple_node`` ``label=`` included) or, failing that, the
+      physical group of that name (:func:`node_name_to_nodes`;
+      0 or ≥2 matches fail loud);
     * an ``int`` → the raw node tag (power-user escape hatch — **not**
       compose-safe: ``g.compose`` offsets node tags at the FEM level
       before the bridge runs, so a raw int authored against pre-compose
@@ -416,7 +420,8 @@ def resolve_element_node_pair(
         if isinstance(ref, int):
             return int(ref)
         if isinstance(ref, str):
-            ids = _expand_label_to_nodes(fem, ref)
+            ids = node_name_to_nodes(
+                fem, ref, where=f"{cls} nodes= {which} endpoint")
             if len(ids) != 1:
                 raise BridgeError(
                     f"{cls} nodes= {which} endpoint label {ref!r} resolves to "
@@ -445,6 +450,45 @@ def resolve_element_node_pair(
             f"would otherwise assemble a singular element silently)."
         )
     return i_tag, j_tag
+
+
+def node_name_to_nodes(
+    fem: "FEMData", name: str, *, where: str,
+) -> tuple[int, ...]:
+    """The nodes a node-argument name selects: a node label (a
+    ``g.decouple_node`` label included) or a physical group.
+
+    A name that is both, selecting different nodes, is refused rather
+    than picked; one that is neither raises naming both namespaces.
+    """
+    nodes_obj = getattr(fem, "nodes", None)
+
+    def _lookup(attr: str) -> tuple[int, ...] | None:
+        groups = getattr(nodes_obj, attr, None)
+        if groups is None:
+            return None
+        try:
+            return tuple(int(n) for n in groups.node_ids(name))
+        except KeyError:
+            return None  # not a name of this namespace
+
+    by_label = _lookup("labels")
+    by_pg = _lookup("physical")
+    if by_label is None:
+        if by_pg is None:
+            raise BridgeError(
+                f"{where} {name!r} is neither a node "
+                f"label nor a physical group on the FEM snapshot (a "
+                f"g.decouple_node label=... is a node label)."
+            )
+        return by_pg
+    if by_pg is not None and set(by_label) != set(by_pg):
+        raise BridgeError(
+            f"{where} {name!r} names both a label "
+            f"(nodes {by_label[:5]}) and a physical group (nodes "
+            f"{by_pg[:5]}) — rename one, or pass the node handle."
+        )
+    return by_label
 
 
 def _polygon_area_3d(fem: "FEMData", cycle: Sequence[int]) -> float:
@@ -556,6 +600,26 @@ def extract_pg_polygon_loops(
     the outer boundary and any remaining cycles are interior holes) and 1D line
     loop PGs.
     """
+    # Memoised per snapshot with the fan-out (an emit asks for a panel's
+    # loops from several passes); only for the PG's own fan-out.
+    cache = _pg_fanout_cache_for(fem)
+    own = fanout is None or fanout is (
+        cache.get(("elements", pg)) if cache is not None else None)
+    if own and cache is not None:
+        hit = cache.get(("loops", pg))
+        if hit is not None:
+            return hit  # type: ignore[return-value]
+    loops = _extract_pg_polygon_loops(fem, pg, fanout)
+    if own and cache is not None:
+        cache[("loops", pg)] = loops
+    return loops
+
+
+def _extract_pg_polygon_loops(
+    fem: "FEMData",
+    pg: str,
+    fanout: "PGElementFanout | None",
+) -> "tuple[tuple[int, ...], tuple[tuple[int, ...], ...]]":
     if fanout is None:
         fanout = expand_pg_to_elements(fem, pg)
     if len(fanout) == 0:
@@ -744,6 +808,191 @@ def resolve_ladruno_membrane_nodes(
     return resolved
 
 
+def _node_xyz(fem: "FEMData", ids: "Sequence[int] | np.ndarray") -> "np.ndarray":
+    """``float64[n, 3]`` coordinates of ``ids`` (memoised sorted id index).
+
+    Raises :class:`BridgeError` when an id is not a node of the snapshot.
+    """
+    cache = _pg_fanout_cache_for(fem)
+    hit = cache.get(("node_index", "")) if cache is not None else None
+    if hit is None:
+        all_ids = np.asarray(fem.nodes.ids, dtype=np.int64).reshape(-1)
+        coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+        if coords.ndim == 2 and coords.shape[1] < 3:
+            coords = np.hstack(
+                [coords, np.zeros((coords.shape[0], 3 - coords.shape[1]))])
+        order = np.argsort(all_ids, kind="stable")
+        hit = (all_ids[order], coords[order])
+        if cache is not None:
+            cache[("node_index", "")] = hit
+    sorted_ids: np.ndarray = hit[0]  # type: ignore[index]
+    sorted_xyz: np.ndarray = hit[1]  # type: ignore[index]
+    want = np.asarray(ids, dtype=np.int64).reshape(-1)
+    pos = np.searchsorted(sorted_ids, want)
+    pos_c = np.minimum(pos, max(len(sorted_ids) - 1, 0))
+    if len(sorted_ids) == 0 or not bool(np.all(sorted_ids[pos_c] == want)):
+        bad = want[(len(sorted_ids) == 0) | (sorted_ids[pos_c] != want)]
+        raise BridgeError(
+            f"LadrunoMembrane: node(s) {bad[:5].tolist()} are not nodes of "
+            f"the FEM snapshot."
+        )
+    return np.asarray(sorted_xyz[pos_c], dtype=np.float64)
+
+
+#: Relative tolerance of the frame-in-panel test: a point is on the panel's
+#: plane / boundary when it is within ``_PANEL_REL_TOL`` x the panel's
+#: bounding-box diagonal.  Shared mesh nodes coincide exactly, so this only
+#: absorbs round-off.
+_PANEL_REL_TOL = 1e-6
+
+
+class MembraneFramesFilteredWarning(UserWarning):
+    """A ``LadrunoMembrane`` ``frames=`` group lost some or all of its
+    frames to the per-panel filter (:func:`resolve_ladruno_membrane_context`).
+
+    Expected for a group that spans several panels (a storey's beams); a
+    sign of a wrong group or a misplaced frame otherwise, so the build
+    names the dropped elements.
+    """
+
+
+class _PanelGeometry:
+    """Plane + 2-D polygon of one membrane panel, for the frame filter."""
+
+    def __init__(
+        self,
+        fem: "FEMData",
+        outer: "Sequence[int]",
+        holes: "Sequence[Sequence[int]]",
+    ) -> None:
+        pts = _node_xyz(fem, outer)
+        self.origin = pts.mean(axis=0)
+        n = np.zeros(3)
+        m = len(pts)
+        for i in range(m):
+            p0, p1 = pts[i], pts[(i + 1) % m]
+            n[0] += (p0[1] - p1[1]) * (p0[2] + p1[2])
+            n[1] += (p0[2] - p1[2]) * (p0[0] + p1[0])
+            n[2] += (p0[0] - p1[0]) * (p0[1] + p1[1])
+        nn = float(np.linalg.norm(n))
+        if nn <= 0.0:
+            raise BridgeError(
+                "LadrunoMembrane: the panel's boundary polygon is degenerate "
+                "(zero area); cannot place its frames."
+            )
+        self.normal = n / nn
+        ref = (np.array([1.0, 0.0, 0.0]) if abs(self.normal[0]) < 0.9
+               else np.array([0.0, 1.0, 0.0]))
+        e1 = np.cross(self.normal, ref)
+        self.e1 = e1 / np.linalg.norm(e1)
+        self.e2 = np.cross(self.normal, self.e1)
+        diag = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0)))
+        self.tol = _PANEL_REL_TOL * max(diag, 1e-300)
+        self.outer2d = self._proj(pts)
+        self.holes2d = [self._proj(_node_xyz(fem, h)) for h in holes]
+        self.lo = self.outer2d.min(axis=0) - self.tol
+        self.hi = self.outer2d.max(axis=0) + self.tol
+
+    def _proj(self, pts: "np.ndarray") -> "np.ndarray":
+        d = pts - self.origin
+        return np.stack([d @ self.e1, d @ self.e2], axis=1)
+
+    @staticmethod
+    def _on_boundary(p: "np.ndarray", poly: "np.ndarray", tol: float) -> "np.ndarray":
+        a = poly
+        b = np.roll(poly, -1, axis=0)
+        ab = b - a                                   # (m, 2)
+        ap = p[:, None, :] - a[None, :, :]           # (n, m, 2)
+        den = np.maximum((ab * ab).sum(axis=1), 1e-300)
+        t = np.clip((ap * ab[None]).sum(axis=2) / den[None], 0.0, 1.0)
+        proj = a[None] + t[..., None] * ab[None]
+        dist = np.linalg.norm(p[:, None, :] - proj, axis=2)
+        return np.asarray((dist <= tol).any(axis=1))
+
+    @staticmethod
+    def _inside(p: "np.ndarray", poly: "np.ndarray") -> "np.ndarray":
+        a = poly
+        b = np.roll(poly, -1, axis=0)
+        u, v = p[:, 0:1], p[:, 1:2]
+        crosses = (a[None, :, 1] > v) != (b[None, :, 1] > v)
+        dv = b[:, 1] - a[:, 1]
+        dv = np.where(dv == 0.0, 1e-300, dv)
+        u_int = a[None, :, 0] + (v - a[None, :, 1]) * (b[:, 0] - a[:, 0])[None] / dv[None]
+        return np.asarray((np.count_nonzero(crosses & (u < u_int), axis=1) % 2) == 1)
+
+    def contains(self, pts: "np.ndarray") -> "np.ndarray":
+        """Per point: on the plane, and on the outer boundary or strictly
+        inside it, and not strictly inside a hole."""
+        pts = np.asarray(pts, dtype=np.float64).reshape(-1, 3)
+        ok: np.ndarray = np.asarray(
+            np.abs((pts - self.origin) @ self.normal) <= self.tol, dtype=bool)
+        p2 = self._proj(pts)
+        ok &= np.all((p2 >= self.lo) & (p2 <= self.hi), axis=1)
+        idx = np.nonzero(ok)[0]
+        if idx.size == 0:
+            return ok
+        q = p2[idx]
+        sub = self._on_boundary(q, self.outer2d, self.tol) | self._inside(q, self.outer2d)
+        for h in self.holes2d:
+            in_hole = self._inside(q, h) & ~self._on_boundary(q, h, self.tol)
+            sub &= ~in_hole
+        ok[idx] = sub
+        return ok
+
+    def frame_rows_inside(self, fem: "FEMData", conn: "Any") -> "np.ndarray":
+        """Per frame connectivity row: every node, and the I-J chord midpoint,
+        lie in the panel (:meth:`contains`).  ``conn`` is a rectangular
+        ``int[N, k]`` array or a sequence of rows."""
+        arr = np.asarray(conn) if not isinstance(conn, np.ndarray) else conn
+        if arr.ndim == 2 and arr.dtype != object:
+            if arr.shape[0] == 0:
+                return np.zeros(0, dtype=bool)
+            arr = arr.astype(np.int64, copy=False)
+            ok_nodes = self.contains(_node_xyz(fem, arr.reshape(-1))).reshape(arr.shape)
+            mids = 0.5 * (_node_xyz(fem, arr[:, 0]) + _node_xyz(fem, arr[:, 1]))
+            return np.asarray(ok_nodes.all(axis=1) & self.contains(mids))
+        rows = [tuple(int(n) for n in r) for r in conn]
+        return np.asarray(
+            [bool(self.frame_rows_inside(fem, np.asarray([r], dtype=np.int64))[0])
+             for r in rows],
+            dtype=bool,
+        )
+
+
+def _membrane_panel_name(spec: Element) -> str:
+    pg = getattr(spec, "pg", None)
+    if pg is not None:
+        return f"LadrunoMembrane(pg={pg!r})"
+    return f"LadrunoMembrane(nodes={getattr(spec, 'nodes', None)!r})"
+
+
+def _plan_lookup(
+    element_plan: "Iterable[tuple[Element, ElementPlanRows]]",
+    *,
+    eids: "Sequence[int] | None" = None,
+    tag: "int | None" = None,
+) -> "list[tuple[int, tuple[int, ...]]]":
+    """``(ops_tag, conn)`` plan rows matching FEM ``eids`` or one ops ``tag``."""
+    out: list[tuple[int, tuple[int, ...]]] = []
+    want = np.asarray(list(eids), dtype=np.int64) if eids is not None else None
+    for _s, sub in element_plan:
+        if not len(sub):
+            continue
+        if want is not None:
+            hits = np.nonzero(np.isin(sub.eids, want))[0]
+        else:
+            t = int(tag) if tag is not None else -1
+            if sub.tags is None:
+                i = t - sub.tag_start
+                hits = np.asarray([i] if 0 <= i < len(sub) else [], dtype=np.int64)
+            else:
+                hits = np.flatnonzero(np.asarray(sub.tags) == t)
+        for i in hits.tolist():
+            _eid, conn, ele_tag = sub[i]
+            out.append((int(ele_tag), conn))
+    return out
+
+
 def resolve_ladruno_membrane_context(
     fem: "FEMData",
     spec: Element,
@@ -752,21 +1001,53 @@ def resolve_ladruno_membrane_context(
     *,
     include_frames: bool = True,
 ) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]]":
-    """Resolve ``(frames, support_nodes, holes)`` for a :class:`LadrunoMembrane`."""
+    """Resolve ``(frames, support_nodes, holes)`` for a :class:`LadrunoMembrane`.
+
+    Frames are filtered per panel: the fork kernel goes singular on a
+    supporting frame outside the panel (an out-of-plane column projects
+    to a point; a beam of the next panel lies outside its polygon), and
+    then transfers no load at all.  A frame is kept when every node of it,
+    and its I-J chord midpoint, lie on the panel's plane and on its outer
+    boundary or strictly inside it, and not strictly inside a hole (within
+    :data:`_PANEL_REL_TOL` x the panel's bounding-box diagonal).  A
+    ``frames=`` group (a PG / label name, or a ``pg=`` Element spec) is
+    FILTERED to the frames of this panel; an explicitly named frame (an int
+    tag, or a node-pair Element spec) that falls outside is REFUSED.  When
+    ``frames=`` was given, filtering leaves no frame and no
+    ``support_nodes=`` was given, the panel would carry its load nowhere:
+    refused, naming the panel.
+    """
     from ...node import Node, NodeSet
 
-    # 1. Frames
+    # 1. Frames — candidate groups as (ops_tags, conn, explicit, source):
+    # ``conn`` a rectangular int64[N, k] array (or a row sequence for a
+    # mixed-width group).  Kept columnar: a tower-wide ``frames="Beams"``
+    # is re-tested against every panel.
     frames_out: list[int] = []
     seen_frames: set[int] = set()
+    candidates: "list[tuple[np.ndarray, Any, bool, str]]" = []
 
-    def _add_frame(t: int) -> None:
-        ti = int(t)
-        if ti not in seen_frames:
-            seen_frames.add(ti)
-            frames_out.append(ti)
+    def _translate(eids: "np.ndarray", where: str) -> "np.ndarray":
+        if fem_eid_to_ops_tag is None:
+            tags = np.full(eids.shape[0], -1, dtype=np.int64)
+        elif hasattr(fem_eid_to_ops_tag, "translate"):
+            tags = np.asarray(fem_eid_to_ops_tag.translate(eids), dtype=np.int64)
+        else:
+            tags = np.asarray(
+                [int(fem_eid_to_ops_tag.get(int(e), -1)) for e in eids.tolist()],
+                dtype=np.int64,
+            )
+        if eids.shape[0] and bool((tags < 0).any()):
+            feid = int(eids[int(np.argmax(tags < 0))])
+            raise BridgeError(
+                f"LadrunoMembrane: frames= {where} contains FEM "
+                f"element {feid}, which has no emitted OpenSees element."
+            )
+        return tags
 
     raw_frames = getattr(spec, "frames", None) if include_frames else None
     if raw_frames is not None:
+        element_plan = list(element_plan)
         plan_by_spec_id = {id(s): sub for s, sub in element_plan}
         for item in raw_frames:
             if isinstance(item, Element):
@@ -776,48 +1057,68 @@ def resolve_ladruno_membrane_context(
                         f"LadrunoMembrane: frames= Element spec {item!r} has no "
                         f"emitted elements in this model."
                     )
-                for _eid, _conn, ele_tag in sub:
-                    _add_frame(ele_tag)
+                sub_tags = (
+                    sub.tags if sub.tags is not None
+                    else sub.tag_start + np.arange(len(sub), dtype=np.int64)
+                )
+                candidates.append((
+                    np.asarray(sub_tags, dtype=np.int64), sub.conn,
+                    getattr(item, "pg", None) is None,
+                    f"Element spec {type(item).__name__}",
+                ))
             elif isinstance(item, str):
-                eids_list: list[int] = []
                 try:
                     fan = expand_pg_to_elements(fem, item)
-                    eids_list = [int(e) for e in fan.eids.tolist()]
+                    eids_arr = np.asarray(fan.eids, dtype=np.int64)
+                    conn_any: "Any" = fan.conn
                 except BridgeError:
                     labels = getattr(getattr(fem, "elements", None), "labels", None)
-                    if labels is not None:
-                        try:
-                            eids_list = [int(e) for e in labels.element_ids(item)]
-                        except (KeyError, ValueError) as exc:
-                            raise BridgeError(
-                                f"LadrunoMembrane: frames= group/label {item!r} not "
-                                f"found in FEM snapshot."
-                            ) from exc
-                    else:
+                    if labels is None:
                         raise
-                if not eids_list:
+                    try:
+                        eids_arr = np.asarray(
+                            [int(e) for e in labels.element_ids(item)], dtype=np.int64)
+                    except (KeyError, ValueError) as exc:
+                        raise BridgeError(
+                            f"LadrunoMembrane: frames= group/label {item!r} not "
+                            f"found in FEM snapshot."
+                        ) from exc
+                    conn_any = None
+                if eids_arr.shape[0] == 0:
                     raise BridgeError(
                         f"LadrunoMembrane: frames= group/label {item!r} matched 0 elements."
                     )
-                for feid in eids_list:
-                    mapped = (
-                        fem_eid_to_ops_tag.get(int(feid))
-                        if fem_eid_to_ops_tag is not None
-                        else None
-                    )
-                    if mapped is None:
+                tags_arr = _translate(eids_arr, f"group {item!r}")
+                if conn_any is None:
+                    by_tag = dict(_plan_lookup(element_plan, eids=eids_arr.tolist()))
+                    missing = [t for t in tags_arr.tolist() if t not in by_tag]
+                    if missing:
                         raise BridgeError(
-                            f"LadrunoMembrane: frames= group {item!r} contains FEM "
-                            f"element {feid}, which has no emitted OpenSees element."
+                            f"LadrunoMembrane: frames= label {item!r}: OpenSees "
+                            f"element {missing[0]} has no planned connectivity."
                         )
-                    _add_frame(int(mapped))
+                    conn_any = [by_tag[t] for t in tags_arr.tolist()]
+                candidates.append((tags_arr, conn_any, False, f"group {item!r}"))
             elif isinstance(item, int) and not isinstance(item, bool):
                 mapped = (
                     fem_eid_to_ops_tag.get(int(item))
                     if fem_eid_to_ops_tag is not None
                     else None
                 )
-                _add_frame(int(mapped) if mapped is not None else int(item))
+                tag = int(mapped) if mapped is not None else int(item)
+                rows = (
+                    _plan_lookup(element_plan, eids=[int(item)]) if mapped is not None
+                    else _plan_lookup(element_plan, tag=tag)
+                )
+                if not rows:
+                    raise BridgeError(
+                        f"LadrunoMembrane: frames= tag {item} matches no element "
+                        f"this model emits."
+                    )
+                candidates.append((
+                    np.asarray([tag], dtype=np.int64), [rows[0][1]], True,
+                    f"tag {item}",
+                ))
 
     # 2. Support nodes
     supp_out: list[int] = []
@@ -854,8 +1155,9 @@ def resolve_ladruno_membrane_context(
     # 3. Holes (auto-detected from pg mesh + explicit holes=)
     holes_out: list[tuple[int, ...]] = []
     pg = getattr(spec, "pg", None)
+    outer: "tuple[int, ...] | None" = None
     if pg is not None:
-        _outer, pg_holes = extract_pg_polygon_loops(fem, pg)
+        outer, pg_holes = extract_pg_polygon_loops(fem, pg)
         holes_out.extend(pg_holes)
 
     raw_holes = getattr(spec, "holes", None)
@@ -886,7 +1188,144 @@ def resolve_ladruno_membrane_context(
                     )
                 holes_out.append(loop)
 
+    # 4. Per-panel frame filter (see the docstring).
+    if candidates:
+        if outer is None:
+            outer = resolve_ladruno_membrane_nodes(fem, spec)
+        panel = _PanelGeometry(fem, outer, holes_out)
+        for tags_arr, conn_any, explicit, source in candidates:
+            inside = panel.frame_rows_inside(fem, conn_any)
+            if explicit and not bool(inside.all()):
+                k = int(np.argmin(inside))
+                raise BridgeError(
+                    f"{_membrane_panel_name(spec)}: frames= {source} (OpenSees "
+                    f"element {int(tags_arr[k])}, nodes "
+                    f"{tuple(int(n) for n in conn_any[k])}) does not lie in this "
+                    f"panel: a supporting frame must lie in the panel's plane, "
+                    f"on its outer boundary or inside it, and not inside a "
+                    f"hole. The fork kernel goes singular on such a frame and "
+                    f"transfers no load. Drop it from this panel's frames=, or "
+                    f"name a group (PG / label) and let the bridge keep the "
+                    f"panel's own frames."
+                )
+            if not explicit and int(np.count_nonzero(inside)) < len(inside):
+                dropped = tags_arr[~inside].tolist()
+                share = (
+                    f"all {len(inside)}" if len(dropped) == len(inside)
+                    else f"{len(dropped)} of its {len(inside)}"
+                )
+                warnings.warn(
+                    f"{_membrane_panel_name(spec)}: frames= {source}: "
+                    f"{share} frame element(s) do "
+                    f"not lie in this panel and are not passed to it "
+                    f"(OpenSees element(s) {dropped[:10]}"
+                    f"{' ...' if len(dropped) > 10 else ''}). Expected when "
+                    f"the group spans several panels; otherwise check that "
+                    f"those frames lie on the panel's plane, on its outer "
+                    f"boundary or inside it, and not inside a hole.",
+                    MembraneFramesFilteredWarning,
+                    stacklevel=_stacklevel_outside_package(),
+                )
+            for tag in tags_arr[inside].tolist():
+                if tag not in seen_frames:
+                    seen_frames.add(tag)
+                    frames_out.append(int(tag))
+        if not frames_out and not supp_out:
+            raise BridgeError(
+                f"{_membrane_panel_name(spec)}: none of its frames= "
+                f"({', '.join(sorted({s for _t, _c, _x, s in candidates}))}) lies "
+                f"in this panel (on its plane, on its outer boundary or inside "
+                f"it), and no support_nodes= were given, so the panel's load "
+                f"would reach no support. Add the panel's edge beams to frames=, "
+                f"or give support_nodes=."
+            )
+
     return tuple(frames_out), tuple(supp_out), tuple(holes_out)
+
+
+def resolve_ladruno_membrane_diaphragm_nodes(
+    fem: "FEMData", spec: Element,
+) -> "tuple[int, ...]":
+    """``diaphragm_nodes=`` of a :class:`LadrunoMembrane` as node tags.
+
+    The forms of ``support_nodes=``: int tags, ``Node`` handles and PG or
+    label names (a PG first, then a node label), in order, first
+    occurrence kept. ``()`` when the spec has none.  Any other spec
+    raises: only a membrane has diaphragm nodes.
+    """
+    from ...element.shell import LadrunoMembrane
+
+    if not isinstance(spec, LadrunoMembrane):
+        raise BridgeError(
+            f"resolve_ladruno_membrane_diaphragm_nodes: {type(spec).__name__} "
+            "is not a LadrunoMembrane."
+        )
+    raw = spec.diaphragm_nodes
+    out: list[int] = []
+    seen: set[int] = set()
+
+    def _add(n: int) -> None:
+        ni = int(n)
+        if ni not in seen:
+            seen.add(ni)
+            out.append(ni)
+
+    for item in raw or ():
+        if isinstance(item, str):
+            try:
+                nids = expand_pg_to_nodes(fem, item)
+            except BridgeError:
+                nids = _expand_label_to_nodes(fem, item)
+            if not nids:
+                raise BridgeError(
+                    f"LadrunoMembrane: diaphragm_nodes= {item!r} matched 0 nodes."
+                )
+            for nid in nids:
+                _add(int(nid))
+        else:
+            _add(_resolve_membrane_node_ref(fem, item, "diaphragm_nodes"))
+    return tuple(out)
+
+
+def resolve_ladruno_membrane_emit_context(
+    fem: "FEMData",
+    spec: Element,
+    element_plan: "Iterable[tuple[Element, ElementPlanRows]]" = (),
+    fem_eid_to_ops_tag: "Any" = None,
+) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], tuple[int, ...]]":
+    """The ``(frames, support_nodes, holes, diaphragm_nodes)`` context a
+    :class:`LadrunoMembrane` emits with
+    (:func:`~apeGmsh.opensees._internal.tag_resolution.set_membrane_context`):
+    :func:`resolve_ladruno_membrane_context` and
+    :func:`resolve_ladruno_membrane_diaphragm_nodes`.
+    """
+    return (
+        *resolve_ladruno_membrane_context(
+            fem, spec, element_plan, fem_eid_to_ops_tag,
+        ),
+        resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
+    )
+
+
+def ladruno_membrane_named_nodes(
+    fem: "FEMData", spec: Element,
+) -> "tuple[int, ...]":
+    """Every node a :class:`LadrunoMembrane` names besides its outer loop:
+    its ``support_nodes=``, hole loops and ``diaphragm_nodes=``, in that
+    order (repeats kept).
+
+    The fork gives each one stiffness, so each one is emitted, takes the
+    membrane's ndf, joins its stage and its rank, and is never skipped as
+    a ``pg=`` panel's interior node.
+    """
+    _fr, supp, holes = resolve_ladruno_membrane_context(
+        fem, spec, include_frames=False,
+    )
+    return (
+        *supp,
+        *(n for h in holes for n in h),
+        *resolve_ladruno_membrane_diaphragm_nodes(fem, spec),
+    )
 
 
 def expand_spec_to_elements(

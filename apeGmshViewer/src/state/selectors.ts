@@ -128,9 +128,39 @@ export {
   type LineDiagramFieldName,
   type ZRecSource,
 };
+export {
+  buildBeamChainPlotModel,
+  computeLineDiagramHover,
+  formatHoverReadout,
+  pickChainPlotAtS,
+  summarizeDrawnBeams,
+  syncLineDiagramDerived,
+  type BeamChainExtremaPlot,
+  type BeamChainHoverPlot,
+  type BeamChainJointPlot,
+  type BeamChainPlotModel,
+  type BeamChainSpanPlotModel,
+  type BeamChainStationDotPlot,
+  type BeamChainUnknownGapPlot,
+  type BuildBeamChainPlotOptions,
+} from "./lineDiagramChainSvg.ts";
 
 export type { Activation } from "./activation.ts";
 export type { ResultsPairing } from "./results.ts";
+export {
+  buildLoads3D,
+  evaluatePatternSeriesFactor,
+  loadsColourPalette,
+  loadsSummaryOf,
+  loadsUnitsOf,
+  type BuildLoads3DOptions,
+  type LoadPatternCounts,
+  type LoadPatternEntry,
+  type Loads3DGeometry,
+  type LoadsPeaks,
+  type LoadsSummary,
+  type LoadsUnitLabels,
+} from "./loads.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,

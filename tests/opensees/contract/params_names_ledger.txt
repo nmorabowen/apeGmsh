@@ -14,8 +14,8 @@
 # fails the test. N_LEDGER counts the unnamed + uncheckable lines and
 # may only go down (name the argv, or add a roster sample, and delete
 # the line); N_NOSTORE pins the nostore lines exactly.
-N_LEDGER = 56
-N_NOSTORE = 108
+N_LEDGER = 58
+N_NOSTORE = 109
 unnamed damping.URD
 unnamed damping.URDbeta
 unnamed nDMaterial.DruckerPrager
@@ -40,12 +40,14 @@ unnamed timeSeries.Pulse
 unnamed timeSeries.Ricker
 unnamed timeSeries.Trig
 unnamed uniaxialMaterial.ASDSteel1D
+unnamed uniaxialMaterial.Bilin
 unnamed uniaxialMaterial.ENT
 unnamed uniaxialMaterial.ElasticMaterial
 unnamed uniaxialMaterial.ElasticPPGap
 unnamed uniaxialMaterial.Hysteretic
 unnamed uniaxialMaterial.LadrunoRebarBuckling
 unnamed uniaxialMaterial.LadrunoUniaxialJ2
+unnamed uniaxialMaterial.ModIMKPeakOriented
 unnamed uniaxialMaterial.Parallel
 unnamed uniaxialMaterial.PySimple1
 unnamed uniaxialMaterial.QzSimple1
@@ -113,6 +115,7 @@ nostore element.LadrunoQuad
 nostore element.LadrunoUP
 nostore element.ShellDKGQ
 nostore element.ShellMITC4
+nostore element.ShellNLDKGQ
 nostore element.SixNodeTri
 nostore element.TenNodeTetrahedron
 nostore element.Tri31

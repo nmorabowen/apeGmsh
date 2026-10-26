@@ -228,7 +228,7 @@ class TransformRecord:
 
     ``jnt_offset`` is the call's flat ``-jntOffset`` tail, global
     ``(dXi, dYi[, dZi], dXj, dYj[, dZj])``; empty when the line has none
-    (opensees 2.35.0; an older file has none).
+    (opensees 2.37.0; an older file has none).
     """
 
     type_token: str

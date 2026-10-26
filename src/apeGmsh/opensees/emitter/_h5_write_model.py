@@ -5,7 +5,7 @@ the mixin holds no state.
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Sequence
 from .._internal.typed_records import (
     BeamIntegrationRecord as _BeamIntegrationRecord,
     EleLoadRecord as _EleLoadRecord,
@@ -38,6 +38,9 @@ from ._h5_write import (
     _write_param_array,
 )
 from ._h5_host import _H5Host
+
+if TYPE_CHECKING:
+    from .h5_reader import EquationConstraintRecordRO
 
 
 def material_name(rec: _MaterialRecord) -> str:
@@ -92,6 +95,10 @@ def recorder_name(rec: _RecorderRecord, idx: int) -> str:
 
 class _H5WriteModelMixin(_H5Host):
     """Mixin: holds no state, no ``__init__``; see the module docstring."""
+
+    if TYPE_CHECKING:
+        # ``H5Emitter.__init__`` makes it (opensees 2.35.0).
+        _equation_constraints: "list[EquationConstraintRecordRO]"
 
     def _write_bcs(self, f: Any) -> None:
         """Write ``/opensees/bcs/fix`` and ``/opensees/bcs/mass`` compound datasets.
@@ -400,7 +407,7 @@ class _H5WriteModelMixin(_H5Host):
             vec_arr = np.asarray([list(rec.vec)], dtype=np.float64)
             g.create_dataset("per_element_vecxz", data=vec_arr)
             if rec.jnt_offset:
-                # opensees 2.35.0: the line's -jntOffset tail, (1, 6) in
+                # opensees 2.37.0: the line's -jntOffset tail, (1, 6) in
                 # 3-D, (1, 4) in 2-D; absent when the line has none.
                 g.create_dataset(
                     "jnt_offset",
@@ -917,6 +924,7 @@ class _H5WriteModelMixin(_H5Host):
             self._equal_dofs or self._rigid_links
             or self._rigid_diaphragms or self._embedded_nodes
             or self._phantom_node_tags or self._embedded_rebars
+            or self._equation_constraints
         )
         if not has_any:
             return
@@ -941,6 +949,45 @@ class _H5WriteModelMixin(_H5Host):
             self._write_constraints_embedded_node(constraints)
         if self._embedded_rebars:
             self._write_constraints_embedded_rebar(constraints)
+        if self._equation_constraints:
+            self._write_constraints_equation_constraint(constraints)
+
+    def _write_constraints_equation_constraint(self, parent: Any) -> None:
+        """Persist ``/opensees/constraints/equationConstraint`` (2.35.0).
+
+        One row per global ``equationConstraint`` line, in emit order:
+        ``cnode`` (int64), ``cdof`` (int32), ``ccoef`` (f8) and ``name``
+        (the line's comment label, ``""`` when none), with the ragged
+        retained terms ``ret_offsets`` (n + 1, int32) over ``ret_node``
+        (int64), ``ret_dof`` (int32) and ``ret_coef`` (f8). Written only
+        when a line exists, so other files keep their bytes.
+        """
+        import h5py
+        import numpy as np
+
+        recs = self._equation_constraints
+        offsets = [0]
+        for rec in recs:
+            offsets.append(offsets[-1] + len(rec.retained))
+        terms = [t for rec in recs for t in rec.retained]
+        g = parent.create_group("equationConstraint")
+        g.create_dataset(
+            "cnode", data=np.asarray([r.cnode for r in recs], dtype=np.int64))
+        g.create_dataset(
+            "cdof", data=np.asarray([r.cdof for r in recs], dtype=np.int32))
+        g.create_dataset(
+            "ccoef", data=np.asarray([r.ccoef for r in recs], dtype=np.float64))
+        g.create_dataset(
+            "name", data=np.array([r.name for r in recs], dtype=object),
+            dtype=h5py.string_dtype(encoding="utf-8"))
+        g.create_dataset(
+            "ret_offsets", data=np.asarray(offsets, dtype=np.int32))
+        g.create_dataset(
+            "ret_node", data=np.asarray([t[0] for t in terms], dtype=np.int64))
+        g.create_dataset(
+            "ret_dof", data=np.asarray([t[1] for t in terms], dtype=np.int32))
+        g.create_dataset(
+            "ret_coef", data=np.asarray([t[2] for t in terms], dtype=np.float64))
 
     def _write_constraints_embedded_rebar(self, parent: Any) -> None:
         """Persist ``/opensees/constraints/embeddedRebar`` (K2b, 2.29.0).

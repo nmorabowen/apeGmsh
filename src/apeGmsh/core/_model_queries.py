@@ -8,6 +8,7 @@ import pandas as pd
 
 from ._helpers import Tag, DimTag, TagsLike
 from .Labels import (
+    bind_held_labels,
     pg_preserved,
     cleanup_label_pgs,
     reconcile_label_pgs,
@@ -271,6 +272,9 @@ class _Queries:
             m1.plot.geometry(label_tags=True)
         """
         self._require_unfrozen("g.model.queries.make_conformal()")
+        # Entities made with sync=False reach the model (and their held
+        # labels bind) before the entity lists below are read.
+        bind_held_labels()
         before = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
 
         if dims is None:

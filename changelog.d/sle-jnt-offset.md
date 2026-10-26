@@ -1,4 +1,4 @@
-### ADDED — `geomTransf` joint offsets (`jnt_offset=`) and an ETABS insertion-point helper (opensees 2.35.0)
+### ADDED — `geomTransf` joint offsets (`jnt_offset=`) and an ETABS insertion-point helper (opensees 2.37.0)
 
 `ops.geomTransf.Linear` / `PDelta` / `Corotational` take
 `jnt_offset=((dXi, dYi, dZi), (dXj, dYj, dZj))`, the global vectors from each
@@ -29,7 +29,7 @@ A global line load (`from_model` `beamUniform`) on a beam whose offsets turn
 its axis away from the node chord refuses: the load would be projected on the
 wrong axes.
 
-Schema: opensees **2.35.0**. A transform group whose line carries
+Schema: opensees **2.37.0**. A transform group whose line carries
 `-jntOffset` gains a `jnt_offset` dataset, `(1, 6)` in 3-D and `(1, 4)` in
 2-D; lines without offsets write none, so older archives keep their bytes and
 hash. H5 replay, `ModelData`, and a rotated `Assembly` instance (each half

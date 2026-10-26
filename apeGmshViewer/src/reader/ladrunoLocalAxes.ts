@@ -26,15 +26,24 @@
 // the file gives no frame. Python and MPCO do the same (#2090). An empty ID beside
 // FRAME rows is refused by name: those frames belong to no element.
 //
-// A per-step bucket (`RESULTS/ON_ELEMENTS/LOCAL_AXES`, schema §5, which the fork at
-// FORK_PIN does not write) has no such fallback (#2349): at a step the stored frame
-// is the answer, and the reference frame in its place is a wrong frame for a
-// co-rotational element, warned or not. So a bucket that cannot be paired with its
-// ids, or with the stage's steps, is refused by name (the file, the bucket, the step):
-// ID or DATA missing or not a dataset, a DATA that is not (steps, elements, 3|4|9),
-// a step or row count that is not the stage's or the ID's, an empty ID beside rows,
-// or a row that does not decode (not finite, or a zero quaternion). (An id twice in the step's buckets is refused at open, as in any ON_ELEMENTS
-// token, by reader/ladrunoElements.ts.) A step-less read does not read them.
+// A per-step bucket (`RESULTS/ON_ELEMENTS/LOCAL_AXES`, which the fork at FORK_PIN
+// does not write) has one layout, ruled on #2451: one group per element class,
+// `<classTag>-<ClassName>[<g>:<h>]/{ID[nE], DATA[steps, nE, 3|4|9], STEP[steps]?,
+// TIME[steps]?}`, the chunked form fork schema §7.0 gives every streaming group, in
+// §7.2's per-class buckets. Schema §5 still draws the superseded per-step form
+// (`ID` and `DATA/STEP_<k>` on LOCAL_AXES itself); that form, and any child of
+// LOCAL_AXES that is not a class group (ID, DATA, STEP, TIME, a STEP_<k>), is refused
+// by name. It has no fallback either (#2349): at
+// a step the stored frame is the answer, and the reference frame in its place is a
+// wrong frame for a co-rotational element, warned or not. So a bucket that cannot be
+// paired with its ids, or with the stage's steps, is refused by name (the file, the
+// bucket, the step): ID or DATA missing or not a dataset (a DATA group of STEP_<k>
+// datasets is named as §5's form), a DATA that is not (steps, elements, 3|4|9), a
+// step or row count that is not the stage's or the ID's, a STEP or TIME that is not a
+// 1-D dataset of one value per step (either may be absent), an empty ID beside rows, or a
+// row that does not decode (not finite, or a zero quaternion). (An id twice in the
+// step's buckets is refused at open, as in any ON_ELEMENTS token, by
+// reader/ladrunoElements.ts.) A step-less read does not read them.
 //
 // The frames are resolved with sorted typed arrays, never a Set or Map sized by the
 // element count, which V8 caps at 2^24 entries (as reader/ladrunoChecks.ts does).
@@ -167,29 +176,53 @@ export function warnModelLocalAxes(modelLa: LocalAxesGroup, reads: LocalAxesRead
   });
 }
 
+/** The one step-bucket layout (#2451), as a refusal states it. */
+const STEP_LAYOUT =
+  "a step bucket is one <classTag>-<ClassName> group on LOCAL_AXES holding one ID[nE] dataset, one chunked DATA[steps, nE, 3|4|9] dataset, and optionally STEP[steps] and TIME[steps] (fork schema §7.0, in §7.2's per-class buckets; #2451)";
+
+/** The superseded per-step form schema §5 draws, as a refusal names it. */
+const SCHEMA5_FORM = "the per-step DATA/STEP_<k> form schema §5 draws, which §7.0's chunked DATA superseded";
+
 /**
  * The frame rows of `RESULTS/ON_ELEMENTS/LOCAL_AXES` (`stepLa`) at `step`, one entry
- * per bucket read; `nSteps` is the stage's step count. A bucket is `{ID[nE],
- * DATA[nSteps, nE, 3|4|9]}`, on `stepLa` itself or one per class group. Any other
- * bucket is refused by name (the file, the bucket, the step), as is a row that does
- * not decode to a frame (naming its element and row). An id listed twice in the
- * step's buckets is refused at open, by reader/ladrunoElements.ts.
+ * per bucket read; `nSteps` is the stage's step count. A bucket is one class group
+ * `{ID[nE], DATA[nSteps, nE, 3|4|9], STEP[nSteps]?, TIME[nSteps]?}` (#2451). Any child
+ * of `stepLa` that is not a group (the flat form, and schema §5's per-step form) and
+ * any other bucket are refused by name (the file, the bucket, the step), as is a
+ * row that does not decode to a frame (naming its element and row). An id listed
+ * twice in the step's buckets is refused at open, by reader/ladrunoElements.ts.
  */
 export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nSteps: number, reads: LocalAxesReads): FrameRows[] {
+  const refuser = (at: string) => (what: string) =>
+    reads.fail(`${reads.file}: ${at} ${what}; a step's frame is read only as stored, and the reference frame in its place would be the wrong frame, so the local axes at step ${step} are not read`);
+  // Only class groups sit on LOCAL_AXES: any other child (ID, DATA, STEP, TIME, a STEP_<k>, a FRAME) is refused, not skipped.
+  const flat = stepLa.keys().filter((k) => k === "DATA" || !reads.optionalGroup(stepLa, k));
+  if (flat.length > 0) {
+    const schema5 = reads.optionalGroup(stepLa, "DATA") || flat.some((k) => /^STEP_\d+$/.test(k));
+    const form = schema5 ? SCHEMA5_FORM : "a flat layout this reader does not take";
+    throw refuser(stepLa.path)(`holds ${flat.join(", ")} on itself (${form}; ${STEP_LAYOUT})`);
+  }
   const read: FrameRows[] = [];
   const readBucket = (b: LocalAxesGroup) => {
-    const refuse = (what: string) =>
-      reads.fail(`${reads.file}: ${b.path} ${what}; a step's frame is read only as stored, and the reference frame in its place would be the wrong frame, so the local axes at step ${step} are not read`);
+    const refuse = refuser(b.path);
     const hasId = b.keys().includes("ID");
     const hasData = b.keys().includes("DATA");
-    const layout = "a step bucket is one ID[nE] dataset and one DATA[steps, nE, 3|4|9] dataset, on LOCAL_AXES itself or on each of its groups";
-    if (!hasId || !hasData) throw refuse(`${hasId ? "holds an ID but no DATA" : hasData ? "holds a DATA but no ID" : "holds neither an ID nor a DATA"} (${layout})`);
+    if (!hasId || !hasData) throw refuse(`${hasId ? "holds an ID but no DATA" : hasData ? "holds a DATA but no ID" : "holds neither an ID nor a DATA"} (${STEP_LAYOUT})`);
     const idDs = reads.optionalDataset(b, "ID");
     const dataDs = reads.optionalDataset(b, "DATA");
-    if (!idDs || !dataDs) throw refuse(`holds ${idDs ? "a DATA" : "an ID"} that is not a dataset (${layout})`);
+    if (!dataDs && reads.optionalGroup(b, "DATA")) throw refuse(`holds a DATA group, not a DATA dataset (${SCHEMA5_FORM}; ${STEP_LAYOUT})`);
+    if (!idDs || !dataDs) throw refuse(`holds ${idDs ? "a DATA" : "an ID"} that is not a dataset (${STEP_LAYOUT})`);
     const shape = dataDs.shape ?? [];
     if (shape.length !== 3) throw refuse(`has DATA of shape (${shape.join(", ")}), not (steps, elements, components)`);
     if (shape[0] !== nSteps) throw refuse(`has DATA for ${shape[0]} step(s), but the stage has ${nSteps}`);
+    // STEP and TIME may be absent; present, each is 1-D with one value per DATA step (schema §7.0, as the sibling readers take them).
+    for (const axis of ["STEP", "TIME"]) {
+      if (!b.keys().includes(axis)) continue;
+      const ax = reads.optionalDataset(b, axis);
+      if (!ax) throw refuse(`holds a ${axis} that is not a dataset (${STEP_LAYOUT})`);
+      const axShape = ax.shape ?? [];
+      if (axShape.length !== 1 || axShape[0] !== shape[0]) throw refuse(`has ${axis} of shape (${axShape.join(", ")}), not (${shape[0]}), one value for each of its DATA's ${shape[0]} step(s)`);
+    }
     const ids = reads.ints(idDs);
     const nE = ids.length;
     if (nE === 0) {
@@ -209,9 +242,6 @@ export function collectStepLocalAxes(stepLa: LocalAxesGroup, step: number, nStep
     }
     read.push({ at: idDs.path, ids, raw: slice, cols, source: "step_local_axes" });
   };
-  if (stepLa.keys().includes("ID") || stepLa.keys().includes("DATA")) {
-    readBucket(stepLa);
-  }
   for (const k of stepLa.keys()) {
     const sub = reads.optionalGroup(stepLa, k);
     if (sub) readBucket(sub);
@@ -228,8 +258,16 @@ export interface ResolvedLocalAxes {
   sources: (LocalAxesSource | null)[];
 }
 
+/** `ids` sorted ascending with each repeat dropped, as a new typed array: the id lookup a Set would be, past V8's 2^24 cap (search it with rowOf). */
+export function sortedUniqueIds(ids: ArrayLike<number>): Float64Array {
+  const sorted = Float64Array.from(ids).sort();
+  let u = 0;
+  for (let i = 0; i < sorted.length; i++) if (u === 0 || sorted[i] !== sorted[u - 1]) sorted[u++] = sorted[i]!;
+  return sorted.slice(0, u);
+}
+
 /** The index of `n` in the ascending `sorted`, or -1 (a binary search). */
-function rowOf(sorted: Float64Array, n: number): number {
+export function rowOf(sorted: Float64Array, n: number): number {
   let [lo, hi] = [0, sorted.length - 1];
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
@@ -264,10 +302,8 @@ export function resolveLocalAxes(groups: readonly FrameRows[], elementIds?: Arra
       }
     }
   }
-  const sorted = framed.subarray(0, m).sort();
-  let u = 0;
-  for (let i = 0; i < m; i++) if (u === 0 || sorted[i] !== sorted[u - 1]) sorted[u++] = sorted[i]!;
-  const ids = sorted.slice(0, u);
+  const ids = sortedUniqueIds(framed.subarray(0, m));
+  const u = ids.length;
   // Each id's frame: the last row that decodes.
   const winGroup = new Uint32Array(u);
   const winRow = new Uint32Array(u);

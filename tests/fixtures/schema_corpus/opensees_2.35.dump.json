@@ -306,7 +306,6 @@
   "transforms": [
    {
     "__type__": "TransformRecord",
-    "jnt_offset": [],
     "tag": 1,
     "type_token": "Linear",
     "vec": [

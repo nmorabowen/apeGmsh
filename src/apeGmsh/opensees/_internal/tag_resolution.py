@@ -342,17 +342,19 @@ def current_fem_element_id(emitter: "Emitter") -> int:
     return int(eid)
 
 
-#: Emitter attribute carrying pre-resolved ``(frames, support_nodes, holes)``
-#: for a :class:`~apeGmsh.opensees.element.shell.LadrunoMembrane` emission.
+#: Emitter attribute carrying pre-resolved ``(frames, support_nodes, holes,
+#: diaphragm_nodes)`` for a
+#: :class:`~apeGmsh.opensees.element.shell.LadrunoMembrane` emission.
 ATTR_MEMBRANE_CONTEXT = "_ladruno_membrane_context"
 
 
 def set_membrane_context(
     emitter: object,
-    context: "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]] | None",
+    context: "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], tuple[int, ...]] | None",
 ) -> None:
-    """Attach (or clear with ``None``) resolved ``(frames, support_nodes, holes)``
-    tuples on ``emitter`` for :class:`LadrunoMembrane`."""
+    """Attach (or clear with ``None``) resolved ``(frames, support_nodes,
+    holes, diaphragm_nodes)`` tuples on ``emitter`` for
+    :class:`LadrunoMembrane`."""
     if context is None:
         if hasattr(emitter, ATTR_MEMBRANE_CONTEXT):
             delattr(emitter, ATTR_MEMBRANE_CONTEXT)
@@ -362,6 +364,7 @@ def set_membrane_context(
 
 def current_membrane_context(
     emitter: "Emitter",
-) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]] | None":
-    """Return the pre-resolved ``(frames, support_nodes, holes)`` context if set."""
+) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], tuple[int, ...]] | None":
+    """Return the pre-resolved ``(frames, support_nodes, holes,
+    diaphragm_nodes)`` context if set."""
     return getattr(emitter, ATTR_MEMBRANE_CONTEXT, None)

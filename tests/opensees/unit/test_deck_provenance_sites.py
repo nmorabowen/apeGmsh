@@ -168,8 +168,10 @@ def test_modal_deck_arpack_stamped(tmp_path: Path) -> None:
 @pytest.mark.usefixtures("resolver")
 @pytest.mark.parametrize("kind", ["tcl", "py"])
 def test_from_h5_build_is_the_auto_case(tmp_path: Path, kind: str) -> None:
-    # The archive carries no OpenSeesTarget, so the rebuilt deck is the
-    # auto case: unstamped, whatever the resolver has answered.
+    # An unpinned model's archive has no @target_mode (opensees 2.36.0), so
+    # the rebuilt deck is the auto case: unstamped, whatever the resolver
+    # has answered. A pinned archive's replay stamps as the bridge does
+    # (tests/opensees/h5/test_h5_target_mode.py).
     h5, _fem = build_simple_frame_h5(tmp_path)
     text = OpenSeesModel.from_h5(str(h5)).build(kind)
     assert text is not None

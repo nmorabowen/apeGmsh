@@ -5,6 +5,7 @@ state and no ``__init__``.
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Sequence, cast
 
 from .._internal.build.errors import BridgeError
@@ -51,6 +52,8 @@ class _ModalMixin(_ProcedureHost):
         self,
         values: Sequence[float],
         live_emitter: "LiveOpsEmitter",
+        *,
+        feast: bool = False,
     ) -> "EigenResult":
         """Wrap a just-finished solve in an ``EigenResult`` with the handles
         :meth:`EigenResult.to_native` needs: this
@@ -73,6 +76,7 @@ class _ModalMixin(_ProcedureHost):
             _ndm=int(self._ndm),
             _ndf=int(self._ndf),
             _epoch=epoch,
+            _feast=feast,
         )
 
     def eigen(
@@ -621,6 +625,7 @@ class _ModalMixin(_ProcedureHost):
         f_max: float,
         *,
         certify: bool = False,
+        trace_stop: bool = False,
     ) -> "EigenResult":
         """Band-targeted FEAST eigensolve via the live emitter.
 
@@ -641,12 +646,19 @@ class _ModalMixin(_ProcedureHost):
             Frequency band in Hz; needs ``0 <= f_min < f_max``.
         certify
             Emit ``-certify`` (the completeness certificate).
+        trace_stop
+            Emit ``-traceStop``: stop on MKL's trace criterion instead of
+            the relative residual, the fork's default from ``c83ee812e``
+            (fork WP-203). The eigenpairs are the same either way; the
+            residual stop skips the refinement loops the trace stop runs.
 
         Returns
         -------
         EigenResult
             The standard eigen result (possibly zero modes if the band
             is empty) with lazy ``mode_shape`` access.
+            :meth:`EigenResult.modal_properties` runs ``modalProperties``
+            on its modes.
         """
         if not (0.0 <= f_min < f_max):
             raise ValueError(
@@ -680,8 +692,9 @@ class _ModalMixin(_ProcedureHost):
         self._artifacts.after_emit(self)
         values = live_emitter.eigen_feast(
             float(f_min), float(f_max), certify=certify,
+            trace_stop=trace_stop,
         )
-        return self._eigen_result(values, live_emitter)
+        return self._eigen_result(values, live_emitter, feast=True)
 
     def complex_eigen(
         self,
@@ -915,6 +928,7 @@ class _ModalMixin(_ProcedureHost):
         damp: float | None = None,
         modal_damp: Sequence[float] | None = None,
         solver: str = "-genBandArpack",
+        scale: float | None = None,
     ) -> "ResponseSpectrumResult":
         """Run a response-spectrum analysis with native combination.
 
@@ -951,6 +965,14 @@ class _ModalMixin(_ProcedureHost):
         damp, modal_damp
             Optional damping channel (uniform ratio or per-mode).
             Required for ``CQC``.
+        scale
+            Optional factor on ``Sa`` (a unit conversion such as g to
+            model units, or an ``I/R`` factor). Must be finite and > 0;
+            ``None`` is scale 1. The bridge multiplies the ``-Sa`` values
+            by it and does not emit the fork's ``-scale``, which only
+            builds from ``c83ee812e`` (fork WP-202) apply under
+            ``-combine`` and older ones parse and ignore: the scaled
+            ordinates give the same answer on every build.
         """
         from ..analysis.modal import (
             ResponseSpectrumResult,
@@ -998,6 +1020,14 @@ class _ModalMixin(_ProcedureHost):
                 damp=damp, rayleigh=None, modal_damp=modal_damp,
                 context=context,
             )
+
+        if scale is not None:
+            s_val = float(scale)
+            if not (math.isfinite(s_val) and s_val > 0.0):
+                raise ValueError(
+                    f"{context}: scale must be finite and > 0, got {scale!r}."
+                )
+            sa = [a * s_val for a in sa]
 
         args: list[int | float | str] = ["-Tn", *tn, "-Sa", *sa]
         args.extend(("-combine", combine))

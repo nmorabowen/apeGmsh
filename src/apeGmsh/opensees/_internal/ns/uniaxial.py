@@ -15,6 +15,7 @@ from ...material.uniaxial import (
     ENT,
     ASDConcrete1D as _ASDConcrete1DCls,
     ASDSteel1D,
+    Bilin,
     Concrete01,
     Concrete02,
     ElasticMaterial,
@@ -27,6 +28,7 @@ from ...material.uniaxial import (
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
+    ModIMKPeakOriented,
     MultiLinear,
     Parallel,
     PySimple1,
@@ -594,6 +596,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         penalty_ratio: float = 1000.0,
         softening: str = "exponential",
         pm: float | tuple[float, float] | None = None,
+        pm_bal: tuple[float, float, float, float] | None = None,
         implex: bool = False,
         name: str | None = None,
     ) -> LadrunoCohesiveHinge:
@@ -602,8 +605,9 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         Ladruno fork (``MAT_TAG`` 33003); the discrete rotation-jump law
         ``M([[theta]])`` carrying fracture energy ``Gf`` per hinge — the
         embedded-hinge law of ``LadrunoDispBeamColumn -hinge*`` and
-        ``LadrunoIMKBeam``, with optional ``pm`` axial-moment interaction and
-        ``implex`` extrapolation. See :class:`LadrunoCohesiveHinge`.
+        ``LadrunoIMKBeam``, with optional ``pm`` / ``pm_bal`` axial-moment
+        interaction and ``implex`` extrapolation. See
+        :class:`LadrunoCohesiveHinge`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -611,7 +615,139 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         return self._bridge._register(
             LadrunoCohesiveHinge(
                 Mc=Mc, Gf=Gf, penalty=penalty, penalty_ratio=penalty_ratio,
-                softening=softening, pm=pm, implex=implex,
+                softening=softening, pm=pm, pm_bal=pm_bal, implex=implex,
             ),
             name=name,
         )
+
+    def Bilin(
+        self, *,
+        Ke: float,
+        AsPos: float,
+        AsNeg: float,
+        My_pos: float,
+        My_neg: float,
+        LamdaS: float,
+        LamdaD: float,
+        LamdaA: float,
+        LamdaK: float,
+        Cs: float = 1.0,
+        Cd: float = 1.0,
+        Ca: float = 1.0,
+        Ck: float = 1.0,
+        Thetap_pos: float,
+        Thetap_neg: float,
+        Thetapc_pos: float,
+        Thetapc_neg: float,
+        KPos: float,
+        KNeg: float,
+        Thetau_pos: float,
+        Thetau_neg: float,
+        PDPlus: float = 1.0,
+        PDNeg: float = 1.0,
+        nFactor: float | None = None,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> Bilin:
+        """``uniaxialMaterial Bilin`` — Modified IMK bilinear hinge law.
+
+        Lignos & Krawinkler (2011) deteriorating bilinear moment-rotation law.
+        See :class:`Bilin` and :meth:`Bilin.from_lignos_ratios`.
+        """
+        return self._bridge._register(
+            Bilin(
+                Ke=Ke,
+                AsPos=AsPos,
+                AsNeg=AsNeg,
+                My_pos=My_pos,
+                My_neg=My_neg,
+                LamdaS=LamdaS,
+                LamdaD=LamdaD,
+                LamdaA=LamdaA,
+                LamdaK=LamdaK,
+                Cs=Cs,
+                Cd=Cd,
+                Ca=Ca,
+                Ck=Ck,
+                Thetap_pos=Thetap_pos,
+                Thetap_neg=Thetap_neg,
+                Thetapc_pos=Thetapc_pos,
+                Thetapc_neg=Thetapc_neg,
+                KPos=KPos,
+                KNeg=KNeg,
+                Thetau_pos=Thetau_pos,
+                Thetau_neg=Thetau_neg,
+                PDPlus=PDPlus,
+                PDNeg=PDNeg,
+                nFactor=nFactor,
+                implex=implex,
+            ),
+            name=name,
+        )
+
+    def ModIMKPeakOriented(
+        self, *,
+        Ke: float,
+        alfaPos: float,
+        alfaNeg: float,
+        My_pos: float,
+        My_neg: float,
+        Ls: float,
+        Ld: float,
+        La: float,
+        Lk: float,
+        Cs: float = 1.0,
+        Cd: float = 1.0,
+        Ca: float = 1.0,
+        Ck: float = 1.0,
+        thetaPpos: float,
+        thetaPneg: float,
+        thetaPCpos: float,
+        thetaPCneg: float,
+        ResfacPos: float,
+        ResfacNeg: float,
+        fracDispPos: float,
+        fracDispNeg: float,
+        DPos: float = 1.0,
+        DNeg: float = 1.0,
+        nFactor: float | None = None,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> ModIMKPeakOriented:
+        """``uniaxialMaterial ModIMKPeakOriented`` — Modified IMK peak-oriented hinge law.
+
+        Ibarra, Medina & Krawinkler (2005) / Haselton et al. (2008/2016)
+        deteriorating peak-oriented moment-rotation law. See
+        :class:`ModIMKPeakOriented` and :meth:`ModIMKPeakOriented.from_haselton_gamma`.
+        """
+        return self._bridge._register(
+            ModIMKPeakOriented(
+                Ke=Ke,
+                alfaPos=alfaPos,
+                alfaNeg=alfaNeg,
+                My_pos=My_pos,
+                My_neg=My_neg,
+                Ls=Ls,
+                Ld=Ld,
+                La=La,
+                Lk=Lk,
+                Cs=Cs,
+                Cd=Cd,
+                Ca=Ca,
+                Ck=Ck,
+                thetaPpos=thetaPpos,
+                thetaPneg=thetaPneg,
+                thetaPCpos=thetaPCpos,
+                thetaPCneg=thetaPCneg,
+                ResfacPos=ResfacPos,
+                ResfacNeg=ResfacNeg,
+                fracDispPos=fracDispPos,
+                fracDispNeg=fracDispNeg,
+                DPos=DPos,
+                DNeg=DNeg,
+                nFactor=nFactor,
+                implex=implex,
+            ),
+            name=name,
+        )
+

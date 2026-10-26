@@ -577,7 +577,7 @@ class ModelData:
                     )
                     # Append the same record-shape the writer produces.
                     from ._internal.typed_records import TransformRecord as _TransformRecord  # local
-                    # Carry the line's -jntOffset (opensees 2.35.0) so a
+                    # Carry the line's -jntOffset (opensees 2.37.0) so a
                     # ModelData.write() of this archive keeps it.
                     jnt: tuple[float, ...] = ()
                     if "jnt_offset" in g:

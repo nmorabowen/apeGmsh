@@ -114,7 +114,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
 
     from ._internal.build.records import InitialStressRecord
     from ._internal.compose import _ReplayOrder
-    from ._target import BackendInfo
+    from ._target import BackendInfo, TargetMode
     from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
 
@@ -224,21 +224,148 @@ def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     return tuple(out)
 
 
+def _user_equation_count(declarations: Any) -> int:
+    """The number of ``apeSees.equation_constraint`` declarations."""
+    if declarations is None:
+        return 0
+    return sum(1 for d in declarations.decls
+               if d.family == "equation_constraint")
+
+
+def _equation_rows(
+    model: Any, program: "Sequence[Any]", declarations: Any,
+) -> "tuple[tuple[int | None, Any], ...]":
+    """The archive's global ``equationConstraint`` lines as ``(emit index,
+    row)`` pairs, in emit order.
+
+    From opensees 2.35.0 they are the stored rows
+    (:meth:`H5Model.equation_constraints`): every line the global pass
+    wrote, the ``enforce="equation"`` ties' and then the
+    ``apeSees.equation_constraint`` rows (the bridge writes those last in
+    its MP pass). The last ``K`` rows must equal the ``K`` user rows'
+    ``/opensees/decl_params`` records, else :class:`MalformedH5Error`
+    (an archive with no ``/opensees/decls`` has none to check).
+
+    Below 2.35.0 the archive stores no line: a tie's are lost (the replay
+    refuses it, :func:`~._internal.compose.refuse_unreplayable_streams`)
+    and the user rows are their ``decl_params`` records, joined to the
+    last ``K`` global ``equationConstraint`` calls of the program (the
+    bridge's order); a file with no program keeps them unjoined (``None``).
+    """
+    from .emitter.h5_reader import (
+        EquationConstraintRecordRO,
+        MalformedH5Error,
+        archives_equation_constraints,
+        emit_index_of,
+    )
+
+    # Read first: it refuses the store in a file below 2.35.0.
+    stored = model.equation_constraints()
+    if archives_equation_constraints(model.opensees_zone_version()):
+        # No /opensees/decls (a rewrite of a file below 2.25.0): the rows
+        # are every line the source carried, so there is nothing to check.
+        users = (_equation_constraint_records(declarations)
+                 if declarations is not None else ())
+        tail = stored[len(stored) - len(users):] if users else ()
+        if len(users) > len(stored) or any(
+                (r.cnode, r.cdof, r.ccoef, r.retained)
+                != (u.cnode, u.cdof, u.ccoef, u.retained)
+                for r, u in zip(tail, users)):
+            raise MalformedH5Error(
+                "/opensees/constraints/equationConstraint: its last "
+                f"{len(users)} row(s) are not the archive's "
+                f"{len(users)} apeSees.equation_constraint row(s) in "
+                "/opensees/decl_params; the two disagree.")
+        return tuple(
+            (emit_index_of(program, "equationConstraint", i) if program
+             else None, row)
+            for i, row in enumerate(stored))
+    # No /opensees/decls (below 2.25.0): nothing to join. The deck targets
+    # say so when they build (:meth:`OpenSeesModel._populate_emitter`), not
+    # every reader that opens the file.
+    users = (_equation_constraint_records(declarations)
+             if declarations is not None else ())
+    if not users:
+        return ()
+    calls = [run.first + k for run in program
+             if run.method == "equationConstraint" and int(run.stage) == -1
+             for k in range(int(run.count))]
+    if program and len(calls) < len(users):
+        raise MalformedH5Error(
+            f"/opensees/program holds {len(calls)} global equationConstraint "
+            f"call(s), fewer than the archive's {len(users)} "
+            "apeSees.equation_constraint row(s).")
+    at = calls[len(calls) - len(users):] if program else [None] * len(users)
+    return tuple(
+        (i, EquationConstraintRecordRO(
+            cnode=u.cnode, cdof=u.cdof, ccoef=u.ccoef, retained=u.retained))
+        for i, u in zip(at, users))
+
+
+def _link_user_equation_calls(
+    program: "Sequence[Any]", k: int,
+) -> "tuple[Any, ...]":
+    """``program`` with its last ``k`` global ``equationConstraint`` calls
+    linked to rows ``0 .. k-1`` of the opensees 2.35.0 store.
+
+    The ``to_h5`` rewrite of an archive below 2.35.0 stores its ``k``
+    ``apeSees.equation_constraint`` rows (:func:`_equation_rows`), and the
+    echoed program must say which call wrote each, as a 2.35 writer's
+    does. Those calls are the source's last ``k`` (the bridge writes the
+    user rows last), each in a run of its own; a tie's calls stay
+    unlinked, since the source stores no line for them.
+    """
+    from .emitter.h5_reader import ProgramRun
+    from .emitter.verbs import VERBS
+
+    if not k:
+        return tuple(program)
+    store = VERBS["equationConstraint"].store.partition("|")[0]
+    total = sum(int(r.count) for r in program
+                if r.method == "equationConstraint" and int(r.stage) == -1)
+    if total < k:
+        raise ValueError(
+            f"_link_user_equation_calls: {total} global equationConstraint "
+            f"call(s) for {k} user row(s).")
+    out: "list[Any]" = []
+    seen = 0
+    for run in program:
+        if run.method != "equationConstraint" or int(run.stage) != -1:
+            out.append(run)
+            continue
+        if run.store:
+            raise ValueError(
+                "_link_user_equation_calls: the program already links an "
+                "equationConstraint call to a store; it is no pre-2.35 file.")
+        for j in range(int(run.count)):
+            user_row = seen - (total - k)
+            seen += 1
+            out.append(ProgramRun(
+                first=int(run.first) + j, count=1, method=run.method,
+                store=store if user_row >= 0 else "",
+                row=user_row if user_row >= 0 else -1,
+                stage=-1, decl=int(run.decl)))
+    return tuple(out)
+
+
 #: The ``/opensees/constraints`` datasets of :meth:`H5Model.mp_constraints`,
 #: each with the verb that wrote it, in the bridge's fixed kind order
 #: (``emit_mp_constraints``), which a file with no program falls back to.
+#: The ``equationConstraint`` lines (opensees 2.35.0,
+#: :func:`_equation_rows`) join them by emit index.
 _MP_BUCKETS = ("equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode")
 _MP_KIND_ORDER = ("rigidLink", "equalDOF", "rigidDiaphragm", "embeddedNode")
 
 
 def _mp_rows_in_bridge_order(
     buckets: "Sequence[Sequence[Any]]", program: "Sequence[Any]",
+    equation_rows: "Sequence[tuple[int | None, Any]]" = (),
 ) -> "tuple[tuple[int | None, Any], ...]":
     """The global MP rows as ``(emit index, row)`` pairs, in the order the
     bridge emitted them (#2405).
 
     ``buckets`` is :meth:`H5Model.mp_constraints` (the :data:`_MP_BUCKETS`
-    order). With a ``/opensees/program`` each row is joined to the call
+    order) and ``equation_rows`` the :func:`_equation_rows` pairs. With a ``/opensees/program`` each row is joined to the call
     that wrote it, and a row no call wrote raises (``LookupError``);
     without one (below opensees 2.23.0, or a model made from the
     emitter's buffers) the index is ``None`` and the rows keep the
@@ -246,12 +373,15 @@ def _mp_rows_in_bridge_order(
     """
     from .emitter.h5_reader import emit_index_of
 
-    by_verb = dict(zip(_MP_BUCKETS, buckets))
+    by_verb = dict(zip(_MP_BUCKETS, buckets, strict=True))
     rows: "list[tuple[int | None, Any]]" = []
     for verb in _MP_KIND_ORDER:
         for i, row in enumerate(by_verb[verb]):
             rows.append((emit_index_of(program, verb, i) if program else None,
                          row))
+    # Without a program the lines go last: the user rows are, and a
+    # tie's position among the other kinds is not recorded.
+    rows.extend(equation_rows)
     if program:
         rows.sort(key=lambda it: int(it[0] or 0))
     return tuple(rows)
@@ -440,6 +570,11 @@ class OpenSeesModel:
     #: refusal; ``build('live')`` refuses on stock openseespy when
     #: ``requires`` names the fork; ``to_h5`` echoes the stamp.
     _solve_stamp: "SolveStamp | None" = None
+    #: ``/opensees@target_mode`` (opensees 2.36.0): the bridge's
+    #: ``OpenSeesTarget.mode``; ``"auto"`` when absent. A pinned mode
+    #: stamps the replay deck as the bridge does, and ``"fork"`` joins
+    #: :meth:`replay_requires`; ``to_h5`` echoes it.
+    _target_mode: "TargetMode" = "auto"
     #: ``/opensees/decls`` (ADR 0114 R5, K1-6, opensees 2.25.0) as the
     #: reader's ``DeclarationTable``, or ``None`` for a file without it
     #: (below 2.25.0, or written by no bridge emit).
@@ -594,10 +729,12 @@ class OpenSeesModel:
             program = model.program()
             commands = model.commands()
             embedded_rebars = model.embedded_rebars()
-            mp_constraints = _mp_rows_in_bridge_order(
-                model.mp_constraints(), program)
             solve_stamp = model.solve_stamp()
+            target_mode = model.target_mode()
             declarations = model.declarations()
+            mp_constraints = _mp_rows_in_bridge_order(
+                model.mp_constraints(), program,
+                _equation_rows(model, program, declarations))
 
             elements = cls._load_elements(model, fem)
             fixes, masses = cls._load_bcs(model)
@@ -675,6 +812,7 @@ class OpenSeesModel:
             _program=program,
             _commands=commands,
             _solve_stamp=solve_stamp,
+            _target_mode=target_mode,
             _declarations=declarations,
             _embedded_rebars=embedded_rebars,
             _mp_constraints=mp_constraints,
@@ -780,6 +918,7 @@ class OpenSeesModel:
             _masses=tuple(emitter._masses),
             _mass_from_model=emitter._mass_from_model,
             _solve_stamp=emitter.solve_stamp(),
+            _target_mode=emitter._target_mode,
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
@@ -790,7 +929,8 @@ class OpenSeesModel:
             # The global MP rows, in the fixed kind order (no program).
             _mp_constraints=_mp_rows_in_bridge_order(
                 (emitter._equal_dofs, emitter._rigid_links,
-                 emitter._rigid_diaphragms, emitter._embedded_nodes), ()),
+                 emitter._rigid_diaphragms, emitter._embedded_nodes), (),
+                tuple((None, r) for r in emitter._equation_constraints)),
             # K1-8: the buffers are this writer's own, so they hold the
             # tags a 2.27.0 archive stores.
             _initial_stress_param_tags=tuple(
@@ -926,13 +1066,21 @@ class OpenSeesModel:
         # An archived rigidDiaphragm whose master is fixed on some in-plane
         # DOFs only, under Transformation, refuses before any emitter
         # exists (the live one wipes the domain on creation).
-        from ._internal.compose import refuse_archived_partly_fixed_diaphragms
+        from ._internal.compose import (
+            refuse_archived_partly_fixed_diaphragms,
+            refuse_archived_stage_routes,
+        )
 
         refuse_archived_partly_fixed_diaphragms(
             ndm=self._ndm, fixes=self._fixes,
             mp_constraints=self._mp_constraints,
             analysis_attrs=dict(self._analysis_attrs),
             patterns=self._patterns, stages=self._stages)
+        # So does an archived stage flip that the stage close refuses.
+        refuse_archived_stage_routes(
+            stages=self._stages, elements=self._elements,
+            declarations=self._declarations, fem=self._fem,
+            requires=self.replay_requires())
         if target in ("tcl", "py", "live"):
             # ADR 0114 D6: fail closed on the stored refusals before any
             # emit. The archive skipped the solve-time gates and recorded
@@ -943,7 +1091,8 @@ class OpenSeesModel:
             # emitter exists: the live one wipes the domain on creation.
             from ._internal.compose import refuse_unreplayable_streams
 
-            refuse_unreplayable_streams(self._fem)
+            refuse_unreplayable_streams(
+                self._fem, equation_rows=self._equation_tie_rows())
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":
@@ -1173,6 +1322,12 @@ class OpenSeesModel:
         ``None`` for a file that carries none (below 2.24.0)."""
         return self._solve_stamp
 
+    @property
+    def target_mode(self) -> "TargetMode":
+        """The archive's ``/opensees@target_mode`` (opensees 2.36.0): the
+        bridge's ``OpenSeesTarget.mode``, ``"auto"`` when absent."""
+        return self._target_mode
+
     #: The partition mode every tcl / py / live replay emits: the read
     #: side is partition-blind (the flat single-domain degrade), so the
     #: stored verdict it answers to is the flat one.
@@ -1199,8 +1354,19 @@ class OpenSeesModel:
         declares a fork-only type
         (:func:`~apeGmsh.opensees.emitter.caps.flat_requires`), also for an
         archive without a stamp (below 2.24.0), whose stored chain is all
-        that is known.
+        that is known. ``"fork"`` is added too for a fork-pinned archive
+        (``target_mode == "fork"``, opensees 2.36.0): the bridge's
+        ``OpenSeesTarget(mode="fork")`` asserts the fork on the live path
+        and is known to run it at stage close (#2375, #2444).
         """
+        verbs = self._verbs_replay_requires()
+        if self._target_mode == "fork" and "fork" not in verbs:
+            return tuple(sorted((*verbs, "fork")))
+        return verbs
+
+    def _verbs_replay_requires(self) -> tuple[str, ...]:
+        """:meth:`replay_requires` without the ``target_mode`` pin: what the
+        archived verbs and chains alone need."""
         stamp = self._solve_stamp
         requires = () if stamp is None else stamp.requires
         return flat_requires(requires, chains=self._archived_chains())
@@ -1665,6 +1831,36 @@ class OpenSeesModel:
             return None
         return _ReplayOrder(self._program, self._declarations)
 
+    def _equation_tie_rows(self) -> "tuple[Any, ...]":
+        """The archived global equation-tie lines: the
+        ``equationConstraint`` rows of :attr:`_mp_constraints` without the
+        ``apeSees.equation_constraint`` rows, which are the last ones."""
+        from .emitter.h5_reader import EquationConstraintRecordRO
+
+        rows = [r for _i, r in self._mp_constraints
+                if isinstance(r, EquationConstraintRecordRO)]
+        return tuple(rows[:len(rows) - _user_equation_count(
+            self._declarations)])
+
+    def _stores_equation_lines(self) -> bool:
+        """Whether the source archive stores its ``equationConstraint``
+        lines (opensees 2.35.0); a model with no source version (made from
+        the emitter's buffers) holds them."""
+        from .emitter.h5_reader import archives_equation_constraints
+
+        return (self._opensees_version is None
+                or archives_equation_constraints(self._opensees_version))
+
+    def _echoed_program(self) -> "tuple[Any, ...]":
+        """The program the ``to_h5`` rewrite echoes: the source's, with a
+        pre-2.35 source's user ``equationConstraint`` calls linked to the
+        rows the rewrite stores (:func:`_link_user_equation_calls`)."""
+        program = tuple(self._program)
+        if not program or self._stores_equation_lines():
+            return program
+        return _link_user_equation_calls(
+            program, _user_equation_count(self._declarations))
+
     def _populate_emitter(self, emitter: Any, *, flat: bool = False) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
@@ -1704,6 +1900,15 @@ class OpenSeesModel:
                 return None
             return int(val)
 
+        # Rehydrate connectivity per element from the broker FEM —
+        # without this the tcl/py/live targets emit invalid element
+        # calls (missing iNode / jNode prefix).
+        elements_with_conn = self._rehydrate_element_connectivity(self._elements)
+
+        # The interior of a LadrunoMembrane(pg=...) panel is not part of
+        # the deck the bridge emitted (membrane_interior_nodes): the
+        # replay skips the same nodes.
+        skip = self.membrane_interior_nodes(elements_with_conn)
         nodes = tuple(
             (
                 int(nid),
@@ -1711,12 +1916,16 @@ class OpenSeesModel:
                 _ndf_or_none(int(nid)),
             )
             for nid, c in zip(self._fem.nodes.ids, self._fem.nodes.coords)
+            if int(nid) not in skip
         )
 
-        # Rehydrate connectivity per element from the broker FEM —
-        # without this the tcl/py/live targets emit invalid element
-        # calls (missing iNode / jNode prefix).
-        elements_with_conn = self._rehydrate_element_connectivity(self._elements)
+        # With no /opensees/decls the archive cannot say whether it had
+        # apeSees.equation_constraint rows: the deck says so, at any version.
+        # Every bridge emit writes the decls, so a 2.35 file without them is
+        # a rewrite of a file below 2.25.0 (which lost its rows) or no
+        # bridge's: neither proves its stored lines complete.
+        if self._declarations is None:
+            _equation_constraint_records(None)
 
         # g.reinforce deck-replay (A4 full): the bond material name→tag map
         # `emit_reinforce_ties` needs to resolve a tie's `-bond <name>` is the
@@ -1757,8 +1966,9 @@ class OpenSeesModel:
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
             reinforce_name_to_tag=reinforce_name_to_tag,
-            equation_constraints=_equation_constraint_records(
-                self._declarations),
+            # Every equationConstraint line is an ``mp_constraints`` row
+            # (:func:`_equation_rows`), the user rows of a pre-2.35 archive
+            # included, so none replays as ``equation_constraints``.
             embedded_rebars=self._embedded_rebars,
             mp_constraints=self._mp_constraints,
             order=self._replay_order(),
@@ -1771,12 +1981,65 @@ class OpenSeesModel:
         if self._stages:
             _replay_staged_into(
                 emitter, stages=self._stages, commands=self._commands,
-                program=self._program, flat=flat, **replay_kwargs,
+                program=self._program, flat=flat,
+                declarations=self._declarations,
+                requires=self.replay_requires(), **replay_kwargs,
             )
         else:
             _replay_into(
                 emitter, commands=self._commands, flat=flat, **replay_kwargs,
             )
+
+    def membrane_interior_nodes(
+        self, elements: "tuple[ElementRecord, ...] | None" = None,
+    ) -> "frozenset[int]":
+        """The fem nodes the archived deck did not declare: the interior of
+        each ``LadrunoMembrane(pg=...)`` panel.
+
+        The replay twin of the bridge's
+        :func:`~apeGmsh.opensees._internal.build.ndf.membrane_interior_nodes`:
+        the nodes of the membranes' physical-group cells (the ``pg`` read
+        from ``/opensees/decl_params``) that no archived element touches,
+        counting each membrane's ``-nodes`` / ``-hole`` / ``-supportNodes`` /
+        ``-diaphragmNodes``.
+        ``frozenset()`` for an archive with no ``pg=`` membrane, or one too
+        old to carry ``/opensees/decl_params``.
+        """
+        decls = self._declarations
+        if decls is None:
+            return frozenset()
+        pgs: list[str] = []
+        for rows in decls.params.values():
+            for row in rows:
+                if row.type == "LadrunoMembrane":
+                    pg = row.params.get("pg")
+                    if isinstance(pg, str) and pg:
+                        pgs.append(pg)
+        if not pgs:
+            return frozenset()
+        from ._internal.build.pg_expand import expand_pg_to_elements
+
+        cand: set[int] = set()
+        for pg in dict.fromkeys(pgs):
+            fan = expand_pg_to_elements(self._fem, pg)
+            for _eid, conn in fan:
+                cand.update(conn)
+        if elements is None:
+            elements = self._rehydrate_element_connectivity(self._elements)
+        keep: set[int] = set()
+        for rec in elements:
+            keep.update(int(n) for n in rec.connectivity)
+            if rec.type_token == "LadrunoMembrane":
+                taking = False
+                for a in rec.args:
+                    if isinstance(a, str):
+                        taking = a in (
+                            "-nodes", "-hole", "-supportNodes",
+                            "-diaphragmNodes",
+                        )
+                    elif taking and float(a) == int(float(a)):
+                        keep.add(int(float(a)))
+        return frozenset(cand - keep)
 
     def _rehydrate_element_connectivity(
         self, records: tuple[ElementRecord, ...],
@@ -2107,6 +2370,7 @@ class OpenSeesModel:
         emitter_fresh: "H5Emitter" = type(emitter)(
             model_name=self._model_name,
             snapshot_id=self._snapshot_id,
+            target_mode=self._target_mode,
         )
         # K1-8: the parameter tags the rewrite stores (a 2.27.0 file stores
         # every one): the source's own, or for a pre-2.27 source the tags
@@ -2132,7 +2396,8 @@ class OpenSeesModel:
         # source below 2.23.0 has no program: echoing that absence keeps
         # the replay's own tape out of the file, which is not the order the
         # bridge emitted.
-        emitter_fresh.restore_program(self._program, self._commands)
+        emitter_fresh.restore_program(
+            self._echoed_program(), self._commands)
         # ADR 0114 D6: echo the solve stamp. ``@requires`` regenerates
         # from the echoed program's methods and the rewritten stores, so
         # it equals a current source's; a source below 2.33.0 gains the
@@ -2173,11 +2438,12 @@ class OpenSeesModel:
         Returns the deck as a string; if ``out=`` is given, writes it
         to that path as well.
         """
+        from ._target import OpenSeesTarget
         from .emitter.tcl import deck_backend
 
-        # An archive carries no OpenSeesTarget: the rebuilt deck is the
-        # ``mode="auto"`` case, which ``deck_backend`` leaves unstamped.
-        backend = deck_backend(None)
+        # The archive keeps the target's mode, never its machine paths
+        # (opensees 2.36.0): the rebuilt deck stamps as the bridge's did.
+        backend = deck_backend(OpenSeesTarget(mode=self._target_mode))
         emitter: "Emitter"
         if kind == "tcl":
             from .emitter.tcl import TclEmitter
@@ -2229,7 +2495,9 @@ class OpenSeesModel:
         refuse_live_requires(
             stamp, get_backend_info(),
             mpi_systems=tuple(
-                s for s in self._archived_systems() if is_mpi_system(s)))
+                s for s in self._archived_systems() if is_mpi_system(s)),
+            pinned=tuple(t for t in requires
+                         if t not in self._verbs_replay_requires()))
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
 
@@ -2237,6 +2505,7 @@ class OpenSeesModel:
 def refuse_live_requires(
     stamp: "SolveStamp | None", backend: "BackendInfo", *,
     mpi_systems: "Sequence[str]" = (),
+    pinned: "Sequence[str]" = (),
 ) -> None:
     """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
 
@@ -2249,7 +2518,11 @@ def refuse_live_requires(
     from a newer bridge must not be solved on a guess. ``build('live')``
     hands in the flat replay's tokens
     (:meth:`OpenSeesModel.replay_requires`) and the MPI systems its chain
-    declares (``mpi_systems``), which the message names.
+    declares (``mpi_systems``), which the message names. ``pinned`` are the
+    tokens only the ``/opensees@target_mode`` pin adds (``"fork"`` for a
+    fork-pinned archive whose verbs need no fork, opensees 2.36.0): the
+    message names that attribute as their source, and ``@requires`` as the
+    source of the rest.
     """
     if stamp is None or not stamp.requires:
         return
@@ -2283,10 +2556,22 @@ def refuse_live_requires(
             "This bridge knows no backend that provides "
             + ", ".join(repr(t) for t in unknown)
             + "; the archive was written by a newer bridge.")
+    from_verbs = [t for t in missing if t not in pinned]
+    from_pin = [t for t in missing if t in pinned]
+    sources: list[str] = []
+    if from_verbs:
+        sources.append(
+            "the archive's verbs require "
+            + ", ".join(repr(t) for t in from_verbs) + " (/opensees@requires)")
+    if from_pin:
+        sources.append(
+            "the archive is pinned to "
+            + ", ".join(repr(t) for t in from_pin)
+            + " (/opensees@target_mode: the bridge was built with "
+            "OpenSeesTarget(mode='fork'), which asserts the fork)")
     raise BridgeError(
-        "OpenSeesModel.build('live'): the archive's verbs require "
-        + ", ".join(repr(t) for t in missing)
-        + f" (/opensees@requires), but the bound openseespy is a "
+        "OpenSeesModel.build('live'): " + " and ".join(sources)
+        + f", but the bound openseespy is a "
         f"{backend.kind} build ({backend.source}). " + " ".join(hints)
     )
 

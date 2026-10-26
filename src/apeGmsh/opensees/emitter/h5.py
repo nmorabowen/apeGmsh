@@ -81,6 +81,7 @@ from types import MappingProxyType
 from datetime import datetime, timezone
 from typing import Any, NamedTuple, NoReturn, Sequence
 
+from .._target import TargetMode
 from .base import DroppedAxisGuard
 from .caps import SolveStamp, TargetCaps, value_requires
 from .verbs import VERBS, Verb
@@ -117,6 +118,7 @@ from ._h5_program import (
     _command_kind,
 )
 from ._h5_write import _set_attr
+from .h5_reader import TARGET_MODES, EquationConstraintRecordRO
 from ._h5_decls import _H5DeclsMixin, _decl_refs, _json_text
 from ._h5_stages import _H5StagesMixin
 from ._h5_verbs_model import _H5ModelVerbsMixin
@@ -165,11 +167,11 @@ class H5LedgerWarning(UserWarning):
 
     A ``ledger`` row of ``VERBS`` (ADR 0114, Q3) is a verb ``H5Emitter``
     counts and drops: ``/opensees`` carries no record of the call, so a
-    deck replayed from the file omits it (the contact and embed rows and an
-    ``enforce="equation"`` tie's ``equationConstraint`` rows; some persist in
-    the neutral zone instead). A bridge-level ``apeSees.equation_constraint``
-    row is not counted: its ``EquationConstraintRecord`` is a
-    ``/opensees/decl_params`` row that replay re-emits.
+    deck replayed from the file omits it (the contact and embed rows and a
+    stage-claimed ``enforce="equation"`` tie's ``equationConstraint`` lines;
+    some persist in the neutral zone instead). A global ``equationConstraint``
+    line is not counted: from opensees 2.35.0 it is a
+    ``/opensees/constraints/equationConstraint`` row that replay re-emits.
     The bridge raises it at most once per ``apeSees`` instance for each
     distinct set of ledgered verbs. It is not an ``H5FeatureDeferredWarning``,
     so the automatic ``model.h5`` write does not silence it."""
@@ -673,15 +675,44 @@ class H5RefusedVerb(NotImplementedError):
 #:     reader would read a dataset-form pair as no arguments, hence the
 #:     bump: a 2.34 reader opens 2.12 through 2.34 and refuses a dataset
 #:     form below 2.34.0; a 2.33.x reader REFUSES a 2.34.x file.
-#:   * 2.35.0 — joint offsets: additive — a ``/opensees/transforms/*``
+#:   * 2.35.0 — equationConstraint lines archived: additive — a new
+#:     ``/opensees/constraints/equationConstraint`` group holds one row
+#:     per global ``equationConstraint`` line, an ``enforce="equation"``
+#:     tie's (one per tied DOF) and an ``apeSees.equation_constraint``
+#:     row's alike, its ``/opensees/program`` call linking it, so a replay
+#:     writes each line at its emit index. Written only when a line
+#:     exists, so every other archive keeps its bytes and hash; the group
+#:     is hashed, so an archive with one hashes differently once at this
+#:     minor. A stage-claimed equation tie's lines stay unarchived (the
+#:     replay refuses it by name). A 2.34 reader would replay the model
+#:     untied, hence the bump: a 2.35 reader opens 2.12 through 2.35 and
+#:     refuses the group below 2.35.0; a 2.34.x reader REFUSES a 2.35.x
+#:     file.
+#:   * 2.36.0 — the target mode: additive — ``/opensees@target_mode``, a
+#:     string ``"fork"`` or ``"stock"``, is the bridge's pinned
+#:     ``OpenSeesTarget.mode``. Written only for a
+#:     pinned target; an absent attribute reads as ``"auto"``, so every
+#:     older archive and every unpinned one keeps its bytes and meaning.
+#:     ``binary`` / ``python`` are machine paths and are never archived.
+#:     Not hashed (``MODEL_HASH_EXCLUDED_ATTRS``): the same model pinned or
+#:     on auto has one ``model_hash``. A replay stamps its deck as the
+#:     bridge does and treats a ``"fork"`` archive as needing the fork. A
+#:     2.35 reader would replay a fork pin as auto, hence the bump: a 2.36
+#:     reader opens 2.12 through 2.36; a 2.35.x reader REFUSES a 2.36.x
+#:     file.
+#:   * 2.37.0 — joint offsets: additive — a ``/opensees/transforms/*``
 #:     group whose ``geomTransf`` line carries ``-jntOffset`` gains a
 #:     float64 ``jnt_offset`` dataset, ``(1, 6)`` in 3-D and ``(1, 4)`` in
 #:     2-D, the line's global ``dXi dYi [dZi] dXj dYj [dZj]``. A line
-#:     without offsets writes no dataset, so every archive a 2.34 writer
-#:     could write keeps its bytes and hash. A 2.34 reader would replay an
-#:     offset line without its offsets, hence the bump: a 2.35 reader opens
-#:     2.12 through 2.35; a 2.34.x reader REFUSES a 2.35.x file.
-SCHEMA_VERSION: str = "2.35.0"
+#:     without offsets writes no dataset. Every transform's
+#:     ``/opensees/decl_params`` row does gain a ``"jnt_offset"`` field
+#:     (``null`` when none was declared), so an archive with a transform
+#:     changes bytes, but not ``model_hash`` (``decl_params`` is in
+#:     ``MODEL_HASH_EXCLUDED_CHILDREN``) nor the deck it replays. A 2.36
+#:     reader would replay an offset line without its offsets, hence the
+#:     bump: a 2.37 reader opens 2.12 through 2.37; a 2.36.x reader
+#:     REFUSES a 2.37.x file.
+SCHEMA_VERSION: str = "2.37.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1010,11 +1041,20 @@ class H5Emitter(
         model_name: str | None = None,
         apegmsh_version: str | None = None,
         snapshot_id: str | None = None,
+        target_mode: TargetMode = "auto",
     ) -> None:
         self._schema_version: str = schema_version
         self._model_name: str = model_name or "model"
         self._apegmsh_version: str = apegmsh_version or "unknown"
         self._snapshot_id: str = snapshot_id or ""
+        # opensees 2.36.0: the bridge's ``OpenSeesTarget.mode``,
+        # written as ``/opensees@target_mode`` when pinned. Only the mode:
+        # ``binary`` / ``python`` are machine paths, never archived.
+        if target_mode not in TARGET_MODES:
+            raise ValueError(
+                f"H5Emitter(target_mode={target_mode!r}): the target mode is "
+                f"one of {sorted(TARGET_MODES)} (OpenSeesTarget.mode).")
+        self._target_mode: TargetMode = target_mode
 
         self._ndm: int | None = None
         self._ndf: int | None = None
@@ -1046,6 +1086,9 @@ class H5Emitter(
         # build wrote, archived from 2.29.0 (K2b) under
         # ``/opensees/constraints/embeddedRebar``. See ``embedded_rebar``.
         self._embedded_rebars: list[_EmbeddedRebarRecord] = []
+        # The global equationConstraint lines (opensees 2.35.0), each a row of
+        # ``/opensees/constraints/equationConstraint``. See ``equationConstraint``.
+        self._equation_constraints: list[EquationConstraintRecordRO] = []
 
         # ADR 0114 D1: every drop of a ``ledger`` verb goes through :meth:`_ledger`, which
         # counts it here by verb. The ``ledger`` rows of ``VERBS`` are the
@@ -1456,8 +1499,12 @@ class H5Emitter(
         self._write_commands(f)
         self._write_program(f)
         # ADR 0114 D6 (schema 2.24.0): the solve stamp, on ``/opensees``
-        # itself. Hashed, like every attribute of the group.
+        # itself. Hashed, like every attribute of the group except
+        # ``target_mode`` (``MODEL_HASH_EXCLUDED_ATTRS``).
         self._write_solve_stamp(f)
+        # opensees 2.36.0: the pinned target mode, beside the
+        # stamp; hash-excluded (``MODEL_HASH_EXCLUDED_ATTRS``).
+        self._write_target_mode(f)
         # ADR 0114 R5 (K1-6, schema 2.25.0): the declarations. A label,
         # so ``decls`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``.
         self._write_decls(f)
@@ -1510,6 +1557,21 @@ class H5Emitter(
                         tuple(refs["integration_ref"]),
                         tuple(refs["section_ref"])))
         return out
+
+    def _write_target_mode(self, f: Any) -> None:
+        """Persist ``/opensees@target_mode`` for a pinned target.
+
+        ``"auto"`` writes nothing: an absent attribute reads as ``"auto"``,
+        so an unpinned model's archive keeps its pre-2.36 bytes.
+        """
+        if self._target_mode == "auto":
+            return
+        import h5py
+        import numpy as np
+
+        self._ops_group(f).attrs.create(
+            "target_mode", np.array(self._target_mode, dtype=object),
+            dtype=h5py.string_dtype(encoding="utf-8"))
 
     def _ops_group(self, f: Any) -> Any:
         """Lazily get or create the ``/opensees/`` namespace group.
@@ -1774,8 +1836,9 @@ def _noted(
     and a Protocol method a body calls internally counts once, as the
     outer call.
     """
-    glob, _, stage_side = VERBS[name].store.partition("|")
-    stage_store = stage_side or glob
+    glob, split, stage_side = VERBS[name].store.partition("|")
+    # ``"<global>|"``: a stage call writes no row (``equationConstraint``).
+    stage_store = stage_side if split else glob
     tagged = _DECL_TAG_ARG.get(name)
     side_channel = name in _SIDE_CHANNEL_DECL_VERBS
 

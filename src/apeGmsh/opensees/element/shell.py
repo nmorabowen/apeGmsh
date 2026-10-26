@@ -2,10 +2,12 @@
 Shell element primitives — typed wrappers over the OpenSees ``element
 Shell*`` family.
 
-Four element types live here:
+Five element types live here:
 
 * :class:`ShellMITC4` — 4-node MITC shell (membrane + bending).
 * :class:`ShellDKGQ` — 4-node Discrete Kirchhoff (Quadrilateral) shell.
+* :class:`ShellNLDKGQ` — its geometrically nonlinear (updated Lagrangian)
+  twin, whose tangent carries the initial-stress stiffness.
 * :class:`ASDShellQ4` — 4-node ASD shell (Petracca/ASDEA Software).
 * :class:`ASDShellT3` — 3-node ASD shell.
 
@@ -13,6 +15,7 @@ The OpenSees commands per the manual:
 
 * ``element ShellMITC4 tag i j k l secTag``
 * ``element ShellDKGQ  tag i j k l secTag``
+* ``element ShellNLDKGQ tag i j k l secTag``
 * ``element ASDShellQ4 tag i j k l secTag [-corotational]``
   ``[-drillingNT alpha] [-localCS x1 x2 x3 y1 y2 y3]``
 * ``element ASDShellT3 tag i j k secTag [-corotational]``
@@ -66,6 +69,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ShellMITC4",
     "ShellDKGQ",
+    "ShellNLDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
     "LadrunoMembrane",
@@ -106,6 +110,19 @@ def _check_local_cs(type_name: str, local_cs: tuple[float, ...]) -> None:
         raise ValueError(
             f"{type_name}: local_cs= must not be the zero vector (the element "
             f"reads a zero -local vector as 'use the default frame')."
+        )
+
+
+def _check_p_delta(type_name: str, p_delta: bool, corotational: bool) -> None:
+    """``-pDelta`` and ``-corotational`` are exclusive (the fork refuses
+    the element when both are given)."""
+    if p_delta and corotational:
+        raise ValueError(
+            f"{type_name}: p_delta=True and corotational=True are mutually "
+            f"exclusive (the parser refuses -pDelta with -corotational). "
+            f"-pDelta is linear kinematics plus the initial-stress "
+            f"stiffness; -corotational already carries the geometric "
+            f"nonlinearity."
         )
 
 
@@ -193,6 +210,51 @@ class ShellDKGQ(Element):
 
 
 # ---------------------------------------------------------------------------
+# ShellNLDKGQ — geometrically nonlinear Discrete Kirchhoff quadrilateral
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellNLDKGQ(Element):
+    """``element ShellNLDKGQ`` — geometrically nonlinear 4-node DKGQ shell.
+
+    The updated-Lagrangian twin of :class:`ShellDKGQ`: its tangent carries
+    the initial-stress (geometric) stiffness of the current membrane
+    forces, so an ``eigen`` after a gravity preload sees the P-Delta
+    softening of a wall (ADR 0124). Under ``algorithm Linear`` its nodal
+    forces read stale (``shell_probe``); solve with ``Newton``.
+
+    Parameters
+    ----------
+    pg
+        Physical group whose surface (quadrilateral) cells receive
+        this element.
+    section
+        The plate / shell :class:`Section`.
+    """
+
+    pg: str
+    section: Section
+    damp: Damping | None = None
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 4:
+            raise ValueError(
+                f"ShellNLDKGQ: expected 4 node tags, got {len(nodes)}."
+            )
+        sec_tag = resolve_tag(emitter, self.section)
+        emitter.element(
+            "ShellNLDKGQ", tag, *nodes, sec_tag,
+            *damp_args(emitter, self.damp),
+        )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.section, self.damp)
+        return (self.section,)
+
+
+# ---------------------------------------------------------------------------
 # ASDShellQ4 — 4-node ASD shell
 # ---------------------------------------------------------------------------
 
@@ -200,9 +262,9 @@ class ShellDKGQ(Element):
 class ASDShellQ4(Element):
     """``element ASDShellQ4`` — 4-node ASD shell.
 
-    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``,
-    ``-noeas``, ``-drillingStab $v`` / ``-drillingNL`` (mutually
-    exclusive) and ``-local $x1 $x2 $x3``.
+    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``
+    / ``-pDelta`` (mutually exclusive), ``-noeas``, ``-drillingStab $v`` /
+    ``-drillingNL`` (mutually exclusive) and ``-local $x1 $x2 $x3``.
 
     Parameters
     ----------
@@ -213,6 +275,17 @@ class ASDShellQ4(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    p_delta
+        Append ``-pDelta`` (**Ladruno fork**, at or after
+        ``stage_emit.C83_FORK_COMMIT`` c83ee812e): linear kinematics
+        plus the initial-stress (geometric) stiffness of the current
+        membrane forces, the shell analogue of ``geomTransf PDelta``, for a
+        gravity, ``loadConst``, ``eigen`` sequence. Refused with
+        ``corotational=True`` (the fork refuses the pair). Stock OpenSees
+        and older fork builds accept the token and drop the stiffness, so
+        the live route refuses any build not measured to carry c83ee812e
+        (``stage_emit.FORK_BUILD_HAS_C83``) and a Tcl / py deck checks
+        ``ladrunoBuild`` at its start (``ASDSHELL_PDELTA_GUARD``).
     no_eas
         Append ``-noeas``: turn off the enhanced membrane (the AGQI
         incompatible modes and their EAS parameters), leaving the plain
@@ -238,6 +311,7 @@ class ASDShellQ4(Element):
     pg: str
     section: Section
     corotational: bool = False
+    p_delta: bool = False
     no_eas: bool = False
     drilling_stab: float | None = None
     drilling_nl: bool = False
@@ -246,6 +320,7 @@ class ASDShellQ4(Element):
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_p_delta("ASDShellQ4", self.p_delta, self.corotational)
         if self.local_cs is not None:
             _check_local_cs("ASDShellQ4", self.local_cs)
         if self.drilling_nt_alpha is not None:
@@ -278,6 +353,8 @@ class ASDShellQ4(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.p_delta:
+            args.append("-pDelta")
         if self.no_eas:
             args.append("-noeas")
         if self.drilling_stab is not None:
@@ -306,9 +383,9 @@ class ASDShellT3(Element):
     """``element ASDShellT3`` — 3-node ASD shell.
 
     Phase 2γ scope ships the canonical positional arguments plus the
-    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``,
-    ``-drillingNL`` and ``-local $x1 $x2 $x3``. ``-reducedIntegration`` is
-    not exposed.
+    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``
+    / ``-pDelta`` (mutually exclusive), ``-drillingNL`` and ``-local $x1
+    $x2 $x3``. ``-reducedIntegration`` is not exposed.
 
     Parameters
     ----------
@@ -319,6 +396,9 @@ class ASDShellT3(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    p_delta
+        Append ``-pDelta`` (**Ladruno fork**; see ``ASDShellQ4``).
+        Refused with ``corotational=True``.
     drilling_nl
         Append ``-drillingNL`` (nonlinear drilling DOF treatment).
     drilling_dof
@@ -334,12 +414,14 @@ class ASDShellT3(Element):
     pg: str
     section: Section
     corotational: bool = False
+    p_delta: bool = False
     drilling_nl: bool = False
     drilling_dof: int | None = None
     local_cs: tuple[float, ...] | None = None
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_p_delta("ASDShellT3", self.p_delta, self.corotational)
         if self.local_cs is not None:
             _check_local_cs("ASDShellT3", self.local_cs)
         if self.drilling_dof is not None:
@@ -360,6 +442,8 @@ class ASDShellT3(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.p_delta:
+            args.append("-pDelta")
         if self.drilling_nl:
             args.append("-drillingNL")
         if self.local_cs is not None:
@@ -404,6 +488,36 @@ def _normalize_node_ref(cls_name: str, field_name: str, val: object) -> int | st
     return tag
 
 
+def _normalize_node_list(
+    cls_name: str, field_name: str, value: object,
+) -> tuple[int | str, ...]:
+    """A node ref, ``NodeSet`` or sequence of them, as tags and names."""
+    if isinstance(value, (int, str, Node, NodeSet)) and not isinstance(value, bool):
+        raw: tuple[object, ...] = (value,)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        raw = tuple(value)
+    else:
+        raise TypeError(
+            f"{cls_name}: {field_name}= must be a node tag, Node, NodeSet, "
+            f"PG/label name, or sequence thereof."
+        )
+    if not raw:
+        raise ValueError(f"{cls_name}: {field_name}= must not be empty.")
+    out: list[int | str] = []
+    for idx, item in enumerate(raw):
+        where = f"{field_name}[{idx}]"
+        if isinstance(item, NodeSet):
+            out.extend(_normalize_node_ref(cls_name, where, int(t)) for t in item.tags)
+        elif isinstance(item, bool) or not isinstance(item, (int, str, Node)):
+            raise TypeError(
+                f"{cls_name}: {where} must be an int tag, Node, NodeSet, or "
+                f"PG/label name, got {type(item).__name__}."
+            )
+        else:
+            out.append(_normalize_node_ref(cls_name, where, item))
+    return tuple(out)
+
+
 def _resolve_node_ref(cls_name: str, field_name: str, val: object) -> int:
     norm = _normalize_node_ref(cls_name, field_name, val)
     if isinstance(norm, str):
@@ -422,10 +536,34 @@ class LadrunoMembrane(Element):
     panel rather than fanning out per Gmsh cell:
 
     ``element LadrunoMembrane $tag -nodes $n1 $n2 $n3 ... [-frames $f1 ...]``
-    ``[-supportNodes $sn1 ...] [-hole $h1 $h2 $h3 ...] [-method $method]``
+    ``[-supportNodes $sn1 ...] [-hole $h1 $h2 $h3 ...]``
+    ``[-diaphragmNodes $d1 ...] [-method $method]``
     ``[-spanAxis $dx $dy [$dz]] [-orthoRatio $eta] [-pressure $q]``
-    ``[-thick $t -mat $matTag | -stiff $E $nu $t] [-rho $rho] [-lumped]``
-    ``[-meshSize $hMax] [-damp $dampTag]``
+    ``[-thick $t -mat $matTag | -stiff $E $nu $t] [-f11 $v] [-f22 $v]``
+    ``[-f12 $v] [-rho $rho] [-lumped] [-meshSize $hMax] [-damp $dampTag]``
+
+    With a stiffness (``stiff=``, ``E=``/``nu=``/``thickness=``, ``mat=``
+    with ``thickness=``, or ``section=``), every outer, hole and support
+    node gets the panel's condensed in-plane (diaphragm) stiffness and
+    mass. ``diaphragm_nodes=`` adds nodes that get that stiffness and mass
+    but no gravity share, such as the nodes of an edge beam or of a wall
+    along an opening. It takes the forms ``support_nodes=`` takes (tags,
+    ``Node``, ``NodeSet``, PG or label names). ``f11=``, ``f22=`` and
+    ``f12=`` scale the plane-stress modulus as ``D_ij * sqrt(f_i * f_j)``
+    in the element's local axes (e1 = global X and e2 = global Y for a
+    horizontal slab), as ``LadrunoShellModifier`` does; the mass is not
+    scaled. ``mesh_size=`` also sets the diaphragm mesh, and point
+    connections depend on it. ``c83ee812e`` parses these options but
+    gives an in-plane stiffness 26 to 28 percent low; the exact one needs
+    fork build ``b6d3e3d2`` (fork WP-208) or later. The live route refuses
+    them on a build not measured to carry it
+    (``stage_emit.FORK_BUILD_HAS_MEMBRANE_WP208``), and a Tcl / py deck
+    checks ``ladrunoBuild`` at its start (``MEMBRANE_WP208_GUARD``).
+
+    The element answers ``membraneForces`` (``N11, N22, N12`` per diaphragm
+    triangle), ``meanMembraneForce``, ``diaphragmForces`` (the in-plane
+    force on each element node), ``diaphragmVertices`` and
+    ``diaphragmTriangles``, through ``eleResponse`` and element recorders.
 
     ``pressure=`` does not load the slab by itself. The fork reads it only
     inside ``LadrunoMembrane::addLoad``, as the reference value that a
@@ -457,6 +595,7 @@ class LadrunoMembrane(Element):
     frames: tuple[int | str | Element, ...] | None = None
     support_nodes: tuple[int | str | Node | NodeSet, ...] | None = None
     holes: tuple[tuple[MembraneNodeRef, ...] | str, ...] | None = None
+    diaphragm_nodes: tuple[int | str | Node | NodeSet, ...] | None = None
     method: str = "tributary"
     span_axis: tuple[float, ...] | None = None
     ortho_ratio: float | None = None
@@ -471,6 +610,9 @@ class LadrunoMembrane(Element):
     rho: float | None = None
     lumped: bool = False
     mesh_size: float | None = None
+    f11: float | None = None
+    f22: float | None = None
+    f12: float | None = None
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
@@ -572,6 +714,14 @@ class LadrunoMembrane(Element):
                         )
                     )
             object.__setattr__(self, "support_nodes", tuple(norm_sn))
+
+        if self.diaphragm_nodes is not None:
+            object.__setattr__(
+                self, "diaphragm_nodes",
+                _normalize_node_list(
+                    "LadrunoMembrane", "diaphragm_nodes", self.diaphragm_nodes,
+                ),
+            )
 
         if self.holes is not None:
             if isinstance(self.holes, str):
@@ -781,6 +931,31 @@ class LadrunoMembrane(Element):
                 )
             object.__setattr__(self, "mesh_size", ms_val)
 
+        for f_name in ("f11", "f22", "f12"):
+            f_raw = getattr(self, f_name)
+            if f_raw is None:
+                continue
+            f_val = float(f_raw)
+            if not (math.isfinite(f_val) and f_val > 0.0):
+                raise ValueError(
+                    f"LadrunoMembrane: {f_name}= must be finite and > 0, got "
+                    f"{f_raw!r}."
+                )
+            object.__setattr__(self, f_name, f_val)
+        if self.stiff is None and self.mat is None and self.section is None:
+            given = [
+                n for n in ("diaphragm_nodes", "f11", "f22", "f12")
+                if getattr(self, n) is not None
+            ]
+            if given:
+                names = ", ".join(f"{n}=" for n in given)
+                raise ValueError(
+                    f"LadrunoMembrane: {names} act on the in-plane stiffness, "
+                    f"and this membrane has none. Give it one (stiff=, "
+                    f"E=/nu=/thickness=, mat= with thickness=, or section=), "
+                    f"or drop {names}."
+                )
+
     def _resolve_standalone_context(
         self,
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]]:
@@ -825,6 +1000,18 @@ class LadrunoMembrane(Element):
                 )
         return tuple(frames_out), tuple(supp_out), tuple(holes_out)
 
+    def _resolve_standalone_diaphragm_nodes(self) -> tuple[int, ...]:
+        """``diaphragm_nodes=`` as tags outside the bridge build pipeline."""
+        out: list[int] = []
+        for dn in self.diaphragm_nodes or ():
+            if isinstance(dn, str):
+                raise RuntimeError(
+                    "LadrunoMembrane: diaphragm_nodes= containing PG/label "
+                    "names requires emitting through ops.build().emit(...)."
+                )
+            out.append(_resolve_node_ref("LadrunoMembrane", "diaphragm_nodes", dn))
+        return tuple(out)
+
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         if getattr(emitter, ATTR_ELEMENT_NODES, None) is not None:
             nodes = current_element_nodes(emitter)
@@ -843,9 +1030,10 @@ class LadrunoMembrane(Element):
 
         ctx = current_membrane_context(emitter)
         if ctx is not None:
-            frames_tags, support_node_tags, hole_loops = ctx
+            frames_tags, support_node_tags, hole_loops, diaphragm_tags = ctx
         else:
             frames_tags, support_node_tags, hole_loops = self._resolve_standalone_context()
+            diaphragm_tags = self._resolve_standalone_diaphragm_nodes()
 
         args: list[int | float | str] = ["-nodes", *(int(n) for n in nodes)]
         if frames_tags:
@@ -854,6 +1042,8 @@ class LadrunoMembrane(Element):
             args.extend(["-supportNodes", *(int(sn) for sn in support_node_tags)])
         for hole_loop in hole_loops:
             args.extend(["-hole", *(int(h) for h in hole_loop)])
+        if diaphragm_tags:
+            args.extend(["-diaphragmNodes", *(int(d) for d in diaphragm_tags)])
         args.extend(["-method", self.method])
         if self.span_axis is not None:
             args.extend(["-spanAxis", *(float(c) for c in self.span_axis)])
@@ -873,6 +1063,10 @@ class LadrunoMembrane(Element):
                 float(self.section.nu),
                 float(self.section.h),
             ])
+        for f_name in ("f11", "f22", "f12"):
+            f_val = getattr(self, f_name)
+            if f_val is not None:
+                args.extend([f"-{f_name}", float(f_val)])
         eff_rho = self.rho
         if (
             eff_rho is None

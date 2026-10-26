@@ -19,8 +19,10 @@ from .records import (
 )
 from .pg_expand import (
     _record_node_ids,
+    expand_pg_to_elements,
     expand_pg_to_nodes,
     expand_spec_to_elements,
+    ladruno_membrane_named_nodes,
     resolve_ladruno_membrane_context,
 )
 
@@ -263,7 +265,9 @@ def infer_node_ndf(
     from the map; in this pragmatic variant (ADR 0048 PR-1) they fall back
     to the ``ops.model`` envelope at emit (the purist clean break's
     fail-loud-on-orphan-mesh-node and ``ops.ndf`` decoupled channel are
-    deferred).
+    deferred).  One orphan class is handled: the interior nodes of a
+    ``LadrunoMembrane(pg=...)`` panel are not emitted at all
+    (:func:`membrane_interior_nodes`).
 
     Implementation note (perf): semantics are exactly
     :func:`_infer_ndf_from_incidence` — the unit-tested reference core,
@@ -314,13 +318,7 @@ def infer_node_ndf(
         first_tag.setdefault(cls_name, int(fanout.conn[0][0]))
         blocks.extend(_conn_width_blocks(fanout.conn))
         if cls_name == "LadrunoMembrane":
-            _fr, supp_tags, hole_loops = resolve_ladruno_membrane_context(
-                fem, spec, include_frames=False,
-            )
-            extra_ids = [
-                *supp_tags,
-                *(n for h in hole_loops for n in h),
-            ]
+            extra_ids = ladruno_membrane_named_nodes(fem, spec)
             if extra_ids:
                 blocks.append(np.asarray([extra_ids], dtype=np.int64))
 
@@ -405,6 +403,258 @@ def infer_node_ndf(
         int(t): int(f)
         for t, f in zip(all_ids.tolist(), floors.tolist())
     }
+
+
+def membrane_interior_nodes(
+    fem: "FEMData", elements: "Iterable[Element]",
+) -> "frozenset[int]":
+    """Mesh nodes the deck must NOT emit: the interior of ``pg=`` membranes.
+
+    A ``LadrunoMembrane(pg=...)`` is one macro-element on the panel's
+    boundary loop; the gmsh cells of its physical group are only the
+    geometry it was read from.  Their nodes that are not on the outer loop,
+    a hole, or ``support_nodes=`` of any membrane, and that no other
+    declared element touches, would be emitted as ``node`` lines with no
+    element attached, i.e. free DOFs with no stiffness: K is singular and
+    the analysis returns no load path (and every eigenvalue undetermined).
+    Those nodes are returned here; every node-emit site skips them, and
+    :func:`validate_membrane_interior_untargeted` refuses any record that
+    targets one.  FEMData keeps them (the neutral mesh is unchanged).
+
+    ``frozenset()`` without a ``pg=`` membrane, at the cost of one
+    ``isinstance`` pass.
+    """
+    from ...element.shell import LadrunoMembrane
+
+    specs = list(elements)
+    membranes = [
+        s for s in specs
+        if isinstance(s, LadrunoMembrane) and getattr(s, "pg", None) is not None
+    ]
+    if not membranes:
+        return frozenset()
+    cand_blocks: list[np.ndarray] = []
+    for m in membranes:
+        fan = expand_pg_to_elements(fem, str(m.pg))
+        if len(fan):
+            cand_blocks.extend(_conn_width_blocks(fan.conn))
+    if not cand_blocks:
+        return frozenset()
+    cand = _unique_node_ids(cand_blocks)
+    keep_blocks: list[np.ndarray] = []
+    for spec in specs:
+        if isinstance(spec, LadrunoMembrane):
+            fan = expand_spec_to_elements(fem, spec)
+            if len(fan):
+                keep_blocks.extend(_conn_width_blocks(fan.conn))
+            extra = ladruno_membrane_named_nodes(fem, spec)
+            if extra:
+                keep_blocks.append(np.asarray([extra], dtype=np.int64))
+            continue
+        fan = expand_spec_to_elements(fem, spec)
+        if len(fan):
+            keep_blocks.extend(_conn_width_blocks(fan.conn))
+    if keep_blocks:
+        cand = cand[~np.isin(cand, _unique_node_ids(keep_blocks))]
+    return frozenset(int(n) for n in cand.tolist())
+
+
+class MembraneHoleNodeFreeWarning(UserWarning):
+    """A ``LadrunoMembrane`` hole node that no other element touches.
+
+    The fork gives such a node no stiffness (see
+    :func:`warn_membrane_hole_nodes_free`), so its DOFs are free unless a
+    ``fix`` holds them.
+    """
+
+
+def warn_membrane_hole_nodes_free(
+    fem: "FEMData", elements: "Iterable[Element]",
+) -> None:
+    """Warn on a ``LadrunoMembrane`` hole whose nodes nothing else stiffens.
+
+    The fork condenses the membrane's in-plane stiffness and mass onto the
+    OUTER loop only (``LadrunoMembraneKernel::condense_inplane_cst`` keeps
+    the outer boundary vertices); a ``-hole`` node is an external node of
+    the element with no stiffness from it.  A hole node that no other
+    element touches is therefore a free DOF: K is singular (``analyze``
+    fails, ``eigen`` returns undetermined values) unless a ``fix`` holds
+    every one of its DOFs.  A warning, not a refusal: a fully fixed hole
+    node is legal.
+    """
+    from ...element.shell import LadrunoMembrane
+
+    specs = list(elements)
+    membranes = [s for s in specs if isinstance(s, LadrunoMembrane)]
+    if not membranes:
+        return
+    hole_nodes: dict[int, LadrunoMembrane] = {}
+    for m in membranes:
+        _fr, _supp, holes = resolve_ladruno_membrane_context(
+            fem, m, include_frames=False,
+        )
+        for h in holes:
+            for n in h:
+                hole_nodes.setdefault(int(n), m)
+    if not hole_nodes:
+        return
+    blocks: list[np.ndarray] = []
+    for spec in specs:
+        if isinstance(spec, LadrunoMembrane):
+            continue
+        fan = expand_spec_to_elements(fem, spec)
+        if len(fan):
+            blocks.extend(_conn_width_blocks(fan.conn))
+    ids = np.fromiter(hole_nodes, dtype=np.int64)
+    if blocks:
+        ids = ids[~np.isin(ids, _unique_node_ids(blocks))]
+    if not ids.size:
+        return
+    m = hole_nodes[int(ids[0])]
+    where = f"pg={m.pg!r}" if m.pg is not None else f"nodes={m.nodes!r}"
+    warnings.warn(
+        f"LadrunoMembrane({where}): {ids.size} node(s) of its hole loop(s) "
+        f"(e.g. {sorted(int(n) for n in ids.tolist())[:5]}) are touched by no "
+        f"other element. The fork condenses the membrane's in-plane stiffness "
+        f"and mass onto the outer loop only, so a hole node carries no "
+        f"stiffness from the membrane: unless a fix holds them, those DOFs "
+        f"are free and K is singular. Frame the opening (beams on the hole's "
+        f"edges, listed in frames= or not), or model the opening as part of "
+        f"the outer boundary.",
+        MembraneHoleNodeFreeWarning,
+        stacklevel=_stacklevel_outside_package(),
+    )
+
+
+def validate_membrane_interior_untargeted(
+    fem: "FEMData",
+    skipped: "frozenset[int]",
+    *,
+    fix_records: "Iterable[FixRecord | SupportRecord]" = (),
+    mass_records: "Iterable[MassRecord]" = (),
+    load_records: "Iterable[_LoadRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    constraint_records: "Iterable[object]" = (),
+    from_model_cases: "Iterable[str]" = (),
+    mass_from_model: bool = False,
+    node_targets: "Iterable[tuple[str, Iterable[int]]]" = (),
+) -> None:
+    """Refuse every record that targets a node :func:`membrane_interior_nodes`
+    keeps out of the deck.
+
+    Such a node is never declared, so a ``fix`` / ``mass`` / ``load`` /
+    ``sp`` / constraint / recorder on it would fail inside OpenSees or,
+    worse, be dropped with a warning.  The bridge never drops a record in
+    silence: it refuses here, naming the record, the node and the fix.
+    ``node_targets`` carries extra ``(description, node ids)`` pairs (the
+    recorders' resolved node lists).
+    """
+    if not skipped:
+        return
+    skip_arr = np.fromiter(skipped, dtype=np.int64)
+
+    def _hits(ids: "Iterable[int]") -> "list[int]":
+        arr = np.asarray(list(ids), dtype=np.int64).reshape(-1)
+        if not arr.size:
+            return []
+        return sorted(int(n) for n in arr[np.isin(arr, skip_arr)].tolist())
+
+    def _refuse(what: str, hit: "list[int]", advice: str) -> None:
+        raise BridgeError(
+            f"{what} targets {len(hit)} node(s) inside a LadrunoMembrane(pg=...) "
+            f"panel (e.g. {hit[:5]}). The membrane is one macro-element on the "
+            f"panel's boundary loop: its interior mesh nodes are not part of "
+            f"the OpenSees model (emitted alone they would be free, element-"
+            f"less DOFs and make K singular), so they are not emitted and "
+            f"nothing can be applied to them. {advice}"
+        )
+
+    def _pg_or_nodes(rec: "FixRecord | MassRecord | SupportRecord") -> "list[int]":
+        if rec.nodes is not None:
+            return [int(n) for n in rec.nodes]
+        if rec.pg is not None:
+            return list(expand_pg_to_nodes(fem, rec.pg))
+        return []
+
+    def _target_nodes(rec: "_LoadRecord | _SPRecord") -> "list[int]":
+        if rec.target_kind == "pg":
+            return list(expand_pg_to_nodes(fem, rec.target))
+        return [int(rec.target)]
+
+    for frec in fix_records:
+        hit = _hits(_pg_or_nodes(frec))
+        if hit:
+            _refuse(
+                f"fix / support (pg={frec.pg!r})" if frec.pg is not None
+                else "fix / support", hit,
+                "Restrain the panel through its boundary nodes or frames "
+                "(a PG that holds only those), or use support_nodes= on the "
+                "membrane.")
+    for mrec in mass_records:
+        hit = _hits(_pg_or_nodes(mrec))
+        if hit:
+            _refuse(
+                f"mass (pg={mrec.pg!r})" if mrec.pg is not None else "mass", hit,
+                "Give the slab mass through the membrane's rho= (with "
+                "thickness=), or put the mass on boundary / frame nodes.")
+    for lrec in load_records:
+        hit = _hits(_target_nodes(lrec))
+        if hit:
+            _refuse(
+                f"nodal load ({lrec.target_kind}={lrec.target!r})", hit,
+                "Load the panel with p.surface_load(ele=membrane) (its "
+                "pressure=), or load boundary / frame nodes.")
+    for srec in sp_records:
+        hit = _hits(_target_nodes(srec))
+        if hit:
+            _refuse(
+                f"sp ({srec.target_kind}={srec.target!r})", hit,
+                "Prescribe the motion on boundary / frame nodes.")
+    for crec in constraint_records:
+        spec = getattr(type(crec), "tag_rewrite_spec", None)
+        if spec is None:
+            continue
+        hit = _hits(_constraint_record_node_tags(crec))
+        if hit:
+            _refuse(
+                f"constraint {type(crec).__name__} "
+                f"({getattr(crec, 'kind', '')})", hit,
+                "Constrain boundary / frame nodes; the membrane already ties "
+                "the panel in its plane.")
+    cases = set(from_model_cases)
+    if cases:
+        hit = _hits(
+            int(r.node_id) for r in fem.nodes.loads if str(r.pattern) in cases)
+        if hit:
+            _refuse(
+                f"p.from_model({sorted(cases)}) nodal loads (g.loads)", hit,
+                "Load the panel with p.surface_load(ele=membrane) (its "
+                "pressure=) instead of a g.loads surface load on the slab.")
+        hit = _hits(
+            int(r.node_id) for r in fem.nodes.sp
+            if not r.is_homogeneous and str(r.pattern) in cases
+        )
+        if hit:
+            _refuse(
+                f"p.from_model({sorted(cases)}) prescribed displacements", hit,
+                "Prescribe the motion on boundary / frame nodes.")
+    if mass_from_model:
+        masses = fem.nodes.masses
+        if len(masses):
+            hit = _hits(masses.node_ids())
+            if hit:
+                _refuse(
+                    "ops.mass_from_model() (g.masses)", hit,
+                    "Give the slab mass through the membrane's rho= (with "
+                    "thickness=) instead of g.masses on the slab, or keep "
+                    "g.masses on boundary / frame nodes.")
+    for what, ids in node_targets:
+        hit = _hits(ids)
+        if hit:
+            _refuse(
+                what, hit,
+                "Record the panel's boundary / frame nodes, or the "
+                "membrane's own element responses.")
 
 
 def validate_adaptive_element_endpoints(
@@ -550,36 +800,56 @@ def resolve_ndf_overlay(
         except Exception:
             decoupled = set()
 
+    from .pg_expand import node_name_to_nodes
+
     overlay: dict[int, int] = {}
     for rec in records:
-        tag = rec.tag
-        if tag is None and rec.handle is not None:
-            tag = getattr(rec.handle, "tag", None)
-        if tag is None:
-            raise BridgeError(
-                "ops.ndf: the target decoupled node has no resolved tag — its "
-                "g.decouple_node handle was not materialized. Call "
-                "g.mesh.queries.get_fem_data(...) so the FEM factory assigns "
-                "the node its tag before constructing the bridge."
-            )
-        tag = int(tag)
-        if tag in inferred:
-            raise BridgeError(
-                f"ops.ndf may only state the ndf of an element-LESS decoupled "
-                f"node, but node {tag} is touched by an element (its ndf is "
-                f"inferred as {inferred[tag]}). Drop ops.ndf for node {tag} — "
-                f"the incident element class already determines its ndf "
-                f"(ADR 0048 / 0049)."
-            )
-        if tag not in decoupled:
-            raise BridgeError(
-                f"ops.ndf target node {tag} is not a decoupled node. ops.ndf "
-                f"is restricted to element-less nodes created via "
-                f"g.decouple_node(...); a mesh node's ndf is inferred from its "
-                f"incident elements and cannot be overridden (ADR 0048 / 0049)."
-            )
-        overlay[tag] = int(rec.ndf)
+        if isinstance(rec.handle, str):
+            # A decoupled node's (or node set's) label: every node
+            # it names, each checked below like a tag.
+            targets: "tuple[int | None, ...]" = node_name_to_nodes(
+                fem, rec.handle, where="ops.ndf target")
+        elif rec.tag is None and rec.handle is not None:
+            targets = (getattr(rec.handle, "tag", None),)
+        else:
+            targets = (rec.tag,)
+        for target in targets:
+            _overlay_one(target, rec.ndf, inferred, decoupled, overlay)
     return overlay
+
+
+def _overlay_one(
+    tag: "int | None",
+    ndf: int,
+    inferred: "dict[int, int]",
+    decoupled: "set[int]",
+    overlay: "dict[int, int]",
+) -> None:
+    """Check one ``ops.ndf`` target node and add it to ``overlay``."""
+    if tag is None:
+        raise BridgeError(
+            "ops.ndf: the target decoupled node has no resolved tag — its "
+            "g.decouple_node handle was not materialized. Call "
+            "g.mesh.queries.get_fem_data(...) so the FEM factory assigns "
+            "the node its tag before constructing the bridge."
+        )
+    tag = int(tag)
+    if tag in inferred:
+        raise BridgeError(
+            f"ops.ndf may only state the ndf of an element-LESS decoupled "
+            f"node, but node {tag} is touched by an element (its ndf is "
+            f"inferred as {inferred[tag]}). Drop ops.ndf for node {tag} — "
+            f"the incident element class already determines its ndf "
+            f"(ADR 0048 / 0049)."
+        )
+    if tag not in decoupled:
+        raise BridgeError(
+            f"ops.ndf target node {tag} is not a decoupled node. ops.ndf "
+            f"is restricted to element-less nodes created via "
+            f"g.decouple_node(...); a mesh node's ndf is inferred from its "
+            f"incident elements and cannot be overridden (ADR 0048 / 0049)."
+        )
+    overlay[tag] = int(ndf)
 
 
 def validate_constraint_master_ndf(
