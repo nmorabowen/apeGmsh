@@ -956,7 +956,7 @@ FEAST_MODAL_PROPERTIES_MESSAGE = (
 )
 
 
-#: The Ladruno fork commit (fork #1016, WP-208) from which a
+#: The Ladruno fork commit (fork WP-208) from which a
 #: ``LadrunoMembrane`` with ``-diaphragmNodes`` or ``-f11``/``-f22``/
 #: ``-f12`` passes the patch test: on ``c83ee812e``, which first parses
 #: them, a uniform stretch reads ``R / (E t eps S)`` = 0.72 to 0.74.
