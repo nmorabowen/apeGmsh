@@ -21,10 +21,10 @@ if TYPE_CHECKING:
     from .Results import Results
 
 __all__ = [
-    "BeamSpanSegmentLoad",
     "BeamSpanDiagram",
-    "parse_membrane_subsegment_loads",
+    "BeamSpanSegmentLoad",
     "parse_ele_load_beam_uniform",
+    "parse_membrane_subsegment_loads",
     "reconstruct_beam_element_diagram",
     "reconstruct_beam_span_diagrams",
 ]
@@ -73,15 +73,15 @@ class BeamSpanDiagram:
       :math:`N(L) = +N_J`, :math:`dN/dx = -w_x(x)`).
     * ``Vy(x)``: local-y shear (:math:`V_y(0) = +V_{y,I}`,
       :math:`V_y(L) = -V_{y,J}`, :math:`dV_y/dx = w_y(x)`).
-    * ``Vz(x)``: local-z shear (:math:`V_z(0) = +V_{z,I}`,
-      :math:`V_z(L) = -V_{z,J}`, :math:`dV_z/dx = w_z(x)`).
+    * ``Vz(x)``: local-z shear (:math:`V_z(0) = -V_{z,I}`,
+      :math:`V_z(L) = +V_{z,J}`, :math:`dV_z/dx = -w_z(x)`).
     * ``T(x)``: torsion (:math:`T(0) = -T_I`).
     * ``Mz(x)``: bending moment about local z associated with :math:`V_y`
       (:math:`M_z(0) = -M_{z,I}`, :math:`M_z(L) = +M_{z,J}`,
       :math:`dM_z/dx = V_y(x)`).
     * ``My(x)``: bending moment about local y associated with :math:`V_z`
       (:math:`M_y(0) = -M_{y,I}`, :math:`M_y(L) = +M_{y,J}`,
-      :math:`dM_y/dx = -V_z(x)`).
+      :math:`dM_y/dx = V_z(x)`).
     """
 
     element_id: int
@@ -268,12 +268,12 @@ def reconstruct_beam_element_diagram(
     # Evaluate shear at initial critical points to locate interior extrema (Vy=0, Vz=0)
     crit_arr = np.asarray(crit_points, dtype=np.float64)
     vy_crit = np.full_like(crit_arr, Vy_I)
-    vz_crit = np.full_like(crit_arr, Vz_I)
+    vz_crit = np.full_like(crit_arr, -Vz_I)
     for a, b, seg in active_loads:
         df_y, _ = _integrate_trapezoid_array(crit_arr, a, b, float(seg.wya), float(seg.wyb))
         df_z, _ = _integrate_trapezoid_array(crit_arr, a, b, float(seg.wza), float(seg.wzb))
         vy_crit += df_y
-        vz_crit += df_z
+        vz_crit -= df_z
 
     tol_seg = 1e-12 * L
     extra_roots: list[float] = []
@@ -298,7 +298,7 @@ def reconstruct_beam_element_diagram(
                 sz += kz
         for tau in _quadratic_roots_on_interval(float(vy_crit[m]), wy0, sy, h):
             extra_roots.append(xm + tau)
-        for tau in _quadratic_roots_on_interval(float(vz_crit[m]), wz0, sz, h):
+        for tau in _quadratic_roots_on_interval(float(vz_crit[m]), -wz0, -sz, h):
             extra_roots.append(xm + tau)
 
     if extra_roots:
@@ -325,7 +325,7 @@ def reconstruct_beam_element_diagram(
 
     N = np.full_like(x, -N_I)
     Vy = np.full_like(x, Vy_I)
-    Vz = np.full_like(x, Vz_I)
+    Vz = np.full_like(x, -Vz_I)
     T = np.full_like(x, -T_I)
     Mz = -Mz_I + Vy_I * x
     My = -My_I - Vz_I * x
@@ -337,7 +337,7 @@ def reconstruct_beam_element_diagram(
 
         N -= dFx
         Vy += dFy
-        Vz += dFz
+        Vz -= dFz
         Mz += dMy_z
         My -= dMz_y
 
@@ -376,7 +376,7 @@ def parse_membrane_subsegment_loads(
     by_beam: dict[int, list[BeamSpanSegmentLoad]] = {}
     for s in range(n_sub):
         base = 9 * s
-        frame_tag = int(round(float(arr[base + 0])))
+        frame_tag = round(float(arr[base + 0]))
         seg = BeamSpanSegmentLoad(
             aL=float(arr[base + 1]),
             bL=float(arr[base + 2]),
@@ -546,7 +546,7 @@ def _select_time_row(arr: ndarray, step: int) -> ndarray:
 
 
 def _extract_beam_local_forces(
-    results: "Results", step: int,
+    results: Results, step: int,
 ) -> dict[int, ndarray]:
     """Extract per-element 6- or 12-component ``localForce`` vectors at ``step``."""
     out: dict[int, ndarray] = {}
@@ -556,7 +556,7 @@ def _extract_beam_local_forces(
     if elems is not None:
         try:
             avail = set(elems.available_components())
-        except Exception:
+        except Exception:  # noqa: BLE001
             avail = set()
 
         if "localForce" in avail:
@@ -628,7 +628,7 @@ def _extract_beam_local_forces(
         if line_st is not None:
             try:
                 ls_avail = set(line_st.available_components())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 ls_avail = set()
             req_3d = {
                 "axial_force", "shear_y", "shear_z",
@@ -658,13 +658,13 @@ def _extract_beam_local_forces(
                         [
                             -float(v_n[i0]),
                             float(v_vy[i0]),
-                            float(v_vz[i0]),
+                            -float(v_vz[i0]),
                             -float(v_t[i0]),
                             -float(v_my[i0]),
                             -float(v_mz[i0]),
                             float(v_n[i1]),
                             -float(v_vy[i1]),
-                            -float(v_vz[i1]),
+                            float(v_vz[i1]),
                             float(v_t[i1]),
                             float(v_my[i1]),
                             float(v_mz[i1]),
@@ -710,8 +710,8 @@ def _call_or_attr(obj: Any, name: str, default: Any = ()) -> Any:
 
 
 def _resolve_element_lengths_and_tag_maps(
-    results: "Results",
-    model: "OpenSeesModel | None",
+    results: Results,
+    model: OpenSeesModel | None,
 ) -> tuple[dict[int, float], dict[int, float], dict[int, int], dict[int, int]]:
     """Return ``(fem_lengths, ops_lengths, fem_to_ops, ops_to_fem)`` for line elements."""
     fem = getattr(results, "fem", None)
@@ -769,9 +769,9 @@ def _resolve_element_lengths_and_tag_maps(
 
 
 def reconstruct_beam_span_diagrams(
-    results: "Results",
+    results: Results,
     *,
-    model: "OpenSeesModel | None" = None,
+    model: OpenSeesModel | None = None,
     subsegment_loads: Mapping[int, Sequence[BeamSpanSegmentLoad]] | Sequence[float] | ndarray | None = None,
     step: int = -1,
     n_sub: int = 9,
@@ -800,7 +800,7 @@ def reconstruct_beam_span_diagrams(
     if resolved_model is None:
         try:
             resolved_model = results.model
-        except Exception:
+        except Exception:  # noqa: BLE001
             resolved_model = None
 
     ndm = 3
@@ -811,7 +811,7 @@ def reconstruct_beam_span_diagrams(
     if not local_forces:
         return {}
 
-    fem_lengths, ops_lengths, fem_to_ops, ops_to_fem = _resolve_element_lengths_and_tag_maps(
+    fem_lengths, ops_lengths, _fem_to_ops, ops_to_fem = _resolve_element_lengths_and_tag_maps(
         results, resolved_model,
     )
 

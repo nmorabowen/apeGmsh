@@ -156,9 +156,12 @@ class Model(_HasLogging):
         Synchronise the OCC kernel with the gmsh model topology.
 
         Call this explicitly when you have been batching operations with
-        ``sync=False``.  Returns ``self`` for chaining.
+        ``sync=False``.  Returns ``self`` for chaining.  Labels asked
+        for on those entities (``label=``) are created here.
         """
         gmsh.model.occ.synchronize()
+        from .Labels import sync_held_labels
+        sync_held_labels(self._parent)
         self._log("OCC kernel synchronised")
         return self
 

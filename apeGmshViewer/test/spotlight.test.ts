@@ -44,7 +44,7 @@ const defLoaded: State = reduce(initialState, { type: "fileLoaded", artifact: "m
 
 test("SPOTLIGHT_EVENT_LEDGER classifies every EventType with a non-empty command/description or reason", () => {
   const entries = Object.entries(SPOTLIGHT_EVENT_LEDGER) as [EventType, (typeof SPOTLIGHT_EVENT_LEDGER)[EventType]][];
-  assert.equal(entries.length, 74, "all 74 store events are classified in SPOTLIGHT_EVENT_LEDGER");
+  assert.equal(entries.length, 75, "all 75 store events are classified in SPOTLIGHT_EVENT_LEDGER");
   const exposedCommands = new Set<string>();
   for (const [eventType, entry] of entries) {
     if (entry.kind === "expose") {

@@ -7,15 +7,19 @@
 //   buildLineDiagram3D, projectHoverNeedle, buildBeamChains)
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import type { ModelFile, OpsObject } from "../src/model/types.ts";
 import { LOCAL_FORCE_STATION_SIGNS, openLadruno, quaternionToZRec } from "../src/reader/ladruno.ts";
+import { openModel } from "../src/reader/node.ts";
 import { modelTransformVecxz, transformVecxzOf } from "../src/reader/read.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
+import { BlobStore } from "../src/state/blobs.ts";
+import { loadModel } from "../src/state/load.ts";
 import {
   beamLocalAxes,
   buildBeamChains,
@@ -31,7 +35,7 @@ import {
   requires3dFrame,
   screenExtrusionDirection,
 } from "../src/state/lineDiagram.ts";
-import type { Decl, DeclPath } from "../src/state/types.ts";
+import type { Decl, DeclPath, LineStationComponent } from "../src/state/types.ts";
 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;
@@ -44,13 +48,13 @@ const closeVec = (a: readonly number[], b: readonly number[], tol = 1e-9) =>
 
 test("beamLocalAxes matches Python compute_beam_local_axes for 2D and 3D chords", () => {
   // 2D horizontal beam along +X: x = (1, 0, 0), defaultVecxz = (0, 0, 1) -> y = (0, 1, 0), z = (0, 0, 1)
-  const f2dH = beamLocalAxes([1, 0, 0], defaultVecxz([1, 0, 0]));
+  const f2dH = beamLocalAxes([1, 0, 0], defaultVecxz([1, 0, 0]))!;
   assert.ok(closeVec(f2dH.xLocal, [1, 0, 0]));
   assert.ok(closeVec(f2dH.yLocal, [0, 1, 0]));
   assert.ok(closeVec(f2dH.zLocal, [0, 0, 1]));
 
   // 2D vertical column along +Y: x = (0, 1, 0), defaultVecxz = (0, 0, 1) -> y = (-1, 0, 0), z = (0, 0, 1)
-  const f2dV = beamLocalAxes([0, 1, 0], defaultVecxz([0, 1, 0]));
+  const f2dV = beamLocalAxes([0, 1, 0], defaultVecxz([0, 1, 0]))!;
   assert.ok(closeVec(f2dV.xLocal, [0, 1, 0]));
   assert.ok(closeVec(f2dV.yLocal, [-1, 0, 0]));
   assert.ok(closeVec(f2dV.zLocal, [0, 0, 1]));
@@ -59,21 +63,21 @@ test("beamLocalAxes matches Python compute_beam_local_axes for 2D and 3D chords"
   // y = (1,0,0) x (0,0,1) = (0, -1, 0); z = (1, 0, 0)
   const vDefZ = defaultVecxz([0, 0, 1]);
   assert.ok(closeVec(vDefZ, [1, 0, 0]));
-  const f3dZ = beamLocalAxes([0, 0, 1], vDefZ);
+  const f3dZ = beamLocalAxes([0, 0, 1], vDefZ)!;
   assert.ok(closeVec(f3dZ.xLocal, [0, 0, 1]));
   assert.ok(closeVec(f3dZ.yLocal, [0, -1, 0]));
   assert.ok(closeVec(f3dZ.zLocal, [1, 0, 0]));
 
   // 3D inclined chord (0.6, 0.8, 0) with custom vecxz = (0, 0, 1):
   // x = (0.6, 0.8, 0), y = (0,0,1) x (0.6,0.8,0) = (-0.8, 0.6, 0), z = (0, 0, 1)
-  const f3dInc = beamLocalAxes([0.6, 0.8, 0], [0, 0, 1]);
+  const f3dInc = beamLocalAxes([0.6, 0.8, 0], [0, 0, 1])!;
   assert.ok(closeVec(f3dInc.xLocal, [0.6, 0.8, 0]));
   assert.ok(closeVec(f3dInc.yLocal, [-0.8, 0.6, 0]));
   assert.ok(closeVec(f3dInc.zLocal, [0, 0, 1]));
 
   // Deformed chord re-orthogonalization against recorded zRec = (0, 0, 1):
   const s = Math.hypot(1, 0.1);
-  const fDef = beamLocalAxes([1 / s, 0, 0.1 / s], [0, 0, 1]);
+  const fDef = beamLocalAxes([1 / s, 0, 0.1 / s], [0, 0, 1])!;
   assert.ok(closeVec(fDef.yLocal, [0, 1, 0]));
   assert.ok(closeVec(fDef.xLocal, [1 / s, 0, 0.1 / s]));
   assert.ok(closeVec(fDef.zLocal, [-0.1 / s, 0, 1 / s]));
@@ -226,13 +230,19 @@ test("picker metadata, defaultFlipSignFor, localAxisForComponent, and LOCAL_FORC
   assert.deepEqual(fields[0]!.components.map((c) => c.key), ["N", "Vy", "Vz", "T", "My", "Mz"]);
   assert.deepEqual(fields[1]!.components.map((c) => c.key), ["eps", "kappaZ"]);
 
-  // Bending moments default to tension-side convention (flipSign = true); others false
+  // Bending moments and curvatures default to tension-side convention (flipSign = true); others false
   assert.equal(defaultFlipSignFor("My"), true);
   assert.equal(defaultFlipSignFor("Mz"), true);
+  assert.equal(defaultFlipSignFor("kappaY"), true);
+  assert.equal(defaultFlipSignFor("kappaZ"), true);
   assert.equal(defaultFlipSignFor("N"), false);
   assert.equal(defaultFlipSignFor("Vy"), false);
   assert.equal(defaultFlipSignFor("Vz"), false);
   assert.equal(defaultFlipSignFor("T"), false);
+  assert.equal(defaultFlipSignFor("eps"), false);
+  assert.equal(defaultFlipSignFor("gammaY"), false);
+  assert.equal(defaultFlipSignFor("gammaZ"), false);
+  assert.equal(defaultFlipSignFor("theta"), false);
 
   // Local axis mapping: Vy & Mz & T -> yLocal, Vz & My & N -> zLocal
   assert.equal(localAxisForComponent("Vy"), "y");
@@ -846,3 +856,192 @@ test("buildLineDiagram3D extrudes My on the 3-D tension side when flipSign=true 
   const needle = projectHoverNeedle(geomMy.beams[0]!, [2, 0, 0], geomMy.effectiveScale, true);
   assert.ok(closeVec(needle.pTop, [2, 0, -0.15], 1e-6));
 });
+
+// -- 8. OpenSees Golden Oracle suite (fixtures/line_oracle_*.{h5,ladruno,golden.json}) --
+
+interface GoldenStationEntry {
+  xi: number[];
+  values: number[][];
+  closed_form: number[][];
+}
+
+interface GoldenBucketEntry {
+  stations: Record<string, GoldenStationEntry>;
+}
+
+interface GoldenElementEntry {
+  fem_id: number;
+  ops_tag: number;
+  nodes: [number, number];
+  coords_i: [number, number, number];
+  coords_j: [number, number, number];
+  length: number;
+  frame: {
+    x: [number, number, number];
+    y: [number, number, number];
+    z: [number, number, number];
+  };
+  frame_quaternion_wxyz: [number, number, number, number];
+  buckets: Record<string, GoldenBucketEntry>;
+}
+
+interface GoldenOracleFile {
+  fixture: string;
+  ndm: 2 | 3;
+  responses: string[];
+  elements: GoldenElementEntry[];
+}
+
+const COMP_TO_CANON: Record<LineStationComponent, string> = {
+  N: "axial_force",
+  Vy: "shear_y",
+  Vz: "shear_z",
+  T: "torsion",
+  My: "bending_moment_y",
+  Mz: "bending_moment_z",
+  eps: "axial_strain",
+  gammaY: "shear_strain_y",
+  gammaZ: "shear_strain_z",
+  theta: "torsion_rate",
+  kappaY: "curvature_y",
+  kappaZ: "curvature_z",
+};
+
+const BUCKET_PRIORITY = ["section.force", "section.deformation", "localForce", "basicForce", "axialForce"] as const;
+
+function winningBucketStation(el: GoldenElementEntry, canon: string): GoldenStationEntry | null {
+  for (const b of BUCKET_PRIORITY) {
+    const st = el.buckets[b]?.stations[canon];
+    if (st) return st;
+  }
+  return null;
+}
+
+for (const fixtureName of [
+  "line_oracle_ss_udl",
+  "line_oracle_cantilever3d",
+  "line_oracle_column3d",
+  "line_oracle_fbc_lobatto",
+  "line_oracle_basic_only",
+] as const) {
+  test(`OpenSees golden oracle (${fixtureName}): readLineStations, joinLadrunoElements, beamLocalAxes, and buildLineDiagram3D match OpenSees 3.7.1`, async () => {
+    const base = new URL(`../fixtures/${fixtureName}`, import.meta.url);
+    const modelPath = fileURLToPath(new URL(`${fixtureName}.h5`, base));
+    const ladrunoPath = fileURLToPath(new URL(`${fixtureName}.ladruno`, base));
+    const goldenPath = fileURLToPath(new URL(`${fixtureName}.golden.json`, base));
+    const golden = JSON.parse(readFileSync(goldenPath, "utf8")) as GoldenOracleFile;
+
+    const model = await openModel(modelPath);
+    const blobs = new BlobStore();
+    const loaded = loadModel(model, blobs);
+    const r = openLadruno(H5, ladrunoPath);
+    try {
+      const stageId = r.index.stages[0]!.id;
+      const join = joinLadrunoElements(loaded.decls, { state: "paired", by: "model_hash" }, r.index.provenance);
+      assert.equal(join.ok, true, `${fixtureName}: joinLadrunoElements must succeed`);
+      if (!join.ok) return;
+      assert.equal(join.space, "ops_tag");
+
+      for (const el of golden.elements) {
+        const declPath = join.byLadrunoId.get(el.ops_tag);
+        assert.ok(declPath !== undefined, `${fixtureName}: ops_tag ${el.ops_tag} joined`);
+        assert.equal(loaded.decls[declPath!]?.element?.femId, el.fem_id);
+        const [qw, qx, qy, qz] = el.frame_quaternion_wxyz;
+        assert.ok(
+          closeVec(quaternionToZRec(qw, qx, qy, qz), el.frame.z, 1e-6),
+          `${fixtureName} ops_tag ${el.ops_tag}: quaternionToZRec matches golden frame.z`,
+        );
+      }
+
+      const avail = r.availableLineStations(stageId);
+      assert.ok(avail.length > 0, `${fixtureName}: has availableLineStations`);
+
+      const lineElement = blobs.i32(loaded.mesh.lineElement);
+      const drawnLinePositions = blobs.f32(loaded.mesh.linePositions);
+      const lineNodes = blobs.get(loaded.mesh.vertexNodes.line) as Float64Array;
+
+      for (const comp of avail) {
+        const canon = COMP_TO_CANON[comp];
+        const slab = r.readLineStations(stageId, comp);
+
+        for (let stepIdx = 0; stepIdx < slab.nSteps; stepIdx++) {
+          const stepData = r.readLineStationStep(stageId, comp, stepIdx);
+          // Check raw station read against golden
+          for (const el of golden.elements) {
+            const expected = winningBucketStation(el, canon);
+            assert.ok(expected !== null, `${fixtureName} ${comp}: golden station entry for ops_tag ${el.ops_tag}`);
+            const idxs: number[] = [];
+            for (let i = 0; i < stepData.elementIndex.length; i++) {
+              if (stepData.elementIndex[i] === el.ops_tag) idxs.push(i);
+            }
+            assert.equal(idxs.length, expected.xi.length, `${fixtureName} ${comp} step ${stepIdx} ops_tag ${el.ops_tag} station count`);
+            const actualXi = idxs.map((i) => stepData.stationNaturalCoord[i]!);
+            const actualVals = idxs.map((i) => stepData.values[i]!);
+            assert.ok(closeVec(actualXi, expected.xi, 1e-9), `${fixtureName} ${comp} xi`);
+            assert.ok(closeVec(actualVals, expected.values[stepIdx]!, 1e-9), `${fixtureName} ${comp} step ${stepIdx} values`);
+          }
+
+          // Check 3-D diagram build (frame xLocal, extrudeDir, expanded stations, zero skipped beams)
+          const geom = buildLineDiagram3D({
+            decls: loaded.decls,
+            meshElements: loaded.mesh.elements,
+            lineElement,
+            drawnLinePositions,
+            lineNodes,
+            stepData,
+            join,
+            ndm: golden.ndm,
+            scale: 1,
+          });
+          assert.equal(geom.skippedUnorientedBeams, 0, `${fixtureName} ${comp}: 0 unoriented beams`);
+          assert.equal(geom.notice, null, `${fixtureName} ${comp}: no error/skip notice`);
+          assert.equal(geom.beams.length, golden.elements.length, `${fixtureName} ${comp}: all beams drawn`);
+
+          for (const el of golden.elements) {
+            const beam = geom.beams.find((b) => b.elementId === el.ops_tag);
+            assert.ok(beam !== undefined, `${fixtureName} ${comp}: beam ops_tag ${el.ops_tag} present`);
+            assert.ok(closeVec(beam.pStart, el.coords_i, 1e-6), `${fixtureName} ${comp} ops_tag ${el.ops_tag} pStart`);
+            assert.ok(closeVec(beam.pEnd, el.coords_j, 1e-6), `${fixtureName} ${comp} ops_tag ${el.ops_tag} pEnd`);
+            assert.ok(close(beam.length, el.length, 1e-6), `${fixtureName} ${comp} ops_tag ${el.ops_tag} length`);
+            assert.ok(closeVec(beam.xLocal, el.frame.x, 1e-6), `${fixtureName} ${comp} ops_tag ${el.ops_tag} xLocal`);
+            const expectedExtrude: readonly [number, number, number] =
+              localAxisForComponent(comp) === "y"
+                ? el.frame.y
+                : comp === "My" || comp === "kappaY"
+                  ? [-el.frame.z[0], -el.frame.z[1], -el.frame.z[2]]
+                  : el.frame.z;
+            assert.ok(
+              closeVec(beam.extrudeDir, expectedExtrude, 1e-6),
+              `${fixtureName} ${comp} ops_tag ${el.ops_tag} extrudeDir (${beam.extrudeDir.join(",")} vs ${expectedExtrude.join(",")})`,
+            );
+
+            const expected = winningBucketStation(el, canon)!;
+            if (expected.xi.length === 1) {
+              // Single-station basicForce N/T expands to [-1, +1]
+              assert.ok(closeVec(Array.from(beam.xi), [-1, 1], 1e-9));
+              const v = expected.values[stepIdx]![0]!;
+              assert.ok(closeVec(Array.from(beam.values), [v, v], 1e-9));
+            } else {
+              assert.ok(closeVec(Array.from(beam.xi), expected.xi, 1e-9));
+              assert.ok(closeVec(Array.from(beam.values), expected.values[stepIdx]!, 1e-9));
+            }
+          }
+
+          // On line_oracle_ss_udl at step 1 for Mz: verify both Fwd (ops_tag 4) and Rev (ops_tag 6)
+          // extrude midspan sagging moment downward (global Y < 0) under default flipSign=true!
+          if (fixtureName === "line_oracle_ss_udl" && comp === "Mz" && stepIdx === 1) {
+            const bFwd = geom.beams.find((b) => b.elementId === 4)!;
+            const bRev = geom.beams.find((b) => b.elementId === 6)!;
+            const hitFwd = projectHoverNeedle(bFwd, [3, 0, 0], geom.effectiveScale, true);
+            const hitRev = projectHoverNeedle(bRev, [3, 0, 0], geom.effectiveScale, true);
+            assert.ok(hitFwd.pTop[1] < -0.1, `Fwd midspan sagging Mz extrudes toward -Y (${hitFwd.pTop[1]})`);
+            assert.ok(closeVec(hitFwd.pTop, hitRev.pTop, 1e-6), "Fwd and Rev meet at identical 3-D midspan tip");
+          }
+        }
+      }
+    } finally {
+      r.close();
+    }
+  });
+}
+
