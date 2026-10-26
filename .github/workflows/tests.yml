@@ -440,7 +440,8 @@ jobs:
     # it. The qt lane already learned this and caps each file at 300 s.
     # 40, not 25: suite wall time on main ran 950-1467 s over 7 runs and
     # run 39168105807 was cancelled at teardown after passing (#2166).
-    timeout-minutes: 40
+    # TEMP (#2544): runner variance puts green runs at 37-39 min; restore to 40 once the slow-runner cause is fixed.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
