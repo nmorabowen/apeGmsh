@@ -308,10 +308,11 @@ class _GravityModalMixin(_ProcedureHost):
         ``1e-3`` of its first difference (a no-tension brace or a gap at zero
         strain, a material that loads and unloads on different branches,
         such as ``Concrete01`` on its backbone) raises. A mode that fails
-        that check is probed again at 100 times the amplitude and judged
-        there: a kink's ratio does not depend on the amplitude, while
-        round-off (a near-rigid link, whose force is a large stiffness times
-        a tiny deformation) shrinks with it. Combine the result
+        that check is probed again at 100 times the amplitude, judged there,
+        and takes its values from that probe: a kink's ratio does not depend
+        on the amplitude, while round-off (a near-rigid link, whose force is
+        a large stiffness times a tiny deformation) shrinks with it. Combine
+        the result
         with :meth:`SpectrumModalResult.combine` (CQC / SRSS) and
         :meth:`SpectrumModalResult.directional` (100/30 / SRSS); the gravity
         values are kept apart (:func:`~apeGmsh.opensees.analysis.spectrum.seismic_envelope`).
@@ -703,13 +704,10 @@ class _GravityModalMixin(_ProcedureHost):
                     "translates in it."
                 )
             amp = probe * float(lam[k]) / peak
-            legs, forces = mode_legs(k, phi, amp, 1.0)
             # Called before the loop moves on, so the closure's k, phi and
             # amp are this mode's.
-            worst, ratio = _judge_kink(
-                elements, forces,
-                lambda: mode_legs(k, phi, amp, _REPROBE)[1],
-            )
+            worst, ratio, scale, legs = _judge_kink(
+                elements, lambda s: mode_legs(k, phi, amp, s))
             if ratio > _KINK_TOL:
                 raise RuntimeError(
                     f"{context}: mode {k + 1}'s two probe legs met different "
@@ -723,8 +721,9 @@ class _GravityModalMixin(_ProcedureHost):
                     "their backbone). The response spectrum is linear about "
                     "that state and is refused."
                 )
+            # The values come from the legs the verdict was taken on.
             for name in extractors:
-                unit = (legs[0][name] - legs[1][name]) / (2.0 * amp)
+                unit = (legs[0][name] - legs[1][name]) / (2.0 * scale * amp)
                 per_mode[name][:, k, :] = coef[:, k, None] * unit[None, :]
 
         algorithm._emit(live_emitter, self.tag_for(algorithm) or 0)
@@ -837,24 +836,32 @@ def _kink_ratio(
     return worst, ratio
 
 
+_T = TypeVar("_T")
+
+
 def _judge_kink(
     elements: "Sequence[int]",
-    forces: "Sequence[Mapping[int, np.ndarray]]",
-    reprobe: "Callable[[], Sequence[Mapping[int, np.ndarray]]]",
-) -> "tuple[int | None, float]":
-    """The kink verdict for one mode: :func:`_kink_ratio` of its legs, and
-    where that exceeds ``_KINK_TOL``, of the legs ``reprobe`` takes at
-    ``_REPROBE`` times the amplitude instead. A kink keeps its ratio at
-    every amplitude, so it is refused either way; round-off, whose second
-    difference does not grow with the probe, falls below the limit (#2545).
-    The caller refuses when the returned ratio exceeds ``_KINK_TOL``."""
+    legs_at: "Callable[[float], tuple[_T, Sequence[Mapping[int, np.ndarray]]]]",
+) -> "tuple[int | None, float, float, _T]":
+    """The kink verdict for one mode. ``legs_at(scale)`` runs the mode's two
+    legs at ``scale`` times its amplitude and returns ``(legs, forces)``.
+
+    :func:`_kink_ratio` of the legs at the probe, and where that exceeds
+    ``_KINK_TOL``, of the legs at ``_REPROBE`` times it instead. A kink
+    keeps its ratio at every amplitude, so it is refused either way;
+    round-off, whose second difference does not grow with the probe, falls
+    below the limit (#2545). Returns ``(worst, ratio, scale, legs)`` of the
+    legs that decided; the caller refuses when ``ratio`` exceeds
+    ``_KINK_TOL`` and otherwise takes its values from those legs.
+    """
+    scale = 1.0
+    legs, forces = legs_at(scale)
     worst, ratio = _kink_ratio(elements, forces)
-    if ratio <= _KINK_TOL:
-        return worst, ratio
-    return _kink_ratio(elements, reprobe())
-
-
-_T = TypeVar("_T")
+    if ratio > _KINK_TOL:
+        scale = _REPROBE
+        legs, forces = legs_at(scale)
+        worst, ratio = _kink_ratio(elements, forces)
+    return worst, ratio, scale, legs
 
 
 def _imposed_leg(
