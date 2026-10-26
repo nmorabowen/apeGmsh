@@ -306,6 +306,7 @@ def test_layer_classes_are_the_bridge_shells() -> None:
     """The roster this file covers, so a new bridge shell shows up here."""
     assert LAYER_CLASSES == {
         "ASDShellQ4": 4, "ASDShellT3": 3, "ShellDKGQ": 4, "ShellMITC4": 4,
+        "ShellNLDKGQ": 4,  # ops.element.ShellNLDKGQ (#2466)
     }
     # ShellMITC3, the layered shell no build had, left the bridge (#2092).
     assert not hasattr(_bridge_elements, "ShellMITC3")
