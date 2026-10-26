@@ -159,7 +159,6 @@ _DOT_EXT = re.compile(r"\.\w")
 _FREE, _ITEM, _PARA, _LIST = range(4)
 _AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
 _TICKED = re.compile(r"`([^`\n]+)`")
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _PATHLIKE =re.compile(r"[\w.\-/*?\[\]]+(?: [\w.\-/*?\[\]]+)*")
 _GLOB = re.compile(r"[*?\[]")
 COMPARE_TRIES = 5
@@ -426,8 +425,8 @@ def _line_paths(line: str, real: Real | None = None) -> list[str]:
             folder = ""  # only a list ("`a/x.py`, `y.py`") makes siblings, not prose
         end = match.end()
         path = match.group(1).split("::", 1)[0].strip().removeprefix("./").lstrip("/")
-        if not _PATHLIKE.fullmatch(path) or (" " in path and "/" not in path):
-            folder = ""  # a space is allowed only inside a directory path (#2339)
+        if not _PATHLIKE.fullmatch(path) or (" " in path and "/" not in path.split(" ", 1)[0]):
+            folder = ""  # a space is allowed only after a directory part, never in a command (#2339)
             continue
         if "/" not in path and "." not in path:
             if real is None or not leading or _GLOB.search(path) or not real(path):
@@ -514,15 +513,12 @@ def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
             in_label = found = True
             line = line[label.end():]
         if (in_section or in_label) and "`" in line:
-            if _negates(line) and not _line_paths(line) and not line.rstrip(" *").endswith(":"):
-                # A prose note that names no path ("no `nodal_resisting_*`", #2298) is
-                # neither read nor allowed to refuse the card; it is named, never silent.
-                print(f"check 9: non-path line in Owned: {line.strip()!r}")
-                continue
             if _negates(line):
                 raise LandError(
                     f"check 9: an Owned line negates, so which paths it owns is ambiguous; "
-                    f"refusing. Reword it (a '**Card amendment' comment): {line.strip()!r}"
+                    f"refusing. Prose belongs outside the '### Owned files' section (a negated note, even "
+                    f"one with no path, is refused; lesson #2326): move it under another heading, or "
+                    f"reword it (a '**Card amendment' comment): {line.strip()!r}"
                 )
             paths.extend(_line_paths(line, real))
     return paths if found else None
@@ -560,15 +556,14 @@ def _amendment_paths(
         elif mode == _ITEM and _BULLET.match(line) and indent <= depth:
             mode = _FREE  # a sibling or shallower bullet ends the negated item
         after_blank = not line.strip()
+        if mode == _PARA and line.rstrip(" *").endswith(":"):
+            mode = _LIST  # a negated paragraph whose last line ends in ":" introduces a negated list (#2326)
         found_word = _negation_word(line)
         if found_word is not None:
             bullet = _BULLET.match(line) is not None
             # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
             # excluding the list after it; admitting a file name never narrows an exclusion.
-            # A trailing ":" opens a negated list only when the negation is in the sentence
-            # that ends in it ("It never read globally. These paths join Owned:" does not, #2412).
-            tail = _SENTENCE_END.split(line.strip())[-1]
-            if (line.rstrip(" *").endswith(":") and _negates(tail)) or (bullet and not _line_paths(line)):
+            if line.rstrip(" *").endswith(":") or (bullet and not _line_paths(line)):
                 new = _LIST
             else:
                 new = _ITEM if bullet else _PARA

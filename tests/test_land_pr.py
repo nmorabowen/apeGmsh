@@ -2141,29 +2141,33 @@ AMENDMENT_2410 = (
     "- `src/apeGmsh/opensees/_internal/compose.py`\n"
     "- `tests/opensees/h5/test_replay_skipped_streams.py`\n"
 )
-CARD_2290 = (
-    "### Owned files\n- `scripts/a.py`\n"
-    "- Refuse at `__enter__` a record that has no `nodal_resisting_*` component; the split keeps `scripts/b.py` apart.\n"
-    "- `scripts/c.py`\n"
-)
+def test_a_negation_in_the_introducing_paragraph_negates_the_list_2410(capsys):
+    # fail closed (review of #2554, F2): the list is not added; --check-card names the lines
+    assert land_pr._amendment_paths(AMENDMENT_2410, 2410) == []
+    assert "skipped a negated card-amendment line" in capsys.readouterr().out
 
 
-def test_a_negation_in_an_earlier_sentence_does_not_open_the_list_2410():
-    assert land_pr._amendment_paths(AMENDMENT_2410, 2410) == [
-        "src/apeGmsh/opensees/_internal/compose.py",
-        "tests/opensees/h5/test_replay_skipped_streams.py",
-    ]
+@pytest.mark.parametrize("amendment", [
+    "**Card amendment:** Do not edit the frozen files. They are:\n- `src/a.py`\n",
+    "**Card amendment:** Do not edit e.g. the frozen files:\n- `src/a.py`\n",
+    "**Card amendment:** Do not edit the frozen files, cf. the ADR.\nThey are:\n\n- `src/a.py`\n",
+    "**Card amendment:** Do not edit the following (the frozen set):\n- `src/a.py`\n",
+])
+def test_a_negated_introduction_never_adds_the_list_2554(amendment):
+    assert land_pr._amendment_paths(amendment, 1) == []
 
 
-def test_a_prose_note_without_a_path_in_an_owned_section_neither_refuses_nor_drops_bullets_2298(capsys):
-    card = "### Owned files\n- `scripts/a.py`\n- A split note: no `nodal_resisting_*` here.\n- `scripts/c.py`\n"
-    assert land_pr._card_paths(card) == ["scripts/a.py", "scripts/c.py"]
-    assert "non-path line in Owned: '- A split note: no `nodal_resisting_*` here.'" in capsys.readouterr().out
-
-
-def test_a_prose_note_that_names_a_path_still_refuses_2298():
-    with pytest.raises(land_pr.LandError, match="an Owned line negates"):
-        land_pr._card_paths(CARD_2290)
+@pytest.mark.parametrize("line", [
+    "- `src/apeGmsh/results/`, but not *.h5 fixtures",
+    "- `src/apeGmsh/rebar/`, except `_frozen`",
+    "- Do not edit the following (`src/x.py`)",
+    "- Do not touch `FORK_PIN`",
+    "- A split note: no `nodal_resisting_*` here.",
+])
+def test_any_negated_owned_line_refuses_with_an_actionable_message_2554(line):
+    with pytest.raises(land_pr.LandError, match=r"Prose belongs outside the '### Owned files' section.*#2326") as exc:
+        land_pr._card_paths("### Owned files\n- `scripts/a.py`\n" + line + "\n")
+    assert line.strip() in str(exc.value)
 
 
 def test_an_owned_path_with_a_space_is_read_2339():
