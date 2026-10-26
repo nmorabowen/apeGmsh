@@ -186,6 +186,9 @@ class _Queries:
             fem = g.mesh.queries.get_fem_data(dim=3)     # 3D only
         """
         parent = self._mesh._parent
+        # Labels on sync=False entities are physical groups from here on.
+        from apeGmsh.core.Labels import bind_held_labels
+        bind_held_labels()
 
         # ── Cache path — Phase 3B.2b-prep ────────────────────────
         # Only honoured for the default extraction signature: caching

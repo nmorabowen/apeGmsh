@@ -126,6 +126,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ComplexEigenResult.from_flat"
     },
+    "EigenResult.modal_properties": {
+      "doc": "Run ``modalProperties -return`` on this solve's modes.",
+      "signature": "modal_properties(*, unorm: 'bool' = False) -> \"'ModalPropertiesResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.modal_properties"
+    },
     "EigenResult.mode_shape": {
       "doc": "Return the mode shape for ``node`` in ``mode`` (1-indexed).",
       "signature": "mode_shape(node: \"'int | Node'\", mode: 'int') -> 'np.ndarray'",
@@ -3410,7 +3416,7 @@
     },
     "ops.eigen_feast": {
       "doc": "Band-targeted FEAST eigensolve via the live emitter.",
-      "signature": "eigen_feast(f_min: 'float', f_max: 'float', *, certify: 'bool' = False) -> \"'EigenResult'\"",
+      "signature": "eigen_feast(f_min: 'float', f_max: 'float', *, certify: 'bool' = False, trace_stop: 'bool' = False) -> \"'EigenResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.eigen_feast"
     },
@@ -3428,13 +3434,13 @@
     },
     "ops.element.ASDShellQ4": {
       "doc": "",
-      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
+      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, p_delta: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ASDShellQ4"
     },
     "ops.element.ASDShellT3": {
       "doc": "",
-      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
+      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, p_delta: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ASDShellT3"
     },
@@ -3463,8 +3469,8 @@
       "symbol": "ops.element.CoupledZeroLength"
     },
     "ops.element.ElasticTimoshenkoBeam": {
-      "doc": "",
-      "signature": "ElasticTimoshenkoBeam(*, pg: 'str', transf: '_AnyTransf | str', E: 'float', G: 'float', A: 'float', Iz: 'float', Avy: 'float', Iy: 'float | None' = None, J: 'float | None' = None, Avz: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False) -> 'ElasticTimoshenkoBeam'",
+      "doc": "``element ElasticTimoshenkoBeam``; ``modifiers`` scales the emitted",
+      "signature": "ElasticTimoshenkoBeam(*, pg: 'str', transf: '_AnyTransf | str', E: 'float', G: 'float', A: 'float', Iz: 'float', Avy: 'float', Iy: 'float | None' = None, J: 'float | None' = None, Avz: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, modifiers: 'FrameModifiers | None' = None) -> 'ElasticTimoshenkoBeam'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ElasticTimoshenkoBeam"
     },
@@ -3608,19 +3614,19 @@
     },
     "ops.element.dispBeamColumn": {
       "doc": "``element dispBeamColumn`` — displacement-based distributed-plasticity.",
-      "signature": "dispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None) -> 'dispBeamColumn'",
+      "signature": "dispBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'dispBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.dispBeamColumn"
     },
     "ops.element.elasticBeamColumn": {
-      "doc": "",
-      "signature": "elasticBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', Iy: 'float | None' = None, G: 'float | None' = None, J: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None) -> 'elasticBeamColumn'",
+      "doc": "``element elasticBeamColumn``; ``modifiers`` scales the emitted",
+      "signature": "elasticBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', A: 'float', E: 'float', Iz: 'float', Iy: 'float | None' = None, G: 'float | None' = None, J: 'float | None' = None, mass: 'float | None' = None, c_mass: 'bool' = False, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'elasticBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.elasticBeamColumn"
     },
     "ops.element.forceBeamColumn": {
       "doc": "``element forceBeamColumn`` — force-based distributed-plasticity.",
-      "signature": "forceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, max_iter: 'int | None' = None, tol: 'float | None' = None, damp: 'Damping | None' = None) -> 'forceBeamColumn'",
+      "signature": "forceBeamColumn(*, pg: 'str', transf: '_AnyTransf | str', integration: 'BeamIntegration | str', mass: 'float | None' = None, max_iter: 'int | None' = None, tol: 'float | None' = None, damp: 'Damping | None' = None, modifiers: 'FrameModifiers | None' = None) -> 'forceBeamColumn'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.forceBeamColumn"
     },
@@ -4014,6 +4020,18 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.MohrCoulombTensionCutoffSoil"
     },
+    "ops.nDMaterial.PM4Sand": {
+      "doc": "Register a :class:`PM4Sand`: a plane-strain (2-D only) sand. A ``-1``",
+      "signature": "PM4Sand(*, Dr: 'float', G0: 'float', hpo: 'float', rho: 'float', P_atm: 'float' = 101.3, h0: 'float' = -1.0, e_max: 'float' = 0.8, e_min: 'float' = 0.5, nb: 'float' = 0.5, nd: 'float' = 0.1, Ado: 'float' = -1.0, z_max: 'float' = -1.0, cz: 'float' = 250.0, ce: 'float' = -1.0, phi_cv: 'float' = 33.0, nu: 'float' = 0.3, Cgd: 'float' = 2.0, Cdr: 'float' = -1.0, Ckaf: 'float' = -1.0, Q: 'float' = 10.0, R: 'float' = 1.5, m: 'float' = 0.01, Fsed_min: 'float' = -1.0, p_sdeo: 'float' = -1.0, int_scheme: 'int' = 5, tan_type: 'int' = 0, tol_f: 'float' = 1e-08, tol_r: 'float' = 1e-08, name: 'str | None' = None) -> 'PM4Sand'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nDMaterial.PM4Sand"
+    },
+    "ops.nDMaterial.PM4Silt": {
+      "doc": "Register a :class:`PM4Silt`: a plane-strain (2-D only) silt. A ``-1``",
+      "signature": "PM4Silt(*, Su: 'float', Su_rate: 'float', G0: 'float', hpo: 'float', rho: 'float', Su_factor: 'float' = 1.0, P_atm: 'float' = 101.3, nu: 'float' = 0.3, nG: 'float' = 0.75, h0: 'float' = 0.5, e_init: 'float' = 0.9, lambda_: 'float' = 0.06, phi_cv: 'float' = 32.0, nb_wet: 'float' = 0.8, nb_dry: 'float' = 0.5, nd: 'float' = 0.3, Ado: 'float' = 0.8, ru_max: 'float' = -1.0, z_max: 'float' = -1.0, cz: 'float' = 100.0, ce: 'float' = -1.0, Cgd: 'float' = 3.0, Ckaf: 'float' = 4.0, m: 'float' = 0.01, CG_consol: 'float' = 2.0, int_scheme: 'int' = 5, tan_type: 'int' = 0, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-10, name: 'str | None' = None) -> 'PM4Silt'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nDMaterial.PM4Silt"
+    },
     "ops.nDMaterial.PlaneStrain": {
       "doc": "Register a :class:`PlaneStrain` 2-D wrapper around a 3-D nDMaterial.",
       "signature": "PlaneStrain(*, base: 'NDMaterial | str', name: 'str | None' = None) -> 'PlaneStrain'",
@@ -4043,6 +4061,24 @@
       "signature": "PlateRebar(*, material: 'UniaxialMaterial | str', angle: 'float', name: 'str | None' = None) -> 'PlateRebar'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.PlateRebar"
+    },
+    "ops.nDMaterial.PressureDependMultiYield": {
+      "doc": "Register a :class:`PressureDependMultiYield`: an effective-stress",
+      "signature": "PressureDependMultiYield(*, nd: 'Literal[2, 3]', rho: 'float', ref_shear_modulus: 'float', ref_bulk_modulus: 'float', friction_angle: 'float', peak_shear_strain: 'float', ref_pressure: 'float', press_depend_coe: 'float', pt_angle: 'float', contrac: 'float', dilat1: 'float', dilat2: 'float', liquefac1: 'float', liquefac2: 'float', liquefac4: 'float', n_surf: 'int' = 20, backbone: 'Backbone | None' = None, e: 'float' = 0.6, vol_limit1: 'float' = 0.9, vol_limit2: 'float' = 0.02, vol_limit3: 'float' = 0.7, atm: 'float' = 101.0, cohesion: 'float' = 0.3, hv: 'float' = 0.0, pv: 'float' = 1.0, name: 'str | None' = None) -> 'PressureDependMultiYield'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nDMaterial.PressureDependMultiYield"
+    },
+    "ops.nDMaterial.PressureDependMultiYield02": {
+      "doc": "Register a :class:`PressureDependMultiYield02`: the 2008 revision of",
+      "signature": "PressureDependMultiYield02(*, nd: 'Literal[2, 3]', rho: 'float', ref_shear_modulus: 'float', ref_bulk_modulus: 'float', friction_angle: 'float', peak_shear_strain: 'float', ref_pressure: 'float', press_depend_coe: 'float', pt_angle: 'float', contrac1: 'float', contrac3: 'float', dilat1: 'float', dilat3: 'float', n_surf: 'int' = 20, backbone: 'Backbone | None' = None, contrac2: 'float' = 5.0, dilat2: 'float' = 3.0, liquefac1: 'float' = 1.0, liquefac2: 'float' = 0.0, e: 'float' = 0.6, vol_limit1: 'float' = 0.9, vol_limit2: 'float' = 0.02, vol_limit3: 'float' = 0.7, atm: 'float' = 101.0, cohesion: 'float' = 0.1, hv: 'float' = 0.0, pv: 'float' = 1.0, name: 'str | None' = None) -> 'PressureDependMultiYield02'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nDMaterial.PressureDependMultiYield02"
+    },
+    "ops.nDMaterial.PressureIndependMultiYield": {
+      "doc": "Register a :class:`PressureIndependMultiYield`: a total-stress multi-",
+      "signature": "PressureIndependMultiYield(*, nd: 'Literal[2, 3]', rho: 'float', ref_shear_modulus: 'float', ref_bulk_modulus: 'float', cohesion: 'float', peak_shear_strain: 'float' = 0.1, friction_angle: 'float' = 0.0, ref_pressure: 'float' = 100.0, press_depend_coe: 'float' = 0.0, n_surf: 'int' = 20, backbone: 'Backbone | None' = None, name: 'str | None' = None) -> 'PressureIndependMultiYield'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nDMaterial.PressureIndependMultiYield"
     },
     "ops.nDMaterial.SAniSandMS": {
       "doc": "Register a :class:`SAniSandMS` memory-surface SANISAND material.",
@@ -4226,7 +4262,7 @@
     },
     "ops.response_spectrum_analysis": {
       "doc": "Run a response-spectrum analysis with native combination.",
-      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack') -> \"'ResponseSpectrumResult'\"",
+      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack', scale: 'float | None' = None) -> \"'ResponseSpectrumResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.response_spectrum_analysis"
     },

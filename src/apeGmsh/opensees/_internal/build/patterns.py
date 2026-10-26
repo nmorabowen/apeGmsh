@@ -15,6 +15,7 @@ from ...pattern.pattern import (
     _LoadRecord,
     _SPRecord,
     _beam_uniform_args,
+    _membrane_pressure_args,
     _self_weight_args,
 )
 from ..tag_resolution import MISSING_FEM_ELEMENT_ID, resolve_tag
@@ -554,6 +555,60 @@ def _translate_fem_eids_for_ele_load(
     return out
 
 
+def _membrane_pressure_tags(
+    erec: Any,
+    element_plan: "Sequence[tuple[Element, ElementPlanRows]] | None",
+    element_owner: "SortedIntToInt | Mapping[int, int] | None",
+    partition_rank: "int | None",
+) -> list[int]:
+    """OpenSees tags of the LadrunoMembranes a ``surface_load(pressure=)``
+    targets: its ``ele=`` handles, or every membrane declared with its
+    ``pg=``.  Fails loud when a target is not a membrane, or ``pg=`` names
+    none (the record would otherwise be a beam load on whatever it hit)."""
+    from ...element.shell import LadrunoMembrane
+
+    where = "Plain.surface_load(pressure=...)"
+    if element_plan is None:
+        raise BridgeError(f"{where}: requires the bridge element_plan.")
+    specs: "list[tuple[Element, ElementPlanRows]]"
+    if erec.target_kind == "pg":
+        specs = [
+            (s, sub) for s, sub in element_plan
+            if isinstance(s, LadrunoMembrane) and s.pg == str(erec.target)
+        ]
+        if not specs:
+            raise BridgeError(
+                f"{where}: pg={erec.target!r} names no LadrunoMembrane. "
+                "pressure= loads LadrunoMembrane panels only; declare the "
+                "membrane with that pg=, or target it by its handle (ele=)."
+            )
+    else:
+        assert isinstance(erec.target, tuple)
+        by_id = {id(s): (s, sub) for s, sub in element_plan}
+        specs = []
+        for item in erec.target:
+            hit = by_id.get(id(item))
+            if hit is None or not isinstance(hit[0], LadrunoMembrane):
+                raise BridgeError(
+                    f"{where}: target {item!r} is not a LadrunoMembrane "
+                    "registered on this bridge."
+                )
+            specs.append(hit)
+    tags: list[int] = []
+    for _s, sub in specs:
+        for i in range(len(sub)):
+            eid_i = int(sub.eids[i])
+            if (
+                partition_rank is not None
+                and element_owner is not None
+                and eid_i != MISSING_FEM_ELEMENT_ID
+                and element_owner.get(eid_i) != partition_rank
+            ):
+                continue
+            tags.append(int(sub._tag(i)))
+    return tags
+
+
 def resolve_ele_load_commands(
     spec: Plain,
     fem: "FEMData",
@@ -572,7 +627,12 @@ def resolve_ele_load_commands(
     # 1. Explicit Plain.ele_loads (beam_uniform / surface_load / self_weight).
     for erec in spec.ele_loads:
         ops_tags: list[int] = []
-        if erec.target_kind == "pg":
+        if erec.load_type == "membranePressure":
+            # surface_load(pressure=q): LadrunoMembrane macro-elements only
+            # (the record refused label= and non-membrane handles).
+            ops_tags = _membrane_pressure_tags(
+                erec, element_plan, element_owner, partition_rank)
+        elif erec.target_kind == "pg":
             pg_name = str(erec.target)
             macro_tags: list[int] = []
             if element_plan is not None:
@@ -680,6 +740,11 @@ def resolve_ele_load_commands(
             )
         elif erec.load_type == "surfaceLoad":
             cmds.append(("-ele", *ops_tags, "-type", "-surfaceLoad"))
+        elif erec.load_type == "membranePressure":
+            cmds.append((
+                "-ele", *ops_tags, "-type", "-beamUniform",
+                *_membrane_pressure_args(erec, ndm),
+            ))
         elif erec.load_type == "selfWeight":
             cmds.append(
                 (

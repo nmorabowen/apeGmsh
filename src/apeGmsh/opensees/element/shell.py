@@ -109,6 +109,19 @@ def _check_local_cs(type_name: str, local_cs: tuple[float, ...]) -> None:
         )
 
 
+def _check_p_delta(type_name: str, p_delta: bool, corotational: bool) -> None:
+    """``-pDelta`` and ``-corotational`` are exclusive (the fork refuses
+    the element when both are given)."""
+    if p_delta and corotational:
+        raise ValueError(
+            f"{type_name}: p_delta=True and corotational=True are mutually "
+            f"exclusive (the parser refuses -pDelta with -corotational). "
+            f"-pDelta is linear kinematics plus the initial-stress "
+            f"stiffness; -corotational already carries the geometric "
+            f"nonlinearity."
+        )
+
+
 # ---------------------------------------------------------------------------
 # ShellMITC4 — 4-node MITC shell
 # ---------------------------------------------------------------------------
@@ -200,9 +213,9 @@ class ShellDKGQ(Element):
 class ASDShellQ4(Element):
     """``element ASDShellQ4`` — 4-node ASD shell.
 
-    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``,
-    ``-noeas``, ``-drillingStab $v`` / ``-drillingNL`` (mutually
-    exclusive) and ``-local $x1 $x2 $x3``.
+    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``
+    / ``-pDelta`` (mutually exclusive), ``-noeas``, ``-drillingStab $v`` /
+    ``-drillingNL`` (mutually exclusive) and ``-local $x1 $x2 $x3``.
 
     Parameters
     ----------
@@ -213,6 +226,17 @@ class ASDShellQ4(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    p_delta
+        Append ``-pDelta`` (**Ladruno fork**, at or after
+        ``stage_emit.C83_FORK_COMMIT`` c83ee812e): linear kinematics
+        plus the initial-stress (geometric) stiffness of the current
+        membrane forces, the shell analogue of ``geomTransf PDelta``, for a
+        gravity, ``loadConst``, ``eigen`` sequence. Refused with
+        ``corotational=True`` (the fork refuses the pair). Stock OpenSees
+        and older fork builds accept the token and drop the stiffness, so
+        the live route refuses any build not measured to carry c83ee812e
+        (``stage_emit.FORK_BUILD_HAS_C83``) and a Tcl / py deck checks
+        ``ladrunoBuild`` at its start (``ASDSHELL_PDELTA_GUARD``).
     no_eas
         Append ``-noeas``: turn off the enhanced membrane (the AGQI
         incompatible modes and their EAS parameters), leaving the plain
@@ -238,6 +262,7 @@ class ASDShellQ4(Element):
     pg: str
     section: Section
     corotational: bool = False
+    p_delta: bool = False
     no_eas: bool = False
     drilling_stab: float | None = None
     drilling_nl: bool = False
@@ -246,6 +271,7 @@ class ASDShellQ4(Element):
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_p_delta("ASDShellQ4", self.p_delta, self.corotational)
         if self.local_cs is not None:
             _check_local_cs("ASDShellQ4", self.local_cs)
         if self.drilling_nt_alpha is not None:
@@ -278,6 +304,8 @@ class ASDShellQ4(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.p_delta:
+            args.append("-pDelta")
         if self.no_eas:
             args.append("-noeas")
         if self.drilling_stab is not None:
@@ -306,9 +334,9 @@ class ASDShellT3(Element):
     """``element ASDShellT3`` — 3-node ASD shell.
 
     Phase 2γ scope ships the canonical positional arguments plus the
-    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``,
-    ``-drillingNL`` and ``-local $x1 $x2 $x3``. ``-reducedIntegration`` is
-    not exposed.
+    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``
+    / ``-pDelta`` (mutually exclusive), ``-drillingNL`` and ``-local $x1
+    $x2 $x3``. ``-reducedIntegration`` is not exposed.
 
     Parameters
     ----------
@@ -319,6 +347,9 @@ class ASDShellT3(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    p_delta
+        Append ``-pDelta`` (**Ladruno fork**; see ``ASDShellQ4``).
+        Refused with ``corotational=True``.
     drilling_nl
         Append ``-drillingNL`` (nonlinear drilling DOF treatment).
     drilling_dof
@@ -334,12 +365,14 @@ class ASDShellT3(Element):
     pg: str
     section: Section
     corotational: bool = False
+    p_delta: bool = False
     drilling_nl: bool = False
     drilling_dof: int | None = None
     local_cs: tuple[float, ...] | None = None
     damp: Damping | None = None
 
     def __post_init__(self) -> None:
+        _check_p_delta("ASDShellT3", self.p_delta, self.corotational)
         if self.local_cs is not None:
             _check_local_cs("ASDShellT3", self.local_cs)
         if self.drilling_dof is not None:
@@ -360,6 +393,8 @@ class ASDShellT3(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.p_delta:
+            args.append("-pDelta")
         if self.drilling_nl:
             args.append("-drillingNL")
         if self.local_cs is not None:

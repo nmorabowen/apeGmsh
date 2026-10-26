@@ -28,6 +28,43 @@ if TYPE_CHECKING:
     ElementPlan = tuple[tuple[Element, ElementPlanRows], ...]
 
 
+def recorder_node_targets(
+    spec: Recorder, fem: "FEMData",
+) -> "list[tuple[str, tuple[int, ...]]]":
+    """``(description, node ids)`` for each node selector of ``spec``.
+
+    The node-addressed recorders (``Node``, ``Monitor``, the filtered
+    ``MPCO`` / ``Ladruno``, and the ``nodes`` records of a
+    :class:`RecorderDeclaration`), resolved the way their emit resolves
+    them.  Used to refuse a recorder on a node the deck does not declare.
+    """
+    from ...recorder import FilterableRecorder, Monitor, Node as NodeRecorder
+
+    name = type(spec).__name__
+    out: list[tuple[str, tuple[int, ...]]] = []
+    if isinstance(spec, RecorderDeclaration):
+        for record in spec.records:
+            if record.category == "nodes":
+                out.append((
+                    f"recorder declaration {spec.name!r} (nodes record)",
+                    _resolve_node_targets(record, fem),
+                ))
+        return out
+    if isinstance(spec, (NodeRecorder, Monitor)):
+        if spec.nodes is not None:
+            out.append((f"recorder {name}", tuple(int(n) for n in spec.nodes)))
+        elif spec.pg is not None:
+            out.append((f"recorder {name}(pg={spec.pg!r})",
+                        expand_pg_to_nodes(fem, spec.pg)))
+    elif isinstance(spec, FilterableRecorder):
+        if spec.nodes is not None:
+            out.append((f"recorder {name}", tuple(int(n) for n in spec.nodes)))
+        if spec.nodes_pg is not None:
+            out.append((f"recorder {name}(nodes_pg={spec.nodes_pg!r})",
+                        expand_pg_to_nodes(fem, spec.nodes_pg)))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Recorder fan-out — Node / Element recorders with pg= resolved to ids
 # ---------------------------------------------------------------------------
