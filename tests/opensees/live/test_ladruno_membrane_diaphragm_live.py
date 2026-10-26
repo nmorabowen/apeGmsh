@@ -1,4 +1,5 @@
-"""Live oracles for ``LadrunoMembrane`` on fork build ``c83ee812e`` (fork WP-204).
+"""Live oracles for ``LadrunoMembrane`` ``diaphragm_nodes=`` and ``f11=`` /
+``f22=`` / ``f12=`` (fork WP-204, exact from WP-208 ``b6d3e3d2``).
 
 A square panel with a node every ``_H`` on its boundary is stretched by a
 prescribed displacement on two opposite edges and is free to contract.
@@ -30,6 +31,9 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._internal.build.stage_emit import (
+    fork_build_has_membrane_wp208,
+)
 from apeGmsh.opensees.emitter import live
 from tests.opensees.fixtures.fem_stub import FEMStub, _ElementsStub, _NodesStub
 
@@ -39,31 +43,38 @@ _A, _B, _E, _NU, _T, _F = 4.0, 2.0, 30e6, 0.2, 0.25, 100.0
 _S, _H, _EPS = 2.0, 0.5, 1e-4
 
 
-def _has_c83_membrane() -> bool:
-    """The bound build parses ``-f11`` (refuses ``-f11 0``) on LadrunoMembrane."""
+@pytest.fixture(autouse=True)
+def _require_wp208() -> None:
+    """Run on a build measured to carry fork WP-208 (``b6d3e3d2``), the
+    table the live route and the decks check
+    (``stage_emit.FORK_BUILD_HAS_MEMBRANE_WP208``).  Below it the live
+    route refuses these options, so there is nothing to measure.  A probe
+    of the parser cannot stand in: an older build refuses every option it
+    does not know, and ``c83ee812e`` parses them but fails the patch
+    test."""
+    build = live.get_backend_info().build
+    if not fork_build_has_membrane_wp208(build):
+        pytest.skip(
+            f"fork build {build!r} is not one measured to carry b6d3e3d2 "
+            "(fork WP-208)")
+
+
+def test_the_bound_build_accepts_f11() -> None:
+    """On a WP-208 build, ``-f11 0.5`` creates the element."""
     ops = live.get_ops()
     live.LiveOpsEmitter(wipe=True)
-    ops.model("basic", "-ndm", 3, "-ndf", 6)
-    for i, (x, y) in enumerate(((0, 0), (1, 0), (1, 1)), start=1):
-        ops.node(i, float(x), float(y), 0.0)
     try:
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        for i, (x, y) in enumerate(((0, 0), (1, 0), (1, 1)), start=1):
+            ops.node(i, float(x), float(y), 0.0)
         ops.element(
             "LadrunoMembrane", 1, "-nodes", 1, 2, 3, "-stiff", 1.0e6, 0.2,
-            0.1, "-f11", 0.0,
+            0.1, "-f11", 0.5,
         )
         tags = ops.getEleTags()
-        refused = 1 not in ([tags] if isinstance(tags, int) else (tags or []))
-    except Exception:
-        refused = True
+        assert 1 in ([tags] if isinstance(tags, int) else list(tags or []))
     finally:
         live.LiveOpsEmitter(wipe=True)
-    return refused
-
-
-@pytest.fixture(autouse=True)
-def _require_c83() -> None:
-    if not _has_c83_membrane():
-        pytest.skip("fork build predates c83ee812e (no LadrunoMembrane -f11)")
 
 
 def _fem(centre: bool) -> FEMStub:

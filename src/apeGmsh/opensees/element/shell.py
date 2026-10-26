@@ -553,8 +553,12 @@ class LadrunoMembrane(Element):
     in the element's local axes (e1 = global X and e2 = global Y for a
     horizontal slab), as ``LadrunoShellModifier`` does; the mass is not
     scaled. ``mesh_size=`` also sets the diaphragm mesh, and point
-    connections depend on it. These need fork build ``c83ee812e`` or
-    later, and an exact in-plane stiffness needs ``b6d3e3d2`` or later.
+    connections depend on it. ``c83ee812e`` parses these options but
+    gives an in-plane stiffness 26 to 28 percent low; the exact one needs
+    fork build ``b6d3e3d2`` (fork WP-208) or later. The live route refuses
+    them on a build not measured to carry it
+    (``stage_emit.FORK_BUILD_HAS_MEMBRANE_WP208``), and a Tcl / py deck
+    checks ``ladrunoBuild`` at its start (``MEMBRANE_WP208_GUARD``).
 
     The element answers ``membraneForces`` (``N11, N22, N12`` per diaphragm
     triangle), ``meanMembraneForce``, ``diaphragmForces`` (the in-plane

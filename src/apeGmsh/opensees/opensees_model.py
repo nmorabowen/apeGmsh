@@ -2000,7 +2000,8 @@ class OpenSeesModel:
         :func:`~apeGmsh.opensees._internal.build.ndf.membrane_interior_nodes`:
         the nodes of the membranes' physical-group cells (the ``pg`` read
         from ``/opensees/decl_params``) that no archived element touches,
-        counting each membrane's ``-nodes`` / ``-hole`` / ``-supportNodes``.
+        counting each membrane's ``-nodes`` / ``-hole`` / ``-supportNodes`` /
+        ``-diaphragmNodes``.
         ``frozenset()`` for an archive with no ``pg=`` membrane, or one too
         old to carry ``/opensees/decl_params``.
         """
@@ -2032,7 +2033,10 @@ class OpenSeesModel:
                 taking = False
                 for a in rec.args:
                     if isinstance(a, str):
-                        taking = a in ("-nodes", "-hole", "-supportNodes")
+                        taking = a in (
+                            "-nodes", "-hole", "-supportNodes",
+                            "-diaphragmNodes",
+                        )
                     elif taking and float(a) == int(float(a)):
                         keep.add(int(float(a)))
         return frozenset(cand - keep)
