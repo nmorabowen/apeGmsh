@@ -5,6 +5,7 @@ Avoids duplicating logic across Model, Mesh, and other modules.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import gmsh
@@ -211,12 +212,21 @@ def resolve_to_dimtags(
 
     if isinstance(ref, (list, tuple)) and not _is_dimtag_tuple(ref):
         out: list[DimTag] = []
-        for item in ref:
-            out.extend(
-                resolve_to_dimtags(
-                    item, default_dim=default_dim, session=session,
+        labels_comp = getattr(session, 'labels', None)
+        # Many names: read every label's entities in one gmsh call.
+        bulk = (
+            labels_comp._bulk_entities()
+            if labels_comp is not None
+            and sum(isinstance(item, str) for item in ref) > 1
+            else nullcontext()
+        )
+        with bulk:
+            for item in ref:
+                out.extend(
+                    resolve_to_dimtags(
+                        item, default_dim=default_dim, session=session,
+                    )
                 )
-            )
         return out
 
     if isinstance(ref, tuple) and _is_dimtag_tuple(ref):
@@ -262,14 +272,13 @@ def _resolve_string_to_dimtags(
     """
     labels_comp = getattr(session, 'labels', None)
     if labels_comp is not None:
-        hits: list[DimTag] = []
-        for d in range(4):
-            # has() is an index lookup; a missed entities() builds its
-            # KeyError message from every label, O(L) per miss.
-            if not labels_comp.has(name, dim=d):
-                continue
-            tags = labels_comp.entities(name, dim=d)
-            hits.extend((d, int(t)) for t in tags)
+        # One index lookup for all dims; a missed entities() would
+        # build its KeyError message from every label, O(L) per miss.
+        hits: list[DimTag] = [
+            (d, t)
+            for d, tags in labels_comp._entities_by_dim(name).items()
+            for t in tags
+        ]
         if hits:
             return hits
 
@@ -412,15 +421,13 @@ def _resolve_string(
     # Try label (union across dims when no explicit dim is given)
     labels_comp = getattr(session, 'labels', None)
     if labels_comp is not None:
-        # has() before entities(): see _resolve_string_to_dimtags.
+        # One lookup for all dims: see _resolve_string_to_dimtags.
+        by_dim = labels_comp._entities_by_dim(name)
         if dim is not None:
-            if labels_comp.has(name, dim=dim):
-                return labels_comp.entities(name, dim=dim)
+            if dim in by_dim:
+                return by_dim[dim]
         else:
-            hits: list[int] = []
-            for d in range(4):
-                if labels_comp.has(name, dim=d):
-                    hits.extend(labels_comp.entities(name, dim=d))
+            hits = [t for tags in by_dim.values() for t in tags]
             if hits:
                 return hits
 

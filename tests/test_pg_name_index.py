@@ -250,6 +250,74 @@ def test_label_index_follows_a_fragment_remap(g):
     assert len(g.labels.entities("frame", dim=1)) == 2
 
 
+def test_fragment_keeps_a_group_whose_entities_survive(g):
+    # synchronize() keeps a group on surviving entities, so the remap
+    # leaves it (and its tag) alone and recreates only changed groups.
+    geo = g.model.geometry
+    geo.add_rectangle(0, 0, 0, 2.0, 1.0, label="wall")
+    p0 = geo.add_point(1.0, 0.5, -1.0)
+    p1 = geo.add_point(1.0, 0.5, 1.0)
+    geo.add_line(p0, p1, label="frame")
+    geo.add_point(5.0, 5.0, 0.0, label="far")
+    far_pg = g.labels._find("far")[0]
+    t = gmsh.model.addPhysicalGroup(0, g.labels.entities("far"))
+    gmsh.model.setPhysicalName(0, t, "far_pg")
+    g.model.boolean.fragment(["wall"], ["frame", "far"], dim=2)
+    assert g.labels._find("far") == {0: far_pg}
+    assert g.physical.get_tag(0, "far_pg") == t
+    assert len(g.labels.entities("frame", dim=1)) == 2
+    tags = [t for d, t in gmsh.model.getPhysicalGroups(1)]
+    assert len(tags) == 1                       # old frame group removed
+    assert gmsh.model.getPhysicalName(1, tags[0]) == "_label:frame"
+
+
+def test_remap_replaces_a_group_whose_set_or_name_changed(g):
+    # A group still held at its old tag is kept only when both its
+    # entity set and its name match the remap; the same entity count
+    # or the same entities under another name are not enough.
+    from apeGmsh.core.Labels import (
+        remap_physical_groups, snapshot_physical_groups,
+    )
+    a, b, c = _lines(3)
+    ta = gmsh.model.addPhysicalGroup(1, [a])
+    gmsh.model.setPhysicalName(1, ta, "SET")
+    tc = gmsh.model.addPhysicalGroup(1, [c])
+    gmsh.model.setPhysicalName(1, tc, "NAME")
+    snap = snapshot_physical_groups()
+    # Same count, other entity: the boolean maps a -> b.
+    # Same entities, other name: a raw rename behind the snapshot.
+    gmsh.model.removePhysicalName("NAME")
+    gmsh.model.setPhysicalName(1, tc, "OTHER")
+    remap_physical_groups(snap, [(1, a)], [[(1, b)]])
+    by_name = {
+        gmsh.model.getPhysicalName(1, t): sorted(
+            gmsh.model.getEntitiesForPhysicalGroup(1, t))
+        for _, t in gmsh.model.getPhysicalGroups(1)
+    }
+    assert by_name == {"SET": [b], "NAME": [c]}
+
+def test_list_resolution_reads_groups_once_and_stays_fresh(g, monkeypatch):
+    from apeGmsh.core._helpers import resolve_to_dimtags
+    a, b, c = _lines(3)
+    g.labels.add(1, [a], name="A")
+    g.labels.add(1, [b], name="B")
+    # Raw edits the index has not seen: B moved to c under a new tag.
+    old = g.labels._find("B")[1]
+    gmsh.model.removePhysicalGroups([(1, old)])
+    t = gmsh.model.addPhysicalGroup(1, [c])
+    gmsh.model.setPhysicalName(1, t, "_label:B")
+    per_group: list = []
+    real = gmsh.model.getEntitiesForPhysicalGroup
+    monkeypatch.setattr(
+        gmsh.model, "getEntitiesForPhysicalGroup",
+        lambda *a: per_group.append(a) or real(*a),
+    )
+    got = resolve_to_dimtags(["A", "B", (1, a)], default_dim=1, session=g)
+    assert per_group == []                      # one bulk read instead
+    assert got == [(1, a), (1, c), (1, a)]
+    assert g.labels._bulk is None
+
+
 def _labelled_fragment_case(n_walls: int, per_wall: int):
     """Walls in the xz plane, each crossed by ``per_wall`` frames."""
     occ = gmsh.model.occ
@@ -270,8 +338,11 @@ def test_labelled_fragment_cost_tracks_raw_gmsh(g):
     """A fragment over L labelled entities costs a multiple of raw gmsh.
 
     The old label lookups made it O(L^2): 103 s against 1.7 s raw for
-    3,916 labels.  Raw gmsh runs first on its own model, then the same
-    geometry is labelled and fragmented through apeGmsh.
+    3,916 labels.  Then, read one group at a time and recreating every
+    group, it held 2.4x raw here; reading all groups in one call and
+    recreating only changed ones holds 1.55x.  Raw gmsh runs first on
+    its own model, then the same geometry is labelled and fragmented
+    through apeGmsh.
     """
     n_walls, per_wall = 150, 6
 
@@ -300,4 +371,10 @@ def test_labelled_fragment_cost_tracks_raw_gmsh(g):
     t_ours = time.perf_counter() - t0
 
     assert len(g.labels.entities(f"FR_{len(frames) - 1}", dim=1)) == 2
-    assert t_ours < 6.0 * t_raw + 1.0, (t_ours, t_raw)
+    assert t_ours < 2.0 * t_raw + 0.1, (t_ours, t_raw)
+
+
+def test_remap_without_the_bulk_gmsh_call(g, monkeypatch):
+    # A gmsh build without getPhysicalGroupsEntities reads group by group.
+    monkeypatch.delattr(gmsh.model, "getPhysicalGroupsEntities")
+    test_label_index_follows_a_fragment_remap(g)
