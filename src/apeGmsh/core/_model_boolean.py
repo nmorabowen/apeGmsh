@@ -142,8 +142,13 @@ class _Boolean:
         labels_comp = getattr(parent, 'labels', None)
         input_label_names: set[str] = set()
         if label is not None and labels_comp is not None:
-            for d, t in obj_dt + tool_dt:
-                input_label_names.update(labels_comp.labels_for_entity(d, t))
+            # One pass over the labels, not labels_for_entity per input:
+            # that lists every label for each input, O(inputs * L).
+            inputs = {(int(d), int(t)) for d, t in obj_dt + tool_dt}
+            input_label_names = {
+                nm for dt, names in labels_comp._names_by_entity().items()
+                if dt in inputs for nm in names
+            }
 
         absorbed = fn_name in ('fuse', 'intersect')
 
@@ -288,10 +293,9 @@ class _Boolean:
                 result_by_dim.setdefault(int(d), []).append(int(t))
             for nm in input_label_names:
                 for d, res_tags in result_by_dim.items():
-                    try:
-                        existing = labels_comp.entities(nm, dim=d)
-                    except (KeyError, ValueError):
+                    if not labels_comp.has(nm, dim=d):
                         continue
+                    existing = labels_comp.entities(nm, dim=d)
                     res_set = set(res_tags)
                     kept = [t for t in existing if t not in res_set]
                     if len(kept) == len(existing):

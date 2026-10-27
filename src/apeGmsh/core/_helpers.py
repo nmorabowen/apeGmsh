@@ -264,10 +264,11 @@ def _resolve_string_to_dimtags(
     if labels_comp is not None:
         hits: list[DimTag] = []
         for d in range(4):
-            try:
-                tags = labels_comp.entities(name, dim=d)
-            except KeyError:
+            # has() is an index lookup; a missed entities() builds its
+            # KeyError message from every label, O(L) per miss.
+            if not labels_comp.has(name, dim=d):
                 continue
+            tags = labels_comp.entities(name, dim=d)
             hits.extend((d, int(t)) for t in tags)
         if hits:
             return hits
@@ -411,18 +412,15 @@ def _resolve_string(
     # Try label (union across dims when no explicit dim is given)
     labels_comp = getattr(session, 'labels', None)
     if labels_comp is not None:
+        # has() before entities(): see _resolve_string_to_dimtags.
         if dim is not None:
-            try:
+            if labels_comp.has(name, dim=dim):
                 return labels_comp.entities(name, dim=dim)
-            except KeyError:
-                pass
         else:
             hits: list[int] = []
             for d in range(4):
-                try:
+                if labels_comp.has(name, dim=d):
                     hits.extend(labels_comp.entities(name, dim=d))
-                except KeyError:
-                    continue
             if hits:
                 return hits
 
