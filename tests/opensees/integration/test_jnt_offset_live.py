@@ -391,6 +391,83 @@ def _stiff_zone_reference(o: Any, ndm: int, chain: list[tuple[float, float, floa
     return _static_reactions(o, (1, 2))
 
 
+# ---------------------------------------------------------------------------
+# A gmsh curve meshed into n elements is one member (#2551)
+# ---------------------------------------------------------------------------
+#
+# Oracle: the cantilever member (0,0,3)-(4,0,3), fixed at x = 0, cardinal 8
+# on 0.6 m with 0.3 m end zones, built by hand as ONE element with
+# ``geomTransf Linear ... -jntOffset 0.3 0 -0.3 -0.3 0 -0.3``. Through the
+# bridge the same curve is meshed into n elements; with the offsets at the
+# curve's ends only it is the same member, so the tip moves alike (elastic
+# beam elements are exact at the nodes). Repeating the end zones on every
+# element (the #2470 review repro) makes it far too stiff.
+
+_TIP = (5.0, -4.0, -20.0, 1.0, 2.0, -3.0)
+_MEMBER_PROPS = dict(A=0.01, E=200e9, G=80e9, J=1e-4, Iy=2e-4, Iz=1e-4)
+
+
+def _bridge_member(n: int, reverse: bool, loads: dict | None) -> tuple[Any, np.ndarray]:
+    """The n-element member through the bridge: (tip displacements,
+    reactions at the base)."""
+    from tests.opensees.unit.test_jnt_offset_members import member_bridge, member_fem
+
+    ops = member_bridge(member_fem(n, reverse=reverse, loads=loads),
+                        loaded=loads is not None, tip=_TIP)
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    o = emitter.ops
+    react = _static_reactions(o, (1,))
+    return np.array([o.nodeDisp(n + 1, k + 1) for k in range(6)], dtype=float), react
+
+
+def _hand_built_member() -> np.ndarray:
+    """The one-element reference, written by hand: tip displacements."""
+    o = LiveOpsEmitter(wipe=True).ops
+    o.wipe()
+    o.model("basic", "-ndm", 3, "-ndf", 6)
+    o.node(1, 0.0, 0.0, 3.0)
+    o.node(2, 4.0, 0.0, 3.0)
+    o.fix(1, 1, 1, 1, 1, 1, 1)
+    o.geomTransf("Linear", 1, 0.0, 0.0, 1.0,
+                 "-jntOffset", 0.3, 0.0, -0.3, -0.3, 0.0, -0.3)
+    p = _MEMBER_PROPS
+    o.element("elasticBeamColumn", 1, 1, 2, p["A"], p["E"], p["G"], p["J"],
+              p["Iy"], p["Iz"], 1)
+    o.timeSeries("Linear", 1)
+    o.pattern("Plain", 1, 1)
+    o.load(2, *_TIP)
+    _static_reactions(o, (1,))
+    return np.array([o.nodeDisp(2, k + 1) for k in range(6)], dtype=float)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["along_x", "reversed"])
+@pytest.mark.parametrize("n", [1, 2, 5])
+def test_meshed_member_matches_a_hand_built_one_element_member(n: int, reverse: bool) -> None:
+    pytest.importorskip("openseespy.opensees")
+    want = _hand_built_member()
+    got, _r = _bridge_member(n, reverse, None)
+    err = float(np.max(np.abs(got - want))) / float(np.max(np.abs(want)))
+    assert err < 1e-9, f"n={n}: max |a - b| / max |b| = {err:.3e}"
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["along_x", "reversed"])
+@pytest.mark.parametrize("n", [2, 5])
+def test_meshed_member_under_a_line_load_matches_the_one_element_member(
+        n: int, reverse: bool) -> None:
+    """With a global line load too: the n-element member's tip moves as
+    the one-element member's, and the base carries the whole load,
+    sum R = w L + tip (the end zones' share goes to the curve's ends)."""
+    pytest.importorskip("openseespy.opensees")
+    w = {"wx": 2.0, "wy": 3.0, "wz": -10.0}
+    one, _r1 = _bridge_member(1, reverse, w)
+    many, react = _bridge_member(n, reverse, w)
+    err = float(np.max(np.abs(many - one))) / float(np.max(np.abs(one)))
+    assert err < 1e-9, f"n={n}: max |a - b| / max |b| = {err:.3e}"
+    total = 4.0 * np.array([w["wx"], w["wy"], w["wz"]]) + np.array(_TIP[:3])
+    np.testing.assert_allclose(-react[0, :3], total, rtol=1e-9)
+
+
 @pytest.mark.parametrize("ndm", [2, 3])
 def test_line_load_over_end_zones_matches_stiff_zone_reference(ndm: int) -> None:
     pytest.importorskip("openseespy.opensees")
