@@ -231,8 +231,7 @@ def element_jnt_offset(
 # ---------------------------------------------------------------------------
 #
 # ETABS applies a frame object's end offsets at the object's two ends; the
-# frame object is the gmsh curve (maintainer ruling 2026-10-26, #2470 and
-# #2551). An offset that is the same pure transverse shift at both ends
+# frame object is the gmsh curve. An offset that is the same pure transverse shift at both ends
 # reads the same on every element, so it stays per element. An
 # end-sensitive offset (an end length, an axial component, unequal ends) is
 # split over each curve the transform's elements come from: the curve's
@@ -245,8 +244,9 @@ def element_jnt_offset(
 # own member and keeps its per-element offset exactly. A snapshot without
 # the stream (a pre-2.36 model.h5, a FEM not extracted from gmsh) cannot
 # tell a member meshed into several elements from a girder of several
-# members, so it keeps #2470's refusal wherever two elements meet without
-# a clear corner (a turn outside MEMBER_CORNER_DEG to MEMBER_FOLD_DEG).
+# members, so it refuses end-sensitive offsets wherever two elements meet
+# without a clear corner (a turn outside MEMBER_CORNER_DEG to
+# MEMBER_FOLD_DEG).
 
 #: One element of a transform: ``(eid, node_i, node_j, p_i, p_j, vecxz)``.
 _ElementRow: TypeAlias = (
@@ -541,7 +541,7 @@ def element_offsets_by_id(
     answer. Otherwise the offsets are end-sensitive: each curve with two
     or more of the transform's elements, one of them end-sensitive, is
     split over its elements (:func:`_split_member`), and a snapshot with
-    no source curves keeps #2470's refusal
+    no source curves refuses where elements meet without a clear corner
     (:func:`_refuse_ambiguous_members`). An element whose own evaluation
     fails (end zones longer than the element) is end-sensitive; the
     failure stands unless a split over its curve replaces it.
