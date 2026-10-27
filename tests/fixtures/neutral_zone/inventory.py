@@ -106,6 +106,10 @@ KNOWN_UNPUBLISHED_ROOT_GROUPS: frozenset[str] = frozenset({
     "loads",
     "masses",
     "composed_from",
+    # ADR 0112 D2: its own zone (``provenance_schema_version``), written
+    # beside the neutral zone by the same ``to_h5``; h5-schema.md
+    # "/provenance" publishes it.
+    "provenance",
 })
 
 
@@ -128,6 +132,9 @@ GROUPS: dict[str, GroupSpec] = {
             # #1304: the writing session's uuid4 (ADR 0112 D1). Optional:
             # absent in files at neutral <= 2.34.0, read without a gate.
             "session_id": ATTR_STR,
+            # ADR 0112 D2: the /provenance zone's own version key, stamped
+            # iff the file carries /provenance (not part of this note).
+            "provenance_schema_version": ATTR_STR,
         },
         note="attrs only; no datasets",
     ),
