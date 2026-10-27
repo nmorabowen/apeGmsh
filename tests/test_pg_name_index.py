@@ -269,6 +269,31 @@ def test_fragment_keeps_a_group_whose_entities_survive(g):
     assert gmsh.model.getPhysicalName(1, tags[0]) == "_label:frame"
 
 
+def test_remap_replaces_a_group_whose_set_or_name_changed(g):
+    # A group still held at its old tag is kept only when both its
+    # entity set and its name match the remap; the same entity count
+    # or the same entities under another name are not enough.
+    from apeGmsh.core.Labels import (
+        remap_physical_groups, snapshot_physical_groups,
+    )
+    a, b, c = _lines(3)
+    ta = gmsh.model.addPhysicalGroup(1, [a])
+    gmsh.model.setPhysicalName(1, ta, "SET")
+    tc = gmsh.model.addPhysicalGroup(1, [c])
+    gmsh.model.setPhysicalName(1, tc, "NAME")
+    snap = snapshot_physical_groups()
+    # Same count, other entity: the boolean maps a -> b.
+    # Same entities, other name: a raw rename behind the snapshot.
+    gmsh.model.removePhysicalName("NAME")
+    gmsh.model.setPhysicalName(1, tc, "OTHER")
+    remap_physical_groups(snap, [(1, a)], [[(1, b)]])
+    by_name = {
+        gmsh.model.getPhysicalName(1, t): sorted(
+            gmsh.model.getEntitiesForPhysicalGroup(1, t))
+        for _, t in gmsh.model.getPhysicalGroups(1)
+    }
+    assert by_name == {"SET": [b], "NAME": [c]}
+
 def test_list_resolution_reads_groups_once_and_stays_fresh(g, monkeypatch):
     from apeGmsh.core._helpers import resolve_to_dimtags
     a, b, c = _lines(3)
