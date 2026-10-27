@@ -191,6 +191,20 @@ def test_label_lookup_add_merge_rename_remove(g):
         g.labels.entities("M")
 
 
+def test_label_rename_to_its_own_name_returns(g):
+    # The rename loop re-finds a group by its old name, so renaming
+    # to the same name used to find the group it had just recreated,
+    # forever.
+    a, _ = _lines(2)
+    g.labels.add(1, [a], name="A")
+    g.labels.rename("A", "A")
+    g.labels.rename("A", "A", dim=1)
+    assert g.labels.entities("A") == [a]
+    with pytest.raises(KeyError, match="no label 'A' found at dim=0"):
+        g.labels.rename("A", "A", dim=0)
+    with pytest.raises(KeyError, match="no label 'B' found"):
+        g.labels.rename("B", "B")
+
 def test_label_multi_dim_still_raises(g):
     a, _ = _lines(2)
     p = gmsh.model.getBoundary([(1, a)], oriented=False)[0][1]

@@ -1676,6 +1676,11 @@ class Labels(_HasLogging):
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         renamed = False
         for d in dims:
+            if old_name == new_name:
+                # Nothing to move; the loop below would re-find the
+                # group it just recreated under the same name forever.
+                renamed = renamed or d in self._find(old_name)
+                continue
             while (pg_tag := self._find(old_name).get(d)) is not None:
                 # Read entities, remove old PG, create new one
                 ent_tags = list(
