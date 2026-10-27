@@ -542,25 +542,35 @@ def element_offsets_by_id(
     or more of the transform's elements, one of them end-sensitive, is
     split over its elements (:func:`_split_member`), and a snapshot with
     no source curves keeps #2470's refusal
-    (:func:`_refuse_ambiguous_members`).
+    (:func:`_refuse_ambiguous_members`). An element whose own evaluation
+    fails (end zones longer than the element) is end-sensitive; the
+    failure stands unless a split over its curve replaces it.
     """
     name = type(transf).__name__
     out: dict[int, tuple[float, ...]] = {}
+    failed: dict[int, ValueError] = {}
     for eid, _ni, _nj, p_i, p_j, vec in rows:
         try:
             out[eid] = element_jnt_offset(
                 transf, p_i, p_j, vec if len(vec) == 3 else None,
                 ndm)
         except ValueError as exc:
-            raise BridgeError(
-                f"geomTransf {name}: element {eid} jnt_offset: {exc}"
-            ) from exc
-    sensitive = {r[0] for r in rows
-                 if not _transverse_only(out[r[0]], r[3], r[4])}
+            failed[eid] = exc
+
+    def raise_failed(eid: int) -> None:
+        raise BridgeError(
+            f"geomTransf {name}: element {eid} jnt_offset: {failed[eid]}"
+        ) from failed[eid]
+
+    sensitive = {r[0] for r in rows if r[0] in failed
+                 or not _transverse_only(out[r[0]], r[3], r[4])}
     if not sensitive:
         return out
     keys = _member_keys(rows, fem)
     if keys is None:
+        for r in rows:
+            if r[0] in failed:
+                raise_failed(r[0])
         _refuse_ambiguous_members(transf, rows, out)
         return out
     members: dict[_MemberKey, list[_ElementRow]] = {}
@@ -570,8 +580,14 @@ def element_offsets_by_id(
     for key, chain in members.items():
         if len(chain) < 2 or not any(r[0] in sensitive for r in chain):
             continue   # its own one-element member, or a transverse shift
-        out.update(_split_member(
-            transf, _order_chain(chain, key, where), key, ndm, where))
+        split = _split_member(
+            transf, _order_chain(chain, key, where), key, ndm, where)
+        out.update(split)
+        for eid in split:
+            failed.pop(eid, None)
+    for r in rows:
+        if r[0] in failed:
+            raise_failed(r[0])
     return out
 
 
