@@ -84,3 +84,46 @@ def test_one_call_per_row_is_linear() -> None:
     elapsed = time.perf_counter() - t0
     assert got == list(range(1, n + 1))
     assert elapsed < 10.0, f"{elapsed:.1f} s: the join is not linear"
+
+
+# The callers must use the one-pass join, not the per-row scan: with the
+# per-row ``emit_index_of`` made to raise, both still answer on a program
+# that covers every row (a reverted call site raises here).
+
+
+def _forbid_per_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    from apeGmsh.opensees.emitter import h5_reader
+
+    def _per_row(*_a, **_k):
+        raise AssertionError("per-row emit_index_of scan in a caller")
+
+    monkeypatch.setattr(h5_reader, "emit_index_of", _per_row)
+
+
+def test_mp_rows_in_bridge_order_uses_the_one_pass_join(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apeGmsh.opensees.opensees_model import _mp_rows_in_bridge_order
+
+    program = [_run(1, 2, "equalDOF", 0), _run(3, 1, "rigidLink", 0)]
+    _forbid_per_row(monkeypatch)
+    got = _mp_rows_in_bridge_order(
+        [["e0", "e1"], ["r0"], [], []], program)
+    assert got == ((1, "e0"), (2, "e1"), (3, "r0"))
+
+
+def test_equation_rows_uses_the_one_pass_join(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from apeGmsh.opensees.opensees_model import _equation_rows
+
+    model = SimpleNamespace(
+        equation_constraints=lambda: ("q0", "q1"),
+        opensees_zone_version=lambda: SimpleNamespace(
+            major=2, minor=35, patch=0),
+    )
+    program = [_run(5, 2, "equationConstraint", 0)]
+    _forbid_per_row(monkeypatch)
+    assert _equation_rows(model, program, None) == ((5, "q0"), (6, "q1"))

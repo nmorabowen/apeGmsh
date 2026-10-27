@@ -476,7 +476,7 @@ jobs:
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
       - name: Runner hardware (#2544)
-        run: lscpu | grep -E 'Model name|^CPU\(s\)'
+        run: lscpu | grep -E 'Model name|^CPU\(s\)' || true
 
       - name: Run curated suite
         run: |
