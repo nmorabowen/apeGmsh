@@ -784,7 +784,7 @@ def _validate_entity_stream(
     entity: "dict[int, ndarray] | None",
     groups: "dict[int, ElementGroup]",
 ) -> "dict[int, ndarray] | None":
-    """Check and normalise an ``ElementComposite(entity=)`` stream (#2551).
+    """Check and normalise an ``ElementComposite(entity=)`` stream.
 
     ``None`` stays ``None`` (no stream).  Otherwise every group gets an
     ``int32`` array of its ``ids`` shape, a code the caller left out
@@ -966,7 +966,7 @@ class ElementComposite:
                     )
                 self._module_label[int(code)] = mlbl
 
-        # Per-element source entity (#2551 S1, neutral schema 2.36.0):
+        # Per-element source entity (neutral schema 2.36.0):
         # dict keyed by element-type code, each value an ``(E_t,)
         # int32`` array aligned 1:1 with the type's ``ids`` — the tag of
         # the model entity of the type's own dimension the element is
@@ -1064,7 +1064,7 @@ class ElementComposite:
         Each value is an ``(E_t,) int32`` array aligned 1:1 with that
         type's group ``ids``: the tag of the Gmsh model entity of the
         type's own dimension the element is classified on, a partition
-        entity resolved to its parent, ``-1`` unknown (#2551).  Raw
+        entity resolved to its parent, ``-1`` unknown.  Raw
         tags: entity tags repeat across composed modules, so a member
         is keyed by ``(module_label, entity)``.  ``None`` when the
         snapshot carries no stream.  Read-only view; consumers must not

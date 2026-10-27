@@ -460,7 +460,7 @@ __all__ = [
 #: reader before this minor did).  An additive column still bumps the
 #: minor (ADR 0113 D5).
 #:
-#: v2.36.0 (October 2026, #2551 S1 — per-element source entity):
+#: v2.36.0 (per-element source entity):
 #: additive and optional — adds ``/elements/{alias}/entity``, an
 #: ``(E,) int32`` dataset row-parallel to ``ids``: the tag of the Gmsh
 #: model entity of the group's dimension each element is classified on,
@@ -951,7 +951,7 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
             data=elem_ml_data,
             dtype=_vlen_utf8(),
         )
-        # #2551 S1 — per-element source entity (neutral schema 2.36.0),
+        # Per-element source entity (neutral schema 2.36.0),
         # row-parallel to ``ids``.  Written on every group iff the
         # snapshot carries the stream (gmsh/msh extraction does; MPCO,
         # ``.ladruno`` and stream-less composes do not), so a reader
@@ -2917,7 +2917,7 @@ def read_neutral_zone_from_group(
                 )
                 if any(s != "" for s in decoded):
                     elem_module_labels[info.code] = decoded
-            # #2551 S1 — per-element source entity (neutral 2.36.0).
+            # Per-element source entity (neutral 2.36.0).
             # Optional: 2.10–2.35 files and stream-less snapshots have
             # no dataset.  Presence-probed with ``in``.
             if "entity" in sub:

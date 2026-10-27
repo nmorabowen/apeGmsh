@@ -106,7 +106,7 @@ def _source_entity(dim: int, tag: int) -> int:
     entity. The result is that entity's tag when it has dimension
     ``dim``, else ``-1``: a partition-interface entity's parent is the
     entity of higher dimension the interface lies in, so its elements
-    have no source of their own dimension (#2551, open question 4).
+    have no source of their own dimension.
     """
     cur_dim, cur_tag = dim, tag
     seen = {(cur_dim, cur_tag)}
@@ -145,7 +145,7 @@ def extract_raw(dim: int | None = 2) -> dict:
         code (ascending), with each value containing ``'ids'``,
         ``'conn'``, ``'entity'``, ``'gmsh_name'``, ``'dim'``,
         ``'order'``, ``'npe'``.  ``'entity'`` is the ``(E,) int32``
-        source-entity stream (#2551): row-parallel to ``'ids'``, the
+        source-entity stream: row-parallel to ``'ids'``, the
         tag of the model entity of the element's own dimension the
         element is classified on, a partition entity resolved to its
         parent (:func:`_source_entity`), ``-1`` when that parent has

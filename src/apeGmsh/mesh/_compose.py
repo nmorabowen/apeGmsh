@@ -678,7 +678,7 @@ class _RewrittenBundle:
     # Per-node provenance (decoupled nodes — ADR 0049), aligned to
     # ``node_ids``.  ``None`` when the source has no decoupled nodes.
     node_provenance: "np.ndarray | None" = None
-    # Per-element source entity (#2551 S1), keyed like
+    # Per-element source entity (neutral 2.36.0), keyed like
     # ``element_groups`` and aligned to each group's ``ids``.  Carried
     # verbatim, never offset: entity tags are not element or node tags,
     # and ``module_label`` namespaces them per module.  ``None`` when
@@ -2798,7 +2798,7 @@ def _merge_bundle_into_fem(
             new_elem_module_label[code] = np.array(
                 [""] * host_size, dtype=object,
             )
-    # #2551 S1 — per-element source entity: concatenated host+bundle
+    # Per-element source entity: concatenated host+bundle
     # per type, values never rewritten.  Same rule as ndf/provenance:
     # the result carries the stream when either side does, filling
     # ``-1`` (unknown) for the stream-less side's rows.

@@ -235,7 +235,7 @@ def _extract_mesh_core(dim: int | None):
     physical = PhysicalGroupSet(extract_physical_groups())
     labels   = LabelSet(extract_labels())
     partitions = extract_partitions(dim)
-    # #2551 S1: the per-element source-entity stream, row-parallel to
+    # The per-element source-entity stream, row-parallel to
     # each group's ids.
     entity = {code: info['entity'] for code, info in raw['groups'].items()}
 
