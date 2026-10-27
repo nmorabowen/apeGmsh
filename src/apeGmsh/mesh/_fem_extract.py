@@ -106,8 +106,14 @@ def _source_entity(dim: int, tag: int) -> int:
     entity. The result is that entity's tag when it has dimension
     ``dim``, else ``-1``: a partition-interface entity's parent is the
     entity of higher dimension the interface lies in, so its elements
-    have no source of their own dimension.
+    have no source of their own dimension. A ghost entity
+    (``Mesh.PartitionCreateGhostCells``) has no parent and holds copies
+    of another partition's elements, so its elements are ``-1`` too, as
+    is a tag that is not positive (a MSH2 file may classify elements on
+    elementary tag ``0``).
     """
+    if gmsh.model.getType(dim, tag).startswith("Ghost"):
+        return -1
     cur_dim, cur_tag = dim, tag
     seen = {(cur_dim, cur_tag)}
     while True:
@@ -123,7 +129,7 @@ def _source_entity(dim: int, tag: int) -> int:
             )
         seen.add((p_dim, p_tag))
         cur_dim, cur_tag = p_dim, p_tag
-    return cur_tag if cur_dim == dim else -1
+    return cur_tag if cur_dim == dim and cur_tag > 0 else -1
 
 
 def extract_raw(dim: int | None = 2) -> dict:

@@ -148,6 +148,9 @@ class LibraryContractTests(unittest.TestCase):
             def getParent(self, dim, tag):
                 return -1, -1  # unpartitioned: no entity has a parent
 
+            def getType(self, dim, tag):
+                return "Discrete"  # not a partition ghost entity
+
             def getPhysicalGroups(self):
                 return [(1, 3), (2, 2), (3, 1)]
 

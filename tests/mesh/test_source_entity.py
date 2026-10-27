@@ -173,6 +173,59 @@ def test_partitioned_entities_resolve_to_their_parent():
     assert {after[e] for e in added} == {-1}
 
 
+_MSH2_TAG0 = """$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+4
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+$EndNodes
+$Elements
+1
+1 3 2 0 0 1 2 3 4
+$EndElements
+"""
+
+
+def test_msh2_elementary_tag_zero_reads_as_unknown(tmp_path):
+    """A MSH 2.2 element on elementary tag 0 (legal in that format, and
+    read on main) is classified on entity 0, which is no source tag."""
+    path = tmp_path / "tag0.msh"
+    path.write_text(_MSH2_TAG0)
+    fem = FEMData.from_msh(str(path), dim=2)
+    (grp,) = list(fem.elements)
+    assert grp.ids.tolist() == [1]
+    assert fem.elements.entity[grp.type_code].tolist() == [-1]
+
+
+def test_ghost_cells_carry_no_source_entity():
+    """Ghost entities (``PartitionCreateGhostCells``) have no parent and
+    hold copies of another partition's elements: their rows are ``-1``,
+    and every element still has its real surface on its own row."""
+    with apeGmsh(model_name="sle_ghost", verbose=False):
+        surf = gmsh.model.occ.addRectangle(0, 0, 0, 2, 1)
+        gmsh.model.occ.synchronize()
+        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), 0.5)
+        gmsh.model.mesh.generate(2)
+        gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", 1)
+        try:
+            gmsh.model.mesh.partition(2)
+            ghosts = [t for d, t in gmsh.model.getEntities(2)
+                      if gmsh.model.getType(d, t).startswith("Ghost")]
+            raw = extract_raw(dim=2)
+        finally:
+            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", 0)
+    assert ghosts
+    ent = np.concatenate([g["entity"] for g in raw["groups"].values()])
+    ids = np.concatenate([g["ids"] for g in raw["groups"].values()])
+    assert set(ent.tolist()) == {surf, -1}
+    assert not set(ghosts) & set(ent.tolist())
+    assert set(ids[ent == surf].tolist()) == set(ids.tolist())
+
+
 def test_factory_carries_the_stream_onto_the_snapshot(frame_h5):
     fem = FEMData.from_h5(str(frame_h5))
     assert fem.elements.entity is not None
@@ -412,3 +465,15 @@ def test_source_entity_is_vectorised_over_one_dims_groups():
         comp.source_entity([99], dim=1)
     labels, ent = comp.source_entity([], dim=3)
     assert labels.size == 0 and ent.size == 0
+
+
+def test_source_entity_maps_interleaved_ids_through_the_sort():
+    """Ids that interleave across groups: concatenation order is not id
+    order, so a lookup that skips the sort permutation answers wrong."""
+    groups = {2: _group(2, [1, 2, 81, 82]), 3: _group(3, [51, 52])}
+    comp = _composite(groups, entity={2: np.array([2, 2, 3, 3]),
+                                      3: np.array([7, 8])})
+    _, ent = comp.source_entity([51, 81, 1], dim=1)
+    assert ent.tolist() == [7, 3, 2]
+    _, ent = comp.source_entity([82, 52, 2], dim=1)
+    assert ent.tolist() == [3, 8, 2]
