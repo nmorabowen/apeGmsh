@@ -4002,7 +4002,7 @@ neutral zone; ignore what else is in the file.</p>
 <h2 id="version-rule">Version rule<a class="headerlink" href="#version-rule" title="Permanent link">&para;</a></h2>
 <p><strong>Read this before reading any data.</strong> Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.</p>
-<p>Versions are <strong>semver strings</strong>, not integers — <code>"2.35.0"</code>, stored as
+<p>Versions are <strong>semver strings</strong>, not integers — <code>"2.36.0"</code>, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.</p>
 <table>
@@ -4032,7 +4032,7 @@ independent version; they do not share a number.</p>
 </tbody>
 </table>
 <p>The neutral zone is gated by <strong><code>neutral_schema_version</code> alone</strong>. At the
-time of writing the writer stamps <code>2.35.0</code>.</p>
+time of writing the writer stamps <code>2.36.0</code>.</p>
 <p><code>schema_version</code> is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the
 composer may overwrite it. <strong>Do not branch on it.</strong> Use it only as a
@@ -4352,7 +4352,7 @@ the two namespaces are separate on purpose.</p>
 </tr>
 </tbody>
 </table>
-<p>and three datasets:</p>
+<p>and these datasets:</p>
 <table>
 <thead>
 <tr>
@@ -4381,9 +4381,18 @@ the two namespaces are separate on purpose.</p>
 <td><code>(E,)</code></td>
 <td>yes</td>
 </tr>
+<tr>
+<td><code>/elements/{type}/entity</code></td>
+<td>int32</td>
+<td><code>(E,)</code></td>
+<td>no (2.36.0)</td>
+</tr>
 </tbody>
 </table>
-<p>Row-aligned, as with nodes. Node ordering within a connectivity row is
+<p>Row-aligned, as with nodes. <code>entity</code> is the tag of the gmsh model entity
+of dimension <code>dim</code> that each element was meshed on (partition entities
+already resolved to their parent), <code>-1</code> when unknown. It is on every
+element group or on none; a reader that does not need it can ignore it. Node ordering within a connectivity row is
 gmsh's node ordering for that element type — take it from <code>gmsh_name</code>
 and <code>code</code>, not from a guess.</p>
 <h2 id="index-base-read-this-carefully">Index base — read this carefully<a class="headerlink" href="#index-base-read-this-carefully" title="Permanent link">&para;</a></h2>
