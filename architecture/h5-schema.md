@@ -316,9 +316,12 @@ above) — the source module's label for compose-merged rows (ADR 0038),
 row-parallel to `ids`: the tag of the Gmsh model entity of dimension
 `@dim` the element is classified on. A partitioned mesh's partition
 entities are resolved to their parent with `getParent`, so partitioning
-leaves every element's value unchanged. `-1` means unknown: a
-partition-interface element, whose parent has a higher dimension, or a
-row composed from a module without the stream. Tags are raw and repeat
+leaves every element's value unchanged. `-1` means the element has no
+source entity: a `.msh` element classified on elementary tag `0`, or a
+row composed from a module without the stream. Extraction skips the
+partition-interface and ghost elements partitioning adds (#2582), but a
+model.h5 written before that fix may still carry partition-interface
+rows, whose parent has a higher dimension, as `-1`. Tags are raw and repeat
 across composed modules; `(module_label, entity)` is the key that names
 one source entity. The dataset is optional and is written on **every**
 group or on none: gmsh and `.msh` extraction write it; MPCO, `.ladruno`

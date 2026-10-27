@@ -465,7 +465,9 @@ __all__ = [
 #: ``(E,) int32`` dataset row-parallel to ``ids``: the tag of the Gmsh
 #: model entity of the group's dimension each element is classified on,
 #: partition entities resolved to their parent with ``getParent``, and
-#: ``-1`` unknown (a partition-interface element).  Written on every
+#: ``-1`` for no source entity.  Extraction skips partition-interface
+#: and ghost elements (#2582); a file written before that fix may still
+#: carry partition-interface rows as ``-1``.  Written on every
 #: group iff the snapshot carries the stream (gmsh/msh extraction does;
 #: MPCO, ``.ladruno`` and the assembly's empty base do not); a reader
 #: probes it with ``in`` and refuses a file carrying it on some groups
