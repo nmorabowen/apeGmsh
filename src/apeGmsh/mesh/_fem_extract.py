@@ -97,6 +97,35 @@ def _validate_connectivity(
 # Raw extraction (dict of arrays — no FEMData yet)
 # =====================================================================
 
+def _source_entity(dim: int, tag: int) -> int:
+    """The source-entity tag of elements classified on ``(dim, tag)``.
+
+    A partitioned mesh moves elements onto partition entities; Gmsh's
+    ``getParent`` names the model entity each one was cut from, and
+    ``(-1, -1)`` on a model entity. The chain is followed to its model
+    entity. The result is that entity's tag when it has dimension
+    ``dim``, else ``-1``: a partition-interface entity's parent is the
+    entity of higher dimension the interface lies in, so its elements
+    have no source of their own dimension (#2551, open question 4).
+    """
+    cur_dim, cur_tag = dim, tag
+    seen = {(cur_dim, cur_tag)}
+    while True:
+        p_dim, p_tag = gmsh.model.getParent(cur_dim, cur_tag)
+        p_dim, p_tag = int(p_dim), int(p_tag)
+        if p_dim < 0:
+            break
+        if (p_dim, p_tag) in seen:
+            raise RuntimeError(
+                f"Gmsh getParent cycles at entity ({p_dim}, {p_tag}) "
+                f"from ({dim}, {tag}); cannot resolve the elements' "
+                f"source entity."
+            )
+        seen.add((p_dim, p_tag))
+        cur_dim, cur_tag = p_dim, p_tag
+    return cur_tag if cur_dim == dim else -1
+
+
 def extract_raw(dim: int | None = 2) -> dict:
     """Pull raw FEM arrays from the current Gmsh session.
 
@@ -113,48 +142,74 @@ def extract_raw(dim: int | None = 2) -> dict:
         ``elem_tags``, ``used_tags``.
 
         ``groups`` is ``dict[int, dict]`` keyed by Gmsh element type
-        code, with each value containing ``'ids'``, ``'conn'``,
-        ``'gmsh_name'``, ``'dim'``, ``'order'``, ``'npe'``.
+        code (ascending), with each value containing ``'ids'``,
+        ``'conn'``, ``'entity'``, ``'gmsh_name'``, ``'dim'``,
+        ``'order'``, ``'npe'``.  ``'entity'`` is the ``(E,) int32``
+        source-entity stream (#2551): row-parallel to ``'ids'``, the
+        tag of the model entity of the element's own dimension the
+        element is classified on, a partition entity resolved to its
+        parent (:func:`_source_entity`), ``-1`` when that parent has
+        another dimension (a partition-interface element).
     """
     # --- nodes (full mesh) ---
     raw_tags, raw_coords, _ = gmsh.model.mesh.getNodes()
     node_tags   = np.array(raw_tags, dtype=np.int64)
     node_coords = np.array(raw_coords).reshape(-1, 3)
 
-    # --- elements, grouped by type ---
+    # --- elements, per model entity, grouped by type ---
+    # One ``getElements(d, tag)`` per entity rather than one global
+    # ``getElements(dim, -1)``: Gmsh builds the global call by walking
+    # the same entities, in ``getEntities`` order, inside each ascending
+    # type code. Concatenating the per-entity blocks in that order
+    # reproduces its ids and connectivity byte for byte, and the loop
+    # learns each block's entity at no extra Gmsh call per element.
     gmsh_dim = -1 if dim is None else dim
-    elem_types, elem_tags_list, node_tags_list = \
-        gmsh.model.mesh.getElements(dim=gmsh_dim, tag=-1)
+    blocks: dict[int, list[tuple[ndarray, ndarray, int]]] = {}
+    for ent_dim, ent_tag in gmsh.model.getEntities(gmsh_dim):
+        etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(
+            dim=ent_dim, tag=ent_tag)
+        if len(etypes) == 0:
+            continue
+        source = _source_entity(int(ent_dim), int(ent_tag))
+        for etype, etags, enodes in zip(etypes, etags_list, enodes_list):
+            if len(etags) == 0:
+                continue
+            blocks.setdefault(int(etype), []).append((etags, enodes, source))
 
     groups: dict[int, dict] = {}
     all_elem_tags: list[int] = []
 
-    for etype, etags, enodes in zip(
-        elem_types, elem_tags_list, node_tags_list
-    ):
-        etype = int(etype)
+    for etype in sorted(blocks):
         props = gmsh.model.mesh.getElementProperties(etype)
         # props: (name, dim, order, n_nodes, local_coords, n_primary)
         npe = props[3]
-        ids = np.array(etags, dtype=np.int64)
-        conn = np.array(enodes, dtype=np.int64).reshape(-1, npe)
-
-        if etype in groups:
-            # Multiple entities of the same type — concatenate
-            prev = groups[etype]
-            prev['ids'] = np.concatenate([prev['ids'], ids])
-            prev['conn'] = np.concatenate([prev['conn'], conn])
+        parts = blocks.pop(etype)
+        if len(parts) == 1:
+            etags, enodes, source = parts[0]
+            ids = np.array(etags, dtype=np.int64)
+            conn = np.array(enodes, dtype=np.int64).reshape(-1, npe)
+            entity = np.full(ids.size, source, dtype=np.int32)
         else:
-            groups[etype] = {
-                'ids':       ids,
-                'conn':      conn,
-                'gmsh_name': props[0],
-                'dim':       int(props[1]),
-                'order':     int(props[2]),
-                'npe':       npe,
-            }
-
-        all_elem_tags.extend(int(t) for t in etags)
+            ids = np.concatenate(
+                [np.asarray(p[0], dtype=np.int64) for p in parts])
+            conn = np.concatenate(
+                [np.asarray(p[1], dtype=np.int64) for p in parts]
+            ).reshape(-1, npe)
+            entity = np.repeat(
+                np.array([p[2] for p in parts], dtype=np.int32),
+                [len(p[0]) for p in parts],
+            )
+        del parts
+        groups[etype] = {
+            'ids':       ids,
+            'conn':      conn,
+            'entity':    entity,
+            'gmsh_name': props[0],
+            'dim':       int(props[1]),
+            'order':     int(props[2]),
+            'npe':       npe,
+        }
+        all_elem_tags.extend(ids.tolist())
 
     # --- integrity guard: every connectivity tag must be a real node ---
     _validate_connectivity(groups, node_tags)

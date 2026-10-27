@@ -459,7 +459,21 @@ __all__ = [
 #: the guard treats as a possible gravity case (it warns, as every
 #: reader before this minor did).  An additive column still bumps the
 #: minor (ADR 0113 D5).
-NEUTRAL_SCHEMA_VERSION: str = "2.35.0"
+#:
+#: v2.36.0 (October 2026, #2551 S1 — per-element source entity):
+#: additive and optional — adds ``/elements/{alias}/entity``, an
+#: ``(E,) int32`` dataset row-parallel to ``ids``: the tag of the Gmsh
+#: model entity of the group's dimension each element is classified on,
+#: partition entities resolved to their parent with ``getParent``, and
+#: ``-1`` unknown (a partition-interface element).  Written on every
+#: group iff the snapshot carries the stream (gmsh/msh extraction does;
+#: MPCO, ``.ladruno`` and the assembly's empty base do not); a reader
+#: probes it with ``in`` and refuses a file carrying it on some groups
+#: only, a shape mismatch, or a value neither ``-1`` nor positive.
+#: 2.10–2.35 files read as no stream.  Not folded into ``snapshot_id``
+#: (like ``module_label``).  Raw tags: a member is keyed by
+#: ``(module_label, entity)``.
+NEUTRAL_SCHEMA_VERSION: str = "2.36.0"
 
 #: Oldest neutral minor the reader opens (ADR 0113 (#1303)): the B2 layout
 #: split. Every later minor is additive and presence-probed, or carries a
@@ -894,6 +908,7 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
     different zones (root vs ``/opensees/element_meta``).
     """
     elements_grp = f.create_group("elements")
+    entity = fem.elements.entity
     for elem_group in fem.elements:
         if elem_group.ids.size == 0:
             continue
@@ -936,6 +951,17 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
             data=elem_ml_data,
             dtype=_vlen_utf8(),
         )
+        # #2551 S1 — per-element source entity (neutral schema 2.36.0),
+        # row-parallel to ``ids``.  Written on every group iff the
+        # snapshot carries the stream (gmsh/msh extraction does; MPCO,
+        # ``.ladruno`` and stream-less composes do not), so a reader
+        # sees all groups or none.
+        if entity is not None:
+            sub.create_dataset(
+                "entity",
+                data=np.asarray(entity[elem_group.type_code],
+                                dtype=np.int32),
+            )
 
 
 def _write_physical_groups(fem: "FEMData", f: Any) -> None:
@@ -2848,6 +2874,8 @@ def read_neutral_zone_from_group(
     # a non-empty label) — saves the uncomposed common case from
     # round-tripping with an all-empty-string array.
     elem_module_labels: dict[int, np.ndarray] = {}
+    elem_entity: dict[int, np.ndarray] = {}
+    elem_no_entity: list[str] = []
     elem_grp = parent["elements"] if "elements" in parent else None
     if elem_grp is not None:
         for type_name in sorted(elem_grp.keys()):
@@ -2889,6 +2917,36 @@ def read_neutral_zone_from_group(
                 )
                 if any(s != "" for s in decoded):
                     elem_module_labels[info.code] = decoded
+            # #2551 S1 — per-element source entity (neutral 2.36.0).
+            # Optional: 2.10–2.35 files and stream-less snapshots have
+            # no dataset.  Presence-probed with ``in``.
+            if "entity" in sub:
+                ent = np.asarray(sub["entity"][...])
+                if ent.shape != ids.shape:
+                    raise MalformedH5Error(
+                        f"{label}: /elements/{type_name}/entity shape "
+                        f"{ent.shape} does not match ids shape "
+                        f"{ids.shape}."
+                    )
+                if ent.size and not (
+                    np.issubdtype(ent.dtype, np.integer)
+                    and bool((((ent == -1) | (ent > 0))
+                              & (ent <= np.iinfo(np.int32).max)).all())
+                ):
+                    raise MalformedH5Error(
+                        f"{label}: /elements/{type_name}/entity holds "
+                        f"values that are neither -1 nor a positive "
+                        f"int32 entity tag."
+                    )
+                elem_entity[info.code] = ent.astype(np.int32, copy=False)
+            else:
+                elem_no_entity.append(type_name)
+    if elem_entity and elem_no_entity:
+        raise MalformedH5Error(
+            f"{label}: /elements carries the per-element 'entity' stream "
+            f"on some groups but not on {sorted(elem_no_entity)}; it is "
+            f"written on every group or none."
+        )
 
     # -- physical_groups + labels (root-level union of node + elem sides) --
     node_pgs, elem_pgs = _read_named_index_at_root(
@@ -3011,6 +3069,7 @@ def read_neutral_zone_from_group(
         contact_planes=contact_planes or None,
         interfaces=interfaces or None,
         gmsh_source=None,
+        entity=elem_entity or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),

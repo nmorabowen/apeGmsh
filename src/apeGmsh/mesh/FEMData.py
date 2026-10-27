@@ -777,6 +777,59 @@ class NodeComposite:
 # ElementComposite
 # =====================================================================
 
+_INT32_MAX = int(np.iinfo(np.int32).max)
+
+
+def _validate_entity_stream(
+    entity: "dict[int, ndarray] | None",
+    groups: "dict[int, ElementGroup]",
+) -> "dict[int, ndarray] | None":
+    """Check and normalise an ``ElementComposite(entity=)`` stream (#2551).
+
+    ``None`` stays ``None`` (no stream).  Otherwise every group gets an
+    ``int32`` array of its ``ids`` shape, a code the caller left out
+    filled with ``-1``.  A code with no group, a wrong shape, a
+    non-integer array, or a value that is neither ``-1`` nor a positive
+    entity tag raises ``ValueError``.
+    """
+    if entity is None:
+        return None
+    unknown = sorted(int(c) for c in entity if int(c) not in groups)
+    if unknown:
+        raise ValueError(
+            f"ElementComposite: entity names element type code(s) "
+            f"{unknown} that have no element group."
+        )
+    out: dict[int, ndarray] = {}
+    for code, grp in groups.items():
+        arr = entity.get(code)
+        if arr is None:
+            out[int(code)] = np.full(grp.ids.shape, -1, dtype=np.int32)
+            continue
+        arr = np.asarray(arr)
+        if arr.shape != grp.ids.shape:
+            raise ValueError(
+                f"ElementComposite: entity[{code}] shape {arr.shape} "
+                f"does not match ids shape {grp.ids.shape}."
+            )
+        if arr.size and not np.issubdtype(arr.dtype, np.integer):
+            raise ValueError(
+                f"ElementComposite: entity[{code}] has dtype "
+                f"{arr.dtype}; source-entity tags are integers."
+            )
+        if arr.size and not bool(
+            (((arr == -1) | (arr > 0)) & (arr <= _INT32_MAX)).all()
+        ):
+            bad = arr[~(((arr == -1) | (arr > 0)) & (arr <= _INT32_MAX))]
+            raise ValueError(
+                f"ElementComposite: entity[{code}] holds "
+                f"{bad[:5].tolist()}; a source entity is a positive "
+                f"int32 Gmsh tag or -1 (unknown)."
+            )
+        out[int(code)] = arr.astype(np.int32, copy=False)
+    return out
+
+
 class ElementComposite:
     """Access and query elements from the FEM mesh.
 
@@ -814,6 +867,7 @@ class ElementComposite:
         rebar_elements=None,
         interfaces=None,
         gmsh_source: tuple[str, str] | None = None,
+        entity: dict[int, ndarray] | None = None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -912,6 +966,16 @@ class ElementComposite:
                     )
                 self._module_label[int(code)] = mlbl
 
+        # Per-element source entity (#2551 S1, neutral schema 2.36.0):
+        # dict keyed by element-type code, each value an ``(E_t,)
+        # int32`` array aligned 1:1 with the type's ``ids`` — the tag of
+        # the model entity of the type's own dimension the element is
+        # classified on (partition entities resolved to their parent),
+        # ``-1`` unknown.  ``None`` means the snapshot carries no stream
+        # (MPCO, ``.ladruno``, a pre-2.36 file); otherwise every group
+        # has an array, a code the caller left out filled with ``-1``.
+        self._entity = _validate_entity_stream(entity, self._groups)
+
     # ── Iteration ───────────────────────────────────────────
 
     def __iter__(self):
@@ -992,6 +1056,82 @@ class ElementComposite:
             for eid, lbl in zip(grp.ids, labels):
                 out[int(eid)] = str(lbl)
         return out
+
+    @property
+    def entity(self) -> "dict[int, ndarray] | None":
+        """Per-element source entity keyed by element-type code.
+
+        Each value is an ``(E_t,) int32`` array aligned 1:1 with that
+        type's group ``ids``: the tag of the Gmsh model entity of the
+        type's own dimension the element is classified on, a partition
+        entity resolved to its parent, ``-1`` unknown (#2551).  Raw
+        tags: entity tags repeat across composed modules, so a member
+        is keyed by ``(module_label, entity)``.  ``None`` when the
+        snapshot carries no stream.  Read-only view; consumers must not
+        mutate.
+        """
+        return self._entity
+
+    def source_entity(
+        self, eids, *, dim: int,
+    ) -> "tuple[ndarray, ndarray]":
+        """``(labels, entity)`` for element ids ``eids`` of dimension ``dim``.
+
+        Vectorised over the groups whose element dimension is ``dim``:
+        ``labels`` is an object array of compose labels (``""`` for
+        host-owned rows), ``entity`` an ``int32`` array of source-entity
+        tags (``-1`` unknown, and every row ``-1`` when the snapshot
+        carries no stream), both aligned with ``eids``.  Together they
+        are the member key ``(module_label, entity)``.
+
+        Raises
+        ------
+        KeyError
+            If an id is not an element of dimension ``dim``.
+        """
+        want = np.asarray(eids, dtype=np.int64).reshape(-1)
+        ids_parts: list[ndarray] = []
+        ent_parts: list[ndarray] = []
+        lbl_parts: list[ndarray] = []
+        for code, grp in self._groups.items():
+            if grp.element_type.dim != dim or grp.ids.size == 0:
+                continue
+            ids_parts.append(np.asarray(grp.ids, dtype=np.int64))
+            if self._entity is None:
+                ent_parts.append(np.full(grp.ids.size, -1, dtype=np.int32))
+            else:
+                ent_parts.append(self._entity[code])
+            labels = (self._module_label.get(code)
+                      if self._module_label is not None else None)
+            lbl_parts.append(
+                np.asarray(labels, dtype=object) if labels is not None
+                else np.full(grp.ids.size, "", dtype=object))
+        if not ids_parts:
+            all_ids = np.empty(0, dtype=np.int64)
+            all_ent = np.empty(0, dtype=np.int32)
+            all_lbl = np.empty(0, dtype=object)
+        else:
+            all_ids = np.concatenate(ids_parts)
+            all_ent = np.concatenate(ent_parts)
+            all_lbl = np.concatenate(lbl_parts)
+        order = np.argsort(all_ids, kind="stable")
+        sorted_ids = all_ids[order]
+        if sorted_ids.size == 0:
+            pos = np.zeros(want.shape, dtype=np.intp)
+            found = np.zeros(want.shape, dtype=bool)
+        else:
+            pos = np.minimum(np.searchsorted(sorted_ids, want),
+                             sorted_ids.size - 1)
+            found = sorted_ids[pos] == want
+        if not found.all():
+            missing = want[~found]
+            raise KeyError(
+                f"source_entity: {missing.size} element id(s) are not "
+                f"elements of dimension {dim} (first: "
+                f"{missing[:5].tolist()})."
+            )
+        rows = order[pos]
+        return all_lbl[rows], all_ent[rows]
 
     @property
     def types(self) -> list[ElementTypeInfo]:
