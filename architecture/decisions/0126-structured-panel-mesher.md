@@ -52,7 +52,7 @@ further than conformity needs. Measured on RevK by YOO:
 |---|---|---|---|
 | each area's own `ceil(L/0.5)` grid (ETABS) | – | 0 | 43,012 |
 | own-edge forced points only (does **not** conform) | 40 / 33 | 40 / 44 | 43,647 |
-| minimal spreading (D3) | 104 / 33 | 104 / 66 | 44,053 |
+| minimal spreading (D3, no snapping) | 104 / 33 | 104 / 66 | 44,053 |
 | YOO today (plane-wide / storey-wide) | 138 / 132 | 138 / 264 | 46,189 |
 
 About two thirds of YOO's extra quads come from over-spreading, not from real
@@ -168,9 +168,19 @@ All the edges of a class are parallel, so a station is a scalar
 The set is sorted and merged with `min_gap=0.02` (D4). Each edge then
 carries exactly the stations of its class inside its interval.
 
-A station therefore reaches every edge that must carry it, and no other.
+A station therefore reaches every edge that must carry it. It can also reach
+an edge that does not need it, when intervals along one line do not nest.
+For example, B and C both overlap A and both run past the same end of A. A
+station of B beyond A's end, but inside C, then lands on C, because all three
+edges are in one class. An overlap-by-overlap propagation would leave C
+alone. Class union is kept because it is simpler and gives the same result on
+RevK. Slice 1 tests this layout and records the extra station as expected.
 This replaces YOO's plane-wide and storey-wide sharing (the table above:
-44,053 quads against 46,189). With no forced points and no partial overlaps,
+44,053 quads against 46,189).
+
+Height classes also chain walls in different planes through a shared
+vertical edge (L and T corners in plan). The collinear link covers that, and
+most of RevK's 276 height classes come from it. With no forced points and no partial overlaps,
 every class holds identical intervals, and the result is each area's own
 `ceil` grid, ETABS's grid exactly.
 
@@ -295,7 +305,10 @@ the panel route has run on a production model. A non-rectangular area under
 1. **Planner (D1–D6).** `apeGmsh.mesh.panels`, pure, with unit tests on
    synthetic layouts:
    - a single panel's `ceil` grid;
-   - a T-junction;
+   - a T-junction, and an L corner in plan (a height class across two
+     planes);
+   - the non-nesting layout of D3 (B and C overlapping A past the same end),
+     with its extra station on C;
    - a beam end on a shared edge, spread to both panels and to their
      opposite edges, and to no other panel;
    - snap and no-snap on a point 0.1 h from a station;
@@ -309,9 +322,16 @@ the panel route has run on a production model. A non-rectangular area under
 
    A scale test meshes a synthetic tower of 1,288 panels and must run within
    a small factor of raw Gmsh on the same entities.
-3. **RevK acceptance (YOO).** YOO replaces `gmsh_mesh.py` with D1/D7, and
-   reproduces the D3 row of the table (44,053 quads, 104 / 66 extra
-   stations).
+3. **RevK acceptance (YOO).** YOO replaces `gmsh_mesh.py` with D1/D7. It
+   checks three things:
+   - with `snap_fraction=0`, the plan reproduces the D3 row of the table:
+     44,053 quads, 104 / 66 extra stations, and 196 / 276 edge classes
+     along / up (the counts were measured without snapping);
+   - `strict=True` refuses nothing, since RevK has no point inside a wall
+     face and every panel is a rectangle (a refusal is a planner bug);
+   - with the default `snap_fraction=0.3`, the plan's counts and smallest
+     segment are recorded as the new reference. The 0.09 m sliver must be
+     gone.
 4. **Parity mode (D8)**, with 43,012 quads on RevK as its acceptance, and T1
    run in that mode against ETABS.
 5. **ETABS-import hook (D9).**
