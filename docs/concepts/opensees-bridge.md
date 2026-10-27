@@ -148,8 +148,8 @@ interior node takes only the transverse part. A curve meshed into n elements
 behaves as one element with the same offsets. Elements that frame into the
 curve do not split it; to put a joint at mid-span, split the curve.
 
-These cases refuse. Each message names the curve, except the last, which
-names the elements and the node:
+These cases refuse. Each message names the curve, except the 3-D one, which
+names the transform only, and the last, which names the elements and the node:
 
 - end-sensitive offsets on a curve that is not straight;
 - a transform that covers only part of a curve and would put an end zone or

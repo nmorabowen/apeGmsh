@@ -28,9 +28,9 @@ source-entity stream (neutral 2.36). Refused, naming the curve: a curved
 curve; a transform covering part of a curve that puts an end zone or axial
 part at an interior node; a curve with mixed element orientation or a
 closed curve; end lengths with different transverse offsets at the two
-ends; an end element no longer than its end offsets; elements of one curve
-with different vecxz; and, in 3-D, a split with neither vecxz= nor
-orientation= on the transform. When the snapshot carries no source curves,
+ends; an end element no longer than its end offsets; and elements of one
+curve with different vecxz. In 3-D, a split with neither vecxz= nor
+orientation= on the transform refuses naming the transform only. When the snapshot carries no source curves,
 it refuses instead, naming the elements and the node, where two elements
 meet turning outside 30-150 deg.
 
