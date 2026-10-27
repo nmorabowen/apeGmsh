@@ -315,6 +315,7 @@ class _ElementsStub:
         elem_pgs: dict[str, _ElementGroupView],
         labels: dict[str, list[int]] | None = None,
         module_label: dict[int, str] | None = None,
+        entity: dict[int, int] | None = None,
     ) -> None:
         self._pgs = dict(elem_pgs)
         self.physical = _PhysicalNamesStub(self._pgs)
@@ -324,9 +325,31 @@ class _ElementsStub:
         self._module_label_by_id = (
             None if module_label is None else dict(module_label)
         )
+        # #2551 S1: ``element-id -> source-entity tag``; ``None`` mirrors
+        # a snapshot without the stream (every element ``-1``).
+        self._entity_by_id = None if entity is None else dict(entity)
 
     def module_label_by_id(self) -> "dict[int, str] | None":
         return self._module_label_by_id
+
+    def source_entity(self, eids, *, dim: int) -> "tuple[ndarray, ndarray]":
+        """Mirror :meth:`ElementComposite.source_entity`: ``(labels,
+        entity)`` aligned with ``eids``; ``-1`` where no entity is known
+        (every row without the stream). Every stub element is a line
+        (``dim`` must be 1); an id in no PG raises ``KeyError``."""
+        if dim != 1:
+            raise KeyError(f"fem-stub.source_entity: only dim=1, got {dim}")
+        known = {int(e) for grp in self._pgs.values() for e in grp.ids}
+        want = [int(e) for e in np.asarray(eids).reshape(-1)]
+        missing = [e for e in want if e not in known]
+        if missing:
+            raise KeyError(
+                f"source_entity: element id(s) {missing[:5]} are not "
+                "elements of dimension 1.")
+        lbl = self._module_label_by_id or {}
+        ent = self._entity_by_id or {}
+        return (np.asarray([lbl.get(e, "") for e in want], dtype=object),
+                np.asarray([ent.get(e, -1) for e in want], dtype=np.int32))
 
     def get(
         self,
