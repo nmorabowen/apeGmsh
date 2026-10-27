@@ -1,6 +1,7 @@
 # ADR 0126 — Structured panel mesher: rectangular wall panels and line members meshed as shared quad grids, without fragment
 
-**Status:** Proposed (2026-10-26). No implementation yet. It adds a pure
+**Status:** Accepted (2026-10-26; approved by the maintainer, recorded on
+#2575). No implementation yet. It adds a pure
 planner (`apeGmsh.mesh.panels.plan_panels`) and one session verb
 (`g.mesh.structured.panels`). It changes no Emitter Protocol, no H5 schema and
 no `FEMData` constructor. Slices are in "Slices"; the ETABS parity mode (D8)
