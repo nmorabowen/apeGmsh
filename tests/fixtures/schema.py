@@ -23,9 +23,11 @@ OPENSEES_BEFORE_EQUATION_CONSTRAINT = "2.34.0"  # the minor just below it, which
 OPENSEES_TARGET_MODE_FROM = "2.36.0"  # the minor whose /opensees@target_mode keeps a pinned target (K #2375); fixed history
 OPENSEES_BEFORE_TARGET_MODE = "2.35.0"  # the minor just below it, which has no @target_mode (K #2375); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
-NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
-NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
+NEUTRAL_CURRENT      = "2.36.0"  # #2551 S1: optional /elements/{alias}/entity (per-element source entity)
+NEUTRAL_PRIOR_MINOR  = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_FLOOR        = "2.10.0"  # B2 layout split; every later minor is additive or shimmed
+NEUTRAL_ENTITY_FROM  = "2.36.0"  # the minor that added /elements/{alias}/entity (#2551 S1); fixed history
+NEUTRAL_BEFORE_ENTITY = "2.35.0"  # the minor just below it, whose files carry no entity stream (#2551 S1); fixed history
 RESULTS_FLOOR        = "1.0.0"   # the results zone's first version
 RESULTS_CURRENT      = "1.2.0"   # #1746: optional root element_index_space stamp
 RESULTS_PRIOR_MINOR  = "1.1.0"   # Phase 6 (ADR 0021): /meta/lineage

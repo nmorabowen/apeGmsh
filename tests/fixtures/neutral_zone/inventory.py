@@ -56,7 +56,8 @@ class DatasetSpec:
 
     ``dtype`` is a canonical token, not a numpy dtype string:
 
-    * ``"int64"`` / ``"float64"`` / ``"int8"`` — plain numeric.
+    * ``"int64"`` / ``"float64"`` / ``"int32"`` / ``"int8"`` — plain
+      numeric.
     * ``"vlen_utf8"`` — HDF5 variable-length UTF-8 string.  ``h5py``
       reports ``dtype == object`` and hands back ``bytes`` on read;
       a browser reader (h5wasm) sees a variable-length string type.
@@ -221,6 +222,12 @@ DATASETS: dict[str, DatasetSpec] = {
     "/elements/{type}/module_label": DatasetSpec(
         "vlen_utf8", 1,
         note="compose provenance; empty string for host-owned rows",
+    ),
+    "/elements/{type}/entity": DatasetSpec(
+        "int32", 1, required=False,
+        note=("source gmsh entity of the group's dim (partition entities "
+              "resolved to their parent); -1 unknown. On every group or "
+              "none (neutral 2.36.0)"),
     ),
     # ------------------------------------------------- physical groups
     "/physical_groups/node_side/{name}/node_ids": DatasetSpec("int64", 1),

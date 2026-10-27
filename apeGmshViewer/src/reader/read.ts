@@ -66,8 +66,14 @@ export interface H5File extends H5Group {
   close(): unknown;
 }
 
-/** The schema versions this reader was written against (ADR 0023). */
-export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
+/**
+ * The schema versions this reader was written against (ADR 0023).
+ *
+ * neutral 2.36.0 (#2551): an optional `/elements/{alias}/entity` dataset
+ * (the per-element source gmsh entity). The app does not need it, and
+ * `readBlock` reads only the datasets it names, so the extra one is ignored.
+ */
+export const NEUTRAL_TARGET = { major: 2, minor: 36 } as const;
 /**
  * opensees 2.27.0: `/opensees/decls` (2.25), `/opensees/decl_params` (2.26,
  * K1-7), and 2.27's additions (K1-8, h5-schema.md "Parameter tags (opensees
