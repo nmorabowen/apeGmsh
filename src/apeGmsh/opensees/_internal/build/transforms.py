@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import weakref
 from dataclasses import dataclass
 from typing import Any, Iterable, TypeAlias
 
@@ -36,6 +37,9 @@ if TYPE_CHECKING:
 #: whose per-element ``vecxz`` agrees to this tolerance share one
 #: ``geomTransf`` line.
 VECXZ_TOL: float = 1e-9
+
+#: Machine epsilon, for the round-off bound on mesh coordinates.
+_EPS: float = float(np.finfo(float).eps)
 
 
 # ---------------------------------------------------------------------------
@@ -227,26 +231,36 @@ def element_jnt_offset(
 
 
 # ---------------------------------------------------------------------------
-# Member ends (ETABS): refuse what the mesh alone cannot place
+# Member ends (ETABS): a member is the gmsh curve
 # ---------------------------------------------------------------------------
 #
-# ETABS applies a frame object's end offsets at the object's two ends. A
-# member meshed into several elements is a straight collinear run of line
-# elements, and so is a continuous girder of several members; without each
-# element's source curve the two cannot be told apart. So an offset
-# that is not the same pure transverse shift at both ends (an end length, an
-# axial component, unequal ends) refuses where two of the transform's
-# elements meet without a clear corner (a turn outside MEMBER_CORNER_DEG
-# to MEMBER_FOLD_DEG). One-element members, corners, and an equal
-# transverse shift on every element are unaffected.
+# ETABS applies a frame object's end offsets at the object's two ends; the
+# frame object is the gmsh curve. An offset that is the same pure transverse shift at both ends
+# reads the same on every element, so it stays per element. An
+# end-sensitive offset (an end length, an axial component, unequal ends) is
+# split over each curve the transform's elements come from: the curve's
+# i-end element takes the i-offset, its j-end element the j-offset, and
+# every interior node the offsets' transverse part, interpolated along the
+# curve's chord. Elements come from a curve through the FEM's per-element
+# source-entity stream (``ElementComposite.source_entity``, neutral 2.36);
+# the member key is ``(module_label, entity)``, so the same curve tag in
+# two Assembly instances is two members. A transform covering only part
+# of a curve keeps each element's own offset, refused where that puts an
+# end zone or axial part at a node interior to the curve. A curve with one
+# element is its own member and keeps its per-element offset exactly. A snapshot without
+# the stream (a pre-2.36 model.h5, a FEM not extracted from gmsh) cannot
+# tell a member meshed into several elements from a girder of several
+# members, so it refuses end-sensitive offsets wherever two elements meet
+# without a clear corner (a turn outside MEMBER_CORNER_DEG to
+# MEMBER_FOLD_DEG).
 
 #: One element of a transform: ``(eid, node_i, node_j, p_i, p_j, vecxz)``.
 _ElementRow: TypeAlias = (
     "tuple[int, int, int, np.ndarray, np.ndarray, tuple[float, ...]]"
 )
 
-#: The issue that carries each element's source curve (member ends).
-MEMBER_CURVES_ISSUE = "#2551"
+#: A member: the curve ``entity`` of compose label ``module_label``.
+_MemberKey: TypeAlias = "tuple[str, int]"
 
 
 def _pad3(v: "Iterable[float]") -> np.ndarray:
@@ -279,7 +293,8 @@ def _transverse_only(
 #: its facet angle, a few degrees); a real corner, a knee of 45 deg or
 #: more, turns by far more. Above the upper one the elements fold back
 #: over each other (a hairpin, overlapping collinear elements), which no
-#: frame corner does. Outside [30, 150] deg end offsets refuse.
+#: frame corner does. Outside [30, 150] deg end offsets refuse. Used only
+#: where the snapshot carries no source curves.
 MEMBER_CORNER_DEG: float = 30.0
 MEMBER_FOLD_DEG: float = 150.0
 
@@ -301,9 +316,10 @@ def _refuse_ambiguous_members(
 ) -> None:
     """Refuse end-sensitive offsets where any two of the transform's
     elements meet at a node without a clear corner (a turn outside
-    [MEMBER_CORNER_DEG, MEMBER_FOLD_DEG]): a meshed member (straight, faceted,
-    or running through a joint) and a girder of several members look alike
-    there, and a fold-back is no corner."""
+    [MEMBER_CORNER_DEG, MEMBER_FOLD_DEG]), on a snapshot that carries no
+    source curves: there a meshed member (straight, faceted, or running
+    through a joint) and a girder of several members look alike, and a
+    fold-back is no corner."""
     by_node: dict[int, list[int]] = {}
     for k, r in enumerate(rows):
         by_node.setdefault(r[1], []).append(k)
@@ -329,15 +345,269 @@ def _refuse_ambiguous_members(
                     f"on elements {a[0]} and {b[0]}, which meet at node "
                     f"{node} turning {turn:.3g} deg, outside the "
                     f"{MEMBER_CORNER_DEG:g}-{MEMBER_FOLD_DEG:g} deg that marks "
-                    "a frame corner. Without each element's source curve "
-                    "apeGmsh cannot tell a member meshed into several "
+                    "a frame corner. The FEM snapshot carries no source "
+                    "curves for these elements (a model.h5 written before "
+                    "neutral schema 2.36, or a FEM not extracted from gmsh), "
+                    "so apeGmsh cannot tell a member meshed into several "
                     "elements (or a faceted curve, or one running through a "
-                    "joint) from a girder of several members, so it cannot "
-                    "put the offsets at the member's ends, as ETABS does "
-                    f"(member ends by curve: {MEMBER_CURVES_ISSUE}). Mesh "
-                    "each member as one element and give members that "
-                    "continue each other separate transforms, or use offsets "
-                    "that are the same transverse shift at both ends.")
+                    "joint) from a girder of several members, and cannot put "
+                    "the offsets at the member's ends, as ETABS does. "
+                    "Re-extract the FEM from gmsh, mesh each member as one "
+                    "element and give members that continue each other "
+                    "separate transforms, or use offsets that are the same "
+                    "transverse shift at both ends.")
+
+
+def _curve_name(key: "_MemberKey") -> str:
+    label, entity = key
+    return f"curve {entity}" + (f" of {label!r}" if label else "")
+
+
+def _member_keys(
+    rows: "list[_ElementRow]", fem: "FEMData",
+) -> "list[_MemberKey] | None":
+    """Each row's member key ``(module_label, entity)``, or ``None`` when
+    any row has no source curve (the snapshot carries no stream, or an
+    element was not classified on a curve)."""
+    labels, entity = fem.elements.source_entity(
+        np.fromiter((r[0] for r in rows), dtype=np.int64, count=len(rows)),
+        dim=1)
+    if bool(np.any(np.asarray(entity) < 1)):
+        return None
+    return [(str(lbl), int(ent)) for lbl, ent in zip(labels, entity)]
+
+
+#: One line element of a curve: ``(eid, node_i, node_j)``.
+_CurveElement: TypeAlias = "tuple[int, int, int]"
+
+#: The curve index of each snapshot's element composite, built on first
+#: use: ``(module_label, entity) -> every line element of that curve``.
+#: Weak keys, so an index lives exactly as long as its snapshot.
+_CURVE_INDEX: "weakref.WeakKeyDictionary[Any, dict[_MemberKey, list[_CurveElement]]]" = (
+    weakref.WeakKeyDictionary())
+
+
+def _curve_index(fem: "FEMData") -> "dict[_MemberKey, list[_CurveElement]]":
+    """Every line element of every curve in ``fem``, by member key, in id
+    order: one pass over the snapshot's line elements, then cached."""
+    comp = fem.elements
+    index = _CURVE_INDEX.get(comp)
+    if index is not None:
+        return index
+    index = {}
+    for grp in comp.select(dim=1).groups():
+        ids = np.asarray(grp.ids, dtype=np.int64)
+        if ids.size == 0:
+            continue
+        labels, entity = comp.source_entity(ids, dim=1)
+        conn = np.asarray(grp.connectivity)
+        for k, (eid, lbl, ent) in enumerate(
+                zip(ids.tolist(), labels, np.asarray(entity).tolist())):
+            if ent >= 1:
+                index.setdefault((str(lbl), int(ent)), []).append(
+                    (int(eid), int(conn[k, 0]), int(conn[k, 1])))
+    for elements in index.values():
+        elements.sort()
+    _CURVE_INDEX[comp] = index
+    return index
+
+
+def _refuse_mixed_orientation(
+    curve: "list[_CurveElement]", key: "_MemberKey", where: str,
+) -> None:
+    """Refuse a curve whose elements do not all run one way: its i-end is
+    then ambiguous for end offsets (gmsh orders each element's nodes
+    along its curve; ``reverseElements`` breaks that)."""
+    i_nodes = [e[1] for e in curve]
+    j_nodes = [e[2] for e in curve]
+    if len(set(i_nodes)) != len(curve) or len(set(j_nodes)) != len(curve):
+        raise BridgeError(
+            f"{where}: elements {[e[0] for e in curve]} of {_curve_name(key)} "
+            "do not all run the same way (mixed orientation, e.g. after "
+            "reverseElements), so the member's i-end is ambiguous for its "
+            "end offsets. Keep every element in the curve's own node order.")
+
+
+def _part_of_curve(
+    chain: "list[_ElementRow]", key: "_MemberKey",
+    curve: "list[_CurveElement]", out: "dict[int, tuple[float, ...]]",
+    where: str,
+) -> bool:
+    """True when ``chain`` is only part of its curve; then each element
+    keeps its own offset, and this refuses where that offset puts an end
+    zone or any other component along the element's axis at a node
+    interior to the curve: a member's end offsets belong at the curve's
+    two ends. Interior nodes may carry transverse parts only (an Assembly
+    rehydrate re-declares a split curve this way, one line per element).
+    The whole curve must run one way, so its two ends are known."""
+    have = {r[0] for r in chain}
+    missing = [e[0] for e in curve if e[0] not in have]
+    if not missing:
+        return False
+    _refuse_mixed_orientation(curve, key, where)
+    cut = {n for e in curve if e[0] not in have for n in (e[1], e[2])}
+    uses: dict[int, int] = {}
+    for r in chain:
+        uses[r[1]] = uses.get(r[1], 0) + 1
+        uses[r[2]] = uses.get(r[2], 0) + 1
+    for r in chain:
+        if r[0] not in out:
+            continue   # its own evaluation failed; raised by the caller
+        tail = out[r[0]]
+        w = len(tail) // 2
+        axis = r[4] - r[3]
+        length = float(np.linalg.norm(axis))
+        tol = VECXZ_TOL * max(length, 1.0)
+        for node, half in ((r[1], tail[:w]), (r[2], tail[w:])):
+            if uses[node] < 2 and node not in cut:
+                continue   # one of the curve's two ends
+            along = float(_pad3(half) @ axis) / length
+            if abs(along) > tol:
+                raise BridgeError(
+                    f"{where}: the transform covers elements {sorted(have)} "
+                    f"of {_curve_name(key)} but not its elements {missing}, "
+                    f"and would put an end zone or axial offset ({along:.3g} "
+                    f"along element {r[0]}) at node {node}, interior to the "
+                    "curve. A member is the whole curve: its end offsets "
+                    "belong at the curve's two ends, and a part of a curve "
+                    "may carry only transverse offsets at its interior "
+                    "nodes. Put every element of the curve under one "
+                    "transform, or split the curve where the transform "
+                    "changes.")
+    return True
+
+
+def _order_chain(
+    chain: "list[_ElementRow]", key: "_MemberKey", where: str,
+) -> "list[_ElementRow]":
+    """The elements of one member in i -> j order: the order of its curve,
+    whose start is the i-end (gmsh orders each element's nodes along its
+    curve). They must form one open chain, every element running the way
+    the curve runs."""
+    if len(chain) == 1:
+        return chain
+    ids = sorted(r[0] for r in chain)
+    adj: dict[int, list[int]] = {}
+    for r in chain:
+        adj.setdefault(r[1], []).append(r[2])
+        adj.setdefault(r[2], []).append(r[1])
+    start_node = next(iter(adj))
+    reach, todo = {start_node}, [start_node]
+    while todo:
+        for m in adj[todo.pop()]:
+            if m not in reach:
+                reach.add(m)
+                todo.append(m)
+    if len(reach) != len(adj) or any(len(v) > 2 for v in adj.values()):
+        raise BridgeError(
+            f"{where}: elements {ids} of {_curve_name(key)} under this "
+            "transform are not one chain of elements, so the member has no "
+            "single pair of ends for its end offsets. Put the whole curve "
+            "under one transform.")
+    if all(len(v) == 2 for v in adj.values()):
+        raise BridgeError(
+            f"{where}: {_curve_name(key)} (elements {ids}) is closed, so "
+            "the member has no i-end for its end offsets. Split the curve "
+            "at a joint, or give the transform equal offsets at both ends.")
+    by_i = {r[1]: r for r in chain}
+    j_nodes = {r[2] for r in chain}
+    starts = [n for n in by_i if n not in j_nodes]
+    if len(by_i) != len(chain) or len(starts) != 1:
+        raise BridgeError(
+            f"{where}: elements {ids} of {_curve_name(key)} do not all run "
+            "the same way (mixed orientation, e.g. after reverseElements), "
+            "so the member's i-end is ambiguous for its end offsets. Keep "
+            "every element in the curve's own node order.")
+    out: list[_ElementRow] = []
+    node = starts[0]
+    while node in by_i and len(out) < len(chain):
+        out.append(by_i[node])
+        node = by_i[node][2]
+    return out
+
+
+def _split_member(
+    transf: GeomTransf, chain: "list[_ElementRow]", key: "_MemberKey",
+    ndm: int, where: str,
+) -> dict[int, tuple[float, ...]]:
+    """Each element's ``-jntOffset`` tail on one member of two or more
+    elements, ``chain`` in i -> j order (ETABS member ends)."""
+    ids = [r[0] for r in chain]
+    name = _curve_name(key)
+    p_s, p_e = chain[0][3], chain[-1][4]
+    chord = p_e - p_s
+    length = float(np.linalg.norm(chord))
+    tol = VECXZ_TOL * max(length, 1.0)
+    # Mesh coordinates carry round-off relative to their own size (about
+    # 2e-9 m at UTM northings of 1e7 m): allow that bound, never a share
+    # of the coordinates that would hide a real sagitta.
+    coords = np.stack([p for r in chain for p in (r[3], r[4])])
+    straight_tol = (64.0 * _EPS * float(np.max(np.abs(coords)))
+                    + VECXZ_TOL * max(length, 1.0))
+    for r in chain[1:]:
+        off = r[3] - p_s
+        dist = float(np.linalg.norm(off - float(off @ chord) / length**2 * chord))
+        if dist > straight_tol:
+            raise BridgeError(
+                f"{where}: {name} (elements {ids}) is not straight (node "
+                f"{r[1]} lies {dist:.3g} off its chord), and its offsets "
+                "change along it (end lengths, an axial component or "
+                "unequal ends), so they have no single axis. End-sensitive "
+                "offsets on a curved curve are refused: split the curve into "
+                "straight curves, or drop the end offsets.")
+    vec = chain[0][5]
+    if len(vec) == 3 and any(
+            _vecxz_key(r[5]) != _vecxz_key(vec) for r in chain[1:]):  # type: ignore[arg-type]
+        raise BridgeError(
+            f"{where}: the elements of {name} ({ids}) have different vecxz, "
+            "so its end offsets have no single frame. Give the member one "
+            "vecxz.")
+    rule = _jnt_rule(transf)
+    if rule is not None:
+        try:
+            pair = rule.offsets(
+                [float(c) for c in p_s[:ndm]], [float(c) for c in p_e[:ndm]],
+                vec if (ndm == 3 and len(vec) == 3) else None)
+        except ValueError as exc:
+            raise BridgeError(f"{where}: {name}: {exc}") from exc
+        d_i, d_j = _pad3(pair[0]), _pad3(pair[1])
+    else:
+        flat = _constant_jnt(transf)
+        w = len(flat) // 2
+        d_i, d_j = _pad3(flat[:w]), _pad3(flat[w:])
+    e = chord / length
+    a_i, a_j = float(d_i @ e), float(d_j @ e)
+    t_i, t_j = d_i - a_i * e, d_j - a_j * e
+    if (abs(a_i) > tol or abs(a_j) > tol) and float(
+            np.linalg.norm(t_i - t_j)) > tol:
+        raise BridgeError(
+            f"{where}: {name} (elements {ids}) has end lengths along its "
+            "axis and different transverse offsets at its ends; spread over "
+            f"its {len(chain)} elements the offset axis would kink. Mesh the "
+            "member as one element, or give both ends the same transverse "
+            "offset.")
+
+    def transverse(p: np.ndarray) -> np.ndarray:
+        if np.array_equal(t_i, t_j):   # constant along the member, exactly
+            return t_i
+        s = float((p - p_s) @ e) / length
+        return (1.0 - s) * t_i + s * t_j
+
+    out: dict[int, tuple[float, ...]] = {}
+    last = len(chain) - 1
+    for k, r in enumerate(chain):
+        o_i = d_i if k == 0 else transverse(r[3])
+        o_j = d_j if k == last else transverse(r[4])
+        flex = (r[4] + o_j) - (r[3] + o_i)
+        if float(flex @ (r[4] - r[3])) <= 0.0:
+            raise BridgeError(
+                f"{where}: element {r[0]} of {name} ({ids}) is no longer "
+                "than the end offsets on it (its flexible length would be "
+                "zero or reversed). Mesh the member ends coarser, or shorten "
+                "the end offsets.")
+        flat_k = tuple(float(c) for c in (*o_i[:ndm], *o_j[:ndm]))
+        out[r[0]] = flat_k if any(v != 0.0 for v in flat_k) else ()
+    return out
 
 
 def _transform_rows(
@@ -374,22 +644,67 @@ def _transform_rows(
 
 
 def element_offsets_by_id(
-    transf: GeomTransf, rows: "list[_ElementRow]", ndm: int,
+    transf: GeomTransf, rows: "list[_ElementRow]", fem: "FEMData", ndm: int,
 ) -> dict[int, tuple[float, ...]]:
-    """Each element's ``-jntOffset`` tail under ``transf``, by element id,
-    after refusing what only the members' curves could place."""
+    """Each element's ``-jntOffset`` tail under ``transf``, by element id.
+
+    Every element first gets the offset evaluated on its own joints. When
+    every one is the same transverse shift at both ends that is the
+    answer. Otherwise the offsets are end-sensitive: each curve with two
+    or more of the transform's elements, one of them end-sensitive, is
+    split over its elements (:func:`_split_member`), and a snapshot with
+    no source curves refuses where elements meet without a clear corner
+    (:func:`_refuse_ambiguous_members`). An element whose own evaluation
+    fails (end zones longer than the element) is end-sensitive; the
+    failure stands unless a split over its curve replaces it.
+    """
+    name = type(transf).__name__
     out: dict[int, tuple[float, ...]] = {}
+    failed: dict[int, ValueError] = {}
     for eid, _ni, _nj, p_i, p_j, vec in rows:
         try:
             out[eid] = element_jnt_offset(
                 transf, p_i, p_j, vec if len(vec) == 3 else None,
                 ndm)
         except ValueError as exc:
-            raise BridgeError(
-                f"geomTransf {type(transf).__name__}: element {eid} "
-                f"jnt_offset: {exc}"
-            ) from exc
-    _refuse_ambiguous_members(transf, rows, out)
+            failed[eid] = exc
+
+    def raise_failed(eid: int) -> None:
+        raise BridgeError(
+            f"geomTransf {name}: element {eid} jnt_offset: {failed[eid]}"
+        ) from failed[eid]
+
+    sensitive = {r[0] for r in rows if r[0] in failed
+                 or not _transverse_only(out[r[0]], r[3], r[4])}
+    if not sensitive:
+        return out
+    keys = _member_keys(rows, fem)
+    if keys is None:
+        for r in rows:
+            if r[0] in failed:
+                raise_failed(r[0])
+        _refuse_ambiguous_members(transf, rows, out)
+        return out
+    members: dict[_MemberKey, list[_ElementRow]] = {}
+    for key, r in zip(keys, rows):
+        members.setdefault(key, []).append(r)
+    where = f"geomTransf {name} jnt_offset"
+    ends = {k: c for k, c in members.items()
+            if any(r[0] in sensitive for r in c)}
+    curves = _curve_index(fem)
+    for key, chain in ends.items():
+        if _part_of_curve(chain, key, curves[key], out, where):
+            continue   # part of a curve: each element keeps its own offset
+        if len(chain) < 2:
+            continue   # a one-element curve: its own offset, exactly
+        split = _split_member(
+            transf, _order_chain(chain, key, where), key, ndm, where)
+        out.update(split)
+        for eid in split:
+            failed.pop(eid, None)
+    for r in rows:
+        if r[0] in failed:
+            raise_failed(r[0])
     return out
 
 
@@ -400,7 +715,7 @@ def transform_element_offsets(
     with, for a caller that needs it again (a line load over the end
     zones)."""
     return element_offsets_by_id(
-        transf, _transform_rows(transf, elements, fem, ndm), ndm)
+        transf, _transform_rows(transf, elements, fem, ndm), fem, ndm)
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,17 +791,21 @@ def plan_transform_specs(
     for transf in transforms:
         own_tag = spec_to_own_tag[id(transf)]
         _check_jnt_offset(transf, ndm)
+        split: "tuple[list[_ElementRow], dict[int, tuple[float, ...]]] | None" = None
         if not needs_fanout(transf):
             constant = _constant_jnt(transf)
             if constant:
-                # One line for every element; still refuse it where only
-                # the members' source curves could place it.
+                # One line for every element, unless a member meshed into
+                # several elements splits it (its ends only, ETABS): then
+                # the transform fans out like a rule.
                 rows = _transform_rows(
                     transf, elems_by_transf.get(id(transf), []), fem, ndm)
-                _refuse_ambiguous_members(
-                    transf, rows, {r[0]: constant for r in rows})
-            specs.append((transf, None))
-            continue
+                jnt_of = element_offsets_by_id(transf, rows, fem, ndm)
+                if any(jnt_of[r[0]] != constant for r in rows):
+                    split = (rows, jnt_of)
+            if split is None:
+                specs.append((transf, None))
+                continue
         oriented = is_orientation_transform(transf)
 
         # Guard: orientation= is meaningless in OpenSees 2-D.  The
@@ -516,7 +835,8 @@ def plan_transform_specs(
         elif not oriented and spec_vecxz is None:
             raise BridgeError(
                 f"geomTransf {type(transf).__name__}: a jnt_offset= "
-                "InsertionPoint needs each element's local axes in 3-D; "
+                "InsertionPoint (or an offset split over a meshed member) "
+                "needs each element's local axes in 3-D; "
                 "give the transform vecxz= or orientation=."
             )
 
@@ -546,8 +866,11 @@ def plan_transform_specs(
             continue
 
         # Gather per-element (vecxz, jnt_offset), keyed by element id.
-        rows = _transform_rows(transf, elems, fem, ndm)
-        jnt_of = element_offsets_by_id(transf, rows, ndm)
+        if split is None:
+            rows = _transform_rows(transf, elems, fem, ndm)
+            jnt_of = element_offsets_by_id(transf, rows, fem, ndm)
+        else:
+            rows, jnt_of = split
         per_element: list[
             tuple[int, tuple[float, ...], tuple[float, ...]]] = [
             (eid, vec, jnt_of[eid]) for eid, _ni, _nj, _pi, _pj, vec in rows]
