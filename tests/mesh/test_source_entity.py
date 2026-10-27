@@ -195,7 +195,10 @@ def test_msh2_elementary_tag_zero_reads_as_unknown(tmp_path):
     read on main) is classified on entity 0, which is no source tag."""
     path = tmp_path / "tag0.msh"
     path.write_text(_MSH2_TAG0)
-    fem = FEMData.from_msh(str(path), dim=2)
+    # ``from_msh`` merges into the current gmsh model; a session makes
+    # that model a fresh one whatever an earlier test left behind.
+    with apeGmsh(model_name="sle_msh0", verbose=False):
+        fem = FEMData.from_msh(str(path), dim=2)
     (grp,) = list(fem.elements)
     assert grp.ids.tolist() == [1]
     assert fem.elements.entity[grp.type_code].tolist() == [-1]
