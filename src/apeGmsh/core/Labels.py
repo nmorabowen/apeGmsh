@@ -64,6 +64,8 @@ import numpy as np
 from apeGmsh._logging import _HasLogging
 from apeGmsh._types import DimTag
 
+from ._pg_name_index import PGNameIndex
+
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
     from apeGmsh._session import _SessionBase as _Session
@@ -1186,6 +1188,13 @@ class Labels(_HasLogging):
         self._held: dict[tuple[int, str], list[int]] = {}
         # This composite's mark (``_HELD_MARK``) on the model it holds in.
         self._mark = uuid.uuid4().hex
+        # ``_label:`` name -> {dim: pg_tag}; every lookup is checked
+        # against gmsh (the rule is in core/_pg_name_index.py).
+        self._index = PGNameIndex(is_label_pg)
+
+    def _find(self, name: str) -> dict[int, int]:
+        """``{dim: pg_tag}`` of label *name* (no prefix), empty if none."""
+        return self._index.lookup(add_prefix(name))
 
     def _require_kernel(self, verb: str) -> None:
         """Refuse a query that would read the absent gmsh kernel."""
@@ -1332,14 +1341,11 @@ class Labels(_HasLogging):
         the provenance record of a new label)."""
         prefixed = add_prefix(name)
 
-        # Build a name→(dim, pg_tag) index in one pass over all label
-        # PGs.  This replaces up to 4 separate _find_pg_tag scans with
-        # a single O(n) scan + O(1) dict lookups.
-        label_index = self._label_index()
+        found = self._index.lookup(prefixed)
 
         # Check if this label already exists at this dim — merge
         # rather than duplicate.
-        existing_tag = label_index.get((dim, prefixed))
+        existing_tag = found.get(dim)
         if existing_tag is not None:
             existing_ents = list(
                 gmsh.model.getEntitiesForPhysicalGroup(dim, existing_tag)
@@ -1356,8 +1362,10 @@ class Labels(_HasLogging):
                 )
             merged = sorted(set(existing_ents) | new_tags)
             gmsh.model.removePhysicalGroups([(dim, existing_tag)])
+            self._index.drop(dim, existing_tag)
             pg_tag = gmsh.model.addPhysicalGroup(dim, merged)
             gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
+            self._index.note(dim, pg_tag)
             self._log(f"add({name!r}, dim={dim}) merged into pg_tag={pg_tag}")
             return pg_tag
 
@@ -1366,7 +1374,7 @@ class Labels(_HasLogging):
         for other_dim in range(4):
             if other_dim == dim:
                 continue
-            if (other_dim, prefixed) in label_index:
+            if other_dim in found:
                 warnings.warn(
                     f"Label {name!r} already exists at dim={other_dim}, "
                     f"now also being created at dim={dim}. This may "
@@ -1377,6 +1385,7 @@ class Labels(_HasLogging):
 
         pg_tag = gmsh.model.addPhysicalGroup(dim, [int(t) for t in tags])
         gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
+        self._index.note(dim, pg_tag)
         self._log(f"add({name!r}, dim={dim}, tags={tags}) -> pg_tag={pg_tag}")
         # ADR 0112 D3: the label's creation is its declaration.  A merge
         # into an existing label (above) keeps the creating record; a held
@@ -1385,20 +1394,6 @@ class Labels(_HasLogging):
             from apeGmsh._internal.provenance import capture
             capture(self._parent, "neutral", "labels", name)
         return pg_tag
-
-    @staticmethod
-    def _label_index() -> dict[tuple[int, str], int]:
-        """Build ``(dim, prefixed_name) -> pg_tag`` for all label PGs.
-
-        One pass over ``getPhysicalGroups(-1)`` replaces repeated
-        per-dimension scans.
-        """
-        index: dict[tuple[int, str], int] = {}
-        for d, t in gmsh.model.getPhysicalGroups(-1):
-            pg_name = gmsh.model.getPhysicalName(d, t)
-            if is_label_pg(pg_name):
-                index[(d, pg_name)] = t
-        return index
 
     # ------------------------------------------------------------------
     # Query
@@ -1432,19 +1427,17 @@ class Labels(_HasLogging):
             dimensions.
         """
         self._require_kernel(f"g.labels.entities({name!r})")
-        prefixed = add_prefix(name)
+        found = self._find(name)
 
         if dim is not None:
             # Direct lookup at a specific dimension
-            for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(dim):
-                pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
-                if pg_name == prefixed:
-                    return [
-                        int(t)
-                        for t in gmsh.model.getEntitiesForPhysicalGroup(
-                            pg_dim, pg_tag,
-                        )
-                    ]
+            if dim in found:
+                return [
+                    int(t)
+                    for t in gmsh.model.getEntitiesForPhysicalGroup(
+                        dim, found[dim],
+                    )
+                ]
             available = self.get_all()
             raise KeyError(
                 f"no label {name!r} found at dim={dim}. "
@@ -1452,11 +1445,7 @@ class Labels(_HasLogging):
             )
 
         # dim=None — search all dimensions, require unambiguous match
-        matches: list[tuple[int, int]] = []  # (pg_dim, pg_tag)
-        for d in range(4):
-            for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
-                if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
-                    matches.append((pg_dim, pg_tag))
+        matches = sorted(found.items())  # (pg_dim, pg_tag)
 
         if not matches:
             available = self.get_all()
@@ -1537,11 +1526,12 @@ class Labels(_HasLogging):
         # Guarded ahead of the delegation so the message names has(),
         # not the entities() call underneath it.
         self._require_kernel(f"g.labels.has({name!r})")
-        try:
-            self.entities(name, dim=dim)
-            return True
-        except KeyError:
-            return False
+        found = self._find(name)
+        if dim is not None:
+            return dim in found
+        if len(found) > 1:
+            self.entities(name)     # raises the multi-dim ValueError
+        return bool(found)
 
     # ------------------------------------------------------------------
     # Remove / rename
@@ -1569,14 +1559,15 @@ class Labels(_HasLogging):
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(self._parent, f"g.labels.remove({name!r})")
         self._bind_held()
-        prefixed = add_prefix(name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         removed = False
         for d in dims:
-            for pg_dim, pg_tag in list(gmsh.model.getPhysicalGroups(d)):
-                if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
-                    gmsh.model.removePhysicalGroups([(pg_dim, pg_tag)])
-                    removed = True
+            # Until none is left: a duplicate-named PG at d surfaces on
+            # the next lookup, as the old scan removed every match.
+            while (pg_tag := self._find(name).get(d)) is not None:
+                gmsh.model.removePhysicalGroups([(d, pg_tag)])
+                self._index.drop(d, pg_tag)
+                removed = True
         if not removed:
             raise KeyError(
                 f"no label {name!r} found"
@@ -1608,21 +1599,21 @@ class Labels(_HasLogging):
             self._parent, f"g.labels.rename({old_name!r} -> {new_name!r})",
         )
         self._bind_held()
-        old_prefixed = add_prefix(old_name)
         new_prefixed = add_prefix(new_name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         renamed = False
         for d in dims:
-            for pg_dim, pg_tag in list(gmsh.model.getPhysicalGroups(d)):
-                if gmsh.model.getPhysicalName(pg_dim, pg_tag) == old_prefixed:
-                    # Read entities, remove old PG, create new one
-                    ent_tags = list(
-                        gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
-                    )
-                    gmsh.model.removePhysicalGroups([(pg_dim, pg_tag)])
-                    new_pg = gmsh.model.addPhysicalGroup(pg_dim, [int(t) for t in ent_tags])
-                    gmsh.model.setPhysicalName(pg_dim, new_pg, new_prefixed)
-                    renamed = True
+            while (pg_tag := self._find(old_name).get(d)) is not None:
+                # Read entities, remove old PG, create new one
+                ent_tags = list(
+                    gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag)
+                )
+                gmsh.model.removePhysicalGroups([(d, pg_tag)])
+                self._index.drop(d, pg_tag)
+                new_pg = gmsh.model.addPhysicalGroup(d, [int(t) for t in ent_tags])
+                gmsh.model.setPhysicalName(d, new_pg, new_prefixed)
+                self._index.note(d, new_pg)
+                renamed = True
         if not renamed:
             raise KeyError(
                 f"no label {old_name!r} found"
@@ -1706,16 +1697,9 @@ class Labels(_HasLogging):
         tags = self.entities(label_name, dim=dim)
 
         # Resolve the dim from the label's PG
-        prefixed = add_prefix(label_name)
         resolved_dim = dim
         if resolved_dim is None:
-            for d in [3, 2, 1, 0]:
-                for pd, pt in gmsh.model.getPhysicalGroups(d):
-                    if gmsh.model.getPhysicalName(pd, pt) == prefixed:
-                        resolved_dim = d
-                        break
-                if resolved_dim is not None:
-                    break
+            resolved_dim = max(self._find(label_name), default=None)
         if resolved_dim is None:
             raise KeyError(f"label {label_name!r} not found")
 
@@ -1772,6 +1756,23 @@ class Labels(_HasLogging):
             name = strip_prefix(pg_name)
             for t in gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag):
                 result[(int(d), int(t))] = name
+        return result
+
+    def _names_by_entity(self) -> dict[DimTag, list[str]]:
+        """``(dim, tag) -> every label holding it``, in one pass.
+
+        :meth:`labels_for_entity` for many entities at once: that one
+        lists every label per call.
+        """
+        self._require_kernel("g.labels.labels_for_entity()")
+        result: dict[DimTag, list[str]] = {}
+        for d, pg_tag in gmsh.model.getPhysicalGroups():
+            pg_name = gmsh.model.getPhysicalName(d, pg_tag)
+            if not is_label_pg(pg_name):
+                continue
+            name = strip_prefix(pg_name)
+            for t in gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag):
+                result.setdefault((int(d), int(t)), []).append(name)
         return result
 
     def labels_for_entity(self, dim: int, tag: int) -> list[str]:

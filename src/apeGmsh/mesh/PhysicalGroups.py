@@ -12,6 +12,7 @@ from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
 
+
 _DIM_LABEL: dict[int, str] = {
     0: 'points',
     1: 'curves',
@@ -41,6 +42,11 @@ class PhysicalGroups(_HasLogging):
       ``get_name``, ``get_tag``, ``summary``
     * **Mesh nodes**— ``get_nodes``
 
+    Name lookups go through an index, ``name -> {dim: tag}``, so
+    ``get_tag`` and ``add`` cost O(1) per call instead of a scan of every
+    group.  It never answers stale, even after raw ``gmsh.model.*``
+    calls; the rule is in :mod:`apeGmsh.core._pg_name_index`.
+
     All mutating methods return ``self`` for chaining::
 
         (g.physical
@@ -58,6 +64,15 @@ class PhysicalGroups(_HasLogging):
 
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
+        # User-facing names only: label PGs are skipped, as get_tag
+        # skips them.  Every lookup is checked against gmsh.
+        from apeGmsh.core._pg_name_index import PGNameIndex
+        self._index = PGNameIndex(
+            lambda n: bool(n) and not is_label_pg(n))
+
+    def _named(self, name: str) -> dict[int, Tag]:
+        """``{dim: tag}`` of the user-facing groups named *name*."""
+        return self._index.lookup(name)
 
     def _require_unfrozen(self, verb: str) -> None:
         """Refuse a PG mutation once the broker snapshot is canonical.
@@ -144,10 +159,8 @@ class PhysicalGroups(_HasLogging):
 
         # Upsert: if a PG with this name already exists, merge
         if name:
-            conflict = [
-                d for d in (0, 1, 2, 3)
-                if d != dim and self.get_tag(d, name) is not None
-            ]
+            found = self._named(name)
+            conflict = sorted(d for d in found if d != dim)
             if conflict:
                 raise ValueError(
                     f"Physical group {name!r} already exists at "
@@ -156,7 +169,7 @@ class PhysicalGroups(_HasLogging):
                     f"dim={dim} entities (multi-dimensional physical "
                     f"groups are not supported)."
                 )
-            existing_tag = self.get_tag(dim, name)
+            existing_tag = found.get(dim)
             if existing_tag is not None:
                 old_ents = list(
                     gmsh.model.getEntitiesForPhysicalGroup(
@@ -178,6 +191,7 @@ class PhysicalGroups(_HasLogging):
         pg_tag = gmsh.model.addPhysicalGroup(dim, resolved, tag=tag)
         if name:
             gmsh.model.setPhysicalName(dim, pg_tag, name)
+            self._index.note(dim, pg_tag)
         self._log(
             f"add(dim={dim}, entities={tags}) -> pg_tag={pg_tag}"
             + (f", name={name!r}" if name else "")
@@ -318,6 +332,7 @@ class PhysicalGroups(_HasLogging):
         # PG here leaves the two disagreeing about what exists.
         self._require_unfrozen(f"g.physical.set_name({name!r})")
         gmsh.model.setPhysicalName(dim, tag, name)
+        self._index.note(dim, tag)
         self._log(f"set_name(dim={dim}, tag={tag}, name={name!r})")
         return self
 
@@ -329,6 +344,7 @@ class PhysicalGroups(_HasLogging):
         """
         self._require_unfrozen(f"g.physical.remove_name({name!r})")
         gmsh.model.removePhysicalName(name)
+        self._index.forget(name)
         self._log(f"remove_name({name!r})")
         return self
 
@@ -346,6 +362,8 @@ class PhysicalGroups(_HasLogging):
         """
         self._require_unfrozen("g.physical.remove()")
         gmsh.model.removePhysicalGroups(dimTags=dim_tags)
+        for d, t in dim_tags:
+            self._index.drop(d, t)
         self._log(f"remove({dim_tags})")
         return self
 
@@ -353,6 +371,7 @@ class PhysicalGroups(_HasLogging):
         """Remove every physical group in the current model."""
         self._require_unfrozen("g.physical.remove_all()")
         gmsh.model.removePhysicalGroups()
+        self._index.clear()
         self._log("remove_all()")
         return self
 
@@ -430,10 +449,8 @@ class PhysicalGroups(_HasLogging):
         raise_if_no_live_kernel(self._parent, "g.physical.entities()")
         if isinstance(name_or_tag, str):
             if dim is None:
-                matches = [
-                    d for d in (0, 1, 2, 3)
-                    if self.get_tag(d, name_or_tag) is not None
-                ]
+                found = self._named(name_or_tag)
+                matches = sorted(found)
                 if not matches:
                     raise KeyError(
                         f"No physical group named {name_or_tag!r} at any "
@@ -449,8 +466,7 @@ class PhysicalGroups(_HasLogging):
                         f"to read one slice."
                     )
                 d = matches[0]
-                pg_tag = self.get_tag(d, name_or_tag)
-                return list(gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag))
+                return list(gmsh.model.getEntitiesForPhysicalGroup(d, found[d]))
             pg_tag = self.get_tag(dim, name_or_tag)
             if pg_tag is None:
                 raise KeyError(
@@ -507,13 +523,14 @@ class PhysicalGroups(_HasLogging):
         """
         from apeGmsh.core._compose_errors import raise_if_no_live_kernel
         raise_if_no_live_kernel(self._parent, "g.physical.get_tag()")
-        for _, pg_tag in gmsh.model.getPhysicalGroups(dim=dim):
-            pg_name = gmsh.model.getPhysicalName(dim, pg_tag)
-            if is_label_pg(pg_name):
-                continue
-            if pg_name == name:
-                return pg_tag
-        return None
+        if not name:
+            # The index holds named groups only; "" finds the first
+            # unnamed group, as the scan always did.
+            for _, pg_tag in gmsh.model.getPhysicalGroups(dim=dim):
+                if gmsh.model.getPhysicalName(dim, pg_tag) == "":
+                    return pg_tag
+            return None
+        return self._named(name).get(dim)
 
     def summary(self) -> pd.DataFrame:
         """
