@@ -373,6 +373,19 @@ def test_a_faulty_sidecar_row_warns(
     assert out == (200000, 8.5)
 
 
+def _pickled(obj: object) -> bytes:
+    import pickle
+
+    return pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _computed(sec: SectionProperties) -> SectionProperties:
+    """Fill every lazy cache: geometric, warping, plastic, stress."""
+    sec.analyze()
+    sec.stress(N=1.0)
+    return sec
+
+
 def test_section_properties_pickle_round_trip(g) -> None:
     """``SectionProperties`` pickles (#2567): the read-only material view
     is thawed for the pickle and refrozen on load, with every material
@@ -381,8 +394,7 @@ def test_section_properties_pickle_round_trip(g) -> None:
     from types import MappingProxyType
 
     sec = _analyzer(g, material=SectionMaterial(E=200e3, nu=0.3, G=80e3))
-    sec.warping()  # a memoised analysis travels too
-    back = pickle.loads(pickle.dumps(sec, protocol=pickle.HIGHEST_PROTOCOL))
+    back = pickle.loads(_pickled(sec))
     assert type(back._materials) is MappingProxyType
     assert dict(back.materials) == dict(sec.materials)
     assert back.name == "PG24"
@@ -390,6 +402,60 @@ def test_section_properties_pickle_round_trip(g) -> None:
     assert back.geometric().area == pytest.approx(sec.geometric().area)
     # the source keeps its own frozen view
     assert type(sec._materials) is MappingProxyType
+
+
+def test_an_unpickled_analyzer_recomputes_lazily(g) -> None:
+    """The pickle carries the declaration, not the caches: an analyzer
+    unpickled after every analysis ran starts with none cached, and
+    recomputes each one to the same numbers."""
+    import pickle
+
+    sec = _computed(_analyzer(g))
+    back = pickle.loads(_pickled(sec))
+    assert back._geometric is None and back._warping is None
+    assert back._plastic is None and back._unit_fields is None
+    assert back._warp_solutions == ()
+    assert back.geometric().area == pytest.approx(sec.geometric().area)
+    assert back.warping().GJ == pytest.approx(sec.warping().GJ)
+    assert back.plastic().Mp_xx == pytest.approx(sec.plastic().Mp_xx)
+    assert back.stress(N=1.0).sigma_zz == pytest.approx(
+        sec.stress(N=1.0).sigma_zz)
+
+
+def test_equal_analyzers_pickle_equal_whatever_was_computed(g) -> None:
+    """Two analyzers of one mesh and one material pickle to the same bytes
+    when only one of them has run its analyses: a cache is not part of
+    the declaration."""
+    g.sections.rect_face(2.0, 4.0, label="bar")
+    g.mesh.sizing.set_global_size(0.4)
+    g.mesh.generation.generate(dim=2)
+    g.mesh.generation.set_order(2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
+    mat = SectionMaterial(E=200e3, nu=0.3, fy=345.0)
+    fresh = SectionProperties(fem, materials={"bar": mat}, name="PG24")
+    used = _computed(
+        SectionProperties(fem, materials={"bar": mat}, name="PG24"))
+    assert _pickled(used) == _pickled(fresh)
+
+
+@pytest.mark.parametrize("query", ["stress", "plastic"])
+def test_a_read_only_query_keeps_the_declaration_digest(
+        g, tmp_path: Path, query: str) -> None:
+    """A read-only ``stress()`` or ``plastic()`` between two emits is no
+    new declaration: the P5 digest (and so the automatic write, the
+    lineage memo and ``ops.results``) does not see it."""
+    from apeGmsh.opensees._internal.artifact_write import lineage_key
+
+    sec = _analyzer(g)
+    ops = _frame(lambda o: o.section.ComputedSection(analysis=sec))
+    ops.tcl(str(tmp_path / "bridge.tcl"), progress=False, flat=True)
+    before = lineage_key(ops)
+    assert before is not None
+    if query == "stress":
+        sec.stress(N=1.0)
+    else:
+        sec.plastic()
+    assert lineage_key(ops) == before
 
 
 def test_reader_tolerates_absence(tmp_path: Path) -> None:
