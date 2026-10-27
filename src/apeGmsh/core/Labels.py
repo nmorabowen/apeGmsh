@@ -1603,7 +1603,7 @@ class Labels(_HasLogging):
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         renamed = False
         for d in dims:
-            if old_name == new_name:
+            if add_prefix(old_name) == new_prefixed:
                 # Nothing to move; the loop below would re-find the
                 # group it just recreated under the same name forever.
                 renamed = renamed or d in self._find(old_name)
