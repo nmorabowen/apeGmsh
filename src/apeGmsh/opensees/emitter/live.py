@@ -35,12 +35,12 @@ from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_MESSAGE,
     BEAM3D_PARTIAL_LOAD_MESSAGE,
     MEMBRANE_WP208_MESSAGE,
+    Beam3dPartialLoadTargets,
     SweptMaterialReach,
     fork_build_has_beam3d_partial_load,
     fork_build_has_c83,
     fork_build_has_membrane_wp208,
     is_asdshell_p_delta,
-    is_beam3d_partial_load,
     is_membrane_wp208,
 )
 from .._internal.build.stage_validate import StageZeroLedger
@@ -1287,6 +1287,7 @@ class LiveOpsEmitter:
         # knows the type but not ``-shear`` must still be gated on it).
         self._stage_zero_ledger().owed = True
         self._swept_reach().note_element(tag, args)
+        self._beam3d_load_targets().note_element(ele_type, tag)
         if is_membrane_wp208(ele_type, args) and not (
                 fork_build_has_membrane_wp208(self._backend().build)):
             raise RuntimeError(MEMBRANE_WP208_MESSAGE)
@@ -1420,12 +1421,13 @@ class LiveOpsEmitter:
 
     def eleLoad(self, *args: int | float | str) -> None:
         ndm = self._model_ndm if self._model_ndm is not None else 3
-        # A 3-D partial or trapezoidal -beamUniform needs a fork build
-        # measured to honour it (stage_emit.BEAM3D_PARTIAL_LOAD_FORK_COMMIT):
-        # older builds drop or truncate it and analyze still returns 0.
-        # Stock and an unstamped fork build answer no sha, so they refuse
-        # here too.  Checked before the call reaches the interpreter.
-        if is_beam3d_partial_load(args, ndm) and not (
+        # A 3-D partial or trapezoidal -beamUniform on an element other than
+        # forceBeamColumn needs a fork build measured to honour it
+        # (stage_emit.BEAM3D_PARTIAL_LOAD_FORK_COMMIT): older builds drop or
+        # truncate it and analyze still returns 0.  Stock and an unstamped
+        # fork build answer no sha, so they refuse here too.  Checked
+        # before the call reaches the interpreter.
+        if self._beam3d_load_targets().needs_floor(args, ndm) and not (
                 fork_build_has_beam3d_partial_load(self._backend().build)):
             raise RuntimeError(BEAM3D_PARTIAL_LOAD_MESSAGE)
         if "-type" in args:
@@ -2137,6 +2139,7 @@ class LiveOpsEmitter:
 
     def remove_element(self, tag: int) -> None:
         self._swept_reach().note_removed(tag)
+        self._beam3d_load_targets().note_removed(tag)
         self._ops.remove("element", int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
@@ -2176,6 +2179,12 @@ class LiveOpsEmitter:
     #: gate tests) still has one.
     _stage0: "StageZeroLedger | None" = None
     _reach: "SweptMaterialReach | None" = None
+    _beam3d_targets: "Beam3dPartialLoadTargets | None" = None
+
+    def _beam3d_load_targets(self) -> Beam3dPartialLoadTargets:
+        if self._beam3d_targets is None:
+            self._beam3d_targets = Beam3dPartialLoadTargets()
+        return self._beam3d_targets
 
     def _swept_reach(self) -> SweptMaterialReach:
         if self._reach is None:

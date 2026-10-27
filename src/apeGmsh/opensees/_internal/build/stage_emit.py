@@ -1095,7 +1095,8 @@ def fork_build_has_beam3d_partial_load(build: "str | None") -> bool:
 #: :data:`BEAM3D_PARTIAL_LOAD_GUARD` stops a deck with it.
 BEAM3D_PARTIAL_LOAD_MESSAGE = (
     "apeGmsh: a 3-D eleLoad -type -beamUniform with a partial span or a "
-    "trapezoid requires the Ladruno fork at or after fork commit "
+    "trapezoid on any element but forceBeamColumn requires the Ladruno "
+    "fork at or after fork commit "
     f"{BEAM3D_PARTIAL_LOAD_FORK_COMMIT[:9]} (fork WP-098 and WP-200). "
     "Older builds give a wrong answer with no warning: fork build "
     "79e062367 keeps only the start values on elasticBeamColumn and "
@@ -1130,6 +1131,70 @@ def is_beam3d_partial_load(
     return (
         at + 1 < len(args) and args[at + 1] == "-beamUniform"
         and len(args) - (at + 2) > 3)
+
+
+#: The element tokens whose 3-D partial or trapezoidal ``-beamUniform`` is
+#: right only at or after :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, counted
+#: in the fork source by ``LOAD_TAG_Beam3dPartialUniformLoad`` branches:
+#: ``ElasticBeam3d`` has one that ignores the tail before ``9d3c3216d``;
+#: ``ElasticTimoshenkoBeam3d``, ``DispBeamColumn3d`` and
+#: ``LadrunoDispBeamColumn3d`` gain theirs at ``9d3c3216d``;
+#: ``LadrunoIMKBeam`` gains its at the floor; ``LadrunoForceBeamColumn``
+#: first exists after the floor, so it needs it too.  Listed for the
+#: record and the tests: the check itself refuses every token outside
+#: :data:`BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS` (fail closed).
+BEAM3D_PARTIAL_LOAD_FLOOR_ELEMENTS: frozenset[str] = frozenset({
+    "elasticBeamColumn", "ElasticTimoshenkoBeam", "dispBeamColumn",
+    "LadrunoDispBeamColumn", "LadrunoIMKBeam", "LadrunoForceBeamColumn",
+})
+
+#: The element tokens that honour the load on stock OpenSees and on every
+#: fork build: ``ForceBeamColumn3d`` reads the tail in ``computeReactions``
+#: and ``computeSectionForces`` on stock (upstream ``f4c791df6``) and on
+#: fork builds before ``9d3c3216d``.
+BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS: frozenset[str] = frozenset({
+    "forceBeamColumn",
+})
+
+
+class Beam3dPartialLoadTargets:
+    """Which element tags a 3-D partial or trapezoidal ``-beamUniform`` may
+    reach without :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`.
+
+    An emitter notes every element it creates and removes.  Only the tags
+    of :data:`BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS` are kept, so the memory is
+    the safe elements' and nothing else.  A load needs the floor when it
+    is such a load and any target is not a kept tag: a needing element, an
+    unknown token, a tag never created, or a target list it cannot read
+    (anything but ``-ele t1 t2 ...``).
+    """
+
+    def __init__(self) -> None:
+        self._safe: set[int] = set()
+
+    def note_element(self, ele_type: str, tag: int) -> None:
+        if ele_type in BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS:
+            self._safe.add(int(tag))
+        else:
+            self._safe.discard(int(tag))
+
+    def note_removed(self, tag: int) -> None:
+        self._safe.discard(int(tag))
+
+    def needs_floor(
+        self, args: "Sequence[int | float | str]", ndm: int,
+    ) -> bool:
+        """Whether ``eleLoad *args`` in an ``ndm`` model needs the floor."""
+        if not is_beam3d_partial_load(args, ndm):
+            return False
+        if not args or args[0] != "-ele":
+            return True
+        targets = args[1:list(args).index("-type")]
+        if not targets:
+            return True
+        return any(
+            isinstance(t, bool) or not isinstance(t, numbers.Integral)
+            or int(t) not in self._safe for t in targets)
 
 
 def fork_guard_lines(

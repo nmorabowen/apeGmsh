@@ -38,11 +38,11 @@ from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_GUARD,
     BEAM3D_PARTIAL_LOAD_GUARD,
     MEMBRANE_WP208_GUARD,
+    Beam3dPartialLoadTargets,
     ForkBuildGuard,
     MaterialStageCarriers,
     fork_guard_lines,
     is_asdshell_p_delta,
-    is_beam3d_partial_load,
     is_membrane_wp208,
 )
 from .._internal.build.stage_validate import StageZeroLedger
@@ -529,6 +529,8 @@ class TclEmitter:
         self._lines: _LineBuf = _LineBuf(header)
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
+        # The elements a 3-D partial -beamUniform may load on any build.
+        self._beam3d_targets = Beam3dPartialLoadTargets()
         # The fork build floors this deck already checks, with the rank
         # whose block checks it (None: the whole deck).
         self._fork_floors: set[tuple[ForkBuildGuard, int | None]] = set()
@@ -1024,6 +1026,7 @@ class TclEmitter:
     ) -> None:
         self._stage0.owed = True
         self._stage_carriers.note_element(ele_type, tag, args)
+        self._beam3d_targets.note_element(ele_type, tag)
         if is_asdshell_p_delta(ele_type, args):
             self._require_fork_floors((ASDSHELL_PDELTA_GUARD,))
         if is_membrane_wp208(ele_type, args):
@@ -1062,7 +1065,7 @@ class TclEmitter:
         self._lines.append(prefix + _join("load", tag, *forces))
 
     def eleLoad(self, *args: int | float | str) -> None:
-        if is_beam3d_partial_load(
+        if self._beam3d_targets.needs_floor(
                 args, self._model_ndm if self._model_ndm is not None else 3):
             self._require_fork_floors((BEAM3D_PARTIAL_LOAD_GUARD,))
         prefix = "    " if self._open_block_pattern else ""
@@ -1857,6 +1860,7 @@ class TclEmitter:
 
     def remove_element(self, tag: int) -> None:
         self._stage_carriers.note_removed(tag)
+        self._beam3d_targets.note_removed(tag)
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"remove element {int(tag)}")
