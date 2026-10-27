@@ -434,9 +434,8 @@ def snapshot_physical_groups() -> list[dict]:
     """
     bind_held_labels()
     snapshot: list[dict] = []
-    for dim, pg_tag in gmsh.model.getPhysicalGroups():
+    for (dim, pg_tag), ent_tags in _physical_groups_entities().items():
         name = gmsh.model.getPhysicalName(dim, pg_tag)
-        ent_tags = list(gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag))
         sigs: dict[int, dict] = {}
         for t in ent_tags:
             t_int = int(t)
@@ -447,10 +446,33 @@ def snapshot_physical_groups() -> list[dict]:
             'dim':               dim,
             'pg_tag':            pg_tag,
             'name':              name,
-            'entity_tags':       [int(t) for t in ent_tags],
+            'entity_tags':       ent_tags,
             'entity_signatures': sigs,
         })
     return snapshot
+
+
+def _physical_groups_entities() -> dict[DimTag, list[int]]:
+    """``(dim, pg_tag) -> entity tags`` of every physical group.
+
+    ``getEntitiesForPhysicalGroup`` scans every entity of the dim, so
+    reading G groups one by one costs O(G * E).
+    ``getPhysicalGroupsEntities`` reads them all in one scan (gmsh
+    4.15 has it; a build without it takes the per-group path).
+    """
+    # apegmsh-lint: getattr-undefined-ok gmsh API probe, absent in older gmsh
+    if hasattr(gmsh.model, 'getPhysicalGroupsEntities'):
+        dts, ents = gmsh.model.getPhysicalGroupsEntities()
+        return {
+            (int(d), int(t)): [int(et) for _, et in es]
+            for (d, t), es in zip(dts, ents)
+        }
+    return {
+        (int(d), int(t)): [
+            int(et) for et in gmsh.model.getEntitiesForPhysicalGroup(d, t)
+        ]
+        for d, t in gmsh.model.getPhysicalGroups()
+    }
 
 
 def remap_physical_groups(
@@ -845,7 +867,14 @@ def remap_physical_groups(
                 stacklevel=3,
             )
 
-    # -- Remove surviving stale PGs, then recreate ---------------------
+    # -- Remap every PG, then replace only the ones that changed --------
+    # synchronize() keeps a PG on the entities that survived it, so a
+    # PG whose remapped entities equal what it holds now is already
+    # right and is left alone.  The rest are removed in one call (gmsh
+    # skips a missing group there) and recreated.
+    current_pgs = _physical_groups_entities()
+    stale: list[DimTag] = []
+    recreate: list[tuple[int, list[int], str]] = []
     for entry in snapshot:
         dim = entry['dim']
         old_pg_tag = entry['pg_tag']
@@ -861,15 +890,6 @@ def remap_physical_groups(
         # caller's work.
         if name in skip_set:
             continue
-
-        # Remove the old PG if it survived synchronize with stale data.
-        # Expected to fail when the PG was already destroyed by
-        # synchronize() — Gmsh raises bare Exception, so we can't
-        # narrow the catch.
-        try:
-            gmsh.model.removePhysicalGroups([(dim, old_pg_tag)])
-        except Exception:
-            pass
 
         # Remap each entity tag.
         #
@@ -971,15 +991,30 @@ def remap_physical_groups(
                 )
 
         new_tags = sorted(set(new_tags))
+        held = current_pgs.get((dim, old_pg_tag))
+        if (
+            new_tags and held is not None
+            and sorted(held) == new_tags
+            and gmsh.model.getPhysicalName(dim, old_pg_tag) == name
+        ):
+            continue
+        # Removed even when synchronize() already dropped it: that
+        # clears the name gmsh still holds for the tag.
+        stale.append((dim, old_pg_tag))
         if new_tags:
-            new_pg = gmsh.model.addPhysicalGroup(dim, new_tags)
-            gmsh.model.setPhysicalName(dim, new_pg, name)
+            recreate.append((dim, new_tags, name))
         elif old_tags:
             warnings.warn(
                 f"Physical group '{name}' (dim={dim}) is now empty — "
                 f"no geometric descendants survived the boolean.",
                 stacklevel=3,
             )
+
+    if stale:
+        gmsh.model.removePhysicalGroups(stale)
+    for dim, new_tags, name in recreate:
+        new_pg = gmsh.model.addPhysicalGroup(dim, new_tags)
+        gmsh.model.setPhysicalName(dim, new_pg, name)
 
 
 # =====================================================================
@@ -1191,6 +1226,8 @@ class Labels(_HasLogging):
         # ``_label:`` name -> {dim: pg_tag}; every lookup is checked
         # against gmsh (the rule is in core/_pg_name_index.py).
         self._index = PGNameIndex(is_label_pg)
+        # (dim, pg_tag) -> entity tags, read once by ``_bulk_entities``.
+        self._bulk: dict[DimTag, list[int]] | None = None
 
     def _find(self, name: str) -> dict[int, int]:
         """``{dim: pg_tag}`` of label *name* (no prefix), empty if none."""
@@ -1520,6 +1557,42 @@ class Labels(_HasLogging):
             .set_index(['dim', 'pg_tag'])
             .sort_index()
         )
+
+    def _entities_by_dim(self, name: str) -> dict[int, list[int]]:
+        """``{dim: entity tags}`` of label *name*, empty if none.
+
+        One index lookup for every dim, where ``has(dim=d)`` then
+        ``entities(dim=d)`` per dim costs two lookups for each.
+        """
+        self._require_kernel(f"g.labels.entities({name!r})")
+        found = sorted(self._find(name).items())
+        if self._bulk is not None:
+            return {d: list(self._bulk.get((d, pg), [])) for d, pg in found}
+        return {
+            d: [int(t) for t in gmsh.model.getEntitiesForPhysicalGroup(d, pg)]
+            for d, pg in found
+        }
+
+    @contextmanager
+    def _bulk_entities(self) -> Iterator[None]:
+        """Serve ``_entities_by_dim`` from one read of every group.
+
+        ``getEntitiesForPhysicalGroup`` scans every entity of the dim,
+        so resolving L label names one by one costs O(L * E).  Inside
+        this block the group contents come from one
+        ``getPhysicalGroupsEntities`` taken on entry; the group tags
+        still come from the checked index.  Only for a stretch that
+        writes no physical group, such as resolving a list of refs.
+        """
+        if self._bulk is not None:
+            yield
+            return
+        self._require_kernel("g.labels.entities()")
+        self._bulk = _physical_groups_entities()
+        try:
+            yield
+        finally:
+            self._bulk = None
 
     def has(self, name: str, *, dim: int | None = None) -> bool:
         """Return True if a label with this name exists."""
