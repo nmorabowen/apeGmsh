@@ -227,12 +227,23 @@ def _section_lines(deck: str) -> list[str]:
 def _bridge_and_replay(
         g, tmp_path: Path, case: str, *, drop_sidecar: bool = False,
 ) -> tuple[list[str], list[str]]:
+    from apeGmsh._core import default_artifact_dir
+    from apeGmsh.opensees._internal.artifact_write import BridgeArtifactWarning
+
     material, factory, _literals = _REPLAY_CASES[case]
     sec = _analyzer(g, material=material)
     ops = _frame(lambda o: factory(o, sec))
     deck = tmp_path / "bridge.tcl"
     archive = tmp_path / "model.h5"
-    ops.tcl(str(deck), progress=False, flat=True)
+    # The deck emit writes the automatic model.h5 (ADR 0112 D1).  A
+    # ComputedSection's analyzer must pickle into the P5 digest, or the
+    # write is skipped with only a warning (#2567).
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", BridgeArtifactWarning)
+        ops.tcl(str(deck), progress=False, flat=True)
+    auto = default_artifact_dir() / "simple_frame.h5"
+    assert auto.is_file()
+    assert len(read_computed_sections(str(auto))) == 1
     ops.h5(str(archive))
     if drop_sidecar:
         with h5py.File(str(archive), "r+") as f:
@@ -360,6 +371,25 @@ def test_a_faulty_sidecar_row_warns(
     with pytest.warns(ReplaySlotTypeWarning, match=match):
         out = st.recover("section", tag, "Elastic", (200000, 8.5))
     assert out == (200000, 8.5)
+
+
+def test_section_properties_pickle_round_trip(g) -> None:
+    """``SectionProperties`` pickles (#2567): the read-only material view
+    is thawed for the pickle and refrozen on load, with every material
+    and the analysis numbers intact."""
+    import pickle
+    from types import MappingProxyType
+
+    sec = _analyzer(g, material=SectionMaterial(E=200e3, nu=0.3, G=80e3))
+    sec.warping()  # a memoised analysis travels too
+    back = pickle.loads(pickle.dumps(sec, protocol=pickle.HIGHEST_PROTOCOL))
+    assert type(back._materials) is MappingProxyType
+    assert dict(back.materials) == dict(sec.materials)
+    assert back.name == "PG24"
+    assert back.warping().GJ == pytest.approx(sec.warping().GJ)
+    assert back.geometric().area == pytest.approx(sec.geometric().area)
+    # the source keeps its own frozen view
+    assert type(sec._materials) is MappingProxyType
 
 
 def test_reader_tolerates_absence(tmp_path: Path) -> None:
