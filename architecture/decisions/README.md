@@ -140,3 +140,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0122](0122-ladruno-canonical-results-format.md) | `.ladruno` is the canonical results format | Accepted |
 | [0123](0123-native-results-single-partition.md) | Native results stay single-partition; no native PARTITION_REDUCTION | Accepted |
 | [0124](0124-gravity-preloaded-modal-and-per-mode-rsa.md) | Gravity-preloaded modal analysis and per-mode response spectrum on one live domain | Proposed |
+| [0125](0125-discrete-mesh-import.md) | Discrete mesh import: a ready-made mesh into a live session, then the normal `get_fem_data` route | Proposed |
