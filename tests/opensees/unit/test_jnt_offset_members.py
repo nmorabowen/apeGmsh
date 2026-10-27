@@ -23,6 +23,7 @@ member) is ``tests/opensees/integration/test_jnt_offset_live.py``.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -567,7 +568,7 @@ def test_a_curved_curve_keeps_an_equal_transverse_shift() -> None:
 @pytest.mark.parametrize("case, match", [
     ("mixed", r"elements \[101, 102, 103\] of curve 7 do not all run the same way"),
     ("closed", r"curve 7 \(elements \[101, 102, 103, 104\]\) is closed"),
-    ("gap", r"elements \[101, 103\] of curve 7 under this transform are not one chain"),
+    ("gap", r"covers elements \[101, 103\] of curve 7 but not its elements \[102\]"),
     ("short", r"element 101 of curve 7 .* is no longer than the end offsets"),
     ("kink", r"curve 7 .* has end lengths along its axis and different transverse"),
 ])
@@ -592,6 +593,77 @@ def test_ambiguous_curves_refuse(case: str, match: str) -> None:
         rule = ((0.25, 0.1, 0.0), (-0.4, 0.3, 0.0))
     with pytest.raises(BridgeError, match=match):
         member_bridge(fem, rule=rule).build().emit(RecordingEmitter())
+
+
+def _three_on_one_curve(mine: tuple[int, ...]) -> FEMStub:
+    """Curve 7 of three elements 101-103 along +X; ``mine`` under PG "M"
+    (the end-sensitive transform), the rest under PG "N"."""
+    coords = {1: (0.0, 0.0, 3.0), 2: (1.0, 0.0, 3.0), 3: (2.0, 0.0, 3.0), 4: (3.0, 0.0, 3.0)}
+    conn = {101: (1, 2), 102: (2, 3), 103: (3, 4)}
+    rest = tuple(e for e in conn if e not in mine)
+    groups = {"M": (mine, tuple(conn[e] for e in mine))}
+    if rest:
+        groups["N"] = (rest, tuple(conn[e] for e in rest))
+    return stub(coords, groups, entity=dict.fromkeys(conn, CURVE))
+
+
+@pytest.mark.parametrize("mine, missing", [
+    ((101, 102), "[103]"), ((102,), "[101, 103]"), ((101,), "[102, 103]"),
+    ((101, 103), "[102]")], ids=["first_two", "middle", "first", "both_ends"])
+def test_a_partial_curve_with_end_offsets_refuses_naming_the_missing(
+        mine: tuple[int, ...], missing: str) -> None:
+    """Maintainer ruling (2026-10-27, #2578 review): a transform with
+    end-sensitive offsets that covers only some of a curve's elements
+    refuses. Elements 101+102 used to take the j-zone at node 3, mid-curve;
+    a lone element kept both end zones at interior nodes."""
+    ops = bridge(_three_on_one_curve(mine))
+    if len(mine) < 3:
+        ops.element.elasticBeamColumn(
+            pg="N", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
+            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    with pytest.raises(BridgeError, match=(
+            rf"covers elements \[{', '.join(map(str, sorted(mine)))}\] of curve 7 "
+            rf"but not its elements {re.escape(missing)}")):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_a_partial_curve_keeps_an_equal_transverse_shift() -> None:
+    """A shift that reads the same on every element stays per element on
+    part of a curve, as without curves."""
+    def run(fem: FEMStub) -> list[Any]:
+        ops = bridge(fem, rule=SHIFT_ONLY)
+        ops.element.elasticBeamColumn(
+            pg="N", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
+            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+        return _emit(ops).calls
+    curved = _three_on_one_curve((101, 102))
+    bare = stub({1: (0.0, 0.0, 3.0), 2: (1.0, 0.0, 3.0), 3: (2.0, 0.0, 3.0), 4: (3.0, 0.0, 3.0)},
+                {"M": ((101, 102), ((1, 2), (2, 3))), "N": ((103,), ((3, 4),))})
+    assert run(curved) == run(bare)
+
+
+def test_a_straight_curve_at_utm_coordinates_splits() -> None:
+    """A straight 1 m curve at UTM scale (E 5e5, N 1e7 m), 4 elements
+    placed by linear interpolation as gmsh does. Its interior nodes sit
+    1.4e-9 m off the chord (round-off at 1e7), more than a tolerance of
+    1e-9 x its length, so straightness must scale with the coordinates."""
+    import math
+
+    import numpy as np
+
+    ang = math.radians(11.4)
+    u = np.array([math.cos(ang), math.sin(ang), 0.0])
+    p0 = np.array([512347.048, 9876540.5, 3.0])
+    pts = [tuple(float(c) for c in p0 + (k / 4.0) * u) for k in range(5)]
+    rule = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
+                          end_offset_i=0.05, end_offset_j=0.05)
+    got = element_offsets(_emit(bridge(_chain(pts, curve=CURVE), rule=rule)))
+    hang = (0.0, 0.0, -0.3)
+    z = 0.05 * u
+    assert got[101] == pytest.approx((z[0], z[1], -0.3, *hang), abs=1e-8)
+    assert got[102] == pytest.approx((*hang, *hang), abs=1e-8)
+    assert got[103] == pytest.approx((*hang, *hang), abs=1e-8)
+    assert got[104] == pytest.approx((*hang, -z[0], -z[1], -0.3), abs=1e-8)
 
 
 def test_varying_vecxz_along_a_curve_refuses() -> None:

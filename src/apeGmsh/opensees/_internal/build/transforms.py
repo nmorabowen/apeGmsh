@@ -240,8 +240,10 @@ def element_jnt_offset(
 # curve's chord. Elements come from a curve through the FEM's per-element
 # source-entity stream (``ElementComposite.source_entity``, neutral 2.36);
 # the member key is ``(module_label, entity)``, so the same curve tag in
-# two Assembly instances is two members. A curve with one element is its
-# own member and keeps its per-element offset exactly. A snapshot without
+# two Assembly instances is two members. An end-sensitive transform must
+# cover each of its curves whole: a part of a curve has no member ends. A
+# curve with one element is its own member and keeps its per-element
+# offset exactly. A snapshot without
 # the stream (a pre-2.36 model.h5, a FEM not extracted from gmsh) cannot
 # tell a member meshed into several elements from a girder of several
 # members, so it refuses end-sensitive offsets wherever two elements meet
@@ -371,6 +373,44 @@ def _member_keys(
     return [(str(lbl), int(ent)) for lbl, ent in zip(labels, entity)]
 
 
+def _curve_elements(
+    keys: "Iterable[_MemberKey]", fem: "FEMData",
+) -> "dict[_MemberKey, list[int]]":
+    """Every line element of each curve in ``keys``, across the whole
+    snapshot (whichever transform it uses), in id order."""
+    want = set(keys)
+    all_ids = np.asarray(fem.elements.select(dim=1).ids, dtype=np.int64)
+    labels, entity = fem.elements.source_entity(all_ids, dim=1)
+    out: dict[_MemberKey, list[int]] = {k: [] for k in want}
+    wanted_ent = {k[1] for k in want}
+    for eid, lbl, ent in zip(all_ids.tolist(), labels, np.asarray(entity).tolist()):
+        if ent in wanted_ent:
+            key = (str(lbl), int(ent))
+            if key in out:
+                out[key].append(int(eid))
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def _refuse_partial_curve(
+    chain: "list[_ElementRow]", key: "_MemberKey", whole: "list[int]",
+    where: str,
+) -> None:
+    """Refuse end-sensitive offsets on a transform that covers only some
+    of a curve's elements: the member's ends are the curve's ends, which
+    a part of the curve does not have."""
+    have = {r[0] for r in chain}
+    missing = [e for e in whole if e not in have]
+    if missing:
+        raise BridgeError(
+            f"{where}: the transform covers elements {sorted(have)} of "
+            f"{_curve_name(key)} but not its elements {missing}, and its "
+            "offsets are end-sensitive (end lengths, an axial component or "
+            "unequal ends). A member is the whole curve, so its end offsets "
+            "belong at the curve's two ends, which part of a curve does not "
+            "have. Put every element of the curve under one transform, or "
+            "split the curve where the transform changes.")
+
+
 def _order_chain(
     chain: "list[_ElementRow]", key: "_MemberKey", where: str,
 ) -> "list[_ElementRow]":
@@ -432,10 +472,14 @@ def _split_member(
     chord = p_e - p_s
     length = float(np.linalg.norm(chord))
     tol = VECXZ_TOL * max(length, 1.0)
+    # Mesh coordinates carry round-off relative to their own size (UTM
+    # northings of 1e7 m), so straightness also scales with it.
+    coords = np.stack([p for r in chain for p in (r[3], r[4])])
+    straight_tol = VECXZ_TOL * max(float(np.max(np.abs(coords))), length, 1.0)
     for r in chain[1:]:
         off = r[3] - p_s
         dist = float(np.linalg.norm(off - float(off @ chord) / length**2 * chord))
-        if dist > tol:
+        if dist > straight_tol:
             raise BridgeError(
                 f"{where}: {name} (elements {ids}) is not straight (node "
                 f"{r[1]} lies {dist:.3g} off its chord), and its offsets "
@@ -577,9 +621,13 @@ def element_offsets_by_id(
     for key, r in zip(keys, rows):
         members.setdefault(key, []).append(r)
     where = f"geomTransf {name} jnt_offset"
-    for key, chain in members.items():
-        if len(chain) < 2 or not any(r[0] in sensitive for r in chain):
-            continue   # its own one-element member, or a transverse shift
+    ends = {k: c for k, c in members.items()
+            if any(r[0] in sensitive for r in c)}
+    whole = _curve_elements(ends, fem)
+    for key, chain in ends.items():
+        _refuse_partial_curve(chain, key, whole[key], where)
+        if len(chain) < 2:
+            continue   # a one-element curve: its own offset, exactly
         split = _split_member(
             transf, _order_chain(chain, key, where), key, ndm, where)
         out.update(split)

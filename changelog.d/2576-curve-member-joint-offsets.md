@@ -17,14 +17,23 @@ follow the split.
 - **Refused, naming the curve:** end-sensitive offsets on a curve that is
   not straight. Before this change, #2470 accepted a coarse arc whose turns
   read as frame corners. Split the arc into straight curves, or drop the end
-  offsets. Also refused: a curve whose elements run both ways, a closed
-  curve, a curve only partly under the transform, end lengths with unequal
-  transverse ends, and an end element no longer than its end zone.
+  offsets. Straightness allows round-off relative to the coordinates' size,
+  so a straight curve at UTM coordinates still splits.
+- **Refused, naming the curve and its missing elements:** end-sensitive
+  offsets on a transform that covers only some of a curve's elements (a
+  lone element of a meshed curve, or two of its three). A member is the
+  whole curve; put the curve under one transform, or split the curve where
+  the transform changes. Earlier, #2470 accepted such a part when its
+  elements did not meet in a straight run.
+- Also refused: a curve whose elements run both ways, a closed curve, end
+  lengths with unequal transverse ends, and an end element no longer than
+  its end zone.
 - **No source curves:** a FEM without the entity stream (a model.h5
   written before neutral schema 2.36, or a FEM not extracted from gmsh)
   keeps the earlier refusal wherever two of the transform's elements meet
   without a clear corner. The message now says the snapshot carries no
   source curves.
 - **Unchanged:** offsets that are the same transverse shift at both ends,
-  one-element curves, and every other model the earlier rule accepted emit
-  byte for byte as before. The emit goldens do not move.
+  curves meshed as one element, and every other model the earlier rule
+  accepted, apart from the two refusals above, emit byte for byte as before.
+  The emit goldens do not move.

@@ -388,7 +388,15 @@ class _ElementsStub:
         (P-GROUPRESULT).  The stub mirrors the broker — behaviour
         byte-identical to the (now removed) ``.get`` body; the returned
         view answers both the legacy iter and the new
-        ``.groups()``/``.result()``/``.resolve()`` surface."""
+        ``.groups()``/``.result()``/``.resolve()`` surface.
+
+        ``select(dim=1)`` (no other filter) is every element: the stub's
+        elements are all lines; its ``.ids`` are every PG's ids."""
+        if (pg is None and dim == 1 and target is None and label is None
+                and tag is None and element_type is None and partition is None):
+            ids = tuple(sorted({int(e) for grp in self._pgs.values()
+                                for e in grp.ids}))
+            return _ElementGroupView(ids=ids, connectivity=())  # type: ignore[return-value]
         return self.get(
             target, pg=pg, label=label, tag=tag, dim=dim,
             element_type=element_type, partition=partition,
