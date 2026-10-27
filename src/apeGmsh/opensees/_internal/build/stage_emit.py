@@ -823,10 +823,9 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
     # FORK_PIN ladruno-v20261023, which merges the fix: no reset.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
-    # A local build one commit past fork wp/209 (0f2e73c2e): 43b235bbb is
-    # its ancestor (ahead 35, behind 0, checked in a local fork clone; the
-    # commit is on no fork branch yet, so no GitHub compare).  Ancestry
-    # only: the live reset test has not run on it.
+    # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
+    # build/86893bd: 43b235bbb is its ancestor (GitHub compare: ahead 35,
+    # behind 0).  The live reset test passes on it: no reset.
     "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
     # The maintainer's venv build, an ancestor of the fix: resets.
     "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
@@ -899,9 +898,9 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 FORK_BUILD_HAS_C83: dict[str, bool] = {
     # FORK_PIN ladruno-v20261023: c83ee812e is its ancestor.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
-    # A local build one commit past fork wp/209 (0f2e73c2e): c83ee812e is
-    # its ancestor (ahead 20, behind 0, checked in a local fork clone; the
-    # commit is on no fork branch yet, so no GitHub compare).
+    # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
+    # build/86893bd: c83ee812e is its ancestor (GitHub compare: ahead 20,
+    # behind 0).
     "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
     # The maintainer's venv build, which predates it: -pDelta runs without
     # the geometric stiffness, and modalProperties after eigen -feast exits
