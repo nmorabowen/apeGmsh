@@ -1666,6 +1666,10 @@ class Labels(_HasLogging):
         ------
         KeyError
             When no label with *old_name* exists.
+        ValueError
+            When a label *new_name* already exists at a dim being
+            renamed.  Nothing is renamed at any dim: merging two labels
+            is not what ``rename`` does.
         """
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(
@@ -1674,6 +1678,19 @@ class Labels(_HasLogging):
         self._bind_held()
         new_prefixed = add_prefix(new_name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
+        if add_prefix(old_name) != new_prefixed:
+            # Checked for every dim before any group is touched: gmsh
+            # keeps one group per name and dim, so the recreated group
+            # would lose its name to the one already there (#2577).
+            old_dims, new_dims = self._find(old_name), self._find(new_name)
+            clash = [d for d in dims if d in old_dims and d in new_dims]
+            if clash:
+                raise ValueError(
+                    f"cannot rename label {old_name!r} to {new_name!r}: "
+                    f"label {new_name!r} already exists at dim={clash[0]}"
+                    + (f" (and dims {clash[1:]})" if len(clash) > 1 else "")
+                    + ". Remove it first, or pick another name."
+                )
         renamed = False
         for d in dims:
             if add_prefix(old_name) == new_prefixed:
