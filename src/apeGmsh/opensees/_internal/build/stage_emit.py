@@ -1038,6 +1038,99 @@ def is_membrane_wp208(
         a in MEMBRANE_WP208_OPTIONS for a in args if isinstance(a, str))
 
 
+#: The Ladruno fork commit from which every 3-D beam element the bridge
+#: emits honours a 3-D ``eleLoad -beamUniform`` with a partial span or a
+#: trapezoid (``wy wz wx aL bL [wyb wzb wxb]``, the fork's
+#: ``Beam3dPartialUniformLoad``).  Fork WP-098 (``9d3c3216d``) adds the
+#: load to ``ElasticTimoshenkoBeam3d``, ``DispBeamColumn3d`` and
+#: ``LadrunoDispBeamColumn3d`` and makes ``ElasticBeam3d`` read the tail;
+#: fork WP-200 (this commit, a descendant of ``9d3c3216d``) adds it to
+#: the 3-D ``LadrunoIMKBeam``.  ``forceBeamColumn`` honoured it before;
+#: ``LadrunoForceBeamColumn`` enters later (``9f4e92c77``) with it.
+#: Fork build 79e062367, an ancestor of both, keeps only the start values
+#: on ``elasticBeamColumn`` and drops the whole load on the other three
+#: (#2550, #2561).
+BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
+
+#: Fork builds measured for :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, by
+#: exact ``ladrunoBuild()`` sha.  No command marks the load, so no
+#: :class:`ForkBuildFloor` probe can, and a sha cannot be ordered: a build
+#: joins once its ancestry is checked on the fork by a GitHub compare
+#: (#2557 policy), and every fork build not listed ``True`` is refused
+#: (fail closed).  A ``FORK_PIN`` bump adds its row (a unit lock fails
+#: otherwise).
+FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
+    # The floor commit itself.
+    BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
+    # FORK_PIN ladruno-v20261023 (compare: ahead 35, behind 0); the live
+    # oracle tests/opensees/live/test_beam_uniform_3d_trapezoid_live.py
+    # passes on it (#2561).
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # Fork WP-208, b6d3e3d21 (compare: ahead 30, behind 0).
+    "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f": True,
+    # A ladruno build after WP-208 (compare: ahead 45, behind 0).
+    "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
+    # Fork branch build/86893bd, one commit past wp/209 (compare: ahead
+    # 48, behind 0).
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
+    # The maintainer's venv build, an ancestor of 9d3c3216d: the live
+    # oracle fails 24 of its 28 cases on it (#2561).
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
+
+
+def fork_build_has_beam3d_partial_load(build: "str | None") -> bool:
+    """Whether the build that answers ``ladrunoBuild()`` with ``build`` is
+    measured to carry :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`.
+
+    ``None`` (stock, or a fork build without the stamp) and every unlisted
+    sha are ``False``.
+    """
+    return FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD.get(build or "", False)
+
+
+#: The error a 3-D partial or trapezoidal ``-beamUniform`` stops with below
+#: the floor: the live route raises it and
+#: :data:`BEAM3D_PARTIAL_LOAD_GUARD` stops a deck with it.
+BEAM3D_PARTIAL_LOAD_MESSAGE = (
+    "apeGmsh: a 3-D eleLoad -type -beamUniform with a partial span or a "
+    "trapezoid requires the Ladruno fork at or after fork commit "
+    f"{BEAM3D_PARTIAL_LOAD_FORK_COMMIT[:9]} (fork WP-098 and WP-200). "
+    "Older builds give a wrong answer with no warning: fork build "
+    "79e062367 keeps only the start values on elasticBeamColumn and "
+    "drops the whole load on ElasticTimoshenkoBeam, dispBeamColumn and "
+    "LadrunoDispBeamColumn while analyze returns 0 (apeGmsh issues "
+    "#2550, #2565). The running OpenSees has no ladrunoBuild command, or "
+    "its ladrunoBuild sha is not one measured to carry that commit. "
+    "Rebuild the Ladruno fork at FORK_PIN."
+)
+
+#: The guard a deck with a 3-D partial or trapezoidal ``-beamUniform``
+#: runs: stock is refused too, as the live route always refused it.
+BEAM3D_PARTIAL_LOAD_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, ok in FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD.items()
+        if ok)),
+    message=BEAM3D_PARTIAL_LOAD_MESSAGE,
+    stock_runs=False)
+
+
+def is_beam3d_partial_load(
+    args: "Sequence[int | float | str]", ndm: int,
+) -> bool:
+    """Whether ``eleLoad *args`` in an ``ndm`` model is a 3-D
+    ``-beamUniform`` with a partial span or a trapezoid: more than the
+    three values ``wy wz wx`` after the type.  The load the live route and
+    :data:`BEAM3D_PARTIAL_LOAD_GUARD` hold to
+    :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`."""
+    if ndm != 3 or "-type" not in args:
+        return False
+    at = list(args).index("-type")
+    return (
+        at + 1 < len(args) and args[at + 1] == "-beamUniform"
+        and len(args) - (at + 2) > 3)
+
+
 def fork_guard_lines(
     guard: ForkBuildGuard, dialect: 'Literal["py", "tcl"]',
 ) -> list[str]:

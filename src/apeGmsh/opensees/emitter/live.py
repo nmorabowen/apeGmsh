@@ -33,11 +33,14 @@ from typing import (
 from .._internal.analyze_rc import check_analyze_rc
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_MESSAGE,
+    BEAM3D_PARTIAL_LOAD_MESSAGE,
     MEMBRANE_WP208_MESSAGE,
     SweptMaterialReach,
+    fork_build_has_beam3d_partial_load,
     fork_build_has_c83,
     fork_build_has_membrane_wp208,
     is_asdshell_p_delta,
+    is_beam3d_partial_load,
     is_membrane_wp208,
 )
 from .._internal.build.stage_validate import StageZeroLedger
@@ -1416,12 +1419,20 @@ class LiveOpsEmitter:
         self._ops.load(tag, *forces)
 
     def eleLoad(self, *args: int | float | str) -> None:
+        ndm = self._model_ndm if self._model_ndm is not None else 3
+        # A 3-D partial or trapezoidal -beamUniform needs a fork build
+        # measured to honour it (stage_emit.BEAM3D_PARTIAL_LOAD_FORK_COMMIT):
+        # older builds drop or truncate it and analyze still returns 0.
+        # Stock and an unstamped fork build answer no sha, so they refuse
+        # here too.  Checked before the call reaches the interpreter.
+        if is_beam3d_partial_load(args, ndm) and not (
+                fork_build_has_beam3d_partial_load(self._backend().build)):
+            raise RuntimeError(BEAM3D_PARTIAL_LOAD_MESSAGE)
         if "-type" in args:
             type_idx = args.index("-type")
             if type_idx + 1 < len(args):
                 ltype = str(args[type_idx + 1])
                 trailing = args[type_idx + 2:]
-                ndm = self._model_ndm if self._model_ndm is not None else 3
                 if ltype == "-beamUniform" and len(trailing) > (
                     2 if ndm == 2 else 3
                 ):
