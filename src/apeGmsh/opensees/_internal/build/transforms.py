@@ -754,8 +754,9 @@ def plan_transform_specs(
     :func:`emit_transform_specs` writes what it planned.
 
     For each transform that :func:`needs_fanout` (an ``orientation=``
-    transform, or a ``jnt_offset=`` :class:`InsertionPoint` rule), the
-    bridge:
+    transform, or a ``jnt_offset=`` :class:`InsertionPoint` rule), or whose
+    constant end-sensitive ``jnt_offset=`` splits over a gmsh curve's two
+    ends (a member is the curve; see "Member ends" above), the bridge:
 
       1. Walks every element spec whose ``transf`` IS this transform.
       2. For each element in the spec's PG, computes the per-element
