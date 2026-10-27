@@ -705,6 +705,89 @@ def test_a_straight_curve_at_utm_coordinates_splits() -> None:
     assert got[104] == pytest.approx((*hang, -z[0], -z[1], -0.3), abs=1e-8)
 
 
+def test_a_5mm_sagitta_at_utm_coordinates_refuses() -> None:
+    """The straightness tolerance is a round-off bound on the coordinates
+    (64 eps |x|max, ~1.4e-7 m at 1e7) plus 1e-9 L, never a share of the
+    coordinates: a 1 m curve bowed 5 mm at N 1e7 is curved, and refuses."""
+    import math
+
+    import numpy as np
+
+    ang = math.radians(11.4)
+    u = np.array([math.cos(ang), math.sin(ang), 0.0])
+    n = np.array([-math.sin(ang), math.cos(ang), 0.0])
+    p0 = np.array([512347.048, 9876540.5, 3.0])
+    pts = [tuple(float(c) for c in p0 + s * u + 4.0 * 0.005 * s * (1.0 - s) * n)
+           for s in (k / 4.0 for k in range(5))]
+    rule = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
+                          end_offset_i=0.05, end_offset_j=0.05)
+    with pytest.raises(BridgeError, match=r"curve 7 \(elements \[101, 102, 103, 104\]\) is not straight"):
+        bridge(_chain(pts, curve=CURVE), rule=rule).build().emit(RecordingEmitter())
+
+
+def test_a_lone_reversed_element_of_a_curve_refuses() -> None:
+    """Review round 2: element 101 is stored 2 -> 1 on a curve that runs
+    1 -> 4. Alone under a transform with only a j-zone, it would put that
+    zone at node 1, the curve's i-end; the curve's mixed orientation
+    refuses for a part of it too."""
+    coords = {1: (0.0, 0.0, 3.0), 2: (1.0, 0.0, 3.0), 3: (2.0, 0.0, 3.0), 4: (3.0, 0.0, 3.0)}
+    fem = stub(coords, {"M": ((101,), ((2, 1),)), "N": ((102, 103), ((2, 3), (3, 4)))},
+               entity=dict.fromkeys((101, 102, 103), CURVE))
+    rule = InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
+                          end_offset_j=0.3)
+    ops = bridge(fem, rule=rule)
+    ops.element.elasticBeamColumn(
+        pg="N", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    with pytest.raises(BridgeError, match=r"elements \[101, 102, 103\] of curve 7 do not all run the same way"):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_the_curve_index_is_built_once_per_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 2 (cost): 40 end-sensitive transforms, one per curve,
+    plus their line loads, scan the snapshot's line elements once, not
+    once per transform (O(transforms x lines) was ~130 s per plan for a
+    2000-line rehydrate)."""
+    from apeGmsh._kernel.record_sets import ElementLoadSet
+    from apeGmsh._kernel.records._loads import ElementLoadRecord
+
+    n = 40
+    coords = {}
+    groups = {}
+    entity = {}
+    for k in range(n):
+        a, b = 2 * k + 1, 2 * k + 2
+        coords[a], coords[b] = (0.0, float(k), 3.0), (4.0, float(k), 3.0)
+        groups[f"M{k}"] = ((1000 + k,), ((a, b),))
+        entity[1000 + k] = k + 1
+    fem = stub(coords, groups, entity=entity)
+    fem.elements.loads = ElementLoadSet([
+        ElementLoadRecord(element_id=1000 + k, load_type="beamUniform",
+                          params={"wx": 0.0, "wy": 0.0, "wz": -10.0}, pattern="dl")
+        for k in range(n)])
+    scans = []
+    select = type(fem.elements).select
+
+    def counting(self: Any, *args: Any, **kw: Any) -> Any:
+        if kw.get("dim") == 1 and kw.get("pg") is None:
+            scans.append(1)
+        return select(self, *args, **kw)
+    monkeypatch.setattr(type(fem.elements), "select", counting)
+    ops = apeSees(cast("object", fem), default_orientation=None, element_tags="fem")
+    ops.model(ndm=3, ndf=6)
+    for k in range(n):
+        ops.element.elasticBeamColumn(
+            pg=f"M{k}", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0), jnt_offset=RULE),
+            A=0.01, E=200e9, Iz=1e-4, Iy=2e-4, G=80e9, J=1e-4)
+    ops.fix(pg="Base", dofs=(1,) * 6)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("dl")
+    got = element_offsets(_emit(ops))
+    assert len(got) == n and all(t == _approx((0.3, 0.0, -0.3, -0.3, 0.0, -0.3))
+                                 for t in got.values())
+    assert len(scans) == 1
+
+
 def test_varying_vecxz_along_a_curve_refuses() -> None:
     """Rows of one straight curve whose vecxz turns: no single frame."""
     import numpy as np

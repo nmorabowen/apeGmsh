@@ -17,8 +17,10 @@ follow the split.
 - **Refused, naming the curve:** end-sensitive offsets on a curve that is
   not straight. Before this change, #2470 accepted a coarse arc whose turns
   read as frame corners. Split the arc into straight curves, or drop the end
-  offsets. Straightness allows round-off relative to the coordinates' size,
-  so a straight curve at UTM coordinates still splits.
+  offsets. Straightness allows only coordinate round-off (64 machine
+  epsilon of the largest coordinate, plus 1e-9 of the length). A straight
+  curve at UTM coordinates still splits, and a 5 mm bow there still
+  refuses.
 - **Part of a curve:** a transform with end-sensitive offsets that covers
   only some of a curve's elements keeps each element's own offset. It is
   refused, naming the curve, its missing elements and the node, wherever

@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import weakref
 from dataclasses import dataclass
 from typing import Any, Iterable, TypeAlias
 
@@ -36,6 +37,9 @@ if TYPE_CHECKING:
 #: whose per-element ``vecxz`` agrees to this tolerance share one
 #: ``geomTransf`` line.
 VECXZ_TOL: float = 1e-9
+
+#: Machine epsilon, for the round-off bound on mesh coordinates.
+_EPS: float = float(np.finfo(float).eps)
 
 
 # ---------------------------------------------------------------------------
@@ -373,40 +377,75 @@ def _member_keys(
     return [(str(lbl), int(ent)) for lbl, ent in zip(labels, entity)]
 
 
-def _curve_elements(
-    keys: "Iterable[_MemberKey]", fem: "FEMData",
-) -> "dict[_MemberKey, list[int]]":
-    """Every line element of each curve in ``keys``, across the whole
-    snapshot (whichever transform it uses), in id order."""
-    want = set(keys)
-    all_ids = np.asarray(fem.elements.select(dim=1).ids, dtype=np.int64)
-    labels, entity = fem.elements.source_entity(all_ids, dim=1)
-    out: dict[_MemberKey, list[int]] = {k: [] for k in want}
-    wanted_ent = {k[1] for k in want}
-    for eid, lbl, ent in zip(all_ids.tolist(), labels, np.asarray(entity).tolist()):
-        if ent in wanted_ent:
-            key = (str(lbl), int(ent))
-            if key in out:
-                out[key].append(int(eid))
-    return {k: sorted(v) for k, v in out.items()}
+#: One line element of a curve: ``(eid, node_i, node_j)``.
+_CurveElement: TypeAlias = "tuple[int, int, int]"
+
+#: The curve index of each snapshot's element composite, built on first
+#: use: ``(module_label, entity) -> every line element of that curve``.
+#: Weak keys, so an index lives exactly as long as its snapshot.
+_CURVE_INDEX: "weakref.WeakKeyDictionary[Any, dict[_MemberKey, list[_CurveElement]]]" = (
+    weakref.WeakKeyDictionary())
+
+
+def _curve_index(fem: "FEMData") -> "dict[_MemberKey, list[_CurveElement]]":
+    """Every line element of every curve in ``fem``, by member key, in id
+    order: one pass over the snapshot's line elements, then cached."""
+    comp = fem.elements
+    index = _CURVE_INDEX.get(comp)
+    if index is not None:
+        return index
+    index = {}
+    for grp in comp.select(dim=1).groups():
+        ids = np.asarray(grp.ids, dtype=np.int64)
+        if ids.size == 0:
+            continue
+        labels, entity = comp.source_entity(ids, dim=1)
+        conn = np.asarray(grp.connectivity)
+        for k, (eid, lbl, ent) in enumerate(
+                zip(ids.tolist(), labels, np.asarray(entity).tolist())):
+            if ent >= 1:
+                index.setdefault((str(lbl), int(ent)), []).append(
+                    (int(eid), int(conn[k, 0]), int(conn[k, 1])))
+    for elements in index.values():
+        elements.sort()
+    _CURVE_INDEX[comp] = index
+    return index
+
+
+def _refuse_mixed_orientation(
+    curve: "list[_CurveElement]", key: "_MemberKey", where: str,
+) -> None:
+    """Refuse a curve whose elements do not all run one way: its i-end is
+    then ambiguous for end offsets (gmsh orders each element's nodes
+    along its curve; ``reverseElements`` breaks that)."""
+    i_nodes = [e[1] for e in curve]
+    j_nodes = [e[2] for e in curve]
+    if len(set(i_nodes)) != len(curve) or len(set(j_nodes)) != len(curve):
+        raise BridgeError(
+            f"{where}: elements {[e[0] for e in curve]} of {_curve_name(key)} "
+            "do not all run the same way (mixed orientation, e.g. after "
+            "reverseElements), so the member's i-end is ambiguous for its "
+            "end offsets. Keep every element in the curve's own node order.")
 
 
 def _part_of_curve(
-    chain: "list[_ElementRow]", key: "_MemberKey", whole: "list[int]",
-    out: "dict[int, tuple[float, ...]]", fem: "FEMData", where: str,
+    chain: "list[_ElementRow]", key: "_MemberKey",
+    curve: "list[_CurveElement]", out: "dict[int, tuple[float, ...]]",
+    where: str,
 ) -> bool:
     """True when ``chain`` is only part of its curve; then each element
     keeps its own offset, and this refuses where that offset puts an end
     zone or any other component along the element's axis at a node
     interior to the curve: a member's end offsets belong at the curve's
     two ends. Interior nodes may carry transverse parts only (an Assembly
-    rehydrate re-declares a split curve this way, one line per element)."""
+    rehydrate re-declares a split curve this way, one line per element).
+    The whole curve must run one way, so its two ends are known."""
     have = {r[0] for r in chain}
-    missing = [e for e in whole if e not in have]
+    missing = [e[0] for e in curve if e[0] not in have]
     if not missing:
         return False
-    sel = fem.elements.select(ids=missing)
-    cut = {int(n) for row in np.asarray(sel.connectivity) for n in row}
+    _refuse_mixed_orientation(curve, key, where)
+    cut = {n for e in curve if e[0] not in have for n in (e[1], e[2])}
     uses: dict[int, int] = {}
     for r in chain:
         uses[r[1]] = uses.get(r[1], 0) + 1
@@ -499,10 +538,12 @@ def _split_member(
     chord = p_e - p_s
     length = float(np.linalg.norm(chord))
     tol = VECXZ_TOL * max(length, 1.0)
-    # Mesh coordinates carry round-off relative to their own size (UTM
-    # northings of 1e7 m), so straightness also scales with it.
+    # Mesh coordinates carry round-off relative to their own size (about
+    # 2e-9 m at UTM northings of 1e7 m): allow that bound, never a share
+    # of the coordinates that would hide a real sagitta.
     coords = np.stack([p for r in chain for p in (r[3], r[4])])
-    straight_tol = VECXZ_TOL * max(float(np.max(np.abs(coords))), length, 1.0)
+    straight_tol = (64.0 * _EPS * float(np.max(np.abs(coords)))
+                    + VECXZ_TOL * max(length, 1.0))
     for r in chain[1:]:
         off = r[3] - p_s
         dist = float(np.linalg.norm(off - float(off @ chord) / length**2 * chord))
@@ -650,9 +691,9 @@ def element_offsets_by_id(
     where = f"geomTransf {name} jnt_offset"
     ends = {k: c for k, c in members.items()
             if any(r[0] in sensitive for r in c)}
-    whole = _curve_elements(ends, fem)
+    curves = _curve_index(fem)
     for key, chain in ends.items():
-        if _part_of_curve(chain, key, whole[key], out, fem, where):
+        if _part_of_curve(chain, key, curves[key], out, where):
             continue   # part of a curve: each element keeps its own offset
         if len(chain) < 2:
             continue   # a one-element curve: its own offset, exactly
