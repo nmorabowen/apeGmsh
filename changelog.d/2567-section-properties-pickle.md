@@ -8,6 +8,9 @@ automatic `model.h5` (ADR 0112 D1, rule P5). A `ComputedSection`'s
 `<model_name>.h5` was left beside the run.
 
 `SectionProperties` now pickles. It thaws the material view into a dict
-for the pickle and refreezes it on load, and its memoised analyses travel
-with it. The automatic write succeeds, and the archive carries
+for the pickle and refreezes it on load. The pickle carries the
+declaration only, never the lazy analysis caches: an unpickled analyzer
+recomputes them on demand, and a read-only `stress()` or `plastic()`
+between two emits leaves the digest, and so the written file, unchanged.
+The automatic write succeeds, and the archive carries
 `/opensees/computed_sections`.
