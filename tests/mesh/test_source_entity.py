@@ -64,8 +64,8 @@ def _frame_and_blocks(g) -> dict[str, int]:
 def _oracle_entity(eid: int) -> int | None:
     """Source entity from Gmsh's per-element lookup, or ``None``.
 
-    ``getElement`` does not know the interface elements a partition
-    creates; those return ``None`` and are checked separately.
+    ``getElement`` may not know the interface elements a partition
+    creates; those return ``None`` (see :func:`_is_interface_element`).
     """
     try:
         _, _, edim, etag = gmsh.model.mesh.getElement(int(eid))
@@ -77,29 +77,56 @@ def _oracle_entity(eid: int) -> int | None:
     return int(p_tag) if p_dim == edim else -1
 
 
+def _is_interface_element(eid: int) -> bool:
+    """True for an element ``PartitionCreateTopology`` added at a cut.
+
+    Gmsh's per-element lookup either does not know it, or classifies it
+    on an entity whose parent has a higher dimension (the cut lies in
+    that entity).
+    """
+    try:
+        _, _, edim, etag = gmsh.model.mesh.getElement(int(eid))
+    except Exception:
+        return True
+    return gmsh.model.getParent(edim, etag)[0] > edim
+
+
 def _check_against_gmsh(dim: int | None) -> dict:
-    """Assert extract_raw matches Gmsh's global call and per-element oracle."""
+    """Assert extract_raw matches Gmsh's global call and per-element oracle.
+
+    On a partitioned mesh the global call also returns the interface
+    elements ``PartitionCreateTopology`` adds; extraction leaves them
+    out (#2582), so the expected blocks are the global call's with
+    those elements (:func:`_is_interface_element`) removed, in order.
+    """
     raw = extract_raw(dim=dim)
     types, tags, nodes = gmsh.model.mesh.getElements(
         -1 if dim is None else dim, -1)
-    assert list(raw["groups"]) == [int(t) for t in types]
-    for k, code in enumerate(int(t) for t in types):
+    want_types: list[int] = []
+    want_ids: list[np.ndarray] = []
+    want_conn: list[np.ndarray] = []
+    for etype, etags, enodes in zip(types, tags, nodes):
+        ids = np.asarray(etags, dtype=np.int64)
+        npe = gmsh.model.mesh.getElementProperties(int(etype))[3]
+        conn = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+        known = np.array(
+            [not _is_interface_element(int(e)) for e in ids], dtype=bool)
+        if known.any():
+            want_types.append(int(etype))
+            want_ids.append(ids[known])
+            want_conn.append(conn[known])
+    assert list(raw["groups"]) == want_types
+    for code, ids, conn in zip(want_types, want_ids, want_conn):
         grp = raw["groups"][code]
         assert grp["ids"].dtype == np.int64
-        assert np.array_equal(grp["ids"], np.asarray(tags[k], dtype=np.int64))
-        assert np.array_equal(
-            grp["conn"].ravel(), np.asarray(nodes[k], dtype=np.int64))
+        assert np.array_equal(grp["ids"], ids)
+        assert np.array_equal(grp["conn"], conn)
         assert grp["entity"].dtype == np.int32
         assert grp["entity"].shape == grp["ids"].shape
         for eid, ent in zip(grp["ids"], grp["entity"]):
             want = _oracle_entity(int(eid))
-            if want is None:
-                # A partition-interface element: its parent entity has a
-                # higher dimension, so it has no source of its own dim.
-                assert ent == -1, eid
-            else:
-                assert ent == want, (code, int(eid), int(ent), want)
-    assert raw["elem_tags"] == [int(t) for block in tags for t in block]
+            assert ent == want, (code, int(eid), int(ent), want)
+    assert raw["elem_tags"] == [int(t) for block in want_ids for t in block]
     return raw
 
 
@@ -150,9 +177,10 @@ def test_capture_reproduces_gmsh_and_names_each_elements_entity():
 
 
 def test_partitioned_entities_resolve_to_their_parent():
-    """I2: partitioning leaves ``entity`` unchanged by element id, and
-    the interface elements it adds are ``-1`` (no member is cut at a
-    rank boundary)."""
+    """I2: partitioning leaves ``entity`` unchanged by element id: every
+    element on a partition entity resolves to its parent, and the
+    interface elements ``PartitionCreateTopology`` adds are not
+    extracted (#2582), so no element is added."""
     with apeGmsh(model_name="sle_part", verbose=False) as g:
         _frame_and_blocks(g)
         before = _by_id(extract_raw(dim=None))
@@ -163,14 +191,17 @@ def test_partitioned_entities_resolve_to_their_parent():
                  if gmsh.model.getParent(1, t)[0] == 1
                  and len(gmsh.model.mesh.getElements(1, t)[1])]
         assert moved
+        # ... and created interface entities, whose parent has a
+        # higher dimension, carrying elements of their own.
+        interface = [
+            (d, t) for d, t in gmsh.model.getEntities()
+            if gmsh.model.getParent(d, t)[0] > d
+            and len(gmsh.model.mesh.getElements(d, t)[1])]
+        assert interface
         gmsh.model.mesh.rebuildElementCache()
         after = _by_id(_check_against_gmsh(None))
-    common = before.keys() & after.keys()
-    assert common == before.keys()
-    assert all(after[e] == before[e] for e in common)
-    added = after.keys() - before.keys()
-    assert added  # PartitionCreateTopology adds interface elements
-    assert {after[e] for e in added} == {-1}
+    assert after == before
+    assert -1 not in set(after.values())
 
 
 _MSH2_TAG0 = """$MeshFormat
@@ -204,29 +235,39 @@ def test_msh2_elementary_tag_zero_reads_as_unknown(tmp_path):
     assert fem.elements.entity[grp.type_code].tolist() == [-1]
 
 
-def test_ghost_cells_carry_no_source_entity():
+def test_ghost_cells_add_no_rows_and_resolve_to_the_surface():
     """Ghost entities (``PartitionCreateGhostCells``) have no parent and
-    hold copies of another partition's elements: their rows are ``-1``,
-    and every element still has its real surface on its own row."""
+    hold copies, under the same ids, of another partition's elements.
+    They are not extracted (#2582): each element appears once, on the
+    row of the partition entity that owns it, which resolves to the
+    parent surface."""
     with apeGmsh(model_name="sle_ghost", verbose=False):
         surf = gmsh.model.occ.addRectangle(0, 0, 0, 2, 1)
         gmsh.model.occ.synchronize()
         gmsh.model.mesh.setSize(gmsh.model.getEntities(0), 0.5)
         gmsh.model.mesh.generate(2)
+        _, before, _ = gmsh.model.mesh.getElements(2, -1)
+        old = gmsh.option.getNumber("Mesh.PartitionCreateGhostCells")
         gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", 1)
         try:
             gmsh.model.mesh.partition(2)
             ghosts = [t for d, t in gmsh.model.getEntities(2)
                       if gmsh.model.getType(d, t).startswith("Ghost")]
+            ghost_ids = {
+                int(e) for t in ghosts
+                for block in gmsh.model.mesh.getElements(2, t)[1]
+                for e in block}
             raw = extract_raw(dim=2)
         finally:
-            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", 0)
-    assert ghosts
+            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", old)
+    assert ghosts and ghost_ids
     ent = np.concatenate([g["entity"] for g in raw["groups"].values()])
     ids = np.concatenate([g["ids"] for g in raw["groups"].values()])
-    assert set(ent.tolist()) == {surf, -1}
-    assert not set(ghosts) & set(ent.tolist())
-    assert set(ids[ent == surf].tolist()) == set(ids.tolist())
+    assert np.unique(ids).size == ids.size
+    assert sorted(ids.tolist()) == sorted(
+        int(e) for block in before for e in block)
+    assert ghost_ids <= set(ids.tolist())  # each still once, as owned
+    assert set(ent.tolist()) == {surf}
 
 
 def test_factory_carries_the_stream_onto_the_snapshot(frame_h5):
