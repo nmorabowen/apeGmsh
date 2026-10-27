@@ -142,7 +142,14 @@ class LibraryContractTests(unittest.TestCase):
                 return "fake"
 
             def getEntities(self, dim=-1):
-                return [(1, 30), (2, 20), (3, 10)]
+                ents = [(1, 30), (2, 20), (3, 10)]
+                return [e for e in ents if dim == -1 or e[0] == dim]
+
+            def getParent(self, dim, tag):
+                return -1, -1  # unpartitioned: no entity has a parent
+
+            def getType(self, dim, tag):
+                return "Discrete"  # not a partition ghost entity
 
             def getPhysicalGroups(self):
                 return [(1, 3), (2, 2), (3, 1)]

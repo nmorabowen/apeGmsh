@@ -30,7 +30,9 @@ env:
 jobs:
   suite:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 was cancelled 7 nights out of 7 (#2544): the run is tests.yml's
+    # suite selection, ~30 min on a slow runner, so it takes the same 40.
+    timeout-minutes: 40
     env:
       APEGMSH_EXPECT_GL: "1"
     steps:

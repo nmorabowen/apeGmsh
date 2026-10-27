@@ -199,6 +199,8 @@ def test_label_rename_to_its_own_name_returns(g):
     g.labels.add(1, [a], name="A")
     g.labels.rename("A", "A")
     g.labels.rename("A", "A", dim=1)
+    # Same stored name once prefixed: "_label:A" is "A".
+    g.labels.rename("A", "_label:A")
     assert g.labels.entities("A") == [a]
     with pytest.raises(KeyError, match="no label 'A' found at dim=0"):
         g.labels.rename("A", "A", dim=0)

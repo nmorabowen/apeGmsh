@@ -678,6 +678,12 @@ class _RewrittenBundle:
     # Per-node provenance (decoupled nodes — ADR 0049), aligned to
     # ``node_ids``.  ``None`` when the source has no decoupled nodes.
     node_provenance: "np.ndarray | None" = None
+    # Per-element source entity (neutral 2.36.0), keyed like
+    # ``element_groups`` and aligned to each group's ``ids``.  Carried
+    # verbatim, never offset: entity tags are not element or node tags,
+    # and ``module_label`` namespaces them per module.  ``None`` when
+    # the source carries no stream.
+    element_entity: "dict[int, np.ndarray] | None" = None
     # Embedded-reinforcement ties (ADR 0067 P5.1): the source's
     # ``elements.reinforce_ties`` (ReinforceTieRecord), offset-rewritten
     # via tag_rewrite_spec (rebar_node scalar + host_nodes array; name +
@@ -1828,6 +1834,12 @@ def _rewrite_source_for_compose(
             ids=new_ids,
             connectivity=new_conn,
         )
+    src_entity = source.elements.entity
+    new_element_entity = (
+        None if src_entity is None
+        else {code: np.array(arr, dtype=np.int32)
+              for code, arr in src_entity.items()}
+    )
 
     # 3. Physical groups + labels — rewrite the dict-shaped name maps
     #    on both node-side and element-side composites.
@@ -2047,6 +2059,7 @@ def _rewrite_source_for_compose(
         node_ndf=new_node_ndf,
         node_provenance=new_node_provenance,
         element_groups=new_element_groups,
+        element_entity=new_element_entity,
         node_physical=new_node_physical,
         elem_physical=new_elem_physical,
         node_labels=new_node_labels,
@@ -2785,6 +2798,21 @@ def _merge_bundle_into_fem(
             new_elem_module_label[code] = np.array(
                 [""] * host_size, dtype=object,
             )
+    # Per-element source entity: concatenated host+bundle
+    # per type, values never rewritten.  Same rule as ndf/provenance:
+    # the result carries the stream when either side does, filling
+    # ``-1`` (unknown) for the stream-less side's rows.
+    host_entity = fem.elements.entity
+    bundle_entity = bundle.element_entity
+    carry_entity = host_entity is not None or bundle_entity is not None
+    new_elem_entity: dict[int, np.ndarray] = {}
+    if carry_entity:
+        for code, host_group in new_element_groups.items():
+            new_elem_entity[code] = (
+                np.asarray(host_entity[code], dtype=np.int32)
+                if host_entity is not None
+                else np.full(host_group.ids.shape, -1, dtype=np.int32)
+            )
 
     for code, bundle_group in bundle.element_groups.items():
         b_ids = np.asarray(bundle_group.ids, dtype=np.int64)
@@ -2801,6 +2829,16 @@ def _merge_bundle_into_fem(
             )
         else:
             b_label_arr = np.array([bundle.label] * b_size, dtype=object)
+        if carry_entity:
+            b_entity_arr = (
+                np.asarray(bundle_entity[code], dtype=np.int32)
+                if bundle_entity is not None
+                else np.full(b_ids.shape, -1, dtype=np.int32)
+            )
+            new_elem_entity[code] = (
+                np.concatenate([new_elem_entity[code], b_entity_arr])
+                if code in new_elem_entity else b_entity_arr
+            )
         if code in new_element_groups:
             host_group = new_element_groups[code]
             merged_ids = np.concatenate([
@@ -2897,6 +2935,7 @@ def _merge_bundle_into_fem(
         partitions=getattr(fem.elements, "_partitions", None) or None,
         part_elem_map=new_part_elem_map or None,
         module_label=new_elem_module_label,
+        entity=new_elem_entity if carry_entity else None,
         # ADR 0067 P5.1: carry the host's own ties + append the bundle's
         # rewritten ties (the with_* transforms below shallow-copy the
         # ElementComposite, preserving this list by reference).

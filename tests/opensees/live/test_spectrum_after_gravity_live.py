@@ -347,6 +347,29 @@ def test_d_gravity_state_is_restored(transf: str) -> None:
 
 @pytest.mark.live
 @pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize("p_delta", [True, False])
+@pytest.mark.parametrize("transf", ["Linear", "PDelta"])
+def test_gravity_drift_is_zero_right_after_the_call(
+        transf: str, p_delta: bool) -> None:
+    """``gravity_drift()`` promises ``0.0`` while nothing has moved the
+    domain. Under ``NormUnbalance 1.0`` the driver settles the gravity state
+    with unloaded Linear steps before the per-mode legs, so a snapshot taken
+    before settling read 1.5e-7 right after the call (#2545). The snapshot
+    is the state the driver leaves the domain at."""
+    spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
+    res = _frame(transf, unbalance_tol=1.0).spectrum_after_gravity(
+        N_MODES, spectra=[spec], extractors=ROOF_EX, p_delta=p_delta,
+        solver="-fullGenLapack")
+    assert res.modal.gravity_drift() == (0.0, 0.0)
+    # It is still the gravity state: the gravity values agree with it.
+    roof = res.modal.gravity.node_disp(ROOF)[:2]
+    np.testing.assert_allclose(roof, res.gravity_values["roof"], rtol=1e-9)
+    assert res.modal.gravity.total_reaction(2) == pytest.approx(
+        G_LOAD * 2 * (len(FLOOR) + N_STORY), rel=1e-6)
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
 def test_p_delta_false_responses_are_those_of_k() -> None:
     lin = _run("Linear")
     pd_off = _run("PDelta", p_delta=False)
@@ -545,9 +568,11 @@ def test_a_member_that_changes_stiffness_at_the_reference_is_refused(
     strain: each probe leg compresses a different one. Concrete01 braces
     compressed by gravity sit on their backbone: one leg loads along it,
     the other unloads on the stiffer branch. Either way the two legs meet
-    different stiffnesses, and no amplitude gives a linear response."""
+    different stiffnesses, and no amplitude gives a linear response: the
+    re-probe at 100 times the amplitude refuses them too."""
     spec = DesignSpectrum(TN, SA, direction=1, scale=9.81)
-    with pytest.raises(RuntimeError, match="met different stiffnesses"):
+    with pytest.raises(RuntimeError, match="met different stiffnesses.*"
+                                           "at 100 times the probe"):
         _frame(braces=braces).spectrum_after_gravity(
             N_MODES, spectra=[spec], extractors=ROOF_EX, p_delta=p_delta,
             solver="-fullGenLapack")
@@ -589,10 +614,13 @@ def test_a_loose_gravity_tolerance_is_not_a_kink(transf: str) -> None:
 _CORNERS = ((-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0))
 
 
-def _diaphragm(transf: str, dx: float) -> apeSees:
+def _diaphragm(transf: str, dx: float, *, link: float = 1.0,
+               gravity: float = 1.0) -> apeSees:
     """Four columns, their tops tied by stiff links to one centre node that
     carries the floor's translational and rotational mass (the review's
-    repro). Its pure-torsion mode barely moves the centre node."""
+    repro). Its pure-torsion mode barely moves the centre node. ``link``
+    scales the links' section (``A``, ``J``, ``I``) and ``gravity`` the
+    loads on the column tops."""
     coords = ([(x, y, 0.0) for x, y in _CORNERS]
               + [(x, y, 3.0) for x, y in _CORNERS] + [(dx, 0.0, 3.0)])
     nodes = _NodesStub(ids=list(range(1, 10)), coords=coords,
@@ -611,12 +639,13 @@ def _diaphragm(transf: str, dx: float) -> apeSees:
     tl = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
     ops.element.elasticBeamColumn(pg="Cols", transf=tc, A=0.25, E=30e9,
                                   G=12e9, J=0.01, Iy=0.0052, Iz=0.0052)
-    ops.element.elasticBeamColumn(pg="Links", transf=tl, A=10.0, E=30e9,
-                                  G=12e9, J=10.0, Iy=10.0, Iz=10.0)
+    ops.element.elasticBeamColumn(pg="Links", transf=tl, A=10.0 * link,
+                                  E=30e9, G=12e9, J=10.0 * link,
+                                  Iy=10.0 * link, Iz=10.0 * link)
     ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
     ops.mass(pg="Centre", values=(8e4, 8e4, 0.0, 0.0, 0.0, 8e4 * 6.0))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        p.load(pg="Tops", forces=(0.0, 0.0, -2e5, 0.0, 0.0, 0.0))
+        p.load(pg="Tops", forces=(0.0, 0.0, -2e5 * gravity, 0.0, 0.0, 0.0))
     ops.constraints.Transformation()
     ops.numberer.RCM()
     ops.system.UmfPack()
@@ -655,6 +684,38 @@ def test_torsion_mode_at_a_centred_mass_node(transf: str, dx: float) -> None:
     assert max(res.restore_drift) < 1e-9
 
 
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize("transf", ["Linear", "PDelta"])
+def test_round_off_in_a_near_rigid_link_is_not_a_kink(transf: str) -> None:
+    """Links a million times stiffer, under thirty times the gravity: a
+    link carries no gravity force, but its resisting force is a huge
+    stiffness times the round-off in its nodal displacements, a second
+    difference of ~0.04 against a first of 27 at the probe. The linear
+    frame was refused at 1.48e-3, blaming a link (#2545). The re-probe at
+    100 times the amplitude reads it at ~1e-5, and the per-mode values
+    are the modal ones, to the eigenvector's own accuracy on a stiffness
+    this ill-conditioned (2.3e-8 Linear, 1.3e-7 PDelta, measured; the same
+    at either probe size, so it is not the legs' round-off)."""
+    spec = [DesignSpectrum((0.0, 2.0), (5.0, 5.0), direction=d)
+            for d in (1, 2)]
+    res = _diaphragm(transf, 1e-3, link=1e6, gravity=30.0).spectrum_after_gravity(
+        3, spectra=spec, extractors={"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))},
+        solver="-fullGenLapack")
+    ops = res.modal._live.ops
+    props = res.modal.modal.properties
+    lam = np.asarray(res.modal.eigenvalues)
+    for d, comp in enumerate(("MX", "MY")):
+        gamma = np.asarray(props[f"partiFactor{comp}"])
+        got = res.modes("c", d)
+        for k in range(3):
+            want = gamma[k] * 5.0 / lam[k] * np.asarray(
+                ops.nodeEigenvector(9, k + 1))[[0, 1, 5]]
+            assert np.max(np.abs(got[k] - want)) <= 1e-6 * float(
+                np.max(np.abs(got))), (comp, k)
+    assert res.modal.gravity_drift() == (0.0, 0.0)
+
+
 # -- the fork's -increment route (fork WP-207, ADR 0124 amendment) ------------
 
 def _route(monkeypatch: pytest.MonkeyPatch, route: str, run: Any) -> Any:
@@ -677,6 +738,7 @@ def _per_mode_rel(fast: Any, slow: Any, name: str) -> np.ndarray:
 _FRAMES: dict[str, Any] = {
     "linear": lambda: _frame("Linear"),
     "pdelta": lambda: _frame("PDelta"),
+    "corotational": lambda: _frame("Corotational"),
     "pdelta-braced-x2": lambda: _frame("PDelta", braces="Elastic",
                                        gravity=2.0),
 }
@@ -711,7 +773,7 @@ def test_increment_route_equals_the_static_route(
     # The column tags are read off the unbraced frame; the braced one
     # numbers its elements differently, so it is compared on the nodes.
     names = ("disp", "base", "base_shear") + (
-        ("cols",) if frame in ("linear", "pdelta") else ())
+        ("cols",) if frame in ("linear", "pdelta", "corotational") else ())
     ex = {n: EXTRACTORS[n] for n in names if n != "base_shear"}
 
     def run() -> Any:
@@ -790,7 +852,10 @@ def test_an_imposed_state_off_the_mode_is_refused(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """The imposed displacement is checked against ``± a φ / λ``: a build
     whose participation factor or spectrum lookup differed (here, ``Sa``
-    off by 1e-4) raises instead of scaling every mode."""
+    off by 1e-4) raises instead of scaling every mode. The failed leg is
+    still reverted: the domain is back at its committed state, not left at
+    the imposed trial one (#2545)."""
+    from apeGmsh.opensees.emitter.live import get_ops
     from apeGmsh.opensees.procedures import _gravity_modal as gm
 
     _need_increment()
@@ -803,3 +868,8 @@ def test_an_imposed_state_off_the_mode_is_refused(
     monkeypatch.setattr(gm, "_impose_mode", off)
     with pytest.raises(RuntimeError, match="imposed a displacement"):
         _run()
+    ops = get_ops()
+    # IncrDisp (response 4) is trial - committed: zero once reverted.
+    for node in FLOOR:
+        assert [float(ops.nodeResponse(node, d, 4)) for d in (1, 2)] == [
+            0.0, 0.0], node

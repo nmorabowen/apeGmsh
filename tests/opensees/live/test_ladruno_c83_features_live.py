@@ -14,6 +14,9 @@
   doubles the combined displacement.
 * ``modalProperties`` after ``eigen -feast`` (fork WP-203), with and without
   ``-traceStop``: the band's participation factors equal the ARPACK ones.
+  FEAST needs the MKL Extended Eigensolver, which only the Windows/oneAPI
+  fork build links (fork ADR 43 P1). On a build that prints that refusal
+  the test skips as ``ladruno_mkl`` (#2555); any other FEAST failure fails.
 
 Every test probes the bound build for the c83 behaviour and skips on an
 older fork build: the ASD shells refuse ``-pDelta -corotational`` only from
@@ -249,13 +252,29 @@ def test_rsa_scale_two_doubles_the_combined_displacement() -> None:
     assert u2 == pytest.approx(2.0 * u1, rel=1e-12)
 
 
+#: The fork's refusal on a build without the MKL Extended Eigensolver (the
+#: Linux release tarball): ``FeastEigenSolver::solve()``, fork ADR 43 P1.
+FEAST_WITHOUT_MKL = "FEAST requires the MKL Extended Eigensolver"
+
+
+@pytest.mark.ladruno_mkl
 @pytest.mark.parametrize("trace_stop", [False, True])
-def test_feast_then_modal_properties_matches_arpack(trace_stop: bool) -> None:
+def test_feast_then_modal_properties_matches_arpack(
+    trace_stop: bool, capfd: pytest.CaptureFixture[str],
+) -> None:
     ref = _cantilever().modal_properties(2, solver="-fullGenLapack")
     f = np.sqrt(ref.eigenvalues) / (2.0 * math.pi)
-    band = _cantilever().eigen_feast(
-        0.5 * float(f[0]), 1.5 * float(f[1]), trace_stop=trace_stop,
-    )
+    capfd.readouterr()
+    try:
+        band = _cantilever().eigen_feast(
+            0.5 * float(f[0]), 1.5 * float(f[1]), trace_stop=trace_stop,
+        )
+    except Exception:
+        err = capfd.readouterr().err
+        live.LiveOpsEmitter(wipe=True)
+        if FEAST_WITHOUT_MKL not in err:
+            raise
+        pytest.skip(f"ladruno_mkl: FEAST unavailable ({FEAST_WITHOUT_MKL})")
     props = band.modal_properties()
     live.LiveOpsEmitter(wipe=True)
     assert len(band.eigenvalues) == 2
