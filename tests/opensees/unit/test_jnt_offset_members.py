@@ -607,24 +607,63 @@ def _three_on_one_curve(mine: tuple[int, ...]) -> FEMStub:
     return stub(coords, groups, entity=dict.fromkeys(conn, CURVE))
 
 
+def _partial(mine: tuple[int, ...], rule: Any = RULE) -> apeSees:
+    ops = bridge(_three_on_one_curve(mine), rule=rule)
+    ops.element.elasticBeamColumn(
+        pg="N", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    return ops
+
+
 @pytest.mark.parametrize("mine, missing", [
     ((101, 102), "[103]"), ((102,), "[101, 103]"), ((101,), "[102, 103]"),
     ((101, 103), "[102]")], ids=["first_two", "middle", "first", "both_ends"])
-def test_a_partial_curve_with_end_offsets_refuses_naming_the_missing(
+def test_a_partial_curve_with_end_zones_refuses_naming_the_node(
         mine: tuple[int, ...], missing: str) -> None:
-    """Maintainer ruling (2026-10-27, #2578 review): a transform with
-    end-sensitive offsets that covers only some of a curve's elements
-    refuses. Elements 101+102 used to take the j-zone at node 3, mid-curve;
-    a lone element kept both end zones at interior nodes."""
-    ops = bridge(_three_on_one_curve(mine))
-    if len(mine) < 3:
-        ops.element.elasticBeamColumn(
-            pg="N", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
-            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+    """Maintainer ruling (2026-10-27, #2578 review, option B): part of a
+    curve keeps each element's own offset, and refuses where that puts an
+    end zone at a node interior to the curve. The review's three cases:
+    101+102 (the j-zone landed mid-curve), a lone element (both end zones
+    at interior nodes) and 101+103; all put a 0.3 m zone at node 2."""
     with pytest.raises(BridgeError, match=(
             rf"covers elements \[{', '.join(map(str, sorted(mine)))}\] of curve 7 "
-            rf"but not its elements {re.escape(missing)}")):
-        ops.build().emit(RecordingEmitter())
+            rf"but not its elements {re.escape(missing)}, and would put an end "
+            r"zone or axial offset \(-?0\.3 along element 10\d\) at node 2, "
+            r"interior to the curve")):
+        _partial(mine).build().emit(RecordingEmitter())
+
+
+@pytest.mark.parametrize("mine, jnt, node", [
+    ((101,), ((0.0, 0.1, 0.0), (0.05, 0.1, 0.0)), 2),
+    ((103,), ((0.05, 0.1, 0.0), (0.0, 0.1, 0.0)), 3),
+], ids=["j_half", "i_half"])
+def test_a_partial_curve_refuses_any_axial_part_at_an_interior_node(
+        mine: tuple[int, ...], jnt: Any, node: int) -> None:
+    """Not only a rigid length: a 0.05 m component along the axis at an
+    interior node (either half of the tail) refuses."""
+    with pytest.raises(BridgeError, match=rf"\(0\.05 along element {mine[0]}\) at node {node},"):
+        _partial(mine, rule=jnt).build().emit(RecordingEmitter())
+
+
+@pytest.mark.parametrize("mine, rule, want", [
+    ((101,), InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
+                            end_offset_i=0.3),
+     {101: (0.3, 0.0, -0.3, 0.0, 0.0, -0.3)}),
+    ((102,), ((0.0, 0.1, 0.0), (0.0, 0.2, 0.0)),
+     {102: (0.0, 0.1, 0.0, 0.0, 0.2, 0.0)}),
+    ((103,), InsertionPoint(cardinal_point=8, depth=0.6, width=0.3, axis_2="z",
+                            end_offset_j=0.3),
+     {103: (0.0, 0.0, -0.3, -0.3, 0.0, -0.3)}),
+], ids=["i_end_element", "interior_transverse", "j_end_element"])
+def test_a_partial_curve_with_transverse_interior_nodes_is_accepted(
+        mine: tuple[int, ...], rule: Any, want: dict[int, tuple[float, ...]]) -> None:
+    """The shape an Assembly rehydrate re-declares (one line per element of
+    a split curve): end zones only at the curve's own ends, transverse
+    parts (equal or not) at its interior nodes. Each element keeps its
+    own offset."""
+    got = element_offsets(_emit(_partial(mine, rule=rule)))
+    for eid, tail in want.items():
+        assert got[eid] == _approx(tail)
 
 
 def test_a_partial_curve_keeps_an_equal_transverse_shift() -> None:

@@ -19,11 +19,15 @@ follow the split.
   read as frame corners. Split the arc into straight curves, or drop the end
   offsets. Straightness allows round-off relative to the coordinates' size,
   so a straight curve at UTM coordinates still splits.
-- **Refused, naming the curve and its missing elements:** end-sensitive
-  offsets on a transform that covers only some of a curve's elements (a
-  lone element of a meshed curve, or two of its three). A member is the
-  whole curve; put the curve under one transform, or split the curve where
-  the transform changes. Earlier, #2470 accepted such a part when its
+- **Part of a curve:** a transform with end-sensitive offsets that covers
+  only some of a curve's elements keeps each element's own offset. It is
+  refused, naming the curve, its missing elements and the node, wherever
+  that offset puts an end zone or any other component along the element's
+  axis at a node interior to the curve. A part whose interior nodes carry
+  only transverse offsets is accepted: it is how an Assembly rehydrate
+  re-declares a split curve, one line per element. For example, a lone
+  element of a meshed curve with end zones at both its ends refuses, and so
+  do two of its three elements. Earlier, #2470 accepted these when the
   elements did not meet in a straight run.
 - Also refused: a curve whose elements run both ways, a closed curve, end
   lengths with unequal transverse ends, and an end element no longer than

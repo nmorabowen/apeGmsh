@@ -20,6 +20,7 @@ fresh instance per test or reuse a session-scoped one.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -381,6 +382,7 @@ class _ElementsStub:
         dim: int | None = None,
         element_type: str | int | None = None,
         partition: int | None = None,
+        ids: "Iterable[int] | None" = None,
     ) -> _GroupResultView:
         """selection-unification v2 P3-R: ``fem.elements.get`` is
         removed; ``fem.elements.select(pg=).groups()`` /
@@ -391,12 +393,26 @@ class _ElementsStub:
         ``.groups()``/``.result()``/``.resolve()`` surface.
 
         ``select(dim=1)`` (no other filter) is every element: the stub's
-        elements are all lines; its ``.ids`` are every PG's ids."""
-        if (pg is None and dim == 1 and target is None and label is None
-                and tag is None and element_type is None and partition is None):
-            ids = tuple(sorted({int(e) for grp in self._pgs.values()
-                                for e in grp.ids}))
-            return _ElementGroupView(ids=ids, connectivity=())  # type: ignore[return-value]
+        elements are all lines; its ``.ids`` are every PG's ids.
+        ``select(ids=[...])`` is those elements, ``.ids`` and
+        ``.connectivity`` aligned; an unknown id raises ``KeyError``."""
+        conn = {int(e): tuple(c) for grp in self._pgs.values()
+                for e, c in zip(grp.ids, grp.connectivity)}
+        bare = (pg is None and target is None and label is None and tag is None
+                and element_type is None and partition is None)
+        if bare and ids is not None and dim is None:
+            want = [int(e) for e in ids]
+            unknown = [e for e in want if e not in conn]
+            if unknown:
+                raise KeyError(f"fem-stub.select: unknown element ids {unknown}")
+            return _ElementGroupView(  # type: ignore[return-value]
+                ids=tuple(want), connectivity=tuple(conn[e] for e in want))
+        if bare and ids is None and dim == 1:
+            every = tuple(sorted(conn))
+            return _ElementGroupView(  # type: ignore[return-value]
+                ids=every, connectivity=tuple(conn[e] for e in every))
+        if ids is not None:
+            raise ValueError("fem-stub.elements.select: ids= takes no other filter")
         return self.get(
             target, pg=pg, label=label, tag=tag, dim=dim,
             element_type=element_type, partition=partition,
