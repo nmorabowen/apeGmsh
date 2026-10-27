@@ -1681,7 +1681,7 @@ class Labels(_HasLogging):
         if add_prefix(old_name) != new_prefixed:
             # Checked for every dim before any group is touched: gmsh
             # keeps one group per name and dim, so the recreated group
-            # would lose its name to the one already there (#2577).
+            # would lose its name to the one already there.
             old_dims, new_dims = self._find(old_name), self._find(new_name)
             clash = [d for d in dims if d in old_dims and d in new_dims]
             if clash:
