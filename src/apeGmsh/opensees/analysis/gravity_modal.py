@@ -130,7 +130,14 @@ class GravityModalResult:
         (periods, participation factors, effective mass ratios and their
         cumulative sums, total mass).
     gravity
-        The domain state right after ``loadConst -time 0``.
+        The domain state right after ``loadConst -time 0``. Under
+        :meth:`~apeGmsh.opensees.apeSees.spectrum_after_gravity` with
+        ``p_delta=True`` it is retaken after the per-mode solves, at the
+        settled gravity state the driver leaves the domain at (a few
+        unloaded ``Linear`` steps from the state ``loadConst`` froze, nearer
+        equilibrium under a loose declared test). Either way it is the
+        state the driver returned with, so :meth:`gravity_drift` reads
+        ``0.0`` right after the call.
     p_delta
         ``True``: the eigenproblem was solved after the gravity preload, on
         the tangent ``K - Kg`` of the gravity state. ``False``: it was
