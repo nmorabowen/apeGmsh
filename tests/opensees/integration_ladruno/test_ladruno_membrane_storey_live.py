@@ -45,8 +45,8 @@ BEAMS = [
     ((0, 0), (6, 0)), ((6, 0), (12, 0)), ((0, 5), (6, 5)), ((6, 5), (12, 5)),
     ((0, 0), (0, 5)), ((6, 0), (6, 5)), ((12, 0), (12, 5)), ((9, 0), (9, 5)),
     ((0, 10), (6, 10)), ((0, 5), (0, 10)), ((6, 5), (6, 10)),
-    # The hole is framed: the fork gives a hole node no stiffness of its
-    # own (MembraneHoleNodeFreeWarning).
+    # The hole is framed: the membrane stiffens a hole node in its plane
+    # at most, never out of it (MembraneHoleNodeFreeWarning).
     ((2, 6.5), (4, 6.5)), ((4, 6.5), (4, 8.5)), ((4, 8.5), (2, 8.5)),
     ((2, 8.5), (2, 6.5)),
     # Trimmers frame the opening into the edge beams. Without them the hole

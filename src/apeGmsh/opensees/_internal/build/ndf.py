@@ -317,10 +317,6 @@ def infer_node_ndf(
             continue
         first_tag.setdefault(cls_name, int(fanout.conn[0][0]))
         blocks.extend(_conn_width_blocks(fanout.conn))
-        if cls_name == "LadrunoMembrane":
-            extra_ids = ladruno_membrane_named_nodes(fem, spec)
-            if extra_ids:
-                blocks.append(np.asarray([extra_ids], dtype=np.int64))
 
     # One registry probe + one unique-node pass per class.
     structural: list[tuple[str, "frozenset[int]", int, np.ndarray]] = []
@@ -462,9 +458,9 @@ def membrane_interior_nodes(
 class MembraneHoleNodeFreeWarning(UserWarning):
     """A ``LadrunoMembrane`` hole node that no other element touches.
 
-    The fork gives such a node no stiffness (see
-    :func:`warn_membrane_hole_nodes_free`), so its DOFs are free unless a
-    ``fix`` holds them.
+    The membrane stiffens such a node in its own plane at most, so its
+    other DOFs are free unless a ``fix`` holds them (see
+    :func:`warn_membrane_hole_nodes_free`).
     """
 
 
@@ -473,14 +469,18 @@ def warn_membrane_hole_nodes_free(
 ) -> None:
     """Warn on a ``LadrunoMembrane`` hole whose nodes nothing else stiffens.
 
-    The fork condenses the membrane's in-plane stiffness and mass onto the
-    OUTER loop only (``LadrunoMembraneKernel::condense_inplane_cst`` keeps
-    the outer boundary vertices); a ``-hole`` node is an external node of
-    the element with no stiffness from it.  A hole node that no other
-    element touches is therefore a free DOF: K is singular (``analyze``
+    The membrane gives its nodes in-plane stiffness only.  From fork
+    WP-204/WP-208 (the pin's floor) it condenses that stiffness onto every
+    external node, hole loops included, but only when the panel has one
+    (``stiff=``, ``E=``/``nu=``/``thickness=``, ``mat=`` or ``section=``),
+    and only along the panel's own axes: the out-of-plane translation and
+    the rotations get nothing (``LadrunoMembrane::resolveAndBuildTransfer``
+    scatters the condensed 2-D block through ``e1``/``e2`` only, at fork
+    pin bdb69cea).  Before WP-204 the condensation kept the outer loop
+    alone.  A hole node that no other element touches therefore has free
+    DOFs: K is singular (``analyze``
     fails, ``eigen`` returns undetermined values) unless a ``fix`` holds
-    every one of its DOFs.  A warning, not a refusal: a fully fixed hole
-    node is legal.
+    them.  A warning, not a refusal: a fixed hole node is legal.
     """
     from ...element.shell import LadrunoMembrane
 
@@ -515,10 +515,10 @@ def warn_membrane_hole_nodes_free(
     warnings.warn(
         f"LadrunoMembrane({where}): {ids.size} node(s) of its hole loop(s) "
         f"(e.g. {sorted(int(n) for n in ids.tolist())[:5]}) are touched by no "
-        f"other element. The fork condenses the membrane's in-plane stiffness "
-        f"and mass onto the outer loop only, so a hole node carries no "
-        f"stiffness from the membrane: unless a fix holds them, those DOFs "
-        f"are free and K is singular. Frame the opening (beams on the hole's "
+        f"other element. The membrane stiffens a node in the panel's plane "
+        f"at most (and not at all without an in-plane stiffness), never out "
+        f"of it: unless a fix holds them, those nodes' other DOFs are free "
+        f"and K is singular. Frame the opening (beams on the hole's "
         f"edges, listed in frames= or not), or model the opening as part of "
         f"the outer boundary.",
         MembraneHoleNodeFreeWarning,

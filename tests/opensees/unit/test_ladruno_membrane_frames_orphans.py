@@ -341,8 +341,9 @@ def test_interior_node_ids_match_the_skip_set() -> None:
 
 
 def test_a_hole_node_no_element_touches_warns() -> None:
-    """The fork condenses the membrane onto its outer loop, so an unframed
-    hole node has no stiffness: the build says so."""
+    """The membrane stiffens a node in its plane at most (this one has no
+    in-plane stiffness at all), so an unframed hole node has free DOFs:
+    the build says so."""
     from apeGmsh.opensees._internal.build.ndf import MembraneHoleNodeFreeWarning
 
     fem = _fem()

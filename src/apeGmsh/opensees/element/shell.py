@@ -491,7 +491,11 @@ def _normalize_node_ref(cls_name: str, field_name: str, val: object) -> int | st
 def _normalize_node_list(
     cls_name: str, field_name: str, value: object,
 ) -> tuple[int | str, ...]:
-    """A node ref, ``NodeSet`` or sequence of them, as tags and names."""
+    """A node ref, ``NodeSet`` or sequence of them, as tags and names.
+
+    ``()`` and an empty ``NodeSet`` (a group that matched nothing) are
+    refused alike: either would drop the flag from the deck in silence.
+    """
     if isinstance(value, (int, str, Node, NodeSet)) and not isinstance(value, bool):
         raw: tuple[object, ...] = (value,)
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
@@ -507,6 +511,11 @@ def _normalize_node_list(
     for idx, item in enumerate(raw):
         where = f"{field_name}[{idx}]"
         if isinstance(item, NodeSet):
+            if not item.tags:
+                raise ValueError(
+                    f"{cls_name}: {field_name}= must not be empty ({where} is "
+                    f"a NodeSet with no nodes)."
+                )
             out.extend(_normalize_node_ref(cls_name, where, int(t)) for t in item.tags)
         elif isinstance(item, bool) or not isinstance(item, (int, str, Node)):
             raise TypeError(
@@ -676,44 +685,12 @@ class LadrunoMembrane(Element):
             object.__setattr__(self, "frames", f_tup)
 
         if self.support_nodes is not None:
-            if (
-                isinstance(self.support_nodes, (int, str, Node, NodeSet))
-                and not isinstance(self.support_nodes, bool)
-            ):
-                raw_sn: tuple[object, ...] = (self.support_nodes,)
-            elif (
-                isinstance(self.support_nodes, Sequence)
-                and not isinstance(self.support_nodes, (str, bytes))
-            ):
-                raw_sn = tuple(self.support_nodes)
-            else:
-                raise TypeError(
-                    "LadrunoMembrane: support_nodes= must be a node tag, Node, "
-                    "NodeSet, PG/label name, or sequence thereof."
-                )
-            norm_sn: list[int | str] = []
-            for idx, sn_item in enumerate(raw_sn):
-                if isinstance(sn_item, bool) or not isinstance(
-                    sn_item, (int, str, Node, NodeSet)
-                ):
-                    raise TypeError(
-                        f"LadrunoMembrane: support_nodes[{idx}] must be an int tag, "
-                        f"Node, NodeSet, or PG/label name, got {type(sn_item).__name__}."
-                    )
-                if isinstance(sn_item, NodeSet):
-                    for t in sn_item.tags:
-                        norm_sn.append(
-                            _normalize_node_ref(
-                                "LadrunoMembrane", f"support_nodes[{idx}]", int(t)
-                            )
-                        )
-                else:
-                    norm_sn.append(
-                        _normalize_node_ref(
-                            "LadrunoMembrane", f"support_nodes[{idx}]", sn_item
-                        )
-                    )
-            object.__setattr__(self, "support_nodes", tuple(norm_sn))
+            object.__setattr__(
+                self, "support_nodes",
+                _normalize_node_list(
+                    "LadrunoMembrane", "support_nodes", self.support_nodes,
+                ),
+            )
 
         if self.diaphragm_nodes is not None:
             object.__setattr__(
