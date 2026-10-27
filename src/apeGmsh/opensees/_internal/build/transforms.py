@@ -762,7 +762,9 @@ def plan_transform_specs(
       2. For each element in the spec's PG, computes the per-element
          vecxz (:func:`compute_vecxz_for_element`, else the spec's own
          ``vecxz``; none in 2-D) and ``-jntOffset``
-         (:func:`element_jnt_offset`).
+         (:func:`element_jnt_offset` per element, or
+         :func:`element_offsets_by_id` for the whole transform where an
+         end-sensitive offset splits over a curve).
       3. Deduplicates across all elements: distinct ``(vecxz, offset)``
          keys produce distinct ``geomTransf`` tags. The first encountered
          key reuses the spec's own allocated tag (so the spec's tag is

@@ -148,13 +148,19 @@ interior node takes only the transverse part. A curve meshed into n elements
 behaves as one element with the same offsets. Elements that frame into the
 curve do not split it; to put a joint at mid-span, split the curve.
 
-These cases refuse, and the message names the curve:
+These cases refuse. Each message names the curve, except the last, which
+names the elements and the node:
 
 - end-sensitive offsets on a curve that is not straight;
 - a transform that covers only part of a curve and would put an end zone or
   axial offset at a node interior to the curve (transverse-only interior nodes
   pass);
 - a curve whose elements run both ways, or a closed curve;
+- end lengths along the curve with different transverse offsets at its two
+  ends (the offset axis would kink);
+- an end element no longer than the end offsets on it (no flexible length);
+- elements of one curve with different `vecxz`;
+- in 3-D, a split with neither `vecxz=` nor `orientation=` on the transform;
 - a snapshot with no source curves (a `model.h5` older than 2.36, or a FEM not
   extracted from gmsh), wherever two of the transform's elements meet without
   a clear corner of 30 to 150 degrees.

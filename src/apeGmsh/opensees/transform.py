@@ -27,8 +27,12 @@ the transverse part. The curve of each element comes from the FEM's
 source-entity stream (neutral 2.36). Refused, naming the curve: a curved
 curve; a transform covering part of a curve that puts an end zone or axial
 part at an interior node; a curve with mixed element orientation or a
-closed curve; and, when the snapshot carries no source curves, two
-elements meeting at a node turning outside 30-150 deg.
+closed curve; end lengths with different transverse offsets at the two
+ends; an end element no longer than its end offsets; elements of one curve
+with different vecxz; and, in 3-D, a split with neither vecxz= nor
+orientation= on the transform. When the snapshot carries no source curves,
+it refuses instead, naming the elements and the node, where two elements
+meet turning outside 30-150 deg.
 
 Loads on an offset beam: a ``Plain.from_model`` line load (global,
 ``beamUniform`` / ``line_load``) covers the full node-to-node length, as

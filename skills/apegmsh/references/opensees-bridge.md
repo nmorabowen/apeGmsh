@@ -132,11 +132,14 @@ transverse shift at both ends stay per element. End-sensitive offsets (end
 lengths, an axial part, unequal ends) split over each curve: first element
 takes the i-offset, last the j-offset, interior nodes the transverse part. A
 curve of n elements acts as one element; to put a joint mid-span, split the
-curve. It refuses (naming the curve) on: a curved curve; a transform covering
+curve. It refuses, naming the curve, on: a curved curve; a transform covering
 part of a curve that puts an end zone or axial part at an interior node; mixed
-element orientation or a closed curve; and, with no source curves (pre-2.36
-`model.h5`, FEM not from gmsh), two elements meeting outside a 30-150 degree
-corner.
+element orientation or a closed curve; end lengths with different transverse
+offsets at the two ends; an end element no longer than its end offsets;
+elements of one curve with different `vecxz`; and, in 3-D, a split with
+neither `vecxz=` nor `orientation=`. With no source curves (pre-2.36
+`model.h5`, FEM not from gmsh) it refuses instead, naming the elements and the
+node, where two elements meet outside a 30-150 degree corner.
 
 ### Site-response soils (multi-yield, PM4)
 
