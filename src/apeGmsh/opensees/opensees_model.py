@@ -256,7 +256,6 @@ def _equation_rows(
         EquationConstraintRecordRO,
         MalformedH5Error,
         archives_equation_constraints,
-        emit_index_of,
     )
 
     # Read first: it refuses the store in a file below 2.35.0.
@@ -276,9 +275,10 @@ def _equation_rows(
                 f"{len(users)} row(s) are not the archive's "
                 f"{len(users)} apeSees.equation_constraint row(s) in "
                 "/opensees/decl_params; the two disagree.")
+        indices = (_emit_indices(program, "equationConstraint", len(stored))
+                   if program else None)
         return tuple(
-            (emit_index_of(program, "equationConstraint", i) if program
-             else None, row)
+            (indices[i] if indices is not None else None, row)
             for i, row in enumerate(stored))
     # No /opensees/decls (below 2.25.0): nothing to join. The deck targets
     # say so when they build (:meth:`OpenSeesModel._populate_emitter`), not
@@ -357,6 +357,31 @@ _MP_BUCKETS = ("equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode")
 _MP_KIND_ORDER = ("rigidLink", "equalDOF", "rigidDiaphragm", "embeddedNode")
 
 
+def _emit_indices(
+    program: "Sequence[Any]", method: str, n: int,
+) -> "list[int]":
+    """``[emit_index_of(program, method, i) for i in range(n)]`` (global
+    stage), in one pass over ``program`` instead of one per row.
+
+    :func:`~.emitter.h5_reader.emit_index_of` scans every run for each
+    row, which is quadratic when each constraint is its own call: 50,001
+    ``equalDOF`` rows cost minutes in :meth:`OpenSeesModel.from_h5`
+    (#2544). The first run that covers a row wins, as there (a later one
+    is a partition replica); a row no run covers is handed to
+    ``emit_index_of`` so it raises the same ``LookupError``.
+    """
+    from .emitter.h5_reader import emit_index_of
+
+    first: "dict[int, int]" = {}
+    for run in program:
+        if run.method != method or run.stage != -1 or run.row < 0:
+            continue
+        for k in range(min(run.count, max(0, n - run.row))):
+            first.setdefault(run.row + k, run.first + k)
+    return [first[i] if i in first else emit_index_of(program, method, i)
+            for i in range(n)]
+
+
 def _mp_rows_in_bridge_order(
     buckets: "Sequence[Sequence[Any]]", program: "Sequence[Any]",
     equation_rows: "Sequence[tuple[int | None, Any]]" = (),
@@ -371,14 +396,13 @@ def _mp_rows_in_bridge_order(
     emitter's buffers) the index is ``None`` and the rows keep the
     bridge's fixed kind order.
     """
-    from .emitter.h5_reader import emit_index_of
-
     by_verb = dict(zip(_MP_BUCKETS, buckets, strict=True))
     rows: "list[tuple[int | None, Any]]" = []
     for verb in _MP_KIND_ORDER:
+        indices = (_emit_indices(program, verb, len(by_verb[verb]))
+                   if program else None)
         for i, row in enumerate(by_verb[verb]):
-            rows.append((emit_index_of(program, verb, i) if program else None,
-                         row))
+            rows.append((indices[i] if indices is not None else None, row))
     # Without a program the lines go last: the user rows are, and a
     # tie's position among the other kinds is not recorded.
     rows.extend(equation_rows)
