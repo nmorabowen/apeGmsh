@@ -2170,6 +2170,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#frame-members-and-joint-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frame members and joint offsets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3686,6 +3697,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#frame-members-and-joint-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frame members and joint offsets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3855,6 +3877,45 @@ deck restates none of them, emit warns (<code>UnconsumedModelDefinitionWarning</
 rather than writing an unsupported, massless model in silence.
 Everything the session declared — imported or not — still persists into
 <code>model.h5</code> for the viewer and <code>Results</code>.</p>
+<h2 id="frame-members-and-joint-offsets">Frame members and joint offsets<a class="headerlink" href="#frame-members-and-joint-offsets" title="Permanent link">&para;</a></h2>
+<p>A beam's <code>geomTransf</code> can carry rigid joint offsets: <code>jnt_offset=((dXi, dYi,
+dZi), (dXj, dYj, dZj))</code> gives the global vector from each node to its element
+end, or an <code>InsertionPoint</code> rule gives an ETABS cardinal point, joint offsets
+and end-length rigid zones. The offsets are emitted as <code>-jntOffset</code>. A 3-D
+<code>Corotational</code> refuses them, because OpenSees zeroes them there.</p>
+<p>ETABS puts a frame object's offsets at the object's two ends, and in apeGmsh
+that frame object is the <strong>gmsh curve</strong>. The mesh alone cannot tell one curve
+meshed into several elements from a girder of several members, so <code>FEMData</code>
+records, per element, the gmsh entity it was meshed on:
+<code>fem.elements.entity</code> holds the tags per element type, and
+<code>fem.elements.source_entity(eids, dim=1)</code> returns <code>(module_label, entity)</code>,
+the key that names a curve in a composed model (the same tag in two
+<code>Assembly</code> instances is two curves). The stream is in <code>model.h5</code> from neutral
+schema 2.36.</p>
+<p>An offset that is the same transverse shift at both ends reads the same on
+every element, so it stays per element. An end-sensitive offset (an end
+length, an axial component, unequal ends) is split over each curve: the
+curve's first element takes the i-offset, its last the j-offset, and each
+interior node takes only the transverse part. A curve meshed into n elements
+behaves as one element with the same offsets. Elements that frame into the
+curve do not split it; to put a joint at mid-span, split the curve.</p>
+<p>These cases refuse. Each message names the curve, except the 3-D one, which
+names the transform only, and the last, which names the elements and the node:</p>
+<ul>
+<li>end-sensitive offsets on a curve that is not straight;</li>
+<li>a transform that covers only part of a curve and would put an end zone or
+  axial offset at a node interior to the curve (transverse-only interior nodes
+  pass);</li>
+<li>a curve whose elements run both ways, or a closed curve;</li>
+<li>end lengths along the curve with different transverse offsets at its two
+  ends (the offset axis would kink);</li>
+<li>an end element no longer than the end offsets on it (no flexible length);</li>
+<li>elements of one curve with different <code>vecxz</code>;</li>
+<li>in 3-D, a split with neither <code>vecxz=</code> nor <code>orientation=</code> on the transform;</li>
+<li>a snapshot with no source curves (a <code>model.h5</code> older than 2.36, or a FEM not
+  extracted from gmsh), wherever two of the transform's elements meet without
+  a clear corner of 30 to 150 degrees.</li>
+</ul>
 <h2 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h2>
 <p>Real analyses rarely happen in one shot: gravity first, then pushover; excavate,
 then install the lining, then shake. The bridge models this directly with
