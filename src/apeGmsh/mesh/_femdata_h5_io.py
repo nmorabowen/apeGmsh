@@ -908,10 +908,16 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
     different zones (root vs ``/opensees/element_meta``).
     """
     elements_grp = f.create_group("elements")
-    entity = fem.elements.entity
+    # Read once a group is written: a snapshot with no element rows has
+    # no stream to write, and needs no ``entity`` attribute.
+    entity_read = False
+    entity = None
     for elem_group in fem.elements:
         if elem_group.ids.size == 0:
             continue
+        if not entity_read:
+            entity = fem.elements.entity
+            entity_read = True
         type_name = elem_group.type_name.replace("/", "_")
         sub = elements_grp.create_group(type_name)
         et = elem_group.element_type

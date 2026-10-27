@@ -234,6 +234,12 @@
       "skill": "references/fem-broker.md",
       "symbol": "FEMData.elements.select"
     },
+    "FEMData.elements.source_entity": {
+      "doc": "``(labels, entity)`` for element ids ``eids`` of dimension ``dim``.",
+      "signature": "source_entity(eids, *, dim: 'int') -> \"'tuple[ndarray, ndarray]'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.source_entity"
+    },
     "FEMData.elements.type_table": {
       "doc": "DataFrame of element types in the mesh.",
       "signature": "type_table() -> \"'pd.DataFrame'\"",
