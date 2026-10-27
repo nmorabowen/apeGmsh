@@ -1049,14 +1049,15 @@ def is_membrane_wp208(
 #: ``LadrunoForceBeamColumn`` enters later (``9f4e92c77``) with it.
 #: Fork build 79e062367, an ancestor of both, keeps only the start values
 #: on ``elasticBeamColumn`` and drops the whole load on the other three
-#: (#2550, #2561).
+#: (``tests/opensees/live/test_beam_uniform_3d_trapezoid_live.py``).
 BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
 
 #: Fork builds measured for :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, by
 #: exact ``ladrunoBuild()`` sha.  No command marks the load, so no
 #: :class:`ForkBuildFloor` probe can, and a sha cannot be ordered: a build
 #: joins once its ancestry is checked on the fork by a GitHub compare
-#: (#2557 policy), and every fork build not listed ``True`` is refused
+#: (a build GitHub cannot see is not listed), and every fork build not
+#: listed ``True`` is refused
 #: (fail closed).  A ``FORK_PIN`` bump adds its row (a unit lock fails
 #: otherwise).
 FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
@@ -1064,7 +1065,7 @@ FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261023 (compare: ahead 35, behind 0); the live
     # oracle tests/opensees/live/test_beam_uniform_3d_trapezoid_live.py
-    # passes on it (#2561).
+    # passes on it.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # Fork WP-208, b6d3e3d21 (compare: ahead 30, behind 0).
     "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f": True,
@@ -1074,7 +1075,7 @@ FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # 48, behind 0).
     "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
     # The maintainer's venv build, an ancestor of 9d3c3216d: the live
-    # oracle fails 24 of its 28 cases on it (#2561).
+    # oracle fails 24 of its 28 cases on it.
     "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
 }
 
