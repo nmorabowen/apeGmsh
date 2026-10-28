@@ -36,3 +36,4 @@ addition:
   rebuttal in the PR thread.
 
 - **Run revert checks out of place (lesson #2422).** A "fails with the fix reverted" check runs in a scratch tree: `git worktree add --detach <scratch> <base-sha>` with the new tests copied in, or `git archive <sha> | tar -x -C <scratch>`, with `PYTHONPATH=<scratch>/src`. Never run `git checkout <ref> -- <path>`, `git restore`, `git reset --hard` or `git clean` in the working worktree. Afterwards run `git worktree remove` on the scratch tree, first making sure nothing is junctioned into it.
+- **Probe an adopted suggestion (lesson #2591).** When you adopt a fix a reviewer or the coordinator suggested, probe it against the card's oracle before pushing, and say in the PR body which probe covers it.

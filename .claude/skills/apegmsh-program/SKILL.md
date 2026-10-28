@@ -182,6 +182,10 @@ lock handover and handoff.
 - Two requests for one lock: the first live, small slice takes it, and the other
   plans read-only meanwhile (#1805 before #1853, 2026-10-13).
 
+**Suggested fixes.** Your own suggested fix (a tolerance, an exemption) goes to
+the builder with the probe that would refute it, and states its scope limits
+(#2591; #2578's tolerance, #2587's exemption).
+
 **WIP slots.** The 8-PR cap is program-wide: every worker opens its PR with
 `python scripts/open_program_pr.py` (it refuses at 8 counted; `--count` shows
 the count), not its own session's count. A `human-gate` PR that is approved
