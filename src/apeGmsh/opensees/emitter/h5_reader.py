@@ -88,6 +88,7 @@ __all__ = [
     "ProgramRun",
     "SchemaVersionError",
     "TARGET_MODES",
+    "emit_index_map",
     "emit_index_of",
     "open",
     "records_program_decl",
@@ -582,6 +583,27 @@ def emit_index_of(
         f"/opensees/program has no {method!r} call writing row {row} "
         f"in stage {stage}."
     )
+
+
+def emit_index_map(
+    runs: "Sequence[ProgramRun]", method: str, *, stage: int = -1,
+) -> dict[int, int]:
+    """``{row: emit index}`` for every row of ``method``'s store in
+    ``stage`` that a run covers, built in one pass over ``runs``.
+
+    Agrees with :func:`emit_index_of` on every row it holds: the first
+    run that covers a row wins. A caller joining many rows looks each up
+    here and hands a missing one to :func:`emit_index_of`, which raises
+    the error that row's own lookup raises (#2566); calling
+    :func:`emit_index_of` once per row scans every run each time.
+    """
+    out: dict[int, int] = {}
+    for run in runs:
+        if run.method != method or run.stage != stage or run.row < 0:
+            continue
+        for k in range(run.count):
+            out.setdefault(run.row + k, run.first + k)
+    return out
 
 
 class MalformedH5Error(ValueError):
@@ -2030,6 +2052,9 @@ class H5Model:
             )
         runs = self.program()
         seen: dict[tuple[str, int], int] = {}
+        # One emit-index map per (method, stage), not one program scan per
+        # row (#2566); a row no run covers raises through emit_index_of.
+        index_maps: dict[tuple[str, int], dict[int, int]] = {}
         out: list[CommandRecordRO] = []
         for i in range(n):
             args: list[int | float | str] = []
@@ -2049,12 +2074,19 @@ class H5Model:
             key = (methods[i], stages[i])
             row = seen.get(key, 0)
             seen[key] = row + 1
+            index_map = index_maps.get(key)
+            if index_map is None:
+                index_map = index_maps[key] = emit_index_map(
+                    runs, methods[i], stage=stages[i])
+            emit_index = index_map.get(row)
+            if emit_index is None:
+                emit_index = emit_index_of(
+                    runs, methods[i], row, stage=stages[i])
             out.append(CommandRecordRO(
                 method=methods[i], token=tokens[i], stage=stages[i],
                 args=tuple(args),
                 names=tuple(arg_names[offsets[i]:offsets[i + 1]]),
-                emit_index=emit_index_of(
-                    runs, methods[i], row, stage=stages[i]),
+                emit_index=emit_index,
             ))
         return tuple(out)
 
