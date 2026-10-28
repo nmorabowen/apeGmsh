@@ -207,6 +207,7 @@ All `prog-*` agents follow this protocol.
    - raise a ratchet baseline.
 8. **Report.** Send the orchestrator at most 300 words: the PR URL, what changed, the verification result, risks and follow-ups. Long material goes in the PR body.
 9. **If blocked,** stop and report rather than improvise. That covers a red gate, an ambiguous card, or scope that must grow.
+10. **A suggested fix needs its own probe** (#2591; #2578, #2587). A fix from a review finding or a coordinator note is probed against the card's oracle before the builder pushes it (the PR body names the probe) and again by the delta reviewer, on every engine version the deck can run on. A suggestion states its scope limits.
 
 ## 8. Kill criteria and KPIs
 
