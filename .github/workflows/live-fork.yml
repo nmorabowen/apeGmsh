@@ -42,6 +42,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[plot,viewer,dxf]" pytest
 
+      # FORK_PIN names the `-mkl` tarball: FEAST and Pardiso linked
+      # dynamically against MKL, which the tarball does not ship.
+      # opensees.so NEEDs libmkl_*.so.2, so without this `import opensees`
+      # fails outright. mkl 2026.x ships .so.3, hence the upper bound.
+      - name: Install the MKL runtime
+        run: |
+          set -euo pipefail
+          pip install "mkl>=2024.2.2,<2026"
+          mkl_lib=$(python - <<'PY'
+          import importlib.metadata as md, pathlib
+          dist = md.distribution("mkl")
+          dirs = sorted({
+              str(pathlib.Path(dist.locate_file(f)).resolve().parent)
+              for f in (dist.files or ())
+              if f.name.startswith("libmkl_core.so.2")
+          })
+          if len(dirs) != 1:
+              raise SystemExit(f"expected one libmkl_core.so.2 dir, got {dirs}")
+          print(dirs[0])
+          PY
+          )
+          ls -l "$mkl_lib"/libmkl_*.so.2
+          echo "LD_LIBRARY_PATH=$mkl_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
       - name: Fetch the pinned fork build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,6 +84,11 @@ jobs:
           purelib=$(python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
           cp "$RUNNER_TEMP"/fork/opensees*.so "$purelib/"
           ls -l "$purelib"/opensees*.so
+          # Every NEEDED library must resolve (MKL included), or fail here.
+          ldd "$purelib"/opensees*.so
+          if ldd "$purelib"/opensees*.so | grep -q "not found"; then
+            echo "::error::opensees.so has unresolved libraries"; exit 1
+          fi
 
       - name: Assert the installed build is the pinned one
         working-directory: ${{ runner.temp }}
@@ -78,6 +107,25 @@ jobs:
           pytest tests -q -rs -p no:cacheprovider \
             -m "ladruno_fork and not qt and not subprocess and not bench" \
             --junitxml="$RUNNER_TEMP/live-fork.xml"
+
+      # The pinned build carries MKL, so a `ladruno_mkl:` skip here means the
+      # MKL runtime broke, not that the build lacks it: fail instead of
+      # letting FEAST/Pardiso go untested.
+      - name: Assert no ladruno_mkl skips
+        run: |
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          path = os.path.join(os.environ["RUNNER_TEMP"], "live-fork.xml")
+          bad = [
+              f'{tc.get("classname")}::{tc.get("name")}: {sk.get("message", "")}'
+              for tc in ET.parse(path).getroot().iter("testcase")
+              if (sk := tc.find("skipped")) is not None
+              and "ladruno_mkl:" in sk.get("message", "")
+          ]
+          for b in bad:
+              print(f"::error::{b}")
+          raise SystemExit(1 if bad else 0)
+          PY
 
       - name: Job summary
         if: always()
