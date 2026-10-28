@@ -65,6 +65,12 @@ jobs:
           )
           ls -l "$mkl_lib"/libmkl_*.so.2
           echo "LD_LIBRARY_PATH=$mkl_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          # The -mkl build takes all its BLAS/LAPACK from MKL, which picks
+          # its kernels by CPU (AVX2 vs AVX-512 runners), so a softening
+          # pushover can take a different branch on another runner.  Pin
+          # MKL to one code path so the lane gives one answer everywhere.
+          echo "MKL_CBWR=COMPATIBLE" >> "$GITHUB_ENV"
+          grep -m1 'model name' /proc/cpuinfo
 
       - name: Fetch the pinned fork build
         env:
