@@ -72,7 +72,7 @@ def _is_membrane(call: tuple[str, tuple[Any, ...]]) -> bool:
         pytest.param((), id="empty-tuple"),
         pytest.param("empty-set", id="bare-empty-NodeSet"),
         pytest.param(("empty-set",), id="empty-NodeSet-in-a-tuple"),
-        pytest.param(("empty-set", 5), id="empty-NodeSet-beside-a-tag"),
+        pytest.param(("empty-set", "empty-set"), id="two-empty-NodeSets"),
     ],
 )
 def test_empty_node_lists_are_refused_alike(field: str, value: Any) -> None:
@@ -82,6 +82,22 @@ def test_empty_node_lists_are_refused_alike(field: str, value: Any) -> None:
         value = tuple(_empty_set() if v == "empty-set" else v for v in value)
     with pytest.raises(ValueError, match=rf"{field}= must not be empty"):
         LadrunoMembrane(nodes=(1, 2, 3), stiff=STIFF, **{field: value})
+
+
+@pytest.mark.parametrize("field", ["support_nodes", "diaphragm_nodes"])
+@pytest.mark.parametrize(("value", "index"), [
+    pytest.param(("empty-set", 5), 0, id="empty-NodeSet-before-a-tag"),
+    pytest.param((5, "empty-set"), 1, id="empty-NodeSet-after-a-tag"),
+])
+def test_an_empty_node_set_beside_a_tag_is_named(
+        field: str, value: Any, index: int) -> None:
+    """The list is not empty, so the refusal names the empty item (#2568)."""
+    value = tuple(_empty_set() if v == "empty-set" else v for v in value)
+    with pytest.raises(ValueError) as info:
+        LadrunoMembrane(nodes=(1, 2, 3), stiff=STIFF, **{field: value})
+    msg = str(info.value)
+    assert f"{field}[{index}] is a NodeSet with no nodes" in msg
+    assert "must not be empty" not in msg
 
 
 @pytest.mark.parametrize("field", ["support_nodes", "diaphragm_nodes"])
