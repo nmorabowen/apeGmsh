@@ -33,6 +33,14 @@ if TYPE_CHECKING:
 
 __all__ = ["GravityModalResult", "GravityState"]
 
+#: A reference state whose every displacement is within this fraction of the
+#: model's extent is the unloaded state, at round-off: a Corotational column
+#: at rest reads 6.7e-16 (one ulp of its 3.0 coordinates) on a 6 m model,
+#: 1e-16 of the extent, while the live test frames' gravity states read
+#: 1e-5. Dividing by such a reference reported a round-off difference as a
+#: drift of 9e-4 (displacement) and 3e9 (reaction) (#2568).
+_UNLOADED_REL = 1e-12
+
 
 @dataclass(frozen=True, slots=True)
 class GravityState:
@@ -50,12 +58,19 @@ class GravityState:
     time
         The domain pseudo-time when the snapshot was taken (``0.0`` after
         ``loadConst -time 0``).
+    extent
+        The model's largest coordinate extent (the largest per-axis span
+        of the node coordinates), the length :func:`state_drift` tells a
+        round-off displacement from a real one by. ``0.0`` (the default,
+        for a hand-built snapshot) treats only an exactly zero
+        displacement field as unloaded.
     """
 
     node_tags: np.ndarray
     disp: Mapping[int, np.ndarray]
     reactions: Mapping[int, np.ndarray]
     time: float
+    extent: float = 0.0
 
     def node_disp(self, node: "int | Node") -> np.ndarray:
         """The snapshot displacement vector of ``node``."""
@@ -88,30 +103,43 @@ def snapshot_state(ops: Any) -> GravityState:
     reac = {
         t: np.asarray(ops.nodeReaction(t), dtype=np.float64) for t in tags
     }
+    xyz = np.asarray([ops.nodeCoord(t) for t in tags], dtype=np.float64)
     return GravityState(
         node_tags=np.asarray(tags, dtype=np.int64),
         disp=disp,
         reactions=reac,
         time=float(ops.getTime()),
+        extent=float(np.max(np.ptp(xyz, axis=0))) if xyz.size else 0.0,
     )
+
+
+def _peak(x: Mapping[int, np.ndarray]) -> float:
+    return max((float(np.max(np.abs(v), initial=0.0)) for v in x.values()),
+               default=0.0)
 
 
 def state_drift(a: GravityState, b: GravityState) -> tuple[float, float]:
     """``(disp, reaction)`` drift between two snapshots of one domain.
 
     Each is the largest absolute difference over every node DOF, divided
-    by the largest absolute value in ``a`` (or ``1.0`` where ``a`` is all
-    zero, so an unloaded reference reports an absolute drift).
+    by the largest absolute value in ``a``. An unloaded reference reports
+    the absolute drift of both instead: one whose every displacement is
+    within ``1e-12`` of ``a.extent`` (round-off, or exactly zero), since
+    its displacements and reactions are then round-off and a quotient by
+    them reads round-off as drift. A reaction field of exactly zero under
+    a loaded reference reports its absolute drift too.
     """
-    def _rel(x: Mapping[int, np.ndarray], y: Mapping[int, np.ndarray]) -> float:
+    for x, y in ((a.disp, b.disp), (a.reactions, b.reactions)):
         if set(x) != set(y):
             raise ValueError(
                 "state_drift: the two snapshots hold different node sets."
             )
+    unloaded = _peak(a.disp) <= _UNLOADED_REL * a.extent
+
+    def _rel(x: Mapping[int, np.ndarray], y: Mapping[int, np.ndarray]) -> float:
         diff = max((float(np.max(np.abs(x[t] - y[t]), initial=0.0))
                     for t in x), default=0.0)
-        scale = max((float(np.max(np.abs(x[t]), initial=0.0))
-                     for t in x), default=0.0)
+        scale = 0.0 if unloaded else _peak(x)
         return diff / scale if scale > 0.0 else diff
 
     return _rel(a.disp, b.disp), _rel(a.reactions, b.reactions)

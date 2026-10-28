@@ -716,6 +716,75 @@ def test_round_off_in_a_near_rigid_link_is_not_a_kink(transf: str) -> None:
     assert res.modal.gravity_drift() == (0.0, 0.0)
 
 
+# -- the restore check about an unloaded reference (#2568) --------------------
+
+_DIAPHRAGM_SPEC = [DesignSpectrum((0.0, 2.0), (5.0, 5.0), direction=d)
+                   for d in (1, 2)]
+_CENTRE_EX = {"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))}
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize(("dx", "link", "gravity"), [
+    (0.0, 1.0, 1.0), (1e-9, 1.0, 1.0), (1e-3, 1e6, 30.0)])
+@pytest.mark.parametrize("transf", ["Linear", "PDelta", "Corotational"])
+def test_an_unloaded_reference_at_round_off_is_not_a_drift(
+        transf: str, dx: float, link: float, gravity: float) -> None:
+    """Under ``p_delta=False`` the per-mode legs run about the unloaded
+    state. A Corotational column at rest reads ``6.7e-16`` (one ulp of its
+    coordinates, not zero) and reactions of ``3.5e-20``, and the restore
+    check divided by them: round-off differences of ``6e-19`` and ``1e-10``
+    were refused as a drift of ``9e-4`` and ``3e9``. A reference within
+    round-off of the model's extent is the unloaded state and reports the
+    absolute drift, as an exactly zero one always did."""
+    res = _diaphragm(transf, dx, link=link, gravity=gravity
+                     ).spectrum_after_gravity(
+        3, spectra=_DIAPHRAGM_SPEC, extractors=_CENTRE_EX, p_delta=False,
+        solver="-fullGenLapack")
+    # Absolute: round-off of the displacement (m) and the reaction (N).
+    assert res.restore_drift[0] < 1e-15
+    assert res.restore_drift[1] < 1e-7
+    assert res.modal.gravity_drift() == (0.0, 0.0)
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize("p_delta", [False, True])
+@pytest.mark.parametrize("transf", ["Linear", "Corotational"])
+def test_a_domain_left_off_its_reference_is_refused(
+        monkeypatch: pytest.MonkeyPatch, transf: str, p_delta: bool) -> None:
+    """A real drift still refuses, about the unloaded reference and about
+    the gravity one. Before the per-mode loop's restore snapshot, a lateral
+    load of 1 kN on the centre node is solved into the domain, which is
+    left at another equilibrium, as when the legs do not return: some
+    250 N of base shear per column against round-off of 1e-10 N, and a
+    sway of 4e-6 m against the gravity state's 8e-5 m."""
+    from apeGmsh.opensees.analysis import gravity_modal as gmod
+
+    real = gmod.snapshot_state
+    # The restore snapshot is the per-mode loop's second; under p_delta
+    # the gravity snapshot and the eigen check's come first.
+    restore = 4 if p_delta else 2
+    calls = {"n": 0}
+
+    def leave_loaded(ops: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == restore:
+            ops.timeSeries("Constant", 9001)
+            ops.pattern("Plain", 9001, 9001)
+            ops.load(9, 1e3, 0.0, 0.0, 0.0, 0.0, 0.0)
+            assert ops.analyze(1) == 0
+        return real(ops)
+
+    monkeypatch.setattr(gmod, "snapshot_state", leave_loaded)
+    with pytest.raises(RuntimeError, match="did not return to its reference "
+                                           "state"):
+        _diaphragm(transf, 0.0).spectrum_after_gravity(
+            3, spectra=_DIAPHRAGM_SPEC, extractors=_CENTRE_EX,
+            p_delta=p_delta, solver="-fullGenLapack")
+    assert calls["n"] == restore
+
+
 # -- the fork's -increment route (fork WP-207, ADR 0124 amendment) ------------
 
 def _route(monkeypatch: pytest.MonkeyPatch, route: str, run: Any) -> Any:
