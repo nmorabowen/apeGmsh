@@ -1353,7 +1353,7 @@ class _ReplayOrder:
 
     __slots__ = (
         "_program", "_decls", "_tag_runs", "_first", "_joined",
-        "_partition_at", "_recorder_keys")
+        "_partition_at", "_recorder_keys", "_rows")
 
     def __init__(self, program: "Sequence[Any]", declarations: Any) -> None:
         from ..emitter.h5_reader import records_program_decl
@@ -1375,6 +1375,9 @@ class _ReplayOrder:
             self._first.setdefault(
                 (str(run.method), int(run.stage)), int(run.first))
         self._joined: "dict[tuple[str, frozenset[str]], dict[int, int]]" = {}
+        # method -> {global row: emit index}, built on a method's first
+        # :meth:`row` query (one program pass).
+        self._rows: "dict[str, dict[int, int]]" = {}
         # The emit index of the first global partition block; ``None`` for
         # an archive with no partition block, which sorts by emit index.
         self._partition_at: "int | None" = None
@@ -1435,10 +1438,22 @@ class _ReplayOrder:
 
     def row(self, method: str, row: int) -> int:
         """The emit index of global ``row`` of ``method``'s store
-        (:func:`~apeGmsh.opensees.emitter.h5_reader.emit_index_of`)."""
-        from ..emitter.h5_reader import emit_index_of
+        (:func:`~apeGmsh.opensees.emitter.h5_reader.emit_index_of`).
 
-        return emit_index_of(self._program, method, row, stage=-1)
+        The first query of a method maps all its rows in one program pass
+        (:func:`~apeGmsh.opensees.emitter.h5_reader.emit_index_map`), so a
+        replay that keys every row is linear, not one scan per row.
+        A row no call covers raises through ``emit_index_of``."""
+        from ..emitter.h5_reader import emit_index_map, emit_index_of
+
+        rows = self._rows.get(method)
+        if rows is None:
+            rows = self._rows[method] = emit_index_map(
+                self._program, method, stage=-1)
+        found = rows.get(row)
+        if found is None:
+            return emit_index_of(self._program, method, row, stage=-1)
+        return found
 
     def _fresh_calls(
         self, methods: "frozenset[str]",

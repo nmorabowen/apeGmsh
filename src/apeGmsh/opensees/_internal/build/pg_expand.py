@@ -1314,9 +1314,11 @@ def ladruno_membrane_named_nodes(
     its ``support_nodes=``, hole loops and ``diaphragm_nodes=``, in that
     order (repeats kept).
 
-    The fork gives each one stiffness, so each one is emitted, takes the
-    membrane's ndf, joins its stage and its rank, and is never skipped as
-    a ``pg=`` panel's interior node.
+    The fork gives each one stiffness, so each one is emitted, joins the
+    membrane's stage and its rank, and is never skipped as a ``pg=``
+    panel's interior node. Its ndf is whatever the rest of the model
+    gives it: the class is ndf-adaptive, so ndf inference counts no
+    membrane node.
     """
     _fr, supp, holes = resolve_ladruno_membrane_context(
         fem, spec, include_frames=False,

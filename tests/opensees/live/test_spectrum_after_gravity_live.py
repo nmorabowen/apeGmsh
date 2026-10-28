@@ -615,14 +615,17 @@ _CORNERS = ((-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0))
 
 
 def _diaphragm(transf: str, dx: float, *, link: float = 1.0,
-               gravity: float = 1.0) -> apeSees:
+               gravity: float = 1.0, origin: float = 0.0) -> apeSees:
     """Four columns, their tops tied by stiff links to one centre node that
     carries the floor's translational and rotational mass (the review's
     repro). Its pure-torsion mode barely moves the centre node. ``link``
-    scales the links' section (``A``, ``J``, ``I``) and ``gravity`` the
-    loads on the column tops."""
-    coords = ([(x, y, 0.0) for x, y in _CORNERS]
-              + [(x, y, 3.0) for x, y in _CORNERS] + [(dx, 0.0, 3.0)])
+    scales the links' section (``A``, ``J``, ``I``), ``gravity`` the
+    loads on the column tops, and ``origin`` shifts every node in x, y
+    and z (coarser coordinate ulps, the same span)."""
+    o = origin
+    coords = ([(x + o, y + o, o) for x, y in _CORNERS]
+              + [(x + o, y + o, o + 3.0) for x, y in _CORNERS]
+              + [(dx + o, o, o + 3.0)])
     nodes = _NodesStub(ids=list(range(1, 10)), coords=coords,
                        node_pgs={"Base": [1, 2, 3, 4], "Tops": [5, 6, 7, 8],
                                  "Centre": [9]})
@@ -714,6 +717,103 @@ def test_round_off_in_a_near_rigid_link_is_not_a_kink(transf: str) -> None:
             assert np.max(np.abs(got[k] - want)) <= 1e-6 * float(
                 np.max(np.abs(got))), (comp, k)
     assert res.modal.gravity_drift() == (0.0, 0.0)
+
+
+# -- the restore check about an unloaded reference (#2568) --------------------
+
+_DIAPHRAGM_SPEC = [DesignSpectrum((0.0, 2.0), (5.0, 5.0), direction=d)
+                   for d in (1, 2)]
+_CENTRE_EX = {"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))}
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize(("dx", "link", "gravity", "origin"), [
+    (0.0, 1.0, 1.0, 0.0), (1e-9, 1.0, 1.0, 0.0), (1e-3, 1e6, 30.0, 0.0),
+    (0.0, 1.0, 1.0, 1e3), (0.0, 1.0, 1.0, 1e5)])
+@pytest.mark.parametrize("transf", ["Linear", "PDelta", "Corotational"])
+def test_an_unloaded_reference_at_round_off_is_not_a_drift(
+        transf: str, dx: float, link: float, gravity: float,
+        origin: float) -> None:
+    """Under ``p_delta=False`` the per-mode legs run about the unloaded
+    state. A Corotational column at rest reads ``6.7e-16`` (one ulp of its
+    coordinates, not zero) and reactions of ``3.5e-20``, and the restore
+    check divided by them: round-off differences of ``6e-19`` and ``1e-10``
+    were refused as a drift of ``9e-4`` and ``3e9``. A reference within
+    round-off of the model's extent is undeformed and reports the absolute
+    drift, as an exactly zero one always did. Moved 1e3 or 1e5 from the
+    origin the model reads the same round-off at rest (the elements work
+    on coordinate differences), so the extent is the span, not the
+    coordinates' magnitude."""
+    res = _diaphragm(transf, dx, link=link, gravity=gravity, origin=origin
+                     ).spectrum_after_gravity(
+        3, spectra=_DIAPHRAGM_SPEC, extractors=_CENTRE_EX, p_delta=False,
+        solver="-fullGenLapack")
+    # Absolute: round-off of the displacement (m) and the reaction (N).
+    assert res.restore_drift[0] < 1e-15
+    assert res.restore_drift[1] < 1e-7
+    assert res.modal.gravity_drift() == (0.0, 0.0)
+
+
+def _left_loaded_drift(monkeypatch: pytest.MonkeyPatch, transf: str,
+                       p_delta: bool, load: float) -> tuple[float, float]:
+    """Solve a lateral ``load`` on the centre node into the domain just
+    before the per-mode loop's restore snapshot, under ``LoadControl 0``
+    (no gravity step: the time stays put), and return the refused
+    ``(displacement, reaction)`` drift read from the message."""
+    import re
+
+    from apeGmsh.opensees.analysis import gravity_modal as gmod
+
+    real = gmod.snapshot_state
+    # The restore snapshot is the per-mode loop's second; under p_delta
+    # the gravity snapshot and the eigen check's come first.
+    restore = 4 if p_delta else 2
+    calls = {"n": 0}
+
+    def leave_loaded(ops: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == restore:
+            ops.timeSeries("Constant", 9001)
+            ops.pattern("Plain", 9001, 9001)
+            ops.load(9, load, 0.0, 0.0, 0.0, 0.0, 0.0)
+            ops.integrator("LoadControl", 0.0)
+            assert ops.analyze(1) == 0
+        return real(ops)
+
+    with monkeypatch.context() as m, pytest.raises(
+            RuntimeError, match="did not return to its reference state"
+    ) as info:
+        m.setattr(gmod, "snapshot_state", leave_loaded)
+        _diaphragm(transf, 0.0).spectrum_after_gravity(
+            3, spectra=_DIAPHRAGM_SPEC, extractors=_CENTRE_EX,
+            p_delta=p_delta, solver="-fullGenLapack")
+    assert calls["n"] == restore
+    got = re.search(r"displacement ([0-9.e+-]+), reaction ([0-9.e+-]+)",
+                    str(info.value))
+    assert got is not None
+    return float(got.group(1)), float(got.group(2))
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize("p_delta", [False, True])
+@pytest.mark.parametrize("transf", ["Linear", "Corotational"])
+def test_a_domain_left_off_its_reference_is_refused(
+        monkeypatch: pytest.MonkeyPatch, transf: str, p_delta: bool) -> None:
+    """A real drift still refuses, about the unloaded reference and about
+    the gravity one: 1 kN on the centre node leaves the domain at another
+    equilibrium, as when the legs do not return. About the unloaded
+    reference that is 250 N of base shear per column against round-off of
+    1e-10 N, reported absolute (the largest base reaction component); about the gravity one,
+    a 3.7e-6 m sway against its 8e-5 m. The refused drift is the load's: it
+    scales with it, linearly, from 10 N to 1 kN."""
+    big = _left_loaded_drift(monkeypatch, transf, p_delta, 1e3)
+    small = _left_loaded_drift(monkeypatch, transf, p_delta, 10.0)
+    if not p_delta:
+        assert 250.0 <= big[1] <= 1e3, big  # absolute, the base reaction
+    assert big[0] / small[0] == pytest.approx(100.0, rel=1e-2)
+    assert big[1] / small[1] == pytest.approx(100.0, rel=1e-2)
 
 
 # -- the fork's -increment route (fork WP-207, ADR 0124 amendment) ------------

@@ -320,8 +320,11 @@ leaves every element's value unchanged. `-1` means the element has no
 source entity: a `.msh` element classified on elementary tag `0`, or a
 row composed from a module without the stream. Extraction skips the
 partition-interface and ghost elements partitioning adds (#2582), but a
-model.h5 written before that fix may still carry partition-interface
-rows, whose parent has a higher dimension, as `-1`. Tags are raw and repeat
+model.h5 written before that fix may still carry both as `-1` rows:
+partition-interface rows, whose parent has a higher dimension, and, when
+it was written with `Mesh.PartitionCreateGhostCells=1`, ghost rows, which
+repeat the `ids` of elements the file already holds from their owning
+partition. Tags are raw and repeat
 across composed modules; `(module_label, entity)` is the key that names
 one source entity. The dataset is optional and is written on **every**
 group or on none: gmsh and `.msh` extraction write it; MPCO, `.ladruno`
