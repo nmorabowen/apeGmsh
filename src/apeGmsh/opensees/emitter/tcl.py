@@ -36,7 +36,6 @@ from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_GUARD,
-    BEAM3D_PARTIAL_LOAD_GUARD,
     MEMBRANE_WP208_GUARD,
     Beam3dPartialLoadTargets,
     ForkBuildGuard,
@@ -1065,9 +1064,10 @@ class TclEmitter:
         self._lines.append(prefix + _join("load", tag, *forces))
 
     def eleLoad(self, *args: int | float | str) -> None:
-        if self._beam3d_targets.needs_floor(
-                args, self._model_ndm if self._model_ndm is not None else 3):
-            self._require_fork_floors((BEAM3D_PARTIAL_LOAD_GUARD,))
+        beam3d_guard = self._beam3d_targets.guard_for(
+            args, self._model_ndm if self._model_ndm is not None else 3)
+        if beam3d_guard is not None:
+            self._require_fork_floors((beam3d_guard,))
         prefix = "    " if self._open_block_pattern else ""
         self._lines.append(prefix + _join("eleLoad", *args))
 

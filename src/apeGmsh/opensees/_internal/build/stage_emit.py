@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numbers
+import re
 from typing import TYPE_CHECKING
 
 from typing import (
@@ -851,6 +852,10 @@ class ForkBuildAllowlist(NamedTuple):
     message: str
     #: Whether a build without ``ladrunoBuild`` (stock) runs on.
     stock_runs: bool = True
+    #: When set (with ``stock_runs`` False), a build without
+    #: ``ladrunoBuild`` runs on iff its ``version`` answer starts with
+    #: ``X.Y.Z`` at or after this; any other answer stops the deck.
+    stock_min_version: "tuple[int, int, int] | None" = None
 
 
 #: A check an emitted deck runs on the build at its start.
@@ -1148,25 +1153,110 @@ BEAM3D_PARTIAL_LOAD_FLOOR_ELEMENTS: frozenset[str] = frozenset({
     "LadrunoDispBeamColumn", "LadrunoIMKBeam", "LadrunoForceBeamColumn",
 })
 
-#: The element tokens that honour the load on stock OpenSees and on every
-#: fork build: ``ForceBeamColumn3d`` reads the tail in ``computeReactions``
-#: and ``computeSectionForces`` on stock (upstream ``f4c791df6``) and on
-#: fork builds before ``9d3c3216d``.
+#: The element tokens that honour the load without
+#: :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, though only on a build that
+#: carries :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`
+#: (:data:`FORCE_BEAM_PARTIAL_LOAD_GUARD`).
 BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS: frozenset[str] = frozenset({
     "forceBeamColumn",
 })
 
+#: The upstream OpenSees commit that makes ``ForceBeamColumn3d`` read the
+#: tail of the 3-D partial load (``computeReactions`` and
+#: ``computeSectionForces``).  Builds before it ignore the trapezoid part,
+#: and the ``OPS_VERSION`` 3.6.0 tag, which predates it, carries no
+#: partial-load branch at all.
+FORCE_BEAM_PARTIAL_LOAD_COMMIT = "f4c791df6a5886cd0a98e08be29582ae691eaa1c"
+
+#: The first ``OPS_VERSION`` every build of which carries
+#: :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`: upstream ``f1d16ac7f`` sets
+#: "3.7.0" and descends from it (GitHub compare: ahead 212, behind 0), and
+#: tag v3.7.0 contains it.  "3.6.0" names builds on both sides (tag v3.6.0
+#: is 652 commits behind it), so a build that answers 3.6.0 is refused,
+#: openseespy 3.6.0.3 included although it carries the fix.
+FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
+
+#: Fork builds measured for :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`, by
+#: exact ``ladrunoBuild()`` sha, each by a GitHub compare on the fork.
+#: Every fork build not listed ``True`` is refused (fail closed).  A
+#: ``FORK_PIN`` bump adds its row (a unit lock fails otherwise).
+FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
+    # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
+    BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
+    # FORK_PIN ladruno-v20261023 (compare: ahead 4080, behind 0).
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # Fork WP-208 (compare: ahead 4075, behind 0).
+    "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f": True,
+    # A ladruno build after WP-208 (compare: ahead 4090, behind 0).
+    "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
+    # Fork branch build/86893bd (compare: ahead 4093, behind 0).
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
+    # The maintainer's venv build (compare: ahead 3472, behind 0); the
+    # live oracle passes forceBeamColumn on it.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": True,
+}
+
+
+def fork_build_has_force_beam_partial_load(build: "str | None") -> bool:
+    """Whether the fork build that answers ``ladrunoBuild()`` with
+    ``build`` is measured to carry :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`.
+
+    ``None`` and every unlisted sha are ``False``.
+    """
+    return FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD.get(build or "", False)
+
+
+def stock_version_has_force_beam_partial_load(version: object) -> bool:
+    """Whether a stock build that answers ``version()`` with ``version``
+    carries :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`
+    (:data:`FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION`).  An answer that does
+    not start with ``X.Y.Z`` is ``False``."""
+    parsed = parse_ops_version(version)
+    return parsed is not None and (
+        parsed >= FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION)
+
+
+#: The error a 3-D partial or trapezoidal ``-beamUniform`` on
+#: ``forceBeamColumn`` alone stops with on a build that lacks
+#: :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`.
+FORCE_BEAM_PARTIAL_LOAD_MESSAGE = (
+    "apeGmsh: a 3-D eleLoad -type -beamUniform with a partial span or a "
+    "trapezoid on forceBeamColumn needs a build with upstream OpenSees "
+    f"commit {FORCE_BEAM_PARTIAL_LOAD_COMMIT[:9]}: OpenSees "
+    f"{'.'.join(map(str, FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION))} or "
+    "later, or a Ladruno fork build measured to carry it. Older builds "
+    "drop the trapezoid part or the whole load, a wrong answer with no "
+    "warning (apeGmsh issue #2565). The running OpenSees reports a "
+    "version before that or one that cannot be read, or its ladrunoBuild "
+    "sha is not one measured to carry the commit. openseespy 3.6.0.3 "
+    "carries it but reports 3.6.0 like the 3.6.0 builds without it, so it "
+    "is refused too. Upgrade OpenSees, or rebuild the Ladruno fork at "
+    "FORK_PIN."
+)
+
+#: The guard a deck runs when its 3-D partial load reaches
+#: ``forceBeamColumn`` alone: a listed fork build, or stock at or after
+#: :data:`FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION`.
+FORCE_BEAM_PARTIAL_LOAD_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, ok in FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD.items()
+        if ok)),
+    message=FORCE_BEAM_PARTIAL_LOAD_MESSAGE,
+    stock_runs=False,
+    stock_min_version=FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION)
+
 
 class Beam3dPartialLoadTargets:
-    """Which element tags a 3-D partial or trapezoidal ``-beamUniform`` may
-    reach without :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`.
+    """Which build a 3-D partial or trapezoidal ``-beamUniform`` needs,
+    from the element tags it reaches.
 
     An emitter notes every element it creates and removes.  Only the tags
     of :data:`BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS` are kept, so the memory is
-    the safe elements' and nothing else.  A load needs the floor when it
-    is such a load and any target is not a kept tag: a needing element, an
-    unknown token, a tag never created, or a target list it cannot read
-    (anything but ``-ele t1 t2 ...``).
+    theirs and nothing else.  A load whose every target is a kept tag needs
+    :data:`FORCE_BEAM_PARTIAL_LOAD_GUARD`; one with any other target (a
+    listed element, an unknown token, a tag never created, or a target list
+    other than ``-ele t1 t2 ...``) needs :data:`BEAM3D_PARTIAL_LOAD_GUARD`
+    (fail closed).
     """
 
     def __init__(self) -> None:
@@ -1181,20 +1271,21 @@ class Beam3dPartialLoadTargets:
     def note_removed(self, tag: int) -> None:
         self._safe.discard(int(tag))
 
-    def needs_floor(
+    def guard_for(
         self, args: "Sequence[int | float | str]", ndm: int,
-    ) -> bool:
-        """Whether ``eleLoad *args`` in an ``ndm`` model needs the floor."""
+    ) -> "ForkBuildAllowlist | None":
+        """The guard ``eleLoad *args`` in an ``ndm`` model needs, or
+        ``None`` for a load outside this check."""
         if not is_beam3d_partial_load(args, ndm):
-            return False
+            return None
         if not args or args[0] != "-ele":
-            return True
+            return BEAM3D_PARTIAL_LOAD_GUARD
         targets = args[1:list(args).index("-type")]
-        if not targets:
-            return True
-        return any(
-            isinstance(t, bool) or not isinstance(t, numbers.Integral)
-            or int(t) not in self._safe for t in targets)
+        if not targets or any(
+                isinstance(t, bool) or not isinstance(t, numbers.Integral)
+                or int(t) not in self._safe for t in targets):
+            return BEAM3D_PARTIAL_LOAD_GUARD
+        return FORCE_BEAM_PARTIAL_LOAD_GUARD
 
 
 def fork_guard_lines(
@@ -1222,6 +1313,8 @@ def fork_guard_lines(
                 raise BridgeError(
                     f"ForkBuildAllowlist: {sha!r} is not a 40-hex "
                     "ladrunoBuild sha.")
+        if guard.stock_min_version is not None:
+            return _versioned_allowlist_lines(guard, dialect)
         if not guard.stock_runs:
             if dialect == "tcl":
                 return ['if {[info commands ladrunoBuild] eq "" || '
@@ -1254,6 +1347,65 @@ def fork_guard_lines(
     raise BridgeError(
         f"fork_guard_lines: {type(guard).__name__} is not a fork build "
         "guard (ForkBuildFloor or ForkBuildAllowlist).")
+
+
+def parse_ops_version(text: object) -> "tuple[int, int, int] | None":
+    """The ``X.Y.Z`` an OpenSees ``version`` answer starts with (both
+    interpreters return ``OPS_VERSION`` as is, e.g. ``"3.8.0"``), or
+    ``None`` when it starts with anything else."""
+    m = _OPS_VERSION_RE.match(str(text))
+    if m is None:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+_OPS_VERSION_RE = re.compile(r"\s*(\d+)\.(\d+)\.(\d+)")
+
+
+def _versioned_allowlist_lines(
+    guard: ForkBuildAllowlist, dialect: 'Literal["py", "tcl"]',
+) -> list[str]:
+    """:func:`fork_guard_lines` for an allowlist whose stock side runs on
+    from :attr:`ForkBuildAllowlist.stock_min_version`."""
+    assert guard.stock_min_version is not None
+    if guard.stock_runs:
+        raise BridgeError(
+            "ForkBuildAllowlist: stock_min_version needs stock_runs=False.")
+    floor = guard.stock_min_version
+    if dialect == "tcl":
+        return [
+            'if {[info commands ladrunoBuild] eq ""} {',
+            "    if {[catch {version} _apesees_version] || "
+            r"![regexp {^\s*(\d+\.\d+\.\d+)} $_apesees_version "
+            "-> _apesees_v] || "
+            f"[package vcompare $_apesees_v {'.'.join(map(str, floor))}] "
+            "< 0} {",
+            f'        error "{guard.message}"',
+            "    }",
+            "} elseif {[catch {ladrunoBuild} _apesees_build] || "
+            f"[lsearch -exact {{{' '.join(guard.builds)}}} "
+            "[string trim $_apesees_build]] < 0} {",
+            f'    error "{guard.message}"',
+            "}"]
+    return [
+        "if hasattr(ops, 'ladrunoBuild'):",
+        "    try:",
+        "        _apesees_build = str(ops.ladrunoBuild()).strip()",
+        "    except Exception:",
+        "        _apesees_build = ''",
+        f"    if _apesees_build not in {tuple(guard.builds)!r}:",
+        f"        raise SystemExit({guard.message!r})",
+        "else:",
+        "    import re as _apesees_re",
+        "    try:",
+        "        _apesees_version = str(ops.version())",
+        "    except Exception:",
+        "        _apesees_version = ''",
+        "    _apesees_v = _apesees_re.match("
+        r"r'\s*(\d+)\.(\d+)\.(\d+)', _apesees_version)",
+        "    if _apesees_v is None or tuple("
+        f"int(g) for g in _apesees_v.groups()) < {floor!r}:",
+        f"        raise SystemExit({guard.message!r})"]
 
 
 def _carried_material_tag(
