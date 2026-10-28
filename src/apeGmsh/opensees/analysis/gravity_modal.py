@@ -37,8 +37,8 @@ __all__ = ["GravityModalResult", "GravityState"]
 #: model's extent is the unloaded state, at round-off: a Corotational column
 #: at rest reads 6.7e-16 (one ulp of its 3.0 coordinates) on a 6 m model,
 #: 1e-16 of the extent, while the live test frames' gravity states read
-#: 1e-5. Dividing by such a reference reported a round-off difference as a
-#: drift of 9e-4 (displacement) and 3e9 (reaction) (#2568).
+#: 1e-5. A quotient by such a reference reads a round-off difference as a
+#: drift of order one, so it reports the absolute drift instead.
 _UNLOADED_REL = 1e-12
 
 
