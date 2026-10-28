@@ -85,6 +85,16 @@ _SETTLE_STEPS = 10
 #: every requested direction, is not probed.
 _NEGLIGIBLE_MASS = 1e-12
 
+#: A spectrum direction whose free mass (``totalFreeMass``) falls short of
+#: the nodal mass on its unfixed DOFs by more than this fraction is refused:
+#: the modes miss some of the mass (gap 6, mass on MP-retained DOFs under
+#: Transformation before WP-211).
+_FREE_MASS_TOL = 1e-6
+
+#: A spectrum direction whose modes' effective masses sum to at most this
+#: fraction of its free mass is refused: every Γ is zero to round-off.
+_LOADED_MASS_TOL = 1e-6
+
 #: On the fork's ``-increment`` route, every imposed nodal translation must
 #: equal the static leg's ``± a φ / λ`` to this fraction of the probe.
 _IMPOSED_TOL = 1e-6
@@ -346,6 +356,22 @@ class _GravityModalMixin(_ProcedureHost):
         the nodes (``g.masses`` on the session, or ``ops.mass`` /
         ``mass_from_model``): that is the supported route.
 
+        **The modes must carry the loaded mass.** A spectrum direction is
+        refused when ``modalProperties`` counts less free mass along it
+        (``totalFreeMass``) than the nodes carry on DOFs no ``fix`` holds,
+        or when the modes' effective masses along it sum to at most
+        ``1e-6`` of the free mass (every Γ zero to round-off). The first is
+        what stock OpenSees and Ladruno forks older than
+        ``ladruno-v20261027`` (WP-211) give for mass on the constrained
+        nodes of a rigid diaphragm under ``constraints Transformation``: a
+        zero response, or a Γ too low when only some floors lose their
+        mass. These checks need the modes, so with ``p_delta=True`` they
+        run after the gravity analysis (in the per-mode step, on the
+        gravity state), and with ``p_delta=False`` before it. On those older
+        builds, mass on a node that an ``equalDOF`` ties to a fixed node is
+        refused too, although its Γ is right: put that mass on the fixed
+        node, or use a fork with WP-211.
+
         **No recorders.** Each probe leg and each return solve commits, and
         on the ``-increment`` route each leg calls the domain's recorders on
         its trial state, so a declared recorder would write extra rows for
@@ -380,7 +406,9 @@ class _GravityModalMixin(_ProcedureHost):
         BridgeError
             The model carries element mass (refused: the modal force is
             built from nodal masses), declares a recorder, or a spectrum
-            names a direction outside ``1..ndm``.
+            names a direction outside ``1..ndm``, or a direction a spectrum
+            loads has less free mass than unfixed nodal mass, or a zero Γ
+            (to round-off) in every mode.
         ValueError
             No spectra or extractors, or an extractor's length changed.
         RuntimeError
@@ -521,6 +549,18 @@ class _GravityModalMixin(_ProcedureHost):
                 "the nodes instead (g.masses, or ops.mass / "
                 "mass_from_model), the supported route."
             )
+        # The mass the modes should act on: the nodal mass less what sits on
+        # SP-fixed DOFs (Penalty and Lagrange count those as free too, so
+        # the free mass may be larger, never smaller).
+        fixed = {int(t): {int(d) - 1 for d in ops.getFixedDOFs(t)}
+                 for t in ops.getFixedNodes()}
+        unfixed = np.zeros(ndm)
+        for t, m in masses.items():
+            held = fixed.get(t, set())
+            for d in range(min(ndm, m.size)):
+                if d not in held:
+                    unfixed[d] += m[d]
+        _check_loaded_mass(properties, unfixed, spectra, context)
         massed = [t for t in tags if np.any(masses[t] != 0.0)]
 
         ts_tag = 1 + max(
@@ -787,6 +827,73 @@ class _GravityModalMixin(_ProcedureHost):
                 "λ = 1 in a whole number of steps; declare dlam = 1/N."
             )
         return steps
+
+
+def _check_loaded_mass(
+    properties: "Mapping[str, Sequence[float]]",
+    unfixed: "np.ndarray",
+    spectra: "Sequence[DesignSpectrum]",
+    context: str,
+) -> None:
+    """Refuse a spectrum direction whose modes do not carry its mass (gap 6).
+
+    Γ divides by the free mass, ``totalFreeMass``. Stock OpenSees and forks
+    older than ``ladruno-v20261027`` (WP-211) count a DOF that the
+    ``Transformation`` handler retains through an MP constraint as fixed, so
+    the mass on a rigid diaphragm's constrained nodes drops out of it:
+    ``totalMass`` still matches the nodes, but the free mass falls short of
+    the nodal mass on DOFs no SP constraint fixes (``unfixed``), and Γ with
+    it: all of it (a zero response) or one floor's share (Γ too low). Such a
+    direction is refused, and so is a direction whose modes carry almost
+    none of the free mass (every Γ zero to round-off, or not a number).
+
+    Known false refusal on those builds: mass on a node that an
+    ``equalDOF`` ties to a fixed node is not fixed by a ``fix``, so it is
+    expected free, but the old build drops it. Γ is right there (the node
+    cannot move), yet the direction is refused.
+    """
+    import numpy as np
+
+    if "totalFreeMass" not in properties:
+        raise BridgeError(
+            f"{context}: modalProperties -return gives no 'totalFreeMass' on "
+            "this build, so the mass the modes act on cannot be checked "
+            "against the nodal mass. Use a build whose modalProperties "
+            "returns it (stock OpenSees since 2022, every Ladruno fork "
+            "release)."
+        )
+    free = np.asarray(properties["totalFreeMass"], dtype=np.float64)
+    for s in spectra:
+        d = s.direction - 1
+        if float(free[d]) < (1.0 - _FREE_MASS_TOL) * float(unfixed[d]):
+            raise BridgeError(
+                f"{context}: the spectrum along direction {s.direction} acts "
+                f"on a free mass of {float(free[d]):.6g} (modalProperties "
+                f"totalFreeMass) while the nodes carry {float(unfixed[d]):.6g} "
+                "on DOFs no fix holds in that direction, so Γ and the "
+                "response would miss the difference. The likely cause is "
+                "nodal mass on DOFs an MP constraint retains under "
+                "constraints Transformation (the constrained nodes of a "
+                "rigid diaphragm or rigid link), which stock OpenSees and "
+                "Ladruno forks older than ladruno-v20261027 (WP-211) count "
+                "as fixed. Use a fork with WP-211, put the mass on the "
+                "master node, or declare constraints Penalty or Lagrange. "
+                "Mass on a DOF that a load pattern's sp holds is also left "
+                "out of the free mass."
+            )
+        carried = float(np.sum(np.abs(np.asarray(
+            properties[f"partiMassM{'XYZ'[d]}"], dtype=np.float64))))
+        # Written so that a NaN effective mass is refused too.
+        if not carried > _LOADED_MASS_TOL * float(free[d]):
+            raise BridgeError(
+                f"{context}: the modes carry an effective mass of "
+                f"{carried:.3e} along direction {s.direction}, against a "
+                f"free mass of {float(free[d]):.6g}: every participation "
+                "factor Γ along it is zero to round-off, so the spectrum "
+                "along it gives no response. Request more modes, or check "
+                "that the mass the modes act on (modalProperties "
+                "totalFreeMass) is the model's."
+            )
 
 
 def _rsa_increment_available(ops: Any) -> "bool | None":
