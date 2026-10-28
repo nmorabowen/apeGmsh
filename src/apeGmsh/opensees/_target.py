@@ -68,18 +68,16 @@ _TARGET_MODES: frozenset[str] = frozenset({"auto", "fork", "stock"})
 _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 
 
-#: The newest ``ladrunoSchema`` version this module reads.  Fork WP-185's
-#: ``SRC/interpreter/LadrunoSchema.h`` (apeGmsh#2517): v1 is v0 plus a
-#: sorted ``capabilities`` list, every other key keeping its v0 meaning.
-#: v0 is still read, since fork builds before v1 (ladruno-v20261023,
-#: bdb69cea5) answer it; any other version is unknown.
-LADRUNO_SCHEMA_VERSION = 1
-
 _V0_KEYS: frozenset[str] = frozenset(
     {"build", "commands", "engine", "options", "schema_version"}
 )
 
-#: The exact top-level key set of each version read, by ``schema_version``.
+#: The ``ladrunoSchema`` versions this module reads, each with its exact
+#: top-level key set; any other version is unknown.  Fork WP-185's
+#: ``SRC/interpreter/LadrunoSchema.h`` (apeGmsh#2517): v1 is v0 plus a
+#: sorted ``capabilities`` list, every other key keeping its v0 meaning.
+#: v0 is still read, since fork builds before v1 (ladruno-v20261023,
+#: bdb69cea5) answer it.
 _SCHEMA_KEYS: dict[int, frozenset[str]] = {
     0: _V0_KEYS,
     1: _V0_KEYS | {"capabilities"},

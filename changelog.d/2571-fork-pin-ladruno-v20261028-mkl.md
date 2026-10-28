@@ -10,7 +10,7 @@ The lane now fails on any `ladruno_mkl:` skip and uploads its junit XML. `Backen
 `ladrunoSchema` version 1, which is version 0 plus a `capabilities` list. Version 0 is still read for older
 fork builds, and its schema lists no capability. The fork build tables accept the new pin.
 
-On fork pins before fork commit `eaaf07e8b` (fork PR #1022, FB-1), a `LadrunoCohesiveHinge` placed with
+On fork pins before fork commit `eaaf07e8b` (nmorabowen/OpenSees#1022, FB-1), a `LadrunoCohesiveHinge` placed with
 an interior `-hingeLoc` read the wrong moment: `(1 - xi) q1 + xi q2` instead of the true moment `M(xi)` at
 the hinge. On the root element of a tip-loaded two-element cantilever with `hinge_loc=0.5`, it read a
 third of the real moment. Re-run any model with an interior `hinge_loc` hinge that ran on such a pin.
