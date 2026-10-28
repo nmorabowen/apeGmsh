@@ -222,3 +222,58 @@ def test_ndf_inference_takes_no_opinion_from_a_membrane() -> None:
         diaphragm_nodes=(D,))
     elements = [p for p in ops._primitives if isinstance(p, Element)]
     assert infer_node_ndf(fem, elements, ndm=3) == {}
+
+
+# ---------------------------------------------------------------------------
+# state_drift per quantity (#2568). Pure arithmetic, kept here so the suite
+# lane runs it (the spectrum live file needs openseespy). Unrelated to the
+# membrane: this is the slice's one unit test file.
+# ---------------------------------------------------------------------------
+
+
+def _synthetic(u: float, r: float, *, extent: float = 6.0) -> Any:
+    import numpy as np
+
+    from apeGmsh.opensees.analysis.gravity_modal import GravityState
+
+    return GravityState(
+        node_tags=np.asarray([1, 2]),
+        disp={1: np.zeros(3), 2: np.asarray([u, 0.0, 0.0])},
+        reactions={1: np.asarray([0.0, r, 0.0]), 2: np.zeros(3)},
+        time=0.0, extent=extent)
+
+
+@pytest.mark.parametrize(("a", "b", "want"), [
+    # Undeformed, loads on the supports: the reaction drift stays relative
+    # (absolute it read 1e-5, above the restore limit).
+    pytest.param((0.0, 1e7), (0.0, 1e7 + 1e-5), (0.0, 1e-12),
+                 id="undeformed-support-loads-relative"),
+    # Undeformed at round-off on both sides: absolute.
+    pytest.param((6.7e-16, 3.5e-20), (6.7e-16 + 6e-19, 1.05e-10),
+                 (6e-19, 1.05e-10), id="round-off-reference-absolute"),
+    # Both snapshots exactly zero: no division.
+    pytest.param((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), id="both-zero"),
+    # A zero reference and a real drift: both large.
+    pytest.param((0.0, 0.0), (3.7e-6, 250.0), (3.7e-6, 250.0),
+                 id="zero-reference-real-drift"),
+    # Undeformed with support loads and a real drift: relative to them.
+    pytest.param((0.0, 1e7), (3.7e-6, 1e7 + 250.0), (3.7e-6, 2.5e-5),
+                 id="support-loads-real-drift"),
+    # Undeformed under large support loads: a residual below the restore
+    # limit relative to them passes (the rule's stated limit).
+    pytest.param((0.0, 2e8), (0.0, 2e8 + 100.0), (0.0, 5e-7),
+                 id="large-support-loads-small-residual"),
+    # Deformed: relative, as before.
+    pytest.param((8e-5, 2e5), (8e-5 + 8e-11, 2e5 + 2e-4), (1e-6, 1e-9),
+                 id="deformed-relative"),
+])
+def test_state_drift_per_quantity(a: tuple[float, float],
+                                  b: tuple[float, float],
+                                  want: tuple[float, float]) -> None:
+    """The displacement judges whether the reference is deformed; the
+    reaction drift of an undeformed one is the smaller of its absolute and
+    relative drifts (closed forms of the inputs)."""
+    from apeGmsh.opensees.analysis.gravity_modal import state_drift
+
+    got = state_drift(_synthetic(*a), _synthetic(*b))
+    assert got == pytest.approx(want, rel=1e-3, abs=1e-30)

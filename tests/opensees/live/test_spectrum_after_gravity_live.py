@@ -755,61 +755,14 @@ def test_an_unloaded_reference_at_round_off_is_not_a_drift(
     assert res.modal.gravity_drift() == (0.0, 0.0)
 
 
-def _synthetic(u: float, r: float, *, extent: float = 6.0) -> Any:
-    from apeGmsh.opensees.analysis.gravity_modal import GravityState
+def _left_loaded_drift(monkeypatch: pytest.MonkeyPatch, transf: str,
+                       p_delta: bool, load: float) -> tuple[float, float]:
+    """Solve a lateral ``load`` on the centre node into the domain just
+    before the per-mode loop's restore snapshot, under ``LoadControl 0``
+    (no gravity step: the time stays put), and return the refused
+    ``(displacement, reaction)`` drift read from the message."""
+    import re
 
-    return GravityState(
-        node_tags=np.asarray([1, 2]),
-        disp={1: np.zeros(3), 2: np.asarray([u, 0.0, 0.0])},
-        reactions={1: np.asarray([0.0, r, 0.0]), 2: np.zeros(3)},
-        time=0.0, extent=extent)
-
-
-@pytest.mark.live
-@pytest.mark.parametrize(("a", "b", "want"), [
-    # Undeformed, loads on the supports: the reaction drift stays relative
-    # (absolute it read 1e-5, above the restore limit).
-    pytest.param((0.0, 1e7), (0.0, 1e7 + 1e-5), (0.0, 1e-12),
-                 id="undeformed-support-loads-relative"),
-    # Undeformed at round-off on both sides: absolute.
-    pytest.param((6.7e-16, 3.5e-20), (6.7e-16 + 6e-19, 1.05e-10),
-                 (6e-19, 1.05e-10), id="round-off-reference-absolute"),
-    # Both snapshots exactly zero: no division.
-    pytest.param((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), id="both-zero"),
-    # A zero reference and a real drift: both large.
-    pytest.param((0.0, 0.0), (3.7e-6, 250.0), (3.7e-6, 250.0),
-                 id="zero-reference-real-drift"),
-    # Undeformed with support loads, and a real drift: still large.
-    pytest.param((0.0, 1e7), (3.7e-6, 1e7 + 250.0), (3.7e-6, 2.5e-5),
-                 id="support-loads-real-drift"),
-    # Deformed: relative, as before.
-    pytest.param((8e-5, 2e5), (8e-5 + 8e-11, 2e5 + 2e-4), (1e-6, 1e-9),
-                 id="deformed-relative"),
-])
-def test_state_drift_per_quantity(a: tuple[float, float],
-                                  b: tuple[float, float],
-                                  want: tuple[float, float]) -> None:
-    """The displacement judges whether the reference is deformed; the
-    reaction drift of an undeformed one is the smaller of its absolute and
-    relative drifts (closed forms of the inputs)."""
-    from apeGmsh.opensees.analysis.gravity_modal import state_drift
-
-    got = state_drift(_synthetic(*a), _synthetic(*b))
-    assert got == pytest.approx(want, rel=1e-3, abs=1e-30)
-
-
-@pytest.mark.live
-@pytest.mark.usefixtures("rsa_route")
-@pytest.mark.parametrize("p_delta", [False, True])
-@pytest.mark.parametrize("transf", ["Linear", "Corotational"])
-def test_a_domain_left_off_its_reference_is_refused(
-        monkeypatch: pytest.MonkeyPatch, transf: str, p_delta: bool) -> None:
-    """A real drift still refuses, about the unloaded reference and about
-    the gravity one. Before the per-mode loop's restore snapshot, a lateral
-    load of 1 kN on the centre node is solved into the domain, which is
-    left at another equilibrium, as when the legs do not return: some
-    250 N of base shear per column against round-off of 1e-10 N, and a
-    sway of 4e-6 m against the gravity state's 8e-5 m."""
     from apeGmsh.opensees.analysis import gravity_modal as gmod
 
     real = gmod.snapshot_state
@@ -823,17 +776,44 @@ def test_a_domain_left_off_its_reference_is_refused(
         if calls["n"] == restore:
             ops.timeSeries("Constant", 9001)
             ops.pattern("Plain", 9001, 9001)
-            ops.load(9, 1e3, 0.0, 0.0, 0.0, 0.0, 0.0)
+            ops.load(9, load, 0.0, 0.0, 0.0, 0.0, 0.0)
+            ops.integrator("LoadControl", 0.0)
             assert ops.analyze(1) == 0
         return real(ops)
 
-    monkeypatch.setattr(gmod, "snapshot_state", leave_loaded)
-    with pytest.raises(RuntimeError, match="did not return to its reference "
-                                           "state"):
+    with monkeypatch.context() as m, pytest.raises(
+            RuntimeError, match="did not return to its reference state"
+    ) as info:
+        m.setattr(gmod, "snapshot_state", leave_loaded)
         _diaphragm(transf, 0.0).spectrum_after_gravity(
             3, spectra=_DIAPHRAGM_SPEC, extractors=_CENTRE_EX,
             p_delta=p_delta, solver="-fullGenLapack")
     assert calls["n"] == restore
+    got = re.search(r"displacement ([0-9.e+-]+), reaction ([0-9.e+-]+)",
+                    str(info.value))
+    assert got is not None
+    return float(got.group(1)), float(got.group(2))
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize("p_delta", [False, True])
+@pytest.mark.parametrize("transf", ["Linear", "Corotational"])
+def test_a_domain_left_off_its_reference_is_refused(
+        monkeypatch: pytest.MonkeyPatch, transf: str, p_delta: bool) -> None:
+    """A real drift still refuses, about the unloaded reference and about
+    the gravity one: 1 kN on the centre node leaves the domain at another
+    equilibrium, as when the legs do not return. About the unloaded
+    reference that is 250 N of base shear per column against round-off of
+    1e-10 N, reported absolute (the largest base reaction component); about the gravity one,
+    a 3.7e-6 m sway against its 8e-5 m. The refused drift is the load's: it
+    scales with it, linearly, from 10 N to 1 kN."""
+    big = _left_loaded_drift(monkeypatch, transf, p_delta, 1e3)
+    small = _left_loaded_drift(monkeypatch, transf, p_delta, 10.0)
+    if not p_delta:
+        assert 250.0 <= big[1] <= 1e3, big  # absolute, the base reaction
+    assert big[0] / small[0] == pytest.approx(100.0, rel=1e-2)
+    assert big[1] / small[1] == pytest.approx(100.0, rel=1e-2)
 
 
 # -- the fork's -increment route (fork WP-207, ADR 0124 amendment) ------------

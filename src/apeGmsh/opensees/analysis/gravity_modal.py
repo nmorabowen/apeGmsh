@@ -136,10 +136,13 @@ def state_drift(a: GravityState, b: GravityState) -> tuple[float, float]:
       restrained nodes, which the relative drift measures, or round-off of
       a zero field (a Corotational column at rest reads ``3.5e-20``
       beside ``1e-10`` after a return), which only the absolute one
-      measures. The domain cannot tell them apart, and a drift that moved
-      the domain makes both large. No snapshot holds a force scale to
-      tell them by: the ratio of the two snapshots' round-off reactions
-      ranges over ``8e-11`` to ``8e-6`` on the live test frames.
+      measures. The domain cannot tell them apart: no snapshot holds a
+      force scale to tell them by (the ratio of the two snapshots'
+      round-off reactions ranges over ``8e-11`` to ``8e-6`` on the live
+      test frames). The limit of the rule: a reaction change is reported
+      no larger than its fraction of the support loads, so under large
+      ones a real residual can read below a caller's tolerance (100 N on
+      2e8 N reads 5e-7), as it does under a deformed reference.
 
     A deformed reference keeps both drifts relative.
     """
