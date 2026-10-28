@@ -326,11 +326,46 @@ class PhysicalGroups(_HasLogging):
         dim  : dimension of the physical group
         tag  : physical-group tag
         name : new label
+
+        Raises
+        ------
+        ValueError
+            If another physical group at *dim* is already named *name*.
+            gmsh keeps one group per name and dim and drops the call
+            without a word, so neither group would change.  Also if
+            *name* starts with the reserved ``_label:`` prefix, as
+            :meth:`add` refuses.  Setting a group's own current name
+            stays a no-op.
         """
         # Frozen on the same terms as add(): the broker's
         # PhysicalGroupSet is a snapshot keyed by name, so renaming a
         # PG here leaves the two disagreeing about what exists.
         self._require_unfrozen(f"g.physical.set_name({name!r})")
+        if gmsh.model.getPhysicalName(dim, tag) == name:
+            # Already this group's name: nothing to do.  Checked first
+            # so a label PG's own name is not refused below.
+            return self
+        # The index skips label names, so a clash with a label PG could
+        # not be seen; and a user PG renamed into the label namespace
+        # would vanish from get_tag.  Refused like add() refuses it.
+        if is_label_pg(name):
+            raise ValueError(
+                f"g.physical.set_name(dim={dim}, tag={tag}, name={name!r}): "
+                f"names starting with {LABEL_PREFIX!r} are reserved for "
+                f"g.labels.  Use a name without that prefix, or "
+                f"g.labels.rename() to rename a label."
+            )
+        # "" is no name: any number of groups may be unnamed.
+        holder = self._named(name).get(dim) if name else None
+        if holder is not None:
+            raise ValueError(
+                f"g.physical.set_name(dim={dim}, tag={tag}, name={name!r}): "
+                f"physical group {name!r} already exists at dim={dim} "
+                f"(tag={holder}).  gmsh keeps one group per name and dim, "
+                f"so the name would be dropped and neither group would "
+                f"change.  Remove or rename that group first, or pick "
+                f"another name."
+            )
         gmsh.model.setPhysicalName(dim, tag, name)
         self._index.note(dim, tag)
         self._log(f"set_name(dim={dim}, tag={tag}, name={name!r})")

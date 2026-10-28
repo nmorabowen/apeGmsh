@@ -76,6 +76,45 @@ def test_rename_and_remove_are_reflected(g):
     assert g.physical.get_tag(1, "") == t2
 
 
+def test_set_name_onto_a_held_name_raises_and_changes_nothing(g):
+    # #2588: gmsh keeps one group per (dim, name) and drops the call
+    # silently, so both groups kept their names and nothing was raised.
+    a, b, c = _lines(3)
+    t_b = g.physical.add(1, [a], name="B")
+    t_c = g.physical.add(1, [b], name="C")
+    t_u = g.physical.add(1, [c])                  # unnamed
+    for t, before in ((t_b, "B"), (t_u, "")):
+        with pytest.raises(ValueError, match=r"'C' already exists at dim=1"):
+            g.physical.set_name(1, t, "C")
+        assert g.physical.get_name(1, t) == before
+    assert g.physical.get_name(1, t_c) == "C"
+    assert g.physical.get_tag(1, "C") == t_c
+    assert g.physical.get_tag(1, "B") == t_b
+
+
+def test_set_name_to_its_own_name_or_empty_is_a_no_op(g):
+    a, b, c = _lines(3)
+    t = g.physical.add(1, [a], name="C")
+    assert g.physical.set_name(1, t, "C") is g.physical
+    assert g.physical.get_tag(1, "C") == t
+    # "" is no name: two unnamed groups do not clash.
+    u1 = g.physical.add(1, [b])
+    g.physical.add(1, [c])
+    g.physical.set_name(1, u1, "")
+    assert g.physical.get_name(1, u1) == ""
+
+
+def test_set_name_refuses_the_label_prefix(g):
+    a, b = _lines(2)
+    g.labels.add(1, [a], name="lab")
+    t = g.physical.add(1, [b], name="user")
+    for name in ("_label:lab", "_label:free"):
+        with pytest.raises(ValueError, match="reserved for g.labels"):
+            g.physical.set_name(1, t, name)
+    assert g.physical.get_name(1, t) == "user"
+    assert g.labels.entities("lab", dim=1) == [a]
+
+
 def test_remove_all_is_reflected(g):
     # Kept apart from remove_name: in plain gmsh 4.15, renaming,
     # removePhysicalName and then removePhysicalGroups() corrupts the
