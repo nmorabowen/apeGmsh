@@ -615,14 +615,17 @@ _CORNERS = ((-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0))
 
 
 def _diaphragm(transf: str, dx: float, *, link: float = 1.0,
-               gravity: float = 1.0) -> apeSees:
+               gravity: float = 1.0, origin: float = 0.0) -> apeSees:
     """Four columns, their tops tied by stiff links to one centre node that
     carries the floor's translational and rotational mass (the review's
     repro). Its pure-torsion mode barely moves the centre node. ``link``
-    scales the links' section (``A``, ``J``, ``I``) and ``gravity`` the
-    loads on the column tops."""
-    coords = ([(x, y, 0.0) for x, y in _CORNERS]
-              + [(x, y, 3.0) for x, y in _CORNERS] + [(dx, 0.0, 3.0)])
+    scales the links' section (``A``, ``J``, ``I``), ``gravity`` the
+    loads on the column tops, and ``origin`` shifts every node in x, y
+    and z (coarser coordinate ulps, the same span)."""
+    o = origin
+    coords = ([(x + o, y + o, o) for x, y in _CORNERS]
+              + [(x + o, y + o, o + 3.0) for x, y in _CORNERS]
+              + [(dx + o, o, o + 3.0)])
     nodes = _NodesStub(ids=list(range(1, 10)), coords=coords,
                        node_pgs={"Base": [1, 2, 3, 4], "Tops": [5, 6, 7, 8],
                                  "Centre": [9]})
@@ -725,19 +728,24 @@ _CENTRE_EX = {"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))}
 
 @pytest.mark.live
 @pytest.mark.usefixtures("rsa_route")
-@pytest.mark.parametrize(("dx", "link", "gravity"), [
-    (0.0, 1.0, 1.0), (1e-9, 1.0, 1.0), (1e-3, 1e6, 30.0)])
+@pytest.mark.parametrize(("dx", "link", "gravity", "origin"), [
+    (0.0, 1.0, 1.0, 0.0), (1e-9, 1.0, 1.0, 0.0), (1e-3, 1e6, 30.0, 0.0),
+    (0.0, 1.0, 1.0, 1e3), (0.0, 1.0, 1.0, 1e5)])
 @pytest.mark.parametrize("transf", ["Linear", "PDelta", "Corotational"])
 def test_an_unloaded_reference_at_round_off_is_not_a_drift(
-        transf: str, dx: float, link: float, gravity: float) -> None:
+        transf: str, dx: float, link: float, gravity: float,
+        origin: float) -> None:
     """Under ``p_delta=False`` the per-mode legs run about the unloaded
     state. A Corotational column at rest reads ``6.7e-16`` (one ulp of its
     coordinates, not zero) and reactions of ``3.5e-20``, and the restore
     check divided by them: round-off differences of ``6e-19`` and ``1e-10``
     were refused as a drift of ``9e-4`` and ``3e9``. A reference within
-    round-off of the model's extent is the unloaded state and reports the
-    absolute drift, as an exactly zero one always did."""
-    res = _diaphragm(transf, dx, link=link, gravity=gravity
+    round-off of the model's extent is undeformed and reports the absolute
+    drift, as an exactly zero one always did. Moved 1e3 or 1e5 from the
+    origin the model reads the same round-off at rest (the elements work
+    on coordinate differences), so the extent is the span, not the
+    coordinates' magnitude."""
+    res = _diaphragm(transf, dx, link=link, gravity=gravity, origin=origin
                      ).spectrum_after_gravity(
         3, spectra=_DIAPHRAGM_SPEC, extractors=_CENTRE_EX, p_delta=False,
         solver="-fullGenLapack")
@@ -745,6 +753,49 @@ def test_an_unloaded_reference_at_round_off_is_not_a_drift(
     assert res.restore_drift[0] < 1e-15
     assert res.restore_drift[1] < 1e-7
     assert res.modal.gravity_drift() == (0.0, 0.0)
+
+
+def _synthetic(u: float, r: float, *, extent: float = 6.0) -> Any:
+    from apeGmsh.opensees.analysis.gravity_modal import GravityState
+
+    return GravityState(
+        node_tags=np.asarray([1, 2]),
+        disp={1: np.zeros(3), 2: np.asarray([u, 0.0, 0.0])},
+        reactions={1: np.asarray([0.0, r, 0.0]), 2: np.zeros(3)},
+        time=0.0, extent=extent)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(("a", "b", "want"), [
+    # Undeformed, loads on the supports: the reaction drift stays relative
+    # (absolute it read 1e-5, above the restore limit).
+    pytest.param((0.0, 1e7), (0.0, 1e7 + 1e-5), (0.0, 1e-12),
+                 id="undeformed-support-loads-relative"),
+    # Undeformed at round-off on both sides: absolute.
+    pytest.param((6.7e-16, 3.5e-20), (6.7e-16 + 6e-19, 1.05e-10),
+                 (6e-19, 1.05e-10), id="round-off-reference-absolute"),
+    # Both snapshots exactly zero: no division.
+    pytest.param((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), id="both-zero"),
+    # A zero reference and a real drift: both large.
+    pytest.param((0.0, 0.0), (3.7e-6, 250.0), (3.7e-6, 250.0),
+                 id="zero-reference-real-drift"),
+    # Undeformed with support loads, and a real drift: still large.
+    pytest.param((0.0, 1e7), (3.7e-6, 1e7 + 250.0), (3.7e-6, 2.5e-5),
+                 id="support-loads-real-drift"),
+    # Deformed: relative, as before.
+    pytest.param((8e-5, 2e5), (8e-5 + 8e-11, 2e5 + 2e-4), (1e-6, 1e-9),
+                 id="deformed-relative"),
+])
+def test_state_drift_per_quantity(a: tuple[float, float],
+                                  b: tuple[float, float],
+                                  want: tuple[float, float]) -> None:
+    """The displacement judges whether the reference is deformed; the
+    reaction drift of an undeformed one is the smaller of its absolute and
+    relative drifts (closed forms of the inputs)."""
+    from apeGmsh.opensees.analysis.gravity_modal import state_drift
+
+    got = state_drift(_synthetic(*a), _synthetic(*b))
+    assert got == pytest.approx(want, rel=1e-3, abs=1e-30)
 
 
 @pytest.mark.live
