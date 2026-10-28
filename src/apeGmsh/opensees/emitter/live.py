@@ -33,8 +33,16 @@ from typing import (
 from .._internal.analyze_rc import check_analyze_rc
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_MESSAGE,
+    BEAM3D_PARTIAL_LOAD_GUARD,
+    BEAM3D_PARTIAL_LOAD_MESSAGE,
+    FORCE_BEAM_PARTIAL_LOAD_GUARD,
+    FORCE_BEAM_PARTIAL_LOAD_MESSAGE,
     MEMBRANE_WP208_MESSAGE,
+    Beam3dPartialLoadTargets,
     SweptMaterialReach,
+    fork_build_has_beam3d_partial_load,
+    fork_build_has_force_beam_partial_load,
+    stock_version_has_force_beam_partial_load,
     fork_build_has_c83,
     fork_build_has_membrane_wp208,
     is_asdshell_p_delta,
@@ -1284,6 +1292,7 @@ class LiveOpsEmitter:
         # knows the type but not ``-shear`` must still be gated on it).
         self._stage_zero_ledger().owed = True
         self._swept_reach().note_element(tag, args)
+        self._beam3d_load_targets().note_element(ele_type, tag)
         if is_membrane_wp208(ele_type, args) and not (
                 fork_build_has_membrane_wp208(self._backend().build)):
             raise RuntimeError(MEMBRANE_WP208_MESSAGE)
@@ -1373,6 +1382,16 @@ class LiveOpsEmitter:
         ops = self._real_ops if self._in_partition else self._ops
         return _backend_of(ops)
 
+    def _backend_version(self) -> object:
+        """The ``version()`` answer of the build this emitter drives (the
+        real module inside a partition block), or ``None`` when it has no
+        such command or the call fails: an unreadable version."""
+        ops = self._real_ops if self._in_partition else self._ops
+        try:
+            return ops.version()
+        except Exception:  # no version command: unreadable, refused
+            return None
+
     def _confirm_tangent_predictor(self) -> None:
         """Raise unless the just-set LadrunoLoadControl armed the predictor.
 
@@ -1416,12 +1435,36 @@ class LiveOpsEmitter:
         self._ops.load(tag, *forces)
 
     def eleLoad(self, *args: int | float | str) -> None:
+        ndm = self._model_ndm if self._model_ndm is not None else 3
+        # A 3-D partial or trapezoidal -beamUniform needs a build measured
+        # to honour it on every element it reaches (stage_emit
+        # Beam3dPartialLoadTargets): older builds drop or truncate it and
+        # analyze still returns 0.  Checked before the call reaches the
+        # interpreter.  On an element other than forceBeamColumn, stock and
+        # an unstamped fork build answer no sha and refuse here.  On
+        # forceBeamColumn alone a fork build must be listed for it, and
+        # stock must report a version that carries the fix (the stock gate
+        # below, skipped inside a partition block, then still refuses
+        # every partial form outside one).
+        beam3d_guard = self._beam3d_load_targets().guard_for(args, ndm)
+        if beam3d_guard is BEAM3D_PARTIAL_LOAD_GUARD and not (
+                fork_build_has_beam3d_partial_load(self._backend().build)):
+            raise RuntimeError(BEAM3D_PARTIAL_LOAD_MESSAGE)
+        if beam3d_guard is FORCE_BEAM_PARTIAL_LOAD_GUARD:
+            backend = self._backend()
+            if backend.kind == "fork":
+                carries = fork_build_has_force_beam_partial_load(
+                    backend.build)
+            else:
+                carries = stock_version_has_force_beam_partial_load(
+                    self._backend_version())
+            if not carries:
+                raise RuntimeError(FORCE_BEAM_PARTIAL_LOAD_MESSAGE)
         if "-type" in args:
             type_idx = args.index("-type")
             if type_idx + 1 < len(args):
                 ltype = str(args[type_idx + 1])
                 trailing = args[type_idx + 2:]
-                ndm = self._model_ndm if self._model_ndm is not None else 3
                 if ltype == "-beamUniform" and len(trailing) > (
                     2 if ndm == 2 else 3
                 ):
@@ -2126,6 +2169,7 @@ class LiveOpsEmitter:
 
     def remove_element(self, tag: int) -> None:
         self._swept_reach().note_removed(tag)
+        self._beam3d_load_targets().note_removed(tag)
         self._ops.remove("element", int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
@@ -2165,6 +2209,12 @@ class LiveOpsEmitter:
     #: gate tests) still has one.
     _stage0: "StageZeroLedger | None" = None
     _reach: "SweptMaterialReach | None" = None
+    _beam3d_targets: "Beam3dPartialLoadTargets | None" = None
+
+    def _beam3d_load_targets(self) -> Beam3dPartialLoadTargets:
+        if self._beam3d_targets is None:
+            self._beam3d_targets = Beam3dPartialLoadTargets()
+        return self._beam3d_targets
 
     def _swept_reach(self) -> SweptMaterialReach:
         if self._reach is None:
