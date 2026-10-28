@@ -398,9 +398,17 @@ class TestUncuttableWithGhostCells:
     the old element map sent them there, so a group already whole on
     one partition tallied as split and was "moved" (#2590)."""
 
-    def test_whole_group_is_left_alone_with_ghost_cells(self, g):
+    def test_whole_group_is_left_alone_with_ghost_cells(
+            self, g, monkeypatch):
         _build_two_body_contact_model(g)
         part = g.mesh.partitioning
+        assert part is g.mesh.partitioning
+
+        def _no_reassignment(*_args, **_kwargs):
+            raise AssertionError(
+                "the group is already whole on partition 1, yet the "
+                "override tried to reassign it")
+
         old_ghost = gmsh.option.getNumber("Mesh.PartitionCreateGhostCells")
         gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", 1)
         try:
@@ -409,6 +417,7 @@ class TestUncuttableWithGhostCells:
             # The group: every element partition 1 owns, which borders
             # partition 2 and so has ghost copies there.
             group = fem.partitions[1].element_ids.tolist()
+            monkeypatch.setattr(part, "partition_explicit", _no_reassignment)
             with warnings.catch_warnings():
                 warnings.simplefilter("error", UserWarning)
                 info = part._enforce_uncuttable(2, group)
