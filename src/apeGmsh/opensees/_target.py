@@ -68,12 +68,20 @@ _TARGET_MODES: frozenset[str] = frozenset({"auto", "fork", "stock"})
 _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 
 
-#: The one ``ladrunoSchema`` version this module reads.
-LADRUNO_SCHEMA_VERSION = 0
-
-_SCHEMA_KEYS: frozenset[str] = frozenset(
+_V0_KEYS: frozenset[str] = frozenset(
     {"build", "commands", "engine", "options", "schema_version"}
 )
+
+#: The ``ladrunoSchema`` versions this module reads, each with its exact
+#: top-level key set; any other version is unknown.  Fork WP-185's
+#: ``SRC/interpreter/LadrunoSchema.h`` (apeGmsh#2517): v1 is v0 plus a
+#: sorted ``capabilities`` list, every other key keeping its v0 meaning.
+#: v0 is still read, since fork builds before v1 (ladruno-v20261023,
+#: bdb69cea5) answer it.
+_SCHEMA_KEYS: dict[int, frozenset[str]] = {
+    0: _V0_KEYS,
+    1: _V0_KEYS | {"capabilities"},
+}
 _OPTION_KEYS: frozenset[str] = frozenset({"nargs", "since"})
 
 
@@ -93,7 +101,7 @@ class LadrunoOption:
 
 @dataclass(frozen=True)
 class LadrunoSchema:
-    """The fork's self-description, parsed from ``ladrunoSchema()`` v0.
+    """The fork's self-description, parsed from ``ladrunoSchema()`` v0 or v1.
 
     Hashable (no ``dict`` field), so :class:`BackendInfo` stays hashable.
     Built only by :func:`backend_info_of`, and only from a schema that
@@ -101,7 +109,7 @@ class LadrunoSchema:
     """
 
     schema_version: int
-    """Always :data:`LADRUNO_SCHEMA_VERSION`; any other version is not parsed."""
+    """``0`` or ``1`` (a key of ``_SCHEMA_KEYS``); any other version is not parsed."""
     build: str
     """The 40-char sha, equal to ``ladrunoBuild()`` of the same module."""
     engine: str
@@ -114,6 +122,12 @@ class LadrunoSchema:
     """The Ladruno commands this engine registers."""
     options: tuple[tuple[str, tuple[tuple[str, LadrunoOption], ...]], ...]
     """``((owner, ((token, LadrunoOption), ...)), ...)``, sorted by name."""
+    capabilities: frozenset[str] = frozenset()
+    """The behaviours the build promises (v1 ``capabilities``).
+
+    Empty for a v0 schema: the fork reads a name's absence as "older
+    build, refuse", and v0 predates every name.
+    """
 
     def option(self, owner: str, token: str) -> LadrunoOption | None:
         """The spec for ``token`` on ``owner``, or ``None`` if it is not listed."""
@@ -225,19 +239,26 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
-    """A decoded v0 schema as :class:`LadrunoSchema`, or ``None`` if in doubt.
+    """A decoded v0 or v1 schema as :class:`LadrunoSchema`, or ``None`` if
+    in doubt.
 
-    ``schema_version`` is checked first, before any other key is read.
+    ``schema_version`` is checked first, before any other key is read, and
+    the key set must be exactly that version's.
     """
     if not isinstance(obj, dict):
         return None
     version = obj.get("schema_version")
-    if not _is_int(version) or version != LADRUNO_SCHEMA_VERSION:
+    if not _is_int(version) or version not in _SCHEMA_KEYS:
         return None
-    if set(obj) != _SCHEMA_KEYS:
+    if set(obj) != _SCHEMA_KEYS[version]:
         return None
     raw_build, engine = obj["build"], obj["engine"]
     commands, options = obj["commands"], obj["options"]
+    capabilities = obj["capabilities"] if version == 1 else []
+    if not isinstance(capabilities, list) or not all(
+        isinstance(c, str) and c for c in capabilities
+    ) or len(set(capabilities)) != len(capabilities):
+        return None
     if build is None or not isinstance(raw_build, str) or raw_build.strip() != build:
         return None
     if not isinstance(engine, str) or not engine:
@@ -271,6 +292,7 @@ def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
         engine=engine,
         commands=frozenset(commands),
         options=tuple(owners),
+        capabilities=frozenset(capabilities),
     )
 
 

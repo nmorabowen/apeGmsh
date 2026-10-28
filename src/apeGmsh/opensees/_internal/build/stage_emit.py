@@ -822,7 +822,10 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 #: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
 #: otherwise).
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261023, which merges the fix: no reset.
+    # FORK_PIN ladruno-v20261028: 43b235bbb is its ancestor (GitHub
+    # compare: ahead 89, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023, which merges the fix: no reset.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
     # build/86893bd: 43b235bbb is its ancestor (GitHub compare: ahead 35,
@@ -901,7 +904,10 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261023: c83ee812e is its ancestor.
+    # FORK_PIN ladruno-v20261028: c83ee812e is its ancestor (GitHub
+    # compare: ahead 74, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023: c83ee812e is its ancestor.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
     # build/86893bd: c83ee812e is its ancestor (GitHub compare: ahead 20,
@@ -984,7 +990,9 @@ MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
 FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # The floor commit itself.
     MEMBRANE_WP208_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261023: b6d3e3d21 is its ancestor.
+    # FORK_PIN ladruno-v20261028 (compare: ahead 72, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023: b6d3e3d21 is its ancestor.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # A ladruno build after the floor (compare: ahead 15, behind 0).
     "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
@@ -1068,7 +1076,9 @@ BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
 FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # The floor commit itself.
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261023 (compare: ahead 35, behind 0); the live
+    # FORK_PIN ladruno-v20261028 (compare: ahead 102, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023 (compare: ahead 35, behind 0); the live
     # oracle tests/opensees/live/test_beam_uniform_3d_trapezoid_live.py
     # passes on it.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
@@ -1183,7 +1193,9 @@ FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
 FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261023 (compare: ahead 4080, behind 0).
+    # FORK_PIN ladruno-v20261028 (compare: ahead 4147, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023 (compare: ahead 4080, behind 0).
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # Fork WP-208 (compare: ahead 4075, behind 0).
     "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f": True,
