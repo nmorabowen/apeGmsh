@@ -3032,10 +3032,10 @@ def _merge_bundle_into_fem(
 
     # ── 11. Append the bundle's constraint / load / SP records.  One
     #       pass routes every record to its broker bucket, then one
-    #       ``_replaced`` swaps the five record sets in (#2566).  Calling
-    #       ``with_constraint`` / ``with_load`` once per record copied
+    #       ``_replaced`` swaps the five record sets in.  A
+    #       ``with_constraint`` / ``with_load`` call per record would copy
     #       the whole record list and both composites each time, which is
-    #       quadratic: 50,001 equalDOF rows cost ~9 s of a 13 s bridge.
+    #       quadratic in the record count.
     #       The routing is ``FEMData.with_constraint`` / ``with_load``'s
     #       dispatch, in the same record order, refusing an unknown
     #       record type with the same ``TypeError`` for the same record.

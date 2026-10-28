@@ -594,7 +594,7 @@ def emit_index_map(
     Agrees with :func:`emit_index_of` on every row it holds: the first
     run that covers a row wins. A caller joining many rows looks each up
     here and hands a missing one to :func:`emit_index_of`, which raises
-    the error that row's own lookup raises (#2566); calling
+    the error that row's own lookup raises; calling
     :func:`emit_index_of` once per row scans every run each time.
     """
     out: dict[int, int] = {}
@@ -2053,7 +2053,7 @@ class H5Model:
         runs = self.program()
         seen: dict[tuple[str, int], int] = {}
         # One emit-index map per (method, stage), not one program scan per
-        # row (#2566); a row no run covers raises through emit_index_of.
+        # row; a row no run covers raises through emit_index_of.
         index_maps: dict[tuple[str, int], dict[int, int]] = {}
         out: list[CommandRecordRO] = []
         for i in range(n):

@@ -1376,7 +1376,7 @@ class _ReplayOrder:
                 (str(run.method), int(run.stage)), int(run.first))
         self._joined: "dict[tuple[str, frozenset[str]], dict[int, int]]" = {}
         # method -> {global row: emit index}, built on a method's first
-        # :meth:`row` query (one program pass, #2566).
+        # :meth:`row` query (one program pass).
         self._rows: "dict[str, dict[int, int]]" = {}
         # The emit index of the first global partition block; ``None`` for
         # an archive with no partition block, which sorts by emit index.
@@ -1442,8 +1442,8 @@ class _ReplayOrder:
 
         The first query of a method maps all its rows in one program pass
         (:func:`~apeGmsh.opensees.emitter.h5_reader.emit_index_map`), so a
-        replay that keys every row is linear, not one scan per row
-        (#2566). A row no call covers raises through ``emit_index_of``."""
+        replay that keys every row is linear, not one scan per row.
+        A row no call covers raises through ``emit_index_of``."""
         from ..emitter.h5_reader import emit_index_map, emit_index_of
 
         rows = self._rows.get(method)
