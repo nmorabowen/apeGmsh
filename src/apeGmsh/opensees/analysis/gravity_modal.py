@@ -33,6 +33,14 @@ if TYPE_CHECKING:
 
 __all__ = ["GravityModalResult", "GravityState"]
 
+#: A reference state whose every displacement is within this fraction of the
+#: model's extent (:attr:`GravityState.extent`) is undeformed, at
+#: round-off: a Corotational column at rest reads 6.7e-16 (one ulp of its
+#: 3.0 coordinates), 1e-16 of the extent, while the live test frames'
+#: gravity states read 1e-5. A quotient by such a reference reads a
+#: round-off difference as a drift of order one.
+_UNLOADED_REL = 1e-12
+
 
 @dataclass(frozen=True, slots=True)
 class GravityState:
@@ -50,12 +58,21 @@ class GravityState:
     time
         The domain pseudo-time when the snapshot was taken (``0.0`` after
         ``loadConst -time 0``).
+    extent
+        The model's largest per-axis span of the node coordinates, the
+        length :func:`state_drift` tells a round-off displacement from a
+        real one by. It is the span, not the coordinates' magnitude: the
+        elements work on coordinate differences, and a model moved 1e6
+        from the origin reads the same round-off at rest. ``0.0`` (the
+        default, for a hand-built snapshot) treats only an exactly zero
+        displacement field as undeformed.
     """
 
     node_tags: np.ndarray
     disp: Mapping[int, np.ndarray]
     reactions: Mapping[int, np.ndarray]
     time: float
+    extent: float = 0.0
 
     def node_disp(self, node: "int | Node") -> np.ndarray:
         """The snapshot displacement vector of ``node``."""
@@ -88,33 +105,65 @@ def snapshot_state(ops: Any) -> GravityState:
     reac = {
         t: np.asarray(ops.nodeReaction(t), dtype=np.float64) for t in tags
     }
+    xyz = np.asarray([ops.nodeCoord(t) for t in tags], dtype=np.float64)
     return GravityState(
         node_tags=np.asarray(tags, dtype=np.int64),
         disp=disp,
         reactions=reac,
         time=float(ops.getTime()),
+        extent=float(np.max(np.ptp(xyz, axis=0))) if xyz.size else 0.0,
     )
+
+
+def _peak(x: Mapping[int, np.ndarray]) -> float:
+    return max((float(np.max(np.abs(v), initial=0.0)) for v in x.values()),
+               default=0.0)
 
 
 def state_drift(a: GravityState, b: GravityState) -> tuple[float, float]:
     """``(disp, reaction)`` drift between two snapshots of one domain.
 
     Each is the largest absolute difference over every node DOF, divided
-    by the largest absolute value in ``a`` (or ``1.0`` where ``a`` is all
-    zero, so an unloaded reference reports an absolute drift).
+    by the largest absolute value in ``a`` (absolute where that is zero).
+
+    An undeformed reference, one whose every displacement is within
+    ``1e-12`` of ``a.extent`` (round-off, or exactly zero), changes that:
+
+    * its displacement drift is absolute, since a quotient by round-off
+      reads a round-off difference as a drift of order one;
+    * its reaction drift is the smaller of the absolute and the relative
+      one. An undeformed reference's reactions are either the loads on its
+      restrained nodes, which the relative drift measures, or round-off of
+      a zero field (a Corotational column at rest reads ``3.5e-20``
+      beside ``1e-10`` after a return), which only the absolute one
+      measures. The domain cannot tell them apart: no snapshot holds a
+      force scale to tell them by (the ratio of the two snapshots'
+      round-off reactions ranges over ``8e-11`` to ``8e-6`` on the live
+      test frames). The limit of the rule: a reaction change is reported
+      no larger than its fraction of the support loads, so under large
+      ones a real residual can read below a caller's tolerance (100 N on
+      2e8 N reads 5e-7), as it does under a deformed reference.
+
+    A deformed reference keeps both drifts relative.
     """
-    def _rel(x: Mapping[int, np.ndarray], y: Mapping[int, np.ndarray]) -> float:
+    for x, y in ((a.disp, b.disp), (a.reactions, b.reactions)):
         if set(x) != set(y):
             raise ValueError(
                 "state_drift: the two snapshots hold different node sets."
             )
-        diff = max((float(np.max(np.abs(x[t] - y[t]), initial=0.0))
+
+    def _diff(x: Mapping[int, np.ndarray], y: Mapping[int, np.ndarray]) -> float:
+        return max((float(np.max(np.abs(x[t] - y[t]), initial=0.0))
                     for t in x), default=0.0)
-        scale = max((float(np.max(np.abs(x[t]), initial=0.0))
-                     for t in x), default=0.0)
+
+    def _rel(diff: float, scale: float) -> float:
         return diff / scale if scale > 0.0 else diff
 
-    return _rel(a.disp, b.disp), _rel(a.reactions, b.reactions)
+    d_diff, r_diff = _diff(a.disp, b.disp), _diff(a.reactions, b.reactions)
+    r_rel = _rel(r_diff, _peak(a.reactions))
+    if _peak(a.disp) <= _UNLOADED_REL * a.extent:
+        return d_diff, min(r_diff, r_rel)
+    return _rel(d_diff, _peak(a.disp)), r_rel
 
 
 @dataclass(frozen=True, slots=True)
