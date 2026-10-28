@@ -10,8 +10,9 @@ mass. On it:
   eigenvalues from above (Rayleigh-Ritz);
 * ``responseSpectrumPerMode``: the base reaction of every eigenmode is
   minus its total modal inertia (iota^T K phi = 0);
-* ``responseSpectrumAnalysis -requireMass`` refuses the three-mode
-  shortfall and accepts the completed set.
+* ``responseSpectrumAnalysis -requireMass`` brackets the three-mode
+  ratio (passes just below it, refuses just above it with the fork's
+  message) and accepts the completed set at 100 %.
 
 Each test skips with the capability probe's own refusal when the build
 lacks the command (``ladruno-v20261023`` has none of them), so the lane
@@ -126,14 +127,24 @@ def test_per_mode_base_reaction_balances_the_modal_inertia() -> None:
                                atol=1e-12 * np.abs(fx).max())
 
 
-def test_require_mass_refuses_a_shortfall() -> None:
+def test_require_mass_refuses_a_shortfall(capfd: pytest.CaptureFixture[str]) -> None:
     ops = engine("responseSpectrumAnalysis -requireMass", "residualModes")
+    podium(ops)
+    ops.eigen("-fullGenLapack", 3)
+    ratio = mass_ratio_x(ops)
+    assert 0.18 < ratio < 0.19                 # three modes carry ~18.4 %
+    # the guard sits on the ratio: just below it passes, just above it refuses
+    ops.responseSpectrumAnalysis(1, *SPEC, "-mode", 1, "-requireMass", 0.18)
+    capfd.readouterr()
     podium(ops)
     ops.eigen("-fullGenLapack", 3)
     ops.modalProperties()
     with pytest.raises(Exception):
-        ops.responseSpectrumAnalysis(1, *SPEC, "-mode", 1, "-requireMass", 0.9)
-    # the completed set carries the mass, so the same guard passes
+        ops.responseSpectrumAnalysis(1, *SPEC, "-mode", 1, "-requireMass", 0.19)
+    err = capfd.readouterr().err
+    assert f"the modes carry {100 * ratio:.2f}% of the free mass in direction 1" in err
+    assert "below -requireMass 19.00%" in err
+    # the completed set carries the mass, so the strictest guard passes
     podium(ops)
     ops.eigen("-fullGenLapack", 3)
     ops.residualModes("-dir", 1)

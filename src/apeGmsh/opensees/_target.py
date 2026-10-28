@@ -546,7 +546,13 @@ def require_rsa_feature(feature: str) -> None:
     """Refuse with "fork too old: needs chain M ..." unless the live build has it.
 
     The one call a wrapper makes before emitting a chain M / P1 command,
-    so an older build fails here and not with an opaque Tcl error.
+    so an older build fails here and not with an opaque OpenSees error.
+
+    It probes only the in-process openseespy module the live path binds
+    (:func:`probe_rsa_features`), and raises :class:`ImportError` when no
+    openseespy is installed.  It says nothing about a Tcl ``OpenSees``
+    binary a subprocess path runs (``ops.tcl(run=True)``), which is a
+    different build.
     """
     probe_rsa_features().require(feature)
 
