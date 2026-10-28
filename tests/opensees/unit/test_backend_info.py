@@ -533,3 +533,56 @@ def test_command_queries_speak_only_for_the_engine_that_answered() -> None:
     assert info.has_command("LadrunoTie", engine="dl") is True
     # the classic Tcl binary a subprocess runs is another engine: unknown
     assert info.has_command("LadrunoTie", engine="classic") is None
+
+
+# --------------------------------------------------------------------------
+# ladrunoSchema v1 (fork WP-185 at 9aadc76cc, apeGmsh#2517): v0 + capabilities
+# --------------------------------------------------------------------------
+#: The shape fork ``SRC/interpreter/LadrunoSchema.h`` renders at 9aadc76cc:
+#: keys sorted, compact separators, ``schema_version`` 1.
+_V1_TEXT = (
+    f'{{"build":"{_SHA}","capabilities":["mdStageFlagPreserved"],'
+    '"commands":["LadrunoTie","ladrunoBuild","ladrunoSchema"],"engine":"dl",'
+    '"options":{"LadrunoRCConcrete":{"-Cd":{"nargs":"list","since":"PR-155"}}},'
+    '"schema_version":1}'
+)
+
+
+def _v1_obj(**over: Any) -> dict[str, Any]:
+    obj = json.loads(_V1_TEXT)
+    obj.update(over)
+    return obj
+
+
+def test_v1_schema_as_the_fork_renders_it_parses() -> None:
+    info = backend_info_of(_with_schema(_V1_TEXT))
+    s = info.schema
+    assert s is not None
+    assert (s.schema_version, s.build, s.engine) == (1, _SHA, "dl")
+    assert s.capabilities == frozenset({"mdStageFlagPreserved"})
+    assert info.supports_option("LadrunoRCConcrete", "-Cd") is True
+    assert info.has_command("ladrunoSchema") is True
+    again = backend_info_of(_with_schema(_V1_TEXT))
+    assert info == again and hash(info) == hash(again)
+
+
+def test_v0_schema_promises_no_capability() -> None:
+    s = backend_info_of(_with_schema()).schema
+    assert s is not None and s.schema_version == 0
+    assert s.capabilities == frozenset()
+
+
+@pytest.mark.parametrize("obj", [
+    _v1_obj(capabilities="mdStageFlagPreserved"),
+    _v1_obj(capabilities=["mdStageFlagPreserved", 3]),
+    _v1_obj(capabilities=[""]),
+    _v1_obj(capabilities=["a", "a"]),
+    # v1 without its new key, and v0 with it: each key set is exact
+    {k: v for k, v in _v1_obj().items() if k != "capabilities"},
+    _schema_obj(capabilities=["mdStageFlagPreserved"]),
+    # a later version in v1's shape is not read as v1
+    _v1_obj(schema_version=2),
+])
+def test_doubtful_v1_is_unknown(obj: dict[str, Any]) -> None:
+    assert _schema_from_obj(obj, _SHA) is None
+    assert _schema_from_obj(_v1_obj(), _SHA) is not None

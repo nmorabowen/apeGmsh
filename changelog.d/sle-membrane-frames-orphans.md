@@ -30,9 +30,11 @@ LadrunoMembrane::solve_linear_system`. Two bridge bugs caused it.
   nodes). `EigenResult.to_native` / `to_ladruno` and `capture_live_modes`
   write the deck's nodes.
 
-The fork condenses a membrane's in-plane stiffness and mass onto its outer
-loop only, so a hole node that no other element touches has no stiffness.
-The build now warns `MembraneHoleNodeFreeWarning`; frame the opening.
+The fork condenses a membrane's in-plane stiffness onto every external node,
+hole loops included (fork WP-204), but along the panel's own axes only: the
+out-of-plane translation and the rotations get nothing. A hole node that no
+other element touches therefore has free DOFs. The build now warns
+`MembraneHoleNodeFreeWarning`; frame the opening.
 
 The fork lane solves a three-panel storey (an interior beam, a framed hole,
 columns and an `ASDShellT3` wall): `sum Rz = q * sum(A_i)` at rtol 1e-9, with
