@@ -18,7 +18,7 @@ contract.
 Follow `internal_docs/program/PROGRAM.md` §7 (Worker protocol) exactly, and
 also:
 
-- Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files only inside your own worktree.
+- Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files in a per-slice directory outside the worktree (`<system temp>/prog-<slice>/`, never a shared scratchpad), and `git status --porcelain` empty before you report.
 - **Read the task guide first.** Before editing, read the guide AGENTS.md routes
   your change to: bridge-feature, viewer-results, or adr-docs.
 - **Back every behaviour change with an oracle that names the right answer.**
