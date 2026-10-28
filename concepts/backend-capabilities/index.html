@@ -3882,19 +3882,26 @@ with its own, empty domain, and every query answers from that one.</p>
 also says what it can do: the commands its engine registers and the option
 tokens each fail-closed parser accepts. <code>get_backend_info()</code> reads it, so
 <code>info.supports_option("LadrunoRCConcrete", "-implexControl")</code> answers
-<code>True</code> or <code>False</code>. An older build, a schema version other than 0, or a
-schema that disagrees with <code>ladrunoBuild()</code> reads as <em>unknown
-capabilities</em>, and the same query answers <code>None</code>. An unknown answer is
-never <code>False</code>, and it never changes whether the build counts as the fork.
-Command answers speak only for the in-process engine, not for a Tcl
-binary that a subprocess runs.</p>
+<code>True</code> or <code>False</code>. apeGmsh reads schema versions 0 and 1. Version 1 is
+version 0 plus a <code>capabilities</code> list of the behaviours the build promises,
+read on <code>info.schema.capabilities</code>; every other key keeps its version 0
+meaning. A version 0 schema (older fork builds) reads with an empty
+<code>capabilities</code> set. An older build with no <code>ladrunoSchema()</code>, a schema
+version other than 0 or 1, a schema whose keys are not exactly that
+version's, or a schema that disagrees with <code>ladrunoBuild()</code> reads as
+<em>unknown capabilities</em>, and the same query answers <code>None</code>. An unknown
+answer is never <code>False</code>, and it never changes whether the build counts as
+the fork. Command answers speak only for the in-process engine, not for a
+Tcl binary that a subprocess runs.</p>
 <div class="admonition warning">
-<p class="admonition-title">The fork is a source build</p>
+<p class="admonition-title">The fork is mostly a source build</p>
 <p>The Ladruno fork lives at
 <a href="https://github.com/nmorabowen/OpenSees">nmorabowen/OpenSees</a> and
-publishes no wheels or binary releases. Tier 2 currently means
-compiling OpenSees yourself. If you are evaluating apeGmsh, plan on
-tiers 0 and 1 and treat tier 2 as opt-in.</p>
+publishes no wheels. The build that apeGmsh's nightly <code>live-fork</code> lane
+tests, the one <code>FORK_PIN</code> names, is a Linux release tarball built for
+Python 3.11 and linked against MKL. For any other platform, such as
+Windows, tier 2 still means compiling OpenSees yourself. If you are
+evaluating apeGmsh, plan on tiers 0 and 1 and treat tier 2 as opt-in.</p>
 </div>
 <h2 id="how-a-missing-capability-fails">How a missing capability fails<a class="headerlink" href="#how-a-missing-capability-fails" title="Permanent link">&para;</a></h2>
 <p>Nothing in tier 2 fails <em>silently</em> — but the two classes read differently,
