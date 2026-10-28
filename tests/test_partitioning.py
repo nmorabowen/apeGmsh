@@ -835,3 +835,98 @@ class TestPartitionSetComposite:
         assert not fem.partitions
         assert list(fem.partitions) == []
         assert fem.partitions.ids == []
+
+
+# =====================================================================
+# #2582 — partitioning adds no elements to FEMData
+# =====================================================================
+
+def _gmsh_element_table(dim: int | None) -> dict[int, tuple[int, ...]]:
+    """``{element id: connectivity}`` straight from Gmsh, for ``dim``
+    (``None``: every dimension)."""
+    table: dict[int, tuple[int, ...]] = {}
+    for d in (range(4) if dim is None else [dim]):
+        etypes, etags, enodes = gmsh.model.mesh.getElements(dim=d, tag=-1)
+        for etype, tags, nodes in zip(etypes, etags, enodes):
+            npe = gmsh.model.mesh.getElementProperties(etype)[3]
+            conn = np.asarray(nodes, dtype=np.int64).reshape(-1, npe)
+            for eid, row in zip(np.asarray(tags).tolist(), conn.tolist()):
+                table[int(eid)] = tuple(int(n) for n in row)
+    return table
+
+
+def _element_table(fem) -> dict[int, tuple[int, ...]]:
+    """``{element id: connectivity}`` over every group of ``fem``."""
+    table: dict[int, tuple[int, ...]] = {}
+    for grp in fem.elements:
+        for eid, conn in zip(np.asarray(grp.ids).tolist(),
+                             np.asarray(grp.connectivity).tolist()):
+            assert eid not in table, f"element {eid} extracted twice"
+            table[int(eid)] = tuple(int(n) for n in conn)
+    return table
+
+
+class TestPartitionAddsNoElements:
+    """``partition(n)`` must not change which elements FEMData holds.
+
+    The oracle is Gmsh's own element table (ids and connectivity) of
+    the same mesh, read before partitioning. Gmsh's
+    default ``Mesh.PartitionCreateTopology=1`` meshes each cut with new
+    lower-dimensional elements (lines between surfaces, triangles
+    between volumes, points where a cut meets a curve), and
+    ``Mesh.PartitionCreateGhostCells=1`` copies the neighbouring
+    partition's elements under the same ids. Both used to reach
+    FEMData as extra elements (#2582).
+    """
+
+    @pytest.mark.parametrize("ghost", [0, 1], ids=["no-ghost", "ghost"])
+    @pytest.mark.parametrize(
+        "model_dim, fem_dim",
+        [(2, 2), (2, None), (3, 3), (3, 2), (3, None)],
+        ids=["2d-dim2", "2d-all", "3d-dim3", "3d-dim2", "3d-all"])
+    def test_partitioned_elements_equal_unpartitioned(
+            self, g, ghost, model_dim, fem_dim):
+        if model_dim == 2:
+            _build_plate(g)
+        else:
+            _build_box(g)
+        before = _gmsh_element_table(fem_dim)
+        assert before
+
+        old_ghost = gmsh.option.getNumber("Mesh.PartitionCreateGhostCells")
+        old_topo = gmsh.option.getNumber("Mesh.PartitionCreateTopology")
+        gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", ghost)
+        gmsh.option.setNumber("Mesh.PartitionCreateTopology", 1)
+        try:
+            g.mesh.partitioning.partition(3)
+            kinds = {gmsh.model.getType(*e) for e in gmsh.model.getEntities()}
+            interface = [
+                e for e in gmsh.model.getEntities()
+                if gmsh.model.getParent(*e)[0] > e[0]]
+            fem = g.mesh.queries.get_fem_data(dim=fem_dim)
+        finally:
+            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", old_ghost)
+            gmsh.option.setNumber("Mesh.PartitionCreateTopology", old_topo)
+
+        # The mesh really carries what extraction must leave out.
+        assert interface, "partition() created no interface entity"
+        assert any(k.startswith("Ghost") for k in kinds) == bool(ghost)
+
+        after = _element_table(fem)
+        assert after == before
+
+        # Each element lies in exactly one partition, and the
+        # partitions cover exactly the FEMData elements.
+        owner: dict[int, int] = {}
+        for rec in fem.partitions:
+            for eid in rec.element_ids.tolist():
+                assert eid not in owner, (
+                    f"element {eid} in partitions {owner[eid]} and {rec.id}")
+                owner[int(eid)] = rec.id
+        assert set(owner) == set(after)
+        assert len(fem.partitions) == 3
+
+        # Every element has a source entity of its own dimension: the
+        # interface elements were the ``-1`` rows (#2572).
+        for code, ent in fem.elements.entity.items():
+            assert not (np.asarray(ent) == -1).any(), code

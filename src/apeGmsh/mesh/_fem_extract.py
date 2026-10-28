@@ -97,23 +97,14 @@ def _validate_connectivity(
 # Raw extraction (dict of arrays — no FEMData yet)
 # =====================================================================
 
-def _source_entity(dim: int, tag: int) -> int:
-    """The source-entity tag of elements classified on ``(dim, tag)``.
+def _model_entity(dim: int, tag: int) -> tuple[int, int]:
+    """The model entity ``(dim, tag)`` was cut from, following ``getParent``.
 
     A partitioned mesh moves elements onto partition entities; Gmsh's
-    ``getParent`` names the model entity each one was cut from, and
-    ``(-1, -1)`` on a model entity. The chain is followed to its model
-    entity. The result is that entity's tag when it has dimension
-    ``dim``, else ``-1``: a partition-interface entity's parent is the
-    entity of higher dimension the interface lies in, so its elements
-    have no source of their own dimension. A ghost entity
-    (``Mesh.PartitionCreateGhostCells``) has no parent and holds copies
-    of another partition's elements, so its elements are ``-1`` too, as
-    is a tag that is not positive (a MSH2 file may classify elements on
-    elementary tag ``0``).
+    ``getParent`` names the entity each one was cut from, and
+    ``(-1, -1)`` on a model entity. The chain is followed to its end; a
+    model entity is its own result.
     """
-    if gmsh.model.getType(dim, tag).startswith("Ghost"):
-        return -1
     cur_dim, cur_tag = dim, tag
     seen = {(cur_dim, cur_tag)}
     while True:
@@ -129,7 +120,53 @@ def _source_entity(dim: int, tag: int) -> int:
             )
         seen.add((p_dim, p_tag))
         cur_dim, cur_tag = p_dim, p_tag
-    return cur_tag if cur_dim == dim and cur_tag > 0 else -1
+    return cur_dim, cur_tag
+
+
+def _is_partition_artifact(dim: int, tag: int) -> bool:
+    """True when ``(dim, tag)`` holds elements partitioning added.
+
+    Two kinds of entity carry elements that are not elements of the
+    mesh, and both are skipped at extraction so a partitioned FEMData
+    holds each mesh element once, exactly as the unpartitioned mesh
+    does (#2582):
+
+    * a **partition-interface** entity
+      (``Mesh.PartitionCreateTopology``, on by default): Gmsh meshes
+      the cut between two partitions with new lower-dimensional
+      elements (lines between surfaces, triangles between volumes,
+      points where a cut meets a curve). Its parent is the entity of
+      *higher* dimension the cut lies in, so the chain ends on a model
+      entity of another dimension.
+    * a **ghost** entity (``Mesh.PartitionCreateGhostCells``): it holds
+      copies, under the same element ids, of the neighbouring
+      partition's elements, which are already extracted from the
+      partition that owns them.
+
+    A model entity (no parent) is never an artifact, whatever its tag:
+    a MSH2 file may classify real elements on elementary tag ``0``.
+    """
+    if gmsh.model.getType(dim, tag).startswith("Ghost"):
+        return True
+    m_dim, m_tag = _model_entity(dim, tag)
+    return (m_dim, m_tag) != (dim, tag) and m_dim != dim
+
+
+def _source_entity(dim: int, tag: int) -> int:
+    """The source-entity tag of elements classified on ``(dim, tag)``.
+
+    The tag of the model entity ``(dim, tag)`` was cut from
+    (:func:`_model_entity`) when that entity has dimension ``dim``,
+    else ``-1``. Extraction skips partition-interface and ghost
+    entities (:func:`_is_partition_artifact`) before asking, so ``-1``
+    remains only for a tag that is not positive (a MSH2 file may
+    classify elements on elementary tag ``0``); a ghost or interface
+    entity still answers ``-1`` here.
+    """
+    if gmsh.model.getType(dim, tag).startswith("Ghost"):
+        return -1
+    m_dim, m_tag = _model_entity(dim, tag)
+    return m_tag if m_dim == dim and m_tag > 0 else -1
 
 
 def extract_raw(dim: int | None = 2) -> dict:
@@ -154,8 +191,11 @@ def extract_raw(dim: int | None = 2) -> dict:
         source-entity stream: row-parallel to ``'ids'``, the
         tag of the model entity of the element's own dimension the
         element is classified on, a partition entity resolved to its
-        parent (:func:`_source_entity`), ``-1`` when that parent has
-        another dimension (a partition-interface element).
+        parent (:func:`_source_entity`).
+
+        Partition-interface and ghost elements are not extracted
+        (:func:`_is_partition_artifact`): a partitioned mesh yields the
+        same element ids as the unpartitioned one.
     """
     # --- nodes (full mesh) ---
     raw_tags, raw_coords, _ = gmsh.model.mesh.getNodes()
@@ -172,6 +212,8 @@ def extract_raw(dim: int | None = 2) -> dict:
     gmsh_dim = -1 if dim is None else dim
     blocks: dict[int, list[tuple[ndarray, ndarray, int]]] = {}
     for ent_dim, ent_tag in gmsh.model.getEntities(gmsh_dim):
+        if _is_partition_artifact(int(ent_dim), int(ent_tag)):
+            continue
         etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(
             dim=ent_dim, tag=ent_tag)
         if len(etypes) == 0:
@@ -402,6 +444,10 @@ def extract_partitions(dim: int | None) -> dict[int, dict]:
     dict[int, dict]
         ``{partition_id: {'node_ids': ndarray, 'element_ids': ndarray}}``
         Empty dict if the mesh is not partitioned.
+
+        Partition-interface and ghost entities are skipped
+        (:func:`_is_partition_artifact`), as in :func:`extract_raw`:
+        each element belongs to the one partition that owns it.
     """
     try:
         n_parts = gmsh.model.getNumberOfPartitions()
@@ -416,6 +462,8 @@ def extract_partitions(dim: int | None) -> dict[int, dict]:
     dims = [dim] if dim is not None else list(range(4))
     for d in dims:
         for ent_dim, ent_tag in gmsh.model.getEntities(d):
+            if _is_partition_artifact(int(ent_dim), int(ent_tag)):
+                continue
             try:
                 pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
             except Exception:
