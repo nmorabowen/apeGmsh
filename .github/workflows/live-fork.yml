@@ -108,10 +108,38 @@ jobs:
 
       - name: Run ladruno_fork tests
         run: |
+          # FEAST, Pardiso and the rest run on MKL's default code path.
+          echo "MKL_CBWR=${MKL_CBWR:-<unset>}"
           # -m replaces pyproject's addopts expression, so `not qt` is repeated.
           pytest tests -q -rs -p no:cacheprovider \
             -m "ladruno_fork and not qt and not subprocess and not bench" \
+            --deselect tests/interop/test_strut_tie.py::test_cook_mitchell_double_corbel_pushover_against_the_paper \
             --junitxml="$RUNNER_TEMP/live-fork.xml"
+
+      # TEMP (#2602): corbel softening peak depends on the MKL code path; remove when #2602 closes
+      - name: Run the Cook-Mitchell corbel test (MKL_CBWR=COMPATIBLE)
+        if: ${{ !cancelled() }}
+        env:
+          MKL_CBWR: COMPATIBLE
+        run: |
+          set -euo pipefail
+          echo "MKL_CBWR=${MKL_CBWR:-<unset>}"
+          # The warrant-lane rule needs every row test selected; this step
+          # runs one test that is not a row, so the rule stays with the main step.
+          unset APEGMSH_WARRANT_LANE
+          pytest -q -rs -p no:cacheprovider \
+            -m "ladruno_fork and not qt and not subprocess and not bench" \
+            tests/interop/test_strut_tie.py::test_cook_mitchell_double_corbel_pushover_against_the_paper \
+            --junitxml="$RUNNER_TEMP/live-fork-corbel.xml"
+          # A skip or a deselection is not a pass: exactly one passing case.
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          path = os.path.join(os.environ["RUNNER_TEMP"], "live-fork-corbel.xml")
+          cases = list(ET.parse(path).getroot().iter("testcase"))
+          ok = [c for c in cases if not any(c.find(t) is not None for t in ("failure", "error", "skipped"))]
+          if len(cases) != 1 or len(ok) != 1:
+              raise SystemExit(f"::error::corbel step: expected 1 passing case, got {len(ok)} of {len(cases)}")
+          PY
 
       # The pinned build carries MKL, so a `ladruno_mkl:` skip here means the
       # MKL runtime broke, not that the build lacks it: fail instead of
@@ -121,10 +149,10 @@ jobs:
         run: |
           python - <<'PY'
           import os, xml.etree.ElementTree as ET
-          path = os.path.join(os.environ["RUNNER_TEMP"], "live-fork.xml")
           bad = [
               f'{tc.get("classname")}::{tc.get("name")}: {sk.get("message", "")}'
-              for tc in ET.parse(path).getroot().iter("testcase")
+              for name in ("live-fork.xml", "live-fork-corbel.xml")
+              for tc in ET.parse(os.path.join(os.environ["RUNNER_TEMP"], name)).getroot().iter("testcase")
               if (sk := tc.find("skipped")) is not None
               and "ladruno_mkl:" in sk.get("message", "")
           ]
@@ -140,7 +168,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: live-fork-junit
-          path: ${{ runner.temp }}/live-fork.xml
+          path: |
+            ${{ runner.temp }}/live-fork.xml
+            ${{ runner.temp }}/live-fork-corbel.xml
           if-no-files-found: warn
 
       - name: Job summary
@@ -148,15 +178,17 @@ jobs:
         run: |
           python - <<'PY'
           import os, xml.etree.ElementTree as ET
-          path = os.path.join(os.environ["RUNNER_TEMP"], "live-fork.xml")
+          paths = [os.path.join(os.environ["RUNNER_TEMP"], name)
+                   for name in ("live-fork.xml", "live-fork-corbel.xml")]
+          paths = [p for p in paths if os.path.exists(p)]
           out = open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8")
-          if not os.path.exists(path):
+          if not paths:
               out.write("## live-fork\n\nNo junit XML was written.\n")
               raise SystemExit(0)
           n = {"passed": 0, "failed": 0, "skipped": 0}
           mkl = mismatch = 0
           failed = []
-          for tc in ET.parse(path).getroot().iter("testcase"):
+          for tc in (tc for p in paths for tc in ET.parse(p).getroot().iter("testcase")):
               sk = tc.find("skipped")
               if tc.find("failure") is not None or tc.find("error") is not None:
                   n["failed"] += 1
