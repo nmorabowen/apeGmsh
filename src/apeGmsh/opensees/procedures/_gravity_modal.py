@@ -367,7 +367,10 @@ class _GravityModalMixin(_ProcedureHost):
         zero response, or a Γ too low when only some floors lose their
         mass. These checks need the modes, so with ``p_delta=True`` they
         run after the gravity analysis (in the per-mode step, on the
-        gravity state), and with ``p_delta=False`` before it.
+        gravity state), and with ``p_delta=False`` before it. On those older
+        builds, mass on a node that an ``equalDOF`` ties to a fixed node is
+        refused too, although its Γ is right: put that mass on the fixed
+        node, or use a fork with WP-211.
 
         **No recorders.** Each probe leg and each return solve commits, and
         on the ``-increment`` route each leg calls the domain's recorders on
@@ -518,8 +521,10 @@ class _GravityModalMixin(_ProcedureHost):
                 f"period; got {lam.tolist()}."
             )
         periods = 2.0 * np.pi / np.sqrt(lam)
+        components = ("MX", "MY", "MZ")
         gamma = np.stack([
-            _modal_column(properties, "partiFactor", s.direction)
+            np.asarray(properties[f"partiFactor{components[s.direction - 1]}"],
+                       dtype=np.float64)
             for s in spectra
         ])
         coef = gamma * np.stack([s.sa(periods) for s in spectra])
@@ -587,7 +592,9 @@ class _GravityModalMixin(_ProcedureHost):
         # direction takes no part (a pure-torsion mode about a centred mass
         # node has Γ ~ 1e-12, not 0, and almost no translation there).
         meff = np.stack([
-            np.abs(_modal_column(properties, "partiMass", s.direction))
+            np.abs(np.asarray(
+                properties[f"partiMass{components[s.direction - 1]}"],
+                dtype=np.float64))
             for s in spectra
         ])
         active = np.any(
@@ -822,20 +829,6 @@ class _GravityModalMixin(_ProcedureHost):
         return steps
 
 
-def _modal_column(
-    properties: "Mapping[str, Sequence[float]]", name: str, direction: int,
-) -> "np.ndarray":
-    """The ``partiFactor`` / ``partiMass`` column of translational
-    ``direction``. With three columns ``modalProperties`` names the third
-    ``RMZ`` whatever ``ndm``: under ``ndm 3 ndf 3`` it is the Z translation."""
-    import numpy as np
-
-    key = f"{name}M{'XYZ'[direction - 1]}"
-    if key not in properties and direction == 3:
-        key = f"{name}RMZ"
-    return np.asarray(properties[key], dtype=np.float64)
-
-
 def _check_loaded_mass(
     properties: "Mapping[str, Sequence[float]]",
     unfixed: "np.ndarray",
@@ -852,7 +845,12 @@ def _check_loaded_mass(
     the nodal mass on DOFs no SP constraint fixes (``unfixed``), and Γ with
     it: all of it (a zero response) or one floor's share (Γ too low). Such a
     direction is refused, and so is a direction whose modes carry almost
-    none of the free mass (every Γ zero to round-off).
+    none of the free mass (every Γ zero to round-off, or not a number).
+
+    Known false refusal on those builds: mass on a node that an
+    ``equalDOF`` ties to a fixed node is not fixed by a ``fix``, so it is
+    expected free, but the old build drops it. Γ is right there (the node
+    cannot move), yet the direction is refused.
     """
     import numpy as np
 
@@ -883,9 +881,10 @@ def _check_loaded_mass(
                 "Mass on a DOF that a load pattern's sp holds is also left "
                 "out of the free mass."
             )
-        carried = float(np.sum(np.abs(
-            _modal_column(properties, "partiMass", s.direction))))
-        if carried <= _LOADED_MASS_TOL * float(free[d]):
+        carried = float(np.sum(np.abs(np.asarray(
+            properties[f"partiMassM{'XYZ'[d]}"], dtype=np.float64))))
+        # Written so that a NaN effective mass is refused too.
+        if not carried > _LOADED_MASS_TOL * float(free[d]):
             raise BridgeError(
                 f"{context}: the modes carry an effective mass of "
                 f"{carried:.3e} along direction {s.direction}, against a "

@@ -244,29 +244,11 @@ def test_a_direction_without_nodal_mass_falls_to_the_gamma_guard() -> None:
         _run(props, 2, masses=masses)
 
 
-# -- ndm 3, ndf 3: the third column is named RMZ ---------------------------------
-
-def test_direction_3_reads_the_rmz_column_under_ndf_3() -> None:
-    """With three columns modalProperties names the third RMZ whatever
-    ndm; under ndm 3 ndf 3 it is the Z translation. Direction 3 used to
-    raise KeyError on partiFactorMZ."""
-    m = M_TOT / 4
-    masses: Rows = {t: (m, m, m) for t in TOPS}
-    props = {
-        "totalMass": [M_TOT] * 3,
-        "totalFreeMass": [M_TOT] * 3,
-        "partiFactorMX": [1.0, 0.0, 0.0],
-        "partiFactorMY": [0.0, 1.0, 0.0],
-        "partiFactorRMZ": [0.0, 0.0, 1.0],
-        "partiMassMX": [M_TOT, 0.0, 0.0],
-        "partiMassMY": [0.0, M_TOT, 0.0],
-        "partiMassRMZ": [0.0, 0.0, M_TOT],
-    }
-    with pytest.raises(_PastTheGuards):
-        _run(props, 1, 2, 3, masses=masses)
-    props["partiMassRMZ"] = [0.0, 0.0, 0.0]
-    with pytest.raises(BridgeError, match="direction 3, .* zero to round-off"):
-        _run(props, 3, masses=masses)
+def test_a_nan_effective_mass_is_refused() -> None:
+    props = _properties(free=M_TOT, gamma_x=(1.0, 0.0, 0.0))
+    props["partiMassMX"][2] = float("nan")
+    with pytest.raises(BridgeError, match="effective mass of nan"):
+        _run(props, 1)
 
 
 # -- A1-3: the element-mass refusal is unchanged ---------------------------------
