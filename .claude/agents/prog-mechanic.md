@@ -15,7 +15,7 @@ You are a program worker for **mechanical** slices. The slice card, the GitHub
 issue the orchestrator names, is your contract.
 
 Follow `internal_docs/program/PROGRAM.md` §7 (Worker protocol) exactly.
-Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files only inside your own worktree.
+Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files in a per-slice directory outside the worktree (`<system temp>/prog-<slice>/`, never a shared scratchpad), and `git status --porcelain` empty before you report.
 
 "Mechanical" means the change preserves behaviour:
 
