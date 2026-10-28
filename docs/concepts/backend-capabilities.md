@@ -66,20 +66,27 @@ A fork build recent enough to answer `ladrunoSchema()` (fork PR #972)
 also says what it can do: the commands its engine registers and the option
 tokens each fail-closed parser accepts. `get_backend_info()` reads it, so
 `info.supports_option("LadrunoRCConcrete", "-implexControl")` answers
-`True` or `False`. An older build, a schema version other than 0, or a
-schema that disagrees with `ladrunoBuild()` reads as *unknown
-capabilities*, and the same query answers `None`. An unknown answer is
-never `False`, and it never changes whether the build counts as the fork.
-Command answers speak only for the in-process engine, not for a Tcl
-binary that a subprocess runs.
+`True` or `False`. apeGmsh reads schema versions 0 and 1. Version 1 is
+version 0 plus a `capabilities` list of the behaviours the build promises,
+read on `info.schema.capabilities`; every other key keeps its version 0
+meaning. A version 0 schema (older fork builds) reads with an empty
+`capabilities` set. An older build with no `ladrunoSchema()`, a schema
+version other than 0 or 1, a schema whose keys are not exactly that
+version's, or a schema that disagrees with `ladrunoBuild()` reads as
+*unknown capabilities*, and the same query answers `None`. An unknown
+answer is never `False`, and it never changes whether the build counts as
+the fork. Command answers speak only for the in-process engine, not for a
+Tcl binary that a subprocess runs.
 
-!!! warning "The fork is a source build"
+!!! warning "The fork is mostly a source build"
 
     The Ladruno fork lives at
     [nmorabowen/OpenSees](https://github.com/nmorabowen/OpenSees) and
-    publishes no wheels or binary releases. Tier 2 currently means
-    compiling OpenSees yourself. If you are evaluating apeGmsh, plan on
-    tiers 0 and 1 and treat tier 2 as opt-in.
+    publishes no wheels. The build that apeGmsh's nightly `live-fork` lane
+    tests, the one `FORK_PIN` names, is a Linux release tarball built for
+    Python 3.11 and linked against MKL. For any other platform, such as
+    Windows, tier 2 still means compiling OpenSees yourself. If you are
+    evaluating apeGmsh, plan on tiers 0 and 1 and treat tier 2 as opt-in.
 
 ## How a missing capability fails
 
