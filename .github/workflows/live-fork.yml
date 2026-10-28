@@ -112,6 +112,7 @@ jobs:
       # MKL runtime broke, not that the build lacks it: fail instead of
       # letting FEAST/Pardiso go untested.
       - name: Assert no ladruno_mkl skips
+        if: always()
         run: |
           python - <<'PY'
           import os, xml.etree.ElementTree as ET
@@ -126,6 +127,16 @@ jobs:
               print(f"::error::{b}")
           raise SystemExit(1 if bad else 0)
           PY
+
+      # Per-test outcomes (which FEAST / Pardiso cases passed), since -q
+      # prints no passing ids.
+      - name: Upload the junit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-fork-junit
+          path: ${{ runner.temp }}/live-fork.xml
+          if-no-files-found: warn
 
       - name: Job summary
         if: always()
