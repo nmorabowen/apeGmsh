@@ -85,6 +85,11 @@ _SETTLE_STEPS = 10
 #: every requested direction, is not probed.
 _NEGLIGIBLE_MASS = 1e-12
 
+#: A spectrum direction whose free mass (``totalFreeMass``) is at most this
+#: fraction of its nodal mass is refused: the modes act on none of the mass
+#: (gap 6, mass on MP-retained DOFs under Transformation before WP-211).
+_FREE_MASS_TOL = 1e-9
+
 #: On the fork's ``-increment`` route, every imposed nodal translation must
 #: equal the static leg's ``± a φ / λ`` to this fraction of the probe.
 _IMPOSED_TOL = 1e-6
@@ -346,6 +351,14 @@ class _GravityModalMixin(_ProcedureHost):
         the nodes (``g.masses`` on the session, or ``ops.mass`` /
         ``mass_from_model``): that is the supported route.
 
+        **The modes must carry the loaded mass.** A spectrum direction is
+        refused when the nodes carry mass along it but ``modalProperties``
+        counts no free mass there (``totalFreeMass``), or when every mode's
+        Γ along it is zero. Both mean a zero response. The first is what
+        stock OpenSees and Ladruno forks older than ``ladruno-v20261027``
+        (WP-211) give for mass on the constrained nodes of a rigid diaphragm
+        under ``constraints Transformation``.
+
         **No recorders.** Each probe leg and each return solve commits, and
         on the ``-increment`` route each leg calls the domain's recorders on
         its trial state, so a declared recorder would write extra rows for
@@ -380,7 +393,9 @@ class _GravityModalMixin(_ProcedureHost):
         BridgeError
             The model carries element mass (refused: the modal force is
             built from nodal masses), declares a recorder, or a spectrum
-            names a direction outside ``1..ndm``.
+            names a direction outside ``1..ndm``, or a direction a spectrum
+            loads has nodal mass but no free mass, or a zero Γ in every
+            mode.
         ValueError
             No spectra or extractors, or an extractor's length changed.
         RuntimeError
@@ -521,6 +536,7 @@ class _GravityModalMixin(_ProcedureHost):
                 "the nodes instead (g.masses, or ops.mass / "
                 "mass_from_model), the supported route."
             )
+        _check_loaded_mass(properties, nodal, spectra, context)
         massed = [t for t in tags if np.any(masses[t] != 0.0)]
 
         ts_tag = 1 + max(
@@ -787,6 +803,63 @@ class _GravityModalMixin(_ProcedureHost):
                 "λ = 1 in a whole number of steps; declare dlam = 1/N."
             )
         return steps
+
+
+def _check_loaded_mass(
+    properties: "Mapping[str, Sequence[float]]",
+    nodal: "np.ndarray",
+    spectra: "Sequence[DesignSpectrum]",
+    context: str,
+) -> None:
+    """Refuse a spectrum direction whose modes cannot carry its mass (gap 6).
+
+    Γ divides by the free mass, ``totalFreeMass``. Stock OpenSees and forks
+    older than ``ladruno-v20261027`` (WP-211) count a DOF that the
+    ``Transformation`` handler retains through an MP constraint as fixed, so
+    the mass on a rigid diaphragm's constrained nodes drops out of it:
+    ``totalMass`` still matches the nodes, but the free mass and every Γ are
+    zero and the response comes out as zero, silently. A direction with
+    nodal mass and no free mass is refused, and so is a direction whose
+    modes all have a zero Γ.
+    """
+    import numpy as np
+
+    if "totalFreeMass" not in properties:
+        raise BridgeError(
+            f"{context}: modalProperties -return gives no 'totalFreeMass' on "
+            "this build, so the mass the modes act on cannot be checked "
+            "against the nodal mass. Use a build whose modalProperties "
+            "returns it (stock OpenSees since 2022, every Ladruno fork "
+            "release)."
+        )
+    free = np.asarray(properties["totalFreeMass"], dtype=np.float64)
+    components = ("MX", "MY", "MZ")
+    for s in spectra:
+        d = s.direction - 1
+        if nodal[d] > 0.0 and abs(float(free[d])) <= _FREE_MASS_TOL * nodal[d]:
+            raise BridgeError(
+                f"{context}: the spectrum along direction {s.direction} acts "
+                f"on a free mass of {float(free[d]):.6g} (modalProperties "
+                f"totalFreeMass) while the nodes carry {float(nodal[d]):.6g} "
+                "in that direction, so every Γ is zero and so would the "
+                "response be. The likely cause is nodal mass on DOFs an MP "
+                "constraint retains under constraints Transformation (the "
+                "constrained nodes of a rigid diaphragm or rigid link), "
+                "which stock OpenSees and Ladruno forks older than "
+                "ladruno-v20261027 (WP-211) count as fixed. Use a fork with "
+                "WP-211, put the mass on the master node, or declare "
+                "constraints Penalty or Lagrange."
+            )
+        gamma = np.asarray(properties[f"partiFactor{components[d]}"],
+                           dtype=np.float64)
+        if not np.any(gamma):
+            raise BridgeError(
+                f"{context}: every mode has a zero participation factor Γ "
+                f"along direction {s.direction} (partiFactor{components[d]}), "
+                "so the spectrum along it gives a zero response. Request "
+                "more modes, or check that the mass the modes act on "
+                "(modalProperties totalFreeMass) is the model's."
+            )
 
 
 def _rsa_increment_available(ops: Any) -> "bool | None":
