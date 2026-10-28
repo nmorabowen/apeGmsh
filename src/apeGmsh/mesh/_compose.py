@@ -3030,22 +3030,75 @@ def _merge_bundle_into_fem(
         units=merged_units,
     )
 
-    # ── 11. Now append the bundle's records via the with_*
-    #       transforms.  This routes through the existing
-    #       constraint / load / mass dispatch and avoids re-implementing
-    #       the routing logic.  Cheap per-record clone of the
-    #       FEMData (shallow copy + record-set replace) — fine for
-    #       compose-time merges.
-    for rec in bundle.node_constraints:
-        new_fem = new_fem.with_constraint(rec)
-    for rec in bundle.elem_constraints:
-        new_fem = new_fem.with_constraint(rec)
-    for rec in bundle.nodal_loads:
-        new_fem = new_fem.with_load(rec)
-    for rec in bundle.element_loads:
-        new_fem = new_fem.with_load(rec)
-    for rec in bundle.sp_records:
-        new_fem = new_fem.with_load(rec)
+    # ── 11. Append the bundle's constraint / load / SP records.  One
+    #       pass routes every record to its broker bucket, then one
+    #       ``_replaced`` swaps the five record sets in (#2566).  Calling
+    #       ``with_constraint`` / ``with_load`` once per record copied
+    #       the whole record list and both composites each time, which is
+    #       quadratic: 50,001 equalDOF rows cost ~9 s of a 13 s bridge.
+    #       The routing is ``FEMData.with_constraint`` / ``with_load``'s
+    #       dispatch, in the same record order, refusing an unknown
+    #       record type with the same ``TypeError`` for the same record.
+    #       Every record is routed before anything is built, so a refusal
+    #       leaves nothing half-extended.
+    from .._kernel.records._constraints import (
+        NodePairRecord, NodeGroupRecord, NodeToSurfaceRecord,
+        InterpolationRecord, SurfaceCouplingRecord,
+    )
+    from .._kernel.records._loads import (
+        NodalLoadRecord, ElementLoadRecord, SPRecord,
+    )
+
+    add_node_constraints: list = []
+    add_elem_constraints: list = []
+    add_nodal_loads: list = []
+    add_element_loads: list = []
+    add_sp: list = []
+    for rec in (*bundle.node_constraints, *bundle.elem_constraints):
+        if isinstance(rec, (NodePairRecord, NodeGroupRecord,
+                            NodeToSurfaceRecord)):
+            add_node_constraints.append(rec)
+        elif isinstance(rec, (InterpolationRecord, SurfaceCouplingRecord)):
+            add_elem_constraints.append(rec)
+        elif isinstance(rec, SPRecord):
+            add_sp.append(rec)
+        else:
+            raise TypeError(
+                f"FEMData.with_constraint: unsupported record type "
+                f"{type(rec).__name__!r} — expected a ConstraintRecord "
+                f"subclass or SPRecord."
+            )
+    for rec in (*bundle.nodal_loads, *bundle.element_loads,
+                *bundle.sp_records):
+        if isinstance(rec, NodalLoadRecord):
+            add_nodal_loads.append(rec)
+        elif isinstance(rec, ElementLoadRecord):
+            add_element_loads.append(rec)
+        elif isinstance(rec, SPRecord):
+            add_sp.append(rec)
+        else:
+            raise TypeError(
+                f"FEMData.with_load: unsupported record type "
+                f"{type(rec).__name__!r} — expected NodalLoadRecord, "
+                f"ElementLoadRecord, or SPRecord."
+            )
+    if (add_node_constraints or add_elem_constraints or add_nodal_loads
+            or add_element_loads or add_sp):
+        n_set, e_set = new_fem.nodes, new_fem.elements
+        new_fem = new_fem._replaced(
+            nodes=new_fem._replaced_nodes(
+                constraints=type(n_set.constraints)(
+                    [*n_set.constraints, *add_node_constraints]),
+                loads=type(n_set.loads)([*n_set.loads, *add_nodal_loads]),
+                sp=type(n_set.sp)([*n_set.sp, *add_sp]),
+            ),
+            elements=new_fem._replaced_elements(
+                constraints=type(e_set.constraints)(
+                    [*e_set.constraints, *add_elem_constraints]),
+                loads=type(e_set.loads)(
+                    [*e_set.loads, *add_element_loads]),
+            ),
+        )
     # Masses were merged columnar into ``new_nodes`` above (ADR 0065 v2 /
     # plan_emit_memory_columnar.md C1–C3) — no per-record ``with_mass``
     # append loop here.
