@@ -242,15 +242,24 @@ class _InjectingOps:
     on: ``force`` newtons added to ``nodeReaction`` at one free DOF (an
     unbalanced force of exactly that size), or ``analyze`` failing (a run
     that stops converging; OpenSees reverts a failed step, so the domain
-    stays at the last accepted one)."""
+    stays at the last accepted one). ``fail_calls`` fails those 1-based
+    ``analyze`` calls only, which forces a halving."""
 
     def __init__(
-        self, real: object, *, from_step: int, force: float = 0.0, fail: bool = False
+        self,
+        real: object,
+        *,
+        from_step: int = 1,
+        force: float = 0.0,
+        fail: bool = False,
+        fail_calls: frozenset[int] = frozenset(),
     ) -> None:
         self._real = real
         self._from_step = from_step
         self._force = force
         self._fail = fail
+        self._fail_calls = fail_calls
+        self.calls = 0
         self.accepted = 0
         self.node: int | None = None
 
@@ -258,6 +267,9 @@ class _InjectingOps:
         return getattr(self._real, name)
 
     def analyze(self, *args: object) -> int:
+        self.calls += 1
+        if self.calls in self._fail_calls:
+            return -1
         if self._fail and self.accepted + 1 >= self._from_step:
             return -1
         rc = int(self._real.analyze(*args))
@@ -370,42 +382,22 @@ def test_pushover_refuses_a_run_that_stops_converging(
     assert "step 3 did not converge" in str(err) and "2 halvings" in str(err)
 
 
-def test_step_fallbacks_loosen_the_displacement_tolerance_only() -> None:
-    """Before #2602 a fallback ran ``NormDispIncr`` at 100 × the tolerance
-    and nothing else, so it could accept a state far out of equilibrium.
-    Every attempt now carries the same force tolerance."""
-    calls: list[tuple[str, tuple[object, ...]]] = []
-
-    class _Live:
-        attempts = 0
-
-        def test(self, *args: object) -> None:
-            calls.append(("test", args))
-
-        def algorithm(self, *args: object) -> None:
-            calls.append(("algorithm", args))
-
-        def analyze(self, n: int) -> int:
-            self.attempts += 1
-            return 0 if self.attempts == 3 else -1  # the second fallback converges
-
-    fallbacks = (
-        "KrylovNewton",
-        ("NewtonLineSearch", "-type", "Bisection"),
-        "ModifiedNewton",
-    )
-    assert _strut_tie._step(_Live(), fallbacks, 1e-6, 100.0, 250.0) == 1
-    tests = [args for kind, args in calls if kind == "test"]
-    assert [t[0] for t in tests] == ["NormDispAndUnbalance"] * 3
-    assert [t[2] for t in tests] == [250.0] * 3  # the force tolerance, never loosened
-    assert tests[0][1] == 1e-6 and tests[0][3] == 60
-    assert all(t[1] == pytest.approx(1e-4) and t[3] == 200 for t in tests[1:])
-    algorithms = [args for kind, args in calls if kind == "algorithm"]
-    assert algorithms == [
-        ("KrylovNewton",),
-        ("NewtonLineSearch", "-type", "Bisection"),
-        ("Newton",),
-    ]
+def test_pushover_stops_at_the_target_after_halvings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two forced halvings (steps 2 and 3, each failing Newton and the three
+    fallbacks once) leave increments of 0.01, 0.005, 0.0025, 0.0025, 0.005;
+    growing back to 0.01 the last step would end at 0.035 mm, past the
+    0.03 mm target. It stops at the target instead."""
+    holder = _inject(monkeypatch, fail_calls=frozenset({2, 3, 4, 5, 7, 8, 9, 10}))
+    result = strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
+    curve = result.overlays["fe_curve"]
+    assert holder["ops"].accepted == len(curve["points"]) - 1 == 6
+    assert curve["stopped"] == "target"
+    assert curve["control"]["reached"] == pytest.approx(0.03, rel=1e-9)
+    assert curve["reached_fraction"] == pytest.approx(1.0, rel=1e-9)
+    deltas = [p[0] for p in curve["points"]]
+    assert deltas[-1] == pytest.approx(0.03, rel=1e-9)
 
 
 @pytest.mark.parametrize("bad", [0.0, -1e-3, float("nan")])
@@ -531,7 +523,15 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
     prediction, 1.20 × the measured 502 kN) where ``LadrunoConcrete3D``'s
     implicit return map stalls at 410 kN. The two materials therefore
     bracket the model; the bearing-element stress path recorded here is
-    the data a fork investigation of the Ladruno return map starts from."""
+    the data a fork investigation of the Ladruno return map starts from.
+
+    #2602: the plateau is reached by the fallbacks, not plain Newton, and at
+    the default 100 × loosened fallback tolerance their states sit up to
+    about 0.6 % of the load out of equilibrium, on either side of the 0.5 %
+    check depending on the path. The fallbacks here run at the base
+    tolerance (``fallback_tolerance_factor=1``). That is a tighter run, not
+    a looser one: the plateau stays at about 600 kN per side, and each step
+    lands well inside the check."""
     model = _load("cook_mitchell_corbel.stm.json")
     bars = _load("cook_mitchell_bars.json")
     result = strut_tie_pushover(
@@ -543,9 +543,11 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
         weld_plates=True,
         extra_bars=bars,
         material="asd",
+        fallback_tolerance_factor=1.0,
     )
     curve = result.overlays["fe_curve"]
     per_side = curve["capacity"] / 2.0
+    assert curve["equilibrium"]["max_relative_unbalance"] < 0.2 * 5e-3
     assert curve["material"] == "asd"
     assert curve["backend"] in ("ladruno-fork", "stock-openseespy")
     assert curve["element"] == "Tri31"
