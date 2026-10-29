@@ -383,6 +383,13 @@ class _GravityModalMixin(_ProcedureHost):
         The driver always adds the extractor ``"base_shear"`` (the total
         support reaction per translational direction), so
         :meth:`SpectrumModalResult.base_shear` gives ``V_t`` per direction.
+        The result also carries each mode's inertia force ``m φ Γ Sa`` at
+        every massed node (:attr:`SpectrumModalResult.inertia`), from which
+        :meth:`SpectrumModalResult.storey_forces` sums storey shears and
+        moments per mode; each mode's total inertia is checked against its
+        total base reaction, and an
+        :class:`~apeGmsh.opensees.analysis.spectrum.InertiaBalanceWarning` is
+        issued when they differ by more than ``1e-3`` of the inertia.
 
         Parameters
         ----------
@@ -465,9 +472,10 @@ class _GravityModalMixin(_ProcedureHost):
             num_modes, p_delta=p_delta, solver=solver, context=context,
             hook=hook,
         )
-        gravity_values, per_mode, labels, drift = cast(
+        gravity_values, per_mode, labels, drift, inertia = cast(
             "tuple[dict[str, np.ndarray], dict[str, np.ndarray], "
-            "dict[str, tuple[str, ...] | None], tuple[float, float]]",
+            "dict[str, tuple[str, ...] | None], tuple[float, float], "
+            "tuple[np.ndarray, tuple[int, ...], np.ndarray]]",
             holder["out"],
         )
         if not p_delta:
@@ -478,14 +486,19 @@ class _GravityModalMixin(_ProcedureHost):
                 name: _evaluate(ex, ops, name, None, context)
                 for name, ex in named.items()
             }
-        return SpectrumModalResult(
+        result = SpectrumModalResult(
             modal=modal,
             spectra=spectra_t,
             gravity_values=gravity_values,
             per_mode=per_mode,
             labels=labels,
             restore_drift=drift,
+            inertia=inertia[0],
+            inertia_nodes=inertia[1],
+            inertia_coords=inertia[2],
         )
+        result.check_inertia_balance(warn=True)
+        return result
 
     def _per_mode_spectrum(
         self,
@@ -496,7 +509,7 @@ class _GravityModalMixin(_ProcedureHost):
         extractors: "Mapping[str, ResponseExtractor]",
         *,
         context: str,
-    ) -> "tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, tuple[str, ...] | None], tuple[float, float]]":
+    ) -> "tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, tuple[str, ...] | None], tuple[float, float], tuple[np.ndarray, tuple[int, ...], np.ndarray]]":
         """The per-mode loop of ADR 0124 D4, about the domain's current
         committed state; leaves the domain back at it."""
         import numpy as np
@@ -562,6 +575,11 @@ class _GravityModalMixin(_ProcedureHost):
                     unfixed[d] += m[d]
         _check_loaded_mass(properties, unfixed, spectra, context)
         massed = [t for t in tags if np.any(masses[t] != 0.0)]
+        # Each mode's inertia force m φ Γ Sa at the massed nodes (A5-3): the
+        # load whose static response the legs measure, kept for the storey
+        # forces and the inertia / base-reaction balance.
+        width = max((masses[t].size for t in massed), default=ndm)
+        inertia = np.zeros((len(spectra), lam.size, len(massed), width))
 
         ts_tag = 1 + max(
             (int(tag) for p in self._primitives if isinstance(p, TimeSeries)
@@ -743,6 +761,9 @@ class _GravityModalMixin(_ProcedureHost):
                     f"{context}: mode {k + 1} has effective mass but no node "
                     "translates in it."
                 )
+            for i, t in enumerate(massed):
+                f = masses[t] * phi[t][:masses[t].size]
+                inertia[:, k, i, :f.size] = coef[:, k, None] * f[None, :]
             amp = probe * float(lam[k]) / peak
             # Called before the loop moves on, so the closure's k, phi and
             # amp are this mode's.
@@ -778,7 +799,10 @@ class _GravityModalMixin(_ProcedureHost):
                 f"{drift[0]:.3e}, reaction {drift[1]:.3e}; limit "
                 f"{_RESTORE_TOL:g}). Tighten the declared convergence test."
             )
-        return ref_values, per_mode, labels, drift
+        coords = np.asarray([ops.nodeCoord(t)[:ndm] for t in massed],
+                            dtype=np.float64).reshape(len(massed), ndm)
+        return (ref_values, per_mode, labels, drift,
+                (inertia, tuple(massed), coords))
 
 
     def _gravity_steps(self, context: str) -> int:
