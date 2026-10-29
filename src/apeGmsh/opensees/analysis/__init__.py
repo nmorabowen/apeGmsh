@@ -68,6 +68,7 @@ from .modal import (
     ParallelModalResult,
     RandomResponseResult,
     ResponseSpectrumResult,
+    RsaCombineWarning,
     SteadyStateResult,
 )
 from .constraint_handler import Plain as PlainConstraints
@@ -191,6 +192,7 @@ __all__ = [
     # modal-response committing commands (ADR 0075)
     "ModalHistoryResult",
     "ResponseSpectrumResult",
+    "RsaCombineWarning",
     # frequency-domain sweeps (ADR 0075 tier 2)
     "FrequencyResponseResult",
     "SteadyStateResult",

@@ -209,8 +209,9 @@ is frozen there (``verbs.EMITTER_METHOD_COUNT``; the lock in
 OpenSees verb is a ``command()`` token with a ``via="command"`` row in
 ``verbs.VERBS``, never a new method. The channel is fail-closed:
 :func:`command_row` raises ``ValueError`` for any token without such a
-row, on every emitter, and no row ships yet (K4 moves the typed fork
-verbs onto it). Only a registered primitive's ``_emit`` with a literal
+row, on every emitter. The first rows are the fork's chain M
+``residualModes`` / ``ritzVectors`` (A3a); K4 moves the typed fork verbs
+onto it. Only a registered primitive's ``_emit`` with a literal
 verb may call it (the lock scans the callers); there is no user-facing
 ``ops.command(...)``.
 """

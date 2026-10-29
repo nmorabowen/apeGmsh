@@ -521,7 +521,7 @@ CLASS: dict[str, str] = {
         "update_material_stage", "addToParameter", "step_hook_ramp",
         "flip_element_stage", "rayleigh", "modal_damping", "eigen",
         "profiler", "command", "update_parameter", "set_node_vel",
-        "set_node_accel")},
+        "set_node_accel", "residualModes", "ritzVectors")},
     **{v: "part" for v in (
         "section_close", "patch", "fiber", "layer", "pattern_close", "load",
         "eleLoad", "sp", "recorder_declaration_begin",
@@ -554,6 +554,7 @@ ROWS_STORE: dict[str, tuple[str, ...]] = {
     "rayleigh": ("commands", "rayleigh"),
     "modal_damping": ("commands",), "eigen": ("commands",),
     "profiler": ("commands",), "command": ("commands",),
+    "residualModes": ("commands",), "ritzVectors": ("commands",),
 }
 
 #: ``tagged`` stores: group path below a scope -> allocator kind.
@@ -753,6 +754,10 @@ def test_every_declaration_verb_has_its_key(tmp_path: Path) -> None:
     # ``command`` has no bridge caller yet (ADR 0114 Q7): a row of it would
     # meet no open declaration and refuse at write, which
     # ``test_tagless_row_without_a_declaration_refuses`` pins for the path.
-    assert set(ROWS_STORE) - {"command"} <= seen, sorted(
-        set(ROWS_STORE) - {"command"} - seen)
+    # ``residualModes`` / ``ritzVectors`` (A3a) run only in the live
+    # one-shots (``apeSees.residual_modes`` / ``ritz_vectors``), so no
+    # archived model carries one either.
+    unreached = {"command", "residualModes", "ritzVectors"}
+    assert set(ROWS_STORE) - unreached <= seen, sorted(
+        set(ROWS_STORE) - unreached - seen)
     assert {"region", "rayleigh_region"} <= seen

@@ -15,7 +15,7 @@
 # may only go down (name the argv, or add a roster sample, and delete
 # the line); N_NOSTORE pins the nostore lines exactly.
 N_LEDGER = 58
-N_NOSTORE = 109
+N_NOSTORE = 111
 unnamed damping.URD
 unnamed damping.URDbeta
 unnamed nDMaterial.DruckerPrager
@@ -149,6 +149,8 @@ nostore integrator.LadrunoIndirectControl
 nostore integrator.LadrunoLoadControl
 nostore integrator.LoadControl
 nostore integrator.Newmark
+nostore modalBasis.ResidualModes
+nostore modalBasis.RitzVectors
 nostore numberer.AMD
 nostore numberer.LadrunoParallelRCM
 nostore numberer.ParallelPlain
