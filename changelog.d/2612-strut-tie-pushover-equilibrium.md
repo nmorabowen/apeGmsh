@@ -35,8 +35,9 @@ that refusal. Its bracket, 0.7 × 471 kN < per side < 1.1 × 502 kN with
 map fails loudly (#2602 route 2). On the corbel the refusal comes at step 2,
 the branch point of the diagnosis, with an unbalanced force of 1.3 % of the
 load. The `ASDConcrete3D` corbel test now runs its fallbacks at the base
-tolerance (`fallback_tolerance_factor=1`) and still reaches its plateau of
-about 600 kN per side, every step well inside the check.
+tolerance (`fallback_tolerance_factor=1`) and stops at 0.9 mm, on the rising
+branch above 1.05 × the prediction. Its plateau of about 600 kN per side,
+past about 1 mm, converges on some CI runners and not on others.
 
 A run whose increment was halved also stops at the target now. Before, the
 last step could carry it past (`reached_fraction` 1.003 on that corbel).
