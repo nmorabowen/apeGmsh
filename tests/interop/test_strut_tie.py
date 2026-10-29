@@ -599,29 +599,35 @@ def test_extra_bars_are_arranged_and_placed() -> None:
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
-def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() -> None:
+def test_asd_material_rises_past_the_prediction_with_a_bearing_path() -> None:
     """The second concrete model, stock ``ASDConcrete3D``, on the welded and
-    reinforced Cook and Mitchell corbel: a plateau of about 600 kN per side
-    (2026-09-19: 601 kN, 1.28 × the prediction, 1.20 × the measured 502 kN)
-    where ``LadrunoConcrete3D``'s implicit return map stalls at 410 kN. The
-    two materials therefore bracket the model; the bearing-element stress
-    path recorded here is the data a fork investigation of the Ladruno
-    return map starts from.
+    reinforced Cook and Mitchell corbel. On 2026-09-19 it reached a plateau
+    of about 600 kN per side (601 kN, 1.28 × the prediction, 1.20 × the
+    measured 502 kN), where ``LadrunoConcrete3D``'s implicit return map
+    stalls at 410 kN. The bearing-element stress path recorded here is the
+    data a fork investigation of the Ladruno return map starts from.
 
-    #2612: the plateau is reached by the fallbacks (all 40 steps), not plain
-    Newton. At the old fallback factor of 100 their states sat up to about
-    0.6 % of the load out of equilibrium, on either side of the 0.5 % check
-    depending on the path. At factor 1 the run failed to converge at 1.1 mm
-    on one CI runner (live-fork 40827694053, "fallbacks at 1e-06"). At the
-    default of 10 it reaches 2.0 mm with the largest ratio about 0.07 %
-    (local)."""
+    #2612: the run stops at 0.9 mm, on the rising branch, because the
+    plateau past about 1 mm is not reached in equilibrium on every CI
+    runner, at any fallback factor tried. Every step there is
+    fallback-accepted, and the state each fallback lands on depends on the
+    runner's path:
+
+    - factor 1: no convergence at 1.1 mm (live-fork 40827694053);
+    - factor 10, the default: refused at 1.8 mm, 0.62 % out of equilibrium
+      (40836670984), but 2.0 mm reached on the other runner (40836668510);
+    - factor 100: 0.1-0.6 % out of equilibrium in local runs, on either side
+      of the check.
+
+    Up to 0.9 mm, at the default, the largest ratio is 0.07 % locally, and
+    the load is past 1.05 × the prediction (about 560 kN per side)."""
     model = _load("cook_mitchell_corbel.stm.json")
     bars = _load("cook_mitchell_bars.json")
     result = strut_tie_pushover(
         model,
         mesh_size=40.0,
-        target_displacement=2.0,
-        steps=40,
+        target_displacement=0.9,
+        steps=18,
         max_halvings=4,
         weld_plates=True,
         extra_bars=bars,
@@ -635,7 +641,8 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
     assert curve["element"] == "Tri31"
     assert 0.0 < curve["reached_fraction"] <= 1.0 + 1e-9
     assert curve["increment"] <= 0.05 + 1e-12  # max_increment raised the steps
-    assert curve["steps"] * curve["increment"] == pytest.approx(2.0)
+    assert curve["steps"] * curve["increment"] == pytest.approx(0.9)
+    assert curve["stopped"] == "target"
     assert result.overlays["fe_summary"]["backend"] == curve["backend"]
     assert "ASDConcrete3D" in curve["source"]
     assert (

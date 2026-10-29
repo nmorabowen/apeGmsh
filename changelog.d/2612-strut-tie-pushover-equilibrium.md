@@ -50,8 +50,11 @@ that refusal. Its bracket, 0.7 × 471 kN < per side < 1.1 × 502 kN with
 `stopped == "post_peak"`, is unchanged, and returns when the fork's return
 map fails loudly (#2602 route 2). On the corbel the refusal comes at step 2,
 the branch point of the diagnosis, with an unbalanced force of 1.3 % of the
-load. The welded `ASDConcrete3D` corbel test still reaches its plateau of
-about 600 kN per side at 2.0 mm under the new default.
+load. The welded `ASDConcrete3D` corbel test now stops at 0.9 mm, on the
+rising branch above 1.05 × the prediction. Its plateau of about 600 kN per
+side, past about 1 mm, is reached in equilibrium on some CI runners and not
+on others, at every fallback factor tried (1, 10, 100). Every plateau step is
+fallback-accepted.
 
 A run whose increment was halved also stops at the target now. Before, the
 last step could carry it past (`reached_fraction` 1.003 on that corbel).
