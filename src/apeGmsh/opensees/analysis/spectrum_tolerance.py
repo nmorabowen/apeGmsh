@@ -5,9 +5,9 @@ An OpenSees RSA result compared with a reference program (ETABS, say)
 never sees exactly the same periods. A flat tolerance then fails for a
 difference the period mismatch fully explains. This module turns the
 period mismatch into the tolerance a parity gate should use, reported as
-``base + period`` (:class:`ParityTolerance`) so a reader sees why a gate is
-wider than its base. The two parts compound, ``total = (1 + base)(1 +
-period) - 1``, so a base on top of an exact period part stays exact.
+its base and period parts compounded, ``total = (1 + base)(1 + period) - 1``
+(:class:`ParityTolerance`), so a reader sees why a gate is wider than its
+base. Compounding keeps a base on top of an exact period part exact.
 
 * :func:`spectrum_slope` — the local slope ``s = d ln Sa / d ln T``, one-sided
   so a corner of the spectrum gives a defined value;
