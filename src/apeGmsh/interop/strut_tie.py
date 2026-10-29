@@ -798,9 +798,20 @@ def _step(
 ConcreteModel = Literal["ladruno", "asd"]
 
 EQUILIBRIUM_TOLERANCE_0_005: float = 5e-3
-"""Largest unbalanced force of an accepted pushover step, as a fraction of
-the load it reports (``|λ|·|P|``): the default force tolerance of Abaqus
-(R_n = 0.005) and ANSYS (CNVTOL, 0.5 %) (#2602)."""
+"""Largest unbalanced force of an accepted pushover step (2-norm over the
+free DOFs), as a fraction of the load it reports (``|λ|·|P|``) (#2602). 0.5 %
+is the size of the default force tolerance of ANSYS (CNVTOL: residual
+2-norm over the 2-norm of the applied nodal loads) and of Abaqus (R_n =
+0.005: largest nodal residual over a time-averaged nodal force). Neither
+normalises by the applied resultant as this check does."""
+
+FALLBACK_TOLERANCE_FACTOR_10: float = 10.0
+"""How far a fallback loosens ``NormDispIncr`` (#2612). Measured on the
+small corbel with ``ASDConcrete3D`` (0.3 mm, 10 steps): at 100 a fallback
+state is 0.54 % out of equilibrium and the run is refused at step 5; at 10
+the largest ratio is 0.22 % (234 kN); at 1 it is 0.05 % (261 kN), but on one
+CI runner the welded Cook and Mitchell corbel then fails to converge at
+1.1 mm (live-fork 40827694053). 10 passes both."""
 
 
 class PushoverRefusedError(RuntimeError):
@@ -934,7 +945,7 @@ def strut_tie_pushover(
     material: ConcreteModel = "ladruno",
     element: PlaneElement = "Tri31",
     stress_paths: Mapping[str, Sequence[float]] | None = None,
-    fallback_tolerance_factor: float = 100.0,
+    fallback_tolerance_factor: float = FALLBACK_TOLERANCE_FACTOR_10,
     equilibrium_tolerance: float = EQUILIBRIUM_TOLERANCE_0_005,
     verbose: bool = False,
 ) -> StrutTieOverlays:
@@ -1010,15 +1021,26 @@ def strut_tie_pushover(
         ``tolerance × fallback_tolerance_factor`` with 200 iterations
         before the increment is halved; the plastic-damage tangent is
         non-symmetric and Newton alone stalls at cracking. The curve
-        records how many steps needed a fallback.
+        records how many steps needed a fallback. The default factor is
+        10 (it was 100 before #2612; see ``FALLBACK_TOLERANCE_FACTOR_10``).
     equilibrium_tolerance
         ``NormDispIncr`` bounds the last correction, not the residual, so
         every accepted step is also checked for equilibrium: the 2-norm of
         the unbalanced force over the free DOFs (``R_int − λ·P``, read from
         ``reactions()``) must not exceed ``equilibrium_tolerance × |λ|·|P|``,
-        the load the curve reports at that step. The default is the 0.5 %
-        force tolerance of Abaqus and ANSYS. ``fe_curve["equilibrium"]``
-        records the tolerance and the largest ratio met.
+        the load the curve reports at that step. The default, 0.5 %, is the
+        size of the default force tolerance of ANSYS and Abaqus, which
+        normalise differently (``EQUILIBRIUM_TOLERANCE_0_005``).
+        ``fe_curve["equilibrium"]`` records the tolerance and the largest
+        ratio met.
+
+        Known limit: the check asks for equilibrium, not for a plausible
+        load. A step that is in equilibrium at a non-physical λ, such as
+        a spike from an IMPL-EX extrapolation, passes it. If the next step
+        then falls below half that λ, the run stops at ``"post_peak"`` with
+        the spike as its capacity. The #2602 diagnosis saw a λ = 1.17e7
+        step only under ``implex=True``, and no trace showed whether it was
+        in equilibrium.
 
     Raises
     ------
@@ -1391,6 +1413,7 @@ if __name__ == "__main__":  # pragma: no cover
 __all__ = [
     "EC_COEFFICIENT_4700",
     "EQUILIBRIUM_TOLERANCE_0_005",
+    "FALLBACK_TOLERANCE_FACTOR_10",
     "FT_COEFFICIENT_0_33",
     "GC_OVER_GF_250",
     "GF_MC2010_COEFFICIENT",

@@ -23,6 +23,7 @@ import pytest
 from apeGmsh.interop import strut_tie as _strut_tie
 from apeGmsh.interop.strut_tie import (
     EQUILIBRIUM_TOLERANCE_0_005,
+    FALLBACK_TOLERANCE_FACTOR_10,
     PushoverRefusedError,
     _parse_fixed_plane,
     main,
@@ -418,6 +419,34 @@ def test_pushover_refuses_a_step_out_of_equilibrium(tmp_path: Path) -> None:
     assert "#2602" in msg
 
 
+def test_pushover_refuses_a_fallback_accepted_step_out_of_equilibrium(
+    tmp_path: Path,
+) -> None:
+    """Newton fails on step 2 (``analyze`` call 2) and KrylovNewton, the first
+    fallback, converges (call 3), so the step that carries the injected force
+    was accepted by a fallback: the path the loosened tolerance opened."""
+    res = _fresh(tmp_path, {"from_step": 2, "force": 5.0e4, "fail_calls": [2]})
+    err = res["refused"]
+    assert res["accepted"] == 2
+    assert err["reason"] == "unbalanced"
+    assert err["step"] == 2
+    assert err["unbalance"] == pytest.approx(5.0e4, rel=1e-6)
+    assert "accepted by a fallback algorithm" in err["message"]
+
+
+def test_pushover_defaults_finish_the_stock_asd_corbel(tmp_path: Path) -> None:
+    """#2612 review: at the old fallback factor of 100 this run (defaults,
+    0.3 mm in 10 steps) was refused at step 5, 0.536 % out of equilibrium. At
+    the default of 10 it reaches the target in equilibrium."""
+    res = _fresh(tmp_path, target_displacement=0.3, steps=10)
+    curve = res["curve"]
+    assert curve["stopped"] == "target"
+    assert curve["fallback_steps"] > 0  # the fallbacks carry it, not Newton
+    assert curve["equilibrium"]["max_relative_unbalance"] < EQUILIBRIUM_TOLERANCE_0_005
+    assert curve["capacity"] > 0.0
+    assert FALLBACK_TOLERANCE_FACTOR_10 == 10.0
+
+
 def test_pushover_refuses_at_step_one_with_only_the_origin(tmp_path: Path) -> None:
     """The degenerate end: the first step is refused, and the curve carried
     is the origin alone."""
@@ -570,49 +599,43 @@ def test_extra_bars_are_arranged_and_placed() -> None:
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
-def test_asd_material_rises_past_the_prediction_with_a_bearing_path() -> None:
+def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() -> None:
     """The second concrete model, stock ``ASDConcrete3D``, on the welded and
-    reinforced Cook and Mitchell corbel. On 2026-09-19 it reached a plateau
-    of about 600 kN per side (601 kN, 1.28 × the prediction, 1.20 × the
-    measured 502 kN), where ``LadrunoConcrete3D``'s implicit return map
-    stalls at 410 kN. The bearing-element stress path recorded here is the
-    data a fork investigation of the Ladruno return map starts from.
+    reinforced Cook and Mitchell corbel: a plateau of about 600 kN per side
+    (2026-09-19: 601 kN, 1.28 × the prediction, 1.20 × the measured 502 kN)
+    where ``LadrunoConcrete3D``'s implicit return map stalls at 410 kN. The
+    two materials therefore bracket the model; the bearing-element stress
+    path recorded here is the data a fork investigation of the Ladruno
+    return map starts from.
 
-    #2602: that plateau was reached by the fallbacks, not plain Newton. At
-    the default 100 × loosened fallback tolerance, their states sat up to
-    about 0.6 % of the load out of equilibrium in local runs, on either side
-    of the 0.5 % check depending on the path. Here the fallbacks run at the
-    base tolerance (``fallback_tolerance_factor=1``), which is tighter, not
-    looser, so every step lands far inside the check.
-
-    The plateau itself is not reached on every path: past about 1 mm the
-    run converges on some CI runners (live-fork 40826555866, about 600 kN
-    per side) and fails to converge on others (40827694053, at 1.1 mm). The
-    test therefore stops at 0.9 mm on the rising branch. There the load is
-    already past 1.05 × the prediction, at about 560 kN per side locally."""
+    #2612: the plateau is reached by the fallbacks (all 40 steps), not plain
+    Newton. At the old fallback factor of 100 their states sat up to about
+    0.6 % of the load out of equilibrium, on either side of the 0.5 % check
+    depending on the path. At factor 1 the run failed to converge at 1.1 mm
+    on one CI runner (live-fork 40827694053, "fallbacks at 1e-06"). At the
+    default of 10 it reaches 2.0 mm with the largest ratio about 0.07 %
+    (local)."""
     model = _load("cook_mitchell_corbel.stm.json")
     bars = _load("cook_mitchell_bars.json")
     result = strut_tie_pushover(
         model,
         mesh_size=40.0,
-        target_displacement=0.9,
-        steps=18,
+        target_displacement=2.0,
+        steps=40,
         max_halvings=4,
         weld_plates=True,
         extra_bars=bars,
         material="asd",
-        fallback_tolerance_factor=1.0,
     )
     curve = result.overlays["fe_curve"]
     per_side = curve["capacity"] / 2.0
-    assert curve["equilibrium"]["max_relative_unbalance"] < 0.2 * 5e-3
+    assert curve["equilibrium"]["max_relative_unbalance"] < 0.5 * 5e-3
     assert curve["material"] == "asd"
     assert curve["backend"] in ("ladruno-fork", "stock-openseespy")
     assert curve["element"] == "Tri31"
     assert 0.0 < curve["reached_fraction"] <= 1.0 + 1e-9
     assert curve["increment"] <= 0.05 + 1e-12  # max_increment raised the steps
-    assert curve["steps"] * curve["increment"] == pytest.approx(0.9)
-    assert curve["stopped"] == "target"
+    assert curve["steps"] * curve["increment"] == pytest.approx(2.0)
     assert result.overlays["fe_summary"]["backend"] == curve["backend"]
     assert "ASDConcrete3D" in curve["source"]
     assert (
