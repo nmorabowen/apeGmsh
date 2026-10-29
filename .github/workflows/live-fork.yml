@@ -94,6 +94,22 @@ jobs:
           if ldd "$purelib"/opensees*.so | grep -q "not found"; then
             echo "::error::opensees.so has unresolved libraries"; exit 1
           fi
+          # The classic Tcl interpreter (#2603), for the subprocess lane
+          # (ADR 0106 D3). It goes beside opensees.so: the -mkl exe's RUNPATH
+          # is $ORIGIN/../.., the same as opensees.so's. It reads init.tcl from
+          # TCL_LIBRARY, because its compiled-in library path is a build-machine
+          # path. The unpacked tcl8.6/ stays in $RUNNER_TEMP/fork for the whole
+          # job.
+          cp "$RUNNER_TEMP/fork/OpenSees" "$purelib/OpenSees"
+          [ -x "$purelib/OpenSees" ] || { echo "::error::no executable OpenSees in the fork tarball"; exit 1; }
+          [ -f "$RUNNER_TEMP/fork/tcl8.6/init.tcl" ] || { echo "::error::no tcl8.6/init.tcl in the fork tarball"; exit 1; }
+          ldd "$purelib/OpenSees"
+          if ldd "$purelib/OpenSees" | grep -q "not found"; then
+            echo "::error::OpenSees has unresolved libraries"; exit 1
+          fi
+          echo "TCL_LIBRARY=$RUNNER_TEMP/fork/tcl8.6" >> "$GITHUB_ENV"
+          # _resolve_fork_exe (test_solver_stats_live.py) finds the exe here.
+          echo "APEGMSH_OPENSEES_BIN=$purelib" >> "$GITHUB_ENV"
 
       - name: Assert the installed build is the pinned one
         working-directory: ${{ runner.temp }}
@@ -105,6 +121,33 @@ jobs:
           got=$(python -c "import opensees; print(opensees.ladrunoBuild())" | tail -n1)
           echo "pin=$want build=$got"
           [ "$got" = "$want" ] || { echo "::error::build $got != pin $want"; exit 1; }
+
+      # The Tcl exe is the pinned build too, and its Tcl initialises from the
+      # shipped tcl8.6/. OpenSees can exit 0 on a Tcl error, and a missing
+      # init.tcl is only a stderr line, so the step trusts neither the exit
+      # status nor silence: no "application-specific initialization failed"
+      # line, and the trailing marker must print.
+      - name: Assert the Tcl exe is the pinned build and initialises Tcl
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          want=$(grep -E '^sha=' "$GITHUB_WORKSPACE/FORK_PIN" | cut -d= -f2-)
+          exe="$APEGMSH_OPENSEES_BIN/OpenSees"
+          cat > exe_check.tcl <<'TCL'
+          if {[info library] ne $env(TCL_LIBRARY)} { error "Tcl library [info library] is not $env(TCL_LIBRARY)" }
+          puts "tcl [info patchlevel] library [info library]"
+          puts "build [ladrunoBuild]"
+          puts APEGMSH_EXE_CHECK_OK
+          TCL
+          rc=0
+          "$exe" exe_check.tcl > exe_check.log 2>&1 || rc=$?
+          cat exe_check.log
+          echo "exit status $rc"
+          if grep "initialization failed" exe_check.log; then
+            echo "::error::OpenSees did not initialise Tcl from $TCL_LIBRARY"; exit 1
+          fi
+          grep -qx "APEGMSH_EXE_CHECK_OK" exe_check.log || { echo "::error::OpenSees did not reach the trailing marker"; exit 1; }
+          grep -qx "build $want" exe_check.log || { echo "::error::OpenSees is not the pinned build $want"; exit 1; }
 
       - name: Run ladruno_fork tests
         run: |
