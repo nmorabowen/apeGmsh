@@ -14,7 +14,9 @@ overturning moment, each combined by CQC.
   displacements, and both are asserted;
 * gate 3: each mode's base storey shear from inertia equals its base
   reaction (relative ``1e-3``; ``1e-9`` measured), on the static legs
-  (stock openseespy) and on the fork's ``-increment`` legs.
+  (stock openseespy) and on the fork's ``-increment`` legs;
+* the balance is not fooled by a near-torsion mode whose net force is
+  round-off of the base shear (review of #2614).
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ from tests.opensees.fixtures.fem_stub import (  # noqa: E402
     _NodesStub,
 )
 from tests.opensees.live.test_spectrum_after_gravity_live import (  # noqa: E402,F401
+    _diaphragm,
     rsa_route,
 )
 
@@ -173,3 +176,32 @@ def test_gate3_base_storey_shear_from_inertia_equals_the_base_reaction() -> None
     assert np.all(np.abs(base[:, 0]) > 0.0)
     np.testing.assert_allclose(base[:, 0], -reaction[:, 0], rtol=1e-3)
     assert float(np.max(res.inertia_balance())) < 1e-9
+
+
+@pytest.mark.live
+@pytest.mark.usefixtures("rsa_route")
+@pytest.mark.parametrize(("transf", "dx"), [
+    ("Linear", 1e-4), ("PDelta", 2e-5), ("PDelta", 1e-4),
+    ("Corotational", 2e-5)])
+def test_near_torsion_mode_does_not_trip_the_balance(transf: str,
+                                                     dx: float) -> None:
+    """A centre-mass diaphragm offset by ``dx``: its torsion mode passes
+    the mass filter with a net inertia of ~1e-6 N against a base shear of
+    ~4e5 N. Relative to its own net that round-off read 3e-3 and the driver
+    warned; relative to the spectrum's largest modal base force it is
+    round-off."""
+    spec = [DesignSpectrum((0.0, 2.0), (5.0, 5.0), direction=d)
+            for d in (1, 2)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InertiaBalanceWarning)
+        res = _diaphragm(transf, dx, link=1e6, gravity=30.0
+                         ).spectrum_after_gravity(
+            3, spectra=spec,
+            extractors={"c": NodeDisp(nodes=[9], dofs=(1, 2, 6))},
+            solver="-fullGenLapack")
+    total = np.abs(res.inertia[..., :3].sum(axis=2)).max(axis=2)
+    assert np.min(total[total > 0.0]) < 1e-9 * np.max(total)   # the torsion mode
+    assert float(np.max(res.inertia_balance())) < 1e-6
+    base = res.storey_forces([0.0]).shear[:, :, 0, :]
+    np.testing.assert_allclose(base, -res.per_mode[BASE_SHEAR], rtol=0.0,
+                               atol=1e-6 * float(np.max(np.abs(base))))

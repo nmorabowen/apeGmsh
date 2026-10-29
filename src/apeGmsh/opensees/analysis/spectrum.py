@@ -448,6 +448,15 @@ def combine_directions(
 ) -> DirectionalCases: ...
 
 
+@overload
+def combine_directions(
+    per_direction: "npt.ArrayLike", *, method: str = ...,
+    rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
+    damping: "float | npt.ArrayLike | None" = ...,
+    permutations: bool = ...,
+) -> "np.ndarray | DirectionalCases": ...
+
+
 def combine_directions(
     per_direction: "npt.ArrayLike",
     *,
@@ -534,7 +543,8 @@ class ModalCancellation:
     angles
         ``(n_modes,)``: each mode's principal-axis angle in degrees,
         ``atan2(Γ_b, Γ_a)`` of its participation factors along the two plan
-        directions, or ``None`` when not known.
+        directions modulo 180° (the sign of an eigenvector is arbitrary),
+        or ``None`` when not known.
     rule
         ``"CQC"`` or ``"SRSS"``.
     """
@@ -854,6 +864,12 @@ class SpectrumModalResult:
 
         ``check`` first runs :meth:`check_inertia_balance` (each mode's
         total inertia against its base reaction, relative ``1e-3``).
+
+        The moment is that of the inertia alone. Under ``p_delta=True`` the
+        gravity load acting through each mode's sway adds a P-Δ moment that
+        is not included here: the overturning moment from the reactions
+        exceeds this one by it (0.5 % on a slender 2-D stick). The shear
+        has no such term.
         """
         if self.inertia is None or self.inertia_coords is None:
             raise ValueError(
@@ -905,13 +921,20 @@ class SpectrumModalResult:
         return StoreyForces(elevations=z, shear=shear, moment=moment)
 
     def inertia_balance(self) -> np.ndarray:
-        """``(n_spectra, n_modes)``: ``|Σ F + R| / |Σ F|`` per mode, the
-        largest over the translational components, of the total modal
-        inertia ``Σ F`` and the total base reaction ``R`` (``"base_shear"``).
-        Zero for a mode that takes no part. Equilibrium makes it zero to
-        round-off; above ``1e-3`` it says the inertia the storey forces
-        rest on is not the load the reactions answered (mass the per-mode
-        loads missed, an eigenvector off the stiffness the legs met)."""
+        """``(n_spectra, n_modes)``: the gap ``|Σ F + R|`` between each
+        mode's total inertia ``Σ F`` and its total base reaction ``R``
+        (``"base_shear"``), the largest over the translational components,
+        relative to the spectrum's largest modal base force
+        ``max_k |Σ F_k|``. Zero for a mode that takes no part.
+
+        The scale is per spectrum, not per mode: a near-torsion mode's net
+        force is round-off of the base shear (``1e-6`` N against ``1e5`` N),
+        and its own net would turn that round-off into a false alarm, while
+        a gap of ``1e-3`` of the governing base shear is what moves a storey
+        force. Equilibrium makes it zero to round-off; above ``1e-3`` the
+        inertia the storey forces rest on is not the load the reactions
+        answered (mass the per-mode loads missed, an eigenvector off the
+        stiffness the legs met)."""
         if self.inertia is None:
             raise ValueError(
                 "SpectrumModalResult.inertia_balance: this result carries "
@@ -920,7 +943,7 @@ class SpectrumModalResult:
         reaction = self._values(BASE_SHEAR)           # (s, m, ndm)
         ndm = reaction.shape[2]
         total = np.asarray(self.inertia)[..., :ndm].sum(axis=2)
-        scale = np.max(np.abs(total), axis=2)
+        scale = np.max(np.abs(total), axis=(1, 2))[:, None]
         gap = np.max(np.abs(total + reaction), axis=2)
         with np.errstate(divide="ignore", invalid="ignore"):
             rel = np.where(scale > 0.0, gap / scale,
@@ -940,7 +963,8 @@ class SpectrumModalResult:
             f"SpectrumModalResult: mode {k + 1} under spectrum {s} "
             f"(direction {self.spectra[s].direction}): its total inertia "
             f"Σ m φ Γ Sa and its total base reaction differ by "
-            f"{rel[s, k]:.3e} of the inertia (limit {rtol:g}); "
+            f"{rel[s, k]:.3e} of the spectrum's largest modal base force "
+            f"(limit {rtol:g}); "
             f"{int(np.sum(rel > rtol))} mode-spectrum pair(s) fail. The "
             "storey forces from inertia would not add up to the base shear."
         )
@@ -961,8 +985,8 @@ class SpectrumModalResult:
     ) -> ModalCancellation:
         """:func:`modal_cancellation` of value ``index`` of ``name`` under
         spectrum ``spectrum``, with each mode's principal-axis angle
-        ``atan2(Γ_b, Γ_a)`` (degrees) from its participation factors along
-        the plan directions ``plan = (a, b)`` (1-based; ``None`` leaves the
+        ``atan2(Γ_b, Γ_a)`` (degrees, modulo 180°) from its participation
+        factors along the plan directions ``plan = (a, b)`` (1-based; ``None`` leaves the
         angles out)."""
         terms = self.modes(name, spectrum)[:, int(index)]
         angles = None
@@ -970,7 +994,8 @@ class SpectrumModalResult:
             comp = ("MX", "MY", "MZ")
             ga, gb = (self.modal.modal.participation_factors(comp[int(d) - 1])
                       for d in plan)
-            angles = np.degrees(np.arctan2(gb, ga))
+            # an axis, not a direction: φ and -φ are the same mode
+            angles = np.mod(np.degrees(np.arctan2(gb, ga)), 180.0)
         return modal_cancellation(terms, rule=rule, omega=self.omega,
                                   damping=damping, angles=angles)
 

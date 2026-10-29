@@ -36,12 +36,12 @@ XI = 0.05
 
 
 def _rho12(wi: float, wj: float, xi: float) -> float:
-    """The fork's rhoCQC (LadrunoModalCombination.h), equal damping."""
+    """Der Kiureghian's equal-damping form (Chopra, Dynamics of Structures,
+    eq. 13.7.10), written apart from the general one that the fork's rhoCQC
+    and cqc_correlation use: ``8ξ²(1+r)r^1.5 / ((1-r²)² + 4ξ²r(1+r)²)``."""
     r = wj / wi
-    num = 8.0 * xi * xi * (1.0 + r) * r ** 1.5
-    den = (1.0 - r * r) ** 2 + 4.0 * xi * xi * r * (1.0 + r * r) \
-        + 8.0 * xi * xi * r * r
-    return num / den
+    return 8.0 * xi * xi * (1.0 + r) * r ** 1.5 / (
+        (1.0 - r * r) ** 2 + 4.0 * xi * xi * r * (1.0 + r) ** 2)
 
 
 def test_gate1_two_mode_cqc_closed_form_with_signed_cross_term() -> None:
@@ -55,7 +55,7 @@ def test_gate1_two_mode_cqc_closed_form_with_signed_cross_term() -> None:
     assert srss == pytest.approx(math.sqrt(13.0), rel=1e-12)
     # opposite signs: the cross term lowers CQC below SRSS, the same values
     # with one sign flipped raise it above
-    assert got < srss * (1.0 - 0.1)
+    assert got < srss * (1.0 - 0.1)      # fails if the signs were dropped
     same = float(combine_modes(np.abs(r), rule="CQC", omega=W, damping=XI))
     assert same == pytest.approx(
         math.sqrt(13.0 + 12.0 * rho), rel=1e-12)
@@ -193,10 +193,12 @@ def test_inertia_balance_is_checked_against_the_base_reaction() -> None:
     bad = R.copy()
     bad[0, 1, 0] *= 1.0 + 5e-4                           # mode 2 off by 5e-4
     res = _result(F, bad)
-    np.testing.assert_allclose(res.inertia_balance()[0], [0.0, 5e-4],
-                               rtol=1e-9)
+    # relative to the spectrum's largest modal base force (mode 1's 5.0),
+    # not to mode 2's own 0.5
+    np.testing.assert_allclose(res.inertia_balance()[0],
+                               [0.0, 0.5 * 5e-4 / 5.0], rtol=1e-9)
     res.check_inertia_balance(rtol=1e-3)                 # inside the 1e-3
-    bad[0, 1, 0] = -0.5 * (1.0 + 5e-3)
+    bad[0, 1, 0] = -0.5 * (1.0 + 2e-2)
     res = _result(F, bad)
     with pytest.raises(RuntimeError, match="mode 2 under spectrum 0"):
         res.storey_forces([0.0])
@@ -226,5 +228,5 @@ def test_cancellation_reads_the_principal_axis_angles() -> None:
     res = _result(F, R, disp=disp,
                   gamma=(np.array([1.0, 0.0]), np.array([1.0, -2.0])))
     rep = res.cancellation("disp", 1, rule="SRSS")
-    np.testing.assert_allclose(rep.angles, [45.0, -90.0])
+    np.testing.assert_allclose(rep.angles, [45.0, 90.0])   # modulo 180
     np.testing.assert_array_equal(rep.terms, [0.025, -0.003])
