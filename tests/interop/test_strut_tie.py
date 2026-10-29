@@ -202,9 +202,10 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
     them to a path that branches at the first step plain Newton cannot
     converge, because ``LadrunoConcrete3D`` returns 0 from a failed return
     map; a 1e-12 change in ft moves the peak from 318 to 414 kN on one MKL
-    path. The equilibrium guard now finds that step out of equilibrium (far
-    above 0.5 % of the load) and refuses, so the equilibrated part of the
-    curve ends below the floor. The bracket is unchanged and waits for an
+    path. The equilibrium guard refuses at that step, step 2, the first one
+    a fallback accepts: its unbalanced force is 1.3 % of the load, against
+    0.5 % (live-fork run 40826555866). The equilibrated part of the curve
+    ends there, below the floor. The bracket is unchanged and waits for an
     equilibrated run: 0.7 × 471 kN (the strut-and-tie prediction, the
     floor) < per side < 1.1 × 502 kN (the measured load), with
     ``stopped == "post_peak"``. Chain F (#2602 route 2) restores it.
@@ -218,6 +219,7 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
     record_property("refused_step", err.step)
     record_property("refusal", str(err))
     assert err.reason == "unbalanced"
+    assert err.step == 2  # the branch point of the #2602 diagnosis
     assert err.relative_tolerance == 5e-3
     equilibrated_per_side = max(p[1] for p in err.points) / 2.0
     assert equilibrated_per_side < 0.7 * COOK_MITCHELL_STM_PREDICTION_N
@@ -527,8 +529,8 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
 
     #2602: the plateau is reached by the fallbacks, not plain Newton, and at
     the default 100 × loosened fallback tolerance their states sit up to
-    about 0.6 % of the load out of equilibrium, on either side of the 0.5 %
-    check depending on the path. The fallbacks here run at the base
+    about 0.6 % of the load out of equilibrium (local runs), on either side
+    of the 0.5 % check depending on the path. The fallbacks here run at the base
     tolerance (``fallback_tolerance_factor=1``). That is a tighter run, not
     a looser one: the plateau stays at about 600 kN per side, and each step
     lands well inside the check."""

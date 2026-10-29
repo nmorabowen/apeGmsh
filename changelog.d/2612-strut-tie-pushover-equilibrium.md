@@ -32,5 +32,11 @@ returns 0 with the trial stress. A `LadrunoConcrete3D` pushover past
 cracking is therefore refused. The Cook and Mitchell corbel test now expects
 that refusal. Its bracket, 0.7 × 471 kN < per side < 1.1 × 502 kN with
 `stopped == "post_peak"`, is unchanged, and returns when the fork's return
-map fails loudly (#2602 route 2). The `ASDConcrete3D` corbel still reaches
-its plateau of about 600 kN per side.
+map fails loudly (#2602 route 2). On the corbel the refusal comes at step 2,
+the branch point of the diagnosis, with an unbalanced force of 1.3 % of the
+load. The `ASDConcrete3D` corbel test now runs its fallbacks at the base
+tolerance (`fallback_tolerance_factor=1`) and still reaches its plateau of
+about 600 kN per side, every step well inside the check.
+
+A run whose increment was halved also stops at the target now. Before, the
+last step could carry it past (`reached_fraction` 1.003 on that corbel).
