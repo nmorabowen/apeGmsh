@@ -635,7 +635,7 @@ def test_asd_material_rises_past_the_prediction_with_a_bearing_path() -> None:
     )
     curve = result.overlays["fe_curve"]
     per_side = curve["capacity"] / 2.0
-    assert curve["equilibrium"]["max_relative_unbalance"] < 0.5 * 5e-3
+    assert curve["equilibrium"]["max_relative_unbalance"] < 0.2 * 5e-3
     assert curve["material"] == "asd"
     assert curve["backend"] in ("ladruno-fork", "stock-openseespy")
     assert curve["element"] == "Tri31"
