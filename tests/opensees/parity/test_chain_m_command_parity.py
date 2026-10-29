@@ -19,6 +19,9 @@ from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 
+#: The ``ModalBasis`` family's contract list (``tests/families.py``).
+ALL_MODAL_BASIS = [ResidualModes, RitzVectors]
+
 #: (primitive, fork Tcl line, the arguments after the command name)
 CASES: list[tuple[Any, str, tuple[Any, ...]]] = [
     (ResidualModes(dirs=(1,)), "residualModes -dir 1", ("-dir", 1)),
@@ -35,6 +38,7 @@ CASES: list[tuple[Any, str, tuple[Any, ...]]] = [
      (3, "-pattern", 5, 9)),
 ]
 IDS = [line for _, line, _ in CASES]
+assert {type(p) for p, _, _ in CASES} == set(ALL_MODAL_BASIS)
 
 
 class _Ops:
