@@ -797,6 +797,43 @@ def _step(
 
 ConcreteModel = Literal["ladruno", "asd"]
 
+EQUILIBRIUM_TOLERANCE_0_005: float = 5e-3
+"""Largest unbalanced force of an accepted pushover step, as a fraction of
+the load it reports (``|λ|·|P|``): the default force tolerance of Abaqus
+(R_n = 0.005) and ANSYS (CNVTOL, 0.5 %) (#2602)."""
+
+
+class PushoverRefusedError(RuntimeError):
+    """:func:`strut_tie_pushover` reached a step it cannot vouch for, so it
+    returns no capacity (#2602).
+
+    ``reason`` is ``"unbalanced"`` (a step was accepted but its unbalanced
+    force exceeds the tolerance) or ``"no_convergence"`` (no algorithm
+    converged after every halving of the increment). ``step`` is the
+    1-based step, ``unbalance`` the unbalanced force (N) of the refused
+    state (``None`` for ``"no_convergence"``, whose state OpenSees reverted),
+    ``relative_tolerance`` the tolerance on ``unbalance / (|λ|·|P|)``, and
+    ``points`` the ``[[delta, P], ...]`` curve up to the last step in
+    equilibrium — data for a plot, not a capacity.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: Literal["unbalanced", "no_convergence"],
+        step: int,
+        unbalance: float | None,
+        relative_tolerance: float,
+        points: list[list[float]],
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.step = step
+        self.unbalance = unbalance
+        self.relative_tolerance = relative_tolerance
+        self.points = points
+
 
 class _StressPaths:
     """Stress history of the element nearest each requested point."""
@@ -898,6 +935,7 @@ def strut_tie_pushover(
     element: PlaneElement = "Tri31",
     stress_paths: Mapping[str, Sequence[float]] | None = None,
     fallback_tolerance_factor: float = 100.0,
+    equilibrium_tolerance: float = EQUILIBRIUM_TOLERANCE_0_005,
     verbose: bool = False,
 ) -> StrutTieOverlays:
     """Push the D-region under displacement control with the fork's
@@ -973,6 +1011,25 @@ def strut_tie_pushover(
         before the increment is halved; the plastic-damage tangent is
         non-symmetric and Newton alone stalls at cracking. The curve
         records how many steps needed a fallback.
+    equilibrium_tolerance
+        ``NormDispIncr`` bounds the last correction, not the residual, so
+        every accepted step is also checked for equilibrium: the 2-norm of
+        the unbalanced force over the free DOFs (``R_int − λ·P``, read from
+        ``reactions()``) must not exceed ``equilibrium_tolerance × |λ|·|P|``,
+        the load the curve reports at that step. The default is the 0.5 %
+        force tolerance of Abaqus and ANSYS. ``fe_curve["equilibrium"]``
+        records the tolerance and the largest ratio met.
+
+    Raises
+    ------
+    PushoverRefusedError
+        When a step is accepted out of equilibrium, or no algorithm
+        converges after ``max_halvings`` halvings. No capacity is returned
+        for such a run (#2602): its peak would be a sample of a diverged
+        path, not a capacity. The error names the step, the unbalanced
+        force and the tolerance, and carries the curve up to the last step
+        in equilibrium. A returned curve therefore always stopped at
+        ``"target"`` or ``"post_peak"``.
 
     Notes
     -----
@@ -980,6 +1037,10 @@ def strut_tie_pushover(
     stock ``openseespy`` the bridge raises at emit. Bars are perfectly
     bonded and end where the tie ends: anchorage is not modelled.
     """
+    if not equilibrium_tolerance > 0.0:  # NaN fails too
+        raise ValueError(
+            f"equilibrium_tolerance must be > 0, got {equilibrium_tolerance!r}"
+        )
     fe = _build(
         model,
         case=case,
@@ -1048,6 +1109,24 @@ def strut_tie_pushover(
     ops.build().emit(emitter)
     live = emitter.ops
 
+    # The free DOFs carry the unbalanced force after ``reactions()``; the
+    # domain's own fixities say which those are.
+    fixed_dofs = {
+        int(n): {int(d) for d in live.getFixedDOFs(int(n))}
+        for n in live.getFixedNodes()
+    }
+    node_tags = [int(n) for n in live.getNodeTags()]
+
+    def unbalance() -> float:
+        live.reactions()
+        sq = 0.0
+        for tag in node_tags:
+            held = fixed_dofs.get(tag, set())
+            for k, r in enumerate(_v(live.nodeReaction(tag)), start=1):
+                if k not in held:
+                    sq += float(r) * float(r)
+        return math.sqrt(sq)
+
     points: list[list[float]] = [[0.0, 0.0]]
     paths = _StressPaths(live, fe, stress_paths)
     lambdas: list[float] = [0.0]
@@ -1055,7 +1134,9 @@ def strut_tie_pushover(
     reached = 0.0
     current = du
     fallback_steps = 0
+    worst_ratio = 0.0
     while abs(reached) < target - 1e-12:
+        step_no = len(points)
         rc = _step(live, fallback_algorithms, tolerance, fallback_tolerance_factor)
         if rc > 0:
             fallback_steps += 1
@@ -1068,10 +1149,49 @@ def strut_tie_pushover(
             if rc > 0:
                 fallback_steps += 1
         if rc < 0:
-            stopped = "divergence"
-            break
+            raise PushoverRefusedError(
+                f"strut_tie_pushover refuses: step {step_no} did not converge. "
+                f"No algorithm met NormDispIncr {tolerance:g} (fallbacks at "
+                f"{tolerance * fallback_tolerance_factor:g}) after {max_halvings} "
+                f"halvings of the increment, down to {abs(current):.3g} mm, at "
+                f"delta = {abs(reached):.4g} mm. A diverged run has no capacity "
+                f"(#2602); the curve to step {step_no - 1} is on .points.",
+                reason="no_convergence",
+                step=step_no,
+                unbalance=None,
+                relative_tolerance=equilibrium_tolerance,
+                points=points,
+            )
         reached = float(live.nodeDisp(control_node, dof))
         lam = float(live.getTime())
+        residual = unbalance()
+        applied = abs(lam) * reference
+        if applied > 0.0:
+            ratio = residual / applied
+        else:
+            ratio = 0.0 if residual == 0.0 else math.inf
+        if not ratio <= equilibrium_tolerance:  # NaN fails too
+            accepted_by = (
+                f"Newton at NormDispIncr {tolerance:g}"
+                if rc == 0
+                else "a fallback algorithm at NormDispIncr "
+                f"{tolerance * fallback_tolerance_factor:g}"
+            )
+            raise PushoverRefusedError(
+                f"strut_tie_pushover refuses: step {step_no} (delta = "
+                f"{abs(reached):.4g} mm, lambda = {lam:.4g}) was accepted by "
+                f"{accepted_by} but is not in equilibrium: the unbalanced force "
+                f"{residual:.4g} N is {ratio:.3g} of the applied load "
+                f"{applied:.4g} N, tolerance {equilibrium_tolerance:g}. Its "
+                f"peak would be a sample of a diverged path, so no capacity is "
+                f"returned (#2602); the curve to step {step_no - 1} is on .points.",
+                reason="unbalanced",
+                step=step_no,
+                unbalance=residual,
+                relative_tolerance=equilibrium_tolerance,
+                points=points,
+            )
+        worst_ratio = max(worst_ratio, ratio)
         lambdas.append(lam)
         points.append([abs(reached), lam * reference])
         paths.record(abs(reached), lam)
@@ -1117,6 +1237,10 @@ def strut_tie_pushover(
             "reached_fraction": abs(reached) / target,
             "material": material,
             "tolerance": tolerance,
+            "equilibrium": {
+                "tolerance": equilibrium_tolerance,
+                "max_relative_unbalance": worst_ratio,
+            },
         },
         "fe_summary": _summary(
             fe, live, reactions, E=E, nu=POISSON_RATIO, fc=fc, ft=ft_v, Gf=gf_v, Gc=gc_v
@@ -1260,11 +1384,13 @@ if __name__ == "__main__":  # pragma: no cover
 
 __all__ = [
     "EC_COEFFICIENT_4700",
+    "EQUILIBRIUM_TOLERANCE_0_005",
     "FT_COEFFICIENT_0_33",
     "GC_OVER_GF_250",
     "GF_MC2010_COEFFICIENT",
     "GF_MC2010_EXPONENT",
     "POISSON_RATIO",
+    "PushoverRefusedError",
     "StrutTieOverlays",
     "main",
     "strut_tie_overlays",
