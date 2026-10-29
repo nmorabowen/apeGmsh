@@ -7,9 +7,13 @@ column stub so the far column face is a physical boundary.
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import json
 import math
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -229,6 +233,13 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
 # The equilibrium guard (#2602): a step out of equilibrium, or a run that
 # does not converge, returns no capacity. These run on stock openseespy
 # (ASDConcrete3D in its linear range), so the live-stock lane proves them.
+#
+# Each case runs in a fresh process. Stock ASDConcrete3D keeps a process-wide
+# hardening law per material tag that ``wipe`` does not clear (#2044; fixed
+# in the fork only). A pushover on tag 1 in the shared pytest process would
+# hand its law to every later tag-1 ASDConcrete3D test, and the other way
+# round: on this PR's first live-stock run, test_asdconcrete_fc_golden.py
+# read this corbel's Te.
 # ---------------------------------------------------------------------------
 _ELASTIC_ASD = {
     "mesh_size": 45.0,
@@ -290,25 +301,85 @@ class _InjectingOps:
         return r
 
 
-def _inject(monkeypatch: pytest.MonkeyPatch, **kw: object) -> dict[str, _InjectingOps]:
-    holder: dict[str, _InjectingOps] = {}
+def _scenario(model_json: str, inject: dict, run: dict) -> dict:
+    """The child process's body: one pushover, with ``inject`` passed to
+    :class:`_InjectingOps` (none when empty), and its outcome as JSON data."""
+    import json
 
-    class _Emitter(_strut_tie.LiveOpsEmitter):
-        @property
-        def ops(self):  # type: ignore[override]
-            if "ops" not in holder:
-                holder["ops"] = _InjectingOps(super().ops, **kw)  # type: ignore[arg-type]
-            return holder["ops"]
+    import apeGmsh.interop.strut_tie as st
 
-    monkeypatch.setattr(_strut_tie, "LiveOpsEmitter", _Emitter)
-    return holder
+    holder: dict = {}
+    if inject:
+        if "fail_calls" in inject:
+            inject = dict(inject, fail_calls=frozenset(inject["fail_calls"]))
+
+        class _Emitter(st.LiveOpsEmitter):
+            @property
+            def ops(self):  # type: ignore[override]
+                if "ops" not in holder:
+                    holder["ops"] = _InjectingOps(super().ops, **inject)
+                return holder["ops"]
+
+        st.LiveOpsEmitter = _Emitter  # type: ignore[misc]
+    with open(model_json, encoding="utf-8") as fh:
+        model = json.load(fh)
+    accepted = holder.get
+    try:
+        result = st.strut_tie_pushover(model, **run)
+    except st.PushoverRefusedError as err:
+        return {
+            "refused": {
+                "reason": err.reason,
+                "step": err.step,
+                "unbalance": err.unbalance,
+                "relative_tolerance": err.relative_tolerance,
+                "points": err.points,
+                "message": str(err),
+            },
+            "accepted": accepted("ops").accepted if holder else None,
+        }
+    return {
+        "curve": result.overlays["fe_curve"],
+        "applied": list(result.applied),
+        "accepted": accepted("ops").accepted if holder else None,
+    }
 
 
-def test_pushover_guard_passes_a_converged_linear_range_run() -> None:
+def _fresh(tmp_path: Path, inject: dict | None = None, **overrides: object) -> dict:
+    """Run :func:`_scenario` on the corbel in a fresh interpreter."""
+    run = dict(_ELASTIC_ASD, **overrides)
+    out = tmp_path / "out.json"
+    script = tmp_path / "run.py"
+    model_json = str(FIXTURES / "corbel.stm.json")
+    script.write_text(
+        "import json\n\n"
+        + inspect.getsource(_InjectingOps)
+        + "\n\n"
+        + inspect.getsource(_scenario)
+        + "\n\n"
+        + f"res = _scenario({model_json!r}, {inject or {}!r}, {run!r})\n"
+        + f"open({str(out)!r}, 'w', encoding='utf-8').write(json.dumps(res))\n",
+        encoding="utf-8",
+    )
+    src = str(Path(_strut_tie.__file__).resolve().parents[2])
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([src, *filter(None, [env.get("PYTHONPATH")])])
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_pushover_guard_passes_a_converged_linear_range_run(tmp_path: Path) -> None:
     """A linear-range run under plain Newton: the guard reads an unbalance
     thousands of times below its tolerance and returns the capacity."""
-    result = strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
-    curve = result.overlays["fe_curve"]
+    curve = _fresh(tmp_path)["curve"]
     assert curve["stopped"] == "target"
     assert len(curve["points"]) == 4
     assert curve["capacity"] == max(p[1] for p in curve["points"]) > 0.0
@@ -318,88 +389,69 @@ def test_pushover_guard_passes_a_converged_linear_range_run() -> None:
     assert 0.0 <= eq["max_relative_unbalance"] < 1e-6
 
 
-def test_pushover_measures_the_unbalance_it_is_given(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pushover_measures_the_unbalance_it_is_given(tmp_path: Path) -> None:
     """An injected 10 N below the tolerance passes, and the ratio recorded is
     10 N over the smallest applied load ``|λ|·|P|``, that of step 1."""
-    _inject(monkeypatch, from_step=1, force=10.0)
-    result = strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
-    curve = result.overlays["fe_curve"]
-    reference = float(np.linalg.norm(result.applied[:2]))
+    res = _fresh(tmp_path, {"from_step": 1, "force": 10.0})
+    curve = res["curve"]
+    reference = float(np.linalg.norm(res["applied"][:2]))
     lam1 = curve["load_factors"][1]
     assert curve["equilibrium"]["max_relative_unbalance"] == pytest.approx(
         10.0 / (lam1 * reference), rel=1e-3
     )
 
 
-def test_pushover_refuses_a_step_out_of_equilibrium(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pushover_refuses_a_step_out_of_equilibrium(tmp_path: Path) -> None:
     """A step accepted with an unbalanced force above 0.5 % of the applied
     load refuses the run: no result object, an error naming the step, the
     force and the tolerance, and the curve up to the step before."""
     force = 5.0e4
-    _inject(monkeypatch, from_step=2, force=force)
-    with pytest.raises(PushoverRefusedError) as info:
-        strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
-    err = info.value
-    assert err.reason == "unbalanced"
-    assert err.step == 2
-    assert err.unbalance == pytest.approx(force, rel=1e-6)
-    assert err.relative_tolerance == 5e-3
-    assert len(err.points) == 2 and err.points[0] == [0.0, 0.0]
-    assert err.points[1][1] > 0.0
-    msg = str(err)
+    err = _fresh(tmp_path, {"from_step": 2, "force": force})["refused"]
+    assert err["reason"] == "unbalanced"
+    assert err["step"] == 2
+    assert err["unbalance"] == pytest.approx(force, rel=1e-6)
+    assert err["relative_tolerance"] == 5e-3
+    assert len(err["points"]) == 2 and err["points"][0] == [0.0, 0.0]
+    assert err["points"][1][1] > 0.0
+    msg = err["message"]
     assert "step 2" in msg and "tolerance 0.005" in msg and "5e+04 N" in msg
     assert "#2602" in msg
 
 
-def test_pushover_refuses_at_step_one_with_only_the_origin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pushover_refuses_at_step_one_with_only_the_origin(tmp_path: Path) -> None:
     """The degenerate end: the first step is refused, and the curve carried
     is the origin alone."""
-    _inject(monkeypatch, from_step=1, force=5.0e4)
-    with pytest.raises(PushoverRefusedError) as info:
-        strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
-    assert info.value.step == 1
-    assert info.value.points == [[0.0, 0.0]]
+    err = _fresh(tmp_path, {"from_step": 1, "force": 5.0e4})["refused"]
+    assert err["step"] == 1
+    assert err["points"] == [[0.0, 0.0]]
 
 
-def test_pushover_refuses_a_run_that_stops_converging(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pushover_refuses_a_run_that_stops_converging(tmp_path: Path) -> None:
     """Before #2602 a run whose step failed every halving returned the peak
     of the steps before as ``capacity`` with ``stopped="divergence"``."""
-    holder = _inject(monkeypatch, from_step=3, fail=True)
-    with pytest.raises(PushoverRefusedError) as info:
-        strut_tie_pushover(_load("corbel.stm.json"), max_halvings=2, **_ELASTIC_ASD)
-    err = info.value
-    assert err.reason == "no_convergence"
-    assert err.step == 3
-    assert err.unbalance is None
-    assert len(err.points) == 3
-    assert holder["ops"].accepted == 2
-    assert "step 3 did not converge" in str(err) and "2 halvings" in str(err)
+    res = _fresh(tmp_path, {"from_step": 3, "fail": True}, max_halvings=2)
+    err = res["refused"]
+    assert err["reason"] == "no_convergence"
+    assert err["step"] == 3
+    assert err["unbalance"] is None
+    assert len(err["points"]) == 3
+    assert res["accepted"] == 2
+    assert "step 3 did not converge" in err["message"]
+    assert "2 halvings" in err["message"]
 
 
-def test_pushover_stops_at_the_target_after_halvings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pushover_stops_at_the_target_after_halvings(tmp_path: Path) -> None:
     """Two forced halvings (steps 2 and 3, each failing Newton and the three
     fallbacks once) leave increments of 0.01, 0.005, 0.0025, 0.0025, 0.005;
     growing back to 0.01 the last step would end at 0.035 mm, past the
     0.03 mm target. It stops at the target instead."""
-    holder = _inject(monkeypatch, fail_calls=frozenset({2, 3, 4, 5, 7, 8, 9, 10}))
-    result = strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
-    curve = result.overlays["fe_curve"]
-    assert holder["ops"].accepted == len(curve["points"]) - 1 == 6
+    res = _fresh(tmp_path, {"fail_calls": [2, 3, 4, 5, 7, 8, 9, 10]})
+    curve = res["curve"]
+    assert res["accepted"] == len(curve["points"]) - 1 == 6
     assert curve["stopped"] == "target"
     assert curve["control"]["reached"] == pytest.approx(0.03, rel=1e-9)
     assert curve["reached_fraction"] == pytest.approx(1.0, rel=1e-9)
-    deltas = [p[0] for p in curve["points"]]
-    assert deltas[-1] == pytest.approx(0.03, rel=1e-9)
+    assert curve["points"][-1][0] == pytest.approx(0.03, rel=1e-9)
 
 
 @pytest.mark.parametrize("bad", [0.0, -1e-3, float("nan")])
