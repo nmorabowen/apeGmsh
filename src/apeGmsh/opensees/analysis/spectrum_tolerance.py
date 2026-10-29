@@ -5,8 +5,9 @@ An OpenSees RSA result compared with a reference program (ETABS, say)
 never sees exactly the same periods. A flat tolerance then fails for a
 difference the period mismatch fully explains. This module turns the
 period mismatch into the tolerance a parity gate should use, reported as
-``base + period`` (:class:`ParityTolerance`) so a reader sees why a gate is
-wider than its base.
+its base and period parts compounded, ``total = (1 + base)(1 + period) - 1``
+(:class:`ParityTolerance`), so a reader sees why a gate is wider than its
+base. Compounding keeps a base on top of an exact period part exact.
 
 * :func:`spectrum_slope` — the local slope ``s = d ln Sa / d ln T``, one-sided
   so a corner of the spectrum gives a defined value;
@@ -39,7 +40,7 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from .spectrum import DesignSpectrum, combine_modes
+from .spectrum import DesignSpectrum, _sa_function, combine_modes
 
 __all__ = [
     "ParityTolerance",
@@ -56,11 +57,14 @@ _T_POWER = {"force": 0, "displacement": 2}
 
 @dataclass(frozen=True, slots=True)
 class ParityTolerance:
-    """A relative parity tolerance, ``total = base + period``.
+    """A relative parity tolerance, ``total = (1 + base)(1 + period) - 1``.
 
     ``base`` is the gate's own tolerance (solver, mesh, rounding);
     ``period`` the part the period mismatch explains, a float for one mode
-    or an array (one per value) for a combined quantity. ``method`` is
+    or an array (one per value) for a combined quantity. The parts
+    compound rather than add: a 1 % base on a 5.27 % period part gives
+    6.32 %, not 6.27 %; the plain sum is their first-order form, low by
+    ``base · period``. ``method`` is
     ``"exact"``, ``"first_order"`` or ``"combined"``. ``str()`` gives the
     one-line report; nothing is printed.
     """
@@ -72,8 +76,9 @@ class ParityTolerance:
 
     @property
     def total(self) -> "float | np.ndarray":
-        """``base + period``: the relative tolerance the gate uses."""
-        return self.base + self.period
+        """``(1 + base)(1 + period) - 1``: the relative tolerance the gate
+        uses."""
+        return (1.0 + self.base) * (1.0 + self.period) - 1.0
 
     def passes(self, value: "npt.ArrayLike", reference: "npt.ArrayLike") -> bool:
         """``|value - reference| <= total · |reference|``, at every value."""
@@ -84,16 +89,25 @@ class ParityTolerance:
     def __str__(self) -> str:
         period = float(np.max(self.period))
         worst = " (max)" if np.ndim(self.period) else ""
+        total = (1.0 + self.base) * (1.0 + period) - 1.0
         return (
-            f"tolerance {self.base + period:.2%}{worst} = base {self.base:.2%}"
-            f" + period {period:.2%} ({self.quantity}, {self.method})"
+            f"tolerance {total:.2%}{worst} = (1 + base {self.base:.2%})"
+            f"(1 + period {period:.2%}) - 1 ({self.quantity}, {self.method})"
         )
 
 
 def _sa_of(spectrum: Any) -> "Callable[[np.ndarray], np.ndarray]":
-    """``Sa(T)`` of a :class:`DesignSpectrum` or of a vectorised callable,
-    refused where it is not positive (a ratio of ``Sa`` is taken)."""
-    raw = spectrum.sa if isinstance(spectrum, DesignSpectrum) else spectrum
+    """``Sa(T)`` of a :class:`DesignSpectrum`, or of what a
+    :class:`DesignSpectrum` takes as a function (an object with ``.at``, or a
+    vectorised callable); refused where it is not positive (a ratio of
+    ``Sa`` is taken)."""
+    raw = (spectrum.sa if isinstance(spectrum, DesignSpectrum)
+           else _sa_function(spectrum))
+    if raw is None:
+        raise TypeError(
+            "spectrum tolerance: spectrum must be a DesignSpectrum, an object "
+            f"with .at(T), or a vectorised Sa(T); got {type(spectrum).__name__}."
+        )
 
     def sa(t: "npt.ArrayLike") -> np.ndarray:
         v = np.asarray(raw(np.asarray(t, dtype=np.float64)), dtype=np.float64)
@@ -142,6 +156,10 @@ def spectrum_slope(
     t = float(period)
     if not (math.isfinite(t) and t > 0.0):
         raise ValueError(f"spectrum_slope: period must be > 0, got {period!r}.")
+    if not 0.0 < rel_step < 1.0:
+        raise ValueError(
+            f"spectrum_slope: rel_step must be in (0, 1), got {rel_step!r}."
+        )
     sa = _sa_of(spectrum)
     lo, mid, hi = sa(np.array([t * (1.0 - rel_step), t, t * (1.0 + rel_step)]))
     left = math.log(mid / lo) / -math.log1p(-rel_step)
@@ -215,11 +233,17 @@ def combined_period_tolerance(
     Each mode is rescaled to the reference period by
     ``Sa(T_ref)/Sa(T) · (T_ref/T)^p`` and the combination is re-run with
     the reference ``ω = 2π/T_ref`` (for CQC, ``ρ`` is recomputed with it).
+    CQC needs ``damping`` (one ratio, or one per mode); there is no default.
     The period part is ``|C - C_ref| / C_ref``, per value; ``C_ref = 0``
     gives 0 when ``C = 0`` too and ``inf`` otherwise.
     """
     p = _power(quantity)
     b = _base(base)
+    if rule == "CQC" and damping is None:
+        raise ValueError(
+            "combined_period_tolerance: rule='CQC' needs damping= (one ratio "
+            "or one per mode); pass rule='SRSS' to combine without it."
+        )
     v = np.asarray(per_mode, dtype=np.float64)
     t = np.asarray(periods, dtype=np.float64).ravel()
     t_ref = np.asarray(periods_ref, dtype=np.float64).ravel()

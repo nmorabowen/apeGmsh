@@ -11,7 +11,8 @@ written here by hand, apart from the module under test:
   the one-sided slopes at a corner;
 * gate 3: a two-mode CQC re-evaluated with the reference periods, ``ρ``
   recomputed with the reference ``ω``;
-* gate 4: the report carries base + period and they add up.
+* gate 4: the report carries base and period and they compound,
+  ``(1 + base)(1 + period) - 1``.
 """
 from __future__ import annotations
 
@@ -203,8 +204,13 @@ def test_report_base_plus_period() -> None:
                            base=0.01)
     assert isinstance(tol, ParityTolerance)
     assert tol.base == 0.01
-    assert float(tol.total) == pytest.approx(0.01 + float(tol.period),
-                                             rel=1e-15)
+    assert float(tol.total) == pytest.approx(
+        1.01 * (1.0 + float(tol.period)) - 1.0, rel=1e-15)
+    # compounding is what keeps it exact: 1 % base on a 5.27 % period part
+    # is 6.32 % (1.01 · 1.022**2.36 - 1), not the first-order sum 6.27 %
+    assert float(tol.total) == pytest.approx(1.01 * 1.022 ** 2.36 - 1.0,
+                                             rel=1e-12)
+    assert float(tol.total) == pytest.approx(0.0632, abs=5e-5)
     text = str(tol)
     assert "base" in text and "period" in text and "exact" in text
     assert f"{100 * float(tol.period):.2f}" in text
@@ -216,7 +222,8 @@ def test_report_array_total_and_passes() -> None:
     per_mode = np.array([[1.0, 0.0], [0.5, 2.0]])
     tol = combined_period_tolerance(SPEC, per_mode, t, t_ref,
                                     quantity="force", rule="SRSS", base=0.02)
-    np.testing.assert_allclose(tol.total, 0.02 + tol.period, rtol=0)
+    np.testing.assert_allclose(tol.total, 1.02 * (1.0 + tol.period) - 1.0,
+                               rtol=1e-15)
     ref = np.array([1.0, 2.0])
     assert tol.passes(ref * (1.0 + 0.019), ref)
     assert not tol.passes(ref * (1.0 + tol.total + 0.01), ref)
@@ -232,3 +239,27 @@ def test_refusals() -> None:
     with pytest.raises(ValueError, match="periods"):
         combined_period_tolerance(SPEC, [1.0, 2.0], [0.4], [0.4, 0.3],
                                   quantity="force", rule="SRSS")
+
+
+def test_cqc_without_damping_is_refused() -> None:
+    with pytest.raises(ValueError, match="rule='CQC' needs damping="):
+        combined_period_tolerance(SPEC, [1.0, -0.6], [0.51, 0.46],
+                                  [0.50, 0.46], quantity="force")
+
+
+@pytest.mark.parametrize("step", [0.0, -1e-6, 1.0, 2.0, float("nan")])
+def test_slope_rel_step_is_validated(step: float) -> None:
+    with pytest.raises(ValueError, match="rel_step"):
+        spectrum_slope(SPEC, 0.4, rel_step=step)
+
+
+def test_spectrum_with_at_method() -> None:
+    class AtOnly:                      # a codeSpectra-like object, not callable
+        def at(self, t: np.ndarray) -> np.ndarray:
+            return _sa(t)
+
+    assert spectrum_slope(AtOnly(), 0.4) == pytest.approx(S_RISE, rel=1e-6)
+    tol = period_tolerance(AtOnly(), 0.4 * 1.022, 0.4, quantity="force")
+    assert float(tol.period) == pytest.approx(1.022 ** 0.36 - 1.0, rel=1e-9)
+    with pytest.raises(TypeError, match="spectrum must be"):
+        spectrum_slope(object(), 0.4)
