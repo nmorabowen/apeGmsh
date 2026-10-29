@@ -7,7 +7,7 @@ import pandas as pd
 
 from apeGmsh._logging import _HasLogging
 from apeGmsh._types import Tag, DimTag
-from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg
+from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg, strip_prefix
 
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
@@ -321,6 +321,9 @@ class PhysicalGroups(_HasLogging):
         """
         Assign (or rename) the label of an existing physical group.
 
+        A named group is renamed in place: it keeps its tag and its
+        entities, takes *name*, and no longer answers to its old name.
+
         Parameters
         ----------
         dim  : dimension of the physical group
@@ -332,16 +335,23 @@ class PhysicalGroups(_HasLogging):
         ValueError
             If another physical group at *dim* is already named *name*.
             gmsh keeps one group per name and dim and drops the call
-            without a word, so neither group would change.  Also if
+            without a word, so neither group would change.  If *name*
+            already names a group at another dim, as :meth:`add`
+            refuses: a physical-group name maps to one dimension.  If
             *name* starts with the reserved ``_label:`` prefix, as
-            :meth:`add` refuses.  Setting a group's own current name
-            stays a no-op.
+            :meth:`add` refuses, or if the group is a label's
+            (rename it with ``g.labels.rename()``).  If *name* is
+            ``""`` and the group is named: use :meth:`remove_name` to
+            unname it.  Setting a group's own current name stays a
+            no-op.  Every refusal comes before any gmsh write.
         """
         # Frozen on the same terms as add(): the broker's
         # PhysicalGroupSet is a snapshot keyed by name, so renaming a
         # PG here leaves the two disagreeing about what exists.
         self._require_unfrozen(f"g.physical.set_name({name!r})")
-        if gmsh.model.getPhysicalName(dim, tag) == name:
+        where = f"g.physical.set_name(dim={dim}, tag={tag}, name={name!r})"
+        current = gmsh.model.getPhysicalName(dim, tag)
+        if current == name:
             # Already this group's name: nothing to do.  Checked first
             # so a label PG's own name is not refused below.
             return self
@@ -350,25 +360,62 @@ class PhysicalGroups(_HasLogging):
         # would vanish from get_tag.  Refused like add() refuses it.
         if is_label_pg(name):
             raise ValueError(
-                f"g.physical.set_name(dim={dim}, tag={tag}, name={name!r}): "
-                f"names starting with {LABEL_PREFIX!r} are reserved for "
-                f"g.labels.  Use a name without that prefix, or "
-                f"g.labels.rename() to rename a label."
+                f"{where}: names starting with {LABEL_PREFIX!r} are "
+                f"reserved for g.labels.  Use a name without that "
+                f"prefix, or g.labels.rename() to rename a label."
             )
-        # "" is no name: any number of groups may be unnamed.
-        holder = self._named(name).get(dim) if name else None
+        # A label's group renamed here would leave g.labels without it.
+        if is_label_pg(current):
+            raise ValueError(
+                f"{where}: group (dim={dim}, tag={tag}) is the label "
+                f"{strip_prefix(current)!r}, not a physical group.  "
+                f"Use g.labels.rename() to rename it, or "
+                f"g.physical.from_label() to make a physical group of it."
+            )
+        # Reached only for a named group ("" == "" returned above).
+        if not name:
+            raise ValueError(
+                f"{where}: an empty name would unname group "
+                f"{current!r}.  Use g.physical.remove_name({current!r}) "
+                f"to drop its name."
+            )
+        found = self._named(name)
+        conflict = sorted(d for d in found if d != dim)
+        if conflict:
+            raise ValueError(
+                f"{where}: physical group {name!r} already exists at "
+                f"dim={conflict[0]}.  A physical-group name maps to a "
+                f"single dimension, as g.physical.add() requires; use a "
+                f"distinct name for the dim={dim} group."
+            )
+        holder = found.get(dim)
         if holder is not None:
             raise ValueError(
-                f"g.physical.set_name(dim={dim}, tag={tag}, name={name!r}): "
-                f"physical group {name!r} already exists at dim={dim} "
-                f"(tag={holder}).  gmsh keeps one group per name and dim, "
-                f"so the name would be dropped and neither group would "
-                f"change.  Remove or rename that group first, or pick "
-                f"another name."
+                f"{where}: physical group {name!r} already exists at "
+                f"dim={dim} (tag={holder}).  gmsh keeps one group per "
+                f"name and dim, so the name would be dropped and neither "
+                f"group would change.  Remove or rename that group "
+                f"first, or pick another name."
             )
+        if current:
+            # gmsh's setPhysicalName keeps a name the group already
+            # has, so the old one is dropped first.  removePhysicalName
+            # drops it at every dim: any other group still holding it
+            # (only raw gmsh can make one) gets it back.
+            others = [
+                (int(d), int(t)) for d, t in gmsh.model.getPhysicalGroups()
+                if (int(d), int(t)) != (dim, int(tag))
+                and gmsh.model.getPhysicalName(d, t) == current
+            ]
+            gmsh.model.removePhysicalName(current)
+            self._index.forget(current)
+            for d, t in others:
+                gmsh.model.setPhysicalName(d, t, current)
+                self._index.note(d, t)
         gmsh.model.setPhysicalName(dim, tag, name)
         self._index.note(dim, tag)
-        self._log(f"set_name(dim={dim}, tag={tag}, name={name!r})")
+        self._log(f"set_name(dim={dim}, tag={tag}, name={name!r})"
+                  + (f", was {current!r}" if current else ""))
         return self
 
     def remove_name(self, name: str) -> PhysicalGroups:

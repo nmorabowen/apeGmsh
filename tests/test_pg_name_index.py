@@ -61,13 +61,18 @@ def test_label_pgs_are_skipped(g):
 def test_rename_and_remove_are_reflected(g):
     a, b = _lines(2)
     t = g.physical.add(1, [a], name="old")
-    # gmsh keeps a name the group already has: set_name alone is a no-op.
-    g.physical.set_name(1, t, "new")
-    assert g.physical.get_tag(1, "old") == t
-    assert g.physical.get_tag(1, "new") is None
-    g.physical.remove_name("old").set_name(1, t, "new")
+    # #2594: gmsh keeps a name the group already has, so set_name was a
+    # silent no-op.  It renames in place: same tag, same entities.
+    assert g.physical.set_name(1, t, "new") is g.physical
     assert g.physical.get_tag(1, "old") is None
     assert g.physical.get_tag(1, "new") == t
+    assert g.physical.get_name(1, t) == "new"
+    assert list(g.physical.get_entities(1, t)) == [a]
+    assert g.physical.get_all() == [(1, t)]
+    # The freed name is free again, at any dim.
+    p = gmsh.model.getBoundary([(1, b)], oriented=False)[0][1]
+    assert g.physical.add(0, [p], name="old") != t
+    g.physical.remove([(0, g.physical.get_tag(0, "old"))])
     g.physical.remove([(1, t)])
     assert g.physical.get_tag(1, "new") is None
     t2 = g.physical.add(1, [b], name="kept")
@@ -102,6 +107,77 @@ def test_set_name_to_its_own_name_or_empty_is_a_no_op(g):
     g.physical.add(1, [c])
     g.physical.set_name(1, u1, "")
     assert g.physical.get_name(1, u1) == ""
+
+
+def test_set_name_refuses_a_name_held_at_another_dim(g):
+    # #2594: add() refuses a name held at another dim; set_name let it
+    # through, leaving _named("C") == {1: .., 0: ..}.
+    a, b = _lines(2)
+    t_c = g.physical.add(1, [a], name="C")
+    p0, p1 = (gmsh.model.getBoundary([(1, b)], oriented=False)[i][1]
+              for i in range(2))
+    t_u = g.physical.add(0, [p0])                 # unnamed
+    t_n = g.physical.add(0, [p1], name="P")       # named
+    for t, before in ((t_u, ""), (t_n, "P")):
+        with pytest.raises(ValueError, match=r"'C' already exists at dim=1"):
+            g.physical.set_name(0, t, "C")
+        assert g.physical.get_name(0, t) == before
+    assert g.physical._named("C") == {1: t_c}
+    assert g.physical.get_tag(0, "P") == t_n
+
+
+def test_set_name_refuses_an_empty_name_for_a_named_group(g):
+    # "" on a named group was a silent no-op; unnaming is remove_name's.
+    a, _ = _lines(2)
+    t = g.physical.add(1, [a], name="keep")
+    with pytest.raises(ValueError, match=r"remove_name\('keep'\)"):
+        g.physical.set_name(1, t, "")
+    assert g.physical.get_tag(1, "keep") == t
+
+
+def test_set_name_refuses_a_label_group(g):
+    # A label's group renamed through g.physical was a silent no-op; a
+    # real rename would take the group away from g.labels.
+    a, _ = _lines(2)
+    g.labels.add(1, [a], name="lab")
+    (lt,) = [t for d, t in gmsh.model.getPhysicalGroups(1)
+             if gmsh.model.getPhysicalName(d, t) == "_label:lab"]
+    with pytest.raises(ValueError, match=r"is the label 'lab'.*labels\.rename"):
+        g.physical.set_name(1, lt, "user")
+    assert gmsh.model.getPhysicalName(1, lt) == "_label:lab"
+    assert g.labels.entities("lab", dim=1) == [a]
+    assert g.physical.get_tag(1, "user") is None
+
+
+def test_rename_keeps_the_old_name_on_a_raw_other_dim_group(g):
+    # removePhysicalName drops a name at every dim.  A raw-gmsh group at
+    # another dim that shares the old name keeps it.
+    a, _ = _lines(2)
+    t = g.physical.add(1, [a], name="old")
+    p = gmsh.model.getBoundary([(1, a)], oriented=False)[0][1]
+    t0 = gmsh.model.addPhysicalGroup(0, [p])
+    gmsh.model.setPhysicalName(0, t0, "old")
+    g.physical.set_name(1, t, "new")
+    assert gmsh.model.getPhysicalName(0, t0) == "old"
+    assert g.physical._named("old") == {0: t0}
+    assert g.physical._named("new") == {1: t}
+
+
+def test_renamed_group_reaches_fem_and_the_h5_round_trip(g, tmp_path):
+    from apeGmsh.mesh.FEMData import FEMData
+    a, b = _lines(2)
+    t = g.physical.add(1, [a, b], name="old")
+    g.physical.set_name(1, t, "new")
+    g.mesh.generation.generate(dim=1)
+    fem = g.mesh.queries.get_fem_data(dim=1)
+    out = tmp_path / "renamed.h5"
+    fem.to_h5(str(out))
+    for f in (fem, FEMData.from_h5(str(out))):
+        assert "old" not in f.nodes.physical.names()
+        assert f.nodes.physical.get_tag(1, "new") == t
+        assert f.elements.physical.get_tag(1, "new") == t
+        assert len(f.elements.physical.element_ids("new")) == len(
+            fem.elements.physical.element_ids((1, t)))
 
 
 def test_set_name_refuses_the_label_prefix(g):
