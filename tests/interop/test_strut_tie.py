@@ -11,11 +11,15 @@ import itertools
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 
+from apeGmsh.interop import strut_tie as _strut_tie
 from apeGmsh.interop.strut_tie import (
+    EQUILIBRIUM_TOLERANCE_0_005,
+    PushoverRefusedError,
     _parse_fixed_plane,
     main,
     strut_tie_overlays,
@@ -105,45 +109,50 @@ def test_schema_and_case_are_checked() -> None:
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
-def test_corbel_pushover_curve_rises_then_stops() -> None:
-    from apeGmsh.interop.strut_tie import strut_tie_pushover
-
-    model = _load("corbel.stm.json")
-    result = strut_tie_pushover(
-        model,
-        mesh_size=45.0,
-        extra_fixed_planes=(("x", -400.0, (0, 1)),),
-        target_displacement=0.3,
-        steps=10,
-    )
-    curve = result.overlays["fe_curve"]
-    pts = curve["points"]
-    assert len(pts) >= 4
-    assert pts[0] == [0.0, 0.0]
-    deltas = [p[0] for p in pts]
-    assert all(b > a for a, b in itertools.pairwise(deltas))
-    assert curve["capacity"] == max(p[1] for p in pts)
-    # Reinforced: the tie bars carry the region well past the plain-concrete
-    # cracking peak (about 136 kN on this mesh without bars).
-    assert curve["capacity"] > 150.0e3
-    assert "ties as Steel02" in curve["source"]
-    assert result.overlays["fe_summary"]["ties_modelled"]["T1"] > 0.0
-    assert curve["stopped"] in ("target", "divergence", "post_peak")
-    # First increment is elastic: load rises with displacement.
-    assert pts[1][1] > 0.0
-    json.dumps(result.overlays, allow_nan=False)
+def test_corbel_pushover_refuses_a_step_out_of_equilibrium(
+    record_property: Any,
+) -> None:
+    """#2602: at the pinned fork, ``LadrunoConcrete3D``'s return map fails
+    silently (``setTrialStrain`` returns 0 with the off-surface trial
+    stress), so a step past cracking is accepted out of equilibrium and the
+    run refuses. Before the guard this test accepted ``stopped="divergence"``
+    and a capacity above 150 kN from such a path. Once chain F makes the
+    return map fail loudly (#2602 route 2), the expectation goes back to a
+    curve that rises past the plain-concrete cracking peak (about 136 kN on
+    this mesh) to more than 150 kN."""
+    with pytest.raises(PushoverRefusedError) as info:
+        strut_tie_pushover(
+            _load("corbel.stm.json"),
+            mesh_size=45.0,
+            extra_fixed_planes=(("x", -400.0, (0, 1)),),
+            target_displacement=0.3,
+            steps=10,
+        )
+    err = info.value
+    record_property("refused_step", err.step)
+    record_property("refusal", str(err))
+    assert err.reason == "unbalanced"
+    assert "is not in equilibrium" in str(err)
+    pts = err.points
+    assert pts[0] == [0.0, 0.0] and len(pts) == err.step
+    assert all(b[0] > a[0] for a, b in itertools.pairwise(pts))
+    assert len(pts) < 2 or pts[1][1] > 0.0  # the elastic first step rises
 
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
 def test_pile_cap_pushover_writes_both_overlays(tmp_path: Path) -> None:
+    """Plumbing: both overlays and the bearing paths reach one file. One
+    linear-range step (0.05 mm, λ ≈ 0.6), because past it the pinned fork's
+    return map leaves the solid region out of equilibrium and the run
+    refuses (#2602)."""
     out = write_strut_tie_overlays(
         FIXTURES / "pile_cap.stm.json",
         tmp_path / "cap.overlays.json",
         mesh_size=300.0,
         pushover=True,
-        target_displacement=0.3,
-        steps=3,
+        target_displacement=0.05,
+        steps=1,
         max_halvings=3,
     )
     data = json.loads(out.read_text(encoding="utf-8"))
@@ -164,7 +173,9 @@ COOK_MITCHELL_MEASURED_N = 502.0e3  # per side
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
-def test_cook_mitchell_double_corbel_pushover_against_the_paper() -> None:
+def test_cook_mitchell_double_corbel_pushover_against_the_paper(
+    record_property: Any,
+) -> None:
     """ACI SP-208 Part 3 §2, Cook and Mitchell (1988) double corbel:
     strut-and-tie prediction 471 kN per side (tie yield, 4 No. 15 at
     444 MPa), measured 502 kN. The fixture is the apeConcrete anchor's
@@ -185,24 +196,222 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper() -> None:
     current state with a wide bracket so a change in either direction —
     a welded-plate option lifting the peak, or a regression lowering
     it — is noticed and re-documented.
+
+    **#2602 (2026-10-29): the run refuses at the pinned fork.** The 287–385
+    kN peaks this test saw were not capacities. The #2602 diagnosis traced
+    them to a path that branches at the first step plain Newton cannot
+    converge, because ``LadrunoConcrete3D`` returns 0 from a failed return
+    map; a 1e-12 change in ft moves the peak from 318 to 414 kN on one MKL
+    path. The equilibrium guard now finds that step out of equilibrium (far
+    above 0.5 % of the load) and refuses, so the equilibrated part of the
+    curve ends below the floor. The bracket is unchanged and waits for an
+    equilibrated run: 0.7 × 471 kN (the strut-and-tie prediction, the
+    floor) < per side < 1.1 × 502 kN (the measured load), with
+    ``stopped == "post_peak"``. Chain F (#2602 route 2) restores it.
     """
     model = _load("cook_mitchell_corbel.stm.json")
-    result = strut_tie_pushover(
-        model, mesh_size=40.0, target_displacement=3.0, steps=30, max_halvings=5
-    )
+    with pytest.raises(PushoverRefusedError) as info:
+        strut_tie_pushover(
+            model, mesh_size=40.0, target_displacement=3.0, steps=30, max_halvings=5
+        )
+    err = info.value
+    record_property("refused_step", err.step)
+    record_property("refusal", str(err))
+    assert err.reason == "unbalanced"
+    assert err.relative_tolerance == 5e-3
+    equilibrated_per_side = max(p[1] for p in err.points) / 2.0
+    assert equilibrated_per_side < 0.7 * COOK_MITCHELL_STM_PREDICTION_N
+
+
+# ---------------------------------------------------------------------------
+# The equilibrium guard (#2602): a step out of equilibrium, or a run that
+# does not converge, returns no capacity. These run on stock openseespy
+# (ASDConcrete3D in its linear range), so the live-stock lane proves them.
+# ---------------------------------------------------------------------------
+_ELASTIC_ASD = {
+    "mesh_size": 45.0,
+    "extra_fixed_planes": (("x", -400.0, (0, 1)),),
+    "target_displacement": 0.03,
+    "steps": 3,
+    "material": "asd",
+}
+
+
+class _InjectingOps:
+    """The live module with a known defect from accepted step ``from_step``
+    on: ``force`` newtons added to ``nodeReaction`` at one free DOF (an
+    unbalanced force of exactly that size), or ``analyze`` failing (a run
+    that stops converging; OpenSees reverts a failed step, so the domain
+    stays at the last accepted one)."""
+
+    def __init__(
+        self, real: object, *, from_step: int, force: float = 0.0, fail: bool = False
+    ) -> None:
+        self._real = real
+        self._from_step = from_step
+        self._force = force
+        self._fail = fail
+        self.accepted = 0
+        self.node: int | None = None
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+    def analyze(self, *args: object) -> int:
+        if self._fail and self.accepted + 1 >= self._from_step:
+            return -1
+        rc = int(self._real.analyze(*args))
+        self.accepted += rc == 0
+        return rc
+
+    def nodeReaction(self, tag: int, *args: object) -> list[float]:
+        r = [float(x) for x in self._real.nodeReaction(tag, *args)]
+        if self.node is None:
+            fixed = {int(n) for n in self._real.getFixedNodes()}
+            self.node = min(
+                int(n) for n in self._real.getNodeTags() if int(n) not in fixed
+            )
+        if self.accepted >= self._from_step and int(tag) == self.node:
+            r[0] += self._force
+        return r
+
+
+def _inject(monkeypatch: pytest.MonkeyPatch, **kw: object) -> dict[str, _InjectingOps]:
+    holder: dict[str, _InjectingOps] = {}
+
+    class _Emitter(_strut_tie.LiveOpsEmitter):
+        @property
+        def ops(self):  # type: ignore[override]
+            if "ops" not in holder:
+                holder["ops"] = _InjectingOps(super().ops, **kw)  # type: ignore[arg-type]
+            return holder["ops"]
+
+    monkeypatch.setattr(_strut_tie, "LiveOpsEmitter", _Emitter)
+    return holder
+
+
+def test_pushover_guard_passes_a_converged_linear_range_run() -> None:
+    """A linear-range run under plain Newton: the guard reads an unbalance
+    thousands of times below its tolerance and returns the capacity."""
+    result = strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
     curve = result.overlays["fe_curve"]
-    per_side = curve["capacity"] / 2.0
-    assert curve["stopped"] == "post_peak"  # a real peak, not a solver failure
-    assert curve["fallback_steps"] >= 0
-    assert curve["tolerance"] == 1e-6
-    assert (
-        0.7 * COOK_MITCHELL_STM_PREDICTION_N < per_side < 1.1 * COOK_MITCHELL_MEASURED_N
+    assert curve["stopped"] == "target"
+    assert len(curve["points"]) == 4
+    assert curve["capacity"] == max(p[1] for p in curve["points"]) > 0.0
+    eq = curve["equilibrium"]
+    assert eq["tolerance"] == EQUILIBRIUM_TOLERANCE_0_005 == 5e-3
+    assert curve["fallback_steps"] == 0
+    assert 0.0 <= eq["max_relative_unbalance"] < 1e-6
+
+
+def test_pushover_measures_the_unbalance_it_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected 10 N below the tolerance passes, and the ratio recorded is
+    10 N over the smallest applied load ``|λ|·|P|``, that of step 1."""
+    _inject(monkeypatch, from_step=1, force=10.0)
+    result = strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
+    curve = result.overlays["fe_curve"]
+    reference = float(np.linalg.norm(result.applied[:2]))
+    lam1 = curve["load_factors"][1]
+    assert curve["equilibrium"]["max_relative_unbalance"] == pytest.approx(
+        10.0 / (lam1 * reference), rel=1e-3
     )
-    assert math.isclose(
-        curve["capacity_factor"], per_side / COOK_MITCHELL_STM_PREDICTION_N
+
+
+def test_pushover_refuses_a_step_out_of_equilibrium(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A step accepted with an unbalanced force above 0.5 % of the applied
+    load refuses the run: no result object, an error naming the step, the
+    force and the tolerance, and the curve up to the step before."""
+    force = 5.0e4
+    _inject(monkeypatch, from_step=2, force=force)
+    with pytest.raises(PushoverRefusedError) as info:
+        strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
+    err = info.value
+    assert err.reason == "unbalanced"
+    assert err.step == 2
+    assert err.unbalance == pytest.approx(force, rel=1e-6)
+    assert err.relative_tolerance == 5e-3
+    assert len(err.points) == 2 and err.points[0] == [0.0, 0.0]
+    assert err.points[1][1] > 0.0
+    msg = str(err)
+    assert "step 2" in msg and "tolerance 0.005" in msg and "5e+04 N" in msg
+    assert "#2602" in msg
+
+
+def test_pushover_refuses_at_step_one_with_only_the_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The degenerate end: the first step is refused, and the curve carried
+    is the origin alone."""
+    _inject(monkeypatch, from_step=1, force=5.0e4)
+    with pytest.raises(PushoverRefusedError) as info:
+        strut_tie_pushover(_load("corbel.stm.json"), **_ELASTIC_ASD)
+    assert info.value.step == 1
+    assert info.value.points == [[0.0, 0.0]]
+
+
+def test_pushover_refuses_a_run_that_stops_converging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Before #2602 a run whose step failed every halving returned the peak
+    of the steps before as ``capacity`` with ``stopped="divergence"``."""
+    holder = _inject(monkeypatch, from_step=3, fail=True)
+    with pytest.raises(PushoverRefusedError) as info:
+        strut_tie_pushover(_load("corbel.stm.json"), max_halvings=2, **_ELASTIC_ASD)
+    err = info.value
+    assert err.reason == "no_convergence"
+    assert err.step == 3
+    assert err.unbalance is None
+    assert len(err.points) == 3
+    assert holder["ops"].accepted == 2
+    assert "step 3 did not converge" in str(err) and "2 halvings" in str(err)
+
+
+def test_step_fallbacks_loosen_the_displacement_tolerance_only() -> None:
+    """Before #2602 a fallback ran ``NormDispIncr`` at 100 × the tolerance
+    and nothing else, so it could accept a state far out of equilibrium.
+    Every attempt now carries the same force tolerance."""
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Live:
+        attempts = 0
+
+        def test(self, *args: object) -> None:
+            calls.append(("test", args))
+
+        def algorithm(self, *args: object) -> None:
+            calls.append(("algorithm", args))
+
+        def analyze(self, n: int) -> int:
+            self.attempts += 1
+            return 0 if self.attempts == 3 else -1  # the second fallback converges
+
+    fallbacks = (
+        "KrylovNewton",
+        ("NewtonLineSearch", "-type", "Bisection"),
+        "ModifiedNewton",
     )
-    assert result.overlays["fe_summary"]["ties_modelled"]["T"] > 0.0
-    assert result.n_elements > 500
+    assert _strut_tie._step(_Live(), fallbacks, 1e-6, 100.0, 250.0) == 1
+    tests = [args for kind, args in calls if kind == "test"]
+    assert [t[0] for t in tests] == ["NormDispAndUnbalance"] * 3
+    assert [t[2] for t in tests] == [250.0] * 3  # the force tolerance, never loosened
+    assert tests[0][1] == 1e-6 and tests[0][3] == 60
+    assert all(t[1] == pytest.approx(1e-4) and t[3] == 200 for t in tests[1:])
+    algorithms = [args for kind, args in calls if kind == "algorithm"]
+    assert algorithms == [
+        ("KrylovNewton",),
+        ("NewtonLineSearch", "-type", "Bisection"),
+        ("Newton",),
+    ]
+
+
+@pytest.mark.parametrize("bad", [0.0, -1e-3, float("nan")])
+def test_pushover_equilibrium_tolerance_must_be_positive(bad: float) -> None:
+    with pytest.raises(ValueError, match="equilibrium_tolerance must be > 0"):
+        strut_tie_pushover(_load("corbel.stm.json"), equilibrium_tolerance=bad)
 
 
 # ---------------------------------------------------------------------------

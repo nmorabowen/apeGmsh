@@ -777,20 +777,23 @@ def _step(
     fallback_algorithms: Sequence[AlgorithmSpec],
     tolerance: float,
     factor: float,
+    unbalance: float,
 ) -> int:
     """One ``analyze(1)``: 0 when Newton converged, 1 when a fallback
-    algorithm did, -1 when nothing did. Leaves Newton and the base
-    tolerance in place afterwards."""
+    algorithm did, -1 when nothing did. Every attempt must also bring the
+    2-norm of the unbalanced force below ``unbalance`` (N): a fallback
+    loosens the displacement tolerance by ``factor``, never the force one
+    (#2602). Leaves Newton in place afterwards."""
+    live.test("NormDispAndUnbalance", tolerance, unbalance, 60, 0)
     if int(live.analyze(1)) == 0:
         return 0
     rc = -1
     for spec in fallback_algorithms:
-        live.test("NormDispIncr", tolerance * factor, 200)
+        live.test("NormDispAndUnbalance", tolerance * factor, unbalance, 200, 0)
         live.algorithm(*((spec,) if isinstance(spec, str) else spec))
         if int(live.analyze(1)) == 0:
             rc = 1
             break
-    live.test("NormDispIncr", tolerance, 60)
     live.algorithm("Newton")
     return rc
 
@@ -1007,7 +1010,8 @@ def strut_tie_pushover(
         ``(name, *args)`` tuple, e.g. ``("NewtonLineSearch", "-type",
         "Bisection")``. of the Newton iteration. When a
         step fails, each fallback algorithm is tried in turn at
-        ``tolerance × fallback_tolerance_factor`` with 200 iterations
+        ``tolerance × fallback_tolerance_factor`` (the force tolerance of
+        ``equilibrium_tolerance`` is not loosened) with 200 iterations
         before the increment is halved; the plastic-damage tangent is
         non-symmetric and Newton alone stalls at cracking. The curve
         records how many steps needed a fallback.
@@ -1017,8 +1021,12 @@ def strut_tie_pushover(
         the unbalanced force over the free DOFs (``R_int − λ·P``, read from
         ``reactions()``) must not exceed ``equilibrium_tolerance × |λ|·|P|``,
         the load the curve reports at that step. The default is the 0.5 %
-        force tolerance of Abaqus and ANSYS. ``fe_curve["equilibrium"]``
-        records the tolerance and the largest ratio met.
+        force tolerance of Abaqus and ANSYS. The iteration itself
+        (``NormDispAndUnbalance``, Newton and every fallback alike) demands
+        half that force of the last accepted load, so a step that cannot
+        reach equilibrium is halved instead of accepted.
+        ``fe_curve["equilibrium"]`` records the tolerance and the largest
+        ratio met.
 
     Raises
     ------
@@ -1135,9 +1143,26 @@ def strut_tie_pushover(
     current = du
     fallback_steps = 0
     worst_ratio = 0.0
+    peak_fraction = 0.5  # the run stops once the load falls below this × the peak
     while abs(reached) < target - 1e-12:
         step_no = len(points)
-        rc = _step(live, fallback_algorithms, tolerance, fallback_tolerance_factor)
+        # The iteration's force tolerance, in N: a fraction ``peak_fraction`` of
+        # the check below, scaled by the last accepted load (by |P| on step 1,
+        # which has none). A step whose load falls by less than that fraction
+        # then passes the check; one that falls further ends the run anyway.
+        in_iteration = (
+            peak_fraction
+            * equilibrium_tolerance
+            * reference
+            * (abs(lambdas[-1]) if step_no > 1 else 1.0)
+        )
+        rc = _step(
+            live,
+            fallback_algorithms,
+            tolerance,
+            fallback_tolerance_factor,
+            in_iteration,
+        )
         if rc > 0:
             fallback_steps += 1
         halvings = 0
@@ -1145,14 +1170,21 @@ def strut_tie_pushover(
             halvings += 1
             current *= 0.5
             live.integrator("DisplacementControl", control_node, dof, current)
-            rc = _step(live, fallback_algorithms, tolerance, fallback_tolerance_factor)
+            rc = _step(
+                live,
+                fallback_algorithms,
+                tolerance,
+                fallback_tolerance_factor,
+                in_iteration,
+            )
             if rc > 0:
                 fallback_steps += 1
         if rc < 0:
             raise PushoverRefusedError(
                 f"strut_tie_pushover refuses: step {step_no} did not converge. "
                 f"No algorithm met NormDispIncr {tolerance:g} (fallbacks at "
-                f"{tolerance * fallback_tolerance_factor:g}) after {max_halvings} "
+                f"{tolerance * fallback_tolerance_factor:g}) with an unbalanced "
+                f"force below {in_iteration:.4g} N after {max_halvings} "
                 f"halvings of the increment, down to {abs(current):.3g} mm, at "
                 f"delta = {abs(reached):.4g} mm. A diverged run has no capacity "
                 f"(#2602); the curve to step {step_no - 1} is on .points.",
@@ -1172,11 +1204,11 @@ def strut_tie_pushover(
             ratio = 0.0 if residual == 0.0 else math.inf
         if not ratio <= equilibrium_tolerance:  # NaN fails too
             accepted_by = (
-                f"Newton at NormDispIncr {tolerance:g}"
+                f"Newton (NormDispIncr {tolerance:g}"
                 if rc == 0
-                else "a fallback algorithm at NormDispIncr "
+                else "a fallback algorithm (NormDispIncr "
                 f"{tolerance * fallback_tolerance_factor:g}"
-            )
+            ) + f", unbalance below {in_iteration:.4g} N)"
             raise PushoverRefusedError(
                 f"strut_tie_pushover refuses: step {step_no} (delta = "
                 f"{abs(reached):.4g} mm, lambda = {lam:.4g}) was accepted by "
@@ -1199,7 +1231,7 @@ def strut_tie_pushover(
             current = min(abs(du), 2.0 * abs(current)) * sign
             live.integrator("DisplacementControl", control_node, dof, current)
         peak = max(p[1] for p in points)
-        if peak > 0.0 and points[-1][1] < 0.5 * peak:
+        if peak > 0.0 and points[-1][1] < peak_fraction * peak:
             stopped = "post_peak"
             break
 
