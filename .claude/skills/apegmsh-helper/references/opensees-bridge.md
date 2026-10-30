@@ -117,6 +117,30 @@ Which namespace:
 
 Every method has an explicit, fully-typed signature (no `**kwargs`).
 
+### Joint offsets on `geomTransf` (`jnt_offset=`)
+
+`ops.geomTransf.Linear/PDelta/Corotational(jnt_offset=((dXi,dYi,dZi),(dXj,dYj,dZj)))`
+emits `-jntOffset` (2-D: 2-tuples). `jnt_offset=` also takes an
+`apeGmsh.opensees.joint_offset.InsertionPoint` rule (ETABS cardinal point 1-11,
+joint offsets, end-length rigid zones). A 3-D `Corotational` refuses offsets.
+Schema opensees 2.37.0 stores them as `/opensees/transforms/*/jnt_offset`.
+
+A frame member is the **gmsh curve**. `FEMData` records each element's source
+entity (`fem.elements.entity`, `fem.elements.source_entity(eids, dim=1)` ->
+`(module_label, entity)`, neutral schema 2.36). Offsets that are the same
+transverse shift at both ends stay per element. End-sensitive offsets (end
+lengths, an axial part, unequal ends) split over each curve: first element
+takes the i-offset, last the j-offset, interior nodes the transverse part. A
+curve of n elements acts as one element; to put a joint mid-span, split the
+curve. It refuses, naming the curve, on: a curved curve; a transform covering
+part of a curve that puts an end zone or axial part at an interior node; mixed
+element orientation or a closed curve; end lengths with different transverse
+offsets at the two ends; an end element no longer than its end offsets; and
+elements of one curve with different `vecxz`. In 3-D, a split with neither
+`vecxz=` nor `orientation=` refuses naming the transform only. With no source curves (pre-2.36
+`model.h5`, FEM not from gmsh) it refuses instead, naming the elements and the
+node, where two elements meet outside a 30-150 degree corner.
+
 ### Site-response soils (multi-yield, PM4)
 
 `ops.nDMaterial.PressureIndependMultiYield` (total-stress clay),

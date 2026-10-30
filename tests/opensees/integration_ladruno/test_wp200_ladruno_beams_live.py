@@ -494,6 +494,27 @@ def test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live(
 
     # 3. Single-hinge hinge_loc=0.5 on LadrunoDispBeamColumn and LadrunoForceBeamColumn
     #    with both 2-tuple subdivide=(4, 4.0) and scalar subdivide=4 followed by mass=10.0 (2D & 3D)
+    #
+    # Closed form (statically determinate cantilever, base x=0, tip x=L=4,
+    # tip load (FX, FY_HINGE)): |M(x)| = |FY_HINGE| (L - x), whatever the
+    # element and hinge stiffness.  Element 1 spans [0, 2], its hinge at
+    # hinge_loc=0.5 sits at x=1: |M| = 12e3 * 3 = 36 kN*m.  Element 2 spans
+    # [2, 4], hinge at x=3: |M| = 12e3 * 1 = 12 kN*m.  Both stay below
+    # Mc = 40 kN*m, so the hinge is not activated and equilibrium exists at
+    # lambda = 1.  (The previous FY = -18 kN put 54 kN*m on the x=1 hinge:
+    # it activates at lambda* = 40/54 = 0.741 and a softening hinge on a
+    # determinate cantilever has no equilibrium at lambda = 1, apeGmsh #2571.)
+    #
+    # What this checks is the hinge's own moment, hingeSummary[1] (the
+    # material's stress), against M(x_h).  Before fork FB-1 (eaaf07e8b) an
+    # interior hinge read (1 - xi) q1 + xi q2 instead of M(xi) = (xi - 1) q1 +
+    # xi q2, with basic end moments q1 = -M(x_i), q2 = M(x_j).  On element 1
+    # (M(0) = 48, M(2) = 24 kN*m, one sign) that is 0.5 * |M(2) - M(0)| =
+    # 12 kN*m, not 36, so this assertion fails on such a build (the fork
+    # bisect's parent build 49d0ebc09 read 900 against 2700 at lambda=0.05,
+    # the same 1/3).  On element 2 the two readings coincide (12 kN*m).
+    fy_hinge = -12.0e3
+    mc_hinge = 40.0e3
     for cls_name in ("LadrunoDispBeamColumn", "LadrunoForceBeamColumn"):
         sub_cases: tuple[dict[str, Any], ...] = (
             ({"subdivide": (4, 4.0)}, {"subdivide": 4, "mass": 10.0})
@@ -508,7 +529,7 @@ def test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live(
             sec_h = ops_h.section.Elastic(E=2.0e11, A=0.04, Iz=1.6e-4)
             integ_h = ops_h.beamIntegration.Lobatto(section=sec_h, n_ip=4)
             h_m = ops_h.uniaxialMaterial.LadrunoCohesiveHinge(
-                Mc=40.0e3, Gf=250.0, softening="linear"
+                Mc=mc_hinge, Gf=250.0, softening="linear"
             )
             getattr(ops_h.element, cls_name)(
                 pg="Beam",
@@ -520,7 +541,7 @@ def test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live(
             )
             ops_h.fix(label="base", dofs=(1, 1, 1))
             with ops_h.pattern.Plain(series=ops_h.timeSeries.Linear()) as p:
-                p.load(node=ops_h.nodes.one(label="tip"), forces=(FX, FY, 0.0))
+                p.load(node=ops_h.nodes.one(label="tip"), forces=(FX, fy_hinge, 0.0))
             ops_h.constraints.Plain()
             ops_h.numberer.RCM()
             ops_h.system.BandGeneral()
@@ -532,6 +553,19 @@ def test_ladruno_beam_shear_hinge_single_hinge_loc_and_subdivide_live(
             em_h = LiveOpsEmitter(wipe=True)
             ops_h.build().emit(em_h)
             assert em_h.analyze(steps=1) == 0
+
+            o_h = em_h.ops
+            hinge_x = []
+            for tag in o_h.getEleTags():
+                xi_node, xj_node = (o_h.nodeCoord(n)[0] for n in o_h.eleNodes(tag))
+                x_h = xi_node + 0.5 * (xj_node - xi_node)
+                want = abs(fy_hinge) * (L - x_h)
+                assert want < mc_hinge, (cls_name, x_h, want)
+                hs = np.asarray(o_h.eleResponse(tag, "hingeSummary"), dtype=float)
+                assert abs(hs[1]) == pytest.approx(want, rel=RTOL), (
+                    cls_name, extra, x_h, hs)
+                hinge_x.append(x_h)
+            assert sorted(hinge_x) == pytest.approx([1.0, 3.0]), hinge_x
 
     # 4. 3-D LadrunoForceBeamColumn with scalar subdivide=4 and mass=10.0
     fem_f3 = _two_element_cantilever_fem("wp200_lfbc3d_scalar_subdivide")

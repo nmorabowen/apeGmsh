@@ -61,7 +61,8 @@ def test_capabilities_carries_the_build_stamp() -> None:
 
 
 def test_backend_info_parses_the_ladruno_schema() -> None:
-    """The bound fork's ``ladrunoSchema`` v0 (fork PR #972) parses (#1931).
+    """The bound fork's ``ladrunoSchema`` (fork PR #972, v1 since WP-185 /
+    apeGmsh#2517) parses (#1931).
 
     In the ``live-fork`` lane (``APEGMSH_FORK_PIN_ENFORCE=1``) the pinned
     build carries the schema, so it must parse. A local dev build predating
@@ -78,7 +79,11 @@ def test_backend_info_parses_the_ladruno_schema() -> None:
         pytest.skip("fork build predates ops.ladrunoSchema (fork PR #972)")
     info = get_backend_info()
     assert info.schema is not None, "ladrunoSchema read as unknown"
-    assert info.schema.schema_version == 0
+    # FORK_PIN ladruno-v20261029 (6ee6a04fd, the 9aadc76cc source plus a
+    # release-workflow change) answers v1 (fork WP-185,
+    # apeGmsh#2517): v0 plus ``capabilities``.
+    assert info.schema.schema_version == 1
+    assert "mdStageFlagPreserved" in info.schema.capabilities
     assert info.schema.build == ops.ladrunoBuild().strip() == info.build
     assert info.supports_option("LadrunoRCConcrete", "-implexControl") is True
     assert info.has_command("ladrunoSchema") is True

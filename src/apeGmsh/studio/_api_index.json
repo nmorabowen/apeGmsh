@@ -234,6 +234,12 @@
       "skill": "references/fem-broker.md",
       "symbol": "FEMData.elements.select"
     },
+    "FEMData.elements.source_entity": {
+      "doc": "``(labels, entity)`` for element ids ``eids`` of dimension ``dim``.",
+      "signature": "source_entity(eids, *, dim: 'int') -> \"'tuple[ndarray, ndarray]'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.source_entity"
+    },
     "FEMData.elements.type_table": {
       "doc": "DataFrame of element types in the mesh.",
       "signature": "type_table() -> \"'pd.DataFrame'\"",
@@ -4272,9 +4278,15 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.register"
     },
+    "ops.residual_modes": {
+      "doc": "Eigenmodes completed by the fork's missing-mass pseudo-modes, live.",
+      "signature": "residual_modes(dirs: 'Sequence[int]', *, num_modes: 'int', period: 'float | str' = 'rayleigh', replace: 'bool' = False, tol: 'float | None' = None, solver: 'str' = '-genBandArpack') -> \"'ModalPropertiesResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.residual_modes"
+    },
     "ops.response_spectrum_analysis": {
       "doc": "Run a response-spectrum analysis with native combination.",
-      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack', scale: 'float | None' = None) -> \"'ResponseSpectrumResult'\"",
+      "signature": "response_spectrum_analysis(direction: 'int', *, periods: 'Sequence[float]', accels: 'Sequence[float]', combine: 'str', num_modes: 'int', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, solver: 'str' = '-genBandArpack', scale: 'float | None' = None, require_mass: 'float | None' = None) -> \"'ResponseSpectrumResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.response_spectrum_analysis"
     },
@@ -4283,6 +4295,12 @@
       "signature": "results(path: 'str') -> \"'Results'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.results"
+    },
+    "ops.ritz_vectors": {
+      "doc": "Load-dependent Ritz vectors as the mode set, live.",
+      "signature": "ritz_vectors(n: 'int', *, dirs: 'Sequence[int]' = (), patterns: \"'Sequence[Plain | str]'\" = (), cycles: 'Sequence[int] | None' = None, tol: 'float | None' = None) -> \"'ModalPropertiesResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.ritz_vectors"
     },
     "ops.run": {
       "doc": "Drive an in-process LiveOpsEmitter through the full deck.",

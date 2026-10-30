@@ -678,6 +678,12 @@ class _RewrittenBundle:
     # Per-node provenance (decoupled nodes — ADR 0049), aligned to
     # ``node_ids``.  ``None`` when the source has no decoupled nodes.
     node_provenance: "np.ndarray | None" = None
+    # Per-element source entity (neutral 2.36.0), keyed like
+    # ``element_groups`` and aligned to each group's ``ids``.  Carried
+    # verbatim, never offset: entity tags are not element or node tags,
+    # and ``module_label`` namespaces them per module.  ``None`` when
+    # the source carries no stream.
+    element_entity: "dict[int, np.ndarray] | None" = None
     # Embedded-reinforcement ties (ADR 0067 P5.1): the source's
     # ``elements.reinforce_ties`` (ReinforceTieRecord), offset-rewritten
     # via tag_rewrite_spec (rebar_node scalar + host_nodes array; name +
@@ -1828,6 +1834,12 @@ def _rewrite_source_for_compose(
             ids=new_ids,
             connectivity=new_conn,
         )
+    src_entity = source.elements.entity
+    new_element_entity = (
+        None if src_entity is None
+        else {code: np.array(arr, dtype=np.int32)
+              for code, arr in src_entity.items()}
+    )
 
     # 3. Physical groups + labels — rewrite the dict-shaped name maps
     #    on both node-side and element-side composites.
@@ -2047,6 +2059,7 @@ def _rewrite_source_for_compose(
         node_ndf=new_node_ndf,
         node_provenance=new_node_provenance,
         element_groups=new_element_groups,
+        element_entity=new_element_entity,
         node_physical=new_node_physical,
         elem_physical=new_elem_physical,
         node_labels=new_node_labels,
@@ -2785,6 +2798,21 @@ def _merge_bundle_into_fem(
             new_elem_module_label[code] = np.array(
                 [""] * host_size, dtype=object,
             )
+    # Per-element source entity: concatenated host+bundle
+    # per type, values never rewritten.  Same rule as ndf/provenance:
+    # the result carries the stream when either side does, filling
+    # ``-1`` (unknown) for the stream-less side's rows.
+    host_entity = fem.elements.entity
+    bundle_entity = bundle.element_entity
+    carry_entity = host_entity is not None or bundle_entity is not None
+    new_elem_entity: dict[int, np.ndarray] = {}
+    if carry_entity:
+        for code, host_group in new_element_groups.items():
+            new_elem_entity[code] = (
+                np.asarray(host_entity[code], dtype=np.int32)
+                if host_entity is not None
+                else np.full(host_group.ids.shape, -1, dtype=np.int32)
+            )
 
     for code, bundle_group in bundle.element_groups.items():
         b_ids = np.asarray(bundle_group.ids, dtype=np.int64)
@@ -2801,6 +2829,16 @@ def _merge_bundle_into_fem(
             )
         else:
             b_label_arr = np.array([bundle.label] * b_size, dtype=object)
+        if carry_entity:
+            b_entity_arr = (
+                np.asarray(bundle_entity[code], dtype=np.int32)
+                if bundle_entity is not None
+                else np.full(b_ids.shape, -1, dtype=np.int32)
+            )
+            new_elem_entity[code] = (
+                np.concatenate([new_elem_entity[code], b_entity_arr])
+                if code in new_elem_entity else b_entity_arr
+            )
         if code in new_element_groups:
             host_group = new_element_groups[code]
             merged_ids = np.concatenate([
@@ -2897,6 +2935,7 @@ def _merge_bundle_into_fem(
         partitions=getattr(fem.elements, "_partitions", None) or None,
         part_elem_map=new_part_elem_map or None,
         module_label=new_elem_module_label,
+        entity=new_elem_entity if carry_entity else None,
         # ADR 0067 P5.1: carry the host's own ties + append the bundle's
         # rewritten ties (the with_* transforms below shallow-copy the
         # ElementComposite, preserving this list by reference).
@@ -2991,22 +3030,75 @@ def _merge_bundle_into_fem(
         units=merged_units,
     )
 
-    # ── 11. Now append the bundle's records via the with_*
-    #       transforms.  This routes through the existing
-    #       constraint / load / mass dispatch and avoids re-implementing
-    #       the routing logic.  Cheap per-record clone of the
-    #       FEMData (shallow copy + record-set replace) — fine for
-    #       compose-time merges.
-    for rec in bundle.node_constraints:
-        new_fem = new_fem.with_constraint(rec)
-    for rec in bundle.elem_constraints:
-        new_fem = new_fem.with_constraint(rec)
-    for rec in bundle.nodal_loads:
-        new_fem = new_fem.with_load(rec)
-    for rec in bundle.element_loads:
-        new_fem = new_fem.with_load(rec)
-    for rec in bundle.sp_records:
-        new_fem = new_fem.with_load(rec)
+    # ── 11. Append the bundle's constraint / load / SP records.  One
+    #       pass routes every record to its broker bucket, then one
+    #       ``_replaced`` swaps the five record sets in.  A
+    #       ``with_constraint`` / ``with_load`` call per record would copy
+    #       the whole record list and both composites each time, which is
+    #       quadratic in the record count.
+    #       The routing is ``FEMData.with_constraint`` / ``with_load``'s
+    #       dispatch, in the same record order, refusing an unknown
+    #       record type with the same ``TypeError`` for the same record.
+    #       Every record is routed before anything is built, so a refusal
+    #       leaves nothing half-extended.
+    from .._kernel.records._constraints import (
+        NodePairRecord, NodeGroupRecord, NodeToSurfaceRecord,
+        InterpolationRecord, SurfaceCouplingRecord,
+    )
+    from .._kernel.records._loads import (
+        NodalLoadRecord, ElementLoadRecord, SPRecord,
+    )
+
+    add_node_constraints: list = []
+    add_elem_constraints: list = []
+    add_nodal_loads: list = []
+    add_element_loads: list = []
+    add_sp: list = []
+    for rec in (*bundle.node_constraints, *bundle.elem_constraints):
+        if isinstance(rec, (NodePairRecord, NodeGroupRecord,
+                            NodeToSurfaceRecord)):
+            add_node_constraints.append(rec)
+        elif isinstance(rec, (InterpolationRecord, SurfaceCouplingRecord)):
+            add_elem_constraints.append(rec)
+        elif isinstance(rec, SPRecord):
+            add_sp.append(rec)
+        else:
+            raise TypeError(
+                f"FEMData.with_constraint: unsupported record type "
+                f"{type(rec).__name__!r} — expected a ConstraintRecord "
+                f"subclass or SPRecord."
+            )
+    for rec in (*bundle.nodal_loads, *bundle.element_loads,
+                *bundle.sp_records):
+        if isinstance(rec, NodalLoadRecord):
+            add_nodal_loads.append(rec)
+        elif isinstance(rec, ElementLoadRecord):
+            add_element_loads.append(rec)
+        elif isinstance(rec, SPRecord):
+            add_sp.append(rec)
+        else:
+            raise TypeError(
+                f"FEMData.with_load: unsupported record type "
+                f"{type(rec).__name__!r} — expected NodalLoadRecord, "
+                f"ElementLoadRecord, or SPRecord."
+            )
+    if (add_node_constraints or add_elem_constraints or add_nodal_loads
+            or add_element_loads or add_sp):
+        n_set, e_set = new_fem.nodes, new_fem.elements
+        new_fem = new_fem._replaced(
+            nodes=new_fem._replaced_nodes(
+                constraints=type(n_set.constraints)(
+                    [*n_set.constraints, *add_node_constraints]),
+                loads=type(n_set.loads)([*n_set.loads, *add_nodal_loads]),
+                sp=type(n_set.sp)([*n_set.sp, *add_sp]),
+            ),
+            elements=new_fem._replaced_elements(
+                constraints=type(e_set.constraints)(
+                    [*e_set.constraints, *add_elem_constraints]),
+                loads=type(e_set.loads)(
+                    [*e_set.loads, *add_element_loads]),
+            ),
+        )
     # Masses were merged columnar into ``new_nodes`` above (ADR 0065 v2 /
     # plan_emit_memory_columnar.md C1–C3) — no per-record ``with_mass``
     # append loop here.

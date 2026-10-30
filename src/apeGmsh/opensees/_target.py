@@ -68,12 +68,20 @@ _TARGET_MODES: frozenset[str] = frozenset({"auto", "fork", "stock"})
 _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 
 
-#: The one ``ladrunoSchema`` version this module reads.
-LADRUNO_SCHEMA_VERSION = 0
-
-_SCHEMA_KEYS: frozenset[str] = frozenset(
+_V0_KEYS: frozenset[str] = frozenset(
     {"build", "commands", "engine", "options", "schema_version"}
 )
+
+#: The ``ladrunoSchema`` versions this module reads, each with its exact
+#: top-level key set; any other version is unknown.  Fork WP-185's
+#: ``SRC/interpreter/LadrunoSchema.h`` (apeGmsh#2517): v1 is v0 plus a
+#: sorted ``capabilities`` list, every other key keeping its v0 meaning.
+#: v0 is still read, since fork builds before v1 (ladruno-v20261023,
+#: bdb69cea5) answer it.
+_SCHEMA_KEYS: dict[int, frozenset[str]] = {
+    0: _V0_KEYS,
+    1: _V0_KEYS | {"capabilities"},
+}
 _OPTION_KEYS: frozenset[str] = frozenset({"nargs", "since"})
 
 
@@ -93,7 +101,7 @@ class LadrunoOption:
 
 @dataclass(frozen=True)
 class LadrunoSchema:
-    """The fork's self-description, parsed from ``ladrunoSchema()`` v0.
+    """The fork's self-description, parsed from ``ladrunoSchema()`` v0 or v1.
 
     Hashable (no ``dict`` field), so :class:`BackendInfo` stays hashable.
     Built only by :func:`backend_info_of`, and only from a schema that
@@ -101,7 +109,7 @@ class LadrunoSchema:
     """
 
     schema_version: int
-    """Always :data:`LADRUNO_SCHEMA_VERSION`; any other version is not parsed."""
+    """``0`` or ``1`` (a key of ``_SCHEMA_KEYS``); any other version is not parsed."""
     build: str
     """The 40-char sha, equal to ``ladrunoBuild()`` of the same module."""
     engine: str
@@ -114,6 +122,12 @@ class LadrunoSchema:
     """The Ladruno commands this engine registers."""
     options: tuple[tuple[str, tuple[tuple[str, LadrunoOption], ...]], ...]
     """``((owner, ((token, LadrunoOption), ...)), ...)``, sorted by name."""
+    capabilities: frozenset[str] = frozenset()
+    """The behaviours the build promises (v1 ``capabilities``).
+
+    Empty for a v0 schema: the fork reads a name's absence as "older
+    build, refuse", and v0 predates every name.
+    """
 
     def option(self, owner: str, token: str) -> LadrunoOption | None:
         """The spec for ``token`` on ``owner``, or ``None`` if it is not listed."""
@@ -225,19 +239,26 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
-    """A decoded v0 schema as :class:`LadrunoSchema`, or ``None`` if in doubt.
+    """A decoded v0 or v1 schema as :class:`LadrunoSchema`, or ``None`` if
+    in doubt.
 
-    ``schema_version`` is checked first, before any other key is read.
+    ``schema_version`` is checked first, before any other key is read, and
+    the key set must be exactly that version's.
     """
     if not isinstance(obj, dict):
         return None
     version = obj.get("schema_version")
-    if not _is_int(version) or version != LADRUNO_SCHEMA_VERSION:
+    if not _is_int(version) or version not in _SCHEMA_KEYS:
         return None
-    if set(obj) != _SCHEMA_KEYS:
+    if set(obj) != _SCHEMA_KEYS[version]:
         return None
     raw_build, engine = obj["build"], obj["engine"]
     commands, options = obj["commands"], obj["options"]
+    capabilities = obj["capabilities"] if version == 1 else []
+    if not isinstance(capabilities, list) or not all(
+        isinstance(c, str) and c for c in capabilities
+    ) or len(set(capabilities)) != len(capabilities):
+        return None
     if build is None or not isinstance(raw_build, str) or raw_build.strip() != build:
         return None
     if not isinstance(engine, str) or not engine:
@@ -271,6 +292,7 @@ def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
         engine=engine,
         commands=frozenset(commands),
         options=tuple(owners),
+        capabilities=frozenset(capabilities),
     )
 
 
@@ -420,6 +442,141 @@ class OpenSeesCapabilities:
     against.  It is the machine-readable replacement for scraping the splash
     banner, which library and test runs suppress.
     """
+    rsa: "RsaFeatures | None" = None
+    """The fork's modal-basis and RSA commands (:func:`probe_rsa_features`)."""
+
+
+#: The first fork release with chain M (WP-211..215: slave mass in
+#: ``modalProperties``, ``-requireMass``, ``residualModes``, mode tags,
+#: ``ritzVectors``) and P1 (WP-216: ``responseSpectrumPerMode``).
+CHAIN_M_MIN_RELEASE = "ladruno-v20261027"
+
+#: Each probed feature: (the command whose presence answers it, the
+#: :class:`RsaFeatures` field, the chain a refusal names).
+#: ``-requireMass`` is an option, not a command: see :class:`RsaFeatures`.
+_RSA_FEATURES: dict[str, tuple[str, str, str]] = {
+    "residualModes": ("residualModes", "residual_modes", "chain M"),
+    "ritzVectors": ("ritzVectors", "ritz_vectors", "chain M"),
+    "responseSpectrumAnalysis -requireMass": (
+        "residualModes", "rsa_require_mass", "chain M"),
+    "responseSpectrumPerMode": ("responseSpectrumPerMode", "rsa_per_mode", "P1"),
+}
+
+
+class ForkTooOldError(RuntimeError):
+    """The in-process OpenSees build lacks a fork feature a wrapper needs."""
+
+
+@dataclass(frozen=True)
+class RsaFeatures:
+    """Which of the fork's chain M / P1 commands the in-process build has.
+
+    Each flag is the presence of the command on the module, which is how
+    openseespy exposes a registered command; nothing is run, so the probe
+    needs no model and leaves the domain alone.  (``residualModes -kinds``
+    needs an AnalysisModel and errors on an empty domain, so it cannot
+    probe.)  Stock openseespy and a fork build older than
+    :data:`CHAIN_M_MIN_RELEASE` read ``False``.
+
+    ``rsa_require_mass`` cannot be seen from outside: it is an option of
+    ``responseSpectrumAnalysis``, whose parser runs only after ``eigen``
+    and ``modalProperties``, and ``ladrunoSchema`` lists no RSA options.
+    It is inferred from ``residualModes``: on the fork's first-parent
+    history ``-requireMass`` (PR #1021) merged before ``residualModes``
+    (PR #1023), so a build with the second has the first.
+    """
+
+    residual_modes: bool
+    """``residualModes`` (WP-213, fork PR #1023)."""
+    ritz_vectors: bool
+    """``ritzVectors`` (WP-215, fork PR #1027)."""
+    rsa_require_mass: bool
+    """``responseSpectrumAnalysis -requireMass`` (WP-212, fork PR #1021); inferred."""
+    rsa_per_mode: bool
+    """``responseSpectrumPerMode`` (WP-216, fork PR #1032)."""
+    build: str | None = None
+    """The probed build's ``ladrunoBuild()`` sha, for the refusal message."""
+
+    @property
+    def chain_m(self) -> bool:
+        """Every chain M command is present."""
+        return self.residual_modes and self.ritz_vectors and self.rsa_require_mass
+
+    def require(self, feature: str) -> None:
+        """Raise :class:`ForkTooOldError` unless ``feature`` is present.
+
+        ``feature`` is ``"residualModes"``, ``"ritzVectors"``,
+        ``"responseSpectrumAnalysis -requireMass"`` or
+        ``"responseSpectrumPerMode"``.
+        """
+        chain, attr = self._lookup(feature)
+        if getattr(self, attr):
+            return
+        engine = (f"fork build {self.build[:12]}" if self.build
+                  else "build (stock openseespy, or a fork without ladrunoBuild)")
+        raise ForkTooOldError(
+            f"fork too old: needs {chain} ({CHAIN_M_MIN_RELEASE}+) for "
+            f"{feature}; the in-process OpenSees {engine} does not have it. "
+            f"Install a Ladruno fork release {CHAIN_M_MIN_RELEASE} or newer."
+        )
+
+    @staticmethod
+    def _lookup(feature: str) -> tuple[str, str]:
+        try:
+            _, attr, chain = _RSA_FEATURES[feature]
+        except KeyError:
+            raise ValueError(
+                f"unknown fork feature {feature!r}; one of {sorted(_RSA_FEATURES)}"
+            ) from None
+        return chain, attr
+
+
+#: One probe per OpenSees module object, i.e. per interpreter in a process.
+#: The value keeps the module alive, so its ``id`` is never reused.
+_RSA_CACHE: dict[int, tuple[Any, RsaFeatures]] = {}
+
+
+def rsa_features_of(ops: Any) -> RsaFeatures:
+    """Probe the module ``ops`` for chain M / P1; cached per module, never raises."""
+    hit = _RSA_CACHE.get(id(ops))
+    if hit is not None and hit[0] is ops:
+        return hit[1]
+    has = {attr: hasattr(ops, cmd) for cmd, attr, _ in _RSA_FEATURES.values()}
+    feats = RsaFeatures(
+        residual_modes=has["residual_modes"],
+        ritz_vectors=has["ritz_vectors"],
+        rsa_require_mass=has["rsa_require_mass"],
+        rsa_per_mode=has["rsa_per_mode"],
+        build=_build_stamp(ops),
+    )
+    _RSA_CACHE[id(ops)] = (ops, feats)
+    return feats
+
+
+def probe_rsa_features() -> RsaFeatures:
+    """:func:`rsa_features_of` the in-process openseespy the live path binds.
+
+    Raises whatever :func:`apeGmsh.opensees.emitter.live._get_ops` raises
+    when openseespy is not installed.
+    """
+    from .emitter.live import _get_ops
+
+    return rsa_features_of(_get_ops())
+
+
+def require_rsa_feature(feature: str) -> None:
+    """Refuse with "fork too old: needs chain M ..." unless the live build has it.
+
+    The one call a wrapper makes before emitting a chain M / P1 command,
+    so an older build fails here and not with an opaque OpenSees error.
+
+    It probes only the in-process openseespy module the live path binds
+    (:func:`probe_rsa_features`), and raises :class:`ImportError` when no
+    openseespy is installed.  It says nothing about a Tcl ``OpenSees``
+    binary a subprocess path runs (``ops.tcl(run=True)``), which is a
+    different build.
+    """
+    probe_rsa_features().require(feature)
 
 
 #: Minimum fork build (``ops.ladrunoBuild()``) for the 2026-09-07 TIMs batch
@@ -534,4 +691,5 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
         version=info.version,
         has_ladruno_up=has_fork,
         build=info.build,
+        rsa=rsa_features_of(ops),
     )

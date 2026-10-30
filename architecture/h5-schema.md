@@ -297,18 +297,42 @@ matching group regardless of which PG it belongs to.
 ├── attrs: code=4, gmsh_name="Tetrahedron 4", npe=4, dim=3, order=1
 ├── ids               (E_t,) int64                — element tags
 ├── connectivity      (E_t, 4) int64              — node tags per element
-└── module_label      (E_t,) vlen-utf-8           — always written, schema 2.9.0
+├── module_label      (E_t,) vlen-utf-8           — always written, schema 2.9.0
+└── entity            (E_t,) int32                — optional, schema 2.36.0
 
 /elements/line2/
 ├── attrs: code=1, gmsh_name="Line 2", npe=2, dim=1, order=1
 ├── ids
 ├── connectivity      (E_l, 2) int64
-└── module_label      (E_l,) vlen-utf-8
+├── module_label      (E_l,) vlen-utf-8
+└── entity            (E_l,) int32
 ```
 
 `module_label` is always written (same contract as `/nodes/module_label`
 above) — the source module's label for compose-merged rows (ADR 0038),
 `""` for host-owned rows / the uncomposed case.
+
+`entity` (neutral 2.36.0, #2551) is the element's **source entity**,
+row-parallel to `ids`: the tag of the Gmsh model entity of dimension
+`@dim` the element is classified on. A partitioned mesh's partition
+entities are resolved to their parent with `getParent`, so partitioning
+leaves every element's value unchanged. `-1` means the element has no
+source entity: a `.msh` element classified on elementary tag `0`, or a
+row composed from a module without the stream. Extraction skips the
+partition-interface and ghost elements partitioning adds (#2582), but a
+model.h5 written before that fix may still carry both as `-1` rows:
+partition-interface rows, whose parent has a higher dimension, and, when
+it was written with `Mesh.PartitionCreateGhostCells=1`, ghost rows, which
+repeat the `ids` of elements the file already holds from their owning
+partition. Tags are raw and repeat
+across composed modules; `(module_label, entity)` is the key that names
+one source entity. The dataset is optional and is written on **every**
+group or on none: gmsh and `.msh` extraction write it; MPCO, `.ladruno`
+and other stream-less snapshots do not. Readers probe it with `in`; a
+file carrying it on some groups only, with a shape other than `ids`, or
+with a value that is neither `-1` nor a positive int32 is refused with
+`MalformedH5Error`. A 2.10–2.35 file reads as no stream. It is not part
+of `snapshot_id`.
 
 OpenSees-specific element metadata (positional args, cross-references)
 lives under `/opensees/element_meta/{type_token}` — a parallel index
@@ -2630,7 +2654,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.36.0** | **2.10.0** |
 | opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.37.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
@@ -2745,7 +2769,7 @@ our own output is held by
 The list below is the **neutral-zone** lineage, condensed from the
 canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
 [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py), current
-through **2.35.0**. The opensees zone's per-version history is
+through **2.36.0**. The opensees zone's per-version history is
 maintained inline in [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)
 (`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
 additions are summarized after this list.
@@ -2944,6 +2968,13 @@ full "why" and the exact affected dtype columns:
   decodes to `None` (unknown), and an older file reads the same way;
   the guard still warns on an unknown source. Additive, presence-probed
   on read; the minor bumps per ADR 0113 D5.
+- `2.36.0` — #2551 S1 per-element source entity: adds the optional
+  `/elements/{alias}/entity` dataset, `(E,) int32` row-parallel to
+  `ids`: the tag of the model entity of `@dim` each element is
+  classified on, partition entities resolved to their parent, `-1`
+  unknown. Written on every group iff the snapshot carries the stream;
+  a 2.10–2.35 file reads as no stream. Not in `snapshot_id`. Additive,
+  presence-probed on read; the minor bumps per ADR 0113 D5.
 
 ### OpenSees-zone history (post-2.10)
 

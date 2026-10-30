@@ -122,6 +122,49 @@ rather than writing an unsupported, massless model in silence.
 Everything the session declared — imported or not — still persists into
 `model.h5` for the viewer and `Results`.
 
+## Frame members and joint offsets
+
+A beam's `geomTransf` can carry rigid joint offsets: `jnt_offset=((dXi, dYi,
+dZi), (dXj, dYj, dZj))` gives the global vector from each node to its element
+end, or an `InsertionPoint` rule gives an ETABS cardinal point, joint offsets
+and end-length rigid zones. The offsets are emitted as `-jntOffset`. A 3-D
+`Corotational` refuses them, because OpenSees zeroes them there.
+
+ETABS puts a frame object's offsets at the object's two ends, and in apeGmsh
+that frame object is the **gmsh curve**. The mesh alone cannot tell one curve
+meshed into several elements from a girder of several members, so `FEMData`
+records, per element, the gmsh entity it was meshed on:
+`fem.elements.entity` holds the tags per element type, and
+`fem.elements.source_entity(eids, dim=1)` returns `(module_label, entity)`,
+the key that names a curve in a composed model (the same tag in two
+`Assembly` instances is two curves). The stream is in `model.h5` from neutral
+schema 2.36.
+
+An offset that is the same transverse shift at both ends reads the same on
+every element, so it stays per element. An end-sensitive offset (an end
+length, an axial component, unequal ends) is split over each curve: the
+curve's first element takes the i-offset, its last the j-offset, and each
+interior node takes only the transverse part. A curve meshed into n elements
+behaves as one element with the same offsets. Elements that frame into the
+curve do not split it; to put a joint at mid-span, split the curve.
+
+These cases refuse. Each message names the curve, except the 3-D one, which
+names the transform only, and the last, which names the elements and the node:
+
+- end-sensitive offsets on a curve that is not straight;
+- a transform that covers only part of a curve and would put an end zone or
+  axial offset at a node interior to the curve (transverse-only interior nodes
+  pass);
+- a curve whose elements run both ways, or a closed curve;
+- end lengths along the curve with different transverse offsets at its two
+  ends (the offset axis would kink);
+- an end element no longer than the end offsets on it (no flexible length);
+- elements of one curve with different `vecxz`;
+- in 3-D, a split with neither `vecxz=` nor `orientation=` on the transform;
+- a snapshot with no source curves (a `model.h5` older than 2.36, or a FEM not
+  extracted from gmsh), wherever two of the transform's elements meet without
+  a clear corner of 30 to 150 degrees.
+
 ## Stages
 
 Real analyses rarely happen in one shot: gravity first, then pushover; excavate,

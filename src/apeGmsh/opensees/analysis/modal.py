@@ -26,6 +26,7 @@ drivers (fork ADR 44, ``LadrunoModalResponse``).
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,9 +35,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..._core import default_artifact_dir
+from .._internal.types import ModalBasis, Primitive
 from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
+    from ..emitter.base import Emitter
     from ..emitter.live import LiveOpsEmitter
     from ..node import Node
 
@@ -47,7 +50,9 @@ __all__ = [
     "ModalPropertiesResult",
     "ParallelModalResult",
     "RandomResponseResult",
+    "ResidualModes",
     "ResponseSpectrumResult",
+    "RitzVectors",
     "RotationRolesUnavailableWarning",
     "StaleModelArchiveWarning",
     "SteadyStateResult",
@@ -106,6 +111,171 @@ _MPI_BLIND_MSG = (
     "apeSees.modal_properties(...) on a node-sized model (ADR 0077 Tier 0) "
     "for participation."
 )
+
+
+def _modal_dirs(dirs: Sequence[int], *, context: str) -> tuple[int, ...]:
+    """Global translations 1..3, each once (the fork's ``-dir`` rule)."""
+    out = tuple(int(d) for d in dirs)
+    if any(d not in (1, 2, 3) for d in out):
+        raise ValueError(
+            f"{context}: dirs are global translations 1, 2 or 3, got {dirs!r}."
+        )
+    if len(set(out)) != len(out):
+        raise ValueError(f"{context}: a direction is given twice in {dirs!r}.")
+    return out
+
+
+def _unit_tol(tol: float | None, *, context: str) -> float | None:
+    """``-tol``: ``None`` keeps the fork's default, else a value in (0, 1)."""
+    if tol is None:
+        return None
+    t = float(tol)
+    if not 0.0 < t < 1.0:
+        raise ValueError(f"{context}: tol must be in (0, 1), got {tol!r}.")
+    return t
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ResidualModes(ModalBasis):
+    """``residualModes -dir d1 <d2 <d3>> <-period $T> <-replace> <-tol $t>``.
+
+    Fork WP-213 (Ladruno ADR 213): appends, per direction, the
+    missing-mass pseudo-modes of the current mode set, so the modal mass
+    reaches 100 % and the static response is exact. It runs after
+    ``eigen`` (or ``ritzVectors``) and before ``modalProperties``, which
+    must run again on the new set; a later ``eigen`` drops the record.
+
+    ``period`` is ``"rayleigh"`` (the default, not emitted): a spectral
+    analysis reads each pseudo-mode's Sa at its own Rayleigh period. A
+    period ``T`` keeps the Rayleigh λ, and ``responseSpectrumAnalysis``
+    then reads Sa at ``T`` and sums the pseudo-modes into one rigid mode
+    (ADR 213 D3b). The fork refuses ``T`` on a Ritz set.
+    """
+
+    dirs: tuple[int, ...]
+    period: float | str = "rayleigh"
+    replace: bool = False
+    tol: float | None = None
+
+    def __post_init__(self) -> None:
+        context = "ResidualModes"
+        dirs = _modal_dirs(self.dirs, context=context)
+        if not dirs:
+            raise ValueError(f"{context}: dirs needs at least one direction.")
+        period: float | str = self.period
+        if period != "rayleigh":
+            if isinstance(period, (str, bool)):
+                raise ValueError(
+                    f"{context}: period is 'rayleigh' or a period in "
+                    f"seconds, got {period!r}."
+                )
+            period = float(period)
+            if not (math.isfinite(period) and period > 0.0):
+                raise ValueError(
+                    f"{context}: period must be finite and > 0, got "
+                    f"{self.period!r}."
+                )
+        object.__setattr__(self, "dirs", dirs)
+        object.__setattr__(self, "period", period)
+        object.__setattr__(self, "replace", bool(self.replace))
+        object.__setattr__(self, "tol", _unit_tol(self.tol, context=context))
+
+    def args(self) -> tuple[int | float | str, ...]:
+        """The command's arguments after ``residualModes``."""
+        out: list[int | float | str] = ["-dir", *self.dirs]
+        if self.period != "rayleigh":
+            out.extend(("-period", self.period))
+        if self.replace:
+            out.append("-replace")
+        if self.tol is not None:
+            out.extend(("-tol", self.tol))
+        return tuple(out)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.command("residualModes", *self.args())
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RitzVectors(ModalBasis):
+    """``ritzVectors $n <-dir d ...> <-pattern $tag ...> <-cycles $c ...> <-tol $t>``.
+
+    Fork WP-215 (Ladruno ADR 213 D7, D8): load-dependent Ritz vectors
+    installed as the domain's mode set, in place of ``eigen``. The
+    starting loads are ``M ι_d`` for each direction in ``dirs``, then the
+    reference loads of each pattern tag in ``patterns``, in that order;
+    ``cycles`` caps the blocks per start, one count per start in the same
+    order (``0`` is no cap). The fork factors ``K`` through the defined
+    analysis, so one must exist, and it refuses a partitioned
+    (OpenSeesSP) domain. Ritz periods are Rayleigh periods, not natural
+    periods.
+    """
+
+    n: int
+    dirs: tuple[int, ...] = ()
+    patterns: tuple[int, ...] = ()
+    cycles: tuple[int, ...] | None = None
+    tol: float | None = None
+
+    def __post_init__(self) -> None:
+        context = "RitzVectors"
+        if isinstance(self.n, bool) or int(self.n) != self.n or self.n < 1:
+            raise ValueError(
+                f"{context}: n must be an integer >= 1, got {self.n!r}."
+            )
+        dirs = _modal_dirs(self.dirs, context=context)
+        patterns = tuple(int(p) for p in self.patterns)
+        if len(set(patterns)) != len(patterns):
+            raise ValueError(
+                f"{context}: a pattern is given twice in {self.patterns!r}."
+            )
+        if not dirs and not patterns:
+            raise ValueError(
+                f"{context}: give at least one starting load (dirs and/or "
+                "patterns)."
+            )
+        cycles = self.cycles
+        if cycles is not None:
+            cycles = tuple(int(c) for c in cycles)
+            if len(cycles) != len(dirs) + len(patterns):
+                raise ValueError(
+                    f"{context}: cycles takes one count per starting load, "
+                    f"dirs then patterns ({len(dirs) + len(patterns)} "
+                    f"starts, {len(cycles)} counts)."
+                )
+            if any(c < 0 for c in cycles):
+                raise ValueError(
+                    f"{context}: cycles are counts >= 0 (0 = no cap), got "
+                    f"{self.cycles!r}."
+                )
+        object.__setattr__(self, "n", int(self.n))
+        object.__setattr__(self, "dirs", dirs)
+        object.__setattr__(self, "patterns", patterns)
+        object.__setattr__(self, "cycles", cycles)
+        object.__setattr__(self, "tol", _unit_tol(self.tol, context=context))
+
+    def args(self) -> tuple[int | float | str, ...]:
+        """The command's arguments after ``ritzVectors``."""
+        out: list[int | float | str] = [self.n]
+        if self.dirs:
+            out.extend(("-dir", *self.dirs))
+        if self.patterns:
+            out.extend(("-pattern", *self.patterns))
+        if self.cycles is not None:
+            out.extend(("-cycles", *self.cycles))
+        if self.tol is not None:
+            out.extend(("-tol", self.tol))
+        return tuple(out)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.command("ritzVectors", *self.args())
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
 
 
 def _damping_channel_args(

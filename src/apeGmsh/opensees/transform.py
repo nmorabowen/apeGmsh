@@ -18,15 +18,21 @@ resolves per element (see :mod:`apeGmsh.opensees.joint_offset`). A 3-D
 ``Corotational`` refuses one: ``CorotCrdTransf3d`` zeroes the offsets
 with a warning ("rigid joint zones not implemented yet").
 
-Members: ETABS puts a frame object's end offsets at its two ends. The mesh
-alone cannot tell a member meshed into several elements from a continuous
-girder of several members, so an offset that is not the same transverse
-shift at both ends (an end length, an axial component, unequal ends)
-refuses where any two of a transform's elements meet at a node turning
-outside 30-150 deg (a straight or faceted member, one running through a
-joint, a fold-back) until elements carry their source curve (#2551).
-One-element members, corners of 30-150 deg, and an equal transverse shift
-on every element are unaffected.
+Members: ETABS puts a frame object's end offsets at its two ends, and the
+member is the gmsh curve. An offset that is the same transverse shift at
+both ends stays per element. An end-sensitive offset (an end length, an
+axial component, unequal ends) goes only at the curve's two ends: the
+first element takes the i-offset, the last the j-offset, interior nodes
+the transverse part. The curve of each element comes from the FEM's
+source-entity stream (neutral 2.36). Refused, naming the curve: a curved
+curve; a transform covering part of a curve that puts an end zone or axial
+part at an interior node; a curve with mixed element orientation or a
+closed curve; end lengths with different transverse offsets at the two
+ends; an end element no longer than its end offsets; and elements of one
+curve with different vecxz. In 3-D, a split with neither vecxz= nor
+orientation= on the transform refuses naming the transform only. When the snapshot carries no source curves,
+it refuses instead, naming the elements and the node, where two elements
+meet turning outside 30-150 deg.
 
 Loads on an offset beam: a ``Plain.from_model`` line load (global,
 ``beamUniform`` / ``line_load``) covers the full node-to-node length, as

@@ -39,3 +39,4 @@ Round 1 checks every seam the card lists.
 - a short list of what you hunted and found clean.
 
 - **Run revert checks out of place (lesson #2422).** A "fails with the fix reverted" check runs in a scratch tree: `git worktree add --detach <scratch> <base-sha>` with the new tests copied in, or `git archive <sha> | tar -x -C <scratch>`, with `PYTHONPATH=<scratch>/src`. Never run `git checkout <ref> -- <path>`, `git restore`, `git reset --hard` or `git clean` in the working worktree. Afterwards run `git worktree remove` on the scratch tree, first making sure nothing is junctioned into it.
+- **Re-probe a fix that came from a finding (lesson #2591).** A fix that originates in your own finding, or in a coordinator note, is re-probed in the delta review against the same oracle as the original change (for an engine-dependent change: every engine version the deck can run on, stock and fork). State the scope limits in any fix you suggest ("exempt X only where Y is verified").
