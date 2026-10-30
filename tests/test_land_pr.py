@@ -178,7 +178,7 @@ def _checkout(head, base=FRESH_BASE):
 
 
 def _log_call(job_url):
-    return f"api --allow-escape-sequences repos/{{owner}}/{{repo}}/actions/jobs/{job_url.rsplit('/', 1)[1]}/logs"
+    return f"api repos/{{owner}}/{{repo}}/actions/jobs/{job_url.rsplit('/', 1)[1]}/logs"
 
 
 def _behind_call(base=FRESH_BASE):
@@ -1940,10 +1940,28 @@ def test_an_unreadable_base_refuses(log):
     assert not _merged(gh)
 
 
+class RejectsFlag(Replay):
+    """A gh that, like 2.96.0, fails any call carrying --allow-escape-sequences (#2629)."""
+
+    def __call__(self, args):
+        if "--allow-escape-sequences" in args:
+            self.calls.append(" ".join(args))
+            raise land_pr.subprocess.CalledProcessError(1, ["gh", *args])
+        return super().__call__(args)
+
+
+def test_check_11_reads_the_base_on_a_gh_without_the_escape_flag(capsys):
+    """#2628 was refused on gh 2.96.0. Revert-proof: with the flag back, the read fails and check 11 refuses."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    gh = RejectsFlag(gh.responses)
+    assert land_pr.land(1218, gh, git, sleep=lambda _s: None) == 0
+    assert not any("--allow-escape-sequences" in call for call in gh.calls)
+
+
 def test_a_failed_log_read_refuses():
     """Revert-proof: without `check_fresh_base`, it merges."""
     gh, git = _recording(1218, PR_1218, SQUASH_1218)
-    gh = Flaky(gh.responses, "api --allow-escape-sequences", 99)
+    gh = Flaky(gh.responses, "api repos/{owner}/{repo}/actions/jobs/", 99)
     with pytest.raises(land_pr.LandError, match=r"check 11: .*could not be read \(CalledProcessError"):
         _run(1218, gh, git)
     assert not _merged(gh)
