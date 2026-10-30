@@ -440,9 +440,17 @@ class PhysicalGroups(_HasLogging):
 
         Parameters
         ----------
-        dim_tags : ``[(dim, pg_tag), ...]`` pairs identifying groups to remove
+        dim_tags : ``[(dim, pg_tag), ...]`` pairs identifying groups to remove.
+                   An empty list removes nothing.
         """
         self._require_unfrozen("g.physical.remove()")
+        # gmsh reads an empty list as the argument-less form, which
+        # wipes every group and, after any targeted removal, corrupts
+        # the heap at finalize (see remove_all).  An empty selection
+        # is a legitimate input and a no-op here.
+        if not dim_tags:
+            self._log("remove([]): nothing to remove")
+            return self
         gmsh.model.removePhysicalGroups(dimTags=dim_tags)
         for d, t in dim_tags:
             self._index.drop(d, t)

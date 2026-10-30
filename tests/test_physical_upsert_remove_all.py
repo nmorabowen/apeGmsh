@@ -64,6 +64,20 @@ g.physical.remove([(1, t2)])
 g.physical.remove_all()
 """
 
+# An empty selection: gmsh reads an empty list as the argument-less
+# form, so remove([]) wiped every group and, after a targeted remove,
+# killed the process too.  It is a no-op now; the survivor is checked
+# before remove_all clears the model for the shared epilogue.
+_REMOVE_ONE_THEN_EMPTY = """
+t = g.physical.add(1, [a], name="grp")
+t2 = g.physical.add(1, [b], name="other")
+g.physical.remove([(1, t2)])
+g.physical.remove([])
+assert gmsh.model.getPhysicalGroups() == [(1, t)], gmsh.model.getPhysicalGroups()
+assert g.physical.get_tag(1, "grp") == t
+g.physical.remove_all()
+"""
+
 
 def _run_session(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
@@ -81,7 +95,8 @@ def _run_session(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.parametrize(
-    "body", [_UPSERT, _REMOVE_ONE], ids=["upsert", "remove_one"])
+    "body", [_UPSERT, _REMOVE_ONE, _REMOVE_ONE_THEN_EMPTY],
+    ids=["upsert", "remove_one", "remove_one_then_empty"])
 def test_remove_all_after_a_targeted_removal_exits_0(
         tmp_path: Path, body: str) -> None:
     proc = _run_session(tmp_path, body)

@@ -204,6 +204,39 @@ def test_remove_all_is_reflected(g):
     assert g.physical.get_tag(1, "all") is None
 
 
+def test_no_argument_less_remove_physical_groups(g, monkeypatch):
+    # The subprocess pin in test_physical_upsert_remove_all.py needs
+    # the heap corruption to kill the child, which Linux may not do.
+    # This holds the contract itself on every OS: neither remove_all()
+    # nor remove([]) ever hands gmsh no dimTags or an empty list, which
+    # gmsh reads as "remove every group".
+    calls: list[tuple[tuple, dict]] = []
+    real = gmsh.model.removePhysicalGroups
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gmsh.model, "removePhysicalGroups", spy)
+    a, b = _lines(2)
+    t = g.physical.add(1, [a], name="keep")
+    t2 = g.physical.add(1, [b], name="other")
+    # The empty selection is checked before any targeted removal: on
+    # Windows that order is what lets a wrong implementation fail
+    # this assertion instead of killing the process at teardown.
+    g.physical.remove([])
+    assert calls == [], calls
+    assert gmsh.model.getPhysicalGroups() == [(1, t), (1, t2)]
+    g.physical.remove([(1, t2)])
+    assert g.physical.get_tag(1, "keep") == t
+    g.physical.remove_all()
+    assert gmsh.model.getPhysicalGroups() == []
+    g.physical.remove_all()          # nothing left: no gmsh call at all
+    sent = [kwargs.get("dimTags", args[0] if args else None)
+            for args, kwargs in calls]
+    assert sent == [[(1, t2)], [(1, t)]], sent
+
+
 def test_remove_all_drops_the_names_too(g):
     # The argument-less form kept every name, so a group created later
     # at a freed tag inherited it and its own setPhysicalName was

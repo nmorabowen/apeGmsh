@@ -7,6 +7,9 @@ at finalize (`0xc0000374`) once any targeted `removePhysicalGroups([(dim, tag)])
 with or without apeGmsh, and every targeted removal (the upsert, `g.physical.remove`, label upkeep)
 armed it. `remove_all()` now lists the groups and removes them by `(dim, tag)`, which also drops their
 names: the argument-less form kept them, so a group created later at a freed tag inherited a stale
-name and its own `setPhysicalName` was dropped. `tests/test_physical_upsert_remove_all.py` pins the
-exit code in a fresh interpreter (`subprocess` marker) for the upsert and the single-remove routes,
-and `tests/test_pg_name_index.py` pins the name drop in process.
+name and its own `setPhysicalName` was dropped. `g.physical.remove([])` passed the empty list through,
+which gmsh also reads as "remove every group"; an empty selection is now a no-op.
+`tests/test_physical_upsert_remove_all.py` pins the exit code in a fresh interpreter (`subprocess`
+marker) for the upsert, single-remove and empty-selection routes, and `tests/test_pg_name_index.py`
+pins the name drop and, through a spy on `removePhysicalGroups`, that neither verb ever sends gmsh no
+`dimTags` or an empty list.
