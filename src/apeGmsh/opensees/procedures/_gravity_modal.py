@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     import numpy as np
 
     from ..analysis.gravity_modal import GravityModalResult
+    from ..analysis.modal import ResidualModes, RitzVectors
+    from ..pattern.pattern import Plain
     from ..analysis.spectrum import (
         DesignSpectrum,
         ResponseExtractor,
@@ -110,6 +112,11 @@ class _GravityModalMixin(_ProcedureHost):
         *,
         p_delta: bool = True,
         solver: str = "-genBandArpack",
+        basis: str = "eigen",
+        ritz_dirs: Sequence[int] = (),
+        ritz_patterns: "Sequence[Plain | str]" = (),
+        residual: "Sequence[int] | None" = None,
+        residual_period: float | None = None,
     ) -> "GravityModalResult":
         """Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``
         on the same live domain.
@@ -127,6 +134,29 @@ class _GravityModalMixin(_ProcedureHost):
            model; the step count is the ``dlam``).
         3. ``loadConst -time 0``: the gravity loads stay on, frozen.
         4. ``eigen`` on the current tangent, then ``modalProperties -return``.
+
+        **The mode set** (fork chain M, Ladruno ADR 213). The order is
+        fixed: the basis, then the residual pseudo-modes, then
+        ``modalProperties``, with no ``eigen`` in between (a later
+        ``eigen`` drops the pseudo-modes and the mode tags).
+
+        - ``basis="eigen"`` (default) solves ``eigen``; ``basis="ritz"``
+          runs ``ritzVectors num_modes`` instead, with the starting loads
+          ``M ι_d`` for each of ``ritz_dirs`` and the reference loads of
+          each of ``ritz_patterns`` (the gravity pattern gives a basis whose
+          static participation in that load is 100 %). Ritz periods are
+          Rayleigh periods, not natural periods.
+        - ``residual=dirs`` appends ``residualModes -dir dirs``: the
+          missing-mass pseudo-modes, so the modal mass of each direction
+          reaches 100 %. On a Ritz basis the fork re-solves the joint set
+          (all tagged Ritz).
+        - ``residual_period=T`` adds ``-period T``: a spectrum reads the
+          pseudo-modes' Sa at ``T`` and combines them as one rigid mode
+          (ADR 213 D3b). The fork refuses it on a Ritz basis, and so does
+          the bridge.
+
+        Each mode's kind is on the result
+        (:attr:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult.kinds`).
 
         **What ``p_delta`` means.** ``True`` solves step 4 after the preload,
         so the stiffness is ``K - Kg`` with ``Kg`` from the gravity axial
@@ -161,14 +191,30 @@ class _GravityModalMixin(_ProcedureHost):
             ``False``: modes on ``K`` before it.
         solver
             The ``eigen`` solver flag.
+        basis
+            ``"eigen"`` or ``"ritz"`` (``num_modes`` Ritz vectors).
+        ritz_dirs, ritz_patterns
+            The Ritz starting loads (``basis="ritz"`` only; at least one):
+            global translations, and ``ops.pattern.Plain`` handles or names.
+        residual
+            Directions (1, 2, 3) to complete with ``residualModes``, or
+            ``None``.
+        residual_period
+            The pseudo-modes' Sa period ``T`` (s), or ``None`` for their
+            Rayleigh periods. Needs ``residual``; refused with
+            ``basis="ritz"``.
 
         Raises
         ------
         ValueError
-            ``num_modes < 1``, or the integrator is not a fixed-increment
-            ``LoadControl`` reaching ``λ = 1``.
+            ``num_modes < 1``, the integrator is not a fixed-increment
+            ``LoadControl`` reaching ``λ = 1``, or the mode-set options do
+            not fit together.
         BridgeError
-            The analysis chain is incomplete, or not ``Static``.
+            The analysis chain is incomplete, or not ``Static``; or a Ritz
+            basis or residual is asked of an MPI (partitioned) model.
+        ForkTooOldError
+            ``basis="ritz"`` or ``residual`` on a build without chain M.
         NotImplementedError
             The model has registered stages (live runs flat models only,
             ADR 0121 D2).
@@ -176,10 +222,72 @@ class _GravityModalMixin(_ProcedureHost):
             The gravity analysis failed to converge, or the eigen solve
             moved the gravity state.
         """
+        context = "apeSees.modal_after_gravity"
         return self._run_gravity_modal(
-            num_modes, p_delta=p_delta, solver=solver,
-            context="apeSees.modal_after_gravity", hook=None,
+            num_modes, p_delta=p_delta, solver=solver, context=context,
+            hook=None, mode_set=self._mode_set(
+                num_modes, basis=basis, ritz_dirs=ritz_dirs,
+                ritz_patterns=ritz_patterns, residual=residual,
+                residual_period=residual_period, context=context),
         )
+
+    def _mode_set(
+        self,
+        num_modes: int,
+        *,
+        basis: str,
+        ritz_dirs: Sequence[int],
+        ritz_patterns: "Sequence[Plain | str]",
+        residual: "Sequence[int] | None",
+        residual_period: float | None,
+        context: str,
+    ) -> "tuple[RitzVectors | None, ResidualModes | None]":
+        """The chain M records the options ask for, validated and gated
+        (A4 probe, MPI) before anything is built."""
+        from .._target import require_rsa_feature
+        from ..analysis.modal import ResidualModes, RitzVectors
+        from ..pattern.pattern import Plain as _Plain
+
+        if basis not in ("eigen", "ritz"):
+            raise ValueError(
+                f"{context}: basis is 'eigen' or 'ritz', got {basis!r}.")
+        if basis == "eigen" and (len(ritz_dirs) > 0 or len(ritz_patterns) > 0):
+            raise ValueError(
+                f"{context}: ritz_dirs / ritz_patterns need basis='ritz'.")
+        if residual_period is not None and residual is None:
+            raise ValueError(
+                f"{context}: residual_period needs residual= (the directions "
+                "whose pseudo-modes read Sa at it).")
+        if residual_period is not None and basis == "ritz":
+            raise ValueError(
+                f"{context}: residual_period is refused on a Ritz basis: the "
+                "fork's residualModes re-solves a Ritz set jointly and refuses "
+                "-period there (WP-215).")
+        ritz = None
+        if basis == "ritz":
+            tags: list[int] = []
+            for handle in ritz_patterns:
+                pat = self._resolve(handle, base=_Plain)
+                tag = self.tag_for(pat) if isinstance(pat, _Plain) else None
+                if tag is None:
+                    raise BridgeError(
+                        f"{context}: ritz_patterns takes ops.pattern.Plain "
+                        f"handles (or registered names) on this bridge, got "
+                        f"{handle!r}.")
+                tags.append(int(tag))
+            ritz = RitzVectors(n=num_modes, dirs=tuple(ritz_dirs),
+                               patterns=tuple(tags))
+            self._refuse_mpi_modal_basis(context, "ritzVectors")
+            require_rsa_feature("ritzVectors")
+        extra = None
+        if residual is not None:
+            extra = ResidualModes(
+                dirs=tuple(residual),
+                period="rayleigh" if residual_period is None
+                else residual_period)
+            self._refuse_mpi_modal_basis(context, "residualModes")
+            require_rsa_feature("residualModes")
+        return ritz, extra
 
     def _run_gravity_modal(
         self,
@@ -189,10 +297,12 @@ class _GravityModalMixin(_ProcedureHost):
         solver: str,
         context: str,
         hook: "_Hook | None",
+        mode_set: "tuple[RitzVectors | None, ResidualModes | None]" = (None, None),
     ) -> "GravityModalResult":
         """The D1 sequence; ``hook`` runs once the modes exist, with the
         domain at its reference state (the gravity state, or the unloaded
-        one under ``p_delta=False``), and must leave it there."""
+        one under ``p_delta=False``), and must leave it there. ``mode_set``
+        is ``(ritz, residual)`` from :meth:`_mode_set`."""
         from ..analysis.gravity_modal import (
             GravityModalResult,
             snapshot_state,
@@ -219,11 +329,27 @@ class _GravityModalMixin(_ProcedureHost):
         self._artifacts.after_emit(self)
         ops = live_emitter.ops
 
+        ritz, extra = mode_set
+
+        def solve_modes() -> "tuple[list[float], dict[str, list[float]]]":
+            # The basis, then the residual, then modalProperties, and no
+            # eigen in between (ADR 213: eigen clears the mode tags).
+            if ritz is not None:
+                ritz._emit(live_emitter, 0)
+                found: list[float] = []
+            else:
+                found = live_emitter.eigen(num_modes, solver=solver)
+            if extra is not None:
+                extra._emit(live_emitter, 0)
+            props = live_emitter.modal_properties()
+            if ritz is not None or extra is not None:
+                found = [float(v) for v in props["eigenLambda"]]
+            return found, props
+
         values: list[float] = []
         properties: dict[str, list[float]] = {}
         if not p_delta:
-            values = live_emitter.eigen(num_modes, solver=solver)
-            properties = live_emitter.modal_properties()
+            values, properties = solve_modes()
             if hook is not None:
                 hook(live_emitter, np.asarray(values, dtype=np.float64),
                      properties)
@@ -246,8 +372,7 @@ class _GravityModalMixin(_ProcedureHost):
         gravity = snapshot_state(ops)
 
         if p_delta:
-            values = live_emitter.eigen(num_modes, solver=solver)
-            properties = live_emitter.modal_properties()
+            values, properties = solve_modes()
 
         disp_drift, reac_drift = state_drift(gravity, snapshot_state(ops))
         if disp_drift != 0.0 or reac_drift != 0.0:
@@ -292,6 +417,11 @@ class _GravityModalMixin(_ProcedureHost):
         extractors: "Mapping[str, ResponseExtractor]",
         p_delta: bool = True,
         solver: str = "-genBandArpack",
+        basis: str = "eigen",
+        ritz_dirs: Sequence[int] = (),
+        ritz_patterns: "Sequence[Plain | str]" = (),
+        residual: "Sequence[int] | None" = None,
+        residual_period: float | None = None,
     ) -> "SpectrumModalResult":
         """Per-mode response spectrum about the gravity state (ADR 0124 D4).
 
@@ -350,6 +480,20 @@ class _GravityModalMixin(_ProcedureHost):
         the kink check and the recorder refusal are the same on both routes,
         and the imposed displacement is checked against ``± a_k φ_k / λ_k``.
 
+        **Ritz and residual modes** (``basis``, ``residual``,
+        ``residual_period`` as in :meth:`modal_after_gravity`). A Ritz
+        vector or a pseudo-mode ``ψ`` is not an eigenvector, so a static
+        leg under ``a M ψ`` would move the domain by ``K⁻¹ M ψ``, not by
+        ``a ψ / λ``. Such a mode set therefore needs the ``-increment``
+        route (imposed legs, every extractor a built-in one), and is
+        refused on the static one. The values are those of the fork's RSA:
+        ``ψ Γ Sa / λ`` with the Rayleigh ``λ``. With ``residual_period=T``
+        the pseudo-modes read Sa at ``T``, and every combination on the
+        result sums them into one rigid mode at ``ω = 2π/T``
+        (:attr:`SpectrumModalResult.sa_periods`, ADR 213 D3b). The modes'
+        kinds are :attr:`SpectrumModalResult.kinds`; a Ritz or pseudo-mode
+        period is a Rayleigh period.
+
         **Nodal mass only.** The modal force is ``M φ`` built from the nodal
         masses, so a model whose mass sits in its elements (a section or
         material ``rho``, an element ``mass=``) is refused. Lump the mass to
@@ -405,7 +549,7 @@ class _GravityModalMixin(_ProcedureHost):
             :class:`~apeGmsh.opensees.analysis.spectrum.ElementResponse`, or
             any callable, such as a story-shear aggregator). The name
             ``"base_shear"`` is reserved.
-        p_delta, solver
+        p_delta, solver, basis, ritz_dirs, ritz_patterns, residual, residual_period
             As :meth:`modal_after_gravity`.
 
         Raises
@@ -427,6 +571,10 @@ class _GravityModalMixin(_ProcedureHost):
         from ..analysis.spectrum import SpectrumModalResult
 
         context = "apeSees.spectrum_after_gravity"
+        mode_set = self._mode_set(
+            num_modes, basis=basis, ritz_dirs=ritz_dirs,
+            ritz_patterns=ritz_patterns, residual=residual,
+            residual_period=residual_period, context=context)
         recorders = sorted({type(p).__name__ for p in self._primitives
                             if isinstance(p, Recorder)})
         if recorders:
@@ -465,17 +613,18 @@ class _GravityModalMixin(_ProcedureHost):
                  properties: "Mapping[str, Sequence[float]]") -> None:
             holder["out"] = self._per_mode_spectrum(
                 live_emitter, eigenvalues, properties, spectra_t, named,
-                context=context,
+                context=context, sa_period=residual_period,
             )
 
         modal = self._run_gravity_modal(
             num_modes, p_delta=p_delta, solver=solver, context=context,
-            hook=hook,
+            hook=hook, mode_set=mode_set,
         )
-        gravity_values, per_mode, labels, drift, inertia = cast(
+        gravity_values, per_mode, labels, drift, inertia, sa_periods = cast(
             "tuple[dict[str, np.ndarray], dict[str, np.ndarray], "
             "dict[str, tuple[str, ...] | None], tuple[float, float], "
-            "tuple[np.ndarray, tuple[int, ...], np.ndarray]]",
+            "tuple[np.ndarray, tuple[int, ...], np.ndarray], "
+            "np.ndarray | None]",
             holder["out"],
         )
         if not p_delta:
@@ -496,6 +645,7 @@ class _GravityModalMixin(_ProcedureHost):
             inertia=inertia[0],
             inertia_nodes=inertia[1],
             inertia_coords=inertia[2],
+            sa_periods=sa_periods,
         )
         result.check_inertia_balance(warn=True)
         return result
@@ -509,9 +659,13 @@ class _GravityModalMixin(_ProcedureHost):
         extractors: "Mapping[str, ResponseExtractor]",
         *,
         context: str,
-    ) -> "tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, tuple[str, ...] | None], tuple[float, float], tuple[np.ndarray, tuple[int, ...], np.ndarray]]":
+        sa_period: float | None = None,
+    ) -> "tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, tuple[str, ...] | None], tuple[float, float], tuple[np.ndarray, tuple[int, ...], np.ndarray], np.ndarray | None]":
         """The per-mode loop of ADR 0124 D4, about the domain's current
-        committed state; leaves the domain back at it."""
+        committed state; leaves the domain back at it. ``sa_period`` is the
+        ``residualModes -period`` the bridge emitted: the residual
+        pseudo-modes (``modeKind`` 1) read Sa at it, while λ stays their
+        own (ADR 213 D3b)."""
         import numpy as np
 
         from .._internal.types import SolutionAlgorithm, TimeSeries
@@ -534,13 +688,24 @@ class _GravityModalMixin(_ProcedureHost):
                 f"period; got {lam.tolist()}."
             )
         periods = 2.0 * np.pi / np.sqrt(lam)
+        kinds = np.asarray(properties.get("modeKind", [0] * lam.size),
+                           dtype=np.int64)
+        if kinds.size != lam.size:
+            raise RuntimeError(
+                f"{context}: modalProperties gives {kinds.size} mode kinds "
+                f"for {lam.size} modes.")
+        sa_periods = None
+        if sa_period is not None:
+            sa_periods = np.where(kinds == 1, float(sa_period), 0.0)
+        sa_at = periods if sa_periods is None else np.where(
+            sa_periods > 0.0, sa_periods, periods)
         components = ("MX", "MY", "MZ")
         gamma = np.stack([
             np.asarray(properties[f"partiFactor{components[s.direction - 1]}"],
                        dtype=np.float64)
             for s in spectra
         ])
-        coef = gamma * np.stack([s.sa(periods) for s in spectra])
+        coef = gamma * np.stack([s.sa(sa_at) for s in spectra])
 
         # The modal force is M φ with the nodal masses; element mass (which
         # modalProperties counts) would be missing from it.
@@ -684,6 +849,16 @@ class _GravityModalMixin(_ProcedureHost):
             and _rsa_increment_available(ops) is True
         )
         gamma_peak = np.argmax(np.abs(gamma), axis=0)
+        if np.any(kinds != 0) and not increment:
+            raise BridgeError(
+                f"{context}: the mode set holds Ritz vectors or residual "
+                "pseudo-modes, which are not eigenvectors: a static leg under "
+                "a M ψ moves the domain by K⁻¹ M ψ, not by a ψ / λ. They "
+                "need the -increment route, which imposes ψ Γ Sa / λ as the "
+                "fork's RSA does: a fork build with responseSpectrumAnalysis "
+                "-increment (WP-207) and only the built-in extractors "
+                "(NodeDisp, NodeReaction, ElementResponse)."
+            )
 
         def mode_legs(
             k: int, phi: "dict[int, np.ndarray]", amp: float, scale: float,
@@ -802,7 +977,7 @@ class _GravityModalMixin(_ProcedureHost):
         coords = np.asarray([ops.nodeCoord(t)[:ndm] for t in massed],
                             dtype=np.float64).reshape(len(massed), ndm)
         return (ref_values, per_mode, labels, drift,
-                (inertia, tuple(massed), coords))
+                (inertia, tuple(massed), coords), sa_periods)
 
 
     def _gravity_steps(self, context: str) -> int:

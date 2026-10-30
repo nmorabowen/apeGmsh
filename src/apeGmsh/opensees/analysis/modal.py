@@ -408,6 +408,28 @@ class ModalPropertiesResult:
         return 1.0 / self.freq
 
     @property
+    def kinds(self) -> tuple[str, ...]:
+        """Each mode's kind: ``"eigen"``, ``"residual"`` (a ``residualModes``
+        pseudo-mode) or ``"ritz"`` (a ``ritzVectors`` vector), from the
+        fork's ``modeKind`` in ``modalProperties -return`` (0, 1, 2). A
+        build without mode tags returns no ``modeKind``: every mode is then
+        ``"eigen"``. A residual or Ritz mode's period is its Rayleigh
+        period, not a natural period."""
+        raw = self.properties.get("modeKind")
+        if raw is None:
+            return ("eigen",) * len(self.eigenvalues)
+        names = {0: "eigen", 1: "residual", 2: "ritz"}
+        out = []
+        for k in raw:
+            if int(k) not in names:
+                raise ValueError(
+                    f"ModalPropertiesResult.kinds: unknown modeKind {k!r}; "
+                    "the fork's tags are 0 (eigen), 1 (residual), 2 (ritz)."
+                )
+            out.append(names[int(k)])
+        return tuple(out)
+
+    @property
     def total_mass(self) -> np.ndarray:
         """Total structure mass per component (ndf-long)."""
         return self._array("totalMass")
