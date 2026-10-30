@@ -178,7 +178,7 @@ def _checkout(head, base=FRESH_BASE):
 
 
 def _log_call(job_url):
-    return f"api --allow-escape-sequences repos/{{owner}}/{{repo}}/actions/jobs/{job_url.rsplit('/', 1)[1]}/logs"
+    return f"api repos/{{owner}}/{{repo}}/actions/jobs/{job_url.rsplit('/', 1)[1]}/logs"
 
 
 def _behind_call(base=FRESH_BASE):
@@ -1940,10 +1940,53 @@ def test_an_unreadable_base_refuses(log):
     assert not _merged(gh)
 
 
-def test_a_failed_log_read_refuses():
-    """Revert-proof: without `check_fresh_base`, it merges."""
+ESC_LINE = "2026-10-13T10:00:04.0000000Z \x1b[36;1mgit checkout --progress\x1b[0m\n"
+
+
+class LogGh(Replay):
+    """A gh for the job-log read. `mode` is 'rejected' (2.96: unknown flag), 'needed' (2.97+: a
+    flagless read of a body with ESC fails) or 'dead' (every log read fails). #2629."""
+
+    def __init__(self, responses, mode):
+        super().__init__(responses)
+        self.mode = mode
+
+    def __call__(self, args):
+        key = " ".join(args)
+        if "/logs" not in key:
+            return super().__call__(args)
+        flagged = "--allow-escape-sequences" in args
+        if self.mode == "dead" or (self.mode == "rejected" and flagged):
+            self.calls.append(key)
+            raise land_pr.subprocess.CalledProcessError(1, ["gh", *args])
+        out = super().__call__([a for a in args if a != "--allow-escape-sequences"])
+        self.calls[-1] = key
+        if self.mode == "needed" and not flagged and "\x1b" in out:
+            raise land_pr.subprocess.CalledProcessError(1, ["gh", *args])
+        return out
+
+
+def _gh_with_escapes(mode):
     gh, git = _recording(1218, PR_1218, SQUASH_1218)
-    gh = Flaky(gh.responses, "api --allow-escape-sequences", 99)
+    for key, text in list(gh.responses.items()):
+        if "/logs" in key:
+            gh.responses[key] = ESC_LINE + text
+    assert land_pr._CHECKOUT.search(ESC_LINE + _checkout("a" * 40))
+    return LogGh(gh.responses, mode), git
+
+
+@pytest.mark.parametrize("mode, flagged", [("rejected", False), ("needed", True)])
+def test_check_11_reads_the_base_on_both_gh_behaviours(mode, flagged):
+    """gh 2.96 rejects --allow-escape-sequences; gh 2.97+ needs it for a log with ESC bytes.
+    Revert-proof: always-flag fails 'rejected'; never-flag fails 'needed'."""
+    gh, git = _gh_with_escapes(mode)
+    assert land_pr.land(1218, gh, git, sleep=lambda _s: None) == 0
+    assert any("--allow-escape-sequences" in c for c in gh.calls) is flagged
+
+
+def test_a_failed_log_read_refuses():
+    """Both the flagless and the flagged read fail. Revert-proof: without `check_fresh_base`, it merges."""
+    gh, git = _gh_with_escapes("dead")
     with pytest.raises(land_pr.LandError, match=r"check 11: .*could not be read \(CalledProcessError"):
         _run(1218, gh, git)
     assert not _merged(gh)
