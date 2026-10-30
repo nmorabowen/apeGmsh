@@ -183,11 +183,17 @@ export const NEUTRAL_TARGET = { major: 2, minor: 36 } as const;
  * table; the scene still draws each beam between its nodes, not its offset
  * ends.
  *
+ * opensees 2.38.0 (#2613, h5-schema.md "/opensees/decl_params"): the
+ * decl_params row of a typed `recorder.Ladruno` gains a `precision` field
+ * (`"f64"` or `"f32"`, the recorded data's on-disk element type). Replay
+ * data inside the hash-excluded decl_params JSON, which the app does not
+ * read, so nothing here reads differently; model_hash is unchanged.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 37 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 38 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
