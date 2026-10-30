@@ -226,6 +226,7 @@ from ._internal.types import (
     GeomTransf,
     Integrator,
     LinearSystem,
+    ModalBasis,
     NDMaterial,
     Numberer,
     Pattern,
@@ -382,6 +383,7 @@ _KIND_BY_FAMILY: tuple[tuple[type[Primitive], str], ...] = (
     (SolutionAlgorithm, "algorithm"),
     (Integrator,       "integrator"),
     (Analysis,         "analysis"),
+    (ModalBasis,       "modalBasis"),
 )
 
 

@@ -12,7 +12,8 @@ and the lock pins the moves:
     token routed through ``Emitter.command()``, which is itself the
     last Protocol method (K1-2). The ``command`` rows are the channel's
     allow-list (``base.command_row``): a token without one raises on
-    every emitter. None ships yet; K4 moves typed fork verbs onto it.
+    every emitter. The first are ``residualModes`` / ``ritzVectors``
+    (A3a); K4 moves typed fork verbs onto it.
 ``family``
     The kind of model fact the verb states; one of :data:`FAMILIES`.
 ``scope``
@@ -117,6 +118,19 @@ def _p(
         verb=verb, via="protocol", family=family, scope=scope, h5=h5,
         store=store, requires=requires, returns=returns,
         seq_op=seq[0], seq_what=seq[1], decl=decl,
+    )
+
+
+def _c(
+    verb: str, family: str, scope: Scope, h5: H5, store: str, *,
+    requires: frozenset[str] = _NONE,
+) -> Verb:
+    """A ``command()`` token's row (ADR 0114 D2): no Protocol method, so
+    its ``returns`` is the channel's ``None``."""
+    return Verb(
+        verb=verb, via="command", family=family, scope=scope, h5=h5,
+        store=store, requires=requires, returns="None",
+        seq_op="", seq_what="", decl=False,
     )
 
 
@@ -301,6 +315,13 @@ _ROWS: Final[tuple[Verb, ...]] = (
     # Method 75, the last. H5 writes an allow-listed token as a
     # ``/opensees/commands`` row; an unknown token raises on every emitter.
     _p("command", "channel", "both", "archive", _CMD),
+    # -- Command tokens ---------------------------------------------------
+    # The fork's chain M modal-basis commands (WP-213, WP-215), emitted by
+    # ``analysis.modal.ResidualModes`` / ``RitzVectors``. Like ``eigen``
+    # they run after the model is built; H5 writes each as a
+    # ``/opensees/commands`` row.
+    _c("residualModes", "modal", "global", "archive", _CMD, requires=_FORK),
+    _c("ritzVectors", "modal", "global", "archive", _CMD, requires=_FORK),
 )
 
 #: One row per verb, keyed by verb name.
