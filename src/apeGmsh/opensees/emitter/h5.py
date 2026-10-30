@@ -712,7 +712,16 @@ class H5RefusedVerb(NotImplementedError):
 #:     reader would replay an offset line without its offsets, hence the
 #:     bump: a 2.37 reader opens 2.12 through 2.37; a 2.36.x reader
 #:     REFUSES a 2.37.x file.
-SCHEMA_VERSION: str = "2.37.0"
+#:   * 2.38.0 — Ladruno recorder precision: additive — the
+#:     ``decl_params`` row of the typed ``recorder.Ladruno`` gains a
+#:     ``precision`` field, ``"f64"`` or ``"f32"`` (never null; ``"f64"``
+#:     is the fork's default and then the deck carries no flag), the
+#:     on-disk element type the ``-precision`` flag selects. No path or
+#:     dtype changes; ``decl_params`` is hash-excluded, so ``model_hash``
+#:     and the replayed deck are unchanged. The stamp moves for an
+#:     additive change (rule D5, as 2.28.0 and 2.30.0 did): a 2.38 reader
+#:     opens 2.12 through 2.38; a 2.37.x reader REFUSES a 2.38.x file.
+SCHEMA_VERSION: str = "2.38.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but

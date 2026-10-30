@@ -1671,7 +1671,7 @@ and its deck line has no flag, byte-identical to an earlier writer's. An
 archive written before 2.30.0 has no `precision` key in these rows; it
 reads exactly as before.
 
-**`precision` on `recorder.Ladruno` (program slice X, #2613).** The rows
+**`precision` on `recorder.Ladruno` (opensees 2.38.0; program slice X, #2613).** The rows
 of the typed `recorder.Ladruno` carry a `precision` field, `"f64"` or
 `"f32"`: the on-disk element type of the per-step result data, which the
 fork's `recorder ladruno -precision` flag selects. It is never null. The
@@ -1681,8 +1681,8 @@ flag and is byte-identical to an earlier writer's; `"f32"` puts
 `/opensees/recorders/ladruno_N` `params` argv also carries it. The
 `.ladruno` the run writes stamps the effective choice in its own
 `INFO/STORED_PRECISION` (`f64` under `-envelope`, whatever was asked). An
-archive written before the field existed has no `precision` key in a
-Ladruno row; it reads exactly as before.
+archive written before 2.38.0 has no `precision` key in a Ladruno row; it
+reads exactly as before.
 
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
@@ -2668,7 +2668,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.36.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.37.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.38.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -3223,6 +3223,16 @@ detail lives in the `SCHEMA_VERSION` docstring in
   not `model_hash` or its replayed deck. A 2.36 reader would replay an
   offset line without its offsets, hence the minor. Additive minor (a
   2.36.x reader refuses a 2.37.x file, INV-4).
+- `2.38.0` — program slice X #2613 (the coordinator's ruling of
+  2026-10-30, rule D5 as in 2.28.0 and 2.30.0): the
+  [`/opensees/decl_params`](#opensees-decl_params-optional-opensees-2260)
+  row of the typed `recorder.Ladruno` gains a `precision` field, `"f64"`
+  or `"f32"`, the on-disk element type of the recorded data that the
+  fork's `-precision` flag selects; never null, and `"f64"` (the fork's
+  default) emits no flag, so a default deck is byte-identical. No path or
+  dtype changes; `decl_params` is hash-excluded, so `model_hash` and the
+  replayed deck are unchanged. Additive minor (a 2.37.x reader refuses a
+  2.38.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
