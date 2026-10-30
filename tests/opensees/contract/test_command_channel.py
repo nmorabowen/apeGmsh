@@ -1,7 +1,7 @@
 """Conformance: ``Emitter.command()`` on the five emitters (ADR 0114 D2/D3).
 
 The channel is fail-closed. A token is allowed only by a ``via="command"``
-row in ``VERBS``, and none ships yet, so the round trip below injects one
+row in ``VERBS``. The round trip below injects its own probe
 row through ``base.VERBS`` (the mapping ``command_row`` reads). It also
 pins the K1-2 ``H5Emitter`` helpers: ``_refuse`` raises
 :class:`H5RefusedVerb` naming the verb and its row, ``_ledger`` counts a
@@ -58,8 +58,14 @@ def _inject_row(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Verb:
 
 # -- the fail-closed allow-list ---------------------------------------------
 
-def test_no_command_row_ships_yet() -> None:
-    assert not [k for k, v in VERBS.items() if v.via == "command"]
+def test_the_command_rows_are_the_chain_m_verbs() -> None:
+    # The first rows (A3a): the fork's residualModes / ritzVectors.
+    rows = {k: v for k, v in VERBS.items() if v.via == "command"}
+    assert set(rows) == {"residualModes", "ritzVectors"}
+    for row in rows.values():
+        assert (row.family, row.scope, row.h5) == ("modal", "global", "archive")
+        assert row.store == "/opensees/commands"
+        assert row.requires == frozenset({"fork"})
     assert VERBS["command"].via == "protocol"
     assert VERBS["command"].h5 == "archive"
     assert VERBS["command"].store == "/opensees/commands"

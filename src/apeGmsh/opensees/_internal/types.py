@@ -49,6 +49,7 @@ __all__ = [
     "SolutionAlgorithm",
     "Integrator",
     "Analysis",
+    "ModalBasis",
 ]
 
 
@@ -304,3 +305,9 @@ class Integrator(Primitive):
 
 class Analysis(Primitive):
     """Abstract base for ``analysis <Type>`` primitives."""
+
+
+class ModalBasis(Primitive):
+    """Abstract base for the fork's mode-set commands (``residualModes``,
+    ``ritzVectors``): emitted through ``command()`` after the model is
+    built, never registered on a bridge."""
