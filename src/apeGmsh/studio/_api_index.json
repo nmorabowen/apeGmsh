@@ -3890,7 +3890,7 @@
     },
     "ops.modal_after_gravity": {
       "doc": "Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``",
-      "signature": "modal_after_gravity(num_modes: 'int', *, p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'GravityModalResult'\"",
+      "signature": "modal_after_gravity(num_modes: 'int', *, p_delta: 'bool' = True, solver: 'str' = '-genBandArpack', basis: 'str' = 'eigen', ritz_dirs: 'Sequence[int]' = (), ritz_patterns: \"'Sequence[Plain | str]'\" = (), residual: \"'Sequence[int] | None'\" = None, residual_period: 'float | None' = None) -> \"'GravityModalResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.modal_after_gravity"
     },
@@ -4376,7 +4376,7 @@
     },
     "ops.spectrum_after_gravity": {
       "doc": "Per-mode response spectrum about the gravity state (ADR 0124 D4).",
-      "signature": "spectrum_after_gravity(num_modes: 'int', *, spectra: \"'Sequence[DesignSpectrum]'\", extractors: \"'Mapping[str, ResponseExtractor]'\", p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'SpectrumModalResult'\"",
+      "signature": "spectrum_after_gravity(num_modes: 'int', *, spectra: \"'Sequence[DesignSpectrum]'\", extractors: \"'Mapping[str, ResponseExtractor]'\", p_delta: 'bool' = True, solver: 'str' = '-genBandArpack', basis: 'str' = 'eigen', ritz_dirs: 'Sequence[int]' = (), ritz_patterns: \"'Sequence[Plain | str]'\" = (), residual: \"'Sequence[int] | None'\" = None, residual_period: 'float | None' = None) -> \"'SpectrumModalResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.spectrum_after_gravity"
     },

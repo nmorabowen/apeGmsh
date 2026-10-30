@@ -334,16 +334,60 @@ def cqc_correlation(
 
 
 def _modal_terms(
-    r: np.ndarray, omega: "npt.ArrayLike | None",
-) -> "tuple[np.ndarray, npt.ArrayLike | None]":
-    """The terms a combination rule sees: today every mode is its own term.
+    r: np.ndarray,
+    omega: "npt.ArrayLike | None",
+    *,
+    sa_periods: "npt.ArrayLike | None" = None,
+    damping: "float | npt.ArrayLike | None" = None,
+) -> "tuple[np.ndarray, npt.ArrayLike | None, float | npt.ArrayLike | None]":
+    """The terms a combination rule sees, ``(r, omega, damping)``.
 
-    The hook for A3-5 (ADR 213 D3b): modes that share an Sa-period
-    override are one rigid mode, so their values are summed algebraically
-    into one term at ``ω = 2π/T`` here, before any rule, as the fork's RSA
-    does. Not implemented yet; every rule goes through this.
+    ``sa_periods`` is one value per mode: ``0`` for a mode with no Sa-period
+    override, else the period ``T`` its Sa was read at
+    (``residualModes -period T``). The modes sharing one ``T`` are one
+    rigid mode (ADR 213 D3b, ASCE 7-22 §12.9.1.1), as in the fork's
+    ``responseSpectrumAnalysis -combine``. Their values are summed
+    algebraically into one term, before any rule, in the slot of the
+    group's first mode, at ``ω = 2π/T`` and with that mode's damping. An
+    overridden mode alone in its group keeps its slot at ``ω = 2π/T``. With
+    no override (or ``sa_periods=None``) every mode is its own term.
     """
-    return r, omega
+    if sa_periods is None:
+        return r, omega, damping
+    t = np.asarray(sa_periods, dtype=np.float64).ravel()
+    n = r.shape[0]
+    if t.size != n:
+        raise ValueError(
+            f"combine_modes: {t.size} Sa periods for {n} modes of values.")
+    over = t > 0.0
+    if not np.any(over):
+        return r, omega, damping
+    slot = np.empty(n, dtype=np.intp)
+    keep: list[int] = []
+    group: dict[float, int] = {}
+    for a in range(n):
+        if over[a] and float(t[a]) in group:
+            slot[a] = group[float(t[a])]
+            continue
+        slot[a] = len(keep)
+        if over[a]:
+            group[float(t[a])] = len(keep)
+        keep.append(a)
+    terms = np.zeros((len(keep),) + r.shape[1:])
+    np.add.at(terms, slot, r)
+    idx = np.asarray(keep)
+    w_out: "np.ndarray | None" = None
+    if omega is not None:
+        w_all = np.asarray(omega, dtype=np.float64).ravel()
+        if w_all.size != n:
+            raise ValueError(
+                f"combine_modes: {w_all.size} omegas for {n} modes of values.")
+        w_out = w_all[idx].copy()
+        w_out[over[idx]] = 2.0 * np.pi / t[idx][over[idx]]
+    xi = damping
+    if damping is not None and np.ndim(damping) > 0:
+        xi = np.asarray(damping, dtype=np.float64).ravel()[idx]
+    return terms, w_out, xi
 
 
 def combine_modes(
@@ -352,6 +396,7 @@ def combine_modes(
     rule: str = "CQC",
     omega: "npt.ArrayLike | None" = None,
     damping: "float | npt.ArrayLike | None" = None,
+    sa_periods: "npt.ArrayLike | None" = None,
 ) -> np.ndarray:
     """Combine the per-mode values of one quantity over the mode axis.
 
@@ -361,13 +406,17 @@ def combine_modes(
     modes of opposite sign and correlation ``ρ_ij`` give the cross term
     ``2 ρ_ij r_i r_j < 0``. ``rule`` is ``"CQC"`` (needs ``omega`` and
     ``damping``; ``ρ_ij`` is :func:`cqc_correlation`, the formula of the
-    fork's ``LadrunoModalCombination::rhoCQC``) or ``"SRSS"``. Returns the
-    non-negative combined value, shape ``per_mode.shape[1:]``.
+    fork's ``LadrunoModalCombination::rhoCQC``) or ``"SRSS"``.
+    ``sa_periods`` (one per mode, ``0`` for none) marks the modes whose Sa
+    was read at an override period: the modes sharing one are combined as
+    one rigid mode (:func:`_modal_terms`). Returns the non-negative combined
+    value, shape ``per_mode.shape[1:]``.
     """
     r = np.asarray(per_mode, dtype=np.float64)
     if r.ndim < 1:
         raise ValueError("combine_modes: per_mode needs a mode axis.")
-    r, omega = _modal_terms(r, omega)
+    r, omega, damping = _modal_terms(
+        r, omega, sa_periods=sa_periods, damping=damping)
     if rule == "SRSS":
         return np.asarray(np.sqrt(np.sum(r * r, axis=0)))
     if rule == "CQC":
@@ -436,6 +485,7 @@ def combine_directions(
     rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
     damping: "float | npt.ArrayLike | None" = ...,
     permutations: Literal[False] = ...,
+    sa_periods: "npt.ArrayLike | None" = ...,
 ) -> np.ndarray: ...
 
 
@@ -445,6 +495,7 @@ def combine_directions(
     rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
     damping: "float | npt.ArrayLike | None" = ...,
     permutations: Literal[True],
+    sa_periods: "npt.ArrayLike | None" = ...,
 ) -> DirectionalCases: ...
 
 
@@ -454,6 +505,7 @@ def combine_directions(
     rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
     damping: "float | npt.ArrayLike | None" = ...,
     permutations: bool = ...,
+    sa_periods: "npt.ArrayLike | None" = ...,
 ) -> "np.ndarray | DirectionalCases": ...
 
 
@@ -465,6 +517,7 @@ def combine_directions(
     omega: "npt.ArrayLike | None" = None,
     damping: "float | npt.ArrayLike | None" = None,
     permutations: bool = False,
+    sa_periods: "npt.ArrayLike | None" = None,
 ) -> "np.ndarray | DirectionalCases":
     """Combine one quantity's per-direction values (axis 0).
 
@@ -474,7 +527,8 @@ def combine_directions(
     With ``rule`` (``"CQC"`` or ``"SRSS"``), ``per_direction`` holds the
     per-mode sets instead, shape ``(n_directions, n_modes, …)``: each
     direction is first combined over its modes by :func:`combine_modes`
-    (``omega`` and ``damping`` as there). With ``permutations=True``
+    (``omega``, ``damping`` and ``sa_periods`` as there: pass a result's
+    :attr:`SpectrumModalResult.sa_periods` so its rigid term is one mode). With ``permutations=True``
     (``"100-30"`` only) the result is the :class:`DirectionalCases` of every
     signed case, ``n_directions · 2^n_directions`` of them, whose
     :attr:`~DirectionalCases.envelope` is the scalar ``"100-30"`` value.
@@ -495,7 +549,8 @@ def combine_directions(
                 "and a mode axis, (n_directions, n_modes, ...)."
             )
         raw = np.stack([combine_modes(v, rule=rule, omega=omega,
-                                      damping=damping) for v in raw])
+                                      damping=damping, sa_periods=sa_periods)
+                        for v in raw])
     e = np.abs(raw)
     if permutations:
         if method != "100-30":
@@ -695,6 +750,12 @@ class SpectrumModalResult:
     inertia_nodes, inertia_coords
         The massed nodes' tags and their ``(n_nodes, ndm)`` coordinates,
         in the order of :attr:`inertia`'s node axis.
+    sa_periods
+        ``(n_modes,)``: the period each mode's Sa was read at when it is not
+        the mode's own, ``0`` elsewhere, or ``None`` (no override). A
+        ``residual_period=T`` gives ``T`` on every residual pseudo-mode;
+        every combination here treats the modes sharing a ``T`` as one
+        rigid mode at ``ω = 2π/T`` (ADR 213 D3b), as the fork's RSA does.
     """
 
     modal: "GravityModalResult"
@@ -706,6 +767,7 @@ class SpectrumModalResult:
     inertia: "np.ndarray | None" = None
     inertia_nodes: tuple[int, ...] = ()
     inertia_coords: "np.ndarray | None" = None
+    sa_periods: "np.ndarray | None" = None
 
     @property
     def omega(self) -> np.ndarray:
@@ -714,8 +776,16 @@ class SpectrumModalResult:
 
     @property
     def periods(self) -> np.ndarray:
-        """Periods of the modes (s)."""
+        """Periods of the modes (s): ``2π/√λ``. For a Ritz vector or a
+        residual pseudo-mode that is its Rayleigh period, not a natural
+        period (see :attr:`kinds`)."""
         return self.modal.periods
+
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        """Each mode's kind: ``"eigen"``, ``"residual"`` or ``"ritz"``
+        (:attr:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult.kinds`)."""
+        return self.modal.modal.kinds
 
     def modes(self, name: str, spectrum: int = 0) -> np.ndarray:
         """``(n_modes, n_values)`` per-mode values of ``name`` under
@@ -732,7 +802,8 @@ class SpectrumModalResult:
         """``(n_spectra, n_values)``: ``name`` combined over the modes,
         per spectrum. CQC needs ``damping`` (one ratio or one per mode)."""
         return np.stack([
-            combine_modes(v, rule=rule, omega=self.omega, damping=damping)
+            combine_modes(v, rule=rule, omega=self.omega, damping=damping,
+                          sa_periods=self.sa_periods)
             for v in self._values(name)
         ])
 
@@ -773,7 +844,8 @@ class SpectrumModalResult:
                 f"{v.shape}."
             )
         return np.stack([
-            combine_modes(x, rule=rule, omega=self.omega, damping=damping)
+            combine_modes(x, rule=rule, omega=self.omega, damping=damping,
+                          sa_periods=self.sa_periods)
             for x in v
         ])
 
@@ -987,7 +1059,16 @@ class SpectrumModalResult:
         spectrum ``spectrum``, with each mode's principal-axis angle
         ``atan2(Γ_b, Γ_a)`` (degrees, modulo 180°) from its participation
         factors along the plan directions ``plan = (a, b)`` (1-based; ``None`` leaves the
-        angles out)."""
+        angles out). Refused when an Sa-period override groups modes into
+        one rigid term: the per-mode shares would not add up to it."""
+        if self.sa_periods is not None and np.any(
+                np.asarray(self.sa_periods) > 0.0):
+            raise ValueError(
+                "SpectrumModalResult.cancellation: this result has an "
+                "Sa-period override (residual_period=), so its modes sharing "
+                "it combine as one rigid term; a per-mode cancellation report "
+                "does not apply."
+            )
         terms = self.modes(name, spectrum)[:, int(index)]
         angles = None
         if plan is not None:
