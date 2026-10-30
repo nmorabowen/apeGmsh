@@ -1520,18 +1520,18 @@
   {
    "zone": "opensees",
    "minor": "2.37",
-   "sha": "9c63fae03e2577d61d487bb746fe52a8096031ab",
-   "date": "2026-10-26",
+   "sha": "95c1b8b91a2ef2787e0ec89c3f20a38b5b817f56",
+   "date": "2026-10-30",
    "version": "2.37.0",
    "bump_commits": [
-    "8c958645b07bf186d696ae321816532deaf72026"
+    "c5a383d821de0535e34cccb980dffd767c20c6b3"
    ],
    "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
    "status": "ok",
    "files": {
     "h5": {
      "name": "opensees_2.37.h5",
-     "sha256": "3e82b810cbe3e8c0ca1ffb4da1d3bdf5bc3f00d0b19c9d7c7b29c62b07b431d5"
+     "sha256": "3bbb046b258821b06d2d6c1db79aeab5bcaad23fa870245cbfb6be3c968c26c8"
     },
     "dump": {
      "name": "opensees_2.37.dump.json",
@@ -1543,7 +1543,7 @@
     }
    },
    "stamps": {
-    "neutral": "2.35.0",
+    "neutral": "2.36.0",
     "opensees": "2.37.0"
    }
   },
