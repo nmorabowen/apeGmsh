@@ -1,6 +1,6 @@
 # ADR 0127 — Admit the `ModalBasis` primitive family for the fork's mode-set commands
 
-**Status:** Proposed (2026-10-29). Admits one entry to the frozen
+**Status:** Accepted (2026-10-30). Admits one entry to the frozen
 "primitive families" registry under ADR 0121 D4. Program issue
 nmorabowen/OpenSees#1024, chain A link A3a (apeGmsh PR #2620).
 
