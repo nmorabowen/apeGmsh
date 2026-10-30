@@ -192,13 +192,31 @@ def test_set_name_refuses_the_label_prefix(g):
 
 
 def test_remove_all_is_reflected(g):
-    # Kept apart from remove_name: in plain gmsh 4.15, renaming,
-    # removePhysicalName and then removePhysicalGroups() corrupts the
-    # heap at finalize (0xc0000374), with or without apeGmsh.
+    # In plain gmsh 4.15.2 the argument-less removePhysicalGroups()
+    # corrupts the heap at finalize (0xc0000374) once any targeted
+    # removePhysicalGroups([(dim, tag)]) ran in the model; renaming
+    # (removePhysicalName + setPhysicalName) is harmless.  remove_all()
+    # lists the groups instead (#2608); the kill is pinned out of
+    # process in tests/test_physical_upsert_remove_all.py.
     a, _ = _lines(2)
     g.physical.add(1, [a], name="all")
     g.physical.remove_all()
     assert g.physical.get_tag(1, "all") is None
+
+
+def test_remove_all_drops_the_names_too(g):
+    # The argument-less form kept every name, so a group created later
+    # at a freed tag inherited it and its own setPhysicalName was
+    # dropped.  Listing the groups removes the names with them.
+    a, b = _lines(2)
+    t = g.physical.add(1, [a], name="all")
+    g.physical.remove_all()
+    assert gmsh.model.getPhysicalName(1, t) == ""
+    t2 = g.physical.add(1, [b], name="other", tag=t)
+    assert t2 == t
+    assert g.physical.get_name(1, t2) == "other"
+    assert g.physical.get_tag(1, "all") is None
+    assert g.physical.get_tag(1, "other") == t2
 
 
 def test_raw_gmsh_create_and_rename_are_found(g):

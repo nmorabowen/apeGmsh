@@ -450,11 +450,28 @@ class PhysicalGroups(_HasLogging):
         return self
 
     def remove_all(self) -> PhysicalGroups:
-        """Remove every physical group in the current model."""
+        """Remove every physical group in the current model.
+
+        The groups are listed and removed by ``(dim, tag)``.  gmsh's
+        argument-less ``removePhysicalGroups()`` is never called: in
+        gmsh 4.15.2 it corrupts the heap at finalize once any targeted
+        ``removePhysicalGroups([(dim, tag)])`` ran in the model (the
+        upsert in :meth:`add`, :meth:`remove`, label upkeep), and the
+        process then dies at ``g.end()`` with no traceback (#2608;
+        pinned by ``tests/test_physical_upsert_remove_all.py``).
+        Listing them also drops their names, which the argument-less
+        form kept, so a group later created at a freed tag no longer
+        inherits a stale name.
+        """
         self._require_unfrozen("g.physical.remove_all()")
-        gmsh.model.removePhysicalGroups()
+        dim_tags = [
+            (int(d), int(t)) for d, t in gmsh.model.getPhysicalGroups()
+        ]
+        # An empty list IS the argument-less form, so nothing is sent.
+        if dim_tags:
+            gmsh.model.removePhysicalGroups(dimTags=dim_tags)
         self._index.clear()
-        self._log("remove_all()")
+        self._log(f"remove_all(): removed {len(dim_tags)} group(s)")
         return self
 
     # ------------------------------------------------------------------
