@@ -1,13 +1,13 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "2ec87af3605fff00142bc916a65455aeeeb98396",
+ "base": "95c1b8b91a2ef2787e0ec89c3f20a38b5b817f56",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
  },
  "current": {
   "neutral": "2.36.0",
-  "opensees": "2.37.0"
+  "opensees": "2.38.0"
  },
  "entries": [
   {
@@ -1545,6 +1545,36 @@
    "stamps": {
     "neutral": "2.35.0",
     "opensees": "2.37.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.38",
+   "sha": "266006b196a688e33cc0bafd4366745692fb0347",
+   "date": "2026-10-30",
+   "version": "2.38.0",
+   "bump_commits": [
+    "266006b196a688e33cc0bafd4366745692fb0347"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.38.h5",
+     "sha256": "f6d88a0cc2c85cd00b988d098c0b354418e64ff320f640d2aa9cc4d70400164f"
+    },
+    "dump": {
+     "name": "opensees_2.38.dump.json",
+     "sha256": "b7009ea5b26fb2176ddda57a73003abbaf914a12c114f975368f596a791b6c18"
+    },
+    "tcl": {
+     "name": "opensees_2.38.tcl",
+     "sha256": "1456e16f037e2e406c0310b4fac0f1e23991bed9cfd7370624eef7d2f336121f"
+    }
+   },
+   "stamps": {
+    "neutral": "2.36.0",
+    "opensees": "2.38.0"
    }
   }
  ]
