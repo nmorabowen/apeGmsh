@@ -1671,6 +1671,19 @@ and its deck line has no flag, byte-identical to an earlier writer's. An
 archive written before 2.30.0 has no `precision` key in these rows; it
 reads exactly as before.
 
+**`precision` on `recorder.Ladruno` (program slice X, #2613).** The rows
+of the typed `recorder.Ladruno` carry a `precision` field, `"f64"` or
+`"f32"`: the on-disk element type of the per-step result data, which the
+fork's `recorder ladruno -precision` flag selects. It is never null. The
+default `"f64"` is the fork's own default, so the deck line carries no
+flag and is byte-identical to an earlier writer's; `"f32"` puts
+`-precision f32` right after the file name, where the
+`/opensees/recorders/ladruno_N` `params` argv also carries it. The
+`.ladruno` the run writes stamps the effective choice in its own
+`INFO/STORED_PRECISION` (`f64` under `-envelope`, whatever was asked). An
+archive written before the field existed has no `precision` key in a
+Ladruno row; it reads exactly as before.
+
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
 `type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,

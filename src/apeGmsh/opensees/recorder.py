@@ -49,7 +49,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from typing import Iterable
+from typing import Iterable, Literal
 
 from .._vocabulary import (
     expand_many,
@@ -128,6 +128,28 @@ def _check_precision(precision: "int | None", where: str) -> None:
         raise ValueError(
             f"{where}: precision must be a positive int (the significant "
             f"digits per written value), got {precision!r}."
+        )
+
+
+#: The on-disk precisions the fork's ``recorder ladruno -precision`` takes
+#: (``LadrunoRecorder.cpp``). The fork also accepts the spellings
+#: ``float32`` / ``single`` / ``float64`` / ``double``, and *warns and keeps
+#: f64* on anything else; the bridge admits only the two canonical tokens
+#: so a typo cannot silently record in the other precision.
+LADRUNO_PRECISIONS: frozenset[str] = frozenset({"f64", "f32"})
+
+
+def _check_ladruno_precision(precision: object, where: str) -> None:
+    """Refuse a ``precision`` outside :data:`LADRUNO_PRECISIONS`.
+
+    The fork parser falls back to f64 with a warning on an unknown token,
+    so an unchecked value would run and write the wrong precision
+    unnoticed; the bridge fails closed at construction instead.
+    """
+    if not isinstance(precision, str) or precision not in LADRUNO_PRECISIONS:
+        raise ValueError(
+            f"{where}: precision must be 'f64' or 'f32' (the on-disk "
+            f"element type of the recorded data), got {precision!r}."
         )
 
 
@@ -1004,7 +1026,8 @@ class Ladruno(FilterableRecorder):
 
     OpenSees command (value channels + region filter + energy balance)::
 
-        recorder ladruno fname.ladruno [-N nodal_responses...]
+        recorder ladruno fname.ladruno [-precision f32]
+                                       [-N nodal_responses...]
                                        [-E elem_responses...]
                                        [-T dt $dt | -T nsteps $n]
                                        [-R $regTag]
@@ -1063,10 +1086,25 @@ class Ladruno(FilterableRecorder):
     like the value filter (ADR 0064 §4). Read any region's balance via
     ``Results.energy(region=<tag>)``; whole-model via ``Results.energy()``.
 
+    **Precision.** ``precision="f32"`` emits ``-precision f32`` right after
+    the file name, and the fork stores the per-step result DATA as
+    float32 (about half the bytes, ~7 significant digits; the fork stamps
+    the choice in the file's ``INFO/STORED_PRECISION``). The default
+    ``"f64"`` emits no flag, so a default deck is byte-identical to one
+    written before the field existed. The flag precedes ``-N``/``-E`` so
+    it never sits where the fork's ``-G`` parser eats trailing tokens.
+    The value is archived in ``ops.h5`` with the recorder's other fields
+    (the ``/opensees/decl_params`` row), so a reader knows the recorded
+    precision without opening the ``.ladruno``.
+
     Parameters
     ----------
     file
         Output ``.ladruno`` (HDF5) file path.
+    precision
+        On-disk element type of the recorded data: ``"f64"`` (default,
+        lossless) or ``"f32"`` (``-precision f32``, lossy). Anything else
+        raises ``ValueError``; the fork would otherwise warn and keep f64.
     nodal_responses
         Tuple of ``-N`` tokens (e.g. ``("displacement",
         "reactionForce")``). Empty tuple means no nodal recording.
@@ -1111,6 +1149,9 @@ class Ladruno(FilterableRecorder):
     # decoupled energy region.
     energy: bool = False
     energy_pg: str | None = None
+    # On-disk precision of the recorded data: ``"f64"`` emits no flag
+    # (byte-identical decks); ``"f32"`` emits ``-precision f32``.
+    precision: Literal["f64", "f32"] = "f64"
     # Region tags for ``-G energy $tag...`` (decoupled energy regions),
     # populated by ``materialize`` / the partition planner from
     # ``energy_pg``. End users never set this directly.
@@ -1127,6 +1168,7 @@ class Ladruno(FilterableRecorder):
                 "Ladruno: at least one of nodal_responses, "
                 "elem_responses, energy or energy_pg required."
             )
+        _check_ladruno_precision(self.precision, "Ladruno")
         self._validate_cadence()
         self._validate_filter()
         self._validate_elem_tokens()
@@ -1241,7 +1283,14 @@ class Ladruno(FilterableRecorder):
         # the energy flag must trail it — the fork's ``-G`` parser eagerly
         # eats trailing ints and cannot rewind past a following flag, so
         # ``-G energy [$tag...]`` is always the final option.
-        args: list[int | float | str] = [self.file, *self._value_channel_args()]
+        args: list[int | float | str] = [self.file]
+        if self.precision != "f64":
+            # Right after the file, before the value channels: the fork
+            # parses options in any order, but ``-G`` eats trailing
+            # tokens, so the flag never follows it. f64 is the fork's
+            # default and emits nothing (byte-identical decks).
+            args += ["-precision", self.precision]
+        args += self._value_channel_args()
         if self.energy or self._energy_region_tags:
             args += ["-G", "energy"]
             if self._energy_region_tags:
