@@ -114,34 +114,46 @@ def test_schema_and_case_are_checked() -> None:
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
-def test_corbel_pushover_refuses_a_step_out_of_equilibrium(
+def test_corbel_pushover_curve_rises_past_cracking_in_equilibrium(
     record_property: Any,
 ) -> None:
-    """#2602: at the pinned fork, ``LadrunoConcrete3D``'s return map fails
-    silently (``setTrialStrain`` returns 0 with the off-surface trial
-    stress), so a step past cracking is accepted out of equilibrium and the
-    run refuses. Before the guard this test accepted ``stopped="divergence"``
-    and a capacity above 150 kN from such a path. Once chain F makes the
-    return map fail loudly (#2602 route 2), the expectation goes back to a
-    curve that rises past the plain-concrete cracking peak (about 136 kN on
-    this mesh) to more than 150 kN."""
-    with pytest.raises(PushoverRefusedError) as info:
-        strut_tie_pushover(
-            _load("corbel.stm.json"),
-            mesh_size=45.0,
-            extra_fixed_planes=(("x", -400.0, (0, 1)),),
-            target_displacement=0.3,
-            steps=10,
-        )
-    err = info.value
-    record_property("refused_step", err.step)
-    record_property("refusal", str(err))
-    assert err.reason == "unbalanced"
-    assert "is not in equilibrium" in str(err)
-    pts = err.points
-    assert pts[0] == [0.0, 0.0] and len(pts) == err.step
+    """The reinforced corbel's curve rises past the plain-concrete cracking
+    peak (about 136 kN on this mesh without bars) to more than 150 kN, with
+    every accepted step in equilibrium.
+
+    At ``ladruno-v20261029`` and before, ``LadrunoConcrete3D`` returned 0
+    from a failed return map, so a step past cracking was accepted out of
+    equilibrium and the equilibrium guard refused it (#2602). From
+    ``ladruno-v20261030`` (fork PR #1038) it returns a negative code, Newton
+    cuts the step, and the run completes in equilibrium (#2622)."""
+    result = strut_tie_pushover(
+        _load("corbel.stm.json"),
+        mesh_size=45.0,
+        extra_fixed_planes=(("x", -400.0, (0, 1)),),
+        target_displacement=0.3,
+        steps=10,
+    )
+    curve = result.overlays["fe_curve"]
+    pts = curve["points"]
+    record_property("capacity_N", curve["capacity"])
+    record_property("stopped", curve["stopped"])
+    record_property("n_points", len(pts))
+    record_property(
+        "max_relative_unbalance", curve["equilibrium"]["max_relative_unbalance"]
+    )
+    assert len(pts) >= 4
+    assert pts[0] == [0.0, 0.0]
     assert all(b[0] > a[0] for a, b in itertools.pairwise(pts))
-    assert len(pts) < 2 or pts[1][1] > 0.0  # the elastic first step rises
+    assert curve["capacity"] == max(p[1] for p in pts)
+    # Reinforced: the tie bars carry the region well past the plain-concrete
+    # cracking peak.
+    assert curve["capacity"] > 150.0e3
+    assert "ties as Steel02" in curve["source"]
+    assert result.overlays["fe_summary"]["ties_modelled"]["T1"] > 0.0
+    assert curve["stopped"] in ("target", "post_peak")
+    assert curve["equilibrium"]["max_relative_unbalance"] <= 5e-3
+    assert pts[1][1] > 0.0  # the elastic first step rises
+    json.dumps(result.overlays, allow_nan=False)
 
 
 @pytest.mark.ladruno_fork
