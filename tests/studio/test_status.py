@@ -100,11 +100,11 @@ def test_status_json_flag(tmp_path: Path, monkeypatch, capsys) -> None:
 def test_main_without_script_or_status(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    # Hermetic: the INV-15 upward search must not leave tmp_path. Run from
-    # a worktree under a checkout that has a project.json, a bare main([])
-    # replayed that script and opened a viewer (#2609).
+    # The empty .apegmsh/ is the ceiling: resolve_root stops at it, so a
+    # parent project.json is never replayed (#2609).
     monkeypatch.chdir(tmp_path)
-    assert main(["--root", str(tmp_path)]) == 2
+    (tmp_path / ".apegmsh").mkdir()
+    assert main([]) == 2
     assert "--status" in capsys.readouterr().err
 
 
