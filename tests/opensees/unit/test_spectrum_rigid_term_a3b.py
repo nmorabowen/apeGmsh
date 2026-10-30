@@ -175,3 +175,68 @@ def test_combined_period_tolerance_keeps_the_rigid_sa_fixed() -> None:
 
     ours, ref = srss(R), srss(v_ref)
     np.testing.assert_allclose(tol.period, np.abs(ours - ref) / ref, rtol=1e-12)
+
+
+def _podium_set(alpha: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """The V3 podium with ``K`` x ``alpha``: three eigenmodes plus the two
+    Rayleigh-Ritz pseudo-modes of the X residual, as ``(T, u1, f, K⁻¹Mr u1)``
+    per mode per unit Sa: floor 1's displacement and the base force."""
+    m = np.array([40.0] + [1.0] * 9)
+    s = alpha * np.array([6e4] + [300.0] * 9)
+    k = np.diag(s + np.append(s[1:], 0.0)) - np.diag(s[1:], 1) - np.diag(s[1:], -1)
+    w = np.sqrt(m)
+    lam, y = np.linalg.eigh(k / np.outer(w, w))
+    phi = (y / w[:, None])[:, :3]
+    iota = np.ones(10)
+    r = iota - phi @ (phi.T @ (m * iota))
+    x = np.linalg.solve(k, m * r)
+    x = x - phi @ (phi.T @ (m * x))
+    v = np.column_stack([r, x])
+    # Rayleigh-Ritz on span{r, x}: the fork's pseudo-modes
+    b = v.T @ (m[:, None] * v)
+    c = np.linalg.cholesky(b)
+    ci = np.linalg.inv(c)
+    lam2, q = np.linalg.eigh(ci @ (v.T @ k @ v) @ ci.T)
+    psi = v @ (ci.T @ q)
+    modes = np.column_stack([phi, psi])
+    lams = np.concatenate([lam[:3], lam2])
+    gamma = modes.T @ (m * iota)
+    u1 = modes[0] * gamma / lams
+    force = (m[:, None] * modes).sum(axis=0) * gamma
+    return (2 * np.pi / np.sqrt(lams), u1, force,
+            np.linalg.solve(k, m * r)[:1])
+
+
+@pytest.mark.parametrize(("quantity", "column"), [("displacement", 1), ("force", 2)])
+def test_rigid_term_rescale_matches_a_stiffer_model(quantity: str, column: int) -> None:
+    """The hand check behind keeping ``(T_ref/T)^p`` on overridden modes: the
+    reference is an independent solve of the podium with ``K`` x 1.3. The
+    group's displacement is the static residual, which scales by ``1/1.3``;
+    its force does not move."""
+    from apeGmsh.opensees.analysis.spectrum_tolerance import (
+        combined_period_tolerance,
+    )
+
+    t_rigid = 0.05
+    sa = np.array([9.81, 5.0])
+    tn = [0.0, 10.0]
+    spec = lambda t: np.interp(t, tn, sa)  # noqa: E731
+    ours, ref = _podium_set(1.0), _podium_set(1.3)
+    over = np.array([0.0, 0.0, 0.0, t_rigid, t_rigid])
+    at = lambda t: np.where(over > 0.0, spec(t_rigid), spec(t))  # noqa: E731
+    v = ours[column] * at(ours[0])
+    v_ref = ref[column] * at(ref[0])
+    # the group is the static residual: its sum, and how it scales
+    group, group_ref = v[3:].sum(), v_ref[3:].sum()
+    if quantity == "displacement":
+        assert group == pytest.approx(ours[3][0] * spec(t_rigid), rel=1e-9)
+        assert group_ref == pytest.approx(group / 1.3, rel=1e-9)
+    else:
+        assert group_ref == pytest.approx(group, rel=1e-9)
+    tol = combined_period_tolerance(
+        spec, v, ours[0], ref[0], quantity=quantity, rule="SRSS",
+        sa_periods=over)
+    hand = combine_modes(v, rule="SRSS", sa_periods=over)
+    hand_ref = combine_modes(v_ref, rule="SRSS", sa_periods=over)
+    assert float(tol.period) == pytest.approx(
+        abs(hand - hand_ref) / hand_ref, rel=1e-8)
