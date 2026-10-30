@@ -824,8 +824,8 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
     # FORK_PIN ladruno-v20261030b (23d937bc4): 43b235bbb is its ancestor
     # (GitHub compare: ahead 103, behind 0). It is c9004f48d plus
-    # 6 commits: fork PRs #1043 (summed return codes saturate) and
-    # #1042 (a recorder regression test).
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
     "23d937bc4011d1b29230671511531e23f777d78c": True,
     # ladruno-v20261030 (c9004f48d): 43b235bbb is its ancestor
     # (GitHub compare: ahead 97, behind 0). It is 6ee6a04fd plus
@@ -919,8 +919,8 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 FORK_BUILD_HAS_C83: dict[str, bool] = {
     # FORK_PIN ladruno-v20261030b (23d937bc4): c83ee812e is its ancestor
     # (GitHub compare: ahead 88, behind 0). It is c9004f48d plus
-    # 6 commits: fork PRs #1043 (summed return codes saturate) and
-    # #1042 (a recorder regression test).
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
     "23d937bc4011d1b29230671511531e23f777d78c": True,
     # ladruno-v20261030 (c9004f48d): c83ee812e is its ancestor
     # (GitHub compare: ahead 82, behind 0). It is 6ee6a04fd plus
@@ -1018,8 +1018,8 @@ FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     MEMBRANE_WP208_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261030b (23d937bc4): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 86, behind 0). It is c9004f48d plus
-    # 6 commits: fork PRs #1043 (summed return codes saturate) and
-    # #1042 (a recorder regression test).
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
     "23d937bc4011d1b29230671511531e23f777d78c": True,
     # ladruno-v20261030 (c9004f48d): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 80, behind 0). It is 6ee6a04fd plus
@@ -1117,8 +1117,8 @@ FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261030b (23d937bc4): 34df942c7 is its ancestor
     # (GitHub compare: ahead 116, behind 0). It is c9004f48d plus
-    # 6 commits: fork PRs #1043 (summed return codes saturate) and
-    # #1042 (a recorder regression test).
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
     "23d937bc4011d1b29230671511531e23f777d78c": True,
     # ladruno-v20261030 (c9004f48d): 34df942c7 is its ancestor
     # (GitHub compare: ahead 110, behind 0). It is 6ee6a04fd plus
@@ -1247,8 +1247,8 @@ FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261030b (23d937bc4): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4161, behind 0). It is c9004f48d plus
-    # 6 commits: fork PRs #1043 (summed return codes saturate) and
-    # #1042 (a recorder regression test).
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
     "23d937bc4011d1b29230671511531e23f777d78c": True,
     # ladruno-v20261030 (c9004f48d): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4155, behind 0). It is 6ee6a04fd plus
