@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_37_0() -> None:
-    """Schema 2.37.0 — a ``geomTransf`` line with ``-jntOffset`` stores
-    it as a ``jnt_offset`` dataset of its transform group (#2470)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 37, 0)
+def test_opensees_reader_version_is_2_38_0() -> None:
+    """Schema 2.38.0 — the typed ``recorder.Ladruno`` ``decl_params`` row
+    carries ``precision`` (``"f64"`` / ``"f32"``; program slice X, #2613)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 38, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:
