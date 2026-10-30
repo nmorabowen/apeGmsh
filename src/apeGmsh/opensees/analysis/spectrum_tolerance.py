@@ -242,7 +242,14 @@ def combined_period_tolerance(
     read at an override period (``residual_period=``,
     :attr:`~apeGmsh.opensees.analysis.spectrum.SpectrumModalResult.sa_periods`):
     their Sa does not move with the period, so only ``(T_ref/T)^p``
-    rescales them, and both combinations take them as one rigid term.
+    rescales them, and both combinations take them as one rigid term. The
+    ``p = 2`` stays for displacements: the group's sum is the static
+    residual ``K⁻¹ M r Sa(T)``, which does not depend on how the pseudo-modes
+    split it, but does scale with the stiffness, by exactly ``(T_ref/T)²``
+    when the two models share their shapes (the assumption of this module).
+    Its force ``M r Sa(T)`` does not, which is ``p = 0``. If the two models
+    split the residual differently, the per-mode ratios no longer describe
+    the group; compare the two groups' own sums instead.
     """
     p = _power(quantity)
     b = _base(base)

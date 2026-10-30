@@ -1006,7 +1006,13 @@ class SpectrumModalResult:
         force. Equilibrium makes it zero to round-off; above ``1e-3`` the
         inertia the storey forces rest on is not the load the reactions
         answered (mass the per-mode loads missed, an eigenvector off the
-        stiffness the legs met)."""
+        stiffness the legs met).
+
+        That makes it a real check for eigenmodes, whose force ``m φ Γ Sa``
+        is built apart from the reactions. For a residual or Ritz mode
+        (:attr:`kinds`) the force is ``K ψ Γ Sa / λ``, read off the same
+        imposed leg as the reactions, so the balance holds by construction
+        and only catches an inconsistent read."""
         if self.inertia is None:
             raise ValueError(
                 "SpectrumModalResult.inertia_balance: this result carries "
