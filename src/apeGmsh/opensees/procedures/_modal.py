@@ -6,7 +6,6 @@ state and no ``__init__``.
 from __future__ import annotations
 
 import math
-import warnings
 from typing import TYPE_CHECKING, Sequence, cast
 
 from .._internal.build.errors import BridgeError
@@ -951,9 +950,7 @@ class _ModalMixin(_ProcedureHost):
         nodal displacement; element forces, drifts and storey shears
         read off that domain are not combined responses. For those use
         :meth:`spectrum_after_gravity`, which combines each quantity's
-        signed per-mode values. Every call warns
-        :class:`~apeGmsh.opensees.analysis.modal.RsaCombineWarning`
-        to say so.
+        signed per-mode values.
 
         Parameters
         ----------
@@ -995,7 +992,6 @@ class _ModalMixin(_ProcedureHost):
         from .._target import require_rsa_feature
         from ..analysis.modal import (
             ResponseSpectrumResult,
-            RsaCombineWarning,
             _damping_channel_args,
         )
         from ..emitter.live import LiveOpsEmitter
@@ -1061,14 +1057,6 @@ class _ModalMixin(_ProcedureHost):
                 )
             require_rsa_feature("responseSpectrumAnalysis -requireMass")
             args.extend(("-requireMass", r_val))
-        warnings.warn(
-            f"{context}: -combine combines the nodal displacements only; "
-            "element forces, drifts and storey shears read off this domain "
-            "are not combined responses. Use apeSees.spectrum_after_gravity "
-            "for those.",
-            RsaCombineWarning,
-            stacklevel=2,
-        )
 
         bm = self.build()
         self._assert_fork_if_required()
@@ -1127,6 +1115,10 @@ class _ModalMixin(_ProcedureHost):
 
         Raises
         ------
+        BridgeError
+            The model runs under MPI (a partitioned model or an MPI
+            ``system``): the fork refuses ``residualModes`` on OpenSeesSP,
+            so the bridge refuses before emitting.
         ForkTooOldError
             The in-process build lacks ``residualModes``; raised before
             the model is built.
@@ -1138,6 +1130,7 @@ class _ModalMixin(_ProcedureHost):
 
         context = "apeSees.residual_modes"
         self._modal_prereqs_and_guards(num_modes, context=context)
+        self._refuse_mpi_modal_basis(context, "residualModes")
         record = ResidualModes(
             dirs=tuple(dirs), period=period, replace=replace, tol=tol)
         require_rsa_feature("residualModes")
@@ -1207,27 +1200,16 @@ class _ModalMixin(_ProcedureHost):
             The in-process build lacks ``ritzVectors``; raised before
             the model is built.
         """
-        from .._internal.build.ownership import is_partitioned
-        from .._internal.types import Analysis, LinearSystem
+        from .._internal.types import Analysis
         from .._target import require_rsa_feature
         from ..analysis.modal import ModalPropertiesResult, RitzVectors
-        from ..emitter.caps import is_mpi_system
         from ..emitter.live import LiveOpsEmitter
         from ..pattern.pattern import Plain as _Plain
         import numpy as np
 
         context = "apeSees.ritz_vectors"
         self._modal_prereqs_and_guards(1, context=context)
-        mpi = [type(p).__name__ for p in self._primitives
-               if isinstance(p, LinearSystem)
-               and is_mpi_system(type(p).__name__)]
-        if is_partitioned(self._fem) or mpi:
-            why = (f"system {mpi[0]}" if mpi else "a partitioned model")
-            raise BridgeError(
-                f"{context}: {why} runs under MPI, and the fork refuses "
-                "ritzVectors on a partitioned (OpenSeesSP) domain. Use "
-                "eigen (apeSees.eigen / modal_properties) there."
-            )
+        self._refuse_mpi_modal_basis(context, "ritzVectors")
         if not any(isinstance(p, Analysis) for p in self._primitives):
             raise BridgeError(
                 f"{context}: the fork factors K through the defined "
@@ -1261,6 +1243,25 @@ class _ModalMixin(_ProcedureHost):
             properties=properties,
             _live=live_emitter,
         )
+
+    def _refuse_mpi_modal_basis(self, context: str, command: str) -> None:
+        """Refuse a partitioned model or an MPI ``system`` before emitting:
+        the fork refuses ``residualModes`` / ``ritzVectors`` on a
+        partitioned (OpenSeesSP) domain."""
+        from .._internal.build.ownership import is_partitioned
+        from .._internal.types import LinearSystem
+        from ..emitter.caps import is_mpi_system
+
+        mpi = [type(p).__name__ for p in self._primitives
+               if isinstance(p, LinearSystem)
+               and is_mpi_system(type(p).__name__)]
+        if is_partitioned(self._fem) or mpi:
+            why = (f"system {mpi[0]}" if mpi else "a partitioned model")
+            raise BridgeError(
+                f"{context}: {why} runs under MPI, and the fork refuses "
+                f"{command} on a partitioned (OpenSeesSP) domain. Use "
+                "eigen (apeSees.eigen / modal_properties) there."
+            )
 
     def _resolve_modal_excitation(
         self,

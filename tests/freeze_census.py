@@ -62,7 +62,7 @@ FROZEN: dict[str, frozenset[str]] = {
 }
 
 ADMITTED: dict[str, dict[str, str]] = {
-    "primitive families": {},
+    "primitive families": {"modal basis": "0127"},
     "constraint kinds": {},
     "studio mcp tools": {},
     "habitat tools": {},

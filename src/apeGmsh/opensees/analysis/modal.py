@@ -54,20 +54,9 @@ __all__ = [
     "ResponseSpectrumResult",
     "RitzVectors",
     "RotationRolesUnavailableWarning",
-    "RsaCombineWarning",
     "StaleModelArchiveWarning",
     "SteadyStateResult",
 ]
-
-
-class RsaCombineWarning(UserWarning):
-    """:meth:`apeSees.response_spectrum_analysis` combined displacements only.
-
-    The fork's ``-combine`` commits the combined nodal displacement field;
-    forces, drifts and storey shears read off that domain are not combined
-    responses. :meth:`apeSees.spectrum_after_gravity` combines each
-    quantity's signed per-mode values.
-    """
 
 
 class StaleModelArchiveWarning(UserWarning):

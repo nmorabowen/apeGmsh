@@ -2,7 +2,8 @@
 
 * :class:`ResidualModes` / :class:`RitzVectors` validate as the fork's
   parsers do (WP-213, WP-215);
-* ``apeSees.ritz_vectors`` refuses an MPI (SP) model before emitting;
+* ``apeSees.ritz_vectors`` and ``residual_modes`` refuse an MPI (SP)
+  model before emitting;
 * without chain M the verbs and ``require_mass=`` refuse through the A4
   probe (``ForkTooOldError``) before the model is built;
 * the one-shots run their commands in the fixed order (basis, residual,
@@ -22,11 +23,7 @@ import pytest
 from apeGmsh.opensees import _target, apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._target import ForkTooOldError
-from apeGmsh.opensees.analysis.modal import (
-    ResidualModes,
-    RitzVectors,
-    RsaCombineWarning,
-)
+from apeGmsh.opensees.analysis.modal import ResidualModes, RitzVectors
 from apeGmsh.opensees.emitter import live
 
 from tests.opensees.fixtures.fem_stub import (
@@ -179,17 +176,29 @@ def test_ritz_vectors_replaces_eigen(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
-def test_ritz_vectors_refuses_a_partitioned_model(
-    monkeypatch: pytest.MonkeyPatch,
+_MODAL_BASIS_VERBS = [
+    pytest.param(lambda ops: ops.residual_modes((1,), num_modes=2),
+                 "residualModes", id="residual_modes"),
+    pytest.param(lambda ops: ops.ritz_vectors(2, dirs=(1,)),
+                 "ritzVectors", id="ritz_vectors"),
+]
+
+
+@pytest.mark.parametrize(("call", "command"), _MODAL_BASIS_VERBS)
+def test_modal_basis_verbs_refuse_a_partitioned_model(
+    call: Any, command: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _engine(monkeypatch, NEW)
     ops = _bridge(make_two_column_frame_partitioned())
     _no_build(ops, monkeypatch)
-    with pytest.raises(BridgeError, match="OpenSeesSP"):
-        ops.ritz_vectors(2, dirs=(1,))
+    with pytest.raises(BridgeError, match=f"refuses {command} on a partitioned"):
+        call(ops)
 
 
-def test_ritz_vectors_refuses_an_mpi_system(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("call", "command"), _MODAL_BASIS_VERBS)
+def test_modal_basis_verbs_refuse_an_mpi_system(
+    call: Any, command: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _engine(monkeypatch, NEW)
     ops = _bridge(analysis=False)
     ops.constraints.Transformation()
@@ -201,7 +210,7 @@ def test_ritz_vectors_refuses_an_mpi_system(monkeypatch: pytest.MonkeyPatch) -> 
     ops.analysis.Static()
     _no_build(ops, monkeypatch)
     with pytest.raises(BridgeError, match="system Mumps runs under MPI"):
-        ops.ritz_vectors(2, dirs=(1,))
+        call(ops)
 
 
 def test_ritz_vectors_needs_an_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -243,9 +252,8 @@ def test_require_mass_reaches_the_command(monkeypatch: pytest.MonkeyPatch) -> No
     _engine(monkeypatch, NEW)
     ops = _bridge()
     _fake_run(ops, monkeypatch)
-    with pytest.warns(RsaCombineWarning, match="spectrum_after_gravity"):
-        ops.response_spectrum_analysis(1, periods=TN, accels=SA, combine="SRSS",
-                                       num_modes=2, require_mass=0.9)
+    ops.response_spectrum_analysis(1, periods=TN, accels=SA, combine="SRSS",
+                                   num_modes=2, require_mass=0.9)
     rsa = _FakeLive.steps[-1]
     assert rsa == ("responseSpectrumAnalysis",
                    (1, "-Tn", *TN, "-Sa", *SA, "-combine", "SRSS",
@@ -258,8 +266,7 @@ def test_without_require_mass_the_line_is_unchanged(
     _engine(monkeypatch, OLD)                 # no chain M needed without it
     ops = _bridge()
     _fake_run(ops, monkeypatch)
-    with pytest.warns(RsaCombineWarning):
-        ops.response_spectrum_analysis(1, periods=TN, accels=SA, combine="SRSS",
-                                       num_modes=2)
+    ops.response_spectrum_analysis(1, periods=TN, accels=SA, combine="SRSS",
+                                   num_modes=2)
     assert _FakeLive.steps[-1] == (
         "responseSpectrumAnalysis", (1, "-Tn", *TN, "-Sa", *SA, "-combine", "SRSS"))

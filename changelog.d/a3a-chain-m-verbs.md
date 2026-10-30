@@ -13,18 +13,19 @@ mode set:
 - `ops.ritz_vectors(n, dirs=(), patterns=(), cycles=None, tol=None)` runs
   `ritzVectors` in place of `eigen`. Its starting loads are the inertia of
   each direction, then the reference loads of each `ops.pattern.Plain`. It
-  needs a declared analysis. It refuses a partitioned model or an MPI
-  `system` before anything is emitted, because the fork refuses
-  `ritzVectors` on OpenSeesSP.
+  needs a declared analysis.
+
+Both refuse a partitioned model or an MPI `system` before anything is
+emitted, because the fork refuses both commands on OpenSeesSP.
 
 `response_spectrum_analysis` takes `require_mass=` (a ratio in (0, 1]) and
 emits `-requireMass`. The fork then refuses an analysis whose modes carry
-less of the free mass. Every call now warns `RsaCombineWarning`: `-combine`
-combines nodal displacements only, and `spectrum_after_gravity` is the way
-to combine forces, drifts and storey shears.
+less of the free mass. Its docstring now says that `-combine` combines
+nodal displacements only, and that `spectrum_after_gravity` is the way to
+combine forces, drifts and storey shears.
 
 All three refuse with `ForkTooOldError` on a build without chain M, before
 the model is built. The commands are the first `command()` tokens (ADR 0114
 D2): the `analysis.modal.ResidualModes` / `RitzVectors` primitives, under a
-new `ModalBasis` family. Neither is registered on a bridge, so decks and
-`model.h5` do not carry them.
+new `ModalBasis` family (ADR 0127, admitted under ADR 0121 D4). Neither is
+registered on a bridge, so decks and `model.h5` do not carry them.

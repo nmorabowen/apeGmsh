@@ -135,10 +135,9 @@ def test_require_mass_reaches_the_fork_and_refuses_a_shortfall(
     assert 0.18 < ratio < 0.19                      # three modes carry ~18.4 %
     kw: dict[str, Any] = dict(periods=TN, accels=SA, combine="SRSS",
                               num_modes=3, solver="-fullGenLapack")
-    with pytest.warns(UserWarning, match="nodal displacements only"):
-        podium().response_spectrum_analysis(1, require_mass=0.18, **kw)
+    podium().response_spectrum_analysis(1, require_mass=0.18, **kw)
     capfd.readouterr()
-    with pytest.raises(Exception), pytest.warns(UserWarning):
+    with pytest.raises(Exception):
         podium().response_spectrum_analysis(1, require_mass=0.19, **kw)
     err = capfd.readouterr().err
     assert f"the modes carry {100 * ratio:.2f}% of the free mass in direction 1" in err
