@@ -612,13 +612,17 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
     ops.system.UmfPack()     # LadrunoConcrete3D's tangent is unsymmetric
     ops.test.NormDispIncr(tol=1e-8, max_iter=50)
     ops.algorithm.Newton()
-    ops.integrator.LoadControl(dlam=0.05)
+    # 100 steps: past cracking, LadrunoConcrete3D refuses a return map that
+    # fails, and with 50 or fewer steps one does (at step 17 of 50, 8 of
+    # 20). From 80 to 400 steps every step converges to the same cracked
+    # state.
+    ops.integrator.LoadControl(dlam=0.01)
     ops.analysis.Static()
     model_h5 = str(tmp_path / "model.h5")
     ops.h5(model_h5)
     emitter = LiveOpsEmitter(wipe=True)
     ops.build().emit(emitter)
-    for step in range(20):
+    for step in range(100):
         assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
     live = emitter.ops
 
