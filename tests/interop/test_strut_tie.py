@@ -214,6 +214,20 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
     equilibrated run: 0.7 × 471 kN (the strut-and-tie prediction, the
     floor) < per side < 1.1 × 502 kN (the measured load), with
     ``stopped == "post_peak"``. Chain F (#2602 route 2) restores it.
+
+    **#2622 (FORK_PIN ladruno-v20261030): the fork refuses the failed
+    return map, and the run still refuses, later.** Fork PR #1038 (refusal
+    rule B of the amended #2602 ruling) makes ``LadrunoConcrete3D`` return
+    a negative code when its last plane-stress pass fails or σ22 stays
+    unconverged, so Newton cuts the step instead of accepting a diverged
+    state. The run gets past step 2 and then refuses on every MKL path the
+    #2602 matrix measured: at steps 65–121, with ``"unbalanced"`` (MKL_CBWR
+    unset on AMD) or ``"no_convergence"`` (AVX2, AVX512, COMPATIBLE). The
+    step and the reason vary with the MKL path, so neither is pinned; the
+    test asserts that the run refuses past the #2602 branch point with one
+    of the two reasons and that the error carries the equilibrated curve.
+    The return-map robustness behind the refusal, the 2 % MKL agreement and
+    the paper bracket are #2621.
     """
     model = _load("cook_mitchell_corbel.stm.json")
     with pytest.raises(PushoverRefusedError) as info:
@@ -223,11 +237,29 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
     err = info.value
     record_property("refused_step", err.step)
     record_property("refusal", str(err))
-    assert err.reason == "unbalanced"
-    assert err.step == 2  # the branch point of the #2602 diagnosis
+    record_property("reason", err.reason)
+    # The pin before #1038 refused here, at step 2 (live-fork 40826555866).
+    assert err.step > 2
     assert err.relative_tolerance == 5e-3
+    if err.reason == "unbalanced":
+        # An accepted state out of equilibrium: its unbalanced force is kept.
+        assert err.unbalance is not None and math.isfinite(err.unbalance)
+        assert err.unbalance > 0.0
+    elif err.reason == "no_convergence":
+        # OpenSees reverted the unconverged step, so there is no state.
+        assert err.unbalance is None
+    else:
+        pytest.fail(f"unknown refusal reason {err.reason!r}")
+    assert f"step {err.step} " in str(err)
+    # The curve: the origin plus every step before the refused one, each in
+    # equilibrium, with the control displacement increasing.
+    assert len(err.points) == err.step
+    assert err.points[0] == [0.0, 0.0]
+    assert all(math.isfinite(d) and math.isfinite(p) for d, p in err.points)
+    assert all(b[0] > a[0] for a, b in itertools.pairwise(err.points))
     equilibrated_per_side = max(p[1] for p in err.points) / 2.0
-    assert equilibrated_per_side < 0.7 * COOK_MITCHELL_STM_PREDICTION_N
+    record_property("equilibrated_per_side_N", equilibrated_per_side)
+    assert equilibrated_per_side > 0.0
 
 
 # ---------------------------------------------------------------------------
