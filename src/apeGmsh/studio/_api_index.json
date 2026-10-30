@@ -4238,7 +4238,7 @@
     },
     "ops.recorder.Ladruno": {
       "doc": "Construct + register a ``recorder ladruno`` (fork-only).",
-      "signature": "Ladruno(*, file: 'str', nodal_responses: 'tuple[str, ...]' = (), elem_responses: 'tuple[str, ...]' = (), dT: 'float | None' = None, nsteps: 'int | None' = None, energy: 'bool' = False, energy_pg: 'str | None' = None, nodes: 'tuple[int, ...] | None' = None, nodes_pg: 'str | None' = None, elements: 'tuple[int, ...] | None' = None, elements_pg: 'str | None' = None, name: 'str | None' = None) -> 'Ladruno'",
+      "signature": "Ladruno(*, file: 'str', nodal_responses: 'tuple[str, ...]' = (), elem_responses: 'tuple[str, ...]' = (), dT: 'float | None' = None, nsteps: 'int | None' = None, energy: 'bool' = False, energy_pg: 'str | None' = None, precision: \"Literal['f64', 'f32']\" = 'f64', nodes: 'tuple[int, ...] | None' = None, nodes_pg: 'str | None' = None, elements: 'tuple[int, ...] | None' = None, elements_pg: 'str | None' = None, name: 'str | None' = None) -> 'Ladruno'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.recorder.Ladruno"
     },
