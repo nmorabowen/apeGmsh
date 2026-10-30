@@ -126,7 +126,7 @@ jobs:
       # shipped tcl8.6/. OpenSees can exit 0 on a Tcl error, and a missing
       # init.tcl is only a stderr line, so the step trusts neither the exit
       # status nor silence: no "application-specific initialization failed"
-      # line, and the trailing marker must print.
+      # line, the trailing marker must print, and the exit status must be 0.
       - name: Assert the Tcl exe is the pinned build and initialises Tcl
         working-directory: ${{ runner.temp }}
         run: |
@@ -148,6 +148,7 @@ jobs:
           fi
           grep -qx "APEGMSH_EXE_CHECK_OK" exe_check.log || { echo "::error::OpenSees did not reach the trailing marker"; exit 1; }
           grep -qx "build $want" exe_check.log || { echo "::error::OpenSees is not the pinned build $want"; exit 1; }
+          [ "$rc" -eq 0 ] || { echo "::error::OpenSees exited $rc after the marker"; exit 1; }
 
       - name: Run ladruno_fork tests
         run: |
