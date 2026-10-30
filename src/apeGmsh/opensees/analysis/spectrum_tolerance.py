@@ -225,6 +225,7 @@ def combined_period_tolerance(
     rule: str = "CQC",
     damping: "float | npt.ArrayLike | None" = None,
     base: float = 0.0,
+    sa_periods: "npt.ArrayLike | None" = None,
 ) -> ParityTolerance:
     """The tolerance of a combined quantity, from its per-mode values.
 
@@ -236,6 +237,12 @@ def combined_period_tolerance(
     CQC needs ``damping`` (one ratio, or one per mode); there is no default.
     The period part is ``|C - C_ref| / C_ref``, per value; ``C_ref = 0``
     gives 0 when ``C = 0`` too and ``inf`` otherwise.
+
+    ``sa_periods`` (one per mode, ``0`` for none) marks modes whose Sa was
+    read at an override period (``residual_period=``,
+    :attr:`~apeGmsh.opensees.analysis.spectrum.SpectrumModalResult.sa_periods`):
+    their Sa does not move with the period, so only ``(T_ref/T)^p``
+    rescales them, and both combinations take them as one rigid term.
     """
     p = _power(quantity)
     b = _base(base)
@@ -257,10 +264,18 @@ def combined_period_tolerance(
         raise ValueError("combined_period_tolerance: periods must be > 0.")
     sa = _sa_of(spectrum)
     k = sa(t_ref) / sa(t) * (t_ref / t) ** p
+    if sa_periods is not None:
+        over = np.asarray(sa_periods, dtype=np.float64).ravel() > 0.0
+        if over.size != t.size:
+            raise ValueError(
+                f"combined_period_tolerance: {over.size} Sa periods for "
+                f"{t.size} modes.")
+        k = np.where(over, (t_ref / t) ** p, k)
     v_ref = v * k.reshape((-1,) + (1,) * (v.ndim - 1))
-    ours = combine_modes(v, rule=rule, omega=2.0 * np.pi / t, damping=damping)
+    ours = combine_modes(v, rule=rule, omega=2.0 * np.pi / t, damping=damping,
+                         sa_periods=sa_periods)
     ref = combine_modes(v_ref, rule=rule, omega=2.0 * np.pi / t_ref,
-                        damping=damping)
+                        damping=damping, sa_periods=sa_periods)
     gap = np.abs(ours - ref)
     with np.errstate(divide="ignore", invalid="ignore"):
         part = np.where(ref > 0.0, gap / ref, np.where(gap > 0.0, np.inf, 0.0))

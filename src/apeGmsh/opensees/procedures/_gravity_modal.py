@@ -97,6 +97,10 @@ _FREE_MASS_TOL = 1e-6
 #: fraction of its free mass is refused: every Γ is zero to round-off.
 _LOADED_MASS_TOL = 1e-6
 
+#: The leg key of the loaded nodes' elastic force (residual and Ritz modes);
+#: never an extractor name, since those are strings a user chose.
+_ELASTIC = "\0elastic"
+
 #: On the fork's ``-increment`` route, every imposed nodal translation must
 #: equal the static leg's ``± a φ / λ`` to this fraction of the probe.
 _IMPOSED_TOL = 1e-6
@@ -742,9 +746,17 @@ class _GravityModalMixin(_ProcedureHost):
         massed = [t for t in tags if np.any(masses[t] != 0.0)]
         # Each mode's inertia force m φ Γ Sa at the massed nodes (A5-3): the
         # load whose static response the legs measure, kept for the storey
-        # forces and the inertia / base-reaction balance.
-        width = max((masses[t].size for t in massed), default=ndm)
-        inertia = np.zeros((len(spectra), lam.size, len(massed), width))
+        # forces and the inertia / base-reaction balance. A residual or Ritz
+        # vector ψ is not an eigenvector (K ψ ≠ λ M ψ): the load whose static
+        # response is ψ Γ Sa / λ is the elastic force K ψ Γ Sa / λ, which can
+        # load nodes without mass. Such a set keeps every node with a free
+        # DOF on the node axis, and its non-eigen modes take that force from
+        # the imposed legs (an eigenmode's m φ Γ Sa is the same force).
+        elastic = bool(np.any(kinds != 0))
+        loaded = ([t for t in tags if len(fixed.get(t, set())) < masses[t].size]
+                  if elastic else massed)
+        width = max((masses[t].size for t in loaded), default=ndm)
+        inertia = np.zeros((len(spectra), lam.size, len(loaded), width))
 
         ts_tag = 1 + max(
             (int(tag) for p in self._primitives if isinstance(p, TimeSeries)
@@ -789,6 +801,19 @@ class _GravityModalMixin(_ProcedureHost):
         def element_forces() -> "dict[int, np.ndarray]":
             return {e: np.asarray(ops.eleForce(e), dtype=np.float64)
                     for e in elements}
+
+        def nodal_force() -> "np.ndarray":
+            # Each loaded node's resisting force at its free DOFs: with no
+            # load on, the force K u that holds the domain at its state.
+            ops.reactions()
+            out = np.zeros((len(loaded), width))
+            for i, t in enumerate(loaded):
+                r = np.asarray(ops.nodeReaction(t), dtype=np.float64)
+                held = fixed.get(t, set())
+                for d in range(min(width, r.size)):
+                    if d not in held:
+                        out[i, d] = r[d]
+            return out
 
         def disp() -> "dict[int, np.ndarray]":
             return {t: np.asarray(ops.nodeDisp(t), dtype=np.float64)
@@ -878,13 +903,17 @@ class _GravityModalMixin(_ProcedureHost):
                     for name, ex in extractors.items()
                 }
                 start_forces = element_forces()
+                start_nodal = nodal_force() if elastic else None
 
                 def read() -> "tuple[dict[str, np.ndarray], dict[int, np.ndarray]]":
+                    changes = {
+                        name: _evaluate(ex, ops, name, ref_values[name].size,
+                                        context) - start[name]
+                        for name, ex in extractors.items()}
+                    if start_nodal is not None:
+                        changes[_ELASTIC] = nodal_force() - start_nodal
                     return (
-                        {name: _evaluate(ex, ops, name,
-                                         ref_values[name].size, context)
-                         - start[name]
-                         for name, ex in extractors.items()},
+                        changes,
                         {e: f - start_forces[e]
                          for e, f in element_forces().items()},
                     )
@@ -936,7 +965,7 @@ class _GravityModalMixin(_ProcedureHost):
                     f"{context}: mode {k + 1} has effective mass but no node "
                     "translates in it."
                 )
-            for i, t in enumerate(massed):
+            for i, t in enumerate(loaded):
                 f = masses[t] * phi[t][:masses[t].size]
                 inertia[:, k, i, :f.size] = coef[:, k, None] * f[None, :]
             amp = probe * float(lam[k]) / peak
@@ -961,6 +990,9 @@ class _GravityModalMixin(_ProcedureHost):
             for name in extractors:
                 unit = (legs[0][name] - legs[1][name]) / (2.0 * scale * amp)
                 per_mode[name][:, k, :] = coef[:, k, None] * unit[None, :]
+            if kinds[k] != 0:
+                unit = (legs[0][_ELASTIC] - legs[1][_ELASTIC]) / (2.0 * scale * amp)
+                inertia[:, k] = coef[:, k, None, None] * unit[None, :, :]
 
         algorithm._emit(live_emitter, self.tag_for(algorithm) or 0)
 
@@ -974,10 +1006,10 @@ class _GravityModalMixin(_ProcedureHost):
                 f"{drift[0]:.3e}, reaction {drift[1]:.3e}; limit "
                 f"{_RESTORE_TOL:g}). Tighten the declared convergence test."
             )
-        coords = np.asarray([ops.nodeCoord(t)[:ndm] for t in massed],
-                            dtype=np.float64).reshape(len(massed), ndm)
+        coords = np.asarray([ops.nodeCoord(t)[:ndm] for t in loaded],
+                            dtype=np.float64).reshape(len(loaded), ndm)
         return (ref_values, per_mode, labels, drift,
-                (inertia, tuple(massed), coords), sa_periods)
+                (inertia, tuple(loaded), coords), sa_periods)
 
 
     def _gravity_steps(self, context: str) -> int:

@@ -378,9 +378,12 @@ def _modal_terms(
     idx = np.asarray(keep)
     w_out: "np.ndarray | None" = None
     if omega is not None:
-        w_out = np.asarray(omega, dtype=np.float64).ravel()[idx].copy()
-        if w_out.size == idx.size:
-            w_out[over[idx]] = 2.0 * np.pi / t[idx][over[idx]]
+        w_all = np.asarray(omega, dtype=np.float64).ravel()
+        if w_all.size != n:
+            raise ValueError(
+                f"combine_modes: {w_all.size} omegas for {n} modes of values.")
+        w_out = w_all[idx].copy()
+        w_out[over[idx]] = 2.0 * np.pi / t[idx][over[idx]]
     xi = damping
     if damping is not None and np.ndim(damping) > 0:
         xi = np.asarray(damping, dtype=np.float64).ravel()[idx]
@@ -482,6 +485,7 @@ def combine_directions(
     rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
     damping: "float | npt.ArrayLike | None" = ...,
     permutations: Literal[False] = ...,
+    sa_periods: "npt.ArrayLike | None" = ...,
 ) -> np.ndarray: ...
 
 
@@ -491,6 +495,7 @@ def combine_directions(
     rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
     damping: "float | npt.ArrayLike | None" = ...,
     permutations: Literal[True],
+    sa_periods: "npt.ArrayLike | None" = ...,
 ) -> DirectionalCases: ...
 
 
@@ -500,6 +505,7 @@ def combine_directions(
     rule: "str | None" = ..., omega: "npt.ArrayLike | None" = ...,
     damping: "float | npt.ArrayLike | None" = ...,
     permutations: bool = ...,
+    sa_periods: "npt.ArrayLike | None" = ...,
 ) -> "np.ndarray | DirectionalCases": ...
 
 
@@ -511,6 +517,7 @@ def combine_directions(
     omega: "npt.ArrayLike | None" = None,
     damping: "float | npt.ArrayLike | None" = None,
     permutations: bool = False,
+    sa_periods: "npt.ArrayLike | None" = None,
 ) -> "np.ndarray | DirectionalCases":
     """Combine one quantity's per-direction values (axis 0).
 
@@ -520,7 +527,8 @@ def combine_directions(
     With ``rule`` (``"CQC"`` or ``"SRSS"``), ``per_direction`` holds the
     per-mode sets instead, shape ``(n_directions, n_modes, …)``: each
     direction is first combined over its modes by :func:`combine_modes`
-    (``omega`` and ``damping`` as there). With ``permutations=True``
+    (``omega``, ``damping`` and ``sa_periods`` as there: pass a result's
+    :attr:`SpectrumModalResult.sa_periods` so its rigid term is one mode). With ``permutations=True``
     (``"100-30"`` only) the result is the :class:`DirectionalCases` of every
     signed case, ``n_directions · 2^n_directions`` of them, whose
     :attr:`~DirectionalCases.envelope` is the scalar ``"100-30"`` value.
@@ -541,7 +549,8 @@ def combine_directions(
                 "and a mode axis, (n_directions, n_modes, ...)."
             )
         raw = np.stack([combine_modes(v, rule=rule, omega=omega,
-                                      damping=damping) for v in raw])
+                                      damping=damping, sa_periods=sa_periods)
+                        for v in raw])
     e = np.abs(raw)
     if permutations:
         if method != "100-30":

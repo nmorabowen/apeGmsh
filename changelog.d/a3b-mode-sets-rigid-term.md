@@ -27,7 +27,14 @@ pseudo-modes read Sa at `T` while keeping their Rayleigh λ, so each value is
 every combination on the result (`combine`, `combine_values`, `base_shear`,
 `scale_to_base_shear`) sums the pseudo-modes into one rigid term at
 `ω = 2π/T` before the rule, as the fork's `responseSpectrumAnalysis
--combine` does (fork ADR 213 D3b). `combine_modes` takes the same
-`sa_periods=`. Ritz vectors and pseudo-modes are not eigenvectors, so a mode
-set holding them needs the `-increment` route, and the static-probe route
-refuses it.
+-combine` does (fork ADR 213 D3b). `combine_modes`,
+`combine_directions(rule=…)` and A6's `combined_period_tolerance` take the
+same `sa_periods=`.
+
+Ritz vectors and pseudo-modes are not eigenvectors (`K ψ ≠ λ M ψ`), which
+changes two things:
+
+- A mode set holding them needs the `-increment` route; the static-probe
+  route refuses it.
+- Their per-mode force for `storey_forces` and the inertia balance is the
+  elastic force `K ψ Γ Sa / λ`, read off the imposed leg, not `m ψ Γ Sa`.

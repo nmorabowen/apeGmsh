@@ -130,3 +130,48 @@ def _bridge() -> apeSees:
 def test_mode_set_options_refuse_before_the_build(kw: dict, match: str) -> None:
     with pytest.raises(ValueError, match=match):
         _bridge().modal_after_gravity(3, **kw)
+
+
+def test_omega_must_match_the_modes() -> None:
+    with pytest.raises(ValueError, match="3 omegas for 4 modes"):
+        combine_modes(R, rule="CQC", omega=OMEGA[:3], damping=XI,
+                      sa_periods=SA_PERIODS)
+
+
+def test_combine_directions_takes_the_rigid_term() -> None:
+    from apeGmsh.opensees.analysis.spectrum import combine_directions
+
+    per_dir = np.stack([R, 0.5 * R])               # (direction, mode, value)
+    got = combine_directions(per_dir, method="SRSS", rule="CQC", omega=OMEGA,
+                             damping=XI, sa_periods=SA_PERIODS)
+    each = [combine_modes(v, rule="CQC", omega=OMEGA, damping=XI,
+                          sa_periods=SA_PERIODS) for v in per_dir]
+    np.testing.assert_allclose(got, np.sqrt(each[0] ** 2 + each[1] ** 2),
+                               rtol=1e-12)
+    ungrouped = combine_directions(per_dir, method="SRSS", rule="CQC",
+                                   omega=OMEGA, damping=XI)
+    assert not np.allclose(got, ungrouped, rtol=1e-3)
+
+
+def test_combined_period_tolerance_keeps_the_rigid_sa_fixed() -> None:
+    """A6 with an override: the overridden modes' Sa does not move with the
+    period, and both combinations take them as one rigid term."""
+    from apeGmsh.opensees.analysis.spectrum_tolerance import (
+        combined_period_tolerance,
+    )
+
+    tn, sa = [0.0, 0.1, 0.5, 2.0], [4.0, 9.8, 9.8, 2.0]
+    spec = lambda t: np.interp(t, tn, sa)  # noqa: E731
+    t = 2 * np.pi / OMEGA
+    t_ref = t * np.array([1.02, 0.97, 1.05, 0.9])
+    tol = combined_period_tolerance(
+        spec, R, t, t_ref, quantity="force", rule="SRSS",
+        sa_periods=SA_PERIODS)
+    k = np.where(SA_PERIODS > 0, 1.0, np.interp(t_ref, tn, sa) / np.interp(t, tn, sa))
+    v_ref = R * k[:, None]
+
+    def srss(v: np.ndarray) -> np.ndarray:
+        return np.sqrt(v[0] ** 2 + v[1] ** 2 + (v[2] + v[3]) ** 2)
+
+    ours, ref = srss(R), srss(v_ref)
+    np.testing.assert_allclose(tol.period, np.abs(ours - ref) / ref, rtol=1e-12)

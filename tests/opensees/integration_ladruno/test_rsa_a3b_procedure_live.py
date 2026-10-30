@@ -20,6 +20,12 @@ fork test's ASCE-shaped table. No client data.
    grouping the two differ).
 3. A Ritz basis from the gravity pattern: every mode is ``"ritz"`` and the
    static participation in the gravity load is 100 %.
+4. ``spectrum_after_gravity(basis="ritz")`` end to end: kinds, the inertia
+   balance, and the fork's RSA on the same Ritz set.
+
+In 1, 2 and 4 every mode's storey shear (from ``m φ Γ Sa`` for an
+eigenmode, the elastic force ``K ψ Γ Sa / λ`` for a residual or Ritz mode)
+equals the storey spring's force.
 
 Lane ``live-fork`` (``ladruno_fork``); each test skips through the A4 probe
 only on a build without chain M or ``-increment``, which the pin has.
@@ -27,6 +33,7 @@ only on a build without chain M or ``-increment``, which the pin has.
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -35,7 +42,11 @@ import pytest
 
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._target import ForkTooOldError, rsa_features_of
-from apeGmsh.opensees.analysis.spectrum import DesignSpectrum, NodeDisp
+from apeGmsh.opensees.analysis.spectrum import (
+    DesignSpectrum,
+    InertiaBalanceWarning,
+    NodeDisp,
+)
 from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 from apeGmsh.opensees.emitter.live import get_ops
 
@@ -55,6 +66,7 @@ KY = 2.0 * KX
 G = 9.81
 XI = 0.05
 N_MODES = 3
+H = 3.0
 T_RIGID = 0.05
 SDS, SD1, TL = 1.0, 0.6, 8.0
 
@@ -96,10 +108,13 @@ def _require(*features: str) -> Any:
 
 
 def podium() -> tuple[apeSees, Any]:
-    """The V3 podium in X and Y, node 1 the base, node i+1 floor i, with a
-    gravity pattern (-m g along Y) and a static chain."""
+    """The V3 podium in X and Y, node 1 the base, node j+1 floor j at
+    height j·H (the springs act along their dirs only, so the elevations
+    only place the storey cuts), with a gravity pattern (-m g along Y) and
+    a static chain."""
     nodes = _NodesStub(
-        ids=list(range(1, N + 2)), coords=[(0.0, 0.0, 0.0)] * (N + 1),
+        ids=list(range(1, N + 2)),
+        coords=[(0.0, j * H, 0.0) for j in range(N + 1)],
         node_pgs={"Base": [1], "Floors": list(range(2, N + 2))},
     )
     groups = {f"S{i}": _ElementGroupView(ids=(i + 1,), connectivity=((i + 1, i + 2),))
@@ -128,7 +143,9 @@ def podium() -> tuple[apeSees, Any]:
     return ops, p
 
 
-def _fork_combined_base_shear(period: float | None) -> list[float]:
+def _fork_combined_base_shear(
+    period: float | None, ritz: int | None = None,
+) -> list[float]:
     """The fork's own RSA on the same mode set: raw commands, ``-combine CQC``.
     The base spring is the only path to the support, so the combined base
     shear is its stiffness times the combined floor-1 displacement."""
@@ -153,9 +170,12 @@ def _fork_combined_base_shear(period: float | None) -> list[float]:
         ops.algorithm("Linear")
         ops.integrator("LoadControl", 1.0)
         ops.analysis("Static")
-        ops.eigen("-fullGenLapack", N_MODES)
-        ops.residualModes("-dir", 1, 2,
-                          *(() if period is None else ("-period", period)))
+        if ritz is None:
+            ops.eigen("-fullGenLapack", N_MODES)
+            ops.residualModes("-dir", 1, 2,
+                              *(() if period is None else ("-period", period)))
+        else:
+            ops.ritzVectors(ritz, "-dir", 1, 2)
         ops.modalProperties()
         ops.responseSpectrumAnalysis(d, "-Tn", *TN.tolist(), "-Sa", *SA.tolist(),
                                      "-combine", "CQC", "-damp", XI)
@@ -163,12 +183,28 @@ def _fork_combined_base_shear(period: float | None) -> list[float]:
     return out
 
 
-def _run(period: float | None) -> Any:
+def _run(period: float | None, **kw: Any) -> Any:
     ops, _ = podium()
+    kw = kw or {"residual": (1, 2), "residual_period": period}
     return ops.spectrum_after_gravity(
-        N_MODES, spectra=SPECTRA,
+        N_MODES if "ritz_dirs" not in kw else 2 * N_MODES, spectra=SPECTRA,
         extractors={"u": NodeDisp(list(range(2, N + 2)), dofs=(1, 2))},
-        solver="-fullGenLapack", residual=(1, 2), residual_period=period)
+        solver="-fullGenLapack", **kw)
+
+
+def _check_storey_shear_is_the_spring_force(res: Any) -> None:
+    """Per mode and spectrum, the storey shear from the modal (inertia or
+    elastic) force equals the storey spring's force k (u_j - u_{j-1})."""
+    st = res.storey_forces([(j - 1) * H for j in range(1, N + 1)], vertical=2)
+    for s in range(2):
+        u = res.modes("u", s).reshape(-1, N, 2)          # (mode, floor, dof)
+        for d, k in ((0, KX), (1, KY)):
+            du = np.diff(np.concatenate(
+                [np.zeros((u.shape[0], 1)), u[:, :, d]], axis=1), axis=1)
+            spring = du * k[None, :]                       # (mode, storey)
+            scale = float(np.max(np.abs(spring)))
+            np.testing.assert_allclose(st.shear[s, :, :, d], spring, rtol=1e-6,
+                                       atol=1e-7 * scale)
 
 
 def _check_modal_and_residual(res: Any, sa_of_pseudo: Any) -> None:
@@ -198,6 +234,7 @@ def test_residual_modes_rayleigh_periods_match_the_fork_rsa() -> None:
     res = _run(None)
     assert res.sa_periods is None
     _check_modal_and_residual(res, res.periods)
+    _check_storey_shear_is_the_spring_force(res)
     np.testing.assert_allclose(res.base_shear(rule="CQC", damping=XI),
                                _fork_combined_base_shear(None), rtol=1e-6)
 
@@ -208,6 +245,7 @@ def test_residual_period_is_one_rigid_mode_as_in_the_fork_rsa() -> None:
     pseudo = np.asarray(res.kinds) == "residual"
     np.testing.assert_array_equal(res.sa_periods, np.where(pseudo, T_RIGID, 0.0))
     _check_modal_and_residual(res, T_RIGID)
+    _check_storey_shear_is_the_spring_force(res)
     fork = _fork_combined_base_shear(T_RIGID)
     np.testing.assert_allclose(res.base_shear(rule="CQC", damping=XI), fork,
                                rtol=1e-6)
@@ -244,3 +282,20 @@ def test_ritz_basis_from_the_gravity_pattern() -> None:
     lam_y = np.linalg.eigvalsh(ky / np.sqrt(np.outer(M, M)))
     assert all(z >= e * (1 - 1e-9) for z, e in zip(sorted(modal.eigenvalues), lam_y))
     assert math.isfinite(res.gravity_drift()[0])
+
+
+def test_ritz_basis_spectrum_end_to_end() -> None:
+    """A3-6: ``spectrum_after_gravity(basis="ritz")`` carries the kinds, its
+    storey forces are the spring forces, its inertia balances the base, and
+    its CQC base shear is the fork's RSA on the same Ritz set."""
+    _require("ritzVectors")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InertiaBalanceWarning)
+        res = _run(None, basis="ritz", ritz_dirs=(1, 2))
+    assert res.kinds == ("ritz",) * (2 * N_MODES)
+    assert res.sa_periods is None
+    assert float(np.max(res.inertia_balance())) < 1e-6
+    _check_storey_shear_is_the_spring_force(res)
+    np.testing.assert_allclose(res.base_shear(rule="CQC", damping=XI),
+                               _fork_combined_base_shear(None, ritz=2 * N_MODES),
+                               rtol=1e-6)
