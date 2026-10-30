@@ -750,8 +750,14 @@ def _check_bases(number: int, pr: dict[str, Any], gh: Runner, check_no: int) -> 
     for run_id, (job_id, starts) in sorted(workflow_runs.items()):
         where = f"run {run_id} (job {job_id})"
         try:
-            # No --allow-escape-sequences: gh 2.96 rejects it (#2629), and the checkout line is plain text.
-            log = gh(["api", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"])
+            # Job logs carry ESC bytes (colour codes). gh 2.96 has no --allow-escape-sequences and
+            # reads them; gh 2.97+ refuses a raw body with ESC unless given it. So try flagless,
+            # and on failure retry once with the flag (#2629). Both failing refuses.
+            endpoint = f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"
+            try:
+                log = gh(["api", endpoint])
+            except subprocess.CalledProcessError:
+                log = gh(["api", "--allow-escape-sequences", endpoint])
             merge = _CHECKOUT.search(log)
             if merge is None or merge.group(1) != head:
                 raise ValueError(f"no 'Merge {head[:12]} into <base>' checkout line")
