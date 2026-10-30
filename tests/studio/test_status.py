@@ -97,8 +97,14 @@ def test_status_json_flag(tmp_path: Path, monkeypatch, capsys) -> None:
     assert payload["names"]["physical_groups"] == ["Rock"]
 
 
-def test_main_without_script_or_status(capsys) -> None:
-    assert main([]) == 2
+def test_main_without_script_or_status(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # Hermetic: the INV-15 upward search must not leave tmp_path. Run from
+    # a worktree under a checkout that has a project.json, a bare main([])
+    # replayed that script and opened a viewer (#2609).
+    monkeypatch.chdir(tmp_path)
+    assert main(["--root", str(tmp_path)]) == 2
     assert "--status" in capsys.readouterr().err
 
 
