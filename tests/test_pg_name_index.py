@@ -215,6 +215,11 @@ def test_no_argument_less_remove_physical_groups(g, monkeypatch):
 
     def spy(*args, **kwargs):
         calls.append((args, kwargs))
+        sent = kwargs.get("dimTags", args[0] if args else None)
+        # An empty or missing dimTags never reaches gmsh: after the
+        # targeted remove below it would corrupt the heap and kill
+        # the shared pytest process at the fixture's session.end().
+        assert sent, f"argument-less removePhysicalGroups: {(args, kwargs)}"
         return real(*args, **kwargs)
 
     monkeypatch.setattr(gmsh.model, "removePhysicalGroups", spy)
