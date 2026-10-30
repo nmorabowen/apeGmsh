@@ -824,7 +824,7 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
     # FORK_PIN ladruno-v20261030 (c9004f48d): 43b235bbb is its ancestor
     # (GitHub compare: ahead 97, behind 0). It is 6ee6a04fd plus
-    # fork PR #1038 (5 commits, LadrunoConcrete3D only).
+    # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
     # ladruno-v20261029 (6ee6a04fd): 43b235bbb is its ancestor
     # (GitHub compare: ahead 92, behind 0). It is 3 commits past
@@ -914,7 +914,7 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 FORK_BUILD_HAS_C83: dict[str, bool] = {
     # FORK_PIN ladruno-v20261030 (c9004f48d): c83ee812e is its ancestor
     # (GitHub compare: ahead 82, behind 0). It is 6ee6a04fd plus
-    # fork PR #1038 (5 commits, LadrunoConcrete3D only).
+    # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
     # ladruno-v20261029 (6ee6a04fd): c83ee812e is its ancestor
     # (GitHub compare: ahead 77, behind 0). It is 3 commits past
@@ -1008,7 +1008,7 @@ FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     MEMBRANE_WP208_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261030 (c9004f48d): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 80, behind 0). It is 6ee6a04fd plus
-    # fork PR #1038 (5 commits, LadrunoConcrete3D only).
+    # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
     # ladruno-v20261029 (6ee6a04fd): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 75, behind 0). It is 3 commits past
@@ -1102,7 +1102,7 @@ FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261030 (c9004f48d): 34df942c7 is its ancestor
     # (GitHub compare: ahead 110, behind 0). It is 6ee6a04fd plus
-    # fork PR #1038 (5 commits, LadrunoConcrete3D only).
+    # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
     # ladruno-v20261029 (6ee6a04fd): 34df942c7 is its ancestor
     # (GitHub compare: ahead 105, behind 0). It is 3 commits past
@@ -1227,7 +1227,7 @@ FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
     # FORK_PIN ladruno-v20261030 (c9004f48d): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4155, behind 0). It is 6ee6a04fd plus
-    # fork PR #1038 (5 commits, LadrunoConcrete3D only).
+    # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
     # ladruno-v20261029 (6ee6a04fd): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4150, behind 0). It is 3 commits past
