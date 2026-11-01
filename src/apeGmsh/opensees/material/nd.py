@@ -2989,6 +2989,7 @@ class ASDConcrete3D(NDMaterial):
         cdf: float = 0.0,
         implex: bool = False,
         tangent: str = "secant",
+        units: str = "MPa-mm-N",
     ) -> "ASDConcrete3D":
         """Build from physical inputs, generating the backbone in Python.
 
@@ -3011,7 +3012,7 @@ class ASDConcrete3D(NDMaterial):
                     f"got {val!r}"
                 )
         ft_ = ft if ft is not None else _laws.default_ft(fc)
-        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
+        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc, units=units)
         Gc_ = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_, Gf_)
         lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
             E, fc, ft_, Gf_, Gc_)
@@ -3754,7 +3755,8 @@ class LadrunoConcrete3D(NDMaterial):
         magnitudes** (both ``> 0``; the fork requires ``ft < fc``).
     Gf, Gc
         Tensile and compressive fracture energies per unit area (both
-        ``> 0``).
+        ``> 0``). ``Gc=None`` emits ``GC_OVER_GF * Gf`` (the same ratio
+        :meth:`from_fc` uses).
     e, kupfer
         Yield-surface eccentricity. Supply ``e`` directly (``-e``; must be
         in ``(0.5, 1]``) **or** let it derive from the biaxial/uniaxial
@@ -3762,12 +3764,14 @@ class LadrunoConcrete3D(NDMaterial):
         Supplying both an explicit ``e`` and a non-default ``kupfer`` is a
         construction error.
     Df
-        Dilatancy / flow-shape factor (``-Df``; ``> 0``, default 1.0).
+        Dilatancy / flow-shape factor (``-Df``; ``> 0``, default 1.0, the
+        fork's constructor default). Always emitted, so the deck runs the
+        value Python reports even if the fork default changes.
     As
         Compression-ductility amplitude (``-As``; ``>= 1``, default 2.0).
     hardening
         Pre-peak hardening ``(qh0, Hp)`` (``-hardening``; default
-        ``(0.3, 0.5)``).
+        ``(0.3, 0.5)``, the fork's constructor default). Always emitted.
     ductility
         Compression post-peak ductility coefficients
         ``(Ah, Bh, Ch, Dh)`` (``-ductility``; default
@@ -3811,6 +3815,10 @@ class LadrunoConcrete3D(NDMaterial):
         ``"legacy"`` (the v1 flow) — ``-flowPotential``. ``None`` emits
         nothing (build default: ``cdpm2`` from
         :data:`LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD` on).
+    ec
+        Strain at peak compression. Informational only: it is **not**
+        emitted (the fork has no such token); :meth:`from_fc` uses it to set
+        the ductility coefficient ``Bh``.
 
     **Build floors.** The four options above are documented, not enforced
     (a bare hash cannot prove ancestry — the :data:`ASDP_MIN_FORK_BUILD`
@@ -3826,7 +3834,7 @@ class LadrunoConcrete3D(NDMaterial):
     fc: float
     ft: float
     Gf: float
-    Gc: float
+    Gc: float | None = None
     e: float | None = None
     kupfer: float = 1.16
     Df: float = 1.0
@@ -3845,11 +3853,14 @@ class LadrunoConcrete3D(NDMaterial):
     eps_fc: float | None = None
     gc_legacy: bool = False
     flow_potential: str | None = None
+    ec: float | None = None
 
     _TENSION_LAWS: ClassVar[frozenset[str]] = frozenset({"bilinear", "exp"})
     _FLOW_POTENTIALS: ClassVar[frozenset[str]] = frozenset({"cdpm2", "legacy"})
 
     def __post_init__(self) -> None:
+        if self.ec is not None and self.ec <= 0:
+            raise ValueError(f"LadrunoConcrete3D: ec must be > 0, got {self.ec!r}")
         if self.E <= 0:
             raise ValueError(f"LadrunoConcrete3D: E must be > 0, got {self.E!r}")
         if not (0.0 <= self.nu < 0.5):
@@ -3866,10 +3877,18 @@ class LadrunoConcrete3D(NDMaterial):
                 f"LadrunoConcrete3D: need ft < fc, got ft={self.ft!r}, "
                 f"fc={self.fc!r}"
             )
-        if self.Gf <= 0 or self.Gc <= 0:
+        if self.Gf <= 0:
             raise ValueError(
-                f"LadrunoConcrete3D: Gf, Gc must be > 0, got Gf={self.Gf!r}, "
-                f"Gc={self.Gc!r}"
+                f"LadrunoConcrete3D: Gf must be > 0, got {self.Gf!r}"
+            )
+        if self.Gc is not None and self.Gc <= 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: Gc must be > 0 if supplied, got {self.Gc!r}"
+            )
+        if len(self.hardening) != 2:
+            raise ValueError(
+                "LadrunoConcrete3D: hardening must be a 2-tuple (qh0, Hp) "
+                f"(the fork's -hardening reads two values), got {self.hardening!r}"
             )
         if self.Df <= 0:
             raise ValueError(f"LadrunoConcrete3D: Df must be > 0, got {self.Df!r}")
@@ -3948,20 +3967,20 @@ class LadrunoConcrete3D(NDMaterial):
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | int | str] = [
-            self.E, self.nu, self.fc, self.ft, self.Gf, self.Gc
+            self.E, self.nu, self.fc, self.ft, self.Gf, self._gc()
         ]
         if self.e is not None:
             args += ["-e", self.e]
         elif self.kupfer != 1.16:
             args += ["-kupfer", self.kupfer]
-        if self.Df != 1.0:
-            args += ["-Df", self.Df]
+        # -Df and -hardening are always emitted: the deck must run the
+        # values Python reports whatever the fork's constructor default.
+        args += ["-Df", self.Df]
         if self.As != 2.0:
             args += ["-As", self.As]
         if self.rho:
             args += ["-rho", self.rho]
-        if self.hardening != (0.3, 0.5):
-            args += ["-hardening", *self.hardening]
+        args += ["-hardening", *self.hardening]
         if self.ductility != (0.08, 0.003, 2.0, 1.0e-6):
             args += ["-ductility", *self.ductility]
         if self.lch != 1.0:
@@ -3987,6 +4006,111 @@ class LadrunoConcrete3D(NDMaterial):
         if self.flow_potential is not None:
             args += ["-flowPotential", self.flow_potential]
         emitter.nDMaterial("LadrunoConcrete3D", tag, *args)
+
+    def _gc(self) -> float:
+        """The emitted ``Gc``: the supplied value, else ``GC_OVER_GF * Gf``."""
+        return self.Gc if self.Gc is not None else _laws.GC_OVER_GF * self.Gf
+
+    def l_max(self) -> tuple[float, float]:
+        r"""Crack-band snapback ceilings ``(l_max_t, l_max_c)``.
+
+        .. math::
+            l_{\max,t} = k\,\frac{E G_f}{f_t^2}, \qquad
+            l_{\max,c} = \frac{2 E G_c}{f_c^2 (1 + H_p)}
+
+        with ``k = 20/21`` for the CDPM2 bilinear law (``tension_law`` of
+        ``"bilinear"`` or ``None``, the fork default) and ``k = 1`` for
+        ``"exp"`` (:func:`._asdconcrete_laws.tension_snapback_factor`).
+        ``Gc`` is the emitted value (``GC_OVER_GF * Gf`` when ``None``).
+        Nothing calls this automatically: it is a helper for the caller.
+        """
+        gc = self._gc()
+        hp = float(self.hardening[1])
+        factor = _laws.tension_snapback_factor(self.tension_law)
+        l_max_t = factor * self.E * self.Gf / (self.ft * self.ft)
+        l_max_c = 2.0 * self.E * gc / ((self.fc * self.fc) * (1.0 + hp))
+        return (l_max_t, l_max_c)
+
+    @property
+    def epsc0(self) -> float | None:
+        """Alias for ec."""
+        return self.ec
+
+    def check_element_size(self, h_max: float, *, pg: str | None = None) -> None:
+        """Raise ValueError if h_max exceeds min(l_max_t, l_max_c)."""
+        if h_max <= 0:
+            raise ValueError(f"LadrunoConcrete3D: h_max must be > 0, got {h_max!r}")
+        l_max_t, l_max_c = self.l_max()
+        l_ceil = min(l_max_t, l_max_c)
+        if h_max > l_ceil:
+            where = f" (PG {pg!r})" if pg is not None else ""
+            raise ValueError(
+                f"LadrunoConcrete3D: element size h_max={h_max:g} exceeds "
+                f"snap-back ceiling min(l_max_t, l_max_c)={l_ceil:g}{where} "
+                f"(l_max_t={l_max_t:g}, l_max_c={l_max_c:g}, ratio={h_max / l_ceil:.3f}). "
+                f"Refine the mesh or adjust fracture energy to prevent snap-back."
+            )
+
+    @classmethod
+    def from_fc(
+        cls,
+        fc: float,
+        *,
+        units: str = "MPa-mm-N",
+        aggregate: str = "quartzite",
+        **kwargs: Any,
+    ) -> "LadrunoConcrete3D":
+        r"""Build from the mean compressive strength ``fc`` (turnkey calibration).
+
+        ``E``, ``nu``, ``ft``, ``Gf``, ``Gc``, ``ec``, ``Df``, ``hardening``,
+        ``As`` and the ductility ``Bh`` come from
+        :func:`._asdconcrete_laws.fib_mc2010_concrete_params` (its docstring
+        cites each source); any of them can be overridden by keyword.
+        ``units`` is an explicit preset (``"MPa-mm-N"``, ``"Pa-m-N"``,
+        ``"kPa-m-kN"``, ``"psi-in-lbf"``, ``"ksi-in-kip"``). The CDPM2
+        ``Df = 0.85`` / ``Hp = 0.01`` differ from the fork's constructor
+        defaults and reach the deck because ``-Df`` / ``-hardening`` are
+        always emitted. ``flow_potential`` is left to the build (the pinned
+        fork does not parse ``-flowPotential``).
+        """
+        params = _laws.fib_mc2010_concrete_params(
+            fc, units=units, aggregate=aggregate
+        )
+        E = kwargs.pop("E", params.E)
+        nu = kwargs.pop("nu", params.nu)
+        ft = kwargs.pop("ft", params.ft)
+        fc_val = kwargs.pop("fc", params.fc)
+        Gf = kwargs.pop("Gf", kwargs.pop("Gt", params.Gf))
+        Gc = kwargs.pop("Gc", params.Gc)
+        ec = kwargs.pop("ec", kwargs.pop("eps_c1", kwargs.pop("epsc0", params.ec)))
+        Df = kwargs.pop("Df", params.Df)
+        hardening = kwargs.pop("hardening", params.hardening)
+        if "ductility" in kwargs:
+            ductility = kwargs.pop("ductility")
+        else:
+            bh = max(0.001, ec - fc_val / E)
+            ductility = (0.08, bh, 2.0, 1.0e-6)
+        As = kwargs.pop("As", params.As)
+        auto_regularize = kwargs.pop("auto_regularize", True)
+        tension_law = kwargs.pop("tension_law", "bilinear")
+        ct_temper = kwargs.pop("ct_temper", "proj")
+        return cls(
+            E=E,
+            nu=nu,
+            fc=fc_val,
+            ft=ft,
+            Gf=Gf,
+            Gc=Gc,
+            Df=Df,
+            hardening=hardening,
+            ductility=ductility,
+            As=As,
+            auto_regularize=auto_regularize,
+            tension_law=tension_law,
+            ct_temper=ct_temper,
+            ec=ec,
+            **kwargs,
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -4098,6 +4222,9 @@ class _LadrunoRC(NDMaterial):
     auto_regularization
         Crack-band (Bazant-Oh) reference length (``-autoRegularization
         $lch_ref``; ``> 0``). ``None`` (default) = off / baseline-identical.
+    fc, ft, Gf, Gc, epsc0
+        Provenance from :meth:`from_fc` (strengths, fracture energies, peak
+        compressive strain). Not emitted: the backbones carry them.
     """
 
     _type: ClassVar[str] = ""
@@ -4138,56 +4265,109 @@ class _LadrunoRC(NDMaterial):
     beta_c: float | None = None
     cracked_nu: float | None = None
     auto_regularization: float | None = None
+    fc: float | None = None
+    ft: float | None = None
+    Gf: float | None = None
+    Gc: float | None = None
+    epsc0: float | None = None
 
     @classmethod
     def from_fc(
-        cls, *,
-        E: float,
-        nu: float,
-        fc: float,
+        cls,
+        fc: float | None = None,
+        *,
+        E: float | None = None,
+        nu: float | None = None,
         ft: float | None = None,
         Gf: float | None = None,
         Gc: float | None = None,
         lch_ref: float | None = None,
         rho: float = 0.0,
         regularize: bool = True,
+        calibration: str = "legacy",
+        units: str = "MPa-mm-N",
+        aggregate: str = "quartzite",
         **kwargs: Any,
     ) -> "Self":
         """Build from physical inputs, generating the backbones in Python.
 
-        Mirrors :meth:`ASDConcrete3D.from_fc`: ``ft`` defaults to
-        ``0.1*fc``; ``Gf``/``Gc`` to the CEB-FIP correlations; ``lch_ref``
-        to the native self-derived band width. ``regularize=True`` (default)
-        wires ``-autoRegularization $lch_ref`` so the crack-band softening is
-        mesh-objective. Extra ``kwargs`` pass straight through to the
-        constructor (e.g. ``interlock=True``, ``tens_stiff="vc"``).
+        ``calibration="legacy"`` (default) is the historical rule, unchanged:
+        ``E`` and ``nu`` are required; ``ft`` defaults to ``0.1*fc``,
+        ``Gf``/``Gc`` to the CEB-FIP correlations; ``lch_ref`` to the native
+        self-derived band width. It mirrors :meth:`ASDConcrete3D.from_fc`.
+
+        ``calibration="mc2010"`` opts into the turnkey calibration of
+        :func:`._asdconcrete_laws.fib_mc2010_concrete_params` (``fc`` is the
+        mean strength in the explicit ``units`` preset; ``E``, ``nu``,
+        ``ft``, ``Gf``, ``Gc`` and the peak strain ``ec`` are derived, each
+        overridable by keyword).
+
+        ``regularize=True`` (default) wires ``-autoRegularization $lch_ref``
+        so the crack-band softening is mesh-objective. Extra ``kwargs`` pass
+        straight through to the constructor (e.g. ``interlock=True``,
+        ``tens_stiff="vc"``).
         """
-        if E <= 0:
-            raise ValueError(f"{cls.__name__}.from_fc: E must be > 0, got {E!r}")
+        if fc is None:
+            raise ValueError(f"{cls.__name__}.from_fc: fc must be provided")
         if fc <= 0:
             raise ValueError(
                 f"{cls.__name__}.from_fc: fc must be > 0, got {fc!r}"
             )
-        for label, val in (("ft", ft), ("Gf", Gf), ("Gc", Gc),
+        for label, val in (("E", E), ("ft", ft), ("Gf", Gf), ("Gc", Gc),
                            ("lch_ref", lch_ref)):
             if val is not None and val <= 0:
                 raise ValueError(
                     f"{cls.__name__}.from_fc: {label} must be > 0 if supplied, "
                     f"got {val!r}"
                 )
-        ft_ = ft if ft is not None else _laws.default_ft(fc)
-        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
-        Gc_ = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_, Gf_)
+        ec_val: float | None = kwargs.pop("ec", kwargs.pop("epsc0", None))
+        if calibration == "legacy":
+            if E is None or nu is None:
+                raise ValueError(
+                    f"{cls.__name__}.from_fc: calibration='legacy' needs E and "
+                    "nu; pass calibration='mc2010' to derive them from fc"
+                )
+            if aggregate != "quartzite":
+                raise ValueError(
+                    f"{cls.__name__}.from_fc: aggregate applies only to "
+                    "calibration='mc2010'"
+                )
+            E_val, nu_val = E, nu
+            ft_val = ft if ft is not None else _laws.default_ft(fc)
+            Gf_val = Gf if Gf is not None else _laws.ceb_fip_Gf(fc, units=units)
+            Gc_val = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_val, Gf_val)
+        elif calibration == "mc2010":
+            params = _laws.fib_mc2010_concrete_params(
+                fc, units=units, aggregate=aggregate
+            )
+            E_val = E if E is not None else params.E
+            nu_val = nu if nu is not None else params.nu
+            ft_val = ft if ft is not None else params.ft
+            Gf_val = Gf if Gf is not None else params.Gf
+            Gc_val = Gc if Gc is not None else params.Gc
+            ec_val = ec_val if ec_val is not None else params.ec
+        else:
+            raise ValueError(
+                f"{cls.__name__}.from_fc: calibration must be 'legacy' or "
+                f"'mc2010', got {calibration!r}"
+            )
+
         lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
-            E, fc, ft_, Gf_, Gc_)
-        Te, Ts, Td = _laws.make_tension(E, ft_, Gf_, lch)
-        Ce, Cs, Cd = _laws.make_compression(E, fc, Gc_, lch)
+            E_val, fc, ft_val, Gf_val, Gc_val, ec=ec_val
+        )
+        Te, Ts, Td = _laws.make_tension(E_val, ft_val, Gf_val, lch)
+        Ce, Cs, Cd = _laws.make_compression(E_val, fc, Gc_val, lch, ec=ec_val)
         return cls(
-            E=E, nu=nu,
+            E=E_val, nu=nu_val,
             Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
             Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
             rho=rho,
             auto_regularization=(lch if regularize else None),
+            fc=fc,
+            ft=ft_val,
+            Gf=Gf_val,
+            Gc=Gc_val,
+            epsc0=ec_val,
             **kwargs,
         )
 
@@ -4269,6 +4449,52 @@ class _LadrunoRC(NDMaterial):
             raise ValueError(
                 f"{self._type}: auto_regularization (lch_ref) must be > 0, "
                 f"got {self.auto_regularization!r}"
+            )
+        if self.epsc0 is not None and self.epsc0 <= 0:
+            raise ValueError(f"{self._type}: epsc0 must be > 0, got {self.epsc0!r}")
+
+    @property
+    def ec(self) -> float | None:
+        """Alias for epsc0."""
+        return self.epsc0
+
+    def l_max(self) -> tuple[float, float]:
+        r"""Element sizes ``(l_max_t, l_max_c)`` above which regularization floors.
+
+        The backbones are tabulated, so there is no closed-form softening
+        law: the ceiling is read off the tables exactly as the fork's
+        ``ladruno_rc_kernel::regularize`` sees them
+        (:func:`._asdconcrete_laws.rc_regularization_lch_max`). Above it
+        the fork clamps the rescaled energy to its snap-back floor and the
+        response is no longer mesh-objective. Needs
+        ``auto_regularization`` (without it the tables are never rescaled).
+        Nothing calls this automatically: it is a helper for the caller.
+        """
+        if self.auto_regularization is None:
+            raise ValueError(
+                f"{self._type}: l_max needs auto_regularization (lch_ref); "
+                "without -autoRegularization the backbones are not rescaled "
+                "by element size"
+            )
+        lref = self.auto_regularization
+        l_max_t = _laws.rc_regularization_lch_max(
+            self.Te, self.Ts, self.Td, self.E, lref)
+        l_max_c = _laws.rc_regularization_lch_max(
+            self.Ce, self.Cs, self.Cd, self.E, lref)
+        return (l_max_t, l_max_c)
+
+    def check_element_size(self, h_max: float, *, pg: str | None = None) -> None:
+        """Raise ValueError if h_max exceeds min(l_max_t, l_max_c)."""
+        if h_max <= 0:
+            raise ValueError(f"{self._type}: h_max must be > 0, got {h_max!r}")
+        l_max_t, l_max_c = self.l_max()
+        l_ceil = min(l_max_t, l_max_c)
+        if h_max > l_ceil:
+            where = f" (PG {pg!r})" if pg is not None else ""
+            raise ValueError(
+                f"{self._type}: element size h_max={h_max:g} exceeds "
+                f"snap-back ceiling min(l_max_t, l_max_c)={l_ceil:g}{where} "
+                f"(l_max_t={l_max_t:g}, l_max_c={l_max_c:g}, ratio={h_max / l_ceil:.3f})."
             )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:

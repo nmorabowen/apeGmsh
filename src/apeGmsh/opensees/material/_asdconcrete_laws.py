@@ -24,6 +24,12 @@ native ``-fc`` curve unchanged.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+import dataclasses
+from dataclasses import dataclass
+import math
+from typing import Any
+
 
 __all__ = [
     "default_ft",
@@ -33,7 +39,113 @@ __all__ = [
     "make_tension",
     "make_compression",
     "l_max",
+    "UNIT_PRESETS",
+    "AGGREGATE_FACTORS",
+    "ConcreteMC2010Params",
+    "fib_mc2010_concrete_params",
+    "GC_OVER_GF",
+    "tension_snapback_factor",
+    "rc_regularization_lch_max",
 ]
+
+
+#: Compressive-to-tensile fracture-energy ratio used when no ``Gc`` is given.
+#: The ~250 ratio is the Nakamura & Higai (2001) estimate (as adopted, e.g.,
+#: by the DIANA material library). fib MC2010 gives NO compressive fracture
+#: energy, so this is not a Model Code value.
+GC_OVER_GF: float = 250.0
+
+
+#: ``units`` presets: ``(stress per MPa, length per mm)`` in the user system.
+#: Units are always explicit; nothing is inferred from the magnitude of ``fc``.
+UNIT_PRESETS: dict[str, tuple[float, float]] = {
+    "MPa-mm-N": (1.0, 1.0),
+    "MPa-mm": (1.0, 1.0),
+    "Pa-m-N": (1.0e6, 1.0e-3),
+    "Pa-m": (1.0e6, 1.0e-3),
+    "kPa-m-kN": (1.0e3, 1.0e-3),
+    "kPa-m": (1.0e3, 1.0e-3),
+    "psi-in-lbf": (145.03773773, 1.0 / 25.4),
+    "psi-in": (145.03773773, 1.0 / 25.4),
+    "ksi-in-kip": (0.14503773773, 1.0 / 25.4),
+    "ksi-in": (0.14503773773, 1.0 / 25.4),
+}
+
+AGGREGATE_FACTORS: dict[str, float] = {
+    "basalt": 1.2,
+    "quartzite": 1.0,
+    "limestone": 0.9,
+    "sandstone": 0.7,
+}
+
+
+@dataclass(frozen=True)
+class ConcreteMC2010Params(Mapping[str, Any]):
+    r"""Concrete parameters calibrated from ``fc`` (see :func:`fib_mc2010_concrete_params`).
+
+    Every stress / modulus / energy / length is in the ``units`` system the
+    caller declared; strains are dimensionless.
+    """
+
+    E: float
+    nu: float
+    fc: float
+    ft: float
+    Gf: float
+    Gc: float
+    ec: float
+    Df: float
+    hardening: tuple[float, float]
+    ductility: tuple[float, float, float, float]
+    As: float
+    e: float
+    kupfer: float
+    units: str
+    aggregate: str
+    fck: float
+    fcm: float
+    l_max_t: float
+    l_max_c: float
+
+    @property
+    def Gt(self) -> float:
+        """Alias for Gf."""
+        return self.Gf
+
+    @property
+    def eps_c1(self) -> float:
+        """Alias for ec."""
+        return self.ec
+
+    @property
+    def epsc0(self) -> float:
+        """Alias for ec (for RC models)."""
+        return self.ec
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def __iter__(self) -> Iterator[str]:
+        fields = [f.name for f in dataclasses.fields(self)]
+        yield from fields
+        yield "Gt"
+        yield "eps_c1"
+        yield "epsc0"
+
+    def __len__(self) -> int:
+        return len(dataclasses.fields(self)) + 3
+
+
+def _unit_scales(units: str, who: str) -> tuple[float, float]:
+    """``(stress per MPa, length per mm)`` for an explicit ``units`` preset."""
+    if units not in UNIT_PRESETS:
+        raise ValueError(
+            f"{who}: unknown units {units!r}, supported: {sorted(UNIT_PRESETS)}"
+        )
+    return UNIT_PRESETS[units]
 
 
 def default_ft(fc: float) -> float:
@@ -41,14 +153,169 @@ def default_ft(fc: float) -> float:
     return 0.1 * fc
 
 
-def ceb_fip_Gf(fc: float) -> float:
-    """CEB-FIP tensile fracture energy per area: ``Gf = 0.073 fc^0.18``."""
-    return float(0.073 * fc ** 0.18)
+def ceb_fip_Gf(
+    fc: float,
+    *,
+    units: str = "MPa-mm-N",
+    stress_scale: float | None = None,
+    length_scale: float | None = None,
+) -> float:
+    r"""CEB-FIP / fib MC2010 tensile fracture energy per area.
+
+    fib MC2010 Eq. 5.1-9: :math:`G_F = 73 f_{cm}^{0.18}` [N/m], i.e.
+    :math:`0.073 f_{cm}^{0.18}` [N/mm] with :math:`f_{cm}` in MPa.
+    ``fc`` is read in the declared ``units`` (default ``"MPa-mm-N"``, which
+    reproduces the historical ``0.073 fc^0.18``); the result is converted to
+    user force / user length. Units are never inferred from the magnitude
+    of ``fc``.
+    """
+    if stress_scale is None or length_scale is None:
+        s_sig, s_len = _unit_scales(units, "ceb_fip_Gf")
+        stress_scale = s_sig if stress_scale is None else stress_scale
+        length_scale = s_len if length_scale is None else length_scale
+
+    fc_mpa = fc / stress_scale
+    gf_n_mm = 0.073 * (fc_mpa ** 0.18)
+    return float(gf_n_mm * stress_scale * length_scale)
 
 
 def ceb_fip_Gc(fc: float, ft: float, Gf: float) -> float:
     """Compressive fracture energy per area: ``Gc = 2 Gf (fc/ft)^2``."""
     return 2.0 * Gf * (fc * fc) / (ft * ft)
+
+
+def fib_mc2010_concrete_params(
+    fc: float,
+    *,
+    units: str = "MPa-mm-N",
+    aggregate: str = "quartzite",
+) -> ConcreteMC2010Params:
+    r"""Calibrate a full concrete parameter set from the mean strength ``fc``.
+
+    Sources, per quantity (``fcm = fc`` in MPa, ``fck = fcm - 8``, floored
+    at ``0.75 fcm`` for very weak concrete):
+
+    * ``ft`` = :math:`f_{ctm}`: fib MC2010 Eq. 5.1-3a/b
+      (:math:`0.3 f_{ck}^{2/3}` up to C50, :math:`2.12\ln(1 + 0.1 f_{cm})` above).
+    * ``E`` = :math:`E_{ci} = 21500\,\alpha_E (f_{cm}/10)^{1/3}`: fib MC2010
+      section 5.1.7.2, with the aggregate factor :math:`\alpha_E` of MC2010
+      Table 5.1-6 (``aggregate``).
+    * ``Gf``: fib MC2010 Eq. 5.1-9, :math:`0.073 f_{cm}^{0.18}` [N/mm]. It has
+      no aggregate-size term.
+    * ``Gc`` = ``GC_OVER_GF * Gf`` (Nakamura & Higai 2001 ratio; MC2010 has
+      no compressive fracture energy).
+    * ``ec`` = :math:`\varepsilon_{c1} = 0.7 f_{cm}^{0.31}` per mille, capped
+      at 2.8 per mille: EN 1992-1-1 Table 3.1; floored at ``1.6 fc/E`` so the
+      pre-peak branch stays above the elastic line.
+    * ``Df = 0.85``, ``hardening = (0.3, 0.01)``, ``As = 15``: the CDPM2
+      calibration of Grassl et al. (2013). These are **not** the fork's
+      constructor defaults (``Df = 1.0``, ``Hp = 0.5``); LadrunoConcrete3D
+      always emits ``-Df`` / ``-hardening`` so the deck runs these values.
+
+    ``units`` is an explicit preset from :data:`UNIT_PRESETS`; nothing is
+    inferred from the magnitude of ``fc``.
+    """
+    if fc <= 0:
+        raise ValueError(f"fib_mc2010_concrete_params: fc must be > 0, got {fc!r}")
+    s_sig, s_len = _unit_scales(units, "fib_mc2010_concrete_params")
+    if aggregate not in AGGREGATE_FACTORS:
+        raise ValueError(
+            f"fib_mc2010_concrete_params: unknown aggregate {aggregate!r}, "
+            f"supported: {sorted(AGGREGATE_FACTORS)}"
+        )
+
+    s_gf = s_sig * s_len
+    alpha_E = AGGREGATE_FACTORS[aggregate]
+
+    f_cm_mpa = fc / s_sig
+    f_ck_mpa = max(f_cm_mpa - 8.0, 0.75 * f_cm_mpa)
+
+    if f_ck_mpa <= 50.0:
+        ft_mpa = 0.30 * (f_ck_mpa ** (2.0 / 3.0))
+    else:
+        ft_mpa = 2.12 * math.log(1.0 + 0.10 * f_cm_mpa)
+
+    e_mpa = 21500.0 * alpha_E * ((f_cm_mpa / 10.0) ** (1.0 / 3.0))
+    gf_n_mm = 0.073 * (f_cm_mpa ** 0.18)
+    gc_n_mm = GC_OVER_GF * gf_n_mm
+
+    fc_u = f_cm_mpa * s_sig
+    fck_u = f_ck_mpa * s_sig
+    ft_u = ft_mpa * s_sig
+    e_u = e_mpa * s_sig
+    nu = 0.20
+    gf_u = gf_n_mm * s_gf
+    gc_u = gc_n_mm * s_gf
+
+    eps0 = fc_u / e_u
+    eps_c1 = max(min(0.0007 * (f_cm_mpa ** 0.31), 0.0028), 1.6 * eps0)
+
+    Df = 0.85
+    hardening = (0.3, 0.01)
+    As = 15.0
+    kupfer = 1.16
+    Bh = max(0.001, eps_c1 - eps0)
+    ductility = (0.08, Bh, 2.0, 1.0e-6)
+
+    # Kupfer biaxial eccentricity e in (0.5, 1.0]
+    eps_ratio = ft_u / fc_u
+    denom = kupfer * kupfer - eps_ratio * eps_ratio
+    eps_ecc = eps_ratio * (kupfer * kupfer - 1.0) / denom if denom > 0 else 0.025
+    e_ecc = (1.0 + eps_ecc) / (2.0 - eps_ecc)
+    e_ecc = max(0.5001, min(1.0, e_ecc))
+
+    # Snap-back ceilings for the CDPM2 bilinear tension law (the fork
+    # wrapper default) and the compression law.
+    hp = hardening[1]
+    l_max_t = tension_snapback_factor("bilinear") * e_u * gf_u / (ft_u * ft_u)
+    l_max_c = 2.0 * e_u * gc_u / ((fc_u * fc_u) * (1.0 + hp))
+
+    return ConcreteMC2010Params(
+        E=e_u,
+        nu=nu,
+        fc=fc_u,
+        ft=ft_u,
+        Gf=gf_u,
+        Gc=gc_u,
+        ec=eps_c1,
+        Df=Df,
+        hardening=hardening,
+        ductility=ductility,
+        As=As,
+        e=e_ecc,
+        kupfer=kupfer,
+        units=units,
+        aggregate=aggregate,
+        fck=fck_u,
+        fcm=fc_u,
+        l_max_t=l_max_t,
+        l_max_c=l_max_c,
+    )
+
+
+def tension_snapback_factor(tension_law: str | None) -> float:
+    r"""``k`` in the crack-band snap-back ceiling :math:`h_{max} = k\,E G_f / f_t^2`.
+
+    A band of width ``h`` snaps back when the softening slope in crack
+    opening, :math:`|d\sigma/dw|`, exceeds :math:`E/h`, so
+    :math:`h_{max} = E / |d\sigma/dw|_{w=0}`. For the fork's
+    LadrunoConcrete3D laws (``LadrunoConcrete3DKernel.h``):
+
+    * ``"exp"``: :math:`\sigma = f_t\exp(-w f_t/G_f)`, initial slope
+      :math:`f_t^2/G_f`, so ``k = 1``.
+    * ``"bilinear"`` (CDPM2, the wrapper default, also for ``None``):
+      first branch from :math:`f_t` to :math:`0.3 f_t` at
+      :math:`w_1 = 0.15 w_f`, :math:`w_f = G_f/(0.225 f_t)`, initial slope
+      :math:`1.05 f_t^2/G_f`, so ``k = 20/21``.
+    """
+    if tension_law == "exp":
+        return 1.0
+    if tension_law in (None, "bilinear"):
+        return 20.0 / 21.0
+    raise ValueError(
+        f"tension_snapback_factor: unknown tension_law {tension_law!r} "
+        "(expected 'bilinear', 'exp' or None)"
+    )
 
 
 def auto_lch_ref(
@@ -131,7 +398,14 @@ def make_tension(
         xi, si, xipl = Te[i], Ts[i], Tpl[i]
         xipl = min(xipl, xi - si / E)
         qi = (xi - xipl) * E
-        Td[i] = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        d = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        if d >= 1.0:
+            raise ValueError(
+                f"make_tension: point {i} reaches damage d={d!r} >= 1 "
+                f"(stress {si!r} at strain {xi!r}); the inputs give a "
+                "backbone with no residual stiffness"
+            )
+        Td[i] = d
     return Te, Ts, Td
 
 
@@ -182,7 +456,14 @@ def make_compression(
         xi, si, xipl = Ce[i], Cs[i], Cpl[i]
         xipl = min(xipl, xi - si / E)
         qi = (xi - xipl) * E
-        Cd[i] = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        d = max(0.0, 1.0 - si / qi)  # clamp FP undershoot at d~0
+        if d >= 1.0:
+            raise ValueError(
+                f"make_compression: point {i} reaches damage d={d!r} >= 1 "
+                f"(stress {si!r} at strain {xi!r}); the inputs give a "
+                "backbone with no residual stiffness"
+            )
+        Cd[i] = d
     return Ce, Cs, Cd
 
 
@@ -194,3 +475,58 @@ def l_max(E: float, Gf: float, ft: float) -> float:
     mesh-objective. Independent of ``lch_ref`` (ADR 0044, Fact 2).
     """
     return 2.0 * E * Gf / (ft * ft)
+
+
+def rc_regularization_lch_max(
+    x: tuple[float, ...] | list[float],
+    y: tuple[float, ...] | list[float],
+    d: tuple[float, ...] | list[float],
+    E: float,
+    lch_ref: float,
+) -> float:
+    r"""Band width above which ``-autoRegularization`` floors a backbone.
+
+    A port of the fork's ``ladruno_rc_kernel::fractureEnergy`` /
+    ``regularize`` (``LadrunoRCKernel.h``). The kernel rescales the
+    post-peak branch to the energy :math:`g_0\,l_{ref}/l_{ch}` and clamps
+    it at :math:`g_{min} = 1.01\,y_p x_p / 2` (the peak point) to keep the
+    strain abscissa monotone, i.e. to stop snap-back. The clamp engages for
+
+    .. math:: l_{ch} > l_{max} = l_{ref}\,g_0 / g_{min}.
+
+    ``g_0`` is the kernel's energy measure: the unloading triangle at the
+    peak (with the damaged modulus) plus the area under the softening
+    branch, extended linearly to zero stress when the table ends in
+    softening. ``d`` may be empty (the fork pads it with zeros). Returns
+    ``inf`` for a backbone with no softening branch.
+    """
+    n = len(x)
+    dd = list(d) if d else [0.0] * n
+    q = [y[i] / (1.0 - dd[i]) for i in range(n)]
+    pos1 = -1
+    for i in range(1, n):
+        if (y[i] - y[i - 1]) / (x[i] - x[i - 1]) < 0.0:
+            pos1 = i - 1
+            break
+    if pos1 < 0:
+        return math.inf
+    pos2 = -1
+    for i in range(pos1 + 1, n):
+        if (y[i] - y[i - 1]) / (x[i] - x[i - 1]) >= 0.0:
+            pos2 = i - 1
+            break
+    g_add = 0.0
+    if pos2 < 0:
+        if y[n - 1] > 0.0:
+            k = (y[n - 1] - y[n - 2]) / (x[n - 1] - x[n - 2])
+            x3 = x[n - 1] - y[n - 1] / k
+            g_add = y[n - 1] * (x3 - x[n - 1]) / 2.0
+        pos2 = n - 1
+    d1 = 1.0 - y[pos1] / q[pos1] if q[pos1] > 0.0 else 0.0
+    Ed = (1.0 - d1) * E
+    g0 = y[pos1] * y[pos1] / Ed / 2.0 if Ed > 0.0 else 0.0
+    for i in range(pos1 + 1, pos2 + 1):
+        g0 += (x[i] - x[i - 1]) * (y[i - 1] + y[i]) / 2.0
+    g0 += g_add
+    g_min = 1.01 * y[pos1] * x[pos1] / 2.0
+    return float(lch_ref * g0 / g_min)
