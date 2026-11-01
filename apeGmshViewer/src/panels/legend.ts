@@ -23,13 +23,10 @@ import {
   resolveFieldUnits,
   roleLegendOf,
   scaleLabel,
-  UNIT_DISPLAY_OPTIONS,
-  UNIT_SYSTEM_IDS,
-  UNIT_SYSTEMS,
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry, UnitDisplay, UnitSystemId } from "../state/types.ts";
+import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 export { fmtValue, rampCss } from "../state/selectors.ts";
@@ -354,43 +351,6 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     legend.append(ends);
     legend.append(el("div", "contour-range", lines.range));
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
-    legend.append(el("div", "legend-note", lines.units));
-    const unitRow = el("div", "contour-units");
-    const dst = el("select", "contour-units-target");
-    dst.title = "display unit system (baseUnits)";
-    for (const opt of UNIT_DISPLAY_OPTIONS) {
-      const label = opt.value !== "as_stored" && opt.value === s.contour.declaredUnits ? `${opt.label} (native)` : opt.label;
-      const o = el("option", undefined, label);
-      o.value = opt.value;
-      o.selected = opt.value === s.contour.targetUnits;
-      dst.append(o);
-    }
-    unlisten.push(listen(dst, "change", () => store.dispatch({ type: "setContourUnits", target: dst.value as UnitDisplay })));
-    unitRow.append(dst);
-    if (s.contour.targetUnits !== "as_stored" && s.contour.declaredUnits === null) {
-      const src = el("select", "contour-units-source");
-      src.title = "file native unit system (from)";
-      if (s.contour.sourceUnits === null) {
-        const p = el("option", undefined, "from … (pick source units)");
-        p.value = "";
-        p.disabled = true;
-        p.selected = true;
-        src.append(p);
-      }
-      for (const id of UNIT_SYSTEM_IDS) {
-        const o = el("option", undefined, `from ${UNIT_SYSTEMS[id].label}`);
-        o.value = id;
-        o.selected = id === s.contour.sourceUnits;
-        src.append(o);
-      }
-      unlisten.push(
-        listen(src, "change", () => {
-          if (src.value) store.dispatch({ type: "setContourUnits", source: src.value as UnitSystemId });
-        }),
-      );
-      unitRow.append(src);
-    }
-    legend.append(unitRow);
     legend.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");

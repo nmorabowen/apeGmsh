@@ -664,14 +664,16 @@ export function reduce(s: State, e: Event): State {
       if (!CMAP_NAMES.includes(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
       return s.contour.cmap === e.cmap ? s : { ...s, contour: { ...s.contour, cmap: e.cmap } };
     case "setContourUnits": {
-      if (e.source !== undefined && !UNIT_SYSTEM_IDS.includes(e.source)) {
-        throw new RangeError(`setContourUnits: source ${JSON.stringify(e.source)}`);
+      const hasSource = e.source !== undefined || e.sourceUnits !== undefined;
+      const rawSource = e.source !== undefined ? e.source : e.sourceUnits;
+      if (rawSource !== undefined && rawSource !== null && !UNIT_SYSTEM_IDS.includes(rawSource)) {
+        throw new RangeError(`setContourUnits: source ${JSON.stringify(rawSource)}`);
       }
-      const targetUnits = e.target ?? s.contour.targetUnits;
+      const targetUnits = e.target ?? e.targetUnits ?? s.contour.targetUnits;
       if (targetUnits !== "as_stored" && !UNIT_SYSTEM_IDS.includes(targetUnits)) {
         throw new RangeError(`setContourUnits: target ${JSON.stringify(targetUnits)}`);
       }
-      const sourceUnits = s.contour.declaredUnits ?? e.source ?? s.contour.sourceUnits;
+      const sourceUnits = s.contour.declaredUnits ?? (hasSource ? (rawSource ?? null) : s.contour.sourceUnits);
       if (s.contour.sourceUnits === sourceUnits && s.contour.targetUnits === targetUnits) return s;
       return { ...s, contour: { ...s.contour, sourceUnits, targetUnits } };
     }

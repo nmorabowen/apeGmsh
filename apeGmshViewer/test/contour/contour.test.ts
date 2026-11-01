@@ -14,10 +14,12 @@ import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import { LadrunoError, openLadruno } from "../../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
-import { contourLines, rampCss } from "../../src/panels/legend.ts";
+import { mountHeader } from "../../src/panels/header.ts";
+import { contourLines, mountLegend, rampCss } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
 import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
-import { contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
+import { classifyFieldDimension, contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
+import { Store } from "../../src/state/store.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
 
@@ -332,7 +334,7 @@ test("partial write: a component whose value columns disagree with _ids is refus
   h.effects.dispose();
 });
 
-test("baseUnits: setContourUnits converts forces and moments to tf_m_s and labels display units", () => {
+test("baseUnits: setContourUnits converts forces, moments, curvatures, and lengths and labels display units", () => {
   const rf = resolveFieldUnits("reaction_force", "nodal", "kN_m_s", "tf_m_s", "static");
   assert.equal(rf.unit, "tf");
   assert.ok(Math.abs(rf.factor - 1000 / 9806.65) < 1e-15);
@@ -348,6 +350,179 @@ test("baseUnits: setContourUnits converts forces and moments to tf_m_s and label
   const modeDisp = resolveFieldUnits("displacement", "nodal", "kN_m_s", "N_mm_s", "mode");
   assert.equal(modeDisp.unit, null);
   assert.equal(modeDisp.factor, 1);
+
+  // 1-D beam line-diagram canonical names & keys:
+  const mzMm = resolveFieldUnits("bending_moment_z", "element", "kN_m_s", "N_mm_s", "static");
+  assert.equal(mzMm.unit, "N·mm");
+  assert.equal(mzMm.factor, 1e6);
+  const myTf = resolveFieldUnits("bending_moment_y", "element", "kN_m_s", "tf_m_s", "static");
+  assert.equal(myTf.unit, "tf·m");
+  assert.ok(Math.abs(myTf.factor - 1000 / 9806.65) < 1e-15);
+  const vyN = resolveFieldUnits("shear_y", "element", "kN_m_s", "N_mm_s", "static");
+  assert.equal(vyN.unit, "N");
+  assert.equal(vyN.factor, 1000);
+  const kyMm = resolveFieldUnits("curvature_y", "element", "kN_m_s", "N_mm_s", "static");
+  assert.equal(kyMm.unit, "1/mm");
+  assert.ok(Math.abs(kyMm.factor - 1e-3) < 1e-15);
+  const kzM = resolveFieldUnits("curvature_z", "element", "N_mm_s", "kN_m_s", "static");
+  assert.equal(kzM.unit, "1/m");
+  assert.equal(kzM.factor, 1000);
+  const twistRate = resolveFieldUnits("torsional_strain", "element", "kN_m_s", "N_mm_s", "static");
+  assert.equal(twistRate.unit, "1/mm");
+  assert.ok(Math.abs(twistRate.factor - 1e-3) < 1e-15);
+  assert.equal(classifyFieldDimension("axial_extension", "element").kind, "length");
+  assert.equal(classifyFieldDimension("chord_rotation_z", "element").kind, "angle");
+  assert.equal(classifyFieldDimension("axial_strain", "element").kind, "dimensionless");
+  assert.equal(classifyFieldDimension("shear_strain_y", "element").kind, "dimensionless");
+  assert.equal(classifyFieldDimension("N", "element").kind, "force");
+  assert.equal(classifyFieldDimension("T", "element").kind, "moment");
+});
+
+test("global Units control in #header renders Native (when undeclared) & Units dropdowns, and #legend has no unit dropdowns", async () => {
+  const h = await opened();
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  class FakeDomEl {
+    tagName: string;
+    id = "";
+    className = "";
+    title = "";
+    value = "";
+    type = "";
+    step = "";
+    min = "";
+    label = "";
+    hidden = false;
+    disabled = false;
+    selected = false;
+    dataset: Record<string, string | undefined> = {};
+    style: Record<string, string> = {};
+    children: (FakeDomEl | string)[] = [];
+    parent: FakeDomEl | null = null;
+    listeners = new Map<string, ((ev?: unknown) => void)[]>();
+    constructor(tag: string) {
+      this.tagName = tag.toUpperCase();
+    }
+    append(...xs: (FakeDomEl | string)[]) {
+      for (const x of xs) {
+        if (typeof x !== "string") x.parent = this;
+        this.children.push(x);
+      }
+    }
+    replaceChildren(...xs: (FakeDomEl | string)[]) {
+      this.children = [];
+      this.append(...xs);
+    }
+    remove() {
+      if (this.parent) {
+        this.parent.children = this.parent.children.filter((c) => c !== this);
+      }
+    }
+    addEventListener(type: string, fn: (ev?: unknown) => void) {
+      const arr = this.listeners.get(type) ?? [];
+      arr.push(fn);
+      this.listeners.set(type, arr);
+    }
+    removeEventListener(type: string, fn: (ev?: unknown) => void) {
+      const arr = this.listeners.get(type) ?? [];
+      this.listeners.set(
+        type,
+        arr.filter((f) => f !== fn),
+      );
+    }
+    trigger(type: string) {
+      for (const fn of this.listeners.get(type) ?? []) fn();
+    }
+    get textContent(): string {
+      return this.children.map((c) => (typeof c === "string" ? c : c.textContent)).join("");
+    }
+    set textContent(v: string) {
+      this.children = [v];
+    }
+    all(pred: (e: FakeDomEl) => boolean): FakeDomEl[] {
+      const out: FakeDomEl[] = pred(this) ? [this] : [];
+      for (const c of this.children) if (typeof c !== "string") out.push(...c.all(pred));
+      return out;
+    }
+  }
+  const headerEl = new FakeDomEl("header");
+  const fileNameEl = new FakeDomEl("span");
+  const fileStatsEl = new FakeDomEl("span");
+  const legendEl = new FakeDomEl("aside");
+  headerEl.append(fileNameEl, fileStatsEl);
+  (globalThis as { document?: unknown }).document = {
+    title: "",
+    documentElement: { dataset: { theme: "dark" } },
+    createElement: (t: string) => new FakeDomEl(t),
+    getElementById: (id: string) => {
+      if (id === "header") return headerEl;
+      if (id === "file-name") return fileNameEl;
+      if (id === "file-stats") return fileStatsEl;
+      if (id === "legend") return legendEl;
+      return null;
+    },
+  };
+  let unHeader: (() => void) | null = null;
+  let unLegend: (() => void) | null = null;
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    await until(() => h.store.get().contour.scan?.status === "done", "contour scan");
+
+    unHeader = mountHeader(h.store);
+    unLegend = mountLegend(h.store);
+
+    // 1. Undeclared file: #header shows both .header-units-source ("Native") and .header-units-target ("Units")
+    assert.equal(headerEl.hidden, false);
+    assert.equal(headerEl.all((e) => e.className === "header-units-source").length, 1);
+    assert.equal(headerEl.all((e) => e.className === "header-units-target").length, 1);
+    // #legend has NO .contour-units dropdowns and NO redundant lines.units note
+    assert.equal(legendEl.all((e) => e.className.includes("contour-units")).length, 0);
+    assert.ok(!legendEl.textContent.includes("Units: not stored in the results file."));
+
+    // 2. Selecting source and target in #header dispatches setContourUnits and updates #legend contour-title & tooltip
+    const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;
+    srcSel.value = "kN_m_s";
+    srcSel.trigger("change");
+    const dstSel = headerEl.all((e) => e.className === "header-units-target")[0]!;
+    dstSel.value = "N_mm_s";
+    dstSel.trigger("change");
+    assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+    assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
+    const unitsWrap = headerEl.all((e) => e.className === "header-units")[0]!;
+    assert.equal(unitsWrap.title, "Units: N-mm-tonne-s (converted from kN-m-tonne-s).");
+    assert.match(legendEl.all((e) => e.className === "contour-title")[0]!.textContent, /\[mm\]/);
+
+    // Resetting Native select to "" resets sourceUnits to null when undeclared
+    const srcSelAfter = headerEl.all((e) => e.className === "header-units-source")[0]!;
+    srcSelAfter.value = "";
+    srcSelAfter.trigger("change");
+    assert.equal(h.store.get().contour.sourceUnits, null);
+
+    // 3. Declared file: .header-units-source ("Native") is hidden; .header-units-target marks "(native)"
+    const infoDeclared = { ...h.store.get().results!, units: "kN_m_s" as const };
+    h.store.dispatch({ type: "resultsLoaded", info: infoDeclared, sizeBytes: 0, readMs: 0, warnings: [] });
+    assert.equal(headerEl.all((e) => e.className === "header-units-source").length, 0);
+    const dstDeclared = headerEl.all((e) => e.className === "header-units-target")[0]!;
+    assert.ok(dstDeclared.textContent.includes("kN-m-tonne-s (kN, m, s) (native)"));
+
+    // 4. Standalone results-only store (modelSummary(s) === null) mounted at boot (empty store) before loading an undeclared file
+    unHeader();
+    unHeader = null;
+    const bootStore = new Store();
+    unHeader = mountHeader(bootStore);
+    assert.equal(headerEl.hidden, true, "#header starts hidden on empty store at boot");
+    const infoUndeclared = { ...h.store.get().results!, units: null };
+    bootStore.dispatch({ type: "fileOpened", artifact: "results", path: infoUndeclared.path });
+    bootStore.dispatch({ type: "resultsLoaded", info: infoUndeclared, sizeBytes: 0, readMs: 0, warnings: [] });
+    assert.equal(headerEl.hidden, false, "#header un-hides when undeclared results load after boot");
+    assert.equal(headerEl.all((e) => e.className === "header-units-source").length, 1);
+    assert.equal(headerEl.all((e) => e.className === "header-units-target").length, 1);
+  } finally {
+    unHeader?.();
+    unLegend?.();
+    (globalThis as { document?: unknown }).document = prevDoc;
+    h.effects.dispose();
+  }
 });
 
 test("declared vs undeclared units: declared files auto-select native units; undeclared files require source units", async () => {

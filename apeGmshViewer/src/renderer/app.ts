@@ -489,6 +489,15 @@ async function captureExtrudeResults(settle: (ms?: number) => Promise<unknown>, 
       await bridge.captureStill("extrude-results-5-collapsed-line-diagram");
       ldPanel.querySelector("h3")?.click();
       await painted();
+
+      // (6) Switch global units in #header to kN-mm-tonne-s and verify #header, #line-diagram, #loads, and #legend all convert
+      const prevTargetUnits = store.get().contour.targetUnits;
+      store.dispatch({ type: "setContourUnits", target: "kN_m_s", targetUnits: "kN_m_s" });
+      await painted();
+      await painted();
+      await bridge.captureStill("extrude-results-6-global-units-kN-m");
+      store.dispatch({ type: "setContourUnits", target: prevTargetUnits, targetUnits: prevTargetUnits });
+      await painted();
     }
   }
 

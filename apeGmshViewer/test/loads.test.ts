@@ -859,6 +859,14 @@ test("LoadsLayer (Three.js), renderLoads (#loads panel), and Patterns window 'sh
 
     const dom7 = renderLoads(sAll7) as unknown as MinimalEl;
     const text7 = dom7.textContent;
+    assert.equal(dom7.all((e) => e.className.includes("loads-units")).length, 0, "#loads has no duplicate unit dropdowns");
+    const unitNoteEl = dom7.all((e) => e.className.includes("loads-unit-note"))[0]!;
+    assert.equal(
+      unitNoteEl.textContent,
+      "F [kN] · M [kN·m] · q [kN/m] · p [kPa] · u₀ [m] · θ₀ [rad] · a_g [m/s²]",
+      "renders compact symbol key without trailing Units: ... prose",
+    );
+    assert.equal(unitNoteEl.title, "Units: kN-m-tonne-s (converted from N-m-kg-s).");
     assert.match(text7, /max 5 kN/, "renders converted nodal force peak with kN");
     assert.match(text7, /max 2 kN·m/, "renders converted nodal moment peak with kN·m");
     assert.match(text7, /max 8 kN\/m/, "renders converted beamUniform peak with kN/m");

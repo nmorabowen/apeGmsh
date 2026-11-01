@@ -620,6 +620,15 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
     assert.ok(dom !== null);
     assert.match(dom.find("line-diagram-notice")?.textContent ?? "", /1 3-D beam skipped/);
 
+    // Unit conversion on #line-diagram: converting from kN_m_s to N_mm_s scales Vy (force) by 1000 and Mz (moment) by 1e6:
+    h.store.dispatch({ type: "setContourUnits", source: "kN_m_s", target: "N_mm_s" });
+    for (const u of unlisten.splice(0)) u();
+    dom = renderLineDiagram(h.store.get(), undefined, unlisten) as unknown as FakeEl | null;
+    assert.ok(dom !== null);
+    assert.equal(dom.find("line-diagram-title")?.textContent, "section_force · Vy (shear_y) [N]");
+    assert.equal(dom.find("contour-min")?.textContent, "-4.500e+4");
+    assert.equal(dom.find("contour-max")?.textContent, "6.000e+4");
+
     // Switching to mesh phase (no lineStations) clears stale stepRange, scan, and notice, and hides #line-diagram:
     h.store.dispatch({ type: "setPhase", at: { kind: "mesh" } });
     assert.equal(h.store.get().lineDiagram.notice, null);

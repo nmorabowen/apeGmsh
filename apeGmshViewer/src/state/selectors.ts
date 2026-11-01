@@ -81,7 +81,7 @@ export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField }
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, fmtValue, MAGNITUDE, NO_DATA_RGB, rampCss, RANGE_MODES, sampleCmap } from "./contour.ts";
 export { legendEntryColour } from "./palette.ts";
-export { resolveFieldUnits, UNIT_DISPLAY_OPTIONS, UNIT_SYSTEM_IDS, UNIT_SYSTEMS } from "./units.ts";
+export { classifyFieldDimension, resolveFieldUnits, UNIT_DISPLAY_OPTIONS, UNIT_SYSTEM_IDS, UNIT_SYSTEMS } from "./units.ts";
 export {
   beamLocalAxes,
   buildBeamChains,

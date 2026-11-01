@@ -1007,7 +1007,13 @@ export type Event =
   | { type: "setContourRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "setContourCmap"; cmap: ContourCmap }
   /** baseUnits: set the file's assumed native unit system and/or the display unit system */
-  | { type: "setContourUnits"; source?: UnitSystemId; target?: UnitDisplay }
+  | {
+      type: "setContourUnits";
+      source?: UnitSystemId | null;
+      target?: UnitDisplay;
+      sourceUnits?: UnitSystemId | null;
+      targetUnits?: UnitDisplay;
+    }
   /** V4c1 (effects): the finite range of the step shown, for the key it was measured on */
   | { type: "contourStepRange"; key: string; min: number | null; max: number | null }
   /** V4c1 (effects): the history scan started, progressed, finished or failed */
