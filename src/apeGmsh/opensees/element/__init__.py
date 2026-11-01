@@ -41,7 +41,6 @@ from .beam_column import (
     elasticBeamColumn,
     forceBeamColumn,
 )
-from ._reinforce import effective_rebar_lch
 from .embedded_rebar import embedded_rebar_args
 from .frame_modifiers import FrameModifiers
 from .shell import (
@@ -125,5 +124,4 @@ __all__ = [
     "LadrunoUP",
     # embedded reinforcement (Ladruno fork — resolver-produced coupling)
     "embedded_rebar_args",
-    "effective_rebar_lch",
 ]

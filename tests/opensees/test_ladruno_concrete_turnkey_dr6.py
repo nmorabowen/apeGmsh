@@ -1,28 +1,34 @@
-"""Unit-invariance, calibration and guard verification for DR-6 (Turnkey Concrete).
+"""DR-6 turnkey concrete calibration: oracles, unit invariance and guards.
 
-Tests:
-1. 5-unit-system invariance (MPa-mm-N, Pa-m-N, kPa-m-kN, ksi-in-kip, psi-in-lbf)
-   for ceb_fip_Gf, LadrunoConcrete3D.from_fc, LadrunoRCConcrete.from_fc, and l_max().
-2. Dimensionless pi-groups:
-   Pi_t = Gf * Ec / (ft^2 * l_max_t) == 21/20 to < 1e-12
-   Pi_c = Gc * Ec / (fc^2 * l_max_c) == (1 + Hp)/2 to < 1e-12
-3. check_element_size(h_max) pass/raise behavior.
-4. effective_rebar_lch(l_ch, d_b) Grassl 2018 floor.
-5. New flags emission (-symTangent, -cyclicHysteresis, -rebar).
+Covers:
+
+1. fib MC2010 / EN 1992-1-1 values for a C30 concrete (literature oracle).
+2. Hand-derived crack-band snap-back lengths for the fork's two
+   LadrunoConcrete3D tension laws, and for a hand-built RC backbone under
+   the fork's ``regularize`` floor.
+3. Unit invariance across five explicit unit presets (no magnitude
+   inference).
+4. LadrunoConcrete3D always emits ``-Df`` / ``-hardening``, keeps the fork's
+   constructor defaults, and no longer carries flags the pinned fork does
+   not parse.
+5. ``_LadrunoRC.from_fc`` keeps its legacy calibration unless the caller
+   opts into ``calibration="mc2010"``.
+6. The backbone generator refuses a point with damage >= 1.
 """
 from __future__ import annotations
 
-import numpy as np
+import math
+
 import pytest
 
-from apeGmsh._kernel.resolvers._reinforce import resolve_reinforce
-from apeGmsh.opensees.element import effective_rebar_lch
-from apeGmsh.opensees.element._reinforce import effective_rebar_lch as eff_lch_direct
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from apeGmsh.opensees.material import _asdconcrete_laws as laws
 from apeGmsh.opensees.material._asdconcrete_laws import (
+    GC_OVER_GF,
     UNIT_PRESETS,
     ceb_fip_Gf,
     fib_mc2010_concrete_params,
+    rc_regularization_lch_max,
 )
 from apeGmsh.opensees.material.nd import (
     ASDConcrete3D,
@@ -33,434 +39,248 @@ from apeGmsh.opensees.material.nd import (
 PRESETS_5 = ["MPa-mm-N", "Pa-m-N", "kPa-m-kN", "ksi-in-kip", "psi-in-lbf"]
 
 
-def test_effective_rebar_lch_import_parity() -> None:
-    assert effective_rebar_lch is eff_lch_direct
+# ---------------------------------------------------------------------------
+# 1. Literature oracle: C30 (fck = 30 MPa, fcm = 38 MPa)
+# ---------------------------------------------------------------------------
+
+def test_mc2010_c30_matches_published_tables() -> None:
+    p = fib_mc2010_concrete_params(38.0, units="MPa-mm-N")
+    assert p.fck == pytest.approx(30.0)
+    # fib MC2010 Table 5.1-2: C30 fctm = 2.9 MPa.
+    assert p.ft == pytest.approx(2.9, abs=0.01)
+    # fib MC2010 Table 5.1-7: C30 Eci = 33.6 GPa (quartzite aggregate).
+    assert p.E == pytest.approx(33_600.0, rel=2e-3)
+    # fib MC2010 Eq. 5.1-9: GF = 73 * 38^0.18 N/m = 140.5 N/m.
+    assert p.Gf == pytest.approx(0.1405, abs=5e-4)
+    # EN 1992-1-1 Table 3.1: C30/37 eps_c1 = 2.2 per mille.
+    assert p.ec == pytest.approx(2.2e-3, abs=5e-5)
+    # Nakamura & Higai ratio, not a Model Code value.
+    assert p.Gc == pytest.approx(GC_OVER_GF * p.Gf)
+    # CDPM2 (Grassl et al. 2013) calibration.
+    assert (p.Df, p.hardening, p.As) == (0.85, (0.3, 0.01), 15.0)
 
 
-def test_effective_rebar_lch_grassl_floor() -> None:
-    # Coarse mesh (l_ch > 1.5 d_b): keeps l_ch
-    assert effective_rebar_lch(50.0, 20.0) == 50.0
-    # Fine mesh (l_ch < 1.5 d_b): floored at 1.5 * d_b
-    assert effective_rebar_lch(20.0, 20.0) == 30.0
-    # Boundary (l_ch == 1.5 d_b)
-    assert effective_rebar_lch(30.0, 20.0) == 30.0
-
-    with pytest.raises(ValueError, match="l_ch must be > 0"):
-        effective_rebar_lch(0.0, 20.0)
-    with pytest.raises(ValueError, match="l_ch must be > 0"):
-        effective_rebar_lch(-10.0, 20.0)
-    with pytest.raises(ValueError, match="d_b must be > 0"):
-        effective_rebar_lch(50.0, 0.0)
-    with pytest.raises(ValueError, match="d_b must be > 0"):
-        effective_rebar_lch(50.0, -5.0)
+def test_mc2010_aggregate_factor_scales_only_the_modulus() -> None:
+    q = fib_mc2010_concrete_params(38.0)
+    b = fib_mc2010_concrete_params(38.0, aggregate="basalt")
+    assert b.E == pytest.approx(1.2 * q.E)  # MC2010 Table 5.1-6
+    assert (b.ft, b.Gf) == (q.ft, q.Gf)
 
 
-def test_ceb_fip_Gf_unit_invariance() -> None:
-    fc_base_mpa = 30.0
-    gf_ref_n_mm = 0.073 * (fc_base_mpa ** 0.18)
-
-    for u_name in PRESETS_5:
-        s_sig, s_len = UNIT_PRESETS[u_name]
-        s_gf = s_sig * s_len
-        fc_val = fc_base_mpa * s_sig
-
-        gf_val = ceb_fip_Gf(fc_val, units=u_name)
-        gf_in_n_mm = gf_val / s_gf
-        assert abs(gf_in_n_mm - gf_ref_n_mm) < 1.0e-12
-
-        # Dimensionless ratio check: Gf / (ft * l_ch)
-        ft_val = 0.1 * fc_val
-        lch_val = 50.0 * s_len
-        dimless = gf_val / (ft_val * lch_val)
-        ref_dimless = gf_ref_n_mm / ((0.1 * fc_base_mpa) * 50.0)
-        assert abs(dimless - ref_dimless) < 1.0e-14
+def test_eps_c1_is_capped_at_ec2_value() -> None:
+    p = fib_mc2010_concrete_params(98.0)  # C90: EC2 caps eps_c1 at 2.8 per mille
+    assert p.ec == pytest.approx(max(2.8e-3, 1.6 * p.fc / p.E))
 
 
-def test_fib_mc2010_params_invariance() -> None:
-    fc_base_mpa = 30.0
-    ref = fib_mc2010_concrete_params(fc_base_mpa, units="MPa-mm-N")
+# ---------------------------------------------------------------------------
+# 2. Hand-derived snap-back lengths
+# ---------------------------------------------------------------------------
 
-    for u_name in PRESETS_5:
-        s_sig, s_len = UNIT_PRESETS[u_name]
-        s_gf = s_sig * s_len
-        cur = fib_mc2010_concrete_params(fc_base_mpa * s_sig, units=u_name)
-
-        assert abs(cur.E / s_sig - ref.E) < 1.0e-11
-        assert abs(cur.ft / s_sig - ref.ft) < 1.0e-11
-        assert abs(cur.Gf / s_gf - ref.Gf) < 1.0e-12
-        assert abs(cur.Gc / s_gf - ref.Gc) < 1.0e-11
-        assert abs(cur.ec - ref.ec) < 1.0e-15
-        assert abs(cur.e - ref.e) < 1.0e-15
-        assert cur.Df == ref.Df
-        assert cur.hardening == ref.hardening
-
-        # Snap-back lengths scaled to mm
-        assert abs(cur.l_max_t / s_len - ref.l_max_t) < 1.0e-11
-        assert abs(cur.l_max_c / s_len - ref.l_max_c) < 1.0e-11
-
-        # Dimensionless Pi-groups: exact analytical constants
-        pi_t = cur.Gf * cur.E / ((cur.ft ** 2) * cur.l_max_t)
-        hp = cur.hardening[1]
-        pi_c = cur.Gc * cur.E / ((cur.fc ** 2) * cur.l_max_c)
-
-        assert abs(pi_t - 21.0 / 20.0) < 1.0e-12
-        assert abs(pi_c - (1.0 + hp) / 2.0) < 1.0e-12
+def _h_max_from_initial_slope(E: float, slope: float) -> float:
+    # A band of width h snaps back once |d sigma / d w| > E / h.
+    return E / abs(slope)
 
 
-def test_ladruno_concrete3d_from_fc_invariance() -> None:
-    fc_base_mpa = 30.0
-    ref = LadrunoConcrete3D.from_fc(fc_base_mpa, units="MPa-mm-N")
-    ref_l_max_t, ref_l_max_c = ref.l_max()
-
-    for u_name in PRESETS_5:
-        s_sig, s_len = UNIT_PRESETS[u_name]
-        s_gf = s_sig * s_len
-        cur = LadrunoConcrete3D.from_fc(fc_base_mpa * s_sig, units=u_name)
-
-        assert abs(cur.E / s_sig - ref.E) < 1.0e-11
-        assert abs(cur.ft / s_sig - ref.ft) < 1.0e-11
-        assert abs(cur.Gf / s_gf - ref.Gf) < 1.0e-12
-        assert abs((cur.Gc or 0.0) / s_gf - (ref.Gc or 0.0)) < 1.0e-11
-        assert cur.Df == 0.85
-        assert cur.hardening == (0.3, 0.01)
-
-        l_max_t, l_max_c = cur.l_max()
-        assert abs(l_max_t / s_len - ref_l_max_t) < 1.0e-11
-        assert abs(l_max_c / s_len - ref_l_max_c) < 1.0e-11
-
-        # Pi-groups
-        pi_t = cur.Gf * cur.E / ((cur.ft ** 2) * l_max_t)
-        hp = float(cur.hardening[1])
-        gc = cur.Gc if cur.Gc is not None else 150.0 * cur.Gf
-        pi_c = gc * cur.E / ((cur.fc ** 2) * l_max_c)
-
-        assert abs(pi_t - 21.0 / 20.0) < 1.0e-12
-        assert abs(pi_c - (1.0 + hp) / 2.0) < 1.0e-12
+def test_exponential_law_snapback_length_is_E_Gf_over_ft2() -> None:
+    m = LadrunoConcrete3D(E=30_000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.12,
+                          Gc=30.0, tension_law="exp")
+    # sigma(w) = ft exp(-w ft / Gf)  (LadrunoConcrete3DKernel.h, law 0)
+    dw = 1e-9
+    slope = (3.0 * math.exp(-dw * 3.0 / 0.12) - 3.0) / dw
+    h = _h_max_from_initial_slope(30_000.0, slope)
+    assert h == pytest.approx(30_000.0 * 0.12 / 9.0, rel=1e-6)  # = 400 mm
+    l_t, _ = m.l_max()
+    assert l_t == pytest.approx(h, rel=1e-6)
+    assert l_t == pytest.approx(400.0, rel=1e-6)
 
 
-def test_ladruno_rc_concrete_from_fc_invariance() -> None:
-    fc_base_mpa = 30.0
-    ref = LadrunoRCConcrete.from_fc(fc_base_mpa, units="MPa-mm-N")
-    ref_l_max_t, ref_l_max_c = ref.l_max()
+@pytest.mark.parametrize("law", ["bilinear", None])
+def test_bilinear_law_snapback_length(law: str | None) -> None:
+    m = LadrunoConcrete3D(E=30_000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.12,
+                          Gc=30.0, tension_law=law)
+    # CDPM2 bilinear: ft -> 0.3 ft at w1 = 0.15 wf, wf = Gf / (0.225 ft).
+    wf = 0.12 / (0.225 * 3.0)
+    slope = (3.0 - 0.3 * 3.0) / (0.15 * wf)
+    h = _h_max_from_initial_slope(30_000.0, slope)
+    l_t, _ = m.l_max()
+    assert l_t == pytest.approx(h, rel=1e-12)
+    assert l_t == pytest.approx(400.0 * 20.0 / 21.0, rel=1e-12)
 
-    for u_name in PRESETS_5:
-        s_sig, s_len = UNIT_PRESETS[u_name]
-        s_gf = s_sig * s_len
-        cur = LadrunoRCConcrete.from_fc(fc_base_mpa * s_sig, units=u_name)
 
-        assert abs(cur.E / s_sig - ref.E) < 1.0e-11
-        assert abs(cur.nu - ref.nu) < 1.0e-15
-        assert cur.ft is not None and ref.ft is not None
-        assert abs(cur.ft / s_sig - ref.ft) < 1.0e-11
-        assert cur.Gf is not None and ref.Gf is not None
-        assert abs(cur.Gf / s_gf - ref.Gf) < 1.0e-12
-        assert cur.Gc is not None and ref.Gc is not None
-        assert abs(cur.Gc / s_gf - ref.Gc) < 1.0e-11
-        assert cur.fc is not None and ref.fc is not None
+def test_c30_from_fc_snapback_length() -> None:
+    m = LadrunoConcrete3D.from_fc(38.0)
+    l_t, l_c = m.l_max()
+    # (20/21) * 33550.6 * 0.140502 / 2.89647^2, by hand.
+    assert l_t == pytest.approx(535.13, abs=0.05)
+    assert l_c == pytest.approx(
+        2.0 * m.E * m.Gc / (m.fc ** 2 * 1.01), rel=1e-12)  # type: ignore[operator]
 
-        l_max_t, l_max_c = cur.l_max()
-        assert abs(l_max_t / s_len - ref_l_max_t) < 1.0e-11
-        assert abs(l_max_c / s_len - ref_l_max_c) < 1.0e-11
 
-        # Pi-groups (LadrunoRCConcrete default tension_law="exp" uses factor 2.0 -> Pi_t = 1/2)
-        pi_t = cur.Gf * cur.E / ((cur.ft ** 2) * l_max_t)
-        hp = 0.01
-        pi_c = cur.Gc * cur.E / ((cur.fc ** 2) * l_max_c)
+def test_rc_regularization_floor_hand_table() -> None:
+    # E = 3e4, peak (1e-4, 3), linear softening to zero at 1e-3, no damage.
+    # g0 = 3^2 / (2 E) + (1e-3 - 1e-4) * 3 / 2 = 1.5e-3
+    # gmin = 1.01 * 3 * 1e-4 / 2 = 1.515e-4  ->  l_max = lref * 9.90099
+    x, y = (0.0, 1e-4, 1e-3), (0.0, 3.0, 0.0)
+    got = rc_regularization_lch_max(x, y, (), 3.0e4, 50.0)
+    assert got == pytest.approx(50.0 * 1.5e-3 / 1.515e-4, rel=1e-12)
+    assert rc_regularization_lch_max((0.0, 1e-4), (0.0, 3.0), (), 3e4, 50.0) \
+        == math.inf
 
-        assert abs(pi_t - 0.5) < 1.0e-12
-        assert abs(pi_c - (1.0 + hp) / 2.0) < 1.0e-12
+
+def test_rc_l_max_reads_the_emitted_tables() -> None:
+    rc = LadrunoRCConcrete(
+        E=3.0e4, nu=0.2,
+        Te=(0.0, 1e-4, 1e-3), Ts=(0.0, 3.0, 0.0),
+        Ce=(0.0, 1e-3, 1e-2), Cs=(0.0, 30.0, 0.0),
+        auto_regularization=50.0,
+    )
+    l_t, l_c = rc.l_max()
+    assert l_t == pytest.approx(50.0 * 1.5e-3 / 1.515e-4, rel=1e-12)
+    g0_c = 30.0 ** 2 / (2 * 3e4) + 9e-3 * 30.0 / 2
+    assert l_c == pytest.approx(50.0 * g0_c / (1.01 * 30.0 * 1e-3 / 2), rel=1e-12)
+    with pytest.raises(ValueError, match="needs auto_regularization"):
+        LadrunoRCConcrete(E=3e4, nu=0.2, Te=rc.Te, Ts=rc.Ts,
+                          Ce=rc.Ce, Cs=rc.Cs).l_max()
 
 
 def test_check_element_size_pass_and_raise() -> None:
-    conc = LadrunoConcrete3D.from_fc(30.0)
-    l_max_t, l_max_c = conc.l_max()
-    l_ceil = min(l_max_t, l_max_c)
-
-    # Within bounds: passes without error
-    conc.check_element_size(0.99 * l_ceil)
-    conc.check_element_size(l_ceil)
-
-    # Exceeding bounds: raises ValueError
-    with pytest.raises(ValueError, match="exceeds snap-back ceiling"):
-        conc.check_element_size(1.01 * l_ceil)
-
-    # Exceeding bounds with pg: message includes PG
+    conc = LadrunoConcrete3D.from_fc(38.0)
+    ceil = min(conc.l_max())
+    conc.check_element_size(ceil)
     with pytest.raises(ValueError, match=r"exceeds snap-back ceiling.*\(PG 'Core'\)"):
-        conc.check_element_size(1.01 * l_ceil, pg="Core")
-
+        conc.check_element_size(1.01 * ceil, pg="Core")
     with pytest.raises(ValueError, match="h_max must be > 0"):
         conc.check_element_size(-5.0)
 
-    # RC concrete
-    rc = LadrunoRCConcrete.from_fc(30.0)
-    rc_t, rc_c = rc.l_max()
-    rc_ceil = min(rc_t, rc_c)
 
-    rc.check_element_size(0.95 * rc_ceil)
-    with pytest.raises(ValueError, match="exceeds snap-back ceiling"):
-        rc.check_element_size(1.05 * rc_ceil)
+# ---------------------------------------------------------------------------
+# 3. Explicit units, no magnitude inference
+# ---------------------------------------------------------------------------
 
-    with pytest.raises(ValueError, match=r"exceeds snap-back ceiling.*\(PG 'Shell'\)"):
-        rc.check_element_size(1.05 * rc_ceil, pg="Shell")
+def test_ceb_fip_Gf_unit_invariance() -> None:
+    ref = 0.073 * 30.0 ** 0.18
+    for u in PRESETS_5:
+        s_sig, s_len = UNIT_PRESETS[u]
+        assert ceb_fip_Gf(30.0 * s_sig, units=u) / (s_sig * s_len) \
+            == pytest.approx(ref, rel=1e-12)
 
 
-def test_ladruno_concrete3d_flags_emission() -> None:
-    # Default emission omits -symTangent and -cyclicHysteresis
-    conc_def = LadrunoConcrete3D.from_fc(30.0)
-    rec_def = RecordingEmitter()
-    conc_def._emit(rec_def, tag=10)
-    args_def = rec_def.calls[0][1]
-    assert "-symTangent" not in args_def
-    assert "-cyclicHysteresis" not in args_def
-    assert "-Df" not in args_def
-    assert "-hardening" not in args_def
+def test_default_units_never_switch_on_magnitude() -> None:
+    # The historical rule, unchanged: fc is read in MPa whatever its size.
+    assert ceb_fip_Gf(30.0e6) == pytest.approx(0.073 * (30.0e6) ** 0.18)
+    # A psi user passing fc=4000 must declare it.
+    p = fib_mc2010_concrete_params(4000.0, units="psi-in-lbf")
+    assert p.fc == pytest.approx(4000.0)
+    assert p.fcm / UNIT_PRESETS["psi-in-lbf"][0] == pytest.approx(27.579, abs=1e-3)
+    with pytest.raises(ValueError, match="unknown units"):
+        fib_mc2010_concrete_params(30.0, units="MPa-cm")
 
-    # Explicit opt-in emits the flags
+
+def test_asdconcrete3d_from_fc_default_is_unchanged() -> None:
+    m = ASDConcrete3D.from_fc(E=30e9, v=0.2, fc=30e6)
+    assert m.Gf == pytest.approx(0.073 * (30e6) ** 0.18)
+
+
+@pytest.mark.parametrize("u", PRESETS_5)
+def test_turnkey_unit_invariance(u: str) -> None:
+    s_sig, s_len = UNIT_PRESETS[u]
+    ref3 = LadrunoConcrete3D.from_fc(38.0)
+    cur3 = LadrunoConcrete3D.from_fc(38.0 * s_sig, units=u)
+    assert cur3.E / s_sig == pytest.approx(ref3.E, rel=1e-12)
+    assert cur3.Gf / (s_sig * s_len) == pytest.approx(ref3.Gf, rel=1e-12)
+    for a, b in zip(cur3.l_max(), ref3.l_max()):
+        assert a / s_len == pytest.approx(b, rel=1e-12)
+
+    refrc = LadrunoRCConcrete.from_fc(38.0, calibration="mc2010")
+    currc = LadrunoRCConcrete.from_fc(38.0 * s_sig, calibration="mc2010", units=u)
+    for a, b in zip(currc.l_max(), refrc.l_max()):
+        assert a / s_len == pytest.approx(b, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# 4. LadrunoConcrete3D deck contract
+# ---------------------------------------------------------------------------
+
+def _args(m: LadrunoConcrete3D) -> tuple[object, ...]:
     rec = RecordingEmitter()
-    conc = LadrunoConcrete3D.from_fc(
-        30.0,
-        sym_tangent=True,
-        cyclic_hysteresis=True,
-    )
-    conc._emit(rec, tag=1)
-    args = rec.calls[0][1]
-
-    assert "-symTangent" in args
-    assert "-cyclicHysteresis" in args
-    # Defaults 0.85 and (0.3, 0.01) match C++ defaults and are omitted from emit
-    assert "-Df" not in args
-    assert "-hardening" not in args
-
-    # Non-defaults are emitted
-    rec2 = RecordingEmitter()
-    conc2 = LadrunoConcrete3D.from_fc(
-        30.0,
-        Df=0.95,
-        hardening=(0.4, 0.02),
-    )
-    conc2._emit(rec2, tag=2)
-    args2 = rec2.calls[0][1]
-    assert "-Df" in args2 and 0.95 in args2
-    assert "-hardening" in args2 and (0.4, 0.02) == (
-        args2[args2.index("-hardening") + 1],
-        args2[args2.index("-hardening") + 2],
-    )
+    m._emit(rec, tag=1)
+    return tuple(rec.calls[0][1])
 
 
-def test_ladruno_rc_concrete_rebar_emission() -> None:
-    # Default emission omits -rebar
-    rc_def = LadrunoRCConcrete.from_fc(30.0)
-    rec_def = RecordingEmitter()
-    rc_def._emit(rec_def, tag=20)
-    args_def = rec_def.calls[0][1]
-    assert "-rebar" not in args_def
-
-    # Explicit rebar layers are emitted
-    rec = RecordingEmitter()
-    rc = LadrunoRCConcrete.from_fc(
-        30.0,
-        rebar=[(0.012, 0.0, 420.0, 200000.0), (0.008, 90.0, 420.0, 200000.0)],
-    )
-    rc._emit(rec, tag=2)
-    args = list(rec.calls[0][1])
-
-    assert args.count("-rebar") == 2
-    idx1 = args.index("-rebar")
-    assert args[idx1:idx1 + 5] == ["-rebar", 0.012, 0.0, 420.0, 200000.0]
+def test_raw_defaults_are_the_fork_defaults_and_always_emitted() -> None:
+    # Fork pin, LadrunoConcrete3D.cpp: Df = 1.0, qh0 = 0.3, Hp = 0.5.
+    m = LadrunoConcrete3D(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.13, Gc=32.5)
+    assert (m.Df, m.hardening) == (1.0, (0.3, 0.5))
+    a = _args(m)
+    assert a[8:] == ("-Df", 1.0, "-hardening", 0.3, 0.5)
 
 
-def test_ec_epsc0_attributes_and_overrides() -> None:
-    # LadrunoConcrete3D ec and epsc0 alias
-    conc = LadrunoConcrete3D.from_fc(30.0)
-    assert conc.ec is not None and conc.ec > 0.0
-    assert conc.epsc0 == conc.ec
-
-    # Override ec in from_fc kwargs
-    conc_over = LadrunoConcrete3D.from_fc(30.0, ec=0.0025)
-    assert conc_over.ec == 0.0025
-    assert conc_over.epsc0 == 0.0025
-    assert conc_over.ductility[1] == pytest.approx(0.0025 - 30.0 / conc_over.E)
-
-    # LadrunoRCConcrete epsc0 and ec alias
-    rc = LadrunoRCConcrete.from_fc(30.0)
-    assert rc.epsc0 is not None and rc.epsc0 > 0.0
-    assert rc.ec == rc.epsc0
-
-    rc_over = LadrunoRCConcrete.from_fc(30.0, ec=0.0028)
-    assert rc_over.epsc0 == 0.0028
-    assert rc_over.ec == 0.0028
+def test_from_fc_emits_the_cdpm2_values_it_reports() -> None:
+    m = LadrunoConcrete3D.from_fc(38.0)
+    a = _args(m)
+    i, j = a.index("-Df"), a.index("-hardening")
+    assert a[i:i + 2] == ("-Df", 0.85)
+    assert a[j:j + 3] == ("-hardening", 0.3, 0.01)
+    assert a[a.index("-As") + 1] == 15.0
+    assert "-flowPotential" not in a  # the pinned fork does not parse it
 
 
-def test_rebar_kwargs_normalization() -> None:
-    # Passed via kwargs as nested lists
-    rc = LadrunoRCConcrete.from_fc(
-        30.0,
-        rebar=[[0.015, 0.0, 400.0, 200000.0]],
-    )
-    assert rc.rebar == ((0.015, 0.0, 400.0, 200000.0),)
+def test_gc_none_emits_the_from_fc_ratio() -> None:
+    m = LadrunoConcrete3D(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.13)
+    assert _args(m)[7] == pytest.approx(GC_OVER_GF * 0.13)
 
 
-def test_ceb_fip_Gf_legacy_pa_autodetect() -> None:
-    # 30 MPa in Pa (30e6) without units specified
-    gf_auto = ceb_fip_Gf(30.0e6)
-    gf_explicit = ceb_fip_Gf(30.0e6, units="Pa-m-N")
-    assert abs(gf_auto - gf_explicit) < 1.0e-12
-    assert abs(gf_auto - 134.6) < 0.1
+def test_flags_the_pinned_fork_does_not_parse_are_gone() -> None:
+    base = dict(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.13, Gc=32.5)
+    for flag in ("sym_tangent", "cyclic_hysteresis"):
+        with pytest.raises(TypeError, match=flag):
+            LadrunoConcrete3D(**base, **{flag: True})  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="rebar"):
+        LadrunoRCConcrete.from_fc(
+            38.0, calibration="mc2010", rebar=[(0.01, 0.0, 420.0, 2e5)])
+    with pytest.raises(ValueError, match="2-tuple"):
+        LadrunoConcrete3D(**base, hardening=(0.3, 0.5, 1.0, 2.0))  # type: ignore[arg-type]
 
 
-def test_ceb_fip_Gf_and_params_2token_alias_pa_autodetect() -> None:
-    # 30 MPa in Pa (30e6) with units="MPa-mm" alias
-    gf_alias = ceb_fip_Gf(30.0e6, units="MPa-mm")
-    gf_explicit = ceb_fip_Gf(30.0e6, units="Pa-m-N")
-    assert abs(gf_alias - gf_explicit) < 1.0e-12
-    assert abs(gf_alias - 134.6) < 0.1
+# ---------------------------------------------------------------------------
+# 5. _LadrunoRC.from_fc back-compat
+# ---------------------------------------------------------------------------
 
-    params_alias = fib_mc2010_concrete_params(30.0e6, units="MPa-mm")
-    params_explicit = fib_mc2010_concrete_params(30.0e6, units="Pa-m-N")
-    assert abs(params_alias.E - params_explicit.E) < 1.0e-9
-    assert abs(params_alias.Gf - params_explicit.Gf) < 1.0e-12
-
-
-def test_ladruno_concrete3d_raw_instantiation_defaults_match_cpp() -> None:
-    # Raw dataclass instantiation matches C++ defaults (Df=0.85, hardening=(0.3, 0.01))
-    conc = LadrunoConcrete3D(
-        E=30000.0,
-        nu=0.2,
-        fc=30.0,
-        ft=3.0,
-        Gf=0.13,
-        Gc=32.5,
-    )
-    assert conc.Df == 0.85
-    assert conc.hardening == (0.3, 0.01)
-
-    # l_max_c uses hp = 0.01 (matching C++ Hp = 0.01)
-    # l_max_c = 2 * E * Gc / (fc^2 * (1 + 0.01))
-    expected_l_max_c = 2.0 * 30000.0 * 32.5 / (30.0 ** 2 * 1.01)
-    _, l_max_c = conc.l_max()
-    assert abs(l_max_c - expected_l_max_c) < 1.0e-11
-
-    # Minimal emission omits default Df and hardening
-    rec = RecordingEmitter()
-    conc._emit(rec, tag=1)
-    args = rec.calls[0][1]
-    assert "-Df" not in args
-    assert "-hardening" not in args
+def test_rc_from_fc_legacy_is_the_historical_rule() -> None:
+    E, fc = 30000.0, 30.0
+    m = LadrunoRCConcrete.from_fc(E=E, nu=0.2, fc=fc)
+    ft = 0.1 * fc
+    Gf = 0.073 * fc ** 0.18
+    Gc = laws.ceb_fip_Gc(fc, ft, Gf)
+    lch = laws.auto_lch_ref(E, fc, ft, Gf, Gc)
+    Te, Ts, Td = laws.make_tension(E, ft, Gf, lch)
+    Ce, Cs, Cd = laws.make_compression(E, fc, Gc, lch)
+    assert (m.Te, m.Ts, m.Td) == (tuple(Te), tuple(Ts), tuple(Td))
+    assert (m.Ce, m.Cs, m.Cd) == (tuple(Ce), tuple(Cs), tuple(Cd))
+    assert m.auto_regularization == lch
+    assert (m.ft, m.Gf, m.Gc, m.epsc0) == (ft, Gf, Gc, None)
 
 
-def test_tension_law_sensitivity_l_max() -> None:
-    # LadrunoConcrete3D: bilinear -> 20/21, exp/linear -> 2.0
-    conc_bilin = LadrunoConcrete3D.from_fc(30.0, tension_law="bilinear")
-    l_t_bilin, _ = conc_bilin.l_max()
-    pi_t_bilin = conc_bilin.Gf * conc_bilin.E / ((conc_bilin.ft ** 2) * l_t_bilin)
-    assert abs(pi_t_bilin - 21.0 / 20.0) < 1.0e-12
-
-    conc_exp = LadrunoConcrete3D.from_fc(30.0, tension_law="exp")
-    l_t_exp, _ = conc_exp.l_max()
-    pi_t_exp = conc_exp.Gf * conc_exp.E / ((conc_exp.ft ** 2) * l_t_exp)
-    assert abs(pi_t_exp - 0.5) < 1.0e-12
-    assert abs(l_t_exp / l_t_bilin - 2.0 / (20.0 / 21.0)) < 1.0e-12
-
-    # LadrunoRCConcrete: default ("exp") -> 2.0, bilinear -> 20/21
-    rc_exp = LadrunoRCConcrete.from_fc(30.0, tension_law="exp")
-    rc_l_t_exp, _ = rc_exp.l_max()
-    assert abs(rc_exp.Gf * rc_exp.E / ((rc_exp.ft ** 2) * rc_l_t_exp) - 0.5) < 1.0e-12
-
-    rc_bilin = LadrunoRCConcrete.from_fc(30.0, tension_law="bilinear")
-    rc_l_t_bilin, _ = rc_bilin.l_max()
-    assert abs(rc_bilin.Gf * rc_bilin.E / ((rc_bilin.ft ** 2) * rc_l_t_bilin) - 21.0 / 20.0) < 1.0e-12
+def test_rc_from_fc_legacy_needs_E_and_nu() -> None:
+    with pytest.raises(ValueError, match="calibration='mc2010'"):
+        LadrunoRCConcrete.from_fc(30.0)
+    with pytest.raises(ValueError, match="calibration must be"):
+        LadrunoRCConcrete.from_fc(30.0, E=3e4, nu=0.2, calibration="aci")
 
 
-def test_asdconcrete3d_from_fc_units() -> None:
-    # In MPa-mm-N: fc = 30.0 MPa
-    c_mpa = ASDConcrete3D.from_fc(
-        E=30000.0, v=0.2, fc=30.0, units="MPa-mm-N"
-    )
-    # In kPa-m-kN: fc = 30000.0 kPa (30 MPa), E = 30,000,000 kPa
-    c_kpa = ASDConcrete3D.from_fc(
-        E=30000.0 * 1000.0, v=0.2, fc=30000.0, units="kPa-m-kN"
-    )
-    # 1 N/mm == 1 kN/m, so Gf values should match across units
-    assert abs(c_kpa.Gf - c_mpa.Gf) < 1.0e-12
+def test_rc_from_fc_mc2010_opt_in() -> None:
+    m = LadrunoRCConcrete.from_fc(38.0, calibration="mc2010")
+    p = fib_mc2010_concrete_params(38.0)
+    assert (m.E, m.nu, m.ft, m.Gf, m.Gc, m.epsc0) == (
+        p.E, p.nu, p.ft, p.Gf, p.Gc, p.ec)
+    assert LadrunoRCConcrete.from_fc(
+        38.0, calibration="mc2010", ec=0.0028).ec == 0.0028
 
 
-def test_resolve_reinforce_invokes_effective_rebar_lch() -> None:
-    hex_ids = [1, 2, 3, 4, 5, 6, 7, 8]
-    # Small 10 mm cube (nominal l_ch = 10.0)
-    hex_xyz = np.array([
-        [0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0],
-        [0, 0, 10], [10, 0, 10], [10, 10, 10], [0, 10, 10],
-    ], dtype=float)
-    bar_ids = [10, 11]
-    bar_xyz = np.array([[2, 5, 5], [8, 5, 5]], dtype=float)
-    bar_seg = [(10, 11)]
+# ---------------------------------------------------------------------------
+# 6. Damage >= 1 is refused, not clamped
+# ---------------------------------------------------------------------------
 
-    # Case 1: Fine mesh (h = 10.0 mm < 1.5 * d_b = 30.0 mm for d_b = 20.0 mm)
-    recs = resolve_reinforce(
-        bar_node_ids=bar_ids,
-        bar_node_coords=bar_xyz,
-        bar_segments=bar_seg,
-        host_node_ids=[hex_ids],
-        host_node_coords=[hex_xyz],
-        host_kinds=["hex8"],
-        perfect=1.0e8,
-        diameter=20.0,
-    )
-    assert len(recs) == 2
-    for r in recs:
-        assert r.effective_lch == pytest.approx(30.0)
-        assert r.lch_eff == pytest.approx(30.0)
-
-    # Case 2: Coarse mesh (h = 100.0 mm > 1.5 * d_b = 30.0 mm)
-    recs_coarse = resolve_reinforce(
-        bar_node_ids=bar_ids,
-        bar_node_coords=bar_xyz,
-        bar_segments=bar_seg,
-        host_node_ids=[hex_ids],
-        host_node_coords=[hex_xyz * 10.0],
-        host_kinds=["hex8"],
-        perfect=1.0e8,
-        diameter=20.0,
-    )
-    for r in recs_coarse:
-        assert r.effective_lch == pytest.approx(100.0)
-        assert r.lch_eff == pytest.approx(100.0)
-
-
-def test_ns_wrappers_units_and_ladruno_flags() -> None:
-    from unittest.mock import MagicMock
-    from apeGmsh.opensees.apesees import apeSees
-
-    ops = apeSees(MagicMock(name="FEMData"))
-    # Test ops.nDMaterial.ASDConcrete3D with units
-    mat_3d = ops.nDMaterial.ASDConcrete3D(
-        E=30000.0, v=0.2, fc=30.0, units="MPa-mm-N", name="c3d"
-    )
-    assert mat_3d is not None
-
-    # Test ops.uniaxialMaterial.ASDConcrete1D with units
-    mat_1d = ops.uniaxialMaterial.ASDConcrete1D(
-        E=30000.0, fc=30.0, units="MPa-mm-N", name="c1d"
-    )
-    assert mat_1d is not None
-
-    # Test ops.nDMaterial.LadrunoConcrete3D with sym_tangent, cyclic_hysteresis, ec
-    mat_l3d = ops.nDMaterial.LadrunoConcrete3D(
-        E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.13, Gc=32.5,
-        sym_tangent=True, cyclic_hysteresis=True, ec=0.0025, name="l3d"
-    )
-    assert mat_l3d.sym_tangent is True
-    assert mat_l3d.cyclic_hysteresis is True
-    assert mat_l3d.ec == 0.0025
-
-
-def test_ladruno_rc_tension_law_validation() -> None:
-    # Valid tension laws
-    for law in ("exp", "linear", "bilinear", "vc1986", None):
-        rc = LadrunoRCConcrete.from_fc(30.0, tension_law=law)
-        assert rc.tension_law == law
-
-    # Invalid tension law raises ValueError
-    with pytest.raises(ValueError, match="tension_law must be one of"):
-        LadrunoRCConcrete.from_fc(30.0, tension_law="quadratic")
-
+def test_backbone_refuses_full_damage() -> None:
+    with pytest.raises(ValueError, match="reaches damage"):
+        laws.make_compression(30000.0, 30.0, 50.0, 100.0, fcr=0.0)

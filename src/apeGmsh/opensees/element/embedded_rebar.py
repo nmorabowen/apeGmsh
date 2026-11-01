@@ -39,10 +39,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ._reinforce import effective_rebar_lch
 
-
-__all__ = ["embedded_rebar_args", "effective_rebar_lch"]
+__all__ = ["embedded_rebar_args"]
 
 # OpenSees command token + live class tag (SRC/classTags.h, ladruno
 # private >=33000 band — the dead pre-300 value is gone, do not hardcode it).

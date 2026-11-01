@@ -1107,10 +1107,10 @@ class _NDMaterialNS(_BridgeNamespace):
         Gc: float,
         e: float | None = None,
         kupfer: float = 1.16,
-        Df: float = 0.85,
+        Df: float = 1.0,
         As: float = 2.0,
         rho: float = 0.0,
-        hardening: tuple[float, float] = (0.3, 0.01),
+        hardening: tuple[float, float] = (0.3, 0.5),
         ductility: tuple[float, float, float, float] = (
             0.08, 0.003, 2.0, 1.0e-6),
         lch: float = 1.0,
@@ -1124,8 +1124,6 @@ class _NDMaterialNS(_BridgeNamespace):
         eps_fc: float | None = None,
         gc_legacy: bool = False,
         flow_potential: str | None = None,
-        sym_tangent: bool = False,
-        cyclic_hysteresis: bool = False,
         ec: float | None = None,
         name: str | None = None,
     ) -> LadrunoConcrete3D:
@@ -1148,8 +1146,7 @@ class _NDMaterialNS(_BridgeNamespace):
                 lch=lch, auto_regularize=auto_regularize, implex=implex,
                 eta=eta, ct_temper=ct_temper, hoop_k=hoop_k, hoop_fy=hoop_fy,
                 tension_law=tension_law, eps_fc=eps_fc, gc_legacy=gc_legacy,
-                flow_potential=flow_potential, sym_tangent=sym_tangent,
-                cyclic_hysteresis=cyclic_hysteresis, ec=ec,
+                flow_potential=flow_potential, ec=ec,
             ),
             name=name,
         )
