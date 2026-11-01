@@ -53,13 +53,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/probe"
           cat > "$RUNNER_TEMP/probe/run.sh" <<'SH'
           #!/usr/bin/env bash
-          # usage: run.sh <name> <ELECTRON_EXTRA_LAUNCH_ARGS value> [xvfb-run args...]
+          # usage: run.sh <name> <VAR=value ...> [xvfb-run args...]
           name="$1"; extra="$2"; shift 2
           out="$RUNNER_TEMP/probe/$name/out.png"
           mkdir -p "$(dirname "$out")"
           cd "$GITHUB_WORKSPACE/apeGmshViewer"
           set +e
-          ELECTRON_EXTRA_LAUNCH_ARGS="$extra" timeout 300 \
+          env $extra timeout 300 \
             xvfb-run -a "$@" npm run capture -- fixtures/shoebuckle.h5 "$out" \
             > "$RUNNER_TEMP/probe/$name.log" 2>&1
           code=$?
@@ -74,7 +74,7 @@ jobs:
           fi
           {
             echo "### $name"
-            echo "- flags: ELECTRON_EXTRA_LAUNCH_ARGS='$extra', xvfb-run args: '$*'"
+            echo "- env: '$extra', xvfb-run args: '$*'"
             echo "- exit code: $code"
             echo "- PNG: $size bytes, $distinct distinct pixel values, $verdict"
             echo "- stderr/stdout tail:"
@@ -89,11 +89,17 @@ jobs:
       - name: 'Variant A: plain xvfb-run, no extra flags'
         run: '"$RUNNER_TEMP/probe/run.sh" A-plain ""'
 
-      - name: 'Variant B: --no-sandbox'
-        run: '"$RUNNER_TEMP/probe/run.sh" B-no-sandbox "--no-sandbox"'
+      # ELECTRON_EXTRA_LAUNCH_ARGS is not read by Electron (run 41331371795),
+      # so the sandbox variants use Electron's own env switch, then the
+      # setuid fix its error message asks for. Neither touches app code.
+      - name: 'Variant B: ELECTRON_DISABLE_SANDBOX=1'
+        run: '"$RUNNER_TEMP/probe/run.sh" B-disable-sandbox-env "ELECTRON_DISABLE_SANDBOX=1"'
 
-      - name: 'Variant C: --no-sandbox --disable-gpu --use-gl=swiftshader'
-        run: '"$RUNNER_TEMP/probe/run.sh" C-swiftshader "--no-sandbox --disable-gpu --use-gl=swiftshader"'
+      - name: 'Variant C: chrome-sandbox owned by root, mode 4755'
+        run: |
+          sudo chown root apeGmshViewer/node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 apeGmshViewer/node_modules/electron/dist/chrome-sandbox
+          "$RUNNER_TEMP/probe/run.sh" C-suid-sandbox ""
 
       - name: Upload PNGs and logs
         if: always()
