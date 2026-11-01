@@ -18,8 +18,12 @@ import { THEME_MODES, type ThemeMode } from "../theme/tokens.ts";
 
 export const SPEC_VERSION = "apegmsh-view/1";
 
-/** The named camera views a spec may ask for (ADR 0128 D1); `home` is the app's own and not part of the spec. */
-export const SPEC_CAMERAS = ["iso", "+x", "-x", "+y", "-y", "top", "bottom", "fit", "fit-selection"] as const;
+/**
+ * The named camera views a spec may ask for (ADR 0128 D1). `home` is the
+ * app's own. `fit-selection` is not in v1: a spec cannot make a selection,
+ * so the app would draw the `fit` view under that name (INV-4; review of #2660).
+ */
+export const SPEC_CAMERAS = ["iso", "+x", "-x", "+y", "-y", "top", "bottom", "fit"] as const;
 export type SpecCameraName = (typeof SPEC_CAMERAS)[number];
 
 /** D9: the app panels a `chrome: "app"` shot can leave out of the layout, each by name. */
@@ -188,7 +192,11 @@ function deform(v: unknown, key: string): SpecDeform {
   const o = object(v, key, ["scale", "ghost"]);
   const scale = o["scale"] === undefined ? 1 : finite(o["scale"], `${key}.scale`);
   if (!(scale > 0)) throw new SpecError(`${key}.scale`, `must be positive; got ${scale}`);
-  return { scale, ghost: o["ghost"] === undefined ? false : bool(o["ghost"], `${key}.ghost`) };
+  const ghost = o["ghost"] === undefined ? false : bool(o["ghost"], `${key}.ghost`);
+  // Maintainer ruling on #2651: the reference ghost is a translucent pass that is not
+  // pixel-identical between two frames, so v1 refuses it until it is made deterministic.
+  if (ghost) throw new SpecError(`${key}.ghost`, `is not drawn by ${SPEC_VERSION}: the reference ghost does not draw the same pixels twice, so a still of it is not reproducible`);
+  return { scale, ghost };
 }
 
 function clip(v: unknown, key: string): SpecClip[] {

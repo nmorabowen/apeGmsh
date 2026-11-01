@@ -118,10 +118,10 @@ test("the four ADR 0094 views (mesh, contour, deformed, reactions) compile into 
   s = apply(contour);
   assert.deepEqual(s.phase.at, { kind: "results", stage: 2, step: 3 });
   assert.deepEqual([s.visibility.colourBy, s.contour.field, s.contour.component, s.contour.source, s.contour.range, s.contour.cmap], ["contour", "displacement", "displacement_z", "nodal", "history", "jet"]);
-  // deformed: the deformed shape at scale 10 with the reference ghost, coloured by group.
-  s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10, ghost: true } }), d));
+  // deformed: the deformed shape at scale 10, coloured by group (no reference ghost: spec v1 refuses it).
+  s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10 } }), d));
   assert.deepEqual(s.phase.at, { kind: "results", stage: 1, step: 0 });
-  assert.deepEqual([s.visibility.colourBy, s.deform.on, s.deform.scale, s.deform.ghost], ["group", true, 10, true]);
+  assert.deepEqual([s.visibility.colourBy, s.deform.on, s.deform.scale, s.deform.ghost], ["group", true, 10, false]);
   // reactions: the reaction magnitude, a fixed range, another colormap; the deformed shape is off again (each shot starts from the base view).
   s = apply(plan(shotOf({ stage: "unprop", step: 2, contour: { field: "reaction_force", component: "magnitude", range: { min: 0, max: 50 }, cmap: "viridis" } }), d));
   assert.deepEqual([s.contour.field, s.contour.component, s.contour.range, s.contour.fixed, s.contour.cmap, s.deform.on], ["reaction_force", MAGNITUDE, "fixed", { min: 0, max: 50 }, "viridis", false]);
@@ -131,6 +131,23 @@ test("the four ADR 0094 views (mesh, contour, deformed, reactions) compile into 
   // isolate a group by its path.
   s = apply(plan(shotOf({ isolate: [d.groups[0]!.path] }), d));
   assert.deepEqual(s.visibility.hidden, d.groups.slice(1).map((g) => g.path));
+});
+
+test("reactions: the set records them at the held nodes only (NaN elsewhere); the contour's history range is the closed form over those nodes", async () => {
+  const set = await makeReactionSet(join(tmp, "reactions-range"));
+  assert.equal(set.held.size, 144, "the Col group's nodes, held in x, y and z");
+  const h = await open(set.model, set.results);
+  const shot = shotOf({ stage: "unprop", contour: { field: "reaction_force", component: "magnitude" } });
+  const p = plan(shot, describe(h.store.get()));
+  for (const e of p.events) h.store.dispatch(e);
+  await until(() => h.store.get().contour.scan?.status === "done", "the history scan");
+  const scan = h.store.get().contour.scan!;
+  // Stage 2 (unprop), steps k = 0..3: |R| = 3 (k + 1) sqrt(1 + 4 + 9) (1 + n mod 4), over held nodes n only.
+  const factors = [...set.held].map((n) => 1 + (n % 4));
+  const min = 3 * 1 * Math.sqrt(14) * Math.min(...factors);
+  const max = 3 * 4 * Math.sqrt(14) * Math.max(...factors);
+  assert.ok(Math.abs(scan.min! - min) < 1e-9 * max && Math.abs(scan.max! - max) < 1e-9 * max, `range ${scan.min}..${scan.max}, expected ${min}..${max}`);
+  assert.ok(scan.min! > 0, "no node outside the supports contributes a zero reaction");
 });
 
 test("INV-2/INV-7: one compile per shot; chrome, layers and background change no event and no camera", async () => {

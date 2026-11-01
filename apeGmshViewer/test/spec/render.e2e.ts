@@ -6,26 +6,31 @@
 //   node scripts/build.mjs && node test/spec/render.e2e.ts [<outdir>]
 //
 // It checks, and exits non-zero on the first failure:
-//   1. the four ADR 0094 views (mesh, contour, deformed, reactions) render in
-//      both chromes, each PNG exactly the spec's size; a model still lays out
-//      no panel; an app still with its layers off keeps the viewport's box;
-//   2. the same spec rendered twice gives identical PNGs (the kill criterion:
-//      it stops here when not), but for the translucent reference ghost,
-//      which is held to a bound (TRANSLUCENT below); and each shot's time
-//      (kill criterion ~10 s);
+//   1. the mesh, contour and deformed views of ADR 0094, and a reaction
+//      contour at the supports (ADR 0094's reactions view is a diagram at the
+//      supports, which the app does not draw yet: a parity gap for slice 6),
+//      render in both chromes, each PNG exactly the spec's size; a model still
+//      lays out no panel; an app still with its layers off keeps the
+//      viewport's box;
+//   2. the same spec rendered twice gives identical PNGs, every shot (the
+//      kill criterion: it stops here when not; spec v1 refuses the reference
+//      ghost, which is not), and each shot's time (kill criterion ~10 s);
+//   INV-1: Chromium's profile goes to `<out>/.chromium`, and the app's
+//      folder under APPDATA is unchanged by a render or a describe;
 //   3. INV-7: an app and a model still of one shot have the same camera pose
 //      and the same contour; the scale bar is drawn unless turned off, and
 //      it is the only difference; `transparent` writes PNG alpha;
 //   4. each D2 shot refusal refuses with its reason, the same in both
 //      chromes, and writes no PNG, while the other shots still run (exit 1);
-//      each spec refusal writes render.json and no PNG (exit 2);
+//      each spec refusal writes render.json and no PNG (exit 2), and a
+//      non-empty --out is refused with nothing written (exit 2);
 //   5. a render beside an open view window leaves that window's pixels,
 //      inspector and header as they were (INV-5, ADR 0128 D4).
 // The stills stay in <outdir> (default: a new temporary folder) for review.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -77,6 +82,19 @@ async function render(name: string, spec: object): Promise<{ code: number; ms: n
 
 const pngs = (dir: string) => readdirSync(dir).filter((f) => f.endsWith(".png")).sort();
 
+/** INV-1: every file under the app's APPDATA folder, with its size and time; a run that writes there changes it. */
+const APPDATA_DIR = join(process.env["APPDATA"] ?? "", "apegmsh-viewer");
+function appdataListing(): string[] {
+  if (!process.env["APPDATA"] || !existsSync(APPDATA_DIR)) return [];
+  return (readdirSync(APPDATA_DIR, { recursive: true }) as string[])
+    .map((p) => {
+      const st = statSync(join(APPDATA_DIR, p));
+      return `${p} ${st.isDirectory() ? "dir" : st.size} ${st.mtimeMs}`;
+    })
+    .sort();
+}
+const appdataBefore = appdataListing();
+
 // ---- the sets -----------------------------------------------------------------------
 
 const reactions = await makeReactionSet(join(OUT, "sets", "reactions"));
@@ -101,10 +119,11 @@ const mismatch = copySet(join(OUT, "sets", "mismatch"), "contour_staged.h5", "el
   assert.deepEqual(d.stages.map((s: { name: string }) => s.name), ["base", "erect", "unprop"]);
   assert.ok(d.stages[2].fields.some((f: { name: string }) => f.name === "reaction_force"));
   assert.deepEqual(pngs(out), [], "describe draws nothing");
+  assert.ok(existsSync(join(out, ".chromium")), "INV-1: Chromium's profile is inside --out");
   log(`describe: ok (${Math.round(r.ms)} ms)`);
 }
 
-// ---- 1-3: the four views, twice ----------------------------------------------------------
+// ---- 1-3: the views, twice -----------------------------------------------------------------
 
 const SIZE: [number, number] = [1200, 800];
 const contour = { stage: "unprop", contour: { field: "displacement", component: "z" } };
@@ -112,17 +131,9 @@ const views = [
   { name: "mesh", camera: "iso" },
   { name: "contour", ...contour },
   { name: "deformed", stage: "unprop", deform: { scale: 10 } },
+  // A nodal contour of the reactions, recorded at the held nodes only: not ADR 0094's diagram at the supports.
   { name: "reactions", stage: "unprop", contour: { field: "reaction_force", component: "magnitude" } },
 ];
-/**
- * The reference ghost is a translucent pass (renderer/deform.ts: no depth
- * write, blended), and on the maintainer's machine it is not bit-stable even
- * between two frames of one run, like main's selection halo (#2657): the two
- * runs are compared with a bound for these shots, and must be identical for
- * every other shot.
- */
-const TRANSLUCENT = new Set(["deformed.ghost", "deformed.ghost.model"]);
-const GHOST_BOUND = { pixels: 0.001, channel: 16 };
 const viewSpec = {
   spec: "apegmsh-view/1",
   files: { model: reactions.model },
@@ -135,8 +146,6 @@ const viewSpec = {
     { ...contour, name: "contour.model-transparent", chrome: "model", background: "transparent" },
     { ...contour, name: "contour.model-captioned", chrome: "model", caption: "Vertical displacement, stage unprop, last step.", layers: { caption: true, banner: true } },
     { ...contour, name: "contour.clip.model", chrome: "model", clip: [{ normal: "y", offset: 0.5 }], isolate: ["mesh/physical_group/Col", "mesh/physical_group/Top"] },
-    { name: "deformed.ghost", stage: "unprop", deform: { scale: 10, ghost: true } },
-    { name: "deformed.ghost.model", chrome: "model", stage: "unprop", deform: { scale: 10, ghost: true } },
   ],
 };
 const A = await render("views-a", viewSpec);
@@ -153,23 +162,14 @@ for (const s of A.shots) {
   const pb = readPng(readFileSync(join(B.dir, `${s.name}.png`)));
   assert.deepEqual([pa.width, pa.height], SIZE, `${s.name} is exactly the spec's size`);
   const d = rgbDiff(pa, pb);
-  let same = "identical twice";
-  if (TRANSLUCENT.has(s.name)) {
-    let channel = 0;
-    for (let i = 0; i < pa.rgba.length; i++) if ((i & 3) !== 3) channel = Math.max(channel, Math.abs(pa.rgba[i]! - pb.rgba[i]!));
-    if (d.count > GHOST_BOUND.pixels * pa.width * pa.height || channel > GHOST_BOUND.channel) {
-      throw new Error(`KILL: ${s.name} (translucent ghost) differs beyond its bound: ${d.count} pixels, channel ${channel}`);
-    }
-    same = `translucent ghost: ${d.count} pixels differ by at most ${channel} levels`;
-  } else if (d.count) {
-    // Kill criterion (#2651): the same spec must give the same pixels on one machine.
-    throw new Error(`KILL: ${s.name} differs between two runs of one spec in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
-  }
+  // Kill criterion (#2651): the same spec must give the same pixels on one machine, every shot.
+  if (d.count) throw new Error(`KILL: ${s.name} differs between two runs of one spec in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
   if (s.chrome === "model") assert.deepEqual(s.layout!.panels, [], `${s.name}: a model still lays out no panel (DOM check)`);
   worst = Math.max(worst, s.ms);
-  log(`  ${s.name}: ${pa.width}x${pa.height}, ${same}, ${Math.round(s.ms)} ms`);
+  log(`  ${s.name}: ${pa.width}x${pa.height}, identical twice, ${Math.round(s.ms)} ms`);
 }
-log(`views: ${A.shots.length} stills, pixel-identical over two runs but the translucent ghost; run ${Math.round(A.ms)} / ${Math.round(B.ms)} ms; slowest shot ${Math.round(worst)} ms`);
+for (const R of [A, B]) assert.ok(existsSync(join(R.dir, ".chromium")), "INV-1: Chromium's profile is inside --out");
+log(`views: ${A.shots.length} stills, pixel-identical over two runs; run ${Math.round(A.ms)} / ${Math.round(B.ms)} ms; slowest shot ${Math.round(worst)} ms`);
 if (worst > 10000) throw new Error(`KILL: a shot took ${Math.round(worst)} ms (> ~10 s)`);
 
 // D9: app layers off leave the viewport's box alone and leave only what no layer names.
@@ -244,13 +244,34 @@ for (const [name, spec, key] of [
   ["spec-version", { spec: "apegmsh-view/9", files: { model: reactions.model }, shots: [{ name: "a" }] }, "spec"],
   ["spec-key", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", zoom: 2 }] }, "shots[0].zoom"],
   ["spec-type", { spec: "apegmsh-view/1", files: { model: reactions.model }, size: [10, 10], shots: [{ name: "a" }] }, "size[0]"],
+  ["spec-ghost", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", stage: "unprop", deform: { scale: 10, ghost: true } }] }, "shots[0].deform.ghost"],
+  ["spec-fit-selection", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", camera: "fit-selection" }] }, "shots[0].camera"],
 ] as const) {
   const R = await render(name, spec);
   assert.equal(R.code, 2, `${name}: a refused spec exits 2`);
   assert.equal(R.refused?.key, key);
-  assert.deepEqual(readdirSync(R.dir), ["render.json"], `${name}: no PNG`);
-  log(`  refused spec ${name} at ${key} (${Math.round(R.ms)} ms)`);
+  assert.deepEqual(readdirSync(R.dir).filter((f) => f !== ".chromium"), ["render.json"], `${name}: no PNG`);
+  log(`  refused spec ${name} at ${key} (${Math.round(R.ms)} ms): ${readdirSync(R.dir).join(", ")}`);
 }
+// A busy --out: an earlier run's still and record stay as they were, and nothing is added (no stale still beside a refusal).
+{
+  const dir = join(OUT, "busy-out");
+  const out = join(dir, "out");
+  mkdirSync(out, { recursive: true });
+  writeFileSync(join(out, "a.png"), "an earlier run's still");
+  const spec = join(dir, "spec.json");
+  writeFileSync(spec, JSON.stringify({ spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", stage: "erect", step: 99 }] }));
+  const r = await run(["--mode=render", `--spec=${spec}`, `--out=${out}`]);
+  assert.equal(r.code, 2, "a busy --out exits 2");
+  assert.deepEqual(readdirSync(out), ["a.png"], "nothing is written into a busy --out");
+  const d = await run(["--mode=describe", `--file=${reactions.model}`, `--out=${out}`]);
+  assert.equal(d.code, 2, "describe refuses a busy --out too");
+  assert.deepEqual(readdirSync(out), ["a.png"]);
+  log("  refused a busy --out (render and describe), nothing written");
+}
+// INV-1: nothing of the agent runs above went to the app's APPDATA folder (the human's window below does write there).
+assert.deepEqual(appdataListing(), appdataBefore, `INV-1: ${APPDATA_DIR} unchanged by the agent runs`);
+log(`INV-1: ${APPDATA_DIR} unchanged (${appdataBefore.length} entries before and after)`);
 log("D2 refusals: ok");
 
 // ---- 5: a render leaves the human's window alone -------------------------------------------

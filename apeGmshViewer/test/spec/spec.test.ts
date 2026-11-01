@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { prepareRender } from "../../src/spec/job.ts";
+import { outRefusal, prepareRender } from "../../src/spec/job.ts";
 import { APP_LAYERS, MODEL_LAYERS, SPEC_VERSION, validateSpec } from "../../src/spec/spec.ts";
 
 const FIX = fileURLToPath(new URL("../../fixtures/", import.meta.url));
@@ -63,6 +63,7 @@ test("D2: a wrong type refuses the spec and names the key", () => {
   refused(base({}, { stage: "s", deform: { scale: "10" } }), "shots[0].deform.scale", /finite number; got "10"/);
   refused(base({}, { stage: "s", deform: { scale: 0 } }), "shots[0].deform.scale", /must be positive/);
   refused(base({}, { stage: "s", deform: { ghost: "yes" } }), "shots[0].deform.ghost", /true or false/);
+  refused(base({}, { stage: "s", deform: { ghost: true } }), "shots[0].deform.ghost", /is not drawn by apegmsh-view\/1: the reference ghost does not draw the same pixels twice/);
   refused(base({}, { camera: { eye: [1, 0], target: [0, 0, 0], up: [0, 0, 1] } }), "shots[0].camera.eye", /three numbers/);
   refused(base({}, { camera: { eye: [0, 0, 0], target: [0, 0, 0], up: [0, 0, 1] } }), "shots[0].camera.eye", /differ from the target/);
   refused(base({}, { isolate: [] }), "shots[0].isolate", /non-empty list/);
@@ -75,6 +76,8 @@ test("D2: a wrong type refuses the spec and names the key", () => {
 test("D2/D8: a value outside its closed set refuses the spec; a colour can only be a named colormap", () => {
   refused(base({ theme: "sepia" }), "theme", /one of dark, light; got "sepia"/);
   refused(base({}, { camera: "home" }), "shots[0].camera", /one of iso, \+x/);
+  // INV-4: a spec cannot make a selection, so `fit-selection` would draw the `fit` view under its name.
+  refused(base({}, { camera: "fit-selection" }), "shots[0].camera", /one of iso, \+x, -x, \+y, -y, top, bottom, fit; got "fit-selection"/);
   refused(base({}, { stage: "s", contour: { field: "f", component: "x", cmap: "#ff0000" } }), "shots[0].contour.cmap", /one of jet, turbo/);
   refused(base({}, { stage: "s", contour: { field: "f", component: "x", gauss: "nodes" } }), "shots[0].contour.gauss", /one of cell/);
   refused(base({}, { colour_by: "material" }), "shots[0].colour_by", /one of group, role, contour/);
@@ -160,6 +163,7 @@ test("D1: an axis-name normal is its unit vector; an explicit camera is kept as 
 const fsOf = {
   readFile: (p: string) => readFileSync(p, "utf8"),
   exists: existsSync,
+  list: (p: string) => readdirSync(p),
   mkdir: (p: string) => mkdirSync(p, { recursive: true }),
   writeFile: (p: string, t: string) => writeFileSync(p, t),
 };
@@ -181,6 +185,9 @@ for (const [name, body, key] of [
   ["no-model", JSON.stringify(base({ files: { model: "missing.h5" } })), "files.model"],
   ["not-a-model", JSON.stringify(base({ files: { model: join(FIX, "contour_staged.results.h5") } })), "files.model"],
   ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.results.h5") } })), "files.results"],
+  // Maintainer ruling on #2651: the reference ghost is not pixel-identical between two frames.
+  ["ghost", JSON.stringify(base({}, { stage: "base", deform: { scale: 10, ghost: true } })), "shots[0].deform.ghost"],
+  ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
   test(`D2: a refused spec (${name}) writes render.json naming ${key}, and no PNG`, () => {
     const { out, p } = job(name, body);
@@ -193,6 +200,30 @@ for (const [name, body, key] of [
     assert.deepEqual(r.render.refused, { key: p.key, reason: p.reason });
   });
 }
+
+test("D2: a non-empty --out is refused before the spec is read, and nothing in it is touched (no stale still beside a refusal)", () => {
+  const dir = join(tmp, "busy");
+  const out = join(dir, "out");
+  mkdirSync(out, { recursive: true });
+  const spec = join(dir, "spec.json");
+  writeFileSync(spec, JSON.stringify(base()));
+  writeFileSync(join(out, "a.png"), "a still of an earlier run");
+  const p = prepareRender(spec, out, fsOf);
+  assert.equal(p.ok, false);
+  if (p.ok) return;
+  assert.equal(p.key, "--out");
+  assert.match(p.reason, /is not empty \(a\.png\); an agent run writes into an absent or empty folder/);
+  assert.equal(p.wrote, false);
+  assert.deepEqual(readdirSync(out), ["a.png"], "no render.json is added and the old still is left as it was");
+  assert.equal(readFileSync(join(out, "a.png"), "utf8"), "a still of an earlier run");
+  // A refused spec too: the folder must be empty first, so no older still can stand beside its render.json.
+  writeFileSync(spec, "{ not json");
+  assert.equal((prepareRender(spec, out, fsOf) as { key: string }).key, "--out");
+  // An empty folder takes the run.
+  rmSync(join(out, "a.png"));
+  assert.equal(outRefusal(out, fsOf), null);
+  assert.equal(outRefusal(join(dir, "absent"), fsOf), null);
+});
 
 test("D1: files resolve against the spec's folder and pair by ADR 0112's rules; a valid spec writes nothing yet", () => {
   const dir = join(tmp, "relative");

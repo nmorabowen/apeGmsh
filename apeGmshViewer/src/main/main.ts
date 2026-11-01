@@ -33,7 +33,7 @@
 // `app:config`.
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,7 +49,7 @@ import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
-import { prepareRender, type RenderJobFiles } from "../spec/job.ts";
+import { outRefusal, prepareRender, PROFILE_DIR, type JobFs, type RenderJobFiles } from "../spec/job.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -82,16 +82,32 @@ if (mode === "render" && (!arg("spec") || !out)) throw new Error("--mode=render 
 // A still is the spec's `size` in pixels, whatever the display's scale (ADR 0128 D9: a model still is exactly `size`).
 if (agentMode) app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
+const jobFs: JobFs = {
+  readFile: (path) => readFileSync(path, "utf8"),
+  exists: existsSync,
+  list: (path) => readdirSync(path),
+  mkdir: (path) => mkdirSync(path, { recursive: true }),
+  writeFile: (path, text) => writeFileSync(path, text),
+};
+
+/** ADR 0128 D2: an agent run writes into an absent or empty `--out` only (spec/job.ts); a busy folder is refused, with nothing written. */
+const outBusy = agentMode ? outRefusal(resolve(out!), jobFs) : null;
+if (outBusy) {
+  process.stderr.write(`apeGmshViewer: --out refused: ${outBusy}\n`);
+  app.exit(2);
+}
+// INV-1: an agent run writes nothing outside `--out`, Chromium's profile and crash dumps included.
+if (agentMode && !outBusy) {
+  const profile = join(resolve(out!), PROFILE_DIR);
+  app.setPath("userData", profile);
+  app.setPath("crashDumps", join(profile, "crashdumps"));
+}
+
 /** The render job: the validated spec and its set, or (the spec refused) null, with render.json naming the key. */
-const renderJob = mode === "render" ? loadRenderJob(resolve(arg("spec")!), resolve(out!)) : null;
+const renderJob = mode === "render" && !outBusy ? loadRenderJob(resolve(arg("spec")!), resolve(out!)) : null;
 
 function loadRenderJob(specPath: string, outDir: string): RenderJobFiles | null {
-  const p = prepareRender(specPath, outDir, {
-    readFile: (path) => readFileSync(path, "utf8"),
-    exists: existsSync,
-    mkdir: (path) => mkdirSync(path, { recursive: true }),
-    writeFile: (path, text) => writeFileSync(path, text),
-  });
+  const p = prepareRender(specPath, outDir, jobFs);
   if (p.ok) return p.job;
   // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
   process.stderr.write(`apeGmshViewer: the spec ${specPath} is refused: ${p.key}: ${p.reason}\n`);
@@ -563,7 +579,7 @@ app.whenReady().then(() => {
     });
     return;
   }
-  if (mode === "render" && !renderJob) return;
+  if (outBusy || (mode === "render" && !renderJob)) return;
   if (agentMode) mkdirSync(resolve(out!), { recursive: true });
   const w = new BrowserWindow({
     // ADR 0128 D9: a render window's page is the spec's size (at device scale 1, above).
