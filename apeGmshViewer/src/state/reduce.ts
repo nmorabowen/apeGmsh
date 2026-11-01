@@ -96,9 +96,17 @@ export function canonicalPose(p: CameraPose, who: string): CameraPose {
   // world Z, on the +Z side: (Z - fz f) / |..|, whose length is hypot(fx, fy).
   const h = Math.hypot(fx, fy);
   if (h > 1e-12) {
-    const cos = (-fz * fx * u[0] - fz * fy * u[1]) / h + h * u[2];
-    if (!(cos >= Math.cos(ROLL_TOLERANCE))) {
-      const deg = (Math.acos(Math.min(1, Math.max(-1, cos))) * 180) / Math.PI;
+    const [ix, iy, iz] = [(-fz * fx) / h, (-fz * fy) / h, h];
+    const cross = Math.hypot(iy * u[2] - iz * u[1], iz * u[0] - ix * u[2], ix * u[1] - iy * u[0]);
+    const roll = Math.atan2(cross, ix * u[0] + iy * u[1] + iz * u[2]);
+    // target - eye is rounded: each component of the view direction is off by
+    // up to about eps * |coordinate| / |target - eye|, which turns the no-roll
+    // up by that much over h. Near the vertical, far from the origin (a
+    // georeferenced model), that exceeds ROLL_TOLERANCE, so it is allowed for.
+    const scale = Math.max(...eye.map(Math.abs), ...target.map(Math.abs));
+    const tolerance = ROLL_TOLERANCE + (16 * Number.EPSILON * scale) / (fl * h);
+    if (!(roll <= tolerance)) {
+      const deg = (roll * 180) / Math.PI;
       throw new RangeError(`${who}: up ${JSON.stringify(up)} rolls the camera by ${deg.toPrecision(4)} degrees; the camera has no roll (world Z stays up the screen)`);
     }
   }
@@ -396,7 +404,9 @@ export function reduce(s: State, e: Event): State {
       const lineDiagram = clearedResults
         ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
         : s.lineDiagram;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram });
+      // VA1: opening another model drops the camera of the one shown; the same path again (a reload, a retry after a failed read) keeps it.
+      const camera = e.artifact === "model" && !(prev && prev.path === e.path) ? { ...initialCamera, seq: s.camera.seq } : s.camera;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -451,8 +461,10 @@ export function reduce(s: State, e: Event): State {
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
-        // VA1: a re-read keeps the view; another model opens on its own (the viewport frames it).
-        camera: reread ? s.camera : { ...initialCamera, seq: s.camera.seq },
+        // VA1: a read of the path already open keeps the view, a retry after a
+        // failed read too (fileOpened dropped the camera when the path changed);
+        // another model opens on its own (the viewport frames it).
+        camera: prev !== null && prev.path === info.path ? s.camera : { ...initialCamera, seq: s.camera.seq },
       });
     }
     case "setLoaded": {

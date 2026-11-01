@@ -134,6 +134,46 @@ test("a re-read of the same model keeps the camera; another model opens with non
   }
 });
 
+test("a watch reload through a failed read keeps the camera; a failed open of another file drops it", () => {
+  const moved = reduce(loaded, { type: "cameraMoved", pose: { eye: [9, -9, 9], target: [1, 0, 0], up: [0, 0, 1] } });
+  const p = load.info.path;
+  let s = reduce(moved, { type: "fileChanged", path: p });
+  s = reduce(s, { type: "fileOpened", artifact: "model", path: p });
+  s = reduce(s, { type: "fileFailed", artifact: "model", path: p, error: "half-written" });
+  assert.equal(s.artifacts.model?.status, "failed");
+  s = reduce(s, { type: "fileOpened", artifact: "model", path: p });
+  s = reduce(s, { type: "fileLoaded", artifact: "model", load: loadModel(model, new BlobStore()) });
+  assert.equal(s.camera, moved.camera, "the retry's fileLoaded keeps the camera, as any re-read of the open file does");
+  let t = reduce(moved, { type: "fileOpened", artifact: "model", path: "other.h5" });
+  assert.deepEqual(t.camera, { pose: null, request: null, seq: 0 }, "opening another file drops the camera");
+  t = reduce(t, { type: "fileFailed", artifact: "model", path: "other.h5", error: "x" });
+  t = reduce(t, { type: "fileOpened", artifact: "model", path: "other.h5" });
+  t = reduce(t, { type: "fileLoaded", artifact: "model", load: { ...load, info: { ...load.info, path: "other.h5" } } });
+  assert.equal(t.camera.pose, null, "the other file opens framed, not at the first file's camera");
+});
+
+test("the write-back of a near-vertical view far from the origin is accepted and places back to the same view", () => {
+  // A georeferenced model (centre near 5e5, 4e6): target - eye loses most of the
+  // tiny horizontal part of a near-vertical view direction to rounding.
+  for (const c of [[0, 0, 0], [5e5, 4e6, 100]] as const) {
+    for (const tilt of [0, 1e-12, 1e-9, 1e-6, 1e-4, 1e-2, Math.PI - 1e-9]) {
+      const cam = new THREE.PerspectiveCamera(35, 4 / 3, 0.01, 1e7);
+      cam.up.set(0, 0, 1);
+      const nav = navOn(cam);
+      nav.target.set(c[0], c[1], c[2]);
+      cam.position.set(c[0], c[1], c[2] + 50);
+      nav.snapTo({ yaw: 0.3, tilt });
+      const pose = canonicalPose(poseOf(cam, nav.target, 5e-3, "perspective", 50), "cameraMoved");
+      const again = new THREE.PerspectiveCamera(35, 4 / 3, 0.01, 1e7);
+      placePose(again, pose);
+      const what = `centre ${c} tilt ${tilt}`;
+      near(again.position.toArray(), cam.position.toArray(), 0, `${what} eye`);
+      near(forwardOf(again.quaternion), forwardOf(cam.quaternion), 1e-9, `${what} forward`);
+      near(upOf(again.quaternion), upOf(cam.quaternion), 1e-9, `${what} screen up`);
+    }
+  }
+});
+
 test("cameraMoved writes the pose back without a request; the same pose again is a no-op; a bad pose is refused", () => {
   const pose: CameraPose = { eye: [9, -9, 9], target: [1, 0, 0], up: [0, 0, 2] };
   const s = reduce(loaded, { type: "cameraMoved", pose });

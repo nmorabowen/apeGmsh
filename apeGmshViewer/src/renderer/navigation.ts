@@ -65,16 +65,20 @@ export const VIEW_HEADINGS: Readonly<Record<HeadingView, Heading>> = {
 };
 
 /**
- * VA1: the heading of a look-at whose view direction is `forward` and screen
- * up `up` (no roll: state/reduce.ts `canonicalPose` refuses an up that rolls).
- * Off the vertical it is `headingOf(forward)`; looking straight down or up,
- * `up` sets the yaw.
+ * VA1: the heading of a look-at whose view direction is `forward` and unit
+ * screen up `up` (no roll: state/reduce.ts `canonicalPose` refuses an up that
+ * rolls). Heading {yaw, tilt} looks along Rz(yaw)(0, sin t, -cos t) with up
+ * Rz(yaw)(0, cos t, sin t), so the yaw is read from whichever horizontal part
+ * is the larger: the forward's (sin t) away from the vertical, the up's
+ * (|cos t|) near it, where the forward's is tiny and, far from the origin,
+ * mostly rounding of target - eye. Straight down or up, only `up` sets it.
  */
 export function headingOfPose(forward: THREE.Vector3, up: THREE.Vector3): Heading {
   const f = forward.clone().normalize();
-  if (Math.hypot(f.x, f.y) >= 1e-12) return headingOf(f);
-  // Heading {yaw, 0} has screen up Rz(yaw)(0, 1, 0); {yaw, pi} has Rz(yaw)(0, -1, 0).
-  return f.z < 0 ? { yaw: Math.atan2(-up.x, up.y), tilt: 0 } : { yaw: Math.atan2(up.x, -up.y), tilt: Math.PI };
+  const fh = Math.hypot(f.x, f.y);
+  const tilt = Math.atan2(fh, -f.z);
+  if (fh >= Math.hypot(up.x, up.y)) return { yaw: Math.atan2(-f.x, f.y), tilt };
+  return { yaw: tilt <= Math.PI / 2 ? Math.atan2(-up.x, up.y) : Math.atan2(up.x, -up.y), tilt };
 }
 
 /** VA1: put `camera` at `pose` (eye, and the no-roll orientation that looks at the target); returns its heading. */
