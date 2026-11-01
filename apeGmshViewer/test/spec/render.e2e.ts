@@ -134,7 +134,7 @@ const viewSpec = {
     { ...contour, name: "contour.model-noscale", chrome: "model", layers: { scale_bar: false } },
     { ...contour, name: "contour.model-transparent", chrome: "model", background: "transparent" },
     { ...contour, name: "contour.model-captioned", chrome: "model", caption: "Vertical displacement, stage unprop, last step.", layers: { caption: true, banner: true } },
-    { ...contour, name: "contour.clip.model", chrome: "model", clip: [{ normal: "x", offset: 1.0 }], isolate: ["mesh/physical_group/Col", "mesh/physical_group/Top"], camera: "-y" },
+    { ...contour, name: "contour.clip.model", chrome: "model", clip: [{ normal: "y", offset: 0.5 }], isolate: ["mesh/physical_group/Col", "mesh/physical_group/Top"] },
     { name: "deformed.ghost", stage: "unprop", deform: { scale: 10, ghost: true } },
     { name: "deformed.ghost.model", chrome: "model", stage: "unprop", deform: { scale: 10, ghost: true } },
   ],
@@ -290,9 +290,18 @@ log("D2 refusals: ok");
       });
     const evaluate = async (expr: string) => (await call("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true })).result?.result?.value;
     for (let i = 0; i < 100 && !(await evaluate("!document.getElementById('header').hidden")); i++) await new Promise((r) => setTimeout(r, 100));
-    // The human picks an element: a click at the middle of the window, through the page's own input path.
+    // The human picks an element: a click through the page's own input path, tried over a grid until one hits the model.
     const [w, h] = (await evaluate("[innerWidth, innerHeight]")) as [number, number];
-    for (const type of ["mousePressed", "mouseReleased"]) await call("Input.dispatchMouseEvent", { type, x: Math.round(w / 3), y: Math.round(h / 2), button: "left", clickCount: 1 });
+    const selected = async () => (await evaluate("!document.getElementById('inspector').hidden && document.getElementById('inspector').innerText.length > 0")) === true;
+    grid: for (const fy of [0.5, 0.4, 0.6, 0.3, 0.7]) {
+      for (const fx of [0.35, 0.3, 0.4, 0.25, 0.45, 0.5]) {
+        const at = { x: Math.round(fx * w), y: Math.round(fy * h) };
+        await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...at });
+        for (const type of ["mousePressed", "mouseReleased"]) await call("Input.dispatchMouseEvent", { type, ...at, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 });
+        await new Promise((r) => setTimeout(r, 400));
+        if (await selected()) break grid;
+      }
+    }
     await new Promise((r) => setTimeout(r, 1500));
     const look = () =>
       evaluate(
