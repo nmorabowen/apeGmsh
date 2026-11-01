@@ -1,0 +1,104 @@
+# Probe, never a required check (ADR 0128 open question; plan_viewer_agent_stills.md,
+# "Linux and CI"): does apeGmshViewer's headless capture write a PNG on ubuntu
+# under xvfb-run? It runs `npm run capture` three ways, each its own step, and
+# records exit code, stderr, PNG size and whether the PNG is non-blank. The job
+# always ends green; the answer is in the step summary and the uploaded artifact.
+# Making capture work on Linux, if it does not, belongs to VA2, not here.
+name: viewer-capture-probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/viewer-capture-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same Node setup as the app-tests job in tests.yml.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+          cache: npm
+          cache-dependency-path: apeGmshViewer/package-lock.json
+
+      - name: npm ci
+        working-directory: apeGmshViewer
+        run: npm ci --no-audit --no-fund
+
+      # Electron's runtime libraries and the X server. A probe fact too: the
+      # list of packages that had to be added is the list VA2 must document.
+      - name: Install xvfb and Electron runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libatk-bridge2.0-0t64
+          pip install pillow
+
+      - name: Build once
+        working-directory: apeGmshViewer
+        run: node scripts/build.mjs
+
+      # The helper every variant calls. It never fails the step: it runs
+      # capture under xvfb-run, then writes probe/<name>.log and
+      # probe/<name>.result with the exit code, PNG size and non-blank check.
+      - name: Write the probe helper
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe"
+          cat > "$RUNNER_TEMP/probe/run.sh" <<'SH'
+          #!/usr/bin/env bash
+          # usage: run.sh <name> <ELECTRON_EXTRA_LAUNCH_ARGS value> [xvfb-run args...]
+          name="$1"; extra="$2"; shift 2
+          out="$RUNNER_TEMP/probe/$name/out.png"
+          mkdir -p "$(dirname "$out")"
+          cd "$GITHUB_WORKSPACE/apeGmshViewer"
+          set +e
+          ELECTRON_EXTRA_LAUNCH_ARGS="$extra" timeout 300 \
+            xvfb-run -a "$@" npm run capture -- fixtures/shoebuckle.h5 "$out" \
+            > "$RUNNER_TEMP/probe/$name.log" 2>&1
+          code=$?
+          size=0; distinct=0; verdict="no PNG"
+          if [ -s "$out" ]; then
+            size=$(stat -c %s "$out")
+            distinct=$(python3 -c "
+          from PIL import Image
+          im = Image.open('$out').convert('RGB')
+          print(len(set(im.getdata())))")
+            if [ "$distinct" -gt 1 ]; then verdict="non-blank"; else verdict="BLANK"; fi
+          fi
+          {
+            echo "### $name"
+            echo "- flags: ELECTRON_EXTRA_LAUNCH_ARGS='$extra', xvfb-run args: '$*'"
+            echo "- exit code: $code"
+            echo "- PNG: $size bytes, $distinct distinct pixel values, $verdict"
+            echo "- stderr/stdout tail:"
+            echo '```'
+            tail -n 25 "$RUNNER_TEMP/probe/$name.log"
+            echo '```'
+          } | tee "$RUNNER_TEMP/probe/$name.result" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+          SH
+          chmod +x "$RUNNER_TEMP/probe/run.sh"
+
+      - name: 'Variant A: plain xvfb-run, no extra flags'
+        run: '"$RUNNER_TEMP/probe/run.sh" A-plain ""'
+
+      - name: 'Variant B: --no-sandbox'
+        run: '"$RUNNER_TEMP/probe/run.sh" B-no-sandbox "--no-sandbox"'
+
+      - name: 'Variant C: --no-sandbox --disable-gpu --use-gl=swiftshader'
+        run: '"$RUNNER_TEMP/probe/run.sh" C-swiftshader "--no-sandbox --disable-gpu --use-gl=swiftshader"'
+
+      - name: Upload PNGs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-capture-probe
+          path: ${{ runner.temp }}/probe
+          if-no-files-found: warn
