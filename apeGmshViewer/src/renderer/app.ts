@@ -1266,13 +1266,15 @@ async function captureGizmo(settle: (ms?: number) => Promise<unknown>, width: nu
 }
 
 /**
- * VA1 (D7): `<out>.camera-plus-x.png`, the `+x` named view through the store,
- * then `<out>.camera-plus-x-again.png`, the same view asked for again after a
- * turn away: the same request gives the same frame (pixel-identical, and the
- * same pose to the bit). The camera is then put back at the pose it had,
- * through an explicit `setCamera`, so the stills after it are unchanged.
+ * VA1 (D7): `<out>.camera-plus-x.png`, the `+x` named view through the store;
+ * `<out>.camera-plus-x-reread.png`, the same after the model file is read
+ * again (a re-read keeps the camera); and `<out>.camera-plus-x-again.png`,
+ * the view asked for again after a turn away. Each must show the same frame
+ * (pixel-identical, and the same pose to the bit). The camera is then put
+ * back at the pose it had, through an explicit `setCamera`, so the stills
+ * after it are unchanged.
  */
-async function captureCamera(settle: (ms?: number) => Promise<unknown>) {
+async function captureCamera(settle: (ms?: number) => Promise<unknown>, file: string) {
   viewport.renderNow();
   const before = store.get().camera.pose;
   if (!before) throw new Error("capture: the store holds no camera after the model was framed");
@@ -1284,11 +1286,15 @@ async function captureCamera(settle: (ms?: number) => Promise<unknown>) {
   };
   store.dispatch({ type: "setCamera", to: "+x" });
   const first = await show("camera-plus-x");
+  const same = (what: string, pose: unknown) => {
+    if (JSON.stringify(first) !== JSON.stringify(pose)) throw new Error(`capture: ${what} changed the camera: ${JSON.stringify(first)} vs ${JSON.stringify(pose)}`);
+  };
+  if (!(await effects.open(file))) throw new Error(`capture: the re-read of ${file} failed`);
+  same("a re-read of the model", await show("camera-plus-x-reread"));
   store.dispatch({ type: "setCamera", to: { yaw: 0.7, tilt: 1.1 } });
   viewport.renderNow();
   store.dispatch({ type: "setCamera", to: "+x" });
-  const again = await show("camera-plus-x-again");
-  if (JSON.stringify(first) !== JSON.stringify(again)) throw new Error(`capture: +x twice gave two cameras: ${JSON.stringify(first)} vs ${JSON.stringify(again)}`);
+  same("asking for +x again", await show("camera-plus-x-again"));
   store.dispatch({ type: "setCamera", to: before });
   viewport.renderNow();
 }
@@ -1361,7 +1367,7 @@ async function main() {
   await settle();
   viewport.renderNow();
   await bridge.captureStill("groups");
-  await captureCamera(settle);
+  await captureCamera(settle, cfg.file);
   store.dispatch({ type: "setColourBy", by: "role" });
   await settle();
   viewport.renderNow();

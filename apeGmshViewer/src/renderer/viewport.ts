@@ -72,6 +72,13 @@ interface MeshIndex {
   prims: Map<number, Prims>;
 }
 
+/** VA1: `s` differs from `prev` in the camera alone (every other top-level slice is the same object). */
+function onlyCameraChanged(s: State, prev: State | null): boolean {
+  if (!prev || s.camera === prev.camera) return false;
+  for (const k of Object.keys(s) as (keyof State)[]) if (k !== "camera" && s[k] !== prev[k]) return false;
+  return true;
+}
+
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
   readonly perspCamera: THREE.PerspectiveCamera;
@@ -301,17 +308,33 @@ export class Viewport {
     else this.nav.snapTo({ yaw: to.yaw, tilt: to.tilt });
   }
 
-  /** VA1: the camera moved (`changed`); the pose goes to the store after the next render. */
-  private cameraDirty = false;
+  /** VA1: camera moves so far (`changed` counts them), and the count last written back. */
+  private cameraMoves = 0;
+  private cameraWritten = 0;
+  private cameraWritePending = false;
 
-  /** VA1: write the camera shown back to the store (once a frame at most, never inside a dispatch). */
-  private writeCamera(): void {
-    if (!this.cameraDirty) return;
-    this.cameraDirty = false;
-    const m = this.store.get().mesh ?? this.geometryInfo;
-    // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
-    const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
-    this.store.dispatch({ type: "cameraMoved", pose });
+  /**
+   * VA1: write the camera back to the store once it has held still for a
+   * frame: an animation frame after a render, if nothing moved it since. A
+   * drag or the scripted orbit writes once, when it stops, not every frame:
+   * each dispatch runs every panel's listener, and a write per frame cost
+   * the renderer about 15 MB of working set over the measured orbit. The
+   * write runs from an animation frame, so never inside a dispatch.
+   */
+  private scheduleCameraWrite(): void {
+    if (this.cameraWritePending || this.cameraMoves === this.cameraWritten) return;
+    this.cameraWritePending = true;
+    const at = this.cameraMoves;
+    requestAnimationFrame(() => {
+      this.cameraWritePending = false;
+      // Still moving: look again next frame.
+      if (this.cameraMoves !== at) return this.scheduleCameraWrite();
+      this.cameraWritten = at;
+      const m = this.store.get().mesh ?? this.geometryInfo;
+      // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
+      const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
+      this.store.dispatch({ type: "cameraMoved", pose });
+    });
   }
 
   /**
@@ -376,7 +399,7 @@ export class Viewport {
         }
       },
       changed: () => {
-        this.cameraDirty = true;
+        this.cameraMoves++;
         this.syncCameraFrustum();
         this.notifyView();
         this.lineDiagram.onCameraChange();
@@ -463,7 +486,8 @@ export class Viewport {
   private onState(s: State, prev: State | null): void {
     // VA1: the theme first, so a mesh built below takes its colours.
     if (s.theme !== this.activeTheme) this.showTheme(s.theme);
-    this.onScene(s, prev);
+    // The camera write-back (once a frame while the view moves) changes nothing the scene is built from.
+    if (!onlyCameraChanged(s, prev)) this.onScene(s, prev);
     // VA1: each new setCamera request once, after the scene it frames is built.
     const req = s.camera.request;
     if (req && req.seq !== prev?.camera.request?.seq) this.applyCamera(s, req.to);
@@ -1377,7 +1401,7 @@ export class Viewport {
     if (this.highlight.children.length) this.halo.render(this.scene, this.camera);
     this.lastRenderMs = performance.now() - t;
     if (this.halo.pulsing) this.requestRender();
-    this.writeCamera();
+    this.scheduleCameraWrite();
   }
 
   /** V4e1: the box the offset slider maps, the reference (undeformed) mesh (renderer/clip.ts sliderBox); null with no mesh. */
