@@ -379,6 +379,131 @@ async function captureLineDiagrams(settle: (ms?: number) => Promise<unknown>, wi
   store.dispatch({ type: "clearSelection" });
 }
 
+/**
+ * 3-D frame extrusion + rigid joint-offset results stills on models with `hasExtrudableFrames`:
+ * (1) `extrude-results-1-deform-ghost`: extruded 3-D frame + rigid joint offsets + deformed shape (`scale 25`, reference ghost),
+ * (2) `extrude-results-2-deform-contour`: extruded 3-D frame + rigid joint offsets + deformed shape + nodal contour (`|u|`),
+ * (3) `extrude-results-3-line-diagram`: extruded 3-D frame (auto-dimmed to 0.25 opacity) + rigid joint offsets + 3-D moment diagram (`My`/`Mz`),
+ * (4) `extrude-results-4-deform-contour-diagram`: simultaneous extruded 3-D frame + rigid joint offsets + deformed shape + nodal contour + 3-D moment diagram.
+ */
+async function captureExtrudeResults(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.mesh?.frameExtrusion?.hasExtrudableFrames || !s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  let stageIdx = stages.findIndex((st) => (st.lineStations?.length ?? 0) > 0);
+  if (stageIdx < 0) stageIdx = 0;
+  const st = stages[stageIdx];
+  if (!st) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const last = Math.max(0, st.time.length - 1);
+
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setLineDiagram", on: false });
+  store.dispatch({ type: "setOpacity", value: 1 });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: stageIdx, step: last } });
+  if (!store.get().visibility.extrudeFrames) store.dispatch({ type: "toggleExtrudeFrames" });
+  if (s0.mesh.frameExtrusion.hasJointOffsets && !store.get().visibility.showOffsets) {
+    store.dispatch({ type: "toggleShowOffsets" });
+  }
+
+  // (1) Deformed shape + reference ghost on 3-D extruded frame + offsets
+  if (deformOf(store.get()).ok) {
+    store.dispatch({ type: "setDeform", on: true });
+    store.dispatch({ type: "setDeformScale", scale: 25 });
+    store.dispatch({ type: "setReferenceGhost", on: true });
+  }
+  await until(() => deformShown(), 15000);
+  await settle(150);
+  viewport.renderNow();
+  await painted();
+  await painted();
+  await bridge.captureStill("extrude-results-1-deform-ghost");
+
+  // (2) Deformed shape + nodal contour on 3-D extruded frame + offsets
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  store.dispatch({ type: "setContourRange", range: "history" });
+  const nf = contourFieldsOf(store.get())?.fields[0];
+  if (nf && nf.components[0]) {
+    store.dispatch({ type: "setContourField", source: "nodal", field: nf.name, component: nf.components[0].key });
+  }
+  await until(() => contourShown() && store.get().contour.scan?.status === "done" && deformShown(), 30000);
+  await settle(150);
+  viewport.renderNow();
+  await painted();
+  await painted();
+  await bridge.captureStill("extrude-results-2-deform-contour");
+
+  // (3) Undeformed 3-D extruded frame (auto-dimmed to 0.25) + offsets + 3-D moment diagram
+  if ((st.lineStations?.length ?? 0) > 0) {
+    store.dispatch({ type: "setDeform", on: false });
+    store.dispatch({ type: "setReferenceGhost", on: false });
+    store.dispatch({ type: "setColourBy", by: "group" });
+    const comp = st.lineStations!.includes("Mz") ? "Mz" : st.lineStations!.includes("My") ? "My" : st.lineStations![0]!;
+    store.dispatch({ type: "setLineDiagramComponent", component: comp });
+    store.dispatch({ type: "setLineDiagramRange", range: "step" });
+    store.dispatch({ type: "setLineDiagramCmap", cmap: "sign" });
+    store.dispatch({ type: "setLineDiagram", on: true });
+    await until(() => store.get().resultStep?.status === "ready" && store.get().lineDiagram.stepRange !== null, 15000);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill("extrude-results-3-line-diagram");
+
+    // (4) Simultaneous 3-D extruded frame + offsets + deformed shape + nodal contour + 3-D moment diagram
+    if (deformOf(store.get()).ok) {
+      store.dispatch({ type: "setDeform", on: true });
+      store.dispatch({ type: "setDeformScale", scale: 25 });
+      store.dispatch({ type: "setReferenceGhost", on: true });
+    }
+    store.dispatch({ type: "setColourBy", by: "contour" });
+    await until(() => contourShown() && deformShown() && store.get().lineDiagram.stepRange !== null, 30000);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill("extrude-results-4-deform-contour-diagram");
+
+    // (5) Collapse #line-diagram and verify #loads immediately shifts up with no overlap
+    const ldPanel = document.getElementById("line-diagram")!;
+    const loadsPanel = document.getElementById("loads")!;
+    const legendPanel = document.getElementById("legend")!;
+    if (!ldPanel.hidden && !loadsPanel.hidden && !legendPanel.hidden) {
+      const ldBefore = ldPanel.getBoundingClientRect();
+      const loadsBefore = loadsPanel.getBoundingClientRect();
+      const legendBefore = legendPanel.getBoundingClientRect();
+      if (ldBefore.bottom > loadsBefore.top + 1) {
+        throw new Error(`capture: #line-diagram (${ldBefore.bottom}) overlaps #loads (${loadsBefore.top})`);
+      }
+      if (loadsBefore.bottom > legendBefore.top + 1) {
+        throw new Error(`capture: #loads (${loadsBefore.bottom}) overlaps #legend (${legendBefore.top})`);
+      }
+      ldPanel.querySelector("h3")?.click();
+      await painted();
+      await painted();
+      const loadsAfter = loadsPanel.getBoundingClientRect();
+      if (!(loadsAfter.top < loadsBefore.top - 40)) {
+        throw new Error(`capture: collapsing #line-diagram did not shift #loads up (${loadsBefore.top} -> ${loadsAfter.top})`);
+      }
+      await bridge.captureStill("extrude-results-5-collapsed-line-diagram");
+      ldPanel.querySelector("h3")?.click();
+      await painted();
+    }
+  }
+
+  // Restore state for subsequent capture steps
+  if (store.get().visibility.extrudeFrames) store.dispatch({ type: "toggleExtrudeFrames" });
+  store.dispatch({ type: "setLineDiagram", on: false });
+  store.dispatch({ type: "setLineDiagramRange", range: "history" });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setDeformScale", scale: 1 });
+  store.dispatch({ type: "setReferenceGhost", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setOpacity", value: 1 });
+  store.dispatch({ type: "clearSelection" });
+}
+
 /** Poll the store (every 20 ms, at most `ms`) until `ok` holds; false on timeout. */
 async function until(ok: () => boolean, ms = 15000): Promise<boolean> {
   for (let t = 0; t < ms; t += 20) {
@@ -1209,6 +1334,22 @@ async function main() {
   // selected (`selectStage`). The rule is fixed, so no flag is needed and the
   // stills come from committed code.
   store.dispatch({ type: "setColourBy", by: "group" });
+  if (store.get().mesh?.frameExtrusion?.hasExtrudableFrames) {
+    store.dispatch({ type: "toggleExtrudeFrames" });
+    await settle();
+    viewport.renderNow();
+    await bridge.captureStill("extrude");
+    if (store.get().mesh?.frameExtrusion?.hasJointOffsets) {
+      store.dispatch({ type: "toggleShowOffsets" });
+      await settle();
+      viewport.renderNow();
+      await bridge.captureStill("extrude-no-offsets");
+      store.dispatch({ type: "toggleShowOffsets" });
+    }
+    store.dispatch({ type: "toggleExtrudeFrames" });
+    await settle();
+    viewport.renderNow();
+  }
   for (const kind of WINDOW_KINDS) {
     store.dispatch({ type: "openWindow", window: kind });
     await settle();
@@ -1243,6 +1384,7 @@ async function main() {
     await captureDeform(settle, width, height);
     // V4f (D7): the 3-D line-diagram stills (including simultaneous contour + line diagram).
     await captureLineDiagrams(settle, width, height);
+    await captureExtrudeResults(settle, width, height);
     // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
     await captureElements(settle, width, height);
     // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).

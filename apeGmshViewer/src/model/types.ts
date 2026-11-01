@@ -82,6 +82,17 @@ export interface NameAlias {
   tag: number;
 }
 
+/**
+ * 2-D cross-section boundary loops in OpenSees `(y_local, z_local)`:
+ * `loops[0]` is the exterior boundary (CCW in `(y, z)`) and `loops[1..]` are
+ * interior holes (CW in `(y, z)`). Plain JSON only so it can live on `Decl`.
+ */
+export interface SectionProfile {
+  readonly loops: readonly (readonly (readonly [number, number])[])[];
+  readonly axisymmetric?: boolean;
+  readonly source: "computed" | "patches" | "parametric" | "elastic";
+}
+
 export interface OpenSeesZone {
   version: string;
   objects: OpsObject[];
@@ -89,6 +100,8 @@ export interface OpenSeesZone {
   names: NameAlias[];
   /** the model-definition data: declarations, analysis, series, patterns, recorders, stages */
   definitions: Definitions;
+  /** Optional `/opensees/computed_sections` `outline_yz` boundary loops keyed by section tag. */
+  computedOutlines?: Readonly<Record<number, readonly (readonly (readonly [number, number])[])[]>>;
 }
 
 /**

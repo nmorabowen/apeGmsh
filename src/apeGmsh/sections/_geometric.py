@@ -304,14 +304,8 @@ def compute_geometric(snap: SectionSnapshot) -> GeometricProperties:
 # --------------------------------------------------------------------- #
 
 
-def _exterior_perimeter(snap: SectionSnapshot) -> float:
-    """Sum of exterior-loop lengths, one per connected component.
-
-    Boundary edges are corner edges appearing in exactly one element.
-    Loops are chained; per component, the loop with the largest
-    enclosed |shoelace area| is the exterior (winding-agnostic) —
-    every other loop is a hole and is excluded.
-    """
+def _chain_boundary_loops(snap: SectionSnapshot) -> list[list[int]]:
+    """Chain corner edges appearing in exactly one element into vertex loops."""
     edge_count: dict[tuple[int, int], int] = {}
     edge_dir: dict[tuple[int, int], tuple[int, int]] = {}
     for b in snap.blocks:
@@ -336,10 +330,7 @@ def _exterior_perimeter(snap: SectionSnapshot) -> float:
             )
         succ[a] = c
 
-    coords = snap.coords
-    comp = snap.node_component
-    # component -> (best |area|, best length)
-    best: dict[int, tuple[float, float]] = {}
+    loops: list[list[int]] = []
     visited: set[int] = set()
     for start in list(succ):
         if start in visited:
@@ -351,13 +342,119 @@ def _exterior_perimeter(snap: SectionSnapshot) -> float:
             loop.append(nxt)
             visited.add(nxt)
             nxt = succ[nxt]
+        loops.append(loop)
+    return loops
+
+
+def _exterior_perimeter(snap: SectionSnapshot) -> float:
+    """Sum of exterior-loop lengths, one per connected component.
+
+    Boundary edges are corner edges appearing in exactly one element.
+    Loops are chained; per component, the loop with the largest
+    enclosed |shoelace area| is the exterior (winding-agnostic) —
+    every other loop is a hole and is excluded.
+    """
+    coords = snap.coords
+    comp = snap.node_component
+    # component -> (best |area|, best length)
+    best: dict[int, tuple[float, float]] = {}
+    for loop in _chain_boundary_loops(snap):
         pts = coords[loop]
         rolled = np.roll(pts, -1, axis=0)
         area2 = float(np.abs(
             np.sum(pts[:, 0] * rolled[:, 1] - rolled[:, 0] * pts[:, 1])
         ))
         length = float(np.sum(np.linalg.norm(rolled - pts, axis=1)))
-        c = int(comp[start])
+        c = int(comp[loop[0]])
         if c not in best or area2 > best[c][0]:
             best[c] = (area2, length)
     return float(sum(length for _, length in best.values()))
+
+
+def _simplify_collinear_loop(pts: list[tuple[float, float]]) -> list[list[float]]:
+    """Drop vertices collinear with their immediate neighbours & rotate to canonical start."""
+    ring = list(pts)
+    changed = True
+    while changed and len(ring) > 3:
+        changed = False
+        n = len(ring)
+        for i in range(n):
+            py, pz = ring[(i - 1) % n]
+            cy, cz = ring[i]
+            ny, nz = ring[(i + 1) % n]
+            uy, uz = cy - py, cz - pz
+            vy, vz = ny - cy, nz - cz
+            nu = math.hypot(uy, uz)
+            nv = math.hypot(vy, vz)
+            if nu == 0.0 or nv == 0.0:
+                del ring[i]
+                changed = True
+                break
+            cross = abs(uy * vz - uz * vy)
+            dot = uy * vy + uz * vz
+            if cross <= 1e-9 * nu * nv and dot > 0.0:
+                del ring[i]
+                changed = True
+                break
+    if not ring:
+        return []
+    start_idx = min(
+        range(len(ring)),
+        key=lambda k: (round(ring[k][0], 12), round(ring[k][1], 12)),
+    )
+    rotated = ring[start_idx:] + ring[:start_idx]
+    return [[float(y), float(z)] for y, z in rotated]
+
+
+def boundary_loops_yz(
+    snap: SectionSnapshot,
+    *,
+    cx: float,
+    cy: float,
+) -> list[list[list[float]]]:
+    """Return simplified boundary loops in centroid-shifted OpenSees ``(y_local, z_local)``.
+
+    Per ADR 0099, authoring ``(x_auth, y_auth)`` maps to OpenSees local
+    section coordinates as ``y_local = y_auth - cy``, ``z_local = x_auth - cx``.
+    Per connected component, the loop with the largest enclosed ``|area|``
+    is the exterior boundary (oriented CCW in ``(y_local, z_local)``) and
+    any remaining loops are interior holes (oriented CW in ``(y_local, z_local)``).
+    """
+    coords = snap.coords
+    comp = snap.node_component
+    by_comp: dict[int, list[tuple[float, list[tuple[float, float]]]]] = {}
+    for loop in _chain_boundary_loops(snap):
+        pts_auth = coords[loop]
+        pts_yz = [
+            (float(row[1] - cy), float(row[0] - cx))
+            for row in pts_auth
+        ]
+        n = len(pts_yz)
+        signed_area2 = 0.0
+        for i in range(n):
+            y0, z0 = pts_yz[i]
+            y1, z1 = pts_yz[(i + 1) % n]
+            signed_area2 += y0 * z1 - y1 * z0
+        c = int(comp[loop[0]])
+        by_comp.setdefault(c, []).append((signed_area2, pts_yz))
+
+    out: list[list[list[float]]] = []
+    # Sort components deterministically by descending exterior |area|, then component id.
+    comp_order = sorted(
+        by_comp.keys(),
+        key=lambda c: (-max(abs(a2) for a2, _ in by_comp[c]), c),
+    )
+    for c in comp_order:
+        comp_loops = sorted(by_comp[c], key=lambda item: -abs(item[0]))
+        for idx, (signed_area2, pts_yz) in enumerate(comp_loops):
+            is_exterior = idx == 0
+            # Exterior loop: CCW (signed_area2 > 0); hole loop: CW (signed_area2 < 0).
+            if (is_exterior and signed_area2 < 0.0) or (
+                not is_exterior and signed_area2 > 0.0
+            ):
+                pts_yz = list(reversed(pts_yz))
+            simplified = _simplify_collinear_loop(pts_yz)
+            if len(simplified) >= 3:
+                out.append(simplified)
+    return out
+

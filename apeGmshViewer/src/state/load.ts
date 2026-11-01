@@ -9,6 +9,7 @@ import type { Group, ModelFile, OpsFamily, OpsObject, Param, SequenceZone } from
 import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
+import { buildFrameExtrusion } from "./frameExtrusion.ts";
 import { groupAdjacency } from "./adjacency.ts";
 import { assignSlots, NO_GROUP, OPS_ONLY, slotColour } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
@@ -104,7 +105,8 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
     byH5: (path: string) => byH5.get(path) ?? null,
   };
   for (const [obj, id] of ids) {
-    decls[id.path] = objectDecl(obj, id, lookup);
+    const computedOutline = obj.family === "section" ? model.opensees?.computedOutlines?.[obj.tag] : undefined;
+    decls[id.path] = objectDecl(obj, id, lookup, computedOutline);
     if (id.nameSource === "/opensees/names") addName(names, id.name, id.path);
   }
 
@@ -207,7 +209,12 @@ function pathOfRef(model: ModelFile, r: ElementRef): DeclPath {
 }
 
 /** The render blobs, the per-primitive element and legend indices, and the coloured legend. */
-export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore): MeshInfo {
+export function meshInfoOf(
+  model: ModelFile,
+  mesh: MeshBuffers,
+  blobs: BlobStore,
+  decls: Readonly<Record<DeclPath, Decl>> = emptyRecord(),
+): MeshInfo {
   // Legend: build.ts's rows (most elements first). Groups that are neighbours
   // in the view (an element of each shares a node) get contrasting slots of
   // the office palette (R2, the #1330 ruling); the adjacency is kept in the
@@ -263,6 +270,20 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
   };
   const lines = index(mesh.lineRefs, "lineRefs");
   const tris = index(mesh.triRefs, "triRefs");
+  const lineElementIds = Int32Array.from(mesh.lineRefs, (r) => (r.kind === "fem" ? model.blocks[r.blockIndex]!.ids[r.row]! : -1));
+  const ext = buildFrameExtrusion({
+    linePositions: mesh.linePositions,
+    lineNodes: mesh.lineNodes,
+    lineElementIds,
+    lineRefs: mesh.lineRefs,
+    decls,
+    definitions: model.opensees?.definitions ?? null,
+    elementMeta: model.opensees?.elementMeta ?? null,
+    ndm: model.meta.ndm === 2 ? 2 : model.meta.ndm === 3 ? 3 : null,
+  });
+  const frameTriElement = Int32Array.from(ext.frameTriSegments, (s) => lines.element[s]!);
+  const frameTriGroup = Int32Array.from(ext.frameTriSegments, (s) => lines.group[s]!);
+
   return {
     linePositions: blobs.put("model/mesh/linePositions", mesh.linePositions, [mesh.lineRefs.length, 6]),
     triPositions: blobs.put("model/mesh/triPositions", mesh.triPositions, [mesh.triRefs.length, 9]),
@@ -277,6 +298,28 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
       tri: blobs.put("model/mesh/triNodes", mesh.triNodes),
       // V4d: the node tag of every outline-edge vertex, what the deformed shape moves the edges through.
       edge: blobs.put("model/mesh/edgeNodes", mesh.edgeNodes),
+    },
+    frameExtrusion: {
+      triPositions: blobs.put("model/mesh/frameTriPositions", ext.frameTriPositions, [ext.frameTriSegments.length, 9]),
+      triNodes: blobs.put("model/mesh/frameTriNodes", ext.frameTriNodes),
+      triSegments: blobs.put("model/mesh/frameTriSegments", ext.frameTriSegments),
+      triElementIds: blobs.put("model/mesh/frameTriElementIds", ext.frameTriElementIds),
+      triElement: blobs.put("model/mesh/frameTriElement", frameTriElement),
+      triGroup: blobs.put("model/mesh/frameTriGroup", frameTriGroup),
+      edgePositions: blobs.put("model/mesh/frameEdgePositions", ext.frameEdgePositions, [ext.frameEdgeSegments.length, 6]),
+      edgeNodes: blobs.put("model/mesh/frameEdgeNodes", ext.frameEdgeNodes),
+      edgeSegments: blobs.put("model/mesh/frameEdgeSegments", ext.frameEdgeSegments),
+      extrudedSegmentMask: blobs.put("model/mesh/extrudedSegmentMask", ext.extrudedSegmentMask),
+      clearLinePositions: blobs.put("model/mesh/clearLinePositions", ext.clearLinePositions, [mesh.lineRefs.length, 6]),
+      offsetLinePositions: blobs.put("model/mesh/offsetLinePositions", ext.offsetLinePositions, [ext.offsetLineSegments.length, 6]),
+      offsetLineNodes: blobs.put("model/mesh/offsetLineNodes", ext.offsetLineNodes),
+      offsetLineSegments: blobs.put("model/mesh/offsetLineSegments", ext.offsetLineSegments),
+      offsetJointPositions: blobs.put("model/mesh/offsetJointPositions", ext.offsetJointPositions, [ext.offsetJointSegments.length, 3]),
+      offsetJointNodes: blobs.put("model/mesh/offsetJointNodes", ext.offsetJointNodes),
+      offsetJointSegments: blobs.put("model/mesh/offsetJointSegments", ext.offsetJointSegments),
+      hasExtrudableFrames: ext.hasExtrudableFrames,
+      hasJointOffsets: ext.hasJointOffsets,
+      extrusionSkippedUnoriented: ext.skippedUnorientedCount,
     },
     elements,
     legend,
@@ -408,7 +451,7 @@ export function loadModel(
     decls,
     names,
     blocks: blocksOf(model, blobs),
-    mesh: meshInfoOf(model, mesh, blobs),
+    mesh: meshInfoOf(model, mesh, blobs, decls),
     provenance: provenance ? provenanceEntries(provenance) : [],
     provenanceOrigin: provenance?.originColumn ?? false,
     definitions: model.opensees ? model.opensees.definitions : null,

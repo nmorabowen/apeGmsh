@@ -25,6 +25,11 @@ export interface FullPositions {
   tri: Float32Array;
   /** the outline edges, moved through their own node ids (MeshInfo.vertexNodes.edge), like the faces */
   edge: Float32Array;
+  clearLine?: Float32Array;
+  frameTri?: Float32Array;
+  frameEdge?: Float32Array;
+  offsetLine?: Float32Array;
+  offsetJoint?: Float32Array;
   /** `base` for the undeformed mesh, else `<displacement key>|scale <s>` */
   key: string;
   /** the displacement drawn (its `missing` flags mark nodes drawn undeformed); null for the base */
@@ -33,7 +38,23 @@ export interface FullPositions {
 
 /** The undeformed positions, from the mesh blobs (never written to). */
 export function basePositions(info: MeshInfo, blobs: BlobStore): FullPositions {
-  return { line: blobs.f32(info.linePositions), tri: blobs.f32(info.triPositions), edge: blobs.f32(info.edgePositions), key: "base", disp: null };
+  const fe = info.frameExtrusion;
+  return {
+    line: blobs.f32(info.linePositions),
+    tri: blobs.f32(info.triPositions),
+    edge: blobs.f32(info.edgePositions),
+    ...(fe
+      ? {
+          clearLine: blobs.f32(fe.clearLinePositions),
+          frameTri: blobs.f32(fe.triPositions),
+          frameEdge: blobs.f32(fe.edgePositions),
+          offsetLine: blobs.f32(fe.offsetLinePositions),
+          offsetJoint: blobs.f32(fe.offsetJointPositions),
+        }
+      : {}),
+    key: "base",
+    disp: null,
+  };
 }
 
 /**
@@ -62,6 +83,11 @@ export function deformFull(base: FullPositions, disp: DisplacementData, scale: n
     line: deformedPositions(base.line, disp.line.d, scale),
     tri: deformedPositions(base.tri, disp.tri.d, scale),
     edge: deformedPositions(base.edge, disp.edge.d, scale),
+    ...(base.clearLine ? { clearLine: deformedPositions(base.clearLine, disp.line.d, scale) } : {}),
+    ...(base.frameTri && disp.frameTri ? { frameTri: deformedPositions(base.frameTri, disp.frameTri.d, scale) } : {}),
+    ...(base.frameEdge && disp.frameEdge ? { frameEdge: deformedPositions(base.frameEdge, disp.frameEdge.d, scale) } : {}),
+    ...(base.offsetLine && disp.offsetLine ? { offsetLine: deformedPositions(base.offsetLine, disp.offsetLine.d, scale) } : {}),
+    ...(base.offsetJoint && disp.offsetJoint ? { offsetJoint: deformedPositions(base.offsetJoint, disp.offsetJoint.d, scale) } : {}),
     key,
     disp,
   };
@@ -84,9 +110,11 @@ export function selectionOutline(
   blobs: BlobStore,
   prims: readonly Prims[],
   makeLines: (positions: Float32Array, widthPx: number) => THREE.Object3D,
+  showOffsets = false,
 ): THREE.Object3D[] {
   const pos = drawnPositions(full, info, blobs);
-  return highlightObjects(pos.line, pos.tri, prims, makeLines);
+  const linePos = showOffsets && pos.clearLine ? pos.clearLine : pos.line;
+  return highlightObjects(linePos, pos.tri, prims, makeLines);
 }
 
 /**
@@ -212,10 +240,24 @@ export function ghostObjects(
   drawn: { lineMap: Int32Array; triMap: Int32Array },
   edgeMap: Int32Array | null,
   mode: ThemeMode = "dark",
+  frameTriMap: Int32Array | null = null,
+  frameEdgeMap: Int32Array | null = null,
+  drawnLineMap: Int32Array | null = null,
+  showOffsets = false,
 ): THREE.Object3D[] {
   // Always the mesh blobs: the ghost is the undeformed mesh, whatever is drawn.
   const base = basePositions(info, blobs);
-  const edges = edgeMap ? gatherInto(base.edge, edgeMap, 6) : null;
+  const surfEdges = edgeMap ? gatherInto(base.edge, edgeMap, 6) : null;
+  const fEdges = frameEdgeMap && base.frameEdge ? gatherInto(base.frameEdge, frameEdgeMap, 6) : null;
+  const edges =
+    surfEdges && fEdges
+      ? (() => {
+          const out = new Float32Array(surfEdges.length + fEdges.length);
+          out.set(surfEdges, 0);
+          out.set(fEdges, surfEdges.length);
+          return out;
+        })()
+      : (surfEdges ?? fEdges);
   const t = themeTokens(mode);
   const out: THREE.Object3D[] = [];
   if (edges?.length) {
@@ -227,7 +269,19 @@ export function ghostObjects(
     e.renderOrder = -1;
     out.push(e);
   }
-  const tri = gatherInto(base.tri, drawn.triMap, 9);
+  const surfTri = gatherInto(base.tri, drawn.triMap, 9);
+  const fTri = frameTriMap && base.frameTri ? gatherInto(base.frameTri, frameTriMap, 9) : null;
+  const tri =
+    surfTri.length && fTri?.length
+      ? (() => {
+          const out = new Float32Array(surfTri.length + fTri.length);
+          out.set(surfTri, 0);
+          out.set(fTri, surfTri.length);
+          return out;
+        })()
+      : surfTri.length
+        ? surfTri
+        : (fTri ?? surfTri);
   if (tri.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
@@ -241,7 +295,8 @@ export function ghostObjects(
     mesh.renderOrder = -1;
     out.push(mesh);
   }
-  const line = gatherInto(base.line, drawn.lineMap, 6);
+  const lineSrc = showOffsets && base.clearLine ? base.clearLine : base.line;
+  const line = gatherInto(lineSrc, drawnLineMap ?? drawn.lineMap, 6);
   if (line.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(line, 3));
