@@ -360,22 +360,117 @@ def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
     )
 
 
+# Corner signs of the 8-node brick in OpenSees order (bottom face, then top).
+_HEX_CORNERS = np.array([
+    (-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+    (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1),
+], dtype=float)
+_GP = 1.0 / np.sqrt(3.0)
+
+
+def _hex_volume(x: np.ndarray) -> float:
+    """Reference volume of a trilinear hex: 2x2x2 Gauss of ``detJ`` (exact).
+
+    The same rule as the fork's ``LadrunoBrick::computeVolume``; signed, so a
+    mis-ordered or inverted element reads ``<= 0`` there and here alike.
+    """
+    vol = 0.0
+    for g in _HEX_CORNERS * _GP:
+        terms = 1.0 + _HEX_CORNERS * g  # (8, 3): (1 + xi_i xi), ...
+        dN = np.empty((8, 3))
+        dN[:, 0] = _HEX_CORNERS[:, 0] * terms[:, 1] * terms[:, 2]
+        dN[:, 1] = _HEX_CORNERS[:, 1] * terms[:, 0] * terms[:, 2]
+        dN[:, 2] = _HEX_CORNERS[:, 2] * terms[:, 0] * terms[:, 1]
+        vol += float(np.linalg.det((dN / 8.0).T @ x))
+    return vol
+
+
+def _min_node_distance(x: np.ndarray) -> float:
+    """``Element::getCharacteristicLength``: the minimum inter-node distance."""
+    n = len(x)
+    return min(
+        float(np.linalg.norm(x[i] - x[j])) for i in range(n) for j in range(i + 1, n)
+    )
+
+
+def _measure_lch(cls: str, x: np.ndarray) -> float | None:
+    """The fork's override of ``getCharacteristicLength`` for ``cls``, or ``None``.
+
+    Measure-based, from the corner nodes (exact for straight-edged quadratic
+    elements, the mesher's default): ``cbrt(V)`` for the bricks, ``cbrt(6V)``
+    for ``BezierTet10``, ``sqrt(A)`` for ``LadrunoQuad`` and ``sqrt(2A)`` for
+    the triangles (fork 23d937bc4). ``None`` means the class keeps the base
+    rule. A degenerate measure falls back to the base, as the fork does.
+    """
+    if cls in ("LadrunoBrick", "LadrunoBrick20") and len(x) >= 8:
+        v = _hex_volume(x[:8])
+        return float(np.cbrt(v)) if v > 0.0 else _min_node_distance(x)
+    if cls == "BezierTet10" and len(x) >= 4:
+        v6 = abs(float(np.linalg.det(np.stack([x[1] - x[0], x[2] - x[0], x[3] - x[0]]))))
+        return float(np.cbrt(v6)) if v6 > 0.0 else _min_node_distance(x)
+    if cls == "LadrunoQuad" and len(x) >= 4:
+        a = 0.5 * float(np.linalg.norm(np.cross(x[2] - x[0], x[3] - x[1])))
+        return float(np.sqrt(a)) if a > 0.0 else _min_node_distance(x)
+    if cls in ("LadrunoCST", "LadrunoLST", "BezierTri6") and len(x) >= 3:
+        a = 0.5 * float(np.linalg.norm(np.cross(x[1] - x[0], x[2] - x[0])))
+        return float(np.sqrt(2.0 * a)) if a > 0.0 else _min_node_distance(x)
+    return None
+
+
+def _element_lch(cls: str, x: np.ndarray) -> float:
+    """The characteristic length the fork hands ``cls``'s materials."""
+    measured = _measure_lch(cls, x)
+    return measured if measured is not None else _min_node_distance(x)
+
+
+def _ladruno_concrete_ceiling(mat: object) -> tuple[str, float, float | None] | None:
+    """``(name, ceiling, fixed_lch)`` for a Ladruno concrete the sweep checks.
+
+    ``fixed_lch`` is the one length every element uses when the material does
+    not regularize per element (``None`` when it does). ``None`` overall means
+    there is nothing to check: an ``_LadrunoRC`` without
+    ``-autoRegularization`` never rescales its tables by element size.
+    """
+    from ....material.nd import LadrunoConcrete3D, _LadrunoRC
+
+    if isinstance(mat, LadrunoConcrete3D):
+        return ("LadrunoConcrete3D", min(mat.l_max()),
+                None if mat.auto_regularize else float(mat.lch))
+    if isinstance(mat, _LadrunoRC):
+        if mat.auto_regularization is None:
+            return None
+        return (type(mat).__name__, min(mat.l_max()), None)
+    return None
+
+
 def sweep_asdconcrete_element_size(
     spec: "Element",
     elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
     fem: "FEMData",
 ) -> None:
-    """Warn (once, aggregated) when ASDConcrete elements exceed ``l_max`` (ADR 0044).
+    """Warn (once, aggregated) when concrete elements exceed their snap-back ceiling (ADR 0044).
 
-    For elements whose ``spec.material`` is an ``ASDConcrete3D``/``ASDConcrete1D``
-    *directly* (solids and 2-node members), compares the element's
-    characteristic length — the minimum inter-node distance, matching
-    OpenSees' ``Element::getCharacteristicLength`` — against the material's
-    crack-band snapback ceiling ``l_max = 2 E Gf / ft^2``. Elements over the
-    ceiling have their softening fracture energy floored by the binary, so the
-    response is over-brittle and no longer mesh-objective.
+    For elements whose ``spec.material`` is *directly* (solids and 2-node
+    members) one of the crack-band concretes, compares the length the binary
+    regularizes with against the material's snap-back ceiling. Elements over
+    it have their softening energy floored, so the response is over-brittle
+    and no longer mesh-objective.
 
-    Minimal cut: section-nested ASDConcrete (fiber beams / shells, where the
+    * ``ASDConcrete3D``/``ASDConcrete1D``: ``l_max = 2 E Gf / ft^2`` against
+      the minimum inter-node distance (``Element::getCharacteristicLength``).
+    * ``LadrunoConcrete3D``: ``min(l_max_t, l_max_c)``
+      (:meth:`~apeGmsh.opensees.material.nd.LadrunoConcrete3D.l_max`) against
+      each element's own length under ``auto_regularize``, else against the
+      fixed ``lch`` every element uses.
+    * ``LadrunoRCConcrete``/``LadrunoRCFiniteStrain`` with
+      ``auto_regularization``: the ceiling read off the emitted tables, against
+      each element's own length. Without it nothing depends on the mesh.
+
+    A Ladruno concrete's element length follows the fork's per-class override
+    where one is mirrored (:func:`_measure_lch`); any other class uses the
+    base rule.
+
+    Minimal cut: section-nested concrete (fiber beams / shells, where the
     material lives inside a section rather than ``spec.material``) is skipped —
     its per-class characteristic-length mapping is a documented follow-up. The
     pass is read-only and never blocks emit; the warning is CI-promotable via
@@ -388,36 +483,52 @@ def sweep_asdconcrete_element_size(
     from ....material.nd import ASDConcrete3D, ASDRegularizationWarning
     from ....material.uniaxial import ASDConcrete1D
 
-    if not isinstance(mat, (ASDConcrete3D, ASDConcrete1D)):
-        return
-    lmax = mat.l_max()
-    if lmax is None:  # raw-constructed without ft/Gf provenance — no ceiling
+    pg = getattr(spec, "pg", None)
+    where = f" in PG {pg!r}" if pg is not None else ""
+    advice = (
+        "Their softening fracture energy is floored, so the response is "
+        "over-brittle and not mesh-objective; refine the mesh or increase Gf."
+    )
+    fixed_lch: float | None = None
+    if isinstance(mat, (ASDConcrete3D, ASDConcrete1D)):
+        asd_lmax = mat.l_max()
+        if asd_lmax is None:  # raw-constructed without ft/Gf provenance — no ceiling
+            return
+        name, lmax = "ASDConcrete", asd_lmax
+        ceiling = f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={lmax:g}"
+    else:
+        found = _ladruno_concrete_ceiling(mat)
+        if found is None:
+            return
+        name, lmax, fixed_lch = found
+        ceiling = f"crack-band snap-back ceiling min(l_max_t, l_max_c)={lmax:g}"
+
+    if fixed_lch is not None:
+        if fixed_lch > lmax:
+            warnings.warn(
+                f"{name}: the fixed lch={fixed_lch:g} every element{where} uses "
+                f"exceeds the {ceiling} (ratio {fixed_lch / lmax:.2f}). {advice}",
+                ASDRegularizationWarning,
+                stacklevel=2,
+            )
         return
 
+    cls = type(spec).__name__
     worst = 0.0
     over = 0
     for _eid, node_tags in elements:
-        coords = [_node_coord(fem, int(t)) for t in node_tags]
-        n = len(coords)
-        if n < 2:
+        coords = np.array([_node_coord(fem, int(t)) for t in node_tags])
+        if len(coords) < 2:
             continue
-        lch = min(
-            float(np.linalg.norm(coords[i] - coords[j]))
-            for i in range(n)
-            for j in range(i + 1, n)
-        )
+        lch = (_min_node_distance(coords) if name == "ASDConcrete"
+               else _element_lch(cls, coords))
         if lch > lmax:
             over += 1
             worst = max(worst, lch)
     if over:
-        pg = getattr(spec, "pg", None)
-        where = f" in PG {pg!r}" if pg is not None else ""
         warnings.warn(
-            f"ASDConcrete: {over}/{len(elements)} elements{where} exceed the "
-            f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={lmax:g} "
-            f"(worst lch={worst:g}, ratio {worst / lmax:.2f}). Their softening "
-            f"fracture energy is floored, so the response is over-brittle and "
-            f"not mesh-objective; refine the mesh or increase Gf.",
+            f"{name}: {over}/{len(elements)} elements{where} exceed the "
+            f"{ceiling} (worst lch={worst:g}, ratio {worst / lmax:.2f}). {advice}",
             ASDRegularizationWarning,
             stacklevel=2,
         )
