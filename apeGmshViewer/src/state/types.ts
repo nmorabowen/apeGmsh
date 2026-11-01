@@ -971,6 +971,13 @@ export interface CameraState {
   request: { to: CameraRequest; seq: number } | null;
   /** Counts `setCamera` requests for the whole session; never reset, so a request can never reuse a seq the viewport saw. */
   seq: number;
+  /**
+   * The model path read at least once since it was opened, or null. The pose
+   * belongs to it: a load or a failed read of this path keeps the camera (a
+   * watch reload, a retry after a failed re-read); a path opened but never
+   * read (its first read pending, or failed) opens framed.
+   */
+  read: string | null;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */

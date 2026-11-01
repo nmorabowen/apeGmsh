@@ -51,7 +51,7 @@ test("setCamera: each named view is a pure transition that records the request; 
   const selected = reduce(frozen, { type: "select", pick: { decl: loaded.mesh!.elements[0]!, at: null, nodes: null } });
   for (const view of NAMED_VIEWS) {
     const s = setCamera(view === "fit-selection" ? selected : frozen, view);
-    assert.deepEqual(s.camera, { pose: null, request: { to: view, seq: 1 }, seq: 1 }, view);
+    assert.deepEqual(s.camera, { pose: null, request: { to: view, seq: 1 }, seq: 1, read: load.info.path }, view);
     assert.deepEqual(JSON.parse(JSON.stringify(s.camera)), s.camera, `${view}: the camera state is plain data`);
   }
   const twice = setCamera(setCamera(frozen, "fit"), "fit");
@@ -126,7 +126,7 @@ test("a re-read of the same model keeps the camera; another model opens with non
   assert.notEqual(reread.mesh, moved.mesh, "the re-read built a new mesh");
   assert.equal(reread.camera, moved.camera, "the re-read keeps the camera");
   const other = reduce(moved, { type: "fileLoaded", artifact: "model", load: { ...load, info: { ...load.info, path: "other.h5" } } });
-  assert.deepEqual(other.camera, { pose: null, request: null, seq: 1 });
+  assert.deepEqual(other.camera, { pose: null, request: null, seq: 1, read: "other.h5" });
   for (const e of [{ type: "fileClosed", artifact: "model" }, { type: "fileFailed", artifact: "model", path: load.info.path, error: "x" }] as const) {
     const t = reduce(reduce(moved, { type: "setTheme", theme: "light" }), e);
     assert.equal(t.camera, moved.camera, `${e.type} keeps the camera`);
@@ -145,7 +145,7 @@ test("a watch reload through a failed read keeps the camera; a failed open of an
   s = reduce(s, { type: "fileLoaded", artifact: "model", load: loadModel(model, new BlobStore()) });
   assert.equal(s.camera, moved.camera, "the retry's fileLoaded keeps the camera, as any re-read of the open file does");
   let t = reduce(moved, { type: "fileOpened", artifact: "model", path: "other.h5" });
-  assert.deepEqual(t.camera, { pose: null, request: null, seq: 0 }, "opening another file drops the camera");
+  assert.deepEqual(t.camera, { pose: null, request: null, seq: 0, read: null }, "opening another file drops the camera");
   t = reduce(t, { type: "fileFailed", artifact: "model", path: "other.h5", error: "x" });
   t = reduce(t, { type: "fileOpened", artifact: "model", path: "other.h5" });
   t = reduce(t, { type: "fileLoaded", artifact: "model", load: { ...load, info: { ...load.info, path: "other.h5" } } });
@@ -159,6 +159,7 @@ test("a camera move while another model loads does not carry into it: the new mo
   let s = reduce(initialState, { type: "fileOpened", artifact: "model", path: load.info.path });
   s = reduce(s, { type: "fileLoaded", artifact: "model", load });
   s = reduce(s, moveA);
+  const aReady = s;
   s = reduce(s, { type: "fileOpened", artifact: "model", path: "B.h5" });
   // A is still drawn while B reads: the viewport may write A's view back.
   s = reduce(s, moveWhileB);
@@ -170,6 +171,18 @@ test("a camera move while another model loads does not carry into it: the new mo
   f = reduce(f, { type: "fileOpened", artifact: "model", path: "B.h5" });
   f = reduce(f, { type: "fileLoaded", artifact: "model", load: other });
   assert.equal(f.camera.pose, null, "B's retry opens framed");
+  // A failed first read of B, then a camera move, then a successful retry: B was never read, so it opens framed.
+  let c = reduce(s, { type: "fileFailed", artifact: "model", path: "B.h5", error: "half-written" });
+  c = reduce(c, { type: "cameraMoved", pose: { eye: [5, -9, 9], target: [1, 0, 0], up: [0, 0, 1] } });
+  assert.notEqual(c.camera.pose, null, "the move is written back while B is unread");
+  c = reduce(c, { type: "fileOpened", artifact: "model", path: "B.h5" });
+  c = reduce(c, { type: "fileLoaded", artifact: "model", load: other });
+  assert.equal(c.camera.pose, null, "B, read for the first time after a failed first read, opens framed");
+  // A watch reload of A that fails, a move, then the retry: A was read, so the moved pose stands.
+  let r = reduce(reduce(aReady, { type: "fileOpened", artifact: "model", path: load.info.path }), { type: "fileFailed", artifact: "model", path: load.info.path, error: "half" });
+  r = reduce(r, { type: "cameraMoved", pose: { eye: [7, -9, 9], target: [1, 0, 0], up: [0, 0, 1] } });
+  r = reduce(reduce(r, { type: "fileOpened", artifact: "model", path: load.info.path }), { type: "fileLoaded", artifact: "model", load });
+  assert.deepEqual(r.camera.pose?.eye, [7, -9, 9], "the reload of A keeps the pose moved during its failed read");
   // A model loaded at B, then re-read: kept, as for A.
   const moved = reduce(loadedB, moveWhileB);
   assert.equal(reduce(moved, { type: "fileLoaded", artifact: "model", load: { ...other } }).camera, moved.camera);
@@ -200,7 +213,7 @@ test("the write-back of a near-vertical view far from the origin is accepted and
 test("cameraMoved writes the pose back without a request; the same pose again is a no-op; a bad pose is refused", () => {
   const pose: CameraPose = { eye: [9, -9, 9], target: [1, 0, 0], up: [0, 0, 2] };
   const s = reduce(loaded, { type: "cameraMoved", pose });
-  assert.deepEqual(s.camera, { pose: canonicalPose(pose, "x"), request: null, seq: 0 });
+  assert.deepEqual(s.camera, { pose: canonicalPose(pose, "x"), request: null, seq: 0, read: load.info.path });
   assert.equal(reduce(s, { type: "cameraMoved", pose }), s);
   assert.throws(() => reduce(s, { type: "cameraMoved", pose: { ...pose, up: [1, 1, 0] } }), /cameraMoved: up .* rolls the camera/);
 });

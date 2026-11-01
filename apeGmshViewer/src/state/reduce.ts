@@ -57,7 +57,7 @@ export const initialLoads: LoadsState = {
 };
 
 /** VA1: no camera until the viewport first frames a scene. */
-export const initialCamera: CameraState = { pose: null, request: null, seq: 0 };
+export const initialCamera: CameraState = { pose: null, request: null, seq: 0, read: null };
 
 /** The largest camera roll (radians) an explicit `up` may imply; the camera is a Z-up turntable with none. */
 export const ROLL_TOLERANCE = 1e-6;
@@ -461,10 +461,10 @@ export function reduce(s: State, e: Event): State {
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
-        // VA1: a read of the path already loaded keeps the view (a re-read, and
-        // a retry after a failed read of it). A path only opened, never read,
-        // opens framed: a pose moved while it loaded shows the model before it.
-        camera: prev !== null && prev.path === info.path && prev.status !== "opened" ? s.camera : { ...initialCamera, seq: s.camera.seq },
+        // VA1: a read of the path already read keeps the view (a re-read, and a
+        // retry after a failed re-read). A path never read opens framed: a pose
+        // moved while it loaded, or after its first read failed, is not its own.
+        camera: s.camera.read === info.path ? s.camera : { ...initialCamera, seq: s.camera.seq, read: info.path },
       });
     }
     case "setLoaded": {
@@ -509,8 +509,9 @@ export function reduce(s: State, e: Event): State {
         clip: s.clip,
         // VA1: the theme is the window's. The camera stands through a failed
         // re-read of the model shown; a failed first read of a path drops a
-        // pose moved while it loaded (the model shown then was another one).
-        camera: prev !== null && prev.path === e.path && prev.status !== "opened" ? s.camera : { ...initialCamera, seq: s.camera.seq },
+        // pose moved while it loaded (the model shown then was another one),
+        // and the path stays unread (camera.read), so its retry opens framed.
+        camera: s.camera.read === e.path ? s.camera : { ...initialCamera, seq: s.camera.seq },
         theme: s.theme,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
@@ -849,7 +850,7 @@ export function reduce(s: State, e: Event): State {
       const seq = s.camera.seq + 1;
       // An explicit pose is the camera at once; a named view or a turn is resolved by the viewport, which writes the pose back.
       const pose = typeof to === "object" && "eye" in to ? to : s.camera.pose;
-      return { ...s, camera: { pose, request: { to, seq }, seq } };
+      return { ...s, camera: { ...s.camera, pose, request: { to, seq }, seq } };
     }
     case "cameraMoved": {
       const pose = canonicalPose(e.pose, "cameraMoved");
