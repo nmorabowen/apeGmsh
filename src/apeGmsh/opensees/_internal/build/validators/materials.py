@@ -443,6 +443,125 @@ def _ladruno_concrete_ceiling(mat: object) -> tuple[str, float, float | None] | 
     return None
 
 
+def _crack_band_ceiling(mat: object) -> tuple[str, float, float | None, str] | None:
+    """``(name, l_max, fixed_lch, ceiling text)`` for a crack-band concrete, or ``None``.
+
+    ``None`` when ``mat`` is not one, or has no ceiling to check: an ASD
+    concrete raw-constructed without ``ft``/``Gf`` provenance, or an
+    ``_LadrunoRC`` without ``-autoRegularization``.
+    """
+    from ....material.nd import ASDConcrete3D
+    from ....material.uniaxial import ASDConcrete1D
+
+    if isinstance(mat, (ASDConcrete3D, ASDConcrete1D)):
+        asd_lmax = mat.l_max()
+        if asd_lmax is None:
+            return None
+        return ("ASDConcrete", asd_lmax, None,
+                f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={asd_lmax:g}")
+    found = _ladruno_concrete_ceiling(mat)
+    if found is None:
+        return None
+    name, lmax, fixed_lch = found
+    return (name, lmax, fixed_lch,
+            f"crack-band snap-back ceiling min(l_max_t, l_max_c)={lmax:g}")
+
+
+# Shells whose section materials see the base rule: none of them overrides
+# getCharacteristicLength at the fork pin (only ASDShellQ4 does, under
+# SRC/element/shell/).
+_BASE_RULE_SHELLS = frozenset({"ShellMITC4", "ShellDKGQ", "ShellNLDKGQ", "ASDShellT3"})
+
+
+def _section_host_lch(spec: object, x: np.ndarray) -> float | None:
+    """The length a section-nested material reads from its host element, or ``None``.
+
+    The materials latch ``ops_TheActiveElement->getCharacteristicLength()``
+    (``ASDConcrete3DMaterial.cpp:1687``, ``ASDConcrete1DMaterial.cpp:1059``,
+    ``LadrunoConcrete3D.cpp:382``, ``LadrunoRCConcrete.cpp:337``), and the
+    domain's update loop sets the active element to the shell before its
+    sections are driven (``Domain.cpp:2766``/``2785``), so the length is the
+    shell's own. Fork 23d937bc4. ``None`` means the host is not mirrored and
+    the sweep skips it.
+    """
+    cls = type(spec).__name__
+    if cls == "ASDShellQ4":
+        # ASDShellQ4.cpp:1876: the base length, halved while the EAS membrane
+        # is on (it localizes in one row of Gauss points); -noeas drops it.
+        lch = _min_node_distance(x)
+        return lch if getattr(spec, "no_eas", False) else lch / 2.0
+    if cls in _BASE_RULE_SHELLS:
+        return _min_node_distance(x)
+    return None
+
+
+def _sweep_section_concrete(
+    spec: "Element",
+    elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
+    fem: "FEMData",
+) -> None:
+    """The ADR 0044 sweep for crack-band concrete inside ``spec.section``.
+
+    Every concrete reached through the section's wrapper graph
+    (``LayeredShell`` layers, ``PlateFiber``, ``LadrunoShellModifier``, ...)
+    is checked against the host's length (:func:`_section_host_lch`), or
+    against its fixed ``lch`` when it does not regularize per element. One
+    warning per PG lists each concrete over its ceiling.
+    """
+    section = getattr(spec, "section", None)
+    if section is None:
+        return
+    from ....material.nd import ASDRegularizationWarning
+
+    found = [c for c in map(_crack_band_ceiling, _material_graph(section)) if c is not None]
+    if not found:
+        return
+    cls = type(spec).__name__
+    per_element = [c for c in found if c[2] is None]
+    lchs: list[float] = []
+    if per_element:
+        for _eid, node_tags in elements:
+            coords = np.array([_node_coord(fem, int(t)) for t in node_tags])
+            if len(coords) < 2:
+                continue
+            lch = _section_host_lch(spec, coords)
+            if lch is None:
+                per_element = []  # host not mirrored: nothing to compare with
+                break
+            lchs.append(lch)
+
+    lines: list[str] = []
+    for name, lmax, fixed_lch, ceiling in found:
+        if fixed_lch is not None:
+            if fixed_lch > lmax:
+                lines.append(
+                    f"{name}: the fixed lch={fixed_lch:g} every element uses "
+                    f"exceeds the {ceiling} (ratio {fixed_lch / lmax:.2f})")
+            continue
+        if not per_element:
+            continue
+        over = [h for h in lchs if h > lmax]
+        if over:
+            worst = max(over)
+            lines.append(
+                f"{name}: {len(over)}/{len(elements)} elements exceed the "
+                f"{ceiling} (worst lch={worst:g}, ratio {worst / lmax:.2f})")
+    if not lines:
+        return
+    pg = getattr(spec, "pg", None)
+    where = f" in PG {pg!r}" if pg is not None else ""
+    eas = (" ASDShellQ4 halves the node distance while EAS is on (no_eas=False)."
+           if cls == "ASDShellQ4" else "")
+    warnings.warn(
+        f"Concrete in the section of {cls}{where}: " + "; ".join(lines)
+        + f". The length is the host's getCharacteristicLength.{eas} Over the "
+        f"ceiling the softening fracture energy is floored, so the response is "
+        f"over-brittle and not mesh-objective; refine the mesh or increase Gf.",
+        ASDRegularizationWarning,
+        stacklevel=3,
+    )
+
+
 def sweep_asdconcrete_element_size(
     spec: "Element",
     elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
@@ -470,18 +589,19 @@ def sweep_asdconcrete_element_size(
     where one is mirrored (:func:`_measure_lch`); any other class uses the
     base rule.
 
-    Minimal cut: section-nested concrete (fiber beams / shells, where the
-    material lives inside a section rather than ``spec.material``) is skipped —
-    its per-class characteristic-length mapping is a documented follow-up. The
-    pass is read-only and never blocks emit; the warning is CI-promotable via
+    Concrete nested in ``spec.section`` is swept by
+    :func:`_sweep_section_concrete` against the host's length
+    (:func:`_section_host_lch`): the shells so far. Fiber beams are a
+    documented follow-up, and an unmirrored host is skipped. The pass is
+    read-only and never blocks emit; the warning is CI-promotable via
     ``-W error::...ASDRegularizationWarning``.
     """
     mat = getattr(spec, "material", None)
     if mat is None:
+        _sweep_section_concrete(spec, elements, fem)
         return
     # Deferred import: avoids an _internal -> material import cycle at load.
-    from ....material.nd import ASDConcrete3D, ASDRegularizationWarning
-    from ....material.uniaxial import ASDConcrete1D
+    from ....material.nd import ASDRegularizationWarning
 
     pg = getattr(spec, "pg", None)
     where = f" in PG {pg!r}" if pg is not None else ""
@@ -489,19 +609,10 @@ def sweep_asdconcrete_element_size(
         "Their softening fracture energy is floored, so the response is "
         "over-brittle and not mesh-objective; refine the mesh or increase Gf."
     )
-    fixed_lch: float | None = None
-    if isinstance(mat, (ASDConcrete3D, ASDConcrete1D)):
-        asd_lmax = mat.l_max()
-        if asd_lmax is None:  # raw-constructed without ft/Gf provenance — no ceiling
-            return
-        name, lmax = "ASDConcrete", asd_lmax
-        ceiling = f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={lmax:g}"
-    else:
-        found = _ladruno_concrete_ceiling(mat)
-        if found is None:
-            return
-        name, lmax, fixed_lch = found
-        ceiling = f"crack-band snap-back ceiling min(l_max_t, l_max_c)={lmax:g}"
+    found = _crack_band_ceiling(mat)
+    if found is None:
+        return
+    name, lmax, fixed_lch, ceiling = found
 
     if fixed_lch is not None:
         if fixed_lch > lmax:
