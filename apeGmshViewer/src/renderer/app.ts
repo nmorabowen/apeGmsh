@@ -1270,9 +1270,9 @@ async function captureGizmo(settle: (ms?: number) => Promise<unknown>, width: nu
  * `<out>.camera-plus-x-reread.png`, the same after the model file is read
  * again (a re-read keeps the camera); and `<out>.camera-plus-x-again.png`,
  * the view asked for again after a turn away. Each must show the same frame
- * (pixel-identical, and the same pose to the bit). It runs last in the
- * capture; the camera is then put back at the pose it had, through an
- * explicit `setCamera`.
+ * (pixel-identical, and the same pose to the bit). The camera is then put
+ * back at the pose it had, through an explicit `setCamera`, for the stills
+ * after it.
  */
 async function captureCamera(settle: (ms?: number) => Promise<unknown>, file: string) {
   viewport.renderNow();
@@ -1367,6 +1367,7 @@ async function main() {
   await settle();
   viewport.renderNow();
   await bridge.captureStill("groups");
+  await captureCamera(settle, cfg.file);
   store.dispatch({ type: "setColourBy", by: "role" });
   await settle();
   viewport.renderNow();
@@ -1440,8 +1441,6 @@ async function main() {
     // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
     await captureGizmo(settle, width, height);
   }
-  // VA1 (D7): the camera stills last, so the re-read and the camera they move never touch the stills above.
-  await captureCamera(settle, cfg.file);
   await bridge.captureDone();
 }
 
