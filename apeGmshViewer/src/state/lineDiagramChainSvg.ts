@@ -126,6 +126,12 @@ export interface BuildBeamChainPlotOptions {
   hover?: LineDiagramHoverReadout | null;
   width?: number;
   height?: number;
+  valueFactor?: number;
+  valueUnit?: string | null;
+  lengthFactor?: number;
+  lengthUnit?: string | null;
+  uComp?: { factor: number; unit: string | null };
+  uLength?: { factor: number; unit: string | null };
 }
 
 /**
@@ -338,12 +344,16 @@ export function pickChainPlotAtS(
 export function formatHoverReadout(
   hover: LineDiagramHoverReadout,
   component: LineStationComponent | null,
+  uComp: { factor: number; unit: string | null } = { factor: 1, unit: null },
+  uLength: { factor: number; unit: string | null } = { factor: 1, unit: null },
 ): string {
   const compLabel = component ?? "val";
   const meta = component ? LINE_DIAGRAM_COMPONENT_META[component] : undefined;
   const canonical = meta ? ` (${meta.canonical})` : "";
   const extrapNote = hover.withinStationSpan ? "" : " [clamped to station end]";
-  return `E${hover.elementId} · ξ = ${hover.xi.toFixed(3)} · s = ${fmtValue(hover.s)} · ${compLabel}${canonical} = ${fmtValue(hover.value)}${extrapNote}`;
+  const sUnit = uLength.unit ? ` [${uLength.unit}]` : "";
+  const vUnit = uComp.unit ? ` [${uComp.unit}]` : "";
+  return `E${hover.elementId} · ξ = ${hover.xi.toFixed(3)} · s = ${fmtValue(hover.s * uLength.factor)}${sUnit} · ${compLabel}${canonical} = ${fmtValue(hover.value * uComp.factor)}${vUnit}${extrapNote}`;
 }
 
 const fmtCoord = (n: number): string => Number(n.toFixed(2)).toString();
@@ -377,6 +387,9 @@ export function buildBeamChainPlotModel(
   const halfH = (plotH / 2) * 0.82;
   const totalLength = Math.max(chain.totalLength, 1e-12);
   const sign = opts.flipSign ? -1 : 1;
+  const valueFactor = opts.uComp?.factor ?? opts.valueFactor ?? 1;
+  const lengthFactor = opts.uLength?.factor ?? opts.lengthFactor ?? 1;
+  const lengthUnit = opts.uLength?.unit ?? opts.lengthUnit ?? null;
 
   let maxAbs = 0;
   for (const sp of chain.spans) {
@@ -477,7 +490,7 @@ export function buildBeamChainPlotModel(
             y: vToY(minSt.value),
             value: minSt.value,
             signedValue: sign * minSt.value,
-            label: fmtValue(minSt.value),
+            label: fmtValue(minSt.value * valueFactor),
           }
         : null;
 
@@ -489,7 +502,7 @@ export function buildBeamChainPlotModel(
             y: vToY(maxSt.value),
             value: maxSt.value,
             signedValue: sign * maxSt.value,
-            label: fmtValue(maxSt.value),
+            label: fmtValue(maxSt.value * valueFactor),
           }
         : null;
 
@@ -523,10 +536,12 @@ export function buildBeamChainPlotModel(
   });
 
   const firstSpan = chain.spans[0];
+  const lengthSuffix = lengthUnit ? ` ${lengthUnit}` : "";
+  const lengthStr = `${fmtValue(chain.totalLength * lengthFactor)}${lengthSuffix}`;
   const headerLabel =
     chain.spans.length === 1 && firstSpan
-      ? `Chain ${chainIndex + 1}: E${firstSpan.elementId} (N${firstSpan.nodeStart} → N${firstSpan.nodeEnd}, L = ${fmtValue(chain.totalLength)})`
-      : `Chain ${chainIndex + 1} (${chain.spans.length} spans, L = ${fmtValue(chain.totalLength)}): ${chain.spans.map((sp) => `E${sp.elementId}`).join(" → ")}`;
+      ? `Chain ${chainIndex + 1}: E${firstSpan.elementId} (N${firstSpan.nodeStart} → N${firstSpan.nodeEnd}, L = ${lengthStr})`
+      : `Chain ${chainIndex + 1} (${chain.spans.length} spans, L = ${lengthStr}): ${chain.spans.map((sp) => `E${sp.elementId}`).join(" → ")}`;
 
   let hoverMarker: BeamChainHoverPlot | null = null;
   if (opts.hover && opts.hover.chainIndex === chainIndex) {
@@ -542,7 +557,7 @@ export function buildBeamChainPlotModel(
       value: opts.hover.value,
       signedValue: sign * opts.hover.value,
       withinStationSpan: opts.hover.withinStationSpan,
-      label: `E${opts.hover.elementId}: ${fmtValue(opts.hover.value)}`,
+      label: `E${opts.hover.elementId}: ${fmtValue(opts.hover.value * valueFactor)}`,
     };
   }
 

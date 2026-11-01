@@ -44,7 +44,7 @@ const defLoaded: State = reduce(initialState, { type: "fileLoaded", artifact: "m
 
 test("SPOTLIGHT_EVENT_LEDGER classifies every EventType with a non-empty command/description or reason", () => {
   const entries = Object.entries(SPOTLIGHT_EVENT_LEDGER) as [EventType, (typeof SPOTLIGHT_EVENT_LEDGER)[EventType]][];
-  assert.equal(entries.length, 75, "all 75 store events are classified in SPOTLIGHT_EVENT_LEDGER");
+  assert.equal(entries.length, 77, "all 77 store events are classified in SPOTLIGHT_EVENT_LEDGER");
   const exposedCommands = new Set<string>();
   for (const [eventType, entry] of entries) {
     if (entry.kind === "expose") {
@@ -505,17 +505,36 @@ test("spotlightViewOf exposes contour, unit, deform, and step drill-downs when p
   s = reduce(s, { type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
   s = reduce(s, { type: "openSpotlight" });
 
-  // Root view with paired results includes contourUnits, contourField, step, and deformScale commands
+  // Root view with paired results includes contourUnits ("Set Display Units…"), contourField, step, and deformScale commands
   const rootView = spotlightViewOf(reduce(s, { type: "setSpotlightQuery", query: "contour units" }));
-  assert.ok(rootView.items.some((i) => i.id === "cmd:contour-units"));
+  const cmdUnits = rootView.items.find((i) => i.id === "cmd:contour-units");
+  assert.ok(cmdUnits);
+  assert.equal(cmdUnits.title, "Set Display Units… (as stored)");
 
-  // Drill into contourUnits and verify target/source unit items dispatch setContourUnits
+  // Drill into contourUnits (undeclared file: declaredUnits === null) -> includes both target and source unit options
   const unitsState = reduce(s, { type: "setSpotlightMode", mode: "contourUnits" });
   const unitsView = spotlightViewOf(unitsState);
   const tfItem = unitsView.items.find((i) => i.id === "val:unit-target-tf_m_s");
   assert.ok(tfItem, "contourUnits drill-down lists tf_m_s display unit option");
+  assert.ok(
+    unitsView.items.some((i) => i.id.startsWith("val:unit-source-")),
+    "contourUnits drill-down lists Native File Units when declaredUnits === null",
+  );
   for (const ev of tfItem.action.events) s = reduce(s, ev);
   assert.equal(s.contour.targetUnits, "tf_m_s");
+
+  // When declaredUnits !== null, Native File Units (val:unit-source-*) are omitted from contourUnits drill-down
+  const sDeclared: typeof s = {
+    ...s,
+    contour: { ...s.contour, declaredUnits: "kN_m_s", sourceUnits: "kN_m_s" },
+    spotlight: { ...s.spotlight, open: true, mode: "contourUnits", query: "" },
+  };
+  const declaredView = spotlightViewOf(sDeclared);
+  assert.equal(
+    declaredView.items.some((i) => i.id.startsWith("val:unit-source-")),
+    false,
+    "Native File Units items are omitted when declaredUnits !== null",
+  );
 });
 
 test("English natural-language search, 'search' command ranking, 'set' options, and Tab / Shift+Enter workflows", async () => {

@@ -138,6 +138,28 @@ export function blobRefsOf(s: State): BlobRef[] {
   if (s.mesh) {
     const m = s.mesh;
     out.push(m.linePositions, m.triPositions, m.edgePositions, m.lineElement, m.triElement, m.lineGroup, m.triGroup);
+    if (m.frameExtrusion) {
+      const f = m.frameExtrusion;
+      out.push(
+        f.triPositions,
+        f.triNodes,
+        f.triSegments,
+        f.triElementIds,
+        f.triElement,
+        f.triGroup,
+        f.edgePositions,
+        f.edgeNodes,
+        f.edgeSegments,
+        f.extrudedSegmentMask,
+        f.clearLinePositions,
+        f.offsetLinePositions,
+        f.offsetLineNodes,
+        f.offsetLineSegments,
+        f.offsetJointPositions,
+        f.offsetJointNodes,
+        f.offsetJointSegments,
+      );
+    }
   }
   for (const d of Object.values(s.decls)) if (d.group) out.push(d.group.ids);
   for (const b of s.blocks) out.push(b.connectivity);
@@ -206,6 +228,10 @@ export interface DisplacementData {
   tri: VertexDisplacement;
   /** the outline edges (2 vertices each), through their own node ids */
   edge: VertexDisplacement;
+  frameTri?: VertexDisplacement;
+  frameEdge?: VertexDisplacement;
+  offsetLine?: VertexDisplacement;
+  offsetJoint?: VertexDisplacement;
 }
 
 /** The current results step's data: kept here, outside the store, and only the latest one (D5). */
@@ -767,11 +793,20 @@ export class Effects {
       const lineNodes = this.blobs.get(mesh.vertexNodes.line) as Float64Array;
       const triNodes = this.blobs.get(mesh.vertexNodes.tri) as Float64Array;
       const edgeNodes = this.blobs.get(mesh.vertexNodes.edge) as Float64Array;
+      const fe = mesh.frameExtrusion;
       this.disp = {
         key: v.keys.disp,
         line: vertexDisplacements(lineNodes, column, rows),
         tri: vertexDisplacements(triNodes, column, rows),
         edge: vertexDisplacements(edgeNodes, column, rows),
+        ...(fe
+          ? {
+              frameTri: vertexDisplacements(this.blobs.get(fe.triNodes) as Float64Array, column, rows),
+              frameEdge: vertexDisplacements(this.blobs.get(fe.edgeNodes) as Float64Array, column, rows),
+              offsetLine: vertexDisplacements(this.blobs.get(fe.offsetLineNodes) as Float64Array, column, rows),
+              offsetJoint: vertexDisplacements(this.blobs.get(fe.offsetJointNodes) as Float64Array, column, rows),
+            }
+          : {}),
       };
     }
     if (s.deform.measured?.key === v.keys.count || this.countedFor === v.keys.count) return;

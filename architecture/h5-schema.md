@@ -596,6 +596,29 @@ are attribute-only, like materials. Every section group is named
       fields: section_ref (string), dof_ids (int[ndf])
 ```
 
+### `ComputedSection` provenance: `/opensees/computed_sections`
+
+Written only when a `ComputedSection` emitted (opensees 2.20.0); excluded
+from `model_hash`.
+
+```
+/opensees/computed_sections/
+├── tag             int64 (n,)       joins to /opensees/sections/*
+├── analyzer_name   vlen utf-8 (n,)  "" when unnamed
+└── payload         vlen utf-8 (n,)  one JSON object per section
+```
+
+`payload` holds `kind`, the reference moduli, `policy`, `n_parts`,
+`n_elements` and `materials`. Since the frame-extrusion viewer slice it
+also holds `outline_yz`: the analyzer mesh's boundary as a list of loops,
+each a list of `[y, z]` points relative to the section centroid (the axes
+`lower_to_fiber` uses), outer loops counter-clockwise and holes clockwise.
+The key is absent in older files; a reader treats that as "no outline",
+never as an error. A present `outline_yz` that is not a list of loops of
+3+ finite points is malformed, and apeGmshViewer refuses the file. It is a
+key inside a provenance blob, not a new dataset, and does not move the
+stamp.
+
 ## `/opensees/transforms`
 
 ```

@@ -111,10 +111,110 @@ const sspQuadMat: Decoder = (args) =>
     ? { syntax: "matTag type thickness", slots: [{ slot: 0, family: "nDMaterial", label: "matTag" }] }
     : { reason: "args are not 'matTag type thickness'" };
 
+const IMK_MAT_FLAGS_1: ReadonlySet<string> = new Set([
+  "-matZ",
+  "-matY",
+  "-matZi",
+  "-matZj",
+  "-matYi",
+  "-matYj",
+  "-hingeI",
+  "-hingeJ",
+  "-shearHinge",
+  "-shearHingeY",
+  "-shearHingeZ",
+  "-hingeBiaxial",
+  "-hingeBiaxialI",
+  "-hingeBiaxialJ",
+]);
+
+const imkBeam: Decoder = (args) => {
+  const n = leadingNumbers(args);
+  const collectFlagSlots = (baseSlots: { slot: number; family: "geomTransf" | "uniaxialMaterial"; label: string }[]) => {
+    const slots = [...baseSlots];
+    for (let i = n; i < args.length; i++) {
+      const tok = args[i];
+      if (typeof tok === "string" && IMK_MAT_FLAGS_1.has(tok) && isNum(args[i + 1])) {
+        slots.push({ slot: i + 1, family: "uniaxialMaterial", label: tok.slice(1) });
+        i += 1;
+      } else if (tok === "-hingeBiaxialIJ" && isNum(args[i + 1]) && isNum(args[i + 2])) {
+        slots.push(
+          { slot: i + 1, family: "uniaxialMaterial", label: "hingeBiaxialI" },
+          { slot: i + 2, family: "uniaxialMaterial", label: "hingeBiaxialJ" },
+        );
+        i += 2;
+      }
+    }
+    return slots;
+  };
+  if (n === 4 || n === 6) {
+    const base: { slot: number; family: "geomTransf" | "uniaxialMaterial"; label: string }[] = [
+      { slot: 3, family: "geomTransf", label: "transfTag" },
+    ];
+    if (n === 6) {
+      base.push(
+        { slot: 4, family: "uniaxialMaterial", label: "matTagI" },
+        { slot: 5, family: "uniaxialMaterial", label: "matTagJ" },
+      );
+    }
+    return {
+      syntax: n === 6 ? "A E Iz transfTag matTagI matTagJ (2-D)" : "A E Iz transfTag (2-D)",
+      slots: collectFlagSlots(base),
+    };
+  }
+  if (n === 7 || n === 9) {
+    const base: { slot: number; family: "geomTransf" | "uniaxialMaterial"; label: string }[] = [
+      { slot: 6, family: "geomTransf", label: "transfTag" },
+    ];
+    if (n === 9) {
+      base.push(
+        { slot: 7, family: "uniaxialMaterial", label: "matTagI" },
+        { slot: 8, family: "uniaxialMaterial", label: "matTagJ" },
+      );
+    }
+    return {
+      syntax: n === 9 ? "A E G Jx Iy Iz transfTag matTagI matTagJ (3-D)" : "A E G Jx Iy Iz transfTag (3-D)",
+      slots: collectFlagSlots(base),
+    };
+  }
+  return { reason: `${n} leading numeric args match no LadrunoIMKBeam form (4, 6, 7, or 9)` };
+};
+
+const timoshenkoBeam: Decoder = (args) => {
+  const n = leadingNumbers(args);
+  if (n === 6) {
+    return { syntax: "E G A Iz Avy transfTag (2-D)", slots: [{ slot: 5, family: "geomTransf", label: "transfTag" }] };
+  }
+  if (n === 9) {
+    return {
+      syntax: "E G A Jx Iy Iz Avy Avz transfTag (3-D)",
+      slots: [{ slot: 8, family: "geomTransf", label: "transfTag" }],
+    };
+  }
+  return { reason: `${n} leading numeric args match no ElasticTimoshenkoBeam form (6 or 9)` };
+};
+
+const modElasticBeam2d: Decoder = (args) => {
+  const n = leadingNumbers(args);
+  if (n === 7) {
+    return {
+      syntax: "A E Iz K11 K33 K44 transfTag (2-D)",
+      slots: [{ slot: 6, family: "geomTransf", label: "transfTag" }],
+    };
+  }
+  return { reason: `${n} leading numeric args match no ModElasticBeam2d form (7)` };
+};
+
 export const ELEMENT_SYNTAX: Readonly<Record<string, Decoder>> = {
   dispBeamColumn: beamWithIntegration,
   forceBeamColumn: beamWithIntegration,
+  LadrunoDispBeamColumn: beamWithIntegration,
+  LadrunoForceBeamColumn: beamWithIntegration,
   elasticBeamColumn: elasticBeam,
+  LadrunoIMKBeam: imkBeam,
+  ElasticTimoshenkoBeam: timoshenkoBeam,
+  elasticTimoshenkoBeam: timoshenkoBeam,
+  ModElasticBeam2d: modElasticBeam2d,
   Truss: truss,
   CorotTruss: truss,
   stdBrick: solidMat,
@@ -136,6 +236,18 @@ const secThenN: Decoder = (params) =>
     ? { syntax: "secTag N", slots: [{ slot: 0, family: "section", label: "secTag" }] }
     : { reason: "first param is not a numeric secTag" };
 
+const hingeIntegration: Decoder = (params) =>
+  params.length === 5 && isNum(params[0]) && isNum(params[2]) && isNum(params[4])
+    ? {
+        syntax: "secITag lpI secJTag lpJ secETag",
+        slots: [
+          { slot: 0, family: "section", label: "secITag" },
+          { slot: 2, family: "section", label: "secJTag" },
+          { slot: 4, family: "section", label: "secETag" },
+        ],
+      }
+    : { reason: `expected 5 params 'secITag lpI secJTag lpJ secETag', got ${params.length}` };
+
 export const INTEGRATION_SYNTAX: Readonly<Record<string, Decoder>> = {
   Legendre: secThenN,
   Lobatto: secThenN,
@@ -143,14 +255,65 @@ export const INTEGRATION_SYNTAX: Readonly<Record<string, Decoder>> = {
   NewtonCotes: secThenN,
   Trapezoidal: secThenN,
   CompositeSimpson: secThenN,
+  HingeMidpoint: hingeIntegration,
+  HingeRadau: hingeIntegration,
+  HingeRadauTwo: hingeIntegration,
+  HingeEndpoint: hingeIntegration,
+};
+
+export const SECTION_SYNTAX: Readonly<Record<string, Decoder>> = {
+  Aggregator: (params) => {
+    const slots: LinkSlot[] = [];
+    let i = 0;
+    while (i < params.length) {
+      if (params[i] === "-section") {
+        if (!isNum(params[i + 1])) return { reason: "Aggregator -section flag is missing a numeric secTag" };
+        slots.push({ slot: i + 1, family: "section", label: "secTag" });
+        i += 2;
+      } else if (isNum(params[i]) && typeof params[i + 1] === "string") {
+        slots.push({ slot: i, family: "uniaxialMaterial", label: `matTag(${params[i + 1]})` });
+        i += 2;
+      } else {
+        return { reason: `Aggregator params at [${i}] match neither 'matTag dof' nor '-section secTag'` };
+      }
+    }
+    return slots.length > 0
+      ? { syntax: "(matTag dof)... [-section secTag]", slots }
+      : { reason: "Aggregator has no slots" };
+  },
+  InsertionPoint: (params) =>
+    params.length >= 1 && isNum(params[0])
+      ? {
+          syntax: "secTag -offset dy dz [-bbox yMin yMax zMin zMax]",
+          slots: [{ slot: 0, family: "section", label: "secTag" }],
+        }
+      : { reason: "InsertionPoint first param is not a numeric secTag" },
+  WFSection2d: (params) =>
+    params.length === 7 && isNum(params[0])
+      ? { syntax: "matTag d tw bf tf Nfw Nff", slots: [{ slot: 0, family: "uniaxialMaterial", label: "matTag" }] }
+      : { reason: `WFSection2d expects 7 params, got ${params.length}` },
+  RCSection2d: (params) =>
+    params.length === 12 && isNum(params[0]) && isNum(params[1]) && isNum(params[2])
+      ? {
+          syntax: "coreTag coverTag steelTag d b cover Atop Abot Aside Nfcore Nfcover Nfs",
+          slots: [
+            { slot: 0, family: "uniaxialMaterial", label: "coreTag" },
+            { slot: 1, family: "uniaxialMaterial", label: "coverTag" },
+            { slot: 2, family: "uniaxialMaterial", label: "steelTag" },
+          ],
+        }
+      : { reason: `RCSection2d expects 12 params, got ${params.length}` },
 };
 
 /** Section types whose materials are referenced by HDF5 path (read, not interpreted). */
-export const SECTIONS_WITH_MATERIAL_REFS: ReadonlySet<string> = new Set(["Fiber"]);
+export const SECTIONS_WITH_MATERIAL_REFS: ReadonlySet<string> = new Set(["Fiber", "FiberThermal", "NDFiber"]);
 
 /** Section types that reference no material at all (parameters only). */
 export const SECTIONS_WITHOUT_MATERIALS: ReadonlySet<string> = new Set([
   "Elastic",
   "ElasticMembranePlateSection",
   "ElasticShear",
+  "ElasticTube",
+  "ElasticTimoshenko",
 ]);
+

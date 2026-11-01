@@ -18,6 +18,7 @@ import {
   pickChainPlotAtS,
   rampCss,
   RANGE_MODES,
+  resolveFieldUnits,
   scaleLabel,
   signRampCss,
 } from "../state/selectors.ts";
@@ -31,6 +32,31 @@ const LINE_PLANES: readonly { plane: LineDiagramPlane; label: string }[] = [
 ];
 
 const SVG_NS = "http://www.w3.org/2000/svg";
+
+function lineDiagramUnitsOf(s: State): {
+  uComp: { factor: number; unit: string | null; note: string };
+  uLength: { factor: number; unit: string | null; note: string };
+} {
+  const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
+  const meta = s.lineDiagram.component ? LINE_DIAGRAM_COMPONENT_META[s.lineDiagram.component] : undefined;
+  const uComp = resolveFieldUnits(
+    meta?.canonical ?? s.lineDiagram.component ?? "",
+    "element",
+    s.contour.sourceUnits,
+    s.contour.targetUnits,
+    stageKind,
+    s.contour.declaredUnits,
+  );
+  const uLength = resolveFieldUnits(
+    "displacement",
+    "nodal",
+    s.contour.sourceUnits,
+    s.contour.targetUnits,
+    stageKind,
+    s.contour.declaredUnits,
+  );
+  return { uComp, uLength };
+}
 
 function svgEl(tag: string, cls?: string, attrs?: Record<string, string>, text?: string): HTMLElement {
   const doc = document as Document & { createElementNS?: (ns: string, q: string) => Element };
@@ -56,12 +82,9 @@ function svgEl(tag: string, cls?: string, attrs?: Record<string, string>, text?:
       attrMap[k] = v;
       if (typeof node.setAttribute === "function") node.setAttribute(k, v);
       if (node.dataset) {
-        if (k.startsWith("data-")) {
-          const camel = k.slice(5).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-          node.dataset[camel] = v;
-        } else {
-          node.dataset[k] = v;
-        }
+        const rawKey = k.startsWith("data-") ? k.slice(5) : k;
+        const camel = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+        node.dataset[camel] = v;
       }
     }
   }
@@ -88,10 +111,11 @@ function syncHoverReadoutSlot(slot: HTMLElement, s: State): void {
     slot.replaceChildren();
     return;
   }
+  const { uComp, uLength } = lineDiagramUnitsOf(s);
   const readout = el(
     "div",
     "line-diagram-hover-readout",
-    formatHoverReadout(ld.hover, ld.component),
+    formatHoverReadout(ld.hover, ld.component, uComp, uLength),
   );
   readout.dataset["elementId"] = String(ld.hover.elementId);
   readout.dataset["xi"] = ld.hover.xi.toFixed(4);
@@ -109,11 +133,14 @@ function syncChainHoverLayer(
   s: State,
 ): void {
   const ld = s.lineDiagram;
+  const { uComp, uLength } = lineDiagramUnitsOf(s);
   const model = buildBeamChainPlotModel(chain, chainIndex, ld.chains.length, {
     flipSign: effectiveFlipSign(ld),
     fill: ld.fill,
     component: ld.component,
     hover: ld.hover,
+    uComp,
+    uLength,
   });
   if (model.hoverMarker === null) {
     layer.replaceChildren();
@@ -210,11 +237,14 @@ function renderChainCard(
   chainHoverSlots?: ChainHoverSlot[],
 ): HTMLElement {
   const ld = s.lineDiagram;
+  const { uComp, uLength } = lineDiagramUnitsOf(s);
   const model = buildBeamChainPlotModel(chain, chainIndex, ld.chains.length, {
     flipSign: flipped,
     fill: ld.fill,
     component: ld.component,
     hover: ld.hover,
+    uComp,
+    uLength,
   });
 
   const card = el("div", "line-diagram-chain-card");
@@ -535,8 +565,10 @@ export function renderLineDiagram(
   }
 
   if (ld.on) {
+    const { uComp } = lineDiagramUnitsOf(s);
     const meta = ld.component ? LINE_DIAGRAM_COMPONENT_META[ld.component] : undefined;
-    const titleText = meta ? `${meta.field} · ${meta.key} (${meta.canonical})` : "Line diagram";
+    const unitSuffix = uComp.unit ? ` [${uComp.unit}]` : "";
+    const titleText = meta ? `${meta.field} · ${meta.key} (${meta.canonical})${unitSuffix}` : "Line diagram";
     box.append(el("div", "contour-title line-diagram-title", titleText));
 
     if (ld.drawnBeams.length > 0) {
@@ -581,8 +613,8 @@ export function renderLineDiagram(
     box.append(ramp);
 
     const constant = clim.min !== null && clim.max !== null && clim.min === clim.max;
-    const minText = clim.min === null ? "no finite value" : fmtValue(clim.min);
-    const maxText = clim.max === null ? "" : constant ? "(constant)" : fmtValue(clim.max);
+    const minText = clim.min === null ? "no finite value" : fmtValue(clim.min * uComp.factor);
+    const maxText = clim.max === null ? "" : constant ? "(constant)" : fmtValue(clim.max * uComp.factor);
     const ends = el("div", "contour-ends line-diagram-ends");
     ends.append(el("span", "contour-min", minText), el("span", "contour-max", maxText));
     box.append(ends);
@@ -692,6 +724,9 @@ function lineDiagramSignature(s: State): string {
     ld.stepRange,
     ld.scan,
     ld.notice,
+    s.contour.declaredUnits,
+    s.contour.sourceUnits,
+    s.contour.targetUnits,
     drawnBeamsKey,
     chainsKey,
     ld.on ? lineDiagramClimOf(s) : null,

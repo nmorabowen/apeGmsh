@@ -135,6 +135,8 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
+  toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
+  toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
 };
 
 // ---- Spotlight Item Model ---------------------------------------------------
@@ -490,6 +492,36 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       keywords: "set edges wireframe outline mesh lines toggle",
     });
 
+    if (s.mesh?.frameExtrusion?.hasExtrudableFrames) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-extrude-frames",
+          "display",
+          s.visibility.extrudeFrames ? "Turn Off 3-D Frame Extrusion" : "Turn On 3-D Frame Extrusion",
+          `3-D frame cross-section extrusion is currently ${s.visibility.extrudeFrames ? "ON" : "OFF"}`,
+          [{ type: "toggleExtrudeFrames" }],
+          s.visibility.extrudeFrames,
+          [{ type: "toggleExtrudeFrames" }],
+        ),
+        keywords: "extrude frames sections 3d beam column profile cross-section toggle",
+      });
+    }
+
+    if (s.mesh?.frameExtrusion?.hasJointOffsets) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-show-offsets",
+          "display",
+          s.visibility.showOffsets ? "Hide Rigid Joint Offsets" : "Show Rigid Joint Offsets",
+          `Rigid joint-offset links (-jntOffset / InsertionPoint / -endZones) are currently ${s.visibility.showOffsets ? "ON" : "OFF"}`,
+          [{ type: "toggleShowOffsets" }],
+          s.visibility.showOffsets,
+          [{ type: "toggleShowOffsets" }],
+        ),
+        keywords: "offsets jntoffset insertionpoint endzones rigid joint links toggle",
+      });
+    }
+
     out.push({
       item: drillDownItem(
         "cmd:set-opacity",
@@ -576,11 +608,11 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       item: drillDownItem(
         "cmd:contour-units",
         "contour",
-        `Set Contour Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
-        "Convert contour and load values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
+        `Set Display Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
+        "Convert contour, load, and line-diagram values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
         "contourUnits",
       ),
-      keywords: "set contour loads units baseunits kn tf kgf mm kip mpa kpa",
+      keywords: "set display contour loads line diagram units baseunits kn tf kgf mm kip mpa kpa",
     });
   }
 
@@ -1174,20 +1206,22 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
         );
         if (filter(it)) items.push(it);
       }
-      for (const src of UNIT_SYSTEM_IDS) {
-        const spec = UNIT_SYSTEMS[src];
-        const active = s.contour.sourceUnits === src;
-        const it = commandItem(
-          `val:unit-source-${src}`,
-          "native units",
-          `Native File Units: ${spec.label}`,
-          active ? "Currently assumed native unit system" : `Assume file values are stored in ${spec.label}`,
-          [{ type: "setContourUnits", source: src }],
-          active,
-          [{ type: "setContourUnits", source: src }],
-          section,
-        );
-        if (filter(it)) items.push(it);
+      if (s.contour.declaredUnits === null) {
+        for (const src of UNIT_SYSTEM_IDS) {
+          const spec = UNIT_SYSTEMS[src];
+          const active = s.contour.sourceUnits === src;
+          const it = commandItem(
+            `val:unit-source-${src}`,
+            "native units",
+            `Native File Units: ${spec.label}`,
+            active ? "Currently assumed native unit system" : `Assume file values are stored in ${spec.label}`,
+            [{ type: "setContourUnits", source: src }],
+            active,
+            [{ type: "setContourUnits", source: src }],
+            section,
+          );
+          if (filter(it)) items.push(it);
+        }
       }
       return items;
     }

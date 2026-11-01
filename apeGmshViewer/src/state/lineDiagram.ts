@@ -495,7 +495,9 @@ export function declTransformVecxz(decl: Decl): { tag: number; vecxz: [number, n
     return out;
   }
   if (
-    (decl.params.length === 3 || decl.params.length === 9) &&
+    (decl.params.length === 3 ||
+      decl.params.length === 9 ||
+      (decl.params.length === 10 && decl.params[3] === "-jntOffset")) &&
     typeof decl.params[0] === "number" &&
     typeof decl.params[1] === "number" &&
     typeof decl.params[2] === "number" &&
@@ -593,6 +595,112 @@ export function elementTransformVecxzFromState(
     return found;
   }
   return null;
+}
+
+export interface ElementJointOffset {
+  readonly dI: readonly [number, number, number];
+  readonly dJ: readonly [number, number, number];
+}
+
+/** Collect emitted `transfTag -> (dI, dJ)` joint offsets across all `geomTransf` declarations. */
+export function collectTransformJntOffsets(
+  decls: Readonly<Record<DeclPath, Decl>>,
+): Map<number, ElementJointOffset> {
+  const out = new Map<number, ElementJointOffset>();
+  for (const d of Object.values(decls)) {
+    if (d.kind !== "geomTransf" || !d.jntOffset) continue;
+    for (const row of d.jntOffset) {
+      out.set(row.tag, {
+        dI: [row.dI[0], row.dI[1], row.dI[2]],
+        dJ: [row.dJ[0], row.dJ[1], row.dJ[2]],
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve the effective global joint-offset vectors `(dI, dJ)` for a 1-D
+ * OpenSees element meta row given its nodal endpoints `pI` and `pJ`.
+ * Combines `geomTransf -jntOffset` with `LadrunoIMKBeam -endZones dI dJ`.
+ */
+export function resolveElementJointOffset(
+  metaType: string,
+  args: readonly Param[],
+  pI: readonly [number, number, number],
+  pJ: readonly [number, number, number],
+  jntByTransfTag: ReadonlyMap<number, ElementJointOffset>,
+): ElementJointOffset | null {
+  let dIx = 0, dIy = 0, dIz = 0;
+  let dJx = 0, dJy = 0, dJz = 0;
+  let any = false;
+
+  const dec = ELEMENT_SYNTAX[metaType]?.(args as Param[]);
+  if (dec && "slots" in dec) {
+    const tSlot = dec.slots.find((s) => s.family === "geomTransf");
+    const tTag = tSlot ? args[tSlot.slot] : undefined;
+    if (typeof tTag === "number" && Number.isInteger(tTag)) {
+      const jnt = jntByTransfTag.get(tTag);
+      if (jnt) {
+        dIx += jnt.dI[0];
+        dIy += jnt.dI[1];
+        dIz += jnt.dI[2];
+        dJx += jnt.dJ[0];
+        dJy += jnt.dJ[1];
+        dJz += jnt.dJ[2];
+        any = true;
+      }
+    }
+  }
+
+  if (
+    metaType === "LadrunoIMKBeam" ||
+    metaType === "LadrunoDispBeamColumn" ||
+    metaType === "LadrunoForceBeamColumn"
+  ) {
+    let ezI = 0;
+    let ezJ = 0;
+    const ezIdx = args.indexOf("-endZones");
+    if (
+      ezIdx >= 0 &&
+      typeof args[ezIdx + 1] === "number" &&
+      typeof args[ezIdx + 2] === "number" &&
+      Number.isFinite(args[ezIdx + 1]) &&
+      Number.isFinite(args[ezIdx + 2])
+    ) {
+      ezI = args[ezIdx + 1] as number;
+      ezJ = args[ezIdx + 2] as number;
+    } else {
+      const iIdx = args.indexOf("-endZoneI");
+      const jIdx = args.indexOf("-endZoneJ");
+      if (iIdx >= 0 && typeof args[iIdx + 1] === "number" && Number.isFinite(args[iIdx + 1])) {
+        ezI = args[iIdx + 1] as number;
+      }
+      if (jIdx >= 0 && typeof args[jIdx + 1] === "number" && Number.isFinite(args[jIdx + 1])) {
+        ezJ = args[jIdx + 1] as number;
+      }
+    }
+    if (ezI > 0 || ezJ > 0) {
+      const vx = pJ[0] + dJx - (pI[0] + dIx);
+      const vy = pJ[1] + dJy - (pI[1] + dIy);
+      const vz = pJ[2] + dJz - (pI[2] + dIz);
+      const L = Math.hypot(vx, vy, vz);
+      if (L > 1e-12 && ezI + ezJ < L) {
+        const ux = vx / L, uy = vy / L, uz = vz / L;
+        dIx += ezI * ux;
+        dIy += ezI * uy;
+        dIz += ezI * uz;
+        dJx -= ezJ * ux;
+        dJy -= ezJ * uy;
+        dJz -= ezJ * uz;
+        any = true;
+      }
+    }
+  }
+
+  if (!any) return null;
+  if (Math.hypot(dIx, dIy, dIz) <= 1e-12 && Math.hypot(dJx, dJy, dJz) <= 1e-12) return null;
+  return { dI: [dIx, dIy, dIz], dJ: [dJx, dJy, dJz] };
 }
 
 // -- 3-D Quad-Strip, Profile & Riser Builder ----------------------------------
@@ -1069,6 +1177,8 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
   let minVal = Infinity;
   let maxVal = -Infinity;
 
+  const jntByTransfTag = collectTransformJntOffsets(opts.decls);
+
   for (const { segIdx, endSegIdx, decl, eid } of candidateSegments) {
     const st = stationsByEid.get(eid)!;
     const badStation =
@@ -1126,6 +1236,16 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       }
     } else if (elemNodes) {
       [nodeStart, nodeEnd] = elemNodes;
+    }
+
+    // Shift span endpoints to flexible clear span [pIPrime, pJPrime] when element has rigid joint offsets
+    const meta0 = declObj?.element?.metas[0];
+    if (meta0) {
+      const jnt = resolveElementJointOffset(meta0.type, meta0.args, pStart, pEnd, jntByTransfTag);
+      if (jnt) {
+        pStart = [pStart[0] + jnt.dI[0], pStart[1] + jnt.dI[1], pStart[2] + jnt.dI[2]];
+        pEnd = [pEnd[0] + jnt.dJ[0], pEnd[1] + jnt.dJ[1], pEnd[2] + jnt.dJ[2]];
+      }
     }
 
     const dx = pEnd[0] - pStart[0];

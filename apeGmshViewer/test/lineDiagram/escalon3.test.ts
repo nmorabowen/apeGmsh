@@ -620,6 +620,15 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
     assert.ok(dom !== null);
     assert.match(dom.find("line-diagram-notice")?.textContent ?? "", /1 3-D beam skipped/);
 
+    // Unit conversion on #line-diagram: converting from kN_m_s to N_mm_s scales Vy (force) by 1000 and Mz (moment) by 1e6:
+    h.store.dispatch({ type: "setContourUnits", source: "kN_m_s", target: "N_mm_s" });
+    for (const u of unlisten.splice(0)) u();
+    dom = renderLineDiagram(h.store.get(), undefined, unlisten) as unknown as FakeEl | null;
+    assert.ok(dom !== null);
+    assert.equal(dom.find("line-diagram-title")?.textContent, "section_force · Vy (shear_y) [N]");
+    assert.equal(dom.find("contour-min")?.textContent, "-4.500e+4");
+    assert.equal(dom.find("contour-max")?.textContent, "6.000e+4");
+
     // Switching to mesh phase (no lineStations) clears stale stepRange, scan, and notice, and hides #line-diagram:
     h.store.dispatch({ type: "setPhase", at: { kind: "mesh" } });
     assert.equal(h.store.get().lineDiagram.notice, null);
@@ -633,9 +642,16 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
   }
 });
 
-test("Escalón 3: style.css prevents #banner/#line-diagram overlap and component select truncation", () => {
+test("Escalón 3: style.css prevents #banner/#line-diagram/#loads/#legend overlap and component select truncation", () => {
   const css = readFileSync(new URL("../../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);
+  const html = readFileSync(new URL("../../src/renderer/index.html", import.meta.url), "utf8");
+  assert.match(
+    html,
+    /<div id="left-rail">\s*<aside id="line-diagram" hidden><\/aside>\s*<aside id="loads" hidden><\/aside>\s*<aside id="legend" hidden><\/aside>\s*<\/div>/
+  );
+  assert.match(css, /#left-rail\s*\{[^}]*display:\s*flex;\s*flex-direction:\s*column;/);
+  assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#left-rail,\s*#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);
+  assert.doesNotMatch(css, /#line-diagram:not\(\[hidden\]\)\s*~\s*#loads\s*\{\s*top:/);
   assert.match(css, /\.line-diagram-pick\s+\.line-diagram-field\s*\{\s*flex:\s*0\s+0\s+auto;/);
 });
 
