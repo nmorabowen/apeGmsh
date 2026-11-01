@@ -461,10 +461,10 @@ export function reduce(s: State, e: Event): State {
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
-        // VA1: a read of the path already open keeps the view, a retry after a
-        // failed read too (fileOpened dropped the camera when the path changed);
-        // another model opens on its own (the viewport frames it).
-        camera: prev !== null && prev.path === info.path ? s.camera : { ...initialCamera, seq: s.camera.seq },
+        // VA1: a read of the path already loaded keeps the view (a re-read, and
+        // a retry after a failed read of it). A path only opened, never read,
+        // opens framed: a pose moved while it loaded shows the model before it.
+        camera: prev !== null && prev.path === info.path && prev.status !== "opened" ? s.camera : { ...initialCamera, seq: s.camera.seq },
       });
     }
     case "setLoaded": {
@@ -507,8 +507,10 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
-        // VA1: the camera and the theme are the window's, not the model's.
-        camera: s.camera,
+        // VA1: the theme is the window's. The camera stands through a failed
+        // re-read of the model shown; a failed first read of a path drops a
+        // pose moved while it loaded (the model shown then was another one).
+        camera: prev !== null && prev.path === e.path && prev.status !== "opened" ? s.camera : { ...initialCamera, seq: s.camera.seq },
         theme: s.theme,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },

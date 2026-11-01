@@ -152,6 +152,29 @@ test("a watch reload through a failed read keeps the camera; a failed open of an
   assert.equal(t.camera.pose, null, "the other file opens framed, not at the first file's camera");
 });
 
+test("a camera move while another model loads does not carry into it: the new model opens framed", () => {
+  const other = { ...load, info: { ...load.info, path: "B.h5" } };
+  const moveA = { type: "cameraMoved", pose: { eye: [9, -9, 9], target: [1, 0, 0], up: [0, 0, 1] } } as const;
+  const moveWhileB = { type: "cameraMoved", pose: { eye: [8, -9, 9], target: [1, 0, 0], up: [0, 0, 1] } } as const;
+  let s = reduce(initialState, { type: "fileOpened", artifact: "model", path: load.info.path });
+  s = reduce(s, { type: "fileLoaded", artifact: "model", load });
+  s = reduce(s, moveA);
+  s = reduce(s, { type: "fileOpened", artifact: "model", path: "B.h5" });
+  // A is still drawn while B reads: the viewport may write A's view back.
+  s = reduce(s, moveWhileB);
+  const loadedB = reduce(s, { type: "fileLoaded", artifact: "model", load: other });
+  assert.equal(loadedB.camera.pose, null, "B opens framed, not at the camera moved over A");
+  // The same move, then a failed first read of B and a retry: still framed.
+  let f = reduce(s, { type: "fileFailed", artifact: "model", path: "B.h5", error: "half-written" });
+  assert.equal(f.camera.pose, null, "a failed first read of B drops the pose moved over A");
+  f = reduce(f, { type: "fileOpened", artifact: "model", path: "B.h5" });
+  f = reduce(f, { type: "fileLoaded", artifact: "model", load: other });
+  assert.equal(f.camera.pose, null, "B's retry opens framed");
+  // A model loaded at B, then re-read: kept, as for A.
+  const moved = reduce(loadedB, moveWhileB);
+  assert.equal(reduce(moved, { type: "fileLoaded", artifact: "model", load: { ...other } }).camera, moved.camera);
+});
+
 test("the write-back of a near-vertical view far from the origin is accepted and places back to the same view", () => {
   // A georeferenced model (centre near 5e5, 4e6): target - eye loses most of the
   // tiny horizontal part of a near-vertical view direction to rounding.
