@@ -4022,7 +4022,8 @@ class LadrunoConcrete3D(NDMaterial):
         ``"bilinear"`` or ``None``, the fork default) and ``k = 1`` for
         ``"exp"`` (:func:`._asdconcrete_laws.tension_snapback_factor`).
         ``Gc`` is the emitted value (``GC_OVER_GF * Gf`` when ``None``).
-        Nothing calls this automatically: it is a helper for the caller.
+        The emit-time sweep (``sweep_asdconcrete_element_size``) warns when
+        an element, or the fixed ``lch``, exceeds ``min(l_max_t, l_max_c)``.
         """
         gc = self._gc()
         hp = float(self.hardening[1])
@@ -4468,7 +4469,8 @@ class _LadrunoRC(NDMaterial):
         the fork clamps the rescaled energy to its snap-back floor and the
         response is no longer mesh-objective. Needs
         ``auto_regularization`` (without it the tables are never rescaled).
-        Nothing calls this automatically: it is a helper for the caller.
+        The emit-time sweep (``sweep_asdconcrete_element_size``) warns when
+        an element exceeds ``min(l_max_t, l_max_c)``.
         """
         if self.auto_regularization is None:
             raise ValueError(
