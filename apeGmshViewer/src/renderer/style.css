@@ -595,3 +595,10 @@ body[data-rail-collapsed="true"] #windows { right: 24px; }
   padding: 6px 12px; border-top: 1px solid var(--line);
   font: 11px var(--mono); color: var(--muted); background: var(--faint);
 }
+
+/* ADR 0128 D9, the render mode's capture layers (renderer/app.ts `stillLayout`):
+   an app layer that is off is omitted from the layout, never drawn over; the
+   panels overlay the fixed viewport, so it keeps its position and size. A
+   model still omits every element of the page but the viewport. */
+[data-still-omit] { display: none !important; }
+body[data-still-chrome="model"] > :not(#viewport) { display: none !important; }

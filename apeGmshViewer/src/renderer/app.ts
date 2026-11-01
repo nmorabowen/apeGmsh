@@ -1,6 +1,6 @@
 // Renderer entry: wires the store, the BlobStore, the effects, the viewport
 // and the panels, then runs the mode main asked for (view, measure or
-// capture).
+// capture; ADR 0128's render and describe run in ./agentRender.ts).
 
 import * as THREE from "three";
 import { Effects, type Bridge } from "../effects.ts";
@@ -23,6 +23,8 @@ import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVer
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
+import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
+import { runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
@@ -1299,8 +1301,50 @@ async function captureCamera(settle: (ms?: number) => Promise<unknown>, file: st
   viewport.renderNow();
 }
 
+/**
+ * ADR 0128 D9: the page elements each app layer omits from the layout. A
+ * layer that is off sets `data-still-omit` on its elements (style.css:
+ * `display: none`); every panel is an overlay on the fixed viewport, so the
+ * viewport keeps its position and size. Model mode omits every element of
+ * the page but the viewport.
+ */
+const PANEL_LAYERS: Readonly<Record<AppLayer, readonly string[]>> = {
+  header: ["header"],
+  phase: ["phase"],
+  viewcube: ["viewcube"],
+  left_rail: ["left-rail"],
+  rail: ["rail"],
+  windows: ["windows-menu", "windows"],
+  banner: ["banner"],
+};
+
+const stillLayout: Layout = {
+  apply(chrome, layers) {
+    document.body.dataset["stillChrome"] = chrome;
+    for (const layer of APP_LAYERS) {
+      if (chrome === "app" && typeof layers[layer] !== "boolean") throw new Error(`render: app layer ${layer} has no state`);
+      for (const id of PANEL_LAYERS[layer]) {
+        const node = document.getElementById(id);
+        if (!node) throw new Error(`render: the ${layer} layer's element #${id} is not on the page`);
+        node.toggleAttribute("data-still-omit", chrome === "app" && layers[layer] === false);
+      }
+    }
+  },
+  inLayout() {
+    return [...document.body.children]
+      .filter((n) => n.id !== "viewport" && n.getClientRects().length > 0)
+      .map((n) => (n.id ? `#${n.id}` : n.tagName.toLowerCase()));
+  },
+};
+
 async function main() {
   const cfg = await bridge.config();
+  // ADR 0128 D4: the agent modes (render, describe) run their own flow; the config's mode union predates them.
+  const mode: string = cfg.mode;
+  if (mode === "render" || mode === "describe") {
+    await runAgentMode({ store, blobs, effects, viewport, bridge: bridge as unknown as RenderBridge, layout: stillLayout });
+    return;
+  }
   if (cfg.mode === "view") {
     effects.attach();
     // With V2f's `onOpen`, main replays the open set on subscription; loading
