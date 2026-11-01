@@ -29,7 +29,7 @@ import { LoadsLayer } from "./loads.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
-import type { CameraRequest, DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
+import type { CameraPose, CameraRequest, DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 import {
   DEFAULT_FOV_DEG,
@@ -343,6 +343,17 @@ export class Viewport {
       this.cameraWritten = seen;
     };
     requestAnimationFrame(tick);
+  }
+
+  /**
+   * ADR 0128 D4: the camera shown now, as the write-back above records it,
+   * read at once. The render mode records a still's camera from the frame it
+   * took; a hidden window's animation frames come about once a second, so it
+   * does not wait for the write-back.
+   */
+  currentPose(): CameraPose {
+    const m = this.store.get().mesh ?? this.geometryInfo;
+    return poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
   }
 
   /**

@@ -79,7 +79,9 @@ export interface ShotResult {
   /** the DOM check: the viewport's box, and every other element in the layout */
   layout: { viewport: [number, number, number, number]; panels: string[] } | null;
   image: [number, number] | null;
+  /** the shot's time, and the part spent until its view was on screen (the rest paints, composes and writes) */
   ms: number;
+  shownMs: number | null;
 }
 
 const painted = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -159,10 +161,12 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 function applyClip(store: Store, plan: ShotPlan): void {
   for (const p of store.get().clip.planes) store.dispatch({ type: "removeClipPlane", id: p.id });
   for (const c of plan.clip) {
+    const n = store.get().clip.planes.length;
     store.dispatch({ type: "addClipPlane", normal: c.normal });
     const planes = store.get().clip.planes;
-    const id = planes.at(-1)?.id;
-    if (!id || planes.length === 0) return;
+    // A plane the reducer refused adds nothing: its notice stays set, and the verdict refuses the shot with it.
+    if (planes.length !== n + 1) return;
+    const id = planes.at(-1)!.id;
     store.dispatch({ type: "setClipOffset", id, offset: c.offset });
     if (c.flip) store.dispatch({ type: "setClipFlipped", id, flipped: true });
   }
@@ -188,6 +192,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
   // D9: layers are presentation; the view (and so any refusal) is decided before they are applied.
   const why = await shown(deps, shot, plan);
   if (why !== null) return refuse(why);
+  const shownMs = performance.now() - t0;
   store.dispatch({ type: "setCamera", to: "home" });
   store.dispatch({ type: "setCamera", to: plan.camera });
   const canvas = viewport.renderer.domElement;
@@ -198,8 +203,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
   const before = box();
   layout.apply(shot.chrome, shot.layers);
   viewport.renderNow();
-  // Two painted frames after the last change, then one more for the camera write-back (navigation's rest frame).
-  await painted();
+  // D4: two painted frames after the last change (a hidden window's first capture after a burst of DOM changes can be the frame before them).
   await painted();
   await painted();
   viewport.renderNow();
@@ -241,7 +245,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
     ...base,
     status: "ok",
     png: png.path,
-    camera: s.camera.pose,
+    camera: viewport.currentPose(),
     contour:
       plan.contour && (v.state === "ready" || v.state === "element")
         ? { ...plan.contour, clim: { min: v.clim.min, max: v.clim.max, mode: v.clim.mode, label: v.clim.label }, cmap: v.cmap }
@@ -253,6 +257,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
     layout: { viewport: r, panels },
     image,
     ms: performance.now() - t0,
+    shownMs,
   };
 }
 
@@ -322,5 +327,6 @@ function emptyRefusal(shot: SpecShot): ShotResult {
     layout: null,
     image: null,
     ms: 0,
+    shownMs: null,
   };
 }
