@@ -334,9 +334,7 @@ export class Viewport {
         return;
       }
       this.cameraWritePending = false;
-      const m = this.store.get().mesh ?? this.geometryInfo;
-      // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
-      const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
+      const pose = this.currentPose();
       // A refused write raises (loudly, from this frame) and stays unwritten:
       // the count advances only once the store holds the pose, so the next move writes again.
       this.store.dispatch({ type: "cameraMoved", pose });
@@ -353,6 +351,7 @@ export class Viewport {
    */
   currentPose(): CameraPose {
     const m = this.store.get().mesh ?? this.geometryInfo;
+    // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
     return poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
   }
 

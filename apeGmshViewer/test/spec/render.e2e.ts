@@ -293,12 +293,13 @@ log("D2 refusals: ok");
     // The human picks an element: a click through the page's own input path, tried over a grid until one hits the model.
     const [w, h] = (await evaluate("[innerWidth, innerHeight]")) as [number, number];
     const selected = async () => (await evaluate("!document.getElementById('inspector').hidden && document.getElementById('inspector').innerText.length > 0")) === true;
-    grid: for (const fy of [0.5, 0.4, 0.6, 0.3, 0.7]) {
-      for (const fx of [0.35, 0.3, 0.4, 0.25, 0.45, 0.5]) {
-        const at = { x: Math.round(fx * w), y: Math.round(fy * h) };
+    await new Promise((r) => setTimeout(r, 2000));
+    grid: for (let gy = 1; gy < 12; gy++) {
+      for (let gx = 1; gx < 16; gx++) {
+        const at = { x: Math.round((gx * w) / 16), y: Math.round((gy * h) / 12) };
         await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...at });
         for (const type of ["mousePressed", "mouseReleased"]) await call("Input.dispatchMouseEvent", { type, ...at, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 });
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 120));
         if (await selected()) break grid;
       }
     }
