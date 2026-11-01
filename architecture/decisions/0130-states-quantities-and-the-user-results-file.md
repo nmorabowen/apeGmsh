@@ -114,7 +114,9 @@ Each zone has its own version key (ADR 0112 D2, ADR 0023).
 
 The layout inside each zone is slice 0's architect-pair output. Element
 fields use the `.ladruno` bucket conventions (`COLUMN_MAP`, `COMP_NAMES`,
-`QUADRATURE/GP_PARAM`), so one reader path serves both files. NaN means
+`QUADRATURE/GP_PARAM`), so one reader path serves both files, and the Python writer reuses the
+bucket code of the existing `.ladruno` writer
+(`results/readers/_ladruno_writer.py`, ADR 0122 D6). NaN means
 "not defined here" (the YOO slab uses it to grey out non-slab nodes; that
 convention becomes a rule).
 
@@ -161,13 +163,15 @@ increment of every recorded quantity about the reference state (ADR 0124 D4:
 the static modal-force solve on the preloaded domain).
 
 The per-mode increments come from the ADR 0124 driver's extractors, in
-Python, because that driver refuses a model with a declared recorder (ADR
-0124 D4). apeGmsh writes them to `.user.h5` `/spectra/<case>`. CQC, SRSS and
-100/30 are D4 rules over a case's modes, so the combined demand is a User
-Combination. A fork option that imposes the modal state without committing
-(the request in ADR 0124 D4) would let the recorder write the increments to
-the `.ladruno`; this family's location then moves, and its descriptor does
-not change.
+Python, and apeGmsh writes them to `.user.h5` `/spectra/<case>`. The fork
+recorder cannot write them today: the driver refuses a model with a declared
+recorder (ADR 0124 D4), and that refusal holds on the `-increment` route too
+(ADR 0124 amendment of 2026-10-23), because each leg is imposed at the probe
+amplitude `± a_k φ_k / λ_k` and in both signs, so a recorder would log probe
+states, not design responses. A recorder route that writes one design-scaled
+increment per mode would move this family into the `.ladruno`; its location
+would change, and its descriptor would not. CQC, SRSS and 100/30 are D4 rules
+over a case's modes, so the combined demand is a User Combination.
 
 Gravity is combined separately (ADR 0124 D7): `1.0 D + L_exp ± E` is a
 `linear` combination of a stage and a spectrum combination, which is why
@@ -287,7 +291,7 @@ that. It records it as a prerequisite for SLE adoption, for a follow-up.
 | 3 | V | App: phase-bar families (Stages, Modes, User Combinations) and the Results / User Results picker groups | slice 1 |
 | 4 | V | App: TypeScript evaluator against the conformance fixture; unsigned results as contour only | slice 2, 3 |
 | 5 | B | `apeSees` combination declarations archived in `model.h5` `/opensees/combinations` | slice 0 |
-| 6 | X | `/modes` table from `modalProperties`; `/spectra` from the ADR 0124 driver | slice 1; ADR 0124 PR 2 |
+| 6 | X | `/modes` table from `modalProperties`; `/spectra` from the ADR 0124 driver (`spectrum_after_gravity`, landed in #2467 and #2538) | slice 1 |
 | 7 | V | App: Spectra family, modal table panel | slice 6 |
 | 8 | X+V | `/entities`: cuts, storeys, point sets, with their user results | slice 1 |
 | 9 | V | App: authoring combinations into `.user.h5` (atomic write, backup) | slice 4; human gate |
