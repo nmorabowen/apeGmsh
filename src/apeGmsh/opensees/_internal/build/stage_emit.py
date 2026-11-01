@@ -822,7 +822,12 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 #: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
 #: otherwise).
 FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261030 (c9004f48d): 43b235bbb is its ancestor
+    # FORK_PIN ladruno-v20261030b (23d937bc4): 43b235bbb is its ancestor
+    # (GitHub compare: ahead 103, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): 43b235bbb is its ancestor
     # (GitHub compare: ahead 97, behind 0). It is 6ee6a04fd plus
     # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
@@ -912,7 +917,12 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261030 (c9004f48d): c83ee812e is its ancestor
+    # FORK_PIN ladruno-v20261030b (23d937bc4): c83ee812e is its ancestor
+    # (GitHub compare: ahead 88, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): c83ee812e is its ancestor
     # (GitHub compare: ahead 82, behind 0). It is 6ee6a04fd plus
     # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
@@ -1006,7 +1016,12 @@ MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
 FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # The floor commit itself.
     MEMBRANE_WP208_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261030 (c9004f48d): b6d3e3d21 is its ancestor
+    # FORK_PIN ladruno-v20261030b (23d937bc4): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 86, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 80, behind 0). It is 6ee6a04fd plus
     # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
@@ -1100,7 +1115,12 @@ BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
 FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # The floor commit itself.
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261030 (c9004f48d): 34df942c7 is its ancestor
+    # FORK_PIN ladruno-v20261030b (23d937bc4): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 116, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): 34df942c7 is its ancestor
     # (GitHub compare: ahead 110, behind 0). It is 6ee6a04fd plus
     # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
@@ -1225,7 +1245,12 @@ FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
 FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261030 (c9004f48d): f4c791df6 is its ancestor
+    # FORK_PIN ladruno-v20261030b (23d937bc4): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4161, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4155, behind 0). It is 6ee6a04fd plus
     # 5 commits that change only LadrunoConcrete3D.
     "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
