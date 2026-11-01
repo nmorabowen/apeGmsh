@@ -285,3 +285,74 @@ imports nothing from `apeGmshViewer/`, and the viewer imports nothing from
   alternative comes back.
 - **Line diagrams and model-definition windows in the spec.** The store
   covers them, but v1 leaves them out until an agent workflow asks.
+
+## Amendment 1 (2026-11-01): capture layers (D9)
+
+**Status:** Accepted (2026-11-01) by the owner's merge of this amendment.
+The owner asked for it the same day, on approving the VA1 stills.
+
+The owner asked that an agent can capture only the model and its results:
+the app's panels are turned off as layers, or left out of the picture.
+D1 to D8 assumed a still is the window as a human sees it. That is right
+for "show the human what I see", and wrong for a report figure, where the
+panels are noise and cover the model (in the VA1 stills, the loads and
+physical-group panels sit on the `loads3d` slab and column).
+
+### D9 — A shot chooses its layers
+
+A shot (or the spec, as the default for its shots) takes two new keys:
+
+```json
+{ "chrome": "model", "layers": { "scale_bar": true, "axes": true, "banner": false } }
+```
+
+- **`chrome: "app"`** (the default) is the window as D1 to D8 define it. In
+  this mode, `layers` can switch off single panels by name, from a closed
+  set: `header`, `phase`, `viewcube`, `left_rail` (loads, line diagram,
+  legend), `rail` (section planes, sources, inspector), `windows`,
+  `banner`. A panel that is off is **omitted from the layout**, not drawn
+  over: the viewport does not move or resize because of it.
+- **`chrome: "model"`** draws the viewport alone, at `size`, with every
+  panel omitted. Only these still-only layers can be added, each drawn
+  into the image by the render mode, never by the interactive panels:
+  - `scale_bar`: the colour ramp of the contour or line diagram shown, with
+    its field, component, min, max and range mode, in the D8 fonts and
+    colours. **It is on by default whenever a contour or line diagram is
+    drawn**, because a contour without its scale misleads. An agent turns
+    it off explicitly, and the manifest records that it did.
+  - `axes`: a small X/Y/Z triad in a corner, in place of the ViewCube.
+    Default on.
+  - `banner`: the text of every banner on screen, as one line under the
+    model. Default off; the manifest always has the text (D3).
+  - `caption`: the shot's `caption` as a line of text. Default off.
+- **`background`** is `"theme"` (the default, the theme's viewport
+  background) or `"transparent"` (PNG alpha, for figures placed on a
+  page). No other value; colours stay in `tokens.ts` (D8).
+
+**Rules.**
+- A layer never changes what is drawn or refused. A shot that would refuse
+  with the panels on refuses with them off, with the same reason (D2), and
+  a banner that is off still goes into the manifest.
+- The manifest entry records `chrome`, every layer's state and
+  `background`, so INV-6 holds: the numbers a hidden panel would have
+  shown are in the manifest.
+- An offer (D5) never changes the human's panels: `chrome`, `layers` and
+  `background` apply to stills only and are ignored when an offer is
+  applied (the offer says so). A snapshot (D6) writes the window as it is.
+  To get a clean picture of the human's view, an agent passes the
+  snapshot's spec to `--render` with `chrome: "model"` (INV-2: one
+  compiler).
+- `--describe` lists the layer names the app accepts.
+
+**Slice.** D9 belongs to VA2 (#2651), which owns the spec compiler and the
+render mode. Its done-when adds:
+- a `chrome: "model"` still is exactly `size`, and no panel element is in
+  the layout (DOM check);
+- a contour shot in model mode carries the scale bar unless the spec turns
+  it off, and the manifest records the layer state;
+- a refused shot refuses identically in both modes;
+- the owner approves model-mode stills (ADR 0112 D7).
+
+**Invariant.** **INV-7 (layers are presentation).** Two shots that differ
+only in `chrome`, `layers` or `background` draw the same model from the same
+camera pose, and have the same manifest entry apart from those keys.
