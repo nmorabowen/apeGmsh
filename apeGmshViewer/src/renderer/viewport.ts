@@ -315,7 +315,7 @@ export class Viewport {
 
   /**
    * VA1: write the camera back to the store once it has held still for a
-   * frame: an animation frame after a render, if nothing moved it since. A
+   * frame: an animation frame after a move, if nothing moved it since. A
    * drag or the scripted orbit writes once, when it stops, not every frame:
    * each dispatch runs every panel's listener, and a write per frame cost
    * the renderer about 15 MB of working set over the measured orbit. The
@@ -400,6 +400,7 @@ export class Viewport {
       },
       changed: () => {
         this.cameraMoves++;
+        this.scheduleCameraWrite();
         this.syncCameraFrustum();
         this.notifyView();
         this.lineDiagram.onCameraChange();
@@ -1401,7 +1402,6 @@ export class Viewport {
     if (this.highlight.children.length) this.halo.render(this.scene, this.camera);
     this.lastRenderMs = performance.now() - t;
     if (this.halo.pulsing) this.requestRender();
-    this.scheduleCameraWrite();
   }
 
   /** V4e1: the box the offset slider maps, the reference (undeformed) mesh (renderer/clip.ts sliderBox); null with no mesh. */
