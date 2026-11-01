@@ -77,45 +77,61 @@ if (arg("uncapped") === "1") {
   app.commandLine.appendSwitch("disable-gpu-vsync");
 }
 
-if ((mode === "measure" || mode === "capture" || mode === "measure-results" || mode === "describe") && (!file || !out)) {
+if ((mode === "measure" || mode === "capture" || mode === "measure-results") && (!file || !out)) {
   throw new Error(`--mode=${mode} needs --file and --out`);
 }
-if (mode === "render" && (!arg("spec") || !out)) throw new Error("--mode=render needs --spec and --out");
 // A still is the spec's `size` in pixels, whatever the display's scale (ADR 0128 D9: a model still is exactly `size`).
 if (agentMode) app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
 const jobFs: JobFs = {
   readFile: (path) => readFileSync(path, "utf8"),
   exists: existsSync,
+  isDir: (path) => statSync(path).isDirectory(),
   list: (path) => readdirSync(path),
   mkdir: (path) => mkdirSync(path, { recursive: true }),
   writeFile: (path, text) => writeFileSync(path, text),
 };
 
-/** ADR 0128 D2: an agent run writes into an absent or empty `--out` only (spec/job.ts); a busy folder is refused, with nothing written. */
-const outBusy = agentMode ? outRefusal(resolve(out!), jobFs) : null;
-if (outBusy) {
-  process.stderr.write(`apeGmshViewer: --out refused: ${outBusy}\n`);
-  app.exit(2);
-}
-// INV-1: an agent run writes nothing outside `--out`, Chromium's profile and crash dumps included.
-if (agentMode && !outBusy) {
-  const profile = join(resolve(out!), PROFILE_DIR);
-  app.setPath("userData", profile);
-  app.setPath("crashDumps", join(profile, "crashdumps"));
+/**
+ * ADR 0128 D2 startup of an agent mode: its arguments, its `--out` (absent
+ * or an empty folder: spec/job.ts), Chromium's profile under `--out`
+ * (INV-1), then the render job. Any refusal or unexpected error goes to
+ * stderr and exits 2 at once, before any window, dialog or Chromium write:
+ * a thrown error at this level would open a modal and hang the run, with the
+ * profile still in %APPDATA% (review of #2660).
+ */
+function agentStartup(): { refused: boolean; job: RenderJobFiles | null } {
+  const refuse = (message: string) => {
+    process.stderr.write(`apeGmshViewer: ${message}\n`);
+    app.exit(2);
+    return { refused: true, job: null };
+  };
+  try {
+    if (mode === "describe" && (!file || !out)) return refuse("--mode=describe needs --file and --out");
+    if (mode === "render" && (!arg("spec") || !out)) return refuse("--mode=render needs --spec and --out");
+    const outDir = resolve(out!);
+    const busy = outRefusal(outDir, jobFs);
+    if (busy) return refuse(`--out refused: ${busy}`);
+    // INV-1: an agent run writes nothing outside `--out`, Chromium's profile and crash dumps included.
+    const profile = join(outDir, PROFILE_DIR);
+    app.setPath("userData", profile);
+    app.setPath("crashDumps", join(profile, "crashdumps"));
+    if (mode !== "render") return { refused: false, job: null };
+    const specPath = resolve(arg("spec")!);
+    const p = prepareRender(specPath, outDir, jobFs);
+    // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
+    if (!p.ok) return refuse(`the spec ${specPath} is refused: ${p.key}: ${p.reason}`);
+    return { refused: false, job: p.job };
+  } catch (err) {
+    return refuse(`${mode} failed to start: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
-/** The render job: the validated spec and its set, or (the spec refused) null, with render.json naming the key. */
-const renderJob = mode === "render" && !outBusy ? loadRenderJob(resolve(arg("spec")!), resolve(out!)) : null;
-
-function loadRenderJob(specPath: string, outDir: string): RenderJobFiles | null {
-  const p = prepareRender(specPath, outDir, jobFs);
-  if (p.ok) return p.job;
-  // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
-  process.stderr.write(`apeGmshViewer: the spec ${specPath} is refused: ${p.key}: ${p.reason}\n`);
-  app.exit(2);
-  return null;
-}
+const startup = agentMode ? agentStartup() : { refused: false, job: null };
+/** An agent mode refused at startup: no window opens (it has exited with code 2). */
+const outBusy = startup.refused;
+/** The render job: the validated spec and its set; null when the spec was refused (render.json names the key). */
+const renderJob = startup.job;
 
 // View mode is single-instance: a second launch hands its argv to the first
 // (the "second-instance" handler below) and exits.

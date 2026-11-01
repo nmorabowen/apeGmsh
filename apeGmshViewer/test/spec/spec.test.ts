@@ -4,7 +4,7 @@
 // states every default (D1, D8: light theme for batch stills; D9 layers).
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,6 +163,7 @@ test("D1: an axis-name normal is its unit vector; an explicit camera is kept as 
 const fsOf = {
   readFile: (p: string) => readFileSync(p, "utf8"),
   exists: existsSync,
+  isDir: (p: string) => statSync(p).isDirectory(),
   list: (p: string) => readdirSync(p),
   mkdir: (p: string) => mkdirSync(p, { recursive: true }),
   writeFile: (p: string, t: string) => writeFileSync(p, t),
@@ -223,6 +224,19 @@ test("D2: a non-empty --out is refused before the spec is read, and nothing in i
   rmSync(join(out, "a.png"));
   assert.equal(outRefusal(out, fsOf), null);
   assert.equal(outRefusal(join(dir, "absent"), fsOf), null);
+});
+
+test("D2: an --out that is a file is refused (never listed, so never a throw), and the file is left as it was", () => {
+  const dir = join(tmp, "file-out");
+  mkdirSync(dir, { recursive: true });
+  const out = join(dir, "afile");
+  writeFileSync(out, "x");
+  const spec = join(dir, "spec.json");
+  writeFileSync(spec, JSON.stringify(base()));
+  assert.match(outRefusal(out, fsOf) ?? "", /afile is a file, not a folder/);
+  const p = prepareRender(spec, out, fsOf);
+  assert.ok(!p.ok && p.key === "--out" && !p.wrote);
+  assert.equal(readFileSync(out, "utf8"), "x");
 });
 
 test("D1: files resolve against the spec's folder and pair by ADR 0112's rules; a valid spec writes nothing yet", () => {

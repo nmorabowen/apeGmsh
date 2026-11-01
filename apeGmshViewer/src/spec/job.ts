@@ -29,6 +29,8 @@ export interface RenderJobFiles {
 export interface JobFs {
   readFile(path: string): string;
   exists(path: string): boolean;
+  /** whether an existing path is a folder */
+  isDir(path: string): boolean;
   /** the names in a folder */
   list(path: string): string[];
   mkdir(path: string): void;
@@ -37,9 +39,10 @@ export interface JobFs {
 
 export type Prepared = { ok: true; job: RenderJobFiles } | { ok: false; key: string; reason: string; wrote: boolean };
 
-/** Why `outDir` cannot take a run (it holds files), or null when it is absent or empty. Writes nothing. */
-export function outRefusal(outDir: string, fs: Pick<JobFs, "exists" | "list">): string | null {
+/** Why `outDir` cannot take a run (it is a file, or a folder that holds files), or null when it is absent or empty. Writes nothing. */
+export function outRefusal(outDir: string, fs: Pick<JobFs, "exists" | "isDir" | "list">): string | null {
   if (!fs.exists(outDir)) return null;
+  if (!fs.isDir(outDir)) return `${outDir} is a file, not a folder; an agent run writes into an absent or empty folder`;
   const names = fs.list(outDir);
   if (names.length === 0) return null;
   const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? `, and ${names.length - 5} more` : "");
