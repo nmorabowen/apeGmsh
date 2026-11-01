@@ -351,6 +351,9 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     legend.append(ends);
     legend.append(el("div", "contour-range", lines.range));
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
+    // The unit choice lives in the header; this field's own provenance note
+    // (e.g. "not declared — select source") stays with the legend it describes.
+    legend.append(el("div", "legend-note", lines.units));
     legend.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");

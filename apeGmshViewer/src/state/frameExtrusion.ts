@@ -10,6 +10,7 @@
 import type { ElementRef } from "../chain/resolve.ts";
 import { ELEMENT_SYNTAX, INTEGRATION_SYNTAX } from "../chain/signatures.ts";
 import type { ElementMeta, Param, SectionProfile } from "../model/types.ts";
+import { equivalentRectProfile } from "../reader/equivalentSection.ts";
 import { cellPath, opsRowPath } from "./decls.ts";
 import {
   beamLocalAxes,
@@ -151,70 +152,55 @@ function inlineElementProfile(metaType: string, args: readonly Param[]): Section
     if (is2D) {
       const A = args[0] as number;
       const Iz = args[2] as number;
-      if (A > 0 && Iz > 0) {
-        const hy = Math.sqrt((12 * Iz) / A);
-        const bz = A / hy;
-        if (hy > 0 && bz > 0) {
-          const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
-          return { loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)], ...(axisymmetric ? { axisymmetric: true } : {}), source: "elastic" };
-        }
-      }
+      return equivalentRectProfile(A, Iz);
     } else if (is3D) {
       const A = args[0] as number;
       const Iy = args[4] as number;
       const Iz = args[5] as number;
-      if (A > 0 && Iy > 0 && Iz > 0) {
-        const hy = Math.sqrt((12 * Iz) / A);
-        const bz = Math.sqrt((12 * Iy) / A);
-        if (hy > 0 && bz > 0) {
-          const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
-          return { loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)], ...(axisymmetric ? { axisymmetric: true } : {}), source: "elastic" };
-        }
-      }
+      return equivalentRectProfile(A, Iz, Iy);
     }
   } else if (metaType === "ElasticTimoshenkoBeam" || metaType === "elasticTimoshenkoBeam") {
     if (n === 6) {
       const A = args[2] as number;
       const Iz = args[3] as number;
-      if (A > 0 && Iz > 0) {
-        const hy = Math.sqrt((12 * Iz) / A);
-        const bz = A / hy;
-        if (hy > 0 && bz > 0) {
-          const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
-          return { loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)], ...(axisymmetric ? { axisymmetric: true } : {}), source: "elastic" };
-        }
-      }
+      return equivalentRectProfile(A, Iz);
     } else if (n === 9) {
       const A = args[2] as number;
       const Iy = args[4] as number;
       const Iz = args[5] as number;
-      if (A > 0 && Iy > 0 && Iz > 0) {
-        const hy = Math.sqrt((12 * Iz) / A);
-        const bz = Math.sqrt((12 * Iy) / A);
-        if (hy > 0 && bz > 0) {
-          const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
-          return { loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)], ...(axisymmetric ? { axisymmetric: true } : {}), source: "elastic" };
-        }
-      }
+      return equivalentRectProfile(A, Iz, Iy);
     }
   } else if (metaType === "ModElasticBeam2d" && n === 7) {
     const A = args[0] as number;
     const Iz = args[2] as number;
-    if (A > 0 && Iz > 0) {
-      const hy = Math.sqrt((12 * Iz) / A);
-      const bz = A / hy;
-      if (hy > 0 && bz > 0) {
-        return { loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)], source: "elastic" };
-      }
-    }
+    return equivalentRectProfile(A, Iz);
   } else if ((metaType === "Truss" || metaType === "CorotTruss") && n >= 2) {
     const A = args[0] as number;
-    if (A > 0) {
-      const r = Math.sqrt(A / Math.PI);
-      if (r > 0) return { loops: [circleLoop(r)], axisymmetric: true, source: "elastic" };
+    if (typeof A === "number" && Number.isFinite(A) && A > 0) {
+      return { loops: [circleLoop(Math.sqrt(A / Math.PI))], axisymmetric: true, source: "elastic" };
     }
   }
   return null;
+}
+
+/**
+ * The ETABS (2, 3) extent of an `InsertionPoint` as a local (y, z) rectangle,
+ * following `joint_offset.insertion_point_offsets`: `mirror_2` flips the 3
+ * extent, `mirror_3` flips the 2 extent; `axis_2="y"` maps 2→y, 3→z, while
+ * `axis_2="z"` maps 2→z and 3→e1×ez = −y.
+ */
+function insertionPointRect(
+  min2: number,
+  max2: number,
+  min3: number,
+  max3: number,
+  axis2: "y" | "z",
+  mirror2: boolean,
+  mirror3: boolean,
+): [number, number][] {
+  if (mirror2) [min3, max3] = [-max3, -min3];
+  if (mirror3) [min2, max2] = [-max2, -min2];
+  return axis2 === "y" ? rectLoop(min2, max2, min3, max3) : rectLoop(-max3, -min3, min2, max2);
 }
 
 /**
@@ -222,7 +208,7 @@ function inlineElementProfile(metaType: string, args: readonly Param[]): Section
  * struct in `/opensees/decl_params` (`depth`, `width`, `bbox`, `axis_2`,
  * `mirror_2`, `mirror_3`, or a referenced `section` `$decl`).
  */
-function insertionPointProfileFromFields(
+export function insertionPointProfileFromFields(
   fields: Readonly<Record<string, unknown>>,
   secByDeclKey: ReadonlyMap<string, Decl>,
 ): SectionProfile | null {
@@ -244,25 +230,17 @@ function insertionPointProfileFromFields(
   ) {
     const [min2, max2, min3, max3] = rawBbox as [number, number, number, number];
     if (max2 > min2 && max3 > min3) {
-      const [bMin2, bMax2] = mirror2 ? [-max2, -min2] : [min2, max2];
-      const [bMin3, bMax3] = mirror3 ? [-max3, -min3] : [min3, max3];
-      const yMin = axis2 === "y" ? bMin2 : bMin3;
-      const yMax = axis2 === "y" ? bMax2 : bMax3;
-      const zMin = axis2 === "y" ? bMin3 : bMin2;
-      const zMax = axis2 === "y" ? bMax3 : bMax2;
-      return { loops: [rectLoop(yMin, yMax, zMin, zMax)], source: "parametric" };
+      return { loops: [insertionPointRect(min2, max2, min3, max3, axis2, mirror2, mirror3)], source: "parametric" };
     }
   }
 
+  // Python reads a missing width as 0 (`joint_offset._section_bbox`): a
+  // zero-thickness section has no prism to draw, so refuse rather than guess.
   const depth = typeof fields["depth"] === "number" && Number.isFinite(fields["depth"]) && fields["depth"] > 0 ? fields["depth"] : null;
-  const width = typeof fields["width"] === "number" && Number.isFinite(fields["width"]) && fields["width"] > 0 ? fields["width"] : depth;
-  if (depth !== null && width !== null && depth > 0 && width > 0) {
-    const hy = (axis2 === "y" ? depth : width) / 2;
-    const hz = (axis2 === "y" ? width : depth) / 2;
-    const axisymmetric = Math.abs(hy - hz) <= 1e-6 * Math.max(hy, hz);
+  const width = typeof fields["width"] === "number" && Number.isFinite(fields["width"]) && fields["width"] > 0 ? fields["width"] : null;
+  if (depth !== null && width !== null) {
     return {
-      loops: [rectLoop(-hy, hy, -hz, hz)],
-      ...(axisymmetric ? { axisymmetric: true } : {}),
+      loops: [insertionPointRect(-depth / 2, depth / 2, -width / 2, width / 2, axis2, mirror2, mirror3)],
       source: "parametric",
     };
   }

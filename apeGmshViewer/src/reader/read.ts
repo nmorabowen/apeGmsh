@@ -36,6 +36,7 @@ import type {
   Table,
 } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
+import { equivalentRectProfile } from "./equivalentSection.ts";
 import { openH5, type H5FS } from "./h5open.ts";
 
 /** The parts of the h5wasm module this reader uses. */
@@ -493,6 +494,7 @@ class Reader {
         names.push({ name: nm[i]!, kind: kd[i]!, tag: tg[i]! });
       }
     }
+    for (const o of objects) checkJntOffset(o);
     const definitions = this.readDefinitions(g);
     const computedOutlines = this.readComputedOutlines(g);
     // A 2.25+ file declares every tag (the writer refuses a row no declaration
@@ -524,40 +526,29 @@ class Reader {
     if (!has(cs, "tag") || !has(cs, "payload")) return undefined;
     const tg = numbers(this.dataset(cs, "tag"));
     const pl = strings(this.dataset(cs, "payload"));
-    const n = Math.min(tg.length, pl.length);
+    if (tg.length !== pl.length) {
+      throw new SchemaError(`${cs.path}: tag (${tg.length}) and payload (${pl.length}) lengths differ`);
+    }
     const out: Record<number, readonly (readonly (readonly [number, number])[])[]> = {};
     let any = false;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < tg.length; i++) {
       const tag = tg[i]!;
-      const raw = pl[i]!;
-      if (!Number.isInteger(tag) || !raw) continue;
+      const where = `${joinPath(cs.path, "payload")}[${i}]`;
+      if (!Number.isInteger(tag)) throw new SchemaError(`${joinPath(cs.path, "tag")}[${i}] = ${tag} is not an integer`);
+      let parsed: unknown;
       try {
-        const parsed = JSON.parse(raw) as { outline_yz?: unknown };
-        if (!Array.isArray(parsed?.outline_yz)) continue;
-        const loops: (readonly [number, number])[][] = [];
-        for (const loop of parsed.outline_yz) {
-          if (!Array.isArray(loop) || loop.length < 3) continue;
-          const pts: [number, number][] = [];
-          for (const pt of loop) {
-            if (
-              Array.isArray(pt) &&
-              pt.length === 2 &&
-              typeof pt[0] === "number" &&
-              typeof pt[1] === "number" &&
-              Number.isFinite(pt[0]) &&
-              Number.isFinite(pt[1])
-            ) {
-              pts.push([pt[0], pt[1]]);
-            }
-          }
-          if (pts.length >= 3) loops.push(pts);
-        }
-        if (loops.length > 0) {
-          out[tag] = loops;
-          any = true;
-        }
+        parsed = JSON.parse(pl[i]!);
       } catch {
-        // Ignore malformed sidecar JSON; section falls back to Fiber patches / Elastic props
+        throw new SchemaError(`${where} is not valid JSON`);
+      }
+      // A payload written before outline_yz existed has no key: Tier 1A just does not apply.
+      const raw = (parsed as { outline_yz?: unknown } | null)?.outline_yz;
+      if (raw === undefined) continue;
+      const loops = outlineLoopsOf(raw);
+      if (!loops) throw new SchemaError(`${where}: outline_yz is not a list of closed (y, z) loops of 3+ finite points`);
+      if (loops.length > 0) {
+        out[tag] = loops;
+        any = true;
       }
     }
     return any ? out : undefined;
@@ -1444,6 +1435,46 @@ export function modelTransformVecxz(model: ModelFile): Map<number, [number, numb
   return out;
 }
 
+/** `outline_yz` as loops of finite `(y, z)` points, or `null` when any part is malformed. */
+function outlineLoopsOf(raw: unknown): [number, number][][] | null {
+  if (!Array.isArray(raw)) return null;
+  const loops: [number, number][][] = [];
+  for (const loop of raw) {
+    if (!Array.isArray(loop) || loop.length < 3) return null;
+    const pts: [number, number][] = [];
+    for (const pt of loop) {
+      if (!Array.isArray(pt) || pt.length !== 2 || !pt.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+      pts.push([pt[0] as number, pt[1] as number]);
+    }
+    loops.push(pts);
+  }
+  return loops;
+}
+
+/**
+ * Refuse a `geomTransf` whose `jnt_offset` the bridge could not have written,
+ * as the Python reader does (`h5_reader._transform_record`): `(n, 4)` in 2-D
+ * or `(n, 6)` in 3-D, finite, one row per `per_element_emitted_tag`. A broken
+ * table must not draw the member on its node line as if it had no offset.
+ */
+export function checkJntOffset(obj: OpsObject): void {
+  if (obj.family !== "geomTransf") return;
+  const jnt = obj.tables["jnt_offset"];
+  if (jnt === undefined) return;
+  const where = joinPath(obj.path, "jnt_offset");
+  const cols = jnt.columns.length;
+  if (cols !== 6 && cols !== 4) throw new SchemaError(`${where} has ${cols} columns; the bridge writes 4 in 2-D or 6 in 3-D`);
+  const flat = flattenNumericRows(jnt.rows);
+  if (jnt.rows.length === 0 || flat.length !== jnt.rows.length * cols || !flat.every(Number.isFinite)) {
+    throw new SchemaError(`${where} is not a finite (${jnt.rows.length}, ${cols}) table`);
+  }
+  const tagTable = obj.tables["per_element_emitted_tag"];
+  const nTags = tagTable ? flattenNumericRows(tagTable.rows).length : 1;
+  if (nTags !== jnt.rows.length) {
+    throw new SchemaError(`${where} has ${jnt.rows.length} rows for ${nTags} emitted tags`);
+  }
+}
+
 /**
  * Extract `(emittedTag, dI, dJ)` rigid joint-offset vectors in global `(X, Y, Z)`
  * from a `/opensees/transforms/<name>` `OpsObject` (`jnt_offset` of shape
@@ -1595,6 +1626,36 @@ function simplifyLoop2D(pts: readonly [number, number][]): [number, number][] {
   return ring;
 }
 
+/**
+ * The outline of a section made only of `circ` patches, or `undefined` when it
+ * cannot be drawn exactly. Every patch must share one centre. Full rings give
+ * an outer circle at the largest external radius and a hole at the smallest
+ * internal one. Sectors are drawn as one sector when there is a single patch,
+ * or as a full ring when same-radius sectors together span 360°.
+ */
+function circPatchesProfile(
+  circs: readonly { yC: number; zC: number; intR: number; extR: number; a0: number; a1: number }[],
+): SectionProfile | undefined {
+  const c0 = circs[0]!;
+  const maxExtRad = Math.max(...circs.map((c) => c.extR));
+  const tol = 1e-6 * maxExtRad;
+  if (!circs.every((c) => Math.abs(c.yC - c0.yC) <= tol && Math.abs(c.zC - c0.zC) <= tol)) return undefined;
+  const isSector = (c: { a0: number; a1: number }): boolean => Math.abs(c.a1 - c.a0) < 359.9;
+  if (circs.some(isSector)) {
+    if (circs.length === 1) {
+      return { loops: [circSectorLoop(c0.yC, c0.zC, c0.intR, c0.extR, c0.a0, c0.a1)], source: "patches" };
+    }
+    const sameRadii = circs.every((c) => Math.abs(c.intR - c0.intR) <= tol && Math.abs(c.extR - c0.extR) <= tol);
+    const span = circs.reduce((acc, c) => acc + Math.abs(c.a1 - c.a0), 0);
+    if (!sameRadii || Math.abs(span - 360) > 0.1) return undefined;
+  }
+  const minIntRad = Math.min(...circs.map((c) => c.intR));
+  const loops: [number, number][][] = [circleLoop(c0.yC, c0.zC, maxExtRad, true)];
+  if (minIntRad > tol) loops.push(circleLoop(c0.yC, c0.zC, minIntRad, false));
+  const axisymmetric = Math.hypot(c0.yC, c0.zC) <= tol;
+  return { loops, ...(axisymmetric ? { axisymmetric: true } : {}), source: "patches" };
+}
+
 function unionAxisAlignedRects(
   rects: readonly { yMin: number; yMax: number; zMin: number; zMax: number }[],
 ): [number, number][][] {
@@ -1694,12 +1755,10 @@ export function sectionProfileOf(
     if (tCol >= 0 && pCol >= 0) {
       const rects: { yMin: number; yMax: number; zMin: number; zMax: number }[] = [];
       const quads: [number, number][][] = [];
-      let circCenter: [number, number] | null = null;
-      let maxExtRad = 0;
-      let minIntRad = Number.POSITIVE_INFINITY;
-      let fullCirc = true;
-      let sectorStartDeg = 0;
-      let sectorEndDeg = 360;
+      const circs: { yC: number; zC: number; intR: number; extR: number; a0: number; a1: number }[] = [];
+      // Fail closed: a patch this reader cannot draw exactly drops the whole
+      // profile (the member stays a line) rather than drawing part of it.
+      let drawable = true;
 
       for (const row of patches.rows) {
         const kind = String(row[tCol] ?? "");
@@ -1725,43 +1784,23 @@ export function sectionProfileOf(
             if (signedArea2D(q) < 0) q.reverse();
             quads.push(q);
           }
-        } else if (kind === "circ" && p.length >= 4 && p.slice(0, 4).every(Number.isFinite)) {
-          const [yC, zC, intR, extR] = p as number[];
+        } else if (kind === "circ" && p.length >= 4 && p.slice(0, 4).every(Number.isFinite) && p[3]! > 0) {
           const a0 = Number.isFinite(p[4]) ? p[4]! : 0;
           const a1 = Number.isFinite(p[5]) ? p[5]! : 360;
-          if (extR! > 0) {
-            circCenter = [yC!, zC!];
-            maxExtRad = Math.max(maxExtRad, extR!);
-            minIntRad = Math.min(minIntRad, Math.max(0, intR!));
-            if (Math.abs(a1 - a0) < 359.9) {
-              fullCirc = false;
-              sectorStartDeg = a0;
-              sectorEndDeg = a1;
-            }
-          }
+          circs.push({ yC: p[0]!, zC: p[1]!, intR: Math.max(0, p[2]!), extR: p[3]!, a0, a1 });
+        } else {
+          drawable = false;
         }
       }
 
-      if (circCenter && maxExtRad > 0 && rects.length === 0 && quads.length === 0) {
-        if (!fullCirc) {
-          const intR = Number.isFinite(minIntRad) ? minIntRad : 0;
-          return {
-            loops: [circSectorLoop(circCenter[0], circCenter[1], intR, maxExtRad, sectorStartDeg, sectorEndDeg)],
-            source: "patches",
-          };
-        }
-        const loops: [number, number][][] = [circleLoop(circCenter[0], circCenter[1], maxExtRad, true)];
-        if (Number.isFinite(minIntRad) && minIntRad > 1e-6 * maxExtRad) {
-          loops.push(circleLoop(circCenter[0], circCenter[1], minIntRad, false));
-        }
-        const axisymmetric = fullCirc && Math.hypot(circCenter[0], circCenter[1]) <= 1e-6 * maxExtRad;
-        return { loops, ...(axisymmetric ? { axisymmetric: true } : {}), source: "patches" };
-      }
-      if (rects.length > 0) {
+      const families = (rects.length > 0 ? 1 : 0) + (quads.length > 0 ? 1 : 0) + (circs.length > 0 ? 1 : 0);
+      if (drawable && families === 1 && circs.length > 0) {
+        const profile = circPatchesProfile(circs);
+        if (profile) return profile;
+      } else if (drawable && families === 1 && rects.length > 0) {
         const loops = unionAxisAlignedRects(rects);
         if (loops.length > 0) return { loops, source: "patches" };
-      }
-      if (quads.length > 0) {
+      } else if (drawable && families === 1 && quads.length === 1) {
         return { loops: [quads[0]!], source: "patches" };
       }
     }
@@ -1807,45 +1846,17 @@ export function sectionProfileOf(
     return { loops, axisymmetric: true, source: "parametric" };
   }
 
-  // Tier 3: Elastic / ElasticShear / ElasticTimoshenko equivalent rectangle from (A, Iz, Iy)
-  if (
-    (obj.type === "Elastic" || obj.type === "ElasticShear") &&
-    p.length >= 3 &&
-    typeof p[1] === "number" &&
-    typeof p[2] === "number" &&
-    p[1] > 0 &&
-    p[2] > 0
-  ) {
-    const A = p[1];
-    const Iz = p[2];
-    const hy = Math.sqrt((12 * Iz) / A);
-    const bz = p.length >= 6 && typeof p[3] === "number" && p[3] > 0 ? Math.sqrt((12 * p[3]) / A) : A / hy;
-    if (Number.isFinite(hy) && Number.isFinite(bz) && hy > 0 && bz > 0) {
-      const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
-      return {
-        loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)],
-        ...(axisymmetric ? { axisymmetric: true } : {}),
-        source: "elastic",
-      };
-    }
+  // Tier 3: Elastic / ElasticShear / ElasticTimoshenko equivalent rectangle from (A, Iz[, Iy])
+  if (obj.type === "Elastic" || obj.type === "ElasticShear") {
+    // [E, A, Iz] in 2-D; [E, A, Iz, Iy, G, J] in 3-D
+    const profile = p.length >= 6 ? equivalentRectProfile(p[1], p[2], p[3]) : p.length >= 3 ? equivalentRectProfile(p[1], p[2]) : null;
+    if (profile) return profile;
   }
-  if (obj.type === "ElasticTimoshenko" && p.length >= 5 && typeof p[2] === "number" && p[2] > 0) {
-    const A = p[2];
-    const is3D = p.length >= 8;
-    const Iy = is3D && typeof p[4] === "number" && p[4] > 0 ? p[4] : null;
-    const Iz = (is3D ? p[5] : p[3]) as number;
-    if (typeof Iz === "number" && Iz > 0) {
-      const hy = Math.sqrt((12 * Iz) / A);
-      const bz = Iy !== null ? Math.sqrt((12 * Iy) / A) : A / hy;
-      if (Number.isFinite(hy) && Number.isFinite(bz) && hy > 0 && bz > 0) {
-        const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
-        return {
-          loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)],
-          ...(axisymmetric ? { axisymmetric: true } : {}),
-          source: "elastic",
-        };
-      }
-    }
+  if (obj.type === "ElasticTimoshenko" && p.length >= 5) {
+    // [E, G, A, Iz, alphaY] in 2-D; [E, G, A, Iz, Iy, J, alphaY, alphaZ] in 3-D
+    // (upstream ElasticTimoshenkoSection3d: J sits at [5], not Iz)
+    const profile = p.length >= 8 ? equivalentRectProfile(p[2], p[3], p[4]) : equivalentRectProfile(p[2], p[3]);
+    if (profile) return profile;
   }
 
   return undefined;

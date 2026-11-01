@@ -475,9 +475,10 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     assert.equal(headerEl.hidden, false);
     assert.equal(headerEl.all((e) => e.className === "header-units-source").length, 1);
     assert.equal(headerEl.all((e) => e.className === "header-units-target").length, 1);
-    // #legend has NO .contour-units dropdowns and NO redundant lines.units note
+    // #legend has NO .contour-units dropdowns, but keeps the contoured field's
+    // own units note: the header's tooltip only ever describes displacement.
     assert.equal(legendEl.all((e) => e.className.includes("contour-units")).length, 0);
-    assert.ok(!legendEl.textContent.includes("Units: not stored in the results file."));
+    assert.ok(legendEl.textContent.includes("Units: not stored in the results file."));
 
     // 2. Selecting source and target in #header dispatches setContourUnits and updates #legend contour-title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;
