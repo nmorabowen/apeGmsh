@@ -23,7 +23,9 @@
 //   --mode=describe ADR 0128 D4: write `describe.json` into `--out`: what the
 //                   set of `--file` offers a spec (stages, steps, fields, groups)
 // Neither agent mode takes the single-instance lock, so both run beside the
-// human's window and never reach it (ADR 0128 INV-5).
+// human's window and never reach it (ADR 0128 INV-5). Both refuse an `--out`
+// that is not empty (exit 2, nothing written), and keep Chromium's profile
+// and crash dumps in `<out>/.chromium` (INV-1: nothing written outside it).
 //
 // In view mode the app is single-instance: a second launch forwards its file
 // here. Opening a file opens its set (./pairing.ts), and the set is watched

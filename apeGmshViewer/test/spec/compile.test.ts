@@ -148,7 +148,16 @@ test("reactions: the set records them at the held nodes only (NaN elsewhere); th
   const max = 3 * 4 * Math.sqrt(14) * Math.max(...factors);
   assert.ok(Math.abs(scan.min! - min) < 1e-9 * max && Math.abs(scan.max! - max) < 1e-9 * max, `range ${scan.min}..${scan.max}, expected ${min}..${max}`);
   assert.ok(scan.min! > 0, "no node outside the supports contributes a zero reaction");
+  // The step the app reads: a value at each held node, and none (NaN, drawn as no data) at every other node.
+  const step = await h.host.readStep({ path: set.results, stage: d0(h).stages[2]!.id, step: 3, seq: 1 });
+  assert.ok(step.ok, step.ok ? "" : step.error);
+  if (!step.ok) return;
+  const ids = Array.from(h.blobs.get(h.store.get().results!.stages[2]!.nodeIds!) as Float64Array);
+  const rz = step.nodal!["reaction_force_z"]!;
+  const finite = ids.filter((_, j) => Number.isFinite(rz[j]!));
+  assert.deepEqual(finite.sort((x, y) => x - y), [...set.held].sort((x, y) => x - y), "reactions exactly at the held nodes");
 });
+const d0 = (h: Opened) => describe(h.store.get());
 
 test("INV-2/INV-7: one compile per shot; chrome, layers and background change no event and no camera", async () => {
   const h = await open(STAGED, STAGED_RESULTS);
