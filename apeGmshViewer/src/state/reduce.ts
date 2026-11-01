@@ -95,7 +95,7 @@ export const initialState: State = {
   phase: { axis: [], at: null },
   selection: { decls: [], picks: [] },
   hover: null,
-  visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group" },
+  visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group", extrudeFrames: false, showOffsets: false },
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
@@ -341,6 +341,8 @@ export function reduce(s: State, e: Event): State {
       const declaredUnits = modelUnits ?? s.results?.units ?? null;
       const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
       const opacity = reread ? s.visibility.opacity : mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
+      const extrudeFrames = reread ? s.visibility.extrudeFrames : false;
+      const showOffsets = reread ? s.visibility.showOffsets : Boolean(mesh.frameExtrusion?.hasJointOffsets);
       return withPhase({
         ...s,
         phase: reread ? s.phase : { ...s.phase, at: null },
@@ -363,7 +365,7 @@ export function reduce(s: State, e: Event): State {
         stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
-        visibility: { ...s.visibility, hidden: [], opacity },
+        visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
         inspector: { pinned: [] },
         spotlight: reread ? s.spotlight : { ...initialSpotlight, seq: s.spotlight.seq },
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
@@ -521,6 +523,14 @@ export function reduce(s: State, e: Event): State {
     case "setColourBy":
       if (e.by !== "group" && e.by !== "role" && e.by !== "contour") throw new RangeError(`setColourBy: ${JSON.stringify(e.by)}`);
       return s.visibility.colourBy === e.by ? s : withContourPick({ ...s, visibility: { ...s.visibility, colourBy: e.by } });
+    case "toggleExtrudeFrames": {
+      const next = e.on !== undefined ? Boolean(e.on) : !s.visibility.extrudeFrames;
+      return s.visibility.extrudeFrames === next ? s : { ...s, visibility: { ...s.visibility, extrudeFrames: next } };
+    }
+    case "toggleShowOffsets": {
+      const next = e.on !== undefined ? Boolean(e.on) : !s.visibility.showOffsets;
+      return s.visibility.showOffsets === next ? s : { ...s, visibility: { ...s.visibility, showOffsets: next } };
+    }
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");

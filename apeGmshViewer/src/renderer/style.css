@@ -41,26 +41,42 @@ option:disabled { color: var(--muted); }
 }
 #banner div + div { margin-top: 3px; }
 
+/* Left rail: stacks #line-diagram, #loads, and #legend in one flex column so
+   they never overlap and collapsing any card immediately reflows its neighbours. */
+#left-rail {
+  position: fixed; left: 16px; top: 102px; bottom: 16px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  pointer-events: none;
+}
+#banner:not([hidden]) ~ #left-rail, #banner:not([hidden]) ~ #line-diagram {
+  top: 168px;
+}
+#left-rail > * { pointer-events: auto; }
+#left-rail > [hidden] { display: none; }
+
 #line-diagram, #loads {
-  position: fixed; left: 16px; top: 102px; max-height: calc(52vh - 110px); overflow: auto;
+  flex: 0 1 auto; min-height: 0; max-height: 52%; overflow: auto;
   padding: 10px 12px; border-radius: 10px; min-width: 280px; max-width: 292px;
   background: var(--panel); border: 1px solid var(--line);
-}
-#banner:not([hidden]) ~ #line-diagram, #banner:not([hidden]) ~ #loads {
-  top: 168px; max-height: calc(52vh - 176px);
-}
-#line-diagram:not([hidden]) ~ #loads {
-  top: 310px; max-height: calc(52vh - 190px);
 }
 #line-diagram[hidden], #loads[hidden] { display: none; }
 .loads-patterns { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .loads-pattern-title { overflow-wrap: anywhere; }
 
 #legend {
-  position: fixed; left: 16px; bottom: 16px; max-height: 45vh; overflow: auto;
-  padding: 10px 12px; border-radius: 10px; min-width: 200px;
+  margin-top: auto; flex: 0 1 auto; min-height: 0; max-height: 48%; overflow: auto;
+  padding: 10px 12px; border-radius: 10px; min-width: 200px; max-width: 292px;
   background: var(--panel); border: 1px solid var(--line);
 }
+/* Balance height across all three left-rail cards when all three are open and expanded;
+   collapsing any card releases its share and immediately shifts its neighbours. */
+#left-rail:has(#line-diagram:not([hidden]):not([data-collapsed="true"])):has(#loads:not([hidden]):not([data-collapsed="true"])) > :not([data-collapsed="true"]) {
+  max-height: calc((100% - 16px) / 3);
+}
+#left-rail:has(> :not([hidden]):not([data-collapsed="true"])):not(:has(> :not([hidden]):not([data-collapsed="true"]) ~ :not([hidden]):not([data-collapsed="true"]))) > :not([data-collapsed="true"]) {
+  max-height: 100%;
+}
+.line-diagram-span-badge { max-height: 4.2em; overflow-y: auto; }
 #legend h3, #line-diagram h3, #loads h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);

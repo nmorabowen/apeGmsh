@@ -57,9 +57,11 @@ def computed_section_payload(prim: object) -> str:
     import json
 
     from apeGmsh.opensees.section.computed import ComputedSection
+    from apeGmsh.sections._geometric import boundary_loops_yz
 
     assert isinstance(prim, ComputedSection)
     analysis = prim.analysis
+    geo = analysis.geometric()
     materials = {
         pg: {
             "E": mat.E,
@@ -76,6 +78,9 @@ def computed_section_payload(prim: object) -> str:
         "n_parts": analysis.n_parts,
         "n_elements": analysis._snapshot.n_elements,
         "materials": materials,
+        "outline_yz": boundary_loops_yz(
+            analysis._snapshot, cx=geo.cx, cy=geo.cy
+        ),
     }
     if prim.kind == "elastic":
         from apeGmsh.sections._lowering import lower_to_elastic

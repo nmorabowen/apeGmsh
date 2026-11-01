@@ -10,6 +10,7 @@ import type { ElementMeta, ModelFile, OpsFamily, OpsObject, Param, Table } from 
 import {
   ELEMENT_SYNTAX,
   INTEGRATION_SYNTAX,
+  SECTION_SYNTAX,
   SECTIONS_WITH_MATERIAL_REFS,
   SECTIONS_WITHOUT_MATERIALS,
   type Decoded,
@@ -228,6 +229,10 @@ class Resolver {
 
   sectionMaterials(sec: OpsObject): ChainNode[] {
     if (SECTIONS_WITHOUT_MATERIALS.has(sec.type)) return [];
+    const syn = SECTION_SYNTAX[sec.type];
+    if (syn) {
+      return this.followSlots(sec.path, syn(sec.params), sec.params, `${sec.path}@params`, `section ${sec.type}`);
+    }
     if (!SECTIONS_WITH_MATERIAL_REFS.has(sec.type)) {
       this.problems.push(`${sec.path}: section type ${sec.type}: material links are not decoded`);
       return [];

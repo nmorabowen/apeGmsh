@@ -32,6 +32,7 @@ import type {
   OpsObject,
   Param,
   ProgramDecls,
+  SectionProfile,
   Table,
 } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
@@ -475,6 +476,7 @@ class Reader {
       }
     }
     const definitions = this.readDefinitions(g);
+    const computedOutlines = this.readComputedOutlines(g);
     // A 2.25+ file declares every tag (the writer refuses a row no declaration
     // claims): an object no `decls/tags` run owns is a broken file, never a
     // fallback to an app-made key.
@@ -486,7 +488,61 @@ class Reader {
         }
       }
     }
-    return { version, objects, elementMeta, names, definitions };
+    return {
+      version,
+      objects,
+      elementMeta,
+      names,
+      definitions,
+      ...(computedOutlines ? { computedOutlines } : {}),
+    };
+  }
+
+  private readComputedOutlines(
+    g: H5Group,
+  ): Readonly<Record<number, readonly (readonly (readonly [number, number])[])[]>> | undefined {
+    if (!has(g, "computed_sections")) return undefined;
+    const cs = this.group(g, "computed_sections");
+    if (!has(cs, "tag") || !has(cs, "payload")) return undefined;
+    const tg = numbers(this.dataset(cs, "tag"));
+    const pl = strings(this.dataset(cs, "payload"));
+    const n = Math.min(tg.length, pl.length);
+    const out: Record<number, readonly (readonly (readonly [number, number])[])[]> = {};
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const tag = tg[i]!;
+      const raw = pl[i]!;
+      if (!Number.isInteger(tag) || !raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as { outline_yz?: unknown };
+        if (!Array.isArray(parsed?.outline_yz)) continue;
+        const loops: (readonly [number, number])[][] = [];
+        for (const loop of parsed.outline_yz) {
+          if (!Array.isArray(loop) || loop.length < 3) continue;
+          const pts: [number, number][] = [];
+          for (const pt of loop) {
+            if (
+              Array.isArray(pt) &&
+              pt.length === 2 &&
+              typeof pt[0] === "number" &&
+              typeof pt[1] === "number" &&
+              Number.isFinite(pt[0]) &&
+              Number.isFinite(pt[1])
+            ) {
+              pts.push([pt[0], pt[1]]);
+            }
+          }
+          if (pts.length >= 3) loops.push(pts);
+        }
+        if (loops.length > 0) {
+          out[tag] = loops;
+          any = true;
+        }
+      } catch {
+        // Ignore malformed sidecar JSON; section falls back to Fiber patches / Elastic props
+      }
+    }
+    return any ? out : undefined;
   }
 
   /**
@@ -1340,7 +1396,9 @@ export function transformVecxzOf(obj: OpsObject): { tag: number; vecxz: [number,
   }
   // Fallback for synthetic geomTransf objects constructed without `tables` in tests:
   if (
-    (obj.params.length === 3 || obj.params.length === 9) &&
+    (obj.params.length === 3 ||
+      obj.params.length === 9 ||
+      (obj.params.length === 10 && obj.params[3] === "-jntOffset")) &&
     typeof obj.params[0] === "number" &&
     typeof obj.params[1] === "number" &&
     typeof obj.params[2] === "number" &&
@@ -1367,4 +1425,412 @@ export function modelTransformVecxz(model: ModelFile): Map<number, [number, numb
   }
   return out;
 }
+
+/**
+ * Extract `(emittedTag, dI, dJ)` rigid joint-offset vectors in global `(X, Y, Z)`
+ * from a `/opensees/transforms/<name>` `OpsObject` (`jnt_offset` of shape
+ * `(n, 6)` in 3-D or `(n, 4)` in 2-D, joined against `per_element_emitted_tag`).
+ * Only rows with a non-zero offset at I or J are returned.
+ */
+export function transformJntOffsetOf(
+  obj: OpsObject,
+): { tag: number; dI: [number, number, number]; dJ: [number, number, number] }[] {
+  if (obj.family !== "geomTransf") return [];
+  const jntTable = obj.tables["jnt_offset"];
+  if (jntTable !== undefined) {
+    const cols = jntTable.columns.length;
+    if ((cols !== 6 && cols !== 4) || jntTable.rows.length === 0) return [];
+    const flatJnt = flattenNumericRows(jntTable.rows);
+    if (flatJnt.length < cols || flatJnt.length % cols !== 0) return [];
+    const nRows = flatJnt.length / cols;
+    const tagTable = obj.tables["per_element_emitted_tag"];
+    const flatTags = tagTable ? flattenNumericRows(tagTable.rows) : [obj.tag];
+    const n = Math.min(nRows, flatTags.length);
+    const out: { tag: number; dI: [number, number, number]; dJ: [number, number, number] }[] = [];
+    for (let r = 0; r < n; r++) {
+      const tag = flatTags[r]!;
+      const base = r * cols;
+      const dXi = flatJnt[base]!;
+      const dYi = flatJnt[base + 1]!;
+      const dZi = cols === 6 ? flatJnt[base + 2]! : 0;
+      const dXj = flatJnt[base + (cols === 6 ? 3 : 2)]!;
+      const dYj = flatJnt[base + (cols === 6 ? 4 : 3)]!;
+      const dZj = cols === 6 ? flatJnt[base + 5]! : 0;
+      if (
+        Number.isInteger(tag) &&
+        Number.isFinite(dXi) &&
+        Number.isFinite(dYi) &&
+        Number.isFinite(dZi) &&
+        Number.isFinite(dXj) &&
+        Number.isFinite(dYj) &&
+        Number.isFinite(dZj) &&
+        (Math.hypot(dXi, dYi, dZi) > 0 || Math.hypot(dXj, dYj, dZj) > 0)
+      ) {
+        out.push({ tag, dI: [dXi, dYi, dZi], dJ: [dXj, dYj, dZj] });
+      }
+    }
+    return out;
+  }
+  // Fallback for synthetic geomTransf objects carrying `-jntOffset` in `params`:
+  const idx = obj.params.indexOf("-jntOffset");
+  if (idx >= 0) {
+    const rem = obj.params.slice(idx + 1);
+    if (rem.length >= 6 && rem.slice(0, 6).every((x) => typeof x === "number" && Number.isFinite(x))) {
+      const [dXi, dYi, dZi, dXj, dYj, dZj] = rem.slice(0, 6) as number[];
+      if (Math.hypot(dXi!, dYi!, dZi!) > 0 || Math.hypot(dXj!, dYj!, dZj!) > 0) {
+        return [{ tag: obj.tag, dI: [dXi!, dYi!, dZi!], dJ: [dXj!, dYj!, dZj!] }];
+      }
+    } else if (rem.length >= 4 && rem.slice(0, 4).every((x) => typeof x === "number" && Number.isFinite(x))) {
+      const [dXi, dYi, dXj, dYj] = rem.slice(0, 4) as number[];
+      if (Math.hypot(dXi!, dYi!) > 0 || Math.hypot(dXj!, dYj!) > 0) {
+        return [{ tag: obj.tag, dI: [dXi!, dYi!, 0], dJ: [dXj!, dYj!, 0] }];
+      }
+    }
+  }
+  return [];
+}
+
+function rectLoop(yMin: number, yMax: number, zMin: number, zMax: number): [number, number][] {
+  return [
+    [yMin, zMin],
+    [yMax, zMin],
+    [yMax, zMax],
+    [yMin, zMax],
+  ];
+}
+
+function circleLoop(
+  yC: number,
+  zC: number,
+  r: number,
+  ccw: boolean,
+  nSeg = 24,
+): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < nSeg; i++) {
+    const k = ccw ? i : nSeg - i;
+    const theta = (2 * Math.PI * (k % nSeg)) / nSeg;
+    pts.push([yC + r * Math.cos(theta), zC + r * Math.sin(theta)]);
+  }
+  return pts;
+}
+
+function circSectorLoop(
+  yC: number,
+  zC: number,
+  intR: number,
+  extR: number,
+  startDeg: number,
+  endDeg: number,
+  nSeg = 24,
+): [number, number][] {
+  const a0 = (startDeg * Math.PI) / 180;
+  const a1 = (endDeg * Math.PI) / 180;
+  const nArc = Math.max(4, Math.ceil((Math.abs(a1 - a0) / (2 * Math.PI)) * nSeg));
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= nArc; i++) {
+    const theta = a0 + ((a1 - a0) * i) / nArc;
+    pts.push([yC + extR * Math.cos(theta), zC + extR * Math.sin(theta)]);
+  }
+  if (intR > 1e-6 * extR) {
+    for (let i = nArc; i >= 0; i--) {
+      const theta = a0 + ((a1 - a0) * i) / nArc;
+      pts.push([yC + intR * Math.cos(theta), zC + intR * Math.sin(theta)]);
+    }
+  } else {
+    pts.push([yC, zC]);
+  }
+  if (signedArea2D(pts) < 0) pts.reverse();
+  return pts;
+}
+
+function signedArea2D(pts: readonly (readonly [number, number])[]): number {
+  let a2 = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [y0, z0] = pts[i]!;
+    const [y1, z1] = pts[(i + 1) % pts.length]!;
+    a2 += y0 * z1 - y1 * z0;
+  }
+  return 0.5 * a2;
+}
+
+function simplifyLoop2D(pts: readonly [number, number][]): [number, number][] {
+  const ring = pts.map(([y, z]): [number, number] => [y, z]);
+  let changed = true;
+  while (changed && ring.length > 3) {
+    changed = false;
+    const n = ring.length;
+    for (let i = 0; i < n; i++) {
+      const [py, pz] = ring[(i - 1 + n) % n]!;
+      const [cy, cz] = ring[i]!;
+      const [ny, nz] = ring[(i + 1) % n]!;
+      const uy = cy - py, uz = cz - pz;
+      const vy = ny - cy, vz = nz - cz;
+      const nu = Math.hypot(uy, uz), nv = Math.hypot(vy, vz);
+      if (nu === 0 || nv === 0 || (Math.abs(uy * vz - uz * vy) <= 1e-9 * nu * nv && uy * vy + uz * vz > 0)) {
+        ring.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return ring;
+}
+
+function unionAxisAlignedRects(
+  rects: readonly { yMin: number; yMax: number; zMin: number; zMax: number }[],
+): [number, number][][] {
+  if (rects.length === 0) return [];
+  if (rects.length === 1) {
+    const r = rects[0]!;
+    return [rectLoop(r.yMin, r.yMax, r.zMin, r.zMax)];
+  }
+  const uniqueCoords = (vals: number[]): number[] => {
+    const sorted = [...vals].sort((a, b) => a - b);
+    const out: number[] = [];
+    for (const v of sorted) {
+      if (out.length === 0 || Math.abs(v - out[out.length - 1]!) > 1e-9) out.push(v);
+    }
+    return out;
+  };
+  const ys = uniqueCoords(rects.flatMap((r) => [r.yMin, r.yMax]));
+  const zs = uniqueCoords(rects.flatMap((r) => [r.zMin, r.zMax]));
+  const ny = ys.length - 1;
+  const nz = zs.length - 1;
+  if (ny <= 0 || nz <= 0) return [];
+
+  const solid = (iy: number, iz: number): boolean => {
+    if (iy < 0 || iy >= ny || iz < 0 || iz >= nz) return false;
+    const ym = 0.5 * (ys[iy]! + ys[iy + 1]!);
+    const zm = 0.5 * (zs[iz]! + zs[iz + 1]!);
+    return rects.some((r) => ym >= r.yMin - 1e-12 && ym <= r.yMax + 1e-12 && zm >= r.zMin - 1e-12 && zm <= r.zMax + 1e-12);
+  };
+
+  const stride = zs.length;
+  const vKey = (iy: number, iz: number) => iy * stride + iz;
+  const adj = new Map<number, number[]>();
+  const addEdge = (u: number, v: number) => {
+    const list = adj.get(u);
+    if (list) list.push(v);
+    else adj.set(u, [v]);
+  };
+
+  for (let iy = 0; iy < ny; iy++) {
+    for (let iz = 0; iz < nz; iz++) {
+      if (!solid(iy, iz)) continue;
+      if (!solid(iy, iz - 1)) addEdge(vKey(iy, iz), vKey(iy + 1, iz));
+      if (!solid(iy + 1, iz)) addEdge(vKey(iy + 1, iz), vKey(iy + 1, iz + 1));
+      if (!solid(iy, iz + 1)) addEdge(vKey(iy + 1, iz + 1), vKey(iy, iz + 1));
+      if (!solid(iy - 1, iz)) addEdge(vKey(iy, iz + 1), vKey(iy, iz));
+    }
+  }
+
+  const loops: [number, number][][] = [];
+  for (const [start, outs] of adj) {
+    while (outs.length > 0) {
+      const next0 = outs.shift()!;
+      const raw: [number, number][] = [
+        [ys[Math.floor(start / stride)]!, zs[start % stride]!],
+      ];
+      let curr = next0;
+      while (curr !== start) {
+        raw.push([ys[Math.floor(curr / stride)]!, zs[curr % stride]!]);
+        const cOuts = adj.get(curr);
+        if (!cOuts || cOuts.length === 0) break;
+        curr = cOuts.shift()!;
+      }
+      const simp = simplifyLoop2D(raw);
+      if (simp.length >= 3) loops.push(simp);
+    }
+  }
+  loops.sort((a, b) => {
+    const aa = signedArea2D(a);
+    const ab = signedArea2D(b);
+    if ((aa > 0) !== (ab > 0)) return aa > 0 ? -1 : 1;
+    return Math.abs(ab) - Math.abs(aa);
+  });
+  return loops;
+}
+
+/**
+ * Resolve a 2-D cross-section boundary polygon (`SectionProfile`) in OpenSees
+ * `(y_local, z_local)` from a `/opensees/sections/<name>` `OpsObject` and any
+ * `/opensees/computed_sections` sidecar `outline_yz`.
+ */
+export function sectionProfileOf(
+  obj: OpsObject,
+  computedOutline?: readonly (readonly (readonly [number, number])[])[],
+): SectionProfile | undefined {
+  if (obj.family !== "section") return undefined;
+
+  // Tier 1A: ComputedSection boundary polygon from /opensees/computed_sections
+  if (computedOutline && computedOutline.length > 0) {
+    return { loops: computedOutline, source: "computed" };
+  }
+
+  // Tier 1B: Fiber / FiberThermal / NDFiber patches
+  const patches = obj.tables["patches"];
+  if (patches && patches.rows.length > 0) {
+    const tCol = patches.columns.indexOf("kind") >= 0 ? patches.columns.indexOf("kind") : patches.columns.indexOf("type");
+    const pCol = patches.columns.indexOf("coords") >= 0 ? patches.columns.indexOf("coords") : patches.columns.indexOf("params");
+    if (tCol >= 0 && pCol >= 0) {
+      const rects: { yMin: number; yMax: number; zMin: number; zMax: number }[] = [];
+      const quads: [number, number][][] = [];
+      let circCenter: [number, number] | null = null;
+      let maxExtRad = 0;
+      let minIntRad = Number.POSITIVE_INFINITY;
+      let fullCirc = true;
+      let sectorStartDeg = 0;
+      let sectorEndDeg = 360;
+
+      for (const row of patches.rows) {
+        const kind = String(row[tCol] ?? "");
+        const rawP = row[pCol];
+        const p = Array.isArray(rawP) ? rawP.map((v) => (typeof v === "number" ? v : Number.NaN)) : [];
+        if (kind === "rect" && p.length >= 4 && p.slice(0, 4).every(Number.isFinite)) {
+          const yMin = Math.min(p[0]!, p[2]!);
+          const yMax = Math.max(p[0]!, p[2]!);
+          const zMin = Math.min(p[1]!, p[3]!);
+          const zMax = Math.max(p[1]!, p[3]!);
+          if (yMax > yMin && zMax > zMin) rects.push({ yMin, yMax, zMin, zMax });
+        } else if ((kind === "quad" || kind === "quadr") && p.length >= 8 && p.slice(0, 8).every(Number.isFinite)) {
+          const ys = [p[0]!, p[2]!, p[4]!, p[6]!];
+          const zs = [p[1]!, p[3]!, p[5]!, p[7]!];
+          const yMin = Math.min(...ys), yMax = Math.max(...ys);
+          const zMin = Math.min(...zs), zMax = Math.max(...zs);
+          const isAxisRect = ys.every((y) => Math.abs(y - yMin) < 1e-9 || Math.abs(y - yMax) < 1e-9) &&
+            zs.every((z) => Math.abs(z - zMin) < 1e-9 || Math.abs(z - zMax) < 1e-9);
+          if (isAxisRect && yMax > yMin && zMax > zMin) {
+            rects.push({ yMin, yMax, zMin, zMax });
+          } else {
+            const q: [number, number][] = [[p[0]!, p[1]!], [p[2]!, p[3]!], [p[4]!, p[5]!], [p[6]!, p[7]!]];
+            if (signedArea2D(q) < 0) q.reverse();
+            quads.push(q);
+          }
+        } else if (kind === "circ" && p.length >= 4 && p.slice(0, 4).every(Number.isFinite)) {
+          const [yC, zC, intR, extR] = p as number[];
+          const a0 = Number.isFinite(p[4]) ? p[4]! : 0;
+          const a1 = Number.isFinite(p[5]) ? p[5]! : 360;
+          if (extR! > 0) {
+            circCenter = [yC!, zC!];
+            maxExtRad = Math.max(maxExtRad, extR!);
+            minIntRad = Math.min(minIntRad, Math.max(0, intR!));
+            if (Math.abs(a1 - a0) < 359.9) {
+              fullCirc = false;
+              sectorStartDeg = a0;
+              sectorEndDeg = a1;
+            }
+          }
+        }
+      }
+
+      if (circCenter && maxExtRad > 0 && rects.length === 0 && quads.length === 0) {
+        if (!fullCirc) {
+          const intR = Number.isFinite(minIntRad) ? minIntRad : 0;
+          return {
+            loops: [circSectorLoop(circCenter[0], circCenter[1], intR, maxExtRad, sectorStartDeg, sectorEndDeg)],
+            source: "patches",
+          };
+        }
+        const loops: [number, number][][] = [circleLoop(circCenter[0], circCenter[1], maxExtRad, true)];
+        if (Number.isFinite(minIntRad) && minIntRad > 1e-6 * maxExtRad) {
+          loops.push(circleLoop(circCenter[0], circCenter[1], minIntRad, false));
+        }
+        const axisymmetric = fullCirc && Math.hypot(circCenter[0], circCenter[1]) <= 1e-6 * maxExtRad;
+        return { loops, ...(axisymmetric ? { axisymmetric: true } : {}), source: "patches" };
+      }
+      if (rects.length > 0) {
+        const loops = unionAxisAlignedRects(rects);
+        if (loops.length > 0) return { loops, source: "patches" };
+      }
+      if (quads.length > 0) {
+        return { loops: [quads[0]!], source: "patches" };
+      }
+    }
+  }
+
+  // Tier 2: Parametric sections (WFSection2d, RCSection2d, ElasticTube)
+  const p = obj.params;
+  if (obj.type === "WFSection2d" && p.length >= 5 && p.slice(1, 5).every((v) => typeof v === "number" && v > 0)) {
+    const [, d, tw, bf, tf] = p as number[];
+    const hy = d! / 2;
+    const wy = Math.max(0, hy - tf!);
+    const hz = bf! / 2;
+    const wz = tw! / 2;
+    if (wy > 0 && hz > wz) {
+      const iLoop: [number, number][] = [
+        [-hy, -hz],
+        [-wy, -hz],
+        [-wy, -wz],
+        [wy, -wz],
+        [wy, -hz],
+        [hy, -hz],
+        [hy, hz],
+        [wy, hz],
+        [wy, wz],
+        [-wy, wz],
+        [-wy, hz],
+        [-hy, hz],
+      ];
+      return { loops: [iLoop], source: "parametric" };
+    }
+    return { loops: [rectLoop(-hy, hy, -hz, hz)], source: "parametric" };
+  }
+  if (obj.type === "RCSection2d" && p.length >= 5 && typeof p[3] === "number" && typeof p[4] === "number" && p[3] > 0 && p[4] > 0) {
+    const d = p[3];
+    const b = p[4];
+    return { loops: [rectLoop(-d / 2, d / 2, -b / 2, b / 2)], source: "parametric" };
+  }
+  if (obj.type === "ElasticTube" && p.length >= 3 && typeof p[1] === "number" && typeof p[2] === "number" && p[1] > 0 && p[2] > 0) {
+    const rOut = p[1] / 2;
+    const rIn = Math.max(0, rOut - p[2]);
+    const loops: [number, number][][] = [circleLoop(0, 0, rOut, true)];
+    if (rIn > 1e-6 * rOut) loops.push(circleLoop(0, 0, rIn, false));
+    return { loops, axisymmetric: true, source: "parametric" };
+  }
+
+  // Tier 3: Elastic / ElasticShear / ElasticTimoshenko equivalent rectangle from (A, Iz, Iy)
+  if (
+    (obj.type === "Elastic" || obj.type === "ElasticShear") &&
+    p.length >= 3 &&
+    typeof p[1] === "number" &&
+    typeof p[2] === "number" &&
+    p[1] > 0 &&
+    p[2] > 0
+  ) {
+    const A = p[1];
+    const Iz = p[2];
+    const hy = Math.sqrt((12 * Iz) / A);
+    const bz = p.length >= 6 && typeof p[3] === "number" && p[3] > 0 ? Math.sqrt((12 * p[3]) / A) : A / hy;
+    if (Number.isFinite(hy) && Number.isFinite(bz) && hy > 0 && bz > 0) {
+      const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
+      return {
+        loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)],
+        ...(axisymmetric ? { axisymmetric: true } : {}),
+        source: "elastic",
+      };
+    }
+  }
+  if (obj.type === "ElasticTimoshenko" && p.length >= 5 && typeof p[2] === "number" && p[2] > 0) {
+    const A = p[2];
+    const is3D = p.length >= 8;
+    const Iy = is3D && typeof p[4] === "number" && p[4] > 0 ? p[4] : null;
+    const Iz = (is3D ? p[5] : p[3]) as number;
+    if (typeof Iz === "number" && Iz > 0) {
+      const hy = Math.sqrt((12 * Iz) / A);
+      const bz = Iy !== null ? Math.sqrt((12 * Iy) / A) : A / hy;
+      if (Number.isFinite(hy) && Number.isFinite(bz) && hy > 0 && bz > 0) {
+        const axisymmetric = Math.abs(hy - bz) <= 1e-6 * Math.max(hy, bz);
+        return {
+          loops: [rectLoop(-hy / 2, hy / 2, -bz / 2, bz / 2)],
+          ...(axisymmetric ? { axisymmetric: true } : {}),
+          source: "elastic",
+        };
+      }
+    }
+  }
+
+  return undefined;
+}
+
 

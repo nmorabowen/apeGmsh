@@ -91,10 +91,19 @@ export class Viewport {
   private readonly geometryLayer = new THREE.Group();
   private geometryInfo: GeometryInfo | null = null;
   private lines: LineSegments2 | null = null;
+  private drawnLineMap: Int32Array | null = null;
   private faces: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
   /** V4d: the original index of every drawn outline edge (what writePositions gathers the moved edges through). */
   private edgeMap: Int32Array | null = null;
+  private frameFaces: THREE.Mesh | null = null;
+  private frameEdges: THREE.LineSegments | null = null;
+  private frameTriMap: Int32Array | null = null;
+  private frameEdgeMap: Int32Array | null = null;
+  private offsetLines: LineSegments2 | null = null;
+  private offsetLineMap: Int32Array | null = null;
+  private offsetJoints: THREE.Points | null = null;
+  private offsetJointMap: Int32Array | null = null;
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
@@ -430,8 +439,16 @@ export class Viewport {
       this.syncLoads(s);
       return;
     }
-    if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
-    else if (s.visibility !== prev.visibility || s.phase !== prev.phase) this.applyVisibility(s);
+    if (
+      (s.visibility.colourBy !== prev.visibility.colourBy ||
+        s.visibility.extrudeFrames !== prev.visibility.extrudeFrames ||
+        s.visibility.showOffsets !== prev.visibility.showOffsets) &&
+      s.mesh
+    ) {
+      this.rebuild(s, s.mesh);
+    } else if (s.visibility !== prev.visibility || s.phase !== prev.phase || s.lineDiagram.on !== prev.lineDiagram.on) {
+      this.applyVisibility(s);
+    }
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
@@ -522,9 +539,45 @@ export class Viewport {
     let changed = false;
     if (next !== null && next !== this.full) {
       this.full = next;
-      writePositions(this.faces, this.lines, next, this.drawn, this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null);
+      const lineSrc = s.visibility.showOffsets && next.clearLine ? next.clearLine : next.line;
+      const drawnLines = { lineMap: this.drawnLineMap ?? this.drawn.lineMap, triMap: this.drawn.triMap };
+      writePositions(
+        this.faces,
+        this.lines,
+        { line: lineSrc, tri: next.tri, edge: next.edge },
+        drawnLines,
+        this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null,
+      );
+      if (this.frameFaces && this.frameTriMap && next.frameTri) {
+        const a = this.frameFaces.geometry.getAttribute("position") as THREE.BufferAttribute;
+        gatherInto(next.frameTri, this.frameTriMap, 9, a.array as Float32Array);
+        a.needsUpdate = true;
+        this.frameFaces.geometry.computeVertexNormals();
+        this.frameFaces.geometry.computeBoundingBox();
+        this.frameFaces.geometry.computeBoundingSphere();
+      }
+      if (this.frameEdges && this.frameEdgeMap && next.frameEdge) {
+        const a = this.frameEdges.geometry.getAttribute("position") as THREE.BufferAttribute;
+        gatherInto(next.frameEdge, this.frameEdgeMap, 6, a.array as Float32Array);
+        a.needsUpdate = true;
+        this.frameEdges.geometry.computeBoundingSphere();
+      }
+      if (this.offsetLines && this.offsetLineMap && next.offsetLine) {
+        const a = this.offsetLines.geometry.getAttribute("instanceStart") as THREE.InterleavedBufferAttribute;
+        gatherInto(next.offsetLine, this.offsetLineMap, 6, a.data.array as Float32Array);
+        a.data.needsUpdate = true;
+        this.offsetLines.geometry.computeBoundingBox();
+        this.offsetLines.geometry.computeBoundingSphere();
+      }
+      if (this.offsetJoints && this.offsetJointMap && next.offsetJoint) {
+        const a = this.offsetJoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+        gatherInto(next.offsetJoint, this.offsetJointMap, 3, a.array as Float32Array);
+        a.needsUpdate = true;
+        this.offsetJoints.geometry.computeBoundingSphere();
+      }
       this.setMarkers(info);
       if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
+      if (this.frameEdges) this.frameEdges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
       if (selectedElementsOf(s).length) this.setHighlight(s, false);
@@ -568,6 +621,51 @@ export class Viewport {
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 
+  /** Map per-segment start/end contour colours (`lineColours` on `drawnLineMap`) onto extruded prism triangles (`frameTriMap`). */
+  private frameTriContourColours(info: MeshInfo, drawnLineMap: Int32Array, lineColours: Float32Array, frameTriMap: Int32Array): Float32Array {
+    const fe = info.frameExtrusion!;
+    const nSegs = info.linePositions.shape[0]!;
+    const segToDrawn = new Int32Array(nSegs).fill(-1);
+    drawnLineMap.forEach((seg, d) => {
+      segToDrawn[seg] = d;
+    });
+    const lineNodes = this.blobs.get(info.vertexNodes.line) as Float64Array;
+    const triSegs = this.blobs.i32(fe.triSegments);
+    const triNodes = this.blobs.get(fe.triNodes) as Float64Array;
+    const out = new Float32Array(frameTriMap.length * 9);
+    for (let dTri = 0; dTri < frameTriMap.length; dTri++) {
+      const t = frameTriMap[dTri]!;
+      const seg = triSegs[t]!;
+      const d = segToDrawn[seg]!;
+      if (d < 0) continue;
+      const nodeI = lineNodes[2 * seg]!;
+      for (let v = 0; v < 3; v++) {
+        const isI = triNodes[3 * t + v] === nodeI;
+        const srcOff = 6 * d + (isI ? 0 : 3);
+        const dstOff = 9 * dTri + 3 * v;
+        out[dstOff] = lineColours[srcOff]!;
+        out[dstOff + 1] = lineColours[srcOff + 1]!;
+        out[dstOff + 2] = lineColours[srcOff + 2]!;
+      }
+    }
+    return out;
+  }
+
+  private subsetLineColours(info: MeshInfo, drawnLineMap: Int32Array, subLineMap: Int32Array, lineColours: Float32Array): Float32Array {
+    if (subLineMap.length === drawnLineMap.length) return lineColours;
+    const nSegs = info.linePositions.shape[0]!;
+    const segToDrawn = new Int32Array(nSegs).fill(-1);
+    drawnLineMap.forEach((seg, d) => {
+      segToDrawn[seg] = d;
+    });
+    const out = new Float32Array(subLineMap.length * 6);
+    for (let i = 0; i < subLineMap.length; i++) {
+      const d = segToDrawn[subLineMap[i]!]!;
+      if (d >= 0) out.set(lineColours.subarray(6 * d, 6 * d + 6), 6 * i);
+    }
+    return out;
+  }
+
   /** Update the colour attributes in place when what the contour shows changed (a scrub: no rebuild). */
   private recolour(s: State): void {
     const info = s.mesh;
@@ -582,10 +680,15 @@ export class Viewport {
       (a.array as Float32Array).set(c.tri);
       a.needsUpdate = true;
     }
+    if (this.frameFaces && this.frameTriMap) {
+      const a = this.frameFaces.geometry.getAttribute("color") as THREE.BufferAttribute;
+      (a.array as Float32Array).set(this.frameTriContourColours(info, this.drawn.lineMap, c.line, this.frameTriMap));
+      a.needsUpdate = true;
+    }
     if (this.lines) {
       // LineSegmentsGeometry keeps the colours as one interleaved buffer, 6 floats per segment (start rgb, end rgb).
       const attr = this.lines.geometry.getAttribute("instanceColorStart") as THREE.InterleavedBufferAttribute;
-      (attr.data.array as Float32Array).set(c.line);
+      (attr.data.array as Float32Array).set(this.subsetLineColours(info, this.drawn.lineMap, this.drawnLineMap ?? this.drawn.lineMap, c.line));
       attr.data.needsUpdate = true;
     }
     this.contourApplied = c.key;
@@ -771,9 +874,18 @@ export class Viewport {
     this.clear(this.highlight);
     this.lineMaterials = [];
     this.lines = null;
+    this.drawnLineMap = null;
     this.faces = null;
     this.edges = null;
     this.edgeMap = null;
+    this.frameFaces = null;
+    this.frameEdges = null;
+    this.frameTriMap = null;
+    this.frameEdgeMap = null;
+    this.offsetLines = null;
+    this.offsetLineMap = null;
+    this.offsetJoints = null;
+    this.offsetJointMap = null;
     this.drawn = null;
     this.index = null;
     this.full = null;
@@ -791,9 +903,18 @@ export class Viewport {
     this.clear(this.content);
     this.lineMaterials = this.lineMaterials.filter((m) => this.highlight.children.some((o) => (o as THREE.Mesh).material === m));
     this.lines = null;
+    this.drawnLineMap = null;
     this.faces = null;
     this.edges = null;
     this.edgeMap = null;
+    this.frameFaces = null;
+    this.frameEdges = null;
+    this.frameTriMap = null;
+    this.frameEdgeMap = null;
+    this.offsetLines = null;
+    this.offsetLineMap = null;
+    this.offsetJoints = null;
+    this.offsetJointMap = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     const t = themeTokens(this.activeTheme);
@@ -844,14 +965,117 @@ export class Viewport {
         this.content.add(this.edges);
       }
     }
-    const line = gatherInto(full.line, drawn.lineMap, 6);
+
+    const fe = info.frameExtrusion;
+    const visibleSegSet = new Set<number>(drawn.lineMap);
+    const extMask = fe && s.visibility.extrudeFrames ? (this.blobs.get(fe.extrudedSegmentMask) as Uint8Array) : null;
+    const drawnLineMap = extMask ? drawn.lineMap.filter((seg) => extMask[seg] === 0) : drawn.lineMap;
+    this.drawnLineMap = drawnLineMap;
+
+    if (fe && s.visibility.extrudeFrames && full.frameTri && full.frameEdge) {
+      const triSegs = this.blobs.i32(fe.triSegments);
+      const fTriIdx: number[] = [];
+      for (let i = 0; i < triSegs.length; i++) {
+        if (visibleSegSet.has(triSegs[i]!)) fTriIdx.push(i);
+      }
+      const frameTriMap = Int32Array.from(fTriIdx);
+      this.frameTriMap = frameTriMap;
+      const fTri = gatherInto(full.frameTri, frameTriMap, 9);
+      if (fTri.length) {
+        const fg = new THREE.BufferGeometry();
+        fg.setAttribute("position", new THREE.BufferAttribute(fTri, 3));
+        let fCol: Float32Array;
+        if (cc) {
+          fCol = this.frameTriContourColours(info, drawn.lineMap, cc.line, frameTriMap);
+        } else if (s.visibility.colourBy === "role") {
+          const r = roleColouring(s)!;
+          const roleTri = Int32Array.from(this.blobs.i32(fe.triElement), (e) => r.byElement[e]!);
+          fCol = this.colours(r.legend, roleTri, frameTriMap, 3);
+        } else {
+          fCol = this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3);
+        }
+        fg.setAttribute("color", new THREE.BufferAttribute(fCol, 3));
+        fg.computeVertexNormals();
+        const fm = new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          side: THREE.DoubleSide,
+          flatShading: true,
+          roughness: 0.72,
+          metalness: 0.05,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
+        });
+        this.frameFaces = new THREE.Mesh(fg, fm);
+        this.content.add(this.frameFaces);
+
+        const edgeSegs = this.blobs.i32(fe.edgeSegments);
+        const fEdgeIdx: number[] = [];
+        for (let i = 0; i < edgeSegs.length; i++) {
+          if (visibleSegSet.has(edgeSegs[i]!)) fEdgeIdx.push(i);
+        }
+        const frameEdgeMap = Int32Array.from(fEdgeIdx);
+        this.frameEdgeMap = frameEdgeMap;
+        const fEdge = gatherInto(full.frameEdge, frameEdgeMap, 6);
+        if (fEdge.length) {
+          const feg = new THREE.BufferGeometry();
+          feg.setAttribute("position", new THREE.BufferAttribute(fEdge, 3));
+          const edgeOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
+          const fem = new THREE.LineBasicMaterial({ color: source.edge, transparent: true, opacity: edgeOpacity });
+          this.frameEdges = new THREE.LineSegments(feg, fem);
+          this.content.add(this.frameEdges);
+        }
+      }
+    }
+
+    const lineSrc = s.visibility.showOffsets && full.clearLine ? full.clearLine : full.line;
+    const line = gatherInto(lineSrc, drawnLineMap, 6);
     if (line.length) {
-      this.lines = this.makeLines(line, cc ? cc.line : this.colours(source.legend, source.line, drawn.lineMap, 2), 3);
+      const lineCol = cc
+        ? this.subsetLineColours(info, drawn.lineMap, drawnLineMap, cc.line)
+        : this.colours(source.legend, source.line, drawnLineMap, 2);
+      this.lines = this.makeLines(line, lineCol, 3);
       this.content.add(this.lines);
     }
+
+    if (fe && s.visibility.showOffsets) {
+      const offsetColour = toHexNumber(themeTokens(this.activeTheme).warn);
+      if (full.offsetLine) {
+        const offLineSegs = this.blobs.i32(fe.offsetLineSegments);
+        const offLineIdx: number[] = [];
+        for (let i = 0; i < offLineSegs.length; i++) {
+          if (visibleSegSet.has(offLineSegs[i]!)) offLineIdx.push(i);
+        }
+        const offsetLineMap = Int32Array.from(offLineIdx);
+        this.offsetLineMap = offsetLineMap;
+        const oLine = gatherInto(full.offsetLine, offsetLineMap, 6);
+        if (oLine.length) {
+          this.offsetLines = this.makeLines(oLine, null, 4, offsetColour);
+          this.content.add(this.offsetLines);
+        }
+      }
+      if (full.offsetJoint) {
+        const offJointSegs = this.blobs.i32(fe.offsetJointSegments);
+        const offJointIdx: number[] = [];
+        for (let i = 0; i < offJointSegs.length; i++) {
+          if (visibleSegSet.has(offJointSegs[i]!)) offJointIdx.push(i);
+        }
+        const offsetJointMap = Int32Array.from(offJointIdx);
+        this.offsetJointMap = offsetJointMap;
+        const oJoint = gatherInto(full.offsetJoint, offsetJointMap, 3);
+        if (oJoint.length) {
+          const jg = new THREE.BufferGeometry();
+          jg.setAttribute("position", new THREE.BufferAttribute(oJoint, 3));
+          const jm = new THREE.PointsMaterial({ color: offsetColour, size: 6, sizeAttenuation: false });
+          this.offsetJoints = new THREE.Points(jg, jm);
+          this.content.add(this.offsetJoints);
+        }
+      }
+    }
+
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);
-    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap, this.activeTheme)) this.ghost.add(o);
+    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap, this.activeTheme, this.frameTriMap, this.frameEdgeMap, this.drawnLineMap, s.visibility.showOffsets)) this.ghost.add(o);
     this.ghost.visible = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
     this.setMarkers(info);
     this.applyVisibility(s, false);
@@ -873,6 +1097,7 @@ export class Viewport {
       }
     }
     if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
+    if (this.frameEdges) this.frameEdges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
     if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, this.full, s.visibility.opacity);
     if (this.faces) {
       const opacity = s.visibility.opacity;
@@ -883,6 +1108,16 @@ export class Viewport {
       m.depthWrite = opacity >= 1;
       m.needsUpdate = true;
     }
+    if (this.frameFaces) {
+      const baseOpacity = s.visibility.opacity;
+      const effOpacity = s.lineDiagram?.on ? Math.min(baseOpacity, 0.25) : baseOpacity;
+      this.frameFaces.visible = effOpacity > 0;
+      const m = this.frameFaces.material as THREE.MeshStandardMaterial;
+      m.transparent = effOpacity < 1;
+      m.opacity = effOpacity;
+      m.depthWrite = effOpacity >= 1;
+      m.needsUpdate = true;
+    }
     this.requestRender();
   }
 
@@ -890,9 +1125,13 @@ export class Viewport {
   private applyDim(on: boolean): void {
     const k = on ? DIM : 1;
     if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
+    if (this.frameFaces) (this.frameFaces.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
+    if (this.offsetLines) (this.offsetLines.material as LineMaterial).color.setScalar(k);
+    if (this.offsetJoints) (this.offsetJoints.material as THREE.PointsMaterial).color.setScalar(k);
     const restOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
+    if (this.frameEdges) (this.frameEdges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
     this.caps.setDim(k);
   }
 
@@ -951,6 +1190,7 @@ export class Viewport {
     const targets: THREE.Object3D[] = [];
     if (this.lines && this.lines.visible) targets.push(this.lines);
     if (this.faces && this.faces.visible) targets.push(this.faces);
+    if (this.frameFaces && this.frameFaces.visible) targets.push(this.frameFaces);
     if (!targets.length) return null;
     this.aim(clientX, clientY);
     return nearestHit(this.raycaster, targets);
@@ -973,7 +1213,7 @@ export class Viewport {
 
   private setHighlight(s: State, pulse = true): void {
     this.clear(this.highlight);
-    this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m);
+    this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m || this.offsetLines?.material === m);
     const info = s.mesh;
     const selected = selectedElementsOf(s);
     this.applyDim(selected.length > 0);
@@ -988,7 +1228,7 @@ export class Viewport {
       return p ? [p] : [];
     });
     // V4d: the outline follows the drawn (possibly deformed) positions.
-    for (const o of selectionOutline(this.full, info, this.blobs, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
+    for (const o of selectionOutline(this.full, info, this.blobs, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR), s.visibility.showOffsets)) this.highlight.add(o);
     if (pulse) this.halo.pulse();
     this.requestRender();
   }
@@ -999,10 +1239,25 @@ export class Viewport {
     const drawn = this.drawn;
     if (!info || !drawn) return null;
     const lineElement = this.blobs.i32(info.lineElement), triElement = this.blobs.i32(info.triElement);
+    const drawnForPick = { lineMap: this.drawnLineMap ?? drawn.lineMap, triMap: drawn.triMap };
+    const frameTriElement = info.frameExtrusion ? this.blobs.i32(info.frameExtrusion.triElement) : null;
     this.aim(clientX, clientY);
     // The objects hold the drawn positions (deformed when the deformed shape shows, V4d).
     // V4e1: a hit the section planes cut away is a miss (C-PICK).
-    const hit = hitElement(this.raycaster, this.lines, this.faces, drawn, info.elements, lineElement, triElement, info.radius, (p) => this.clip.clipped(p, 1e-6 * info.radius));
+    const hit = hitElement(
+      this.raycaster,
+      this.lines,
+      this.faces,
+      drawnForPick,
+      info.elements,
+      lineElement,
+      triElement,
+      info.radius,
+      (p) => this.clip.clipped(p, 1e-6 * info.radius),
+      this.frameFaces,
+      this.frameTriMap,
+      frameTriElement,
+    );
     if (!hit) return null;
     const decl = info.elements[hit.element];
     if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
@@ -1026,7 +1281,8 @@ export class Viewport {
 
   /** Client-space point at the middle of a declaration's first drawn primitive. */
   screenPointOf(decl: DeclPath): { x: number; y: number } | null {
-    const info = this.store.get().mesh;
+    const s = this.store.get();
+    const info = s.mesh;
     if (!info) return null;
     const idx = this.indexOf(info);
     const e = idx.byPath.get(decl);
@@ -1034,8 +1290,9 @@ export class Viewport {
     if (!prims) return null;
     const p = new THREE.Vector3();
     const pos = drawnPositions(this.full, info, this.blobs);
+    const linePos = s.visibility.showOffsets && pos.clearLine ? pos.clearLine : pos.line;
     if (prims.lines.length) {
-      const a = pos.line, li = prims.lines[0]!;
+      const a = linePos, li = prims.lines[0]!;
       p.set((a[6 * li]! + a[6 * li + 3]!) / 2, (a[6 * li + 1]! + a[6 * li + 4]!) / 2, (a[6 * li + 2]! + a[6 * li + 5]!) / 2);
     } else if (prims.tris.length) {
       const a = pos.tri, ti = prims.tris[0]!;

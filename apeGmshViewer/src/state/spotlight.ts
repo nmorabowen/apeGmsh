@@ -135,6 +135,8 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
+  toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
+  toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
 };
 
 // ---- Spotlight Item Model ---------------------------------------------------
@@ -489,6 +491,36 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set edges wireframe outline mesh lines toggle",
     });
+
+    if (s.mesh?.frameExtrusion?.hasExtrudableFrames) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-extrude-frames",
+          "display",
+          s.visibility.extrudeFrames ? "Turn Off 3-D Frame Extrusion" : "Turn On 3-D Frame Extrusion",
+          `3-D frame cross-section extrusion is currently ${s.visibility.extrudeFrames ? "ON" : "OFF"}`,
+          [{ type: "toggleExtrudeFrames" }],
+          s.visibility.extrudeFrames,
+          [{ type: "toggleExtrudeFrames" }],
+        ),
+        keywords: "extrude frames sections 3d beam column profile cross-section toggle",
+      });
+    }
+
+    if (s.mesh?.frameExtrusion?.hasJointOffsets) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-show-offsets",
+          "display",
+          s.visibility.showOffsets ? "Hide Rigid Joint Offsets" : "Show Rigid Joint Offsets",
+          `Rigid joint-offset links (-jntOffset / InsertionPoint / -endZones) are currently ${s.visibility.showOffsets ? "ON" : "OFF"}`,
+          [{ type: "toggleShowOffsets" }],
+          s.visibility.showOffsets,
+          [{ type: "toggleShowOffsets" }],
+        ),
+        keywords: "offsets jntoffset insertionpoint endzones rigid joint links toggle",
+      });
+    }
 
     out.push({
       item: drillDownItem(

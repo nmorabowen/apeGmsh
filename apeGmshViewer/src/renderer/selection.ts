@@ -127,8 +127,11 @@ export function hitElement(
   triElement: Int32Array,
   radius: number,
   clipped: (p: THREE.Vector3) => boolean = () => false,
+  frameFaces: THREE.Object3D | null = null,
+  frameTriMap: Int32Array | null = null,
+  frameTriElement: Int32Array | null = null,
 ): { element: number; point: THREE.Vector3 } | null {
-  if (lines) {
+  if (lines && lines.visible) {
     const hits = raycaster.intersectObject(lines, false).filter((h) => h.faceIndex !== undefined && h.faceIndex !== null);
     if (hits.length && !clipped(hits[0]!.point)) {
       const near = hits[0]!.distance + 1e-6 * radius;
@@ -138,10 +141,22 @@ export function hitElement(
       return { element: lineElement[drawn.lineMap[h.faceIndex!]!]!, point: h.point };
     }
   }
+  let bestFaceHit: { element: number; point: THREE.Vector3; distance: number } | null = null;
   if (faces && faces.visible) {
     const hit = raycaster.intersectObject(faces, false)[0];
-    if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) return { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point };
+    if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) {
+      bestFaceHit = { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point, distance: hit.distance };
+    }
   }
+  if (frameFaces && frameFaces.visible && frameTriMap && frameTriElement) {
+    const hit = raycaster.intersectObject(frameFaces, false)[0];
+    if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) {
+      if (!bestFaceHit || hit.distance < bestFaceHit.distance) {
+        bestFaceHit = { element: frameTriElement[frameTriMap[hit.faceIndex]!]!, point: hit.point, distance: hit.distance };
+      }
+    }
+  }
+  if (bestFaceHit) return { element: bestFaceHit.element, point: bestFaceHit.point };
   return null;
 }
 

@@ -56,12 +56,9 @@ function svgEl(tag: string, cls?: string, attrs?: Record<string, string>, text?:
       attrMap[k] = v;
       if (typeof node.setAttribute === "function") node.setAttribute(k, v);
       if (node.dataset) {
-        if (k.startsWith("data-")) {
-          const camel = k.slice(5).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-          node.dataset[camel] = v;
-        } else {
-          node.dataset[k] = v;
-        }
+        const rawKey = k.startsWith("data-") ? k.slice(5) : k;
+        const camel = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+        node.dataset[camel] = v;
       }
     }
   }

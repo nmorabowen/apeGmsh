@@ -104,7 +104,9 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.hidden === prev.visibility.hidden &&
       s.visibility.colourBy === prev.visibility.colourBy &&
       s.visibility.edges === prev.visibility.edges &&
-      s.visibility.opacity === prev.visibility.opacity
+      s.visibility.opacity === prev.visibility.opacity &&
+      s.visibility.extrudeFrames === prev.visibility.extrudeFrames &&
+      s.visibility.showOffsets === prev.visibility.showOffsets
     ) {
       // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
       // state in every mode; it is rebuilt only when what it says changed.
@@ -148,6 +150,33 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         meshRow.append(b);
       }
       legend.append(meshRow);
+    }
+    const fe = s.mesh?.frameExtrusion;
+    if (fe && (fe.hasExtrudableFrames || fe.hasJointOffsets)) {
+      const frameRow = el("div", "legend-mode legend-frames");
+      if (fe.hasExtrudableFrames) {
+        const extrudeBtn = el("button", "frame-extrude" + (s.visibility.extrudeFrames ? " on" : ""), "extrude");
+        extrudeBtn.title = "toggle 3-D frame cross-section extrusion";
+        unlisten.push(listen(extrudeBtn, "click", () => store.dispatch({ type: "toggleExtrudeFrames" })));
+        frameRow.append(extrudeBtn);
+      }
+      if (fe.hasJointOffsets) {
+        const offsetsBtn = el("button", "frame-offsets" + (s.visibility.showOffsets ? " on" : ""), "offsets");
+        offsetsBtn.title = "toggle rigid joint-offset links (-jntOffset / InsertionPoint / -endZones)";
+        unlisten.push(listen(offsetsBtn, "click", () => store.dispatch({ type: "toggleShowOffsets" })));
+        frameRow.append(offsetsBtn);
+      }
+      legend.append(frameRow);
+      if (s.visibility.extrudeFrames && fe.extrusionSkippedUnoriented > 0) {
+        const n = fe.extrusionSkippedUnoriented;
+        legend.append(
+          el(
+            "div",
+            "legend-note",
+            `${n.toLocaleString()} frame ${n === 1 ? "element" : "elements"} drawn as 1-D ${n === 1 ? "line" : "lines"} (no 3-D section orientation / vecxz recorded).`,
+          ),
+        );
+      }
     }
     if (contour) {
       lastContour = contourSignature(s);

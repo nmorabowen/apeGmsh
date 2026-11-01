@@ -8,13 +8,13 @@
 // returns and fails on a TypedArray, an ArrayBuffer, a Map or a Set.
 
 import type { Field } from "../chain/resolve.ts";
-import type { Definitions, NeutralLoads, OpsFamily, Param, ProgramDecls, SequenceZone } from "../model/types.ts";
+import type { Definitions, NeutralLoads, OpsFamily, Param, ProgramDecls, SectionProfile, SequenceZone } from "../model/types.ts";
 
 // Panels import their chain types from here, never from src/chain (the
 // panel allow-list: state/store, state/selectors, state/types, ui/).
 export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 // The model-definition data, as the reader read it (plain data: no typed array).
-export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, NeutralLoads, OpsFamily, ProgramDecls, SequenceZone, StageDef, Table } from "../model/types.ts";
+export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, NeutralLoads, OpsFamily, ProgramDecls, SectionProfile, SequenceZone, StageDef, Table } from "../model/types.ts";
 
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
@@ -88,6 +88,14 @@ export interface Decl {
   fields: readonly Field[];
   /** for a 3-D geomTransf object: full `(emittedTag, vecxz)` rows from `per_element_vecxz` and `per_element_emitted_tag` (untruncated) */
   vecxz?: readonly { readonly tag: number; readonly vecxz: readonly [number, number, number] }[];
+  /** for a geomTransf object with `-jntOffset`: full `(emittedTag, dI, dJ)` rows in global coordinates */
+  jntOffset?: readonly {
+    readonly tag: number;
+    readonly dI: readonly [number, number, number];
+    readonly dJ: readonly [number, number, number];
+  }[];
+  /** for a section object: 2-D cross-section profile loops in local (y, z) coordinates */
+  sectionProfile?: SectionProfile;
   element?: ElementFacts;
   group?: { dim: number; tag: number; count: number; ids: BlobRef };
   /** where the user's code made this declaration (/provenance, joined by decl path); absent when the file has no record for it */
@@ -178,6 +186,30 @@ export interface LegendEntry {
  */
 export type ColourBy = "group" | "role" | "contour";
 
+/** Pre-computed 3-D cross-section prism extrusion and rigid joint-offset buffers (stored in BlobStore). */
+export interface FrameExtrusionBlobs {
+  readonly triPositions: BlobRef;
+  readonly triNodes: BlobRef;
+  readonly triSegments: BlobRef;
+  readonly triElementIds: BlobRef;
+  readonly triElement: BlobRef;
+  readonly triGroup: BlobRef;
+  readonly edgePositions: BlobRef;
+  readonly edgeNodes: BlobRef;
+  readonly edgeSegments: BlobRef;
+  readonly extrudedSegmentMask: BlobRef;
+  readonly clearLinePositions: BlobRef;
+  readonly offsetLinePositions: BlobRef;
+  readonly offsetLineNodes: BlobRef;
+  readonly offsetLineSegments: BlobRef;
+  readonly offsetJointPositions: BlobRef;
+  readonly offsetJointNodes: BlobRef;
+  readonly offsetJointSegments: BlobRef;
+  readonly hasExtrudableFrames: boolean;
+  readonly hasJointOffsets: boolean;
+  readonly extrusionSkippedUnoriented: number;
+}
+
 /** The render derivation of the model artifact: blob refs, per-primitive indices, legend and bounds. */
 export interface MeshInfo {
   /** 6 floats per segment; 9 per triangle; 6 per outline edge */
@@ -213,6 +245,8 @@ export interface MeshInfo {
    * was built without it, and then the cut face says so instead of a cap.
    */
   nodes?: { ids: BlobRef; xyz: BlobRef };
+  /** 3-D cross-section prism extrusion and rigid joint-offset geometry blobs for 1-D frame elements. */
+  frameExtrusion?: FrameExtrusionBlobs;
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
@@ -809,7 +843,14 @@ export interface State {
   phase: { axis: PhaseKey[]; at: PhaseKey | null };
   selection: { decls: DeclPath[]; picks: Pick[] };
   hover: Pick | DeclPath | null;
-  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number; colourBy: ColourBy };
+  visibility: {
+    hidden: DeclPath[];
+    edges: boolean;
+    opacity: number;
+    colourBy: ColourBy;
+    extrudeFrames: boolean;
+    showOffsets: boolean;
+  };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
@@ -934,6 +975,8 @@ export type Event =
   | { type: "setEdges"; on: boolean }
   | { type: "setOpacity"; value: number }
   | { type: "setColourBy"; by: ColourBy }
+  | { type: "toggleExtrudeFrames"; on?: boolean }
+  | { type: "toggleShowOffsets"; on?: boolean }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }

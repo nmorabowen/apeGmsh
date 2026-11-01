@@ -633,9 +633,16 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
   }
 });
 
-test("Escalón 3: style.css prevents #banner/#line-diagram overlap and component select truncation", () => {
+test("Escalón 3: style.css prevents #banner/#line-diagram/#loads/#legend overlap and component select truncation", () => {
   const css = readFileSync(new URL("../../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);
+  const html = readFileSync(new URL("../../src/renderer/index.html", import.meta.url), "utf8");
+  assert.match(
+    html,
+    /<div id="left-rail">\s*<aside id="line-diagram" hidden><\/aside>\s*<aside id="loads" hidden><\/aside>\s*<aside id="legend" hidden><\/aside>\s*<\/div>/
+  );
+  assert.match(css, /#left-rail\s*\{[^}]*display:\s*flex;\s*flex-direction:\s*column;/);
+  assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#left-rail,\s*#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);
+  assert.doesNotMatch(css, /#line-diagram:not\(\[hidden\]\)\s*~\s*#loads\s*\{\s*top:/);
   assert.match(css, /\.line-diagram-pick\s+\.line-diagram-field\s*\{\s*flex:\s*0\s+0\s+auto;/);
 });
 
