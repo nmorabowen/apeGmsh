@@ -1,6 +1,6 @@
 # ADR 0128 — Agent views in apeGmshViewer: a view spec, headless stills with a manifest, and offers the human applies
 
-**Status:** Proposed (2026-11-01)
+**Status:** Accepted (2026-11-01; proposed and accepted the same day by the owner)
 
 **Owner:** nmora
 
