@@ -315,26 +315,32 @@ export class Viewport {
 
   /**
    * VA1: write the camera back to the store once it has held still for a
-   * frame: an animation frame after a move, if nothing moved it since. A
-   * drag or the scripted orbit writes once, when it stops, not every frame:
-   * each dispatch runs every panel's listener, and a write per frame cost
-   * the renderer about 15 MB of working set over the measured orbit. The
-   * write runs from an animation frame, so never inside a dispatch.
+   * whole frame: the move count is read at one animation frame and must be
+   * the same at the next. A drag or the scripted orbit (one move a frame)
+   * writes once, when it stops, not every frame: each dispatch runs every
+   * panel's listener, and a write per frame cost the measured orbit about
+   * 15 MB of renderer working set and about a fifth of its uncapped frame
+   * rate. The write runs from an animation frame, so never inside a dispatch.
    */
   private scheduleCameraWrite(): void {
     if (this.cameraWritePending || this.cameraMoves === this.cameraWritten) return;
     this.cameraWritePending = true;
-    const at = this.cameraMoves;
-    requestAnimationFrame(() => {
+    let seen = -1;
+    const tick = () => {
+      // Moved since the last look (or this is the first): look again next frame.
+      if (this.cameraMoves !== seen) {
+        seen = this.cameraMoves;
+        requestAnimationFrame(tick);
+        return;
+      }
       this.cameraWritePending = false;
-      // Still moving: look again next frame.
-      if (this.cameraMoves !== at) return this.scheduleCameraWrite();
-      this.cameraWritten = at;
+      this.cameraWritten = seen;
       const m = this.store.get().mesh ?? this.geometryInfo;
       // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
       const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
       this.store.dispatch({ type: "cameraMoved", pose });
-    });
+    };
+    requestAnimationFrame(tick);
   }
 
   /**

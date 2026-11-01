@@ -959,8 +959,10 @@ export type CameraRequest = NamedView | CameraPose | CameraTurn;
 export interface CameraState {
   /**
    * The camera shown now. The viewport writes it back (`cameraMoved`) after
-   * every orbit, pan, zoom or fit and after it applies a request, so the
-   * store always holds the current camera. null until the viewport first
+   * every orbit, pan, zoom or fit and after it applies a request, once the
+   * view has held still for a frame (a drag writes once, when it stops), so
+   * the store holds the current camera whenever the view is at rest. An
+   * explicit pose is recorded at once by `setCamera`. null until the viewport first
    * frames a scene, and again when another model is opened; a re-read of the
    * same model keeps it, and the view with it.
    */
