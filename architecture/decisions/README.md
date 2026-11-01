@@ -142,3 +142,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0124](0124-gravity-preloaded-modal-and-per-mode-rsa.md) | Gravity-preloaded modal analysis and per-mode response spectrum on one live domain | Proposed |
 | [0127](0127-modal-basis-primitive-family.md) | Admit the `ModalBasis` primitive family for the fork's mode-set commands | Accepted |
 | [0128](0128-agent-views-in-apegmshviewer.md) | Agent views in apeGmshViewer: a view spec, headless stills with a manifest, and offers the human applies | Accepted |
+| [0129](0129-crack-band-snapback-fork-reports-apegmsh-predicts.md) | Crack-band snap-back: the fork reports it, apeGmsh predicts it, a live test reconciles them | Proposed |
