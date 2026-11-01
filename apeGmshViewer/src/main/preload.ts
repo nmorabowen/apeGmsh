@@ -17,6 +17,7 @@
 //   scanResults(req)        the history range of a contour field (V4c1);
 //                          cancelResultsScan(id) stops it, and
 //                          onScanProgress(cb) hears its progress
+//   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -97,4 +98,10 @@ contextBridge.exposeInMainWorld("viewer", {
   // V4c1 measure mode: the CPU load since the last call, and the working sets now.
   measureCpu: () => ipcRenderer.invoke("measure:cpu"),
   measureMemory: () => ipcRenderer.invoke("measure:memory"),
+  // ADR 0128 D4 (--mode=render / describe, renderer/agentRender.ts): the job, each still, and the run's result.
+  // Main answers only in those modes, and writes a PNG only under a shot name of the spec.
+  renderJob: () => ipcRenderer.invoke("render:job"),
+  renderPng: (name: string, png: Uint8Array) => ipcRenderer.invoke("render:png", name, png),
+  renderCapture: (name: string) => ipcRenderer.invoke("render:capture", name),
+  renderDone: (result: unknown) => ipcRenderer.invoke("render:done", result),
 });

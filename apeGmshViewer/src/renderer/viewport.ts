@@ -29,7 +29,7 @@ import { LoadsLayer } from "./loads.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
-import type { CameraRequest, DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
+import type { CameraPose, CameraRequest, DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 import {
   DEFAULT_FOV_DEG,
@@ -334,15 +334,25 @@ export class Viewport {
         return;
       }
       this.cameraWritePending = false;
-      const m = this.store.get().mesh ?? this.geometryInfo;
-      // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
-      const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
+      const pose = this.currentPose();
       // A refused write raises (loudly, from this frame) and stays unwritten:
       // the count advances only once the store holds the pose, so the next move writes again.
       this.store.dispatch({ type: "cameraMoved", pose });
       this.cameraWritten = seen;
     };
     requestAnimationFrame(tick);
+  }
+
+  /**
+   * ADR 0128 D4: the camera shown now, as the write-back above records it,
+   * read at once. The render mode records a still's camera from the frame it
+   * took; a hidden window's animation frames come about once a second, so it
+   * does not wait for the write-back.
+   */
+  currentPose(): CameraPose {
+    const m = this.store.get().mesh ?? this.geometryInfo;
+    // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
+    return poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
   }
 
   /**
