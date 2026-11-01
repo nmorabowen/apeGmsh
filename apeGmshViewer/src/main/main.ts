@@ -475,15 +475,21 @@ ipcMain.handle("render:done", (_e, result: unknown) => {
     writeFileSync(join(dir, "render.json"), JSON.stringify(r, null, 2));
     const refused = r.render.shots.filter((s) => s.status !== "ok").length;
     process.stdout.write(`apeGmshViewer: render: ${r.render.shots.length - refused} stills, ${refused} refused; ${join(dir, "render.json")}\n`);
-    // D2: a refused shot makes the run's exit code non-zero; the other shots ran.
-    if (refused) process.exitCode = 1;
-  } else {
-    if (!r?.describe) throw new Error("render:done: no description");
-    writeFileSync(join(dir, "describe.json"), JSON.stringify(r, null, 2));
-    process.stdout.write(`apeGmshViewer: describe: ${join(dir, "describe.json")}\n`);
+    // D2: a refused shot makes the run's exit code non-zero; the other shots ran. (`app.quit()` exits 0 whatever process.exitCode says.)
+    agentExit(refused ? 1 : 0);
+    return;
   }
-  app.quit();
+  if (!r?.describe) throw new Error("render:done: no description");
+  writeFileSync(join(dir, "describe.json"), JSON.stringify(r, null, 2));
+  process.stdout.write(`apeGmshViewer: describe: ${join(dir, "describe.json")}\n`);
+  agentExit(0);
 });
+
+/** End an agent mode with its exit code, the results file closed first. */
+function agentExit(code: number): void {
+  resultsHost.close();
+  app.exit(code);
+}
 
 /** The renderer's V4c1 contour scrub measurement (renderer/app.ts `measureContour`). */
 interface ContourMeasure {
@@ -536,6 +542,11 @@ ipcMain.handle("measure:memory", () => {
 
 ipcMain.handle("app:fail", (_e, message: string) => {
   process.stderr.write(`apeGmshViewer: ${message}\n`);
+  // An agent mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0).
+  if (agentMode) {
+    agentExit(1);
+    return;
+  }
   if (mode !== "view") {
     process.exitCode = 1;
     app.quit();
