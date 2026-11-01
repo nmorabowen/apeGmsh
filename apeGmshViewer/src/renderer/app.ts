@@ -1313,7 +1313,7 @@ const PANEL_LAYERS: Readonly<Record<AppLayer, readonly string[]>> = {
   phase: ["phase"],
   viewcube: ["viewcube"],
   left_rail: ["left-rail"],
-  rail: ["rail"],
+  rail: ["rail", "rail-toggle"],
   windows: ["windows-menu", "windows"],
   banner: ["banner"],
 };
@@ -1321,14 +1321,20 @@ const PANEL_LAYERS: Readonly<Record<AppLayer, readonly string[]>> = {
 const stillLayout: Layout = {
   apply(chrome, layers) {
     document.body.dataset["stillChrome"] = chrome;
+    const omitted: HTMLElement[] = [];
     for (const layer of APP_LAYERS) {
       if (chrome === "app" && typeof layers[layer] !== "boolean") throw new Error(`render: app layer ${layer} has no state`);
       for (const id of PANEL_LAYERS[layer]) {
         const node = document.getElementById(id);
         if (!node) throw new Error(`render: the ${layer} layer's element #${id} is not on the page`);
-        node.toggleAttribute("data-still-omit", chrome === "app" && layers[layer] === false);
+        const off = chrome === "app" && layers[layer] === false;
+        node.toggleAttribute("data-still-omit", off);
+        if (off) omitted.push(node);
       }
     }
+    // The DOM check: an omitted panel has no layout box (never merely covered or transparent).
+    const left = omitted.filter((n) => n.getClientRects().length > 0);
+    if (left.length) throw new Error(`render: ${left.map((n) => `#${n.id}`).join(", ")} still in the layout after being omitted`);
   },
   inLayout() {
     return [...document.body.children]

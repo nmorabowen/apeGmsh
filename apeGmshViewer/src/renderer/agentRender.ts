@@ -19,6 +19,7 @@ import type { Effects } from "../effects.ts";
 import { compileShot, type ShotPlan } from "../spec/compile.ts";
 import { bannerLines, describeSet, type SetDescription } from "../spec/describe.ts";
 import type { SpecShot, ViewSpec } from "../spec/spec.ts";
+import { viewVerdict } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { contourView, deformView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
@@ -105,10 +106,10 @@ function deformOnScreen(s: State, viewport: Viewport, effects: Effects): boolean
 
 /**
  * Wait until the shot's view is on screen; null when it is, else the reason
- * it is refused. A contour or deformed shape the app answers with
- * `unavailable` or `refused` is refused with that reason once it has held,
- * with nothing loading, for SETTLED_MS (a stage's node ids and an element
- * join arrive after the step, and say `unavailable` until then).
+ * it is refused (src/spec/verdict.ts). A contour or deformed shape the app
+ * answers with `unavailable` or `refused` is refused with that reason once
+ * it has held, with nothing loading, for SETTLED_MS: a stage's node ids and
+ * an element join arrive after the step, and say `unavailable` until then.
  */
 async function shown(deps: RenderDeps, shot: SpecShot, plan: ShotPlan): Promise<string | null> {
   const { store, viewport, effects } = deps;
@@ -118,39 +119,15 @@ async function shown(deps: RenderDeps, shot: SpecShot, plan: ShotPlan): Promise<
   for (;;) {
     const s = store.get();
     const now = performance.now();
-    const loading = s.resultStep?.status === "loading" || s.artifacts.results?.status === "opened" || s.artifacts.model?.status === "opened";
-    if (plan.stage && s.resultStep?.status === "failed") return `step ${plan.step} of stage ${JSON.stringify(plan.stage.name)} could not be read: ${s.resultStep.error ?? "unknown error"}`;
-    let why: string | null = null;
-    let ready = !loading;
-    if (shot.colour_by === "contour") {
-      const v = contourView(s);
-      if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") {
-        why = `the contour is not drawn: ${v.reason}`;
-        ready = false;
-      } else if (v.state === "ready" || v.state === "element") {
-        const scan = s.contour.scan;
-        if (shot.contour!.range.mode === "history") {
-          if (scan?.key === v.keys.scan && scan.status === "failed") return `the contour's whole-history range could not be read: ${scan.error ?? "unknown error"}`;
-          if (!(scan?.key === v.keys.scan && scan.status === "done")) ready = false;
-        }
-        if (!contourOnScreen(s, viewport)) ready = false;
-      } else ready = false;
-    }
-    if (shot.deform) {
-      const v = deformView(s);
-      if (v.state === "unavailable" || v.state === "refused") {
-        why = why ?? (v.state === "refused" ? `Deformed shape not drawn: ${v.reason}` : `the deformed shape is not drawn: ${v.reason}`);
-        ready = false;
-      } else if (!deformOnScreen(s, viewport, effects)) ready = false;
-    }
-    if (s.clip.notice) return `the section planes were refused: ${s.clip.notice}`;
-    if (ready) return null;
-    if (why !== lastWhy) {
-      lastWhy = why;
+    const v = viewVerdict(s, shot, plan, { contour: contourOnScreen(s, viewport), deform: deformOnScreen(s, viewport, effects) });
+    if (v.kind === "shown") return null;
+    if (v.kind === "refused") return v.reason;
+    if (v.why !== lastWhy) {
+      lastWhy = v.why;
       since = now;
     }
-    if (why !== null && !loading && now - since >= SETTLED_MS) return why;
-    if (now - t0 >= SHOW_MS) return why ?? `the view did not reach the screen within ${SHOW_MS / 1000} s`;
+    if (v.why !== null && !v.loading && now - since >= SETTLED_MS) return v.why;
+    if (now - t0 >= SHOW_MS) return v.why ?? `the view did not reach the screen within ${SHOW_MS / 1000} s`;
     await sleep(20);
   }
 }
@@ -194,26 +171,7 @@ function applyClip(store: Store, plan: ShotPlan): void {
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
   const { store, viewport, bridge, layout } = deps;
   const t0 = performance.now();
-  const base: ShotResult = {
-    name: shot.name,
-    status: "refused",
-    reason: null,
-    png: null,
-    chrome: shot.chrome,
-    layers: shot.layers,
-    background: shot.background,
-    caption: shot.caption,
-    stage: null,
-    step: null,
-    time: null,
-    camera: null,
-    contour: null,
-    deform: null,
-    banner: [],
-    layout: null,
-    image: null,
-    ms: 0,
-  };
+  const base = emptyRefusal(shot);
   const refuse = (reason: string): ShotResult => ({ ...base, reason, banner: bannerLines(store.get()), ms: performance.now() - t0 });
   const compiled = compileShot(shot, d);
   if (!compiled.ok) return refuse(compiled.reason);
@@ -232,6 +190,12 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
   if (why !== null) return refuse(why);
   store.dispatch({ type: "setCamera", to: "home" });
   store.dispatch({ type: "setCamera", to: plan.camera });
+  const canvas = viewport.renderer.domElement;
+  const box = (): [number, number, number, number] => {
+    const b = canvas.getBoundingClientRect();
+    return [b.x, b.y, b.width, b.height];
+  };
+  const before = box();
   layout.apply(shot.chrome, shot.layers);
   viewport.renderNow();
   // Two painted frames after the last change, then one more for the camera write-back (navigation's rest frame).
@@ -240,8 +204,9 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
   await painted();
   viewport.renderNow();
   const s = store.get();
-  const canvas = viewport.renderer.domElement;
-  const r = canvas.getBoundingClientRect();
+  // The DOM checks (D9): the layers moved nothing, a model still lays out the viewport alone, at the spec's size.
+  const r = box();
+  if (r.some((x, i) => x !== before[i])) throw new Error(`render ${shot.name}: the layers moved the viewport from [${before.join(", ")}] to [${r.join(", ")}]`);
   const panels = layout.inLayout();
   if (shot.chrome === "model" && panels.length) throw new Error(`render ${shot.name}: model mode left ${panels.join(", ")} in the layout`);
   if (canvas.width !== spec.size[0] || canvas.height !== spec.size[1]) {
@@ -285,7 +250,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
       ? { scale: plan.deform.scale, ghost: plan.deform.ghost, state: dv.state, drawn: "drawn" in dv ? dv.drawn : null, missing: dv.state === "partial" ? dv.missing : dv.state === "ready" ? 0 : null }
       : null,
     banner,
-    layout: { viewport: [r.x, r.y, r.width, r.height], panels },
+    layout: { viewport: r, panels },
     image,
     ms: performance.now() - t0,
   };

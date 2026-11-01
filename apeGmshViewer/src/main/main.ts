@@ -49,8 +49,7 @@ import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
-import { resolveSpecFiles } from "../spec/files.ts";
-import { validateSpec, type ViewSpec } from "../spec/spec.ts";
+import { prepareRender, type RenderJobFiles } from "../spec/job.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -83,29 +82,19 @@ if (mode === "render" && (!arg("spec") || !out)) throw new Error("--mode=render 
 // A still is the spec's `size` in pixels, whatever the display's scale (ADR 0128 D9: a model still is exactly `size`).
 if (agentMode) app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
-/** The render job: the validated spec and its set, or (spec refused) nothing, with render.json saying why. */
+/** The render job: the validated spec and its set, or (the spec refused) null, with render.json naming the key. */
 const renderJob = mode === "render" ? loadRenderJob(resolve(arg("spec")!), resolve(out!)) : null;
 
-function loadRenderJob(specPath: string, outDir: string): { spec: ViewSpec; model: string; geometry: string | null; results: string | null } | null {
-  let raw: unknown;
-  let refusal: { key: string; reason: string } | null = null;
-  try {
-    raw = JSON.parse(readFileSync(specPath, "utf8"));
-  } catch (err) {
-    refusal = { key: "spec", reason: `${specPath} is not a readable JSON document: ${err instanceof Error ? err.message : String(err)}` };
-  }
-  if (!refusal) {
-    const v = validateSpec(raw);
-    if (v.ok) {
-      const f = resolveSpecFiles(v.spec, dirname(specPath), existsSync);
-      if (f.ok) return { spec: v.spec, model: f.set.model, geometry: f.set.geometry, results: f.set.results };
-      refusal = { key: f.key, reason: f.reason };
-    } else refusal = { key: v.key, reason: v.reason };
-  }
+function loadRenderJob(specPath: string, outDir: string): RenderJobFiles | null {
+  const p = prepareRender(specPath, outDir, {
+    readFile: (path) => readFileSync(path, "utf8"),
+    exists: existsSync,
+    mkdir: (path) => mkdirSync(path, { recursive: true }),
+    writeFile: (path, text) => writeFileSync(path, text),
+  });
+  if (p.ok) return p.job;
   // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, "render.json"), JSON.stringify({ render: { spec: specPath, refused: refusal } }, null, 2));
-  process.stderr.write(`apeGmshViewer: the spec ${specPath} is refused: ${refusal.key}: ${refusal.reason}\n`);
+  process.stderr.write(`apeGmshViewer: the spec ${specPath} is refused: ${p.key}: ${p.reason}\n`);
   app.exit(2);
   return null;
 }
@@ -584,6 +573,8 @@ app.whenReady().then(() => {
   });
   win = w;
   w.setMenuBarVisibility(false);
+  // Hiding the menu bar grows the page: a render page is put back at the spec's size.
+  if (renderJob) w.setContentSize(renderJob.spec.size[0], renderJob.spec.size[1]);
   // A page load drops the old page's subscriptions.
   w.webContents.on("did-start-loading", () => subscribed.clear());
   w.on("closed", () => {
