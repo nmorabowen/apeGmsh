@@ -72,10 +72,13 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   deformMeasured: { kind: "system", reason: "dispatched by effects after counting drawn nodes without displacement" },
   lineDiagramStepRange: { kind: "system", reason: "dispatched by effects after measuring line-diagram step min/max" },
   lineDiagramScan: { kind: "system", reason: "dispatched by effects during line-diagram history-range scan" },
+  cameraMoved: { kind: "system", reason: "dispatched by the viewport to write the camera back after an orbit, pan, zoom or fit" },
 
   // Pointer / Input gestures
   hover: { kind: "gesture", reason: "continuous pointer hover over a declaration or 3D primitive" },
   setClipPose: { kind: "gesture", reason: "continuous 3D gizmo rotation drag; Spotlight exposes discrete plane normal/offset controls instead" },
+  setCamera: { kind: "gesture", reason: "ViewCube face, edge and corner clicks, its drag, rotate and home buttons; named views reach it through the ADR 0128 view spec" },
+  setTheme: { kind: "gesture", reason: "the ViewCube's Dark / Light dropdown" },
   openSpotlight: { kind: "gesture", reason: "Ctrl+K / header trigger that opens the Spotlight palette itself" },
   closeSpotlight: { kind: "gesture", reason: "Escape / backdrop gesture that closes the Spotlight palette" },
   setSpotlightMode: { kind: "gesture", reason: "internal drill-down navigation within the Spotlight palette" },

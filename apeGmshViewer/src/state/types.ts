@@ -9,6 +9,7 @@
 
 import type { Field } from "../chain/resolve.ts";
 import type { Definitions, NeutralLoads, OpsFamily, Param, ProgramDecls, SectionProfile, SequenceZone } from "../model/types.ts";
+import type { ThemeMode } from "../theme/tokens.ts";
 
 // Panels import their chain types from here, never from src/chain (the
 // panel allow-list: state/store, state/selectors, state/types, ui/).
@@ -914,6 +915,69 @@ export interface State {
   spotlight: SpotlightState;
   /** Search window query builder and text filter */
   search: SearchState;
+  /** VA1 (ADR 0128 D1): the camera the viewport shows, and the latest request to move it */
+  camera: CameraState;
+  /** VA1: the theme of the page and the viewport (an effect applies it with theme/tokens.ts `applyTheme`) */
+  theme: ThemeMode;
+}
+
+/**
+ * VA1 (ADR 0128 D1): the named camera views. Each of `iso` to `bottom` turns
+ * to a fixed heading and fits the whole drawn scene; `+x` is the view from
+ * the +X side (the ViewCube's RIGHT face), `top` looks down -Z with +Y up the
+ * screen. `fit` keeps the heading and fits the whole scene, `fit-selection`
+ * keeps it and fits the selection's drawn bounds, and `home` is the view a
+ * model opens on (plan for a planar model, else `iso`), fitted.
+ */
+export const NAMED_VIEWS = ["iso", "+x", "-x", "+y", "-y", "top", "bottom", "fit", "fit-selection", "home"] as const;
+export type NamedView = (typeof NAMED_VIEWS)[number];
+
+export type Vec3 = readonly [number, number, number];
+
+/**
+ * A camera as a look-at: the eye, a target on the view axis, and the unit
+ * screen-up vector. The camera has no roll (a Z-up turntable), so `up` is
+ * fixed by the view direction except when looking straight down or up, where
+ * it sets the heading. In the orthographic projection the frustum height is
+ * set by |eye - target|, as the perspective view at that distance shows it.
+ */
+export interface CameraPose {
+  eye: Vec3;
+  target: Vec3;
+  up: Vec3;
+}
+
+/** Turn to a heading (yaw about world Z, tilt in [0, pi] from looking straight down) about the orbit pivot, keeping the distance: the ViewCube's clicks and drag. */
+export interface CameraTurn {
+  yaw: number;
+  tilt: number;
+}
+
+/** What `setCamera` asks for: a named view, an explicit pose, or a turn. */
+export type CameraRequest = NamedView | CameraPose | CameraTurn;
+
+export interface CameraState {
+  /**
+   * The camera shown now. The viewport writes it back (`cameraMoved`) after
+   * every orbit, pan, zoom or fit and after it applies a request, once the
+   * view has held still for a frame (a drag writes once, when it stops), so
+   * the store holds the current camera whenever the view is at rest. An
+   * explicit pose is recorded at once by `setCamera`. null until the viewport first
+   * frames a scene, and again when another model is opened; a re-read of the
+   * same model keeps it, and the view with it.
+   */
+  pose: CameraPose | null;
+  /** The latest `setCamera` request; the viewport applies each new `seq` once. Cleared when another model is opened. */
+  request: { to: CameraRequest; seq: number } | null;
+  /** Counts `setCamera` requests for the whole session; never reset, so a request can never reuse a seq the viewport saw. */
+  seq: number;
+  /**
+   * The model path read at least once since it was opened, or null. The pose
+   * belongs to it: a load or a failed read of this path keeps the camera (a
+   * watch reload, a retry after a failed re-read); a path opened but never
+   * read (its first read pending, or failed) opens framed.
+   */
+  read: string | null;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -987,6 +1051,18 @@ export type Event =
   | { type: "sourceResult"; decl: DeclPath; ok: boolean; reason: string | null }
   /** frame the selection, or the whole model when nothing is selected (`F`, or any panel); the frame effect moves the camera */
   | { type: "frameSelection" }
+  /**
+   * VA1: move the camera to a named view, an explicit pose or a heading; the
+   * viewport applies it. A pose that is not finite, has eye = target, an up
+   * along the view direction, or an up that would roll the camera is refused.
+   * A named view or a turn with nothing drawn, and `fit-selection` with
+   * nothing selected, are no-ops.
+   */
+  | { type: "setCamera"; to: CameraRequest }
+  /** VA1 (viewport): the camera after an orbit, pan, zoom or fit, or after it applied a `setCamera` */
+  | { type: "cameraMoved"; pose: CameraPose }
+  /** VA1: the page and viewport theme */
+  | { type: "setTheme"; theme: ThemeMode }
   /** select a `/sequence/stages` row by index (a stage card click), or clear the stage selection with null */
   | { type: "selectStage"; index: number | null }
   /** V4b: a results file was read (metadata only); the effects send it after `fileOpened` */

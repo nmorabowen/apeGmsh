@@ -12,14 +12,19 @@ import {
   LINE_DIAGRAM_CMAP_NAMES,
   lineDiagramKeysOf,
 } from "./lineDiagram.ts";
-import { elementsOfDecl } from "./search.ts";
+import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
+import { THEME_MODES } from "../theme/tokens.ts";
 import {
   LINE_STATION_COMPONENTS,
+  NAMED_VIEWS,
   WINDOW_KINDS,
   type ArtifactInfo,
   type ArtifactKind,
+  type CameraPose,
+  type CameraRequest,
+  type CameraState,
   type ContourState,
   type DeclPath,
   type DeformState,
@@ -30,6 +35,7 @@ import {
   type SpatialNdm,
   type State,
   type UnitSystemId,
+  type Vec3,
 } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
@@ -49,6 +55,86 @@ export const initialLoads: LoadsState = {
   scaleBySeries: false,
   selectedPatterns: null,
 };
+
+/** VA1: no camera until the viewport first frames a scene. */
+export const initialCamera: CameraState = { pose: null, request: null, seq: 0, read: null };
+
+/** The largest camera roll (radians) an explicit `up` may imply; the camera is a Z-up turntable with none. */
+export const ROLL_TOLERANCE = 1e-6;
+
+function vec3Of(v: unknown, who: string, key: string): Vec3 {
+  if (!Array.isArray(v) || v.length !== 3 || !v.every((x) => typeof x === "number" && Number.isFinite(x))) {
+    throw new RangeError(`${who}: ${key} must be three finite numbers; got ${JSON.stringify(v)}`);
+  }
+  return [v[0] as number, v[1] as number, v[2] as number];
+}
+
+/**
+ * VA1: a camera pose, checked and made canonical: `up` becomes the unit
+ * screen-up, its part across the view direction. Refused, with the reason: a
+ * key other than eye, target and up; a value that is not three finite
+ * numbers; eye = target; an up along the view direction; and an up that
+ * would roll the Z-up camera by more than ROLL_TOLERANCE. Looking straight
+ * down or up, any up across the view is allowed: it sets the heading.
+ */
+export function canonicalPose(p: CameraPose, who: string): CameraPose {
+  const keys = Object.keys(p).sort().join(", ");
+  if (keys !== "eye, target, up") throw new RangeError(`${who}: a pose has exactly eye, target and up; got ${keys || "no key"}`);
+  const eye = vec3Of(p.eye, who, "eye");
+  const target = vec3Of(p.target, who, "target");
+  const up = vec3Of(p.up, who, "up");
+  const f = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
+  const fl = Math.hypot(f[0]!, f[1]!, f[2]!);
+  if (!(fl > 0)) throw new RangeError(`${who}: eye and target are the same point ${JSON.stringify(eye)}`);
+  const [fx, fy, fz] = [f[0]! / fl, f[1]! / fl, f[2]! / fl];
+  const along = up[0] * fx + up[1] * fy + up[2] * fz;
+  const across = [up[0] - along * fx, up[1] - along * fy, up[2] - along * fz];
+  const al = Math.hypot(across[0]!, across[1]!, across[2]!);
+  if (!(al > 1e-9 * Math.hypot(...up))) throw new RangeError(`${who}: up ${JSON.stringify(up)} is along the view direction`);
+  const u: Vec3 = [across[0]! / al, across[1]! / al, across[2]! / al];
+  // A Z-up turntable's screen-up lies in the plane of the view direction and
+  // world Z, on the +Z side: (Z - fz f) / |..|, whose length is hypot(fx, fy).
+  const h = Math.hypot(fx, fy);
+  if (h > 1e-12) {
+    const [ix, iy, iz] = [(-fz * fx) / h, (-fz * fy) / h, h];
+    const cross = Math.hypot(iy * u[2] - iz * u[1], iz * u[0] - ix * u[2], ix * u[1] - iy * u[0]);
+    const roll = Math.atan2(cross, ix * u[0] + iy * u[1] + iz * u[2]);
+    // target - eye is rounded: each component of the view direction is off by
+    // up to about eps * |coordinate| / |target - eye|, which turns the no-roll
+    // up by that much over h. Near the vertical, far from the origin (a
+    // georeferenced model), that exceeds ROLL_TOLERANCE, so it is allowed for.
+    const scale = Math.max(...eye.map(Math.abs), ...target.map(Math.abs));
+    const tolerance = ROLL_TOLERANCE + (16 * Number.EPSILON * scale) / (fl * h);
+    if (!(roll <= tolerance)) {
+      const deg = (roll * 180) / Math.PI;
+      throw new RangeError(`${who}: up ${JSON.stringify(up)} rolls the camera by ${deg.toPrecision(4)} degrees; the camera has no roll (world Z stays up the screen)`);
+    }
+  }
+  return { eye, target, up: u };
+}
+
+const samePose = (a: CameraPose, b: CameraPose): boolean =>
+  a.eye.every((x, i) => x === b.eye[i]) && a.target.every((x, i) => x === b.target[i]) && a.up.every((x, i) => x === b.up[i]);
+
+/** VA1: a `setCamera` request checked; null when it is a defined no-op (nothing drawn, or `fit-selection` with nothing selected). */
+function cameraRequestOf(s: State, to: CameraRequest): CameraRequest | null {
+  const drawn = s.mesh !== null || s.geometry !== null;
+  if (typeof to === "string") {
+    if (!(NAMED_VIEWS as readonly string[]).includes(to)) throw new RangeError(`setCamera: ${JSON.stringify(to)} is not a named view (${NAMED_VIEWS.join(", ")})`);
+    if (!drawn) return null;
+    if (to === "fit-selection" && selectedElementsOf(s).length === 0) return null;
+    return to;
+  }
+  if (to !== null && typeof to === "object" && "eye" in to) return canonicalPose(to, "setCamera");
+  if (to !== null && typeof to === "object" && "yaw" in to) {
+    const keys = Object.keys(to).sort().join(", ");
+    if (keys !== "tilt, yaw") throw new RangeError(`setCamera: a turn has exactly yaw and tilt; got ${keys}`);
+    if (!Number.isFinite(to.yaw) || !Number.isFinite(to.tilt)) throw new RangeError(`setCamera: a turn needs a finite yaw and tilt; got ${JSON.stringify(to)}`);
+    if (!drawn) return null;
+    return { yaw: to.yaw, tilt: Math.min(Math.PI, Math.max(0, to.tilt)) };
+  }
+  throw new RangeError(`setCamera: ${JSON.stringify(to)} is not a named view, a pose (eye, target, up) or a turn (yaw, tilt)`);
+}
 
 /** No model, no dimension. */
 const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
@@ -121,6 +207,8 @@ export const initialState: State = {
   loads: initialLoads,
   spotlight: initialSpotlight,
   search: initialSearch,
+  camera: initialCamera,
+  theme: "dark",
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -316,7 +404,9 @@ export function reduce(s: State, e: Event): State {
       const lineDiagram = clearedResults
         ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
         : s.lineDiagram;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram });
+      // VA1: opening another model drops the camera of the one shown; the same path again (a reload, a retry after a failed read) keeps it.
+      const camera = e.artifact === "model" && !(prev && prev.path === e.path) ? { ...initialCamera, seq: s.camera.seq } : s.camera;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -371,6 +461,10 @@ export function reduce(s: State, e: Event): State {
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
+        // VA1: a read of the path already read keeps the view (a re-read, and a
+        // retry after a failed re-read). A path never read opens framed: a pose
+        // moved while it loaded, or after its first read failed, is not its own.
+        camera: s.camera.read === info.path ? s.camera : { ...initialCamera, seq: s.camera.seq, read: info.path },
       });
     }
     case "setLoaded": {
@@ -413,6 +507,12 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
+        // VA1: the theme is the window's. The camera stands through a failed
+        // re-read of the model shown; a failed first read of a path drops a
+        // pose moved while it loaded (the model shown then was another one),
+        // and the path stays unread (camera.read), so its retry opens framed.
+        camera: s.camera.read === e.path ? s.camera : { ...initialCamera, seq: s.camera.seq },
+        theme: s.theme,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -444,6 +544,9 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
+        // VA1: the camera and the theme are the window's, not the model's.
+        camera: s.camera,
+        theme: s.theme,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -741,6 +844,22 @@ export function reduce(s: State, e: Event): State {
     case "frameSelection":
       if (!s.mesh) return s;
       return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
+    case "setCamera": {
+      const to = cameraRequestOf(s, e.to);
+      if (to === null) return s;
+      const seq = s.camera.seq + 1;
+      // An explicit pose is the camera at once; a named view or a turn is resolved by the viewport, which writes the pose back.
+      const pose = typeof to === "object" && "eye" in to ? to : s.camera.pose;
+      return { ...s, camera: { ...s.camera, pose, request: { to, seq }, seq } };
+    }
+    case "cameraMoved": {
+      const pose = canonicalPose(e.pose, "cameraMoved");
+      if (s.camera.pose && samePose(s.camera.pose, pose)) return s;
+      return { ...s, camera: { ...s.camera, pose } };
+    }
+    case "setTheme":
+      if (!(THEME_MODES as readonly string[]).includes(e.theme)) throw new RangeError(`setTheme: ${JSON.stringify(e.theme)} is not a theme (${THEME_MODES.join(", ")})`);
+      return s.theme === e.theme ? s : { ...s, theme: e.theme };
     case "selectStage": {
       if (e.index === null) return s.stage === null ? s : { ...s, stage: null };
       const n = stageCount(s.sequence);

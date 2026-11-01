@@ -29,7 +29,7 @@ import { LoadsLayer } from "./loads.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
-import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
+import type { CameraRequest, DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 import {
   DEFAULT_FOV_DEG,
@@ -38,12 +38,14 @@ import {
   ISO_FORWARD,
   Navigator,
   nearestHit,
+  poseOf,
   syncOrthoFrustum,
+  VIEW_HEADINGS,
   type Heading,
   type ProjectionMode,
   type ViewCamera,
 } from "./navigation.ts";
-import { fitDistance, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
+import { fitDistance, focusOf, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
@@ -68,6 +70,13 @@ interface MeshIndex {
   info: MeshInfo;
   byPath: Map<DeclPath, number>;
   prims: Map<number, Prims>;
+}
+
+/** VA1: `s` differs from `prev` in the camera alone (every other top-level slice is the same object). */
+function onlyCameraChanged(s: State, prev: State | null): boolean {
+  if (!prev || s.camera === prev.camera) return false;
+  for (const k of Object.keys(s) as (keyof State)[]) if (k !== "camera" && s[k] !== prev[k]) return false;
+  return true;
 }
 
 export class Viewport {
@@ -154,11 +163,6 @@ export class Viewport {
     return this.activeProjection;
   }
 
-  /** Current viewport theme mode ("dark" or "light"). */
-  get theme(): ThemeMode {
-    return this.activeTheme;
-  }
-
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
     this.host = host;
     this.store = store;
@@ -237,8 +241,8 @@ export class Viewport {
     this.nav.updated();
   }
 
-  /** Switch between dark and light (report-ready white paper) viewport themes. */
-  setTheme(mode: ThemeMode): void {
+  /** Show the dark or light (report-ready white paper) viewport theme: the store's `theme` (VA1; `onState` calls it). */
+  private showTheme(mode: ThemeMode): void {
     if (mode === this.activeTheme) return;
     this.activeTheme = mode;
     const t = themeTokens(mode);
@@ -267,11 +271,78 @@ export class Viewport {
     this.requestRender();
   }
 
-  /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model. */
-  home(): void {
+  /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model (the `home` view). */
+  private home(): void {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
     else if (s.mesh) this.frame(s.mesh, null, null);
+  }
+
+  /**
+   * VA1: fit the whole drawn scene at `heading` (the `fit` view and the fixed
+   * named views): the geometry on the geometry phase or with no mesh, as `F`
+   * does there; else the whole drawn (deformed) model, as `F` with nothing
+   * selected does (`frameTo(null)`).
+   */
+  private fitScene(heading: Heading): void {
+    const s = this.store.get();
+    if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, heading);
+    else if (s.mesh) this.frame(s.mesh, heading, frameFocus(this.full, s.mesh, this.blobs, this.drawn, null, null));
+  }
+
+  /**
+   * VA1: apply a `setCamera` request (ADR 0128 D1). The reducer has checked
+   * it; the camera moves only here, and the move is written back to the
+   * store as `cameraMoved` with the next frame.
+   */
+  private applyCamera(s: State, to: CameraRequest): void {
+    if (typeof to === "string") {
+      if (to === "home") this.home();
+      else if (to === "fit") this.fitScene(this.nav.heading);
+      else if (to === "fit-selection") {
+        const focus = s.mesh ? focusOf(s, this.blobs) : null;
+        // Nothing of the selection drawn: a defined no-op, as for an empty selection.
+        if (focus) this.frameTo(focus);
+      } else this.fitScene(VIEW_HEADINGS[to]);
+    } else if ("eye" in to) this.nav.place(to);
+    else this.nav.snapTo({ yaw: to.yaw, tilt: to.tilt });
+  }
+
+  /** VA1: camera moves so far (`changed` counts them), and the count last written back. */
+  private cameraMoves = 0;
+  private cameraWritten = 0;
+  private cameraWritePending = false;
+
+  /**
+   * VA1: write the camera back to the store once it has held still for a
+   * whole frame: the move count is read at one animation frame and must be
+   * the same at the next. A drag or the scripted orbit (one move a frame)
+   * writes once, when it stops, not every frame: each dispatch runs every
+   * panel's listener, and a write per frame cost the measured orbit about
+   * 15 MB of renderer working set and about a fifth of its uncapped frame
+   * rate. The write runs from an animation frame, so never inside a dispatch.
+   */
+  private scheduleCameraWrite(): void {
+    if (this.cameraWritePending || this.cameraMoves === this.cameraWritten) return;
+    this.cameraWritePending = true;
+    let seen = -1;
+    const tick = () => {
+      // Moved since the last look (or this is the first): look again next frame.
+      if (this.cameraMoves !== seen) {
+        seen = this.cameraMoves;
+        requestAnimationFrame(tick);
+        return;
+      }
+      this.cameraWritePending = false;
+      const m = this.store.get().mesh ?? this.geometryInfo;
+      // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
+      const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
+      // A refused write raises (loudly, from this frame) and stays unwritten:
+      // the count advances only once the store holds the pose, so the next move writes again.
+      this.store.dispatch({ type: "cameraMoved", pose });
+      this.cameraWritten = seen;
+    };
+    requestAnimationFrame(tick);
   }
 
   /**
@@ -336,6 +407,8 @@ export class Viewport {
         }
       },
       changed: () => {
+        this.cameraMoves++;
+        this.scheduleCameraWrite();
         this.syncCameraFrustum();
         this.notifyView();
         this.lineDiagram.onCameraChange();
@@ -420,6 +493,16 @@ export class Viewport {
   }
 
   private onState(s: State, prev: State | null): void {
+    // VA1: the theme first, so a mesh built below takes its colours.
+    if (s.theme !== this.activeTheme) this.showTheme(s.theme);
+    // The camera write-back (once a frame while the view moves) changes nothing the scene is built from.
+    if (!onlyCameraChanged(s, prev)) this.onScene(s, prev);
+    // VA1: each new setCamera request once, after the scene it frames is built.
+    const req = s.camera.request;
+    if (req && req.seq !== prev?.camera.request?.seq) this.applyCamera(s, req.to);
+  }
+
+  private onScene(s: State, prev: State | null): void {
     // V4e1: the planes move in place; every material already shares them.
     if (!prev || s.clip !== prev.clip) {
       if (this.clip.sync(s.clip)) {
@@ -894,8 +977,11 @@ export class Viewport {
     this.notifyView();
     if (!info) return this.requestRender();
     this.indexOf(info);
-    this.rebuild(this.store.get(), info);
-    this.frame(info);
+    const s = this.store.get();
+    this.rebuild(s, info);
+    // VA1: a new model opens framed; a re-read keeps the camera the store holds (and the view with it).
+    if (s.camera.pose === null) this.frame(info);
+    else this.nav.updated();
   }
 
   /** (Re)build the content group for the current hidden set. */

@@ -22,7 +22,6 @@ import { contourKeysOf, gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
-import { applyTheme } from "../theme/tokens.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
@@ -31,11 +30,12 @@ import { mountViewCube } from "./viewcube.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
-applyTheme(document);
 
 const store = new Store();
 const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
+// VA1: the theme is the store's; the effect styles the page with it (and does so now).
+effects.setThemeTarget(document);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
 effects.setFrameTarget(viewport);
 // V4c1: the contour colours from the step the effects fetched (never kept in the store).
@@ -68,14 +68,16 @@ panels.push(
     heading: () => viewport.nav.heading,
     projection: () => viewport.projection,
     setProjection: (mode) => viewport.setProjection(mode),
-    theme: () => viewport.theme,
-    setTheme: (mode) => {
-      applyTheme(document, mode);
-      viewport.setTheme(mode);
+    // VA1: the theme and every ViewCube click, drag and button go through the store (setTheme, setCamera).
+    theme: () => store.get().theme,
+    setTheme: (mode) => store.dispatch({ type: "setTheme", theme: mode }),
+    snapTo: (h) => store.dispatch({ type: "setCamera", to: { yaw: h.yaw, tilt: h.tilt } }),
+    orbit: (dYaw, dTilt) => {
+      // A turntable orbit about the pivot is a turn to the heading it reaches (navigation.ts orbitAbout).
+      const h = viewport.nav.heading;
+      store.dispatch({ type: "setCamera", to: { yaw: h.yaw + dYaw, tilt: h.tilt + dTilt } });
     },
-    snapTo: (h) => viewport.nav.snapTo(h),
-    orbit: (dYaw, dTilt) => viewport.nav.orbit(viewport.nav.target, dYaw, dTilt),
-    home: () => viewport.home(),
+    home: () => store.dispatch({ type: "setCamera", to: "home" }),
     subscribe: (fn) => viewport.onViewChange(fn),
   }),
 );
@@ -1263,6 +1265,40 @@ async function captureGizmo(settle: (ms?: number) => Promise<unknown>, width: nu
   store.dispatch({ type: "frameSelection" });
 }
 
+/**
+ * VA1 (D7): `<out>.camera-plus-x.png`, the `+x` named view through the store;
+ * `<out>.camera-plus-x-reread.png`, the same after the model file is read
+ * again (a re-read keeps the camera); and `<out>.camera-plus-x-again.png`,
+ * the view asked for again after a turn away. Each must show the same frame
+ * (pixel-identical, and the same pose to the bit). The camera is then put
+ * back at the pose it had, through an explicit `setCamera`, for the stills
+ * after it.
+ */
+async function captureCamera(settle: (ms?: number) => Promise<unknown>, file: string) {
+  viewport.renderNow();
+  const before = store.get().camera.pose;
+  if (!before) throw new Error("capture: the store holds no camera after the model was framed");
+  const show = async (name: string) => {
+    await settle();
+    viewport.renderNow();
+    await bridge.captureStill(name);
+    return store.get().camera.pose;
+  };
+  store.dispatch({ type: "setCamera", to: "+x" });
+  const first = await show("camera-plus-x");
+  const same = (what: string, pose: unknown) => {
+    if (JSON.stringify(first) !== JSON.stringify(pose)) throw new Error(`capture: ${what} changed the camera: ${JSON.stringify(first)} vs ${JSON.stringify(pose)}`);
+  };
+  if (!(await effects.open(file))) throw new Error(`capture: the re-read of ${file} failed`);
+  same("a re-read of the model", await show("camera-plus-x-reread"));
+  store.dispatch({ type: "setCamera", to: { yaw: 0.7, tilt: 1.1 } });
+  viewport.renderNow();
+  store.dispatch({ type: "setCamera", to: "+x" });
+  same("asking for +x again", await show("camera-plus-x-again"));
+  store.dispatch({ type: "setCamera", to: before });
+  viewport.renderNow();
+}
+
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
@@ -1331,6 +1367,7 @@ async function main() {
   await settle();
   viewport.renderNow();
   await bridge.captureStill("groups");
+  await captureCamera(settle, cfg.file);
   store.dispatch({ type: "setColourBy", by: "role" });
   await settle();
   viewport.renderNow();
