@@ -608,11 +608,11 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       item: drillDownItem(
         "cmd:contour-units",
         "contour",
-        `Set Contour Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
-        "Convert contour and load values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
+        `Set Display Units… (${s.contour.targetUnits === "as_stored" ? "as stored" : s.contour.targetUnits})`,
+        "Convert contour, load, and line-diagram values between consistent baseUnits systems (kN-m, tf-m, N-mm, kip-in…)",
         "contourUnits",
       ),
-      keywords: "set contour loads units baseunits kn tf kgf mm kip mpa kpa",
+      keywords: "set display contour loads line diagram units baseunits kn tf kgf mm kip mpa kpa",
     });
   }
 
@@ -1206,20 +1206,22 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
         );
         if (filter(it)) items.push(it);
       }
-      for (const src of UNIT_SYSTEM_IDS) {
-        const spec = UNIT_SYSTEMS[src];
-        const active = s.contour.sourceUnits === src;
-        const it = commandItem(
-          `val:unit-source-${src}`,
-          "native units",
-          `Native File Units: ${spec.label}`,
-          active ? "Currently assumed native unit system" : `Assume file values are stored in ${spec.label}`,
-          [{ type: "setContourUnits", source: src }],
-          active,
-          [{ type: "setContourUnits", source: src }],
-          section,
-        );
-        if (filter(it)) items.push(it);
+      if (s.contour.declaredUnits === null) {
+        for (const src of UNIT_SYSTEM_IDS) {
+          const spec = UNIT_SYSTEMS[src];
+          const active = s.contour.sourceUnits === src;
+          const it = commandItem(
+            `val:unit-source-${src}`,
+            "native units",
+            `Native File Units: ${spec.label}`,
+            active ? "Currently assumed native unit system" : `Assume file values are stored in ${spec.label}`,
+            [{ type: "setContourUnits", source: src }],
+            active,
+            [{ type: "setContourUnits", source: src }],
+            section,
+          );
+          if (filter(it)) items.push(it);
+        }
       }
       return items;
     }

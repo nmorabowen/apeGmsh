@@ -387,6 +387,45 @@ test("ladruno_frame3d end-to-end: selecting connected girders builds continuous 
     assert.equal(layer.sync(s, h.blobs, stepData, h.effects.currentDisplacement()), true);
     assert.equal(layer.hoverNeedle.visible, false);
 
+    // Unit-aware formatHoverReadout and buildBeamChainPlotModel scale s, totalLength, extrema, and hover values:
+    const sampleHover = {
+      decl: "/elements/frame_Beam_0",
+      elementId: 1,
+      xRel: 0.5,
+      x: 1.5,
+      s: 1.5,
+      chainIndex: 0,
+      length: 3,
+      xi: 0,
+      value: -45,
+      withinStationSpan: true,
+      pBase: [1.5, 0, 2] as const,
+      pTop: [1.5, 0, 2.5] as const,
+      needlePositions: [1.5, 0, 2, 1.5, 0, 2.5] as const,
+    };
+    const convertedReadout = formatHoverReadout(
+      sampleHover,
+      "Mz",
+      { factor: 1000, unit: "N·m" },
+      { factor: 1000, unit: "mm" },
+    );
+    assert.equal(
+      convertedReadout,
+      "E1 · ξ = 0.000 · s = 1500 [mm] · Mz (bending_moment_z) = -4.500e+4 [N·m]",
+    );
+    const chain0 = s.lineDiagram.chains[0]!;
+    const plotConverted = buildBeamChainPlotModel(chain0, 0, 1, {
+      flipSign: true,
+      fill: true,
+      component: "Mz",
+      hover: sampleHover,
+      uComp: { factor: 1000, unit: "N·m" },
+      uLength: { factor: 1000, unit: "mm" },
+    });
+    assert.match(plotConverted.headerLabel, /L = 7000 mm/);
+    assert.equal(plotConverted.spans[0]!.minMarker?.label, "-4.500e+4");
+    assert.equal(plotConverted.hoverMarker?.label, "E1: -4.500e+4");
+
     layer.dispose();
   } finally {
     h.effects.dispose();
