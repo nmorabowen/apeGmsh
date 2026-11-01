@@ -24,6 +24,7 @@ import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagram
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
+import { applyTheme } from "./theme/tokens.ts";
 import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
@@ -259,6 +260,8 @@ export class Effects {
   private retries = 0;
   private retryPath: string | null = null;
   private frameTarget: FrameTarget | null = null;
+  /** VA1: the document the theme effect styles (app.ts attaches `document`). */
+  private themeTarget: Document | null = null;
   private readonly off: (() => void)[] = [];
 
   /**
@@ -342,7 +345,19 @@ export class Effects {
         if (!this.frameTarget) throw new Error("frameSelection: no frame target is attached");
         this.frameTarget.frameTo(focusOf(s, this.blobs));
       }),
+      // VA1: setTheme styles the page (the viewport recolours itself from the same state).
+      this.store.subscribe((s, prev) => {
+        if (s.theme === prev.theme) return;
+        if (!this.themeTarget) throw new Error("setTheme: no theme target is attached");
+        applyTheme(this.themeTarget, s.theme);
+      }),
     );
+  }
+
+  /** VA1: attach the document the theme effect styles, and style it with the store's theme now. */
+  setThemeTarget(doc: Document): void {
+    this.themeTarget = doc;
+    applyTheme(doc, this.store.get().theme);
   }
 
   /** Attach what `frameSelection` moves (the viewport). */

@@ -12,6 +12,7 @@
 // the pivot, which keeps the pivot on the same pixel.
 
 import * as THREE from "three";
+import type { CameraPose, NamedView } from "../state/types.ts";
 import { bindingFor, buttonOf, CLICK_SLOP_PX, isSelectAdd, keyAction, type DragAction } from "./bindings.ts";
 
 export const Z_UP: Readonly<THREE.Vector3> = new THREE.Vector3(0, 0, 1);
@@ -42,6 +43,62 @@ export function headingOf(forward: THREE.Vector3): Heading {
   const tilt = Math.acos(THREE.MathUtils.clamp(-f.z, -1, 1));
   const horizontal = Math.hypot(f.x, f.y);
   return { yaw: horizontal < 1e-12 ? 0 : Math.atan2(-f.x, f.y), tilt };
+}
+
+/** VA1: the named views that turn to a fixed heading (and then fit the scene). */
+export type HeadingView = Exclude<NamedView, "fit" | "fit-selection" | "home">;
+
+/**
+ * VA1 (ADR 0128 D1): the heading of each fixed named view. `+x` is the view
+ * from the +X side (the ViewCube's RIGHT face, looking along -X with Z up),
+ * `-y` the FRONT face, `top` looks down -Z with +Y up the screen (the plan a
+ * planar model opens on) and `bottom` looks up +Z with -Y up the screen.
+ */
+export const VIEW_HEADINGS: Readonly<Record<HeadingView, Heading>> = {
+  iso: headingOf(ISO_FORWARD.clone()),
+  "+x": { yaw: Math.PI / 2, tilt: Math.PI / 2 },
+  "-x": { yaw: -Math.PI / 2, tilt: Math.PI / 2 },
+  "+y": { yaw: Math.PI, tilt: Math.PI / 2 },
+  "-y": { yaw: 0, tilt: Math.PI / 2 },
+  top: { yaw: 0, tilt: 0 },
+  bottom: { yaw: 0, tilt: Math.PI },
+};
+
+/**
+ * VA1: the heading of a look-at whose view direction is `forward` and screen
+ * up `up` (no roll: state/reduce.ts `canonicalPose` refuses an up that rolls).
+ * Off the vertical it is `headingOf(forward)`; looking straight down or up,
+ * `up` sets the yaw.
+ */
+export function headingOfPose(forward: THREE.Vector3, up: THREE.Vector3): Heading {
+  const f = forward.clone().normalize();
+  if (Math.hypot(f.x, f.y) >= 1e-12) return headingOf(f);
+  // Heading {yaw, 0} has screen up Rz(yaw)(0, 1, 0); {yaw, pi} has Rz(yaw)(0, -1, 0).
+  return f.z < 0 ? { yaw: Math.atan2(-up.x, up.y), tilt: 0 } : { yaw: Math.atan2(up.x, -up.y), tilt: Math.PI };
+}
+
+/** VA1: put `camera` at `pose` (eye, and the no-roll orientation that looks at the target); returns its heading. */
+export function placePose(camera: THREE.Camera, pose: CameraPose): Heading {
+  const eye = new THREE.Vector3(...pose.eye);
+  const h = headingOfPose(new THREE.Vector3(...pose.target).sub(eye), new THREE.Vector3(...pose.up));
+  camera.position.copy(eye);
+  applyHeading(camera, h);
+  return h;
+}
+
+/**
+ * VA1: the pose `camera` shows, as a look-at: a target on the view axis at
+ * the depth of `pivot` (at least `minDepth`), and the screen up. With the
+ * orthographic projection the eye is put `orthoDistance` before that target
+ * on the same axis, the perspective view of the same frame, so `placePose`
+ * of the result, with `orthoDistance = |eye - target|`, shows the same frame.
+ */
+export function poseOf(camera: THREE.Camera, pivot: THREE.Vector3, minDepth: number, projection: ProjectionMode, orthoDistance: number): CameraPose {
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+  const target = camera.position.clone().addScaledVector(forward, Math.max(depthOf(camera, pivot), minDepth));
+  const eye = projection === "orthographic" ? target.clone().addScaledVector(forward, -orthoDistance) : camera.position.clone();
+  return { eye: [eye.x, eye.y, eye.z], target: [target.x, target.y, target.z], up: [up.x, up.y, up.z] };
 }
 
 /** Point the camera along a heading. */
@@ -272,6 +329,14 @@ export class Navigator {
   /** Snap the camera to heading `to` about `pivot` (defaults to `this.target`), keeping the distance. */
   snapTo(to: Heading, pivot: THREE.Vector3 = this.target): void {
     this.heading = snapAbout(this.host.camera, this.heading, to, pivot);
+    this.updated();
+  }
+
+  /** VA1: put the camera at an explicit pose; its target becomes the pivot, and |eye - target| the orthographic frustum distance. */
+  place(pose: CameraPose): void {
+    this.heading = placePose(this.host.camera, pose);
+    this.target.set(...pose.target);
+    this.orthoDistance = this.target.distanceTo(this.host.camera.position);
     this.updated();
   }
 

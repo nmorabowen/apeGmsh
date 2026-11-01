@@ -29,7 +29,7 @@ import { LoadsLayer } from "./loads.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
-import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
+import type { CameraRequest, DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 import {
   DEFAULT_FOV_DEG,
@@ -38,12 +38,14 @@ import {
   ISO_FORWARD,
   Navigator,
   nearestHit,
+  poseOf,
   syncOrthoFrustum,
+  VIEW_HEADINGS,
   type Heading,
   type ProjectionMode,
   type ViewCamera,
 } from "./navigation.ts";
-import { fitDistance, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
+import { fitDistance, focusOf, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
@@ -154,11 +156,6 @@ export class Viewport {
     return this.activeProjection;
   }
 
-  /** Current viewport theme mode ("dark" or "light"). */
-  get theme(): ThemeMode {
-    return this.activeTheme;
-  }
-
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
     this.host = host;
     this.store = store;
@@ -237,8 +234,8 @@ export class Viewport {
     this.nav.updated();
   }
 
-  /** Switch between dark and light (report-ready white paper) viewport themes. */
-  setTheme(mode: ThemeMode): void {
+  /** Show the dark or light (report-ready white paper) viewport theme: the store's `theme` (VA1; `onState` calls it). */
+  private showTheme(mode: ThemeMode): void {
     if (mode === this.activeTheme) return;
     this.activeTheme = mode;
     const t = themeTokens(mode);
@@ -267,11 +264,54 @@ export class Viewport {
     this.requestRender();
   }
 
-  /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model. */
-  home(): void {
+  /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model (the `home` view). */
+  private home(): void {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
     else if (s.mesh) this.frame(s.mesh, null, null);
+  }
+
+  /**
+   * VA1: fit the whole drawn scene at `heading` (the `fit` view and the fixed
+   * named views): the geometry on the geometry phase or with no mesh, as `F`
+   * does there; else the whole drawn (deformed) model, as `F` with nothing
+   * selected does (`frameTo(null)`).
+   */
+  private fitScene(heading: Heading): void {
+    const s = this.store.get();
+    if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, heading);
+    else if (s.mesh) this.frame(s.mesh, heading, frameFocus(this.full, s.mesh, this.blobs, this.drawn, null, null));
+  }
+
+  /**
+   * VA1: apply a `setCamera` request (ADR 0128 D1). The reducer has checked
+   * it; the camera moves only here, and the move is written back to the
+   * store as `cameraMoved` with the next frame.
+   */
+  private applyCamera(s: State, to: CameraRequest): void {
+    if (typeof to === "string") {
+      if (to === "home") this.home();
+      else if (to === "fit") this.fitScene(this.nav.heading);
+      else if (to === "fit-selection") {
+        const focus = s.mesh ? focusOf(s, this.blobs) : null;
+        // Nothing of the selection drawn: a defined no-op, as for an empty selection.
+        if (focus) this.frameTo(focus);
+      } else this.fitScene(VIEW_HEADINGS[to]);
+    } else if ("eye" in to) this.nav.place(to);
+    else this.nav.snapTo({ yaw: to.yaw, tilt: to.tilt });
+  }
+
+  /** VA1: the camera moved (`changed`); the pose goes to the store after the next render. */
+  private cameraDirty = false;
+
+  /** VA1: write the camera shown back to the store (once a frame at most, never inside a dispatch). */
+  private writeCamera(): void {
+    if (!this.cameraDirty) return;
+    this.cameraDirty = false;
+    const m = this.store.get().mesh ?? this.geometryInfo;
+    // The target lies on the view axis at the pivot's depth, never closer than 1e-3 of the scene radius.
+    const pose = poseOf(this.camera, this.nav.target, 1e-3 * (m?.radius ?? 1), this.activeProjection, this.nav.orthoDistance);
+    this.store.dispatch({ type: "cameraMoved", pose });
   }
 
   /**
@@ -336,6 +376,7 @@ export class Viewport {
         }
       },
       changed: () => {
+        this.cameraDirty = true;
         this.syncCameraFrustum();
         this.notifyView();
         this.lineDiagram.onCameraChange();
@@ -420,6 +461,15 @@ export class Viewport {
   }
 
   private onState(s: State, prev: State | null): void {
+    // VA1: the theme first, so a mesh built below takes its colours.
+    if (s.theme !== this.activeTheme) this.showTheme(s.theme);
+    this.onScene(s, prev);
+    // VA1: each new setCamera request once, after the scene it frames is built.
+    const req = s.camera.request;
+    if (req && req.seq !== prev?.camera.request?.seq) this.applyCamera(s, req.to);
+  }
+
+  private onScene(s: State, prev: State | null): void {
     // V4e1: the planes move in place; every material already shares them.
     if (!prev || s.clip !== prev.clip) {
       if (this.clip.sync(s.clip)) {
@@ -894,8 +944,11 @@ export class Viewport {
     this.notifyView();
     if (!info) return this.requestRender();
     this.indexOf(info);
-    this.rebuild(this.store.get(), info);
-    this.frame(info);
+    const s = this.store.get();
+    this.rebuild(s, info);
+    // VA1: a new model opens framed; a re-read keeps the camera the store holds (and the view with it).
+    if (s.camera.pose === null) this.frame(info);
+    else this.nav.updated();
   }
 
   /** (Re)build the content group for the current hidden set. */
@@ -1324,6 +1377,7 @@ export class Viewport {
     if (this.highlight.children.length) this.halo.render(this.scene, this.camera);
     this.lastRenderMs = performance.now() - t;
     if (this.halo.pulsing) this.requestRender();
+    this.writeCamera();
   }
 
   /** V4e1: the box the offset slider maps, the reference (undeformed) mesh (renderer/clip.ts sliderBox); null with no mesh. */
