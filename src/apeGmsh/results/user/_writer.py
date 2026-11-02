@@ -1,7 +1,7 @@
 """Write a ``<stem>.user.h5``: atomic, and never past a zone it does not know.
 
-Every write builds its own ``<stem>.user.h5.<pid>-<random>.partial`` in the same
-folder, created exclusively, then reopens and verifies it, and only then replaces
+Every write builds its own ``<stem>.user.h5.<host>-<pid>-<random>.partial`` in the
+same folder, created exclusively, then reopens and verifies it, and only then replaces
 the file, so a killed writer leaves the previous file whole (ADR 0130 D2, A4).
 The name is per writer because truncating a shared one destroys the other
 writer's data: on Windows ``h5py.File(name, "w")`` truncates before it fails on
@@ -26,6 +26,7 @@ import ctypes
 import os
 import re
 import secrets
+import socket
 import time
 from pathlib import Path
 from typing import Optional, Sequence
@@ -73,6 +74,8 @@ _STILL_ACTIVE = 259
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _ERROR_ACCESS_DENIED = 5
 _MAX_DWORD = 0xFFFFFFFF
+#: The host token when the machine's name cannot be told; it never sweeps.
+_UNKNOWN_HOST = "unknownhost"
 
 
 def model_hashes(model_h5: "str | Path") -> tuple[str, Optional[str]]:
@@ -396,7 +399,7 @@ def _fsync(path: Path) -> None:
 
 def _create_partial(target: Path) -> tuple[Path, h5py.File]:
     """This writer's own partial, created exclusively: no other writer's is touched."""
-    name = f"{target.name}.{os.getpid()}-{secrets.token_hex(4)}.partial"
+    name = f"{target.name}.{_host_token()}-{os.getpid()}-{secrets.token_hex(4)}.partial"
     partial = target.with_name(name)
     try:
         return partial, h5py.File(partial, "x")
@@ -437,14 +440,39 @@ def _pid_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def _host_token() -> str:
+    """This machine's name, safe in a file name and free of the ``-`` separator.
+
+    :data:`_UNKNOWN_HOST` when it cannot be told: a partial then still gets a
+    name, but no sweep runs, because no host could prove the partial is its own.
+    """
+    try:
+        host = socket.gethostname()
+    except OSError:
+        return _UNKNOWN_HOST
+    token = re.sub(r"[^a-z0-9]+", "_", host.lower()).strip("_")[:63]
+    return token or _UNKNOWN_HOST
+
+
 def _sweep_dead_partials(target: Path) -> None:
-    """Remove partials whose writer has died. Failure here never fails the write:
-    a dead process's lock outlives it for a moment, and the next write tries again."""
-    pattern = re.compile(re.escape(target.name) + r"\.(\d+)-[0-9a-f]+\.partial\Z")
+    """Remove this host's partials whose writer has died.
+
+    A set lives in a synced folder, so another machine's live writer has a PID
+    this host cannot see, and a deletion here would sync to it: only partials
+    naming this host are ever removed. Failure here never fails the write: a
+    dead process's lock outlives it for a moment, and the next write tries again.
+    """
+    host = _host_token()
+    if host == _UNKNOWN_HOST:
+        return
+    pattern = re.compile(
+        re.escape(target.name) + r"\.([a-z0-9_]+)-(\d+)-[0-9a-f]+\.partial\Z")
     with contextlib.suppress(OSError):
         for entry in target.parent.iterdir():
             found = pattern.match(entry.name)
-            if found is not None and not _pid_alive(int(found.group(1))):
+            if found is None or found.group(1) != host:
+                continue
+            if not _pid_alive(int(found.group(2))):
                 with contextlib.suppress(OSError):
                     entry.unlink()
 

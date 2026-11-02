@@ -2824,16 +2824,19 @@ byte encoding is in `results/user/_fingerprint.py`. A native `results.h5` uses
 A write that changes `@results_hash` rewrites or explicitly drops the
 `@basis=results` entries.
 
-**Writing.** Each writer creates its own `<stem>.user.h5.<pid>-<random>.partial` in
-the same folder, opened exclusively, and then replaces the file, so a killed writer
+**Writing.** Each writer creates its own `<stem>.user.h5.<host>-<pid>-<random>.partial`
+in the same folder, opened exclusively, and then replaces the file, so a killed writer
 leaves the previous file whole. The name is per writer because, on Windows, opening a
 shared name for writing truncates it before failing on the lock, which destroys the
 other writer's data. A writer verifies its partial, bit-comparing the `DATA` it
 wrote, and compares `/meta@revision` immediately before the replace: if it moved, the
 write refuses, so the second of two writers refuses rather than overwriting. A small
 window remains between that comparison and the replace. A writer deletes only its
-own partial on failure, and sweeps a leftover only if its PID is not alive; a failed
-sweep does not fail the write. A zone group with no version key refuses the write.
+own partial on failure. It sweeps a leftover only if the leftover names this host and
+its PID is not alive, because a set may live in a synced folder, where another
+machine's live writer has a PID this host cannot see. `<host>` is the machine name in
+lower case, with each run of characters other than `a-z0-9` replaced by `_`; a writer
+that cannot tell its host sweeps nothing. A failed sweep does not fail the write. A zone group with no version key refuses the write.
 The app follows the same rules: it adds a generation to its own copy (this name, not
 ADR 0130 A4's fixed one) and never rewrites a generation, because h5wasm cannot
 delete a link or rewrite a vlen dataset. Earlier generations are its backup.

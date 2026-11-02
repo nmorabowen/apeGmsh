@@ -349,14 +349,49 @@ def test_each_writer_names_its_own_partial(make_model, tmp_path, monkeypatch) ->
     write_user_file(target, model)
     write_user_file(target, model)
     assert len(set(seen)) == 2
+    host = _writer._host_token()
     for name in seen:
-        assert re.fullmatch(rf"s\.user\.h5\.{os.getpid()}-[0-9a-f]+\.partial", name), name
+        assert re.fullmatch(rf"s\.user\.h5\.{host}-{os.getpid()}-[0-9a-f]+\.partial", name), name
 
 
-def _leftover(target: Path, pid: int) -> Path:
-    path = target.with_name(f"{target.name}.{pid}-00ff.partial")
+def _leftover(target: Path, pid: int, host: Optional[str] = None) -> Path:
+    host = _writer._host_token() if host is None else host
+    path = target.with_name(f"{target.name}.{host}-{pid}-00ff.partial")
     path.write_bytes(b"left behind")
     return path
+
+
+@pytest.mark.parametrize(
+    "raw, token",
+    [("DESKTOP-AB12", "desktop_ab12"), ("ws.office.local", "ws_office_local"),
+     ("--", "unknownhost"), ("Ñandú 7", "and_7")],
+)
+def test_the_host_token_is_filesystem_safe(monkeypatch, raw: str, token: str) -> None:
+    monkeypatch.setattr(_writer.socket, "gethostname", lambda: raw)
+    got = _writer._host_token()
+    assert got == token and re.fullmatch(r"[a-z0-9_]+", got)
+
+
+def test_a_partial_naming_another_host_is_never_swept(make_model, tmp_path) -> None:
+    """A synced folder: that machine's live writer has a PID this one cannot see."""
+    target = tmp_path / "s.user.h5"
+    elsewhere = _leftover(target, _dead_pid(), host="another_machine")
+    mine = _leftover(target, _dead_pid())
+    write_user_file(target, make_model())
+    assert elsewhere.exists(), "another host's partial was removed"
+    assert not mine.exists(), "this host's dead writer's partial was not swept"
+
+
+def test_a_host_that_cannot_be_told_sweeps_nothing(make_model, tmp_path, monkeypatch) -> None:
+    def fail() -> str:
+        raise OSError("no name")
+
+    target = tmp_path / "s.user.h5"
+    unknown = _leftover(target, _dead_pid(), host="unknownhost")
+    monkeypatch.setattr(_writer.socket, "gethostname", fail)
+    write_user_file(target, make_model())
+    assert unknown.exists()
+    assert _partials(target) == [unknown], "the write's own partial was not cleaned up"
 
 
 def _dead_pid() -> int:
@@ -369,7 +404,7 @@ def test_a_dead_writers_partial_is_swept_and_a_live_ones_is_not(make_model, tmp_
     target = tmp_path / "s.user.h5"
     dead = _leftover(target, _dead_pid())
     live = _leftover(target, os.getpid())
-    other_stem = tmp_path / f"other.user.h5.{_dead_pid()}-00ff.partial"
+    other_stem = tmp_path / f"other.user.h5.{_writer._host_token()}-{_dead_pid()}-00ff.partial"
     other_stem.write_bytes(b"not this file's")
     write_user_file(target, make_model())
     assert not dead.exists()
