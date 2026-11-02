@@ -2803,11 +2803,15 @@ summing rule needs `@linear=1`, and `envelope` reads the terms' stored rows.
 `.ladruno`, of: `GENERATOR`, `FORMAT_VERSION`, `RUN_ID`; each stage's `KIND`; each
 result's path, shape, dtype, `TIME` and `STEP`, in every family under `RESULTS`
 (`ON_NODES`, `ON_ELEMENTS`, then the rest by name: `ENVELOPES`, `ON_DOMAIN`,
-`ON_REGIONS`); each mode's `LAMBDA`; and the last slab of the stage's first nodal
-result (first element bucket if it has no nodal result), little-endian as stored.
-`INFO/PROVENANCE` is excluded. Values outside that slab are not hashed, so a rewrite
-that keeps every shape, `TIME` and `STEP` and the last slab is not seen. The byte
-encoding is in `results/user/_fingerprint.py`. A native `results.h5` uses
+`ON_REGIONS`); each mode's `LAMBDA`; and one sample per stage, little-endian as
+stored: the last slab of the stage's first nodal result, else of its first element
+bucket, else the first result of any other family under `RESULTS` (its last slab, or
+every statistic of an envelope, which has no time axis). `INFO/PROVENANCE` is
+excluded. Values outside the sample are not hashed, so these are not seen: a rewrite
+of earlier steps under an identical last slab, and, on a stage with a nodal or
+element slab, a rewrite of `ON_DOMAIN`, `ON_REGIONS` or `ENVELOPES` values that keeps
+every shape, `TIME` and `STEP`. A real re-run moves the sampled slab or `RUN_ID`. The
+byte encoding is in `results/user/_fingerprint.py`. A native `results.h5` uses
 `native:<lineage hash>`.
 
 | Zone | Stale when |

@@ -4,9 +4,10 @@
 of every result and each stage's last slab, so it costs milliseconds and does
 not move when a file is stamped: ``INFO/PROVENANCE`` is left out. The limit is
 stated in A6: a rewrite of earlier steps under an identical last step is not
-seen. The same limit covers every value outside the sample: a rewrite of
-``ON_DOMAIN``, ``ON_REGIONS`` or ``ENVELOPES`` values that keeps each dataset's
-shape and, where it has one, ``TIME`` and ``STEP`` is not seen.
+seen. The same limit covers every value outside the sample: on a stage with a
+nodal or element slab, a rewrite of ``ON_DOMAIN``, ``ON_REGIONS`` or ``ENVELOPES``
+values that keeps each dataset's shape and, where it has one, ``TIME`` and
+``STEP`` is not seen. A real re-run moves the sampled slab or ``RUN_ID``.
 
 The encoding, which the app's TypeScript (slice VU3a) must equal byte for byte.
 ``line(s)`` hashes ``s + "\\n"`` as UTF-8; arrays hash as little-endian bytes.
@@ -33,10 +34,14 @@ The encoding, which the app's TypeScript (slice VU3a) must equal byte for byte.
 4. The stage's sample, once, after its results: the last slab (``DATA[T-1]``) of
    the first ``DATA`` dataset with ``T > 0``, or the last mode of the first modes
    result, whichever ``ON_NODES`` reaches first. With no such nodal result, the
-   last slab of the first element bucket with ``T > 0``. None at all: nothing.
+   last slab of the first element bucket with ``T > 0``. With neither, the first
+   result of the other children of ``RESULTS``, by name and descending by name,
+   that has values: a group holding a ``DATA`` dataset gives its last slab, one
+   holding a ``DATA`` group its last mode, and a group holding datasets directly
+   (an envelope, with no time axis) all of them by name. None at all: nothing.
 
-The element fallback of step 4 is the amendment's addition to the measured
-algorithm; a stage with no nodal result would otherwise hash no field value.
+Both fallbacks of step 4 are additions to the measured algorithm; without them
+a stage with no nodal result would hash no field value.
 
 A native ``results.h5`` uses ``native:<lineage hash>``.
 """
@@ -175,6 +180,36 @@ def _hash_stage_results(h: Any, results: h5py.Group, where: str) -> None:
     _hash_index(h, results, "", where, skip=_SAMPLED)
     if sample is not None:
         h.update(_le(sample))
+        return
+    other = _other_sample(results, skip=_SAMPLED)
+    if other is not None:
+        h.update(other)
+
+
+def _other_sample(group: h5py.Group, skip: tuple[str, ...] = ()) -> Optional[bytes]:
+    """The sample of a stage with no nodal or element slab, or ``None``.
+
+    The first result by name that has values. Without this such a stage hashes
+    no value at all, and it may have no ``RUN_ID``, so a re-run would go unseen.
+    """
+    if "DATA" in group:
+        data = group["DATA"]
+        if isinstance(data, h5py.Dataset):
+            return _le(data[data.shape[0] - 1]) if data.shape[0] > 0 else None
+        last: Optional[h5py.Dataset] = None
+        for step in sorted(data, key=lambda n: _index(n, len("STEP_"), group.name)):
+            for mode in sorted(data[step], key=lambda n: _index(n, len("MODE_"), group.name)):
+                last = data[step][mode]
+        return _le(last[...]) if last is not None else None
+    names = [n for n in sorted(group) if n not in skip]
+    held = [group[n] for n in names if isinstance(group[n], h5py.Dataset)]
+    if held:  # an envelope: no time axis, so every statistic it holds
+        return b"".join(_le(ds[...]) for ds in held) or None
+    for name in names:
+        found = _other_sample(group[name])
+        if found is not None:
+            return found
+    return None
 
 
 def _hash_index(

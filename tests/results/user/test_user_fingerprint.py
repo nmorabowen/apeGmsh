@@ -26,13 +26,14 @@ GOLDEN = {
     "bezier_tri6": "844792face2e8e8640b900127a288d446613be00ed8c0a0f4f5fb95409ee24de",
     "energy": "b893d0b39fed406013e9b06fd1390f668c5adb50f0eca0f0b8071a14f2f976f3",
     "fiberbeam": "a991d7666d23d8a9e1d7b8d954262058ccf019f3bf93ba1ea1bdb801d946a09a",
-    "node_envelope": "732318ca4c1a9aac26c28132c18219fb63bb850636437b28f329d8e9085f4b22",
+    "node_envelope": "b897a1182c720f8bbfda96e77fdaa42d6602111173e8f25d2bca5cdf7376addb",
     "quad2d": "2d3998a3fd7273399536406d9fcfcc5b88cc0af9249ba4b6070e5806ddd22bc6",
     "truss2d": "76a404478cbb9ef919c2d79a676fbe1a0a300712819b344edd9a43e7289cfcc3",
 }
 GOLDEN_PART_SET = "d62d58956af134bd46e7bd4e236f03808c777b99d33eff93ecec750d35621ce5"
 GOLDEN_MODES = "eecf2a003117de0df4521ba47d9b5e38142d76f1a597d10729057a86e65435fa"
 GOLDEN_ELEMENT_ONLY = "b3ef4e3f7e5d786e087af7346a786ab847f1445e9e412dbb04c4c3900067ca3c"
+GOLDEN_DOMAIN_ONLY = "af72edfe5cc9e388ee6e9f2f57901421d0b4ba6c4a051246df7cda3dc11e8dcf"
 
 DISP = "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT"
 BUCKET = "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/basicForce/12-Truss[1:0:0]"
@@ -207,18 +208,78 @@ def test_a_dtype_rf1_cannot_encode_in_a_family_refuses(ladruno: Path) -> None:
         results_fingerprint(ladruno)
 
 
-@pytest.mark.parametrize(
-    "make, target",
-    [(_energy, f"{ON_DOMAIN}/DATA"), (_envelope, ENV_MAX)],
-)
-def test_the_stated_limit_values_outside_the_sample_are_not_seen(tmp_path: Path, make, target) -> None:
-    """Every family is indexed, and the sampled slab rule is as the schema has it,
-    so a rewrite that keeps each shape and ``TIME`` is not seen in these families."""
-    path = make(tmp_path)
+def test_the_stated_limit_on_domain_values_beside_a_nodal_slab_are_not_seen(tmp_path: Path) -> None:
+    """Accepted: a real re-run moves the nodal slab or ``RUN_ID``."""
+    path = _energy(tmp_path)
     before = results_fingerprint(path)
     with h5py.File(path, "a") as f:
-        f[target][...] = f[target][...] + 1.0
+        f[f"{ON_DOMAIN}/DATA"][...] = f[f"{ON_DOMAIN}/DATA"][...] + 1.0
     assert results_fingerprint(path) == before
+
+
+def test_the_stated_limit_envelope_values_beside_a_nodal_slab_are_not_seen(ladruno: Path) -> None:
+    with h5py.File(LADRUNO / "node_envelope.ladruno", "r") as src, h5py.File(ladruno, "a") as f:
+        src.copy(src["MODEL_STAGE[1]/RESULTS/ENVELOPES"], f["MODEL_STAGE[1]/RESULTS"], "ENVELOPES")
+    before = results_fingerprint(ladruno)
+    with h5py.File(ladruno, "a") as f:
+        f[ENV_MAX][...] = f[ENV_MAX][...] + 1.0
+    assert results_fingerprint(ladruno) == before
+
+
+@pytest.mark.parametrize("statistic", ["ABSMAX", "MAX", "MIN", "ARG_STEP"])
+def test_an_envelope_only_stages_changed_values_move_rf1(tmp_path: Path, statistic: str) -> None:
+    """Such a stage has no nodal or element slab, so a re-run has only this to move."""
+    path = _envelope(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        target = f[f"MODEL_STAGE[1]/RESULTS/ENVELOPES/ON_NODES/DISPLACEMENT/{statistic}"]
+        target[...] = target[...] + 1
+    assert results_fingerprint(path) != before
+
+
+def _domain_only(tmp_path: Path) -> Path:
+    path = _energy(tmp_path)
+    with h5py.File(path, "a") as f:
+        del f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
+    return path
+
+
+def test_the_third_tier_equals_the_cross_language_golden(tmp_path: Path) -> None:
+    assert results_fingerprint(_domain_only(tmp_path)) == f"rf1:{GOLDEN_DOMAIN_ONLY}"
+
+
+def test_a_domain_only_stage_samples_its_last_slab(tmp_path: Path) -> None:
+    path = _domain_only(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        data = f[f"{ON_DOMAIN}/DATA"]
+        data[0] = data[0] + 1.0
+    assert results_fingerprint(path) == before, "not the last slab: A6's limit holds here too"
+    with h5py.File(path, "a") as f:
+        data = f[f"{ON_DOMAIN}/DATA"]
+        data[data.shape[0] - 1] = data[data.shape[0] - 1] + 1.0
+    assert results_fingerprint(path) != before
+
+
+def test_only_the_first_other_result_is_sampled(tmp_path: Path) -> None:
+    """``ON_DOMAIN`` sorts first, so ``ON_REGIONS`` values stay outside the sample."""
+    path = _domain_only(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        data = f[f"{ON_REGIONS}/DATA"]
+        data[data.shape[0] - 1] = data[data.shape[0] - 1] + 1.0
+    assert results_fingerprint(path) == before
+
+
+def test_an_element_slab_outranks_the_other_families(ladruno: Path) -> None:
+    with h5py.File(ladruno, "a") as f:
+        del f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
+    with h5py.File(LADRUNO / "node_envelope.ladruno", "r") as src, h5py.File(ladruno, "a") as f:
+        src.copy(src["MODEL_STAGE[1]/RESULTS/ENVELOPES"], f["MODEL_STAGE[1]/RESULTS"], "ENVELOPES")
+    before = results_fingerprint(ladruno)
+    with h5py.File(ladruno, "a") as f:
+        f[ENV_MAX][...] = f[ENV_MAX][...] + 1.0
+    assert results_fingerprint(ladruno) == before
 
 
 def test_the_sample_stays_on_nodes_with_another_family_present(tmp_path: Path) -> None:
