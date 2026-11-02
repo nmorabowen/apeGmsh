@@ -360,6 +360,8 @@ class ModalPropertiesResult:
     ----------
     eigenvalues
         1-D ``np.ndarray`` of ``λ_i = ω_i²`` in OpenSees order.
+    unorm
+        ``True`` when ``properties`` came from ``modalProperties -unorm``.
     properties
         The raw ``modalProperties -return`` dict — per-mode series keyed
         ``partiFactor<C>`` / ``partiMass<C>`` / ``partiMassesCumu<C>`` /
@@ -391,6 +393,11 @@ class ModalPropertiesResult:
     # Implementation handle for lazy mode-shape access. Underscore-
     # prefixed; not part of the user-facing surface.
     _live: "LiveOpsEmitter"
+
+    #: Whether ``properties`` came from ``modalProperties -unorm``: its
+    #: factors are then in the displacement-normalised basis, not the
+    #: domain eigenvectors' (the basis caveat above).
+    unorm: bool = False
 
     @property
     def omega(self) -> np.ndarray:

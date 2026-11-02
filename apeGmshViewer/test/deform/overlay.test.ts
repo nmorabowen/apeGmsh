@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
-import { applyGhostVisibility, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
+import { applyGhostVisibility, translucentSurfaces, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
 import { selectionBounds, type Prims } from "../../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
 import { missingMarkers } from "../../src/state/deform.ts";
@@ -152,6 +152,20 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   const faces = objs.find((o) => o instanceof THREE.Mesh)!;
   assert.equal(faces.name, "ghost faces");
   assert.deepEqual(pos(faces), gatherInto(base.tri, drawn.triMap, 9));
+  // #2664: the surfaces stay out of the MSAA canvas, the one way they draw the same pixels twice:
+  // on their own camera layer, and laid over the canvas by one full-screen triangle, multiplied by alpha already.
+  const main = new THREE.Layers();
+  for (const name of ["ghost edges", "ghost faces"]) assert.equal(objs.find((o) => o.name === name)!.layers.test(main), false, name);
+  const composite = objs.find((o) => o.name === "ghost composite") as THREE.Mesh;
+  assert.equal(composite.layers.test(main), true);
+  assert.ok(composite.renderOrder > 0 && composite.renderOrder < 1, "after the deformed mesh's blended edges (0), before the gizmos and the selection (1 and up)");
+  assert.equal(composite.frustumCulled, false);
+  const cm = composite.material as THREE.ShaderMaterial;
+  assert.deepEqual([cm.transparent, cm.depthTest, cm.depthWrite], [true, false, false]);
+  assert.deepEqual(
+    [cm.blending, cm.blendSrc, cm.blendDst, cm.blendSrcAlpha, cm.blendDstAlpha],
+    [THREE.CustomBlending, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor],
+  );
   const segs = objs.filter((o) => o instanceof THREE.LineSegments);
   assert.deepEqual(segs.map((o) => o.name), ["ghost edges", "ghost lines"]);
   assert.deepEqual(segs.map(pos), [gatherInto(base.edge, edgeMap, 6), gatherInto(base.line, drawn.lineMap, 6)]);
@@ -177,6 +191,55 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   assert.equal(faces.visible, false, "ghost surfaces hidden when opacity is 0");
   assert.equal(ghostEdges.visible, false, "ghost outline edges hidden when opacity is 0");
   assert.equal(ghostLines.visible, true, "1-D ghost lines remain visible when 2-D/3-D surfaces are off");
+
+  // Owner rulings on #2664: over translucent surfaces the ghost composites first, under every blended part of the mesh (main's look);
+  // over opaque ones, after the mesh's edges. Each frame the first triangle decides, from the scene, which of the two draws.
+  const under = objs.find((o) => o.name === "ghost composite under") as THREE.Mesh;
+  assert.ok(under.renderOrder < ghostLines.renderOrder && ghostLines.renderOrder < 0 && composite.renderOrder > 0);
+  applyGhostVisibility(group, true, full, 1);
+  const scene = new THREE.Scene();
+  scene.add(group);
+  const solid = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial());
+  const frames = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial());
+  scene.add(solid, frames);
+  // A renderer that records nothing: the target pass is the GPU's; the decision is not.
+  const noop = () => {};
+  const state = { color: { setMask: noop, setLocked: noop }, depth: { setMask: noop } };
+  const renderer = {
+    getDrawingBufferSize: (v: THREE.Vector2) => v.set(4, 4), getRenderTarget: () => null, autoClear: true, getClearAlpha: () => 0,
+    getClearColor: (c: THREE.Color) => c, setRenderTarget: noop, setClearColor: noop, clear: noop, render: noop, state: { buffers: state },
+  } as unknown as THREE.WebGLRenderer;
+  const draws = (): [boolean, boolean] => {
+    under.onBeforeRender(renderer, scene, new THREE.PerspectiveCamera(), under.geometry, under.material as THREE.Material, new THREE.Group());
+    composite.onBeforeRender(renderer, scene, new THREE.PerspectiveCamera(), composite.geometry, composite.material as THREE.Material, new THREE.Group());
+    return [under.geometry.drawRange.count > 0, composite.geometry.drawRange.count > 0];
+  };
+  const set = (m: THREE.Mesh, opacity: number) => Object.assign(m.material as THREE.Material, { transparent: opacity < 1, opacity });
+  for (const [what, solidOpacity, frameOpacity, frameShown, isUnder] of [
+    ["everything opaque", 1, 1, true, false],
+    ["surface opacity 0.35", 0.35, 0.35, true, true],
+    ["the line diagram's 3-D frames at 0.25 under an opacity of 1 (owner ruling: main's look)", 1, 0.25, true, true],
+    ["those frames hidden", 1, 0.25, false, false],
+  ] as const) {
+    set(solid, solidOpacity);
+    set(frames, frameOpacity);
+    frames.visible = frameShown;
+    assert.equal(translucentSurfaces(scene), isUnder, what);
+    assert.deepEqual(draws(), [isUnder, !isUnder], `${what}: exactly one of the two triangles draws`);
+  }
+  // The ghost's own translucent faces and the outline edges' blending never count.
+  set(solid, 1);
+  set(frames, 1);
+  assert.equal(translucentSurfaces(scene), false);
+  // Nor does what draws after both triangles: a plane gizmo's quad (renderOrder 1, 0.25) or the selection fill (9).
+  for (const renderOrder of [1, 9]) {
+    const late = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.25 }));
+    late.renderOrder = renderOrder;
+    scene.add(late);
+    assert.equal(translucentSurfaces(scene), false, `a blended mesh at renderOrder ${renderOrder}`);
+    assert.deepEqual(draws(), [false, true], `renderOrder ${renderOrder}: the ghost stays over the opaque mesh`);
+    scene.remove(late);
+  }
 
   h.effects.dispose();
 });

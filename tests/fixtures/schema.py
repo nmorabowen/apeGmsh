@@ -39,3 +39,18 @@ PROVENANCE_CURRENT     = "1.1.0"  # V2d #1378: additive /provenance/records/orig
 PROVENANCE_PRIOR_MINOR = "1.0.0"  # V2a: /provenance zone registered
 GEOMETRY_FLOOR         = "1.0.0"
 PROVENANCE_FLOOR       = "1.0.0"
+# ADR 0130 <stem>.user.h5 zones (VU1 #2684): each starts at its floor.
+USER_META_CURRENT      = "1.0.0"
+USER_META_FLOOR        = "1.0.0"
+COMBINATIONS_CURRENT   = "1.0.0"
+COMBINATIONS_FLOOR     = "1.0.0"
+USER_RESULTS_CURRENT   = "1.0.0"
+USER_RESULTS_FLOOR     = "1.0.0"
+# ADR 0130 /modes and /spectra (VU6 #2690): each starts at its floor.
+MODES_CURRENT          = "1.0.0"
+MODES_FLOOR            = "1.0.0"
+SPECTRA_CURRENT        = "1.0.0"
+SPECTRA_FLOOR          = "1.0.0"
+# ADR 0130 /entities (VU8 #2692): starts at its floor.
+ENTITIES_CURRENT       = "1.0.0"
+ENTITIES_FLOOR         = "1.0.0"

@@ -160,8 +160,14 @@ from apeGmsh.opensees._internal.schema_version import (
     _ZONE_KEY,
     ASSEMBLY,
     ASSEMBLY_KEY,
+    COMBINATIONS,
+    COMBINATIONS_KEY,
+    ENTITIES,
+    ENTITIES_KEY,
     ENVELOPE_KEY,
     GEOMETRY,
+    MODES,
+    MODES_KEY,
     NEUTRAL,
     NEUTRAL_KEY,
     OPENSEES,
@@ -169,14 +175,32 @@ from apeGmsh.opensees._internal.schema_version import (
     PROVENANCE,
     RESULTS,
     RESULTS_KEY,
+    SPECTRA,
+    SPECTRA_KEY,
     SchemaVersion,
     SchemaVersionError as _PerZoneSchemaError,
+    USER_META,
+    USER_META_KEY,
+    USER_RESULTS,
+    USER_RESULTS_KEY,
     read_zone_version,
     reader_floor,
     reader_version,
     validate_zone_version,
 )
 from tests.fixtures.schema import (
+    COMBINATIONS_CURRENT,
+    COMBINATIONS_FLOOR,
+    ENTITIES_CURRENT,
+    ENTITIES_FLOOR,
+    MODES_CURRENT,
+    MODES_FLOOR,
+    SPECTRA_CURRENT,
+    SPECTRA_FLOOR,
+    USER_META_CURRENT,
+    USER_META_FLOOR,
+    USER_RESULTS_CURRENT,
+    USER_RESULTS_FLOOR,
     GEOMETRY_FLOOR,
     NEUTRAL_FLOOR,
     OPENSEES_FLOOR,
@@ -229,6 +253,29 @@ def test_assembly_key_is_its_own_and_never_the_envelope() -> None:
     assert read_zone_version(attrs, ASSEMBLY) is None
     stamped = {ASSEMBLY_KEY: str(reader_version(ASSEMBLY))}
     assert read_zone_version(stamped, ASSEMBLY) == reader_version(ASSEMBLY)
+
+
+@pytest.mark.parametrize(
+    "zone, key, current, floor",
+    [
+        (USER_META, USER_META_KEY, USER_META_CURRENT, USER_META_FLOOR),
+        (COMBINATIONS, COMBINATIONS_KEY, COMBINATIONS_CURRENT, COMBINATIONS_FLOOR),
+        (USER_RESULTS, USER_RESULTS_KEY, USER_RESULTS_CURRENT, USER_RESULTS_FLOOR),
+        (MODES, MODES_KEY, MODES_CURRENT, MODES_FLOOR),
+        (SPECTRA, SPECTRA_KEY, SPECTRA_CURRENT, SPECTRA_FLOOR),
+        (ENTITIES, ENTITIES_KEY, ENTITIES_CURRENT, ENTITIES_FLOOR),
+    ],
+)
+def test_user_file_zones_have_their_own_key_and_never_the_envelope(
+    zone: str, key: str, current: str, floor: str,
+) -> None:
+    """ADR 0130 D2: each ``.user.h5`` zone has its own key, and a file without
+    it has no version for that zone even if it carries the legacy envelope."""
+    assert _ZONE_KEY[zone] == key == f"{zone}_schema_version"
+    assert str(reader_version(zone)) == current
+    assert str(reader_floor(zone)) == floor
+    assert read_zone_version({ENVELOPE_KEY: str(reader_version(NEUTRAL))}, zone) is None
+    assert read_zone_version({key: current}, zone) == reader_version(zone)
 
 
 def test_per_zone_keys_written_on_native_results(tmp_path: Any) -> None:
@@ -405,8 +452,14 @@ def test_reader_version_reflects_writer_constants() -> None:
         ASSEMBLY_SCHEMA_FLOOR,
         ASSEMBLY_SCHEMA_VERSION,
         SEQUENCE,
+        COMBINATIONS_SCHEMA_FLOOR,
+        ENTITIES_SCHEMA_FLOOR,
+        MODES_SCHEMA_FLOOR,
+        SPECTRA_SCHEMA_FLOOR,
         SEQUENCE_SCHEMA_FLOOR,
         SEQUENCE_SCHEMA_VERSION,
+        USER_META_SCHEMA_FLOOR,
+        USER_RESULTS_SCHEMA_FLOOR,
         GEOMETRY_SCHEMA_FLOOR,
         GEOMETRY_SCHEMA_VERSION,
         PROVENANCE_SCHEMA_FLOOR,
@@ -435,6 +488,15 @@ def test_reader_version_reflects_writer_constants() -> None:
         ASSEMBLY: (ASSEMBLY_SCHEMA_FLOOR, ASSEMBLY_SCHEMA_VERSION),
         # ADR 0112 D2b (V3a #1640): likewise its first version.
         SEQUENCE: (SEQUENCE_SCHEMA_FLOOR, SEQUENCE_SCHEMA_VERSION),
+        # ADR 0130 (VU1 #2684): the .user.h5 zones, each at its first version.
+        USER_META: (USER_META_SCHEMA_FLOOR, USER_META_FLOOR),
+        COMBINATIONS: (COMBINATIONS_SCHEMA_FLOOR, COMBINATIONS_FLOOR),
+        USER_RESULTS: (USER_RESULTS_SCHEMA_FLOOR, USER_RESULTS_FLOOR),
+        # ADR 0130 (VU6 #2690): /modes and /spectra, at their first version.
+        MODES: (MODES_SCHEMA_FLOOR, MODES_FLOOR),
+        SPECTRA: (SPECTRA_SCHEMA_FLOOR, SPECTRA_FLOOR),
+        # ADR 0130 (VU8 #2692): /entities, at its first version.
+        ENTITIES: (ENTITIES_SCHEMA_FLOOR, ENTITIES_FLOOR),
     }
     assert set(writer_floors) == set(_ZONE_KEY)
     for zone, (writer_floor, fixture_floor) in writer_floors.items():
@@ -950,6 +1012,12 @@ def test_h5_schema_doc_registry_matches_writer_constants() -> None:
         (GEOMETRY, "geometry"),
         (PROVENANCE, "provenance"),
         (ASSEMBLY, "assembly"),
+        (USER_META, "user_meta"),
+        (COMBINATIONS, "combinations"),
+        (USER_RESULTS, "user_results"),
+        (MODES, "modes"),
+        (SPECTRA, "spectra"),
+        (ENTITIES, "entities"),
     ):
         floor_doc = _zone_registry_floor(text, label)
         floor_live = str(reader_floor(zone))

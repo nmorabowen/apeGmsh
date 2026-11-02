@@ -33,12 +33,18 @@ import pytest
 from apeGmsh.opensees._internal.schema_version import (
     _ZONE_KEY,
     ASSEMBLY,
+    COMBINATIONS,
+    ENTITIES,
     GEOMETRY,
+    MODES,
     NEUTRAL,
     OPENSEES,
     PROVENANCE,
     RESULTS,
     SEQUENCE,
+    SPECTRA,
+    USER_META,
+    USER_RESULTS,
     reader_version,
 )
 
@@ -63,6 +69,31 @@ NOT_READ_BY_APP: dict[str, str] = {
     ASSEMBLY: (
         "/assembly (ADR 0117 D5) is written only by Assembly.h5 archives; "
         "the app opens model.h5 / results.h5 and has no assembly reader"
+    ),
+    USER_META: (
+        "/meta of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 reader "
+        "in slice VU3a, which adds the target and drops this row"
+    ),
+    COMBINATIONS: (
+        "/combinations of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 "
+        "reader in slice VU3a, which adds the target and drops this row"
+    ),
+    USER_RESULTS: (
+        "/results of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 "
+        "reader in slice VU3a, which adds the target and drops this row"
+    ),
+    MODES: (
+        "/modes of <stem>.user.h5 (ADR 0130): the app reads the modal table "
+        "in slice VU7, which adds the target and drops this row"
+    ),
+    SPECTRA: (
+        "/spectra of <stem>.user.h5 (ADR 0130): the app reads the spectrum "
+        "cases in slice VU7, which adds the target and drops this row"
+    ),
+    ENTITIES: (
+        "/entities of <stem>.user.h5 (ADR 0130): the app reads the cuts, "
+        "storeys and point sets in slice VU8's viewer half, which adds the "
+        "target and drops this row"
     ),
 }
 

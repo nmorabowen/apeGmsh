@@ -27,6 +27,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.results.user import CutEntity
 
     from ._preflight import PreflightReport
     from ._tag_map import FemToOpsTagMap
@@ -340,6 +341,43 @@ class SectionCutDef:
         from ._preflight import run_cut_checks
         return run_cut_checks(
             self, fem, model_h5=model_h5, tag_map=tag_map, tol=tol,
+        )
+
+    # ------------------------------------------------------------------ #
+    # .user.h5 export (ADR 0130 D8)
+    # ------------------------------------------------------------------ #
+    def to_entity(
+        self,
+        *,
+        name: str | None = None,
+        reference: Iterable[float] | np.ndarray | None = None,
+    ) -> "CutEntity":
+        """This cut as a row of ``/entities/cuts`` in a ``<stem>.user.h5``.
+
+        ``name`` defaults to :attr:`label`; a cut with neither is refused,
+        because an entity is named. ``reference`` is the point a stored
+        resultant's moments are about, and defaults to :attr:`plane_point`.
+        A cut kernel's moments about its own centroid move there with
+        ``M + (centroid - reference) x F`` (``SectionCut.moment_about``).
+        The element ids stay OpenSees tags. :meth:`CutEntity.to_cut_def`
+        gives this def back, labelled with ``name``.
+        """
+        from ..results.user._entities import CutEntity
+
+        entity_name = name if name is not None else self.label
+        if entity_name is None:
+            raise ValueError(
+                "to_entity: this cut has no label; pass name= (an entity is named).")
+        return CutEntity(
+            name=entity_name,
+            point=self.plane_point_arr,
+            normal=self.plane_normal_arr,
+            reference=np.asarray(
+                self.plane_point_arr if reference is None else reference, dtype=float),
+            element_ids=np.asarray(self.element_ids, dtype=np.int64),
+            side=self.side,
+            polygon=(None if self.bounding_polygon is None
+                     else np.asarray(self.bounding_polygon, dtype=float)),
         )
 
     # ------------------------------------------------------------------ #

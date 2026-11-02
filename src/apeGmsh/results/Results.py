@@ -72,6 +72,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
@@ -96,6 +97,7 @@ if TYPE_CHECKING:
     from ..opensees._internal.lineage import Lineage
     from ..opensees.opensees_model import OpenSeesModel
     from .plot import ResultsPlot
+    from .user._states import UserCombinations
 
 
 # Sentinel for ``Results._derive`` so we can distinguish
@@ -338,6 +340,14 @@ def _in_notebook_kernel() -> bool:
         return False
     shell = get_ipython()
     return type(shell).__name__ == "ZMQInteractiveShell"
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths name one file; a path that cannot be read is not the same."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 class Results:
@@ -1516,6 +1526,135 @@ class Results:
                 period_s=float(s.period_s),
             ))
         return out
+
+    def combinations(
+        self,
+        user_h5: "Optional[str | Path]" = None,
+        *,
+        model_h5: "Optional[str | Path]" = None,
+        spectra: Any = None,
+    ) -> "UserCombinations":
+        """The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).
+
+        ``user_h5`` is the set's ``<stem>.user.h5``. Omitted, the first that
+        exists beside this file is used: ``<model stem>.user.h5``, then this
+        file's stem without ``.part-<N>`` and ``.results``. ``model_h5``
+        (default: the archive this was opened with) brings its
+        ``/opensees/combinations`` into the table. ``spectra`` reads the
+        ``spectrum`` and ``reference`` terms; by default it is a
+        :class:`~apeGmsh.results.user.UserSpectra` over that ``.user.h5``'s
+        ``/spectra``, judged stale against ``model_h5`` (ADR 0130 A6), so a
+        stale zone's terms are refused unless ``evaluate(...,
+        allow_stale=True)``.
+
+        A term names a stage by its stamped name, else ``stage_<i>`` (A3).
+        The names are bound when the results are opened (``model_h5=``), never
+        here: a read does not rename the caller's stages. So when the model
+        (``model_h5``, or the one this was opened with) declares program stage
+        names and none of them names a stage here, every ``stage`` and
+        ``mode`` term is refused, with a reason that says to open the results
+        with ``model_h5=``; otherwise a term could read a different stage than
+        the same set opened with its model. That holds however the
+        ``Results`` was opened (``from_fem`` binds a neutral cache archive
+        that names no stage). A ``Results`` with no names from either source
+        keeps ``stage_<i>``, and so does one whose reader declined that same
+        model's names when it was opened.
+
+        ``evaluate(state, component, level=...)`` combines a recorded result
+        (``level="domain"`` a ``/spectra`` domain value such as
+        ``base_shear``), ``evaluate(state, user_result=...)`` a user result. A state handle of
+        another ``Results`` is refused.
+        """
+        from .user._evaluate import CombinationRefused
+        from .user._spectra_source import UserSpectra
+        from .user._states import UserCombinations, user_file_beside
+
+        model = model_h5 if model_h5 is not None else self._model_path
+        unbound = None if model is None else self._unbound_stage_names(Path(model))
+        if user_h5 is None:
+            user_h5 = user_file_beside(
+                None if self._path is None else Path(self._path),
+                None if model is None else Path(model))
+        if spectra is None:
+            spectra = UserSpectra(user_h5, model_h5=model)
+
+        def handle(obj: Any) -> Optional[str]:
+            if not isinstance(obj, Results):
+                return None
+            if obj._reader is not self._reader:
+                raise CombinationRefused(
+                    "", "foreign-handle", "this state handle belongs to another "
+                    "Results; combining states of different runs is refused "
+                    "(ADR 0130 D4, A7)")
+            if obj._stage_id is None:
+                raise TypeError(
+                    "an unscoped Results is not a state; use results.stage(...)")
+            return obj._stage_id
+
+        return UserCombinations(
+            self,
+            user_h5=None if user_h5 is None else Path(user_h5),
+            model_h5=None if model is None else Path(model),
+            results_file=self._path,
+            handle=handle,
+            spectra=spectra,
+            unbound_stages=unbound,
+        )
+
+    def _unbound_stage_names(self, model_h5: Path) -> Optional[str]:
+        """Why stage terms cannot be resolved here, or ``None`` when they can.
+
+        ``None`` when ``model_h5`` declares no program stage names, or when the
+        reader names its own stages (a native file). Otherwise the names must
+        be this ``Results``' binding: its stamped stages, in order, are a prefix
+        of the model's names, and every stage after them is unstamped (a
+        partial run stamps only the stages that ran). Two refusals:
+
+        * no stage is stamped: the results were opened without that model;
+          except when they were opened with that same file and the reader
+          declined its names (a KIND or count mismatch), where ``stage_<i>``
+          stands;
+        * the stamps are another model's: the names here would read other
+          stages than ``model_h5``'s.
+
+        Nothing is renamed: each reason says how to bind the names.
+        """
+        import h5py
+
+        from .user._states import canonical_stage_name
+
+        if not hasattr(self._reader, "attach_stage_names"):
+            return None
+        with h5py.File(model_h5, "r") as f:
+            if "opensees" not in f or "stages" not in f["opensees"]:
+                return None
+        from ..opensees.opensees_model import OpenSeesModel
+
+        names = [str(s.name) for s in OpenSeesModel.from_h5(model_h5).stages()]
+        if not names:
+            return None
+        hosts = [s for s in self._all_stages() if s.kind != "mode"]
+        stamped = [canonical_stage_name(s) != s.id for s in hosts]
+        k = stamped.index(False) if False in stamped else len(stamped)
+        here = [canonical_stage_name(s) for s in hosts[:k]]
+        if k == 0:
+            if self._model_path is not None and _same_file(Path(self._model_path), model_h5):
+                return None  # the reader declined these names at open, and said why
+            return (
+                f"model_h5={str(model_h5)!r} declares the stage names {names}, and "
+                f"these results were opened without that model, so their stages "
+                f"are named stage_<i>; a term would read another stage than the "
+                f"same set opened with its model. Open the results with "
+                f"model_h5={str(model_h5)!r} so the names are bound (ADR 0130 A3)"
+            )
+        if not any(stamped[k:]) and here == names[:k]:
+            return None  # this binding, in full or for a partial run
+        return (
+            f"these results are bound to another model's stage names "
+            f"({[canonical_stage_name(s) for s in hosts]}), not to "
+            f"model_h5={str(model_h5)!r}'s {names}; open them with "
+            f"model_h5={str(model_h5)!r} (ADR 0130 A3)"
+        )
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)

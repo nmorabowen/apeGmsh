@@ -503,12 +503,6 @@ class ModelData:
         import numpy as np
 
         from ..mesh.FEMData import FEMData
-
-        # Broker — its ``snapshot_id`` already round-trips through
-        # ``FEMData.from_h5`` (read from /meta, not recomputed), but
-        # we still carry the source value opaque below.
-        fem = FEMData.from_h5(path)
-
         from ._internal.schema_version import (
             OPENSEES,
             read_zone_version,
@@ -516,6 +510,27 @@ class ModelData:
             validate_zone_version,
         )
         from .emitter.h5_reader import MalformedH5Error, read_spatial_ndm
+
+        # The opensees stamp is judged before the neutral zone is read: a
+        # file with /opensees and no stamp at all would otherwise be refused
+        # by FEMData for its empty envelope, which names the wrong zone. A
+        # file with only the envelope reads it as the opensees version.
+        with h5py.File(path, "r") as f:
+            if "opensees" in f:
+                meta_attrs = f["meta"].attrs if "meta" in f else {}
+                opensees_version = read_zone_version(meta_attrs, OPENSEES)
+                if opensees_version is None:
+                    raise MalformedH5Error(
+                        f"{path}: /meta carries no opensees zone version")
+                # A newer file would lose what this reader does not know
+                # on a rewrite, and be stamped with this reader's version.
+                validate_zone_version(
+                    opensees_version, reader_version(OPENSEES), zone=OPENSEES)
+
+        # Broker — its ``snapshot_id`` already round-trips through
+        # ``FEMData.from_h5`` (read from /meta, not recomputed), but
+        # we still carry the source value opaque below.
+        fem = FEMData.from_h5(path)
 
         with h5py.File(path, "r") as f:
             meta = f["meta"]
@@ -544,14 +559,6 @@ class ModelData:
             # (H5Lexists), never ``Group.get()``.
             if "opensees" not in f:
                 return md
-            # A newer file would lose what this reader does not know on a
-            # rewrite, and be stamped with this reader's version.
-            opensees_version = read_zone_version(meta.attrs, OPENSEES)
-            if opensees_version is None:
-                raise MalformedH5Error(
-                    f"{path}: /meta carries no opensees zone version")
-            validate_zone_version(
-                opensees_version, reader_version(OPENSEES), zone=OPENSEES)
             ops_grp = f["opensees"]
             # ADR 0130 D4: write() echoes the combinations it does not edit.
             md._loaded_combinations = read_combinations_group(ops_grp)
