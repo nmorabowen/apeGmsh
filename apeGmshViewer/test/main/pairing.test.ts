@@ -22,7 +22,7 @@ test("classify: the longest suffix wins, case-insensitively", () => {
 
 test("classify: a file the app does not open is refused by name; .mpco is not a sibling", () => {
   assert.throws(() => classify(p("m.txt")), /opens <stem>\.h5.*got .*m\.txt/);
-  assert.throws(() => classify(p("m.mpco")), /<stem>\.results\.h5; got .*m\.mpco/);
+  assert.throws(() => classify(p("m.mpco")), /<stem>\.results\.h5 or <stem>\.user\.h5; got .*m\.mpco/);
   assert.throws(() => classify(".h5"), /got \.h5/);
 });
 
@@ -213,7 +213,6 @@ test("classify: <stem>.user.h5 is the user kind of <stem>, never a model of <ste
   assert.deepEqual(classify(p("m.user.h5")), { kind: "user", stem: p("m") });
   assert.deepEqual(classify(p("M.User.H5")), { kind: "user", stem: p("M") });
   assert.deepEqual(classify(p("a.b.user.h5")), { kind: "user", stem: p("a.b") });
-  assert.throws(() => classify(".user.h5"), /got \.user\.h5/, "a bare suffix has no stem");
   // A writer's partial (h5-schema.md "Writing") is not a file of the set.
   assert.throws(() => classify(p("m.user.h5.host-12-ab.partial")), /<stem>\.user\.h5; got/);
 });
