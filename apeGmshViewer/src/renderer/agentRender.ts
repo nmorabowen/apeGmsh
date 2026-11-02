@@ -22,7 +22,8 @@ import { compileShot, type ShotPlan } from "../spec/compile.ts";
 import { describeSet, type SetDescription } from "../spec/describe.ts";
 import { manifestEntry, manifestOf, refusedEntry, type ManifestEntry } from "../spec/manifest.ts";
 import type { SpecShot, ViewSpec } from "../spec/spec.ts";
-import { viewVerdict } from "../spec/verdict.ts";
+import { applyClip, shownView } from "../spec/snapshot.ts";
+import type { OnScreen } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { contourView, deformView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
@@ -72,11 +73,6 @@ export interface ShotResult {
 const painted = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Wait at most this long for a shot's view to reach the screen. */
-const SHOW_MS = 30000;
-/** A view that stays `unavailable` or `refused` this long, with nothing still loading, is the app's answer. */
-const SETTLED_MS = 1500;
-
 function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolean {
   const v = contourView(s);
   // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
@@ -95,32 +91,9 @@ function deformOnScreen(s: State, viewport: Viewport, effects: Effects): boolean
   return viewport.deformApplied === `${d?.key}|scale ${v.scale}` && d?.key === v.keys.disp;
 }
 
-/**
- * Wait until the shot's view is on screen; null when it is, else the reason
- * it is refused (src/spec/verdict.ts). A contour or deformed shape the app
- * answers with `unavailable` or `refused` is refused with that reason once
- * it has held, with nothing loading, for SETTLED_MS: a stage's node ids and
- * an element join arrive after the step, and say `unavailable` until then.
- */
-async function shown(deps: RenderDeps, shot: SpecShot, plan: ShotPlan): Promise<string | null> {
-  const { store, viewport, effects } = deps;
-  const t0 = performance.now();
-  let lastWhy: string | null = null;
-  let since = t0;
-  for (;;) {
-    const s = store.get();
-    const now = performance.now();
-    const v = viewVerdict(s, shot, plan, { contour: contourOnScreen(s, viewport, effects), deform: deformOnScreen(s, viewport, effects) });
-    if (v.kind === "shown") return null;
-    if (v.kind === "refused") return v.reason;
-    if (v.why !== lastWhy) {
-      lastWhy = v.why;
-      since = now;
-    }
-    if (v.why !== null && !v.loading && now - since >= SETTLED_MS) return v.why;
-    if (now - t0 >= SHOW_MS) return v.why ?? `the view did not reach the screen within ${SHOW_MS / 1000} s`;
-    await sleep(20);
-  }
+/** What the viewport shows now, for the verdict (ADR 0128 D2): the render mode and an applied offer ask the same question. */
+export function onScreenOf(s: State, viewport: Viewport, effects: Effects): OnScreen {
+  return { contour: contourOnScreen(s, viewport, effects), deform: deformOnScreen(s, viewport, effects) };
 }
 
 /** Each world axis's direction on screen (x right, y up) through the camera's rotation. */
@@ -146,21 +119,6 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-/** Add the shot's section planes; each plane's id is the one the reducer gave it. */
-function applyClip(store: Store, plan: ShotPlan): void {
-  for (const p of store.get().clip.planes) store.dispatch({ type: "removeClipPlane", id: p.id });
-  for (const c of plan.clip) {
-    const n = store.get().clip.planes.length;
-    store.dispatch({ type: "addClipPlane", normal: c.normal });
-    const planes = store.get().clip.planes;
-    // A plane the reducer refused adds nothing: its notice stays set, and the verdict refuses the shot with it.
-    if (planes.length !== n + 1) return;
-    const id = planes.at(-1)!.id;
-    store.dispatch({ type: "setClipOffset", id, offset: c.offset });
-    if (c.flip) store.dispatch({ type: "setClipFlipped", id, flipped: true });
-  }
-}
-
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
   const { store, viewport, bridge, layout, blobs, effects } = deps;
   const t0 = performance.now();
@@ -181,7 +139,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
     return refuse(`the app refused the view: ${err instanceof Error ? err.message : String(err)}`);
   }
   // D9: layers are presentation; the view (and so any refusal) is decided before they are applied.
-  const why = await shown(deps, shot, plan);
+  const why = await shownView({ store, onScreen: (st) => onScreenOf(st, viewport, effects), sleep, now: () => performance.now() }, shot, plan);
   if (why !== null) return refuse(why);
   const shownMs = performance.now() - t0;
   store.dispatch({ type: "setCamera", to: "home" });

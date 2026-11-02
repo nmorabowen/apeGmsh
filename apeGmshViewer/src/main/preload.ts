@@ -18,6 +18,7 @@
 //                          cancelResultsScan(id) stops it, and
 //                          onScanProgress(cb) hears its progress
 //   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
+//   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -104,4 +105,25 @@ contextBridge.exposeInMainWorld("viewer", {
   renderPng: (name: string, png: Uint8Array) => ipcRenderer.invoke("render:png", name, png),
   renderCapture: (name: string) => ipcRenderer.invoke("render:capture", name),
   renderDone: (result: unknown) => ipcRenderer.invoke("render:done", result),
+  // ADR 0128 D5 (--present): the offers main heard over the second-instance path. Main holds them until
+  // this subscribes; it never reloads the page for one (INV-5), which is why they do not use `listen`.
+  onOffers: (cb: (offers: unknown[]) => void) => {
+    const handler = (_e: IpcRendererEvent, offers: unknown[]) => cb(offers);
+    ipcRenderer.on("viewer:offers", handler);
+    ipcRenderer.send("viewer:offersReady");
+    return () => {
+      ipcRenderer.removeListener("viewer:offers", handler);
+    };
+  },
+  // ADR 0128 D6 (--snapshot): main asks for the view, and writes what the page replies with.
+  onSnapshotRequest: (cb: (req: { id: number; image: [number, number] }) => void) => {
+    const handler = (_e: IpcRendererEvent, req: { id: number; image: [number, number] }) => cb(req);
+    ipcRenderer.on("viewer:snapshot", handler);
+    return () => {
+      ipcRenderer.removeListener("viewer:snapshot", handler);
+    };
+  },
+  // ADR 0128 D5: a click on an offer opens its set; refused with the reason, never with a dialog.
+  offerOpen: (path: string, needs: readonly string[]) => ipcRenderer.invoke("viewer:offerOpen", path, needs),
+  snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
 });

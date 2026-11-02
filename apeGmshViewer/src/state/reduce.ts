@@ -32,6 +32,9 @@ import {
   type Event,
   type LineDiagramState,
   type LoadsState,
+  type MeshInfo,
+  type Offer,
+  type OffersState,
   type PhaseKey,
   type SpatialNdm,
   type State,
@@ -74,6 +77,17 @@ export const initialLoads: LoadsState = {
 
 /** VA1: no camera until the viewport first frames a scene. */
 export const initialCamera: CameraState = { pose: null, request: null, seq: 0, read: null };
+
+/** VA5 (ADR 0128 D5): the longest offer list; the next offer drops the oldest. */
+export const MAX_OFFERS = 8;
+
+export const initialOffers: OffersState = { list: [], seq: 0, request: null, requestSeq: 0, back: [], notice: null };
+
+/** The opacity a model opens on: solids translucent when they would hide beams, else opaque. */
+export function defaultOpacity(mesh: MeshInfo): number {
+  const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
+  return mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
+}
 
 /** The largest camera roll (radians) an explicit `up` may imply; the camera is a Z-up turntable with none. */
 export const ROLL_TOLERANCE = 1e-6;
@@ -227,6 +241,7 @@ export const initialState: State = {
   search: initialSearch,
   camera: initialCamera,
   theme: "dark",
+  offers: initialOffers,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -409,6 +424,22 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
   };
 }
 
+/** A listed offer, or a loud error: an event for an offer never listed is a bug. */
+function offerOf(s: State, id: number, who: string): Offer {
+  const o = s.offers.list.find((x) => x.id === id);
+  if (!o) throw new RangeError(`${who}: offer ${JSON.stringify(id)} is not on the list`);
+  return o;
+}
+
+/** The state with one offer changed. A click already running can outlive its offer (the cap dropped it): nothing to change then. */
+function withOffer(s: State, id: number, change: Partial<Offer>): State {
+  if (!s.offers.list.some((x) => x.id === id)) {
+    if (id > 0 && id <= s.offers.seq) return s;
+    throw new RangeError(`no offer ${JSON.stringify(id)} was ever listed`);
+  }
+  return { ...s, offers: { ...s.offers, list: s.offers.list.map((o) => (o.id === id ? { ...o, ...change } : o)) } };
+}
+
 export function reduce(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
@@ -447,8 +478,7 @@ export function reduce(s: State, e: Event): State {
       const keep = reread && s.stage !== null && stageIdentity(s.sequence, s.stage) === stageIdentity(sequence, s.stage);
       const modelUnits = e.load.units ?? null;
       const declaredUnits = modelUnits ?? s.results?.units ?? null;
-      const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
-      const opacity = reread ? s.visibility.opacity : mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
+      const opacity = reread ? s.visibility.opacity : defaultOpacity(mesh);
       const extrudeFrames = reread ? s.visibility.extrudeFrames : false;
       const showOffsets = reread ? s.visibility.showOffsets : Boolean(mesh.frameExtrusion?.hasJointOffsets);
       return withPhase({
@@ -534,6 +564,8 @@ export function reduce(s: State, e: Event): State {
         // and the path stays unread (camera.read), so its retry opens framed.
         camera: s.camera.read === e.path ? s.camera : { ...initialCamera, seq: s.camera.seq },
         theme: s.theme,
+        // VA5: offers last for the window session (ADR 0128 D5).
+        offers: s.offers,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -568,6 +600,8 @@ export function reduce(s: State, e: Event): State {
         // VA1: the camera and the theme are the window's, not the model's.
         camera: s.camera,
         theme: s.theme,
+        // VA5: offers last for the window session (ADR 0128 D5).
+        offers: s.offers,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -1153,6 +1187,55 @@ export function reduce(s: State, e: Event): State {
     }
     case "clearSearch":
       return s.search.text === "" && s.search.clauses.length === 0 ? s : { ...s, search: { ...s.search, text: "", clauses: [] } };
+    case "offerReceived": {
+      // INV-5: this lists the offers and touches nothing else of the state.
+      if (!Number.isFinite(e.at)) throw new RangeError(`offerReceived: ${JSON.stringify(e.at)} is not a time`);
+      let seq = s.offers.seq;
+      const arrived = e.offers.map((o): Offer => ({ ...o, id: ++seq, arrivedAt: e.at, status: o.refused ? "refused" : "pending", reason: o.refused ?? null, opens: [], viewRefused: Boolean(o.refused) }));
+      // Newest first; a spec's shots keep their own order within one arrival.
+      return { ...s, offers: { ...s.offers, seq, list: [...arrived, ...s.offers.list].slice(0, MAX_OFFERS) } };
+    }
+    case "offerAssessed": {
+      const o = offerOf(s, e.id, "offerAssessed");
+      if (o.status === "applying" || o.viewRefused) return s;
+      const status = o.status === "applied" ? "applied" : e.refused === null ? "pending" : "refused";
+      const reason = status === "refused" ? e.refused : null;
+      const sameOpens = o.opens.length === e.opens.length && o.opens.every((p, i) => p === e.opens[i]);
+      if (o.status === status && o.reason === reason && sameOpens) return s;
+      return withOffer(s, e.id, { status, reason, opens: e.opens });
+    }
+    case "applyOffer": {
+      const o = offerOf(s, e.id, "applyOffer");
+      if (o.status === "refused") throw new Error(`applyOffer: offer ${e.id} is refused and cannot be applied: ${o.reason}`);
+      // One click at a time: a click while another runs does nothing.
+      if (s.offers.request) return s;
+      const seq = s.offers.requestSeq + 1;
+      const t = withOffer(s, e.id, { status: "applying" });
+      return { ...t, offers: { ...t.offers, requestSeq: seq, request: { kind: "apply", id: e.id, seq }, notice: null } };
+    }
+    case "backOffer": {
+      if (s.offers.back.length === 0) throw new Error("backOffer: no applied offer to go back from");
+      if (s.offers.request) return s;
+      const seq = s.offers.requestSeq + 1;
+      return { ...s, offers: { ...s.offers, requestSeq: seq, request: { kind: "back", seq }, notice: null } };
+    }
+    case "offerApplied": {
+      const t = withOffer(s, e.id, { status: "applied", reason: null });
+      const back = e.memo ? [{ offer: e.id, memo: e.memo }, ...t.offers.back] : t.offers.back;
+      return { ...t, offers: { ...t.offers, request: null, back } };
+    }
+    case "offerRefused": {
+      if (e.reason === "") throw new RangeError("offerRefused: a refusal names its reason");
+      const t = withOffer(s, e.id, { status: "refused", reason: e.reason, viewRefused: true });
+      return { ...t, offers: { ...t.offers, request: null } };
+    }
+    case "offerBackDone": {
+      const [top, ...back] = s.offers.back;
+      if (!top) throw new Error("offerBackDone: no applied offer to go back from");
+      // Its offer is on offer again, unless an earlier click on it is still on the way back.
+      const t = back.some((b) => b.offer === top.offer) ? s : withOffer(s, top.offer, { status: "pending", reason: null });
+      return { ...t, offers: { ...t.offers, request: null, back, notice: e.notice } };
+    }
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

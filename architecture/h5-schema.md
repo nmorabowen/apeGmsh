@@ -2861,7 +2861,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.36.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.38.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.39.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -3426,6 +3426,15 @@ detail lives in the `SCHEMA_VERSION` docstring in
   dtype changes; `decl_params` is hash-excluded, so `model_hash` and the
   replayed deck are unchanged. Additive minor (a 2.37.x reader refuses a
   2.38.x file, INV-4).
+- `2.39.0` — ADR 0130 slice 5 (#2685, rule D5): the optional group
+  `/opensees/combinations` holds the combinations `apeSees` declares, in
+  the layout of [`<stem>.user.h5`](#stemuserh5-user-results-adr-0130) at
+  `g0`. No combination writes no group, so such a file changes only its
+  stamp. It is in `MODEL_HASH_EXCLUDED_CHILDREN` and reaches no deck, so
+  `model_hash` and the replayed deck are unchanged. A rewrite echoes it.
+  Additive minor: a 2.38.x `OpenSeesModel` refuses a 2.39.x file (INV-4). A
+  2.38.x `ModelData` has no version check, so its rewrite drops the group
+  and stamps 2.38; `ModelData.from_h5` applies the floor check from 2.39.0.
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
