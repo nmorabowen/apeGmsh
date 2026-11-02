@@ -406,40 +406,58 @@ def _program(path: Path, *kinds: str) -> Path:
     return _model_h5(path, *zip(("gravity", "live", "modal"), kinds))
 
 
-@pytest.mark.parametrize("stamped", [False, True])
-def test_a_stage_name_does_not_depend_on_how_the_file_was_opened(tmp_path: Path, stamped: bool) -> None:
-    """Delta finding 2: a model naming the stages names them for combinations()."""
+def _program_set(tmp_path: Path, *kinds: str) -> tuple[Path, Path]:
     path = _build_set(tmp_path)
-    model = _program(tmp_path / "run.h5", "static", "static", "static")
+    model = _program(tmp_path / "run.h5", *kinds)
     write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
         Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6))),
-        Combination("ULS_ids", "linear", (_stage("stage_0", 1.2), _stage("stage_1", 1.6)))])
+        Combination("ULS_ids", "linear", (_stage("stage_0", 1.2), _stage("stage_1", 1.6))),
+        Combination("m", "linear", (Term("mode", "stage_2", 9, 2),))])
+    return path, model
+
+
+def test_stage_terms_refuse_until_the_model_names_are_bound(tmp_path: Path) -> None:
+    """Delta finding 2: a read never renames the caller's stages, and never silently differs.
+
+    Opened bare beside a model that names its stages, every stage and mode term
+    refuses and says to open with ``model_h5=``; opened with it, the names bind.
+    """
+    path, model = _program_set(tmp_path, "static", "static", "static")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        run = Results.from_ladruno(path, model_h5=model) if stamped else Results.from_ladruno(path)
-        combos = run.combinations(model_h5=model)
+        bare = Results.from_ladruno(path)
+        stamped = Results.from_ladruno(path, model_h5=model)
+    combos = bare.combinations(model_h5=model)
+    for state in ("ULS", "ULS_ids", "m", bare.stage("stage_0")):
+        with pytest.raises(CombinationRefused) as err:
+            combos.evaluate(state, "displacement_x")
+        assert err.value.reason == "unresolved" and "model_h5=" in err.value.detail
+    assert [s.name for s in bare.stages][:2] == ["MODEL_STAGE[1]", "MODEL_STAGE[2]"]  # untouched
+
+    combos = stamped.combinations()
     got = combos.evaluate("ULS", "displacement_x").field.values[:, 0]
-    want = 1.2 * _read(run, "stage_0") + 1.6 * _read(run, "stage_1")
+    want = 1.2 * _read(stamped, "gravity") + 1.6 * _read(stamped, "live")
     np.testing.assert_allclose(got, want, rtol=1e-15)
     with pytest.raises(CombinationRefused) as err:
         combos.evaluate("ULS_ids", "displacement_x")
     assert "stamped" in err.value.detail
 
 
+def test_without_names_from_either_source_stage_i_stays(run, tmp_path: Path) -> None:
+    _user(tmp_path, [Combination("ULS_ids", "linear", (_stage("stage_0", 2.0),))])
+    combos = run.combinations(model_h5=tmp_path / "run.h5")  # declares no stages
+    got = combos.evaluate("ULS_ids", "displacement_x").field.values[:, 0]
+    np.testing.assert_allclose(got, 2.0 * _read(run, "stage_0"), rtol=1e-15)
+
+
 def test_a_reader_that_declines_the_names_keeps_stage_i(tmp_path: Path) -> None:
     """The .ladruno records KIND static; a program calling live transient is misaligned."""
     from apeGmsh.results.readers._ladruno import StageKindMismatchWarning
 
-    path = _build_set(tmp_path)
-    model = _program(tmp_path / "run.h5", "static", "transient", "static")
-    write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
-        Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6))),
-        Combination("ULS_ids", "linear", (_stage("stage_0", 1.2), _stage("stage_1", 1.6)))])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        run = Results.from_ladruno(path)
+    path, model = _program_set(tmp_path, "static", "transient", "static")
     with pytest.warns(StageKindMismatchWarning):
-        combos = run.combinations(model_h5=model)
+        run = Results.from_ladruno(path, model_h5=model)
+    combos = run.combinations()
     want = 1.2 * _read(run, "stage_0") + 1.6 * _read(run, "stage_1")
     np.testing.assert_allclose(
         combos.evaluate("ULS_ids", "displacement_x").field.values[:, 0], want, rtol=1e-15)

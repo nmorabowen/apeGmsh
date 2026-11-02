@@ -179,7 +179,8 @@ class _RecordedSource:
     linear = True
 
     def __init__(self, results: "Results", level: str, component: str,
-                 ids: Optional[Any], spectra: Optional[SpectraProvider], name: str) -> None:
+                 ids: Optional[Any], spectra: Optional[SpectraProvider], name: str,
+                 unbound_stages: Optional[str] = None) -> None:
         if level not in LEVELS:
             raise ValueError(f"level {level!r} is not one of {LEVELS}")
         self.results = results
@@ -188,6 +189,7 @@ class _RecordedSource:
         self.ids = None if ids is None else np.asarray(ids)
         self.spectra = spectra
         self.name = name
+        self.unbound_stages = unbound_stages
 
     def stored(self, name: str) -> Optional[Field]:
         return None  # a recorded file stores no combination
@@ -196,6 +198,8 @@ class _RecordedSource:
         return CombinationRefused(self.name, reason, detail)
 
     def _host(self, source: str) -> Any:
+        if self.unbound_stages is not None:
+            raise self._refuse("unresolved", self.unbound_stages)
         hosts = [s for s in self.results.stages if s.kind != "mode"]
         hits = [s for s in hosts if canonical_stage_name(s) == source]
         if len(hits) == 1:
@@ -415,8 +419,10 @@ class UserCombinations:
         results_file: Optional[Path],
         handle: Callable[[Any], Optional[str]],
         spectra: Optional[SpectraProvider] = None,
+        unbound_stages: Optional[str] = None,
     ) -> None:
         self._results = results
+        self._unbound_stages = unbound_stages
         self._handle = handle
         self.user_h5 = user_h5
         self.model_h5 = model_h5
@@ -490,7 +496,8 @@ class UserCombinations:
         if (component is None) == (user_result is None):
             raise ValueError("pass exactly one of component= and user_result=")
         recorded = _RecordedSource(
-            self._results, level, component or "", ids, self.spectra, label)
+            self._results, level, component or "", ids, self.spectra, label,
+            unbound_stages=self._unbound_stages)
         source: Any = recorded
         if user_result is not None:
             if self._user is None:

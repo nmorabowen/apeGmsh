@@ -1534,12 +1534,15 @@ class Results:
         ``/opensees/combinations`` into the table. ``spectra`` is a
         ``/spectra`` provider for spectrum terms.
 
-        A term names a stage by its stamped name, else ``stage_<i>`` (A3). On
-        a ``Results`` opened without a model, a ``model_h5`` that declares
-        program stages names this file's stages first, as
-        ``from_ladruno(model_h5=)`` does (``_bind_stage_names``), so a term
-        reads the same stage however the file was opened. A reader that
-        declines the pairing keeps its names, and says why.
+        A term names a stage by its stamped name, else ``stage_<i>`` (A3).
+        The names are bound when the results are opened (``model_h5=``), never
+        here: a read does not rename the caller's stages. So when ``model_h5``
+        declares program stages and this ``Results`` was opened without a
+        model, every ``stage`` and ``mode`` term is refused, with a reason that
+        says to open the results with ``model_h5=``; otherwise a term could
+        read a different stage than the same set opened with its model. A
+        ``Results`` with no names from either source keeps ``stage_<i>``, and
+        one opened with ``model_h5=`` keeps whatever its reader bound.
 
         ``evaluate(state, component, level=...)`` combines a recorded result,
         ``evaluate(state, user_result=...)`` a user result. A state handle of
@@ -1549,8 +1552,10 @@ class Results:
         from .user._states import UserCombinations, user_file_beside
 
         model = model_h5 if model_h5 is not None else self._model_path
-        if model is not None and self._model_path is None:
-            self._name_stages_after(Path(model))
+        unbound = (
+            self._unbound_stage_names(Path(model))
+            if model is not None and self._model_path is None else None
+        )
         if user_h5 is None:
             user_h5 = user_file_beside(
                 None if self._path is None else Path(self._path),
@@ -1576,30 +1581,36 @@ class Results:
             results_file=self._path,
             handle=handle,
             spectra=spectra,
+            unbound_stages=unbound,
         )
 
-    def _name_stages_after(self, model_h5: Path) -> None:
-        """Name an unnamed capture's stages after ``model_h5``'s program, once.
+    def _unbound_stage_names(self, model_h5: Path) -> Optional[str]:
+        """Why stage terms cannot be resolved here, or ``None`` when they can.
 
-        Nothing happens when the archive declares no stages, when the reader
-        names its own stages (a native file), or when a stage already carries
-        a program name. Otherwise this is the pairing ``from_ladruno(model_h5=)``
-        makes, with its warnings; the reader keeps its names where it declines.
+        Not ``None`` when ``model_h5`` declares program stage names that this
+        ``Results`` did not bind: it was opened without a model, and its reader
+        pairs program names (a native file names its own stages). Nothing is
+        renamed: the reason says how to bind them.
         """
         import h5py
 
         if not hasattr(self._reader, "attach_stage_names"):
-            return
-        if any(s.aliases for s in self._all_stages() if s.kind != "mode"):
-            return
+            return None
         with h5py.File(model_h5, "r") as f:
             if "opensees" not in f or "stages" not in f["opensees"]:
-                return
+                return None
         from ..opensees.opensees_model import OpenSeesModel
 
-        _bind_stage_names(self._reader, OpenSeesModel.from_h5(model_h5),
-                          model_path=model_h5)
-        self._stages_cache = None
+        names = [str(s.name) for s in OpenSeesModel.from_h5(model_h5).stages()]
+        if not names:
+            return None
+        return (
+            f"model_h5={str(model_h5)!r} declares the stage names {names}, and "
+            f"these results were opened without a model, so their stages are "
+            f"named stage_<i>; a term would read another stage than the same "
+            f"set opened with its model. Open the results with "
+            f"model_h5={str(model_h5)!r} so the names are bound (ADR 0130 A3)"
+        )
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)
