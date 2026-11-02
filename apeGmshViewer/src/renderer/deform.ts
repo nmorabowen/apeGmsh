@@ -230,10 +230,31 @@ export function missingMarkerObjects(
 }
 
 /**
+ * Pixel-stable (#2664): a blended triangle tested against depth already in the
+ * 4x MSAA buffer gives other pixels each frame, with nothing changed (D3D11 on an
+ * RTX 3070: 40 to 1200 px, up to 8 levels; no difference without MSAA, without
+ * depth test or without the opaque mesh). So the ghost's faces, and the outline
+ * edges under them, blend in three's opaque list, ahead of every opaque object,
+ * where the depth buffer is still empty: `transparent: false` picks the list, and
+ * these factors (NormalBlending's) keep the blend and the alpha.
+ */
+const GHOST_BLEND = {
+  transparent: false,
+  opacity: GHOST_OPACITY,
+  depthWrite: false,
+  blending: THREE.CustomBlending,
+  blendSrc: THREE.SrcAlphaFactor,
+  blendDst: THREE.OneMinusSrcAlphaFactor,
+  blendSrcAlpha: THREE.OneFactor,
+  blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+} as const;
+
+/**
  * The reference ghost: the drawn primitives undeformed, faces and lines in
- * one neutral colour at the Qt ghost opacity. The faces are behind the
- * opaque deformed mesh wherever the two overlap (no depth write, drawn
- * before it); the lines stay in the transparent pass, depth-tested.
+ * one neutral colour at the Qt ghost opacity. The surfaces (outline edges,
+ * then faces) are behind the opaque deformed mesh wherever the two overlap
+ * (no depth write, drawn before it); 1-D lines stay in the transparent pass,
+ * depth-tested, as lines blend there without any pixel changing.
  */
 export function ghostObjects(
   info: MeshInfo,
@@ -265,9 +286,9 @@ export function ghostObjects(
     // The undeformed outline edges, as the Qt ghost keeps its wireframe.
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(edges, 3));
-    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), transparent: true, opacity: GHOST_OPACITY, depthWrite: false }));
+    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), ...GHOST_BLEND }));
     e.name = "ghost edges";
-    e.renderOrder = -1;
+    e.renderOrder = -2;
     out.push(e);
   }
   const surfTri = gatherInto(base.tri, drawn.triMap, 9);
@@ -287,18 +308,9 @@ export function ghostObjects(
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
     g.computeVertexNormals();
-    // Pixel-stable (#2664): a blended triangle tested against depth already in the
-    // 4x MSAA buffer gives other pixels each frame, with nothing changed (D3D11 on an
-    // RTX 3070: 40 to 1200 px, up to 8 levels; no difference without MSAA, without
-    // depth test or without the opaque mesh). So these faces blend in the opaque
-    // list, ahead of every opaque object, where the depth buffer is still empty:
-    // `transparent: false` picks the list, custom blending keeps the blend and the alpha.
     const m = new THREE.MeshStandardMaterial({
       color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true,
-      transparent: false, opacity: GHOST_OPACITY, depthWrite: false,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      ...GHOST_BLEND,
     });
     const mesh = new THREE.Mesh(g, m);
     mesh.name = "ghost faces";
