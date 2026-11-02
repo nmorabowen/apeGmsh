@@ -18,6 +18,7 @@ from apeGmsh.results.user import (
     write_user_file,
 )
 
+from tests.fixtures.schema import MODES_CURRENT
 from tests.results.user._user_helpers import MODES_LAMBDA, REPO, mode_rows
 
 MODES_LADRUNO = REPO / "apeGmshViewer" / "fixtures" / "ladruno_modes.ladruno"
@@ -123,7 +124,7 @@ def test_the_table_round_trips_bit_for_bit(make_model, tmp_path: Path) -> None:
     assert back.same_bits(t)
     assert np.isnan(back.generalized_mass[1])
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["modes_schema_version"] == "1.0.0"
+        assert f["meta"].attrs["modes_schema_version"] == MODES_CURRENT
         assert f["modes/step"].dtype == np.dtype("i4")
         assert f["modes"].attrs["components"] == "MX,MY,RMZ"
 

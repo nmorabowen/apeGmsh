@@ -31,6 +31,7 @@ from apeGmsh.results.user import (
 )
 from apeGmsh.results.user._spectra import same_bits
 
+from tests.fixtures.schema import SPECTRA_CURRENT
 from tests.results.user._user_helpers import case, cqc_reference
 
 LAM = np.array([40.0, 400.0, 900.0, 2500.0])
@@ -232,7 +233,7 @@ def test_a_case_round_trips_bit_for_bit(make_model, tmp_path: Path) -> None:
         assert g["RESULTS/ON_NODES/DISPLACEMENT/ID"].shape == (2, 1)
         assert g["reference/RESULTS/ON_DOMAIN/base_shear/DATA"].shape == (1, 1, 2)
         assert g["RESULTS/ON_DOMAIN/base_shear/STEP"][...].tolist() == [0, 1]
-        assert f["meta"].attrs["spectra_schema_version"] == "1.0.0"
+        assert f["meta"].attrs["spectra_schema_version"] == SPECTRA_CURRENT
 
 
 def test_spectra_replace_the_zone_and_none_keeps_it(make_model, tmp_path: Path) -> None:

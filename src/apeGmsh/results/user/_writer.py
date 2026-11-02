@@ -444,9 +444,9 @@ def _verify(
     if modes is not None and not modes.same_bits(back.modes()):
         raise UserWriteRefused(f"{partial}: the modes table did not read back")
     if spectra is not None:
-        index = back.spectra()
-        if index.refused or len(index.cases) != len(spectra) or not all(
-                same_bits(a, b) for a, b in zip(spectra, index.cases)):
+        read = back.spectra()
+        if read.refused or len(read.cases) != len(spectra) or not all(
+                same_bits(a, b) for a, b in zip(spectra, read.cases)):
             raise UserWriteRefused(f"{partial}: the spectrum cases did not read back")
 
 

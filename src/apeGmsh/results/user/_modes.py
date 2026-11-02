@@ -33,7 +33,7 @@ from ._descriptor import decode_cell
 from ._errors import ZoneRefused
 from ._names import name_problem, text_or_empty
 
-__all__ = ["COMPONENTS", "LAMBDA_RTOL", "ModeTable", "ladruno_lambdas", "mode_table"]
+__all__ = ["COMPONENTS", "LAMBDA_RTOL", "ModeTable", "recorded_lambdas", "mode_table"]
 
 #: The component tokens ``modalProperties`` uses, in the order a table lists them.
 COMPONENTS = ("MX", "MY", "MZ", "RMX", "RMY", "RMZ")
@@ -278,7 +278,7 @@ def read_modes(zone: h5py.Group) -> ModeTable:
 # ---------------------------------------------------------------------------
 
 
-def ladruno_lambdas(results_file: "str | Path") -> dict[tuple[str, int], dict[int, float]]:
+def recorded_lambdas(results_file: "str | Path") -> dict[tuple[str, int], dict[int, float]]:
     """``{(host, s): {mode: LAMBDA}}`` of every modal set a ``.ladruno`` records.
 
     ``host`` is ``stage_<i>``, the ``i``-th ``MODEL_STAGE`` by its index, which is
@@ -307,7 +307,7 @@ def ladruno_lambdas(results_file: "str | Path") -> dict[tuple[str, int], dict[in
 def row_staleness(
     t: ModeTable, lambdas: Mapping[tuple[str, int], Mapping[int, float]],
 ) -> tuple[tuple[bool, str], ...]:
-    """``(stale, reason)`` per row of ``t`` against :func:`ladruno_lambdas`."""
+    """``(stale, reason)`` per row of ``t`` against :func:`recorded_lambdas`."""
     out: list[tuple[bool, str]] = []
     for host, step, mode, lam in zip(t.host, t.step, t.mode, t.lam):
         out.append(_one_row(host, int(step), int(mode), float(lam), lambdas))
@@ -320,22 +320,22 @@ def _one_row(
 ) -> tuple[bool, str]:
     if _HOST.match(host) is None:
         return True, (f"host {host!r} is not a stage_<i> name; a stamped stage name "
-                      "is not resolved against the .ladruno here")
+                      "is not resolved against the results file here")
     sets = sorted(s for (h, s) in lambdas if h == host)
     if not sets:
-        return True, f"the .ladruno records no modes on {host}"
+        return True, f"the results file records no modes on {host}"
     if step == -1:
         if len(sets) != 1:
             return True, f"step -1 names the only set, and {host} holds {len(sets)}"
         step = sets[0]
     if (host, step) not in lambdas:
-        return True, f"the .ladruno records no STEP_{step} on {host}"
+        return True, f"the results file records no STEP_{step} on {host}"
     recorded = lambdas[(host, step)].get(mode)
     if recorded is None:
-        return True, f"the .ladruno records no mode {mode} on {host} STEP_{step}"
+        return True, f"the results file records no mode {mode} on {host} STEP_{step}"
     gap = abs(lam - recorded)
     if not math.isfinite(gap) or gap > LAMBDA_RTOL * abs(recorded):
-        return True, (f"lambda {lam!r} here, {recorded!r} in the .ladruno "
+        return True, (f"lambda {lam!r} here, {recorded!r} in the results file "
                       f"(more than {LAMBDA_RTOL:g} relative)")
     return False, ""
 

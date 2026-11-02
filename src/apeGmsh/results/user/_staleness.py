@@ -24,7 +24,7 @@ from typing import Mapping, Optional
 from ...opensees._internal.schema_version import SchemaVersionError
 from ._errors import UserFileError, ZoneRefused
 from ._fingerprint import results_fingerprint
-from ._modes import ladruno_lambdas, row_staleness
+from ._modes import recorded_lambdas, row_staleness
 from ._reader import UserFile
 from ._writer import model_hashes
 
@@ -142,7 +142,7 @@ def _mode_rows(
     if results_file is None:
         return (ZoneState(True, "no results file to compare lambda with"),) * len(table)
     try:
-        lambdas = ladruno_lambdas(results_file)
+        lambdas = recorded_lambdas(results_file)
     except (OSError, KeyError, ValueError) as exc:
         return (ZoneState(True, f"the results file's modes cannot be read: {exc}"),) * len(table)
     return tuple(ZoneState(stale, reason) for stale, reason in row_staleness(table, lambdas))
