@@ -17,7 +17,7 @@ import * as THREE from "three";
 import { applyGhostVisibility, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
 import { selectionBounds, type Prims } from "../../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
-import { GHOST_OPACITY, missingMarkers } from "../../src/state/deform.ts";
+import { missingMarkers } from "../../src/state/deform.ts";
 import { deformView } from "../../src/state/selectors.ts";
 import type { State } from "../../src/state/types.ts";
 import { NODATA, NODATA_RESULTS, opened, until } from "../contour/harness.ts";
@@ -152,22 +152,20 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   const faces = objs.find((o) => o instanceof THREE.Mesh)!;
   assert.equal(faces.name, "ghost faces");
   assert.deepEqual(pos(faces), gatherInto(base.tri, drawn.triMap, 9));
-  // #2664: the surfaces blend before the depth buffer holds anything, the one order that draws the same pixels twice:
-  // three's opaque list (transparent false), ahead of the opaque mesh (renderOrder), still at the ghost opacity,
-  // with the blend three's NormalBlending would set (a NormalBlending opaque material forces alpha to 1 and does not blend).
-  const ghostEdges0 = objs.find((o) => o.name === "ghost edges") as THREE.LineSegments;
-  for (const o of [faces as THREE.Mesh, ghostEdges0]) {
-    const m = o.material as THREE.Material;
-    assert.equal(m.transparent, false, o.name);
-    assert.equal(m.depthWrite, false, o.name);
-    assert.equal(m.opacity, GHOST_OPACITY, o.name);
-    assert.deepEqual(
-      [m.blending, m.blendEquation, m.blendSrc, m.blendDst, m.blendSrcAlpha, m.blendDstAlpha],
-      [THREE.CustomBlending, THREE.AddEquation, THREE.SrcAlphaFactor, THREE.OneMinusSrcAlphaFactor, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor],
-      o.name,
-    );
-  }
-  assert.ok(ghostEdges0.renderOrder < faces.renderOrder && faces.renderOrder < 0, "the edges, then the faces, then the opaque mesh");
+  // #2664: the surfaces stay out of the MSAA canvas, the one way they draw the same pixels twice:
+  // on their own camera layer, and laid over the canvas by one full-screen triangle, multiplied by alpha already.
+  const main = new THREE.Layers();
+  for (const name of ["ghost edges", "ghost faces"]) assert.equal(objs.find((o) => o.name === name)!.layers.test(main), false, name);
+  const composite = objs.find((o) => o.name === "ghost composite") as THREE.Mesh;
+  assert.equal(composite.layers.test(main), true);
+  assert.ok(composite.renderOrder < faces.renderOrder, "first in the transparent pass");
+  assert.equal(composite.frustumCulled, false);
+  const cm = composite.material as THREE.ShaderMaterial;
+  assert.deepEqual([cm.transparent, cm.depthTest, cm.depthWrite], [true, false, false]);
+  assert.deepEqual(
+    [cm.blending, cm.blendSrc, cm.blendDst, cm.blendSrcAlpha, cm.blendDstAlpha],
+    [THREE.CustomBlending, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor],
+  );
   const segs = objs.filter((o) => o instanceof THREE.LineSegments);
   assert.deepEqual(segs.map((o) => o.name), ["ghost edges", "ghost lines"]);
   assert.deepEqual(segs.map(pos), [gatherInto(base.edge, edgeMap, 6), gatherInto(base.line, drawn.lineMap, 6)]);

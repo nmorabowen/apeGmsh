@@ -229,32 +229,96 @@ export function missingMarkerObjects(
   });
 }
 
+/** The camera layer of the ghost's surfaces (selection.ts HALO_LAYER is another); the main pass never draws them. */
+const GHOST_LAYER = 2;
+/** The ghost target's size over the drawing buffer's: with no MSAA there, this is its anti-aliasing. */
+const GHOST_SUPERSAMPLE = 2;
+
+/** The ghost's surfaces write sRGB themselves: three writes linear into a render target, and the blending must stay in the space the canvas blends in. */
+function encodeSrgb(m: THREE.Material): void {
+  m.onBeforeCompile = (p) => {
+    p.fragmentShader = p.fragmentShader.replace("#include <colorspace_fragment>", "gl_FragColor = sRGBTransferOETF( gl_FragColor );");
+  };
+}
+
 /**
- * Pixel-stable (#2664): a blended triangle tested against depth already in the
- * 4x MSAA buffer gives other pixels each frame, with nothing changed (D3D11 on an
- * RTX 3070: 40 to 1200 px, up to 8 levels; no difference without MSAA, without
- * depth test or without the opaque mesh). So the ghost's faces, and the outline
- * edges under them, blend in three's opaque list, ahead of every opaque object,
- * where the depth buffer is still empty: `transparent: false` picks the list, and
- * these factors (NormalBlending's) keep the blend and the alpha.
+ * Pixel-stable (#2664): a blended triangle in the 4x MSAA canvas gives other
+ * pixels from frame to frame with nothing changed (D3D11 on an RTX 3070: up to
+ * 1200 px and 8 levels against depth already there, 1 or 2 levels in about one
+ * frame in 40 against none). With no MSAA it does not. So the ghost's surfaces are
+ * drawn into their own target, with no MSAA, tested against the depth of the
+ * opaque scene drawn there first, and this full-screen triangle lays the result
+ * over the canvas: first in the transparent pass, where they were drawn, with
+ * the same blend, and covering every sample of every pixel.
  */
-const GHOST_BLEND = {
-  transparent: false,
-  opacity: GHOST_OPACITY,
-  depthWrite: false,
-  blending: THREE.CustomBlending,
-  blendSrc: THREE.SrcAlphaFactor,
-  blendDst: THREE.OneMinusSrcAlphaFactor,
-  blendSrcAlpha: THREE.OneFactor,
-  blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-} as const;
+function ghostComposite(): THREE.Mesh {
+  const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { ghost: { value: target.texture } },
+    vertexShader: "varying vec2 vUv; void main() { vUv = 0.5 * position.xy + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader: "uniform sampler2D ghost; varying vec2 vUv; void main() { gl_FragColor = texture2D(ghost, vUv); }",
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    // The target holds what blending over nothing leaves: colour already multiplied by alpha.
+    blending: THREE.CustomBlending,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+  });
+  m.addEventListener("dispose", () => target.dispose());
+  const quad = new THREE.Mesh(g, m);
+  quad.name = "ghost composite";
+  quad.renderOrder = -2;
+  quad.frustumCulled = false;
+  quad.userData["clipExempt"] = true;
+  const size = new THREE.Vector2();
+  const clearColor = new THREE.Color();
+  quad.onBeforeRender = (renderer, scene, camera) => {
+    renderer.getDrawingBufferSize(size);
+    target.setSize(size.x * GHOST_SUPERSAMPLE, size.y * GHOST_SUPERSAMPLE);
+    const back = renderer.getRenderTarget(), autoClear = renderer.autoClear, mask = camera.layers.mask, clearAlpha = renderer.getClearAlpha();
+    renderer.getClearColor(clearColor);
+    const buffers = renderer.state.buffers;
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0, 0);
+    buffers.color.setMask(true);
+    buffers.depth.setMask(true);
+    renderer.clear();
+    renderer.autoClear = false;
+    // The depth of what is opaque: the ghost was never tested against what blends after it. The lights join the ghost's layer on the way.
+    const blended: THREE.Object3D[] = [quad];
+    scene.traverseVisible((o) => {
+      if ((o as THREE.Light).isLight) o.layers.enable(GHOST_LAYER);
+      const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (mat && (Array.isArray(mat) ? mat : [mat]).some((x) => x.transparent)) blended.push(o);
+    });
+    for (const o of blended) o.visible = false;
+    buffers.color.setMask(false);
+    buffers.color.setLocked(true);
+    renderer.render(scene, camera);
+    buffers.color.setLocked(false);
+    buffers.color.setMask(true);
+    for (const o of blended) o.visible = true;
+    camera.layers.set(GHOST_LAYER);
+    renderer.render(scene, camera);
+    camera.layers.mask = mask;
+    renderer.autoClear = autoClear;
+    renderer.setClearColor(clearColor, clearAlpha);
+    renderer.setRenderTarget(back);
+  };
+  return quad;
+}
 
 /**
  * The reference ghost: the drawn primitives undeformed, faces and lines in
- * one neutral colour at the Qt ghost opacity. The surfaces (outline edges,
- * then faces) are behind the opaque deformed mesh wherever the two overlap
- * (no depth write, drawn before it); 1-D lines stay in the transparent pass,
- * depth-tested, as lines blend there without any pixel changing.
+ * one neutral colour at the Qt ghost opacity, drawn ahead of what blends in
+ * the deformed mesh (no depth write). The surfaces go through `ghostComposite`;
+ * 1-D lines blend in the canvas, where lines draw the same pixels every time.
  */
 export function ghostObjects(
   info: MeshInfo,
@@ -286,9 +350,12 @@ export function ghostObjects(
     // The undeformed outline edges, as the Qt ghost keeps its wireframe.
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(edges, 3));
-    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), ...GHOST_BLEND }));
+    // One target pixel wide is 1 / GHOST_SUPERSAMPLE of a canvas pixel, so the opacity makes up what the width lost.
+    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), transparent: true, opacity: GHOST_OPACITY * GHOST_SUPERSAMPLE, depthWrite: false }));
+    encodeSrgb(e.material);
     e.name = "ghost edges";
-    e.renderOrder = -2;
+    e.renderOrder = -1;
+    e.layers.set(GHOST_LAYER);
     out.push(e);
   }
   const surfTri = gatherInto(base.tri, drawn.triMap, 9);
@@ -310,13 +377,16 @@ export function ghostObjects(
     g.computeVertexNormals();
     const m = new THREE.MeshStandardMaterial({
       color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true,
-      ...GHOST_BLEND,
+      transparent: true, opacity: GHOST_OPACITY, depthWrite: false,
     });
+    encodeSrgb(m);
     const mesh = new THREE.Mesh(g, m);
     mesh.name = "ghost faces";
     mesh.renderOrder = -1;
+    mesh.layers.set(GHOST_LAYER);
     out.push(mesh);
   }
+  if (out.length) out.push(ghostComposite());
   const lineSrc = showOffsets && base.clearLine ? base.clearLine : base.line;
   const line = gatherInto(lineSrc, drawnLineMap ?? drawn.lineMap, 6);
   if (line.length) {
