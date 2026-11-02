@@ -381,8 +381,9 @@ class _Run:
             raise CombinationRefused(
                 row.name, "not-linear",
                 f"{row.rule} sums its terms, and this quantity is not linear (a user "
-                "result without @linear=1, a derived scalar such as von Mises, or a "
-                "native results.h5 component that is not a recorder spelling): a sum of "
+                "result without @linear=1, a derived scalar such as von Mises, a custom "
+                "scalar, or a native results.h5 component that is not a recorder "
+                "spelling): a sum of "
                 "it is not its value under the sum. Store "
                 "a row for this combination, or use envelope (ADR 0130 A5)")
         for term in row.terms:

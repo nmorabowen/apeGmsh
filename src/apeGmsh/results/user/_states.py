@@ -129,6 +129,24 @@ def recorded_is_linear(results_file: Optional[Path], level: str, component: str)
     return is_canonical(component)
 
 
+def custom_scalars(results: "Results", level: str) -> dict[str, Any]:
+    """The ADR 0076 custom scalars a read of ``level`` resolves, by name.
+
+    A custom scalar (``results.nodes.define("umag", "sqrt(...)")``, or one
+    auto-loaded from ``<results>.defs.json``) is an expression over the
+    recorded components, and nothing makes it linear (``abs``, ``sqrt``), so a
+    summing rule never combines it (A5). Only ``nodes`` and ``gauss`` hold
+    them; another recorded level has none, and ``domain`` reads ``/spectra``.
+    """
+    if level == "nodes":
+        return results.nodes.definitions
+    if level == "gauss":
+        return results.elements.gauss.definitions
+    if level in ("elements", "line_stations", "domain"):
+        return {}
+    raise ValueError(f"level {level!r} is not one of {LEVELS}")
+
+
 def canonical_stage_name(info: Any) -> str:
     """A stage's source in a term (A3): its stamped name, else ``stage_<i>``."""
     name = info.name
@@ -236,7 +254,9 @@ class _RecordedSource:
     """One recorded quantity of a ``Results``: ``(level, component)``.
 
     ``linear`` is :func:`recorded_is_linear` of ``results_file``, the file the
-    ``Results`` was opened on; with none given the component is judged by name.
+    ``Results`` was opened on (with none given the component is judged by
+    name), and false for a custom scalar of ``results`` (:func:`custom_scalars`)
+    on every source.
     """
 
     def __init__(self, results: "Results", level: str, component: str,
@@ -258,7 +278,8 @@ class _RecordedSource:
         self.unbound_stages = unbound_stages
         self.allow_stale = bool(allow_stale)
         self.linear = recorded_is_linear(
-            None if results_file is None else Path(results_file), level, component)
+            None if results_file is None else Path(results_file), level, component,
+        ) and component not in custom_scalars(results, level)
 
     def stored(self, name: str) -> Optional[Field]:
         return None  # a recorded file stores no combination

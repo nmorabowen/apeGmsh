@@ -236,3 +236,110 @@ def test_a_derived_scalar_still_envelopes_and_reads_alone(derived_set, component
     lone = combos.evaluate(StateAddress(a.kind, a.source, a.step, 0), component, level="gauss")
     np.testing.assert_array_equal(lone.field.values[:, 0], first)
     assert lone.badges == ()
+
+
+# ---- custom scalars (ADR 0076), on every source --------------------------------
+
+#: ``(name, expression, level)``: neither is linear in the state.
+CUSTOM = (("umag", "sqrt(displacement_x**2 + displacement_y**2)", "nodes"),
+          ("sabs", "abs(stress_xx)", "gauss"))
+
+
+def _quad_set(tmp_path: Path) -> tuple[Path, Path]:
+    """``quad2d.ladruno``'s two steps, and ``ULS = 1.2 step0 + 1.6 step1``, ``ENV`` of both."""
+    path = tmp_path / "quad.ladruno"
+    shutil.copy(LADRUNO / "quad2d.ladruno", path)
+    a, b = Term("stage", "stage_0", 0, 0, 1.2), Term("stage", "stage_0", 1, 0, 1.6)
+    unit = tuple(Term(t.kind, t.source, t.step, 0, 1.0) for t in (a, b))
+    user = write_user_file(
+        tmp_path / "quad.user.h5", _model(tmp_path / "quad.model.h5"), results_file=path,
+        combinations=[Combination("ULS", "linear", (a, b)),
+                      Combination("ENV", "envelope", unit, envelope="max")])
+    return path, user
+
+
+def _quad(path: Path) -> Results:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return Results.from_ladruno(path)
+
+
+def _define(run: Results) -> None:
+    for name, expr, level in CUSTOM:
+        (run.nodes if level == "nodes" else run.elements.gauss).define(name, expr)
+
+
+def _custom_read(run: Results, name: str, level: str, step: int) -> np.ndarray:
+    composite = run.stage("stage_0").nodes if level == "nodes" else run.stage("stage_0").elements.gauss
+    return np.asarray(composite.get(component=name, time=step).values[-1])
+
+
+@pytest.mark.filterwarnings("ignore:Out-of-plane stress_zz recovery")
+@pytest.mark.parametrize(("name", "expr", "level"), CUSTOM)
+def test_a_custom_scalar_refuses_a_summing_rule_on_a_ladruno(tmp_path: Path, name, expr, level) -> None:
+    path, user = _quad_set(tmp_path)
+    run = _quad(path)
+    _define(run)
+    combos = run.combinations(user)
+    with pytest.raises(CombinationRefused) as exc:
+        combos.evaluate("ULS", name, level=level)
+    assert exc.value.reason == "not-linear"
+    assert "custom scalar" in str(exc.value)
+    # A factor-1 envelope and a lone read still read it.
+    first, second = (_custom_read(run, name, level, s) for s in (0, 1))
+    env = combos.evaluate("ENV", name, level=level)
+    np.testing.assert_array_equal(env.field.values[:, 0], np.maximum(first, second))
+    lone = combos.evaluate(StateAddress("stage", "stage_0", 1, 0), name, level=level)
+    np.testing.assert_array_equal(lone.field.values[:, 0], second)
+
+
+@pytest.mark.filterwarnings("ignore:Out-of-plane stress_zz recovery")
+def test_a_custom_scalar_loaded_from_its_sidecar_refuses(tmp_path: Path) -> None:
+    """``<results>.defs.json`` brings the definitions back silently on open."""
+    path, user = _quad_set(tmp_path)
+    first = _quad(path)
+    _define(first)
+    first.save_definitions()
+    reopened = _quad(path)
+    assert set(reopened.nodes.definitions) == {"umag"}
+    for name, _, level in CUSTOM:
+        with pytest.raises(CombinationRefused) as exc:
+            reopened.combinations(user).evaluate("ULS", name, level=level)
+        assert exc.value.reason == "not-linear", name
+
+
+def test_a_custom_scalar_that_takes_a_canonical_name_refuses_on_a_native_file(native_set: Path) -> None:
+    """``displacement_x`` is a recorder spelling the file does not store: here it is
+    ``abs(displacement_z)``, which no sum combines."""
+    run = _open(native_set)
+    run.nodes.define("displacement_x", "abs(displacement_z)")
+    with pytest.raises(CombinationRefused) as exc:
+        run.combinations().evaluate("ULS", "displacement_x")
+    assert exc.value.reason == "not-linear"
+    np.testing.assert_allclose(  # the recorded one beside it still sums
+        run.combinations().evaluate("ULS", "displacement_z").field.values[:, 0],
+        1.2 * np.array(STAGES["D"][0]) + 1.6 * np.array(STAGES["L"][0]), rtol=1e-15)
+
+
+# ---- a recorder file's own spellings -------------------------------------------
+
+
+def test_a_ladruno_component_outside_the_vocabulary_still_sums(tmp_path: Path) -> None:
+    """``basicForce`` is the truss's recorded response under the fork's own name. A
+    ``.ladruno`` is judged by its file, so it sums; the ``results_file`` that
+    ``Results.combinations()`` passes is what says so."""
+    path = tmp_path / "truss.ladruno"
+    shutil.copy(LADRUNO / "truss2d.ladruno", path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = Results.from_ladruno(path)
+    user = write_user_file(
+        tmp_path / "truss.user.h5", _model(tmp_path / "truss.model.h5"), results_file=path,
+        combinations=[Combination("ULS", "linear", (Term("stage", "stage_0", 1, 0, 1.2),
+                                                    Term("stage", "stage_0", 2, 0, 1.6)))])
+    got = run.combinations(user).evaluate("ULS", "basicForce", level="elements")
+    per = [np.asarray(run.stage("stage_0").elements.get(component="basicForce", time=s).values[-1])
+           for s in (1, 2)]
+    assert not np.array_equal(per[0], per[1])
+    np.testing.assert_allclose(got.field.values[:, 0], (1.2 * per[0] + 1.6 * per[1]).ravel(),
+                               rtol=1e-15)
