@@ -1383,6 +1383,8 @@ interface UserTarget {
   path: string;
   model: string | null;
   results: string | null;
+  /** main named the file in the set (`OpenSet.user`); otherwise `path` is where one would be, and may hold nothing */
+  known: boolean;
 }
 
 const userDoor = bridge as unknown as UserBridge;
@@ -1393,11 +1395,15 @@ let userSeq = 0;
  * Read the set's `.user.h5` into the store; resolves once the answer is
  * there. No file there closes it (`userEventOf`); an answer the app cannot
  * take (an unknown target, a malformed reply) is a refusal with the reason,
- * never a partial listing.
+ * never a partial listing. The read is announced (`userOpened`, the "reading"
+ * badge) only for a file the set has: main named it, or it was read before.
+ * A look where no file is known says nothing until a file answers (#2737
+ * delta review, item 2).
  */
 async function readUser(t: UserTarget): Promise<void> {
   const seq = ++userSeq;
-  store.dispatch({ type: "userOpened", path: t.path });
+  const announced = t.known || store.get().user?.path === t.path;
+  if (announced) store.dispatch({ type: "userOpened", path: t.path });
   let read: UserReadIn;
   try {
     read = await userDoor.readUser(t);
@@ -1405,8 +1411,13 @@ async function readUser(t: UserTarget): Promise<void> {
     read = { ok: false, error: `user:read failed: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (seq !== userSeq) return;
+  const event = userEventOf(t.path, read);
+  if (!announced) {
+    if (event.type === "userClosed") return;
+    store.dispatch({ type: "userOpened", path: t.path });
+  }
   try {
-    store.dispatch(userEventOf(t.path, read));
+    store.dispatch(event);
   } catch (err) {
     store.dispatch({ type: "userRead", path: t.path, read: { ok: false, error: `the app cannot take user:read's answer: ${err instanceof Error ? err.message : String(err)}` } });
   }
@@ -1433,7 +1444,7 @@ function mountUserFeed(): void {
     userDoor.onOpen((set) => {
       const path = set.user ?? userPathOf(set);
       const moved = path !== target?.path;
-      target = path === null ? null : { path, model: set.model, results: set.results };
+      target = path === null ? null : { path, model: set.model, results: set.results, known: set.user !== null && set.user !== undefined };
       if (target === null) {
         userSeq++;
         pending = false;
@@ -1444,7 +1455,7 @@ function mountUserFeed(): void {
       // (#2737 review, F1). Only the read itself waits for the model's first read; the same file again keeps waiting as before.
       if (moved) {
         userSeq++;
-        store.dispatch({ type: "userOpened", path: target.path });
+        store.dispatch(target.known ? { type: "userOpened", path: target.path } : { type: "userClosed" });
       }
       pending = true;
       go();
@@ -1524,7 +1535,7 @@ async function main() {
       // ADR 0130: the spec's set has a `.user.h5` when one is beside its model; it is read before the shots, so every still states it.
       const job = await renderBridge.renderJob();
       const path = job.mode === "render" ? userPathOf(job) : null;
-      if (job.mode === "render" && path !== null) await readUser({ path, model: job.model, results: job.results });
+      if (job.mode === "render" && path !== null) await readUser({ path, model: job.model, results: job.results, known: false });
     }
     await runAgentMode({ store, blobs, effects, viewport, bridge: renderBridge, layout: stillLayout });
     return;
