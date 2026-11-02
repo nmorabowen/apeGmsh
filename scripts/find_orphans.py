@@ -6,8 +6,17 @@ Three detections over PRs merged in the last ``--since`` days:
    (``compare/main...<oid>`` reads ``diverged`` or ``ahead``).
 2. ``pushed-after-merge``: the head branch still exists and its tip is not
    the PR's head sha. A branch deleted after merge is not flagged.
+3. ``merged-without-verdict`` (lesson #2637, reported as its own section): a
+   ``program`` PR that the T review policy required a verdict for (``semantic``
+   label, or a change under ``tests/`` / ``.github/workflows/``, or to
+   ``land_pr.py`` / ``check_quirks.py``, a BASELINE or a golden file) was
+   merged with no ``Review-verdict: <model> approve <sha>`` comment bound to
+   the merged head. A non-``semantic`` PR whose body carries ``verify_move``
+   evidence is exempt. Only the last ``VERDICT_WINDOW_DAYS`` days are scanned.
+   A web merge skips ``land_pr``, and this detector cannot block one.
 
-    python scripts/find_orphans.py --format md    # exit 1 when anything is found
+    python scripts/find_orphans.py --format md    # exit 1 when anything is found,
+                                                  # exit 2 when a detection failed
 
 All network access goes through ``fetch(path)``, one wrapper over ``gh api``
 that returns parsed JSON, or ``None`` on HTTP 404. Tests replay recorded
@@ -20,6 +29,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -44,6 +54,13 @@ MAX_PAGES = 20
 
 #: The T review policy was posted at this instant (lesson #2637); a PR merged
 #: earlier is not held to it. The #2627 landing is exempt by that record.
+#: The verdict scan covers a rolling window, so its call count stops growing.
+VERDICT_WINDOW_DAYS = 14
+#: A move PR's body quotes `verify_move`'s success line ("OK, 59 defs, identical
+#: multiset"); a non-semantic PR carrying it is exempt (T ruling on #2679).
+_MOVE_EVIDENCE = re.compile(r"verify_move[\s\S]*identical multiset", re.IGNORECASE)
+#: Prose paths never count as golden files.
+_PROSE_PREFIXES = ("docs/", "internal_docs/")
 POLICY_START = datetime(2026, 10, 30, 19, 37, tzinfo=timezone.utc)
 VERDICT_KIND = "merged-without-verdict"
 VERDICT_NOTE = (
@@ -134,7 +151,7 @@ def _paged(fetch: Fetch, path: str) -> list[dict]:
 
 def _needs_verdict_path(name: str) -> bool:
     return (name.startswith(POLICY_PREFIXES) or name in POLICY_FILES
-            or "golden" in name.lower())
+            or ("golden" in name.lower() and not name.startswith(_PROSE_PREFIXES)))
 
 
 def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
@@ -144,6 +161,8 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
         return False
     if "semantic" in labels:
         return True
+    if _MOVE_EVIDENCE.search(pr.get("body") or ""):
+        return False
     for row in _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files"):
         names = (row.get("filename") or "", row.get("previous_filename") or "")
         if any(n and _needs_verdict_path(n) for n in names):
@@ -161,9 +180,11 @@ def has_head_approval(fetch: Fetch, repo: str, pr: dict) -> bool:
     return _probe.approval_at_head(probe_pr) is not None
 
 
-def find_unreviewed(fetch: Fetch, repo: str, since: datetime) -> list[dict]:
+def find_unreviewed(fetch: Fetch, repo: str, since: datetime,
+                    now: datetime | None = None) -> list[dict]:
     """``merged-without-verdict`` findings (detection 3)."""
-    since = max(since, POLICY_START)
+    now = now or datetime.now(timezone.utc)
+    since = max(since, POLICY_START, now - timedelta(days=VERDICT_WINDOW_DAYS))
     findings: list[dict] = []
     for pr in merged_prs(fetch, repo, since):
         if not verdict_required(fetch, repo, pr):
@@ -244,12 +265,24 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
     args = ap.parse_args(argv)
     since = datetime.now(timezone.utc) - timedelta(days=args.since)
     fetch = fetch or gh_fetch
-    findings = find_orphans(fetch, args.repo, since)
-    findings += find_unreviewed(fetch, args.repo, since)
+    findings: list[dict] = []
+    errors: list[str] = []
+    # Each detection runs alone: one failing never loses the other's results.
+    for name, detect in (("orphans", find_orphans), ("verdicts", find_unreviewed)):
+        try:
+            findings += detect(fetch, args.repo, since)
+        except Exception as exc:  # noqa: BLE001 - reported, then exit 2
+            errors.append(f"{name} detection failed: {exc}")
     if args.format == "json":
         print(json.dumps(findings, indent=2))
     else:
-        print(render_md(findings), end="")
+        print(render_md(findings) if findings or not errors else "", end="")
+    for err in errors:
+        print(f"ERROR: {err}", file=sys.stderr)
+        if args.format == "md":
+            print(f"\n**ERROR: {err}**")
+    if errors:
+        return 2
     return 1 if findings else 0
 
 

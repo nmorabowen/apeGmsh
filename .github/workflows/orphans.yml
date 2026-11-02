@@ -30,8 +30,15 @@ jobs:
           python scripts/find_orphans.py --format md > orphans.md
           code=$?
           cat orphans.md
-          if [ "$code" -gt 1 ]; then exit "$code"; fi
-          echo "found=$code" >> "$GITHUB_OUTPUT"
+          # 0 clean, 1 findings, 2 a detection failed (any other code: crash).
+          # Exit 2 still reports what the other detection found, then fails the job.
+          case "$code" in
+            0) echo "found=0" >> "$GITHUB_OUTPUT" ;;
+            1) echo "found=1" >> "$GITHUB_OUTPUT" ;;
+            2) echo "failed=1" >> "$GITHUB_OUTPUT"
+               if grep -q '^| ' orphans.md; then echo "found=1" >> "$GITHUB_OUTPUT"; fi ;;
+            *) exit "$code" ;;
+          esac
 
       - name: Open or update the tracking issue
         if: steps.find.outputs.found == '1'
@@ -51,3 +58,7 @@ jobs:
           else
             gh issue create --title "$title" --body-file body.md
           fi
+
+      - name: Fail the job when a detection failed
+        if: steps.find.outputs.failed == '1'
+        run: exit 1

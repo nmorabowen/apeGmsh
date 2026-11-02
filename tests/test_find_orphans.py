@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = "nmorabowen/apeGmsh"
@@ -151,10 +151,12 @@ HEAD = "a1b2c3d4" + "0" * 32
 OTHER = "99999999" + "0" * 32
 
 
-def _vpr(number, labels, head=HEAD, merged_at="2026-11-01T01:00:00Z"):
+def _vpr(number, labels, head=HEAD, merged_at=None, body=""):
+    merged_at = merged_at or (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     pr = _pr(number, f"pr {number}", f"b{number}", head, "main",
              f"m{number}" + "0" * 30, merged_at)
     pr["labels"] = [{"name": n} for n in labels]
+    pr["body"] = body
     return pr
 
 
@@ -175,7 +177,7 @@ def make_vfetch(prs, files=None, comments=None):
             return None
         if "/pulls/" in path and "/files" in path:
             n = int(path.split("/pulls/")[1].split("/")[0])
-            return [{"filename": f} for f in files.get(n, [])] if "page=1" in path else []
+            return [f if isinstance(f, dict) else {"filename": f} for f in files.get(n, [])] if "page=1" in path else []
         if "/issues/" in path and "/comments" in path:
             n = int(path.split("/issues/")[1].split("/")[0])
             return comments.get(n, []) if "page=1" in path else []
@@ -239,3 +241,113 @@ def test_report_has_separate_section_and_detector_note(capsys):
     assert "## Merged without an approving Review-verdict" in out
     assert "cannot block" in out
     assert "#1 pr 1" in out
+
+
+# --- review of #2679: exemption, window, errors, scope mutations ---
+
+MOVE_BODY = """Slice: #1965
+Author-model: Sonnet
+Class: mechanical
+
+Moves `LadrunoUP` from `element/solid.py` to `element/solid_up.py`, verbatim.
+
+## Verification
+- `verify_move --base 27a95f769 --head bf30ccbba` (pushed sha): `OK, 59 defs, identical multiset`
+"""
+
+
+def test_verify_move_evidence_exempts_a_non_semantic_pr():
+    pr = _vpr(40, ["program"], body=MOVE_BODY)
+    assert not _unreviewed([pr], files={40: ["tests/families.py", "src/a.py"]})
+
+
+def test_semantic_pr_is_never_exempt_by_move_evidence():
+    pr = _vpr(41, ["program", "semantic"], body=MOVE_BODY)
+    assert [h["pr"] for h in _unreviewed([pr])] == [41]
+
+
+def test_body_without_move_evidence_is_still_flagged():
+    pr = _vpr(42, ["program"], body="Slice: #1\nverify_move was not run here.")
+    assert [h["pr"] for h in _unreviewed([pr], files={42: ["tests/a.py"]})] == [42]
+
+
+def test_golden_clause_outside_tests():
+    # not under tests/, so only the "golden" clause puts it in scope
+    gold = "apeGmshViewer/fixtures/line_oracle_basic_only.golden.json"
+    assert [h["pr"] for h in _unreviewed([_vpr(50, ["program"])], files={50: [gold]})] == [50]
+
+
+def test_golden_in_a_docs_path_is_not_a_golden_file():
+    prs = [_vpr(51, ["program"]), _vpr(52, ["program"])]
+    files = {51: ["docs/golden-stills.md"], 52: ["internal_docs/golden/plan.md"]}
+    assert not _unreviewed(prs, files=files)
+
+
+def test_rename_out_of_tests_is_in_scope_via_previous_filename():
+    row = {"filename": "src/apeGmsh/moved_test_helper.py",
+           "previous_filename": "tests/helper.py"}
+    assert [h["pr"] for h in _unreviewed([_vpr(53, ["program"])], files={53: [row]})] == [53]
+
+
+def test_window_limits_scan_and_fetches_nothing_extra():
+    calls = []
+    inner = make_vfetch([_vpr(60, ["program", "semantic"], merged_at="2026-11-01T01:00:00Z")])
+
+    def fetch(path):
+        calls.append(path)
+        return inner(path)
+
+    now = datetime(2026, 11, 30, tzinfo=timezone.utc)  # 29 days later: outside 14 d
+    assert fo.find_unreviewed(fetch, REPO, POST, now=now) == []
+    assert not [c for c in calls if "/comments" in c or "/files" in c]
+
+
+def test_comments_fetched_only_for_in_scope_prs():
+    calls = []
+    inner = make_vfetch([_vpr(70, ["program"]), _vpr(71, ["semantic"]),
+                         _vpr(72, ["program", "semantic"])],
+                        files={70: ["docs/a.md"]})
+
+    def fetch(path):
+        calls.append(path)
+        return inner(path)
+
+    fo.find_unreviewed(fetch, REPO, POST)
+    commented = [c for c in calls if "/comments" in c]
+    assert len(commented) == 1 and "/issues/72/" in commented[0]
+
+
+def _failing(inner, needle):
+    def fetch(path):
+        if needle in path:
+            raise RuntimeError(f"gh api {path} failed: 403")
+        return inner(path)
+    return fetch
+
+
+def _diverged_and_unreviewed():
+    orphan = _pr(858, "orphan", "claude/x", "7" * 40, "main", "a858" + "0" * 36,
+                 (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    orphan["labels"] = []
+    return [orphan, _vpr(80, ["program", "semantic"])]
+
+
+def test_verdict_failure_keeps_orphan_results_and_exits_2(capsys, monkeypatch):
+    _no_acks(monkeypatch)
+    inner = make_vfetch(_diverged_and_unreviewed())
+
+    def fetch(path):
+        if "/compare/main..." in path:
+            return {"status": "diverged"}
+        return inner(path)
+    assert fo.main(["--since", "3"], fetch=_failing(fetch, "/issues/80/comments")) == 2
+    out = capsys.readouterr().out
+    assert "not-on-main" in out and "verdicts detection failed" in out
+
+
+def test_orphan_failure_keeps_verdict_results_and_exits_2(capsys, monkeypatch):
+    _no_acks(monkeypatch)
+    inner = make_vfetch(_diverged_and_unreviewed())
+    assert fo.main(["--since", "3"], fetch=_failing(inner, "/compare/main...")) == 2
+    out = capsys.readouterr().out
+    assert "merged-without-verdict" in out and "orphans detection failed" in out
