@@ -21,6 +21,17 @@ const cssRgb = (rgb: readonly number[]): string =>
 const currentTheme = (): "dark" | "light" =>
   typeof document !== "undefined" && document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
 
+/** The parts of the state nothing in state/loads.ts reads. Anything not named here recomputes the summary. */
+const NOT_LOADS: ReadonlySet<string> = new Set<keyof State>(["nodes", "hover", "selection", "camera", "spotlight", "search", "windows", "inspector"]);
+
+/** Whether a store change can touch the loads summary. */
+export function loadsInputsChanged(s: State, prev: State): boolean {
+  for (const k of Object.keys(s) as (keyof State)[]) {
+    if (s[k] !== prev[k] && !NOT_LOADS.has(k)) return true;
+  }
+  return false;
+}
+
 export function mountLoads(store: Store, subscribeTheme?: (fn: () => void) => () => void): () => void {
   const panel = byId("loads");
   let unlisten: (() => void)[] = [];
@@ -29,6 +40,8 @@ export function mountLoads(store: Store, subscribeTheme?: (fn: () => void) => ()
 
   const render = (s: State, prev: State | null) => {
     const theme = currentTheme();
+    // The summary walks every load and takes hundreds of ms on a large model: not on a hover or a marker size.
+    if (prev && theme === lastTheme && !loadsInputsChanged(s, prev)) return;
     const sig = loadsSignature(s);
     if (prev && theme === lastTheme && sig === lastSig) return;
     lastTheme = theme;

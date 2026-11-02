@@ -147,6 +147,8 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
+  setNodes: { kind: "expose", command: "toggle-nodes", description: "Toggle the node markers on or off" },
+  setNodeSize: { kind: "expose", command: "set-node-size", description: "Set the node markers' size, or let the app choose it" },
 };
 
 // ---- Spotlight Item Model ---------------------------------------------------
@@ -514,6 +516,21 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
           [{ type: "toggleExtrudeFrames" }],
         ),
         keywords: "extrude frames sections 3d beam column profile cross-section toggle",
+      });
+    }
+
+    if (s.mesh) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-nodes",
+          "display",
+          s.nodes.on ? "Hide Nodes" : "Show Nodes",
+          `Node markers are currently ${s.nodes.on ? "ON" : "OFF"}`,
+          [{ type: "setNodes", on: !s.nodes.on }],
+          s.nodes.on,
+          [{ type: "setNodes", on: !s.nodes.on }],
+        ),
+        keywords: "nodes points markers circles toggle",
       });
     }
 

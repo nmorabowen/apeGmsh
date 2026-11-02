@@ -20,6 +20,7 @@ import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isN
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
+import { smartNodeSize } from "./state/nodes.ts";
 import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, resultsPairing, sourceFor, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
@@ -273,6 +274,18 @@ export class Effects {
   private readonly setWindowMs: number;
   private setTimer: ReturnType<typeof setTimeout> | null = null;
 
+  private syncNodeSize(s: State): void {
+    const { on, size: chosen } = s.nodes;
+    if (!on || chosen !== null || !s.mesh) return;
+    const edges = this.blobs.f32(s.mesh.edgePositions);
+    const segments = edges.length ? edges : this.blobs.f32(s.mesh.linePositions);
+    const viewportPx = typeof window === "undefined" ? 900 : Math.min(window.innerWidth, window.innerHeight);
+    const size = smartNodeSize(segments, s.mesh.radius, viewportPx);
+    queueMicrotask(() => {
+      if (this.store.get().nodes.size === null) this.store.dispatch({ type: "setNodeSize", size, auto: true });
+    });
+  }
+
   constructor(store: Store, blobs: BlobStore, bridge: Bridge, opts: { setWindowMs?: number } = {}) {
     this.store = store;
     this.blobs = blobs;
@@ -323,6 +336,8 @@ export class Effects {
       this.store.subscribe((s) => this.syncDeform(s)),
       // 3-D line diagram step range and history scan.
       this.store.subscribe((s) => this.syncLineDiagram(s)),
+      // The node markers' size, chosen when they turn on and the size is automatic.
+      this.store.subscribe((s) => this.syncNodeSize(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {

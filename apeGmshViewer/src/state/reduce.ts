@@ -12,6 +12,7 @@ import {
   LINE_DIAGRAM_CMAP_NAMES,
   lineDiagramKeysOf,
 } from "./lineDiagram.ts";
+import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
@@ -196,6 +197,7 @@ export const initialState: State = {
   selection: { decls: [], picks: [] },
   hover: null,
   visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group", extrudeFrames: false, showOffsets: false },
+  nodes: { on: false, size: null, auto: true },
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
@@ -486,6 +488,8 @@ export function reduce(s: State, e: Event): State {
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
+        // A chosen size belongs to the model it was chosen for; the user's own stays.
+        nodes: { ...s.nodes, on: reread ? s.nodes.on : false, size: s.nodes.auto ? null : s.nodes.size },
         inspector: { pinned: [] },
         spotlight: reread ? s.spotlight : { ...initialSpotlight, seq: s.spotlight.seq },
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
@@ -667,6 +671,15 @@ export function reduce(s: State, e: Event): State {
     case "toggleShowOffsets": {
       const next = e.on !== undefined ? Boolean(e.on) : !s.visibility.showOffsets;
       return s.visibility.showOffsets === next ? s : { ...s, visibility: { ...s.visibility, showOffsets: next } };
+    }
+    case "setNodes": {
+      if (s.nodes.on === e.on) return s;
+      return { ...s, nodes: { ...s.nodes, on: e.on, size: e.on && s.nodes.auto ? null : s.nodes.size } };
+    }
+    case "setNodeSize": {
+      if (e.size === null) return { ...s, nodes: { ...s.nodes, size: null, auto: true } };
+      if (!Number.isFinite(e.size)) return s;
+      return { ...s, nodes: { ...s.nodes, size: Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, e.size)), auto: e.auto === true } };
     }
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);

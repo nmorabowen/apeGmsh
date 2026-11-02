@@ -852,6 +852,14 @@ export interface State {
     extrudeFrames: boolean;
     showOffsets: boolean;
   };
+  /** The node markers, apart from `visibility`: what watches that (the hidden set, the banner) need not wake for a size. */
+  nodes: {
+    on: boolean;
+    /** in pixels; null until the effects choose one (state/nodes.ts `smartNodeSize`) */
+    size: number | null;
+    /** true while the size is the chosen one, false once the user sets it */
+    auto: boolean;
+  };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
@@ -1117,6 +1125,10 @@ export type Event =
   | { type: "setColourBy"; by: ColourBy }
   | { type: "toggleExtrudeFrames"; on?: boolean }
   | { type: "toggleShowOffsets"; on?: boolean }
+  /** turning them on while the size is automatic chooses it again */
+  | { type: "setNodes"; on: boolean }
+  /** a number from the user; `auto` from the effects' choice; null asks for a new choice */
+  | { type: "setNodeSize"; size: number | null; auto?: boolean }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }
