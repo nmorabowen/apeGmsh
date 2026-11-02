@@ -1,6 +1,6 @@
 """Flag merged PRs whose work never reached ``main``.
 
-Two detections over PRs merged in the last ``--since`` days:
+Three detections over PRs merged in the last ``--since`` days:
 
 1. ``not-on-main``: the merge commit is not an ancestor of ``main``
    (``compare/main...<oid>`` reads ``diverged`` or ``ahead``).
@@ -17,12 +17,23 @@ responses through it. Stdlib only.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
+
+# The verdict format and the "approval at the head sha" rule live in
+# program_probe.py (one parser); the BASELINE list lives in land_pr.py.
+_spec = importlib.util.spec_from_file_location(
+    "program_probe", Path(__file__).resolve().parent / "program_probe.py"
+)
+_probe = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_probe)
+BASELINE: tuple[str, ...] = _probe._land_pr.BASELINE
 
 Fetch = Callable[[str], Any]
 
@@ -30,6 +41,20 @@ DEFAULT_REPO = "nmorabowen/apeGmsh"
 DEFAULT_SINCE_DAYS = 90
 PER_PAGE = 100
 MAX_PAGES = 20
+
+#: The T review policy was posted at this instant (lesson #2637); a PR merged
+#: earlier is not held to it. The #2627 landing is exempt by that record.
+POLICY_START = datetime(2026, 10, 30, 19, 37, tzinfo=timezone.utc)
+VERDICT_KIND = "merged-without-verdict"
+VERDICT_NOTE = (
+    "This section is a detector: it reports after the merge and cannot block one."
+)
+#: Paths whose change makes the T review policy require a verdict (besides a
+#: `semantic` label). `tests/` and the workflows are prefixes.
+POLICY_PREFIXES = ("tests/", ".github/workflows/")
+POLICY_FILES = frozenset(
+    {"scripts/land_pr.py", "scripts/check_quirks.py", *BASELINE}
+)
 
 
 # Rows verified redone on ``main`` (issue #1237, maintainer ruling 2026-10-11).
@@ -93,6 +118,66 @@ def merged_prs(fetch: Fetch, repo: str, since: datetime) -> list[dict]:
     return found
 
 
+def _paged(fetch: Fetch, path: str) -> list[dict]:
+    """All pages of a list endpoint ``path`` (which has no query string)."""
+    rows: list[dict] = []
+    for page in range(1, MAX_PAGES + 1):
+        chunk = fetch(f"{path}?per_page={PER_PAGE}&page={page}")
+        if not chunk:
+            break
+        rows.extend(chunk)
+        if len(chunk) < PER_PAGE:
+            break
+    return rows
+
+
+def _needs_verdict_path(name: str) -> bool:
+    return (name.startswith(POLICY_PREFIXES) or name in POLICY_FILES
+            or "golden" in name.lower())
+
+
+def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
+    """Whether the T review policy required a verdict for this merged PR."""
+    labels = {label["name"] for label in pr.get("labels") or []}
+    if "program" not in labels:
+        return False
+    if "semantic" in labels:
+        return True
+    for row in _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files"):
+        names = (row.get("filename") or "", row.get("previous_filename") or "")
+        if any(n and _needs_verdict_path(n) for n in names):
+            return True
+    return False
+
+
+def has_head_approval(fetch: Fetch, repo: str, pr: dict) -> bool:
+    """An approve bound to the merged head; the latest verdict at it decides."""
+    comments = [
+        {"body": c.get("body"), "createdAt": c["created_at"]}
+        for c in _paged(fetch, f"repos/{repo}/issues/{pr['number']}/comments")
+    ]
+    probe_pr = {"headRefOid": pr["head"]["sha"], "comments": comments}
+    return _probe.approval_at_head(probe_pr) is not None
+
+
+def find_unreviewed(fetch: Fetch, repo: str, since: datetime) -> list[dict]:
+    """``merged-without-verdict`` findings (detection 3)."""
+    since = max(since, POLICY_START)
+    findings: list[dict] = []
+    for pr in merged_prs(fetch, repo, since):
+        if not verdict_required(fetch, repo, pr):
+            continue
+        if has_head_approval(fetch, repo, pr):
+            continue
+        sha = pr["head"]["sha"]
+        findings.append({
+            "kind": VERDICT_KIND, "pr": pr["number"], "title": pr["title"],
+            "base": pr["base"]["ref"], "sha": sha,
+            "detail": f"no Review-verdict approve at merged head {sha[:8]}",
+        })
+    return findings
+
+
 def find_orphans(fetch: Fetch, repo: str, since: datetime) -> list[dict]:
     """Return one finding per detection hit."""
     findings: list[dict] = []
@@ -126,15 +211,27 @@ def find_orphans(fetch: Fetch, repo: str, since: datetime) -> list[dict]:
     return [f for f in findings if (f["pr"], f["kind"]) not in ACKNOWLEDGED]
 
 
-def render_md(findings: list[dict]) -> str:
-    if not findings:
-        return "No orphaned work found.\n"
+def _table(findings: list[dict]) -> list[str]:
     lines = ["| Kind | PR | Base | Detail |", "|---|---|---|---|"]
     for f in findings:
         lines.append(
             f"| {f['kind']} | #{f['pr']} {f['title']} | `{f['base']}` | {f['detail']} |"
         )
-    return "\n".join(lines) + "\n"
+    return lines
+
+
+def render_md(findings: list[dict]) -> str:
+    if not findings:
+        return "No orphaned work found.\n"
+    orphans = [f for f in findings if f["kind"] != VERDICT_KIND]
+    unreviewed = [f for f in findings if f["kind"] == VERDICT_KIND]
+    out: list[str] = []
+    if orphans:
+        out += _table(orphans) + [""]
+    if unreviewed:
+        out += ["## Merged without an approving Review-verdict (lesson #2637)", "",
+                VERDICT_NOTE, ""] + _table(unreviewed) + [""]
+    return "\n".join(out).rstrip("\n") + "\n"
 
 
 def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
@@ -145,7 +242,9 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
     args = ap.parse_args(argv)
     since = datetime.now(timezone.utc) - timedelta(days=args.since)
-    findings = find_orphans(fetch or gh_fetch, args.repo, since)
+    fetch = fetch or gh_fetch
+    findings = find_orphans(fetch, args.repo, since)
+    findings += find_unreviewed(fetch, args.repo, since)
     if args.format == "json":
         print(json.dumps(findings, indent=2))
     else:
