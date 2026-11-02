@@ -16,8 +16,8 @@
 //      kill criterion: it stops here when not), byte-identical manifests except
 //      `timing` (ADR 0128 Acceptance), and each shot's time (kill criterion
 //      ~10 s); the reference ghost likewise, shot 5 times in each of 2 runs in
-//      both chromes (#2664), over the whole image, the phase readout included
-//      (an app still 1 level off on the ghost's outline only is excused, #2715);
+//      both chromes (#2664), model and app shots alternating (#2715), over the
+//      whole image, the phase readout included;
 //   INV-4 (#2696): an app still is the page as it settled: a capture that
 //      first returns a stale frame still writes the right still, a page that
 //      never settles refuses the shot with no PNG, and `--capture-tries` below
@@ -344,32 +344,20 @@ log("D9 layers: ok");
   assert.equal((byName(G1).get("ghost0.model")!.deform as { ghost: boolean }).ghost, true, "the result records the ghost");
   // A ghost that is not drawn would be stable too.
   assert.ok(rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).count > 1000, "the ghost is drawn");
-  // The ghost's box: where the ghost changes the model still (ghost0.model against the same view without it).
+  // The ghost's box: where the ghost changes the model still (ghost0.model against the same view without it), named in a failure.
   const ghostBox = rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).bbox!;
-  // A box over most of the image would excuse most of it (it measures about 20%).
-  const boxShare = ((ghostBox[2] - ghostBox[0]) * (ghostBox[3] - ghostBox[1])) / (SIZE[0] * SIZE[1]);
-  assert.ok(boxShare < 0.3, `the ghost's box ${ghostBox.join(", ")} covers ${Math.round(boxShare * 100)}% of the image, 30% or more`);
-  let excused = 0;
   for (const chrome of ["model", "app"]) {
     const first = still(G1, `ghost0.${chrome}`);
     for (const R of [G1, G2]) {
       for (let i = 0; i < 5; i++) {
-        // The whole image, the phase readout included: an app still is the page as it settled (#2696).
+        // The whole image, the phase readout included: an app still is the page as it settled (#2696). No pixel is
+        // excused: the app stills alternate with model stills, the order that drew the ghost's outline 1 level off (#2715).
         const d = levelDiff(first, still(R, `ghost${i}.${chrome}`), ghostBox);
-        if (!d.count) continue;
-        // #2715 (VA2j, open): when model and app shots alternate, the renderer's canvas draws the ghost's outline 1
-        // level off in some app shot, which one depending on timing (about 200 pixels). Excused only there: an app still,
-        // at most 1000 differing pixels, every one at most 1 level and inside the ghost's box. A ghost moved or
-        // recoloured, or shifted 1 level over a large area, still fails.
-        if (chrome === "app" && d.count <= 1000 && d.maxLevel <= 1 && d.outside === 0) {
-          excused++;
-          continue;
-        }
-        throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")}; up to ${d.maxLevel} levels; ${d.outside} outside the ghost's box ${ghostBox.join(", ")})`);
+        if (d.count) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")}; up to ${d.maxLevel} levels; ${d.outside} outside the ghost's box ${ghostBox.join(", ")})`);
       }
     }
   }
-  log(`reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical but for ${excused} app stills at most 1 level off at most 1000 pixels inside the ghost's box (${Math.round(boxShare * 100)}% of the image; #2715)`);
+  log("reference ghost: 5 shots in each of 2 runs, model and app shots alternating, pixel-identical in both chromes");
 }
 
 // INV-4 (#2696): an app still is the page as it settled, or the shot is refused.

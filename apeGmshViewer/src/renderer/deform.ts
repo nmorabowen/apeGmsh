@@ -272,8 +272,21 @@ function encodeSrgb(m: THREE.Material): void {
  * frame in 40 against none). With no MSAA it does not. So the ghost's surfaces are
  * drawn into their own target, with no MSAA, tested against the depth of the
  * opaque scene drawn there first, and this full-screen triangle lays the result
- * over the canvas with the same blend, covering every sample of every pixel. It
- * goes after the mesh's own blended outline edges (renderOrder 0), which differed
+ * over the canvas, covering every sample of every pixel the ghost reaches.
+ *
+ * It blends in its own shader, not in the canvas (#2715). The canvas's blend was
+ * still not reproducible where the ghost lies over a pixel whose samples differ
+ * (the mesh's silhouette and its edge lines): about 200 px, 1 level, in an app
+ * shot after a model shot, which one depending on timing, with the same GL work
+ * and the same target. Blending over cleared samples only was stable; over the
+ * mesh's samples it was not. So the triangle copies the canvas as it is (resolved)
+ * just before it draws, blends the ghost over that copy, and writes the result
+ * with no blending, one value to every sample of the pixel; it discards where the
+ * ghost is empty, so those pixels keep their own samples. The blend is the same
+ * sum (premultiplied over), now taken once per pixel on the resolved colour: a
+ * pixel may round 1 level apart from the canvas's per-sample blend.
+ *
+ * It goes after the mesh's own blended outline edges (renderOrder 0), which differed
  * in about 1 frame in 100 when they blended over it (5 levels; 0 of 12,000 frames
  * this way), and before the gizmos and the selection (renderOrder 1 and up).
  *
