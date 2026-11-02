@@ -196,11 +196,17 @@ def test_one_state_alone_matches_the_conformance_golden(quantity: str, address: 
 
 def test_the_table_verdicts_match_the_conformance_golden() -> None:
     table = _table()
-    got: dict[str, dict[str, str]] = {"user": {}, "model": {}}
-    for ref in table.refused:
-        got[ref.origin][ref.name] = ref.reason
-    assert got == DOC["table"]
-    assert set(DOC["table"]["user"].values()) == {"clash", "cycle", "unresolved"}
+    got = sorted((r.origin, r.row, r.name, r.reason) for r in table.refused)
+    want = sorted((v["origin"], v["row"], v["name"], v["reason"]) for v in DOC["table"])
+    assert got == want
+    # Every reason of A3, and the row with two faults reads the one judged first.
+    assert {v["reason"] for v in DOC["table"]} == {
+        "empty-name", "duplicate", "clash", "unknown-rule", "no-terms",
+        "bad-param", "bad-term", "unresolved", "cycle"}
+    both = [v["reason"] for v in DOC["table"] if v["name"] == "both_faults"]
+    assert both == ["bad-param"]
+    case = [v["reason"] for v in DOC["table"] if v["name"] == "M_case"]
+    assert case == ["bad-term"]
 
 
 def test_the_committed_fixture_is_what_the_script_writes() -> None:
@@ -213,8 +219,8 @@ def test_the_committed_fixture_is_what_the_script_writes() -> None:
 
 def test_the_fixture_covers_every_rule_and_both_signs() -> None:
     rules = {c["rule"] for c in DOC["combinations"]}
-    assert rules == {"linear", "srss", "cqc", "abs_sum", "directional", "envelope"}
-    envelopes = {c["envelope"] for c in DOC["combinations"] if c["rule"] == "envelope"}
+    assert rules == {"linear", "srss", "cqc", "abs_sum", "directional", "envelope", "median"}
+    envelopes = {c["envelope"] for c in DOC["combinations"] if c["rule"] == "envelope"} - {""}
     assert envelopes == {"max", "min", "absmax"}
     goldens = DOC["goldens"]["recorded"].values()
     assert {g["signed"] for g in goldens if "signed" in g} == {True, False}

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import math
+import unicodedata
 from pathlib import Path
 from typing import Any, Optional
 
@@ -175,6 +176,16 @@ COMBINATIONS = [
     combo("cyc_b", "linear", [term(C, "cyc_a")]),
     combo("reaches_cyc", "linear", [term(S, "D"), term(C, "cyc_a")]),
     combo("on_absent", "linear", [term(C, "nobody")]),
+    # One row per remaining reason of A3, each refused alone.
+    combo(" padded", "linear", [term(S, "D")]),
+    combo("dup", "linear", [term(S, "D")]),
+    combo("dup", "linear", [term(S, "L")]),
+    combo("bad_rule", "median", [term(S, "D")]),
+    combo("no_terms", "linear", []),
+    combo("bad_param", "envelope", [term(S, "D")]),
+    combo("bad_term", "linear", [term("stack", "D")]),
+    # A bad term and a bad parameter: the parameters are judged first.
+    combo("both_faults", "envelope", [term("stack", "D")]),
 ]
 
 #: Rows of ``model.h5`` ``/opensees/combinations``: one the user file names, and
@@ -182,6 +193,9 @@ COMBINATIONS = [
 MODEL_COMBINATIONS = [
     combo("M_base", "linear", [term(S, "D", 2.0)]),
     combo("clash", "linear", [term(S, "L")]),
+    # cqc over a case with no damping: a model.h5 row may not name a case at all,
+    # and that is judged before its damping, so it reads bad-term (#2699 review).
+    combo("M_case", "cqc", [term("spectrum", "Ex")]),
 ]
 
 #: Each quantity: whether it is ``@linear``, and the combinations it stores a row for.
@@ -216,20 +230,85 @@ LONE = {
 Cells = dict[tuple[tuple[Any, ...], str], float]
 
 
-def table_verdicts() -> dict[str, dict[str, str]]:
+RULES = ("linear", "srss", "cqc", "abs_sum", "directional", "envelope")
+KINDS = ("stage", "mode", "spectrum", "reference", "combination")
+
+
+def bad_name(name: Any) -> bool:
+    return (not isinstance(name, str) or not name or not unicodedata.is_normalized("NFC", name)
+            or any(unicodedata.category(ch) == "Cc" for ch in name) or name != name.strip())
+
+
+def bad_address(t: dict[str, Any]) -> bool:
+    kind, step, mode = t["kind"], t["step"], t["mode"]
+    if kind not in KINDS or bad_name(t["source"]):
+        return True
+    if kind == "stage":
+        return not (step >= -1 and mode == 0)
+    if kind == "mode":
+        return not (step >= -1 and mode >= 1)
+    if kind == "spectrum":
+        return not (step == -1 and mode >= 0)
+    return not (step == -1 and mode == 0)
+
+
+def row_reason(c: dict[str, Any], origin: str) -> Optional[str]:
+    """A3's reasons for one row alone, in the order the rules table fixes."""
+    if bad_name(c["name"]):
+        return "empty-name"
+    if c["rule"] not in RULES:
+        return "unknown-rule"
+    if not c["terms"]:
+        return "no-terms"
+    if origin == "model" and any(t["kind"] in ("spectrum", "reference") for t in c["terms"]):
+        return "bad-term"
+    rule, env, frac, damp = c["rule"], c["envelope"], c["fraction"], c["damping"]
+    if (rule == "envelope") != (env != "") or (rule == "envelope" and env not in ("max", "min", "absmax")):
+        return "bad-param"
+    if (rule == "directional") != (frac is not None) or (frac is not None and not 0 <= frac <= 1):
+        return "bad-param"
+    if damp is not None and (rule != "cqc" or not 0 < damp < 1):
+        return "bad-param"
+    if origin == "model" and rule == "cqc" and damp is None:
+        return "bad-param"
+    if any(bad_address(t) or not math.isfinite(t["factor"]) for t in c["terms"]):
+        return "bad-term"
+    whole = [t for t in c["terms"] if t["kind"] == "spectrum" and t["mode"] == 0]
+    if rule in ("srss", "abs_sum") and whole and len(c["terms"]) != 1:
+        return "bad-term"
+    if rule == "cqc":
+        first = c["terms"][0]
+        one_set = all((t["kind"], t["source"], t["step"]) == (first["kind"], first["source"], first["step"])
+                      for t in c["terms"])
+        if (whole and len(c["terms"]) != 1) or (
+                not whole and (first["kind"] not in ("mode", "spectrum") or not one_set)):
+            return "bad-term"
+    elif rule not in ("srss", "abs_sum") and whole:
+        return "bad-term"
+    if rule == "cqc" and damp is None and c["terms"][0]["kind"] == "mode":
+        return "bad-param"
+    return None
+
+
+def table_verdicts() -> list[dict[str, Any]]:
     """The verdict on each refused row (A2, A3), by a fixed point, not a peel."""
-    rows = [("user", c) for c in COMBINATIONS] + [("model", c) for c in MODEL_COMBINATIONS]
+    rows = [("user", i, c) for i, c in enumerate(COMBINATIONS)]
+    rows += [("model", i, c) for i, c in enumerate(MODEL_COMBINATIONS)]
     verdict: dict[int, str] = {}
-    for i, (_, c) in enumerate(rows):
-        same = [o for o, d in rows if d["name"] == c["name"]]
-        if len(same) > 1:
-            verdict[i] = "clash" if len(set(same)) > 1 else "duplicate"
-    standing = {c["name"]: i for i, (_, c) in enumerate(rows) if i not in verdict}
+    for at, (origin, _, c) in enumerate(rows):
+        reason = row_reason(c, origin)
+        if reason is not None:
+            verdict[at] = reason
+    for at, (_, _, c) in enumerate(rows):
+        same = [o for o, _, d in rows if d["name"] == c["name"]]
+        if len(same) > 1 and not bad_name(c["name"]) and at not in verdict:
+            verdict[at] = "clash" if len(set(same)) > 1 else "duplicate"
+    standing = {c["name"]: at for at, (_, _, c) in enumerate(rows) if at not in verdict}
 
     def targets(i: int) -> list[Any]:
-        """Each combination row ``i`` names: its index, or None if not visible to it."""
+        """Each combination row ``i`` names: its position, or None if not visible to it."""
         out = []
-        for t in rows[i][1]["terms"]:
+        for t in rows[i][2]["terms"]:
             if t["kind"] == C:
                 j = standing.get(t["source"])
                 out.append(j if j is not None and (rows[i][0] == "user" or rows[j][0] == "model")
@@ -257,10 +336,8 @@ def table_verdicts() -> dict[str, dict[str, str]]:
             if i not in verdict and any(j is None or j in verdict for j in targets(i)):
                 verdict[i] = "unresolved"
                 changed = True
-    out: dict[str, dict[str, str]] = {"user": {}, "model": {}}
-    for i, reason in sorted(verdict.items()):
-        out[rows[i][0]][rows[i][1]["name"]] = reason
-    return out
+    return [{"origin": rows[at][0], "row": rows[at][1], "name": rows[at][2]["name"],
+             "reason": reason} for at, reason in sorted(verdict.items())]
 
 
 class Refused(Exception):
@@ -321,8 +398,7 @@ class Reference:
         self.linear = q["linear"]
         self.scale = q["scale"]
         self.stored = q["stored"]
-        verdicts = table_verdicts()
-        self.refused = set(verdicts["user"]) | set(verdicts["model"])
+        self.refused = {v["name"] for v in table_verdicts()}
         self.rows = {c["name"]: c for c in [*MODEL_COMBINATIONS, *COMBINATIONS]
                      if c["name"] not in self.refused}
         self.memo: dict[str, Cells] = {}
@@ -510,7 +586,8 @@ def golden_lone(quantity: str, addr: str) -> dict[str, Any]:
 def build() -> dict[str, Any]:
     goldens: dict[str, dict[str, Any]] = {}
     for quantity in QUANTITIES:
-        names = [c["name"] for c in COMBINATIONS] if quantity == "recorded" else USER_COMBINATIONS
+        names = (list(dict.fromkeys(c["name"] for c in COMBINATIONS)) if quantity == "recorded"
+                 else USER_COMBINATIONS)
         goldens[quantity] = {name: golden(quantity, name) for name in names}
     lone = {q: {a: golden_lone(q, a) for a in addrs} for q, addrs in LONE.items()}
     return {

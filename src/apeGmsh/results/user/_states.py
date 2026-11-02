@@ -85,23 +85,27 @@ def canonical_stage_name(info: Any) -> str:
 
 
 def user_file_beside(results_file: Optional[Path], model_h5: Optional[Path]) -> Optional[Path]:
-    """The set's ``<stem>.user.h5`` if it exists, else ``None``.
+    """The set's ``<stem>.user.h5``: the first candidate that exists, else ``None``.
 
-    The stem is the model archive's (``<stem>.h5``) when it is known. Otherwise it
-    is the results file's, without ``.part-<N>`` and ``.results``, so
-    ``truss2d.part-0.ladruno`` and ``yoo_slab.results.h5`` both find their set's file.
+    Beside the results file, in order: ``<model stem>.user.h5`` (the model
+    archive is ``<stem>.h5``), then the results file's stem without
+    ``.part-<N>`` and ``.results``, so ``truss2d.part-0.ladruno`` and
+    ``yoo_slab.results.h5`` find their set's file. A model in another folder or
+    under another stem (``from_fem``'s ``<snap>.model.h5``) therefore never
+    hides the file beside the results. With no results file, the candidate is
+    beside the model. An explicit path is the caller's and is never looked up.
     """
+    candidates: list[Path] = []
+    folder = results_file.parent if results_file is not None else None
     if model_h5 is not None:
         name = model_h5.name
         stem = name[: -len(".h5")] if name.endswith(".h5") else model_h5.stem
-        found = model_h5.with_name(stem + ".user.h5")
-    elif results_file is not None:
+        candidates.append((folder or model_h5.parent) / (stem + ".user.h5"))
+    if results_file is not None:
         stem = _PART.sub("", results_file.stem)
         stem = stem[: -len(".results")] if stem.endswith(".results") else stem
-        found = results_file.with_name(stem + ".user.h5")
-    else:
-        return None
-    return found if found.is_file() else None
+        candidates.append(results_file.with_name(stem + ".user.h5"))
+    return next((c for c in candidates if c.is_file()), None)
 
 
 def node_keys(ids: Any) -> np.ndarray:

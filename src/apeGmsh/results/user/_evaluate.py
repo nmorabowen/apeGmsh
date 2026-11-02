@@ -186,7 +186,7 @@ def _row(table: CombinationTable, name: str, caller: str) -> Combination:
     try:
         return table.by_name(name)
     except KeyError as exc:
-        reason = "refused" if any(r.name == name for r in table.refused) else "unresolved"
+        reason = "refused" if table.refusal(name) is not None else "unresolved"
         raise CombinationRefused(caller, reason, str(exc.args[0])) from exc
 
 

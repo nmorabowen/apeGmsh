@@ -1508,6 +1508,126 @@
    "envelope": "",
    "fraction": null,
    "damping": null
+  },
+  {
+   "name": " padded",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "dup",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "dup",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_rule",
+   "rule": "median",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "no_terms",
+   "rule": "linear",
+   "terms": [],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_param",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_term",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stack",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "both_faults",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stack",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
   }
  ],
  "model_combinations": [
@@ -1534,6 +1654,22 @@
     {
      "kind": "stage",
      "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "M_case",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
      "step": -1,
      "mode": 0,
      "factor": 1.0
@@ -1596,18 +1732,98 @@
    }
   }
  },
- "table": {
-  "user": {
-   "clash": "clash",
-   "cyc_a": "cycle",
-   "cyc_b": "cycle",
-   "reaches_cyc": "cycle",
-   "on_absent": "unresolved"
+ "table": [
+  {
+   "origin": "user",
+   "row": 28,
+   "name": "clash",
+   "reason": "clash"
   },
-  "model": {
-   "clash": "clash"
+  {
+   "origin": "user",
+   "row": 29,
+   "name": "cyc_a",
+   "reason": "cycle"
+  },
+  {
+   "origin": "user",
+   "row": 30,
+   "name": "cyc_b",
+   "reason": "cycle"
+  },
+  {
+   "origin": "user",
+   "row": 31,
+   "name": "reaches_cyc",
+   "reason": "cycle"
+  },
+  {
+   "origin": "user",
+   "row": 32,
+   "name": "on_absent",
+   "reason": "unresolved"
+  },
+  {
+   "origin": "user",
+   "row": 33,
+   "name": " padded",
+   "reason": "empty-name"
+  },
+  {
+   "origin": "user",
+   "row": 34,
+   "name": "dup",
+   "reason": "duplicate"
+  },
+  {
+   "origin": "user",
+   "row": 35,
+   "name": "dup",
+   "reason": "duplicate"
+  },
+  {
+   "origin": "user",
+   "row": 36,
+   "name": "bad_rule",
+   "reason": "unknown-rule"
+  },
+  {
+   "origin": "user",
+   "row": 37,
+   "name": "no_terms",
+   "reason": "no-terms"
+  },
+  {
+   "origin": "user",
+   "row": 38,
+   "name": "bad_param",
+   "reason": "bad-param"
+  },
+  {
+   "origin": "user",
+   "row": 39,
+   "name": "bad_term",
+   "reason": "bad-term"
+  },
+  {
+   "origin": "user",
+   "row": 40,
+   "name": "both_faults",
+   "reason": "bad-param"
+  },
+  {
+   "origin": "model",
+   "row": 1,
+   "name": "clash",
+   "reason": "clash"
+  },
+  {
+   "origin": "model",
+   "row": 2,
+   "name": "M_case",
+   "reason": "bad-term"
   }
- },
+ ],
  "goldens": {
   "recorded": {
    "ULS": {
@@ -2578,6 +2794,27 @@
     "refused": "refused"
    },
    "on_absent": {
+    "refused": "refused"
+   },
+   " padded": {
+    "refused": "refused"
+   },
+   "dup": {
+    "refused": "refused"
+   },
+   "bad_rule": {
+    "refused": "refused"
+   },
+   "no_terms": {
+    "refused": "refused"
+   },
+   "bad_param": {
+    "refused": "refused"
+   },
+   "bad_term": {
+    "refused": "refused"
+   },
+   "both_faults": {
     "refused": "refused"
    }
   },

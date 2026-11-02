@@ -1527,11 +1527,20 @@ class Results:
     ) -> "UserCombinations":
         """The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).
 
-        ``user_h5`` is the set's ``<stem>.user.h5``; omitted, the one named by
-        the model archive's stem, else by this file's stem without
-        ``.part-<N>`` and ``.results``, is used when it exists. ``model_h5`` (default: the archive
-        this was opened with) brings its ``/opensees/combinations`` into the
-        table. ``spectra`` is a ``/spectra`` provider for spectrum terms.
+        ``user_h5`` is the set's ``<stem>.user.h5``. Omitted, the first that
+        exists beside this file is used: ``<model stem>.user.h5``, then this
+        file's stem without ``.part-<N>`` and ``.results``. ``model_h5``
+        (default: the archive this was opened with) brings its
+        ``/opensees/combinations`` into the table. ``spectra`` is a
+        ``/spectra`` provider for spectrum terms.
+
+        A term names a stage by its stamped name, else ``stage_<i>`` (A3). On
+        a ``Results`` opened without a model, a ``model_h5`` that declares
+        program stages names this file's stages first, as
+        ``from_ladruno(model_h5=)`` does (``_bind_stage_names``), so a term
+        reads the same stage however the file was opened. A reader that
+        declines the pairing keeps its names, and says why.
+
         ``evaluate(state, component, level=...)`` combines a recorded result,
         ``evaluate(state, user_result=...)`` a user result. A state handle of
         another ``Results`` is refused.
@@ -1540,6 +1549,8 @@ class Results:
         from .user._states import UserCombinations, user_file_beside
 
         model = model_h5 if model_h5 is not None else self._model_path
+        if model is not None and self._model_path is None:
+            self._name_stages_after(Path(model))
         if user_h5 is None:
             user_h5 = user_file_beside(
                 None if self._path is None else Path(self._path),
@@ -1566,6 +1577,29 @@ class Results:
             handle=handle,
             spectra=spectra,
         )
+
+    def _name_stages_after(self, model_h5: Path) -> None:
+        """Name an unnamed capture's stages after ``model_h5``'s program, once.
+
+        Nothing happens when the archive declares no stages, when the reader
+        names its own stages (a native file), or when a stage already carries
+        a program name. Otherwise this is the pairing ``from_ladruno(model_h5=)``
+        makes, with its warnings; the reader keeps its names where it declines.
+        """
+        import h5py
+
+        if not hasattr(self._reader, "attach_stage_names"):
+            return
+        if any(s.aliases for s in self._all_stages() if s.kind != "mode"):
+            return
+        with h5py.File(model_h5, "r") as f:
+            if "opensees" not in f or "stages" not in f["opensees"]:
+                return
+        from ..opensees.opensees_model import OpenSeesModel
+
+        _bind_stage_names(self._reader, OpenSeesModel.from_h5(model_h5),
+                          model_path=model_h5)
+        self._stages_cache = None
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)

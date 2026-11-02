@@ -381,3 +381,90 @@ def test_a_deep_chain_and_a_wide_diamond_evaluate(run) -> None:
     assert is_signed(table, "d21")
     assert evaluate(table, "d21", FixtureSource()).field.values[0, 0] == 0.0
     assert time.perf_counter() - t0 < 1.0
+
+
+# ---- delta review of #2711 --------------------------------------------------------
+
+
+@pytest.mark.parametrize("model_at", ["model.h5", "results/from_fem/0123abcd.model.h5"])
+def test_a_model_of_another_stem_or_folder_does_not_hide_the_user_file(
+        run, tmp_path: Path, model_at: str) -> None:
+    """Delta finding 1: <model stem>.user.h5 only if it is beside the results file."""
+    model = tmp_path / model_at
+    model.parent.mkdir(parents=True, exist_ok=True)
+    write_user_file(tmp_path / "run.user.h5", _model(model), results_file=tmp_path / "run.ladruno",
+                    combinations=[Combination("ULS", "linear", (_stage("stage_0", 1.2),))])
+    combos = run.combinations(model_h5=model)
+    assert combos.user_h5 == tmp_path / "run.user.h5"
+    assert combos.names == ("ULS",)
+
+
+def _program(path: Path, *kinds: str) -> Path:
+    """A bridge model.h5 of the truss whose stages are gravity, live and modal."""
+    from tests.test_results_ladruno_stage_binding import _model_h5
+
+    return _model_h5(path, *zip(("gravity", "live", "modal"), kinds))
+
+
+@pytest.mark.parametrize("stamped", [False, True])
+def test_a_stage_name_does_not_depend_on_how_the_file_was_opened(tmp_path: Path, stamped: bool) -> None:
+    """Delta finding 2: a model naming the stages names them for combinations()."""
+    path = _build_set(tmp_path)
+    model = _program(tmp_path / "run.h5", "static", "static", "static")
+    write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
+        Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6))),
+        Combination("ULS_ids", "linear", (_stage("stage_0", 1.2), _stage("stage_1", 1.6)))])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = Results.from_ladruno(path, model_h5=model) if stamped else Results.from_ladruno(path)
+        combos = run.combinations(model_h5=model)
+    got = combos.evaluate("ULS", "displacement_x").field.values[:, 0]
+    want = 1.2 * _read(run, "stage_0") + 1.6 * _read(run, "stage_1")
+    np.testing.assert_allclose(got, want, rtol=1e-15)
+    with pytest.raises(CombinationRefused) as err:
+        combos.evaluate("ULS_ids", "displacement_x")
+    assert "stamped" in err.value.detail
+
+
+def test_a_reader_that_declines_the_names_keeps_stage_i(tmp_path: Path) -> None:
+    """The .ladruno records KIND static; a program calling live transient is misaligned."""
+    from apeGmsh.results.readers._ladruno import StageKindMismatchWarning
+
+    path = _build_set(tmp_path)
+    model = _program(tmp_path / "run.h5", "static", "transient", "static")
+    write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
+        Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6))),
+        Combination("ULS_ids", "linear", (_stage("stage_0", 1.2), _stage("stage_1", 1.6)))])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = Results.from_ladruno(path)
+    with pytest.warns(StageKindMismatchWarning):
+        combos = run.combinations(model_h5=model)
+    want = 1.2 * _read(run, "stage_0") + 1.6 * _read(run, "stage_1")
+    np.testing.assert_allclose(
+        combos.evaluate("ULS_ids", "displacement_x").field.values[:, 0], want, rtol=1e-15)
+    with pytest.raises(CombinationRefused) as err:
+        combos.evaluate("ULS", "displacement_x")
+    assert err.value.reason == "unresolved"
+
+
+def test_a_ten_thousand_deep_chain_evaluates_in_about_the_judges_time() -> None:
+    """Delta finding 4: by_name is a lookup, so evaluation is linear in the chain."""
+    import time
+
+    from apeGmsh.results.user._descriptor import resolve
+    from apeGmsh.results.user._evaluate import evaluate
+
+    from tests.results.user.test_user_conformance import FixtureSource
+
+    rows = [Combination("c0", "linear", (Term("stage", "D"),))]
+    rows += [Combination(f"c{i}", "linear", (Term("combination", f"c{i - 1}"),))
+             for i in range(1, 10_000)]
+    t0 = time.perf_counter()
+    table = resolve(rows)
+    judge = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    got = evaluate(table, "c9999", FixtureSource()).field.values
+    spent = time.perf_counter() - t0
+    np.testing.assert_array_equal(got[0], [1.0, 2.0])
+    assert spent < max(2.0, 20 * judge), (spent, judge)

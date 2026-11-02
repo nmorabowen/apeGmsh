@@ -103,13 +103,28 @@ class CombinationTable:
     refused: tuple[Refusal, ...]
     model_rows: tuple[Combination, ...] = ()
 
-    def by_name(self, name: str) -> Combination:
+    def __post_init__(self) -> None:
+        # Name -> row, and name -> first refusal: by_name is a lookup, not a scan.
+        rows: dict[str, Combination] = {}
         for row in (*self.rows, *self.model_rows):
-            if row.name == name:
-                return row
+            rows.setdefault(row.name, row)
+        refusals: dict[str, Refusal] = {}
         for ref in self.refused:
-            if ref.name == name:
-                raise KeyError(f"combination {name!r} is refused: {ref.reason} ({ref.detail})")
+            refusals.setdefault(ref.name, ref)
+        object.__setattr__(self, "_rows_by_name", rows)
+        object.__setattr__(self, "_refusals_by_name", refusals)
+
+    def refusal(self, name: str) -> Optional[Refusal]:
+        """The first refusal of a row named ``name``, or ``None``."""
+        return self._refusals_by_name.get(name)  # type: ignore[attr-defined]
+
+    def by_name(self, name: str) -> Combination:
+        row = self._rows_by_name.get(name)  # type: ignore[attr-defined]
+        if row is not None:
+            return row
+        ref = self.refusal(name)
+        if ref is not None:
+            raise KeyError(f"combination {name!r} is refused: {ref.reason} ({ref.detail})")
         raise KeyError(f"no combination named {name!r}")
 
 
