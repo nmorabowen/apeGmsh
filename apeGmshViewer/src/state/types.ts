@@ -927,6 +927,82 @@ export interface State {
   camera: CameraState;
   /** VA1: the theme of the page and the viewport (an effect applies it with theme/tokens.ts `applyTheme`) */
   theme: ThemeMode;
+  /** VA5 (ADR 0128 D5): the views agents offered, and the way back from one the human applied */
+  offers: OffersState;
+}
+
+/**
+ * VA5 (ADR 0128 D5): where an offer stands. `pending` can be applied;
+ * `applying` is the click being carried out; `applied` is a click that drew
+ * the view; `refused` names why it cannot be (D2) and has no Apply.
+ */
+export type OfferStatus = "pending" | "applying" | "applied" | "refused";
+
+/** What `--present` hands the window for one shot of its spec (src/spec/snapshot.ts `offersOfDocument`). */
+export interface OfferIn {
+  name: string;
+  caption: string | null;
+  /** D9: says the still-only keys the shot carries are ignored here; null when it carries none */
+  ignored: string | null;
+  /** the spec's side of the offer: read only by src/spec/snapshot.ts (the store and the panels never look inside it) */
+  payload: unknown;
+  /** already refused when it arrived (the window could not read its spec): listed with this reason, and never applied */
+  refused?: string;
+}
+
+export interface Offer extends OfferIn {
+  /** unique for the window session */
+  id: number;
+  /** when it reached the window (ms since the epoch) */
+  arrivedAt: number;
+  status: OfferStatus;
+  /** why it is refused; null otherwise */
+  reason: string | null;
+  /** D5: the files outside the open set a click opens first */
+  opens: readonly string[];
+  /** refused by the drawn view at a click, which reading the set again does not undo */
+  viewRefused: boolean;
+}
+
+/** VA5: the view before an offer was applied, for Back (D5). Everything an offer changes, and the set it was on. */
+export interface ViewMemo {
+  files: { model: string; results: string | null };
+  at: PhaseKey | null;
+  picks: readonly Pick[];
+  visibility: State["visibility"];
+  contour: {
+    source: ContourSource;
+    field: string | null;
+    component: string | null;
+    gauss: GaussMode;
+    range: ContourRange;
+    fixed: { min: number; max: number } | null;
+    cmap: ContourCmap;
+    sourceUnits: UnitSystemId | null;
+    targetUnits: UnitDisplay;
+  };
+  deform: { on: boolean; scale: number; ghost: boolean };
+  clip: { planes: readonly ClipPlane[]; applyCuts: boolean; showGizmos: boolean; cutFace: boolean };
+  lineDiagram: boolean;
+  loads: boolean;
+  camera: CameraPose | null;
+  theme: ThemeMode;
+}
+
+/** VA5: offers last for the window session (D5), through any open or failed read. */
+export interface OffersState {
+  /** newest first, at most MAX_OFFERS (state/reduce.ts) */
+  list: readonly Offer[];
+  /** the last offer id handed out */
+  seq: number;
+  /** the human's click being carried out; the offer runner acts on each new `seq`. Null at rest: a click while one runs is dropped. */
+  request: { kind: "apply"; id: number; seq: number } | { kind: "back"; seq: number } | null;
+  /** counts requests for the whole session */
+  requestSeq: number;
+  /** the views to go back to, last applied first; `offer` is the id it was applied from */
+  back: readonly { offer: number; memo: ViewMemo }[];
+  /** why the last Back could not restore the view; cleared by the next click */
+  notice: string | null;
 }
 
 /**
@@ -1181,6 +1257,20 @@ export type Event =
   | { type: "setSearchText"; text: string }
   | { type: "addSearchClause"; clause: Omit<SearchClause, "id"> }
   | { type: "removeSearchClause"; id: string }
-  | { type: "clearSearch" };
+  | { type: "clearSearch" }
+  /** VA5 (ADR 0128 D5): `--present` reached the window. It lists offers and changes nothing else (INV-5). */
+  | { type: "offerReceived"; offers: readonly OfferIn[]; at: number }
+  /** VA5: the offer runner's judgement of a listed offer against the open set: applicable, or refused with the reason */
+  | { type: "offerAssessed"; id: number; refused: string | null; opens: readonly string[] }
+  /** VA5: the human clicked Apply; the only way an offer reaches the view (INV-5) */
+  | { type: "applyOffer"; id: number }
+  /** VA5: the human clicked Back */
+  | { type: "backOffer" }
+  /** VA5 (the runner): the click drew the view; `memo` is the view before it, null when no model was open to go back to */
+  | { type: "offerApplied"; id: number; memo: ViewMemo | null }
+  /** VA5 (the runner): the click was refused and the view put back; the offer stays listed as refused */
+  | { type: "offerRefused"; id: number; reason: string }
+  /** VA5 (the runner): Back finished; `notice` says why the view could not be restored */
+  | { type: "offerBackDone"; notice: string | null };
 
 export type EventType = Event["type"];

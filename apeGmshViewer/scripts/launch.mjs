@@ -5,10 +5,13 @@
 //   node scripts/launch.mjs capture  <model.h5> <out.png>
 //   node scripts/launch.mjs render   <spec.json> <outdir>  ADR 0128 D3, D4: one PNG per shot + manifest.json
 //   node scripts/launch.mjs describe <file.h5> <outdir>    ADR 0128 D4: describe.json
+//   node scripts/launch.mjs present  <spec.json>           ADR 0128 D5: offer the spec to the running window
+//   node scripts/launch.mjs snapshot <outdir>              ADR 0128 D6: the running window's view as a spec
 //
 // render exits with the app's code: 0 every shot drawn, 1 a shot refused (or
-// the run failed), 2 the spec refused (no PNG). The only process started is
-// the Electron binary from node_modules.
+// the run failed), 2 the spec refused (no PNG). present and snapshot too: 0
+// done, 1 no window is running (nothing opens), 2 the spec or `<outdir>`
+// refused. The only process started is the Electron binary from node_modules.
 
 import electronBinary from "electron";
 import { spawn } from "node:child_process";
@@ -36,11 +39,24 @@ if (badFlag) {
   process.exit(2);
 }
 
-if (!["view", "measure", "capture", "render", "describe"].includes(mode ?? "")) {
-  console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png], or render <spec.json> <outdir>, or describe <file.h5> <outdir>");
+if (!["view", "measure", "capture", "render", "describe", "present", "snapshot"].includes(mode ?? "")) {
+  console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png], or render <spec.json> <outdir>, or describe <file.h5> <outdir>, or present <spec.json>, or snapshot <outdir>");
   process.exit(2);
 }
-if (mode === "render" || mode === "describe") {
+if (mode === "present" || mode === "snapshot") {
+  // ADR 0128 D5, D6: these reach the running window, and never open one.
+  if (!file) {
+    console.error(mode === "present" ? "launch.mjs present <spec.json>" : "launch.mjs snapshot <outdir>");
+    process.exit(2);
+  }
+  if (mode === "present" && !existsSync(file)) {
+    console.error(`no such file: ${file}`);
+    process.exit(2);
+  }
+  const target = mode === "present" ? `--spec=${resolve(file)}` : `--out=${resolve(file)}`;
+  const child = spawn(electronBinary, [root, `--mode=${mode}`, target], { stdio: "inherit" });
+  child.on("exit", (code) => process.exit(code ?? 1));
+} else if (mode === "render" || mode === "describe") {
   // ADR 0128 D4: an agent mode writes into its folder only; the app writes and exits with the code.
   const what = mode === "render" ? "<spec.json>" : "<file.h5>";
   if (!file || !outArg) {

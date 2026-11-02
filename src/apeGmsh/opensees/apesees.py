@@ -27,6 +27,11 @@ from typing import (
     cast,
 )
 
+from ._internal._combinations_h5 import (
+    Combination,
+    CombinationTerm,  # noqa: F401  (public: a term that names a step or a mode)
+    declare_combination,
+)
 from ._internal.artifact_write import BridgeArtifactWriter, emit_deck_tail
 from ._internal.build.errors import BridgeError, TagPlanMiss
 from ._internal.build.records import (
@@ -951,6 +956,8 @@ class BuiltModel:
     # declaration order) or ``"fem"`` (each physical-group element keeps
     # its FEM element id as its OpenSees tag; see ``emit``).
     element_tags:            ElementTagMode = "sequential"
+    # ADR 0130 D4: written as /opensees/combinations; no deck reads them.
+    combinations:            tuple[Combination, ...] = ()
     # ADR 0062 — per-build cache of resolved moment-tensor ``(node, force)``
     # pairs, keyed by ``id(rec)``. The host search in
     # ``resolve_moment_tensor_pairs`` runs against the full FEM snapshot and is
@@ -8695,6 +8702,9 @@ class apeSees(
         # read by ``_resolve`` so reference kwargs accept a name string
         # as well as the object handle.
         self._names: dict[str, Primitive] = {}
+        # ADR 0130 D4: declared combinations by name, in declaration order.
+        # Their own namespace: a term's ``kind`` separates them from stages.
+        self._combinations: dict[str, Combination] = {}
         # ``ops.spring_bed``'s shared unit Elastic / Viscous, by their
         # synthesised provenance key. Kept out of ``_names`` so no user
         # material name can be mistaken for them.
@@ -9044,6 +9054,39 @@ class apeSees(
                         label=label_names)
         self._declare_record(rec, "fix", name)
         self._fix_records.append(rec)
+
+    def combination(
+        self,
+        name: str,
+        terms: "Iterable[object]",
+        *,
+        rule: str = "linear",
+        envelope: str = "",
+        fraction: float | None = None,
+        damping: float | None = None,
+    ) -> Combination:
+        """Declare a combination, archived in ``model.h5`` (ADR 0130 D4).
+
+        A term is ``(stage_name, factor)`` for a stage's last step,
+        ``(combination, factor)`` for a combination this bridge declared, or
+        a :class:`CombinationTerm` for a chosen step or a mode. ``rule`` is
+        ``linear``, ``srss``, ``cqc`` (over modes, ``damping`` required: a
+        case's per-mode damping lives in ``.user.h5``), ``abs_sum``,
+        ``directional`` (``fraction``) or ``envelope`` (``envelope`` is
+        ``max``, ``min`` or ``absmax``).
+
+        Refused here, with nothing registered: a bad name, a repeated name,
+        a term naming an undeclared combination, and a ``spectrum`` or
+        ``reference`` term, whose case lives in ``.user.h5``; declare that
+        combination there after the run. A stage's name is stamped by the
+        run, so it resolves when the combination is evaluated.
+        """
+        combo = declare_combination(
+            name, terms, rule=rule, envelope=envelope, fraction=fraction,
+            damping=damping, known=self._combinations,
+        )
+        self._combinations[name] = combo
+        return combo
 
     def equation_constraint(
         self,
@@ -11010,6 +11053,7 @@ class apeSees(
         # somehow captured brackets must trip the count cross-check,
         # not silently write orphan buckets.
         emitter.set_stage_records(bm.stage_records)
+        emitter.set_combinations(bm.combinations)
         # ADR 0114 R5 (K1-6): the side-channel stores' declarations, one
         # per record in the order the side channels just attached them.
         bm._hand_side_channel_rows(emitter, self._initial_stress_records)
@@ -11436,6 +11480,7 @@ class apeSees(
             },
             mass_from_model=self._mass_from_model,
             element_tags=self._element_tags,
+            combinations=tuple(self._combinations.values()),
             _decls=decls,
             _decl_owners={
                 oid: owner for oid, (owner, _decl) in self._decls.items()},
