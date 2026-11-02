@@ -34,9 +34,18 @@ test("the material injects the depth pull after project_vertex, and the pull bra
   const shader = { uniforms: {}, vertexShader: "void main() {\n#include <project_vertex>\n}", fragmentShader: "void main() {\n#include <color_fragment>\n}" };
   m.onBeforeCompile(shader as never, undefined as never);
   assert.ok(shader.vertexShader.includes(`#include <project_vertex>${NODE_DEPTH_GLSL}`));
-  for (const part of ["isPerspectiveMatrix(projectionMatrix)", `${NODE_DEPTH_PULL}`, `${NODE_DEPTH_FLOOR}`, `${NODE_DEPTH_ORTHO}`]) {
-    assert.ok(NODE_DEPTH_GLSL.includes(part), `the shader's pull has no ${part}`);
-  }
+  // The exact text: nodeClipZ below is its JS copy, and the two change together.
+  assert.equal(
+    NODE_DEPTH_GLSL,
+    `
+  if (isPerspectiveMatrix(projectionMatrix)) {
+    vec4 nodePull = projectionMatrix * vec4(mvPosition.xyz * (1.0 - ${NODE_DEPTH_PULL}), 1.0);
+    gl_Position.z = min(nodePull.z / nodePull.w, gl_Position.z / gl_Position.w - ${NODE_DEPTH_FLOOR}) * gl_Position.w;
+  } else {
+    gl_Position.z -= ${NODE_DEPTH_ORTHO} * gl_Position.w;
+  }`,
+    "the shader's pull changed: change nodeClipZ with it",
+  );
 });
 
 test("perspective depth pull is a share of eye distance: a marker behind a wall stays behind it, even with near at 1e-3", async () => {

@@ -43,6 +43,35 @@ test("joint offsets go to the element's own I and J, also on a cell stored J to 
   }
 });
 
+test("-endZones are measured from the element's own I to J, also on a cell stored J to I", async () => {
+  const { h, stations } = await cantilever();
+  try {
+    const s0 = h.store.get();
+    const e4 = s0.decls["mesh/element/4"]!;
+    const m0 = e4.element!.metas[0]!;
+    // Unequal zones: 0.3 at I and 0.1 at J, so swapped ends would be seen.
+    const metas = [{ ...m0, type: "LadrunoIMKBeam", args: [...m0.args, "-endZones", 0.3, 0.1] }, ...e4.element!.metas.slice(1)];
+    const s = { ...s0, decls: { ...s0.decls, ["mesh/element/4"]: { ...e4, element: { ...e4.element!, metas } } } as typeof s0.decls };
+    const at = (en: number[]) => xs(h, s, gaussLayoutOf(s, h.blobs, { ...stations, elementNodes: Float64Array.from(en) })!).slice(0, 2).map((x) => Math.round(x * 1e6) / 1e6);
+    assert.deepEqual(at([1, 2, 1, 2, 2, 3, 2, 3]), [0.3, 1.9]);
+    assert.deepEqual(at([2, 1, 2, 1, 2, 3, 2, 3]), [1.7, 0.1]);
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+test("stations with NaN element nodes keep one key: a new key per call would rebuild the markers without end", async () => {
+  const { h } = await cantilever();
+  try {
+    const step = (h.effects as unknown as { step: { lineDiagram: { elementNodes: Float64Array } } }).step;
+    step.lineDiagram.elementNodes[0] = NaN;
+    const keys = [1, 2, 3].map(() => h.effects.stationsOfStep()!.key);
+    assert.equal(new Set(keys).size, 1, `keys ${keys.join(" ")}`);
+  } finally {
+    h.effects.dispose();
+  }
+});
+
 test("with no element nodes in the step, the model's connectivity orders the stations", async () => {
   const { h, stations } = await cantilever();
   try {
