@@ -80,6 +80,7 @@ import {
 export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, fmtValue, MAGNITUDE, NO_DATA_RGB, rampCss, RANGE_MODES, sampleCmap } from "./contour.ts";
+export { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 export { legendEntryColour } from "./palette.ts";
 export { classifyFieldDimension, resolveFieldUnits, UNIT_DISPLAY_OPTIONS, UNIT_SYSTEM_IDS, UNIT_SYSTEMS } from "./units.ts";
 export {

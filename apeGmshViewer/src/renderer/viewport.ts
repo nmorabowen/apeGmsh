@@ -26,6 +26,7 @@ import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { LoadsLayer } from "./loads.ts";
+import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -50,6 +51,9 @@ import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./v
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
 const INSPECTOR_PX = 470 + 28;
+
+/** The markers' size for the instant before the effects choose one. */
+const NODE_SIZE_FALLBACK = 5;
 
 export { SELECTION_COLOUR } from "./selection.ts";
 /**
@@ -113,6 +117,8 @@ export class Viewport {
   private offsetLineMap: Int32Array | null = null;
   private offsetJoints: THREE.Points | null = null;
   private offsetJointMap: Int32Array | null = null;
+  private nodePoints: THREE.Points | null = null;
+  private nodeVertices: NodeVertices | null = null;
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
@@ -542,11 +548,29 @@ export class Viewport {
     } else if (s.visibility !== prev.visibility || s.phase !== prev.phase || s.lineDiagram.on !== prev.lineDiagram.on) {
       this.applyVisibility(s);
     }
+    this.syncNodes(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
     this.syncLineDiagram(s);
     this.syncLoads(s);
+  }
+
+  /** The node markers: built on first use, then only shown, hidden and resized. */
+  private syncNodes(s: State): void {
+    if (!s.mesh) return;
+    const { on: nodes, size: nodeSize } = s.nodes;
+    if (nodes && !this.nodePoints) {
+      this.rebuild(s, s.mesh);
+      return;
+    }
+    if (!this.nodePoints) return;
+    const size = nodeSize ?? NODE_SIZE_FALLBACK;
+    const m = this.nodePoints.material as THREE.PointsMaterial;
+    if (this.nodePoints.visible === nodes && m.size === size) return;
+    this.nodePoints.visible = nodes;
+    setNodeSize(this.nodePoints, size);
+    this.requestRender();
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
@@ -667,6 +691,12 @@ export class Viewport {
         gatherInto(next.offsetJoint, this.offsetJointMap, 3, a.array as Float32Array);
         a.needsUpdate = true;
         this.offsetJoints.geometry.computeBoundingSphere();
+      }
+      if (this.nodePoints && this.nodeVertices) {
+        const a = this.nodePoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+        nodePositions(this.nodeVertices, next.line, next.tri, a.array as Float32Array);
+        a.needsUpdate = true;
+        this.nodePoints.geometry.computeBoundingSphere();
       }
       this.setMarkers(info);
       if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
@@ -979,6 +1009,8 @@ export class Viewport {
     this.offsetLineMap = null;
     this.offsetJoints = null;
     this.offsetJointMap = null;
+    this.nodePoints = null;
+    this.nodeVertices = null;
     this.drawn = null;
     this.index = null;
     this.full = null;
@@ -1011,6 +1043,8 @@ export class Viewport {
     this.offsetLineMap = null;
     this.offsetJoints = null;
     this.offsetJointMap = null;
+    this.nodePoints = null;
+    this.nodeVertices = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     const t = themeTokens(this.activeTheme);
@@ -1167,6 +1201,19 @@ export class Viewport {
           this.content.add(this.offsetJoints);
         }
       }
+    }
+
+    // Built only while wanted: off, the markers cost nothing.
+    if (s.nodes.on) {
+      this.nodeVertices = uniqueNodeVertices(
+        this.blobs.get(info.vertexNodes.line) as Float64Array,
+        this.blobs.get(info.vertexNodes.tri) as Float64Array,
+        drawn.lineMap,
+        drawn.triMap,
+      );
+      const t = themeTokens(this.activeTheme);
+      this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
+      this.content.add(this.nodePoints);
     }
 
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.

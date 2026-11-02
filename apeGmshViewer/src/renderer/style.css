@@ -504,6 +504,14 @@ body[data-still-chrome="model"] #scale-stack { display: none; }
 .display-row { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
 .display-label { width: 56px; flex: none; color: var(--muted); font-size: 13px; }
 .display-row > .legend-mode { flex: 1; margin: 0; }
+.node-size-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.node-size { flex: 1; min-width: 0; accent-color: var(--accent); }
+.node-size-label { width: 34px; flex: none; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.node-auto {
+  flex: none; padding: 2px 8px; border-radius: 5px; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
+}
+.node-auto.on { background: var(--accent); color: var(--accent-ink, var(--bg-0)); border-color: var(--accent); }
 .display-row > .contour-cmap { flex: 1; width: auto; margin: 0; }
 .legend-mode button:disabled { opacity: 0.45; cursor: default; }
 

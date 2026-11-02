@@ -23,6 +23,8 @@ import {
   legendEntryColour,
   legendOf,
   NO_DATA_RGB,
+  NODE_SIZE_MAX,
+  NODE_SIZE_MIN,
   rampCss,
   RANGE_MODES,
   resolveFieldUnits,
@@ -105,9 +107,19 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   let lastContour = "";
   let lastDeform = "";
   let lastTheme = "";
+  let nodeControls: { slider: HTMLInputElement; label: HTMLElement; auto: HTMLElement } | null = null;
+  // Updated in place: rebuilding the card under a dragged slider would drop the drag.
+  const syncNodeControls = (s: State) => {
+    if (!nodeControls) return;
+    const { size: nodeSize, auto: nodeSizeAuto } = s.nodes;
+    if (nodeSize !== null) nodeControls.slider.value = String(nodeSize);
+    nodeControls.label.textContent = nodeSize === null ? "" : `${nodeSize} px`;
+    nodeControls.auto.className = "node-auto" + (nodeSizeAuto ? " on" : "");
+  };
   const render = (s: State, prev: State | null) => {
     const theme = document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
     const contour = s.visibility.colourBy === "contour";
+    syncNodeControls(s);
     if (
       prev &&
       theme === lastTheme &&
@@ -117,7 +129,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.edges === prev.visibility.edges &&
       s.visibility.opacity === prev.visibility.opacity &&
       s.visibility.extrudeFrames === prev.visibility.extrudeFrames &&
-      s.visibility.showOffsets === prev.visibility.showOffsets
+      s.visibility.showOffsets === prev.visibility.showOffsets &&
+      s.nodes.on === prev.nodes.on
     ) {
       // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
       // state in every mode; it is rebuilt only when what it says changed.
@@ -199,8 +212,31 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       );
     }
     const nodesRow = el("div", "legend-mode");
-    nodesRow.append(pendingBtn("show", "not built yet"), pendingBtn("numbers", "not built yet"));
+    const nodesOn = s.nodes.on;
+    const showNodes = el("button", "node-show" + (nodesOn ? " on" : ""), "show");
+    showNodes.title = "toggle the node markers";
+    unlisten.push(listen(showNodes, "click", () => store.dispatch({ type: "setNodes", on: !store.get().nodes.on })));
+    nodesRow.append(showNodes, pendingBtn("numbers", "not built yet"));
     labelled("Nodes", nodesRow);
+    nodeControls = null;
+    if (nodesOn) {
+      const sizeRow = el("div", "node-size-row");
+      const slider = el("input", "node-size");
+      slider.type = "range";
+      slider.min = String(NODE_SIZE_MIN);
+      slider.max = String(NODE_SIZE_MAX);
+      slider.step = "1";
+      slider.title = "node marker size on screen";
+      unlisten.push(listen(slider, "input", () => store.dispatch({ type: "setNodeSize", size: Number(slider.value) })));
+      const label = el("span", "node-size-label");
+      const auto = el("button", "node-auto", "auto");
+      auto.title = "let the app choose the size for this model";
+      unlisten.push(listen(auto, "click", () => store.dispatch({ type: "setNodeSize", size: null })));
+      sizeRow.append(slider, label, auto);
+      labelled("Size", sizeRow);
+      nodeControls = { slider, label, auto };
+      syncNodeControls(s);
+    }
     const supportsRow = el("div", "legend-mode");
     supportsRow.append(pendingBtn("BC", "not built yet"));
     labelled("Supports", supportsRow);

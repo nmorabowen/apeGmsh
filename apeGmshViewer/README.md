@@ -88,6 +88,10 @@ Then:
   edges and surfaces, frame extrusion and joint offsets, and the contour
   colormap. A control that does not apply is greyed, with the reason in its
   tooltip. Every left-rail card starts collapsed; a click on its title opens it.
+  **show** on the Nodes row draws a filled circle at every drawn node, following
+  the deformed shape, hidden groups and section cuts. They turn on at a size
+  chosen for the model (a share of the median element edge at the fit view,
+  3 to 10 px); the slider sets your own, which stays until **auto** is pressed.
 - **Banner.** The banner is one line, a count of each kind of message; a
   click opens the full list.
 - **Deformed shape.** On a results stage, **deformed** in the Deformed card moves
