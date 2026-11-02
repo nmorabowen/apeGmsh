@@ -35,6 +35,11 @@
 // The ADR's spellings work too: `--render spec.json --out d`, `--describe f --out d`,
 // `--present spec.json`, `--snapshot --out d` (src/spec/snapshot.ts `agentArgsOf`);
 // a request for an agent mode that cannot be carried out exits 2, never view mode.
+// No mode but view hangs (VA2h, #2665): an uncaught error, a failure the page
+// reports, a crashed renderer or one that stops answering for `--hang-ms`
+// (default 60000) exits 1 with the reason on stderr; a render's manifest.json
+// then refuses the run (key `render`) and keeps no PNG without its entry, and a
+// capture writes the reason to `<out>.error.txt`.
 // Neither agent mode takes the single-instance lock, so both run beside the
 // human's window and never reach it (ADR 0128 INV-5). Both refuse an `--out`
 // that is not empty (exit 2, nothing written), and keep Chromium's profile

@@ -13,6 +13,14 @@
 //          the page asks main for its model, before the run can finish;
 //   hang   the renderer's main thread spinning forever from that same moment
 //          (Electron's `unresponsive`).
+// (a hang uses `--hang-ms=5000`: Electron's own `unresponsive` never fires for
+// a hidden window that gets no input, so main's page watchdog is what ends it),
+// and:
+//   - capture: a throw inside the capture sequence itself (renderer/app.ts,
+//     after its first still) exits 1 with `<out>.error.txt`; it used to exit 0
+//     (`app.quit()` ignores process.exitCode: a D7 run stopped at 38 of 59);
+//   - measure-results on a file that is not HDF5 exits 1 (the same exit 0);
+//   - `--hang-ms` that is not a whole number above 0 is refused, exit 2;
 // and, for `--render` only:
 //   - INV-6 after a crash part way: a still already written has no manifest
 //     entry (the renderer held them), so it is removed, and manifest.json
