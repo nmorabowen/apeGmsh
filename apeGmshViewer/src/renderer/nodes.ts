@@ -57,7 +57,11 @@ export function nodePositions(v: NodeVertices, line: Float32Array, tri: Float32A
 
 /** Under perspective, the share of its eye distance a marker is drawn nearer the eye, so it wins against the face it sits on. */
 export const NODE_DEPTH_PULL = 5e-4;
-/** The least perspective pull in normalised depth, about 2 steps of a 24-bit depth buffer: far off, the share alone rounds away. */
+/**
+ * The least perspective pull in normalised depth, about 2 steps of a 24-bit depth buffer: far off, the share alone
+ * rounds away. Being a fixed NDC offset it covers about d^2 * 2.5e-7 / (2 near) metres at distance d (0.5 m at
+ * 100 m with near 5 mm), where the depth buffer barely resolves more anyway.
+ */
 export const NODE_DEPTH_FLOOR = 2.5e-7;
 /** Under an orthographic camera, the fixed pull in normalised depth: there depth is linear, so a fixed offset is the same everywhere. */
 export const NODE_DEPTH_ORTHO = 2e-4;
