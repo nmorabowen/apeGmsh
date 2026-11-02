@@ -348,7 +348,8 @@ code { font-family: var(--mono); }
 }
 .window-toggle.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 #windows {
-  position: fixed; top: 100px; bottom: 64px; right: 498px; width: 440px;
+  /* VU3b (#2737): below a wrapped scrubber bar, as #left-rail is; 100 px under a one-line bar. */
+  position: fixed; top: max(100px, calc(58px + var(--phase-bar-h, 0px) + 6px)); bottom: 64px; right: 498px; width: 440px;
   display: flex; flex-direction: column; gap: 10px; overflow: auto;
 }
 .window {

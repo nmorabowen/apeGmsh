@@ -84,18 +84,25 @@ export function mountBanner(store: Store): () => void {
    * Where the banner is, for style.css: `#left-rail` sits below it (VU3b,
    * #2737). Its top is the expression above (or the CSS 58 px off the scrubber
    * row), and its drawn height is measured: a still shows every line of a
-   * closed banner, and a wrapped bar moves it down.
+   * closed banner, and a wrapped bar moves it down. Only the closed height is
+   * published: the open list overlays the rail (z-index 20), as it always has,
+   * so while it is open the last closed height stands.
    */
-  const publish = () => {
+  const rootStyle = () => {
     const root = typeof document === "undefined" ? undefined : document.documentElement?.style;
-    if (typeof root?.setProperty !== "function") return;
-    if (banner.hidden) {
-      root.removeProperty("--banner-top");
-      root.removeProperty("--banner-h");
-      return;
-    }
+    return typeof root?.setProperty === "function" ? root : null;
+  };
+  const withdraw = () => {
+    const root = rootStyle();
+    root?.removeProperty("--banner-top");
+    root?.removeProperty("--banner-h");
+  };
+  const publish = () => {
+    const root = rootStyle();
+    if (!root) return;
+    if (banner.hidden) return withdraw();
     root.setProperty("--banner-top", scrubberRow(store.get()) ? bannerTopBelowScrubber() : "58px");
-    root.setProperty("--banner-h", `${Math.ceil(banner.getBoundingClientRect().height)}px`);
+    if (banner.dataset["open"] === undefined) root.setProperty("--banner-h", `${Math.ceil(banner.getBoundingClientRect().height)}px`);
   };
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
@@ -105,5 +112,6 @@ export function mountBanner(store: Store): () => void {
     unsubscribe();
     unlisten?.();
     sized?.disconnect();
+    withdraw();
   };
 }

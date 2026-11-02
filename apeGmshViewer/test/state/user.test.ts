@@ -10,7 +10,7 @@
 // is under test.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { candidates } from "../../src/main/pairing.ts";
 import { barClearPx, familiesOf, familyMarks, mountPhase, userBadgeOf } from "../../src/panels/phase.ts";
-import { bannerTopBelowScrubber } from "../../src/panels/banner.ts";
+import { bannerTopBelowScrubber, mountBanner } from "../../src/panels/banner.ts";
 import { userResultsGroup } from "../../src/panels/legend.ts";
 import { readUserSet, type UserH5, type UserRead } from "../../src/reader/userFile.ts";
 import { initialState, NO_USER_FILE, reduce, userEventOf, userInfoOf, userPathOf, userReadable } from "../../src/state/reduce.ts";
@@ -541,5 +541,105 @@ test("mounted, the bar shows each family as a button; the user families are disa
   } finally {
     off();
     (globalThis as { document?: unknown }).document = prevDoc;
+  }
+});
+
+// ---- the banner's published place, and what clears a wrapped bar (#2737 delta review 2) ----
+
+/** A state that shows the banner (one model warning) on the scrubber row. */
+function bannerState(): State {
+  return { ...withResults(initialState), artifacts: { ...initialState.artifacts, model: { ...artifact("C:/w/run.h5", "ready"), warnings: ["a warning"] } } };
+}
+
+function bannerEnv(height: () => number) {
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  const banner = Object.assign(new FakeEl("div"), { getBoundingClientRect: () => ({ height: height() }) });
+  const root = new Map<string, string>();
+  (globalThis as { document?: unknown }).document = {
+    createElement: (t: string) => new FakeEl(t),
+    getElementById: (id: string) => (id === "banner" ? banner : null),
+    documentElement: { style: { setProperty: (k: string, v: string) => root.set(k, v), removeProperty: (k: string) => root.delete(k) } },
+  };
+  let state = bannerState();
+  const listeners: ((s: State, prev: State) => void)[] = [];
+  const store = {
+    get: () => state,
+    dispatch: () => {},
+    subscribe: (l: (s: State, prev: State) => void) => {
+      listeners.push(l);
+      return () => listeners.splice(listeners.indexOf(l), 1);
+    },
+  } as unknown as Store;
+  const set = (s: State) => {
+    const prev = state;
+    state = s;
+    for (const l of [...listeners]) l(state, prev);
+  };
+  return { banner, root, store, set, restore: () => ((globalThis as { document?: unknown }).document = prevDoc) };
+}
+
+test("F2: the banner publishes its closed height only; the open list overlays the rail and leaves it where it was", () => {
+  let h = 54.2;
+  const e = bannerEnv(() => h);
+  const off = mountBanner(e.store);
+  try {
+    assert.equal(e.banner.hidden, false);
+    assert.equal(e.root.get("--banner-h"), "55px");
+    assert.equal(e.root.get("--banner-top"), bannerTopBelowScrubber());
+    const summary = () => e.banner.all((x) => x.className.startsWith("banner-summary"))[0]!;
+    h = 512; // open: max-height 100vh - 180px
+    summary().click();
+    assert.equal(e.banner.dataset["open"], "true");
+    assert.equal(e.root.get("--banner-h"), "55px", "the open height is not published");
+    h = 54.2;
+    summary().click();
+    assert.equal(e.banner.dataset["open"], undefined);
+    assert.equal(e.root.get("--banner-h"), "55px");
+  } finally {
+    off();
+    e.restore();
+  }
+});
+
+test("F3: the banner's variables are removed when it hides and when it unmounts, as the bar's are", () => {
+  const e = bannerEnv(() => 54);
+  const off = mountBanner(e.store);
+  try {
+    assert.ok(e.root.has("--banner-h") && e.root.has("--banner-top"));
+    e.set({ ...initialState, artifacts: { ...initialState.artifacts, model: artifact("C:/w/run.h5", "ready") } });
+    assert.equal(e.banner.hidden, true);
+    assert.deepEqual([e.root.has("--banner-top"), e.root.has("--banner-h")], [false, false], "hidden");
+    e.set(bannerState());
+    assert.ok(e.root.has("--banner-h"));
+  } finally {
+    off();
+    e.restore();
+  }
+  assert.deepEqual([e.root.has("--banner-top"), e.root.has("--banner-h")], [false, false], "after unmount");
+});
+
+/** One `top:` of style.css, evaluated under a published bar height (px): its `max(...)`/`calc(...)` of px terms. */
+function cssTop(selector: string, barPx: number): number {
+  const css = readFileSync(fileURLToPath(new URL("../../src/renderer/style.css", import.meta.url)), "utf8");
+  const at = css.indexOf(`${selector} {`);
+  assert.ok(at >= 0, `style.css has no ${selector} rule`);
+  const rule = css.slice(at, css.indexOf("}", at));
+  const m = /(?:^|[\s;])top:\s*([^;]+);/.exec(rule);
+  assert.ok(m, `${selector} has no top`);
+  const expr = m[1]!.replace(/var\(--phase-bar-h, 0px\)/g, `${barPx}px`);
+  assert.match(expr, /^[\d\s+.()a-z,-]+$/, `an expression this test can evaluate: ${expr}`);
+  const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/calc\(/g, "(");
+  return Function(`return ${js};`)() as number;
+}
+
+test("F1: #windows and #left-rail sit below a wrapped bar, and where they were under a one-line bar", () => {
+  // A one-line bar draws 33 px (y 58 to 90 in the 1600 px D7 still).
+  assert.equal(cssTop("#windows", 33), 100);
+  assert.equal(cssTop("#left-rail", 33), 102);
+  assert.equal(cssTop("#windows", 0), 100, "no bar published");
+  // A two-line bar (1280 px) and a three-line bar (1100 px): 6 px below the bar's bottom (58 px + its height).
+  for (const h of [77, 116]) {
+    assert.equal(cssTop("#windows", h), 58 + h + 6);
+    assert.equal(cssTop("#left-rail", h), 58 + h + 6);
   }
 });
