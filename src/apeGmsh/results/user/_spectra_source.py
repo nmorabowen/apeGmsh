@@ -124,6 +124,7 @@ class UserSpectra:
         level, component = quantity
         if level not in QUANTITY_LEVELS:
             raise ValueError(f"level {level!r} is not one of {QUANTITY_LEVELS}")
+        hits: list[tuple[CaseQuantity, Optional[int]]]
         if level == "domain":
             hits = [(q, None) for q in case.results
                     if q.target == "domain" and q.label == component]
