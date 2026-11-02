@@ -11,11 +11,10 @@
 // - the reference ghost is the undeformed mesh, whatever is drawn.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
-import { applyGhostVisibility, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
+import { applyGhostVisibility, translucentSurfaces, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
 import { selectionBounds, type Prims } from "../../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
 import { missingMarkers } from "../../src/state/deform.ts";
@@ -193,16 +192,45 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   assert.equal(ghostEdges.visible, false, "ghost outline edges hidden when opacity is 0");
   assert.equal(ghostLines.visible, true, "1-D ghost lines remain visible when 2-D/3-D surfaces are off");
 
-  // Owner ruling on #2664: over translucent surfaces the ghost composites first, under every blended part of the mesh; over opaque ones, after the mesh's edges.
-  for (const [opacity, after] of [[0.35, false], [1, true], [0.2, false], [1, true]] as const) {
-    applyGhostVisibility(group, true, full, opacity);
-    assert.equal(composite.visible, true, `opacity ${opacity}`);
-    assert.equal(composite.renderOrder > 0, after, `opacity ${opacity}: over the mesh's edges`);
-    assert.equal(composite.renderOrder < ghostLines.renderOrder, !after, `opacity ${opacity}: under the ghost's 1-D lines`);
+  // Owner rulings on #2664: over translucent surfaces the ghost composites first, under every blended part of the mesh (main's look);
+  // over opaque ones, after the mesh's edges. Each frame the first triangle decides, from the scene, which of the two draws.
+  const under = objs.find((o) => o.name === "ghost composite under") as THREE.Mesh;
+  assert.ok(under.renderOrder < ghostLines.renderOrder && ghostLines.renderOrder < 0 && composite.renderOrder > 0);
+  applyGhostVisibility(group, true, full, 1);
+  const scene = new THREE.Scene();
+  scene.add(group);
+  const solid = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial());
+  const frames = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial());
+  scene.add(solid, frames);
+  // A renderer that records nothing: the target pass is the GPU's; the decision is not.
+  const noop = () => {};
+  const state = { color: { setMask: noop, setLocked: noop }, depth: { setMask: noop } };
+  const renderer = {
+    getDrawingBufferSize: (v: THREE.Vector2) => v.set(4, 4), getRenderTarget: () => null, autoClear: true, getClearAlpha: () => 0,
+    getClearColor: (c: THREE.Color) => c, setRenderTarget: noop, setClearColor: noop, clear: noop, render: noop, state: { buffers: state },
+  } as unknown as THREE.WebGLRenderer;
+  const draws = (): [boolean, boolean] => {
+    under.onBeforeRender(renderer, scene, new THREE.PerspectiveCamera(), under.geometry, under.material as THREE.Material, new THREE.Group());
+    composite.onBeforeRender(renderer, scene, new THREE.PerspectiveCamera(), composite.geometry, composite.material as THREE.Material, new THREE.Group());
+    return [under.geometry.drawRange.count > 0, composite.geometry.drawRange.count > 0];
+  };
+  const set = (m: THREE.Mesh, opacity: number) => Object.assign(m.material as THREE.Material, { transparent: opacity < 1, opacity });
+  for (const [what, solidOpacity, frameOpacity, frameShown, isUnder] of [
+    ["everything opaque", 1, 1, true, false],
+    ["surface opacity 0.35", 0.35, 0.35, true, true],
+    ["the line diagram's 3-D frames at 0.25 under an opacity of 1 (owner ruling: main's look)", 1, 0.25, true, true],
+    ["those frames hidden", 1, 0.25, false, false],
+  ] as const) {
+    set(solid, solidOpacity);
+    set(frames, frameOpacity);
+    frames.visible = frameShown;
+    assert.equal(translucentSurfaces(scene), isUnder, what);
+    assert.deepEqual(draws(), [isUnder, !isUnder], `${what}: exactly one of the two triangles draws`);
   }
-  // A mix: the user's surface opacity alone decides. The viewport passes that, never the 0.25 the line diagram gives 3-D frames, so those count as opaque.
-  const viewportSrc = readFileSync(fileURLToPath(new URL("../../src/renderer/viewport.ts", import.meta.url)), "utf8");
-  assert.equal(viewportSrc.match(/applyGhostVisibility\(this\.ghost, s\.visibility\.edges, \w+(\.\w+)?, s\.visibility\.opacity\)/g)?.length, 2);
+  // The ghost's own translucent faces and the outline edges' blending never count.
+  set(solid, 1);
+  set(frames, 1);
+  assert.equal(translucentSurfaces(scene), false);
 
   h.effects.dispose();
 });

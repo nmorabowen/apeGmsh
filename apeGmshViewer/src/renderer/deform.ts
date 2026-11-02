@@ -238,6 +238,24 @@ const GHOST_SUPERSAMPLE = 2;
 const COMPOSITE_OVER = 0.5;
 const COMPOSITE_UNDER = -2;
 
+/**
+ * Whether the scene shows a translucent surface, the case where the ghost
+ * composites under the mesh (owner rulings on #2664): a visible mesh of
+ * triangles, not the ghost's own, whose material blends at an opacity below 1.
+ * That is the user's surface opacity below 1, and also the 3-D frames the line
+ * diagram draws at 0.25 under an opacity of 1. Fat lines and outline edges are
+ * not surfaces.
+ */
+export function translucentSurfaces(scene: THREE.Object3D): boolean {
+  let found = false;
+  scene.traverseVisible((o) => {
+    if (found || o.type !== "Mesh" || o.layers.isEnabled(GHOST_LAYER) || o.name.startsWith("ghost composite")) return;
+    const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[];
+    found = (Array.isArray(mat) ? mat : [mat]).some((x) => x.visible && x.transparent && x.opacity < 1);
+  });
+  return found;
+}
+
 /** The ghost's surfaces write sRGB themselves: three writes linear into a render target, and the blending must stay in the space the canvas blends in. */
 function encodeSrgb(m: THREE.Material): void {
   m.onBeforeCompile = (p) => {
@@ -257,16 +275,17 @@ function encodeSrgb(m: THREE.Material): void {
  * in about 1 frame in 100 when they blended over it (5 levels; 0 of 12,000 frames
  * this way), and before the gizmos and the selection (renderOrder 1 and up).
  *
- * Over translucent surfaces it goes first, under them (`applyGhostVisibility`;
- * owner ruling on #2664: that look stays). No pixel identity is claimed there:
+ * Over translucent surfaces (`translucentSurfaces`) it goes first, under them
+ * (owner rulings on #2664: that look stays). The pass sorts before any object
+ * draws, so there are two triangles, one at each place, and each frame the first
+ * one (which draws the target) decides which of the two draws; the other draws
+ * nothing (an empty draw range). No pixel identity is claimed there:
  * the mesh's own blended triangles are in the canvas, and blended triangles there
  * differ from frame to frame, so a view spec refuses a ghost shot over them
  * (spec/verdict.ts). The app-chrome capture race is apart (#2696).
  */
-function ghostComposite(): THREE.Mesh {
+function ghostComposite(): THREE.Mesh[] {
   const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
   const m = new THREE.ShaderMaterial({
     uniforms: { ghost: { value: target.texture } },
     vertexShader: "varying vec2 vUv; void main() { vUv = 0.5 * position.xy + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }",
@@ -283,14 +302,25 @@ function ghostComposite(): THREE.Mesh {
     blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
   });
   m.addEventListener("dispose", () => target.dispose());
-  const quad = new THREE.Mesh(g, m);
-  quad.name = "ghost composite";
-  quad.renderOrder = COMPOSITE_OVER;
-  quad.frustumCulled = false;
-  quad.userData["clipExempt"] = true;
+  const triangle = (name: string, renderOrder: number): THREE.Mesh => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+    const t = new THREE.Mesh(g, m);
+    t.name = name;
+    t.renderOrder = renderOrder;
+    t.frustumCulled = false;
+    t.userData["clipExempt"] = true;
+    return t;
+  };
+  const quad = triangle("ghost composite under", COMPOSITE_UNDER);
+  const over = triangle("ghost composite", COMPOSITE_OVER);
+  let under = false;
+  over.onBeforeRender = () => over.geometry.setDrawRange(0, under ? 0 : Infinity);
   const size = new THREE.Vector2();
   const clearColor = new THREE.Color();
   quad.onBeforeRender = (renderer, scene, camera) => {
+    under = translucentSurfaces(scene);
+    quad.geometry.setDrawRange(0, under ? Infinity : 0);
     renderer.getDrawingBufferSize(size);
     target.setSize(size.x * GHOST_SUPERSAMPLE, size.y * GHOST_SUPERSAMPLE);
     const back = renderer.getRenderTarget(), autoClear = renderer.autoClear, mask = camera.layers.mask, clearAlpha = renderer.getClearAlpha();
@@ -303,7 +333,7 @@ function ghostComposite(): THREE.Mesh {
     renderer.clear();
     renderer.autoClear = false;
     // The depth of what is opaque: the ghost was never tested against what blends after it. The lights join the ghost's layer on the way.
-    const blended: THREE.Object3D[] = [quad];
+    const blended: THREE.Object3D[] = [quad, over];
     scene.traverseVisible((o) => {
       if ((o as THREE.Light).isLight) o.layers.enable(GHOST_LAYER);
       const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
@@ -323,7 +353,7 @@ function ghostComposite(): THREE.Mesh {
     renderer.setClearColor(clearColor, clearAlpha);
     renderer.setRenderTarget(back);
   };
-  return quad;
+  return [quad, over];
 }
 
 /**
@@ -398,7 +428,7 @@ export function ghostObjects(
     mesh.layers.set(GHOST_LAYER);
     out.push(mesh);
   }
-  if (out.length) out.push(ghostComposite());
+  if (out.length) out.push(...ghostComposite());
   const lineSrc = showOffsets && base.clearLine ? base.clearLine : base.line;
   const line = gatherInto(lineSrc, drawnLineMap ?? drawn.lineMap, 6);
   if (line.length) {
@@ -416,18 +446,13 @@ export function ghostObjects(
  * Sync the reference ghost's 2-D/3-D surfaces and outline edges with the user's
  * surface opacity (`off` hides ghost surfaces and edges) and edges toggle
  * (`edges` off hides ghost outline edges), while keeping 1-D ghost lines shown.
- * That opacity alone also picks the composite's place, whatever else is translucent:
- * 3-D frames the line diagram dims to 0.25 under an opacity of 1 still count as opaque.
  */
 export function applyGhostVisibility(ghost: THREE.Group, edgesOn: boolean, full: FullPositions | null, opacity = 1): void {
   const showEdges = edgesShown(edgesOn, full, opacity);
   const showFaces = opacity > 0;
   for (const o of ghost.children) {
     if (o.name === "ghost edges") o.visible = showEdges;
-    else if (o.name === "ghost composite") {
-      o.visible = showFaces;
-      o.renderOrder = opacity < 1 ? COMPOSITE_UNDER : COMPOSITE_OVER;
-    }
+    else if (o.name.startsWith("ghost composite")) o.visible = showFaces;
     else if (o.name === "ghost faces" || o instanceof THREE.Mesh) o.visible = showFaces;
   }
 }
