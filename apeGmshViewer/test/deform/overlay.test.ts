@@ -162,10 +162,12 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   assert.equal(composite.frustumCulled, false);
   const cm = composite.material as THREE.ShaderMaterial;
   assert.deepEqual([cm.transparent, cm.depthTest, cm.depthWrite], [true, false, false]);
-  assert.deepEqual(
-    [cm.blending, cm.blendSrc, cm.blendDst, cm.blendSrcAlpha, cm.blendDstAlpha],
-    [THREE.CustomBlending, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor],
-  );
+  // #2715: the canvas's own blend over a pixel whose samples differ is not reproducible, so the triangle does not
+  // blend in the canvas: it writes, to every sample, what its shader blends over a copy of the canvas taken just before.
+  assert.equal(cm.blending, THREE.NoBlending, "the canvas does not blend the composite");
+  assert.ok(cm.uniforms["below"]!.value instanceof THREE.FramebufferTexture, "the copy of the canvas under the composite");
+  assert.match(cm.fragmentShader, /if \(g == vec4\(0\.0\)\) discard;/, "a pixel the ghost does not reach keeps its own samples");
+  assert.match(cm.fragmentShader, /gl_FragColor = g \+ texelFetch\(below, ivec2\(gl_FragCoord\.xy\), 0\) \* \(1\.0 - g\.a\);/, "premultiplied over, of this pixel's copy");
   const segs = objs.filter((o) => o instanceof THREE.LineSegments);
   assert.deepEqual(segs.map((o) => o.name), ["ghost edges", "ghost lines"]);
   assert.deepEqual(segs.map(pos), [gatherInto(base.edge, edgeMap, 6), gatherInto(base.line, drawn.lineMap, 6)]);
@@ -205,14 +207,25 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   // A renderer that records nothing: the target pass is the GPU's; the decision is not.
   const noop = () => {};
   const state = { color: { setMask: noop, setLocked: noop }, depth: { setMask: noop } };
+  // The canvas copies it records: when, and how large.
+  const copies: { at: "under" | "over"; w: number; h: number }[] = [];
+  let at: "under" | "over" = "under";
   const renderer = {
     getDrawingBufferSize: (v: THREE.Vector2) => v.set(4, 4), getRenderTarget: () => null, autoClear: true, getClearAlpha: () => 0,
     getClearColor: (c: THREE.Color) => c, setRenderTarget: noop, setClearColor: noop, clear: noop, render: noop, state: { buffers: state },
+    copyFramebufferToTexture: (t: THREE.FramebufferTexture) => copies.push({ at, w: t.image.width, h: t.image.height }),
   } as unknown as THREE.WebGLRenderer;
   const draws = (): [boolean, boolean] => {
+    copies.length = 0;
+    at = "under";
     under.onBeforeRender(renderer, scene, new THREE.PerspectiveCamera(), under.geometry, under.material as THREE.Material, new THREE.Group());
+    at = "over";
     composite.onBeforeRender(renderer, scene, new THREE.PerspectiveCamera(), composite.geometry, composite.material as THREE.Material, new THREE.Group());
-    return [under.geometry.drawRange.count > 0, composite.geometry.drawRange.count > 0];
+    const d: [boolean, boolean] = [under.geometry.drawRange.count > 0, composite.geometry.drawRange.count > 0];
+    // The canvas is copied once a frame, at the place of the triangle that draws, at the drawing buffer's size, into the texture it reads.
+    assert.deepEqual(copies, [{ at: d[0] ? "under" : "over", w: 4, h: 4 }]);
+    assert.equal((cm.uniforms["below"]!.value as THREE.FramebufferTexture).image.width, 4);
+    return d;
   };
   const set = (m: THREE.Mesh, opacity: number) => Object.assign(m.material as THREE.Material, { transparent: opacity < 1, opacity });
   for (const [what, solidOpacity, frameOpacity, frameShown, isUnder] of [

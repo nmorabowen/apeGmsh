@@ -857,20 +857,36 @@ function printReadRows(rows: ReadRow[]): void {
   );
 }
 
-/** Write one still: `--out` itself, or `<stem>.<suffix>.png` beside it. */
+/**
+ * Write one still: `--out` itself, or `<stem>.<suffix>.png` beside it. A
+ * hidden window's `capturePage` copies the last frame it showed, which can be
+ * from before the page's latest changes (#2716, the race `render:capture`
+ * settles for #2696). So the page is captured until two consecutive captures
+ * are pixel-identical, at most `--capture-tries` times; a page that never
+ * settles fails the run (exit 1, the reason naming the still in
+ * `<out>.error.txt`), and no PNG is written for it. As for `render:capture`,
+ * no still is written once the run is ending (`<out>.error.txt` already says
+ * why it failed), and a write that throws part way leaves no partial PNG
+ * (#2736).
+ */
 ipcMain.handle("capture:still", async (e, suffix: string) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   if (!win) throw new Error("capture: no window");
-  const img = await win.webContents.capturePage();
-  const size = img.getSize();
   const safeSuffix = suffix ? suffix.replace(/[\\/]/g, "_") : "";
   const path = safeSuffix ? out!.replace(/\.png$/i, "") + `.${safeSuffix}.png` : out!;
+  const img = await settledCapture(win);
+  if (!img) {
+    headlessEnd(`capture:still ${path}: the page did not settle: no two consecutive of ${CAPTURE_TRIES} captures were pixel-identical (--capture-tries)`);
+    return null;
+  }
+  const size = img.getSize();
   if (img.isEmpty() || size.width === 0) {
     // A capture with no still is a failed run: exit 1 with the reason in <out>.error.txt, never exit 0 (#2708 review).
     headlessEnd(`capturePage returned an empty image for ${path}`);
     return null;
   }
-  writeFileSync(path, img.toPNG());
+  refuseIfEnding(path);
+  writeStill(path, img.toPNG());
   lastCaptured = path;
   return path;
 });
@@ -906,10 +922,12 @@ function stillPath(name: unknown): string {
  * No still once the run is ending: `headlessEnd` has already written the
  * manifest that refuses the run, and a capture that resolves after it (its
  * `await capturePage()` was pending) would leave a PNG with no entry (INV-6,
- * #2708 review round 2).
+ * #2708 review round 2). A capture's `headlessEnd` has written
+ * `<out>.error.txt`, and a still written after it would stand beside the
+ * failure (#2736).
  */
 function refuseIfEnding(path: string): void {
-  if (ending) throw new Error(`render: the run is ending; ${path} is not written`);
+  if (ending) throw new Error(`${mode}: the run is ending; ${path} is not written`);
 }
 
 /** A still written whole or not at all: a throw part way (a full disk) removes what it wrote, so no PNG stands beside the shot's refusal (#2681 review). */
@@ -971,6 +989,24 @@ const CAPTURE_TRIES = Number(arg("capture-tries") ?? 10);
 const CAPTURE_GAP_MS = 16;
 
 /**
+ * The page of `w` as it settled: captured until two consecutive captures are
+ * pixel-identical, at most `CAPTURE_TRIES` captures `CAPTURE_GAP_MS` apart;
+ * null when no two consecutive ones matched. `render:capture` and
+ * `capture:still` both take their stills from it.
+ */
+async function settledCapture(w: BrowserWindow): Promise<Electron.NativeImage | null> {
+  let img = await w.webContents.capturePage();
+  for (let n = 1; n < CAPTURE_TRIES; n++) {
+    await new Promise((r) => setTimeout(r, CAPTURE_GAP_MS));
+    const next = await w.webContents.capturePage();
+    const same = next.toBitmap().equals(img.toBitmap());
+    img = next;
+    if (same) return img;
+  }
+  return null;
+}
+
+/**
  * An app-mode still: the page as captured, which must be exactly the spec's
  * size. A hidden window's `capturePage` copies the last frame the window
  * showed, which can be from before the page's latest changes (#2696: an app
@@ -984,16 +1020,9 @@ ipcMain.handle("render:capture", async (e, name: unknown) => {
   const w = BrowserWindow.fromWebContents(e.sender);
   if (!w || !renderJob) throw new Error("render:capture: no render window");
   const path = stillPath(name);
-  let img = await w.webContents.capturePage();
-  for (let n = 1; ; n++) {
-    if (n === CAPTURE_TRIES) {
-      throw new Error(`render:capture ${String(name)}: the page did not settle: no two consecutive of ${CAPTURE_TRIES} captures were pixel-identical (--capture-tries)`);
-    }
-    await new Promise((r) => setTimeout(r, CAPTURE_GAP_MS));
-    const next = await w.webContents.capturePage();
-    const same = next.toBitmap().equals(img.toBitmap());
-    img = next;
-    if (same) break;
+  const img = await settledCapture(w);
+  if (!img) {
+    throw new Error(`render:capture ${String(name)}: the page did not settle: no two consecutive of ${CAPTURE_TRIES} captures were pixel-identical (--capture-tries)`);
   }
   const size = img.getSize();
   const [width, height] = renderJob.spec.size;

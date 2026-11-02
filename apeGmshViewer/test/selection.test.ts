@@ -337,7 +337,7 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
   legendRoot.id = "legend";
   // The mesh row lives on the Display card, which the legend panel fills.
   const displayRoot = new FakeLegendEl("DIV");
-  const others: Record<string, FakeLegendEl> = { legend: legendRoot, display: displayRoot, deform: new FakeLegendEl("DIV"), "viewport-scale": new FakeLegendEl("DIV") };
+  const others: Record<string, FakeLegendEl> = { legend: legendRoot, display: displayRoot, deform: new FakeLegendEl("DIV"), "viewport-scale": new FakeLegendEl("DIV"), contour: new FakeLegendEl("DIV") };
   const prevDoc = (globalThis as { document?: unknown }).document;
   (globalThis as { document?: unknown }).document = {
     getElementById: (id: string) => others[id] ?? null,
