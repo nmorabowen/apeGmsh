@@ -20,7 +20,9 @@
 //                   in a hidden window; write `<name>.png` per shot and
 //                   `manifest.json` into the folder `--out`, then exit (0 every
 //                   shot drawn, 1 a shot refused or the run failed, 2 the
-//                   spec refused: no window opens and no PNG is written)
+//                   spec refused: no window opens and no PNG is written).
+//                   An app-chrome still is captured until two consecutive
+//                   captures match, at most `--capture-tries` (default 10)
 //   --mode=describe ADR 0128 D4: write `describe.json` into `--out`: what the
 //                   set of `--file` offers a spec (stages, steps, fields, groups)
 //   --mode=present  ADR 0128 D5: offer the view spec `--spec` to the running
@@ -99,7 +101,9 @@ const badArgs =
       ? `unknown --mode=${arg("mode")}; expected ${MODES.join(", ")}`
       : arg("hang-ms") !== undefined && !/^[1-9][0-9]*$/.test(arg("hang-ms")!)
         ? `--hang-ms=${arg("hang-ms")}: expected a whole number of milliseconds above 0`
-        : null;
+        : arg("capture-tries") !== undefined && !(/^[1-9][0-9]*$/.test(arg("capture-tries")!) && Number(arg("capture-tries")) >= 2)
+          ? `--capture-tries=${arg("capture-tries")}: expected a whole number of captures, 2 or more`
+          : null;
 const mode = badArgs === null ? (arg("mode") ?? "view") : "refused";
 if (badArgs !== null) {
   process.stderr.write(`apeGmshViewer: ${badArgs}\n`);
@@ -939,12 +943,36 @@ ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
   return { path };
 });
 
-/** An app-mode still: the page as captured, which must be exactly the spec's size. */
+/** How many captures an app-mode still may take to settle (`--capture-tries`, 2 or more). */
+const CAPTURE_TRIES = Number(arg("capture-tries") ?? 10);
+/** The pause between two captures of one still: about a frame. */
+const CAPTURE_GAP_MS = 16;
+
+/**
+ * An app-mode still: the page as captured, which must be exactly the spec's
+ * size. A hidden window's `capturePage` copies the last frame the window
+ * showed, which can be from before the page's latest changes (#2696: an app
+ * still with no panels, or a phase readout a step old, reported `ok`). So the
+ * page is captured until two consecutive captures are pixel-identical, at most
+ * `--capture-tries` times; a page that never settles refuses the shot, and no
+ * PNG is written. Two matching captures prove the frame stopped changing, not
+ * that it is the latest frame.
+ */
 ipcMain.handle("render:capture", async (e, name: unknown) => {
   const w = BrowserWindow.fromWebContents(e.sender);
   if (!w || !renderJob) throw new Error("render:capture: no render window");
   const path = stillPath(name);
-  const img = await w.webContents.capturePage();
+  let img = await w.webContents.capturePage();
+  for (let n = 1; ; n++) {
+    if (n === CAPTURE_TRIES) {
+      throw new Error(`render:capture ${String(name)}: the page did not settle: no two consecutive of ${CAPTURE_TRIES} captures were pixel-identical (--capture-tries)`);
+    }
+    await new Promise((r) => setTimeout(r, CAPTURE_GAP_MS));
+    const next = await w.webContents.capturePage();
+    const same = next.toBitmap().equals(img.toBitmap());
+    img = next;
+    if (same) break;
+  }
   const size = img.getSize();
   const [width, height] = renderJob.spec.size;
   if (img.isEmpty() || size.width !== width || size.height !== height) {
