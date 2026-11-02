@@ -27,19 +27,78 @@ test("nodePositions: reads the drawn positions, so a deformed set moves the mark
   assert.deepEqual([...out], [4, 5, 6, 7, 8, 9], "written in place");
 });
 
-test("the depth pull is a share of eye distance: a marker 0.3 m behind a wall 2 m away stays behind it, even with near at 1e-3", async () => {
+test("the material injects the depth pull after project_vertex, and the pull branches on the projection", async () => {
   const THREE = await import("three");
-  const { NODE_DEPTH_PULL } = await import("../src/renderer/nodes.ts");
+  const { makeNodePoints, NODE_DEPTH_GLSL, NODE_DEPTH_FLOOR, NODE_DEPTH_ORTHO, NODE_DEPTH_PULL } = await import("../src/renderer/nodes.ts");
+  const m = makeNodePoints(new Float32Array(3), 6, 0xffffff, 0).material as InstanceType<typeof THREE.PointsMaterial>;
+  const shader = { uniforms: {}, vertexShader: "void main() {\n#include <project_vertex>\n}", fragmentShader: "void main() {\n#include <color_fragment>\n}" };
+  m.onBeforeCompile(shader as never, undefined as never);
+  assert.ok(shader.vertexShader.includes(`#include <project_vertex>${NODE_DEPTH_GLSL}`));
+  for (const part of ["isPerspectiveMatrix(projectionMatrix)", `${NODE_DEPTH_PULL}`, `${NODE_DEPTH_FLOOR}`, `${NODE_DEPTH_ORTHO}`]) {
+    assert.ok(NODE_DEPTH_GLSL.includes(part), `the shader's pull has no ${part}`);
+  }
+});
+
+test("perspective depth pull is a share of eye distance: a marker behind a wall stays behind it, even with near at 1e-3", async () => {
+  const THREE = await import("three");
+  const { nodeClipZ } = await import("../src/renderer/nodes.ts");
   const cam = new THREE.PerspectiveCamera(45, 1, 1e-3, 100);
   cam.updateProjectionMatrix();
-  const ndcZ = (eyeDist: number, pull: number) => {
-    const v = new THREE.Vector4(0, 0, -eyeDist * (1 - pull), 1).applyMatrix4(cam.projectionMatrix);
+  const p = cam.projectionMatrix.elements;
+  const faceZ = (d: number) => {
+    const v = new THREE.Vector4(0, 0, -d, 1).applyMatrix4(cam.projectionMatrix);
     return v.z / v.w;
   };
   for (const [wall, behind] of [[2, 0.3], [5, 3], [0.5, 0.01], [40, 1]] as const) {
-    assert.ok(ndcZ(wall + behind, NODE_DEPTH_PULL) > ndcZ(wall, 0), `marker ${behind} m behind a wall at ${wall} m shows through`);
+    assert.ok(nodeClipZ(p, [0, 0, -(wall + behind)]) > faceZ(wall), `marker ${behind} m behind a wall at ${wall} m shows through`);
   }
-  assert.ok(ndcZ(2, NODE_DEPTH_PULL) < ndcZ(2, 0), "a marker on the face itself is drawn in front of it");
+  for (const d of [0.01, 2, 99]) {
+    // Far off, the share alone is under a depth step; the floor keeps the marker in front of its face.
+    assert.ok(faceZ(d) - nodeClipZ(p, [0, 0, -d]) >= 2.4e-7, `a marker on a face ${d} m away is not drawn in front of it`);
+  }
+});
+
+test("orthographic depth pull is fixed: a marker wins against its face even behind the eye, with a negative near", async () => {
+  const THREE = await import("three");
+  const { nodeClipZ } = await import("../src/renderer/nodes.ts");
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -10, 10);
+  cam.updateProjectionMatrix();
+  const p = cam.projectionMatrix.elements;
+  const faceZ = (z: number) => new THREE.Vector4(0, 0, z, 1).applyMatrix4(cam.projectionMatrix).z;
+  for (const z of [-9, -2, -0.01, 0.5, 2, 9]) {
+    assert.ok(nodeClipZ(p, [0, 0, z]) < faceZ(z), `a marker on a face at view z ${z} loses to it`);
+    assert.ok(nodeClipZ(p, [0, 0, z - 0.01]) > faceZ(z), `a marker 0.01 behind a face at view z ${z} shows through`);
+  }
+});
+
+test("mountLoads: a marker size or a hover never reads the phase; a new phase does", async () => {
+  const { mountLoads } = await import("../src/panels/loads.ts");
+  const real = new Store().get();
+  let reads = 0;
+  const counted = (s: typeof real): typeof real => {
+    const at = s.phase.at;
+    const phase = { ...s.phase };
+    Object.defineProperty(phase, "at", { get: () => (reads++, at), enumerable: true });
+    return { ...s, phase };
+  };
+  const s0 = counted(real);
+  let sub: ((s: typeof real, prev: typeof real) => void) | null = null;
+  const fake = { get: () => s0, subscribe: (fn: typeof sub) => ((sub = fn), () => {}), dispatch: () => {} };
+  const panel = { hidden: false, replaceChildren: () => {} };
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = { getElementById: () => panel };
+  try {
+    const unmount = mountLoads(fake as never);
+    reads = 0;
+    sub!({ ...s0, nodes: { ...s0.nodes, size: 9 } }, s0);
+    sub!({ ...s0, hover: "/x" }, s0);
+    assert.equal(reads, 0, "a marker size or a hover read the phase");
+    sub!(counted(real), s0);
+    assert.ok(reads > 0, "a new phase was not read");
+    unmount();
+  } finally {
+    (globalThis as { document?: unknown }).document = prevDoc;
+  }
 });
 
 test("loadsInputsChanged: a marker size or a hover skips the loads summary; a phase, the loads or the units do not", () => {

@@ -548,7 +548,7 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
           `Gauss point and beam station markers are currently ${s.gaussPoints.on ? "ON" : "OFF"}`,
           [{ type: "setGaussPoints", on: !s.gaussPoints.on }],
           s.gaussPoints.on,
-          [{ type: "setGaussPoints", on: s.gaussPoints.on }],
+          [{ type: "setGaussPoints", on: !s.gaussPoints.on }],
         ),
         keywords: "gauss integration points stations markers toggle",
       });
