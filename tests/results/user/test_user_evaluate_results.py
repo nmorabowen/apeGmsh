@@ -253,3 +253,13 @@ def test_a_stale_user_result_is_refused_unless_asked(run, tmp_path: Path) -> Non
         combos.evaluate("env", user_result="wood_armer_top")
     assert err.value.reason == "stale"
     assert combos.evaluate("env", user_result="wood_armer_top", allow_stale=True).field.values[0, 0] == 10.0
+
+
+def test_a_state_address_alone_is_read_and_a_bad_one_refused(run) -> None:
+    combos = run.combinations()
+    got = combos.evaluate(StateAddress("mode", "stage_2", 9, 2), "displacement_x")
+    np.testing.assert_array_equal(got.field.values[:, 0], np.array(SHAPES[(9, 2)])[:, 0])
+    assert got.signed
+    with pytest.raises(CombinationRefused) as err:
+        combos.evaluate(StateAddress("mode", "stage_2", 9, 0), "displacement_x")
+    assert err.value.reason == "bad-term"

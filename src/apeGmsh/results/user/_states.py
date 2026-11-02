@@ -392,12 +392,17 @@ class UserCombinations:
                     f"state must be a combination name, a CombinationState, a StateAddress "
                     f"or a stage-scoped Results of this run, got {type(state).__name__}")
             address = self._address_of(stage_id)
-        # One state alone is the one-term linear combination of it.
+        # One state alone is the one-term linear combination of it, judged by the
+        # same row rules, so a malformed address refuses here.
         from ._descriptor import Combination, Term
 
-        row = Combination("", "linear", (Term(address.kind, address.source, address.step,
-                                              address.mode, 1.0),))
-        return "", CombinationTable(rows=(row,), refused=())
+        name = f"<{address.kind} {address.source}>"
+        table = resolve([Combination(name, "linear", (Term(
+            address.kind, address.source, address.step, address.mode, 1.0),))])
+        if table.refused:
+            ref = table.refused[0]
+            raise CombinationRefused(name, "bad-term", f"{ref.reason}: {ref.detail}")
+        return name, table
 
     def _address_of(self, stage_id: str) -> StateAddress:
         info = next(s for s in self._results.stages if s.id == stage_id)
