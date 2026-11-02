@@ -85,6 +85,90 @@ export function offersOfDocument(raw: unknown, resolve: (spec: ViewSpec) => Reso
   };
 }
 
+/** What a spec file comes to: its offers, or rows that say it is refused, and why. Never a throw (see `presentDocument`). */
+export interface PresentedDocument {
+  offers: OfferIn[];
+  refused: { key: string; reason: string } | null;
+}
+
+/** The rows a refused spec leaves in the list: one per shot whose name can be read, else one saying no name could be. */
+function refusedRows(raw: unknown, reason: string): OfferIn[] {
+  const shots = (raw as { shots?: unknown } | null)?.shots;
+  const named = (Array.isArray(shots) ? (shots as { name?: unknown; caption?: unknown }[]) : []).filter((x) => typeof x?.name === "string" && x.name !== "");
+  const row = (name: string, caption: unknown): OfferIn => ({ name, caption: typeof caption === "string" ? caption : null, ignored: null, payload: null, refused: reason });
+  return named.length ? named.slice(0, MAX_PRESENT_SHOTS).map((x) => row(x.name as string, x.caption)) : [row("unreadable spec", null)];
+}
+
+/**
+ * A spec file, read and judged where nothing may raise: this runs in the
+ * human's window, where an uncaught error is a modal, and the file can change
+ * between the sender's check and this read. `resolve` throws on a file the app
+ * does not open (main/pairing.ts `classify`); that is a refusal like any other.
+ */
+export function presentDocument(read: () => string, resolve: (spec: ViewSpec) => ResolvedFiles, fold: boolean): PresentedDocument {
+  let raw: unknown = null;
+  const refuse = (key: string, reason: string): PresentedDocument => ({ offers: refusedRows(raw, `${key}: ${reason}`), refused: { key, reason } });
+  try {
+    raw = JSON.parse(read());
+  } catch (err) {
+    return refuse("spec", `not a readable JSON document: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const p = offersOfDocument(raw, resolve, fold);
+    return p.ok ? { offers: p.offers, refused: null } : refuse(p.key, p.reason);
+  } catch (err) {
+    return refuse("files", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** The modes the ADR's spellings name (D4, D5, D6). */
+const AGENT_FLAGS = ["present", "snapshot", "render", "describe"] as const;
+
+/**
+ * The ADR's command lines as the app's own: `--present spec.json`,
+ * `--snapshot --out d`, `--render spec.json --out d`, `--describe f --out d`
+ * become `--mode=...` arguments. Null: the arguments ask for no agent mode.
+ * `refused`: they ask for one, and cannot be carried out. An agent's request
+ * never falls into view mode (a stray `--spec` or `--out` with no mode is refused too).
+ */
+export function agentArgsOf(args: readonly string[]): { argv: string[] } | { refused: string } | null {
+  const flagOf = (a: string) => AGENT_FLAGS.find((f) => a === `--${f}` || a.startsWith(`--${f}=`));
+  const hits = args.filter((a) => flagOf(a));
+  const mode = args.find((a) => a.startsWith("--mode="));
+  const valueOf = (name: string): string | null | undefined => {
+    const i = args.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+    if (i < 0) return undefined;
+    if (args[i]!.startsWith(`--${name}=`)) return args[i]!.slice(name.length + 3) || null;
+    const next = args[i + 1];
+    return next !== undefined && !next.startsWith("--") ? next : null;
+  };
+  if (hits.length === 0) {
+    if ((mode === undefined || mode === "--mode=view") && args.some((a) => a === "--spec" || a.startsWith("--spec=") || a === "--out" || a.startsWith("--out="))) {
+      return { refused: `${args.find((a) => a.startsWith("--spec") || a.startsWith("--out"))} names no agent mode; the modes are ${AGENT_FLAGS.map((f) => `--${f}`).join(", ")}` };
+    }
+    return null;
+  }
+  if (hits.length > 1) return { refused: `only one of ${hits.join(", ")} can be asked for` };
+  if (mode !== undefined) return { refused: `${hits[0]} and ${mode} name two modes` };
+  const flag = flagOf(hits[0]!)!;
+  const value = valueOf(flag);
+  const out = valueOf("out");
+  const argv = [`--mode=${flag}`];
+  if (flag === "snapshot") {
+    if (value) return { refused: "--snapshot takes no value; it names its folder with --out" };
+  } else {
+    if (!value) return { refused: `--${flag} needs ${flag === "describe" ? "a file" : "a spec file"}` };
+    argv.push(flag === "describe" ? `--file=${value}` : `--spec=${value}`);
+  }
+  if (flag === "present") {
+    if (out !== undefined) return { refused: "--present writes nothing, so it takes no --out" };
+    return { argv };
+  }
+  if (!out) return { refused: `--${flag} needs --out <folder>` };
+  argv.push(`--out=${out}`);
+  return { argv };
+}
+
 /** The offer's spec side; anything else in the list is a bug, and says so. */
 function payloadOf(o: Offer): OfferPayload {
   const p = o.payload as OfferPayload | null;
@@ -324,16 +408,21 @@ export function viewShotOf(s: State, pose: CameraPose): { shot: SpecShot; outsid
   return { shot, outside };
 }
 
-/** A plan in the form two plans of one view share: planes scaled to a unit normal (D1: normal . x = offset), an isolate as a set. */
-function planKey(p: ShotPlan): string {
-  const scaled = (v: Vec3, by: number): number[] => v.map((x) => x / by);
+/** How far two section planes of one view may differ: rounding, once scaled to a unit normal. */
+const PLANE_TOLERANCE = 1e-9;
+
+/** A plane scaled to a unit normal (D1: normal . x = offset). */
+function unitPlane(c: { normal: Vec3; offset: number; flip: boolean }): { normal: number[]; offset: number; flip: boolean } {
+  const m = Math.hypot(...c.normal);
+  return { normal: c.normal.map((x) => x / m), offset: c.offset / m, flip: c.flip };
+}
+
+/** A plan's view without its planes: an isolate as a set, and an isolate of every group as what it is, no isolate. */
+function planKey(p: ShotPlan, groups: readonly string[]): string {
+  const everyGroup = (decls: readonly string[]) => groups.length > 0 && groups.every((g) => decls.includes(g));
   return JSON.stringify({
     phase: p.phase,
-    events: p.events.map((e) => (e.type === "isolate" ? { ...e, decls: [...e.decls].sort() } : e)),
-    clip: p.clip.map((c) => {
-      const m = Math.hypot(...c.normal);
-      return { normal: scaled(c.normal, m), offset: c.offset / m, flip: c.flip };
-    }),
+    events: p.events.filter((e) => !(e.type === "isolate" && everyGroup(e.decls))).map((e) => (e.type === "isolate" ? { ...e, decls: [...e.decls].sort() } : e)),
     contour: p.contour,
     deform: p.deform,
   });
@@ -343,7 +432,14 @@ function planKey(p: ShotPlan): string {
 export function sameView(a: SpecShot, b: SpecShot, d: SetDescription): boolean {
   const pa = compileShot(a, d);
   const pb = compileShot(b, d);
-  return pa.ok && pb.ok && planKey(pa.plan) === planKey(pb.plan);
+  if (!pa.ok || !pb.ok) return false;
+  const groups = d.groups.map((g) => g.path);
+  if (planKey(pa.plan, groups) !== planKey(pb.plan, groups) || pa.plan.clip.length !== pb.plan.clip.length) return false;
+  return pa.plan.clip.every((c, i) => {
+    const u = unitPlane(c);
+    const v = unitPlane(pb.plan.clip[i]!);
+    return u.flip === v.flip && u.normal.every((x, k) => Math.abs(x - v.normal[k]!) <= PLANE_TOLERANCE) && Math.abs(u.offset - v.offset) <= PLANE_TOLERANCE * Math.max(1, Math.abs(u.offset));
+  });
 }
 
 /** INV-3's float tolerance on a camera: relative to the eye-to-target distance. */
@@ -468,8 +564,8 @@ export async function shownView(deps: ShownDeps, shot: SpecShot, plan: ShotPlan)
 
 export interface RunnerDeps {
   store: Store;
-  /** open the set of `path`, as a drop does (main's requestOpen) */
-  open(path: string): Promise<{ ok: boolean; reason?: string } | unknown>;
+  /** open the set of `path` for an offer; `needs` are the files it must find. Refused with the reason, never with a dialog (main's `viewer:offerOpen`). */
+  open(path: string, needs: readonly string[]): Promise<{ ok: boolean; reason?: string } | unknown>;
   /** what the viewport shows now, for the verdict */
   onScreen(s: State): OnScreen;
   /** the camera the viewport shows, once the last request has been applied */
@@ -540,6 +636,8 @@ export class OfferRunner {
     if (s.artifacts.model?.status === "opened" || s.artifacts.results?.status === "opened") return;
     let d: SetDescription | null = null;
     for (const o of s.offers.list) {
+      // It arrived refused, or the drawn view refused it: there is nothing to judge again (and no spec behind an unreadable one).
+      if (o.viewRefused) continue;
       const p = payloadOf(o);
       const opens = opensOf(s, p);
       let refused: string | null = null;
@@ -622,7 +720,7 @@ export class OfferRunner {
   /** Ask main to open a set and wait for it; null when it is read, else why not. */
   private async openSet(path: string, model: string, results: string | null, fold: boolean): Promise<string | null> {
     const { store } = this.deps;
-    const answer = (await this.deps.open(path)) as { ok?: boolean; reason?: string } | undefined;
+    const answer = (await this.deps.open(path, results === null ? [model] : [model, results])) as { ok?: boolean; reason?: string } | undefined;
     if (answer && answer.ok === false) return answer.reason ?? `${path} did not open`;
     const t0 = this.now();
     for (;;) {

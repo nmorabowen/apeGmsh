@@ -1355,7 +1355,7 @@ interface OfferBridge {
   onOffers(cb: (offers: OfferIn[]) => void): () => void;
   onSnapshotRequest(cb: (req: { id: number; image: [number, number] }) => void): () => void;
   snapshotReply(id: number, reply: unknown): Promise<unknown>;
-  requestOpen(path: string): Promise<unknown>;
+  offerOpen(path: string, needs: readonly string[]): Promise<unknown>;
 }
 
 /**
@@ -1368,7 +1368,7 @@ function mountOfferFlow(): void {
   const door = bridge as unknown as OfferBridge;
   const runner = new OfferRunner({
     store,
-    open: (path) => door.requestOpen(path),
+    open: (path, needs) => door.offerOpen(path, needs),
     onScreen: (s) => onScreenOf(s, viewport, effects),
     pose: () => (store.get().mesh ? viewport.currentPose() : null),
     settle: async () => {

@@ -17,16 +17,25 @@
 //   3. INV-3: Apply, then `--snapshot`, returns the presented spec, with its
 //      D3 manifest entry;
 //   4. D5: Back leaves 0 RGB pixels different from before the click;
-//   5. D1: a plane given as normal [2,0,0], offset 4 reads back in those words.
+//   5. D1: a plane given as normal [2,0,0], offset 4 reads back in those words;
+//   6. nothing an agent sends raises a modal: a spec with a wrong suffix, one
+//      swapped under the window's read, a model gone before the click, a folder;
+//   7. exit 0 only on the window's acknowledgement: concurrent `--present` with
+//      no window all exit non-zero;
+//   8. the ADR's spellings work, and a request that cannot be carried out exits
+//      2 at once, never view mode.
+// A dialog would stop on the desktop of whoever runs this, so every process
+// starts through a generated entry that turns `dialog.showErrorBox` and an
+// uncaught error into stderr lines, and the run fails on any such line.
 // The stills stay in <outdir> (default: a new temporary folder) for review.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { readPng, rgbDiff } from "./png.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -44,19 +53,37 @@ const RAIL_LEFT = 1094;
 
 type Doc = Record<string, unknown>;
 
-function run(user: string, ...args: string[]): Promise<{ code: number | null; text: string }> {
+/** The app, with its dialogs as stderr lines: see the header. */
+const ENTRY = join(OUT, "no-dialog-entry.mjs");
+writeFileSync(
+  ENTRY,
+  `import { dialog } from "electron";
+dialog.showErrorBox = (t, c) => process.stderr.write("MODAL " + t + " " + c + String.fromCharCode(10));
+process.on("uncaughtException", (e) => process.stderr.write("MODAL uncaught " + (e && e.stack || e) + String.fromCharCode(10)));
+await import(${JSON.stringify(pathToFileURL(join(ROOT, "dist", "main.mjs")).href)});
+`,
+);
+const noModal = (text: string, what: string) => assert.doesNotMatch(text, /MODAL/, `${what}: ${text}`);
+
+function runWithin(ms: number, user: string, ...args: string[]): Promise<{ code: number | null; text: string }> {
   return new Promise((done) => {
-    const c = spawn(electron, [ROOT, `--user-data-dir=${user}`, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const c = spawn(electron, [ENTRY, `--user-data-dir=${user}`, ...args], { stdio: ["ignore", "pipe", "pipe"] });
     let text = "";
     c.stdout.on("data", (d) => (text += String(d)));
     c.stderr.on("data", (d) => (text += String(d)));
-    const killer = setTimeout(() => c.kill(), 90000);
+    const killer = setTimeout(() => {
+      text += "\nTIMED OUT: still running";
+      c.kill();
+    }, ms);
     c.on("exit", (code) => {
       clearTimeout(killer);
+      noModal(text, args.join(" "));
       done({ code, text });
     });
   });
 }
+
+const run = (user: string, ...args: string[]) => runWithin(90000, user, ...args);
 
 /** The window's page, through its debug port. */
 async function pageOf(port: number) {
@@ -149,7 +176,9 @@ async function campaign(theme: "dark" | "light", port: number): Promise<void> {
   assert.equal(bad.code, 2, bad.text);
   assert.match(bad.text, /shots\[0\]\.colur_by/);
 
-  const view = spawn(electron, [ROOT, `--user-data-dir=${user}`, "--force-device-scale-factor=1", `--remote-debugging-port=${port}`, "--mode=view", `--file=${MODEL}`], { stdio: "ignore" });
+  const view = spawn(electron, [ENTRY, `--user-data-dir=${user}`, "--force-device-scale-factor=1", `--remote-debugging-port=${port}`, "--mode=view", `--file=${MODEL}`], { stdio: ["ignore", "ignore", "pipe"] });
+  let viewErr = "";
+  view.stderr.on("data", (d) => (viewErr += String(d)));
   try {
     const page = await pageOf(port);
     await page.until(`document.getElementById("header") && !document.getElementById("header").hidden`, "the model");
@@ -223,6 +252,7 @@ async function campaign(theme: "dark" | "light", port: number): Promise<void> {
     await sleep(800);
     assert.deepEqual((await snap("clip")).view.shots[0]!["clip"], [{ normal: [2, 0, 0], offset: 4, flip: false }]);
     log(`${theme}: D1: the plane reads back`);
+    noModal(viewErr, "the view window");
   } finally {
     view.kill();
     await new Promise((ok) => view.on("exit", ok));
@@ -232,6 +262,120 @@ async function campaign(theme: "dark" | "light", port: number): Promise<void> {
   assert.equal((await run(user, "--mode=present", `--spec=${specShown}`)).code, 1, "the window closed: --present exits 1 again");
 }
 
+/** 6, 7, 8: what must not stop on the human's desktop, and what an exit code may claim. */
+async function robustness(port: number): Promise<void> {
+  const dir = join(OUT, "robust");
+  mkdirSync(join(dir, "folder.h5"), { recursive: true });
+  const user = join(dir, "user");
+  const spec = (name: string, doc: Doc) => {
+    const p = join(dir, `${name}.json`);
+    writeFileSync(p, JSON.stringify({ spec: "apegmsh-view/1", ...doc }));
+    return p;
+  };
+  const good = spec("good", { files: { model: MODEL, results: RESULTS }, shots: [{ name: "plain", camera: "iso" }] });
+
+  // 7. No window, on a fresh profile, under concurrent calls: nobody may claim a window took it (one holds the lock while another is denied it).
+  for (const [n, rounds] of [[16, 4], [8, 4], [4, 6]] as const) {
+    for (let k = 0; k < rounds; k++) {
+      const u = join(dir, `race-${n}-${k}`);
+      const rs = await Promise.all(Array.from({ length: n }, () => run(u, "--mode=present", `--spec=${good}`)));
+      assert.deepEqual(rs.map((r) => r.code), rs.map(() => 1), `${n} concurrent --present with no window: ${rs.map((r) => r.text).join("|")}`);
+    }
+  }
+  log("exit 0 needs the window: 14 rounds of concurrent --present with no window all exit 1");
+
+  // 8. The spellings with no window, and requests that cannot be carried out: an exit at once, not a view window.
+  assert.equal((await runWithin(20000, user, "--present", good)).code, 1, "--present <spec> with no window");
+  const noWin = join(dir, "lit-nowin");
+  assert.equal((await runWithin(20000, user, "--snapshot", "--out", noWin)).code, 1, "--snapshot --out with no window");
+  assert.equal(existsSync(noWin), false);
+  for (const a of [["--present"], ["--snapshot"], ["--render", good], ["--describe", MODEL], ["--mode=presnt", `--spec=${good}`], ["--mode=present", `--specc=${good}`], [`--spec=${good}`], ["--present", good, "--out", dir]]) {
+    const r = await runWithin(20000, user, ...a);
+    assert.equal(r.code, 2, `${a.join(" ")}: ${r.text}`);
+  }
+  const rendered = join(dir, "lit-render");
+  assert.equal((await runWithin(120000, user, "--render", good, "--out", rendered)).code, 0, "--render <spec> --out");
+  assert.ok(existsSync(join(rendered, "plain.png")) && existsSync(join(rendered, "manifest.json")));
+  const described = join(dir, "lit-describe");
+  assert.equal((await runWithin(60000, user, "--describe", MODEL, "--out", described)).code, 0, "--describe <file> --out");
+  assert.ok(existsSync(join(described, "describe.json")));
+  log("spellings: the ADR's four work; requests that cannot be carried out exit 2");
+
+  const view = spawn(electron, [ENTRY, `--user-data-dir=${user}`, "--force-device-scale-factor=1", `--remote-debugging-port=${port}`, "--mode=view", `--file=${MODEL}`], { stdio: ["ignore", "ignore", "pipe"] });
+  let viewErr = "";
+  view.stderr.on("data", (d) => (viewErr += String(d)));
+  const clean = (what: string) => noModal(viewErr, what);
+  try {
+    const page = await pageOf(port);
+    await page.until(`document.getElementById("header") && !document.getElementById("header").hidden`, "the model");
+    await sleep(1200);
+    assert.equal((await runWithin(20000, user, "--present", good)).code, 0, "--present <spec> into the window");
+    await page.until(statusIs("plain", "pending"), "the literal --present's offer");
+    const lit = join(dir, "lit-snap");
+    assert.equal((await runWithin(30000, user, "--snapshot", "--out", lit)).code, 0, "--snapshot --out");
+    assert.ok(existsSync(join(lit, "manifest.json")));
+
+    // 6. Static: the sender refuses these, whatever the suffix.
+    for (const [n, files] of [["win", { model: "C:/Windows/win.ini" }], ["res", { model: MODEL, results: "C:/Windows/win.ini" }], ["txt", { model: "x.txt" }]] as const) {
+      const r = await run(user, "--mode=present", `--spec=${spec(n, { files, shots: [{ name: n }] })}`);
+      assert.equal(r.code, 2, `${n}: ${r.text}`);
+    }
+    clean("wrong suffixes");
+
+    // 6. The swap race: the file flips between the sender's check and the window's read.
+    const flipped = join(dir, "flip.json");
+    const tmp = join(dir, "flip.tmp");
+    const goodDoc = JSON.stringify({ spec: "apegmsh-view/1", files: { model: MODEL }, shots: [{ name: "flip" }] });
+    const badDoc = JSON.stringify({ spec: "apegmsh-view/1", files: { model: "C:/Windows/win.ini" }, shots: [{ name: "flip" }] });
+    writeFileSync(flipped, goodDoc);
+    let on = true;
+    const flipper = setInterval(() => {
+      try {
+        writeFileSync(tmp, on ? badDoc : goodDoc);
+        renameSync(tmp, flipped);
+        on = !on;
+      } catch {
+        // A rename can lose to a reader on Windows; the next tick flips.
+      }
+    }, 2);
+    const codes: (number | null)[] = [];
+    for (let i = 0; i < 12; i++) {
+      const rs = await Promise.all([0, 1, 2].map(() => run(user, "--mode=present", `--spec=${flipped}`)));
+      codes.push(...rs.map((r) => r.code));
+    }
+    clearInterval(flipper);
+    await sleep(500);
+    clean("the swap race");
+    assert.ok(codes.every((c) => c === 0 || c === 2), `the swap race exits 0 or 2: ${codes.join("")}`);
+    log(`swap race: ${codes.filter((c) => c === 0).length} taken, ${codes.filter((c) => c === 2).length} refused, no modal`);
+
+    // 6. The click: a model gone before it, a folder, a file that is not HDF5.
+    const gone = join(dir, "gone.h5");
+    copyFileSync(MODEL, gone);
+    const garbage = join(dir, "garbage.h5");
+    writeFileSync(garbage, "not hdf5");
+    for (const [n, model] of [["cgone", gone], ["cfolder", join(dir, "folder.h5")], ["cgarbage", garbage]] as const) {
+      assert.equal((await run(user, "--mode=present", `--spec=${spec(n, { files: { model }, shots: [{ name: n }] })}`)).code, 0, n);
+      await page.until(`Boolean(${rowOf(n)})`, n);
+      await sleep(200);
+      if (n === "cgone") unlinkSync(gone);
+      await page.js(applyClick(n));
+      await page.until(statusIs(n, "refused"), `${n} refused`);
+      await page.until(`document.querySelector(".offer-apply") && !document.querySelector(".offer-back").matches(":disabled") || !document.querySelector(".offer-row.applying")`, "the click's end");
+      await sleep(600);
+      clean(n);
+      await page.until(`document.getElementById("file-name").textContent.startsWith("contour_staged")`, `${n}: the set it came from`, 20000);
+      log(`click on ${n}: refused in the list, no modal, the view back: ${String(await page.js(`${rowOf(n)}.querySelector(".offer-reason")?.textContent`)).slice(0, 90)}`);
+    }
+    clean("the view window");
+  } finally {
+    view.kill();
+    await new Promise((ok) => view.on("exit", ok));
+    await sleep(500);
+  }
+}
+
+await robustness(19323);
 await campaign("dark", 19321);
 await campaign("light", 19322);
 log(`offers e2e: all checks passed; stills in ${OUT}`);

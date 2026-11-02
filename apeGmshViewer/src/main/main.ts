@@ -1,7 +1,8 @@
 // Electron main process. It reads files and nothing else (ADR 0112 D4):
 // no network, no writes except the measurement / capture outputs a script
 // asked for, and no child process except the user's editor for go-to-source
-// (D3, ./source.ts).
+// (D3, ./source.ts). The one socket is a local pipe, private to one agent call:
+// the running window's acknowledgement of `--present` or `--snapshot`.
 //
 // Modes (argv, set by scripts/launch.mjs):
 //   --mode=view     open a window on --file, or on the first positional
@@ -24,12 +25,16 @@
 //                   set of `--file` offers a spec (stages, steps, fields, groups)
 //   --mode=present  ADR 0128 D5: offer the view spec `--spec` to the running
 //                   window over the second-instance path, which lists it and
-//                   changes nothing else (INV-5). Exit 0 sent, 1 no window is
-//                   running (nothing opens), 2 the spec refused
+//                   changes nothing else (INV-5). Exit 0 only when the window
+//                   acknowledged it, 1 no window answered (nothing opens), 2 the
+//                   spec refused
 //   --mode=snapshot ADR 0128 D6: ask the running window for its view; it writes
 //                   `view.json`, `view.png` and `manifest.json` into the folder
 //                   `--out`, the manifest last. Exit 0 written, 1 no window is
 //                   running or it could not read back, 2 `--out` refused
+// The ADR's spellings work too: `--render spec.json --out d`, `--describe f --out d`,
+// `--present spec.json`, `--snapshot --out d` (src/spec/snapshot.ts `agentArgsOf`);
+// a request for an agent mode that cannot be carried out exits 2, never view mode.
 // Neither agent mode takes the single-instance lock, so both run beside the
 // human's window and never reach it (ADR 0128 INV-5). Both refuse an `--out`
 // that is not empty (exit 2, nothing written), and keep Chromium's profile
@@ -43,8 +48,10 @@
 // `app:config`.
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { randomUUID } from "node:crypto";
+import { connect, createServer } from "node:net";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { cpus } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
@@ -62,25 +69,34 @@ import { openGeometry, openLineage, openProvenance, openStageElements } from "./
 import { resolveSpecFiles } from "../spec/files.ts";
 import { outRefusal, prepareRender, PROFILE_DIR, type JobFs, type RenderJobFiles } from "../spec/job.ts";
 import { MANIFEST_FILE, refusedManifest } from "../spec/manifest.ts";
-import { offersOfDocument, SNAPSHOT_PNG, SNAPSHOT_VIEW, type Presented } from "../spec/snapshot.ts";
+import { agentArgsOf, presentDocument, SNAPSHOT_PNG, SNAPSHOT_VIEW, type PresentedDocument } from "../spec/snapshot.ts";
 import type { OfferIn } from "../state/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+// Unpackaged, argv[1] is the app path; packaged, the file follows the exe.
+const argvSkip = process.defaultApp ? 2 : 1;
+/** The ADR's spellings as `--mode=` arguments; null when the command line uses none. */
+const spelled = agentArgsOf(process.argv.slice(argvSkip));
+const argv = spelled && "argv" in spelled ? [...spelled.argv, ...process.argv] : process.argv;
+
 function arg(name: string): string | undefined {
   const pre = `--${name}=`;
-  return process.argv.find((a) => a.startsWith(pre))?.slice(pre.length);
+  return argv.find((a) => a.startsWith(pre))?.slice(pre.length);
 }
 
 const MODES = ["view", "measure", "capture", "measure-results", "render", "describe", "present", "snapshot"] as const;
-const mode = arg("mode") ?? "view";
-if (!(MODES as readonly string[]).includes(mode)) throw new Error(`unknown --mode=${mode}; expected ${MODES.join(", ")}`);
+/** Why this command line is refused before anything starts: said on stderr, exit 2. Never a thrown error (a modal), never view mode. */
+const badArgs = spelled && "refused" in spelled ? spelled.refused : !(MODES as readonly string[]).includes(arg("mode") ?? "view") ? `unknown --mode=${arg("mode")}; expected ${MODES.join(", ")}` : null;
+const mode = badArgs === null ? (arg("mode") ?? "view") : "refused";
+if (badArgs !== null) {
+  process.stderr.write(`apeGmshViewer: ${badArgs}\n`);
+  app.exit(2);
+}
 /** ADR 0128 D4: the two agent modes; `out` is a folder for them, and they write nothing outside it (INV-1). */
 const agentMode = mode === "render" || mode === "describe";
 /** ADR 0128 D5, D6: these reach the window already running, and never open one. */
 const reachMode = mode === "present" || mode === "snapshot";
-// Unpackaged, argv[1] is the app path; packaged, the file follows the exe.
-const argvSkip = process.defaultApp ? 2 : 1;
 const file = mode === "view" ? fileFromArgv(process.argv, argvSkip, process.cwd()) : arg("file");
 const out = arg("out");
 const t0 = Number(arg("t0") ?? Date.now());
@@ -151,95 +167,132 @@ const renderJob = startup.job;
 // (the "second-instance" handler below) and exits.
 if (mode === "view" && !app.requestSingleInstanceLock()) app.exit(0);
 
-/** What `--present` and `--snapshot` hand the running window (the lock's additional data). */
-type Reach = { kind: "present"; spec: string } | { kind: "snapshot"; out: string };
+/** What `--present` and `--snapshot` hand the running window (the lock's additional data); `ack` is the sender's private pipe. */
+type Reach = { kind: "present"; spec: string; ack: string } | { kind: "snapshot"; out: string; ack: string };
+/** The window's answer on that pipe. */
+type Ack = { ok: true } | { ok: false; code: number; reason: string };
 
-/** A spec file as offers, or refused whole (D2). */
-function presentOffers(specPath: string): Presented {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(specPath, "utf8"));
-  } catch (err) {
-    return { ok: false, key: "spec", reason: `${specPath} is not a readable JSON document: ${err instanceof Error ? err.message : String(err)}` };
-  }
-  return offersOfDocument(raw, (spec) => resolveSpecFiles(spec, dirname(specPath), existsSync), FOLD_CASE);
+/** A spec file as offers, or as refused rows; never a throw (it runs in the human's window). */
+function presentOffers(specPath: string): PresentedDocument {
+  return presentDocument(() => readFileSync(specPath, "utf8"), (spec) => resolveSpecFiles(spec, dirname(specPath), existsSync), FOLD_CASE);
+}
+
+/** How long the sender waits for the window to acknowledge: a window's main process answers at once, so silence means no window took it. */
+const REACH_ACK_MS = 5000;
+
+/** The sender's end of the acknowledgement, listening before the window is asked. */
+function ackPipe(): Promise<{ name: string; answer: Promise<Ack | null> }> {
+  const id = `apegmsh-viewer-${randomUUID()}`;
+  const name = process.platform === "win32" ? `\\\\.\\pipe\\${id}` : join(tmpdir(), `${id}.sock`);
+  return new Promise((listening, failed) => {
+    let settle: (a: Ack | null) => void = () => {};
+    const answer = new Promise<Ack | null>((r) => (settle = r));
+    setTimeout(() => settle(null), REACH_ACK_MS).unref();
+    const server = createServer((socket) => {
+      let text = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (d) => (text += String(d)));
+      socket.on("end", () => settle(JSON.parse(text) as Ack));
+      socket.on("error", () => settle(null));
+    });
+    server.on("error", failed);
+    server.listen(name, () => listening({ name, answer }));
+  });
+}
+
+/** Tell the sender what became of its call. A sender that has gone is no matter for the human's window. */
+function sendAck(pipe: string, ack: Ack): void {
+  const c = connect(pipe, () => c.end(JSON.stringify(ack)));
+  c.on("error", (err) => process.stderr.write(`apeGmshViewer: acknowledging an agent's call: ${err.message}\n`));
 }
 
 /** How long `--snapshot` waits for the window's manifest. */
 const SNAPSHOT_WAIT_MS = 60000;
 
 /** Wait for the manifest the running window writes last; exit with what it says. */
-function awaitSnapshot(dir: string): void {
+function awaitSnapshot(dir: string): Promise<never> {
   const path = join(dir, MANIFEST_FILE);
   const t = Date.now();
-  const timer = setInterval(() => {
-    if (!existsSync(path)) {
-      if (Date.now() - t < SNAPSHOT_WAIT_MS) return;
+  return new Promise<never>(() => {
+    const timer = setInterval(() => {
+      if (!existsSync(path)) {
+        if (Date.now() - t < SNAPSHOT_WAIT_MS) return;
+        clearInterval(timer);
+        process.stderr.write(`apeGmshViewer: snapshot: the window did not answer within ${SNAPSHOT_WAIT_MS / 1000} s\n`);
+        app.exit(1);
+        return;
+      }
       clearInterval(timer);
-      process.stderr.write(`apeGmshViewer: snapshot: the window did not answer within ${SNAPSHOT_WAIT_MS / 1000} s\n`);
-      app.exit(1);
-      return;
-    }
-    clearInterval(timer);
-    const m = JSON.parse(readFileSync(path, "utf8")) as { refused?: { reason: string } };
-    if (m.refused) process.stderr.write(`apeGmshViewer: snapshot refused: ${m.refused.reason}\n`);
-    else process.stdout.write(`apeGmshViewer: snapshot: ${path}\n`);
-    app.exit(m.refused ? 1 : 0);
-  }, 50);
+      const m = JSON.parse(readFileSync(path, "utf8")) as { refused?: { reason: string } };
+      if (m.refused) process.stderr.write(`apeGmshViewer: snapshot refused: ${m.refused.reason}\n`);
+      else process.stdout.write(`apeGmshViewer: snapshot: ${path}\n`);
+      app.exit(m.refused ? 1 : 0);
+    }, 50);
+  });
 }
 
 /**
  * ADR 0128 D5, D6 startup: check what is asked here (exit 2, nothing sent),
  * then reach the running window through the lock. Holding the lock means no
- * window is running: let go of it, say so, exit 1, and open nothing.
+ * window is running: let go of it, say so, exit 1, and open nothing. Denied the
+ * lock proves nothing (another agent call may hold it for a moment): only the
+ * window's acknowledgement is an exit 0. The module's top level awaits this,
+ * and Electron holds `ready` until it ends, so Chromium never starts here and
+ * nothing is written beside the human's profile (INV-1).
  */
-function reachWindow(): void {
+async function reachWindow(): Promise<void> {
   const refuse = (code: number, message: string) => {
     process.stderr.write(`apeGmshViewer: ${message}\n`);
     app.exit(code);
   };
   try {
-    let reach: Reach;
+    let what: { kind: "present"; spec: string } | { kind: "snapshot"; out: string };
     if (mode === "present") {
       const spec = arg("spec");
       if (!spec) return refuse(2, "--mode=present needs --spec");
       const specPath = resolve(spec);
       const p = presentOffers(specPath);
-      if (!p.ok) return refuse(2, `the spec ${specPath} is refused: ${p.key}: ${p.reason}`);
-      reach = { kind: "present", spec: specPath };
+      if (p.refused) return refuse(2, `the spec ${specPath} is refused: ${p.refused.key}: ${p.refused.reason}`);
+      what = { kind: "present", spec: specPath };
     } else {
       if (!out) return refuse(2, "--mode=snapshot needs --out");
       const busy = outRefusal(resolve(out), jobFs);
       if (busy) return refuse(2, `--out refused: ${busy}`);
-      reach = { kind: "snapshot", out: resolve(out) };
+      what = { kind: "snapshot", out: resolve(out) };
     }
-    if (app.requestSingleInstanceLock(reach)) {
+    const ack = await ackPipe();
+    if (app.requestSingleInstanceLock({ ...what, ack: ack.name })) {
       app.releaseSingleInstanceLock();
       return refuse(1, "no apeGmshViewer window is running; none was opened. Ask the human to open one.");
     }
-    if (reach.kind === "present") {
-      process.stdout.write(`apeGmshViewer: present: offered ${reach.spec}\n`);
+    const said = await ack.answer;
+    if (said === null) return refuse(1, `no apeGmshViewer window acknowledged within ${REACH_ACK_MS / 1000} s; none was opened. Ask the human to open one.`);
+    if (!said.ok) return refuse(said.code, said.reason);
+    if (what.kind === "present") {
+      process.stdout.write(`apeGmshViewer: present: the window took ${what.spec}\n`);
       app.exit(0);
       return;
     }
-    // INV-1: this process waits, so Chromium's profile goes under `--out`, never beside the human's.
-    mkdirSync(reach.out, { recursive: true });
-    const profile = join(reach.out, PROFILE_DIR);
-    app.setPath("userData", profile);
-    app.setPath("crashDumps", join(profile, "crashdumps"));
-    awaitSnapshot(reach.out);
+    await awaitSnapshot(what.out);
   } catch (err) {
     refuse(2, `${mode} failed to start: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
-if (reachMode) reachWindow();
+if (reachMode) await reachWindow();
 
 let win: BrowserWindow | null = null;
 /** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
 const subscribed = new Set<string>();
 
+/** While an offer opens its set, what would be a dialog is collected for the offer's refusal instead. */
+let quietFails: string[] | null = null;
+
 function fail(message: string): void {
   process.stderr.write(`apeGmshViewer: ${message}\n`);
+  if (quietFails) {
+    quietFails.push(message);
+    return;
+  }
   if (mode === "view") void app.whenReady().then(() => dialog.showErrorBox("apeGmshViewer", message));
 }
 
@@ -301,26 +354,35 @@ interface RunManifest {
 /** How long the page has to answer a snapshot. */
 const SNAPSHOT_REPLY_MS = 10000;
 
+/** Nothing an agent sends may raise a modal in the human's window: every failure here goes to stderr and to the sender. */
 function heardFromAgent(reach: Reach): void {
-  if (reach.kind === "present") {
-    const p = presentOffers(reach.spec);
-    // The sender checked this file a moment ago; it changed since. Nothing is listed, and it says so.
-    if (!p.ok) {
-      process.stderr.write(`apeGmshViewer: the spec ${reach.spec} is refused: ${p.key}: ${p.reason}\n`);
+  try {
+    if (reach.kind === "present") {
+      const p = presentOffers(reach.spec);
+      if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
+      else offersWaiting.push(p.offers);
+      // The sender checked this file a moment ago. Changed since, it is listed as refused, and the sender hears why.
+      sendAck(reach.ack, p.refused ? { ok: false, code: 2, reason: `the spec ${reach.spec} is refused: ${p.refused.key}: ${p.refused.reason}` } : { ok: true });
       return;
     }
-    if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
-    else offersWaiting.push(p.offers);
-    return;
+    if (reach.kind === "snapshot") {
+      sendAck(reach.ack, { ok: true });
+      void writeSnapshot(reach.out).catch((err: unknown) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`apeGmshViewer: snapshot: ${reason}\n`);
+        try {
+          writeManifestLast(reach.out, refusedManifest("--snapshot", "snapshot", reason, { version: app.getVersion(), version_reason: null }, new Date().toISOString()));
+        } catch {
+          // No folder to write in: the sender's wait ends non-zero.
+        }
+      });
+      return;
+    }
+    const unknown: never = reach;
+    process.stderr.write(`apeGmshViewer: an unknown agent call reached the window: ${JSON.stringify(unknown)}\n`);
+  } catch (err) {
+    process.stderr.write(`apeGmshViewer: an agent's call failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
   }
-  if (reach.kind === "snapshot") {
-    void writeSnapshot(reach.out).catch((err: unknown) => {
-      process.stderr.write(`apeGmshViewer: snapshot: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-    });
-    return;
-  }
-  const unknown: never = reach;
-  process.stderr.write(`apeGmshViewer: an unknown agent call reached the window: ${JSON.stringify(unknown)}\n`);
 }
 
 ipcMain.on("viewer:offersReady", () => {
@@ -486,6 +548,23 @@ ipcMain.handle("viewer:currentSet", () => (mode === "view" ? session.set : null)
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };
   return openPath(path, true) ? { ok: true } : { ok: false, reason: `cannot open ${path}` };
+});
+
+// ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
+ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
+  if (typeof path !== "string" || !Array.isArray(needs)) return { ok: false, reason: `offerOpen needs a path; got ${JSON.stringify(path)}` };
+  for (const f of needs as unknown[]) {
+    if (typeof f !== "string" || !existsSync(f)) return { ok: false, reason: `no such file: ${String(f)}` };
+    if (!statSync(f).isFile()) return { ok: false, reason: `${f} is not a file` };
+  }
+  quietFails = [];
+  try {
+    return openPath(path, true) ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open ${path}` };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  } finally {
+    quietFails = null;
+  }
 });
 
 ipcMain.handle("source:goto", (_e, path: unknown, line: unknown) => goToSource(path, line));
@@ -794,7 +873,7 @@ app.whenReady().then(() => {
     });
     return;
   }
-  if (reachMode || outBusy || (mode === "render" && !renderJob)) return;
+  if (badArgs !== null || reachMode || outBusy || (mode === "render" && !renderJob)) return;
   if (agentMode) mkdirSync(resolve(out!), { recursive: true });
   const w = new BrowserWindow({
     // ADR 0128 D9: a render window's page is the spec's size (at device scale 1, above).

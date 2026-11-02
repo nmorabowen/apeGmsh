@@ -938,6 +938,8 @@ export interface OfferIn {
   ignored: string | null;
   /** the spec's side of the offer: read only by src/spec/snapshot.ts (the store and the panels never look inside it) */
   payload: unknown;
+  /** already refused when it arrived (the window could not read its spec): listed with this reason, and never applied */
+  refused?: string;
 }
 
 export interface Offer extends OfferIn {

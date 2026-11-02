@@ -15,7 +15,8 @@
 // the end-to-end run once VA3 hands that file over.
 
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,7 @@ import { arrivalLabel, mountOfferBadge, mountOffers } from "../src/panels/offers
 import { compileShot } from "../src/spec/compile.ts";
 import { describeSet, SPEC_MAGNITUDE } from "../src/spec/describe.ts";
 import { resolveSpecFiles } from "../src/spec/files.ts";
-import { applyClip, MAX_PRESENT_SHOTS, offersOfDocument, OfferRunner, sameView, samePoseWithin, snapshotManifest, snapshotOf, toDocument, viewMemoOf, viewShotOf, type OfferPayload } from "../src/spec/snapshot.ts";
+import { agentArgsOf, applyClip, MAX_PRESENT_SHOTS, offersOfDocument, presentDocument, OfferRunner, sameView, samePoseWithin, snapshotManifest, snapshotOf, toDocument, viewMemoOf, viewShotOf, type OfferPayload } from "../src/spec/snapshot.ts";
 import { manifestEntry, MANIFEST_VERSION, type ManifestEntry } from "../src/spec/manifest.ts";
 import { SPEC_VERSION, validateSpec, type SpecShot } from "../src/spec/spec.ts";
 import { MAGNITUDE } from "../src/state/contour.ts";
@@ -851,4 +852,188 @@ test("D3/D6: the snapshot's manifest is the one D3 entry, with the selection and
   assert.deepEqual(outside, ["the opacity is 0.5"]);
   assert.equal(e.png, "view.png");
   assert.ok(e.contour && e.contour.drawn && e.contour.extrema.recorded !== null, "the extrema are stated");
+});
+
+// ---- nothing an agent sends raises in the human's window (review of #2697) ----------
+
+test("no modal: a spec the window cannot judge is listed as refused, never a throw (wrong suffix, folder, missing, not JSON, not a spec)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-offers-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, "folder"));
+  writeFileSync(join(dir, "x.txt"), "x");
+  const go = (files: unknown) => presentDocument(() => JSON.stringify({ spec: SPEC_VERSION, files, shots: [{ name: "n", caption: "C." }] }), (spec) => resolveSpecFiles(spec, dir, existsSync), true);
+  // Each of these throws out of `resolveSpecFiles` (main/pairing.ts classify) or refuses; none may reach the caller as a throw.
+  for (const files of [{ model: join(dir, "x.txt") }, { model: "x.txt" }, { model: join(dir, "folder") }, { model: STAGED, results: join(dir, "x.txt") }, { model: join(dir, "none.txt") }, { model: join(FIX, "contour_staged.results.h5") }, { model: STAGED, results: STAGED }]) {
+    const p = go(files);
+    assert.ok(p.refused, `${JSON.stringify(files)} is refused`);
+    assert.equal(p.offers.length, 1);
+    assert.equal(p.offers[0]!.name, "n", "the row keeps the name it could read");
+    assert.equal(p.offers[0]!.caption, "C.");
+    assert.ok(p.offers[0]!.refused?.includes(p.refused.reason));
+  }
+  // The throw is real: guarded here, not absent.
+  assert.throws(() => offersOfDocument({ spec: SPEC_VERSION, files: { model: join(dir, "x.txt") }, shots: [{ name: "n" }] }, (spec) => resolveSpecFiles(spec, dir, existsSync), true));
+  // No name to read: one row that says so.
+  for (const text of ["{ not json", "null", "[]", `{"spec":"${SPEC_VERSION}"}`, `{"spec":"${SPEC_VERSION}","files":{"model":"m.h5"},"shots":[{"name":7}]}`]) {
+    const p = presentDocument(() => text, (spec) => resolveSpecFiles(spec, dir, existsSync), true);
+    assert.ok(p.refused, text);
+    assert.deepEqual(p.offers.map((o) => o.name), ["unreadable spec"], text);
+  }
+});
+
+test("no modal: the swap race: the file changes, or goes, between the sender's check and the window's read", () => {
+  const good = JSON.stringify({ spec: SPEC_VERSION, files: { model: STAGED }, shots: [{ name: "n" }] });
+  const bad = JSON.stringify({ spec: SPEC_VERSION, files: { model: "C:/Windows/win.ini" }, shots: [{ name: "n" }] });
+  const resolve = (spec: Parameters<typeof resolveSpecFiles>[0]) => resolveSpecFiles(spec, FIX, () => true);
+  assert.equal(presentDocument(() => good, resolve, true).refused, null, "what the sender saw");
+  const swapped = presentDocument(() => bad, resolve, true);
+  assert.equal(swapped.refused?.key, "files");
+  assert.equal(swapped.offers[0]!.name, "n");
+  const gone = presentDocument(() => {
+    throw new Error("ENOENT");
+  }, resolve, true);
+  assert.equal(gone.refused?.key, "spec");
+  assert.deepEqual(gone.offers.map((o) => o.name), ["unreadable spec"]);
+});
+
+test("a row that arrived refused stays refused, cannot be applied, and is not judged again", async () => {
+  const r = await rig();
+  const p = presentDocument(() => "{ not json", (spec) => resolveSpecFiles(spec, FIX, () => true), true);
+  r.runner.receive(p.offers);
+  await r.tick();
+  await r.tick();
+  const o = r.store.get().offers.list[0]!;
+  assert.equal(o.status, "refused");
+  assert.match(o.reason!, /^spec: not a readable JSON document/);
+  assert.throws(() => r.store.dispatch({ type: "applyOffer", id: o.id }), /cannot be applied/);
+  r.store.dispatch({ type: "fileChanged", path: STAGED });
+  await r.tick();
+  assert.equal(r.store.get().offers.list[0]!.status, "refused");
+});
+
+test("no modal: a click whose set cannot be opened refuses in the list, and the view stays", async () => {
+  const h = await opened();
+  sets.push(h);
+  h.effects.setThemeTarget({ documentElement: { style: { setProperty() {} }, dataset: {}, setAttribute() {} }, getElementById: () => ({}) } as unknown as Document);
+  const camera = cameraDouble(h.store);
+  await camera.settle();
+  const asked: [string, readonly string[]][] = [];
+  const runner = new OfferRunner({
+    store: h.store,
+    open: async (path, needs) => {
+      asked.push([path, needs]);
+      return { ok: false, reason: `no such file: ${needs[0]}` };
+    },
+    onScreen: () => ({ contour: true, deform: true }),
+    pose: camera.pose,
+    settle: camera.settle,
+  });
+  after(runner.start());
+  const before = viewMemoOf(h.store.get(), camera.pose(), STAGED);
+  runner.receive(offers([{ name: "gone" }], {}, DEFORM_2D, DEFORM_2D_RESULTS));
+  await new Promise((ok) => setTimeout(ok, 0));
+  const o = offerNamed(h.store.get(), "gone");
+  h.store.dispatch({ type: "applyOffer", id: o.id });
+  await new Promise((ok) => setTimeout(ok, 0));
+  await runner.whenIdle();
+  const s = h.store.get();
+  assert.deepEqual(asked, [[DEFORM_2D_RESULTS, [DEFORM_2D, DEFORM_2D_RESULTS]]], "the offer names every file it needs");
+  assert.equal(offerNamed(s, "gone").status, "refused");
+  assert.equal(offerNamed(s, "gone").reason, `no such file: ${DEFORM_2D}`);
+  assert.equal(s.artifacts.model!.path, STAGED);
+  assert.deepEqual(comparable(viewMemoOf(s, camera.pose(), STAGED)), comparable(before));
+});
+
+// ---- INV-3 over the forms a spec can take (review of #2697) --------------------------
+
+test("INV-3: every small-integer normal, at several offsets, reads back as the same plane", async () => {
+  const r = await rig();
+  const d = describeSet(r.store.get(), []);
+  let checked = 0;
+  const lost: string[] = [];
+  for (let x = -3; x <= 3; x++) for (let y = -3; y <= 3; y++) for (let z = -3; z <= 3; z++) {
+    if (x === 0 && y === 0 && z === 0) continue;
+    for (const offset of [1, 4, -7.3, 0.1]) {
+      for (const flip of [false, true]) {
+        const want = shotOf(offers([{ name: "c", clip: [{ normal: [x, y, z], offset, flip }] }])[0]!);
+        const c = compileShot(want, d);
+        assert.ok(c.ok);
+        if (!c.ok) continue;
+        applyClip(r.store, c.plan);
+        const { shot } = viewShotOf(r.store.get(), r.camera.pose());
+        checked++;
+        if (!sameView(shot, want, d)) lost.push(JSON.stringify([x, y, z, offset, flip]));
+      }
+    }
+  }
+  assert.equal(checked, 342 * 8);
+  assert.deepEqual(lost, []);
+  // Tolerance is not blindness: the next plane over is another view.
+  const base = shotOf(offers([{ name: "c", clip: [{ normal: [1, 2, 3], offset: 1 }] }])[0]!);
+  const near = shotOf(offers([{ name: "c", clip: [{ normal: [1, 2, 3], offset: 1 + 1e-6 }] }])[0]!);
+  assert.equal(sameView(base, near, d), false);
+  const tilted = shotOf(offers([{ name: "c", clip: [{ normal: [1, 2, 3.00001], offset: 1 }] }])[0]!);
+  assert.equal(sameView(base, tilted, d), false);
+});
+
+test("INV-3: isolating every group reads back as the offer: nothing is hidden, and it is the same view", async () => {
+  const r = await rig();
+  const paths = describeSet(r.store.get(), []).groups.map((g) => g.path);
+  r.runner.receive(offers([{ name: "all", isolate: paths, camera: "iso" }, { name: "some", isolate: paths.slice(0, 1), camera: "iso" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "all").id);
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "all").status, "applied");
+  assert.deepEqual(s.visibility.hidden, []);
+  const d = describeSet(s, []);
+  assert.ok(sameView(viewShotOf(s, r.camera.pose()).shot, shotOf(offerNamed(s, "all")), d));
+  assert.equal(sameView(viewShotOf(s, r.camera.pose()).shot, shotOf(offerNamed(s, "some")), d), false, "an isolate of some groups is another view");
+  const got = r.runner.snapshot([800, 600]);
+  assert.ok(got.ok);
+  if (!got.ok) return;
+  assert.deepEqual(got.snapshot.spec.shots[0], shotOf(offerNamed(s, "all")), "the offer's own words");
+});
+
+// ---- the ADR's spellings (review of #2697) ---------------------------------------------
+
+test("D4, D5, D6: the ADR's spellings are the app's modes, and an agent's request never falls into view mode", () => {
+  const argvOf = (...a: string[]) => {
+    const r = agentArgsOf(a);
+    assert.ok(r && "argv" in r, `${a.join(" ")}: ${JSON.stringify(r)}`);
+    return r.argv;
+  };
+  assert.deepEqual(argvOf("--present", "s.json"), ["--mode=present", "--spec=s.json"]);
+  assert.deepEqual(argvOf("--present=s.json"), ["--mode=present", "--spec=s.json"]);
+  assert.deepEqual(argvOf("--snapshot", "--out", "d"), ["--mode=snapshot", "--out=d"]);
+  assert.deepEqual(argvOf("--snapshot", "--out=d"), ["--mode=snapshot", "--out=d"]);
+  assert.deepEqual(argvOf("--out", "d", "--snapshot"), ["--mode=snapshot", "--out=d"]);
+  assert.deepEqual(argvOf("--render", "s.json", "--out", "d"), ["--mode=render", "--spec=s.json", "--out=d"]);
+  assert.deepEqual(argvOf("--describe", "m.h5", "--out", "d"), ["--mode=describe", "--file=m.h5", "--out=d"]);
+  assert.deepEqual(argvOf("--user-data-dir=u", "--present", "s.json"), ["--mode=present", "--spec=s.json"]);
+  for (const [a, why] of [
+    [["--present"], /needs a spec file/],
+    [["--present", "--out", "d"], /needs a spec file/],
+    [["--present", "s", "--out", "d"], /takes no --out/],
+    [["--snapshot"], /needs --out/],
+    [["--snapshot", "d"], /takes no value/],
+    [["--snapshot", "--out"], /needs --out/],
+    [["--render", "s"], /needs --out/],
+    [["--render", "--out", "d"], /needs a spec file/],
+    [["--describe", "--out", "d"], /needs a file/],
+    [["--present", "s", "--snapshot", "--out", "d"], /only one of/],
+    [["--present", "s", "--mode=view"], /two modes/],
+    [["--spec=s"], /names no agent mode/],
+    [["--out=d"], /names no agent mode/],
+    [["m.h5", "--out", "d"], /names no agent mode/],
+    [["--mode=view", "--spec=s"], /names no agent mode/],
+  ] as [string[], RegExp][]) {
+    const r = agentArgsOf(a);
+    assert.ok(r && "refused" in r, `${a.join(" ")} is refused; got ${JSON.stringify(r)}`);
+    assert.match(r.refused, why, a.join(" "));
+  }
+  // What stays as it was.
+  for (const a of [[], ["m.h5"], ["--file=m.h5"], ["--mode=view", "--file=m.h5"], ["--mode=render", "--spec=s", "--out=d"], ["--mode=capture", "--file=m", "--out=o.png"], ["--mode=present", "--spec=s"]]) {
+    assert.equal(agentArgsOf(a), null, a.join(" "));
+  }
 });

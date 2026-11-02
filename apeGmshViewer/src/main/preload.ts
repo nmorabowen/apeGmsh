@@ -123,5 +123,7 @@ contextBridge.exposeInMainWorld("viewer", {
       ipcRenderer.removeListener("viewer:snapshot", handler);
     };
   },
+  // ADR 0128 D5: a click on an offer opens its set; refused with the reason, never with a dialog.
+  offerOpen: (path: string, needs: readonly string[]) => ipcRenderer.invoke("viewer:offerOpen", path, needs),
   snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
 });

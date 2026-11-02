@@ -1154,7 +1154,7 @@ export function reduce(s: State, e: Event): State {
       // INV-5: this lists the offers and touches nothing else of the state.
       if (!Number.isFinite(e.at)) throw new RangeError(`offerReceived: ${JSON.stringify(e.at)} is not a time`);
       let seq = s.offers.seq;
-      const arrived = e.offers.map((o): Offer => ({ ...o, id: ++seq, arrivedAt: e.at, status: "pending", reason: null, opens: [], viewRefused: false }));
+      const arrived = e.offers.map((o): Offer => ({ ...o, id: ++seq, arrivedAt: e.at, status: o.refused ? "refused" : "pending", reason: o.refused ?? null, opens: [], viewRefused: Boolean(o.refused) }));
       // Newest first; a spec's shots keep their own order within one arrival.
       return { ...s, offers: { ...s.offers, seq, list: [...arrived, ...s.offers.list].slice(0, MAX_OFFERS) } };
     }
