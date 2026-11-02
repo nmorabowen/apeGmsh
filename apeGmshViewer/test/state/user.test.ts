@@ -17,7 +17,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { candidates } from "../../src/main/pairing.ts";
-import { familiesOf, familyMarks, mountPhase, userBadgeOf } from "../../src/panels/phase.ts";
+import { barClearPx, familiesOf, familyMarks, mountPhase, userBadgeOf } from "../../src/panels/phase.ts";
 import { userResultsGroup } from "../../src/panels/legend.ts";
 import { readUserSet, type UserH5, type UserRead } from "../../src/reader/userFile.ts";
 import { initialState, NO_USER_FILE, reduce, userEventOf, userInfoOf, userPathOf, userReadable } from "../../src/state/reduce.ts";
@@ -418,6 +418,14 @@ test("the contour picker's User Results group: each entry, what it is, and what 
 
 // ---- the phase bar, mounted ---------------------------------------------------
 
+test("the capped bar leaves clear what #header does: 684 px, or 216 px at 1000 px wide or less and with the rail collapsed", () => {
+  // style.css: `#header { max-width: calc(100vw - 684px) }`, `@media (max-width: 1000px)` and `body[data-rail-collapsed="true"]` give 216.
+  assert.equal(barClearPx(1600, false), 684);
+  assert.equal(barClearPx(1001, false), 684);
+  assert.equal(barClearPx(1000, false), 216);
+  assert.equal(barClearPx(1600, true), 216);
+});
+
 class FakeEl {
   tagName: string;
   className = "";
@@ -507,7 +515,10 @@ test("mounted, the bar shows each family as a button; the user families are disa
     assert.deepEqual(pick.children.map((o) => (o as FakeEl).textContent), ["mode_1", "mode_2"]);
     assert.equal(pick.title, "results stage (Modes)");
     // F3 (#2737 review): on the scrubber row the bar stops where #header does, clear of the ViewCube, and its buttons keep one line.
-    assert.match(bar.style["cssText"] ?? "", /max-width: calc\(100vw - 684px\)/);
+    assert.match(bar.style["cssText"] ?? "", /max-width: calc\(100vw - 684px\); flex-wrap: wrap;/);
+    // The scrubber keeps its least width on a line, else it wraps to a line of its own.
+    const box = bar.all((e) => e.className === "scrubber")[0]!;
+    assert.match(box.style["cssText"] ?? "", /flex: 1 1 0; min-width: 340px;/);
     assert.deepEqual([families()[3]!.style["flex"], families()[3]!.style["whiteSpace"]], ["0 0 auto", "nowrap"]);
     // A disabled family dispatches nothing.
     const n = dispatched.length;

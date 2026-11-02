@@ -146,11 +146,29 @@ export function familyMarks(f: PhaseFamily): { count: string; stale: string; ref
 }
 
 /**
- * The bar's cap on the scrubber row: `#header`'s (style.css, `100vw - 684px`),
- * which stops short of the ViewCube and the right rail, so the readout is never
- * under the ViewCube (#2737 review).
+ * The bar's cap on the scrubber row is `#header`'s (style.css): `100vw - 684px`,
+ * short of the ViewCube and the right rail; `100vw - 216px` at 1000 px wide or
+ * less, or with the rail collapsed, where the ViewCube moves to the right edge.
+ * The capped bar wraps, so a control is never under the ViewCube (#2737 review).
  */
 export const BAR_RIGHT_CLEAR_PX = 684;
+export const BAR_RIGHT_CLEAR_NARROW_PX = 216;
+export const NARROW_MAX_PX = 1000;
+
+/** The pixels the capped bar leaves clear on the right: style.css `#header`'s max-width rule, as a function. */
+export function barClearPx(viewportWidth: number, railCollapsed: boolean): number {
+  return viewportWidth <= NARROW_MAX_PX || railCollapsed ? BAR_RIGHT_CLEAR_NARROW_PX : BAR_RIGHT_CLEAR_PX;
+}
+
+/**
+ * A wrapped bar is taller than the one line `#left-rail` (top 102 px) leaves it,
+ * so it is stacked above the rail's cards: its controls stay visible and
+ * clickable, over the top of the first card. Below an open banner (z-index 20).
+ */
+export const BAR_Z = 5;
+
+/** The scrubber's least width on a line: the picker, the three step buttons, the slider at its least and a little readout. It takes a line of its own below that. */
+export const SCRUBBER_MIN_PX = 340;
 
 /** The readout's widest extent; longer text ends in an ellipsis, with the full text as its tooltip. */
 export const READOUT_MAX_PX = 240;
@@ -202,7 +220,12 @@ export function mountPhase(store: Store): () => void {
     const userSays = badge !== null || families.some((f) => !f.drawable);
     bar.hidden = s.phase.axis.length < 2 && !(s.phase.axis.length === 1 && userSays);
     // With the scrubber, the bar takes its own row under the header (style.css centres it on the header row).
-    bar.style.cssText = scrubberRow(s) ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - ${BAR_RIGHT_CLEAR_PX}px);` : "";
+    // Capped as #header is, and wrapping: the scrubber takes a line of its own rather than run under the ViewCube.
+    const wide = typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerWidth;
+    const collapsed = typeof document !== "undefined" && document.body?.dataset?.["railCollapsed"] === "true";
+    bar.style.cssText = scrubberRow(s)
+      ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - ${barClearPx(wide, collapsed)}px); flex-wrap: wrap; z-index: ${BAR_Z};`
+      : "";
     // One button per non-results phase, then one per state family (ADR 0130 D1); the stage picker chooses within the family shown.
     const buttons: HTMLElement[] = s.phase.axis
       .filter((k) => k.kind !== "results")
@@ -254,7 +277,7 @@ export function mountPhase(store: Store): () => void {
   const scrubber = (t: Timeline, s: State): HTMLElement[] => {
     const box = el("span", "scrubber");
     // It shrinks before the bar overflows its cap: the slider to its least width, then the readout to an ellipsis.
-    box.style.cssText = "display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);";
+    box.style.cssText = `display: flex; flex: 1 1 0; min-width: ${SCRUBBER_MIN_PX}px; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);`;
     const pick = el("select", "results-stage");
     pick.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--bg-1); border: 1px solid var(--line); border-radius: 5px;";
     // The family shown: Stages list the static and transient stages, Modes the mode shapes.
@@ -329,9 +352,22 @@ export function mountPhase(store: Store): () => void {
   };
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
+  // The cap follows the window's width and the rail, as #header's does (only a real window has them; the Node tests mount without).
+  const recap = () => render(store.get(), null);
+  const offWindow: (() => void)[] = [];
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", recap);
+    offWindow.push(() => window.removeEventListener("resize", recap));
+    if (typeof MutationObserver !== "undefined") {
+      const rail = new MutationObserver(recap);
+      rail.observe(document.body, { attributes: true, attributeFilter: ["data-rail-collapsed"] });
+      offWindow.push(() => rail.disconnect());
+    }
+  }
   return () => {
     stop();
     unsubscribe();
     for (const u of unlisten) u();
+    for (const u of offWindow) u();
   };
 }
