@@ -561,7 +561,10 @@ export class Viewport {
     if (!s.mesh) return;
     const { on: nodes, size: nodeSize } = s.nodes;
     if (nodes && !this.nodePoints) {
-      this.rebuild(s, s.mesh);
+      // Only the markers: what is drawn has not changed, so the scene is not rebuilt.
+      if (!this.drawn) return;
+      this.buildNodePoints(s, s.mesh, this.drawn, this.full ?? basePositions(s.mesh, this.blobs));
+      this.requestRender();
       return;
     }
     if (!this.nodePoints) return;
@@ -571,6 +574,19 @@ export class Viewport {
     this.nodePoints.visible = nodes;
     setNodeSize(this.nodePoints, size);
     this.requestRender();
+  }
+
+  /** The markers of the drawn nodes, at the drawn (deformed while it shows) positions. */
+  private buildNodePoints(s: State, info: MeshInfo, drawn: { lineMap: Int32Array; triMap: Int32Array }, full: { line: Float32Array; tri: Float32Array }): void {
+    this.nodeVertices = uniqueNodeVertices(
+      this.blobs.get(info.vertexNodes.line) as Float64Array,
+      this.blobs.get(info.vertexNodes.tri) as Float64Array,
+      drawn.lineMap,
+      drawn.triMap,
+    );
+    const t = themeTokens(this.activeTheme);
+    this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
+    this.content.add(this.nodePoints);
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
@@ -1204,17 +1220,7 @@ export class Viewport {
     }
 
     // Built only while wanted: off, the markers cost nothing.
-    if (s.nodes.on) {
-      this.nodeVertices = uniqueNodeVertices(
-        this.blobs.get(info.vertexNodes.line) as Float64Array,
-        this.blobs.get(info.vertexNodes.tri) as Float64Array,
-        drawn.lineMap,
-        drawn.triMap,
-      );
-      const t = themeTokens(this.activeTheme);
-      this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
-      this.content.add(this.nodePoints);
-    }
+    if (s.nodes.on) this.buildNodePoints(s, info, drawn, full);
 
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);

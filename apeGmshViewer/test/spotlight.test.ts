@@ -705,3 +705,12 @@ test("edge cases: quoted field values, param operator preservation, pinned-claus
   const sHelpMode = reduce(loaded, { type: "openSpotlight", mode: "help" });
   assert.ok(spotlightViewOf(sHelpMode).items.length >= 5, "help mode lists step-by-step interactive examples");
 });
+
+test("Show Nodes: Enter and Alt+Enter both toggle the markers, as every display toggle does", () => {
+  const item = spotlightViewOf(reduce(loaded, { type: "openSpotlight", query: "nodes" })).items.find((i) => i.id === "cmd:toggle-nodes");
+  assert.ok(item, "the nodes command is offered on a loaded model");
+  for (const events of [item.events, item.altEvents ?? []]) {
+    const next = events.reduce((st, e) => reduce(st, e), loaded);
+    assert.equal(next.nodes.on, true, "both turn the markers on from off");
+  }
+});

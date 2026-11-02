@@ -528,7 +528,7 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
           `Node markers are currently ${s.nodes.on ? "ON" : "OFF"}`,
           [{ type: "setNodes", on: !s.nodes.on }],
           s.nodes.on,
-          [{ type: "setNodes", on: s.nodes.on }],
+          [{ type: "setNodes", on: !s.nodes.on }],
         ),
         keywords: "nodes points markers circles toggle",
       });
