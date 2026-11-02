@@ -83,7 +83,8 @@ ACKNOWLEDGED: dict[tuple[int, str], tuple[str, str]] = {
 def gh_fetch(path: str) -> Any:
     """GET ``path`` through ``gh api``; ``None`` on a 404."""
     proc = subprocess.run(
-        ["gh", "api", path], capture_output=True, text=True, check=False
+        ["gh", "api", path], capture_output=True, text=True, encoding="utf-8",
+        check=False,
     )
     if proc.returncode != 0:
         if "404" in proc.stderr or "Not Found" in proc.stderr:
