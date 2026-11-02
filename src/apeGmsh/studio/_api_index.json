@@ -3318,6 +3318,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.capabilities"
     },
+    "ops.combination": {
+      "doc": "Declare a combination, archived in ``model.h5`` (ADR 0130 D4).",
+      "signature": "combination(name: 'str', terms: \"'Iterable[object]'\", *, rule: 'str' = 'linear', envelope: 'str' = '', fraction: 'float | None' = None, damping: 'float | None' = None) -> 'Combination'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.combination"
+    },
     "ops.complex_eigen": {
       "doc": "Complex / state-space modal analysis via the live emitter.",
       "signature": "complex_eigen(num_modes: 'int', *, solver: 'str' = '-genBandArpack', tol: 'float | None' = None, closed_form: 'bool' = False) -> \"'ComplexEigenResult'\"",

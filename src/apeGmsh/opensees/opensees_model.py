@@ -82,6 +82,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
+from ._internal._combinations_h5 import (
+    Combination,
+    CombinationsZone,
+    read_combinations,
+)
 from ._internal.lineage import Lineage
 from .emitter.caps import (
     REQUIRES_TOKENS,
@@ -524,6 +529,8 @@ class OpenSeesModel:
     _computed_sections: tuple[tuple[int, str, str], ...] = field(
         default_factory=tuple
     )
+    #: ``/opensees/combinations`` as read (ADR 0130 D4; opensees 2.39.0).
+    _combinations: CombinationsZone = field(default_factory=CombinationsZone)
     #: Tagged damping objects read from ``/opensees/dampings`` (ADR 0053
     #: D3b; empty when none emitted). Replayed before elements so an
     #: element-flag ``-damp`` resolves.
@@ -706,6 +713,7 @@ class OpenSeesModel:
         from ._internal._names_h5 import read_names
 
         names = read_names(spath, opensees_root=opensees_root)
+        combinations = read_combinations(spath, opensees_root=opensees_root)
 
         from ._internal._computed_sections_h5 import read_computed_sections
 
@@ -826,6 +834,7 @@ class OpenSeesModel:
             _lineage=lineage,
             _names=tuple(names),
             _computed_sections=tuple(computed_sections),
+            _combinations=combinations,
             _nodes_ndf=nodes_ndf,
             _initial_stress=initial_stress,
             _initial_stress_param_tags=initial_stress_param_tags,
@@ -1510,6 +1519,13 @@ class OpenSeesModel:
         :meth:`name_for` for keyed lookups.
         """
         return self._names
+
+    def combinations(self) -> tuple[Combination, ...]:
+        """Return the combinations ``apeSees`` declared (ADR 0130 D4), in
+        file order, without any row refused at read (a warning names those).
+        Empty below opensees 2.39.0.
+        """
+        return self._combinations.valid
 
     def computed_sections(self) -> tuple[tuple[int, str, str], ...]:
         """Return the ``ComputedSection`` provenance rows
@@ -2438,6 +2454,8 @@ class OpenSeesModel:
         # every store's row order, so the rows columns still apply.
         if self._declarations is not None:
             emitter_fresh.restore_declarations(self._declarations)
+        # ADR 0130 D4: echo the table verbatim, a refused row included.
+        emitter_fresh.set_combinations(self._combinations.rows_for_rewrite())
         _compose_model_h5(
             self._fem,
             emitter_fresh,
