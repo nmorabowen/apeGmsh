@@ -2868,6 +2868,9 @@ call `validate_zone_version(...)` for each zone before reading it.
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | assembly (ADR 0117 D5) | `assembly_schema_version` | `/assembly` (`Assembly.h5` archives only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ASSEMBLY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | sequence (ADR 0112 D2b) | `sequence_schema_version` | `/sequence` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SEQUENCE_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| user_meta (ADR 0130) | `user_meta_schema_version` | `/meta` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_META_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| combinations (ADR 0130) | `combinations_schema_version` | `/combinations` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `COMBINATIONS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| user_results (ADR 0130) | `user_results_schema_version` | `/results` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_RESULTS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
 > The geometry, provenance, assembly and sequence keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
