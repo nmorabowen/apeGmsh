@@ -439,3 +439,15 @@ test("the renderer's CSS and HTML hold no control bytes: a merge once turned the
     assert.equal(at, -1, `${name} has a control byte at character ${at}`);
   }
 });
+
+test("an app-chrome still draws every card and the banner open, so no closed arrow or closed-header rule reaches it", () => {
+  const css = readFileSync(join(src, "renderer", "style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const ungated: string[] = [];
+  for (const [, selectors, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if (!/content:\s*"\\25b8|margin-bottom:\s*0;/.test(body!)) continue;
+    for (const sel of selectors!.split(",").map((x) => x.trim())) {
+      if (/\[data-collapsed="true"\]|#banner:not\(\[data-open\]\)/.test(sel) && !sel.startsWith('body:not([data-still-chrome="app"])')) ungated.push(sel);
+    }
+  }
+  assert.deepEqual(ungated, []);
+});

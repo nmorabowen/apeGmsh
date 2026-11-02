@@ -68,10 +68,14 @@ body[data-rail-collapsed="true"] #header { max-width: calc(100vw - 216px); }
   all: unset; display: block; box-sizing: border-box; width: 100%; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
 }
+.banner-summary::before { content: "\25be\a0"; }
 #banner:not([data-open]) { width: 536px; }
+/* A collapsed card or closed banner hides its contents and shows a closed arrow, except in an app-chrome still
+   (ADR 0128 D9), which nobody can open: there every card and the banner are drawn open. */
+body:not([data-still-chrome="app"]) #banner:not([data-open]) > .banner-summary::before { content: "\25b8\a0"; }
 body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summary) { display: none; }
-#banner[data-open] { z-index: 20; max-height: calc(100vh - 180px); overflow: auto; }
-#banner[data-open] > .banner-summary { margin-bottom: 6px; }
+#banner[data-open], body[data-still-chrome="app"] #banner { z-index: 20; max-height: calc(100vh - 180px); overflow: auto; }
+#banner[data-open] > .banner-summary, body[data-still-chrome="app"] #banner > .banner-summary { margin-bottom: 6px; }
 
 /* Left rail: stacks the cards in one flex column so they never overlap and
    collapsing any card immediately reflows its neighbours. Display and Deformed
@@ -470,13 +474,13 @@ code { font-family: var(--mono); }
 #rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before {
   color: var(--accent);
 }
-#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before, #line-diagram[data-collapsed="true"] > h3:first-child::before, #loads[data-collapsed="true"] > h3:first-child::before {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child::before {
   content: "\25b8";
 }
 body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"], body:not([data-still-chrome="app"]) #legend[data-collapsed="true"], body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"], body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] {
   flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
 }
-#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child, #line-diagram[data-collapsed="true"] > h3:first-child, #loads[data-collapsed="true"] > h3:first-child {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child {
   margin-bottom: 0;
 }
 body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > :not(:first-child) {
@@ -500,7 +504,6 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
 }
 #banner:not([hidden]) ~ #scale-stack { top: 168px; }
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
-/* A collapsed card or closed banner hides its contents, except in an app-chrome still (ADR 0128 D9), which nobody can open. */
 body[data-still-chrome="model"] #scale-stack { display: none; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
 .vs-title { font-weight: 600; font-size: 13px; }
@@ -535,9 +538,9 @@ body[data-still-chrome="model"] #scale-stack { display: none; }
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
 #display > h3:first-child::before, #deform > h3:first-child::before, #contour > h3:first-child::before { content: "\25be"; font-size: 11px; color: var(--muted); }
-#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before, #contour[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
+body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
 body:not([data-still-chrome="app"]) #display[data-collapsed="true"], body:not([data-still-chrome="app"]) #deform[data-collapsed="true"], body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
-#display[data-collapsed="true"] > h3:first-child, #deform[data-collapsed="true"] > h3:first-child, #contour[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
+body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
 body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] > :not(:first-child) { display: none; }
 .display-row { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
 .display-label { width: 56px; flex: none; color: var(--muted); font-size: 13px; }

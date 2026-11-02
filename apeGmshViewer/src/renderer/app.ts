@@ -929,9 +929,11 @@ function addAt(n: readonly number[], t: number): string {
  * 75 %; the panel with the X plane's Custom normal fields open on (1, 1, 0);
  * six planes, each 10 % inside a face of the box; a 7th refused with its
  * notice. Then a click that misses cut-away geometry: a plane along the view
- * cuts away the nearer half, and a scripted click on an element of that half
- * is a miss (the ring marks where it clicked); the same click with "Apply
- * cuts" off selects it. Then the deformed (scale 10, ghost on), contoured
+ * cuts away the nearer half (on a planar model shown in plan, which lies in
+ * that plane, the first axis plane through the centre that cuts something
+ * away), and a scripted click on an element of that half is a miss (the ring
+ * marks where it clicked); the same click with "Apply cuts" off selects it.
+ * Then the deformed (scale 10, ghost on), contoured
  * model cut by a Y plane (the half nearer the camera gone) and an X plane at
  * 45 %, at the first and the last step of the scrub (the shear carries more
  * of it through the X plane), and that last still at 1280 px. Plane offsets
@@ -1184,7 +1186,7 @@ function marker(at: { x: number; y: number }, text: string): () => void {
 
 /**
  * The V4e2 plane-gizmo stills (D7), by a fixed rule, on the undeformed model
- * coloured by group: one Z plane at 55 % with its gizmo; three planes (Z, X at
+ * coloured by group, seen from the iso camera: one Z plane at 55 % with its gizmo; three planes (Z, X at
  * 40 %, Y at 60 %), three gizmos; the Z gizmo mid-drag (a real press on the
  * quad centre, moved a quarter of the arrow up the normal, still held); the Z
  * plane rotated by its tip (a real press, moved to tilt the normal about 30
@@ -1568,7 +1570,6 @@ async function main() {
     // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
     await captureElements(settle, width, height);
     // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).
-    // Before the V4e1 stills: their pick-miss still finds no target on a flat shell model and ends the capture there.
     await captureCaps(settle, width, height);
     // V4e1 (D7): the section-plane stills, at the capture window's own width, then 1280 px.
     await captureClip(settle, width, height);

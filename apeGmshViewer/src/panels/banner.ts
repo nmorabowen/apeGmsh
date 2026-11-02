@@ -52,7 +52,7 @@ export function mountBanner(store: Store): () => void {
     banner.style.top = scrubberRow(s) ? `${BANNER_BELOW_SCRUBBER_PX}px` : "";
     unlisten?.();
     const only = [...refusals, ...notices, ...warnings][0] ?? null;
-    const summary = el("button", "banner-summary" + (refusals.length ? " refused" : ""), `${open ? "▾" : "▸"} ${bannerSummary(refusals.length, notices.length, warnings.length, only)}`);
+    const summary = el("button", "banner-summary" + (refusals.length ? " refused" : ""), bannerSummary(refusals.length, notices.length, warnings.length, only));
     summary.type = "button";
     summary.title = open ? "close the list" : "read the whole list";
     unlisten = listen(summary, "click", () => {

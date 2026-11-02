@@ -59,7 +59,7 @@ export function nodePositions(v: NodeVertices, line: Float32Array, tri: Float32A
 export const NODE_DEPTH_PULL = 5e-4;
 /**
  * The least perspective pull in normalised depth, about 2 steps of a 24-bit depth buffer: far off, the share alone
- * rounds away. Being a fixed NDC offset it covers about d^2 * 2.5e-7 / (2 near) metres at distance d (0.5 m at
+ * rounds away. Being a fixed NDC offset it covers about d^2 * 2.5e-7 / (2 near) metres at distance d (0.25 m at
  * 100 m with near 5 mm), where the depth buffer barely resolves more anyway.
  */
 export const NODE_DEPTH_FLOOR = 2.5e-7;
