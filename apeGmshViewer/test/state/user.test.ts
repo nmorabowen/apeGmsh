@@ -474,10 +474,13 @@ class FakeEl {
 
 test("mounted, the bar shows each family as a button; the user families are disabled, and Modes opens the first mode", () => {
   const prevDoc = (globalThis as { document?: unknown }).document;
-  const bar = new FakeEl("div");
+  const bar = Object.assign(new FakeEl("div"), { getBoundingClientRect: () => ({ height: 76.4 }) });
+  // The root's custom properties, as style.css reads them (`--phase-bar-h` moves #left-rail below a wrapped bar).
+  const root = new Map<string, string>();
   (globalThis as { document?: unknown }).document = {
     createElement: (t: string) => new FakeEl(t),
     getElementById: (id: string) => (id === "phase" ? bar : null),
+    documentElement: { style: { setProperty: (k: string, v: string) => root.set(k, v), removeProperty: (k: string) => root.delete(k) } },
   };
   let state = withResults(readInto(initialState, writeSet({ modelHash: "ffffffffffffffffffffffffffffffff" })));
   const listeners: ((s: State, prev: State) => void)[] = [];
@@ -507,6 +510,8 @@ test("mounted, the bar shows each family as a button; the user families are disa
       ["Spectra · stale", true],
       ["User Combinations 4 · 2 stale · 2 refused", true],
     ]);
+    // With results on the axis the bar sits on the scrubber row, so its height is published already.
+    assert.equal(root.get("--phase-bar-h"), "77px");
     families()[1]!.click();
     assert.deepEqual(dispatched.at(-1), { type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
     assert.match(families()[1]!.className, /active/);
@@ -519,6 +524,9 @@ test("mounted, the bar shows each family as a button; the user families are disa
     // The scrubber keeps its least width on a line, else it wraps to a line of its own.
     const box = bar.all((e) => e.className === "scrubber")[0]!;
     assert.match(box.style["cssText"] ?? "", /flex: 1 1 0; min-width: 340px;/);
+    // The drawn height is published for #left-rail on the scrubber row, rounded up.
+    assert.equal(root.get("--phase-bar-h"), "77px");
+    assert.doesNotMatch(bar.style["cssText"] ?? "", /z-index/, "the bar is not stacked over the left rail");
     assert.deepEqual([families()[3]!.style["flex"], families()[3]!.style["whiteSpace"]], ["0 0 auto", "nowrap"]);
     // A disabled family dispatches nothing.
     const n = dispatched.length;

@@ -161,11 +161,11 @@ export function barClearPx(viewportWidth: number, railCollapsed: boolean): numbe
 }
 
 /**
- * A wrapped bar is taller than the one line `#left-rail` (top 102 px) leaves it,
- * so it is stacked above the rail's cards: its controls stay visible and
- * clickable, over the top of the first card. Below an open banner (z-index 20).
+ * The custom property on the document root that holds the scrubber bar's drawn
+ * height (px), absent off the scrubber row. style.css moves `#left-rail` below
+ * a bar that wrapped, and keeps its 102 px top under a one-line bar.
  */
-export const BAR_Z = 5;
+export const BAR_HEIGHT_VAR = "--phase-bar-h";
 
 /** The scrubber's least width on a line: the picker, the three step buttons, the slider at its least and a little readout. It takes a line of its own below that. */
 export const SCRUBBER_MIN_PX = 340;
@@ -224,7 +224,7 @@ export function mountPhase(store: Store): () => void {
     const wide = typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerWidth;
     const collapsed = typeof document !== "undefined" && document.body?.dataset?.["railCollapsed"] === "true";
     bar.style.cssText = scrubberRow(s)
-      ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - ${barClearPx(wide, collapsed)}px); flex-wrap: wrap; z-index: ${BAR_Z};`
+      ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - ${barClearPx(wide, collapsed)}px); flex-wrap: wrap;`
       : "";
     // One button per non-results phase, then one per state family (ADR 0130 D1); the stage picker chooses within the family shown.
     const buttons: HTMLElement[] = s.phase.axis
@@ -244,6 +244,14 @@ export function mountPhase(store: Store): () => void {
     }
     for (const b of buttons) rigid(b);
     bar.replaceChildren(...buttons, ...(t ? scrubber(t, s) : []));
+    publishHeight();
+  };
+  /** The bar's drawn height for style.css (`#left-rail` clears a wrapped bar), or none off the scrubber row. */
+  const publishHeight = () => {
+    const root = typeof document === "undefined" ? undefined : document.documentElement?.style;
+    if (typeof root?.setProperty !== "function") return;
+    if (bar.hidden || !scrubberRow(store.get())) root.removeProperty(BAR_HEIGHT_VAR);
+    else root.setProperty(BAR_HEIGHT_VAR, `${Math.ceil(bar.getBoundingClientRect().height)}px`);
   };
   const familyButton = (f: PhaseFamily, on: boolean): HTMLElement => {
     const b = el("button", on ? "phase family active" : "phase family", FAMILY_LABEL[f.key]);
@@ -363,6 +371,13 @@ export function mountPhase(store: Store): () => void {
       rail.observe(document.body, { attributes: true, attributeFilter: ["data-rail-collapsed"] });
       offWindow.push(() => rail.disconnect());
     }
+    // The height also moves without a render of this panel (a font arriving): it is published whenever the bar resizes.
+    if (typeof ResizeObserver !== "undefined") {
+      const sized = new ResizeObserver(publishHeight);
+      sized.observe(bar);
+      offWindow.push(() => sized.disconnect());
+    }
+    offWindow.push(() => document.documentElement.style.removeProperty(BAR_HEIGHT_VAR));
   }
   return () => {
     stop();

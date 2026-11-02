@@ -77,12 +77,20 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
    collapsing any card immediately reflows its neighbours. Display and Deformed
    keep their height; the others share what is left and scroll inside it. */
 #left-rail {
-  position: fixed; left: 16px; top: 102px; bottom: 16px;
+  /* VU3b (#2737): below the scrubber bar however many lines it wrapped to
+     (panels/phase.ts publishes --phase-bar-h, its drawn height, on the scrubber
+     row, which starts at 58 px); 102 px under a one-line bar or none. */
+  position: fixed; left: 16px; top: max(102px, calc(58px + var(--phase-bar-h, 0px) + 6px)); bottom: 16px;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   pointer-events: none;
 }
 #banner:not([hidden]) ~ #left-rail, #banner:not([hidden]) ~ #line-diagram {
   top: 168px;
+}
+/* VU3b (#2737): where the centred Windows strip reaches the rail's column
+   (the strip is about 550 px wide), the rail ends above it. */
+@media (max-width: 1200px) {
+  #left-rail { bottom: 72px; }
 }
 #left-rail > * { pointer-events: auto; }
 #left-rail > [hidden] { display: none; }
