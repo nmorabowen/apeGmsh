@@ -356,3 +356,18 @@ render mode. Its done-when adds:
 **Invariant.** **INV-7 (layers are presentation).** Two shots that differ
 only in `chrome`, `layers` or `background` draw the same model from the same
 camera pose, and have the same manifest entry apart from those keys.
+
+## Amendment 2 (2026-11-01): what Apply promises (D5)
+
+**Status:** Accepted (2026-11-01) by the owner's
+[ruling on #2654](https://github.com/nmorabowen/apeGmsh/issues/2654#issuecomment-6569224049).
+
+D5 says the human sees "exactly the view the agent's still showed". This
+amendment states what "exactly" holds to. The camera and the view are the
+contract: Apply keeps the spec's camera exactly and draws the same plan.
+Pixel identity with a model-chrome still is not part of it.
+
+The human's panels stay where they are, so the open right rail can shift where
+the model sits on screen (about 245 px on the fixture). With the rail collapsed,
+only the panels differ. Apply neither reframes around the rail nor collapses it.
+
