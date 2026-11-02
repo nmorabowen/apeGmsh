@@ -50,7 +50,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { connect, createServer } from "node:net";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,7 +87,14 @@ function arg(name: string): string | undefined {
 
 const MODES = ["view", "measure", "capture", "measure-results", "render", "describe", "present", "snapshot"] as const;
 /** Why this command line is refused before anything starts: said on stderr, exit 2. Never a thrown error (a modal), never view mode. */
-const badArgs = spelled && "refused" in spelled ? spelled.refused : !(MODES as readonly string[]).includes(arg("mode") ?? "view") ? `unknown --mode=${arg("mode")}; expected ${MODES.join(", ")}` : null;
+const badArgs =
+  spelled && "refused" in spelled
+    ? spelled.refused
+    : !(MODES as readonly string[]).includes(arg("mode") ?? "view")
+      ? `unknown --mode=${arg("mode")}; expected ${MODES.join(", ")}`
+      : arg("hang-ms") !== undefined && !/^[1-9][0-9]*$/.test(arg("hang-ms")!)
+        ? `--hang-ms=${arg("hang-ms")}: expected a whole number of milliseconds above 0`
+        : null;
 const mode = badArgs === null ? (arg("mode") ?? "view") : "refused";
 if (badArgs !== null) {
   process.stderr.write(`apeGmshViewer: ${badArgs}\n`);
@@ -100,6 +107,104 @@ const reachMode = mode === "present" || mode === "snapshot";
 const file = mode === "view" ? fileFromArgv(process.argv, argvSkip, process.cwd()) : arg("file");
 const out = arg("out");
 const t0 = Number(arg("t0") ?? Date.now());
+
+// ---------------------------------------------------------------------------
+// VA2h (#2665): no mode but view can hang. Electron answers an uncaught error
+// in main with a modal dialog, and a crashed or hung renderer leaves the
+// hidden window's process alive, so a caller waiting on the exit code would
+// wait forever. Every other mode ends in `headlessEnd`: the reason on stderr,
+// exit 1. A render also leaves its `--out` true to INV-6 (`abandonRender`),
+// and a capture writes the reason to `<out>.error.txt`.
+//
+// Electron's `unresponsive` needs input the renderer leaves unanswered, which
+// a hidden window never gets, so main also asks each window's page a trivial
+// question every second; no answer for `--hang-ms` (default 60 s) ends the run.
+// A page that is merely slow still answers between its tasks.
+// ---------------------------------------------------------------------------
+
+/** Every mode but view runs for a caller that waits on its exit code. */
+const headless = mode !== "view";
+/** Set once the run is ending, so a late event (a renderer killed by the exit itself) changes nothing. */
+let ending = false;
+const errText = (err: unknown) => (err instanceof Error ? (err.stack ?? err.message) : String(err));
+/** How long a page may leave main's question unanswered (`--hang-ms`). */
+const HANG_MS = Number(arg("hang-ms") ?? 60000);
+/** The last still a capture wrote, to name where a failed capture stopped. */
+let lastCaptured: string | null = null;
+
+/** Where the run stopped, for its refusal: the shot in progress (render) or the last still written (capture). */
+function whereStopped(): string {
+  if (mode === "render" && renderJob) {
+    const next = renderJob.spec.shots.find((s) => unwritten.has(s.name));
+    return next ? `it stopped on shot ${next.name}` : "every still had been written";
+  }
+  if (mode === "capture") return lastCaptured ? `the last still written was ${lastCaptured}` : "no still had been written";
+  return "";
+}
+
+function headlessEnd(reason: string): void {
+  if (ending) return;
+  ending = true;
+  let where = "";
+  try {
+    where = whereStopped();
+  } catch {
+    // Before the job is known: nothing was drawn.
+  }
+  const full = where ? `${reason}; ${where}` : reason;
+  const line = `apeGmshViewer: ${mode} failed: ${full}\n`;
+  process.stderr.write(line);
+  try {
+    if (mode === "render") abandonRender(full);
+    if (mode === "capture" && out) writeFileSync(`${out}.error.txt`, line);
+  } catch (err) {
+    process.stderr.write(`apeGmshViewer: ${mode}: the failure could not be recorded in --out: ${errText(err)}\n`);
+  }
+  // Out of the failing callback, and the windows gone first: one run that exited from inside it ended in an access violation, not 1.
+  setImmediate(() => {
+    for (const w of BrowserWindow.getAllWindows()) w.destroy();
+    app.exit(1);
+  });
+}
+
+/** Ask the page a trivial question every second; a page that leaves it unanswered for HANG_MS is hung. */
+function watchPage(w: BrowserWindow): void {
+  let answered = Date.now();
+  let asking = false;
+  const timer = setInterval(() => {
+    if (w.isDestroyed() || ending) {
+      clearInterval(timer);
+      return;
+    }
+    if (Date.now() - answered > HANG_MS) {
+      clearInterval(timer);
+      headlessEnd(`the renderer stopped responding: its page left main's question unanswered for ${HANG_MS} ms (--hang-ms)`);
+      return;
+    }
+    if (asking) return;
+    asking = true;
+    w.webContents.executeJavaScript("0").then(
+      () => {
+        answered = Date.now();
+        asking = false;
+      },
+      () => {
+        asking = false;
+      },
+    );
+  }, 1000);
+}
+
+if (headless) {
+  // A listener of its own also stops Electron's default handler, which is the modal.
+  process.on("uncaughtException", (err) => headlessEnd(`an uncaught error in the main process: ${errText(err)}`));
+  process.on("unhandledRejection", (err) => headlessEnd(`an unhandled rejection in the main process: ${errText(err)}`));
+  app.on("render-process-gone", (_e, _contents, details) => headlessEnd(`the renderer process is gone (${details.reason}, exit code ${details.exitCode})`));
+  app.on("browser-window-created", (_e, w) => {
+    w.on("unresponsive", () => headlessEnd("the renderer stopped responding (Electron's unresponsive)"));
+    watchPage(w);
+  });
+}
 
 // Measurement of GPU throughput: lift the vsync and frame-rate caps.
 if (arg("uncapped") === "1") {
@@ -715,6 +820,7 @@ ipcMain.handle("capture:still", async (e, suffix: string) => {
     return null;
   }
   writeFileSync(path, img.toPNG());
+  lastCaptured = path;
   return path;
 });
 
@@ -743,6 +849,39 @@ function stillPath(name: unknown): string {
   return join(resolve(out!), `${name}.png`);
 }
 
+/** A still written whole or not at all: a throw part way (a full disk) removes what it wrote, so no PNG stands beside the shot's refusal (#2681 review). */
+function writeStill(path: string, png: Uint8Array): void {
+  try {
+    writeFileSync(path, png);
+  } catch (err) {
+    try {
+      rmSync(path, { force: true });
+    } catch (gone) {
+      throw new Error(`${errText(err)}; and the partial ${path} could not be removed: ${errText(gone)}`);
+    }
+    throw err;
+  }
+}
+
+/**
+ * INV-6 when a render cannot reach `render:done`: the renderer held the
+ * manifest entries, so the stills main has written have none and are removed,
+ * and manifest.json refuses the run, naming them and why. A manifest already
+ * written (the run had ended) is left as it is.
+ */
+function abandonRender(reason: string): void {
+  if (!renderJob || !out) return;
+  const dir = resolve(out);
+  if (existsSync(join(dir, MANIFEST_FILE))) return;
+  const drawn = renderJob.spec.shots.map((s) => s.name).filter((n) => !unwritten.has(n));
+  for (const n of drawn) rmSync(join(dir, `${n}.png`), { force: true });
+  const shots = renderJob.spec.shots.length;
+  const what = drawn.length
+    ? `${drawn.length} of ${shots} stills had been written (${drawn.join(", ")}); they are removed, because their manifest entries were the renderer's and a PNG without its entry breaks INV-6`
+    : `none of the ${shots} stills had been written`;
+  writeManifestLast(dir, refusedManifest(resolve(arg("spec")!), "render", `the run did not finish: ${reason}; ${what}`, { version: app.getVersion(), version_reason: null }, new Date().toISOString()));
+}
+
 ipcMain.handle("render:job", () => {
   if (mode === "render" && renderJob) return { mode, ...renderJob };
   if (mode === "describe") {
@@ -756,7 +895,7 @@ ipcMain.handle("render:job", () => {
 ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
   if (!(png instanceof Uint8Array) || png.length < 8) throw new Error("render:png needs the PNG bytes");
   const path = stillPath(name);
-  writeFileSync(path, png);
+  writeStill(path, png);
   return { path };
 });
 
@@ -771,7 +910,7 @@ ipcMain.handle("render:capture", async (e, name: unknown) => {
   if (img.isEmpty() || size.width !== width || size.height !== height) {
     throw new Error(`render:capture ${String(name)}: the page captured as ${size.width} x ${size.height}, not the spec's ${width} x ${height}`);
   }
-  writeFileSync(path, img.toPNG());
+  writeStill(path, img.toPNG());
   return { path, width: size.width, height: size.height };
 });
 
@@ -797,6 +936,7 @@ ipcMain.handle("render:done", (_e, result: unknown) => {
 
 /** End an agent mode with its exit code, the results file closed first. */
 function agentExit(code: number): void {
+  ending = true;
   resultsHost.close();
   app.exit(code);
 }
@@ -850,27 +990,21 @@ ipcMain.handle("measure:memory", () => {
   return { main: mb("Browser"), renderer: mb("Tab") };
 });
 
-ipcMain.handle("app:fail", (_e, message: string) => {
-  process.stderr.write(`apeGmshViewer: ${message}\n`);
-  // An agent mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0).
-  if (agentMode) {
-    agentExit(1);
+ipcMain.handle("app:fail", (_e, message: unknown) => {
+  // A mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0). `app.quit()` exits 0
+  // whatever process.exitCode says, which let a capture that threw at 38 of 59 stills exit 0 (#2665).
+  if (headless) {
+    headlessEnd(`the page failed: ${String(message)}`);
     return;
   }
-  if (mode !== "view") {
-    process.exitCode = 1;
-    app.quit();
-  }
+  process.stderr.write(`apeGmshViewer: ${String(message)}\n`);
 });
 
 app.whenReady().then(() => {
   appReadyAt = Date.now();
   if (mode === "measure-results") {
-    measureResultsMode(file!, out!).catch((err) => {
-      process.stderr.write(`apeGmshViewer: measure-results: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-      process.exitCode = 1;
-      app.quit();
-    });
+    // Not process.exitCode with app.quit(), which exits 0.
+    measureResultsMode(file!, out!).catch((err) => headlessEnd(errText(err)));
     return;
   }
   if (badArgs !== null || reachMode || outBusy || (mode === "render" && !renderJob)) return;
