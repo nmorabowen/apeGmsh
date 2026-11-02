@@ -110,13 +110,25 @@ def staleness(
 
     stale_rows: tuple[str, ...] = ()
     try:
-        table = uf.combinations(model_h5=model_h5)
+        # This zone's rows are its own whatever state the model is in: an
+        # unreadable model is reported above, so it does not refuse them here.
+        table = uf.combinations(model_h5=model_h5 if _readable(model_h5) else None)
         if "combinations" in uf.zones:
             zones["combinations"] = ZoneState(False)
         stale_rows = _stale_combinations(table.rows, zones)
-    except (ZoneRefused, SchemaVersionError, OSError) as exc:
+    except (ZoneRefused, SchemaVersionError) as exc:
         zones["combinations"] = ZoneState(True, f"refused: {exc}")
     return Staleness(zones=zones, results=entries, combinations=stale_rows)
+
+
+def _readable(model_h5: "Optional[str | Path]") -> bool:
+    if model_h5 is None:
+        return False
+    try:
+        model_hashes(model_h5)
+    except UserFileError:
+        return False
+    return True
 
 
 def _stale_combinations(rows, zones: Mapping[str, ZoneState]) -> tuple[str, ...]:

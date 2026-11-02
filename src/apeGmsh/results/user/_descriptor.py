@@ -18,7 +18,7 @@ import h5py
 import numpy as np
 
 from ._errors import ZoneRefused
-from ._names import name_problem, text_or_empty
+from ._names import name_problem
 
 __all__ = [
     "ENVELOPES",
@@ -31,6 +31,7 @@ __all__ = [
     "StateAddress",
     "Term",
     "address_problem",
+    "decode_cell",
     "read_generation",
     "resolve",
     "write_generation",
@@ -190,11 +191,13 @@ def _row_problem(row: Combination, origin: str) -> Optional[tuple[str, str]]:
     if row.damping is not None:
         if row.rule != "cqc":
             return "bad-param", f"{row.rule} takes no damping, got {row.damping}"
-        if not 0.0 <= row.damping < 1.0:
-            return "bad-param", f"cqc damping {row.damping} is not in [0, 1)"
+        if not 0.0 < row.damping < 1.0:
+            return "bad-param", f"cqc damping {row.damping} is not in (0, 1)"
     problem = _terms_problem(row)
     if problem is not None:
         return "bad-term", problem
+    if row.rule == "cqc" and row.damping is None and row.terms[0].kind == "mode":
+        return "bad-param", "cqc over mode terms needs a damping: modes have no damping source"
     if origin == "model":
         for term in row.terms:
             if term.kind in ("spectrum", "reference"):
@@ -290,6 +293,22 @@ def resolve(
 # ---------------------------------------------------------------------------
 
 
+def decode_cell(raw: object, zone: str, where: str) -> str:
+    """A table cell as ``str``. A cell that is not UTF-8 refuses the zone."""
+    if isinstance(raw, bytes):
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ZoneRefused(zone, f"{where} holds a cell that is not UTF-8: {raw!r}") from exc
+    if isinstance(raw, str):
+        try:
+            raw.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ZoneRefused(zone, f"{where} holds a cell that is not UTF-8: {raw!r}") from exc
+        return raw
+    raise ZoneRefused(zone, f"{where} holds a cell that is not a string: {raw!r}")
+
+
 def _column(group: h5py.Group, name: str, code: str, zone: str, length: Optional[int]) -> np.ndarray:
     """A column, refusing the zone when it is absent or of the wrong type."""
     if name not in group:
@@ -328,21 +347,21 @@ def read_generation(group: h5py.Group, zone: str = "/combinations") -> list[Comb
     if int(offsets[0]) != 0 or int(offsets[-1]) != t or np.any(np.diff(offsets) < 0):
         raise ZoneRefused(zone, f"{group.name}/term_offsets does not partition {t} terms")
 
+    def cell(raw: object) -> str:
+        return decode_cell(raw, zone, group.name)
+
     out = []
     for i in range(k):
         row_terms = tuple(
-            Term(text_or_empty(kinds[j]), text_or_empty(sources[j]), int(steps[j]),
+            Term(cell(kinds[j]), cell(sources[j]), int(steps[j]),
                  int(modes[j]), float(factors[j]))
             for j in range(int(offsets[i]), int(offsets[i + 1]))
         )
-        envelope = text_or_empty(envelopes[i])
-        if not envelope and len(envelopes[i]) > 0:
-            envelope = "?"  # undecodable: "" would read as "no envelope" and pass
         out.append(Combination(
-            name=text_or_empty(names[i]),
-            rule=text_or_empty(rules[i]),
+            name=cell(names[i]),
+            rule=cell(rules[i]),
             terms=row_terms,
-            envelope=envelope,
+            envelope=cell(envelopes[i]),
             fraction=None if math.isnan(fractions[i]) else float(fractions[i]),
             damping=None if math.isnan(dampings[i]) else float(dampings[i]),
         ))

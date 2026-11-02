@@ -10,15 +10,18 @@ the other zones still read. A bad row refuses alone, with a reason.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import h5py
 import numpy as np
 
 from ...opensees._internal.schema_version import (
     COMBINATIONS,
+    OPENSEES,
+    SchemaVersionError,
     USER_META,
     USER_RESULTS,
     read_zone_version,
@@ -26,7 +29,7 @@ from ...opensees._internal.schema_version import (
     validate_zone_version,
 )
 from ._descriptor import Combination, CombinationTable, Refusal, read_generation, resolve
-from ._errors import UserFileRefused, ZoneRefused
+from ._errors import UserFileError, UserFileRefused, ZoneRefused
 from ._fields import EntryRefused, ResultEntry, UserResult, read_entry, read_entry_meta
 from ._names import text_or_empty
 
@@ -51,6 +54,18 @@ class ResultIndex:
             if ref.name == name:
                 raise KeyError(f"user result {name!r} is refused: {ref.reason} ({ref.detail})")
         raise KeyError(f"no user result named {name!r}")
+
+
+@contextmanager
+def _zone_guard(zone: str) -> Iterator[None]:
+    """Anything h5py raises on a damaged zone refuses that zone (a dangling link,
+    a dataset where a group belongs). The package's own refusals pass through."""
+    try:
+        yield
+    except (UserFileError, SchemaVersionError):
+        raise
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise ZoneRefused(zone, f"it cannot be read: {exc}") from exc
 
 
 def _text_attr(attrs: h5py.AttributeManager, key: str) -> Optional[str]:
@@ -111,16 +126,23 @@ def _entry_name(zone: h5py.Group, link: str) -> str:
 def read_model_combinations(model_h5: "str | Path") -> list[Combination]:
     """The rows of ``/opensees/combinations/g0`` in a model archive, or ``[]``.
 
-    The zone rides the opensees version (ADR 0130 A3) and may be absent: slice
-    VU5 writes it.
+    The zone rides the opensees version (ADR 0130 A3), so that key is checked
+    before it is read, and it may be absent: slice VU5 writes it.
     """
-    with h5py.File(model_h5, "r") as f:
-        if "opensees" not in f or "combinations" not in f["opensees"]:
-            return []
-        zone = f["opensees/combinations"]
-        if not isinstance(zone, h5py.Group) or "g0" not in zone:
-            raise ZoneRefused("/opensees/combinations", "it has no g0")
-        return read_generation(zone["g0"], "/opensees/combinations")
+    where = "/opensees/combinations"
+    with _zone_guard(where):
+        with h5py.File(model_h5, "r") as f:
+            if "opensees" not in f or "combinations" not in f["opensees"]:
+                return []
+            meta = f["meta"].attrs if "meta" in f else {}
+            version = read_zone_version(meta, OPENSEES)
+            if version is None:
+                raise ZoneRefused(where, "the archive has no opensees_schema_version")
+            validate_zone_version(version, reader_version(OPENSEES), zone=OPENSEES)
+            zone = f[where]
+            if not isinstance(zone, h5py.Group) or "g0" not in zone:
+                raise ZoneRefused(where, "it has no g0")
+            return read_generation(zone["g0"], where)
 
 
 class UserFile:
@@ -135,7 +157,12 @@ class UserFile:
         except OSError as exc:
             raise UserFileRefused(f"{self.path} is not a readable HDF5 file: {exc}") from exc
         with f:
-            self._read_meta(f)
+            try:
+                self._read_meta(f)
+            except (UserFileError, SchemaVersionError):
+                raise
+            except (KeyError, OSError, TypeError, ValueError) as exc:
+                raise UserFileRefused(f"{self.path}: /meta cannot be read: {exc}") from exc
 
     def _read_meta(self, f: h5py.File) -> None:
         if "meta" not in f or not isinstance(f["meta"], h5py.Group):
@@ -174,7 +201,7 @@ class UserFile:
         zone itself cannot be read; the file stays open for the other zones.
         """
         model_rows = read_model_combinations(model_h5) if model_h5 is not None else []
-        with h5py.File(self.path, "r") as f:
+        with _zone_guard("/combinations"), h5py.File(self.path, "r") as f:
             if not _zone_version_checked(f, COMBINATIONS, "combinations"):
                 return resolve([], model_rows)
             rows = read_generation(_current_generation(f["combinations"]))
@@ -182,7 +209,7 @@ class UserFile:
 
     def generations(self) -> tuple[int, ...]:
         """Every generation the file holds, oldest first: the backup of A4."""
-        with h5py.File(self.path, "r") as f:
+        with _zone_guard("/combinations"), h5py.File(self.path, "r") as f:
             if not _zone_version_checked(f, COMBINATIONS, "combinations"):
                 return ()
             found = (_GENERATION.match(k) for k in f["combinations"])
@@ -192,7 +219,7 @@ class UserFile:
 
     def results(self) -> ResultIndex:
         """Every entry, judged without reading ``DATA``. A bad one refuses alone."""
-        with h5py.File(self.path, "r") as f:
+        with _zone_guard("/results"), h5py.File(self.path, "r") as f:
             if not _zone_version_checked(f, USER_RESULTS, "results"):
                 return ResultIndex((), ())
             zone = f["results"]
@@ -208,9 +235,14 @@ class UserFile:
                     if not isinstance(group, h5py.Group):
                         raise EntryRefused("bad-param", f"{group.name} is not a group")
                     entries.append(read_entry_meta(link, group))
+                except ZoneRefused:  # a non-UTF-8 table cell refuses the zone
+                    raise
                 except EntryRefused as exc:
                     refused.append(Refusal(_entry_name(zone, link), exc.reason, exc.detail, row=at))
-                except (KeyError, OSError) as exc:  # a broken link inside the entry
+                except (KeyError, OSError, TypeError, ValueError) as exc:
+                    # What h5py raises on a damaged entry (a broken link, a
+                    # dataset where a group belongs, an attribute of the wrong
+                    # type) refuses that entry; the others still read.
                     refused.append(Refusal(_entry_name(zone, link), "bad-param", str(exc), row=at))
         counts: dict[str, int] = {}
         for entry in entries:

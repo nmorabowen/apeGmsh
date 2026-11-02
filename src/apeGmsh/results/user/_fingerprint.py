@@ -4,7 +4,9 @@
 of every result and each stage's last slab, so it costs milliseconds and does
 not move when a file is stamped: ``INFO/PROVENANCE`` is left out. The limit is
 stated in A6: a rewrite of earlier steps under an identical last step is not
-seen.
+seen. The same limit covers every value outside the sample: a rewrite of
+``ON_DOMAIN``, ``ON_REGIONS`` or ``ENVELOPES`` values that keeps each dataset's
+shape and, where it has one, ``TIME`` and ``STEP`` is not seen.
 
 The encoding, which the app's TypeScript (slice VU3a) must equal byte for byte.
 ``line(s)`` hashes ``s + "\\n"`` as UTF-8; arrays hash as little-endian bytes.
@@ -22,6 +24,11 @@ The encoding, which the app's TypeScript (slice VU3a) must equal byte for byte.
      ``f`` or ``i``; then the bytes of ``TIME``, then of ``STEP``.
    * A ``DATA`` group (modes): ``STEP_<s>`` by ``s`` and ``MODE_<m>`` by ``m``:
      ``line("<path>/STEP_<s>/MODE_<m>|<shape>")``, then ``LAMBDA`` as ``f8``.
+
+   Then every other child of ``RESULTS`` by name, descending by name: a group
+   holding ``DATA`` is hashed as above, with no sample; any other group is
+   descended into; a dataset outside such a group (``ENVELOPES/ON_NODES/<r>/MAX``)
+   gives ``line("<path>|<shape>|<kind><itemsize>")``.
 
 4. The stage's sample, once, after its results: the last slab (``DATA[T-1]``) of
    the first ``DATA`` dataset with ``T > 0``, or the last mode of the first modes
@@ -47,7 +54,8 @@ from ._errors import FingerprintRefused
 __all__ = ["results_fingerprint"]
 
 _STAGE = "MODEL_STAGE["
-_FAMILIES = ("ON_NODES", "ON_ELEMENTS")
+#: The families the sample comes from, in the order they are read.
+_SAMPLED = ("ON_NODES", "ON_ELEMENTS")
 
 
 def results_fingerprint(path: "str | Path") -> str:
@@ -70,12 +78,17 @@ def results_fingerprint(path: "str | Path") -> str:
     h = hashlib.sha256()
     _line(h, "rf1")
     for part in parts:
-        with h5py.File(part, "r") as f:
-            if "INFO" not in f:
-                if len(parts) != 1:
-                    raise FingerprintRefused(f"{part} has no INFO group")
-                return _native_hash(f, part)
-            _hash_part(h, f, part)
+        try:
+            with h5py.File(part, "r") as f:
+                if "INFO" not in f:
+                    if len(parts) != 1:
+                        raise FingerprintRefused(f"{part} has no INFO group")
+                    return _native_hash(f, part)
+                _hash_part(h, f, part)
+        except FingerprintRefused:
+            raise
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise FingerprintRefused(f"{part} cannot be fingerprinted: {exc}") from exc
     return "rf1:" + h.hexdigest()
 
 
@@ -132,7 +145,7 @@ def _hash_part(h: Any, f: h5py.File, path: Path) -> None:
 
 def _hash_stage_results(h: Any, results: h5py.Group, where: str) -> None:
     sample: Optional[np.ndarray] = None
-    for family in _FAMILIES:
+    for family in _SAMPLED:
         if family not in results:
             continue
         for name in sorted(results[family]):
@@ -142,6 +155,8 @@ def _hash_stage_results(h: Any, results: h5py.Group, where: str) -> None:
             else:
                 holders = [(f"{family}/{name}/{b}", result[b]) for b in sorted(result)]
             for path, holder in holders:
+                if not isinstance(holder, h5py.Group):
+                    raise FingerprintRefused(f"{where}/{path} is not a result group")
                 if "DATA" not in holder:
                     continue
                 data = holder["DATA"]
@@ -157,20 +172,48 @@ def _hash_stage_results(h: Any, results: h5py.Group, where: str) -> None:
                     found = _hash_modes(h, data, path, here, want)
                 if want:
                     sample = found
+    _hash_index(h, results, "", where, skip=_SAMPLED)
     if sample is not None:
         h.update(_le(sample))
+
+
+def _hash_index(
+    h: Any, group: h5py.Group, prefix: str, where: str, skip: tuple[str, ...] = (),
+) -> None:
+    """The index of everything the sample does not come from, with no values."""
+    for name in sorted(group):
+        if name in skip:
+            continue
+        child = group[name]
+        path = f"{prefix}{name}"
+        here = f"{where}/{path}"
+        if isinstance(child, h5py.Dataset):
+            _line(h, f"{path}|{_shape(child)}|{_kind(child, here)}")
+        elif "DATA" not in child:
+            _hash_index(h, child, f"{path}/", where)
+        elif isinstance(child["DATA"], h5py.Dataset):
+            _hash_dataset(h, child, child["DATA"], path, here, False)
+        else:
+            _hash_modes(h, child["DATA"], path, here, False)
+
+
+def _shape(ds: h5py.Dataset) -> str:
+    return ",".join(map(str, ds.shape))
+
+
+def _kind(ds: h5py.Dataset, where: str) -> str:
+    if ds.dtype.kind not in "fi":
+        raise FingerprintRefused(f"{where} has dtype {ds.dtype}; rf1 knows f and i")
+    return f"{ds.dtype.kind}{ds.dtype.itemsize}"
 
 
 def _hash_dataset(
     h: Any, holder: h5py.Group, data: h5py.Dataset, path: str, where: str, want: bool,
 ) -> Optional[np.ndarray]:
-    if data.dtype.kind not in "fi":
-        raise FingerprintRefused(f"{where}/DATA has dtype {data.dtype}; rf1 knows f and i")
     for child in ("TIME", "STEP"):
         if child not in holder:
             raise FingerprintRefused(f"{where} has no {child}")
-    shape = ",".join(map(str, data.shape))
-    _line(h, f"{path}|{shape}|{data.dtype.kind}{data.dtype.itemsize}")
+    _line(h, f"{path}|{_shape(data)}|{_kind(data, f'{where}/DATA')}")
     h.update(_le(holder["TIME"][...]))
     h.update(_le(holder["STEP"][...]))
     return data[data.shape[0] - 1] if want and data.shape[0] > 0 else None
@@ -188,8 +231,7 @@ def _hash_modes(
             value = np.asarray(ds.attrs["LAMBDA"], dtype="<f8").ravel()
             if value.size != 1:
                 raise FingerprintRefused(f"{where}/{step}/{mode}@LAMBDA holds {value.size} values")
-            shape = ",".join(map(str, ds.shape))
-            _line(h, f"{path}/{step}/{mode}|{shape}")
+            _line(h, f"{path}/{step}/{mode}|{_shape(ds)}")
             h.update(value.tobytes())
             last = ds
     return last[...] if want and last is not None else None

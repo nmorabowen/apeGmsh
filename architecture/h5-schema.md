@@ -2653,8 +2653,10 @@ non-mesh entities. apeGmsh owns it, and the recorder's `.ladruno` never holds an
 of this ([ADR 0130](decisions/0130-states-quantities-and-the-user-results-file.md),
 Amendment 1). Python writes every zone; the app writes only `/combinations`.
 
-No writer or reader exists yet: slice VU1 implements this and adds the zones to
-the [registry](#zone-registry).
+`apeGmsh.results.user` writes and reads `/meta`, `/combinations` and `/results`,
+which are in the [registry](#zone-registry). `/modes`, `/spectra` and `/entities`
+have no writer or reader yet (slices VU6 and VU8); a write copies them verbatim.
+The app does not read this file yet (slice VU3a).
 
 Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
 ([integer policy](#integer-policy-for-the-adr-0112-zones)). Columns in one table
@@ -2717,7 +2719,9 @@ Readers ignore unknown attributes and groups.
     ON_ENTITIES/values/  ENTITY_KIND str, ENTITY_ROW i4 (n,) in place of ID
     ON_DOMAIN/values/    n = 1, no ID
   MODEL/ELEMENTS/<bucket>/
-    @TOPOLOGY, @PARAM_DOMAIN, @NUM_GP
+    @TOPOLOGY, @PARAM_DOMAIN, @FAMILY    all required
+    @ORDER               i4 (ndir,); required, each >= 1
+    @NUM_GP              i4
     QUADRATURE/GP_PARAM  f8 (G,ndir)
 
 /entities
@@ -2746,7 +2750,9 @@ A `/results` or `/spectra` group is a small stage, so the `.ladruno` read path
 reads it. `STEP` and `TIME` are `0..S-1`; the state of a row is in `STATES` or
 `modes`, never in `STEP`. A stage carries its own `GP_PARAM`, because the
 `.ladruno` does not always have one to borrow: the slab's `ASDShellT3` bucket has
-none.
+none. `@FAMILY` and `@ORDER` are required because the `.ladruno` read path needs
+them to place `GP_PARAM`: a barycentric rule's frame differs between `lagrange` and
+`bernstein`, and a group with no `@ORDER` reads as an old conversion.
 
 **Names.** A name is data in `@name` or a table column, never a link. It is
 non-empty NFC UTF-8 with no control characters and no leading or trailing
@@ -2773,14 +2779,17 @@ whitespace, and compares byte-equal.
 | `envelope` | list | `max`, `min` or `absmax` |
 
 "List" excludes whole cases. A whole case first sums the modes that share a
-`sa_period`. A finite `damping` overrides; NaN takes the case's per-mode column.
+`sa_period`. A finite `damping` must be in (0,1) and overrides; NaN takes the case's
+per-mode column. `cqc` over `mode` terms with NaN damping is `bad-param`, because no
+damping source exists for modes; a whole-case row keeps NaN.
 `λ ≤ 0` is refused. Terms join on the result label, the ID and the Gauss index,
 and a missing row is NaN. Only `linear` can be signed, and only if all its terms
 are. Sign is never stored.
 
 **Refusal** is per row at read, never at open, with the reason `empty-name`,
 `duplicate`, `clash`, `unknown-rule`, `no-terms`, `bad-param`, `bad-term`,
-`unresolved` or `cycle`. Malformed columns refuse the zone.
+`unresolved` or `cycle`. A row in a cycle or reaching one reads `cycle`. Malformed
+columns refuse the zone, and so does a non-UTF-8 cell.
 
 **`/opensees/combinations`** in `model.h5` has this layout at `g0`, is versioned
 by the opensees zone, is in `MODEL_HASH_EXCLUDED_CHILDREN`, and resolves only
@@ -2792,10 +2801,14 @@ summing rule needs `@linear=1`, and `envelope` reads the terms' stored rows.
 
 **Staleness.** `rf1` is SHA-256, in index order over every part of the paired
 `.ladruno`, of: `GENERATOR`, `FORMAT_VERSION`, `RUN_ID`; each stage's `KIND`; each
-result's path, shape, dtype, `TIME` and `STEP`; each mode's `LAMBDA`; and the
-last slab of the stage's first nodal result (first element bucket if it has no
-nodal result), little-endian as stored. `INFO/PROVENANCE` is excluded. A native
-`results.h5` uses `native:<lineage hash>`.
+result's path, shape, dtype, `TIME` and `STEP`, in every family under `RESULTS`
+(`ON_NODES`, `ON_ELEMENTS`, then the rest by name: `ENVELOPES`, `ON_DOMAIN`,
+`ON_REGIONS`); each mode's `LAMBDA`; and the last slab of the stage's first nodal
+result (first element bucket if it has no nodal result), little-endian as stored.
+`INFO/PROVENANCE` is excluded. Values outside that slab are not hashed, so a rewrite
+that keeps every shape, `TIME` and `STEP` and the last slab is not seen. The byte
+encoding is in `results/user/_fingerprint.py`. A native `results.h5` uses
+`native:<lineage hash>`.
 
 | Zone | Stale when |
 |---|---|

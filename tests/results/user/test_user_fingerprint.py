@@ -2,9 +2,10 @@
 
 The goldens were computed by two implementations independent of
 ``results/user/_fingerprint.py``: VU0's Python prototype and its TypeScript twin
-through the app's h5wasm and ``node:crypto`` (the fallback row by the TypeScript
-one, extended to the schema's element-bucket rule; the prototype has no such
-rule). A digest change here breaks the app's slice VU3a too.
+through the app's h5wasm and ``node:crypto``, both extended to index every family
+under ``RESULTS``. The fallback and part-set rows are the TypeScript one's alone,
+since the Python prototype has no rule for them. A digest change here breaks the
+app's slice VU3a too.
 """
 from __future__ import annotations
 
@@ -23,9 +24,9 @@ GOLDEN = {
     "beam3d": "48ab1eaaa17047157458d3afb319f82940c10b1c8d377d988e5ff48d343748ac",
     "bezier_tet10": "97b1afb18534d0462a7674b8c5133dae2830cd8bae0d7b9f99bab292bad6b3fe",
     "bezier_tri6": "844792face2e8e8640b900127a288d446613be00ed8c0a0f4f5fb95409ee24de",
-    "energy": "85573aee7591c97179f22534f27670b175403bbfe35e921951fe5099f9a8892f",
+    "energy": "b893d0b39fed406013e9b06fd1390f668c5adb50f0eca0f0b8071a14f2f976f3",
     "fiberbeam": "a991d7666d23d8a9e1d7b8d954262058ccf019f3bf93ba1ea1bdb801d946a09a",
-    "node_envelope": "da7c06d9a3b96e059ddd178508ef4de7253b01dca752c6aedfd43fc1c96551cc",
+    "node_envelope": "732318ca4c1a9aac26c28132c18219fb63bb850636437b28f329d8e9085f4b22",
     "quad2d": "2d3998a3fd7273399536406d9fcfcc5b88cc0af9249ba4b6070e5806ddd22bc6",
     "truss2d": "76a404478cbb9ef919c2d79a676fbe1a0a300712819b344edd9a43e7289cfcc3",
 }
@@ -141,20 +142,118 @@ def test_the_stated_limit_a_rewrite_of_earlier_steps_is_not_seen(ladruno: Path) 
     assert results_fingerprint(ladruno) == before
 
 
-def test_known_gap_an_envelope_only_stage_hashes_no_field_value(tmp_path: Path) -> None:
-    """``RESULTS/ENVELOPES`` and ``ON_DOMAIN`` are not in the schema's list, so a
-    stage that records only those has no sample. Reported on the VU1 PR; ``rf2``
-    is the place to change it, since the app must match byte for byte."""
+def _energy(tmp_path: Path) -> Path:
+    path = tmp_path / "energy.ladruno"
+    shutil.copy(LADRUNO / "energy.ladruno", path)
+    return path
+
+
+def _envelope(tmp_path: Path) -> Path:
     path = tmp_path / "env.ladruno"
     shutil.copy(LADRUNO / "node_envelope.ladruno", path)
+    return path
+
+
+ON_DOMAIN = "MODEL_STAGE[1]/RESULTS/ON_DOMAIN/energyBalance"
+ON_REGIONS = "MODEL_STAGE[1]/RESULTS/ON_REGIONS/energyBalance"
+ENV_MAX = "MODEL_STAGE[1]/RESULTS/ENVELOPES/ON_NODES/DISPLACEMENT/MAX"
+
+
+@pytest.mark.parametrize("target", [ON_DOMAIN, ON_REGIONS])
+def test_deleting_a_result_of_any_family_moves_rf1(tmp_path: Path, target: str) -> None:
+    path = _energy(tmp_path)
     before = results_fingerprint(path)
     with h5py.File(path, "a") as f:
-        env = f["MODEL_STAGE[1]/RESULTS/ENVELOPES/ON_NODES/DISPLACEMENT/MAX"]
-        env[...] = env[...] + 1.0
+        del f[target]
+    assert results_fingerprint(path) != before
+
+
+def test_deleting_an_envelope_moves_rf1(tmp_path: Path) -> None:
+    path = _envelope(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        del f[ENV_MAX]
+    assert results_fingerprint(path) != before
+
+
+def test_a_new_time_or_shape_in_on_domain_moves_rf1(tmp_path: Path) -> None:
+    path = _energy(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        f[f"{ON_DOMAIN}/TIME"][0] = f[f"{ON_DOMAIN}/TIME"][0] + 1.0
+    assert results_fingerprint(path) != before
+    path = _energy(tmp_path)
+    with h5py.File(path, "a") as f:
+        group = f[ON_DOMAIN]
+        shape = group["DATA"].shape
+        del group["DATA"]
+        group.create_dataset("DATA", data=np.zeros((shape[0], shape[1], shape[2] + 1)))
+    assert results_fingerprint(path) != before
+
+
+def test_a_family_rf1_does_not_know_yet_is_indexed(ladruno: Path) -> None:
+    before = results_fingerprint(ladruno)
+    with h5py.File(ladruno, "a") as f:
+        f.create_group("MODEL_STAGE[1]/RESULTS/ON_SOMETHING/thing").create_dataset(
+            "x", data=np.zeros(3))
+    assert results_fingerprint(ladruno) != before
+
+
+def test_a_dtype_rf1_cannot_encode_in_a_family_refuses(ladruno: Path) -> None:
+    with h5py.File(ladruno, "a") as f:
+        f.create_group("MODEL_STAGE[1]/RESULTS/ON_SOMETHING").create_dataset(
+            "x", data=["text"], dtype=h5py.string_dtype())
+    with pytest.raises(FingerprintRefused, match="dtype"):
+        results_fingerprint(ladruno)
+
+
+@pytest.mark.parametrize(
+    "make, target",
+    [(_energy, f"{ON_DOMAIN}/DATA"), (_envelope, ENV_MAX)],
+)
+def test_the_stated_limit_values_outside_the_sample_are_not_seen(tmp_path: Path, make, target) -> None:
+    """Every family is indexed, and the sampled slab rule is as the schema has it,
+    so a rewrite that keeps each shape and ``TIME`` is not seen in these families."""
+    path = make(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        f[target][...] = f[target][...] + 1.0
     assert results_fingerprint(path) == before
 
 
+def test_the_sample_stays_on_nodes_with_another_family_present(tmp_path: Path) -> None:
+    path = _energy(tmp_path)
+    before = results_fingerprint(path)
+    with h5py.File(path, "a") as f:
+        data = f[f"{DISP}/DATA"]
+        data[data.shape[0] - 1] = data[data.shape[0] - 1] + 1.0
+    assert results_fingerprint(path) != before
+
+
 # ---- refusals --------------------------------------------------------------
+
+
+def test_a_file_that_is_not_hdf5_refuses(tmp_path: Path) -> None:
+    path = tmp_path / "junk.ladruno"
+    path.write_bytes(b"not hdf5")
+    with pytest.raises(FingerprintRefused, match="cannot be fingerprinted"):
+        results_fingerprint(path)
+
+
+def test_a_dangling_link_inside_a_result_refuses(ladruno: Path) -> None:
+    with h5py.File(ladruno, "a") as f:
+        del f[f"{DISP}/TIME"]
+        f[f"{DISP}/TIME"] = h5py.SoftLink("/nowhere")
+    with pytest.raises(FingerprintRefused):
+        results_fingerprint(ladruno)
+
+
+def test_a_result_that_is_a_dataset_refuses(ladruno: Path) -> None:
+    with h5py.File(ladruno, "a") as f:
+        del f[DISP]
+        f[DISP] = np.zeros(3)
+    with pytest.raises(FingerprintRefused):
+        results_fingerprint(ladruno)
 
 
 def test_missing_file_refuses(tmp_path: Path) -> None:

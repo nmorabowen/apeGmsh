@@ -10,15 +10,23 @@ import h5py
 import numpy as np
 import pytest
 
+from apeGmsh.opensees._internal.schema_version import (
+    OPENSEES,
+    OPENSEES_KEY,
+    SchemaVersionError,
+    reader_version,
+)
 from apeGmsh.results.user import (
     Combination,
     Term,
     UserFile,
+    UserFileRefused,
     UserWriteRefused,
     ZoneRefused,
     write_user_file,
 )
 from apeGmsh.results.user._descriptor import resolve, write_generation
+from tests.fixtures.schema import OPENSEES_CURRENT
 
 from .conftest import nodal
 
@@ -26,12 +34,17 @@ GOOD = Combination("good", "linear", (Term("stage", "D", -1, 0, 1.0),))
 D = Term("stage", "D")
 
 
+def _model_rows(model: Path, rows) -> None:
+    with h5py.File(model, "a") as f:
+        write_generation(f.create_group("opensees/combinations/g0"), rows)
+        f["meta"].attrs[OPENSEES_KEY] = OPENSEES_CURRENT
+
+
 def _raw(make_model, tmp_path: Path, rows, *, model_rows=None) -> tuple[Path, Path]:
     """A file holding ``rows`` as they are, and its model archive."""
     model = make_model()
     if model_rows is not None:
-        with h5py.File(model, "a") as f:
-            write_generation(f.create_group("opensees/combinations/g0"), model_rows)
+        _model_rows(model, model_rows)
     path = write_user_file(tmp_path / "s.user.h5", model, combinations=[])
     with h5py.File(path, "a") as f:
         zone = f["combinations"]
@@ -93,7 +106,7 @@ def test_a_bad_row_refuses_alone_with_its_reason(make_model, tmp_path: Path, row
         Combination("list srss", "srss", (D, Term("stage", "L"))),
         Combination("abs", "abs_sum", (Term("spectrum", "c"),)),
         Combination("cqc whole", "cqc", (Term("spectrum", "c"),)),
-        Combination("cqc modes", "cqc", (Term("mode", "eig", -1, 1), Term("mode", "eig", -1, 2))),
+        Combination("cqc modes", "cqc", (Term("mode", "eig", -1, 1), Term("mode", "eig", -1, 2)), damping=0.05),
         Combination("cqc incr", "cqc", (Term("spectrum", "c", -1, 1), Term("spectrum", "c", -1, 2))),
         Combination("dir", "directional", (D, Term("stage", "L")), fraction=0.3),
         Combination("mode k", "linear", (Term("mode", "eig", 4, 2), Term("spectrum", "c", -1, 2))),
@@ -187,12 +200,47 @@ def test_a_chain_in_any_order_stands() -> None:
     assert resolve([top, mid, GOOD]).refused == ()
 
 
-def test_undecodable_bytes_refuse_the_row_not_the_zone(make_model, tmp_path: Path) -> None:
+@pytest.mark.parametrize("column", ["name", "rule", "envelope", "terms/kind", "terms/source"])
+def test_a_non_utf8_cell_refuses_the_zone(make_model, tmp_path: Path, column: str) -> None:
     path, _ = _raw(make_model, tmp_path, [GOOD, Combination("x", "linear", (D,))])
+    write_user_file(path, make_model("m2.h5"), results=[nodal()])
     with h5py.File(path, "a") as f:
-        f["combinations/g1/name"][1] = b"\xff\xfe"
-    table = UserFile(path).combinations()
-    assert table.rows == (GOOD,) and [r.reason for r in table.refused] == ["empty-name"]
+        f[f"combinations/g1/{column}"][1] = b"\xff\xfe"
+    uf = UserFile(path)
+    with pytest.raises(ZoneRefused, match="not UTF-8"):
+        uf.combinations()
+    assert uf.results().entries[0].name == nodal().name
+
+
+def test_a_non_utf8_cell_in_states_refuses_the_zone(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal()])
+    with h5py.File(path, "a") as f:
+        f["results/r0/STATES/source"][0] = b"\xff\xfe"
+    with pytest.raises(ZoneRefused, match="not UTF-8"):
+        UserFile(path).results()
+
+
+@pytest.mark.parametrize(
+    "row, reason",
+    [
+        (Combination("r", "cqc", (Term("spectrum", "c"),), damping=0.0), "bad-param"),
+        (Combination("r", "cqc", (Term("mode", "eig", -1, 1), Term("mode", "eig", -1, 2))), "bad-param"),
+    ],
+)
+def test_the_damping_rulings_refuse(row, reason) -> None:
+    assert [r.reason for r in resolve([row]).refused] == [reason]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        Combination("whole", "cqc", (Term("spectrum", "c"),)),
+        Combination("incr", "cqc", (Term("spectrum", "c", -1, 1), Term("spectrum", "c", -1, 2))),
+        Combination("modes", "cqc", (Term("mode", "eig", -1, 1),), damping=0.05),
+    ],
+)
+def test_nan_damping_stands_where_a_source_exists(row) -> None:
+    assert resolve([row]).refused == ()
 
 
 # ---- malformed columns refuse the zone --------------------------------------
@@ -299,6 +347,105 @@ def test_a_broken_link_in_an_entry_refuses_that_entry(make_model, tmp_path: Path
     assert [r.name for r in index.refused] == ["bad"]
 
 
+def test_a_dataset_where_results_belongs_refuses_that_entry(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal("bad"), nodal("keep")])
+    with h5py.File(path, "a") as f:
+        del f["results/r0/RESULTS"]
+        f["results/r0"].create_dataset("RESULTS", data=[1])
+    index = UserFile(path).results()
+    assert [e.name for e in index.entries] == ["keep"]
+    assert [(r.name, r.reason) for r in index.refused] == [("bad", "bad-param")]
+
+
+@pytest.mark.parametrize("extra", [1, -1])
+def test_data_axis_0_must_match_the_states(make_model, tmp_path: Path, extra: int) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal("bad"), nodal("keep")])
+    with h5py.File(path, "a") as f:
+        values = f["results/r0/RESULTS/ON_NODES/values"]
+        s, n, c = values["DATA"].shape
+        del values["DATA"], values["STEP"], values["TIME"]
+        values.create_dataset("DATA", data=np.zeros((s + extra, n, c)))
+        values.create_dataset("STEP", data=np.arange(s + extra, dtype="i4"))
+        values.create_dataset("TIME", data=np.arange(s + extra, dtype="f8"))
+    index = UserFile(path).results()
+    assert [e.name for e in index.entries] == ["keep"]
+    assert [r.reason for r in index.refused] == ["bad-param"]
+    assert "rows on axis 0" in index.refused[0].detail
+
+
+def test_a_state_free_result_has_one_row(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal("bad")])
+    with h5py.File(path, "a") as f:
+        r = f["results/r0"]
+        r.attrs["per_state"] = np.int8(0)
+        del r["STATES"]
+    index = UserFile(path).results()
+    assert [r.reason for r in index.refused] == ["bad-param"]
+
+
+@pytest.mark.parametrize("link", ["combinations", "combinations/g1/rule", "combinations/g1/terms/kind"])
+def test_a_dangling_link_refuses_the_zone(make_model, tmp_path: Path, link: str) -> None:
+    path, _ = _raw(make_model, tmp_path, [GOOD])
+    write_user_file(path, make_model("m2.h5"), results=[nodal()])
+    with h5py.File(path, "a") as f:
+        del f[link]
+        f[link] = h5py.SoftLink("/nowhere")
+    uf = UserFile(path)
+    with pytest.raises(ZoneRefused):
+        uf.combinations()
+    assert uf.results().entries[0].name == nodal().name
+
+
+def test_a_dangling_results_zone_refuses_the_zone(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal()], combinations=[GOOD])
+    with h5py.File(path, "a") as f:
+        del f["results"]
+        f["results"] = h5py.SoftLink("/nowhere")
+    uf = UserFile(path)
+    with pytest.raises(ZoneRefused):
+        uf.results()
+    assert uf.combinations().rows == (GOOD,)
+
+
+def test_model_combinations_are_read_under_the_opensees_version(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model())
+    model = make_model("newer.h5")
+    _model_rows(model, [GOOD])
+    reader = reader_version(OPENSEES)
+    with h5py.File(model, "a") as f:
+        f["meta"].attrs[OPENSEES_KEY] = f"{reader.major}.{reader.minor + 1}.0"
+    with pytest.raises(SchemaVersionError, match="newer"):
+        UserFile(path).combinations(model_h5=model)
+    with h5py.File(model, "a") as f:
+        del f["meta"].attrs[OPENSEES_KEY]
+    with pytest.raises(ZoneRefused, match="opensees_schema_version"):
+        UserFile(path).combinations(model_h5=model)
+
+
+def test_a_model_without_the_zone_needs_no_opensees_version(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), combinations=[GOOD])
+    assert UserFile(path).combinations(model_h5=make_model()).rows == (GOOD,)
+
+
+def test_a_model_that_is_not_hdf5_refuses_as_a_zone(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), combinations=[GOOD])
+    junk = tmp_path / "junk.h5"
+    junk.write_bytes(b"not hdf5")
+    with pytest.raises(ZoneRefused):
+        UserFile(path).combinations(model_h5=junk)
+
+
+def test_a_damaged_meta_refuses_the_file(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model())
+    with h5py.File(path, "a") as f:
+        attrs = dict(f["meta"].attrs)
+        del f["meta"]
+        f["meta"] = np.zeros(1)
+        assert attrs
+    with pytest.raises(UserFileRefused):
+        UserFile(path)
+
+
 def test_a_duplicate_result_name_refuses_both(make_model, tmp_path: Path) -> None:
     path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal("a"), nodal("b")])
     with h5py.File(path, "a") as f:
@@ -336,16 +483,14 @@ def test_the_writer_refuses_a_row_the_reader_would(make_model, tmp_path: Path, r
 
 def test_the_writer_refuses_a_clash_with_the_model(make_model, tmp_path: Path) -> None:
     model = make_model()
-    with h5py.File(model, "a") as f:
-        write_generation(f.create_group("opensees/combinations/g0"), [GOOD])
+    _model_rows(model, [GOOD])
     with pytest.raises(UserWriteRefused, match="clash"):
         write_user_file(tmp_path / "s.user.h5", model, combinations=[GOOD])
 
 
 def test_a_row_may_name_a_model_row_through_the_writer(make_model, tmp_path: Path) -> None:
     model = make_model()
-    with h5py.File(model, "a") as f:
-        write_generation(f.create_group("opensees/combinations/g0"), [GOOD])
+    _model_rows(model, [GOOD])
     up = Combination("up", "linear", (Term("combination", "good"),))
     path = write_user_file(tmp_path / "s.user.h5", model, combinations=[up])
     table = UserFile(path).combinations(model_h5=model)

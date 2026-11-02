@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -90,6 +91,22 @@ def _kill_writer_at(point: str, target: Path, model: Path) -> None:
         if proc.stderr:
             proc.stderr.close()
     assert proc.returncode != 0, "the writer was not killed: the test proved nothing"
+    _wait_for_the_dead_writers_lock(target.with_name(target.name + ".partial"))
+
+
+def _wait_for_the_dead_writers_lock(partial: Path) -> None:
+    """Windows releases a dead process's locks some time after it exits, and how
+    long depends on the load (``LockFileEx``). Reading the partial before then
+    fails with a lock violation, which is the OS and not the test's subject."""
+    deadline = time.monotonic() + 60.0
+    while partial.exists() and time.monotonic() < deadline:
+        try:
+            with h5py.File(partial, "r"):
+                return
+        except OSError as exc:
+            if "lock" not in str(exc):
+                return  # a partial truly cut short: the lock is not what stops it
+            time.sleep(0.05)
 
 
 def test_the_subprocess_imports_this_worktree() -> None:
@@ -140,6 +157,45 @@ def test_a_later_write_survives_the_dead_writers_partial(make_model, tmp_path: P
     write_user_file(target, model, results=[nodal("later")])
     assert sorted(e.name for e in UserFile(target).results().entries) == ["kept", "later"]
     assert not target.with_name(target.name + ".partial").exists()
+
+
+def test_the_writer_waits_out_a_lock_that_clears(
+    make_model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dead writer's lock, as a deterministic stand-in: the OS's timing is
+    what made the kill-based test flaky, so this one does not depend on it."""
+    model = make_model()
+    real = h5py.File
+    refusals = []
+
+    def locked_twice(name, mode="r", *a, **k):
+        if mode == "w" and str(name).endswith(".partial") and len(refusals) < 2:
+            refusals.append(name)
+            raise OSError("unable to lock file, Win32 GetLastError() = 33")
+        return real(name, mode, *a, **k)
+
+    monkeypatch.setattr(_writer.h5py, "File", locked_twice)
+    monkeypatch.setattr(_writer, "_REPLACE_WAIT_S", 0.0)
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("new")])
+    assert len(refusals) == 2
+    assert [e.name for e in UserFile(target).results().entries] == ["new"]
+
+
+def test_a_partial_held_by_a_live_writer_refuses_and_is_not_deleted(
+    make_model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    partial = target.with_name(target.name + ".partial")
+    monkeypatch.setattr(_writer, "_REPLACE_WAIT_S", 0.0)
+    with h5py.File(partial, "w") as held:  # another writer, mid-write
+        held.create_group("theirs")
+        with pytest.raises(_writer.UserWriteRefused, match="held by another writer"):
+            write_user_file(target, model, results=[nodal("new")])
+    assert _digest(target) == before
+    with h5py.File(partial, "r") as f:
+        assert "theirs" in f, "the other writer's partial was left alone"
 
 
 def test_an_exception_mid_write_leaves_the_file_and_no_partial(

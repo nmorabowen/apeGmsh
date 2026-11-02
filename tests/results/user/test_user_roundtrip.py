@@ -12,10 +12,11 @@ from apeGmsh.opensees._internal.schema_version import (
     COMBINATIONS_KEY,
     SchemaVersionError,
     USER_META_KEY,
+    USER_RESULTS,
     USER_RESULTS_KEY,
     reader_version,
 )
-from apeGmsh.results.readers._ladruno_element_io import parse_blocks
+from apeGmsh.results.readers._ladruno_element_io import _gp_param_for, parse_blocks
 from apeGmsh.results.user import (
     Combination,
     ElementBucket,
@@ -219,14 +220,88 @@ def test_entity_field_round_trips(make_model, tmp_path: Path) -> None:
     assert _bits(back.data) == _bits(r.data)
 
 
-def _bucket() -> ElementBucket:
+def _bucket(**kw) -> ElementBucket:
     data = np.arange(12, dtype="f8").reshape(1, 2, 6) / 7.0
-    return ElementBucket(
+    fields = dict(
         name="204-ASDShellT3[102:0:0]", ids=np.array([11, 12], dtype="i4"), data=data,
         components=(("mxx", "myy", "mxy"),), gauss_ids=(0,), multiplicity=(2,),
-        topology="tri", param_domain="bary",
-        gp_param=np.array([[0.5, 0.5, 0.0], [0.0, 0.5, 0.5]]),
+        topology="tri", param_domain="bary", family="lagrange", order=(1, 1),
+        gp_param=np.array([[0.2, 0.3], [0.1, 0.6]]),
     )
+    fields.update(kw)
+    return ElementBucket(**fields)
+
+
+def _elements(bucket: ElementBucket) -> UserResult:
+    return UserResult(name="wood_armer", target="elements", basis="model", buckets=(bucket,))
+
+
+@pytest.mark.parametrize(
+    "family, expected",
+    [
+        # Closed form: node-0-first (xi, eta) has node weights (xi, eta, 1-xi-eta),
+        # and gmsh (u, v) is the weights of nodes 1 and 2.
+        ("lagrange", [[0.3, 0.5], [0.6, 0.3]]),
+        # A bernstein triangle's rows are gmsh already.
+        ("bernstein", [[0.2, 0.3], [0.1, 0.6]]),
+    ],
+)
+def test_the_recorder_read_path_places_the_gauss_points(make_model, tmp_path, family, expected) -> None:
+    b = _bucket(family=family)
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[_elements(b)])
+    with h5py.File(path, "r") as f:
+        got = _gp_param_for(f["results/r0/MODEL/ELEMENTS"], b.name)
+    assert np.allclose(got, expected, atol=1e-15)
+
+
+def test_a_cartesian_rule_reads_through_the_same_path(make_model, tmp_path) -> None:
+    gp = np.array([[-0.5, 0.5]])
+    b = _bucket(topology="quad", param_domain="[-1,1]", order=(1, 1), gp_param=gp)
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[_elements(b)])
+    with h5py.File(path, "r") as f:
+        assert _gp_param_for(f["results/r0/MODEL/ELEMENTS"], b.name).tolist() == gp.tolist()
+    assert UserFile(path).read_result("wood_armer").buckets[0].order == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "kw, match",
+    [
+        ({"family": ""}, "family"),
+        ({"family": "nurbs"}, "no known barycentric frame"),
+        ({"order": ()}, "order"),
+        ({"order": (1,)}, "ORDER"),
+        ({"order": (0, 1)}, "ORDER"),
+        ({"param_domain": "polar"}, "unknown PARAM_DOMAIN"),
+        ({"gp_param": np.array([[0.5, 0.5, 0.0]]), "order": (1, 1, 1)}, "free"),
+    ],
+)
+def test_the_writer_refuses_what_the_read_path_could_not_place(make_model, tmp_path, kw, match) -> None:
+    target = tmp_path / "s.user.h5"
+    with pytest.raises(UserWriteRefused, match=match):
+        write_user_file(target, make_model(), results=[_elements(_bucket(**kw))])
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda g: g.attrs.__delitem__("FAMILY"),
+        lambda g: g.attrs.__delitem__("ORDER"),
+        lambda g: g.attrs.__setitem__("ORDER", "two"),
+        lambda g: g.attrs.__setitem__("ORDER", np.array([1], dtype="i4")),
+        lambda g: g.attrs.__setitem__("FAMILY", "nurbs"),
+        lambda g: g.attrs.__setitem__("NUM_GP", "two"),
+        lambda g: g.attrs.__setitem__("NUM_GP", 2.5),
+    ],
+)
+def test_a_placement_the_read_path_cannot_use_refuses_the_entry(make_model, tmp_path, damage) -> None:
+    b = _bucket()
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[_elements(b), nodal("keep")])
+    with h5py.File(path, "a") as f:
+        damage(f[f"results/r0/MODEL/ELEMENTS/{b.name}"])
+    index = UserFile(path).results()
+    assert [e.name for e in index.entries] == ["keep"]
+    assert [(r.name, r.reason) for r in index.refused] == [("wood_armer", "bad-param")]
 
 
 def test_element_field_round_trips_and_the_recorder_reader_parses_it(make_model, tmp_path) -> None:
@@ -240,13 +315,16 @@ def test_element_field_round_trips_and_the_recorder_reader_parses_it(make_model,
     assert _bits(got.data) == _bits(b.data) and _bits(got.gp_param) == _bits(b.gp_param)
     assert got.ids.tolist() == [11, 12] and got.components == b.components
     assert (got.gauss_ids, got.multiplicity, got.topology) == ((0,), (2,), "tri")
+    assert (got.family, got.order, got.param_domain) == ("lagrange", (1, 1), "bary")
     with h5py.File(path, "r") as f:
         stored = f[f"results/r0/RESULTS/ON_ELEMENTS/values/{b.name}"]
         blocks = parse_blocks(stored)  # the .ladruno read path, unmodified
         assert [x.comp_names for x in blocks] == [("mxx", "myy", "mxy")]
         assert blocks[0].width == 6 and stored.attrs["NUM_COLUMNS"] == 6
         placed = f[f"results/r0/MODEL/ELEMENTS/{b.name}"]
-        assert placed.attrs["NUM_GP"] == 2 and placed["QUADRATURE/GP_PARAM"].shape == (2, 3)
+        assert placed.attrs["NUM_GP"] == 2 and placed["QUADRATURE/GP_PARAM"].shape == (2, 2)
+        assert placed.attrs["FAMILY"] == "lagrange"
+        assert placed.attrs["ORDER"].tolist() == [1, 1] and placed.attrs["ORDER"].dtype == np.int32
 
 
 def test_no_int64_in_the_file(make_model, ladruno, tmp_path: Path) -> None:
@@ -379,6 +457,24 @@ def test_a_writer_will_not_touch_a_zone_newer_than_it_knows(make_model, tmp_path
     write_user_file(path, make_model(), results=[nodal("other")])  # a zone it does not write
     with h5py.File(path, "r") as f:
         assert f["meta"].attrs[COMBINATIONS_KEY] == newer, "copied verbatim, key included"
+
+
+def test_a_combinations_only_write_stamps_no_results_zone(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), combinations=[LINEAR])
+    write_user_file(path, make_model(), combinations=[CQC])
+    with h5py.File(path, "r") as f:
+        assert "results" not in f and USER_RESULTS_KEY not in f["meta"].attrs
+    assert UserFile(path).results().entries == ()
+
+
+def test_a_write_keeps_the_version_of_a_results_zone_it_did_not_write(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal()])
+    older = str(reader_version(USER_RESULTS))
+    with h5py.File(path, "a") as f:
+        f["meta"].attrs[USER_RESULTS_KEY] = older + "-kept"
+    write_user_file(path, make_model(), combinations=[LINEAR])
+    with h5py.File(path, "r") as f:
+        assert f["meta"].attrs[USER_RESULTS_KEY] == older + "-kept"
 
 
 def test_a_path_not_named_user_h5_refuses(make_model, tmp_path: Path) -> None:

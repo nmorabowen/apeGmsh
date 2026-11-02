@@ -16,7 +16,8 @@ from typing import Any, Optional, Sequence
 import h5py
 import numpy as np
 
-from ._descriptor import StateAddress, address_problem
+from ..readers._ladruno_element_io import gp_param_to_gmsh
+from ._descriptor import StateAddress, address_problem, decode_cell
 from ._errors import UserFileError
 from ._names import name_problem, text_or_empty
 
@@ -46,6 +47,11 @@ class ElementBucket:
 
     Each row of ``components`` (with its ``gauss_ids`` and ``multiplicity``) is
     one ``COLUMN_MAP`` row; a block takes ``len(names) * multiplicity`` columns.
+
+    ``topology``, ``param_domain``, ``family`` and ``order`` place ``gp_param``:
+    the frame of a barycentric rule depends on the family, so the recorder's
+    read path refuses a group without them. ``order`` has one entry per
+    ``gp_param`` column, as the recorder writes it.
     """
 
     name: str
@@ -56,6 +62,8 @@ class ElementBucket:
     multiplicity: tuple[int, ...]
     topology: str
     param_domain: str
+    family: str
+    order: tuple[int, ...]
     gp_param: np.ndarray
 
 
@@ -150,6 +158,21 @@ def _write_id(group: h5py.Group, ids: Any, what: str) -> int:
     return a.shape[0]
 
 
+def _check_order(order: np.ndarray, gp: np.ndarray, where: str) -> None:
+    if order.ndim != 1 or order.size != gp.shape[1] or np.any(order < 1):
+        raise EntryRefused(
+            "bad-param", f"{where}: ORDER {order.tolist()} needs one entry >= 1 "
+            f"per GP_PARAM column, and GP_PARAM has shape {gp.shape}")
+
+
+def _check_frame(gp: np.ndarray, domain: str, topology: str, family: str, where: str) -> None:
+    """Refuse what the recorder's read path could not place, at this seam."""
+    try:
+        gp_param_to_gmsh(gp, param_domain=domain, topology=topology, family=family, where=where)
+    except ValueError as exc:
+        raise EntryRefused("bad-param", str(exc)) from exc
+
+
 def _write_bucket(values: h5py.Group, model: h5py.Group, b: ElementBucket, s: int) -> None:
     problem = _link_problem(b.name)
     if problem is not None:
@@ -182,12 +205,18 @@ def _write_bucket(values: h5py.Group, model: h5py.Group, b: ElementBucket, s: in
     gp = np.asarray(b.gp_param, dtype="f8")
     if gp.ndim != 2 or gp.shape[0] < 1:
         raise EntryRefused("bad-param", f"bucket {b.name}: GP_PARAM has shape {gp.shape}")
-    for what, text in (("topology", b.topology), ("param_domain", b.param_domain)):
+    for what, text in (("topology", b.topology), ("param_domain", b.param_domain),
+                       ("family", b.family)):
         if name_problem(text) is not None:
             raise EntryRefused("bad-param", f"bucket {b.name}: {what} {text!r}")
+    order = _i4(b.order, f"bucket {b.name} order")
+    _check_order(order, gp, f"bucket {b.name}")
+    _check_frame(gp, b.param_domain, b.topology, b.family, f"bucket {b.name}")
     placed = model.create_group(b.name)
     placed.attrs["TOPOLOGY"] = b.topology
     placed.attrs["PARAM_DOMAIN"] = b.param_domain
+    placed.attrs["FAMILY"] = b.family
+    placed.attrs["ORDER"] = order
     placed.attrs["NUM_GP"] = np.int32(gp.shape[0])
     placed.create_group("QUADRATURE").create_dataset("GP_PARAM", data=gp)
 
@@ -311,7 +340,8 @@ def _read_states(group: h5py.Group) -> tuple[StateAddress, ...]:
     if not (kinds.shape == sources.shape == steps.shape == modes.shape) or kinds.size == 0:
         raise EntryRefused("bad-param", f"{group.name} columns disagree or are empty")
     out = tuple(
-        StateAddress(text_or_empty(k), text_or_empty(src), int(st), int(m))
+        StateAddress(decode_cell(k, "/results", group.name),
+                     decode_cell(src, "/results", group.name), int(st), int(m))
         for k, src, st, m in zip(kinds, sources, steps, modes)
     )
     for state in out:
@@ -368,15 +398,23 @@ def _check_placement(group: h5py.Group, bucket: str) -> None:
     if where not in group or not isinstance(group[where], h5py.Group):
         raise EntryRefused("bad-param", f"{group.name} has no {where}")
     placed = group[where]
-    for key in ("TOPOLOGY", "PARAM_DOMAIN"):
-        if not _attr_text(placed, key):
+    texts = {}
+    for key in ("TOPOLOGY", "PARAM_DOMAIN", "FAMILY"):
+        texts[key] = _attr_text(placed, key)
+        if not texts[key]:
             raise EntryRefused("bad-param", f"{placed.name} has no @{key}")
     if "QUADRATURE" not in placed or not isinstance(placed["QUADRATURE"], h5py.Group):
         raise EntryRefused("bad-param", f"{placed.name} has no QUADRATURE")
     gp = _dataset(placed["QUADRATURE"], "GP_PARAM", "f8", 2)
     num_gp = np.asarray(placed.attrs["NUM_GP"]) if "NUM_GP" in placed.attrs else None
-    if num_gp is None or num_gp.size != 1 or int(num_gp.ravel()[0]) != gp.shape[0]:
+    if (num_gp is None or num_gp.size != 1 or num_gp.dtype.kind not in "iu"
+            or int(num_gp.ravel()[0]) != gp.shape[0]):
         raise EntryRefused("bad-param", f"{placed.name}@NUM_GP does not match GP_PARAM {gp.shape}")
+    order = np.asarray(placed.attrs["ORDER"]) if "ORDER" in placed.attrs else None
+    if order is None or order.dtype.kind not in "iu":
+        raise EntryRefused("bad-param", f"{placed.name}@ORDER is absent or not integers")
+    _check_order(order, gp, placed.name)
+    _check_frame(gp[...], texts["PARAM_DOMAIN"], texts["TOPOLOGY"], texts["FAMILY"], placed.name)
 
 
 def _check_holder(holder: h5py.Group, target: str, s: int) -> None:
@@ -444,7 +482,8 @@ def read_entry(entry: ResultEntry, group: h5py.Group) -> UserResult:
     if entry.target == "entities":
         return UserResult(
             **common, components=components, data=data,
-            entity_kind=tuple(text_or_empty(k) for k in values["ENTITY_KIND"][...]),
+            entity_kind=tuple(decode_cell(k, "/results", values.name)
+                              for k in values["ENTITY_KIND"][...]),
             entity_row=values["ENTITY_ROW"][...],
         )
     return UserResult(**common, components=components, data=data)
@@ -467,5 +506,7 @@ def _read_bucket(holder: h5py.Group, entry_group: h5py.Group, name: str) -> Elem
         multiplicity=tuple(int(m) for m in cmap["MULTIPLICITY"][...].ravel()),
         topology=_attr_text(placed, "TOPOLOGY") or "",
         param_domain=_attr_text(placed, "PARAM_DOMAIN") or "",
+        family=_attr_text(placed, "FAMILY") or "",
+        order=tuple(int(o) for o in np.asarray(placed.attrs["ORDER"]).ravel()),
         gp_param=_dataset(placed["QUADRATURE"], "GP_PARAM", "f8", 2)[...],
     )

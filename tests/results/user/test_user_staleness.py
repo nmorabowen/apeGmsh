@@ -163,6 +163,65 @@ def test_a_new_model_refuses_then_drop_stale_drops_derived_keeps_authored(full, 
         assert "modes_schema_version" not in f["meta"].attrs
 
 
+def test_files_that_are_not_hdf5_read_as_stale(full, tmp_path: Path) -> None:
+    junk = tmp_path / "junk.h5"
+    junk.write_bytes(b"not hdf5")
+    got = staleness(full, model_h5=junk, results_file=junk)
+    assert got.results["by results"].stale and "fingerprinted" in got.results["by results"].reason
+    assert got.results["by model"].stale and "cannot be read" in got.results["by model"].reason
+    for root in ("modes", "spectra", "entities"):
+        assert got.zones[root].stale
+    assert not got.zones["combinations"].stale, "the zone's rows do not depend on that file"
+    assert got.combinations == ("cqc", "via cqc")
+
+
+def test_a_model_with_a_dataset_at_meta_reads_as_stale(full, tmp_path: Path) -> None:
+    model = tmp_path / "odd.h5"
+    with h5py.File(model, "w") as f:
+        f["meta"] = np.zeros(1)
+    assert staleness(full, model_h5=model).results["by model"].stale
+
+
+@pytest.mark.parametrize("direction", ["appears", "disappears"])
+def test_model_hash_changing_presence_refuses_over_basis_model(make_model, tmp_path, direction) -> None:
+    fem_only = make_model("fem_only.h5", model=None)
+    full_model = make_model("full.h5")
+    first, second = (fem_only, full_model) if direction == "appears" else (full_model, fem_only)
+    path = write_user_file(tmp_path / "s.user.h5", first, results=[nodal("derived")])
+    before = path.read_bytes()
+    with pytest.raises(UserWriteRefused, match="would become stale"):
+        write_user_file(path, second)
+    assert path.read_bytes() == before
+    write_user_file(path, second, results=[nodal("derived", data=np.ones((2, 3, 2)))])
+    assert UserFile(path).model_hash == (None if direction == "disappears" else "0123456789abcdef0123456789abcdef")
+
+
+@pytest.mark.parametrize("root", ["modes", "spectra", "entities"])
+def test_model_hash_disappearing_refuses_over_a_model_zone(make_model, tmp_path, root) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model("full.h5"))
+    _with_zones(path, root)
+    with pytest.raises(UserWriteRefused, match=root):
+        write_user_file(path, make_model("fem_only.h5", model=None))
+
+
+def test_model_hash_presence_changing_with_nothing_derived_writes(make_model, tmp_path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model("full.h5"), combinations=[])
+    write_user_file(path, make_model("fem_only.h5", model=None))
+    assert UserFile(path).model_hash is None
+    write_user_file(path, make_model("full2.h5"))
+    assert UserFile(path).model_hash is not None
+
+
+def test_the_fem_only_pairing_keeps_working(make_model, tmp_path) -> None:
+    """SLE: its model has only fem_hash (ADR 0130 D10), run after run."""
+    fem_only = make_model("fem_only.h5", model=None)
+    path = write_user_file(tmp_path / "s.user.h5", fem_only, results=[nodal("a")])
+    write_user_file(path, fem_only, results=[nodal("b")])
+    uf = UserFile(path)
+    assert uf.model_hash is None and sorted(e.name for e in uf.results().entries) == ["a", "b"]
+    assert not staleness(path, model_h5=fem_only).results["a"].stale
+
+
 def test_basis_results_without_any_hash_refuses(make_model, tmp_path: Path) -> None:
     with pytest.raises(UserWriteRefused, match="results_file"):
         write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal(basis="results")])

@@ -59,6 +59,7 @@ _MODEL_ZONES = {
 _GENERATION = re.compile(r"g(\d+)\Z")
 _ENTRY = re.compile(r"r(\d+)\Z")
 _REPLACE_TRIES = 10
+_OPEN_TRIES = 100
 _REPLACE_WAIT_S = 0.1
 
 
@@ -71,10 +72,13 @@ def model_hashes(model_h5: "str | Path") -> tuple[str, Optional[str]]:
     path = Path(model_h5)
     if not path.is_file():
         raise UserWriteRefused(f"no such model archive: {path}")
-    with h5py.File(path, "r") as f:
-        if "meta" not in f:
-            raise UserWriteRefused(f"{path} has no /meta")
-        fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+    try:
+        with h5py.File(path, "r") as f:
+            if "meta" not in f:
+                raise UserWriteRefused(f"{path} has no /meta")
+            fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
+    except (KeyError, OSError, TypeError) as exc:
+        raise UserWriteRefused(f"{path} is not a readable model archive: {exc}") from exc
     if not fem_hash:
         raise UserWriteRefused(f"{path}: /meta/lineage has no fem_hash to pair with")
     return fem_hash, model_hash or None
@@ -114,10 +118,10 @@ def write_user_file(
 
     model_moved = results_moved = False
     if previous is not None:
-        model_moved = fem_hash != previous.fem_hash or (
-            model_hash is not None and previous.model_hash is not None
-            and model_hash != previous.model_hash
-        )
+        # model_hash appearing or disappearing counts: what was derived under
+        # the old identity would otherwise be re-labelled by this write. With
+        # nothing derived, _derived_to_drop finds nothing and the write stands.
+        model_moved = fem_hash != previous.fem_hash or model_hash != previous.model_hash
         results_moved = results_hash != previous.results_hash
         # /results must be understood to judge it, even when none of it is rewritten.
         _check_known_versions(
@@ -127,7 +131,7 @@ def write_user_file(
     dropped = _derived_to_drop(target, model_moved, results_moved, names, drop_stale)
 
     partial = target.with_name(target.name + ".partial")
-    out = h5py.File(partial, "w")  # outside the try: a failed open is another writer's file
+    out = _open_partial(partial)  # outside the try: a failed open is another writer's file
     try:
         with out:
             _write_all(out, previous, target, fem_hash, model_hash, results_hash,
@@ -270,9 +274,7 @@ def _write_all(
         meta.attrs[COMBINATIONS_KEY] = COMBINATIONS_SCHEMA_VERSION
     if results:
         _put_results(out, results)
-    if results or "results" in out:
-        if USER_RESULTS_KEY not in meta.attrs:
-            meta.attrs[USER_RESULTS_KEY] = USER_RESULTS_SCHEMA_VERSION
+        meta.attrs[USER_RESULTS_KEY] = USER_RESULTS_SCHEMA_VERSION
 
 
 def _set_or_clear(group: h5py.Group, key: str, value: Optional[str]) -> None:
@@ -343,6 +345,22 @@ def _verify(
 def _fsync(path: Path) -> None:
     with open(path, "r+b") as f:  # Windows refuses fsync on a read-only handle
         os.fsync(f.fileno())
+
+
+def _open_partial(partial: Path) -> h5py.File:
+    """Create the partial, retried. Windows releases a dead process's file locks
+    some time after it exits, and how long depends on the load (``LockFileEx``),
+    so a killed writer's lock can outlive it. A live writer's lock outlasts this."""
+    for attempt in range(_OPEN_TRIES):
+        try:
+            return h5py.File(partial, "w")
+        except OSError as exc:
+            if attempt == _OPEN_TRIES - 1:
+                raise UserWriteRefused(
+                    f"{partial} is held by another writer; nothing was replaced: {exc}"
+                ) from exc
+            time.sleep(_REPLACE_WAIT_S)
+    raise AssertionError("unreachable")
 
 
 def _replace(partial: Path, target: Path) -> None:
