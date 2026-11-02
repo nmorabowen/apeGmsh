@@ -708,6 +708,12 @@
       "skill": "references/results.md",
       "symbol": "Results.close"
     },
+    "Results.combinations": {
+      "doc": "The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).",
+      "signature": "combinations(user_h5: \"'Optional[str | Path]'\" = None, *, model_h5: \"'Optional[str | Path]'\" = None, spectra: 'Any' = None) -> \"'UserCombinations'\"",
+      "skill": "references/results.md",
+      "symbol": "Results.combinations"
+    },
     "Results.demo": {
       "doc": "Return a ready-to-view demo :class:`Results` (cantilever pushover).",
       "signature": "demo(**kwargs) -> \"'Results'\"",
