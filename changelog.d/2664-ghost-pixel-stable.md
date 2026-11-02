@@ -8,5 +8,10 @@ against the depth of the opaque scene, and one full-screen triangle lays the res
 over the canvas. The target is 2x the canvas, so a ghost shown on screen draws the
 opaque scene twice. Lines that were anti-aliased over 4 samples are now anti-aliased
 over 4 pixels of the target, and the ghost now lies over the deformed mesh's outline
-edges and any translucent surface, where it used to lie under them, so its pixels
-change slightly in the app as well as in a still.
+edges, where it used to lie under them, so its pixels change slightly in the app as
+well as in a still.
+
+Over translucent surfaces (surface opacity below 1, the default for a model with both
+solids and lines, so a view spec reaches it) the ghost stays under the mesh, with its
+earlier look, and no pixel identity is claimed: the mesh's own blended triangles are
+in the MSAA canvas. The app-chrome capture race is tracked apart in #2696.

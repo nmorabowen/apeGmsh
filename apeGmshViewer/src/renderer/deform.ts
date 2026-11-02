@@ -234,6 +234,10 @@ const GHOST_LAYER = 2;
 /** The ghost target's size over the drawing buffer's: with no MSAA there, this is its anti-aliasing. */
 const GHOST_SUPERSAMPLE = 2;
 
+/** Where the composite draws in the transparent pass: over the opaque mesh's blended edges (renderOrder 0), or ahead of every blended part of a translucent mesh. */
+const COMPOSITE_OVER = 0.5;
+const COMPOSITE_UNDER = -2;
+
 /** The ghost's surfaces write sRGB themselves: three writes linear into a render target, and the blending must stay in the space the canvas blends in. */
 function encodeSrgb(m: THREE.Material): void {
   m.onBeforeCompile = (p) => {
@@ -252,6 +256,11 @@ function encodeSrgb(m: THREE.Material): void {
  * goes after the mesh's own blended outline edges (renderOrder 0), which differed
  * in about 1 frame in 100 when they blended over it (5 levels; 0 of 12,000 frames
  * this way), and before the gizmos and the selection (renderOrder 1 and up).
+ *
+ * Over translucent surfaces it goes first, under them (`applyGhostVisibility`;
+ * owner ruling on #2664: that look stays). No pixel identity is claimed there:
+ * the mesh's own blended triangles are in the canvas, and blended triangles there
+ * differ from frame to frame. The app-chrome capture race is apart (#2696).
  */
 function ghostComposite(): THREE.Mesh {
   const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -275,7 +284,7 @@ function ghostComposite(): THREE.Mesh {
   m.addEventListener("dispose", () => target.dispose());
   const quad = new THREE.Mesh(g, m);
   quad.name = "ghost composite";
-  quad.renderOrder = 0.5;
+  quad.renderOrder = COMPOSITE_OVER;
   quad.frustumCulled = false;
   quad.userData["clipExempt"] = true;
   const size = new THREE.Vector2();
@@ -406,12 +415,18 @@ export function ghostObjects(
  * Sync the reference ghost's 2-D/3-D surfaces and outline edges with the user's
  * surface opacity (`off` hides ghost surfaces and edges) and edges toggle
  * (`edges` off hides ghost outline edges), while keeping 1-D ghost lines shown.
+ * That opacity alone also picks the composite's place, whatever else is translucent:
+ * 3-D frames the line diagram dims to 0.25 under an opacity of 1 still count as opaque.
  */
 export function applyGhostVisibility(ghost: THREE.Group, edgesOn: boolean, full: FullPositions | null, opacity = 1): void {
   const showEdges = edgesShown(edgesOn, full, opacity);
   const showFaces = opacity > 0;
   for (const o of ghost.children) {
     if (o.name === "ghost edges") o.visible = showEdges;
+    else if (o.name === "ghost composite") {
+      o.visible = showFaces;
+      o.renderOrder = opacity < 1 ? COMPOSITE_UNDER : COMPOSITE_OVER;
+    }
     else if (o.name === "ghost faces" || o instanceof THREE.Mesh) o.visible = showFaces;
   }
 }

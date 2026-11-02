@@ -11,6 +11,7 @@
 // - the reference ghost is the undeformed mesh, whatever is drawn.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
@@ -191,6 +192,17 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   assert.equal(faces.visible, false, "ghost surfaces hidden when opacity is 0");
   assert.equal(ghostEdges.visible, false, "ghost outline edges hidden when opacity is 0");
   assert.equal(ghostLines.visible, true, "1-D ghost lines remain visible when 2-D/3-D surfaces are off");
+
+  // Owner ruling on #2664: over translucent surfaces the ghost composites first, under every blended part of the mesh; over opaque ones, after the mesh's edges.
+  for (const [opacity, after] of [[0.35, false], [1, true], [0.2, false], [1, true]] as const) {
+    applyGhostVisibility(group, true, full, opacity);
+    assert.equal(composite.visible, true, `opacity ${opacity}`);
+    assert.equal(composite.renderOrder > 0, after, `opacity ${opacity}: over the mesh's edges`);
+    assert.equal(composite.renderOrder < ghostLines.renderOrder, !after, `opacity ${opacity}: under the ghost's 1-D lines`);
+  }
+  // A mix: the user's surface opacity alone decides. The viewport passes that, never the 0.25 the line diagram gives 3-D frames, so those count as opaque.
+  const viewportSrc = readFileSync(fileURLToPath(new URL("../../src/renderer/viewport.ts", import.meta.url)), "utf8");
+  assert.equal(viewportSrc.match(/applyGhostVisibility\(this\.ghost, s\.visibility\.edges, \w+(\.\w+)?, s\.visibility\.opacity\)/g)?.length, 2);
 
   h.effects.dispose();
 });
