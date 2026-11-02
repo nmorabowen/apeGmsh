@@ -85,6 +85,16 @@ function runWithin(ms: number, user: string, ...args: string[]): Promise<{ code:
 
 const run = (user: string, ...args: string[]) => runWithin(90000, user, ...args);
 
+/** Stop the window this run started; one that has already exited is not waited for (that wait would hang, and hide why it exited). */
+async function stop(view: ReturnType<typeof spawn>): Promise<void> {
+  if (view.exitCode === null && view.signalCode === null) {
+    const gone = new Promise((ok) => view.once("exit", ok));
+    view.kill();
+    await gone;
+  }
+  await sleep(500);
+}
+
 /** The window's page, through its debug port. */
 async function pageOf(port: number) {
   let ws: WebSocket | null = null;
@@ -267,9 +277,7 @@ async function campaign(theme: "dark" | "light", port: number): Promise<void> {
     log(`${theme}: Amendment 2: the camera after Apply is the spec's`);
     noModal(viewErr, "the view window");
   } finally {
-    view.kill();
-    await new Promise((ok) => view.on("exit", ok));
-    await sleep(500);
+    await stop(view);
   }
   // With the window gone, there is nothing to reach again.
   assert.equal((await run(user, "--mode=present", `--spec=${specShown}`)).code, 1, "the window closed: --present exits 1 again");
@@ -382,9 +390,7 @@ async function robustness(port: number): Promise<void> {
     }
     clean("the view window");
   } finally {
-    view.kill();
-    await new Promise((ok) => view.on("exit", ok));
-    await sleep(500);
+    await stop(view);
   }
 }
 
