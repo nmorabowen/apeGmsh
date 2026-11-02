@@ -347,11 +347,13 @@ def test_a_broken_link_in_an_entry_refuses_that_entry(make_model, tmp_path: Path
     assert [r.name for r in index.refused] == ["bad"]
 
 
-def test_a_dataset_where_results_belongs_refuses_that_entry(make_model, tmp_path: Path) -> None:
+@pytest.mark.parametrize("value", [[1], 1], ids=["array", "scalar"])
+def test_a_dataset_where_results_belongs_refuses_that_entry(make_model, tmp_path: Path, value) -> None:
+    """A scalar dataset is the one h5py raises ``TypeError`` on when probed."""
     path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal("bad"), nodal("keep")])
     with h5py.File(path, "a") as f:
         del f["results/r0/RESULTS"]
-        f["results/r0"].create_dataset("RESULTS", data=[1])
+        f["results/r0"].create_dataset("RESULTS", data=value)
     index = UserFile(path).results()
     assert [e.name for e in index.entries] == ["keep"]
     assert [(r.name, r.reason) for r in index.refused] == [("bad", "bad-param")]
