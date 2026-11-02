@@ -87,8 +87,8 @@ def _native_hash(f: h5py.File, path: Path) -> str:
             if text:
                 return f"native:{text}"
     raise FingerprintRefused(
-        f"{path} is neither a .ladruno (no INFO group) nor a native results "
-        "file with /meta/lineage@results_hash"
+        f"{path} is neither a recorder results file (no INFO group) nor a "
+        "native results file with /meta/lineage@results_hash"
     )
 
 

@@ -168,8 +168,10 @@ def _check_results(results: Sequence[UserResult], results_hash: Optional[str]) -
 
 def _check_combinations(rows: Sequence[Combination], model_h5: "str | Path") -> None:
     table = resolve(rows, read_model_combinations(model_h5))
-    if table.refused:
-        lines = [f"{r.name!r} ({r.origin}): {r.reason}: {r.detail}" for r in table.refused]
+    # A bad model.h5 row that touches none of these is that file's refusal to
+    # report at read; a clash refuses the row here as well, so it is caught.
+    lines = [f"{r.name!r}: {r.reason}: {r.detail}" for r in table.refused if r.origin == "user"]
+    if lines:
         raise UserWriteRefused("combinations refused: " + "; ".join(lines))
 
 
@@ -339,15 +341,8 @@ def _verify(
 
 
 def _fsync(path: Path) -> None:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
-    try:
-        os.fsync(fd)
-    except OSError:  # Windows refuses fsync on a read-only descriptor
-        os.close(fd)
-        fd = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    with open(path, "r+b") as f:  # Windows refuses fsync on a read-only handle
+        os.fsync(f.fileno())
 
 
 def _replace(partial: Path, target: Path) -> None:
