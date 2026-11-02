@@ -36,7 +36,7 @@ export const FAMILY_LABEL: Readonly<Record<FamilyKey, string>> = { stages: "Stag
 /** One family of the phase bar: its members, what of it is stale or refused, and whether a click draws it. */
 export interface PhaseFamily {
   key: FamilyKey;
-  /** the results stages of the family (Stages, Modes), in reader order; [] for the `.user.h5` families */
+  /** the results stages of the family that record a step (Stages, Modes), in reader order; [] for the `.user.h5` families */
   stages: number[];
   /** how many members it lists; null when its zone is listed by name only (Spectra) */
   count: number | null;
@@ -68,9 +68,13 @@ export function familiesOf(s: State): PhaseFamily[] {
     const stages = s.phase.axis.flatMap((k) => (k.kind === "results" && familyOfStage(s, k.stage) === key ? [k.stage] : []));
     if (!stages.length || !s.results) return;
     const results = s.results;
-    const names = stages.map((i) => results.stages[i]!.name || `${results.stages[i]!.id} (unnamed)`);
-    const title = [`${FAMILY_LABEL[key]} of ${baseName(results.path)}: ${names.join(", ")}`, ...notes].join("\n");
-    out.push({ key, stages, count: stages.length, stale, refused, drawable: true, title });
+    const name = (i: number) => results.stages[i]!.name || `${results.stages[i]!.id} (unnamed)`;
+    // A stage that records no step cannot be shown: it is listed, and a click opens the first one that can.
+    const empty = stages.filter((i) => results.stages[i]!.time.length === 0);
+    const shown = stages.filter((i) => results.stages[i]!.time.length > 0);
+    const lines = [`${FAMILY_LABEL[key]} of ${baseName(results.path)}: ${stages.map(name).join(", ")}`];
+    if (empty.length) lines.push(`${empty.map(name).join(", ")} ${empty.length === 1 ? "records" : "record"} no step`);
+    out.push({ key, stages: shown, count: stages.length, stale, refused, drawable: shown.length > 0, title: [...lines, ...notes].join("\n") });
   };
   recorded("stages", [], 0, 0);
   const modeNotes: string[] = [];

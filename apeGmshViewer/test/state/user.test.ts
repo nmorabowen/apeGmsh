@@ -337,6 +337,17 @@ test("the phase bar lists Stages, Modes, Spectra and User Combinations, each wit
   assert.deepEqual(familiesOf(readInto(initialState, writeSet())).map((x) => x.key), ["spectra", "combinations"]);
 });
 
+test("a stage that records no step is listed and never opened (San Ramon's MODEL_STAGE[1] before its modes)", () => {
+  const s = withResults(initialState);
+  const results = { ...s.results!, stages: [{ ...stage("stage_0", "MODEL_STAGE[1]", "static"), time: [] }, ...s.results!.stages.slice(2)] };
+  const f = familiesOf({ ...s, results, phase: { axis: [{ kind: "mesh" }, ...results.stages.map((_, i) => ({ kind: "results" as const, stage: i, step: 0 }))], at: { kind: "mesh" } } });
+  assert.deepEqual(f.map((x) => [x.key, x.stages, x.count, x.drawable]), [
+    ["stages", [], 1, false],
+    ["modes", [1, 2], 2, true],
+  ]);
+  assert.equal(f[0]!.title, "Stages of run.ladruno: MODEL_STAGE[1]\nMODEL_STAGE[1] records no step");
+});
+
 test("a refused /combinations zone, and a stale or refused modal table, show on their families", () => {
   const base = withResults(initialState);
   const user = (info: Partial<NonNullable<ReturnType<typeof userInfoOf>>>): State => ({
