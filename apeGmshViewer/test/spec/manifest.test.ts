@@ -16,6 +16,7 @@ import { describeSet } from "../../src/spec/describe.ts";
 import { manifestEntry, refusedEntry, type ManifestEntry } from "../../src/spec/manifest.ts";
 import { validateSpec, type SpecShot } from "../../src/spec/spec.ts";
 import { viewVerdict } from "../../src/spec/verdict.ts";
+import { takeShots, type RenderDeps } from "../../src/renderer/agentRender.ts";
 import { opened, until } from "../contour/harness.ts";
 import { caseShot, ORACLE, sameAsOracle } from "./manifestOracle.ts";
 
@@ -144,6 +145,110 @@ test("fail closed: an entry that cannot state the view throws, so the render mod
   assert.throws(() => manifestEntry(s, { ...base, step: { ...step, step: step.step + 1 } }), /not the step the view shows/);
   assert.throws(() => manifestEntry(s, { ...base, step: { ...step, nodal: {} } }), /the step data has no displacement_z/);
   assert.throws(() => manifestEntry({ ...s, mesh: { ...s.mesh!, nodes: undefined } }, { ...base, step }), /built without its node table/);
+});
+
+test("INV-6: a section plane cutting the view: `drawn` is null with its reason, `recorded` stands, and the counts state their limit", async () => {
+  const h = await setOf("contour_staged");
+  // The review's repro: this plane cuts away z > 1, and node 17 at z = 3.5 holds the uncut drawn maximum.
+  const shot = { stage: "erect", step: 1, contour: { field: "displacement", component: "displacement_x" } };
+  const whole = (await entryOf(h, shotOf(shot))).entry.contour;
+  assert.ok(whole?.drawn);
+  assert.equal(whole.extrema.drawn!.max.position[2], 3.5, "uncut, the drawn maximum sits above the plane");
+  assert.equal(whole.no_data.limit, null);
+  const c = shotOf({ ...shot, clip: [{ normal: [0, 0, -1], offset: -1 }] });
+  const compiled = compileShot(c, describeSet(h.store.get(), []));
+  assert.ok(compiled.ok);
+  await entryOf(h, shotOf(shot));
+  h.store.dispatch({ type: "addClipPlane", normal: [0, 0, -1] });
+  const planeId = h.store.get().clip.planes.at(-1)!.id;
+  h.store.dispatch({ type: "setClipOffset", id: planeId, offset: -1 });
+  const inputs = { shot: c, png: "s.png", image: [1600, 1000] as [number, number], camera: { eye: [1, 1, 1] as [number, number, number], target: [0, 0, 0] as [number, number, number], up: [0, 0, 1] as [number, number, number], fov: 30 }, layout: null, blobs: h.blobs, step: h.effects.currentStep() };
+  const k = manifestEntry(h.store.get(), inputs).contour;
+  assert.ok(k?.drawn);
+  assert.equal(k.extrema.drawn, null, "no number from a part the still has cut away stands as drawn");
+  assert.match(k.extrema.drawn_reason!, /section planes are cutting/);
+  assert.deepEqual(k.extrema.recorded, whole.extrema.recorded, "the recorded field does not depend on the cut");
+  assert.match(k.no_data.limit!, /counted before the section planes/);
+  assert.equal(k.no_data.count, whole.no_data.count);
+  // Cuts switched off, or the plane inactive: the view is whole again.
+  h.store.dispatch({ type: "setApplyCuts", on: false });
+  const off = manifestEntry(h.store.get(), inputs).contour;
+  assert.ok(off?.drawn);
+  assert.deepEqual(off.extrema.drawn, whole.extrema.drawn);
+  assert.equal(off.no_data.limit, null);
+  h.store.dispatch({ type: "setApplyCuts", on: true });
+  h.store.dispatch({ type: "removeClipPlane", id: planeId });
+});
+
+test("D3: a deformed shape's counts state the same limit under a cut", async () => {
+  const h = await setOf("contour_nodata");
+  const shot = shotOf({ stage: "erect", step: 1, deform: { scale: 10 } });
+  const { entry } = await entryOf(h, shot);
+  assert.ok(entry.deform?.state === "partial");
+  assert.equal(entry.deform.limit, null);
+  h.store.dispatch({ type: "addClipPlane", normal: [0, 0, -1] });
+  const id = h.store.get().clip.planes.at(-1)!.id;
+  const cut = manifestEntry(h.store.get(), { shot, png: "s.png", image: [1, 1], camera: entry.camera!, layout: null, blobs: h.blobs, step: h.effects.currentStep() });
+  h.store.dispatch({ type: "removeClipPlane", id });
+  assert.ok(cut.deform?.state === "partial");
+  assert.match(cut.deform.limit!, /counted before the section planes/);
+});
+
+test("D3: the entry states the still, the camera and the theme it was given", async () => {
+  const h = await setOf("contour_staged");
+  const { entry } = await entryOf(h, shotOf({ stage: "erect", step: 1 }));
+  assert.deepEqual(entry.camera, { eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1], fov: 30 });
+  assert.equal(entry.png, "s.png");
+  assert.deepEqual(entry.image, [1600, 1000]);
+  assert.equal(entry.theme, h.store.get().theme);
+});
+
+test("D3: the pairing is the app's own answer, for a set that pairs and for one that does not", async () => {
+  const paired = await setOf("contour_staged");
+  assert.deepEqual((await entryOf(paired, shotOf({}))).entry.pairing, { state: "paired", reason: null });
+  // The same mismatch render.e2e.ts refuses: these results were not run on this model.
+  const h = await opened(fx("contour_staged.h5"), fx("elem_mixed.results.h5"));
+  openSets.set("mismatch", h);
+  const { entry } = await entryOf(h, shotOf({}));
+  assert.notEqual(entry.pairing.state, "paired");
+  assert.match(entry.pairing.reason!, /model_hash differs/);
+  const refused = refusedEntry(h.store.get(), shotOf({}), "no", null);
+  assert.deepEqual(refused.pairing, entry.pairing, "a refused shot states the pairing too");
+});
+
+test("INV-6: a shot that throws is refused and the run reaches its manifest, so earlier stills keep their entries", async () => {
+  const h = await setOf("contour_staged");
+  const frame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => setTimeout(() => cb(0), 0)) as unknown as typeof requestAnimationFrame;
+  const written: string[] = [];
+  const canvas = { width: 640, height: 480, getBoundingClientRect: () => ({ x: 0, y: 0, width: 640, height: 480 }) };
+  const deps = {
+    store: h.store,
+    blobs: h.blobs,
+    effects: h.effects,
+    viewport: { renderer: { domElement: canvas }, camera: {}, renderNow: () => {}, currentPose: () => ({ eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1] }) },
+    bridge: { renderCapture: async (name: string) => (written.push(name), { path: name, width: 640, height: 480 }) },
+    layout: {
+      apply: () => {
+        if (written.length === 1 && !boomed) {
+          boomed = true;
+          throw new Error("a DOM check failed");
+        }
+      },
+      inLayout: () => [],
+    },
+  } as unknown as RenderDeps;
+  let boomed = false;
+  try {
+    const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, size: [640, 480], shots: [{ name: "a" }, { name: "boom" }, { name: "c" }] });
+    assert.ok(v.ok);
+    const shots = await takeShots(deps, v.spec, describeSet(h.store.get(), []), null);
+    assert.deepEqual(shots.map((s) => [s.entry.name, s.entry.status, s.entry.png]), [["a", "ok", "a.png"], ["boom", "refused", null], ["c", "ok", "c.png"]]);
+    assert.match(shots[1]!.entry.reason!, /the shot failed: a DOM check failed/);
+    assert.deepEqual(written, ["a", "c"], "every PNG written has an ok entry, and the refused shot has none");
+  } finally {
+    globalThis.requestAnimationFrame = frame;
+  }
 });
 
 test("a refused shot's entry: the reason, no still, and no view it never drew", async () => {

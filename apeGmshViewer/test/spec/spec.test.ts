@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { outRefusal, prepareRender } from "../../src/spec/job.ts";
+import { appVersion, outRefusal, prepareRender } from "../../src/spec/job.ts";
 import { APP_LAYERS, MODEL_LAYERS, SPEC_VERSION, validateSpec } from "../../src/spec/spec.ts";
 
 const FIX = fileURLToPath(new URL("../../fixtures/", import.meta.url));
@@ -191,7 +191,7 @@ for (const [name, body, key] of [
   ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
   test(`D2: a refused spec (${name}) writes manifest.json naming ${key}, and no PNG`, () => {
-    const { out, p } = job(name, body);
+    const { spec, out, p } = job(name, body);
     assert.equal(p.ok, false);
     if (p.ok) return;
     assert.equal(p.key, key);
@@ -199,8 +199,20 @@ for (const [name, body, key] of [
     assert.deepEqual(files, ["manifest.json"], "nothing but manifest.json: no PNG");
     const r = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
     assert.deepEqual(r.refused, { key: p.key, reason: p.reason });
+    // D3: the app's version, read from the app's own package.json (job.ts `appVersion`).
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
+    assert.deepEqual(r.app, { version: pkg.version, version_reason: null });
+    assert.equal(r.spec_file, spec);
+    assert.ok(!Number.isNaN(Date.parse(r.timing.written_at)));
   });
 }
+
+test("D3: a refused spec whose app version cannot be found says so", () => {
+  const none = { readFile: () => "", exists: () => false };
+  const v = appVersion(none, tmp);
+  assert.equal(v.version, null);
+  assert.match(v.version_reason!, /cannot state the app's version/);
+});
 
 test("D2: a non-empty --out is refused before the spec is read, and nothing in it is touched (no stale still beside a refusal)", () => {
   const dir = join(tmp, "busy");

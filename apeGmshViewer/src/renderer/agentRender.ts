@@ -278,15 +278,31 @@ export async function runAgentMode(deps: RenderDeps): Promise<void> {
   await loadStillFonts();
   const failed = await openSet(deps, job);
   const d = describeSet(store.get(), drawnPositions(store.get(), deps.blobs));
+  await bridge.renderDone({ manifest: manifestOf(job.spec, await takeShots(deps, job.spec, d, failed)) });
+}
+
+/**
+ * Every shot of the spec, each ending as one entry. INV-6: a shot that throws
+ * (a DOM check, a still that could not be written) is refused with what it
+ * threw, and the run goes on to its manifest, so the stills already written
+ * never stand without one. Main writes a still as its handler's last step, so
+ * a shot that threw has no PNG.
+ */
+export async function takeShots(deps: RenderDeps, spec: ViewSpec, d: SetDescription, failed: string | null): Promise<ShotResult[]> {
   const shots: ShotResult[] = [];
-  for (const shot of job.spec.shots) {
+  for (const shot of spec.shots) {
     if (failed) {
-      shots.push({ entry: refusedEntry(store.get(), shot, failed, null), ms: 0, shownMs: null });
+      shots.push({ entry: refusedEntry(deps.store.get(), shot, failed, null), ms: 0, shownMs: null });
       continue;
     }
-    const r = await takeShot(deps, job.spec, shot, d);
+    let r: ShotResult;
+    try {
+      r = await takeShot(deps, spec, shot, d);
+    } catch (err) {
+      r = { entry: refusedEntry(deps.store.get(), shot, `the shot failed: ${err instanceof Error ? err.message : String(err)}`, null), ms: 0, shownMs: null };
+    }
     console.info(`apeGmshViewer: render ${shot.name}: ${r.entry.status}${r.entry.reason ? ` (${r.entry.reason})` : ""} in ${Math.round(r.ms)} ms`);
     shots.push(r);
   }
-  await bridge.renderDone({ manifest: manifestOf(job.spec, shots) });
+  return shots;
 }

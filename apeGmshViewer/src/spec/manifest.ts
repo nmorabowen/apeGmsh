@@ -16,9 +16,13 @@
 //   what Python's `Results` reads (tests/viewers/test_agent_manifest_oracle.py).
 // - `extrema.drawn` keeps only what the visible primitives show: a solid's
 //   interior node, a hidden group and an inactive element are left out.
-//   Section planes are not applied; the entry's `shot.clip` names them.
+//   With a section plane cutting it is null, and `drawn_reason` says why: what
+//   a cut shows (its caps, the coordinates they cut at) is not computed here,
+//   and a number from a part the still has cut away must not stand as drawn.
 // - `no_data` counts the visible nodes (a nodal or an averaged field) or cells
-//   (a flat or a discrete field) the field gives no finite value.
+//   (a flat or a discrete field) the field gives no finite value. A deformed
+//   shape's counts are of drawn nodes too. With a plane cutting, each carries
+//   a `limit`: they are counted before the cut.
 // - A tie takes the lowest id, so the answer never depends on row order.
 // - `position` is the reference position, in the model's coordinates, also
 //   under a deformed shape: a node's position, or the mean of an element's
@@ -33,7 +37,7 @@ import { elementMaskOf, visibleMaps } from "../renderer/visible.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
 import { applyPlan, cellLookup, planFor } from "../state/extrapolation.ts";
-import { contourView, deformView, type ContourView } from "../state/selectors.ts";
+import { activeCount, contourView, deformView, type ContourView } from "../state/selectors.ts";
 import type { ArtifactInfo, CameraPose, ContourScan, MeshInfo, State } from "../state/types.ts";
 import { bannerLines, describeSet } from "./describe.ts";
 import type { SpecShot, ViewSpec } from "./spec.ts";
@@ -81,14 +85,15 @@ export type ManifestContour =
         /** the whole-history scan of this field, and how far it got; `none` when none ran */
         history_scan: { status: ContourScan["status"] | "none"; done: number; total: number };
       };
-      /** null when no value is finite */
-      extrema: { recorded: ManifestExtrema | null; drawn: ManifestExtrema | null };
-      no_data: { kind: "nodes" | "cells"; count: number; of: number };
+      /** `recorded` null: no value is finite; `drawn` null: `drawn_reason` says why */
+      extrema: { recorded: ManifestExtrema | null; drawn: ManifestExtrema | null; drawn_reason: string | null };
+      /** `limit`: why the count is not of what the still shows, or null when it is */
+      no_data: { kind: "nodes" | "cells"; count: number; of: number; limit: string | null };
     };
 
 export type ManifestDeform =
   | { state: "unavailable" | "refused"; reason: string }
-  | { state: "loading" | "ready" | "partial"; scale: number; ghost: boolean; drawn: number | null; undeformed: number | null };
+  | { state: "loading" | "ready" | "partial"; scale: number; ghost: boolean; drawn: number | null; undeformed: number | null; limit: string | null };
 
 export interface ManifestFile {
   path: string;
@@ -231,7 +236,16 @@ function visibleOf(s: State, mesh: MeshInfo, blobs: BlobStore): { nodes: Set<num
 }
 
 type DrawnContour = Extract<ContourView, { state: "ready" | "element" }>;
-type Evidence = Pick<Extract<ManifestContour, { drawn: true }>, "extrema" | "no_data">;
+/** A field's numbers before the section planes (`drawnContour` applies them). */
+interface Evidence {
+  extrema: { recorded: ManifestExtrema | null; drawn: ManifestExtrema | null };
+  no_data: { kind: "nodes" | "cells"; count: number; of: number };
+}
+
+/** Whether a section plane is cutting the view, as the renderer's cuts read it (state/clip.ts). */
+const cutting = (s: State): boolean => s.clip.applyCuts && activeCount(s.clip) > 0;
+const CUT_EXTREMA = "section planes are cutting this view, and the manifest does not compute what a cut shows; `extrema.recorded` stands, and `shot.clip` names the planes";
+const CUT_COUNT = "counted before the section planes: a node or cell they cut away is still counted";
 
 function row(step: StepValues, key: string): Float64Array {
   const r = step.nodal[key];
@@ -369,6 +383,7 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
   const seen = visibleOf(s, mesh, blobs);
   const evidence = v.state === "ready" ? nodalEvidence(v, mesh, blobs, step, seen) : elementEvidence(s, v, mesh, blobs, step, seen);
   const scan = s.contour.scan?.key === v.keys.scan ? s.contour.scan : null;
+  const cut = cutting(s);
   return {
     drawn: true,
     field: v.field,
@@ -384,12 +399,18 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
       label: v.clim.label,
       history_scan: { status: scan?.status ?? "none", done: scan?.done ?? 0, total: scan?.total ?? 0 },
     },
-    ...evidence,
+    extrema: {
+      recorded: evidence.extrema.recorded,
+      drawn: cut ? null : evidence.extrema.drawn,
+      drawn_reason: cut ? CUT_EXTREMA : evidence.extrema.drawn ? null : "no drawn value is finite",
+    },
+    no_data: { ...evidence.no_data, limit: cut ? CUT_COUNT : null },
   };
 }
 
 function deformOf(s: State): ManifestDeform | null {
   const v = deformView(s);
+  const limit = cutting(s) ? CUT_COUNT : null;
   switch (v.state) {
     case "off":
       return null;
@@ -397,11 +418,11 @@ function deformOf(s: State): ManifestDeform | null {
     case "refused":
       return { state: v.state, reason: v.reason };
     case "loading":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: null, undeformed: null };
+      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: null, undeformed: null, limit };
     case "ready":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: 0 };
+      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: 0, limit };
     case "partial":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: v.missing };
+      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: v.missing, limit };
     default: {
       const unknown: never = v;
       throw new Error(`manifest: unknown deformed view ${JSON.stringify(unknown)}`);
@@ -489,7 +510,11 @@ export function manifestOf(spec: ViewSpec, shots: readonly { entry: ManifestEntr
   };
 }
 
-/** The manifest of a spec refused whole (D2): the key and the reason, and no shot. */
-export function refusedManifest(specPath: string, key: string, reason: string): string {
-  return JSON.stringify({ manifest: MANIFEST_VERSION, spec_file: specPath, refused: { key, reason }, shots: [] }, null, 2);
+/**
+ * The manifest of a spec refused whole (D2): the key and the reason, and no
+ * shot. `spec` is null: the document was not a valid spec. `app` is what
+ * `appVersion` (./job.ts) read, at startup, before any window.
+ */
+export function refusedManifest(specPath: string, key: string, reason: string, app: { version: string | null; version_reason: string | null }, writtenAt: string): string {
+  return JSON.stringify({ manifest: MANIFEST_VERSION, spec: null, spec_file: specPath, refused: { key, reason }, shots: [], app, timing: { shots: {}, written_at: writtenAt } }, null, 2);
 }

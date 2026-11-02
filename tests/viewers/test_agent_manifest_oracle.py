@@ -90,7 +90,7 @@ def _files(name: str) -> dict[str, Any]:
         with h5py.File(path, "r") as f:
             lin = f["meta/lineage"]
             row: dict[str, Any] = {"file": path.name, "size": path.stat().st_size}
-            for key in ("model_hash", "fem_hash"):
+            for key in ("model_hash", "fem_hash") + (("results_hash",) if role == "results" else ()):
                 row[key] = _read_stamp(lin, key)
         out[role] = row
     return out

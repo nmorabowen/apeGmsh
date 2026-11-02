@@ -30,6 +30,7 @@ interface OracleRow {
   size: number;
   model_hash: string | null;
   fem_hash: string | null;
+  results_hash?: string | null;
 }
 export const ORACLE = JSON.parse(readFileSync(new URL("./manifest.oracle.json", import.meta.url), "utf8")) as {
   sets: Record<string, { model: OracleRow; results: OracleRow }>;
@@ -74,10 +75,13 @@ export function sameAsOracle(entry: ManifestEntry, c: OracleCase): void {
   assert.ok(close(k.range.min!, c.range_history.min) && close(k.range.max!, c.range_history.max), `${c.name}: range [${k.range.min}, ${k.range.max}], Python [${c.range_history.min}, ${c.range_history.max}]`);
   sameExtrema(k.extrema.recorded, c.recorded, `${c.name} recorded`);
   sameExtrema(k.extrema.drawn, c.drawn, `${c.name} drawn`);
-  assert.deepEqual(k.no_data, c.no_data, `${c.name}: no data`);
+  assert.equal(k.extrema.drawn_reason, null, `${c.name}: nothing cuts this view`);
+  assert.deepEqual(k.no_data, { ...c.no_data, limit: null }, `${c.name}: no data`);
   const set = ORACLE.sets[c.set]!;
   const m = entry.files.model!, r = entry.files.results!;
   assert.equal(m.size, set.model.size);
   assert.equal(r.size, set.results.size);
   assert.deepEqual([m.model_hash, m.fem_hash, r.model_hash, r.fem_hash], [set.model.model_hash, set.model.fem_hash, set.results.model_hash, set.results.fem_hash]);
+  assert.equal(r.results_hash, set.results.results_hash, `${c.name}: results_hash`);
+  assert.ok(set.results.results_hash, `${c.set}: the oracle states a results_hash, so this comparison is not null against null`);
 }

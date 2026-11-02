@@ -23,7 +23,7 @@
 //      it is the only difference; `transparent` writes PNG alpha;
 //   4. each D2 shot refusal refuses with its reason, the same in both
 //      chromes, and writes no PNG, while the other shots still run (exit 1);
-//      each spec refusal writes manifest.json and no PNG (exit 2), and a
+//      each spec refusal writes manifest.json with the app's version and no PNG (exit 2), and a
 //      non-empty --out is refused with nothing written (exit 2);
 //   5. a render beside an open view window leaves that window's pixels,
 //      inspector and header as they were (INV-5, ADR 0128 D4);
@@ -177,6 +177,21 @@ for (const s of A.shots) {
 // ADR 0128 Acceptance: the same spec twice gives byte-identical manifests, except for timestamps.
 assert.equal(A.stable, B.stable, "two runs of one spec: the manifests differ outside `timing`");
 assert.ok(A.version, "D3: the manifest states the app's version");
+// A camera as resolved, from the real viewport.
+for (const s of A.shots) {
+  assert.ok(s.camera, `${s.name}: a drawn shot states its camera`);
+  assert.ok([...s.camera.eye, ...s.camera.target, ...s.camera.up].every(Number.isFinite), `${s.name}: a finite pose`);
+  assert.ok(typeof s.camera.fov === "number" && s.camera.fov > 0, `${s.name}: a field of view`);
+}
+// INV-6: a plane cuts this still, so nothing is stated as drawn.
+{
+  const cut = a.get("contour.clip.model")!.contour;
+  assert.ok(cut?.drawn);
+  assert.equal(cut.extrema.drawn, null);
+  assert.match(cut.extrema.drawn_reason ?? "", /section planes are cutting/);
+  assert.match(cut.no_data.limit ?? "", /counted before the section planes/);
+  assert.ok(cut.extrema.recorded, "the recorded extrema stand");
+}
 for (const R of [A, B]) assert.ok(existsSync(join(R.dir, ".chromium")), "INV-1: Chromium's profile is inside --out");
 log(`views: ${A.shots.length} stills, pixel-identical over two runs; run ${Math.round(A.ms)} / ${Math.round(B.ms)} ms; slowest shot ${Math.round(worst)} ms`);
 if (worst > 10000) throw new Error(`KILL: a shot took ${Math.round(worst)} ms (> ~10 s)`);
@@ -257,6 +272,7 @@ for (const [name, spec, key] of [
   const R = await render(name, spec);
   assert.equal(R.code, 2, `${name}: a refused spec exits 2`);
   assert.equal(R.refused?.key, key);
+  assert.equal(R.version, A.version, `${name}: the same app version as a run, from the built app`);
   assert.deepEqual(readdirSync(R.dir).filter((f) => f !== ".chromium"), ["manifest.json"], `${name}: no PNG`);
   log(`  refused spec ${name} at ${key} (${Math.round(R.ms)} ms): ${readdirSync(R.dir).join(", ")}`);
 }
