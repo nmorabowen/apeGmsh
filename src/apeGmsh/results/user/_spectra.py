@@ -35,6 +35,7 @@ import numpy as np
 
 from ...opensees.analysis.spectrum import BASE_SHEAR, SpectrumModalResult
 from ._descriptor import Refusal, decode_cell
+from ._errors import ZoneRefused
 from ._fields import (
     EntryRefused,
     _f8,
@@ -442,6 +443,8 @@ def _read_quantities(root: h5py.Group, where: str) -> tuple[CaseQuantity, ...]:
         if on not in _TARGET:
             raise EntryRefused("bad-param", f"{root.name}/RESULTS/{on} is not one of {sorted(_TARGET)}")
         family = root["RESULTS"][on]
+        if not isinstance(family, h5py.Group):
+            raise EntryRefused("bad-param", f"{family.name} is not a group")
         for label in family:
             holder = family[label]
             if not isinstance(holder, h5py.Group) or "DATA" not in holder:
@@ -451,14 +454,16 @@ def _read_quantities(root: h5py.Group, where: str) -> tuple[CaseQuantity, ...]:
                 raise EntryRefused("bad-param", f"{data.name} is not f8 of rank 3")
             s = data.shape[0]
             for axis in ("STEP", "TIME"):
-                if axis not in holder or holder[axis].shape != (s,):
+                if axis not in holder or not isinstance(holder[axis], h5py.Dataset) or \
+                        holder[axis].shape != (s,):
                     raise EntryRefused("bad-param", f"{holder.name}: {axis} must have {s} rows")
             ids = None
             if on == "ON_NODES":
-                if "ID" not in holder or holder["ID"].dtype != np.dtype("i4") or \
-                        holder["ID"].shape != (data.shape[1], 1):
+                found = holder["ID"] if "ID" in holder else None
+                if not isinstance(found, h5py.Dataset) or found.dtype != np.dtype("i4") or \
+                        found.shape != (data.shape[1], 1):
                     raise EntryRefused("bad-param", f"{holder.name}/ID must be i4 ({data.shape[1]}, 1)")
-                ids = holder["ID"][...].ravel()
+                ids = found[...].ravel()
             components = tuple(text_or_empty(_attr(holder, "COMPONENTS")).split(","))
             out.append(CaseQuantity(label, _TARGET[on], components, data[...], ids))
     return tuple(out)
@@ -499,6 +504,13 @@ def read_case(group: h5py.Group) -> SpectrumCase:
     return case
 
 
+def _case_name(group: Any) -> str:
+    """A case's ``@name`` for a refusal, ``""`` when even that cannot be read."""
+    if isinstance(group, h5py.Group) and "name" in group.attrs:
+        return text_or_empty(group.attrs["name"])
+    return ""
+
+
 def read_spectra(zone: h5py.Group) -> SpectraIndex:
     """Every ``s<k>`` case, a bad one refused alone, duplicate names both refused."""
     links = sorted((k for k in zone if _CASE.match(k)), key=lambda k: int(k[1:]))
@@ -510,10 +522,14 @@ def read_spectra(zone: h5py.Group) -> SpectraIndex:
             if not isinstance(group, h5py.Group):
                 raise EntryRefused("bad-param", f"{group.name} is not a group")
             cases.append((at, read_case(group)))
+        except ZoneRefused:  # a non-UTF-8 table cell refuses the zone
+            raise
         except EntryRefused as exc:
-            label = text_or_empty(group.attrs["name"]) if (
-                isinstance(group, h5py.Group) and "name" in group.attrs) else ""
-            refused.append(Refusal(label, exc.reason, exc.detail, row=at))
+            refused.append(Refusal(_case_name(group), exc.reason, exc.detail, row=at))
+        except (IndexError, KeyError, OSError, TypeError, ValueError) as exc:
+            # What h5py raises on a damaged case (a broken link, a dataset where a
+            # group belongs) refuses that case; the others still read.
+            refused.append(Refusal(_case_name(group), "bad-param", str(exc), row=at))
     counts: dict[str, int] = {}
     for _, case in cases:
         counts[case.name] = counts.get(case.name, 0) + 1

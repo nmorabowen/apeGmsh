@@ -278,6 +278,18 @@ def test_a_damaged_case_refuses_alone(make_model, tmp_path: Path) -> None:
     assert [(r.name, r.reason) for r in index.refused] == [("a", "bad-param")]
 
 
+@pytest.mark.parametrize("where", ["RESULTS/ON_NODES/DISPLACEMENT/ID", "RESULTS/ON_DOMAIN/base_shear/STEP",
+                                   "spectrum"])
+def test_a_group_where_a_dataset_belongs_refuses_that_case_alone(make_model, tmp_path, where) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), spectra=[case("a"), case("b")])
+    with h5py.File(path, "a") as f:
+        del f[f"spectra/s0/{where}"]
+        f.create_group(f"spectra/s0/{where}")
+    index = UserFile(path).spectra()
+    assert [c.name for c in index.cases] == ["b"]
+    assert [(r.name, r.reason) for r in index.refused] == [("a", "bad-param")]
+
+
 def test_namesakes_both_refuse_as_duplicate(make_model, tmp_path: Path) -> None:
     path = write_user_file(tmp_path / "s.user.h5", make_model(), spectra=[case("a"), case("b")])
     with h5py.File(path, "a") as f:
