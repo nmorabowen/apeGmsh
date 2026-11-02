@@ -193,6 +193,9 @@ def _row_problem(row: Combination, origin: str) -> Optional[tuple[str, str]]:
             return "bad-param", f"{row.rule} takes no damping, got {row.damping}"
         if not 0.0 < row.damping < 1.0:
             return "bad-param", f"cqc damping {row.damping} is not in (0, 1)"
+    elif origin == "model" and row.rule == "cqc":
+        # A case's per-mode damping lives in .user.h5, so model.h5 has no source.
+        return "bad-param", "cqc in model.h5 needs a damping ratio"
     problem = _terms_problem(row)
     if problem is not None:
         return "bad-term", problem
@@ -239,8 +242,8 @@ def resolve(
         origins = {rows[at][0] for at in ats}
         reason = "clash" if len(origins) > 1 else "duplicate"
         detail = f"{len(ats)} combinations are named {name!r}"
-        for at in ats:
-            verdict[at] = (reason, detail)
+        for at in ats:  # a row already refused keeps its own reason
+            verdict.setdefault(at, (reason, detail))
 
     def alive() -> list[int]:
         return [at for at in range(len(rows)) if at not in verdict]
