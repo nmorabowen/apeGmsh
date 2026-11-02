@@ -72,6 +72,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
@@ -339,6 +340,14 @@ def _in_notebook_kernel() -> bool:
         return False
     shell = get_ipython()
     return type(shell).__name__ == "ZMQInteractiveShell"
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths name one file; a path that cannot be read is not the same."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 class Results:
@@ -1536,13 +1545,16 @@ class Results:
 
         A term names a stage by its stamped name, else ``stage_<i>`` (A3).
         The names are bound when the results are opened (``model_h5=``), never
-        here: a read does not rename the caller's stages. So when ``model_h5``
-        declares program stages and this ``Results`` was opened without a
-        model, every ``stage`` and ``mode`` term is refused, with a reason that
-        says to open the results with ``model_h5=``; otherwise a term could
-        read a different stage than the same set opened with its model. A
-        ``Results`` with no names from either source keeps ``stage_<i>``, and
-        one opened with ``model_h5=`` keeps whatever its reader bound.
+        here: a read does not rename the caller's stages. So when the model
+        (``model_h5``, or the one this was opened with) declares program stage
+        names and none of them names a stage here, every ``stage`` and
+        ``mode`` term is refused, with a reason that says to open the results
+        with ``model_h5=``; otherwise a term could read a different stage than
+        the same set opened with its model. That holds however the
+        ``Results`` was opened (``from_fem`` binds a neutral cache archive
+        that names no stage). A ``Results`` with no names from either source
+        keeps ``stage_<i>``, and so does one whose reader declined that same
+        model's names when it was opened.
 
         ``evaluate(state, component, level=...)`` combines a recorded result,
         ``evaluate(state, user_result=...)`` a user result. A state handle of
@@ -1552,10 +1564,7 @@ class Results:
         from .user._states import UserCombinations, user_file_beside
 
         model = model_h5 if model_h5 is not None else self._model_path
-        unbound = (
-            self._unbound_stage_names(Path(model))
-            if model is not None and self._model_path is None else None
-        )
+        unbound = None if model is None else self._unbound_stage_names(Path(model))
         if user_h5 is None:
             user_h5 = user_file_beside(
                 None if self._path is None else Path(self._path),
@@ -1587,12 +1596,16 @@ class Results:
     def _unbound_stage_names(self, model_h5: Path) -> Optional[str]:
         """Why stage terms cannot be resolved here, or ``None`` when they can.
 
-        Not ``None`` when ``model_h5`` declares program stage names that this
-        ``Results`` did not bind: it was opened without a model, and its reader
-        pairs program names (a native file names its own stages). Nothing is
-        renamed: the reason says how to bind them.
+        Not ``None`` when ``model_h5`` declares program stage names, none of
+        which names a stage of this ``Results``, and its reader pairs program
+        names (a native file names its own stages). The one exception is a
+        reader that declined that same model's names when it was opened (a
+        KIND or count mismatch): its ``stage_<i>`` stands. Nothing is renamed:
+        the reason says how to bind the names.
         """
         import h5py
+
+        from .user._states import canonical_stage_name
 
         if not hasattr(self._reader, "attach_stage_names"):
             return None
@@ -1604,10 +1617,16 @@ class Results:
         names = [str(s.name) for s in OpenSeesModel.from_h5(model_h5).stages()]
         if not names:
             return None
+        here = {canonical_stage_name(s) for s in self._all_stages() if s.kind != "mode"}
+        if here & set(names):
+            return None  # bound, in full or for a partial run
+        if self._model_path is not None and _same_file(Path(self._model_path), model_h5):
+            return None  # the reader declined these names at open, and said why
         return (
             f"model_h5={str(model_h5)!r} declares the stage names {names}, and "
-            f"these results were opened without a model, so their stages are "
-            f"named stage_<i>; a term would read another stage than the same "
+            f"none of them names a stage of these results (they were opened "
+            f"without that model), so their stages are named stage_<i>; a "
+            f"term would read another stage than the same "
             f"set opened with its model. Open the results with "
             f"model_h5={str(model_h5)!r} so the names are bound (ADR 0130 A3)"
         )

@@ -443,6 +443,28 @@ def test_stage_terms_refuse_until_the_model_names_are_bound(tmp_path: Path) -> N
     assert "stamped" in err.value.detail
 
 
+def test_from_fem_refuses_like_a_bare_open(tmp_path: Path, monkeypatch) -> None:
+    """A from_fem Results binds a neutral cache archive that names no stage, so the
+    program model's names are unbound there too: refused, never read the other way."""
+    path, model = _program_set(tmp_path, "static", "static", "static")
+    monkeypatch.chdir(tmp_path)  # from_fem caches under <cwd>/results/from_fem
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bare = Results.from_ladruno(path)
+        ff = Results.from_fem(bare.fem, path)
+    assert ff._model_path is not None  # the neutral cache archive
+    combos = ff.combinations(model_h5=model)
+    for state in ("ULS", "ULS_ids", "m"):
+        with pytest.raises(CombinationRefused) as err:
+            combos.evaluate(state, "displacement_x")
+        assert err.value.reason == "unresolved" and "model_h5=" in err.value.detail
+    # Its own cache archive declares no stages, so on its own stage_<i> stands.
+    combos = ff.combinations()
+    got = combos.evaluate("ULS_ids", "displacement_x").field.values[:, 0]
+    want = 1.2 * _read(ff, "stage_0") + 1.6 * _read(ff, "stage_1")
+    np.testing.assert_allclose(got, want, rtol=1e-15)
+
+
 def test_without_names_from_either_source_stage_i_stays(run, tmp_path: Path) -> None:
     _user(tmp_path, [Combination("ULS_ids", "linear", (_stage("stage_0", 2.0),))])
     combos = run.combinations(model_h5=tmp_path / "run.h5")  # declares no stages
