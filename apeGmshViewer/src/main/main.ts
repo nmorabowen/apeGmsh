@@ -857,14 +857,33 @@ function printReadRows(rows: ReadRow[]): void {
   );
 }
 
-/** Write one still: `--out` itself, or `<stem>.<suffix>.png` beside it. */
+/**
+ * Write one still: `--out` itself, or `<stem>.<suffix>.png` beside it. A
+ * hidden window's `capturePage` copies the last frame it showed, which can be
+ * from before the page's latest changes (#2716, the race `render:capture`
+ * settles for #2696). So the page is captured until two consecutive captures
+ * are pixel-identical, at most `--capture-tries` times; a page that never
+ * settles fails the run (exit 1, the reason naming the still in
+ * `<out>.error.txt`), and no PNG is written for it.
+ */
 ipcMain.handle("capture:still", async (e, suffix: string) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   if (!win) throw new Error("capture: no window");
-  const img = await win.webContents.capturePage();
-  const size = img.getSize();
   const safeSuffix = suffix ? suffix.replace(/[\\/]/g, "_") : "";
   const path = safeSuffix ? out!.replace(/\.png$/i, "") + `.${safeSuffix}.png` : out!;
+  let img = await win.webContents.capturePage();
+  for (let n = 1; ; n++) {
+    if (n === CAPTURE_TRIES) {
+      headlessEnd(`capture:still ${path}: the page did not settle: no two consecutive of ${CAPTURE_TRIES} captures were pixel-identical (--capture-tries)`);
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, CAPTURE_GAP_MS));
+    const next = await win.webContents.capturePage();
+    const same = next.toBitmap().equals(img.toBitmap());
+    img = next;
+    if (same) break;
+  }
+  const size = img.getSize();
   if (img.isEmpty() || size.width === 0) {
     // A capture with no still is a failed run: exit 1 with the reason in <out>.error.txt, never exit 0 (#2708 review).
     headlessEnd(`capturePage returned an empty image for ${path}`);
