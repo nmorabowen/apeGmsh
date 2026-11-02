@@ -2654,8 +2654,7 @@ of this ([ADR 0130](decisions/0130-states-quantities-and-the-user-results-file.m
 Amendment 1). Python writes every zone; the app writes only `/combinations`.
 
 `apeGmsh.results.user` writes and reads `/meta`, `/combinations`, `/results`,
-`/modes` and `/spectra`, which are in the [registry](#zone-registry). `/entities`
-has no writer or reader yet (slice VU8); a write copies it verbatim.
+`/modes`, `/spectra` and `/entities`, which are in the [registry](#zone-registry).
 The app does not read this file yet (slice VU3a).
 
 Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
@@ -2752,6 +2751,19 @@ In a `/spectra` case, `modes/sa` is the `Sa` the mode's response was scaled by:
 `@scale` times `Sa(T)` at the mode's `sa_period`, or at its own period where
 `sa_period` is 0. `spectrum/Sa` is the spectrum unscaled, so `@scale · Sa`
 interpolated at those periods gives `modes/sa`.
+
+In `/entities`, `@element_index_space` covers every element id the zone holds:
+a cut's `element_ids` and a point's `host_element`. Python writes all three tables,
+empty ones included (`K = 0`, offsets `[0]`), and its reader refuses the zone when
+one is missing or malformed. A row of `<kind>_offsets` is `[offsets[i], offsets[i+1])`
+of its column, starting at 0 and ending at the column's length. A cut's `normal` is
+a unit vector, `side` is `positive` or `negative`, and a cut with no bounding polygon
+has an empty polygon row; one with a polygon has at least three vertices. A cut's
+moments are about its `reference`. Names are unique within each table. An
+`ON_ENTITIES` result names a row by `ENTITY_KIND` (`cut`, `storey` or `point_set`,
+for the tables `cuts`, `storeys` and `point_sets`) and `ENTITY_ROW`, its 0-based row
+there; a reader refuses an entry with any other kind, and a write refuses an entry
+whose row the file's `/entities` does not hold.
 
 A `/results` or `/spectra` group is a small stage, so the `.ladruno` read path
 reads it. `STEP` and `TIME` are `0..S-1`; the state of a row is in `STATES` or
@@ -2909,6 +2921,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | user_results (ADR 0130) | `user_results_schema_version` | `/results` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_RESULTS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | modes (ADR 0130) | `modes_schema_version` | `/modes` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `MODES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | spectra (ADR 0130) | `spectra_schema_version` | `/spectra` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SPECTRA_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| entities (ADR 0130) | `entities_schema_version` | `/entities` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ENTITIES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
 > The geometry, provenance, assembly and sequence keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not

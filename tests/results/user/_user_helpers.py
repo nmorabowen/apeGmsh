@@ -13,10 +13,14 @@ import numpy as np
 
 from apeGmsh.results.user import (
     CaseQuantity,
+    CutEntity,
     ElementBucket,
+    Entities,
     ModeTable,
+    PointSet,
     SpectrumCase,
     StateAddress,
+    Storey,
     UserResult,
 )
 
@@ -40,6 +44,24 @@ def nodal(name: str = "Delta_after (L/480)", *, basis: str = "model", **kw) -> U
     )
     fields.update(kw)
     return UserResult(**fields)
+
+
+def sample_entities() -> Entities:
+    """Two cuts (one with a bounding polygon), a storey and a point set."""
+    return Entities(
+        cuts=(
+            CutEntity(name="pier P1 base", point=(0.0, 0.0, 3.0), normal=(0.0, 0.0, 1.0),
+                      reference=(0.5, 0.0, 3.0), element_ids=np.array([101, 102], dtype="i4")),
+            CutEntity(name="Delta_after (L/480)", point=(2.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+                      reference=(2.0, 1.0, 1.5), element_ids=np.array([7], dtype="i4"),
+                      side="negative",
+                      polygon=np.array([[2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [2.0, 2.0, 3.0]])),
+        ),
+        storeys=(Storey(name="L1", level=3.0, reference=(1.0, 1.0, 3.0),
+                        node_ids=np.array([5, 6, 7, 8], dtype="i4")),),
+        point_sets=(PointSet(name="plan points", xyz=np.array([[0.0, 0.0, 3.0], [1.0, 2.0, 3.0]]),
+                             host_element=np.array([-1, 102], dtype="i4")),),
+    )
 
 
 def bucket(**kw) -> ElementBucket:

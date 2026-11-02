@@ -20,6 +20,7 @@ import numpy as np
 
 from ...opensees._internal.schema_version import (
     COMBINATIONS,
+    ENTITIES,
     MODES,
     OPENSEES,
     SPECTRA,
@@ -31,6 +32,7 @@ from ...opensees._internal.schema_version import (
     validate_zone_version,
 )
 from ._descriptor import Combination, CombinationTable, Refusal, read_generation, resolve
+from ._entities import Entities, read_entities
 from ._errors import UserFileError, UserFileRefused, ZoneRefused
 from ._fields import EntryRefused, ResultEntry, UserResult, read_entry, read_entry_meta
 from ._modes import ModeTable, read_modes
@@ -267,7 +269,7 @@ class UserFile:
         with h5py.File(self.path, "r") as f:
             return read_entry(entry, f["results"][entry.link])
 
-    # ---- /modes and /spectra -------------------------------------------
+    # ---- /modes, /spectra and /entities --------------------------------
 
     def modes(self) -> ModeTable:
         """The ``/modes`` table. Raises :class:`ZoneRefused` when the file holds
@@ -286,3 +288,12 @@ class UserFile:
             if not isinstance(zone, h5py.Group):
                 raise ZoneRefused("/spectra", "it is not a group")
             return read_spectra(zone)
+
+    def entities(self) -> Entities:
+        """The ``/entities`` cuts, storeys and point sets; empty tables when the
+        file holds none. Raises :class:`ZoneRefused` on a malformed zone,
+        ``SchemaVersionError`` outside its version range."""
+        with _zone_guard("/entities"), h5py.File(self.path, "r") as f:
+            if not _zone_version_checked(f, ENTITIES, "entities"):
+                return Entities()
+            return read_entities(f["entities"])

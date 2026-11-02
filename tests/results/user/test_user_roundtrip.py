@@ -35,7 +35,7 @@ from tests.fixtures.schema import (
     USER_RESULTS_CURRENT,
 )
 
-from tests.results.user._user_helpers import bucket, elements, nodal
+from tests.results.user._user_helpers import bucket, elements, nodal, sample_entities
 
 LINEAR = Combination(
     "1.2D+1.6L", "linear", (Term("stage", "D", -1, 0, 1.2), Term("stage", "L", 7, 0, 1.6)),
@@ -212,11 +212,12 @@ def test_entity_field_round_trips(make_model, tmp_path: Path) -> None:
     r = UserResult(
         name="storey drift", target="entities", basis="model",
         components=("dx",), data=np.array([[[0.001], [np.nan]]]),
-        entity_kind=("storey", "point_set"), entity_row=np.array([0, 4], dtype="i4"),
+        entity_kind=("storey", "cut"), entity_row=np.array([0, 1], dtype="i4"),
     )
-    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[r])
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[r],
+                           entities=sample_entities())
     back = UserFile(path).read_result(r.name)
-    assert back.entity_kind == ("storey", "point_set") and back.entity_row.tolist() == [0, 4]
+    assert back.entity_kind == ("storey", "cut") and back.entity_row.tolist() == [0, 1]
     assert _bits(back.data) == _bits(r.data)
 
 

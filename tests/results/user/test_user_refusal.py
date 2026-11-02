@@ -29,7 +29,7 @@ from apeGmsh.results.user import (
 from apeGmsh.results.user._descriptor import resolve, write_generation
 from tests.fixtures.schema import OPENSEES_CURRENT
 
-from tests.results.user._user_helpers import nodal
+from tests.results.user._user_helpers import nodal, sample_entities
 
 GOOD = Combination("good", "linear", (Term("stage", "D", -1, 0, 1.0),))
 D = Term("stage", "D")
@@ -254,7 +254,8 @@ def test_a_non_utf8_entity_kind_refuses_the_zone_at_results(make_model, tmp_path
         data=np.zeros((1, 2, 1)), entity_kind=("storey", "cut"),
         entity_row=np.array([0, 1], dtype="i4"),
     )
-    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[entity])
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[entity],
+                           entities=sample_entities())
     with h5py.File(path, "a") as f:
         f["results/r0/RESULTS/ON_ENTITIES/values/ENTITY_KIND"][1] = b"\xff\xfe"
     with pytest.raises(ZoneRefused, match="not UTF-8"):

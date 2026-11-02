@@ -1,10 +1,11 @@
-"""The ``<stem>.user.h5`` file: combinations, user results, modes, spectra (ADR 0130).
+"""The ``<stem>.user.h5`` file: combinations, user results, modes, spectra, entities.
 
-Writer, reader, the ``rf1`` fingerprint and the staleness table for ``/meta``,
-``/combinations``, ``/results``, ``/modes`` and ``/spectra``. :func:`mode_table`
-turns a ``modalProperties`` dict into the ``/modes`` table, and
-:func:`spectrum_cases` an ``apeSees.spectrum_after_gravity`` result into the
-``/spectra`` cases. Nothing here evaluates a combination: that is slice VU2.
+ADR 0130. Writer, reader, the ``rf1`` fingerprint and the staleness table for
+``/meta``, ``/combinations``, ``/results``, ``/modes``, ``/spectra`` and
+``/entities``. :func:`mode_table` turns a ``modalProperties`` dict into the
+``/modes`` table, :func:`spectrum_cases` an ``apeSees.spectrum_after_gravity``
+result into the ``/spectra`` cases, and ``SectionCutDef.to_entity`` a cut into
+a :class:`CutEntity`. Nothing here evaluates a combination: that is slice VU2.
 The layout is in ``architecture/h5-schema.md``.
 """
 from __future__ import annotations
@@ -16,6 +17,7 @@ from ._descriptor import (
     StateAddress,
     Term,
 )
+from ._entities import CutEntity, Entities, PointSet, Storey
 from ._errors import (
     FingerprintRefused,
     UserFileError,
@@ -35,9 +37,12 @@ __all__ = [
     "CaseQuantity",
     "Combination",
     "CombinationTable",
+    "CutEntity",
     "ElementBucket",
+    "Entities",
     "FingerprintRefused",
     "ModeTable",
+    "PointSet",
     "Refusal",
     "ResultEntry",
     "ResultIndex",
@@ -45,6 +50,7 @@ __all__ = [
     "SpectrumCase",
     "StateAddress",
     "Staleness",
+    "Storey",
     "Term",
     "UserFile",
     "UserFileError",

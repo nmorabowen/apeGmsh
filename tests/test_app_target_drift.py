@@ -34,6 +34,7 @@ from apeGmsh.opensees._internal.schema_version import (
     _ZONE_KEY,
     ASSEMBLY,
     COMBINATIONS,
+    ENTITIES,
     GEOMETRY,
     MODES,
     NEUTRAL,
@@ -88,6 +89,11 @@ NOT_READ_BY_APP: dict[str, str] = {
     SPECTRA: (
         "/spectra of <stem>.user.h5 (ADR 0130): the app reads the spectrum "
         "cases in slice VU7, which adds the target and drops this row"
+    ),
+    ENTITIES: (
+        "/entities of <stem>.user.h5 (ADR 0130): the app reads the cuts, "
+        "storeys and point sets in slice VU8's viewer half, which adds the "
+        "target and drops this row"
     ),
 }
 

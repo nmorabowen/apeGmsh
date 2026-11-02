@@ -18,6 +18,7 @@ import numpy as np
 
 from ..readers._ladruno_element_io import gp_param_to_gmsh
 from ._descriptor import StateAddress, address_problem, decode_cell
+from ._entities import KINDS as ENTITY_KINDS
 from ._errors import UserFileError
 from ._names import name_problem, text_or_empty
 
@@ -270,8 +271,9 @@ def write_entry(group: h5py.Group, r: UserResult) -> None:
         if row.ndim != 1 or len(kinds) != row.shape[0]:
             raise EntryRefused("bad-param", "entity_kind and entity_row must have one row per item")
         for kind in kinds:
-            if name_problem(kind) is not None:
-                raise EntryRefused("bad-param", f"entity_kind {kind!r}")
+            if kind not in ENTITY_KINDS:
+                raise EntryRefused(
+                    "bad-param", f"entity_kind {kind!r} is not one of {sorted(ENTITY_KINDS)}")
         n = row.shape[0]
         values.create_dataset("ENTITY_ROW", data=row)
         if kinds:
@@ -431,7 +433,11 @@ def _check_holder(holder: h5py.Group, target: str, s: int) -> None:
         if kinds.shape != (n,) or _dataset(holder, "ENTITY_ROW", "i4", 1).shape != (n,):
             raise EntryRefused("bad-param", f"{holder.name}: entity columns must have {n} rows")
         for kind in kinds[...]:
-            decode_cell(kind, "/results", kinds.name)
+            text = decode_cell(kind, "/results", kinds.name)
+            if text not in ENTITY_KINDS:
+                raise EntryRefused(
+                    "bad-param", f"{kinds.name}: entity kind {text!r} is not one of "
+                    f"{sorted(ENTITY_KINDS)}")
     elif n != 1:
         raise EntryRefused("bad-param", f"{data.name}: a domain value has n = 1, got {n}")
     if _dataset(holder, "STEP", "i4", 1).shape != (s,) or _dataset(holder, "TIME", "f8", 1).shape != (s,):

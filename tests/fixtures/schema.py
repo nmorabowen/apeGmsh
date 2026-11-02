@@ -51,3 +51,6 @@ MODES_CURRENT          = "1.0.0"
 MODES_FLOOR            = "1.0.0"
 SPECTRA_CURRENT        = "1.0.0"
 SPECTRA_FLOOR          = "1.0.0"
+# ADR 0130 /entities (VU8 #2692): starts at its floor.
+ENTITIES_CURRENT       = "1.0.0"
+ENTITIES_FLOOR         = "1.0.0"
