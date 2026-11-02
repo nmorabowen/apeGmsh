@@ -476,7 +476,7 @@ def _crack_band_ceiling(mat: object) -> tuple[str, float, float | None, str] | N
 
 # Shells with no update() at the fork pin: their sections are first driven from
 # the assembly loops, which do not set the active element, so an auto-regularized
-# material latches the length of whichever element was left active (#2680).
+# material latches the length of whichever element was left active.
 _LATCHING_SHELLS = frozenset({"ShellMITC4", "ShellDKGQ", "ShellNLDKGQ"})
 
 
