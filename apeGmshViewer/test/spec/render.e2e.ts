@@ -346,6 +346,9 @@ log("D9 layers: ok");
   assert.ok(rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).count > 1000, "the ghost is drawn");
   // The ghost's box: where the ghost changes the model still (ghost0.model against the same view without it).
   const ghostBox = rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).bbox!;
+  // A box over most of the image would excuse most of it (it measures about 20%).
+  const boxShare = ((ghostBox[2] - ghostBox[0]) * (ghostBox[3] - ghostBox[1])) / (SIZE[0] * SIZE[1]);
+  assert.ok(boxShare < 0.3, `the ghost's box ${ghostBox.join(", ")} covers ${Math.round(boxShare * 100)}% of the image, 30% or more`);
   let excused = 0;
   for (const chrome of ["model", "app"]) {
     const first = still(G1, `ghost0.${chrome}`);
@@ -355,9 +358,10 @@ log("D9 layers: ok");
         const d = levelDiff(first, still(R, `ghost${i}.${chrome}`), ghostBox);
         if (!d.count) continue;
         // #2715 (VA2j, open): when model and app shots alternate, the renderer's canvas draws the ghost's outline 1
-        // level off in some app shot, which one depending on timing. Excused only there: an app still, every differing
-        // pixel at most 1 level and inside the ghost's box. A ghost moved or recoloured still fails.
-        if (chrome === "app" && d.maxLevel <= 1 && d.outside === 0) {
+        // level off in some app shot, which one depending on timing (about 200 pixels). Excused only there: an app still,
+        // at most 1000 differing pixels, every one at most 1 level and inside the ghost's box. A ghost moved or
+        // recoloured, or shifted 1 level over a large area, still fails.
+        if (chrome === "app" && d.count <= 1000 && d.maxLevel <= 1 && d.outside === 0) {
           excused++;
           continue;
         }
@@ -365,7 +369,7 @@ log("D9 layers: ok");
       }
     }
   }
-  log(`reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical but for ${excused} app stills at most 1 level off inside the ghost's box (#2715)`);
+  log(`reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical but for ${excused} app stills at most 1 level off at most 1000 pixels inside the ghost's box (${Math.round(boxShare * 100)}% of the image; #2715)`);
 }
 
 // INV-4 (#2696): an app still is the page as it settled, or the shot is refused.
