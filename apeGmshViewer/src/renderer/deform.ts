@@ -272,8 +272,21 @@ function encodeSrgb(m: THREE.Material): void {
  * frame in 40 against none). With no MSAA it does not. So the ghost's surfaces are
  * drawn into their own target, with no MSAA, tested against the depth of the
  * opaque scene drawn there first, and this full-screen triangle lays the result
- * over the canvas with the same blend, covering every sample of every pixel. It
- * goes after the mesh's own blended outline edges (renderOrder 0), which differed
+ * over the canvas, covering every sample of every pixel the ghost reaches.
+ *
+ * It blends in its own shader, not in the canvas (#2715). The canvas's blend was
+ * still not reproducible where the ghost lies over a pixel whose samples differ
+ * (the mesh's silhouette and its edge lines): about 200 px, 1 level, in an app
+ * shot after a model shot, which one depending on timing, with the same GL work
+ * and the same target. Blending over cleared samples only was stable; over the
+ * mesh's samples it was not. So the triangle copies the canvas as it is (resolved)
+ * just before it draws, blends the ghost over that copy, and writes the result
+ * with no blending, one value to every sample of the pixel; it discards where the
+ * ghost is empty, so those pixels keep their own samples. The blend is the same
+ * sum (premultiplied over), now taken once per pixel on the resolved colour: a
+ * pixel may round 1 level apart from the canvas's per-sample blend.
+ *
+ * It goes after the mesh's own blended outline edges (renderOrder 0), which differed
  * in about 1 frame in 100 when they blended over it (5 levels; 0 of 12,000 frames
  * this way), and before the gizmos and the selection (renderOrder 1 and up).
  *
@@ -288,22 +301,27 @@ function encodeSrgb(m: THREE.Material): void {
  */
 function ghostComposite(): THREE.Mesh[] {
   const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  // What the canvas holds under the composite, copied (resolved) just before it draws.
+  let below = new THREE.FramebufferTexture(1, 1);
   const m = new THREE.ShaderMaterial({
-    uniforms: { ghost: { value: target.texture } },
+    uniforms: { ghost: { value: target.texture }, below: { value: below } },
     vertexShader: "varying vec2 vUv; void main() { vUv = 0.5 * position.xy + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }",
-    fragmentShader: "uniform sampler2D ghost; varying vec2 vUv; void main() { gl_FragColor = texture2D(ghost, vUv); }",
+    // The target holds what blending over nothing leaves: colour already multiplied by alpha. The blend is
+    // this shader's, written to every sample alike; a pixel the ghost does not reach is left as it is.
+    fragmentShader:
+      "uniform sampler2D ghost; uniform sampler2D below; varying vec2 vUv; void main() {" +
+      " vec4 g = texture2D(ghost, vUv); if (g == vec4(0.0)) discard;" +
+      " gl_FragColor = g + texelFetch(below, ivec2(gl_FragCoord.xy), 0) * (1.0 - g.a); }",
     transparent: true,
     depthTest: false,
     depthWrite: false,
     toneMapped: false,
-    // The target holds what blending over nothing leaves: colour already multiplied by alpha.
-    blending: THREE.CustomBlending,
-    blendSrc: THREE.OneFactor,
-    blendDst: THREE.OneMinusSrcAlphaFactor,
-    blendSrcAlpha: THREE.OneFactor,
-    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    blending: THREE.NoBlending,
   });
-  m.addEventListener("dispose", () => target.dispose());
+  m.addEventListener("dispose", () => {
+    target.dispose();
+    below.dispose();
+  });
   const triangle = (name: string, renderOrder: number): THREE.Mesh => {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
@@ -317,8 +335,21 @@ function ghostComposite(): THREE.Mesh[] {
   const quad = triangle("ghost composite under", COMPOSITE_UNDER);
   const over = triangle("ghost composite", COMPOSITE_OVER);
   let under = false;
-  over.onBeforeRender = () => over.geometry.setDrawRange(0, under ? 0 : Infinity);
   const size = new THREE.Vector2();
+  /** Copy the canvas as it is now into `below`, for the triangle that draws (the other one draws nothing). */
+  const copyBelow = (renderer: THREE.WebGLRenderer, draws: boolean): void => {
+    if (!draws) return;
+    if (below.image.width !== size.x || below.image.height !== size.y) {
+      below.dispose();
+      below = new THREE.FramebufferTexture(size.x, size.y);
+      m.uniforms["below"]!.value = below;
+    }
+    renderer.copyFramebufferToTexture(below);
+  };
+  over.onBeforeRender = (renderer) => {
+    over.geometry.setDrawRange(0, under ? 0 : Infinity);
+    copyBelow(renderer, !under);
+  };
   const clearColor = new THREE.Color();
   quad.onBeforeRender = (renderer, scene, camera) => {
     under = translucentSurfaces(scene);
@@ -354,6 +385,7 @@ function ghostComposite(): THREE.Mesh[] {
     renderer.autoClear = autoClear;
     renderer.setClearColor(clearColor, clearAlpha);
     renderer.setRenderTarget(back);
+    copyBelow(renderer, under);
   };
   return [quad, over];
 }
