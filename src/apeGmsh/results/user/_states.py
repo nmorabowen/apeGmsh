@@ -52,7 +52,7 @@ __all__ = [
 ]
 
 #: The recorded levels a combination is evaluated on.
-LEVELS = ("nodes", "elements", "gauss")
+LEVELS = ("nodes", "elements", "gauss", "line_stations")
 _ID = np.dtype([("id", "i8")])
 _SUB = np.dtype([("id", "i8"), ("sub", "i8")])
 _ENTITY = np.dtype([("kind", "U64"), ("row", "i8")])
@@ -191,9 +191,9 @@ class _RecordedSource:
         if self.ids is not None:
             kw["ids"] = self.ids
         if self.level == "nodes":
-            slab = scoped.nodes.get(**kw)
-            values = np.asarray(slab.values)[-1]
-            keys = node_keys(slab.node_ids)
+            nslab = scoped.nodes.get(**kw)
+            values = np.asarray(nslab.values)[-1]
+            keys = node_keys(nslab.node_ids)
         elif self.level == "elements":
             eslab = scoped.elements.get(**kw)
             block = np.asarray(eslab.values)[-1]  # (E, npe)
@@ -201,9 +201,10 @@ class _RecordedSource:
             keys = sub_keys(eids, np.tile(np.arange(block.shape[1]), block.shape[0]))
             values = block.ravel()
         else:
-            gslab = scoped.elements.gauss.get(**kw)
-            values = np.asarray(gslab.values)[-1]
-            eids = np.asarray(gslab.element_index)
+            reader = scoped.elements.gauss if self.level == "gauss" else scoped.elements.line_stations
+            slab = reader.get(**kw)
+            values = np.asarray(slab.values)[-1]
+            eids = np.asarray(slab.element_index)
             keys = sub_keys(eids, _ordinal_within(eids))
         return Field(keys, (self.component,), np.asarray(values, dtype="f8").reshape(-1, 1))
 
