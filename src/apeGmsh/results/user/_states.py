@@ -33,6 +33,7 @@ there a component is linear only if it is a recorder spelling
 (:func:`apeGmsh._vocabulary.is_canonical`). Any other name, the empty one
 included, refuses ``not-linear`` under a summing rule or a factor; ``envelope``
 of factor-1 terms and a lone state read still read it (owner ruling, VU2c).
+A derived scalar (von Mises, a principal value) is not linear on any source.
 
 A user result reads its ``STATES`` rows instead, by exact address, after the
 same canonical check, so a row stored as ``("stage", "gravity")`` is the one a
@@ -51,6 +52,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 import numpy as np
 
 from ..._vocabulary import is_canonical
+from .._derived import is_derived, is_shell_derived
 from ._descriptor import CombinationTable, StateAddress, resolve
 from ._evaluate import (
     Case,
@@ -99,6 +101,14 @@ _MPCO_SUFFIX = ".mpco"
 def recorded_is_linear(results_file: Optional[Path], level: str, component: str) -> bool:
     """Whether a summing rule may combine recorded ``(level, component)`` (A5).
 
+    A derived scalar (:func:`apeGmsh.results._derived.is_derived` and
+    ``is_shell_derived``: von Mises, the principal values, the invariants) is
+    computed on read from a tensor, and a sum of it is not its value under the
+    sum, so it is not linear on any source. The families are the vocabulary's
+    ``DERIVED_*_SCALARS``; the few of them that are linear in the tensor
+    (``mean_stress``, ``volumetric_strain``) are refused with the rest, since the
+    vocabulary does not mark them apart.
+
     A ``domain`` value is read from ``/spectra`` only, never from the results
     file, so the file does not judge it. A ``.ladruno`` or ``.mpco`` serves only
     what it recorded. Any other file, and a ``Results`` with no file, is judged
@@ -107,6 +117,8 @@ def recorded_is_linear(results_file: Optional[Path], level: str, component: str)
     suffixes are the readers' dispatch (:func:`apeGmsh.results._open.open_results`):
     those two open with a recorder's reader, any other file as a native one.
     """
+    if is_derived(component) or is_shell_derived(component):
+        return False
     if level == "domain":
         return True
     if results_file is not None:
