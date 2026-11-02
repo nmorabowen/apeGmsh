@@ -27,6 +27,13 @@
 //     refuses the run naming it and the reason;
 //   - a write that throws part way (a full disk) leaves no partial PNG beside
 //     the shot's refusal (#2681 review);
+// and the #2708 review's four, each failing on the first cut (73be21dc5):
+//   - render: a crash while an app-chrome shot's capturePage is in flight names
+//     that shot, and no still as written;
+//   - describe with main itself blocked 8 s (`--hang-ms=5000`) finishes, exit 0,
+//     and is not reported as a hung renderer;
+//   - capture: capturePage returning an empty image exits 1 with error.txt;
+//   - measure: a failing `.ladruno` read row exits 1;
 // and a normal run of each mode still exits 0 and writes only into `--out`: the
 // run's own `--user-data-dir`, where Chromium would write by default, stays
 // empty (a check no window on the machine can disturb, unlike %APPDATA%).
@@ -65,7 +72,7 @@ const PROMPT_MS = 30000;
 const ENTRY = join(OUT, "fault-entry.mjs");
 writeFileSync(
   ENTRY,
-  `import { app, BrowserWindow, dialog, ipcMain } from "electron";
+  `import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 const nl = String.fromCharCode(10);
@@ -106,6 +113,34 @@ if (fault === "sequence") {
       return r;
     });
 }
+// The #2708 review's four (each its own case below).
+const wrap = (name, make) => {
+  const handle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, fn) => handle(channel, channel !== name ? fn : make(fn));
+};
+// A crash while main awaits capturePage for an app-chrome shot: the shot's path is handed out, its PNG never written.
+// capturePage itself crashes the renderer and stays pending, so the crash is seen while it is in flight.
+if (fault === "crash-capture") {
+  app.on("web-contents-created", (_e, wc) => {
+    wc.capturePage = () => {
+      wc.forcefullyCrashRenderer();
+      return new Promise(() => {});
+    };
+  });
+}
+// Main itself blocked for 8 s (with --hang-ms=5000) while the renderer is fine.
+if (fault === "main-block") wrap("model:open", (fn) => (e, ...a) => {
+  const until = Date.now() + 8000;
+  while (Date.now() < until) {}
+  return fn(e, ...a);
+});
+// capturePage returns an empty image.
+if (fault === "empty") app.on("web-contents-created", (_e, wc) => (wc.capturePage = async () => nativeImage.createEmpty()));
+// measure's .ladruno read row fails: a .ladruno that is not HDF5 appears beside the model once the orbit is done.
+if (fault === "measure-read") wrap("measure:done", (fn) => (e, ...a) => {
+  fs.writeFileSync(after, "not hdf5");
+  return fn(e, ...a);
+});
 if (fault === "partial") {
   const real = fs.writeFileSync;
   fs.writeFileSync = function (path, data, ...rest) {
@@ -325,6 +360,63 @@ if (wanted("render.partial")) {
   assert.match(b.reason ?? "", /AGV_FAULT: ENOSPC/);
   assert.equal(m.shots.find((s) => s.name === "a")!.status, "ok");
   log(`render partial write of b.png: exit 1, b.png removed, b refused: ${(b.reason ?? "").slice(0, 120)}`);
+}
+
+// ---- the #2708 review: four ways the first cut still lied -----------------------------------------
+
+/** Two app-chrome stills (main captures the page itself, `render:capture`). */
+function appSpecIn(dir: string): string {
+  const p = join(dir, "spec.json");
+  writeFileSync(p, JSON.stringify({ spec: "apegmsh-view/1", files: { model: MODEL }, size: [640, 480], shots: [{ name: "a", chrome: "app", camera: "iso" }, { name: "b", chrome: "app", camera: "top" }] }));
+  return p;
+}
+
+if (wanted("render.crash-mid-a")) {
+  // 1: a crash while a's capture is in flight names shot a, and no still as written.
+  const dir = caseDir("render-crash-mid-a");
+  const out = join(dir, "out");
+  const r = await run(join(dir, "user"), { AGV_FAULT: "crash-capture" }, "--mode=render", `--spec=${appSpecIn(dir)}`, `--out=${out}`);
+  failedPromptly(r, "render crash during a's capture", REASON.crash);
+  assert.equal(r.code, 1);
+  assert.deepEqual(listing(out), ["manifest.json"]);
+  const m = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as { refused: { key: string; reason: string } };
+  assert.match(m.refused.reason, /; it stopped on shot a; none of the 2 stills had been written$/, `the shot in flight is named: ${m.refused.reason}`);
+  log(`render crash during a's capture: exit 1, ${m.refused.reason.slice(-80)}`);
+}
+
+if (wanted("describe.main-block")) {
+  // 2: main blocked for 8 s with --hang-ms=5000 is main's stall, not a hung renderer: the run finishes, exit 0.
+  const dir = caseDir("describe-main-block");
+  const { out, args } = argsOf("describe", dir);
+  const r = await run(join(dir, "user"), { AGV_FAULT: "main-block" }, ...args, "--hang-ms=5000");
+  noModal(r, "describe main-block");
+  assert.doesNotMatch(r.text, /renderer stopped responding/, `main's own stall blamed on the renderer: ${r.text}`);
+  assert.equal(r.code, 0, `describe with main blocked 8 s: exit 0: ${r.text}`);
+  assert.deepEqual(listing(out), ["describe.json"]);
+  log(`describe with main blocked 8 s (--hang-ms=5000): exit 0 in ${Math.round(r.ms)} ms, no hang reported`);
+}
+
+if (wanted("capture.empty")) {
+  // 3: capturePage returning an empty image is a failed capture: exit 1, the reason in <out>.error.txt, no still.
+  const dir = caseDir("capture-empty");
+  const { out, args } = argsOf("capture", dir);
+  const r = await run(join(dir, "user"), { AGV_FAULT: "empty" }, ...args);
+  failedPromptly(r, "capture of an empty image", /capture failed: capturePage returned an empty image/);
+  assert.equal(r.code, 1);
+  assert.equal(existsSync(out), false, "no still.png");
+  assert.match(readFileSync(`${out}.error.txt`, "utf8"), /capturePage returned an empty image/);
+  log(`capture of an empty image: exit 1 in ${Math.round(r.ms)} ms, reason in ${out}.error.txt`);
+}
+
+if (wanted("measure.read-row")) {
+  // 4: measure's .ladruno read row failing exits 1, not 0.
+  const dir = caseDir("measure-read-row");
+  const model = join(dir, "m.h5");
+  writeFileSync(model, readFileSync(MODEL));
+  const r = await run(join(dir, "user"), { AGV_FAULT: "measure-read", AGV_AFTER: join(dir, "m.ladruno") }, "--mode=measure", `--file=${model}`, `--out=${join(dir, "m.json")}`);
+  failedPromptly(r, "measure with a .ladruno read row that fails", /measure failed: the \.ladruno read row: /);
+  assert.equal(r.code, 1);
+  log(`measure with a failing .ladruno read row: exit 1 in ${Math.round(r.ms)} ms`);
 }
 
 log(`headless exit e2e: all checks passed; runs in ${OUT}`);

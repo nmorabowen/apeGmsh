@@ -140,7 +140,8 @@ let lastCaptured: string | null = null;
 /** Where the run stopped, for its refusal: the shot in progress (render) or the last still written (capture). */
 function whereStopped(): string {
   if (mode === "render" && renderJob) {
-    const next = renderJob.spec.shots.find((s) => unwritten.has(s.name));
+    // A shot taken from `unwritten` but not yet in `written` (its capture in flight) is the one in progress.
+    const next = renderJob.spec.shots.find((s) => !written.has(s.name));
     return next ? `it stopped on shot ${next.name}` : "every still had been written";
   }
   if (mode === "capture") return lastCaptured ? `the last still written was ${lastCaptured}` : "no still had been written";
@@ -172,32 +173,49 @@ function headlessEnd(reason: string): void {
   });
 }
 
-/** Ask the page a trivial question every second; a page that leaves it unanswered for HANG_MS is hung. */
+const TICK_MS = 1000;
+
+/**
+ * Ask the page a trivial question every second; a page that leaves one
+ * question unanswered for HANG_MS is hung. The wait is timed from when the
+ * question was sent, and a tick that itself fires late (main was busy, so the
+ * answer may sit unread in main's queue) gives no verdict: it restarts the
+ * wait, so main's own stall is never blamed on the renderer (#2708 review).
+ */
 function watchPage(w: BrowserWindow): void {
-  let answered = Date.now();
   let asking = false;
+  let sentAt = 0;
+  let lastTick = Date.now();
   const timer = setInterval(() => {
+    const now = Date.now();
+    const late = now - lastTick > 2 * TICK_MS;
+    lastTick = now;
     if (w.isDestroyed() || ending) {
       clearInterval(timer);
       return;
     }
-    if (Date.now() - answered > HANG_MS) {
-      clearInterval(timer);
-      headlessEnd(`the renderer stopped responding: its page left main's question unanswered for ${HANG_MS} ms (--hang-ms)`);
+    if (late) {
+      if (asking) sentAt = now;
       return;
     }
-    if (asking) return;
+    if (asking) {
+      if (now - sentAt > HANG_MS) {
+        clearInterval(timer);
+        headlessEnd(`the renderer stopped responding: its page left main's question unanswered for ${HANG_MS} ms (--hang-ms)`);
+      }
+      return;
+    }
     asking = true;
+    sentAt = now;
     w.webContents.executeJavaScript("0").then(
       () => {
-        answered = Date.now();
         asking = false;
       },
       () => {
         asking = false;
       },
     );
-  }, 1000);
+  }, TICK_MS);
 }
 
 if (headless) {
@@ -711,8 +729,9 @@ ipcMain.handle("measure:done", (_e, result: unknown) => {
     try {
       measureLadrunoRead(resolve(file));
     } catch (err) {
-      process.stderr.write(`apeGmshViewer: measure: the .ladruno read row: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-      process.exitCode = 1;
+      // headlessEnd, not exitCode + app.quit(): app.quit() exits 0 whatever process.exitCode says.
+      headlessEnd(`the .ladruno read row: ${errText(err)}`);
+      return;
     }
   }
   app.quit();
@@ -821,7 +840,8 @@ ipcMain.handle("capture:still", async (e, suffix: string) => {
   const safeSuffix = suffix ? suffix.replace(/[\\/]/g, "_") : "";
   const path = safeSuffix ? out!.replace(/\.png$/i, "") + `.${safeSuffix}.png` : out!;
   if (img.isEmpty() || size.width === 0) {
-    writeFileSync(`${out!}.error.txt`, `capturePage returned an empty image for ${path}`);
+    // A capture with no still is a failed run: exit 1 with the reason in <out>.error.txt, never exit 0 (#2708 review).
+    headlessEnd(`capturePage returned an empty image for ${path}`);
     return null;
   }
   writeFileSync(path, img.toPNG());
@@ -846,6 +866,8 @@ ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
 
 /** The shot names a PNG may still be written under (each once). */
 const unwritten = new Set(renderJob?.spec.shots.map((s) => s.name) ?? []);
+/** The shots whose PNG is on disk whole: added only after `writeStill` returns (#2708 review). */
+const written = new Set<string>();
 
 function stillPath(name: unknown): string {
   if (mode !== "render" || !renderJob) throw new Error("render: only in --mode=render");
@@ -878,8 +900,9 @@ function abandonRender(reason: string): void {
   if (!renderJob || !out) return;
   const dir = resolve(out);
   if (existsSync(join(dir, MANIFEST_FILE))) return;
-  const drawn = renderJob.spec.shots.map((s) => s.name).filter((n) => !unwritten.has(n));
-  for (const n of drawn) rmSync(join(dir, `${n}.png`), { force: true });
+  const drawn = renderJob.spec.shots.map((s) => s.name).filter((n) => written.has(n));
+  // Every path handed out is removed, a shot whose capture was in flight too; only the whole ones are named.
+  for (const s of renderJob.spec.shots) if (!unwritten.has(s.name)) rmSync(join(dir, `${s.name}.png`), { force: true });
   const shots = renderJob.spec.shots.length;
   const what = drawn.length
     ? `${drawn.length} of ${shots} stills had been written (${drawn.join(", ")}); they are removed, because their manifest entries were the renderer's and a PNG without its entry breaks INV-6`
@@ -901,6 +924,7 @@ ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
   if (!(png instanceof Uint8Array) || png.length < 8) throw new Error("render:png needs the PNG bytes");
   const path = stillPath(name);
   writeStill(path, png);
+  written.add(name as string);
   return { path };
 });
 
@@ -916,6 +940,7 @@ ipcMain.handle("render:capture", async (e, name: unknown) => {
     throw new Error(`render:capture ${String(name)}: the page captured as ${size.width} x ${size.height}, not the spec's ${width} x ${height}`);
   }
   writeStill(path, img.toPNG());
+  written.add(name as string);
   return { path, width: size.width, height: size.height };
 });
 
