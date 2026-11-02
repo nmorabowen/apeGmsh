@@ -52,7 +52,7 @@ What each file contains (do not read them all):
 - `api-cheatsheet.md` — public `g.*` / `apeSees` map (matching heading; signatures via MCP `lookup` / lookup CLI)
 - `fem-broker.md` — `FEMData`, `model.h5`
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
-- `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills + manifest (`render_stills`), caption voice
+- `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills (`render_stills`)
 - `results.md` — `Results.from_*`, plot, render, lineage
 - `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
@@ -369,11 +369,9 @@ signatures) lives in the references.
   `g.opensees` → the post-session `apeSees(fem)` bridge; `g.node_ndf` → ndf is
   inferred from element classes + `ops.ndf` for element-less nodes (ADR
   0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
-  `g.model.fuse`, `g.initialize`) → sub-composite forms; the Python
-  attribute `apeGmsh.apeGmshViewer` → `results.viewer()` /
-  `results.session()` (the desktop app of that name is separate: its
-  headless stills are `apeGmsh.viewers.agent_view.render_stills`,
-  `assess.md`). The legacy Qt `ResultsViewer`
+  `g.model.fuse`, `g.initialize`) → sub-composite forms; the attribute
+  `apeGmsh.apeGmshViewer` → `results.viewer()` / `results.session()`
+  (the desktop app is separate; `assess.md`). The legacy Qt `ResultsViewer`
   is **deleted** (X3-d, #1734) — no import path reaches it; the post-solve
   document is a `ResultsSession` (`results.viewer()` or
   `python -m apeGmsh.viewers <results.h5>`).

@@ -247,8 +247,12 @@ def test_a_manifest_that_is_not_an_object_is_refused(stub, tmp_path, monkeypatch
 
 def test_a_crash_raises_with_stderr(stub, tmp_path, monkeypatch):
     monkeypatch.setenv("STUB_MODE", "crash")
-    with pytest.raises(AgentViewError, match=r"exited 1\nstderr: .*renderer process is gone") as e:
+    # Not one regex over the message: on Windows the stub runs through cmd.exe, whose
+    # AutoRun may print to stderr first (seen in a full-suite run).
+    with pytest.raises(AgentViewError, match=r"^apeGmshViewer --render exited 1\nstderr: ") as e:
         render_stills(_spec(), tmp_path / "stills")
+    assert "the renderer process is gone" in str(e.value)
+    assert "the renderer process is gone" in e.value.stderr
     assert e.value.manifest is None
 
 
