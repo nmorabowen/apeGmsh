@@ -474,3 +474,11 @@ def test_workflow_codes_need_their_positive_marker(tmp_path):
     got = _run_step(tmp_path / "e", _stub(2, "| k | #1 t | `main` | d |\n"))
     assert got == {"failed": "1", "found": "1"}
     assert _run_step(tmp_path / "f", _stub(2, "**ERROR: x**\n")) == {"failed": "1"}
+
+
+def test_move_evidence_never_exempts_a_golden_file():
+    pr = _vpr(95, ["program"], body=MOVE_BODY)
+    gold = "tests/opensees/golden/cells/arch_with_orientation_fan_out/flat/py.h5dump"
+    assert [h["pr"] for h in _unreviewed([pr], files={95: [gold]})] == [95]
+    docs = _vpr(96, ["program"], body=MOVE_BODY)
+    assert not _unreviewed([docs], files={96: ["docs/golden-stills.md"]})

@@ -152,13 +152,18 @@ def _paged(fetch: Fetch, path: str) -> list[dict]:
 
 
 def _always_verdict(name: str) -> bool:
-    """Paths no move evidence can exempt: workflows and the gate scripts."""
-    return (name.startswith(".github/workflows/") or name in POLICY_FILES)
+    """Paths no move evidence can exempt: workflows, gate scripts, golden files."""
+    return (name.startswith(".github/workflows/") or name in POLICY_FILES
+            or _is_golden(name))
+
+
+def _is_golden(name: str) -> bool:
+    return "golden" in name.lower() and not name.startswith(_PROSE_PREFIXES)
 
 
 def _needs_verdict_path(name: str) -> bool:
     return (name.startswith(POLICY_PREFIXES) or name in POLICY_FILES
-            or ("golden" in name.lower() and not name.startswith(_PROSE_PREFIXES)))
+            or _is_golden(name))
 
 
 def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
