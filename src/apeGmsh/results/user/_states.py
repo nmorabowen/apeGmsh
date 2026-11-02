@@ -16,9 +16,14 @@ A term's source address resolves here:
 ``mode``       a mode of that host stage, named the same way. ``step`` is the
                ``STEP_<s>`` id of its modal set, ``-1`` the only set;
                ``mode`` is 1-based
-``spectrum``,  a ``spectra`` provider. ``/spectra`` has no reader yet (VU6),
-``reference``  so without one these terms refuse ``unresolved``
+``spectrum``,  the ``spectra`` provider: ``Results.combinations()`` passes a
+``reference``  :class:`~._spectra_source.UserSpectra` over the set's ``/spectra``
 =============  ===========================================================
+
+A quantity is ``(level, component)``, ``level`` one of :data:`LEVELS`. The
+recorded levels read ``Results``; ``domain`` (a whole-model value such as
+``base_shear``, named by its label) exists only in ``/spectra``, so a ``stage``
+or ``mode`` term of a domain quantity refuses ``unresolved``.
 
 A user result reads its ``STATES`` rows instead, by exact address, after the
 same canonical check, so a row stored as ``("stage", "gravity")`` is the one a
@@ -56,6 +61,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CombinationState",
     "LEVELS",
+    "RECORDED_LEVELS",
     "SpectraProvider",
     "UserCombinations",
     "canonical_stage_name",
@@ -66,8 +72,11 @@ __all__ = [
     "user_file_beside",
 ]
 
-#: The recorded levels a combination is evaluated on.
-LEVELS = ("nodes", "elements", "gauss", "line_stations")
+#: The levels a recorded result is read on.
+RECORDED_LEVELS = ("nodes", "elements", "gauss", "line_stations")
+#: The levels a combination is evaluated on: the recorded ones, and ``domain``,
+#: which only ``/spectra`` holds (ADR 0130 D7 as A7 amends it).
+LEVELS = (*RECORDED_LEVELS, "domain")
 _ID = np.dtype([("id", "i8")])
 _SUB = np.dtype([("id", "i8"), ("sub", "i8")])
 _MODE_STAGE = re.compile(r"(?P<host>.+?)(?:_step_(?P<step>\d+))?_mode_(?P<mode>\d+)\Z")
@@ -142,11 +151,17 @@ def domain_keys() -> np.ndarray:
 
 
 class SpectraProvider(Protocol):
-    """``/spectra`` values for one quantity: the seam VU6's reader fills."""
+    """``/spectra`` values for one quantity (:class:`~._spectra_source.UserSpectra`).
 
-    def field(self, address: StateAddress, quantity: tuple[str, str]) -> Field: ...
+    ``allow_stale`` is the caller's ``evaluate(allow_stale=...)``: a provider
+    refuses a stale zone's terms ``stale`` unless it is true (A6).
+    """
 
-    def case(self, name: str, quantity: tuple[str, str]) -> Case: ...
+    def field(self, address: StateAddress, quantity: tuple[str, str], *,
+              allow_stale: bool = False) -> Field: ...
+
+    def case(self, name: str, quantity: tuple[str, str], *,
+             allow_stale: bool = False) -> Case: ...
 
 
 @dataclass(frozen=True, eq=False)
@@ -180,9 +195,13 @@ class _RecordedSource:
 
     def __init__(self, results: "Results", level: str, component: str,
                  ids: Optional[Any], spectra: Optional[SpectraProvider], name: str,
-                 unbound_stages: Optional[str] = None) -> None:
+                 unbound_stages: Optional[str] = None, allow_stale: bool = False) -> None:
         if level not in LEVELS:
             raise ValueError(f"level {level!r} is not one of {LEVELS}")
+        if level == "domain" and ids is not None:
+            raise ValueError(
+                f"ids={ids!r} selects nodes or elements; a domain value ({component!r}) "
+                "has no ids")
         self.results = results
         self.level = level
         self.component = component
@@ -190,12 +209,20 @@ class _RecordedSource:
         self.spectra = spectra
         self.name = name
         self.unbound_stages = unbound_stages
+        self.allow_stale = bool(allow_stale)
 
     def stored(self, name: str) -> Optional[Field]:
         return None  # a recorded file stores no combination
 
     def _refuse(self, reason: str, detail: str) -> CombinationRefused:
         return CombinationRefused(self.name, reason, detail)
+
+    def _recorded(self, address: StateAddress) -> None:
+        """A domain quantity has no recorded value at a stage or a mode."""
+        if self.level == "domain":
+            raise self._refuse(
+                "unresolved", f"a {address.kind} term reads Results, which records no domain "
+                f"quantity; {self.component!r} on the domain is read from /spectra only")
 
     def _host(self, source: str) -> Any:
         if self.unbound_stages is not None:
@@ -215,7 +242,11 @@ class _RecordedSource:
             "unresolved", f"no stage {source!r} in {[canonical_stage_name(s) for s in hosts]}")
 
     def check(self, address: StateAddress) -> None:
-        """Refuse a ``stage`` or ``mode`` source the stage list does not name canonically."""
+        """Refuse a ``stage`` or ``mode`` source the stage list does not name canonically.
+
+        A user result's stored row is read, never ``Results``, so a domain user
+        result passes here: only the name is checked.
+        """
         if address.kind == "stage":
             self._host(address.source)
         elif address.kind == "mode":
@@ -268,6 +299,8 @@ class _RecordedSource:
             keys = sub_keys(eids, np.tile(np.arange(block.shape[1]), block.shape[0]))
             values = block.ravel()
         else:
+            if self.level not in ("gauss", "line_stations"):  # _recorded refused the domain
+                raise ValueError(f"level {self.level!r} is not a recorded level {RECORDED_LEVELS}")
             reader = scoped.elements.gauss if self.level == "gauss" else scoped.elements.line_stations
             slab = reader.get(**kw)
             values = np.asarray(slab.values)[-1]
@@ -276,6 +309,8 @@ class _RecordedSource:
         return Field(keys, (self.component,), np.asarray(values, dtype="f8").reshape(-1, 1))
 
     def field(self, address: StateAddress) -> Field:
+        if address.kind in ("stage", "mode"):
+            self._recorded(address)
         if address.kind == "stage":
             host = self._host(address.source)
             if not -1 <= address.step < host.n_steps:
@@ -288,9 +323,10 @@ class _RecordedSource:
         if address.kind in ("spectrum", "reference"):
             if self.spectra is None:
                 raise self._refuse(
-                    "unresolved", f"a {address.kind} term needs /spectra, which has no "
-                    "reader yet (ADR 0130 slice VU6)")
-            return self.spectra.field(address, (self.level, self.component))
+                    "unresolved", f"a {address.kind} term reads /spectra, and no spectra "
+                    "provider was given (Results.combinations() passes UserSpectra)")
+            return self._only_ids(self.spectra.field(
+                address, (self.level, self.component), allow_stale=self.allow_stale))
         raise self._refuse("bad-term", f"a {address.kind} term is not a state")
 
     def eigenvalue(self, address: StateAddress) -> float:
@@ -299,9 +335,31 @@ class _RecordedSource:
     def case(self, name: str) -> Case:
         if self.spectra is None:
             raise self._refuse(
-                "unresolved", f"case {name!r} needs /spectra, which has no reader yet "
-                "(ADR 0130 slice VU6)")
-        return self.spectra.case(name, (self.level, self.component))
+                "unresolved", f"case {name!r} is read from /spectra, and no spectra provider "
+                "was given (Results.combinations() passes UserSpectra)")
+        found = self.spectra.case(name, (self.level, self.component),
+                                  allow_stale=self.allow_stale)
+        if self.ids is None:
+            return found
+        return Case(found.mode, found.lam, found.sa_period, found.damping,
+                    tuple(self._only_ids(f) for f in found.increments))
+
+    def _only_ids(self, f: Field) -> Field:
+        """The rows of a ``/spectra`` field at ``ids``, as a ``Results`` read selects them.
+
+        An id the case does not hold refuses: a NaN row would hide it.
+        """
+        if self.ids is None:
+            return f
+        want = np.unique(np.asarray(self.ids, dtype="i8").ravel())
+        have = np.asarray(f.keys["id"], dtype="i8")
+        missing = np.setdiff1d(want, have)
+        if missing.size:
+            raise self._refuse(
+                "unresolved", f"/spectra holds no row for ids {missing.tolist()} of "
+                f"{self.component!r}")
+        keep = np.isin(have, want)
+        return Field(f.keys[keep], f.components, f.values[keep])
 
 
 # ---------------------------------------------------------------------------
@@ -487,9 +545,12 @@ class UserCombinations:
         """The value of ``state`` for one quantity.
 
         Name the quantity with ``component`` (and ``level``, one of
-        :data:`LEVELS`) for a recorded result, or with ``user_result`` for a
-        ``.user.h5`` result. A stale user result is refused unless
-        ``allow_stale=True`` (A6). Raises :class:`CombinationRefused`.
+        :data:`LEVELS`) for a recorded result or a ``/spectra`` value, or with
+        ``user_result`` for a ``.user.h5`` result. ``level="domain"`` names a
+        whole-model value by its label (``base_shear``, an extractor's name),
+        which only ``/spectra`` holds. A stale user result or ``/spectra``
+        zone is refused unless ``allow_stale=True`` (A6). Raises
+        :class:`CombinationRefused`.
         """
         name, address = self._target(state)
         label = name if name is not None else f"<{address}>"
@@ -497,7 +558,7 @@ class UserCombinations:
             raise ValueError("pass exactly one of component= and user_result=")
         recorded = _RecordedSource(
             self._results, level, component or "", ids, self.spectra, label,
-            unbound_stages=self._unbound_stages)
+            unbound_stages=self._unbound_stages, allow_stale=allow_stale)
         source: Any = recorded
         if user_result is not None:
             if self._user is None:

@@ -1540,8 +1540,12 @@ class Results:
         exists beside this file is used: ``<model stem>.user.h5``, then this
         file's stem without ``.part-<N>`` and ``.results``. ``model_h5``
         (default: the archive this was opened with) brings its
-        ``/opensees/combinations`` into the table. ``spectra`` is a
-        ``/spectra`` provider for spectrum terms.
+        ``/opensees/combinations`` into the table. ``spectra`` reads the
+        ``spectrum`` and ``reference`` terms; by default it is a
+        :class:`~apeGmsh.results.user.UserSpectra` over that ``.user.h5``'s
+        ``/spectra``, judged stale against ``model_h5`` (ADR 0130 A6), so a
+        stale zone's terms are refused unless ``evaluate(...,
+        allow_stale=True)``.
 
         A term names a stage by its stamped name, else ``stage_<i>`` (A3).
         The names are bound when the results are opened (``model_h5=``), never
@@ -1556,11 +1560,13 @@ class Results:
         keeps ``stage_<i>``, and so does one whose reader declined that same
         model's names when it was opened.
 
-        ``evaluate(state, component, level=...)`` combines a recorded result,
-        ``evaluate(state, user_result=...)`` a user result. A state handle of
+        ``evaluate(state, component, level=...)`` combines a recorded result
+        (``level="domain"`` a ``/spectra`` domain value such as
+        ``base_shear``), ``evaluate(state, user_result=...)`` a user result. A state handle of
         another ``Results`` is refused.
         """
         from .user._evaluate import CombinationRefused
+        from .user._spectra_source import UserSpectra
         from .user._states import UserCombinations, user_file_beside
 
         model = model_h5 if model_h5 is not None else self._model_path
@@ -1569,6 +1575,8 @@ class Results:
             user_h5 = user_file_beside(
                 None if self._path is None else Path(self._path),
                 None if model is None else Path(model))
+        if spectra is None:
+            spectra = UserSpectra(user_h5, model_h5=model)
 
         def handle(obj: Any) -> Optional[str]:
             if not isinstance(obj, Results):
