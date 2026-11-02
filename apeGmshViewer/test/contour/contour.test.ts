@@ -451,6 +451,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
   const displayEl = new FakeDomEl("aside");
   const deformEl = new FakeDomEl("aside");
   const scaleEl = new FakeDomEl("div");
+  const contourEl = new FakeDomEl("aside");
   headerEl.append(fileNameEl, fileStatsEl);
   (globalThis as { document?: unknown }).document = {
     title: "",
@@ -464,6 +465,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
       if (id === "display") return displayEl;
       if (id === "deform") return deformEl;
       if (id === "viewport-scale") return scaleEl;
+      if (id === "contour") return contourEl;
       return null;
     },
   };
@@ -492,9 +494,37 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     // The colour range is set on the scale in the viewport, not on the card.
     assert.equal(legendEl.all((e) => e.className.includes("contour-modes")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("contour-modes")).length, 1);
+    // The field picker is on the Contour card, not on Physical groups.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-field")).length, 0);
+    assert.equal(contourEl.all((e) => e.className.includes("contour-field")).length, 1);
     // The scale is the only colour bar.
     assert.equal(legendEl.all((e) => e.className.includes("contour-ramp")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("vs-ramp")).length, 1);
+    // The Contour card carries no units note, title, range modes or colour bar either.
+    for (const cls of ["contour-units", "contour-title", "contour-modes", "contour-ramp"]) assert.equal(contourEl.all((e) => e.className.includes(cls)).length, 0, cls);
+    assert.ok(!contourEl.textContent.includes("Units:"));
+    // A step in contour mode rebuilds the Contour card and the scale, never the group rows (a click on one stays).
+    const rowOf = () => legendEl.all((e) => e.className.startsWith("legend-row"))[0];
+    const row0 = rowOf();
+    assert.ok(row0, "Physical groups lists its rows while a contour is on");
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
+    assert.equal(rowOf(), row0, "the same row element after a step change");
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    // The switch: Physical groups has no contour button; off returns to the mode contour came from.
+    assert.ok(!legendEl.all((e) => e.tagName === "BUTTON").some((b) => b.textContent === "contour"));
+    const toggle = () => contourEl.all((e) => e.className.includes("contour-toggle"))[0]!;
+    toggle().trigger("click");
+    assert.equal(h.store.get().visibility.colourBy, "group");
+    assert.equal(scaleEl.hidden, true, "no contour, no scale");
+    assert.equal(contourEl.all((e) => e.className.includes("contour-field")).length, 0, "the field picker shows only while on");
+    h.store.dispatch({ type: "setColourBy", by: "role" });
+    toggle().trigger("click");
+    assert.equal(h.store.get().visibility.colourBy, "contour");
+    assert.equal(scaleEl.hidden, false, "contour on, scale shown");
+    toggle().trigger("click");
+    assert.equal(h.store.get().visibility.colourBy, "role", "off returns to by role, the mode it came from");
+    assert.equal(contourEl.hidden, false, "the card stays while a mesh is loaded");
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
 
     // 2. Selecting source and target in #header dispatches setContourUnits and updates the scale's title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;

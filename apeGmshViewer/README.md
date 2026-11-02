@@ -118,7 +118,8 @@ Then:
   2-D (`/meta/ndm` 2, neutral 2.34.0 on): it is never drawn from the
   surviving axes. The outline edges follow their own nodes, like the
   faces; the ghost keeps the undeformed ones.
-- **Nodal contours.** On a results stage, **contour** in the legend colours
+- **Nodal contours.** On a results stage, **contour** on the Contour card (under
+  Line diagram; Physical groups keeps colouring by group or role) colours
   the mesh by a nodal field at the step shown: pick the field and its
   component (`x`, `y`, `z` as the file names them, the **magnitude** for a
   translational vector such as displacement, velocity, acceleration or

@@ -520,25 +520,25 @@ body[data-still-chrome="model"] #scale-stack { display: none; }
 .viewport-scale .contour-modes { margin-bottom: 0; }
 .viewport-scale .contour-fixed { margin-top: 6px; }
 
-/* The Display and Deformed cards. */
-#display, #deform {
+/* The Display, Deformed and Contour cards. */
+#display, #deform, #contour {
   flex: 0 1 auto; min-height: 0; overflow: auto;
   padding: 10px 12px; border-radius: 10px; width: 292px; box-sizing: border-box;
   background: var(--panel); border: 1px solid var(--line);
 }
 #display, #deform { flex: 0 0 auto; }
 #left-rail > aside { width: 292px; min-width: 0; max-width: none; box-sizing: border-box; }
-#display[hidden], #deform[hidden] { display: none; }
-#display h3, #deform h3 {
+#display[hidden], #deform[hidden], #contour[hidden] { display: none; }
+#display h3, #deform h3, #contour h3 {
   display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
-#display > h3:first-child::before, #deform > h3:first-child::before { content: "\25be"; font-size: 11px; color: var(--muted); }
-#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
-body:not([data-still-chrome="app"]) #display[data-collapsed="true"], body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
-#display[data-collapsed="true"] > h3:first-child, #deform[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
-body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > :not(:first-child) { display: none; }
+#display > h3:first-child::before, #deform > h3:first-child::before, #contour > h3:first-child::before { content: "\25be"; font-size: 11px; color: var(--muted); }
+#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before, #contour[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
+body:not([data-still-chrome="app"]) #display[data-collapsed="true"], body:not([data-still-chrome="app"]) #deform[data-collapsed="true"], body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
+#display[data-collapsed="true"] > h3:first-child, #deform[data-collapsed="true"] > h3:first-child, #contour[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
+body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] > :not(:first-child) { display: none; }
 .display-row { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
 .display-label { width: 56px; flex: none; color: var(--muted); font-size: 13px; }
 .display-row > .legend-mode { flex: 1; margin: 0; }
