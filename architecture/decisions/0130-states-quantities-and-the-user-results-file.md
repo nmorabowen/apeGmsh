@@ -1,8 +1,8 @@
 # ADR 0130 — States and quantities: modes, spectra, user combinations and user results in a `<stem>.user.h5`
 
-**Status:** Proposed (2026-11-01). The `.user.h5` zones and the combination
-descriptor are an irreversible schema decision and go through the program's
-architect pair before slice 1 (ADR 0112 D2).
+**Status:** Accepted, with Amendment 1. Proposed 2026-11-01. The `.user.h5`
+zones and the combination descriptor are an irreversible schema decision and
+went through the program's architect pair before slice 1 (ADR 0112 D2).
 
 ## Context
 
@@ -314,3 +314,137 @@ that. It records it as a prerequisite for SLE adoption, for a follow-up.
   `sle/visor/export_results.py`, `yoo/yoo/slab/{states,outputs,pipeline,footfall,model}.py`.
 - apeGmsh issues from the reference-model sweep: #2667–#2673.
 - Reference models: `C:\nmb\My Libraries\nmb\gitAPE Companion\apeGmsh Reference Models\`.
+
+## Amendment 1 (2026-11-01): the zone layouts and the combination descriptor
+
+Slice 0 (#2675) ran the architect pair: two independent briefs, reconciled by
+the link's orchestrator. The bit-level layouts are in
+[`h5-schema.md`, `<stem>.user.h5`](../h5-schema.md#stemuserh5-user-results-adr-0130).
+This amendment records the decisions and what they change above. Where it
+differs from D1 to D9, it governs.
+
+### A1 — Corrections to the decisions above
+
+| Decision | As written | Now |
+|---|---|---|
+| D1, D4 | every combination is evaluated per quantity | Per quantity holds for recorded results. A user result is summed only if it declares `@linear=1` (A5) |
+| D2 | `/meta` carries `model_hash` and `fem_hash` | `fem_hash` is required; `model_hash` is written when the model has one. The SLE model has only `fem_hash` (D10) |
+| D2 | one `results_hash` governs the derived zones | Staleness depends on the zone (A6). `/spectra` never derives from a `.ladruno`, because the ADR 0124 driver refuses recorders |
+| D2 | the app writes one zone, atomically by replace | HDF5 cannot replace one zone. The app copies the file, adds to the copy and replaces the original (A4) |
+| D3 | bucket code is in `_ladruno_writer.py` | It is in `results/readers/_ladruno_from_mpco.py::_write_column_map`; that writer has none |
+| D3 | `/spectra/<case>`, `/results/<name>` | `/spectra/s<k>`, `/results/r<k>`, with the name in `@name` (A2) |
+| D4 | the app keeps a backup of the previous version | Earlier generations in the file are the backup (A4) |
+| D4 | `linear` is signed | `linear` is signed if and only if all its terms are |
+| D5 | `1.0 D + L_exp ± E` is a `linear` combination | It is `envelope` over `linear(S, +E)` and `linear(S, −E)`, once with `max` and once with `min`. This equals `seismic_envelope` |
+| D5 | a case has a direction or directions | A case has one direction, as `DesignSpectrum` does. Several directions are a `directional` combination |
+| D5 | a case stores every recorded quantity | It stores what its extractors returned, which may be entity or domain values (A7) |
+| D6 | generalised mass comes from `modalProperties` | `modalProperties` does not export it. It is stored as effective mass over `Γ²`, on the direction of largest `|Γ|`, and NaN where every `Γ` is zero |
+| D7 | targets are nodes, elements, entities | `domain` is added, for whole-model values such as a base shear |
+
+### A2 — Names are data
+
+Every named thing is a positional group (`s<k>`, `r<k>`) with `@name`, or a row
+in a table. A name is never an HDF5 link, so real names such as
+`Delta_after (L/480)` need no escaping (the precedent is
+`/opensees/cuts/cut_N`). A writer refuses, and a reader refuses that entry for,
+a name that is empty, not NFC, has a control character, or has leading or
+trailing whitespace. Comparison is byte-equal after that.
+
+A combination may share a name with a stage, a mode or a case, because a term's
+`kind` separates them. Names stay unique among combinations across `model.h5`
+and `.user.h5`; a clash refuses both rows.
+
+### A3 — The descriptor
+
+Columnar tables, with no JSON and no group per combination. A term and a row of
+a user result's `STATES` table use one source address,
+`(kind, source, step, mode)`. A stage's `source` is its stamped name, or
+`stage_<i>` when the run stamped none, which is how the app already names it.
+
+Sign is derived from the rule and the terms, and never stored. Only a signed
+result draws as a deformed shape.
+
+A bad row refuses alone, with a reason (`empty-name`, `duplicate`, `clash`,
+`unknown-rule`, `no-terms`, `bad-param`, `bad-term`, `unresolved`, `cycle`), and
+the file still opens. Malformed columns refuse the zone. `/opensees/combinations`
+uses the same layout, rides the opensees zone's version, and joins
+`MODEL_HASH_EXCLUDED_CHILDREN`, so adding a combination leaves `model_hash`
+unchanged.
+
+### A4 — Writing `/combinations`
+
+`/combinations` holds append-only generation groups `g<N>` and `@current`.
+h5wasm 0.10.3 has no link delete (its API offers only `delete_attribute`) and
+cannot rewrite a vlen dataset, so the app cannot replace a group in place. A
+save copies the file to `<stem>.user.h5.partial`, opens it in `a` mode, adds
+`g<N+1>`, sets `@current` and `/meta@revision`, reopens and verifies, aborts if
+the on-disk `revision` moved, then replaces the original. Python copies zones it
+does not write verbatim, and no writer touches a zone newer than it knows.
+
+An `h5py → h5wasm → h5py` round trip has passed in memory only. `a` mode on a
+multi-gigabyte file has not been probed, and VU9 probes it before it builds on
+this.
+
+### A5 — User results under a combination
+
+For a state that is a combination, a stored row for that state wins. Otherwise
+`envelope` reads the terms' stored rows, and a summing rule requires `@linear=1`
+on the result. A rule that cannot be applied refuses; it never sums.
+
+Measured on the YOO slab for `1.2(D+SD) + 1.6L`: a factored sum misses
+`wood_armer_*` by 9 to 20% and `rib_shear_*` by up to 31%, while the linear
+fields match exactly. Without this flag the app would draw those errors as
+results.
+
+### A6 — Staleness
+
+`results_hash` is a fingerprint and not a file digest: `rf1:` plus SHA-256 over
+identity attributes, the index of every result, and each stage's last slab. A
+whole-file digest costs 0.49 s per 685 MB warm, and moves when a file is
+stamped. The fingerprint measured 6 to 43 ms from 10 to 685 MB, with equal
+digests from h5py and h5wasm on all 8 corpus files. `INFO/PROVENANCE` is left
+out, so stamping cannot stale a file. SHA-256 because `node:crypto` has no
+short BLAKE2b. The limit is stated: a rewrite of earlier steps under an
+identical last step is not seen. The algorithm is cheap to replace (`rf2`).
+
+| Zone | Stale when |
+|---|---|
+| `/meta`, `/combinations` | never; a combination with a stale source is listed as stale |
+| `/modes` | the model hashes differ; a row is stale if its `lambda` differs from the `.ladruno`'s by more than `1e-9` relative |
+| `/spectra`, `/entities` | the model hashes differ |
+| `/results` | by `@basis`: `results_hash` for `results`, the model hashes for `model` |
+
+"Model hashes" compares whichever of `fem_hash` and `model_hash` both sides
+have. Stale content is listed and is drawn only on an explicit request. Python
+refuses a stale term unless called with `allow_stale=True`.
+
+### A7 — What each open question became
+
+1. **Variant manifest:** a `<study>.variants.json` beside the sets, holding
+   `version` and a list of `{label, path, params}`. A set may have no `.user.h5`,
+   and sibling pointers would need one write per set.
+2. **`apeSees` combinations and spectrum cases:** refused. They may reference
+   stages, modes and other `model.h5` combinations. A case lives in `.user.h5`,
+   so a reference to one would invert D4's direction. Declare that combination
+   after the run, in `.user.h5`. This is cheap to relax later and costly to
+   tighten. The two architects differed here.
+3. **Undo depth:** the generations give it. VU9 exposes one revert.
+4. **Per state and an envelope:** always a combination. `envelope` reads stored
+   rows; what no descriptor expresses is state-free.
+
+A term holds no path, stem or hash, so a cross-variant reference cannot be
+written, and Python refuses another `Results`' state handle. SLE's variants share
+hashes until D10 is resolved, so a copied `.user.h5` is not detected there.
+
+Three further points were put to the maintainer with this amendment. Each takes
+the recommended reading below unless the acceptance PR says otherwise:
+
+- **In-file generations**, against a sibling `<stem>.combinations.h5`. A save
+  copies the file: about 20 MB on the slab, and 0.66 to 3 GB on SLE with full
+  field spectra. In-file keeps the set at four files.
+- **`/spectra` writes entity and domain quantities by default**, with full nodal
+  fields on request, which is what makes the SLE cost above rare (about 5 MB
+  against about 1.5 GB per case).
+- **The superposition badge (D4) shows on every `linear` over a stage.** No file
+  says which stage is nonlinear: `/sequence`'s `algorithm` would badge nearly
+  everything anyway, so detection would add nothing.

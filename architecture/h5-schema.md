@@ -2646,6 +2646,176 @@ in. Nothing in `results.h5` or `/model` records that system.
   ([`element_index_space`](#element_index_space)). Such a file reads as
   unverified.
 
+## `<stem>.user.h5`: user results (ADR 0130)
+
+The set's user file: combinations, the modal table, spectra, user results and
+non-mesh entities. apeGmsh owns it, and the recorder's `.ladruno` never holds any
+of this ([ADR 0130](decisions/0130-states-quantities-and-the-user-results-file.md),
+Amendment 1). Python writes every zone; the app writes only `/combinations`.
+
+No writer or reader exists yet: slice VU1 implements this and adds the zones to
+the [registry](#zone-registry).
+
+Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
+([integer policy](#integer-policy-for-the-adr-0112-zones)). Columns in one table
+share a length. NaN means "not defined here" and propagates through every rule.
+Readers ignore unknown attributes and groups.
+
+```text
+/meta
+  @user_meta_schema_version, @combinations_schema_version, @modes_schema_version,
+  @spectra_schema_version, @user_results_schema_version, @entities_schema_version
+                         "1.0.0"; each present if and only if its zone is
+  @fem_hash              byte-equal to <stem>.h5
+  @model_hash            optional; byte-equal to <stem>.h5 when both have one
+  @results_hash          optional; "rf1:<hex>", see Staleness
+  @writer, @units
+  @revision              i4; every save adds 1
+
+/combinations
+  @current               i4; the generation in force
+  g<N>/
+    name, rule, envelope str (K,)     envelope: max | min | absmax | ""
+    fraction, damping    f8 (K,)      fraction: directional; damping: NaN = the case's
+    term_offsets         i4 (K+1,)
+    terms/
+      kind, source       str (T,)
+      step, mode         i4 (T,)
+      factor             f8 (T,)
+
+/modes
+  @components            e.g. "MX,MY,MZ,RMX,RMY,RMZ"
+  host, kind             str (M,)     host: eigen stage
+  step, mode             i4 (M,)      STEP_<s> id; 1-based mode
+  lambda, period, generalized_mass    f8 (M,)
+  participation, mass_ratio, cumulative_ratio    f8 (M,C); ratios are fractions
+
+/spectra/s<k>/           one case, one direction
+  @name, @KIND="static", @direction i4 (1-based), @scale f8
+  spectrum/T, Sa         f8 (P,)      function spectrum: sampled at the modal periods
+  modes/
+    mode                 i4 (M,)      row i is DATA axis 0
+    kind                 str (M,)
+    lambda, sa_period, gamma, sa, damping    f8 (M,)    sa_period: 0 = own period
+  reference/RESULTS/...  S = 1: the reference state's values
+  RESULTS/..., MODEL/... as /results, S = M; labels are recorder spellings
+
+/results/r<k>/           one user result
+  @name, @KIND="static"
+  @target                nodes | elements | entities | domain
+  @per_state             i1; 0 = state-free, S = 1
+  @linear                i1; absent = 0
+  @basis                 results | model; which hash stales it
+  @units                 CSV, optional
+  @element_index_space   elements only
+  STATES/                per-state only; row i is DATA axis 0
+    kind, source         str (S,)
+    step, mode           i4 (S,)
+  RESULTS/
+    ON_NODES/values/     ID i4 (n,1); DATA f8 (S,n,c); STEP i4, TIME f8 (S,); @COMPONENTS
+    ON_ELEMENTS/values/<bucket>/    the same, with @NUM_COLUMNS and COLUMN_MAP @COMP_NAMES
+    ON_ENTITIES/values/  ENTITY_KIND str, ENTITY_ROW i4 (n,) in place of ID
+    ON_DOMAIN/values/    n = 1, no ID
+  MODEL/ELEMENTS/<bucket>/
+    @TOPOLOGY, @PARAM_DOMAIN, @NUM_GP
+    QUADRATURE/GP_PARAM  f8 (G,ndir)
+
+/entities
+  @element_index_space   "opensees": cut element ids are OpenSees tags
+  cuts/
+    name, side           str (K,)
+    point, normal, reference    f8 (K,3)
+    element_offsets      i4 (K+1,)
+    element_ids          i4
+    polygon_offsets      i4 (K+1,)
+    polygon              f8 (P,3)
+  storeys/
+    name                 str (K,)
+    level                f8 (K,)
+    reference            f8 (K,3)
+    node_offsets         i4 (K+1,)
+    node_ids             i4
+  point_sets/
+    name                 str (K,)
+    point_offsets        i4 (K+1,)
+    xyz                  f8 (P,3)
+    host_element         i4 (P,); -1 = none
+```
+
+A `/results` or `/spectra` group is a small stage, so the `.ladruno` read path
+reads it. `STEP` and `TIME` are `0..S-1`; the state of a row is in `STATES` or
+`modes`, never in `STEP`. A stage carries its own `GP_PARAM`, because the
+`.ladruno` does not always have one to borrow: the slab's `ASDShellT3` bucket has
+none.
+
+**Names.** A name is data in `@name` or a table column, never a link. It is
+non-empty NFC UTF-8 with no control characters and no leading or trailing
+whitespace, and compares byte-equal.
+
+**Source address.** One form for `terms` and `STATES`:
+
+| `kind` | `source` | `step` | `mode` |
+|---|---|---|---|
+| `stage` | stamped stage name, else `stage_<i>` | time index, `-1` = last | `0` |
+| `mode` | host stage | `STEP_<s>` id, `-1` = the only set | 1-based |
+| `spectrum` | case | `-1` | `0` = whole case, `k` = one signed increment |
+| `reference` | case | `-1` | `0` |
+| `combination` | name | `-1` | `0` |
+
+**Rules.** With `E = factor · r`, and `p = fraction`:
+
+| `rule` | Terms | Value |
+|---|---|---|
+| `linear` | list | `ΣE` |
+| `srss`, `abs_sum` | list, or one whole case | `√ΣE²`, `Σ\|E\|` |
+| `cqc` | one whole case, or modes of one set | `√max(0, EᵀρE)` |
+| `directional` | list | `max_a(\|E_a\| + p Σ_{b≠a} \|E_b\|)` |
+| `envelope` | list | `max`, `min` or `absmax` |
+
+"List" excludes whole cases. A whole case first sums the modes that share a
+`sa_period`. A finite `damping` overrides; NaN takes the case's per-mode column.
+`λ ≤ 0` is refused. Terms join on the result label, the ID and the Gauss index,
+and a missing row is NaN. Only `linear` can be signed, and only if all its terms
+are. Sign is never stored.
+
+**Refusal** is per row at read, never at open, with the reason `empty-name`,
+`duplicate`, `clash`, `unknown-rule`, `no-terms`, `bad-param`, `bad-term`,
+`unresolved` or `cycle`. Malformed columns refuse the zone.
+
+**`/opensees/combinations`** in `model.h5` has this layout at `g0`, is versioned
+by the opensees zone, is in `MODEL_HASH_EXCLUDED_CHILDREN`, and resolves only
+within `model.h5`: a `spectrum`, `reference` or `.user.h5` source is refused.
+`.user.h5` rows resolve across both files.
+
+**Evaluating a user result.** A stored row for the state wins. Otherwise a
+summing rule needs `@linear=1`, and `envelope` reads the terms' stored rows.
+
+**Staleness.** `rf1` is SHA-256, in index order over every part of the paired
+`.ladruno`, of: `GENERATOR`, `FORMAT_VERSION`, `RUN_ID`; each stage's `KIND`; each
+result's path, shape, dtype, `TIME` and `STEP`; each mode's `LAMBDA`; and the
+last slab of the stage's first nodal result (first element bucket if it has no
+nodal result), little-endian as stored. `INFO/PROVENANCE` is excluded. A native
+`results.h5` uses `native:<lineage hash>`.
+
+| Zone | Stale when |
+|---|---|
+| `/meta`, `/combinations` | never; a combination with a stale source is listed as stale |
+| `/modes` | model hashes differ; a row, if its `lambda` differs from `LAMBDA` by more than `1e-9` relative |
+| `/spectra`, `/entities` | model hashes differ |
+| `/results` | `@basis=results`: `results_hash` differs; `@basis=model`: model hashes differ |
+
+A write that changes `@results_hash` rewrites or explicitly drops the
+`@basis=results` entries.
+
+**Writing.** Every write goes to `<stem>.user.h5.partial` in the same folder and
+then replaces the file, so a killed writer leaves the previous file whole. The
+app adds a generation to a copy and never rewrites one, because h5wasm cannot
+delete a link or rewrite a vlen dataset. Earlier generations are its backup.
+
+**Variants.** `<study>.variants.json` beside the sets holds `version` and a list
+of `{label, path, params}`. `path` is relative. A source address holds no path or
+hash, so a cross-variant term cannot be written.
+
 ## Cross-references
 
 Every reference uses an HDF5 path string. Examples:
