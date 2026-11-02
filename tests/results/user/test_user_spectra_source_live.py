@@ -21,6 +21,7 @@ take the production path, on the nodes and on the domain.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import h5py
@@ -109,6 +110,20 @@ def _frame() -> apeSees:
     return ops
 
 
+class _SpectrumOnlyResults:
+    """The part of a ``Results`` a spectrum-only ``_RecordedSource`` reads.
+
+    These terms read ``/spectra`` through ``UserSpectra``, never ``Results``. The
+    source still asks which custom scalars (ADR 0076) the read level holds, so the
+    stand-in holds none. Anything else the source reads from it raises
+    ``AttributeError``: a spectrum term that reached into ``Results`` is a bug.
+    """
+
+    def __init__(self) -> None:
+        self.nodes = SimpleNamespace(definitions={})
+        self.elements = SimpleNamespace(gauss=SimpleNamespace(definitions={}))
+
+
 TABLE = resolve([
     Combination("Ex_cqc", "cqc", (Term("spectrum", "E_x"),)),
     Combination("Ey_cqc", "cqc", (Term("spectrum", "E_y"),)),
@@ -140,7 +155,7 @@ def test_a_cqc_over_a_written_case_equals_the_drivers_own(tmp_path: Path) -> Non
     directional = result.directional("disp", damping=XI)   # (2 n,)
     for d, component in enumerate(("displacement_x", "displacement_y")):
         source: Any = _RecordedSource(
-            cast(Any, None), "nodes", component, None, spectra, "live")
+            cast(Any, _SpectrumOnlyResults()), "nodes", component, None, spectra, "live")
         cols = slice(d, None, 2)
         for name, want in (("Ex_cqc", cqc[0, cols]), ("Ey_cqc", cqc[1, cols]),
                            ("Ex_srss", srss[0, cols]), ("dir", directional[cols])):
@@ -152,14 +167,16 @@ def test_a_cqc_over_a_written_case_equals_the_drivers_own(tmp_path: Path) -> Non
     n = ROOF_COLUMN.index(middle)
     gravity = np.asarray(result.gravity_values["disp"])
     for d, component in enumerate(("displacement_x", "displacement_y")):
-        at: Any = _RecordedSource(cast(Any, None), "nodes", component, [middle], spectra, "live")
+        at: Any = _RecordedSource(
+            cast(Any, _SpectrumOnlyResults()), "nodes", component, [middle], spectra, "live")
         got = evaluate(TABLE, "G+E", at).field
         assert got.keys["id"].tolist() == [middle] and got.values.shape == (1, 1)
         assert not np.isnan(got.values[0, 0])
         want = gravity[2 * n + d] + cqc[0, 2 * n + d]
         np.testing.assert_allclose(got.values[0, 0], want, rtol=RTOL, err_msg=f"G+E {component}")
 
-    shear: Any = _RecordedSource(cast(Any, None), "domain", "base_shear", None, spectra, "live")
+    shear: Any = _RecordedSource(
+        cast(Any, _SpectrumOnlyResults()), "domain", "base_shear", None, spectra, "live")
     for name, want in (("Ex_cqc", result.combine("base_shear", damping=XI)[0]),
                        ("Ey_cqc", result.combine("base_shear", damping=XI)[1]),
                        ("Ex_srss", result.combine("base_shear", rule="SRSS")[0]),

@@ -430,9 +430,10 @@ def test_a_stage_or_mode_term_of_a_domain_quantity_is_unresolved(tmp_path: Path)
         assert "domain" in err.value.detail
 
 
-def test_no_provider_says_so() -> None:
+def test_no_provider_says_so(tmp_path: Path) -> None:
     from apeGmsh.results.user._states import _RecordedSource
-    source = _RecordedSource(None, "nodes", "displacement_x", None, None, "x")  # type: ignore[arg-type]
+    # A real Results: the source reads its custom scalars when it is built.
+    source = _RecordedSource(_truss_set(tmp_path), "nodes", "displacement_x", None, None, "x")
     for call in (lambda: source.case("Ex"),
                  lambda: source.field(StateAddress("spectrum", "Ex", -1, 1))):
         with pytest.raises(CombinationRefused) as err:
