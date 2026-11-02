@@ -5,8 +5,8 @@ and a Deformed card, both moved out of the legend. Every left-rail card is 292 p
 The line-diagram colormap stays in its own card.
 
 A contour now draws a scale in the viewport whether or not its card is open: horizontal by default, top left of
-the free space, with a button for vertical, and draggable. The colour range controls moved from the Contour card
-onto it. Its orientation and place are remembered per machine. An agent run has its own profile, so `--render`
+the free space, with a button for vertical, and draggable. The colour bar and the colour range controls moved from
+the Contour card onto it. Its orientation and place are remembered per machine. An agent run has its own profile, so `--render`
 stills always draw the default.
 
 The banner is one line, a count of each kind, and a click opens the full list over the rail. Refused fields in

@@ -65,7 +65,8 @@ export function contourLines(
     title: `${v.field} · ${v.component.label}${unitSuffix}`,
     min: c.min === null ? "no finite value" : fmtValue(c.min * u.factor),
     max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max * u.factor),
-    ticks: c.min === null || c.max === null ? [] : constant ? [fmtValue(c.min * u.factor)] : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtValue((c.min! + (c.max! - c.min!) * f) * u.factor)),
+    // The scale is the only colour bar, so it also says when there is no range to show.
+    ticks: c.min === null || c.max === null ? ["no finite value"] : constant ? [fmtValue(c.min * u.factor), "(constant)"] : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtValue((c.min! + (c.max! - c.min!) * f) * u.factor)),
     range: c.label,
     units: u.note,
     state: !v.stepMeasured ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading` : null,
@@ -416,13 +417,6 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     legend.append(el("div", "contour-title", lines.title));
     if (lines.topology) legend.append(el("div", "legend-note contour-topology", lines.topology));
     if (lines.axes) legend.append(el("div", "legend-note contour-axes", lines.axes));
-    const ramp = el("div", "contour-ramp");
-    ramp.style.backgroundImage = rampCss(v.cmap);
-    legend.append(ramp);
-    const ends = el("div", "contour-ends");
-    ends.append(el("span", "contour-min", lines.min), el("span", "contour-max", lines.max));
-    legend.append(ends);
-    legend.append(el("div", "contour-range", lines.range));
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
     // The unit choice lives in the header; this field's own provenance note
     // (e.g. "not declared — select source") stays with the legend it describes.

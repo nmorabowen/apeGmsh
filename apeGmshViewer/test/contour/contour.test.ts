@@ -488,6 +488,9 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     // The colour range is set on the scale in the viewport, not on the card.
     assert.equal(legendEl.all((e) => e.className.includes("contour-modes")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("contour-modes")).length, 1);
+    // The scale is the only colour bar.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-ramp")).length, 0);
+    assert.equal(scaleEl.all((e) => e.className.includes("vs-ramp")).length, 1);
 
     // 2. Selecting source and target in #header dispatches setContourUnits and updates #legend contour-title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;
