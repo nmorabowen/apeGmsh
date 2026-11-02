@@ -198,6 +198,8 @@ const EVERY: Record<EventType, Event> = {
   toggleShowOffsets: { type: "toggleShowOffsets" },
   setNodes: { type: "setNodes", on: true },
   setNodeSize: { type: "setNodeSize", size: 6 },
+  setGaussPoints: { type: "setGaussPoints", on: true },
+  setGaussSize: { type: "setGaussSize", size: 4 },
   setCamera: { type: "setCamera", to: "iso" },
   cameraMoved: { type: "cameraMoved", pose: { eye: [10, -10, 10], target: [0, 0, 0], up: [0, 0, 1] } },
   setTheme: { type: "setTheme", theme: "light" },
@@ -218,8 +220,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    82,
-    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, toggleExtrudeFrames, toggleShowOffsets, setNodes, setNodeSize, and setCamera, cameraMoved and setTheme (VA1)",
+    84,
+    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, toggleExtrudeFrames, toggleShowOffsets, setNodes, setNodeSize, setGaussPoints, setGaussSize, and setCamera, cameraMoved and setTheme (VA1)",
   );
 });
 

@@ -40,6 +40,21 @@ import {
 } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
+type Markers = { on: boolean; size: number | null; auto: boolean };
+
+/** On while the size is automatic asks for it to be chosen again (null); the user's own size stays. */
+function markersOn(m: Markers, on: boolean): Markers {
+  if (m.on === on) return m;
+  return { ...m, on, size: on && m.auto ? null : m.size };
+}
+
+/** A user's size (clamped), the effects' choice (`auto`), or null to choose again. */
+function markerSize(m: Markers, size: number | null, auto: boolean | undefined): Markers {
+  if (size === null) return { ...m, size: null, auto: true };
+  if (!Number.isFinite(size)) return m;
+  return { ...m, size: Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, size)), auto: auto === true };
+}
+
 /** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
 
@@ -184,6 +199,7 @@ export const initialState: State = {
   hover: null,
   visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group", extrudeFrames: false, showOffsets: false },
   nodes: { on: false, size: null, auto: true },
+  gaussPoints: { on: false, size: null, auto: true },
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
@@ -460,6 +476,7 @@ export function reduce(s: State, e: Event): State {
         visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
         // A chosen size belongs to the model it was chosen for; the user's own stays.
         nodes: { ...s.nodes, on: reread ? s.nodes.on : false, size: s.nodes.auto ? null : s.nodes.size },
+        gaussPoints: { ...s.gaussPoints, on: reread ? s.gaussPoints.on : false, size: s.gaussPoints.auto ? null : s.gaussPoints.size },
         inspector: { pinned: [] },
         spotlight: reread ? s.spotlight : { ...initialSpotlight, seq: s.spotlight.seq },
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
@@ -639,13 +656,20 @@ export function reduce(s: State, e: Event): State {
       return s.visibility.showOffsets === next ? s : { ...s, visibility: { ...s.visibility, showOffsets: next } };
     }
     case "setNodes": {
-      if (s.nodes.on === e.on) return s;
-      return { ...s, nodes: { ...s.nodes, on: e.on, size: e.on && s.nodes.auto ? null : s.nodes.size } };
+      const nodes = markersOn(s.nodes, e.on);
+      return nodes === s.nodes ? s : { ...s, nodes };
     }
     case "setNodeSize": {
-      if (e.size === null) return { ...s, nodes: { ...s.nodes, size: null, auto: true } };
-      if (!Number.isFinite(e.size)) return s;
-      return { ...s, nodes: { ...s.nodes, size: Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, e.size)), auto: e.auto === true } };
+      const nodes = markerSize(s.nodes, e.size, e.auto);
+      return nodes === s.nodes ? s : { ...s, nodes };
+    }
+    case "setGaussPoints": {
+      const gaussPoints = markersOn(s.gaussPoints, e.on);
+      return gaussPoints === s.gaussPoints ? s : { ...s, gaussPoints };
+    }
+    case "setGaussSize": {
+      const gaussPoints = markerSize(s.gaussPoints, e.size, e.auto);
+      return gaussPoints === s.gaussPoints ? s : { ...s, gaussPoints };
     }
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);

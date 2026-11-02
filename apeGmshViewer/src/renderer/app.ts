@@ -46,6 +46,7 @@ viewport.setStepSource(() => effects.currentStep());
 viewport.setDisplacementSource(() => effects.currentDisplacement());
 // 3-D line diagrams: ribbon + profile + risers from the step the effects fetched.
 viewport.setLineDiagramSource(() => effects.currentLineDiagram());
+viewport.setStationsSource(() => effects.stationsOfStep());
 const panels = [
   mountHeader(store),
   mountBanner(store),

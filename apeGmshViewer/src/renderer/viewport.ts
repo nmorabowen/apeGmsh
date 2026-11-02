@@ -27,6 +27,8 @@ import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameF
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { LoadsLayer } from "./loads.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
+import { deformedPositions } from "../state/deform.ts";
+import { gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -119,6 +121,11 @@ export class Viewport {
   private offsetJointMap: Int32Array | null = null;
   private nodePoints: THREE.Points | null = null;
   private nodeVertices: NodeVertices | null = null;
+  /** Outside `content`, so a rebuild of the mesh keeps the placed layout. */
+  private readonly gaussGroup = new THREE.Group();
+  private gaussPoints: THREE.Points | null = null;
+  private gauss: { deps: unknown[]; layout: GaussLayout | null; base: Float32Array | null; posKey: string } | null = null;
+  private stationsSource: () => (StationPoints & { key: string }) | null = () => null;
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
@@ -194,7 +201,7 @@ export class Viewport {
     this.lineDiagram = new LineDiagramLayer(this.camera);
     this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
-    this.scene.add(this.ghost, this.markers);
+    this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
     this.scene.add(this.gizmos.root);
     // V4e3: the caps, likewise skipped by the clip stamping (each is trimmed by the other planes itself).
@@ -552,6 +559,7 @@ export class Viewport {
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
+    this.syncGauss(s);
     this.syncLineDiagram(s);
     this.syncLoads(s);
   }
@@ -570,6 +578,64 @@ export class Viewport {
     if (this.nodePoints.visible === nodes && m.size === size) return;
     this.nodePoints.visible = nodes;
     setNodeSize(this.nodePoints, size);
+    this.requestRender();
+  }
+
+  /** Where the beam stations for the Gauss markers come from (app.ts wires the effects). */
+  setStationsSource(source: () => (StationPoints & { key: string }) | null): void {
+    this.stationsSource = source;
+  }
+
+  /**
+   * The Gauss point and beam station markers: the layout is placed once per
+   * stage, hidden set and model; the positions follow the deformed shape by
+   * the layout's own weights over the step's nodal displacements.
+   */
+  private syncGauss(s: State): void {
+    const at = s.phase.at;
+    const want = s.gaussPoints.on && at?.kind === "results" && s.mesh !== null;
+    if (!want) {
+      if (this.gaussPoints?.visible) {
+        this.gaussPoints.visible = false;
+        this.requestRender();
+      }
+      return;
+    }
+    const info = s.mesh!;
+    const stations = this.stationsSource();
+    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, stations?.key ?? null];
+    if (!this.gauss || this.gauss.deps.length !== deps.length || this.gauss.deps.some((d, i) => d !== deps[i])) {
+      if (this.gaussPoints) {
+        this.gaussGroup.remove(this.gaussPoints);
+        this.gaussPoints.geometry.dispose();
+        (this.gaussPoints.material as THREE.Material).dispose();
+        this.gaussPoints = null;
+      }
+      const layout = info.nodes ? gaussLayoutOf(s, this.blobs, stations) : null;
+      const base = layout && info.nodes ? gaussBasePositions(layout, this.blobs.get(info.nodes.ids) as Float64Array, this.blobs.get(info.nodes.xyz) as Float64Array) : null;
+      this.gauss = { deps, layout, base, posKey: "" };
+      if (layout && base && layout.count) {
+        const t = themeTokens(this.activeTheme);
+        this.gaussPoints = makeNodePoints(base.slice(), s.gaussPoints.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.accent), toHexNumber(t.bg0));
+        this.gaussGroup.add(this.gaussPoints);
+      }
+    }
+    const g = this.gauss;
+    if (!this.gaussPoints || !g.layout || !g.base) return;
+    const full = this.full;
+    const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
+    const posKey = disp ? `${full!.key}` : "base";
+    if (posKey !== g.posKey) {
+      g.posKey = posKey;
+      const a = this.gaussPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const out = a.array as Float32Array;
+      if (disp) deformedPositions(g.base, gaussDisplacements(g.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale, out);
+      else out.set(g.base);
+      a.needsUpdate = true;
+      this.gaussPoints.geometry.computeBoundingSphere();
+    }
+    this.gaussPoints.visible = true;
+    setNodeSize(this.gaussPoints, s.gaussPoints.size ?? NODE_SIZE_FALLBACK);
     this.requestRender();
   }
 

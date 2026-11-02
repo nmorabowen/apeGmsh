@@ -234,6 +234,8 @@ export interface DisplacementData {
   frameEdge?: VertexDisplacement;
   offsetLine?: VertexDisplacement;
   offsetJoint?: VertexDisplacement;
+  /** the step's nodal rows and their columns, for what is placed between nodes (state/gaussPoints.ts) */
+  nodal?: { column: ReadonlyMap<number, number>; rows: readonly [Float64Array, Float64Array, Float64Array | null] };
 }
 
 /** The current results step's data: kept here, outside the store, and only the latest one (D5). */
@@ -273,6 +275,26 @@ export class Effects {
    */
   private readonly setWindowMs: number;
   private setTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** The beam stations of the step on screen, for the Gauss markers; null when none were read. */
+  stationsOfStep(): { key: string; elementIndex: Float64Array; stationNaturalCoord: Float64Array } | null {
+    const step = this.step;
+    const d = step?.lineDiagram;
+    return step && d ? { key: `${step.stage}|${d.component}`, elementIndex: d.elementIndex, stationNaturalCoord: d.stationNaturalCoord } : null;
+  }
+
+  private syncGaussSize(s: State): void {
+    const { on, size: chosen } = s.gaussPoints;
+    if (!on || chosen !== null || !s.mesh) return;
+    const edges = this.blobs.f32(s.mesh.edgePositions);
+    const segments = edges.length ? edges : this.blobs.f32(s.mesh.linePositions);
+    const viewportPx = typeof window === "undefined" ? 900 : Math.min(window.innerWidth, window.innerHeight);
+    // Smaller than the nodes', so the two read apart when both are on.
+    const size = Math.max(2, smartNodeSize(segments, s.mesh.radius, viewportPx) - 2);
+    queueMicrotask(() => {
+      if (this.store.get().gaussPoints.size === null) this.store.dispatch({ type: "setGaussSize", size, auto: true });
+    });
+  }
 
   private syncNodeSize(s: State): void {
     const { on, size: chosen } = s.nodes;
@@ -338,6 +360,7 @@ export class Effects {
       this.store.subscribe((s) => this.syncLineDiagram(s)),
       // The node markers' size, chosen when they turn on and the size is automatic.
       this.store.subscribe((s) => this.syncNodeSize(s)),
+      this.store.subscribe((s) => this.syncGaussSize(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -829,6 +852,7 @@ export class Effects {
         line: vertexDisplacements(lineNodes, column, rows),
         tri: vertexDisplacements(triNodes, column, rows),
         edge: vertexDisplacements(edgeNodes, column, rows),
+        nodal: { column, rows },
         ...(fe
           ? {
               frameTri: vertexDisplacements(this.blobs.get(fe.triNodes) as Float64Array, column, rows),
@@ -923,7 +947,13 @@ export class Effects {
     // rows joined the mesh of a verified file: `contourView` is `element` for no other).
     const v = contourView(s);
     const element = v.state === "element" ? v.component.key : null;
-    const lineDiagram = s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component) ? s.lineDiagram.component : null;
+    // The Gauss markers place beam stations from any one component's slab (the stations do not depend on it).
+    const lineDiagram =
+      s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component)
+        ? s.lineDiagram.component
+        : s.gaussPoints.on
+          ? (st.lineStations?.[0] ?? null)
+          : null;
     const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}`;
     if (key === this.stepKey) return;
     this.stepKey = key;

@@ -860,6 +860,12 @@ export interface State {
     /** true while the size is the chosen one, false once the user sets it */
     auto: boolean;
   };
+  /** The Gauss point and beam station markers (state/gaussPoints.ts), with the same size rules as the nodes. */
+  gaussPoints: {
+    on: boolean;
+    size: number | null;
+    auto: boolean;
+  };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
@@ -1053,6 +1059,9 @@ export type Event =
   | { type: "setNodes"; on: boolean }
   /** a number from the user; `auto` from the effects' choice; null asks for a new choice */
   | { type: "setNodeSize"; size: number | null; auto?: boolean }
+  /** the Gauss point markers, as setNodes and setNodeSize */
+  | { type: "setGaussPoints"; on: boolean }
+  | { type: "setGaussSize"; size: number | null; auto?: boolean }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }
