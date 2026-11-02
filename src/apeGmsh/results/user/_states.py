@@ -198,6 +198,10 @@ class _RecordedSource:
                  unbound_stages: Optional[str] = None, allow_stale: bool = False) -> None:
         if level not in LEVELS:
             raise ValueError(f"level {level!r} is not one of {LEVELS}")
+        if level == "domain" and ids is not None:
+            raise ValueError(
+                f"ids={ids!r} selects nodes or elements; a domain value ({component!r}) "
+                "has no ids")
         self.results = results
         self.level = level
         self.component = component
@@ -238,9 +242,11 @@ class _RecordedSource:
             "unresolved", f"no stage {source!r} in {[canonical_stage_name(s) for s in hosts]}")
 
     def check(self, address: StateAddress) -> None:
-        """Refuse a ``stage`` or ``mode`` source the stage list does not name canonically."""
-        if address.kind in ("stage", "mode"):
-            self._recorded(address)
+        """Refuse a ``stage`` or ``mode`` source the stage list does not name canonically.
+
+        A user result's stored row is read, never ``Results``, so a domain user
+        result passes here: only the name is checked.
+        """
         if address.kind == "stage":
             self._host(address.source)
         elif address.kind == "mode":
@@ -319,8 +325,8 @@ class _RecordedSource:
                 raise self._refuse(
                     "unresolved", f"a {address.kind} term reads /spectra, and no spectra "
                     "provider was given (Results.combinations() passes UserSpectra)")
-            return self.spectra.field(address, (self.level, self.component),
-                                      allow_stale=self.allow_stale)
+            return self._only_ids(self.spectra.field(
+                address, (self.level, self.component), allow_stale=self.allow_stale))
         raise self._refuse("bad-term", f"a {address.kind} term is not a state")
 
     def eigenvalue(self, address: StateAddress) -> float:
@@ -331,8 +337,29 @@ class _RecordedSource:
             raise self._refuse(
                 "unresolved", f"case {name!r} is read from /spectra, and no spectra provider "
                 "was given (Results.combinations() passes UserSpectra)")
-        return self.spectra.case(name, (self.level, self.component),
-                                 allow_stale=self.allow_stale)
+        found = self.spectra.case(name, (self.level, self.component),
+                                  allow_stale=self.allow_stale)
+        if self.ids is None:
+            return found
+        return Case(found.mode, found.lam, found.sa_period, found.damping,
+                    tuple(self._only_ids(f) for f in found.increments))
+
+    def _only_ids(self, f: Field) -> Field:
+        """The rows of a ``/spectra`` field at ``ids``, as a ``Results`` read selects them.
+
+        An id the case does not hold refuses: a NaN row would hide it.
+        """
+        if self.ids is None:
+            return f
+        want = np.unique(np.asarray(self.ids, dtype="i8").ravel())
+        have = np.asarray(f.keys["id"], dtype="i8")
+        missing = np.setdiff1d(want, have)
+        if missing.size:
+            raise self._refuse(
+                "unresolved", f"/spectra holds no row for ids {missing.tolist()} of "
+                f"{self.component!r}")
+        keep = np.isin(have, want)
+        return Field(f.keys[keep], f.components, f.values[keep])
 
 
 # ---------------------------------------------------------------------------

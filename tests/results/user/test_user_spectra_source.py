@@ -450,3 +450,79 @@ def test_an_element_quantity_of_a_spectrum_term_is_unresolved(tmp_path: Path) ->
         run.combinations(model_h5=model).evaluate("E", "axial_force", level="line_stations")
     assert err.value.reason == "unresolved"
     assert "ON_NODES and ON_DOMAIN only" in err.value.detail
+
+
+# ---- review of #2719: ids, a stored domain user result, allow_stale per term ----
+
+
+def _truss_combos(tmp_path: Path, model_name: str = "run.h5"):
+    run = _truss_set(tmp_path)
+    model = _model(tmp_path / "run.h5")
+    _truss_user(tmp_path, model)
+    return run, run.combinations(tmp_path / "run.user.h5", model_h5=tmp_path / model_name)
+
+
+def test_ids_select_the_spectrum_rows_too(tmp_path: Path) -> None:
+    """F1: ``D+E`` at ``ids=[2]`` is the stage at node 2 plus ``E`` at node 2, one row."""
+    run, combos = _truss_combos(tmp_path)
+    for component in ("displacement_x", "displacement_y"):
+        stage = combos.evaluate(StateAddress("stage", "stage_0"), component, ids=[2]).field
+        e = combos.evaluate("E", component, ids=[2]).field
+        both = combos.evaluate("D+E", component, ids=[2]).field
+        full = combos.evaluate("E", component).field
+        for f in (stage, e, both):
+            assert f.keys["id"].tolist() == [2] and f.values.shape == (1, 1)
+            assert not np.any(np.isnan(f.values))
+        np.testing.assert_array_equal(e.values[0], full.values[1])
+        np.testing.assert_allclose(both.values[0], stage.values[0] + e.values[0], rtol=1e-15)
+        k2 = combos.evaluate("k2", component, ids=[3, 2]).field
+        assert k2.keys["id"].tolist() == [2, 3]
+        ref = combos.evaluate(StateAddress("reference", "Ex"), component, ids=[3]).field
+        assert ref.keys["id"].tolist() == [3]
+    with pytest.raises(CombinationRefused) as err:
+        combos.evaluate("E", "displacement_x", ids=[2, 99])
+    assert err.value.reason == "unresolved" and "[99]" in err.value.detail
+
+
+def test_ids_on_the_domain_raise(tmp_path: Path) -> None:
+    _, combos = _truss_combos(tmp_path)
+    with pytest.raises(ValueError, match="no ids"):
+        combos.evaluate("E", "base_shear", level="domain", ids=[2])
+
+
+def test_a_stored_domain_user_result_reads_its_rows(tmp_path: Path) -> None:
+    """F2: a domain user result's stage row is stored, so ``level="domain"`` reads it."""
+    from apeGmsh.results.user import UserResult
+    run = _truss_set(tmp_path)
+    model = _model(tmp_path / "run.h5")
+    vb = UserResult(name="Vb", target="domain", basis="model", linear=True,
+                    states=(StateAddress("stage", "stage_0", -1, 0),), components=("1", "2"),
+                    data=np.array([[[5.0, 6.0]]]))
+    rows = [Combination("twoD", "linear", (Term("stage", "stage_0", -1, 0, 2.0),))]
+    write_user_file(tmp_path / "run.user.h5", model, results_file=tmp_path / "run.ladruno",
+                    combinations=rows, results=[vb])
+    combos = run.combinations(model_h5=model)
+    for level in ("nodes", "domain"):
+        lone = combos.evaluate(StateAddress("stage", "stage_0"), user_result="Vb", level=level)
+        np.testing.assert_array_equal(lone.field.values, [[5.0, 6.0]])
+        two = combos.evaluate("twoD", user_result="Vb", level=level)
+        np.testing.assert_array_equal(two.field.values, [[10.0, 12.0]])
+    # The name is still checked against the stage list.
+    with pytest.raises(CombinationRefused) as err:
+        combos.evaluate(StateAddress("stage", "nowhere"), user_result="Vb", level="domain")
+    assert err.value.reason == "unresolved"
+
+
+@pytest.mark.parametrize("state", [
+    "k2", StateAddress("reference", "Ex"), StateAddress("spectrum", "Ex", -1, 1)])
+@pytest.mark.parametrize("component, level", [("displacement_x", "nodes"), ("base_shear", "domain")])
+def test_allow_stale_reaches_every_spectra_read(tmp_path: Path, state, component, level) -> None:
+    """F3: a signed increment and the reference read through ``field()``, not ``case()``."""
+    _model(tmp_path / "other.h5", fem_hash="0" * 32)
+    run, stale = _truss_combos(tmp_path, "other.h5")
+    with pytest.raises(CombinationRefused) as err:
+        stale.evaluate(state, component, level=level)
+    assert err.value.reason == "stale"
+    got = stale.evaluate(state, component, level=level, allow_stale=True).field.values
+    fresh = run.combinations(tmp_path / "run.user.h5", model_h5=tmp_path / "run.h5")
+    np.testing.assert_array_equal(got, fresh.evaluate(state, component, level=level).field.values)

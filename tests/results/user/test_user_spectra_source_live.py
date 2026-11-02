@@ -8,7 +8,11 @@ The oracle is the driver's own combination of its in-memory values:
 
 * CQC and SRSS of each case, for each roof-column node's ``Ux`` and ``Uy``
   and for the base shear, equal :meth:`SpectrumModalResult.combine`;
-* 100/30 over the two CQC cases equals :meth:`SpectrumModalResult.directional`.
+* 100/30 over the two CQC cases equals :meth:`SpectrumModalResult.directional`;
+* at ``ids=[one node]``, the reference state plus the x CQC is that node's
+  gravity value plus the driver's CQC there: one row, no NaN. The frame has no
+  ``Results``, so the reference (the gravity state the driver recorded) stands
+  in for a stage here; the stage case is covered on the truss set.
 
 The provider is the one ``Results.combinations()`` builds, and the recorded
 source is the one ``UserCombinations.evaluate`` builds, so the spectrum terms
@@ -111,6 +115,7 @@ TABLE = resolve([
     Combination("Ex_srss", "srss", (Term("spectrum", "E_x"),)),
     Combination("dir", "directional",
                 (Term("combination", "Ex_cqc"), Term("combination", "Ey_cqc")), fraction=0.3),
+    Combination("G+E", "linear", (Term("reference", "E_x"), Term("combination", "Ex_cqc"))),
 ])
 
 
@@ -142,6 +147,17 @@ def test_a_cqc_over_a_written_case_equals_the_drivers_own(tmp_path: Path) -> Non
             got = evaluate(TABLE, name, source).field
             assert got.keys["id"].tolist() == ROOF_COLUMN
             np.testing.assert_allclose(got.values[:, 0], want, rtol=RTOL, err_msg=f"{name} {component}")
+
+    middle = ROOF_COLUMN[1]
+    n = ROOF_COLUMN.index(middle)
+    gravity = np.asarray(result.gravity_values["disp"])
+    for d, component in enumerate(("displacement_x", "displacement_y")):
+        at: Any = _RecordedSource(cast(Any, None), "nodes", component, [middle], spectra, "live")
+        got = evaluate(TABLE, "G+E", at).field
+        assert got.keys["id"].tolist() == [middle] and got.values.shape == (1, 1)
+        assert not np.isnan(got.values[0, 0])
+        want = gravity[2 * n + d] + cqc[0, 2 * n + d]
+        np.testing.assert_allclose(got.values[0, 0], want, rtol=RTOL, err_msg=f"G+E {component}")
 
     shear: Any = _RecordedSource(cast(Any, None), "domain", "base_shear", None, spectra, "live")
     for name, want in (("Ex_cqc", result.combine("base_shear", damping=XI)[0]),
