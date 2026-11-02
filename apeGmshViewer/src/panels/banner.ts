@@ -7,7 +7,7 @@
 // V4c2a adds the element contour's refusal (an unverified file, disagreeing
 // groups, rows that do not join the mesh) and element components refused alone.
 
-import { BANNER_BELOW_SCRUBBER_PX, noticesOf, refusalsOf, scrubberRow, warningsOf } from "../state/selectors.ts";
+import { BANNER_BELOW_SCRUBBER_PX, noticesOf, refusalsOf, SCRUBBER_TOP_PX, scrubberRow, warningsOf } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
@@ -16,6 +16,16 @@ export function bannerSummary(refused: number, notices: number, warnings: number
   if (refused + notices + warnings === 1 && only !== null) return only;
   const part = (n: number, one: string, many: string) => (n ? [`${n} ${n === 1 ? one : many}`] : []);
   return [...part(refused, "refused", "refused"), ...part(notices, "notice", "notices"), ...part(warnings, "warning", "warnings")].join(" · ");
+}
+
+/**
+ * The banner's top under the scrubber row: 106 px under a one-line bar, else
+ * 10 px below the bar's drawn height (`--phase-bar-h`, which panels/phase.ts
+ * publishes on the root; a panel may not import another, so the name is
+ * spelled here as in style.css). style.css moves `#left-rail` by the same rule.
+ */
+export function bannerTopBelowScrubber(): string {
+  return `max(${BANNER_BELOW_SCRUBBER_PX}px, calc(${SCRUBBER_TOP_PX}px + var(--phase-bar-h, 0px) + 10px))`;
 }
 
 export function mountBanner(store: Store): () => void {
@@ -48,8 +58,9 @@ export function mountBanner(store: Store): () => void {
     const notices = noticesOf(s);
     const warnings = warningsOf(s);
     banner.hidden = refusals.length === 0 && notices.length === 0 && warnings.length === 0;
-    // Below the results scrubber row when there is one (panels/phase.ts).
-    banner.style.top = scrubberRow(s) ? `${BANNER_BELOW_SCRUBBER_PX}px` : "";
+    // Below the results scrubber row when there is one (panels/phase.ts), however many lines it wrapped to:
+    // phase.ts publishes the bar's drawn height as --phase-bar-h, and a one-line bar keeps the banner at 106 px (VU3b, #2737).
+    banner.style.top = scrubberRow(s) ? bannerTopBelowScrubber() : "";
     unlisten?.();
     const only = [...refusals, ...notices, ...warnings][0] ?? null;
     const summary = el("button", "banner-summary" + (refusals.length ? " refused" : ""), `${open ? "▾" : "▸"} ${bannerSummary(refusals.length, notices.length, warnings.length, only)}`);
@@ -67,11 +78,40 @@ export function mountBanner(store: Store): () => void {
       ...notices.map((n) => el("div", "notice", n)),
       ...warnings.map((w) => el("div", undefined, w)),
     );
+    publish();
+  };
+  /**
+   * Where the banner is, for style.css: `#left-rail` sits below it (VU3b,
+   * #2737). Its top is the expression above (or the CSS 58 px off the scrubber
+   * row), and its drawn height is measured: a still shows every line of a
+   * closed banner, and a wrapped bar moves it down. Only the closed height is
+   * published: the open list overlays the rail (z-index 20), as it always has,
+   * so while it is open the last closed height stands.
+   */
+  const rootStyle = () => {
+    const root = typeof document === "undefined" ? undefined : document.documentElement?.style;
+    return typeof root?.setProperty === "function" ? root : null;
+  };
+  const withdraw = () => {
+    const root = rootStyle();
+    root?.removeProperty("--banner-top");
+    root?.removeProperty("--banner-h");
+  };
+  const publish = () => {
+    const root = rootStyle();
+    if (!root) return;
+    if (banner.hidden) return withdraw();
+    root.setProperty("--banner-top", scrubberRow(store.get()) ? bannerTopBelowScrubber() : "58px");
+    if (banner.dataset["open"] === undefined) root.setProperty("--banner-h", `${Math.ceil(banner.getBoundingClientRect().height)}px`);
   };
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
+  const sized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publish);
+  sized?.observe(banner);
   return () => {
     unsubscribe();
     unlisten?.();
+    sized?.disconnect();
+    withdraw();
   };
 }

@@ -20,7 +20,19 @@ import { THEME_MODES } from "../theme/tokens.ts";
 import {
   LINE_STATION_COMPONENTS,
   NAMED_VIEWS,
+  USER_RESULT_BASES,
+  USER_RESULT_TARGETS,
+  USER_ZONES,
   WINDOW_KINDS,
+  type StaleMark,
+  type UserCombination,
+  type UserCombinationIn,
+  type UserIndexIn,
+  type UserInfo,
+  type UserReadIn,
+  type UserRefusal,
+  type UserRefusalIn,
+  type UserStalenessIn,
   type ArtifactInfo,
   type ArtifactKind,
   type CameraPose,
@@ -230,6 +242,7 @@ export const initialState: State = {
   stageElements: { status: "none" },
   results: null,
   resultStep: null,
+  user: null,
   contour: initialContour,
   ndm: NO_NDM,
   units: null,
@@ -440,6 +453,96 @@ function withOffer(s: State, id: number, change: Partial<Offer>): State {
   return { ...s, offers: { ...s.offers, list: s.offers.list.map((o) => (o.id === id ? { ...o, ...change } : o)) } };
 }
 
+/** Whatever has no staleness verdict is stale (A6: nothing is drawn as current on no proof). */
+const NO_VERDICT: StaleMark = { stale: true, reason: "the reader gave no staleness verdict for it" };
+
+function oneOf<T extends string>(v: string, allowed: readonly T[], who: string): T {
+  if (!(allowed as readonly string[]).includes(v)) throw new RangeError(`userRead: ${who} ${JSON.stringify(v)} is not one of ${allowed.join(", ")}`);
+  return v as T;
+}
+
+const refusalsOf = (rows: readonly UserRefusalIn[]): UserRefusal[] => rows.map((r) => ({ name: r.name, reason: r.reason, detail: r.detail }));
+
+/**
+ * ADR 0130: the renderer's view of a `.user.h5` (`user:read`'s index and A6
+ * staleness): the User Combinations and Spectra families of the phase bar, the
+ * User Results picker group, and `/modes` as a zone. A target or basis this app
+ * does not know raises, so the caller refuses the answer, never shows it.
+ */
+export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): UserInfo {
+  // Own keys only: a user result may be named `constructor`.
+  const markOf = (rec: Record<string, StaleMark>, key: string): StaleMark => (Object.hasOwn(rec, key) ? rec[key]! : NO_VERDICT);
+  const zoneMark = (z: string): StaleMark => markOf(staleness.zones, z);
+  const known = USER_ZONES as readonly string[];
+  const warnings = [...index.warnings];
+  for (const z of index.zones) if (!known.includes(z)) warnings.push(`${index.path.split(/[\\/]/).pop()} holds /${z}, a zone this app does not know; it is not read`);
+  let combinations: UserInfo["combinations"] = null;
+  const c = index.combinations;
+  if (!c.ok) combinations = { ok: false, reason: c.reason };
+  else if (c.value.rows.length || c.value.modelRows.length || c.value.refused.length) {
+    const stale = new Set(staleness.combinations);
+    const item = (origin: "user" | "model") => (r: UserCombinationIn): UserCombination => ({ name: r.name, rule: r.rule, origin, terms: r.terms.length, stale: stale.has(r.name) });
+    combinations = { ok: true, items: [...c.value.rows.map(item("user")), ...c.value.modelRows.map(item("model"))], refused: refusalsOf(c.value.refused) };
+  }
+  let results: UserInfo["results"] = null;
+  const r = index.results;
+  if (!r.ok) results = { ok: false, reason: r.reason };
+  else if (r.value.entries.length || r.value.refused.length) {
+    results = {
+      ok: true,
+      items: r.value.entries.map((x) => ({
+        name: x.name,
+        target: oneOf(x.target, USER_RESULT_TARGETS, `the target of ${x.name}`),
+        basis: oneOf(x.basis, USER_RESULT_BASES, `the basis of ${x.name}`),
+        perState: x.perState,
+        linear: x.linear,
+        stale: markOf(staleness.results, x.name),
+      })),
+      refused: refusalsOf(r.value.refused),
+    };
+  }
+  const m = index.modes;
+  const modes: UserInfo["modes"] = m === null ? null : m.ok ? { ok: true, rows: m.value.rows, stale: zoneMark("modes") } : { ok: false, reason: m.reason, stale: zoneMark("modes") };
+  const spectra = index.zones.includes("spectra") ? { stale: zoneMark("spectra") } : null;
+  return { warnings, combinations, results, spectra, modes };
+}
+
+/** The suffixes main/pairing.ts `classify` knows, longest first; a part file `<stem>.part-<N>.ladruno` is its stem's results. */
+const SET_SUFFIX = /^(.*?)(?:\.part-\d+\.ladruno|\.geometry\.h5|\.results\.h5|\.user\.h5|\.ladruno|\.h5)$/i;
+
+/**
+ * ADR 0130 D2: the `.user.h5` of a set, `<stem>.user.h5` beside its model (or
+ * its results, with no model): main/pairing.ts `candidates`, which the
+ * renderer cannot import (it reads node:fs); test/state/user.test.ts holds the
+ * two together. A path the app does not open raises.
+ */
+export function userPathOf(set: { model: string | null; results: string | null }): string | null {
+  const from = set.model ?? set.results;
+  if (from === null) return null;
+  const m = SET_SUFFIX.exec(from);
+  if (!m || m[1] === "") throw new Error(`userPathOf: ${from} is not a <stem>.h5, <stem>.results.h5 or <stem>.ladruno`);
+  return `${m[1]}.user.h5`;
+}
+
+/** reader/userFile.ts `readUserFile`'s refusal of a path with no file: the set has no `.user.h5`, which is not a failure. */
+export const NO_USER_FILE = (path: string): string => `no such file: ${path}`;
+
+/** The event a `user:read` answer for `path` becomes: no file there is `userClosed`; any other answer is `userRead`. */
+export function userEventOf(path: string, read: UserReadIn): Event {
+  return !read.ok && read.error === NO_USER_FILE(path) ? { type: "userClosed" } : { type: "userRead", path, read };
+}
+
+/**
+ * Whether the `.user.h5` may be read now: after the model's first read has
+ * landed (ready or failed), so the first frame never waits on it (ADR 0130
+ * VU3a: "the first frame reads none of it"). A set with no model reads at once.
+ */
+export function userReadable(s: State, model: string | null): boolean {
+  if (model === null) return true;
+  const a = s.artifacts.model;
+  return a !== null && a.path === model && a.status !== "opened";
+}
+
 export function reduce(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
@@ -550,6 +653,8 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
         geometry: s.geometry,
         results: s.results,
+        // ADR 0130: the .user.h5 is the set's; renderer/app.ts opens and closes it with the set.
+        user: s.user,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -589,6 +694,7 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
         geometry: s.geometry,
         results: s.results,
+        user: s.user,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -1240,6 +1346,20 @@ export function reduce(s: State, e: Event): State {
       const t = back.some((b) => b.offer === top.offer) ? s : withOffer(s, top.offer, { status: "pending", reason: null });
       return { ...t, offers: { ...t.offers, request: null, back, notice: e.notice } };
     }
+    case "userOpened": {
+      if (typeof e.path !== "string" || e.path === "") throw new RangeError(`userOpened: ${JSON.stringify(e.path)} is not a path`);
+      // A re-read of the same file is pending too: a verdict read before the change (to it, the model or the results) is not shown as current.
+      if (s.user?.path === e.path && s.user.status === "reading") return s;
+      return { ...s, user: { status: "reading", path: e.path } };
+    }
+    case "userRead": {
+      if (!s.user || s.user.path !== e.path) throw new Error(`userRead: ${e.path} is not the open .user.h5`);
+      if (!e.read.ok) return { ...s, user: { status: "failed", path: e.path, error: e.read.error } };
+      if (e.read.user.path !== e.path) throw new Error(`userRead: the answer is for ${e.read.user.path}, not ${e.path}`);
+      return { ...s, user: { status: "ready", path: e.path, info: userInfoOf(e.read.user, e.read.staleness) } };
+    }
+    case "userClosed":
+      return s.user === null ? s : { ...s, user: null };
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

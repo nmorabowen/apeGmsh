@@ -2,7 +2,7 @@
 //
 // Contract for the renderer (V2e's effects.ts feature-detects these):
 //   onOpen(cb(set))        cb hears the set already open (if any) once, then
-//                          every later open: {model, geometry, results}, each
+//                          every later open: {model, geometry, results, user}, each
 //                          an absolute path or null (./pairing.ts)
 //   onFileChanged(cb(path)) a file of the open set was rewritten and closed
 //   goToSource(file, line)  open the user's editor; Promise<{ok, reason?}>
@@ -17,6 +17,10 @@
 //   scanResults(req)        the history range of a contour field (V4c1);
 //                          cancelResultsScan(id) stops it, and
 //                          onScanProgress(cb) hears its progress
+//   readUser(req)           ADR 0130: the set's `<stem>.user.h5` index and its
+//                          staleness against the model and results files the
+//                          request names (`user:read`, reader/userFile.ts
+//                          `UserRead`); never raises, a refusal is `ok: false`
 //   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 // onOpen and onFileChanged return a function that removes the listener.
@@ -29,6 +33,8 @@ interface OpenSet {
   model: string | null;
   geometry: string | null;
   results: string | null;
+  /** ADR 0130: the `<stem>.user.h5` beside the model, or null */
+  user: string | null;
 }
 
 const listeners = { open: 0, fileChanged: 0 };
@@ -89,6 +95,8 @@ contextBridge.exposeInMainWorld("viewer", {
   // V4c2b: an element scan may carry a node-located topology's extrapolation plan (main checks it).
   scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" | "line"; plan?: unknown }) => ipcRenderer.invoke("results:scan", req),
   cancelResultsScan: (scanId: number) => ipcRenderer.invoke("results:scanCancel", scanId),
+  // ADR 0130 (VU3b, #2688): the `.user.h5` index, read on request after the first frame (renderer/app.ts).
+  readUser: (req: { path: string; model: string | null; results: string | null }) => ipcRenderer.invoke("user:read", req),
   onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
     const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
     ipcRenderer.on("results:scanProgress", handler);

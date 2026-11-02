@@ -21,8 +21,9 @@ import { BlobStore } from "../state/blobs.ts";
 import { offsetRange } from "../state/clip.ts";
 import { contourKeysOf, gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
+import { userEventOf, userPathOf, userReadable } from "../state/reduce.ts";
 import { Store } from "../state/store.ts";
-import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
+import { WINDOW_KINDS, type DeclPath, type GaussMode, type UserReadIn } from "../state/types.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
 import { OfferRunner, snapshotManifest } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
@@ -1371,6 +1372,105 @@ const stillLayout: Layout = {
   },
 };
 
+/** ADR 0130 (VU3b): main's door for the set's `.user.h5` (main/preload.ts `readUser`, `user:read`); the Effects bridge does not carry it. */
+interface UserBridge {
+  readUser(req: { path: string; model: string | null; results: string | null }): Promise<UserReadIn>;
+  onOpen(cb: (set: { model: string | null; results: string | null; user?: string | null }) => void): () => void;
+  onFileChanged(cb: (path: string) => void): () => void;
+}
+
+/** One `.user.h5` read: the file and the set's model and results files its staleness is judged against (A6). */
+interface UserTarget {
+  path: string;
+  model: string | null;
+  results: string | null;
+  /** main named the file in the set (`OpenSet.user`); otherwise `path` is where one would be, and may hold nothing */
+  known: boolean;
+}
+
+const userDoor = bridge as unknown as UserBridge;
+/** Counts `user:read` requests: an answer that is not the latest request's is dropped. */
+let userSeq = 0;
+
+/**
+ * Read the set's `.user.h5` into the store; resolves once the answer is
+ * there. No file there closes it (`userEventOf`); an answer the app cannot
+ * take (an unknown target, a malformed reply) is a refusal with the reason,
+ * never a partial listing. The read is announced (`userOpened`, the "reading"
+ * badge) only for a file the set has: main named it, or it was read before.
+ * A look where no file is known says nothing until a file answers (#2737
+ * delta review, item 2).
+ */
+async function readUser(t: UserTarget): Promise<void> {
+  const seq = ++userSeq;
+  const announced = t.known || store.get().user?.path === t.path;
+  if (announced) store.dispatch({ type: "userOpened", path: t.path });
+  let read: UserReadIn;
+  try {
+    read = await userDoor.readUser(t);
+  } catch (err) {
+    read = { ok: false, error: `user:read failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (seq !== userSeq) return;
+  const event = userEventOf(t.path, read);
+  if (!announced) {
+    if (event.type === "userClosed") return;
+    store.dispatch({ type: "userOpened", path: t.path });
+  }
+  try {
+    store.dispatch(event);
+  } catch (err) {
+    store.dispatch({ type: "userRead", path: t.path, read: { ok: false, error: `the app cannot take user:read's answer: ${err instanceof Error ? err.message : String(err)}` } });
+  }
+}
+
+/**
+ * ADR 0130, view mode: each open set's `.user.h5` (main's `user` slot, else
+ * `<stem>.user.h5`, which may appear later), read once the model's first read
+ * has landed, so the first frame never waits on it; and again whenever the
+ * user file, the model or the results change, because A6's staleness depends
+ * on all three (#2729). The file appearing, being replaced or being deleted
+ * arrives as `fileChanged` of its path, never as a reopen.
+ */
+function mountUserFeed(): void {
+  let target: UserTarget | null = null;
+  let pending = false;
+  const go = () => {
+    if (!pending || !target || !userReadable(store.get(), target.model)) return;
+    pending = false;
+    void readUser(target);
+  };
+  panels.push(store.subscribe(go));
+  panels.push(
+    userDoor.onOpen((set) => {
+      const path = set.user ?? userPathOf(set);
+      const moved = path !== target?.path;
+      target = path === null ? null : { path, model: set.model, results: set.results, known: set.user !== null && set.user !== undefined };
+      if (target === null) {
+        userSeq++;
+        pending = false;
+        store.dispatch({ type: "userClosed" });
+        return;
+      }
+      // Another set's user file: the last one's families leave at once, and an answer still on its way for it is dropped
+      // (#2737 review, F1). Only the read itself waits for the model's first read; the same file again keeps waiting as before.
+      if (moved) {
+        userSeq++;
+        store.dispatch(target.known ? { type: "userOpened", path: target.path } : { type: "userClosed" });
+      }
+      pending = true;
+      go();
+    }),
+  );
+  panels.push(
+    userDoor.onFileChanged((path) => {
+      if (!target || ![target.path, target.model, target.results].includes(path)) return;
+      pending = true;
+      go();
+    }),
+  );
+}
+
 /** VA5: main's door for `--present` and `--snapshot` (main/preload.ts); the Effects bridge does not carry them. */
 interface OfferBridge {
   onOffers(cb: (offers: OfferIn[]) => void): () => void;
@@ -1431,11 +1531,20 @@ async function main() {
   // ADR 0128 D4: the agent modes (render, describe) run their own flow; the config's mode union predates them.
   const mode: string = cfg.mode;
   if (mode === "render" || mode === "describe") {
-    await runAgentMode({ store, blobs, effects, viewport, bridge: bridge as unknown as RenderBridge, layout: stillLayout });
+    const renderBridge = bridge as unknown as RenderBridge;
+    if (mode === "render") {
+      // ADR 0130: the spec's set has a `.user.h5` when one is beside its model; it is read before the shots, so every still states it.
+      const job = await renderBridge.renderJob();
+      const path = job.mode === "render" ? userPathOf(job) : null;
+      if (job.mode === "render" && path !== null) await readUser({ path, model: job.model, results: job.results, known: false });
+    }
+    await runAgentMode({ store, blobs, effects, viewport, bridge: renderBridge, layout: stillLayout });
     return;
   }
   if (cfg.mode === "view") {
     effects.attach();
+    // After the effects' own onOpen, so a set's model read has started before the user feed looks at it.
+    mountUserFeed();
     mountOfferFlow();
     // With V2f's `onOpen`, main replays the open set on subscription; loading
     // `config().file` here as well would read the model twice.
