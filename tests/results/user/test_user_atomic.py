@@ -378,18 +378,25 @@ def test_a_dead_writers_partial_is_swept_and_a_live_ones_is_not(make_model, tmp_
 
 
 def test_a_sweep_that_fails_does_not_fail_the_write(make_model, tmp_path, monkeypatch) -> None:
+    """The first leftover the sweep meets refuses; the write stands, and the sweep
+    goes on to the next leftover."""
     target = tmp_path / "s.user.h5"
-    dead = _leftover(target, _dead_pid())
+    leftovers = {_leftover(target, _dead_pid()), _leftover(target, _dead_pid())}
     real = Path.unlink
+    refused: list[Path] = []
 
-    def refuse(self, *a, **k):
-        if self == dead:
+    def refuse_first(self, *a, **k):
+        if self in leftovers and not refused:
+            refused.append(self)
             raise PermissionError("a dead writer's lock outlives it for a moment")
         return real(self, *a, **k)
 
-    monkeypatch.setattr(Path, "unlink", refuse)
+    monkeypatch.setattr(Path, "unlink", refuse_first)
     write_user_file(target, make_model())
-    assert target.exists() and dead.exists()
+    assert target.exists() and len(refused) == 1
+    assert refused[0].exists()
+    (swept,) = leftovers - set(refused)
+    assert not swept.exists(), "one failed removal stopped the sweep"
 
 
 def test_a_failed_write_deletes_only_its_own_partial(make_model, tmp_path, monkeypatch) -> None:
