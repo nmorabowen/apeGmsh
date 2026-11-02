@@ -25,6 +25,15 @@ recorded levels read ``Results``; ``domain`` (a whole-model value such as
 ``base_shear``, named by its label) exists only in ``/spectra``, so a ``stage``
 or ``mode`` term of a domain quantity refuses ``unresolved``.
 
+A recorded quantity is linear, so a summing rule may combine it (A5), when the
+reader translated it from a recorder: every component of a ``.ladruno`` or an
+``.mpco``. A native ``results.h5`` also stores what a writer put beside the
+recorded responses (the YOO slab's ``wood_armer_*`` and ``rib_shear_*``), so
+there a component is linear only if it is a recorder spelling
+(:func:`apeGmsh._vocabulary.is_canonical`). Any other name, the empty one
+included, refuses ``not-linear`` under a summing rule or a factor; ``envelope``
+of factor-1 terms and a lone state read still read it (owner ruling, VU2c).
+
 A user result reads its ``STATES`` rows instead, by exact address, after the
 same canonical check, so a row stored as ``("stage", "gravity")`` is the one a
 term naming ``gravity`` reads. One state read alone has no rule
@@ -41,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 
 import numpy as np
 
+from ..._vocabulary import is_canonical
 from ._descriptor import CombinationTable, StateAddress, resolve
 from ._evaluate import (
     Case,
@@ -83,6 +93,25 @@ _MODE_STAGE = re.compile(r"(?P<host>.+?)(?:_step_(?P<step>\d+))?_mode_(?P<mode>\
 #: The name a recorder gives a stage the run did not stamp.
 _UNSTAMPED = re.compile(r"MODEL_STAGE\[\d+\]\Z")
 _PART = re.compile(r"\.part-\d+\Z")
+#: The suffixes the readers' dispatch (:func:`apeGmsh.results._open.open_results`)
+#: opens with a recorder's reader. Any other file opens as a native ``results.h5``.
+_RECORDER_SUFFIXES = (".ladruno", ".mpco")
+
+
+def recorded_is_linear(results_file: Optional[Path], level: str, component: str) -> bool:
+    """Whether a summing rule may combine recorded ``(level, component)`` (A5).
+
+    A ``domain`` value is read from ``/spectra`` only, never from the results
+    file, so the file does not judge it. A ``.ladruno`` or ``.mpco`` serves only
+    what it recorded. Any other file, and a ``Results`` with no file, is judged
+    by the one recorder vocabulary, :func:`apeGmsh._vocabulary.is_canonical`: a
+    native ``results.h5`` stores design fields as ordinary components.
+    """
+    if level == "domain":
+        return True
+    if results_file is not None and results_file.suffix.lower() in _RECORDER_SUFFIXES:
+        return True
+    return is_canonical(component)
 
 
 def canonical_stage_name(info: Any) -> str:
@@ -189,13 +218,16 @@ def _ordinal_within(ids: np.ndarray) -> np.ndarray:
 
 
 class _RecordedSource:
-    """One recorded quantity of a ``Results``: ``(level, component)``."""
+    """One recorded quantity of a ``Results``: ``(level, component)``.
 
-    linear = True
+    ``linear`` is :func:`recorded_is_linear` of ``results_file``, the file the
+    ``Results`` was opened on; with none given the component is judged by name.
+    """
 
     def __init__(self, results: "Results", level: str, component: str,
                  ids: Optional[Any], spectra: Optional[SpectraProvider], name: str,
-                 unbound_stages: Optional[str] = None, allow_stale: bool = False) -> None:
+                 unbound_stages: Optional[str] = None, allow_stale: bool = False,
+                 results_file: Optional[Path] = None) -> None:
         if level not in LEVELS:
             raise ValueError(f"level {level!r} is not one of {LEVELS}")
         if level == "domain" and ids is not None:
@@ -210,6 +242,8 @@ class _RecordedSource:
         self.name = name
         self.unbound_stages = unbound_stages
         self.allow_stale = bool(allow_stale)
+        self.linear = recorded_is_linear(
+            None if results_file is None else Path(results_file), level, component)
 
     def stored(self, name: str) -> Optional[Field]:
         return None  # a recorded file stores no combination
@@ -558,7 +592,8 @@ class UserCombinations:
             raise ValueError("pass exactly one of component= and user_result=")
         recorded = _RecordedSource(
             self._results, level, component or "", ids, self.spectra, label,
-            unbound_stages=self._unbound_stages, allow_stale=allow_stale)
+            unbound_stages=self._unbound_stages, allow_stale=allow_stale,
+            results_file=self.results_file)
         source: Any = recorded
         if user_result is not None:
             if self._user is None:
