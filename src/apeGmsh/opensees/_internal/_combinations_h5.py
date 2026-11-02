@@ -35,7 +35,7 @@ import math
 import unicodedata
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 if TYPE_CHECKING:
     import h5py
@@ -267,7 +267,7 @@ def declare_combination(
     envelope: str,
     fraction: float | None,
     damping: float | None,
-    known: "Sequence[str] | dict[str, Combination]",
+    known: "Mapping[str, Combination]",
 ) -> Combination:
     """Build a combination, or raise :class:`CombinationError`.
 
