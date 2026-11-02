@@ -11,5 +11,7 @@ factor-1 terms and a lone state read still read it. A derived scalar
 (`von_mises_stress`, `principal_stress_1` and the other `DERIVED_*_SCALARS`)
 is now refused the same way on every source, `.ladruno` and `.mpco` included,
 since a sum of it is not its value under the summed tensor; `mean_stress` and
-`volumetric_strain` are refused with their families. Otherwise `.ladruno` and
+`volumetric_strain` are refused with their families. So is a custom scalar
+(`results.nodes.define(...)`, `results.elements.gauss.define(...)`, or one
+auto-loaded from `<results>.defs.json`), on every source. Otherwise `.ladruno` and
 `.mpco` results, `domain` values and `.user.h5` results are unchanged.
