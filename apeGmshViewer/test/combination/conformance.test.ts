@@ -229,6 +229,13 @@ test("hand values", () => {
   assert.equal(env[0], 1);
 });
 
+test("a whole case scales by |factor|: -2 over Ex reads the golden of +2", () => {
+  const t = CombinationTable.resolve([{ name: "neg", rule: "srss", terms: [{ kind: "spectrum", source: "Ex", step: -1, mode: 0, factor: -2 }], envelope: "", fraction: null, damping: null }]);
+  const want = DOC.goldens["recorded"]!["Ex_srss"]!;
+  assert.ok(!("refused" in want), "Ex_srss is a golden value");
+  check(want, () => evaluate(t, "neg", new FixtureSource()), "neg");
+});
+
 test("a stored row wins over the rule for a user result", () => {
   assert.deepEqual([...evaluate(table(), "ULS", sourceOf("wood_armer_top")).field.values], [9, 8, 7, 6, 5, 4]);
 });
