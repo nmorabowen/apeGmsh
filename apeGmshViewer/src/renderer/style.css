@@ -448,18 +448,22 @@ code { font-family: var(--mono); }
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }
 
-/* The colour scale in the viewport: shown whenever a contour is drawn, top left of
-   the free space until it is dragged (ui/scaleChrome.ts). */
-#viewport-scale {
-  position: fixed; padding: 8px 10px; border-radius: 9px;
+/* The colour scales in the viewport: shown while a contour or a line diagram is
+   drawn, stacked top left of the free space until dragged (ui/scaleChrome.ts). */
+.viewport-scale {
+  padding: 8px 10px; border-radius: 9px; pointer-events: auto;
   cursor: grab; user-select: none; touch-action: none;
   background: var(--panel); border: 1px solid var(--line);
 }
-#viewport-scale.dragging { cursor: grabbing; }
-#viewport-scale[hidden] { display: none; }
-#viewport-scale:not([data-moved]) { left: 324px; top: 102px; }
-#banner:not([hidden]) ~ #viewport-scale:not([data-moved]) { top: 168px; }
-body[data-still-chrome="model"] #viewport-scale { display: none; }
+.viewport-scale.dragging { cursor: grabbing; }
+.viewport-scale[hidden] { display: none; }
+.viewport-scale[data-moved] { position: fixed; }
+#scale-stack {
+  position: fixed; left: 324px; top: 102px; pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+}
+#banner:not([hidden]) ~ #scale-stack { top: 168px; }
+body[data-still-chrome="model"] #scale-stack { display: none; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
 .vs-title { font-weight: 600; font-size: 13px; }
 .vs-orient {
@@ -475,8 +479,8 @@ body[data-still-chrome="model"] #viewport-scale { display: none; }
 .vs-ticks { display: flex; justify-content: space-between; font-size: 12px; font-variant-numeric: tabular-nums; }
 [data-orient="vertical"] .vs-ticks { flex-direction: column-reverse; }
 .vs-range { color: var(--muted); font-size: 12px; margin: 6px 0; }
-#viewport-scale .contour-modes { margin-bottom: 0; }
-#viewport-scale .contour-fixed { margin-top: 6px; }
+.viewport-scale .contour-modes { margin-bottom: 0; }
+.viewport-scale .contour-fixed { margin-top: 6px; }
 
 /* The Display and Deformed cards. */
 #display, #deform {

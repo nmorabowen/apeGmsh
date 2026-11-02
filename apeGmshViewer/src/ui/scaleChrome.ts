@@ -1,15 +1,49 @@
-// The contour scale's place on screen: dragging it, keeping it in the window,
-// and remembering its orientation and position between launches. This is the
+// The colour scales in the viewport (contour, line diagram): what each draws,
+// dragging it, keeping it in the window, and remembering its orientation and
+// position between launches, each under its own key. This is the
 // viewer's own preference, not model data or a view a spec states, so it lives
 // on the element and in this profile's localStorage rather than in the store.
 // An agent run has a profile of its own (main.ts), so its stills always draw
 // the default place.
 
-import { listen } from "./dom.ts";
-
-const KEY = "apegmsh.viewer.contourScale";
+import { el, listen } from "./dom.ts";
 
 export type ScaleOrient = "horizontal" | "vertical";
+
+export interface ScaleContent {
+  title: string;
+  /** where the unit came from, as the title's tooltip */
+  tooltip: string;
+  /** the colormap's CSS gradient, running `to right` */
+  ramp: string;
+  ticks: readonly string[];
+  range: string;
+}
+
+/** Draw a scale's title, orientation button, bar, values and range line. The caller appends its range controls. */
+export function fillScale(scale: HTMLElement, c: ScaleContent, unlisten: (() => void)[], onOrient: () => void): void {
+  const vertical = scale.dataset["orient"] === "vertical";
+  const bar = el("div", "vs-ramp");
+  bar.style.backgroundImage = vertical ? c.ramp.replace("to right", "to top") : c.ramp;
+  const ticks = el("div", "vs-ticks");
+  for (const t of c.ticks) ticks.append(el("span", undefined, t));
+  const body = el("div", "vs-body");
+  body.append(bar, ticks);
+  const orient = el("button", "vs-orient", vertical ? "horizontal" : "vertical");
+  orient.type = "button";
+  orient.title = vertical ? "lay the scale out horizontally" : "lay the scale out vertically";
+  unlisten.push(
+    listen(orient, "click", () => {
+      scale.dataset["orient"] = vertical ? "horizontal" : "vertical";
+      onOrient();
+    }),
+  );
+  const title = el("span", "vs-title", c.title);
+  title.title = c.tooltip;
+  const head = el("div", "vs-head");
+  head.append(title, orient);
+  scale.replaceChildren(head, body, el("div", "vs-range", c.range));
+}
 
 export interface SavedScale {
   orient: ScaleOrient;
@@ -43,7 +77,7 @@ export interface ScaleChrome {
   dispose(): void;
 }
 
-export function mountScaleChrome(scale: HTMLElement): ScaleChrome {
+export function mountScaleChrome(scale: HTMLElement, key: string): ScaleChrome {
   const place = (left: number, top: number) => {
     const r = scale.getBoundingClientRect();
     scale.style.left = `${Math.max(0, Math.min(left, window.innerWidth - r.width))}px`;
@@ -58,7 +92,7 @@ export function mountScaleChrome(scale: HTMLElement): ScaleChrome {
       at: scale.dataset["moved"] ? { left: scale.offsetLeft, top: scale.offsetTop } : null,
     };
     try {
-      localStorage.setItem(KEY, JSON.stringify(saved));
+      localStorage.setItem(key, JSON.stringify(saved));
     } catch {
       // Blocked storage only costs the memory of the place; the scale still works.
     }
@@ -66,7 +100,7 @@ export function mountScaleChrome(scale: HTMLElement): ScaleChrome {
 
   let stored: string | null = null;
   try {
-    stored = localStorage.getItem(KEY);
+    stored = localStorage.getItem(key);
   } catch {
     // As above: the default place holds.
   }

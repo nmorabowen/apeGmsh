@@ -490,11 +490,12 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
   const h = await opened(FRAME3D_MODEL, FRAME3D_LADRUNO);
   const prevDoc = (globalThis as { document?: unknown }).document;
   const aside = new FakeEl("aside");
+  const scaleAside = new FakeEl("div");
   const docEl = { dataset: { theme: "dark" } as Record<string, string | undefined> };
   (globalThis as { document?: unknown }).document = {
     documentElement: docEl,
     createElement: (tag: string) => new FakeEl(tag),
-    getElementById: (id: string) => (id === "line-diagram" ? aside : null),
+    getElementById: (id: string) => (id === "line-diagram" ? aside : id === "line-diagram-scale" ? scaleAside : null),
   };
   let unmount: (() => void) | null = null;
   try {
@@ -549,7 +550,7 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
       unlisten,
     ) as unknown as FakeEl | null;
     assert.ok(dom !== null);
-    assert.equal(dom.find("line-diagram-title")?.textContent, "section_force · Mz (bending_moment_z)");
+    assert.equal(scaleAside.find("vs-title")?.textContent, "section_force · Mz (bending_moment_z)");
 
     // Flip sign button (for Mz, flipped is true by default, so clicking it dispatches flipSign: false):
     const flipBtn = dom.find("line-diagram-flip");
@@ -625,9 +626,14 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
     for (const u of unlisten.splice(0)) u();
     dom = renderLineDiagram(h.store.get(), undefined, unlisten) as unknown as FakeEl | null;
     assert.ok(dom !== null);
-    assert.equal(dom.find("line-diagram-title")?.textContent, "section_force · Vy (shear_y) [N]");
-    assert.equal(dom.find("contour-min")?.textContent, "-4.500e+4");
-    assert.equal(dom.find("contour-max")?.textContent, "6.000e+4");
+    // The card carries no colour bar or range controls; the scale in the viewport does:
+    assert.equal(dom.find("vs-ramp"), undefined);
+    assert.equal(dom.find("line-diagram-range-modes"), undefined);
+    assert.equal(scaleAside.find("vs-title")?.textContent, "section_force · Vy (shear_y) [N]");
+    assert.equal(scaleAside.find("vs-ticks")?.children[0]?.textContent, "-4.500e+4");
+    assert.equal(scaleAside.find("vs-ticks")?.children.at(-1)?.textContent, "6.000e+4");
+    assert.ok(scaleAside.find("line-diagram-range-modes") !== undefined);
+    assert.equal(scaleAside.hidden, false);
 
     // Switching to mesh phase (no lineStations) clears stale stepRange, scan, and notice, and hides #line-diagram:
     h.store.dispatch({ type: "setPhase", at: { kind: "mesh" } });

@@ -34,7 +34,7 @@ import type { State, Store } from "../state/store.ts";
 import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry } from "../state/types.ts";
 import { isHeadingToggleTarget, toggleCardCollapse } from "../ui/collapse.ts";
 import { byId, el, listen } from "../ui/dom.ts";
-import { mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
+import { fillScale, mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
 
 export { fmtValue, rampCss } from "../state/selectors.ts";
 
@@ -389,35 +389,15 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       return;
     }
     const lines = contourLines(s, v);
-    {
-      const body = el("div", "vs-body");
-      const bar = el("div", "vs-ramp");
-      const vertical = viewportScale.dataset["orient"] === "vertical";
-      bar.style.backgroundImage = vertical ? rampCss(v.cmap).replace("to right", "to top") : rampCss(v.cmap);
-      const ticks = el("div", "vs-ticks");
-      for (const t of lines.ticks) ticks.append(el("span", undefined, t));
-      body.append(bar, ticks);
-      const head = el("div", "vs-head");
-      const orient = el("button", "vs-orient", vertical ? "horizontal" : "vertical");
-      orient.type = "button";
-      orient.title = vertical ? "lay the scale out horizontally" : "lay the scale out vertically";
-      unlisten.push(
-        listen(orient, "click", () => {
-          viewportScale.dataset["orient"] = vertical ? "horizontal" : "vertical";
-          render(store.get(), null);
-          scaleChrome?.clamp();
-          scaleChrome?.save();
-        }),
-      );
-      // The unit choice lives in the header; this field's own provenance note
-      // (e.g. "not declared — select source") stays with the scale it describes.
-      const scaleTitle = el("span", "vs-title", lines.title);
-      scaleTitle.title = lines.units;
-      head.append(scaleTitle, orient);
-      viewportScale.replaceChildren(head, body, el("div", "vs-range", lines.range));
-      viewportScale.hidden = false;
+    // The unit choice lives in the header; this field's own provenance note
+    // (e.g. "not declared — select source") stays with the scale it describes.
+    fillScale(viewportScale, { title: lines.title, tooltip: lines.units, ramp: rampCss(v.cmap), ticks: lines.ticks, range: lines.range }, unlisten, () => {
+      render(store.get(), null);
       scaleChrome?.clamp();
-    }
+      scaleChrome?.save();
+    });
+    viewportScale.hidden = false;
+    scaleChrome?.clamp();
     if (lines.topology) legend.append(el("div", "legend-note contour-topology", lines.topology));
     if (lines.axes) legend.append(el("div", "legend-note contour-axes", lines.axes));
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
@@ -468,7 +448,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     }),
   );
   // Only a real window has a place to drag in; the Node tests mount this panel without one.
-  scaleChrome = typeof window === "undefined" ? null : mountScaleChrome(viewportScale);
+  scaleChrome = typeof window === "undefined" ? null : mountScaleChrome(viewportScale, "apegmsh.viewer.contourScale");
 
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);

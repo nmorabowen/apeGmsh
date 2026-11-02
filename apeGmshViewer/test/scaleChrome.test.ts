@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { bannerSummary } from "../src/panels/banner.ts";
+import { signRampCss } from "../src/state/lineDiagram.ts";
 import { parseSavedScale } from "../src/ui/scaleChrome.ts";
 
 test("parseSavedScale: reads what the app writes", () => {
@@ -18,6 +19,14 @@ test("parseSavedScale: anything else is ignored, so the default place holds", ()
   }
 });
 
+test("signRampCss: the colours change at zero, not at the bar's midpoint", () => {
+  assert.match(signRampCss("dark"), / 50%, /);
+  assert.match(signRampCss("dark", { min: -300, max: 100 }), / 75%, /);
+  assert.match(signRampCss("dark", { min: 2, max: 4 }), / 0%, #\w+ 0%, /, "all positive");
+  assert.match(signRampCss("dark", { min: -4, max: -2 }), / 100%, /, "all negative");
+  assert.match(signRampCss("dark", { min: 3, max: 3 }), / 50%, /, "constant");
+});
+
 test("bannerSummary: one message is shown as itself, several as counts of each kind", () => {
   assert.equal(bannerSummary(0, 0, 1, "the one warning"), "the one warning");
   assert.equal(bannerSummary(1, 0, 0, "the one refusal"), "the one refusal");
@@ -29,8 +38,9 @@ test("the scale is a sibling after the banner and the rails, so it paints over t
   const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
   const at = (id: string) => html.indexOf(`id="${id}"`);
   assert.ok(at("banner") > 0 && at("banner") < at("viewport-scale"));
-  assert.ok(at("rail") < at("viewport-scale"), "a drag across the right rail must stay on top of it");
+  assert.ok(at("rail") < at("scale-stack"), "a drag across the right rail must stay on top of it");
+  assert.ok(at("scale-stack") < at("viewport-scale") && at("viewport-scale") < at("line-diagram-scale"), "the two scales stack, contour first");
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /#banner:not\(\[hidden\]\) ~ #viewport-scale:not\(\[data-moved\]\) \{ top: 168px; \}/);
-  assert.match(css, /body\[data-still-chrome="model"\] #viewport-scale \{ display: none; \}/);
+  assert.match(css, /#banner:not\(\[hidden\]\) ~ #scale-stack \{ top: 168px; \}/);
+  assert.match(css, /body\[data-still-chrome="model"\] #scale-stack \{ display: none; \}/);
 });

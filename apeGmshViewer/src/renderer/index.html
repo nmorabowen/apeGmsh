@@ -27,7 +27,10 @@
     <aside id="inspector" hidden></aside>
     <aside id="sources" hidden></aside>
   </div>
-  <div id="viewport-scale" hidden data-orient="horizontal"></div>
+  <div id="scale-stack">
+    <div id="viewport-scale" class="viewport-scale" hidden data-orient="horizontal"></div>
+    <div id="line-diagram-scale" class="viewport-scale" hidden data-orient="horizontal"></div>
+  </div>
   <div id="empty">
     <div class="empty-card">
       <div class="empty-title">Drop a model.h5 here</div>
