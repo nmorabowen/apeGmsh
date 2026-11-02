@@ -448,6 +448,9 @@ test("global Units control in #header renders Native (when undeclared) & Units d
   const fileNameEl = new FakeDomEl("span");
   const fileStatsEl = new FakeDomEl("span");
   const legendEl = new FakeDomEl("aside");
+  const displayEl = new FakeDomEl("aside");
+  const deformEl = new FakeDomEl("aside");
+  const scaleEl = new FakeDomEl("div");
   headerEl.append(fileNameEl, fileStatsEl);
   (globalThis as { document?: unknown }).document = {
     title: "",
@@ -458,6 +461,9 @@ test("global Units control in #header renders Native (when undeclared) & Units d
       if (id === "file-name") return fileNameEl;
       if (id === "file-stats") return fileStatsEl;
       if (id === "legend") return legendEl;
+      if (id === "display") return displayEl;
+      if (id === "deform") return deformEl;
+      if (id === "viewport-scale") return scaleEl;
       return null;
     },
   };
@@ -479,6 +485,9 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     // own units note: the header's tooltip only ever describes displacement.
     assert.equal(legendEl.all((e) => e.className.includes("contour-units")).length, 0);
     assert.ok(legendEl.textContent.includes("Units: not stored in the results file."));
+    // The colour range is set on the scale in the viewport, not on the card.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-modes")).length, 0);
+    assert.equal(scaleEl.all((e) => e.className.includes("contour-modes")).length, 1);
 
     // 2. Selecting source and target in #header dispatches setContourUnits and updates #legend contour-title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;

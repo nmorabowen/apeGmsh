@@ -84,11 +84,17 @@ Then:
   "fem"` marks the element rows as FEM ids. Nodal components keep the file's
   names (`DISPLACEMENT/Ux`), and contour like any other. A file re-stamped
   while open is re-read, never shown under the old stamp.
-- **Deformed shape.** On a results stage, **deformed** in the legend moves
+- **Display.** The Display card in the left rail holds what is drawn: mesh
+  edges and surfaces, frame extrusion and joint offsets, and the contour
+  colormap. A control that does not apply is greyed, with the reason in its
+  tooltip. Every left-rail card starts collapsed; a click on its title opens it.
+- **Banner.** The banner is one line, a count of each kind of message; a
+  click opens the full list.
+- **Deformed shape.** On a results stage, **deformed** in the Deformed card moves
   every drawn node to `x + scale · u`, with `u` the file's nodal
   `displacement_x`, `_y` and `_z` at the step shown (rotations are not
   used). The scale defaults to **1** (true scale); any other scale is
-  stated in the legend. **reference ghost** draws the undeformed mesh behind
+  stated in the card. **reference ghost** draws the undeformed mesh behind
   it at 0.3 opacity. Beams and trusses stay straight chords between their
   displaced end nodes. It composes with contours (the deformed mesh is
   coloured), stage activation and the time scrubber, and a click picks what
@@ -108,11 +114,14 @@ Then:
   reaction force, `[k]` for an unnamed component). The colour range is the
   field's **whole history** on that stage by default: main reads every step
   in the background, and until it is done the range is the step's own, with
-  "range: this step (history scan n%)" in the legend. **this step** and
-  **fixed** (your min and max) are the other modes, and the legend always
-  says which is in use. The colormap defaults to **jet** (or turbo, viridis,
-  plasma, inferno, magma, coolwarm, RdBu_r, RdBu, bwr, seismic, BrBG or
-  Spectral). A
+  "range: this step (history scan n%)" on the scale. A contour draws its
+  scale in the viewport whether or not its card is open: horizontal, top
+  left, with a button for vertical; drag it anywhere, and it comes back where
+  you left it on the next launch. The range is set on the scale: **this step**
+  and **fixed** (your min and max) are the other modes, and the scale always
+  says which is in use. The colormap, in the Display card, defaults to **jet**
+  (or turbo, viridis, plasma, inferno, magma, coolwarm, RdBu_r, RdBu, bwr,
+  seismic, BrBG or Spectral). A
   node the field does not record (not in its `_ids`, or NaN) is **no data**,
   in the grey the legend names: every face or line that touches it is drawn
   in it, never as zero and never blended from its neighbours. The file

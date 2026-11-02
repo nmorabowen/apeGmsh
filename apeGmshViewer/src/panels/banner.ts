@@ -9,10 +9,20 @@
 
 import { BANNER_BELOW_SCRUBBER_PX, noticesOf, refusalsOf, scrubberRow, warningsOf } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import { byId, el } from "../ui/dom.ts";
+import { byId, el, listen } from "../ui/dom.ts";
+
+/** The banner's closed line: the message when there is one, else the counts of each kind. */
+export function bannerSummary(refused: number, notices: number, warnings: number, only: string | null): string {
+  if (refused + notices + warnings === 1 && only !== null) return only;
+  const part = (n: number, one: string, many: string) => (n ? [`${n} ${n === 1 ? one : many}`] : []);
+  return [...part(refused, "refused", "refused"), ...part(notices, "notice", "notices"), ...part(warnings, "warning", "warnings")].join(" · ");
+}
 
 export function mountBanner(store: Store): () => void {
   const banner = byId("banner");
+  // Closed, one line: the rail and the scale sit below it and stay readable. A click reads the whole list.
+  let open = false;
+  let unlisten: (() => void) | null = null;
   const render = (s: State, prev: State | null) => {
     if (
       prev &&
@@ -40,12 +50,28 @@ export function mountBanner(store: Store): () => void {
     banner.hidden = refusals.length === 0 && notices.length === 0 && warnings.length === 0;
     // Below the results scrubber row when there is one (panels/phase.ts).
     banner.style.top = scrubberRow(s) ? `${BANNER_BELOW_SCRUBBER_PX}px` : "";
+    unlisten?.();
+    const only = [...refusals, ...notices, ...warnings][0] ?? null;
+    const summary = el("button", "banner-summary" + (refusals.length ? " refused" : ""), `${open ? "▾" : "▸"} ${bannerSummary(refusals.length, notices.length, warnings.length, only)}`);
+    summary.type = "button";
+    summary.title = open ? "close the list" : "read the whole list";
+    unlisten = listen(summary, "click", () => {
+      open = !open;
+      render(store.get(), null);
+    });
+    if (open) banner.dataset["open"] = "true";
+    else delete banner.dataset["open"];
     banner.replaceChildren(
+      summary,
       ...refusals.map((r) => el("div", "refused", r)),
       ...notices.map((n) => el("div", "notice", n)),
       ...warnings.map((w) => el("div", undefined, w)),
     );
   };
   render(store.get(), null);
-  return store.subscribe(render);
+  const unsubscribe = store.subscribe(render);
+  return () => {
+    unsubscribe();
+    unlisten?.();
+  };
 }

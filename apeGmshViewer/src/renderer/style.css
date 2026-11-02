@@ -63,9 +63,19 @@ body[data-rail-collapsed="true"] #header { max-width: calc(100vw - 216px); }
   color: var(--interp-text); font-size: 13px;
 }
 #banner div + div { margin-top: 3px; }
+/* Closed: one line, above the rail's top. Open: the whole list, over the rail. */
+.banner-summary {
+  all: unset; display: block; box-sizing: border-box; width: 100%; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
+}
+#banner:not([data-open]) { width: 536px; }
+#banner:not([data-open]) > :not(.banner-summary) { display: none; }
+#banner[data-open] { z-index: 20; max-height: calc(100vh - 180px); overflow: auto; }
+#banner[data-open] > .banner-summary { margin-bottom: 6px; }
 
-/* Left rail: stacks #line-diagram, #loads, and #legend in one flex column so
-   they never overlap and collapsing any card immediately reflows its neighbours. */
+/* Left rail: stacks the cards in one flex column so they never overlap and
+   collapsing any card immediately reflows its neighbours. Display and Deformed
+   keep their height; the others share what is left and scroll inside it. */
 #left-rail {
   position: fixed; left: 16px; top: 102px; bottom: 16px;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
@@ -78,8 +88,8 @@ body[data-rail-collapsed="true"] #header { max-width: calc(100vw - 216px); }
 #left-rail > [hidden] { display: none; }
 
 #line-diagram, #loads {
-  flex: 0 1 auto; min-height: 0; max-height: 52%; overflow: auto;
-  padding: 10px 12px; border-radius: 10px; min-width: 280px; max-width: 292px;
+  flex: 0 1 auto; min-height: 0; overflow: auto;
+  padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
 #line-diagram[hidden], #loads[hidden] { display: none; }
@@ -87,18 +97,11 @@ body[data-rail-collapsed="true"] #header { max-width: calc(100vw - 216px); }
 .loads-pattern-title { overflow-wrap: anywhere; }
 
 #legend {
-  margin-top: auto; flex: 0 1 auto; min-height: 0; max-height: 48%; overflow: auto;
-  padding: 10px 12px; border-radius: 10px; min-width: 200px; max-width: 292px;
+  margin-top: auto; flex: 0 1 auto; min-height: 0; overflow: auto;
+  padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
-/* Balance height across all three left-rail cards when all three are open and expanded;
-   collapsing any card releases its share and immediately shifts its neighbours. */
-#left-rail:has(#line-diagram:not([hidden]):not([data-collapsed="true"])):has(#loads:not([hidden]):not([data-collapsed="true"])) > :not([data-collapsed="true"]) {
-  max-height: calc((100% - 16px) / 3);
-}
-#left-rail:has(> :not([hidden]):not([data-collapsed="true"])):not(:has(> :not([hidden]):not([data-collapsed="true"]) ~ :not([hidden]):not([data-collapsed="true"]))) > :not([data-collapsed="true"]) {
-  max-height: 100%;
-}
+.legend-refusals > summary { cursor: pointer; }
 .line-diagram-span-badge { max-height: 4.2em; overflow-y: auto; }
 #legend h3, #line-diagram h3, #loads h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
@@ -444,6 +447,61 @@ code { font-family: var(--mono); }
   display: none;
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }
+
+/* The colour scale in the viewport: shown whenever a contour is drawn, top left of
+   the free space until it is dragged (ui/scaleChrome.ts). */
+#viewport-scale {
+  position: fixed; padding: 8px 10px; border-radius: 9px;
+  cursor: grab; user-select: none; touch-action: none;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#viewport-scale.dragging { cursor: grabbing; }
+#viewport-scale[hidden] { display: none; }
+#viewport-scale:not([data-moved]) { left: 324px; top: 102px; }
+#banner:not([hidden]) ~ #viewport-scale:not([data-moved]) { top: 168px; }
+body[data-still-chrome="model"] #viewport-scale { display: none; }
+.vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
+.vs-title { font-weight: 600; font-size: 13px; }
+.vs-orient {
+  padding: 0 6px; border-radius: 5px; cursor: pointer; flex: none;
+  font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
+}
+.vs-body { display: flex; gap: 6px; }
+[data-orient="horizontal"] .vs-body { flex-direction: column; width: 340px; }
+[data-orient="vertical"] .vs-body { height: 240px; }
+.vs-ramp { border-radius: 3px; border: 1px solid var(--line); }
+[data-orient="horizontal"] .vs-ramp { height: 14px; }
+[data-orient="vertical"] .vs-ramp { width: 16px; }
+.vs-ticks { display: flex; justify-content: space-between; font-size: 12px; font-variant-numeric: tabular-nums; }
+[data-orient="vertical"] .vs-ticks { flex-direction: column-reverse; }
+.vs-range { color: var(--muted); font-size: 12px; margin: 6px 0; }
+#viewport-scale .contour-modes { margin-bottom: 0; }
+#viewport-scale .contour-fixed { margin-top: 6px; }
+
+/* The Display and Deformed cards. */
+#display, #deform {
+  flex: 0 1 auto; min-height: 0; overflow: auto;
+  padding: 10px 12px; border-radius: 10px; width: 292px; box-sizing: border-box;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#display, #deform { flex: 0 0 auto; }
+#left-rail > aside { width: 292px; min-width: 0; max-width: none; box-sizing: border-box; }
+#display[hidden], #deform[hidden] { display: none; }
+#display h3, #deform h3 {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+#display > h3:first-child::before, #deform > h3:first-child::before { content: "\25be"; font-size: 11px; color: var(--muted); }
+#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
+#display[data-collapsed="true"], #deform[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
+#display[data-collapsed="true"] > h3:first-child, #deform[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
+#display[data-collapsed="true"] > :not(:first-child), #deform[data-collapsed="true"] > :not(:first-child) { display: none; }
+.display-row { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
+.display-label { width: 56px; flex: none; color: var(--muted); font-size: 13px; }
+.display-row > .legend-mode { flex: 1; margin: 0; }
+.display-row > .contour-cmap { flex: 1; width: auto; margin: 0; }
+.legend-mode button:disabled { opacity: 0.45; cursor: default; }
 
 /* Right-rail side drawer toggle (#rail-toggle): always anchored on the right edge */
 #rail-toggle {
