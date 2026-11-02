@@ -371,3 +371,21 @@ The human's panels stay where they are, so the open right rail can shift where
 the model sits on screen (about 245 px on the fixture). With the rail collapsed,
 only the panels differ. Apply neither reframes around the rail nor collapses it.
 
+## Amendment 3 (2026-11-02): the agent_view module path (D7)
+
+**Status:** Accepted on the maintainer's merge of this amendment, by the
+ruling of 2026-11-02 on [#2713](https://github.com/nmorabowen/apeGmsh/pull/2713).
+
+D7 leaves the shim's name to slice 4 and reads as if it lived with the viewer
+code. It landed at `src/apeGmsh/agent_view.py` (#2713), so its public name is
+`apeGmsh.agent_view`, not a path under `apeGmsh.viewers`.
+
+The reason is the `viewers` line-count ratchet (`tests/test_loc_ratchet.py`).
+The maintainer ruled to move the module out of `viewers` rather than raise the
+ratchet. The move changes nothing D7 asks of the shim: it still only finds the
+installed executable, writes the spec, spawns the app and returns the manifest,
+and it imports nothing from `apeGmshViewer/`.
+
+D7's original wording stays as written and is read through this amendment:
+where it implies a `viewers` location, the module path is `apeGmsh.agent_view`.
+
