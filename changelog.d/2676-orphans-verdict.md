@@ -1,0 +1,3 @@
+### ADDED — the nightly orphan detector also reports program PRs merged without an approving Review-verdict at the merged head (#2676)
+
+A new `merged-without-verdict` section in the `[Orphans]` issue lists `program` PRs that the T review policy required a verdict for (the `semantic` label, or a change under `tests/` or `.github/workflows/`, to `land_pr.py`, `check_quirks.py`, a BASELINE or a golden file) and that merged with no `Review-verdict: <model> approve <sha>` comment bound to the merged head. It reuses `program_probe`'s parser, ignores PRs merged before 2026-10-30T19:37Z, and says it is a detector that cannot block a merge (lesson #2637).
