@@ -93,9 +93,7 @@ _MODE_STAGE = re.compile(r"(?P<host>.+?)(?:_step_(?P<step>\d+))?_mode_(?P<mode>\
 #: The name a recorder gives a stage the run did not stamp.
 _UNSTAMPED = re.compile(r"MODEL_STAGE\[\d+\]\Z")
 _PART = re.compile(r"\.part-\d+\Z")
-#: The suffixes the readers' dispatch (:func:`apeGmsh.results._open.open_results`)
-#: opens with a recorder's reader. Any other file opens as a native ``results.h5``.
-_RECORDER_SUFFIXES = (".ladruno", ".mpco")
+_MPCO_SUFFIX = ".mpco"
 
 
 def recorded_is_linear(results_file: Optional[Path], level: str, component: str) -> bool:
@@ -105,12 +103,17 @@ def recorded_is_linear(results_file: Optional[Path], level: str, component: str)
     file, so the file does not judge it. A ``.ladruno`` or ``.mpco`` serves only
     what it recorded. Any other file, and a ``Results`` with no file, is judged
     by the one recorder vocabulary, :func:`apeGmsh._vocabulary.is_canonical`: a
-    native ``results.h5`` stores design fields as ordinary components.
+    native ``results.h5`` stores design fields as ordinary components. The
+    suffixes are the readers' dispatch (:func:`apeGmsh.results._open.open_results`):
+    those two open with a recorder's reader, any other file as a native one.
     """
     if level == "domain":
         return True
-    if results_file is not None and results_file.suffix.lower() in _RECORDER_SUFFIXES:
-        return True
+    if results_file is not None:
+        from ..readers._ladruno_live import FORK_SUFFIX
+
+        if results_file.suffix.lower() in (FORK_SUFFIX, _MPCO_SUFFIX):
+            return True
     return is_canonical(component)
 
 
