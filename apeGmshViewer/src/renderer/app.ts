@@ -11,7 +11,7 @@ import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountLoads } from "../panels/loads.ts";
-import { mountOffers } from "../panels/offers.ts";
+import { mountOfferBadge, mountOffers } from "../panels/offers.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
@@ -24,11 +24,10 @@ import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVer
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
-import { OfferRunner, type SnapshotResult } from "../spec/snapshot.ts";
+import { OfferRunner, snapshotManifest } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
-import { bannerLines } from "../spec/describe.ts";
 import type { OfferIn } from "../state/types.ts";
-import { runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
+import { onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
@@ -97,6 +96,8 @@ const chrome = mountCollapsibleChrome({
   },
   onRailToggle: (collapsed) => viewport.setRailCollapsed(collapsed),
 });
+// VA5: a collapsed rail hides the offers panel; its toggle carries the count (the toggle exists once the chrome is mounted).
+panels.push(mountOfferBadge(store));
 const unsubChrome = store.subscribe(() => chrome.syncVisibility());
 panels.push(() => {
   unsubChrome();
@@ -1352,22 +1353,23 @@ const stillLayout: Layout = {
 /** VA5: main's door for `--present` and `--snapshot` (main/preload.ts); the Effects bridge does not carry them. */
 interface OfferBridge {
   onOffers(cb: (offers: OfferIn[]) => void): () => void;
-  onSnapshotRequest(cb: (id: number) => void): () => void;
-  snapshotReply(id: number, reply: { result: SnapshotResult; banner: string[] }): Promise<unknown>;
+  onSnapshotRequest(cb: (req: { id: number; image: [number, number] }) => void): () => void;
+  snapshotReply(id: number, reply: unknown): Promise<unknown>;
   requestOpen(path: string): Promise<unknown>;
 }
 
 /**
  * ADR 0128 D5, D6, view mode only: an offer that reaches the window is listed
  * and nothing else (INV-5); the runner carries out the human's clicks. A
- * snapshot paints nothing and dispatches nothing: main captures the page.
+ * snapshot paints nothing and dispatches nothing: main has captured the page,
+ * and this reads the same view back as a spec and its manifest entry.
  */
 function mountOfferFlow(): void {
   const door = bridge as unknown as OfferBridge;
   const runner = new OfferRunner({
     store,
     open: (path) => door.requestOpen(path),
-    onScreen: () => ({ contour: contourShown(), deform: deformShown() }),
+    onScreen: (s) => onScreenOf(s, viewport, effects),
     pose: () => (store.get().mesh ? viewport.currentPose() : null),
     settle: async () => {
       viewport.renderNow();
@@ -1378,10 +1380,29 @@ function mountOfferFlow(): void {
   panels.push(runner.start());
   panels.push(door.onOffers((offers) => runner.receive(offers)));
   panels.push(
-    door.onSnapshotRequest((id) => {
-      void door.snapshotReply(id, { result: runner.snapshot([window.innerWidth, window.innerHeight]), banner: bannerLines(store.get()) });
+    door.onSnapshotRequest(({ id, image }) => {
+      void door.snapshotReply(id, snapshotReplyOf(runner, image));
     }),
   );
+}
+
+/** The reply to one `--snapshot`; a view the manifest cannot state is refused (INV-6), never a still without its numbers. */
+function snapshotReplyOf(runner: OfferRunner, image: [number, number]) {
+  const result = runner.snapshot(image);
+  if (!result.ok) return result;
+  try {
+    const canvas = viewport.renderer.domElement.getBoundingClientRect();
+    const manifest = snapshotManifest(store.get(), result.snapshot, {
+      image,
+      fov: viewport.camera instanceof THREE.PerspectiveCamera ? viewport.camera.fov : null,
+      layout: { viewport: [canvas.x, canvas.y, canvas.width, canvas.height], panels: stillLayout.inLayout() },
+      blobs,
+      step: effects.currentStep(),
+    });
+    return { ok: true, view: result.snapshot.view, manifest };
+  } catch (err) {
+    return { ok: false, reason: `the manifest cannot state this view: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 async function main() {

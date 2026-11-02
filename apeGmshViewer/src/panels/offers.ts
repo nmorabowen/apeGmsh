@@ -27,6 +27,29 @@ export function arrivalLabel(at: number): string {
   return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
 }
 
+/**
+ * A collapsed rail hides this panel, and an offer must not go unseen (T's
+ * ruling on #2654): the rail's toggle carries how many are on offer. The
+ * stylesheet shows it only while the rail is collapsed. Mount it after the
+ * collapsible chrome, which makes the toggle.
+ */
+export function mountOfferBadge(store: Store): () => void {
+  const toggle = byId("rail-toggle");
+  const render = (s: State) => {
+    const n = s.offers.list.filter((o) => o.status === "pending").length;
+    if (n > 0) toggle.dataset["offers"] = n === 1 ? "1 offer" : `${n} offers`;
+    else delete toggle.dataset["offers"];
+  };
+  render(store.get());
+  const unsubscribe = store.subscribe((s, prev) => {
+    if (s.offers !== prev.offers) render(s);
+  });
+  return () => {
+    unsubscribe();
+    delete toggle.dataset["offers"];
+  };
+}
+
 export function mountOffers(store: Store): () => void {
   const panel = el("aside");
   panel.id = "offers";

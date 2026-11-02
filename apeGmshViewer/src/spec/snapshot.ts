@@ -24,12 +24,14 @@
 
 import type { ResolvedFiles } from "./files.ts";
 import { defaultOpacity } from "../state/reduce.ts";
+import type { BlobStore } from "../state/blobs.ts";
 import { MAGNITUDE } from "../state/contour.ts";
 import type { Store } from "../state/store.ts";
 import type { CameraPose, DeclPath, Event, Offer, OfferIn, State, Vec3, ViewMemo } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { compileShot, type ShotPlan } from "./compile.ts";
 import { describeSet, SPEC_MAGNITUDE, type SetDescription } from "./describe.ts";
+import { manifestEntry, manifestOf, type EntryInput, type Manifest, type ManifestEntry } from "./manifest.ts";
 import { APP_LAYERS, SPEC_VERSION, validateSpec, type SpecShot, type ViewSpec } from "./spec.ts";
 import { viewVerdict, type OnScreen } from "./verdict.ts";
 
@@ -140,8 +142,8 @@ export function viewMemoOf(s: State, pose: CameraPose | null, model: string): Vi
   };
 }
 
-/** The shot's section planes through the store; each plane's id is the one the reducer gave it (the same steps as the render mode). */
-function applyClip(store: Store, plan: ShotPlan): void {
+/** The shot's section planes through the store; each plane's id is the one the reducer gave it (INV-2: the render mode and an offer share this). */
+export function applyClip(store: Store, plan: ShotPlan): void {
   for (const p of store.get().clip.planes) store.dispatch({ type: "removeClipPlane", id: p.id });
   for (const c of plan.clip) {
     const n = store.get().clip.planes.length;
@@ -150,7 +152,8 @@ function applyClip(store: Store, plan: ShotPlan): void {
     // A plane the reducer refused adds nothing: its notice stays set, and the verdict refuses the offer with it.
     if (planes.length !== n + 1) return;
     const id = planes.at(-1)!.id;
-    store.dispatch({ type: "setClipOffset", id, offset: c.offset });
+    // D1: the plane is normal . x = offset with the normal as given; the state keeps it as a unit normal.
+    store.dispatch({ type: "setClipOffset", id, offset: c.offset / Math.hypot(...c.normal) });
     if (c.flip) store.dispatch({ type: "setClipFlipped", id, flipped: true });
   }
 }
@@ -321,16 +324,16 @@ export function viewShotOf(s: State, pose: CameraPose): { shot: SpecShot; outsid
   return { shot, outside };
 }
 
-/** A plan in the form two plans of one view share: planes as unit normals, an isolate as a set. */
+/** A plan in the form two plans of one view share: planes scaled to a unit normal (D1: normal . x = offset), an isolate as a set. */
 function planKey(p: ShotPlan): string {
-  const unit = (v: Vec3): number[] => {
-    const m = Math.hypot(...v);
-    return v.map((x) => x / m);
-  };
+  const scaled = (v: Vec3, by: number): number[] => v.map((x) => x / by);
   return JSON.stringify({
     phase: p.phase,
     events: p.events.map((e) => (e.type === "isolate" ? { ...e, decls: [...e.decls].sort() } : e)),
-    clip: p.clip.map((c) => ({ normal: unit(c.normal), offset: c.offset, flip: c.flip })),
+    clip: p.clip.map((c) => {
+      const m = Math.hypot(...c.normal);
+      return { normal: scaled(c.normal, m), offset: c.offset / m, flip: c.flip };
+    }),
     contour: p.contour,
     deform: p.deform,
   });
@@ -361,6 +364,8 @@ export interface AppliedView {
 export interface Snapshot {
   /** the closed spec document, `view.json` */
   view: Record<string, unknown>;
+  /** the same spec, validated: what the manifest entry states */
+  spec: ViewSpec;
   /** D6: the decl paths the inspector shows */
   selection: DeclPath[];
   /** what the spec cannot say about this view; [] when it says all of it */
@@ -393,22 +398,80 @@ export function snapshotOf(s: State, pose: CameraPose | null, size: [number, num
   // A snapshot is a spec an agent can render: one the validator refuses is a bug here, and says so.
   const v = validateSpec(doc);
   if (!v.ok) return { ok: false, reason: `the view does not read back as a spec: ${v.key}: ${v.reason}` };
-  return { ok: true, snapshot: { view: doc, selection: [...s.selection.decls], outside, camera: pose } };
+  return { ok: true, snapshot: { view: doc, spec: v.spec, selection: [...s.selection.decls], outside, camera: pose } };
+}
+
+/** The file names a snapshot writes into its `--out` (D6); `manifest.json` last, so its presence means done. */
+export const SNAPSHOT_VIEW = "view.json";
+export const SNAPSHOT_PNG = "view.png";
+
+export interface SnapshotInput {
+  image: [number, number];
+  fov: number | null;
+  layout: ManifestEntry["layout"];
+  blobs: BlobStore;
+  step: EntryInput["step"];
+}
+
+/**
+ * D6: the snapshot's manifest, through the one D3 entry (./manifest.ts), plus
+ * the selection and what the spec cannot say, which the closed spec has no key
+ * for. Throws when the entry cannot state the view (INV-6: then no still stands).
+ */
+export function snapshotManifest(s: State, snap: Snapshot, input: SnapshotInput): Manifest {
+  const shot = snap.spec.shots[0]!;
+  const entry = manifestEntry(s, { shot, png: SNAPSHOT_PNG, image: input.image, camera: { ...snap.camera, fov: input.fov }, layout: input.layout, blobs: input.blobs, step: input.step });
+  return manifestOf(snap.spec, [{ entry: { ...entry, selection: snap.selection, outside: snap.outside } as ManifestEntry, ms: 0, shownMs: null }]);
 }
 
 // ---- the offer runner: carries out the human's clicks --------------------------
 
 /** Wait at most this long for a view, or a set, to reach the screen. */
 const SHOW_MS = 30000;
-/** A view that stays refused this long, with nothing still loading, is the app's answer (renderer/agentRender.ts `shown`). */
+/** A view that stays `unavailable` or `refused` this long, with nothing still loading, is the app's answer. */
 const SETTLED_MS = 1500;
+
+/** What a wait for a view reads (the render mode and the offer runner each hand in their own viewport's). */
+export interface ShownDeps {
+  store: Store;
+  onScreen(s: State): OnScreen;
+  sleep(ms: number): Promise<unknown>;
+  now(): number;
+}
+
+/**
+ * Wait until the shot's view is on screen; null when it is, else the reason
+ * it is refused (./verdict.ts). A contour or deformed shape the app answers
+ * with `unavailable` or `refused` is refused with that reason once it has
+ * held, with nothing loading, for SETTLED_MS: a stage's node ids and an element
+ * join arrive after the step, and say `unavailable` until then.
+ */
+export async function shownView(deps: ShownDeps, shot: SpecShot, plan: ShotPlan): Promise<string | null> {
+  const t0 = deps.now();
+  let lastWhy: string | null = null;
+  let since = t0;
+  for (;;) {
+    const s = deps.store.get();
+    const now = deps.now();
+    const v = viewVerdict(s, shot, plan, deps.onScreen(s));
+    if (v.kind === "shown") return null;
+    if (v.kind === "refused") return v.reason;
+    if (v.why !== lastWhy) {
+      lastWhy = v.why;
+      since = now;
+    }
+    if (v.why !== null && !v.loading && now - since >= SETTLED_MS) return v.why;
+    if (now - t0 >= SHOW_MS) return v.why ?? `the view did not reach the screen within ${SHOW_MS / 1000} s`;
+    await deps.sleep(20);
+  }
+}
 
 export interface RunnerDeps {
   store: Store;
   /** open the set of `path`, as a drop does (main's requestOpen) */
   open(path: string): Promise<{ ok: boolean; reason?: string } | unknown>;
   /** what the viewport shows now, for the verdict */
-  onScreen(): OnScreen;
+  onScreen(s: State): OnScreen;
   /** the camera the viewport shows, once the last request has been applied */
   pose(): CameraPose | null;
   /** two painted frames */
@@ -425,11 +488,13 @@ export class OfferRunner {
   private applied: (AppliedView | null)[] = [];
   private idle: Promise<void> = Promise.resolve();
   private assessKey: unknown[] = [];
+  private readonly wait: ShownDeps;
 
   constructor(deps: RunnerDeps) {
     this.deps = deps;
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = deps.now ?? (() => performance.now());
+    this.wait = { store: deps.store, onScreen: deps.onScreen, sleep: this.sleep, now: this.now };
   }
 
   /** Follow the store; the returned function stops. */
@@ -515,7 +580,7 @@ export class OfferRunner {
       for (const e of freshViewEvents(store.get())) store.dispatch(e);
       for (const e of c.plan.events) store.dispatch(e);
       applyClip(store, c.plan);
-      const why = await this.shown(p.shot, c.plan);
+      const why = await shownView(this.wait, p.shot, c.plan);
       if (why !== null) return await refuse(why);
       store.dispatch({ type: "setCamera", to: "home" });
       store.dispatch({ type: "setCamera", to: c.plan.camera });
@@ -572,23 +637,4 @@ export class OfferRunner {
     }
   }
 
-  /** The render mode's rule for "the view is on screen" (ADR 0128 D2): null when it is, else the reason it is refused. */
-  private async shown(shot: SpecShot, plan: ShotPlan): Promise<string | null> {
-    const t0 = this.now();
-    let lastWhy: string | null = null;
-    let since = t0;
-    for (;;) {
-      const now = this.now();
-      const v = viewVerdict(this.deps.store.get(), shot, plan, this.deps.onScreen());
-      if (v.kind === "shown") return null;
-      if (v.kind === "refused") return v.reason;
-      if (v.why !== lastWhy) {
-        lastWhy = v.why;
-        since = now;
-      }
-      if (v.why !== null && !v.loading && now - since >= SETTLED_MS) return v.why;
-      if (now - t0 >= SHOW_MS) return v.why ?? `the view did not reach the screen within ${SHOW_MS / 1000} s`;
-      await this.sleep(20);
-    }
-  }
 }

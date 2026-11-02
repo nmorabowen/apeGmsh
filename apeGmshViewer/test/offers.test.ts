@@ -19,16 +19,17 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { arrivalLabel, mountOffers } from "../src/panels/offers.ts";
+import { arrivalLabel, mountOfferBadge, mountOffers } from "../src/panels/offers.ts";
 import { compileShot } from "../src/spec/compile.ts";
 import { describeSet, SPEC_MAGNITUDE } from "../src/spec/describe.ts";
 import { resolveSpecFiles } from "../src/spec/files.ts";
-import { MAX_PRESENT_SHOTS, offersOfDocument, OfferRunner, sameView, samePoseWithin, snapshotOf, toDocument, viewMemoOf, viewShotOf, type OfferPayload } from "../src/spec/snapshot.ts";
+import { applyClip, MAX_PRESENT_SHOTS, offersOfDocument, OfferRunner, sameView, samePoseWithin, snapshotManifest, snapshotOf, toDocument, viewMemoOf, viewShotOf, type OfferPayload } from "../src/spec/snapshot.ts";
+import { manifestEntry, MANIFEST_VERSION, type ManifestEntry } from "../src/spec/manifest.ts";
 import { SPEC_VERSION, validateSpec, type SpecShot } from "../src/spec/spec.ts";
 import { MAGNITUDE } from "../src/state/contour.ts";
 import { canonicalPose, initialState, MAX_OFFERS, reduce } from "../src/state/reduce.ts";
 import { Store, type Event, type State } from "../src/state/store.ts";
-import type { CameraPose, CameraRequest, OfferIn, Vec3, ViewMemo } from "../src/state/types.ts";
+import type { CameraPose, CameraRequest, ClipPlane, OfferIn, Vec3, ViewMemo } from "../src/state/types.ts";
 import { opened, STAGED, STAGED_RESULTS, until } from "./contour/harness.ts";
 
 const FIX = fileURLToPath(new URL("../fixtures/", import.meta.url));
@@ -626,6 +627,42 @@ test("D6: a stage name two stages share reads back as its index", async () => {
   assert.equal(viewShotOf(s, POSES["start"]!).shot.stage, "erect");
 });
 
+// ---- the section plane a spec names (D1) ------------------------------------------
+
+test("D1: a plane is normal . x = offset with the normal as given: normal [2,0,0], offset 4 cuts at x = 2", async () => {
+  const r = await rig();
+  const offerOf = (clip: unknown) => compileShot(shotOf(offers([{ name: "c", clip }])[0]!), describeSet(r.store.get(), []));
+  const c = offerOf([{ normal: [2, 0, 0], offset: 4, flip: true }, { normal: [0, -3, 4], offset: 10 }]);
+  assert.ok(c.ok);
+  if (!c.ok) return;
+  applyClip(r.store, c.plan);
+  const [a, b] = r.store.get().clip.planes as [ClipPlane, ClipPlane];
+  assert.deepEqual(a.normal, [1, 0, 0]);
+  assert.equal(a.offset, 2, "the plane through x = 2: 2 x 2 = 4");
+  assert.equal(a.flipped, true);
+  // The point 10 n / |n|^2 is on the spec's plane; the state's unit-normal plane holds it too.
+  const on = [0, (-3 * 10) / 25, (4 * 10) / 25];
+  assert.ok(Math.abs(b.normal[0] * on[0]! + b.normal[1] * on[1]! + b.normal[2] * on[2]! - b.offset) < 1e-12);
+});
+
+test("INV-3: a plane given with a non-unit normal reads back as the same plane", async () => {
+  const r = await rig();
+  r.runner.receive(offers([{ name: "c", clip: [{ normal: [2, 0, 0], offset: 4 }], camera: "iso" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "c").id);
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "c").status, "applied", offerNamed(s, "c").reason ?? "");
+  const { shot } = viewShotOf(s, r.camera.pose());
+  assert.deepEqual(shot.clip, [{ normal: [1, 0, 0], offset: 2, flip: false }], "the state's own form of that plane");
+  assert.ok(sameView(shot, shotOf(offerNamed(s, "c")), describeSet(s, [])), "[1,0,0] at 2 is [2,0,0] at 4");
+  // A different plane is a different view: the comparison is not blind to the offset.
+  assert.equal(sameView({ ...shot, clip: [{ normal: [2, 0, 0], offset: 2, flip: false }] }, shotOf(offerNamed(s, "c")), describeSet(s, [])), false);
+  const back = r.runner.snapshot([800, 600]);
+  assert.ok(back.ok);
+  if (back.ok) assert.deepEqual(back.snapshot.spec.shots[0]!.clip, shotOf(offerNamed(s, "c")).clip, "the offer's own words, until the human moves");
+});
+
 // ---- the panel ----------------------------------------------------------------------
 
 class FakeEl {
@@ -680,9 +717,10 @@ class FakeEl {
 function withFakeDom<T>(fn: (rail: FakeEl) => T): T {
   const rail = new FakeEl();
   rail.id = "rail";
+  const toggle = new FakeEl();
   const g = globalThis as unknown as { document?: unknown };
   const before = g.document;
-  g.document = { createElement: () => new FakeEl(), getElementById: (id: string) => (id === "rail" ? rail : null) };
+  g.document = { createElement: () => new FakeEl(), getElementById: (id: string) => (id === "rail" ? rail : id === "rail-toggle" ? toggle : null) };
   try {
     return fn(rail);
   } finally {
@@ -753,4 +791,52 @@ test("the panel: Back is on after an applied offer, and a failed Back's notice s
     store.dispatch({ type: "offerBackDone", notice: "Back could not restore the view: gone" });
     assert.match(panel.textContent, /Back could not restore the view: gone/);
   });
+});
+
+test("the collapsed rail's toggle counts what is on offer: not the refused, not the applied", () => {
+  withFakeDom(() => {
+    const store = new Store();
+    const dispose = mountOfferBadge(store);
+    const doc = (globalThis as unknown as { document: { getElementById(id: string): FakeEl } }).document;
+    const toggle = doc.getElementById("rail-toggle");
+    assert.equal(toggle.dataset["offers"], undefined, "nothing on offer: no count");
+    store.dispatch({ type: "offerReceived", offers: [plain("a")], at: 1 });
+    assert.equal(toggle.dataset["offers"], "1 offer");
+    store.dispatch({ type: "offerReceived", offers: [plain("b"), plain("c")], at: 2 });
+    assert.equal(toggle.dataset["offers"], "3 offers");
+    const [b, c] = store.get().offers.list;
+    store.dispatch({ type: "offerAssessed", id: b!.id, refused: "no such stage", opens: [] });
+    assert.equal(toggle.dataset["offers"], "2 offers");
+    store.dispatch({ type: "applyOffer", id: c!.id });
+    store.dispatch({ type: "offerApplied", id: c!.id, memo: null });
+    assert.equal(toggle.dataset["offers"], "1 offer");
+    dispose();
+    assert.equal(toggle.dataset["offers"], undefined);
+  });
+});
+
+test("D3/D6: the snapshot's manifest is the one D3 entry, with the selection and what the spec cannot say", async () => {
+  const r = await rig();
+  r.runner.receive(offers([{ name: "m", stage: "unprop", contour: { field: "displacement", component: "z" }, camera: "iso" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "m").id);
+  await until(() => r.effects.currentStep()?.step === 3, "the step's values");
+  const decl = r.store.get().mesh!.elements[0]!;
+  r.store.dispatch({ type: "select", pick: { decl, at: null, nodes: null } });
+  r.store.dispatch({ type: "setOpacity", value: 0.5 });
+  const got = r.runner.snapshot([900, 700]);
+  assert.ok(got.ok, got.ok ? "" : got.reason);
+  if (!got.ok) return;
+  const m = snapshotManifest(r.store.get(), got.snapshot, { image: [900, 700], fov: 45, layout: null, blobs: r.blobs, step: r.effects.currentStep() });
+  assert.equal(m.manifest, MANIFEST_VERSION);
+  assert.equal(m.shots.length, 1);
+  const e = m.shots[0]! as ManifestEntry & { selection: string[]; outside: string[] };
+  const direct = manifestEntry(r.store.get(), { shot: got.snapshot.spec.shots[0]!, png: "view.png", image: [900, 700], camera: { ...got.snapshot.camera, fov: 45 }, layout: null, blobs: r.blobs, step: r.effects.currentStep() });
+  const { selection, outside, ...rest } = e;
+  assert.deepEqual(rest, direct, "no second manifest: the entry is VA3's");
+  assert.deepEqual(selection, [decl]);
+  assert.deepEqual(outside, ["the opacity is 0.5"]);
+  assert.equal(e.png, "view.png");
+  assert.ok(e.contour && e.contour.drawn && e.contour.extrema.recorded !== null, "the extrema are stated");
 });

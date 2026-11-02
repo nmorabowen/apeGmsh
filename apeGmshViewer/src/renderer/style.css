@@ -490,6 +490,13 @@ code { font-family: var(--mono); }
 }
 #rail-toggle:hover { color: var(--accent); border-color: var(--accent); }
 #rail-toggle[hidden] { display: none; }
+/* VA5: the offers a collapsed rail hides (panels/offers.ts mountOfferBadge). */
+body[data-rail-collapsed="true"] #rail-toggle[data-offers]::after {
+  content: attr(data-offers);
+  position: absolute; right: 100%; top: 50%; transform: translateY(-50%); margin-right: 4px;
+  padding: 1px 7px; border-radius: 9px; white-space: nowrap;
+  font: 600 12px var(--font); color: var(--accent-ink); background: var(--accent);
+}
 body[data-rail-collapsed="true"] #rail { display: none; }
 body[data-rail-collapsed="true"] #viewcube { right: 24px; }
 body[data-rail-collapsed="true"] #windows { right: 24px; }

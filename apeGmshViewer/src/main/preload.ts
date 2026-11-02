@@ -116,8 +116,8 @@ contextBridge.exposeInMainWorld("viewer", {
     };
   },
   // ADR 0128 D6 (--snapshot): main asks for the view, and writes what the page replies with.
-  onSnapshotRequest: (cb: (id: number) => void) => {
-    const handler = (_e: IpcRendererEvent, id: number) => cb(id);
+  onSnapshotRequest: (cb: (req: { id: number; image: [number, number] }) => void) => {
+    const handler = (_e: IpcRendererEvent, req: { id: number; image: [number, number] }) => cb(req);
     ipcRenderer.on("viewer:snapshot", handler);
     return () => {
       ipcRenderer.removeListener("viewer:snapshot", handler);
