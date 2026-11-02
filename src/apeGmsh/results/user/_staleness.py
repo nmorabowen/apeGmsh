@@ -10,8 +10,10 @@
 "Model hashes" compares whichever of ``fem_hash`` and ``model_hash`` both sides
 have. What cannot be compared is stale: nothing is drawn as current on no proof.
 
-The per-row ``lambda`` rule of ``/modes`` is not here: the zone has no writer and
-no registered version until slice VU6, which owns the row check.
+A ``/modes`` row is stale, too, when its ``lambda`` differs from the paired
+``.ladruno``'s ``LAMBDA`` of that mode by more than ``1e-9`` relative, or when the
+``.ladruno`` cannot show that it does not (:mod:`._modes`). A row of a stale zone
+is stale.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from typing import Mapping, Optional
 from ...opensees._internal.schema_version import SchemaVersionError
 from ._errors import UserFileError, ZoneRefused
 from ._fingerprint import results_fingerprint
+from ._modes import recorded_lambdas, row_staleness
 from ._reader import UserFile
 from ._writer import model_hashes
 
@@ -43,11 +46,13 @@ class ZoneState:
 
 @dataclass(frozen=True)
 class Staleness:
-    """``zones`` by root name, ``results`` by entry name, stale combinations."""
+    """``zones`` by root name, ``results`` by entry name, stale combinations, and
+    ``modes``: one state per ``/modes`` row, in table order."""
 
     zones: Mapping[str, ZoneState] = field(default_factory=dict)
     results: Mapping[str, ZoneState] = field(default_factory=dict)
     combinations: tuple[str, ...] = ()
+    modes: tuple[ZoneState, ...] = ()
 
 
 def _model_state(user: UserFile, model_h5: "Optional[str | Path]") -> ZoneState:
@@ -118,7 +123,29 @@ def staleness(
         stale_rows = _stale_combinations(table.rows, zones)
     except (ZoneRefused, SchemaVersionError) as exc:
         zones["combinations"] = ZoneState(True, f"refused: {exc}")
-    return Staleness(zones=zones, results=entries, combinations=stale_rows)
+    mode_rows: tuple[ZoneState, ...] = ()
+    if "modes" in uf.zones:
+        try:
+            mode_rows = _mode_rows(uf, zones["modes"], results_file)
+        except (ZoneRefused, SchemaVersionError) as exc:
+            zones["modes"] = ZoneState(True, f"refused: {exc}")
+    return Staleness(zones=zones, results=entries, combinations=stale_rows, modes=mode_rows)
+
+
+def _mode_rows(
+    uf: UserFile, zone: ZoneState, results_file: "Optional[str | Path]",
+) -> tuple[ZoneState, ...]:
+    """A6's row rule over ``/modes``; a row of a stale zone is stale."""
+    table = uf.modes()
+    if zone.stale:
+        return (zone,) * len(table)
+    if results_file is None:
+        return (ZoneState(True, "no results file to compare lambda with"),) * len(table)
+    try:
+        lambdas = recorded_lambdas(results_file)
+    except (OSError, KeyError, ValueError) as exc:
+        return (ZoneState(True, f"the results file's modes cannot be read: {exc}"),) * len(table)
+    return tuple(ZoneState(stale, reason) for stale, reason in row_staleness(table, lambdas))
 
 
 def _readable(model_h5: "Optional[str | Path]") -> bool:

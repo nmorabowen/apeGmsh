@@ -46,3 +46,11 @@ COMBINATIONS_CURRENT   = "1.0.0"
 COMBINATIONS_FLOOR     = "1.0.0"
 USER_RESULTS_CURRENT   = "1.0.0"
 USER_RESULTS_FLOOR     = "1.0.0"
+# ADR 0130 /modes and /spectra (VU6 #2690): each starts at its floor.
+MODES_CURRENT          = "1.0.0"
+MODES_FLOOR            = "1.0.0"
+SPECTRA_CURRENT        = "1.0.0"
+SPECTRA_FLOOR          = "1.0.0"
+# ADR 0130 /entities (VU8 #2692): starts at its floor.
+ENTITIES_CURRENT       = "1.0.0"
+ENTITIES_FLOOR         = "1.0.0"

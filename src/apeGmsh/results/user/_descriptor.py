@@ -1,10 +1,12 @@
 """The combination descriptor: columns, rows, per-row refusal (ADR 0130 A3).
 
 This module reads and writes the table of one generation and decides which
-rows stand. It evaluates nothing (slice VU2). Whether a ``stage``, ``mode``,
-``spectrum`` or ``reference`` source exists needs the set's other files, so
-that part of ``unresolved`` is VU2's; a ``combination`` source is resolved
-here, because the rows it names are all in hand.
+rows stand, through the row rules ``model.h5``'s reader shares
+(``opensees/_internal/_combination_rules.py``). It evaluates nothing: that is
+:mod:`._evaluate`. Whether a ``stage``, ``mode``, ``spectrum`` or ``reference``
+source exists needs the set's other files, so the evaluator refuses a missing
+one; a ``combination`` source is resolved here, because the rows it names are
+all in hand.
 
 Sign is derived from the rule and the terms and never stored.
 """
@@ -17,8 +19,8 @@ from typing import Iterable, Optional, Sequence
 import h5py
 import numpy as np
 
+from ...opensees._internal import _combination_rules as rules
 from ._errors import ZoneRefused
-from ._names import name_problem
 
 __all__ = [
     "ENVELOPES",
@@ -37,16 +39,12 @@ __all__ = [
     "write_generation",
 ]
 
-RULES = ("linear", "srss", "cqc", "abs_sum", "directional", "envelope")
-ENVELOPES = ("max", "min", "absmax")
-KINDS = ("stage", "mode", "spectrum", "reference", "combination")
-REASONS = (
-    "empty-name", "duplicate", "clash", "unknown-rule", "no-terms",
-    "bad-param", "bad-term", "unresolved", "cycle",
-)
+RULES = rules.RULES
+ENVELOPES = rules.ENVELOPES
+KINDS = rules.KINDS
+REASONS = rules.REASONS
 
 _STR = h5py.string_dtype(encoding="utf-8")
-_I4_MIN, _I4_MAX = -(2 ** 31), 2 ** 31 - 1
 
 
 @dataclass(frozen=True)
@@ -105,110 +103,39 @@ class CombinationTable:
     refused: tuple[Refusal, ...]
     model_rows: tuple[Combination, ...] = ()
 
-    def by_name(self, name: str) -> Combination:
+    def __post_init__(self) -> None:
+        # Name -> row, and name -> first refusal: by_name is a lookup, not a scan.
+        rows: dict[str, Combination] = {}
         for row in (*self.rows, *self.model_rows):
-            if row.name == name:
-                return row
+            rows.setdefault(row.name, row)
+        refusals: dict[str, Refusal] = {}
         for ref in self.refused:
-            if ref.name == name:
-                raise KeyError(f"combination {name!r} is refused: {ref.reason} ({ref.detail})")
+            refusals.setdefault(ref.name, ref)
+        object.__setattr__(self, "_rows_by_name", rows)
+        object.__setattr__(self, "_refusals_by_name", refusals)
+
+    def refusal(self, name: str) -> Optional[Refusal]:
+        """The first refusal of a row named ``name``, or ``None``."""
+        return self._refusals_by_name.get(name)  # type: ignore[attr-defined]
+
+    def by_name(self, name: str) -> Combination:
+        row = self._rows_by_name.get(name)  # type: ignore[attr-defined]
+        if row is not None:
+            return row
+        ref = self.refusal(name)
+        if ref is not None:
+            raise KeyError(f"combination {name!r} is refused: {ref.reason} ({ref.detail})")
         raise KeyError(f"no combination named {name!r}")
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# Validation: the rules live in ``opensees/_internal/_combination_rules.py``
 # ---------------------------------------------------------------------------
 
 
 def address_problem(a: StateAddress) -> Optional[str]:
     """Why an address breaks the source-address table, or ``None``."""
-    if a.kind not in KINDS:
-        return f"unknown kind {a.kind!r}"
-    problem = name_problem(a.source)
-    if problem is not None:
-        return f"source {a.source!r}: {problem}"
-    if not (_I4_MIN <= a.step <= _I4_MAX and _I4_MIN <= a.mode <= _I4_MAX):
-        return f"step {a.step} or mode {a.mode} does not fit i4"
-    if a.kind == "stage":
-        ok = a.step >= -1 and a.mode == 0
-    elif a.kind == "mode":
-        ok = a.step >= -1 and a.mode >= 1
-    elif a.kind == "spectrum":
-        ok = a.step == -1 and a.mode >= 0
-    else:  # reference, combination
-        ok = a.step == -1 and a.mode == 0
-    if not ok:
-        return f"{a.kind} term with step {a.step}, mode {a.mode}"
-    return None
-
-
-def _terms_problem(row: Combination) -> Optional[str]:
-    """The ``Terms`` column of the rules table, or ``None`` when it holds."""
-    for term in row.terms:
-        problem = address_problem(term.address)
-        if problem is not None:
-            return problem
-        if not math.isfinite(term.factor):
-            return f"factor {term.factor} is not finite"
-    whole = [t for t in row.terms if t.kind == "spectrum" and t.mode == 0]
-    if row.rule in ("srss", "abs_sum"):
-        if whole and len(row.terms) != 1:
-            return f"{row.rule} takes a list or one whole case, not both"
-    elif row.rule == "cqc":
-        first = row.terms[0]
-        if whole:
-            if len(row.terms) != 1:
-                return "cqc takes one whole case, not a list with one"
-        elif first.kind not in ("mode", "spectrum") or any(
-            (t.kind, t.source, t.step) != (first.kind, first.source, first.step)
-            for t in row.terms
-        ):
-            return "cqc takes one whole case, or the modes of one set"
-    elif whole:
-        return f"{row.rule} takes a list, and a list excludes whole cases"
-    return None
-
-
-def _row_problem(row: Combination, origin: str) -> Optional[tuple[str, str]]:
-    """``(reason, detail)`` from the row alone, or ``None``."""
-    problem = name_problem(row.name)
-    if problem is not None:
-        return "empty-name", f"name {row.name!r}: {problem}"
-    if row.rule not in RULES:
-        return "unknown-rule", f"rule {row.rule!r}"
-    if not row.terms:
-        return "no-terms", "a combination needs at least one term"
-    if row.rule == "envelope":
-        if row.envelope not in ENVELOPES:
-            return "bad-param", f"envelope {row.envelope!r} is not one of {ENVELOPES}"
-    elif row.envelope:
-        return "bad-param", f"{row.rule} takes no envelope, got {row.envelope!r}"
-    if row.rule == "directional":
-        if row.fraction is None or not 0.0 <= row.fraction <= 1.0:
-            return "bad-param", f"directional fraction {row.fraction} is not in [0, 1]"
-    elif row.fraction is not None:
-        return "bad-param", f"{row.rule} takes no fraction, got {row.fraction}"
-    if row.damping is not None:
-        if row.rule != "cqc":
-            return "bad-param", f"{row.rule} takes no damping, got {row.damping}"
-        if not 0.0 < row.damping < 1.0:
-            return "bad-param", f"cqc damping {row.damping} is not in (0, 1)"
-    elif origin == "model" and row.rule == "cqc":
-        # A case's per-mode damping lives in .user.h5, so model.h5 has no source.
-        return "bad-param", "cqc in model.h5 needs a damping ratio"
-    problem = _terms_problem(row)
-    if problem is not None:
-        return "bad-term", problem
-    if row.rule == "cqc" and row.damping is None and row.terms[0].kind == "mode":
-        return "bad-param", "cqc over mode terms needs a damping: modes have no damping source"
-    if origin == "model":
-        for term in row.terms:
-            if term.kind in ("spectrum", "reference"):
-                return "bad-term", (
-                    f"a model.h5 combination cannot reference a {term.kind} "
-                    "source: it lives in .user.h5 (ADR 0130 A7)"
-                )
-    return None
+    return rules.address_problem(a.kind, a.source, a.step, a.mode)
 
 
 def resolve(
@@ -217,80 +144,22 @@ def resolve(
 ) -> CombinationTable:
     """Decide which rows stand. A bad row refuses alone (A3).
 
-    Names are unique among combinations across both files. Two rows of one
-    file refuse as ``duplicate``, and rows of the two files as ``clash``:
-    both rows go either way, because neither can claim the name. A row that
-    names a refused or absent combination is ``unresolved``, and a row in a
-    cycle or reaching one is ``cycle``. A ``.user.h5`` row may name a
-    ``model.h5`` row, never the reverse.
+    The verdicts are :func:`~apeGmsh.opensees._internal._combination_rules.judge`'s,
+    the one implementation ``model.h5``'s reader shares. A ``.user.h5`` row may
+    name a ``model.h5`` row, never the reverse.
     """
-    rows = [("user", i, r) for i, r in enumerate(user_rows)]
+    rows: list[tuple[str, int, Combination]] = [("user", i, r) for i, r in enumerate(user_rows)]
     rows += [("model", i, r) for i, r in enumerate(model_rows)]
-    verdict: dict[int, tuple[str, str]] = {}
-    for at, (origin, _, row) in enumerate(rows):
-        problem = _row_problem(row, origin)
-        if problem is not None:
-            verdict[at] = problem
-
-    holders: dict[str, list[int]] = {}
-    for at, (_, _, row) in enumerate(rows):
-        if name_problem(row.name) is None:
-            holders.setdefault(row.name, []).append(at)
-    for name, ats in holders.items():
-        if len(ats) < 2:
-            continue
-        origins = {rows[at][0] for at in ats}
-        reason = "clash" if len(origins) > 1 else "duplicate"
-        detail = f"{len(ats)} combinations are named {name!r}"
-        for at in ats:  # a row already refused keeps its own reason
-            verdict.setdefault(at, (reason, detail))
-
-    def alive() -> list[int]:
-        return [at for at in range(len(rows)) if at not in verdict]
-
-    def visible(origin: str, live: list[int]) -> set[str]:
-        return {rows[at][2].name for at in live if origin == "user" or rows[at][0] == "model"}
-
-    # Cycles first, so a row in one or reaching one reads ``cycle`` even if it also
-    # names something absent. Peel the rows whose references to standing rows are
-    # all settled; what remains is exactly the rows in a cycle or reaching one.
-    live = alive()
-    settled: set[str] = set()
-    pending = list(live)
-    progress = True
-    while progress:
-        progress = False
-        for at in list(pending):
-            origin, _, row = rows[at]
-            refs = {t.source for t in row.terms if t.kind == "combination"}
-            if refs & visible(origin, live) <= settled:
-                settled.add(row.name)
-                pending.remove(at)
-                progress = True
-    for at in pending:
-        verdict[at] = ("cycle", "this combination is in a reference cycle or reaches one")
-
-    changed = True
-    while changed:
-        changed = False
-        live = alive()
-        for at in live:
-            origin, _, row = rows[at]
-            names = visible(origin, live)
-            for term in row.terms:
-                if term.kind == "combination" and term.source not in names:
-                    verdict[at] = ("unresolved", f"combination {term.source!r} does not stand")
-                    changed = True
-                    break
-
+    verdict = rules.judge([(origin, row) for origin, _, row in rows])
     refused = tuple(
         Refusal(rows[at][2].name, *verdict[at], origin=rows[at][0], row=rows[at][1])
         for at in sorted(verdict)
     )
+    standing = [at for at in range(len(rows)) if at not in verdict]
     return CombinationTable(
-        rows=tuple(rows[at][2] for at in alive() if rows[at][0] == "user"),
+        rows=tuple(rows[at][2] for at in standing if rows[at][0] == "user"),
         refused=refused,
-        model_rows=tuple(rows[at][2] for at in alive() if rows[at][0] == "model"),
+        model_rows=tuple(rows[at][2] for at in standing if rows[at][0] == "model"),
     )
 
 

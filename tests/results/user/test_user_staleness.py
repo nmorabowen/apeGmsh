@@ -16,7 +16,7 @@ from apeGmsh.results.user import (
     write_user_file,
 )
 
-from tests.results.user._user_helpers import nodal
+from tests.results.user._user_helpers import case, mode_rows, nodal
 
 
 def _with_zones(path: Path, *roots: str) -> None:
@@ -36,8 +36,9 @@ def full(make_model, ladruno, tmp_path: Path) -> Path:
             Combination("cqc", "cqc", (Term("spectrum", "c"),)),
             Combination("via cqc", "linear", (Term("combination", "cqc"), Term("stage", "D"))),
         ],
+        modes=mode_rows(), spectra=[case("c")],
     )
-    _with_zones(path, "modes", "spectra", "entities")
+    _with_zones(path, "entities")
     return path
 
 

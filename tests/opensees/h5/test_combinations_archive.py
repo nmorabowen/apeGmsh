@@ -233,11 +233,14 @@ def test_a_rewrite_keeps_model_hash(tmp_path: Path) -> None:
 # --- refused when declared, with nothing registered -------------------------
 
 
+@pytest.mark.parametrize("rule", ["linear", "cqc"])
 @pytest.mark.parametrize("kind", ["spectrum", "reference"])
-def test_a_case_term_is_refused_when_declared(kind: str) -> None:
+def test_a_case_term_is_refused_when_declared(kind: str, rule: str) -> None:
+    """``cqc`` over a case with no damping reads ``bad-term`` as well: the term
+    is what to fix, not the damping (#2699 review)."""
     ops = _bridge()
     with pytest.raises(CombinationError, match=rf"\[bad-term\]") as err:
-        ops.combination("x", [CombinationTerm(kind, "case")])
+        ops.combination("x", [CombinationTerm(kind, "case")], rule=rule)
     assert ".user.h5" in str(err.value)
     assert ops.build().combinations == ()
 
@@ -614,14 +617,26 @@ def test_modeldata_refuses_below_the_floor(tmp_path: Path) -> None:
 
 
 def test_modeldata_refuses_an_unstamped_opensees_zone(tmp_path: Path) -> None:
+    """The refusal names the opensees zone. FEMData's own refusal of the empty
+    envelope named the neutral one, and used to answer first (#2699 review)."""
     path = tmp_path / "m.h5"
     _bridge().h5(str(path))
     with h5py.File(path, "a") as f:
         for key in ("opensees_schema_version", "schema_version"):
             if key in f["meta"].attrs:
                 del f["meta"].attrs[key]
-    with pytest.raises(MalformedH5Error):
+    with pytest.raises(MalformedH5Error, match="no opensees zone version"):
         ModelData.from_h5(str(path))
+
+
+def test_modeldata_reads_the_envelope_as_the_opensees_version(tmp_path: Path) -> None:
+    """A file stamped with the envelope alone is not unstamped (ADR 0023)."""
+    path = tmp_path / "m.h5"
+    _bridge().h5(str(path))
+    with h5py.File(path, "a") as f:
+        del f["meta"].attrs["opensees_schema_version"]
+        assert "schema_version" in f["meta"].attrs
+    assert ModelData.from_h5(str(path)).ndm == 3
 
 
 def test_modeldata_opens_a_file_with_no_opensees_zone(tmp_path: Path) -> None:

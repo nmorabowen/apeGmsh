@@ -37,6 +37,9 @@ Per-zone version stamps + one envelope (ADR 0023):
 - ``/meta/user_meta_schema_version``    -> :data:`USER_META_KEY` (ADR 0130)
 - ``/meta/combinations_schema_version`` -> :data:`COMBINATIONS_KEY` (ADR 0130)
 - ``/meta/user_results_schema_version`` -> :data:`USER_RESULTS_KEY` (ADR 0130)
+- ``/meta/modes_schema_version``        -> :data:`MODES_KEY` (ADR 0130)
+- ``/meta/spectra_schema_version``      -> :data:`SPECTRA_KEY` (ADR 0130)
+- ``/meta/entities_schema_version``     -> :data:`ENTITIES_KEY` (ADR 0130)
 - ``/meta/schema_version``            -> :data:`ENVELOPE_KEY` (back-compat only)
 
 Files written before Phase 7a (envelope-only) read via the envelope-fallback
@@ -59,11 +62,19 @@ __all__ = [
     "COMBINATIONS_KEY",
     "COMBINATIONS_SCHEMA_FLOOR",
     "COMBINATIONS_SCHEMA_VERSION",
+    "ENTITIES",
+    "ENTITIES_KEY",
+    "ENTITIES_SCHEMA_FLOOR",
+    "ENTITIES_SCHEMA_VERSION",
     "ENVELOPE_KEY",
     "GEOMETRY",
     "GEOMETRY_KEY",
     "GEOMETRY_SCHEMA_FLOOR",
     "GEOMETRY_SCHEMA_VERSION",
+    "MODES",
+    "MODES_KEY",
+    "MODES_SCHEMA_FLOOR",
+    "MODES_SCHEMA_VERSION",
     "NEUTRAL",
     "NEUTRAL_KEY",
     "OPENSEES",
@@ -79,6 +90,10 @@ __all__ = [
     "SEQUENCE_KEY",
     "SEQUENCE_SCHEMA_FLOOR",
     "SEQUENCE_SCHEMA_VERSION",
+    "SPECTRA",
+    "SPECTRA_KEY",
+    "SPECTRA_SCHEMA_FLOOR",
+    "SPECTRA_SCHEMA_VERSION",
     "SchemaVersion",
     "SchemaVersionError",
     "USER_META",
@@ -130,6 +145,11 @@ SEQUENCE: str = "sequence"
 USER_META: str = "user_meta"
 COMBINATIONS: str = "combinations"
 USER_RESULTS: str = "user_results"
+#: The modal table ``/modes`` and the spectrum cases ``/spectra`` (VU6).
+MODES: str = "modes"
+SPECTRA: str = "spectra"
+#: The non-mesh entities ``/entities``: cuts, storeys, point sets (VU8).
+ENTITIES: str = "entities"
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +185,9 @@ SEQUENCE_KEY: str = "sequence_schema_version"
 USER_META_KEY: str = "user_meta_schema_version"
 COMBINATIONS_KEY: str = "combinations_schema_version"
 USER_RESULTS_KEY: str = "user_results_schema_version"
+MODES_KEY: str = "modes_schema_version"
+SPECTRA_KEY: str = "spectra_schema_version"
+ENTITIES_KEY: str = "entities_schema_version"
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +229,12 @@ COMBINATIONS_SCHEMA_VERSION: str = "1.0.0"  # first version: floor and current c
 COMBINATIONS_SCHEMA_FLOOR: str = "1.0.0"
 USER_RESULTS_SCHEMA_VERSION: str = "1.0.0"  # first version: floor and current coincide
 USER_RESULTS_SCHEMA_FLOOR: str = "1.0.0"
+MODES_SCHEMA_VERSION: str = "1.0.0"  # first version: floor and current coincide
+MODES_SCHEMA_FLOOR: str = "1.0.0"
+SPECTRA_SCHEMA_VERSION: str = "1.0.0"  # first version: floor and current coincide
+SPECTRA_SCHEMA_FLOOR: str = "1.0.0"
+ENTITIES_SCHEMA_VERSION: str = "1.0.0"  # first version: floor and current coincide
+ENTITIES_SCHEMA_FLOOR: str = "1.0.0"
 
 #: First ``/provenance`` version whose ``records`` table carries the
 #: ``origin`` column (#1378), as a ``(major, minor, patch)`` triple.  The
@@ -227,6 +256,9 @@ _ZONE_KEY: dict[str, str] = {
     USER_META: USER_META_KEY,
     COMBINATIONS: COMBINATIONS_KEY,
     USER_RESULTS: USER_RESULTS_KEY,
+    MODES: MODES_KEY,
+    SPECTRA: SPECTRA_KEY,
+    ENTITIES: ENTITIES_KEY,
 }
 
 # Zones born after the per-zone split. The legacy envelope predates them, so
@@ -234,7 +266,7 @@ _ZONE_KEY: dict[str, str] = {
 # written, never "use the envelope" (ADR 0023 INV-2).
 _NO_ENVELOPE_ZONES: frozenset[str] = frozenset(
     {GEOMETRY, PROVENANCE, ASSEMBLY, SEQUENCE,
-     USER_META, COMBINATIONS, USER_RESULTS})
+     USER_META, COMBINATIONS, USER_RESULTS, MODES, SPECTRA, ENTITIES})
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +380,12 @@ def reader_version(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(COMBINATIONS_SCHEMA_VERSION)
     if zone == USER_RESULTS:
         return SchemaVersion.parse(USER_RESULTS_SCHEMA_VERSION)
+    if zone == MODES:
+        return SchemaVersion.parse(MODES_SCHEMA_VERSION)
+    if zone == SPECTRA:
+        return SchemaVersion.parse(SPECTRA_SCHEMA_VERSION)
+    if zone == ENTITIES:
+        return SchemaVersion.parse(ENTITIES_SCHEMA_VERSION)
     raise ValueError(
         f"reader_version: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
@@ -388,6 +426,12 @@ def reader_floor(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(COMBINATIONS_SCHEMA_FLOOR)
     if zone == USER_RESULTS:
         return SchemaVersion.parse(USER_RESULTS_SCHEMA_FLOOR)
+    if zone == MODES:
+        return SchemaVersion.parse(MODES_SCHEMA_FLOOR)
+    if zone == SPECTRA:
+        return SchemaVersion.parse(SPECTRA_SCHEMA_FLOOR)
+    if zone == ENTITIES:
+        return SchemaVersion.parse(ENTITIES_SCHEMA_FLOOR)
     raise ValueError(
         f"reader_floor: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
