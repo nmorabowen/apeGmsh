@@ -83,6 +83,7 @@ from typing import Any, Iterable, Literal, cast
 from ._internal.build.errors import BridgeError
 from ._internal.build.recorders import _emit_recorder_declaration
 from ._internal.build.pg_expand import expand_pg_to_elements
+from ._internal._combinations_h5 import CombinationsZone, read_combinations_group
 from ._internal.compose import _compose_model_h5, _path_stem
 from .emitter.base import Emitter
 from .emitter.h5 import H5Emitter
@@ -155,6 +156,7 @@ class ModelData:
         self._ndm = int(ndm)
         self._ndf = int(ndf)
         self._model_name = model_name
+        self._loaded_combinations = CombinationsZone()
         self._em = H5Emitter(
             model_name=model_name or "model",
             snapshot_id=str(getattr(fem, "snapshot_id", "") or ""),
@@ -436,6 +438,7 @@ class ModelData:
         line-only frame declared with ``ndm=2`` writes ``2`` (#1291).
         """
         name = self._model_name or _path_stem(path)
+        self._em.set_combinations(self._loaded_combinations.rows_for_rewrite())
         _compose_model_h5(
             self._fem,
             self._em,
@@ -531,6 +534,8 @@ class ModelData:
             if "opensees" not in f:
                 return md
             ops_grp = f["opensees"]
+            # ADR 0130 D4: write() echoes the combinations it does not edit.
+            md._loaded_combinations = read_combinations_group(ops_grp)
 
             # ADR 0055 Phase 2 laundering guard: ModelData reads only
             # the orientation zone, so re-saving via ``write()`` would

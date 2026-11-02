@@ -117,6 +117,7 @@ from ._h5_program import (
     _ProgramTape,
     _command_kind,
 )
+from .._internal._combinations_h5 import Combination, write_combinations_into
 from ._h5_write import _set_attr
 from .h5_reader import TARGET_MODES, EquationConstraintRecordRO
 from ._h5_decls import _H5DeclsMixin, _decl_refs, _json_text
@@ -721,7 +722,13 @@ class H5RefusedVerb(NotImplementedError):
 #:     and the replayed deck are unchanged. The stamp moves for an
 #:     additive change (rule D5, as 2.28.0 and 2.30.0 did): a 2.38 reader
 #:     opens 2.12 through 2.38; a 2.37.x reader REFUSES a 2.38.x file.
-SCHEMA_VERSION: str = "2.38.0"
+#:   * 2.39.0 — combinations (ADR 0130 slice 5): additive — the optional
+#:     ``/opensees/combinations`` group holds the combinations ``apeSees``
+#:     declares, as columns at ``g0``. No combination, no group. It is in
+#:     ``MODEL_HASH_EXCLUDED_CHILDREN``, and no deck reads it. A 2.39
+#:     reader opens 2.12 through 2.39; a 2.38.x reader REFUSES a 2.39.x
+#:     file, because its rewrite would drop the group unseen (rule D5).
+SCHEMA_VERSION: str = "2.39.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1166,6 +1173,8 @@ class H5Emitter(
         # ``None``: not handed in, no group.
         self._decl_params: "list[tuple[int, str, dict[str, Any]]] | None" = None
         self._decl_params_restored: "list[DeclParamsRow] | None" = None
+        # 2.39.0: /opensees/combinations, set by set_combinations.
+        self._combinations: "tuple[Combination, ...]" = ()
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -1520,6 +1529,8 @@ class H5Emitter(
         # K1-7 (schema 2.26.0): the declarations' parameters by field
         # name, a derived view of the stores above; hash-excluded too.
         self._write_decl_params(f)
+        # ADR 0130 D4 (schema 2.39.0): hash-excluded; no rows, no group.
+        write_combinations_into(f, self._combinations)
 
     def _decl_params_rows(self) -> "list[DeclParamsRow]":
         """The ``/opensees/decl_params`` rows: the handed-in primitives
@@ -1662,6 +1673,14 @@ class H5Emitter(
             ends.append(first + count)
             decls_of.append(decl)
         self._decl_tag_index = index
+
+    def set_combinations(self, rows: "Sequence[Combination]") -> None:
+        """Hand in the rows of ``/opensees/combinations`` (schema 2.39.0).
+
+        Side channel, not a Protocol call. Replaces any rows set before;
+        the rows are stored as given (a rewrite echoes its source's table).
+        """
+        self._combinations = tuple(rows)
 
     def set_decl_params(
         self, items: "Sequence[tuple[int, object]]",
