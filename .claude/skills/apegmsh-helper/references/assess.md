@@ -83,7 +83,7 @@ human sees the set, each with a manifest of the numbers behind it. One
 call goes from the saved files to PNGs plus the manifest:
 
 ```python
-from apeGmsh.viewers.agent_view import render_stills, AgentViewError
+from apeGmsh.agent_view import render_stills, AgentViewError
 
 spec = {
     "spec": "apegmsh-view/1",

@@ -1,4 +1,4 @@
-"""The ADR 0128 D7 shim (``apeGmsh.viewers.agent_view``) against a stub executable.
+"""The ADR 0128 D7 shim (``apeGmsh.agent_view``) against a stub executable.
 
 The stub stands in for ``apeGmshViewer`` at its command line, the
 contract: it reads ``--render <spec> --out <dir>``, refuses an ``--out``
@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from apeGmsh.viewers import agent_view
-from apeGmsh.viewers.agent_view import AgentViewError, find_viewer, render_stills
+from apeGmsh import agent_view
+from apeGmsh.agent_view import AgentViewError, find_viewer, render_stills
 
 STUB = r'''
 import json, os, sys, time

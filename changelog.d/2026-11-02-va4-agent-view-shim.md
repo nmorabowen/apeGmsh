@@ -1,4 +1,4 @@
-### ADDED — `apeGmsh.viewers.agent_view.render_stills`: apeGmshViewer stills plus a manifest in one call (ADR 0128 slice 4, #2653)
+### ADDED — `apeGmsh.agent_view.render_stills`: apeGmshViewer stills plus a manifest in one call (ADR 0128 slice 4, #2653)
 
 `render_stills(spec, out)` takes every shot of an `apegmsh-view/1` view spec with the installed
 apeGmshViewer and returns its `manifest.json` as a dict. It finds the executable (`$APEGMSH_VIEWER`, else
