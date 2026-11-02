@@ -96,6 +96,7 @@ if TYPE_CHECKING:
     from ..opensees._internal.lineage import Lineage
     from ..opensees.opensees_model import OpenSeesModel
     from .plot import ResultsPlot
+    from .user._states import UserCombinations
 
 
 # Sentinel for ``Results._derive`` so we can distinguish
@@ -1516,6 +1517,53 @@ class Results:
                 period_s=float(s.period_s),
             ))
         return out
+
+    def combinations(
+        self,
+        user_h5: "Optional[str | Path]" = None,
+        *,
+        model_h5: "Optional[str | Path]" = None,
+        spectra: Any = None,
+    ) -> "UserCombinations":
+        """The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).
+
+        ``user_h5`` is the set's ``<stem>.user.h5``; omitted, the one beside
+        this file is used when it exists. ``model_h5`` (default: the archive
+        this was opened with) brings its ``/opensees/combinations`` into the
+        table. ``spectra`` is a ``/spectra`` provider for spectrum terms.
+        ``evaluate(state, component, level=...)`` combines a recorded result,
+        ``evaluate(state, user_result=...)`` a user result. A state handle of
+        another ``Results`` is refused.
+        """
+        from .user._evaluate import CombinationRefused
+        from .user._states import UserCombinations
+
+        if user_h5 is None and self._path is not None:
+            beside = Path(self._path).with_name(Path(self._path).stem + ".user.h5")
+            user_h5 = beside if beside.is_file() else None
+
+        def handle(obj: Any) -> Optional[str]:
+            if not isinstance(obj, Results):
+                return None
+            if obj._reader is not self._reader:
+                raise CombinationRefused(
+                    "", "foreign-handle", "this state handle belongs to another "
+                    "Results; combining states of different runs is refused "
+                    "(ADR 0130 D4, A7)")
+            if obj._stage_id is None:
+                raise TypeError(
+                    "an unscoped Results is not a state; use results.stage(...)")
+            return obj._stage_id
+
+        model = model_h5 if model_h5 is not None else self._model_path
+        return UserCombinations(
+            self,
+            user_h5=None if user_h5 is None else Path(user_h5),
+            model_h5=None if model is None else Path(model),
+            results_file=self._path,
+            handle=handle,
+            spectra=spectra,
+        )
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)
