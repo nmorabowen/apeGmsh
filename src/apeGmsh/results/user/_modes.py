@@ -27,6 +27,7 @@ from typing import Any, Mapping, Optional
 import h5py
 import numpy as np
 
+from ...opensees.analysis.modal import ModalPropertiesResult
 from ..readers._ladruno_multi import discover_partition_files
 from ..readers._mpco_nodal_io import discover_modes
 from ._descriptor import decode_cell
@@ -102,25 +103,36 @@ def _series(properties: Mapping[str, Any], key: str, n: Optional[int]) -> np.nda
 
 
 def mode_table(
-    properties: Mapping[str, Any],
+    modal: ModalPropertiesResult,
     *,
     host: str,
     step: int = -1,
 ) -> ModeTable:
-    """The ``/modes`` table of one ``modalProperties -return`` dict.
+    """The ``/modes`` table of one ``eigen`` + ``modalProperties`` pair.
 
-    ``properties`` is :attr:`ModalPropertiesResult.properties
-    <apeGmsh.opensees.analysis.modal.ModalPropertiesResult.properties>` (also
-    reached as ``GravityModalResult.modal.properties``). ``host`` is the stage
-    whose modal set these modes are, as a source address names it, and
-    ``step`` its ``STEP_<s>`` id (``-1``: the stage's only set).
+    ``modal`` is a :class:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult`
+    (``apeSees.modal_properties``, ``EigenResult.modal_properties``, or
+    ``GravityModalResult.modal``). ``host`` is the stage whose modal set these
+    modes are, as a source address names it, and ``step`` its ``STEP_<s>`` id
+    (``-1``: the stage's only set).
 
     ``lambda`` and ``period`` are ``eigenLambda`` and ``eigenPeriod`` as
     returned, the ratios are ``partiMassRatios<C>`` and ``partiMassRatiosCumu<C>``
     over 100, and ``participation`` is ``partiFactor<C>``, for every component
     ``C`` the dict carries. Raises ``ValueError`` on a dict that lacks one of
-    these or a ``modeKind`` it does not know.
+    these or a ``modeKind`` it does not know, and on properties computed with
+    ``-unorm``: those factors are in a displacement-normalised basis, so their
+    generalised mass is not the ``φᵀMφ`` of the recorded modes.
     """
+    if not isinstance(modal, ModalPropertiesResult):
+        raise TypeError(
+            f"mode_table: expected a ModalPropertiesResult, got {type(modal).__name__}")
+    if modal.unorm:
+        raise ValueError(
+            "mode_table: these properties were computed with modalProperties -unorm, "
+            "whose factors are in the displacement-normalised basis; the table pairs "
+            "with the recorded (domain) eigenvectors. Run modal_properties(unorm=False)")
+    properties: Mapping[str, Any] = modal.properties
     lam = _series(properties, "eigenLambda", None)
     n = lam.size
     period = _series(properties, "eigenPeriod", n)

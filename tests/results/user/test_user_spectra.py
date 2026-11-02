@@ -66,7 +66,8 @@ def _result(*, residual: bool = True, function: bool = False) -> SpectrumModalRe
         "cols": _rng_values(3, (2, n, 5)),
         "base_shear": _rng_values(4, (2, n, 2)),
     }
-    labels = {"disp": DISP.labels, "drift": ("roof drift",), "cols": None, "base_shear": None}
+    labels = {"disp": DISP.labels, "drift": None,
+              "cols": ("e3.N", "e3.V", "e3.M", "e4.N", "e4.V"), "base_shear": None}
     gravity_values = {k: _rng_values(10 + i, (v.shape[2],))
                       for i, (k, v) in enumerate(per_mode.items())}
     return SpectrumModalResult(
@@ -106,8 +107,8 @@ def test_each_spectrum_is_a_case_holding_the_drivers_values() -> None:
 
 def test_components_are_the_labels_or_one_based_indices() -> None:
     c = spectrum_cases(_result(), ["E_x", "E_y"], damping=XI, nodal=["disp"])[0]
-    assert c.result("drift").components == ("roof drift",)
-    assert c.result("cols").components == ("1", "2", "3", "4", "5")
+    assert c.result("drift").components == ("1",), "one unlabelled value"
+    assert c.result("cols").components == ("e3.N", "e3.V", "e3.M", "e4.N", "e4.V")
     assert c.result("base_shear").components == ("1", "2")
 
 
@@ -195,6 +196,23 @@ def _with_labels(labels: tuple[str, ...]) -> SpectrumModalResult:
         modal=res.modal, spectra=res.spectra, gravity_values=res.gravity_values,
         per_mode=res.per_mode, labels={**res.labels, "disp": labels},
         restore_drift=res.restore_drift, sa_periods=res.sa_periods)
+
+
+def _with_unlabelled_cols() -> SpectrumModalResult:
+    res = _result()
+    return SpectrumModalResult(
+        modal=res.modal, spectra=res.spectra, gravity_values=res.gravity_values,
+        per_mode=res.per_mode, labels={**res.labels, "cols": None},
+        restore_drift=res.restore_drift, sa_periods=res.sa_periods)
+
+
+def test_an_unlabelled_extractor_of_many_values_refuses_unless_omitted() -> None:
+    """Review F1: an ElementResponse written flat loses its elements and forces."""
+    res = _with_unlabelled_cols()
+    with pytest.raises(ValueError, match="'cols' returns 5 values with no labels"):
+        spectrum_cases(res, ["E_x", "E_y"], damping=XI, nodal=["disp"])
+    c = spectrum_cases(res, ["E_x", "E_y"], damping=XI, nodal=["disp"], omit=["cols"])[0]
+    assert {q.label for q in c.results} == {"drift", "base_shear", "DISPLACEMENT"}
 
 
 def test_reactions_and_rotations_are_not_nodal_fields_here() -> None:
@@ -288,6 +306,18 @@ def test_a_group_where_a_dataset_belongs_refuses_that_case_alone(make_model, tmp
     index = UserFile(path).spectra()
     assert [c.name for c in index.cases] == ["b"]
     assert [(r.name, r.reason) for r in index.refused] == [("a", "bad-param")]
+
+
+@pytest.mark.parametrize("where", ["RESULTS", "reference/RESULTS"])
+def test_a_family_outside_1_0_0_refuses_the_case_by_name(make_model, tmp_path, where) -> None:
+    """Review F3: a 1.0.0 case holds ON_NODES and ON_DOMAIN only."""
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), spectra=[case("a"), case("b")])
+    with h5py.File(path, "a") as f:
+        f.copy(f[f"spectra/s0/{where}/ON_DOMAIN"], f[f"spectra/s0/{where}"], "ON_ELEMENTS")
+    index = UserFile(path).spectra()
+    assert [c.name for c in index.cases] == ["b"]
+    (refusal,) = index.refused
+    assert refusal.name == "a" and "ON_ELEMENTS is not in spectra 1.0.0" in refusal.detail
 
 
 def test_namesakes_both_refuse_as_duplicate(make_model, tmp_path: Path) -> None:

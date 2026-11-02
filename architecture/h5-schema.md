@@ -2701,6 +2701,8 @@ Readers ignore unknown attributes and groups.
     lambda, sa_period, gamma, sa, damping    f8 (M,)    sa_period: 0 = own period
   reference/RESULTS/...  S = 1: the reference state's values
   RESULTS/..., MODEL/... as /results, S = M; labels are recorder spellings
+                         1.0.0: ON_NODES and ON_DOMAIN only; a reader refuses
+                         a case holding any other family ("not in spectra 1.0.0")
 
 /results/r<k>/           one user result
   @name, @KIND="static"
@@ -2745,6 +2747,11 @@ Readers ignore unknown attributes and groups.
     xyz                  f8 (P,3)
     host_element         i4 (P,); -1 = none
 ```
+
+In a `/spectra` case, `modes/sa` is the `Sa` the mode's response was scaled by:
+`@scale` times `Sa(T)` at the mode's `sa_period`, or at its own period where
+`sa_period` is 0. `spectrum/Sa` is the spectrum unscaled, so `@scale · Sa`
+interpolated at those periods gives `modes/sa`.
 
 A `/results` or `/spectra` group is a small stage, so the `.ladruno` read path
 reads it. `STEP` and `TIME` are `0..S-1`; the state of a row is in `STATES` or

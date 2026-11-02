@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees._internal.schema_version import SchemaVersionError
+from apeGmsh.opensees.analysis.modal import ModalPropertiesResult
 from apeGmsh.results.user import (
     UserFile,
     UserWriteRefused,
@@ -59,12 +60,17 @@ def _shear_frame_properties() -> tuple[dict, np.ndarray]:
     return props, mgen
 
 
+def _modal(props: dict, *, unorm: bool = False) -> ModalPropertiesResult:
+    return ModalPropertiesResult(eigenvalues=np.asarray(props.get("eigenLambda", ())), properties=props,
+                                 _live=None, unorm=unorm)  # type: ignore[arg-type]
+
+
 # ---- the table from modalProperties -----------------------------------------
 
 
 def test_the_table_is_modal_properties_with_fractions() -> None:
     props, _ = _shear_frame_properties()
-    t = mode_table(props, host="stage_0")
+    t = mode_table(_modal(props), host="stage_0")
     assert t.components == ("MX", "MY", "RMZ")
     assert t.lam.tobytes() == np.asarray(props["eigenLambda"]).tobytes()
     assert t.period.tobytes() == np.asarray(props["eigenPeriod"]).tobytes()
@@ -78,7 +84,7 @@ def test_the_table_is_modal_properties_with_fractions() -> None:
 def test_generalized_mass_is_phi_m_phi() -> None:
     """A1: effective mass over Γ² is ``φᵀMφ``, here SCALE², not 1."""
     props, mgen = _shear_frame_properties()
-    t = mode_table(props, host="stage_0")
+    t = mode_table(_modal(props), host="stage_0")
     np.testing.assert_allclose(t.generalized_mass, mgen, rtol=1e-12)
     np.testing.assert_allclose(t.generalized_mass, np.square(SCALE), rtol=1e-12)
 
@@ -86,17 +92,30 @@ def test_generalized_mass_is_phi_m_phi() -> None:
 def test_generalized_mass_is_nan_where_every_gamma_is_zero() -> None:
     props, _ = _shear_frame_properties()
     props["partiFactorMX"] = [props["partiFactorMX"][0], 0.0]
-    t = mode_table(props, host="stage_0")
+    t = mode_table(_modal(props), host="stage_0")
     assert np.isfinite(t.generalized_mass[0]) and np.isnan(t.generalized_mass[1])
 
 
 def test_mode_kinds_follow_the_fork_tags() -> None:
     props, _ = _shear_frame_properties()
     props["modeKind"] = [0, 1]
-    assert mode_table(props, host="stage_0").kind == ("eigen", "residual")
+    assert mode_table(_modal(props), host="stage_0").kind == ("eigen", "residual")
     props["modeKind"] = [0, 7]
     with pytest.raises(ValueError, match="modeKind"):
-        mode_table(props, host="stage_0")
+        mode_table(_modal(props), host="stage_0")
+
+
+def test_unorm_properties_refuse() -> None:
+    """Review F2: -unorm factors are in another basis; M_eff/Γ² is not φᵀMφ there."""
+    props, _ = _shear_frame_properties()
+    with pytest.raises(ValueError, match="unorm"):
+        mode_table(_modal(props, unorm=True), host="stage_0")
+
+
+def test_a_bare_dict_refuses() -> None:
+    props, _ = _shear_frame_properties()
+    with pytest.raises(TypeError, match="ModalPropertiesResult"):
+        mode_table(props, host="stage_0")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("drop", ["eigenLambda", "eigenPeriod", "partiMassMX"])
@@ -104,14 +123,14 @@ def test_a_dict_missing_a_series_refuses(drop: str) -> None:
     props, _ = _shear_frame_properties()
     del props[drop]
     with pytest.raises(ValueError, match=drop):
-        mode_table(props, host="stage_0")
+        mode_table(_modal(props), host="stage_0")
 
 
 def test_a_non_positive_lambda_refuses() -> None:
     props, _ = _shear_frame_properties()
     props["eigenLambda"] = [0.0, props["eigenLambda"][1]]
     with pytest.raises(ValueError, match="lambda"):
-        mode_table(props, host="stage_0")
+        mode_table(_modal(props), host="stage_0")
 
 
 # ---- the zone ---------------------------------------------------------------

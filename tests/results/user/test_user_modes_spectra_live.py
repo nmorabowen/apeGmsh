@@ -112,7 +112,7 @@ def test_a_modes_table_equals_modal_properties(tmp_path: Path) -> None:
     result = _frame().modal_properties(N_MODES, solver="-fullGenLapack")
     props = result.properties
     path = write_user_file(tmp_path / "frame.user.h5", _model(tmp_path),
-                           modes=mode_table(props, host="stage_0"))
+                           modes=mode_table(result, host="stage_0"))
     t = UserFile(path).modes()
     assert len(t) == N_MODES
     assert t.lam.tobytes() == np.asarray(props["eigenLambda"], dtype="f8").tobytes()
@@ -133,6 +133,21 @@ def test_a_modes_table_equals_modal_properties(tmp_path: Path) -> None:
             m = np.asarray(ops.nodeMass(int(node)), dtype="f8")
             mgen[k] += float(np.sum(m[:phi.size] * phi * phi))
     np.testing.assert_allclose(t.generalized_mass, mgen, rtol=1e-9)
+
+
+@pytest.mark.live
+def test_a_table_from_unorm_properties_refuses() -> None:
+    """Review F2: ``-unorm`` factors are in the displacement-normalised basis.
+
+    Measured on this frame before the refusal: M_eff/Γ² read about 96,000 while
+    φᵀMφ of the domain eigenvectors is 1. The result now carries the flag, and
+    the table refuses it.
+    """
+    result = _frame().modal_properties(N_MODES, solver="-fullGenLapack", unorm=True)
+    assert result.unorm is True
+    with pytest.raises(ValueError, match="unorm"):
+        mode_table(result, host="stage_0")
+    assert _frame().modal_properties(N_MODES, solver="-fullGenLapack").unorm is False
 
 
 @pytest.mark.live

@@ -489,6 +489,7 @@ class EigenResult:
             eigenvalues=np.asarray(self.eigenvalues, dtype=np.float64),
             properties=properties,
             _live=self._live,
+            unorm=bool(unorm),
         )
 
     def results(

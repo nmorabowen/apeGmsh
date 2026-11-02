@@ -9,14 +9,20 @@ values (``reference/RESULTS``, ``S = 1``). The ADR 0124 driver refuses
 recorders, so nothing here derives from a ``.ladruno``; the zone goes stale
 with the model hashes only (A1, A6).
 
-**What a case holds** (A7). Every extractor is written as a domain quantity,
-``ON_DOMAIN/<extractor name>``, with its labels as components (``1..n`` when it
-has none), except a nodal one. An extractor whose labels are a
+**What a case holds** (A7). A labelled extractor is written as a domain
+quantity, ``ON_DOMAIN/<extractor name>``, with its labels as components. So are
+an unlabelled one that returns a single value (component ``1``) and the
+driver's ``base_shear`` (components ``1..ndm``, the directions). An unlabelled
+extractor with more values (an
+:class:`~apeGmsh.opensees.analysis.spectrum.ElementResponse`) is refused unless
+named in ``omit=``: written flat, it would lose which element and which force
+each value is. An extractor whose labels are a
 :class:`~apeGmsh.opensees.analysis.spectrum.NodeDisp`'s is a nodal field: it is
 written as ``ON_NODES/DISPLACEMENT`` (the recorder spelling, ``Ux,Uy,Uz``) when
 named in ``nodal=``, left out when named in ``omit=``, and refused otherwise, so
 a full field is never written by default and never dropped silently. Only
-translational displacement is written as a nodal field here.
+translational displacement is written as a nodal field here. A 1.0.0 case holds
+``ON_NODES`` and ``ON_DOMAIN`` only; the reader refuses any other family.
 
 **Units of the spectrum.** ``spectrum/Sa`` is the spectrum as given, without
 ``@scale``; the per-mode ``sa`` column is the ``Sa`` the driver applied,
@@ -33,6 +39,7 @@ from typing import Any, Optional, Sequence
 import h5py
 import numpy as np
 
+from ...opensees._internal.schema_version import SPECTRA_SCHEMA_VERSION
 from ...opensees.analysis.spectrum import BASE_SHEAR, SpectrumModalResult
 from ._descriptor import Refusal, decode_cell
 from ._errors import ZoneRefused
@@ -163,7 +170,8 @@ def spectrum_cases(
     the damping a ``cqc`` combination over the whole case uses; ``None`` writes
     NaN, which such a combination refuses. ``nodal`` names the ``NodeDisp``
     extractors to write as ``ON_NODES/DISPLACEMENT``, ``omit`` the extractors
-    to leave out; a nodal extractor in neither is refused (module docstring).
+    to leave out. A nodal extractor in neither is refused, and so is an
+    unlabelled one with more than one value (module docstring).
     """
     if not isinstance(result, SpectrumModalResult):
         raise TypeError(
@@ -262,6 +270,12 @@ def _quantity_layout(
                 f"spectrum_cases: {extractor!r} holds nodal values "
                 f"({len(field[1])} nodes); name it in nodal= to write the field or in "
                 "omit= to leave it out (A7: nodal fields are written on request)")
+        if not labels and width > 1 and extractor != BASE_SHEAR:
+            raise ValueError(
+                f"spectrum_cases: {extractor!r} returns {width} values with no labels (an "
+                "ElementResponse, say); written to the domain they would lose which element "
+                "and which force each value is. Give the extractor labels, or name it in "
+                "omit= to leave it out")
         components = tuple(labels) if labels else tuple(str(i + 1) for i in range(width))
         out.append((extractor, extractor, "domain", components, None, (1, width)))
     labels_written = [entry[1] for entry in out]
@@ -441,7 +455,9 @@ def _read_quantities(root: h5py.Group, where: str) -> tuple[CaseQuantity, ...]:
     out: list[CaseQuantity] = []
     for on in root["RESULTS"]:
         if on not in _TARGET:
-            raise EntryRefused("bad-param", f"{root.name}/RESULTS/{on} is not one of {sorted(_TARGET)}")
+            raise EntryRefused(
+                "bad-param", f"{root.name}/RESULTS/{on}: the family {on} is not in spectra "
+                f"{SPECTRA_SCHEMA_VERSION}, whose cases hold {sorted(_TARGET)} only")
         family = root["RESULTS"][on]
         if not isinstance(family, h5py.Group):
             raise EntryRefused("bad-param", f"{family.name} is not a group")
