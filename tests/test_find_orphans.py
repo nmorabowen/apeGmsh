@@ -231,7 +231,8 @@ def test_non_program_pr_is_out_of_scope():
 def test_pr_merged_before_policy_is_exempt():
     old = _vpr(30, ["program", "semantic"], merged_at="2026-10-30T19:36:00Z")
     since = datetime(2026, 7, 1, tzinfo=timezone.utc)  # a wide window is clamped
-    assert not fo.find_unreviewed(make_vfetch([old]), REPO, since)
+    pinned = datetime(2026, 11, 2, tzinfo=timezone.utc)  # pinned: no time rot
+    assert not fo.find_unreviewed(make_vfetch([old]), REPO, since, now=pinned)
 
 
 def test_report_has_separate_section_and_detector_note(capsys):
@@ -351,3 +352,125 @@ def test_orphan_failure_keeps_verdict_results_and_exits_2(capsys, monkeypatch):
     assert fo.main(["--since", "3"], fetch=_failing(inner, "/compare/main...")) == 2
     out = capsys.readouterr().out
     assert "merged-without-verdict" in out and "orphans detection failed" in out
+
+
+# --- delta review of #2679 ---
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.mark.parametrize("body", [
+    "verify_move failed: not an identical multiset",
+    "verify_move: FAILED - 3 defs, not an identical multiset",
+    "I did not run verify_move; the multiset is identical, trust me.",
+])
+def test_move_evidence_must_be_verify_moves_ok_line(body):
+    pr = _vpr(90, ["program"], body=body)
+    assert [h["pr"] for h in _unreviewed([pr], files={90: ["tests/a.py"]})] == [90]
+
+
+@pytest.mark.parametrize("line", [
+    "verify_move: OK — 59 defs, identical multiset",
+    "verify_move: OK — 12 defs, 3 moved",
+])
+def test_real_verify_move_output_lines_exempt(line):
+    pr = _vpr(91, ["program"], body=f"Slice: #1\n\n```\n{line}\n```\n")
+    assert not _unreviewed([pr], files={91: ["tests/a.py"]})
+
+
+@pytest.mark.parametrize("path", [
+    ".github/workflows/tests.yml", "scripts/land_pr.py", "scripts/check_quirks.py",
+    "tests/freeze_census.py", "internal_docs/program/retirement_ledger.toml",
+])
+def test_move_evidence_never_exempts_a_gate_file(path):
+    pr = _vpr(92, ["program"], body=MOVE_BODY)
+    assert [h["pr"] for h in _unreviewed([pr], files={92: ["tests/a.py", path]})] == [92]
+
+
+def test_move_evidence_does_not_exempt_a_rename_out_of_a_gate_file():
+    row = {"filename": "scripts/old_land.py", "previous_filename": "scripts/land_pr.py"}
+    pr = _vpr(93, ["program"], body=MOVE_BODY)
+    assert [h["pr"] for h in _unreviewed([pr], files={93: [row]})] == [93]
+
+
+def _fake_run(stderr):
+    def run(*a, **k):
+        return subprocess.CompletedProcess(a, 1, stdout="", stderr=stderr)
+    return run
+
+
+def test_gh_fetch_404_is_not_found(monkeypatch):
+    monkeypatch.setattr(fo.subprocess, "run", _fake_run("gh: Not Found (HTTP 404)"))
+    assert fo.gh_fetch("repos/x/branches/gone") is None
+
+
+@pytest.mark.parametrize("stderr", [
+    "gh: Resource not accessible by integration (HTTP 403) see /branches/404-fix",
+    "gh: API rate limit exceeded (HTTP 403); request 404ab was refused",
+    "gh: Not Found",
+])
+def test_gh_fetch_other_errors_raise(monkeypatch, stderr):
+    monkeypatch.setattr(fo.subprocess, "run", _fake_run(stderr))
+    with pytest.raises(RuntimeError):
+        fo.gh_fetch("repos/x/branches/b")
+
+
+# The workflow's find step, run for real against stub or crashing scripts.
+
+def _find_step_script():
+    text = (ROOT / ".github" / "workflows" / "orphans.yml").read_text(encoding="utf-8")
+    m = re.search(r"- name: Find orphaned work\n.*?run: \|\n(.*?)\n\n      - name:",
+                  text, re.DOTALL)
+    assert m, "find step not found"
+    body = "\n".join(line[10:] for line in m.group(1).splitlines())
+    return body.replace("python scripts/", f'"{Path(sys.executable).as_posix()}" scripts/')
+
+
+def _run_step(tmp_path, source):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available")
+    (tmp_path / "scripts").mkdir(parents=True)
+    for name, text in source.items():
+        (tmp_path / "scripts" / name).write_text(text, encoding="utf-8")
+    out = tmp_path / "gh_output"
+    out.write_text("")
+    env = dict(os.environ, GITHUB_OUTPUT=out.as_posix())
+    subprocess.run([bash, "-c", _find_step_script()], cwd=tmp_path, env=env,
+                   capture_output=True, text=True, check=False)
+    return dict(line.split("=", 1) for line in out.read_text().split())
+
+
+def _stub(code, text):
+    return {"find_orphans.py": f"import sys\nprint({text!r}, end='')\nsys.exit({code})\n"}
+
+
+def test_workflow_import_crash_fails_the_job(tmp_path):
+    # Rename BASELINE in land_pr.py: find_orphans dies at import with exit 1 and
+    # an empty report, which must not read as "findings".
+    scripts = ROOT / "scripts"
+    land = (scripts / "land_pr.py").read_text(encoding="utf-8")
+    assert "\nBASELINE = (" in land
+    src = {n: (scripts / n).read_text(encoding="utf-8")
+           for n in ("find_orphans.py", "program_probe.py")}
+    src["land_pr.py"] = land.replace("\nBASELINE = (", "\nBASELINE_RENAMED = (")
+    got = _run_step(tmp_path, src)
+    assert got.get("failed") == "1" and "found" not in got
+
+
+def test_workflow_codes_need_their_positive_marker(tmp_path):
+    assert _run_step(tmp_path / "a", _stub(1, "")) == {"failed": "1"}
+    assert _run_step(tmp_path / "b", _stub(0, "")) == {"failed": "1"}
+    assert _run_step(tmp_path / "c", _stub(0, "No orphaned work found.\n")) == {"found": "0"}
+    assert _run_step(tmp_path / "d", _stub(1, "| k | #1 t | `main` | d |\n")) == {"found": "1"}
+    got = _run_step(tmp_path / "e", _stub(2, "| k | #1 t | `main` | d |\n"))
+    assert got == {"failed": "1", "found": "1"}
+    assert _run_step(tmp_path / "f", _stub(2, "**ERROR: x**\n")) == {"failed": "1"}

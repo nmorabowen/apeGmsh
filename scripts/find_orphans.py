@@ -57,8 +57,10 @@ MAX_PAGES = 20
 #: The verdict scan covers a rolling window, so its call count stops growing.
 VERDICT_WINDOW_DAYS = 14
 #: A move PR's body quotes `verify_move`'s success line ("OK, 59 defs, identical
-#: multiset"); a non-semantic PR carrying it is exempt (T ruling on #2679).
-_MOVE_EVIDENCE = re.compile(r"verify_move[\s\S]*identical multiset", re.IGNORECASE)
+#: multiset"); a non-semantic PR carrying that line is exempt (T ruling on #2679),
+#: unless it also changes a file that always needs a verdict (`_always_verdict`).
+_MOVE_EVIDENCE = re.compile(
+    r"^[^\n]*\bOK\b\W{1,6}\d+ defs?, (?:identical multiset|\d+ moved)", re.MULTILINE)
 #: Prose paths never count as golden files.
 _PROSE_PREFIXES = ("docs/", "internal_docs/")
 POLICY_START = datetime(2026, 10, 30, 19, 37, tzinfo=timezone.utc)
@@ -104,7 +106,7 @@ def gh_fetch(path: str) -> Any:
         check=False,
     )
     if proc.returncode != 0:
-        if "404" in proc.stderr or "Not Found" in proc.stderr:
+        if "(HTTP 404)" in proc.stderr:
             return None
         raise RuntimeError(f"gh api {path} failed: {proc.stderr.strip()}")
     return json.loads(proc.stdout)
@@ -149,6 +151,11 @@ def _paged(fetch: Fetch, path: str) -> list[dict]:
     return rows
 
 
+def _always_verdict(name: str) -> bool:
+    """Paths no move evidence can exempt: workflows and the gate scripts."""
+    return (name.startswith(".github/workflows/") or name in POLICY_FILES)
+
+
 def _needs_verdict_path(name: str) -> bool:
     return (name.startswith(POLICY_PREFIXES) or name in POLICY_FILES
             or ("golden" in name.lower() and not name.startswith(_PROSE_PREFIXES)))
@@ -161,11 +168,12 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
         return False
     if "semantic" in labels:
         return True
-    if _MOVE_EVIDENCE.search(pr.get("body") or ""):
-        return False
+    exempt = bool(_MOVE_EVIDENCE.search(pr.get("body") or ""))
     for row in _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files"):
-        names = (row.get("filename") or "", row.get("previous_filename") or "")
-        if any(n and _needs_verdict_path(n) for n in names):
+        names = [n for n in (row.get("filename"), row.get("previous_filename")) if n]
+        if any(_always_verdict(n) for n in names):
+            return True
+        if not exempt and any(_needs_verdict_path(n) for n in names):
             return True
     return False
 
