@@ -2655,7 +2655,8 @@ Amendment 1). Python writes every zone; the app writes only `/combinations`.
 
 `apeGmsh.results.user` writes and reads `/meta`, `/combinations`, `/results`,
 `/modes`, `/spectra` and `/entities`, which are in the [registry](#zone-registry).
-The app does not read this file yet (slice VU3a).
+The app reads `/meta`, `/combinations` and the `/results` index (slice VU3a); it
+lists `/modes`, `/spectra` and `/entities` by name only.
 
 Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
 ([integer policy](#integer-policy-for-the-adr-0112-zones)). Columns in one table
