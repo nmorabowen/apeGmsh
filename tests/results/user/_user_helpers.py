@@ -6,6 +6,7 @@ package (``tests/test_import_namespacing.py``).
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -100,3 +101,33 @@ def case(name: str = "E_x (DBE)", **kw) -> SpectrumCase:
     )
     fields.update(kw)
     return SpectrumCase(**fields)
+
+
+def cqc_reference(r: np.ndarray, lam: np.ndarray, xi: np.ndarray, sa_period: np.ndarray) -> np.ndarray:
+    """CQC from the formula: modes sharing an Sa period > 0 are one rigid mode."""
+    terms: list[np.ndarray] = []
+    omegas: list[float] = []
+    damping: list[float] = []
+    slot: dict[float, int] = {}
+    for a in range(lam.size):
+        t = float(sa_period[a])
+        if t > 0.0 and t in slot:
+            terms[slot[t]] = terms[slot[t]] + r[a]
+            continue
+        if t > 0.0:
+            slot[t] = len(terms)
+        terms.append(np.array(r[a], dtype=float))
+        omegas.append(2 * math.pi / t if t > 0.0 else math.sqrt(lam[a]))
+        damping.append(float(xi[a]))
+    total = np.zeros_like(terms[0])
+    for i, (wi, xi_i, ri) in enumerate(zip(omegas, damping, terms)):
+        for j, (wj, xi_j, rj) in enumerate(zip(omegas, damping, terms)):
+            if i == j:
+                rho = 1.0
+            else:
+                b = wj / wi
+                rho = (8 * math.sqrt(xi_i * xi_j) * (xi_i + b * xi_j) * b ** 1.5
+                       / ((1 - b * b) ** 2 + 4 * xi_i * xi_j * b * (1 + b * b)
+                          + 4 * (xi_i ** 2 + xi_j ** 2) * b * b))
+            total = total + rho * ri * rj
+    return np.sqrt(np.clip(total, 0.0, None))
