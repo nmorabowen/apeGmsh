@@ -484,7 +484,11 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     // #legend has NO .contour-units dropdowns, but keeps the contoured field's
     // own units note: the header's tooltip only ever describes displacement.
     assert.equal(legendEl.all((e) => e.className.includes("contour-units")).length, 0);
-    assert.ok(legendEl.textContent.includes("Units: not stored in the results file."));
+    // The scale keeps the contoured field's own units note, as its title's tooltip;
+    // the card states neither: the header's tooltip only ever describes displacement.
+    assert.ok(!legendEl.textContent.includes("Units:"));
+    assert.equal(legendEl.all((e) => e.className === "contour-title").length, 0);
+    assert.equal(scaleEl.all((e) => e.className === "vs-title")[0]!.title, "Units: not stored in the results file.");
     // The colour range is set on the scale in the viewport, not on the card.
     assert.equal(legendEl.all((e) => e.className.includes("contour-modes")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("contour-modes")).length, 1);
@@ -492,7 +496,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     assert.equal(legendEl.all((e) => e.className.includes("contour-ramp")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("vs-ramp")).length, 1);
 
-    // 2. Selecting source and target in #header dispatches setContourUnits and updates #legend contour-title & tooltip
+    // 2. Selecting source and target in #header dispatches setContourUnits and updates the scale's title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;
     srcSel.value = "kN_m_s";
     srcSel.trigger("change");
@@ -503,7 +507,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
     const unitsWrap = headerEl.all((e) => e.className === "header-units")[0]!;
     assert.equal(unitsWrap.title, "Units: N-mm-tonne-s (converted from kN-m-tonne-s).");
-    assert.match(legendEl.all((e) => e.className === "contour-title")[0]!.textContent, /\[mm\]/);
+    assert.match(scaleEl.all((e) => e.className === "vs-title")[0]!.textContent, /\[mm\]/);
 
     // Resetting Native select to "" resets sourceUnits to null when undeclared
     const srcSelAfter = headerEl.all((e) => e.className === "header-units-source")[0]!;

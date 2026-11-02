@@ -409,18 +409,18 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
           scaleChrome?.save();
         }),
       );
-      head.append(el("span", "vs-title", lines.title), orient);
+      // The unit choice lives in the header; this field's own provenance note
+      // (e.g. "not declared — select source") stays with the scale it describes.
+      const scaleTitle = el("span", "vs-title", lines.title);
+      scaleTitle.title = lines.units;
+      head.append(scaleTitle, orient);
       viewportScale.replaceChildren(head, body, el("div", "vs-range", lines.range));
       viewportScale.hidden = false;
       scaleChrome?.clamp();
     }
-    legend.append(el("div", "contour-title", lines.title));
     if (lines.topology) legend.append(el("div", "legend-note contour-topology", lines.topology));
     if (lines.axes) legend.append(el("div", "legend-note contour-axes", lines.axes));
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
-    // The unit choice lives in the header; this field's own provenance note
-    // (e.g. "not declared — select source") stays with the legend it describes.
-    legend.append(el("div", "legend-note", lines.units));
     legend.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");
