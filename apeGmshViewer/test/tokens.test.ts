@@ -431,3 +431,11 @@ test("every colour in the app comes from src/theme/tokens.ts: no colour literal 
   assert.deepEqual(checkSelectCss(css), []);
   assert.equal(checkSelectCss(".contour-cmap { background: var(--hover); }").length, 1, "the select CSS lint catches a planted translucent background");
 });
+
+test("the renderer's CSS and HTML hold no control bytes: a merge once turned the collapse arrow's CSS escape into one", () => {
+  for (const name of ["style.css", "index.html"]) {
+    const text = readFileSync(join(src, "renderer", name), "utf8");
+    const at = [...text].findIndex((c) => c < " " && c !== "\t" && c !== "\n" && c !== "\r");
+    assert.equal(at, -1, `${name} has a control byte at character ${at}`);
+  }
+});

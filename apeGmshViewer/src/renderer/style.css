@@ -534,8 +534,8 @@ body[data-still-chrome="model"] #scale-stack { display: none; }
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
-#display > h3:first-child::before, #deform > h3:first-child::before, #contour > h3:first-child::before { content: "be"; font-size: 11px; color: var(--muted); }
-#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before, #contour[data-collapsed="true"] > h3:first-child::before { content: "b8"; }
+#display > h3:first-child::before, #deform > h3:first-child::before, #contour > h3:first-child::before { content: "\25be"; font-size: 11px; color: var(--muted); }
+#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before, #contour[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
 body:not([data-still-chrome="app"]) #display[data-collapsed="true"], body:not([data-still-chrome="app"]) #deform[data-collapsed="true"], body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
 #display[data-collapsed="true"] > h3:first-child, #deform[data-collapsed="true"] > h3:first-child, #contour[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
 body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] > :not(:first-child) { display: none; }
