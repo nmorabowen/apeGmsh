@@ -1596,12 +1596,20 @@ class Results:
     def _unbound_stage_names(self, model_h5: Path) -> Optional[str]:
         """Why stage terms cannot be resolved here, or ``None`` when they can.
 
-        Not ``None`` when ``model_h5`` declares program stage names, none of
-        which names a stage of this ``Results``, and its reader pairs program
-        names (a native file names its own stages). The one exception is a
-        reader that declined that same model's names when it was opened (a
-        KIND or count mismatch): its ``stage_<i>`` stands. Nothing is renamed:
-        the reason says how to bind the names.
+        ``None`` when ``model_h5`` declares no program stage names, or when the
+        reader names its own stages (a native file). Otherwise the names must
+        be this ``Results``' binding: its stamped stages, in order, are a prefix
+        of the model's names, and every stage after them is unstamped (a
+        partial run stamps only the stages that ran). Two refusals:
+
+        * no stage is stamped: the results were opened without that model;
+          except when they were opened with that same file and the reader
+          declined its names (a KIND or count mismatch), where ``stage_<i>``
+          stands;
+        * the stamps are another model's: the names here would read other
+          stages than ``model_h5``'s.
+
+        Nothing is renamed: each reason says how to bind the names.
         """
         import h5py
 
@@ -1617,18 +1625,27 @@ class Results:
         names = [str(s.name) for s in OpenSeesModel.from_h5(model_h5).stages()]
         if not names:
             return None
-        here = {canonical_stage_name(s) for s in self._all_stages() if s.kind != "mode"}
-        if here & set(names):
-            return None  # bound, in full or for a partial run
-        if self._model_path is not None and _same_file(Path(self._model_path), model_h5):
-            return None  # the reader declined these names at open, and said why
+        hosts = [s for s in self._all_stages() if s.kind != "mode"]
+        stamped = [canonical_stage_name(s) != s.id for s in hosts]
+        k = stamped.index(False) if False in stamped else len(stamped)
+        here = [canonical_stage_name(s) for s in hosts[:k]]
+        if k == 0:
+            if self._model_path is not None and _same_file(Path(self._model_path), model_h5):
+                return None  # the reader declined these names at open, and said why
+            return (
+                f"model_h5={str(model_h5)!r} declares the stage names {names}, and "
+                f"these results were opened without that model, so their stages "
+                f"are named stage_<i>; a term would read another stage than the "
+                f"same set opened with its model. Open the results with "
+                f"model_h5={str(model_h5)!r} so the names are bound (ADR 0130 A3)"
+            )
+        if not any(stamped[k:]) and here == names[:k]:
+            return None  # this binding, in full or for a partial run
         return (
-            f"model_h5={str(model_h5)!r} declares the stage names {names}, and "
-            f"none of them names a stage of these results (they were opened "
-            f"without that model), so their stages are named stage_<i>; a "
-            f"term would read another stage than the same "
-            f"set opened with its model. Open the results with "
-            f"model_h5={str(model_h5)!r} so the names are bound (ADR 0130 A3)"
+            f"these results are bound to another model's stage names "
+            f"({[canonical_stage_name(s) for s in hosts]}), not to "
+            f"model_h5={str(model_h5)!r}'s {names}; open them with "
+            f"model_h5={str(model_h5)!r} (ADR 0130 A3)"
         )
 
     # ------------------------------------------------------------------

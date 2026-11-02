@@ -508,3 +508,50 @@ def test_a_ten_thousand_deep_chain_evaluates_in_about_the_judges_time() -> None:
     spent = time.perf_counter() - t0
     np.testing.assert_array_equal(got[0], [1.0, 2.0])
     assert spent < max(2.0, 20 * judge), (spent, judge)
+
+
+def _named(path: Path, *names: str) -> Path:
+    from tests.test_results_ladruno_stage_binding import _model_h5
+
+    return _model_h5(path, *((n, "static") for n in names))
+
+
+@pytest.mark.parametrize("other", [("live", "gravity", "modal"), ("gravity", "wind", "snow")])
+def test_another_models_stage_names_are_refused(tmp_path: Path, other: tuple[str, ...]) -> None:
+    """Delta finding (p12): one shared name must not lift the refusal.
+
+    Opened with A = [gravity, live, modal], a model B that orders the names
+    differently, or shares only one, would read B's gravity as A's stage_0.
+    """
+    path, model = _program_set(tmp_path, "static", "static", "static")
+    (tmp_path / "b").mkdir()
+    b = _named(tmp_path / "b" / "b.h5", *other)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = Results.from_ladruno(path, model_h5=model)
+    combos = run.combinations(tmp_path / "run.user.h5", model_h5=b)
+    for state in ("ULS", "ULS_ids", "m"):
+        with pytest.raises(CombinationRefused) as err:
+            combos.evaluate(state, "displacement_x")
+        assert err.value.reason == "unresolved"
+        assert "bound to another model's stage names" in err.value.detail
+        assert "model_h5=" in err.value.detail
+    exact = run.combinations(model_h5=model)
+    want = 1.2 * _read(run, "gravity") + 1.6 * _read(run, "live")
+    np.testing.assert_allclose(exact.evaluate("ULS", "displacement_x").field.values[:, 0], want,
+                               rtol=1e-15)
+
+
+def test_a_partial_run_is_its_models_binding(tmp_path: Path) -> None:
+    """Four stages declared, three ran: the three stamped names are a prefix of the four."""
+    path = _build_set(tmp_path)
+    model = _named(tmp_path / "run.h5", "gravity", "live", "modal", "wind")
+    write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
+        Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6)))])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = Results.from_ladruno(path, model_h5=model)
+    assert [s.name for s in run.stages if s.kind != "mode"] == ["gravity", "live", "modal"]
+    got = run.combinations().evaluate("ULS", "displacement_x").field.values[:, 0]
+    want = 1.2 * _read(run, "gravity") + 1.6 * _read(run, "live")
+    np.testing.assert_allclose(got, want, rtol=1e-15)
