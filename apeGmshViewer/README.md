@@ -92,6 +92,13 @@ Then:
   the deformed shape, hidden groups and section cuts. They turn on at a size
   chosen for the model (a share of the median element edge at the fit view,
   3 to 10 px); the slider sets your own, which stays until **auto** is pressed.
+  **show** on the Gauss row does the same for the Gauss points and beam
+  stations of the results stage shown: each point is its element's corners
+  weighted by the corner shape functions at the point's natural coordinates
+  (linear corners, so a curved element's points sit on its straight-sided
+  counterpart), and moves by the same weights of the corners' displacements.
+  A group the file gives no usable coordinates or verified element ids for is
+  counted in a note, never guessed.
 - **Banner.** The banner is one line, a count of each kind of message; a
   click opens the full list.
 - **Deformed shape.** On a results stage, **deformed** in the Deformed card moves

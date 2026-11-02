@@ -23,6 +23,8 @@ import {
   legendEntryColour,
   legendOf,
   NO_DATA_RGB,
+  gaussNotesOf,
+  gaussUnavailable,
   NODE_SIZE_MAX,
   NODE_SIZE_MIN,
   rampCss,
@@ -107,19 +109,23 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   let lastContour = "";
   let lastDeform = "";
   let lastTheme = "";
-  let nodeControls: { slider: HTMLInputElement; label: HTMLElement; auto: HTMLElement } | null = null;
+  type SizeControls = { slider: HTMLInputElement; label: HTMLElement; auto: HTMLElement; of: (s: State) => { size: number | null; auto: boolean } };
+  let sizeControls: SizeControls[] = [];
   // Updated in place: rebuilding the card under a dragged slider would drop the drag.
-  const syncNodeControls = (s: State) => {
-    if (!nodeControls) return;
-    const { size: nodeSize, auto: nodeSizeAuto } = s.nodes;
-    if (nodeSize !== null) nodeControls.slider.value = String(nodeSize);
-    nodeControls.label.textContent = nodeSize === null ? "" : `${nodeSize} px`;
-    nodeControls.auto.className = "node-auto" + (nodeSizeAuto ? " on" : "");
+  const syncSizeControls = (s: State) => {
+    for (const c of sizeControls) {
+      const { size, auto } = c.of(s);
+      if (size !== null) c.slider.value = String(size);
+      c.label.textContent = size === null ? "" : `${size} px`;
+      c.auto.className = "node-auto" + (auto ? " on" : "");
+    }
   };
+  let lastGauss = "";
   const render = (s: State, prev: State | null) => {
     const theme = document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
     const contour = s.visibility.colourBy === "contour";
-    syncNodeControls(s);
+    syncSizeControls(s);
+    const gaussSig = `${s.gaussPoints.on}|${gaussUnavailable(s) ?? ""}|${gaussNotesOf(s).join("|")}`;
     if (
       prev &&
       theme === lastTheme &&
@@ -130,7 +136,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.opacity === prev.visibility.opacity &&
       s.visibility.extrudeFrames === prev.visibility.extrudeFrames &&
       s.visibility.showOffsets === prev.visibility.showOffsets &&
-      s.nodes.on === prev.nodes.on
+      s.nodes.on === prev.nodes.on &&
+      gaussSig === lastGauss
     ) {
       // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
       // state in every mode; it is rebuilt only when what it says changed.
@@ -139,6 +146,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       }
     }
     lastTheme = theme;
+    lastGauss = gaussSig;
     lastDeform = deformSignature(s);
     for (const u of unlisten) u();
     unlisten = [];
@@ -218,25 +226,41 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unlisten.push(listen(showNodes, "click", () => store.dispatch({ type: "setNodes", on: !store.get().nodes.on })));
     nodesRow.append(showNodes, pendingBtn("numbers", "not built yet"));
     labelled("Nodes", nodesRow);
-    nodeControls = null;
-    if (nodesOn) {
-      const sizeRow = el("div", "node-size-row");
+    sizeControls = [];
+    const sizeRow = (what: string, of: SizeControls["of"], set: (size: number | null) => void) => {
+      const row = el("div", "node-size-row");
       const slider = el("input", "node-size");
       slider.type = "range";
       slider.min = String(NODE_SIZE_MIN);
       slider.max = String(NODE_SIZE_MAX);
       slider.step = "1";
-      slider.title = "node marker size on screen";
-      unlisten.push(listen(slider, "input", () => store.dispatch({ type: "setNodeSize", size: Number(slider.value) })));
+      slider.title = `${what} marker size on screen`;
+      unlisten.push(listen(slider, "input", () => set(Number(slider.value))));
       const label = el("span", "node-size-label");
       const auto = el("button", "node-auto", "auto");
       auto.title = "let the app choose the size for this model";
-      unlisten.push(listen(auto, "click", () => store.dispatch({ type: "setNodeSize", size: null })));
-      sizeRow.append(slider, label, auto);
-      labelled("Size", sizeRow);
-      nodeControls = { slider, label, auto };
-      syncNodeControls(s);
+      unlisten.push(listen(auto, "click", () => set(null)));
+      row.append(slider, label, auto);
+      labelled("Size", row);
+      sizeControls.push({ slider, label, auto, of });
+    };
+    if (nodesOn) sizeRow("node", (x) => x.nodes, (size) => store.dispatch({ type: "setNodeSize", size }));
+    // Gauss points and beam stations: results data, so the row says why it cannot when no stage records them.
+    const gaussOn = s.gaussPoints.on;
+    const why = gaussUnavailable(s);
+    const gaussRow = el("div", "legend-mode");
+    const showGauss = el("button", "gauss-show" + (gaussOn ? " on" : ""), "show");
+    showGauss.disabled = why !== null && !gaussOn;
+    showGauss.title = why ?? "toggle the Gauss point and beam station markers";
+    unlisten.push(listen(showGauss, "click", () => store.dispatch({ type: "setGaussPoints", on: !store.get().gaussPoints.on })));
+    gaussRow.append(showGauss);
+    labelled("Gauss", gaussRow);
+    if (gaussOn) {
+      sizeRow("Gauss point", (x) => x.gaussPoints, (size) => store.dispatch({ type: "setGaussSize", size }));
+      if (why) display.append(el("div", "legend-note", `${why}.`));
+      for (const n of gaussNotesOf(s)) display.append(el("div", "legend-note", n));
     }
+    syncSizeControls(s);
     const supportsRow = el("div", "legend-mode");
     supportsRow.append(pendingBtn("BC", "not built yet"));
     labelled("Supports", supportsRow);

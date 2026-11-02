@@ -20,6 +20,7 @@ import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isN
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
+import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, resultsPairing, sourceFor, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
@@ -224,6 +225,13 @@ export function modelExtras(res: {
  * through the vertex node ids (state/deform.ts), and the key it is for
  * (selectors `deformView(...).keys.disp`). Kept here, outside the store.
  */
+/** Element-wise equality of two arrays (beam stations compared step to step). */
+function sameArray(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
 export interface DisplacementData {
   key: string;
   line: VertexDisplacement;
@@ -234,6 +242,8 @@ export interface DisplacementData {
   frameEdge?: VertexDisplacement;
   offsetLine?: VertexDisplacement;
   offsetJoint?: VertexDisplacement;
+  /** the step's nodal rows and their columns, for what is placed between nodes (state/gaussPoints.ts) */
+  nodal?: { column: ReadonlyMap<number, number>; rows: readonly [Float64Array, Float64Array, Float64Array | null] };
 }
 
 /** The current results step's data: kept here, outside the store, and only the latest one (D5). */
@@ -273,6 +283,60 @@ export class Effects {
    */
   private readonly setWindowMs: number;
   private setTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** The last beam stations read, per file and stage: a step still loading keeps them, since they do not change within a stage. */
+  private lastStations: { file: string; seq: number; points: StationPoints & { key: string } } | null = null;
+  private stationsSeq = 0;
+
+  /**
+   * The beam stations of the stage on screen, for the Gauss markers; null
+   * when none were read. The key changes only when the stations do, so a
+   * scrub or a line-diagram component switch does not place them again.
+   */
+  stationsOfStep(): (StationPoints & { key: string }) | null {
+    const s = this.store.get();
+    const at = s.phase.at;
+    const stage = at?.kind === "results" ? at.stage : null;
+    const st = stage !== null ? s.results?.stages[stage] : undefined;
+    if (stage === null || !st || !s.results) return null;
+    // Another file, or another stage of this one, never inherits these stations.
+    const file = `${s.results.path}|${st.id}`;
+    const step = this.step;
+    const last = this.lastStations?.file === file ? this.lastStations : null;
+    if (step && step.stage === stage) {
+      const d = step.lineDiagram;
+      if (d) {
+        const en = d.elementNodes ?? null;
+        const same =
+          last !== null &&
+          sameArray(last.points.elementIndex, d.elementIndex) &&
+          sameArray(last.points.stationNaturalCoord, d.stationNaturalCoord) &&
+          (en === null ? last.points.elementNodes == null : last.points.elementNodes != null && sameArray(last.points.elementNodes, en));
+        if (!same) {
+          const seq = ++this.stationsSeq;
+          this.lastStations = { file, seq, points: { key: `${stage}|${seq}`, elementIndex: d.elementIndex, stationNaturalCoord: d.stationNaturalCoord, elementNodes: en } };
+        }
+        return this.lastStations!.points;
+      }
+      if (step.lineDiagramError) return { key: `${stage}|error|${step.lineDiagramError}`, elementIndex: new Float64Array(0), stationNaturalCoord: new Float64Array(0), error: step.lineDiagramError };
+      // A step read without stations: the stage has none.
+      return null;
+    }
+    return last ? last.points : null;
+  }
+
+  private syncGaussSize(s: State): void {
+    const { on, size: chosen } = s.gaussPoints;
+    if (!on || chosen !== null || !s.mesh) return;
+    const edges = this.blobs.f32(s.mesh.edgePositions);
+    const segments = edges.length ? edges : this.blobs.f32(s.mesh.linePositions);
+    const viewportPx = typeof window === "undefined" ? 900 : Math.min(window.innerWidth, window.innerHeight);
+    // Smaller than the nodes', so the two read apart when both are on.
+    const size = Math.max(2, smartNodeSize(segments, s.mesh.radius, viewportPx) - 2);
+    queueMicrotask(() => {
+      if (this.store.get().gaussPoints.size === null) this.store.dispatch({ type: "setGaussSize", size, auto: true });
+    });
+  }
 
   private syncNodeSize(s: State): void {
     const { on, size: chosen } = s.nodes;
@@ -338,6 +402,7 @@ export class Effects {
       this.store.subscribe((s) => this.syncLineDiagram(s)),
       // The node markers' size, chosen when they turn on and the size is automatic.
       this.store.subscribe((s) => this.syncNodeSize(s)),
+      this.store.subscribe((s) => this.syncGaussSize(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -829,6 +894,7 @@ export class Effects {
         line: vertexDisplacements(lineNodes, column, rows),
         tri: vertexDisplacements(triNodes, column, rows),
         edge: vertexDisplacements(edgeNodes, column, rows),
+        nodal: { column, rows },
         ...(fe
           ? {
               frameTri: vertexDisplacements(this.blobs.get(fe.triNodes) as Float64Array, column, rows),
@@ -863,9 +929,10 @@ export class Effects {
       return false;
     }
     this.readingResults = true;
-    // A re-read invalidates the step on screen: its data may have changed.
+    // A re-read invalidates the step on screen, and the stations read from it: their data may have changed.
     this.step = null;
     this.stepKey = null;
+    this.lastStations = null;
     // V4c1 seam "reload": the scan of the old file stops, and its ranges are forgotten.
     this.stopScan();
     this.scanCache.clear();
@@ -923,7 +990,13 @@ export class Effects {
     // rows joined the mesh of a verified file: `contourView` is `element` for no other).
     const v = contourView(s);
     const element = v.state === "element" ? v.component.key : null;
-    const lineDiagram = s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component) ? s.lineDiagram.component : null;
+    // The Gauss markers place beam stations from any one component's slab (the stations do not depend on it).
+    const lineDiagram =
+      s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component)
+        ? s.lineDiagram.component
+        : s.gaussPoints.on
+          ? (st.lineStations?.[0] ?? null)
+          : null;
     const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}`;
     if (key === this.stepKey) return;
     this.stepKey = key;

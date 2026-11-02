@@ -49,6 +49,7 @@ viewport.setStepSource(() => effects.currentStep());
 viewport.setDisplacementSource(() => effects.currentDisplacement());
 // 3-D line diagrams: ribbon + profile + risers from the step the effects fetched.
 viewport.setLineDiagramSource(() => effects.currentLineDiagram());
+viewport.setStationsSource(() => effects.stationsOfStep());
 const panels = [
   // VA5 (ADR 0128 D5): first, so its box opens the right rail above the inspector.
   mountOffers(store),

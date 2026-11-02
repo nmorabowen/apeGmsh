@@ -11,6 +11,7 @@
 //    directly to `src/state/search.ts` (`parseSearchText`, `runSearchTerms`,
 //    `indexOfModel`), so Spotlight and the Search window never drift.
 
+import { gaussUnavailable } from "./gaussNotes.ts";
 import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
@@ -149,6 +150,9 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
   setNodes: { kind: "expose", command: "toggle-nodes", description: "Toggle the node markers on or off" },
   setNodeSize: { kind: "expose", command: "set-node-size", description: "Set the node markers' size, or let the app choose it" },
+  setGaussPoints: { kind: "expose", command: "toggle-gauss-points", description: "Toggle the Gauss point and beam station markers on or off" },
+  setGaussSize: { kind: "expose", command: "set-gauss-size", description: "Set the Gauss point markers' size, or let the app choose it" },
+  gaussMeasured: { kind: "system", reason: "dispatched by the viewport after placing the Gauss markers of a stage" },
 };
 
 // ---- Spotlight Item Model ---------------------------------------------------
@@ -531,6 +535,22 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
           [{ type: "setNodes", on: !s.nodes.on }],
         ),
         keywords: "nodes points markers circles toggle",
+      });
+    }
+
+    // Offered when the Display row can do something, or to turn the markers off.
+    if (s.results && (s.gaussPoints.on || gaussUnavailable(s) === null)) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-gauss-points",
+          "display",
+          s.gaussPoints.on ? "Hide Gauss Points" : "Show Gauss Points",
+          `Gauss point and beam station markers are currently ${s.gaussPoints.on ? "ON" : "OFF"}`,
+          [{ type: "setGaussPoints", on: !s.gaussPoints.on }],
+          s.gaussPoints.on,
+          [{ type: "setGaussPoints", on: !s.gaussPoints.on }],
+        ),
+        keywords: "gauss integration points stations markers toggle",
       });
     }
 
