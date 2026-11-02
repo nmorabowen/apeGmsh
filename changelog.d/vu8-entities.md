@@ -8,7 +8,11 @@ reference=)` exports a cut: its plane, kept side, OpenSees element tags and boun
 polygon, with the point that a stored resultant's moments are about (the plane point
 by default). `CutEntity.to_cut_def()` gives the def back, so the cut kernel computes the
 same resultant from it. A `target="entities"` user result names its rows by
-`ENTITY_KIND` (`cut`, `storey` or `point_set`) and `ENTITY_ROW`. A write refuses a
-result whose row the file's `/entities` does not hold, including after an `entities`
-rewrite, and the reader refuses any other kind. The `entities` zone joins the schema
-registry at 1.0.0. `/spectra` stays at 1.0.0, holding nodal and domain values only.
+`ENTITY_KIND` (`cut`, `storey` or `point_set`) and `ENTITY_ROW`. The reader refuses any
+other kind, and refuses alone, as `unresolved`, a result naming a row that `/entities`
+does not hold or refuses. A write refuses such a result, including after an `entities`
+rewrite. A model-hash change that drops `/entities` (`drop_stale=True`) drops every
+`ON_ENTITIES` result with it. A bad row (empty, not finite, a bad or duplicate name)
+refuses alone and keeps its position, and the zone still opens. The `entities` zone
+joins the schema registry at 1.0.0. `/spectra` stays at 1.0.0, holding nodal and domain
+values only.
