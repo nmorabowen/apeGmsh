@@ -427,9 +427,11 @@ def _check_holder(holder: h5py.Group, target: str, s: int) -> None:
         if ids.shape != (n, 1):
             raise EntryRefused("bad-param", f"{ids.name} has shape {ids.shape}, expected ({n}, 1)")
     elif target == "entities":
-        if (_dataset(holder, "ENTITY_KIND", "str", 1).shape != (n,)
-                or _dataset(holder, "ENTITY_ROW", "i4", 1).shape != (n,)):
+        kinds = _dataset(holder, "ENTITY_KIND", "str", 1)
+        if kinds.shape != (n,) or _dataset(holder, "ENTITY_ROW", "i4", 1).shape != (n,):
             raise EntryRefused("bad-param", f"{holder.name}: entity columns must have {n} rows")
+        for kind in kinds[...]:
+            decode_cell(kind, "/results", kinds.name)
     elif n != 1:
         raise EntryRefused("bad-param", f"{data.name}: a domain value has n = 1, got {n}")
     if _dataset(holder, "STEP", "i4", 1).shape != (s,) or _dataset(holder, "TIME", "f8", 1).shape != (s,):

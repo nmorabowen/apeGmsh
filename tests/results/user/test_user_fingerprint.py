@@ -309,6 +309,17 @@ def test_a_dangling_link_inside_a_result_refuses(ladruno: Path) -> None:
         results_fingerprint(ladruno)
 
 
+@pytest.mark.parametrize("target", [DISP, ON_DOMAIN])
+def test_a_scalar_data_refuses(tmp_path: Path, target: str) -> None:
+    """Sampled or not: it has no time axis, so it cannot be a result's ``DATA``."""
+    path = _energy(tmp_path)
+    with h5py.File(path, "a") as f:
+        del f[f"{target}/DATA"]
+        f[target].create_dataset("DATA", data=1.0)
+    with pytest.raises(FingerprintRefused, match="scalar"):
+        results_fingerprint(path)
+
+
 def test_a_result_that_is_a_dataset_refuses(ladruno: Path) -> None:
     with h5py.File(ladruno, "a") as f:
         del f[DISP]

@@ -64,7 +64,7 @@ def _zone_guard(zone: str) -> Iterator[None]:
         yield
     except (UserFileError, SchemaVersionError):
         raise
-    except (KeyError, OSError, TypeError, ValueError) as exc:
+    except (IndexError, KeyError, OSError, TypeError, ValueError) as exc:
         raise ZoneRefused(zone, f"it cannot be read: {exc}") from exc
 
 
@@ -239,7 +239,7 @@ class UserFile:
                     raise
                 except EntryRefused as exc:
                     refused.append(Refusal(_entry_name(zone, link), exc.reason, exc.detail, row=at))
-                except (KeyError, OSError, TypeError, ValueError) as exc:
+                except (IndexError, KeyError, OSError, TypeError, ValueError) as exc:
                     # What h5py raises on a damaged entry (a broken link, a
                     # dataset where a group belongs, an attribute of the wrong
                     # type) refuses that entry; the others still read.

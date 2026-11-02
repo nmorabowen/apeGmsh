@@ -245,23 +245,12 @@ def resolve(
     def alive() -> list[int]:
         return [at for at in range(len(rows)) if at not in verdict]
 
-    changed = True
-    while changed:
-        changed = False
-        live = alive()
-        model_names = {rows[at][2].name for at in live if rows[at][0] == "model"}
-        all_names = {rows[at][2].name for at in live}
-        for at in live:
-            origin, _, row = rows[at]
-            visible = model_names if origin == "model" else all_names
-            for term in row.terms:
-                if term.kind == "combination" and term.source not in visible:
-                    verdict[at] = ("unresolved", f"combination {term.source!r} does not stand")
-                    changed = True
-                    break
+    def visible(origin: str, live: list[int]) -> set[str]:
+        return {rows[at][2].name for at in live if origin == "user" or rows[at][0] == "model"}
 
-    # Peel the rows whose references are all settled; what remains is exactly
-    # the rows in a cycle or reaching one.
+    # Cycles first, so a row in one or reaching one reads ``cycle`` even if it also
+    # names something absent. Peel the rows whose references to standing rows are
+    # all settled; what remains is exactly the rows in a cycle or reaching one.
     live = alive()
     settled: set[str] = set()
     pending = list(live)
@@ -269,13 +258,27 @@ def resolve(
     while progress:
         progress = False
         for at in list(pending):
-            refs = {t.source for t in rows[at][2].terms if t.kind == "combination"}
-            if refs <= settled:
-                settled.add(rows[at][2].name)
+            origin, _, row = rows[at]
+            refs = {t.source for t in row.terms if t.kind == "combination"}
+            if refs & visible(origin, live) <= settled:
+                settled.add(row.name)
                 pending.remove(at)
                 progress = True
     for at in pending:
         verdict[at] = ("cycle", "this combination is in a reference cycle or reaches one")
+
+    changed = True
+    while changed:
+        changed = False
+        live = alive()
+        for at in live:
+            origin, _, row = rows[at]
+            names = visible(origin, live)
+            for term in row.terms:
+                if term.kind == "combination" and term.source not in names:
+                    verdict[at] = ("unresolved", f"combination {term.source!r} does not stand")
+                    changed = True
+                    break
 
     refused = tuple(
         Refusal(rows[at][2].name, *verdict[at], origin=rows[at][0], row=rows[at][1])

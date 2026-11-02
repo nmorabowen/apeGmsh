@@ -92,7 +92,7 @@ def results_fingerprint(path: "str | Path") -> str:
                 _hash_part(h, f, part)
         except FingerprintRefused:
             raise
-        except (KeyError, OSError, TypeError, ValueError) as exc:
+        except (IndexError, KeyError, OSError, TypeError, ValueError) as exc:
             raise FingerprintRefused(f"{part} cannot be fingerprinted: {exc}") from exc
     return "rf1:" + h.hexdigest()
 
@@ -245,6 +245,8 @@ def _kind(ds: h5py.Dataset, where: str) -> str:
 def _hash_dataset(
     h: Any, holder: h5py.Group, data: h5py.Dataset, path: str, where: str, want: bool,
 ) -> Optional[np.ndarray]:
+    if data.ndim == 0:
+        raise FingerprintRefused(f"{where}/DATA is a scalar: it has no time axis")
     for child in ("TIME", "STEP"):
         if child not in holder:
             raise FingerprintRefused(f"{where} has no {child}")

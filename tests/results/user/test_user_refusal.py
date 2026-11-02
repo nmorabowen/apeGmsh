@@ -21,6 +21,7 @@ from apeGmsh.results.user import (
     Term,
     UserFile,
     UserFileRefused,
+    UserResult,
     UserWriteRefused,
     ZoneRefused,
     write_user_file,
@@ -194,6 +195,33 @@ def test_a_cycle_refuses_every_row_in_it_or_reaching_it() -> None:
     assert set(table.rows) == {below, GOOD}
 
 
+def _c(name: str, *sources: str) -> Combination:
+    return Combination(name, "linear", tuple(Term("combination", s) for s in sources))
+
+
+def test_cycle_outranks_unresolved_for_a_row_reaching_a_cycle() -> None:
+    table = resolve([_c("a", "b"), _c("b", "a"), _c("r", "a", "zz"), _c("s", "r")])
+    assert table.rows == ()
+    assert {r.name: r.reason for r in table.refused} == dict.fromkeys(["a", "b", "r", "s"], "cycle")
+
+
+def test_cycle_outranks_unresolved_for_a_row_in_a_cycle() -> None:
+    table = resolve([_c("a", "b"), _c("b", "a", "zz")])
+    assert {r.name: r.reason for r in table.refused} == {"a": "cycle", "b": "cycle"}
+
+
+def test_an_absent_name_without_a_cycle_stays_unresolved() -> None:
+    table = resolve([_c("r", "zz"), _c("s", "r"), GOOD])
+    assert table.rows == (GOOD,)
+    assert {r.name: r.reason for r in table.refused} == {"r": "unresolved", "s": "unresolved"}
+
+
+def test_a_model_row_naming_a_user_row_is_unresolved_not_a_cycle() -> None:
+    """It cannot see that row, so no cycle runs through it."""
+    table = resolve([_c("u", "m")], [_c("m", "u")])
+    assert {r.name: r.reason for r in table.refused} == {"m": "unresolved", "u": "unresolved"}
+
+
 def test_a_chain_in_any_order_stands() -> None:
     top = Combination("top", "linear", (Term("combination", "mid"),))
     mid = Combination("mid", "linear", (Term("combination", "good"),))
@@ -216,6 +244,19 @@ def test_a_non_utf8_cell_in_states_refuses_the_zone(make_model, tmp_path: Path) 
     path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal()])
     with h5py.File(path, "a") as f:
         f["results/r0/STATES/source"][0] = b"\xff\xfe"
+    with pytest.raises(ZoneRefused, match="not UTF-8"):
+        UserFile(path).results()
+
+
+def test_a_non_utf8_entity_kind_refuses_the_zone_at_results(make_model, tmp_path: Path) -> None:
+    entity = UserResult(
+        name="drift", target="entities", basis="model", components=("dx",),
+        data=np.zeros((1, 2, 1)), entity_kind=("storey", "cut"),
+        entity_row=np.array([0, 1], dtype="i4"),
+    )
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[entity])
+    with h5py.File(path, "a") as f:
+        f["results/r0/RESULTS/ON_ENTITIES/values/ENTITY_KIND"][1] = b"\xff\xfe"
     with pytest.raises(ZoneRefused, match="not UTF-8"):
         UserFile(path).results()
 

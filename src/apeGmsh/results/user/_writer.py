@@ -1,8 +1,13 @@
 """Write a ``<stem>.user.h5``: atomic, and never past a zone it does not know.
 
-Every write builds ``<stem>.user.h5.partial`` in the same folder, reopens and
-verifies it, and only then replaces the file, so a killed writer leaves the
-previous file whole (ADR 0130 D2, A4).
+Every write builds its own ``<stem>.user.h5.<pid>-<random>.partial`` in the same
+folder, created exclusively, then reopens and verifies it, and only then replaces
+the file, so a killed writer leaves the previous file whole (ADR 0130 D2, A4).
+The name is per writer because truncating a shared one destroys the other
+writer's data: on Windows ``h5py.File(name, "w")`` truncates before it fails on
+the lock. ``/meta@revision`` is compared immediately before the replace, so the
+second of two writers refuses. A window remains between that comparison and the
+replace, which only a lock on the target could close.
 
 Rules this module holds:
 
@@ -16,8 +21,11 @@ Rules this module holds:
 """
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 from typing import Optional, Sequence
@@ -59,8 +67,12 @@ _MODEL_ZONES = {
 _GENERATION = re.compile(r"g(\d+)\Z")
 _ENTRY = re.compile(r"r(\d+)\Z")
 _REPLACE_TRIES = 10
-_OPEN_TRIES = 100
 _REPLACE_WAIT_S = 0.1
+#: A process's exit code while it runs, and ``OpenProcess``'s rights and refusal.
+_STILL_ACTIVE = 259
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_MAX_DWORD = 0xFFFFFFFF
 
 
 def model_hashes(model_h5: "str | Path") -> tuple[str, Optional[str]]:
@@ -130,23 +142,34 @@ def write_user_file(
         )
     dropped = _derived_to_drop(target, model_moved, results_moved, names, drop_stale)
 
-    partial = target.with_name(target.name + ".partial")
-    out = _open_partial(partial)  # outside the try: a failed open is another writer's file
+    _sweep_dead_partials(target)
+    partial, out = _create_partial(target)
     try:
         with out:
             _write_all(out, previous, target, fem_hash, model_hash, results_hash,
                        combinations, results, units, writer, dropped)
-        _verify(partial, model_h5, fem_hash, model_hash, results_hash, combinations, names)
-        if previous is not None and UserFile(target).revision != previous.revision:
-            raise UserWriteRefused(
-                f"{target} changed while this write ran (revision "
-                f"{previous.revision} moved); nothing was replaced. Write again.")
+        _verify(partial, model_h5, fem_hash, model_hash, results_hash, combinations, results)
         _fsync(partial)
+        _refuse_if_moved(target, previous)
         _replace(partial, target)
     except BaseException:
-        partial.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):  # the first failure is the one to report
+            partial.unlink(missing_ok=True)
         raise
     return target
+
+
+def _refuse_if_moved(target: Path, previous: Optional[UserFile]) -> None:
+    """The second of two writers refuses here, rather than overwriting (A4)."""
+    if previous is None:
+        if target.exists():
+            raise UserWriteRefused(
+                f"{target} was created while this write ran; nothing was replaced. "
+                "Write again.")
+    elif UserFile(target).revision != previous.revision:
+        raise UserWriteRefused(
+            f"{target} changed while this write ran (revision "
+            f"{previous.revision} moved); nothing was replaced. Write again.")
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +203,14 @@ def _check_combinations(rows: Sequence[Combination], model_h5: "str | Path") -> 
 
 
 def _check_known_versions(target: Path, combinations: bool, results: bool) -> None:
-    """No writer touches a zone newer than it knows (A4)."""
+    """No writer touches a zone newer than it knows (A4), or one with no version:
+    a group with no key cannot be judged, and copying it on would hide that."""
     with h5py.File(target, "r") as f:
         attrs = f["meta"].attrs
+        for root, key in (("combinations", COMBINATIONS_KEY), ("results", USER_RESULTS_KEY)):
+            if root in f and key not in attrs:
+                raise UserWriteRefused(
+                    f"{target}: /{root} has no {key} in /meta; nothing was replaced.")
         for wanted, zone in ((combinations, COMBINATIONS), (results, USER_RESULTS)):
             version = read_zone_version(attrs, zone) if wanted else None
             if version is not None:
@@ -325,9 +353,11 @@ def _verify(
     model_hash: Optional[str],
     results_hash: Optional[str],
     combinations: Optional[Sequence[Combination]],
-    names: set[str],
+    results: Sequence[UserResult],
 ) -> None:
-    """Read the partial back through the reader before it may replace anything."""
+    """Read the partial back through the reader before it may replace anything,
+    and compare the ``DATA`` this call wrote bit for bit: a partial another process
+    truncated can still read as a well-formed file holding zeros."""
     back = UserFile(partial)
     if (back.fem_hash, back.model_hash, back.results_hash) != (fem_hash, model_hash, results_hash):
         raise UserWriteRefused(f"{partial}: the hashes did not read back")
@@ -335,11 +365,28 @@ def _verify(
         back.combinations(model_h5=model_h5).rows != tuple(combinations)
     ):
         raise UserWriteRefused(f"{partial}: the combinations did not read back")
-    if names:
+    if results:
         index = back.results()
-        missing = names - {e.name for e in index.entries}
+        missing = {r.name for r in results} - {e.name for e in index.entries}
         if missing:
             raise UserWriteRefused(f"{partial}: did not read back: {sorted(missing)}")
+        for r in results:
+            if not _same_data(r, back.read_result(r.name)):
+                raise UserWriteRefused(f"{partial}: the DATA of {r.name!r} did not read back")
+
+
+def _bits(values: object) -> bytes:
+    return np.asarray(values, dtype="f8").tobytes()
+
+
+def _same_data(wrote: UserResult, read: UserResult) -> bool:
+    if wrote.target != "elements":
+        return _bits(wrote.data) == _bits(read.data)
+    theirs = {b.name: b for b in read.buckets}
+    return all(
+        b.name in theirs and _bits(b.data) == _bits(theirs[b.name].data)
+        for b in wrote.buckets
+    )
 
 
 def _fsync(path: Path) -> None:
@@ -347,20 +394,59 @@ def _fsync(path: Path) -> None:
         os.fsync(f.fileno())
 
 
-def _open_partial(partial: Path) -> h5py.File:
-    """Create the partial, retried. Windows releases a dead process's file locks
-    some time after it exits, and how long depends on the load (``LockFileEx``),
-    so a killed writer's lock can outlive it. A live writer's lock outlasts this."""
-    for attempt in range(_OPEN_TRIES):
+def _create_partial(target: Path) -> tuple[Path, h5py.File]:
+    """This writer's own partial, created exclusively: no other writer's is touched."""
+    name = f"{target.name}.{os.getpid()}-{secrets.token_hex(4)}.partial"
+    partial = target.with_name(name)
+    try:
+        return partial, h5py.File(partial, "x")
+    except OSError as exc:
+        raise UserWriteRefused(f"{partial} cannot be created; nothing was replaced: {exc}") from exc
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` runs. Unsure reads as alive, so a sweep leaves the file.
+
+    Never ``os.kill(pid, 0)`` on Windows: there any signal value but the two
+    console events terminates the process.
+    """
+    if os.name != "nt":
         try:
-            return h5py.File(partial, "w")
-        except OSError as exc:
-            if attempt == _OPEN_TRIES - 1:
-                raise UserWriteRefused(
-                    f"{partial} is held by another writer; nothing was replaced: {exc}"
-                ) from exc
-            time.sleep(_REPLACE_WAIT_S)
-    raise AssertionError("unreachable")
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:  # EPERM: it runs under another user
+            return True
+        return True
+    if pid > _MAX_DWORD:
+        return True
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+    kernel32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+    if not handle:
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _sweep_dead_partials(target: Path) -> None:
+    """Remove partials whose writer has died. Failure here never fails the write:
+    a dead process's lock outlives it for a moment, and the next write tries again."""
+    pattern = re.compile(re.escape(target.name) + r"\.(\d+)-[0-9a-f]+\.partial\Z")
+    with contextlib.suppress(OSError):
+        for entry in target.parent.iterdir():
+            found = pattern.match(entry.name)
+            if found is not None and not _pid_alive(int(found.group(1))):
+                with contextlib.suppress(OSError):
+                    entry.unlink()
 
 
 def _replace(partial: Path, target: Path) -> None:
