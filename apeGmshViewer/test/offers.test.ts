@@ -247,6 +247,18 @@ test("INV-5: only the panel's click dispatches Apply or Back; main and the spec 
   assert.deepEqual(senders.map((f) => f.slice(root.length).replace(/\\/g, "/")), ["panels/offers.ts"]);
 });
 
+test("INV-5: an agent's call returns before anything in the window takes focus, restores or opens", () => {
+  const src = readFileSync(fileURLToPath(new URL("../src/main/main.ts", import.meta.url)), "utf8");
+  const start = src.indexOf('app.on("second-instance"');
+  const heard = src.indexOf("heardFromAgent(data as Reach);\n      return;", start);
+  assert.ok(start >= 0 && heard > start, "the handler hands an agent's call over, and returns");
+  for (const opener of ["fileFromArgv(argv", "openPath(next", "win.restore()", "win.focus()"]) {
+    assert.ok(src.indexOf(opener, start) > heard, `${opener} comes after the agent's return`);
+  }
+  const reach = src.slice(src.indexOf("function heardFromAgent"), src.indexOf('ipcMain.on("viewer:offersReady"'));
+  assert.doesNotMatch(reach, /focus|restore|openPath|show\(|reload/, "the agent's path touches none of them");
+});
+
 // ---- an offer that would refuse is listed as refused (D5, D2) -----------------------
 
 test("D5: an offer the set cannot draw is listed as refused, with the compiler's own reason, and cannot be applied", async () => {
