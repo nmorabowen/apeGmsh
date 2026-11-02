@@ -82,7 +82,7 @@ def _model(path: Path, rows: tuple[archive.Combination, ...] = ()) -> Path:
 
 def _user(tmp_path: Path, rows: list[Combination], results=()) -> Path:
     return write_user_file(
-        tmp_path / "run.user.h5", _model(tmp_path / "model.h5"),
+        tmp_path / "run.user.h5", _model(tmp_path / "run.h5"),
         results_file=tmp_path / "run.ladruno", combinations=rows, results=results)
 
 
@@ -128,10 +128,16 @@ def test_a_stage_step_is_a_time_index(run, tmp_path: Path) -> None:
     assert err.value.reason == "unresolved"
 
 
-def test_a_stage_resolves_by_name_too(run, tmp_path: Path) -> None:
-    _user(tmp_path, [Combination("by_name", "linear", (_stage("MODEL_STAGE[2]", 2.0),))])
-    got = run.combinations().evaluate("by_name", "displacement_x").field.values[:, 0]
+def test_an_unstamped_stage_is_named_stage_i_only(run, tmp_path: Path) -> None:
+    """A3: with no stamp the source is ``stage_<i>``; the recorder's group name is not one."""
+    _user(tmp_path, [Combination("by_group", "linear", (_stage("MODEL_STAGE[2]", 2.0),)),
+                     Combination("by_id", "linear", (_stage("stage_1", 2.0),))])
+    combos = run.combinations()
+    got = combos.evaluate("by_id", "displacement_x").field.values[:, 0]
     np.testing.assert_allclose(got, 2.0 * _read(run, "stage_1"), rtol=1e-15)
+    with pytest.raises(CombinationRefused) as err:
+        combos.evaluate("by_group", "displacement_x")
+    assert err.value.reason == "unresolved"
 
 
 # ---- modes: STEP ids, never indices --------------------------------------------
@@ -228,7 +234,7 @@ def test_a_user_result_reads_its_stored_rows(run, tmp_path: Path) -> None:
     with pytest.raises(CombinationRefused) as err:
         run.combinations().evaluate("env", user_result="wood_armer_top")
     assert err.value.reason == "stale"
-    combos = run.combinations(model_h5=tmp_path / "model.h5")
+    combos = run.combinations(model_h5=tmp_path / "run.h5")
     with pytest.raises(CombinationRefused) as err:
         combos.evaluate("ULS", user_result="wood_armer_top")
     assert err.value.reason == "not-linear"
@@ -263,3 +269,115 @@ def test_a_state_address_alone_is_read_and_a_bad_one_refused(run) -> None:
     with pytest.raises(CombinationRefused) as err:
         combos.evaluate(StateAddress("mode", "stage_2", 9, 0), "displacement_x")
     assert err.value.reason == "bad-term"
+
+
+# ---- review of #2711 ------------------------------------------------------------
+
+
+def _stamp(run: Results) -> None:
+    """Stamp the run's stage names, as model_h5= does from /opensees/stages."""
+    run._reader.attach_stage_names(["gravity", "live", "modal"], ["static", "static", "static"])
+    run._stages_cache = None
+
+
+def test_one_state_alone_has_no_rule(run, tmp_path: Path) -> None:
+    """A lone state of a non-linear result reads as stored, and is not badged (finding 1)."""
+    _user(tmp_path, [Combination("ULS", "linear", (_stage("stage_0", 1.2),))],
+          results=[_wood(basis="model", linear=False)])
+    combos = run.combinations(model_h5=tmp_path / "run.h5")
+    for state in (StateAddress("stage", "stage_0"), run.stage("stage_0")):
+        got = combos.evaluate(state, user_result="wood_armer_top")
+        np.testing.assert_array_equal(got.field.values[:, 0], [1.0, 2.0, 3.0])
+        assert got.signed and got.badges == ()
+    assert combos.evaluate(run.stage("stage_0"), "displacement_x").badges == ()
+    with pytest.raises(CombinationRefused) as err:  # a declared linear keeps the check
+        combos.evaluate("ULS", user_result="wood_armer_top")
+    assert err.value.reason == "not-linear"
+
+
+def test_a_stamped_stage_is_named_by_its_stamp(run, tmp_path: Path) -> None:
+    """A3: the stamped name, else stage_<i>, on the term and the STATES side (finding 2)."""
+    _stamp(run)
+    rows = [Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6))),
+            Combination("by_id", "linear", (_stage("stage_0", 1.2),)),
+            Combination("m", "linear", (Term("mode", "modal", 9, 2),))]
+    stored = UserResult(
+        name="mx", target="nodes", basis="model", linear=True,
+        states=(StateAddress("stage", "gravity"), StateAddress("stage", "live")),
+        components=("w",), data=np.array([[[1.0], [2.0], [3.0]], [[10.0], [-20.0], [30.0]]]),
+        ids=np.array([1, 2, 3], dtype="i4"))
+    _user(tmp_path, rows, results=[stored])
+    combos = run.combinations(model_h5=tmp_path / "run.h5")
+    got = combos.evaluate("ULS", user_result="mx").field.values[:, 0]
+    np.testing.assert_allclose(got, [1.2 + 16.0, 2.4 - 32.0, 3.6 + 48.0], rtol=1e-15)
+    for quantity in ({"component": "displacement_x"}, {"user_result": "mx"}):
+        with pytest.raises(CombinationRefused) as err:
+            combos.evaluate("by_id", **quantity)
+        assert err.value.reason == "unresolved" and "stamped" in err.value.detail
+    handle = combos.evaluate(run.stage("gravity"), user_result="mx").field.values[:, 0]
+    np.testing.assert_array_equal(handle, [1.0, 2.0, 3.0])
+    shape = combos.evaluate("m", "displacement_x").field.values[:, 0]
+    np.testing.assert_array_equal(shape, np.array(SHAPES[(9, 2)])[:, 0])
+    mode_handle = next(s for s in run.stages if s.id == "stage_2_step_9_mode_2")
+    got = combos.evaluate(run.stage(mode_handle.id), "displacement_x").field.values[:, 0]
+    np.testing.assert_array_equal(got, shape)
+
+
+@pytest.mark.parametrize("results_name, user_name", [
+    ("yoo_slab_N56_75.results.h5", "yoo_slab_N56_75.user.h5"),
+    ("truss2d.part-0.ladruno", "truss2d.user.h5"),
+    ("run.ladruno", "run.user.h5"),
+])
+def test_the_user_file_is_found_by_the_set_stem(tmp_path: Path, results_name: str, user_name: str) -> None:
+    """Finding 4: the stem drops .results and .part-<N>."""
+    from apeGmsh.results.user._states import user_file_beside
+
+    (tmp_path / user_name).write_bytes(b"")
+    assert user_file_beside(tmp_path / results_name, None) == tmp_path / user_name
+    assert user_file_beside(tmp_path / "elsewhere" / results_name, None) is None
+
+
+def test_the_model_stem_names_the_user_file(tmp_path: Path) -> None:
+    from apeGmsh.results.user._states import user_file_beside
+
+    (tmp_path / "frame.user.h5").write_bytes(b"")
+    (tmp_path / "run.user.h5").write_bytes(b"")
+    assert user_file_beside(tmp_path / "run.ladruno", tmp_path / "frame.h5") == tmp_path / "frame.user.h5"
+
+
+def test_a_partitioned_set_finds_its_user_file(tmp_path: Path) -> None:
+    for k in (0, 1):
+        shutil.copy(LADRUNO / f"truss2d.part-{k}.ladruno", tmp_path / f"truss2d.part-{k}.ladruno")
+    write_user_file(tmp_path / "truss2d.user.h5", _model(tmp_path / "truss2d.h5"),
+                    combinations=[Combination("ULS", "linear", (_stage("stage_0", 1.2),))])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = Results.from_ladruno(tmp_path / "truss2d.part-0.ladruno")
+    assert run.combinations().names == ("ULS",)
+    explicit = run.combinations(tmp_path / "truss2d.user.h5")
+    assert explicit.user_h5 == tmp_path / "truss2d.user.h5"
+
+
+def test_a_deep_chain_and_a_wide_diamond_evaluate(run) -> None:
+    """Finding 5: no recursion, and each combination is evaluated once."""
+    import time
+
+    from apeGmsh.results.user._descriptor import resolve
+    from apeGmsh.results.user._evaluate import evaluate, is_signed
+
+    from tests.results.user.test_user_conformance import FixtureSource
+
+    chain = [Combination("c0", "linear", (Term("stage", "D"),))]
+    chain += [Combination(f"c{i}", "linear", (Term("combination", f"c{i - 1}"),))
+              for i in range(1, 1000)]
+    t0 = time.perf_counter()
+    got = evaluate(resolve(chain), "c999", FixtureSource()).field.values
+    np.testing.assert_array_equal(got[0], [1.0, 2.0])
+    diamond = [Combination("d0", "linear", (Term("stage", "D"),))]
+    diamond += [Combination(f"d{i}", "linear", (Term("combination", f"d{i - 1}"),
+                                                Term("combination", f"d{i - 1}", factor=-1.0)))
+                for i in range(1, 22)]
+    table = resolve(diamond)
+    assert is_signed(table, "d21")
+    assert evaluate(table, "d21", FixtureSource()).field.values[0, 0] == 0.0
+    assert time.perf_counter() - t0 < 1.0

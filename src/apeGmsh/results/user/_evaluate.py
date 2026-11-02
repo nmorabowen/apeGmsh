@@ -29,7 +29,12 @@ assumes linearity" (D4).
 
 A user result (A5): a stored row for the combination wins. Otherwise
 ``envelope`` reads the terms' stored rows, and every other rule needs
-``@linear=1``. A rule that cannot be applied refuses; it never sums.
+``@linear=1``; so does a term whose factor is not 1, because a factor scales
+the quantity. A rule that cannot be applied refuses; it never sums. One state
+read alone (:func:`read_state`) has no rule, so it is read as stored.
+
+Combinations are evaluated in dependency order without recursion, so a deep
+chain or a wide diamond of references costs one evaluation per combination.
 
 The evaluator reads values only through a :class:`Source`, so the same code
 serves the recorded results of a :class:`~apeGmsh.results.Results`, the user
@@ -44,7 +49,7 @@ from typing import Optional, Protocol, Sequence
 
 import numpy as np
 
-from ._descriptor import Combination, CombinationTable, StateAddress, Term
+from ._descriptor import Combination, CombinationTable, StateAddress, Term, address_problem
 from ._errors import UserFileError
 
 __all__ = [
@@ -58,6 +63,7 @@ __all__ = [
     "cqc_rho",
     "evaluate",
     "is_signed",
+    "read_state",
 ]
 
 #: Why an evaluation refuses. A row the table refused reads ``refused``.
@@ -184,18 +190,48 @@ def _row(table: CombinationTable, name: str, caller: str) -> Combination:
         raise CombinationRefused(caller, reason, str(exc.args[0])) from exc
 
 
+def _post_order(table: CombinationTable, name: str, leaf=lambda n: False) -> list[str]:
+    """``name`` and every combination it reaches, each after the ones it names.
+
+    Iterative, so depth is not bounded by the interpreter's stack. ``leaf``
+    stops the walk at a combination whose terms are not needed (a stored row).
+    The table is acyclic: :func:`resolve` refused every row in or reaching a cycle.
+    """
+    order: list[str] = []
+    done: set[str] = set()
+    stack: list[tuple[str, bool]] = [(name, False)]
+    while stack:
+        current, expanded = stack.pop()
+        if current in done:
+            continue
+        if expanded:
+            done.add(current)
+            order.append(current)
+            continue
+        row = _row(table, current, name)
+        stack.append((current, True))
+        if not leaf(current):
+            stack.extend((t.source, False) for t in row.terms
+                         if t.kind == "combination" and t.source not in done)
+    return order
+
+
+def _signs(table: CombinationTable, order: Sequence[str], memo: dict[str, bool]) -> None:
+    for current in order:
+        if current not in memo:
+            row = _row(table, current, current)
+            memo[current] = row.rule == "linear" and all(
+                memo[t.source] if t.kind == "combination" else True for t in row.terms)
+
+
 def is_signed(table: CombinationTable, name: str) -> bool:
     """Whether combination ``name`` is signed: a ``linear`` whose terms all are.
 
     Only a signed result draws as a deformed shape (A3).
     """
-    row = _row(table, name, name)
-    if row.rule != "linear":
-        return False
-    return all(
-        is_signed(table, t.source) if t.kind == "combination" else True
-        for t in row.terms
-    )
+    memo: dict[str, bool] = {}
+    _signs(table, _post_order(table, name), memo)
+    return memo[name]
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +340,7 @@ class _Run:
         self.table = table
         self.source = source
         self.memo: dict[str, Combined] = {}
+        self.signs: dict[str, bool] = {}
         self.fields: dict[StateAddress, Field] = {}
 
     def field(self, address: StateAddress) -> Field:
@@ -312,36 +349,65 @@ class _Run:
         return self.fields[address]
 
     def combination(self, name: str) -> Combined:
-        if name in self.memo:
-            return self.memo[name]
+        """Evaluate ``name``: the combinations it needs first, in dependency order."""
+        stored: dict[str, Optional[Field]] = {}
+
+        def leaf(current: str) -> bool:
+            if current not in stored:
+                stored[current] = self.source.stored(current)
+            return stored[current] is not None
+
+        order = _post_order(self.table, name, leaf)
+        # A stored row is a leaf, but its sign still follows its descriptor.
+        _signs(self.table, _post_order(self.table, name), self.signs)
+        if not self.source.linear:
+            # A5 over every combination the value needs, before any value is read,
+            # so the refusal does not depend on the order the terms are read in.
+            for current in order:
+                if stored.get(current) is None:
+                    self._check_a5(_row(self.table, current, current))
+        for current in order:
+            if current not in self.memo:
+                self.memo[current] = self._one(current, stored.get(current))
+        return self.memo[name]
+
+    def _check_a5(self, row: Combination) -> None:
+        """A rule or a factor that would sum a quantity that is not linear refuses (A5)."""
+        if self.source.linear:
+            return
+        if row.rule != "envelope":
+            raise CombinationRefused(
+                row.name, "not-linear",
+                f"{row.rule} sums its terms, and this quantity does not declare "
+                "@linear=1: a sum of it is not its value under the sum. Store a "
+                "row for this combination, or use envelope (ADR 0130 A5)")
+        for term in row.terms:
+            if term.factor != 1.0:
+                # 2 r(D) is not r(2 D) for a quantity that is not linear.
+                raise CombinationRefused(
+                    row.name, "not-linear",
+                    f"a term of factor {term.factor} scales this quantity, which does not "
+                    "declare @linear=1; an envelope of it takes factor-1 terms (ADR 0130 A5)")
+
+    def _one(self, name: str, stored: Optional[Field]) -> Combined:
         row = _row(self.table, name, name)
-        signed = is_signed(self.table, name)
         badges = (SUPERPOSITION_BADGE,) if (
             row.rule == "linear" and any(t.kind == "stage" for t in row.terms)) else ()
-        stored = self.source.stored(name)
         if stored is not None:
-            out = Combined(name, stored, signed, badges)
-        else:
-            if row.rule != "envelope" and not self.source.linear:
-                raise CombinationRefused(
-                    name, "not-linear",
-                    f"{row.rule} sums its terms, and this quantity does not declare "
-                    "@linear=1: a sum of it is not its value under the sum. Store a "
-                    "row for this combination, or use envelope (ADR 0130 A5)")
-            out = Combined(name, self._apply(row), signed, badges)
-        self.memo[name] = out
-        return out
+            return Combined(name, stored, self.signs[name], badges)
+        self._check_a5(row)
+        return Combined(name, self._apply(row), self.signs[name], badges)
 
-    def term(self, term: Term) -> Field:
+    def term(self, term: Term, name: str) -> Field:
         if term.kind == "combination":
-            return self.combination(term.source).field.scaled(term.factor)
+            return self.memo[term.source].field.scaled(term.factor)
         return self.field(term.address).scaled(term.factor)
 
     def _apply(self, row: Combination) -> Field:
         whole = [t for t in row.terms if t.kind == "spectrum" and t.mode == 0]
         if whole:
             return self._whole_case(row, whole[0])
-        fields = [self.term(t) for t in row.terms]
+        fields = [self.term(t, row.name) for t in row.terms]
         keys, comps, stack = _align(fields, row.name)
         rule = row.rule
         if rule == "linear":
@@ -443,3 +509,20 @@ def evaluate(table: CombinationTable, name: str, source: Source) -> Combined:
     Raises :class:`CombinationRefused` with one of :data:`EVAL_REASONS`.
     """
     return _Run(table, source).combination(name)
+
+
+def read_state(address: StateAddress, source: Source) -> Combined:
+    """One state alone, read as it is: no rule, so no ``@linear`` check and no badge.
+
+    A recorded or user result at one stage, mode or increment is signed. A whole
+    case (``spectrum``, ``mode=0``) is many states, so it is refused here.
+    """
+    name = f"<{address.kind} {address.source}>"
+    problem = address_problem(address)
+    if problem is None and address.kind == "spectrum" and address.mode == 0:
+        problem = "a whole case is not one state; combine it with a rule"
+    if problem is None and address.kind == "combination":
+        problem = "a combination is evaluated by name, not read as a state"
+    if problem is not None:
+        raise CombinationRefused(name, "bad-term", problem)
+    return Combined(name, source.field(address), True, ())

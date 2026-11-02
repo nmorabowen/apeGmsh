@@ -9,16 +9,21 @@ A term's source address resolves here:
 =============  ===========================================================
 ``kind``       read from
 =============  ===========================================================
-``stage``      the ``Results`` stage whose id (``stage_<i>``) is the
-               ``source``, else whose name is; ``step`` is a time index,
-               ``-1`` the last
-``mode``       a mode of that host stage. ``step`` is the ``STEP_<s>`` id of
-               its modal set, ``-1`` the only set; ``mode`` is 1-based
+``stage``      the ``Results`` stage whose canonical name is the ``source``:
+               its stamped name, or ``stage_<i>`` when the run stamped none
+               (A3). ``stage_<i>`` of a stamped stage is refused. ``step`` is
+               a time index, ``-1`` the last
+``mode``       a mode of that host stage, named the same way. ``step`` is the
+               ``STEP_<s>`` id of its modal set, ``-1`` the only set;
+               ``mode`` is 1-based
 ``spectrum``,  a ``spectra`` provider. ``/spectra`` has no reader yet (VU6),
 ``reference``  so without one these terms refuse ``unresolved``
 =============  ===========================================================
 
-A user result reads its ``STATES`` rows instead, by exact address. A term holds
+A user result reads its ``STATES`` rows instead, by exact address, after the
+same canonical check, so a row stored as ``("stage", "gravity")`` is the one a
+term naming ``gravity`` reads. One state read alone has no rule
+(:func:`~._evaluate.read_state`): no ``@linear`` check, no badge. A term holds
 no path, stem or hash, so a cross-variant term cannot be written, and a state
 handle of another ``Results`` is refused (``foreign-handle``).
 """
@@ -32,7 +37,15 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 import numpy as np
 
 from ._descriptor import CombinationTable, StateAddress, resolve
-from ._evaluate import Case, Combined, CombinationRefused, Field, evaluate, is_signed
+from ._evaluate import (
+    Case,
+    Combined,
+    CombinationRefused,
+    Field,
+    evaluate,
+    is_signed,
+    read_state,
+)
 from ._fields import UserResult
 from ._reader import UserFile, read_model_combinations
 from ._staleness import staleness
@@ -45,10 +58,12 @@ __all__ = [
     "LEVELS",
     "SpectraProvider",
     "UserCombinations",
+    "canonical_stage_name",
     "domain_keys",
     "entity_keys",
     "node_keys",
     "sub_keys",
+    "user_file_beside",
 ]
 
 #: The recorded levels a combination is evaluated on.
@@ -56,6 +71,37 @@ LEVELS = ("nodes", "elements", "gauss", "line_stations")
 _ID = np.dtype([("id", "i8")])
 _SUB = np.dtype([("id", "i8"), ("sub", "i8")])
 _MODE_STAGE = re.compile(r"(?P<host>.+?)(?:_step_(?P<step>\d+))?_mode_(?P<mode>\d+)\Z")
+#: The name a recorder gives a stage the run did not stamp.
+_UNSTAMPED = re.compile(r"MODEL_STAGE\[\d+\]\Z")
+_PART = re.compile(r"\.part-\d+\Z")
+
+
+def canonical_stage_name(info: Any) -> str:
+    """A stage's source in a term (A3): its stamped name, else ``stage_<i>``."""
+    name = info.name
+    if not name or name == info.id or _UNSTAMPED.match(name):
+        return str(info.id)
+    return str(name)
+
+
+def user_file_beside(results_file: Optional[Path], model_h5: Optional[Path]) -> Optional[Path]:
+    """The set's ``<stem>.user.h5`` if it exists, else ``None``.
+
+    The stem is the model archive's (``<stem>.h5``) when it is known. Otherwise it
+    is the results file's, without ``.part-<N>`` and ``.results``, so
+    ``truss2d.part-0.ladruno`` and ``yoo_slab.results.h5`` both find their set's file.
+    """
+    if model_h5 is not None:
+        name = model_h5.name
+        stem = name[: -len(".h5")] if name.endswith(".h5") else model_h5.stem
+        found = model_h5.with_name(stem + ".user.h5")
+    elif results_file is not None:
+        stem = _PART.sub("", results_file.stem)
+        stem = stem[: -len(".results")] if stem.endswith(".results") else stem
+        found = results_file.with_name(stem + ".user.h5")
+    else:
+        return None
+    return found if found.is_file() else None
 
 
 def node_keys(ids: Any) -> np.ndarray:
@@ -147,13 +193,25 @@ class _RecordedSource:
 
     def _host(self, source: str) -> Any:
         hosts = [s for s in self.results.stages if s.kind != "mode"]
-        for match in (lambda s: s.id == source, lambda s: s.name == source):
-            hits = [s for s in hosts if match(s)]
-            if len(hits) == 1:
-                return hits[0]
-            if len(hits) > 1:
-                raise self._refuse("unresolved", f"{len(hits)} stages are named {source!r}")
-        raise self._refuse("unresolved", f"no stage {source!r} in {[s.name for s in hosts]}")
+        hits = [s for s in hosts if canonical_stage_name(s) == source]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            raise self._refuse("unresolved", f"{len(hits)} stages are named {source!r}")
+        stamped = [s for s in hosts if s.id == source]
+        if stamped:
+            raise self._refuse(
+                "unresolved", f"{source!r} is stamped {stamped[0].name!r}: a term names a "
+                "stamped stage by its stamped name (ADR 0130 A3)")
+        raise self._refuse(
+            "unresolved", f"no stage {source!r} in {[canonical_stage_name(s) for s in hosts]}")
+
+    def check(self, address: StateAddress) -> None:
+        """Refuse a ``stage`` or ``mode`` source the stage list does not name canonically."""
+        if address.kind == "stage":
+            self._host(address.source)
+        elif address.kind == "mode":
+            self._mode_stage(address)
 
     def _mode_stage(self, address: StateAddress) -> Any:
         host = self._host(address.source)
@@ -288,7 +346,7 @@ def user_result_rows(result: UserResult) -> tuple[np.ndarray, tuple[str, ...], n
 class _UserResultSource:
     """One user result: its ``STATES`` rows, and ``@linear`` (A5)."""
 
-    def __init__(self, result: UserResult, eigen: Optional[_RecordedSource], name: str) -> None:
+    def __init__(self, result: UserResult, recorded: Optional[_RecordedSource], name: str) -> None:
         if result.states is None:
             raise CombinationRefused(
                 name, "state-free", f"user result {result.name!r} is state-free: it is "
@@ -297,7 +355,7 @@ class _UserResultSource:
         self.linear = bool(result.linear)
         self.keys, self.components, self.data = user_result_rows(result)
         self.rows = {address: i for i, address in enumerate(result.states)}
-        self.eigen = eigen
+        self.recorded = recorded
         self.name = name
 
     def _row(self, address: StateAddress) -> Optional[Field]:
@@ -310,6 +368,8 @@ class _UserResultSource:
         return self._row(StateAddress("combination", name, -1, 0))
 
     def field(self, address: StateAddress) -> Field:
+        if self.recorded is not None:
+            self.recorded.check(address)
         found = self._row(address)
         if found is None:
             raise CombinationRefused(
@@ -318,9 +378,9 @@ class _UserResultSource:
         return found
 
     def eigenvalue(self, address: StateAddress) -> float:
-        if self.eigen is None:
+        if self.recorded is None:
             raise CombinationRefused(self.name, "unresolved", "no Results to read the eigenvalue from")
-        return self.eigen.eigenvalue(address)
+        return self.recorded.eigenvalue(address)
 
     def case(self, name: str) -> Case:
         raise CombinationRefused(
@@ -373,46 +433,36 @@ class UserCombinations:
         """A handle on combination ``name``; ``signed`` says if it draws as a shape."""
         return CombinationState(name, is_signed(self.table, name), self)
 
-    def _name_of(self, state: Any) -> tuple[str, CombinationTable]:
-        """The combination a state names, and the table to evaluate it in."""
+    def _target(self, state: Any) -> tuple[Optional[str], Optional[StateAddress]]:
+        """``(combination name, None)``, or ``(None, address)`` for one state alone."""
         if isinstance(state, str):
-            return state, self.table
+            return state, None
         if isinstance(state, CombinationState):
             if state.owner is not self:
                 raise CombinationRefused(
                     state.name, "foreign-handle", "this handle belongs to another set's "
                     "combinations; a combination is valid within one variant (ADR 0130 D4)")
-            return state.name, self.table
+            return state.name, None
         if isinstance(state, StateAddress):
-            address = state
-        else:
-            stage_id = self._handle(state)
-            if stage_id is None:
-                raise TypeError(
-                    f"state must be a combination name, a CombinationState, a StateAddress "
-                    f"or a stage-scoped Results of this run, got {type(state).__name__}")
-            address = self._address_of(stage_id)
-        # One state alone is the one-term linear combination of it, judged by the
-        # same row rules, so a malformed address refuses here.
-        from ._descriptor import Combination, Term
-
-        name = f"<{address.kind} {address.source}>"
-        table = resolve([Combination(name, "linear", (Term(
-            address.kind, address.source, address.step, address.mode, 1.0),))])
-        if table.refused:
-            ref = table.refused[0]
-            raise CombinationRefused(name, "bad-term", f"{ref.reason}: {ref.detail}")
-        return name, table
+            return None, state
+        stage_id = self._handle(state)
+        if stage_id is None:
+            raise TypeError(
+                f"state must be a combination name, a CombinationState, a StateAddress "
+                f"or a stage-scoped Results of this run, got {type(state).__name__}")
+        return None, self._address_of(stage_id)
 
     def _address_of(self, stage_id: str) -> StateAddress:
-        info = next(s for s in self._results.stages if s.id == stage_id)
+        stages = {s.id: s for s in self._results.stages}
+        info = stages[stage_id]
         if info.kind != "mode":
-            return StateAddress("stage", info.id, -1, 0)
+            return StateAddress("stage", canonical_stage_name(info), -1, 0)
         m = _MODE_STAGE.match(info.id)
-        if m is None:
+        if m is None or m.group("host") not in stages:
             raise CombinationRefused("", "unresolved", f"mode stage {info.id!r} has no host")
         step = -1 if m.group("step") is None else int(m.group("step"))
-        return StateAddress("mode", m.group("host"), step, int(m.group("mode")))
+        host = canonical_stage_name(stages[m.group("host")])
+        return StateAddress("mode", host, step, int(m.group("mode")))
 
     def evaluate(
         self,
@@ -431,26 +481,30 @@ class UserCombinations:
         ``.user.h5`` result. A stale user result is refused unless
         ``allow_stale=True`` (A6). Raises :class:`CombinationRefused`.
         """
-        name, table = self._name_of(state)
+        name, address = self._target(state)
+        label = name if name is not None else f"<{address}>"
         if (component is None) == (user_result is None):
             raise ValueError("pass exactly one of component= and user_result=")
         recorded = _RecordedSource(
-            self._results, level, component or "", ids, self.spectra, name)
+            self._results, level, component or "", ids, self.spectra, label)
         source: Any = recorded
         if user_result is not None:
             if self._user is None:
-                raise CombinationRefused(name, "unresolved", "this set has no .user.h5")
+                raise CombinationRefused(label, "unresolved", "this set has no .user.h5")
             if not allow_stale:
                 state_of = staleness(
                     self._user, model_h5=self.model_h5, results_file=self.results_file,
                 ).results.get(user_result)
                 if state_of is not None and state_of.stale:
                     raise CombinationRefused(
-                        name, "stale", f"user result {user_result!r} is stale "
+                        label, "stale", f"user result {user_result!r} is stale "
                         f"({state_of.reason}); pass allow_stale=True to read it")
             try:
                 result = self._user.read_result(user_result)
             except KeyError as exc:
-                raise CombinationRefused(name, "unresolved", str(exc.args[0])) from exc
-            source = _UserResultSource(result, recorded, name)
-        return evaluate(table, name, source)
+                raise CombinationRefused(label, "unresolved", str(exc.args[0])) from exc
+            source = _UserResultSource(result, recorded, label)
+        if address is not None:
+            return read_state(address, source)
+        assert name is not None
+        return evaluate(self.table, name, source)

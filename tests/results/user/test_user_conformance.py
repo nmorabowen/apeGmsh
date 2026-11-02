@@ -36,7 +36,8 @@ from apeGmsh.results.user._evaluate import (
     evaluate,
     is_signed,
 )
-from apeGmsh.results.user._states import _UserResultSource, node_keys
+from apeGmsh.results.user._evaluate import read_state
+from apeGmsh.results.user._states import _UserResultSource, entity_keys, node_keys, sub_keys
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "user_results"
 DOC = json.loads((FIXTURE / "conformance.json").read_text(encoding="utf-8"))
@@ -47,9 +48,30 @@ def _nan(v: Optional[float]) -> float:
     return math.nan if v is None else float(v)
 
 
+def _keys(f: dict[str, Any]) -> np.ndarray:
+    names = f["key_names"]
+    if names == ["id"]:
+        return node_keys([k[0] for k in f["keys"]])
+    if names == ["id", "sub"]:
+        return sub_keys([k[0] for k in f["keys"]], [k[1] for k in f["keys"]])
+    assert names == ["kind", "row"], names
+    return entity_keys([k[0] for k in f["keys"]], [k[1] for k in f["keys"]])
+
+
 def _field(f: dict[str, Any], scale: float = 1.0) -> Field:
     values = np.array([[_nan(v) for v in row] for row in f["values"]], dtype="f8")
-    return Field(node_keys([k[0] for k in f["keys"]]), tuple(f["components"]), scale * values)
+    return Field(_keys(f), tuple(f["components"]), scale * values)
+
+
+def _rows(rows: list[dict[str, Any]]) -> list[Combination]:
+    return [
+        Combination(
+            c["name"], c["rule"],
+            tuple(Term(t["kind"], t["source"], t["step"], t["mode"], t["factor"]) for t in c["terms"]),
+            envelope=c["envelope"], fraction=c["fraction"], damping=c["damping"],
+        )
+        for c in rows
+    ]
 
 
 def _address(text: str) -> StateAddress:
@@ -57,16 +79,9 @@ def _address(text: str) -> StateAddress:
     return StateAddress(kind, source, int(step), int(mode))
 
 
-def _table(rows: Optional[list[dict[str, Any]]] = None):
-    rows = DOC["combinations"] if rows is None else rows
-    return resolve([
-        Combination(
-            c["name"], c["rule"],
-            tuple(Term(t["kind"], t["source"], t["step"], t["mode"], t["factor"]) for t in c["terms"]),
-            envelope=c["envelope"], fraction=c["fraction"], damping=c["damping"],
-        )
-        for c in rows
-    ])
+def _table():
+    """The fixture's ``.user.h5`` rows joined with its ``model.h5`` rows."""
+    return resolve(_rows(DOC["combinations"]), _rows(DOC["model_combinations"]))
 
 
 def _case(c: dict[str, Any]) -> Case:
@@ -91,9 +106,10 @@ class FixtureSource:
 
     def field(self, address: StateAddress) -> Field:
         key = f"{address.kind}|{address.source}|{address.step}|{address.mode}"
-        if key not in self.doc["states"]:
+        found = self.doc["states"].get(key) or self.doc["other_states"].get(key)
+        if found is None:
             raise CombinationRefused("", "unresolved", f"no state {key}")
-        return _field(self.doc["states"][key])
+        return _field(found)
 
     def eigenvalue(self, address: StateAddress) -> float:
         return float(self.doc["eigenvalues"][
@@ -124,6 +140,11 @@ def _user_result(name: str) -> UserResult:
 
 
 class _Eigen:
+    """The recorded side a user result consults: the fixture names stages canonically."""
+
+    def check(self, address: StateAddress) -> None:
+        return None
+
     def eigenvalue(self, address: StateAddress) -> float:
         return FixtureSource().eigenvalue(address)
 
@@ -138,7 +159,8 @@ def _assert_golden(got, want: dict[str, Any]) -> None:
     assert got.signed is want["signed"]
     assert list(got.badges) == want["badges"]
     assert list(got.field.components) == want["components"]
-    assert got.field.keys["id"].tolist() == [k[0] for k in want["keys"]]
+    assert list(got.field.keys.dtype.names) == want["key_names"]
+    assert [list(k) for k in got.field.keys.tolist()] == want["keys"]
     expected = np.array([[_nan(v) for v in row] for row in want["values"]])
     np.testing.assert_allclose(got.field.values, expected, rtol=RTOL, atol=0.0)
 
@@ -155,6 +177,30 @@ def test_every_rule_matches_the_conformance_golden(quantity: str, name: str) -> 
         assert err.value.reason == want["refused"]
         return
     _assert_golden(evaluate(_table(), name, _source(quantity)), want)
+
+
+LONE = [(q, a) for q, states in DOC["lone"].items() for a in states]
+
+
+@pytest.mark.parametrize("quantity, address", LONE)
+def test_one_state_alone_matches_the_conformance_golden(quantity: str, address: str) -> None:
+    """No rule: a non-linear result reads at one stage, and nothing is badged."""
+    want = DOC["lone"][quantity][address]
+    if "refused" in want:
+        with pytest.raises(CombinationRefused) as err:
+            read_state(_address(address), _source(quantity))
+        assert err.value.reason == want["refused"]
+        return
+    _assert_golden(read_state(_address(address), _source(quantity)), want)
+
+
+def test_the_table_verdicts_match_the_conformance_golden() -> None:
+    table = _table()
+    got: dict[str, dict[str, str]] = {"user": {}, "model": {}}
+    for ref in table.refused:
+        got[ref.origin][ref.name] = ref.reason
+    assert got == DOC["table"]
+    assert set(DOC["table"]["user"].values()) == {"clash", "cycle", "unresolved"}
 
 
 def test_the_committed_fixture_is_what_the_script_writes() -> None:
@@ -341,6 +387,12 @@ def test_a_non_linear_user_result_refuses_every_summing_rule() -> None:
         assert err.value.reason == "not-linear", row.name
     got = evaluate(resolve(rows), "env", source).field.values
     np.testing.assert_allclose(got[1], [3.0 * 3.0, 3.0 * 4.0])  # max(3 D, 3 L) at node 2
+    # A factor scales the quantity, so an envelope of 2 L is refused too.
+    scaled = [Combination("env2", "envelope", (Term("stage", "D"), Term("stage", "L", factor=2.0)),
+                          envelope="max")]
+    with pytest.raises(CombinationRefused) as err:
+        evaluate(resolve(scaled), "env2", source)
+    assert err.value.reason == "not-linear"
 
 
 def test_a_stored_row_wins_over_the_rule() -> None:

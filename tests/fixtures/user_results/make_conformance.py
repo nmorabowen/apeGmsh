@@ -16,6 +16,14 @@ against ``apeGmsh.opensees.analysis.spectrum`` (``combine_modes``,
 JSON has no NaN, so a NaN is ``null``. A field is ``{"key_names", "keys",
 "components", "values"}``; ``keys`` holds one list per row and ``values`` one list
 per row, one value per component. An address is written ``kind|source|step|mode``.
+
+What the file holds: the inputs (``states`` and ``other_states`` on Gauss points
+and entities, ``eigenvalues``, ``cases``), the ``.user.h5`` rows
+(``combinations``) and the ``model.h5`` rows (``model_combinations``), each
+quantity's ``@linear`` flag and stored rows, and four kinds of golden: ``table``
+(the verdict on every refused row), ``goldens`` (each combination per quantity),
+and ``lone`` (one state read alone, with no rule). A refused evaluation is
+``{"refused": <reason>}``.
 """
 from __future__ import annotations
 
@@ -62,6 +70,25 @@ STATES = {
     address("spectrum", "Ex", -1, 1): nodal([[3.0, 1.0], [2.0, -2.0], [1.0, 0.5]]),
     address("spectrum", "Ex", -1, 2): nodal([[4.0, -1.0], [-1.0, 2.0], [0.5, 1.0]]),
     address("reference", "Ex"): nodal([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]]),
+}
+
+def keyed(key_names: list[str], keys: list[list[Any]], components: tuple[str, ...],
+          rows: list[list[float]]) -> dict[str, Any]:
+    return {"key_names": key_names, "keys": keys, "components": list(components), "values": rows}
+
+
+#: States on other targets, read by the recorded quantity only. The Gauss terms
+#: share element 5's second point and element 6's first; the entity terms share
+#: the cut, and each has a row the other lacks.
+OTHER_STATES = {
+    address("stage", "GD"): keyed(["id", "sub"], [[5, 0], [5, 1], [6, 0]], ("sxx",),
+                                  [[1.0], [2.0], [3.0]]),
+    address("stage", "GL"): keyed(["id", "sub"], [[5, 1], [6, 0], [6, 1]], ("sxx",),
+                                  [[10.0], [20.0], [30.0]]),
+    address("stage", "XD"): keyed(["kind", "row"], [["cut", 0], ["storey", 2]], ("V",),
+                                  [[4.0], [-1.0]]),
+    address("stage", "XL"): keyed(["kind", "row"], [["cut", 0], ["a_point_set", 1]], ("V",),
+                                  [[6.0], [2.5]]),
 }
 
 EIGENVALUES = {
@@ -139,6 +166,22 @@ COMBINATIONS = [
     combo("twice_ULS", "linear", [term(C, "ULS", 2.0)]),
     combo("bad_lambda", "cqc", [term("spectrum", "Ebad")]),
     combo("no_stage", "linear", [term(S, "Q")]),
+    combo("env_unit", "envelope", [term(S, "D"), term(S, "L"), term(S, "E")], envelope="max"),
+    combo("gauss_ULS", "linear", [term(S, "GD", 1.2), term(S, "GL", 1.6)]),
+    combo("entity_env", "envelope", [term(S, "XD"), term(S, "XL")], envelope="max"),
+    combo("uses_model", "linear", [term(C, "M_base", 1.5)]),
+    combo("clash", "linear", [term(S, "D")]),
+    combo("cyc_a", "linear", [term(C, "cyc_b")]),
+    combo("cyc_b", "linear", [term(C, "cyc_a")]),
+    combo("reaches_cyc", "linear", [term(S, "D"), term(C, "cyc_a")]),
+    combo("on_absent", "linear", [term(C, "nobody")]),
+]
+
+#: Rows of ``model.h5`` ``/opensees/combinations``: one the user file names, and
+#: one whose name the user file uses too, so both rows of that name refuse.
+MODEL_COMBINATIONS = [
+    combo("M_base", "linear", [term(S, "D", 2.0)]),
+    combo("clash", "linear", [term(S, "L")]),
 ]
 
 #: Each quantity: whether it is ``@linear``, and the combinations it stores a row for.
@@ -154,14 +197,70 @@ QUANTITIES = {
     },
 }
 #: The combinations goldened per quantity (every one for ``recorded``).
-USER_COMBINATIONS = ["ULS", "env_max", "env_absmax", "srss_list", "twice_ULS", "plus"]
+USER_COMBINATIONS = ["ULS", "env_max", "env_unit", "env_absmax", "srss_list", "twice_ULS",
+                     "plus", "uses_model"]
+#: One state read alone, per quantity: no rule, so no @linear check and no badge.
+LONE = {
+    "recorded": [address(S, "D"), address(S, "W"), address(M, "eig", -1, 2),
+                 address("spectrum", "Ex", -1, 1), address("reference", "Ex"),
+                 address(S, "GD"), address("spectrum", "Ex"), address(S, "Q")],
+    "m_xx": [address(S, "D")],
+    "wood_armer_top": [address(S, "D"), address(S, "L"), address(S, "Q")],
+}
 
 
 # ---------------------------------------------------------------------------
 # The reference: loops over {(key, label): value}, sharing no evaluator code
 # ---------------------------------------------------------------------------
 
-Cells = dict[tuple[tuple[int, ...], str], float]
+Cells = dict[tuple[tuple[Any, ...], str], float]
+
+
+def table_verdicts() -> dict[str, dict[str, str]]:
+    """The verdict on each refused row (A2, A3), by a fixed point, not a peel."""
+    rows = [("user", c) for c in COMBINATIONS] + [("model", c) for c in MODEL_COMBINATIONS]
+    verdict: dict[int, str] = {}
+    for i, (_, c) in enumerate(rows):
+        same = [o for o, d in rows if d["name"] == c["name"]]
+        if len(same) > 1:
+            verdict[i] = "clash" if len(set(same)) > 1 else "duplicate"
+    standing = {c["name"]: i for i, (_, c) in enumerate(rows) if i not in verdict}
+
+    def targets(i: int) -> list[Any]:
+        """Each combination row ``i`` names: its index, or None if not visible to it."""
+        out = []
+        for t in rows[i][1]["terms"]:
+            if t["kind"] == C:
+                j = standing.get(t["source"])
+                out.append(j if j is not None and (rows[i][0] == "user" or rows[j][0] == "model")
+                           else None)
+        return out
+
+    def reach(i: int) -> set[int]:
+        seen: set[int] = set()
+        todo = [j for j in targets(i) if j is not None]
+        while todo:
+            j = todo.pop()
+            if j not in seen:
+                seen.add(j)
+                todo.extend(k for k in targets(j) if k is not None)
+        return seen
+
+    on_cycle = {i for i in standing.values() if i in reach(i)}
+    for i in standing.values():
+        if i in on_cycle or reach(i) & on_cycle:
+            verdict[i] = "cycle"
+    changed = True
+    while changed:
+        changed = False
+        for i in standing.values():
+            if i not in verdict and any(j is None or j in verdict for j in targets(i)):
+                verdict[i] = "unresolved"
+                changed = True
+    out: dict[str, dict[str, str]] = {"user": {}, "model": {}}
+    for i, reason in sorted(verdict.items()):
+        out[rows[i][0]][rows[i][1]["name"]] = reason
+    return out
 
 
 class Refused(Exception):
@@ -222,24 +321,52 @@ class Reference:
         self.linear = q["linear"]
         self.scale = q["scale"]
         self.stored = q["stored"]
-        self.rows = {c["name"]: c for c in COMBINATIONS}
+        verdicts = table_verdicts()
+        self.refused = set(verdicts["user"]) | set(verdicts["model"])
+        self.rows = {c["name"]: c for c in [*MODEL_COMBINATIONS, *COMBINATIONS]
+                     if c["name"] not in self.refused}
         self.memo: dict[str, Cells] = {}
+        self.key_names = ["id"]
 
     def state(self, addr: str) -> Cells:
-        if addr not in STATES:
+        field = STATES.get(addr)
+        if field is None and self.quantity == "recorded":
+            field = OTHER_STATES.get(addr)
+        if field is None:
             raise Refused("unresolved")
-        return cells(STATES[addr], self.scale)
+        self.key_names = field["key_names"]
+        return cells(field, self.scale)
 
     def term(self, t: dict[str, Any]) -> Cells:
+        if t["factor"] != 1.0 and not self.linear:
+            raise Refused("not-linear")  # a factor scales a quantity that is not linear
         if t["kind"] == C:
             m = self.value(t["source"])
         else:
             m = self.state(address(t["kind"], t["source"], t["step"], t["mode"]))
         return {k: t["factor"] * v for k, v in m.items()}
 
+    def check_a5(self, name: str) -> None:
+        """A5 over every combination the value needs, before any value is read."""
+        todo, seen = [name], set()
+        while todo:
+            current = todo.pop()
+            if current in seen or current in self.stored or current not in self.rows:
+                continue
+            seen.add(current)
+            row = self.rows[current]
+            if not self.linear and (row["rule"] != "envelope"
+                                    or any(t["factor"] != 1.0 for t in row["terms"])):
+                raise Refused("not-linear")
+            todo.extend(t["source"] for t in row["terms"] if t["kind"] == C)
+
     def value(self, name: str) -> Cells:
         if name in self.memo:
             return self.memo[name]
+        if name in self.refused:
+            raise Refused("refused")
+        if name not in self.rows:
+            raise Refused("unresolved")
         row = self.rows[name]
         if name in self.stored:
             out = cells(self.stored[name])
@@ -333,26 +460,20 @@ class Reference:
         return out
 
 
-def signed(name: str) -> bool:
-    row = {c["name"]: c for c in COMBINATIONS}[name]
+def signed(rows: dict[str, dict[str, Any]], name: str) -> bool:
+    row = rows[name]
     return row["rule"] == "linear" and all(
-        signed(t["source"]) if t["kind"] == C else True for t in row["terms"])
+        signed(rows, t["source"]) if t["kind"] == C else True for t in row["terms"])
 
 
-def golden(quantity: str, name: str) -> dict[str, Any]:
-    try:
-        m = Reference(quantity).value(name)
-    except Refused as exc:
-        return {"refused": exc.reason}
+def written(m: Cells, key_names: list[str], is_signed: bool, badges: list[str]) -> dict[str, Any]:
     at = union([m])
     keys = sorted({k for k, _ in at})
     labels = [label for k, label in at if k == keys[0]]
-    row = {c["name"]: c for c in COMBINATIONS}[name]
-    badge = row["rule"] == "linear" and any(t["kind"] == S for t in row["terms"])
     return {
-        "signed": signed(name),
-        "badges": ["superposition assumes linearity"] if badge else [],
-        "key_names": ["id"],
+        "signed": is_signed,
+        "badges": badges,
+        "key_names": key_names,
         "keys": [list(k) for k in keys],
         "components": labels,
         "values": [[None if math.isnan(m[(k, label)]) else m[(k, label)] for label in labels]
@@ -360,22 +481,53 @@ def golden(quantity: str, name: str) -> dict[str, Any]:
     }
 
 
+def golden(quantity: str, name: str) -> dict[str, Any]:
+    ref = Reference(quantity)
+    try:
+        if name in ref.rows:
+            ref.check_a5(name)
+        m = ref.value(name)
+    except Refused as exc:
+        return {"refused": exc.reason}
+    row = ref.rows[name]
+    badge = row["rule"] == "linear" and any(t["kind"] == S for t in row["terms"])
+    return written(m, ref.key_names, signed(ref.rows, name),
+                   ["superposition assumes linearity"] if badge else [])
+
+
+def golden_lone(quantity: str, addr: str) -> dict[str, Any]:
+    kind, _, _, mode = addr.split("|")
+    if kind == "spectrum" and mode == "0":
+        return {"refused": "bad-term"}  # a whole case is many states
+    ref = Reference(quantity)
+    try:
+        m = ref.state(addr)
+    except Refused as exc:
+        return {"refused": exc.reason}
+    return written(m, ref.key_names, True, [])
+
+
 def build() -> dict[str, Any]:
     goldens: dict[str, dict[str, Any]] = {}
     for quantity in QUANTITIES:
         names = [c["name"] for c in COMBINATIONS] if quantity == "recorded" else USER_COMBINATIONS
         goldens[quantity] = {name: golden(quantity, name) for name in names}
+    lone = {q: {a: golden_lone(q, a) for a in addrs} for q, addrs in LONE.items()}
     return {
         "version": 1,
         "rtol": 1e-12,
         "about": "ADR 0130 D4 conformance fixture; written by make_conformance.py. "
                  "null is NaN.",
         "states": STATES,
+        "other_states": OTHER_STATES,
         "eigenvalues": EIGENVALUES,
         "cases": CASES,
         "combinations": COMBINATIONS,
+        "model_combinations": MODEL_COMBINATIONS,
         "quantities": QUANTITIES,
+        "table": table_verdicts(),
         "goldens": goldens,
+        "lone": lone,
     }
 
 

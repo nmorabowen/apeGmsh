@@ -334,6 +334,130 @@
    ]
   }
  },
+ "other_states": {
+  "stage|GD|-1|0": {
+   "key_names": [
+    "id",
+    "sub"
+   ],
+   "keys": [
+    [
+     5,
+     0
+    ],
+    [
+     5,
+     1
+    ],
+    [
+     6,
+     0
+    ]
+   ],
+   "components": [
+    "sxx"
+   ],
+   "values": [
+    [
+     1.0
+    ],
+    [
+     2.0
+    ],
+    [
+     3.0
+    ]
+   ]
+  },
+  "stage|GL|-1|0": {
+   "key_names": [
+    "id",
+    "sub"
+   ],
+   "keys": [
+    [
+     5,
+     1
+    ],
+    [
+     6,
+     0
+    ],
+    [
+     6,
+     1
+    ]
+   ],
+   "components": [
+    "sxx"
+   ],
+   "values": [
+    [
+     10.0
+    ],
+    [
+     20.0
+    ],
+    [
+     30.0
+    ]
+   ]
+  },
+  "stage|XD|-1|0": {
+   "key_names": [
+    "kind",
+    "row"
+   ],
+   "keys": [
+    [
+     "cut",
+     0
+    ],
+    [
+     "storey",
+     2
+    ]
+   ],
+   "components": [
+    "V"
+   ],
+   "values": [
+    [
+     4.0
+    ],
+    [
+     -1.0
+    ]
+   ]
+  },
+  "stage|XL|-1|0": {
+   "key_names": [
+    "kind",
+    "row"
+   ],
+   "keys": [
+    [
+     "cut",
+     0
+    ],
+    [
+     "a_point_set",
+     1
+    ]
+   ],
+   "components": [
+    "V"
+   ],
+   "values": [
+    [
+     6.0
+    ],
+    [
+     2.5
+    ]
+   ]
+  }
+ },
  "eigenvalues": {
   "mode|eig|-1|1": 39.47841760435743,
   "mode|eig|-1|2": 157.91367041742973,
@@ -1205,6 +1329,219 @@
    "envelope": "",
    "fraction": null,
    "damping": null
+  },
+  {
+   "name": "env_unit",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "E",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "max",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "gauss_ULS",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "GD",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.2
+    },
+    {
+     "kind": "stage",
+     "source": "GL",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.6
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "entity_env",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "XD",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "XL",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "max",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "uses_model",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "M_base",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.5
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "clash",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "cyc_a",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "cyc_b",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "cyc_b",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "cyc_a",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "reaches_cyc",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "cyc_a",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "on_absent",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "nobody",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  }
+ ],
+ "model_combinations": [
+  {
+   "name": "M_base",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "clash",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
   }
  ],
  "quantities": {
@@ -1257,6 +1594,18 @@
      ]
     }
    }
+  }
+ },
+ "table": {
+  "user": {
+   "clash": "clash",
+   "cyc_a": "cycle",
+   "cyc_b": "cycle",
+   "reaches_cyc": "cycle",
+   "on_absent": "unresolved"
+  },
+  "model": {
+   "clash": "clash"
   }
  },
  "goldens": {
@@ -2062,6 +2411,174 @@
    },
    "no_stage": {
     "refused": "unresolved"
+   },
+   "env_unit": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      null
+     ],
+     [
+      3.0,
+      4.0
+     ],
+     [
+      5.0,
+      6.0
+     ]
+    ]
+   },
+   "gauss_ULS": {
+    "signed": true,
+    "badges": [
+     "superposition assumes linearity"
+    ],
+    "key_names": [
+     "id",
+     "sub"
+    ],
+    "keys": [
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      6,
+      0
+     ],
+     [
+      6,
+      1
+     ]
+    ],
+    "components": [
+     "sxx"
+    ],
+    "values": [
+     [
+      null
+     ],
+     [
+      18.4
+     ],
+     [
+      35.6
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   "entity_env": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "kind",
+     "row"
+    ],
+    "keys": [
+     [
+      "a_point_set",
+      1
+     ],
+     [
+      "cut",
+      0
+     ],
+     [
+      "storey",
+      2
+     ]
+    ],
+    "components": [
+     "V"
+    ],
+    "values": [
+     [
+      null
+     ],
+     [
+      6.0
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   "uses_model": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.0,
+      6.0
+     ],
+     [
+      9.0,
+      12.0
+     ],
+     [
+      15.0,
+      18.0
+     ]
+    ]
+   },
+   "clash": {
+    "refused": "refused"
+   },
+   "cyc_a": {
+    "refused": "refused"
+   },
+   "cyc_b": {
+    "refused": "refused"
+   },
+   "reaches_cyc": {
+    "refused": "refused"
+   },
+   "on_absent": {
+    "refused": "refused"
    }
   },
   "m_xx": {
@@ -2131,6 +2648,42 @@
      ],
      [
       2.0,
+      2.0
+     ],
+     [
+      2.5,
+      3.0
+     ]
+    ]
+   },
+   "env_unit": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.5,
+      null
+     ],
+     [
+      1.5,
       2.0
      ],
      [
@@ -2249,6 +2802,42 @@
    },
    "plus": {
     "refused": "unresolved"
+   },
+   "uses_model": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.5,
+      3.0
+     ],
+     [
+      4.5,
+      6.0
+     ],
+     [
+      7.5,
+      9.0
+     ]
+    ]
    }
   },
   "wood_armer_top": {
@@ -2291,6 +2880,9 @@
     ]
    },
    "env_max": {
+    "refused": "not-linear"
+   },
+   "env_unit": {
     "signed": false,
     "badges": [],
     "key_names": [
@@ -2317,7 +2909,7 @@
       null
      ],
      [
-      12.0,
+      9.0,
       12.0
      ],
      [
@@ -2327,7 +2919,278 @@
     ]
    },
    "env_absmax": {
-    "signed": false,
+    "refused": "not-linear"
+   },
+   "srss_list": {
+    "refused": "not-linear"
+   },
+   "twice_ULS": {
+    "refused": "not-linear"
+   },
+   "plus": {
+    "refused": "not-linear"
+   },
+   "uses_model": {
+    "refused": "not-linear"
+   }
+  }
+ },
+ "lone": {
+  "recorded": {
+   "stage|D|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ],
+     [
+      5.0,
+      6.0
+     ]
+    ]
+   },
+   "stage|W|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ]
+    ],
+    "components": [
+     "ux"
+    ],
+    "values": [
+     [
+      10.0
+     ],
+     [
+      20.0
+     ]
+    ]
+   },
+   "mode|eig|-1|2": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.0,
+      1.0
+     ],
+     [
+      -0.5,
+      0.3
+     ],
+     [
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "spectrum|Ex|-1|1": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.0,
+      1.0
+     ],
+     [
+      2.0,
+      -2.0
+     ],
+     [
+      1.0,
+      0.5
+     ]
+    ]
+   },
+   "reference|Ex|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.1,
+      0.1
+     ],
+     [
+      0.2,
+      0.2
+     ],
+     [
+      0.3,
+      0.3
+     ]
+    ]
+   },
+   "stage|GD|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id",
+     "sub"
+    ],
+    "keys": [
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      6,
+      0
+     ]
+    ],
+    "components": [
+     "sxx"
+    ],
+    "values": [
+     [
+      1.0
+     ],
+     [
+      2.0
+     ],
+     [
+      3.0
+     ]
+    ]
+   },
+   "spectrum|Ex|-1|0": {
+    "refused": "bad-term"
+   },
+   "stage|Q|-1|0": {
+    "refused": "unresolved"
+   }
+  },
+  "m_xx": {
+   "stage|D|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.5,
+      1.0
+     ],
+     [
+      1.5,
+      2.0
+     ],
+     [
+      2.5,
+      3.0
+     ]
+    ]
+   }
+  },
+  "wood_armer_top": {
+   "stage|D|-1|0": {
+    "signed": true,
     "badges": [],
     "key_names": [
      "id"
@@ -2353,23 +3216,53 @@
       6.0
      ],
      [
-      12.0,
+      9.0,
       12.0
      ],
      [
-      18.0,
+      15.0,
       18.0
      ]
     ]
    },
-   "srss_list": {
-    "refused": "not-linear"
+   "stage|L|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.5,
+      -3.0
+     ],
+     [
+      6.0,
+      0.0
+     ],
+     [
+      -9.0,
+      3.0
+     ]
+    ]
    },
-   "twice_ULS": {
-    "refused": "not-linear"
-   },
-   "plus": {
-    "refused": "not-linear"
+   "stage|Q|-1|0": {
+    "refused": "unresolved"
    }
   }
  }

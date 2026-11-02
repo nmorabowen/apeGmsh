@@ -1527,8 +1527,9 @@ class Results:
     ) -> "UserCombinations":
         """The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).
 
-        ``user_h5`` is the set's ``<stem>.user.h5``; omitted, the one beside
-        this file is used when it exists. ``model_h5`` (default: the archive
+        ``user_h5`` is the set's ``<stem>.user.h5``; omitted, the one named by
+        the model archive's stem, else by this file's stem without
+        ``.part-<N>`` and ``.results``, is used when it exists. ``model_h5`` (default: the archive
         this was opened with) brings its ``/opensees/combinations`` into the
         table. ``spectra`` is a ``/spectra`` provider for spectrum terms.
         ``evaluate(state, component, level=...)`` combines a recorded result,
@@ -1536,11 +1537,13 @@ class Results:
         another ``Results`` is refused.
         """
         from .user._evaluate import CombinationRefused
-        from .user._states import UserCombinations
+        from .user._states import UserCombinations, user_file_beside
 
-        if user_h5 is None and self._path is not None:
-            beside = Path(self._path).with_name(Path(self._path).stem + ".user.h5")
-            user_h5 = beside if beside.is_file() else None
+        model = model_h5 if model_h5 is not None else self._model_path
+        if user_h5 is None:
+            user_h5 = user_file_beside(
+                None if self._path is None else Path(self._path),
+                None if model is None else Path(model))
 
         def handle(obj: Any) -> Optional[str]:
             if not isinstance(obj, Results):
@@ -1555,7 +1558,6 @@ class Results:
                     "an unscoped Results is not a state; use results.stage(...)")
             return obj._stage_id
 
-        model = model_h5 if model_h5 is not None else self._model_path
         return UserCombinations(
             self,
             user_h5=None if user_h5 is None else Path(user_h5),
