@@ -251,6 +251,42 @@ code { font-family: var(--mono); }
 .source:disabled { cursor: default; color: var(--muted); opacity: 0.6; }
 .source-failed { color: var(--error); font-size: 13px; margin: 0 0 6px; }
 
+/* VA5 (ADR 0128 D5): the offers an agent made, at the top of #rail. An offer
+   is a line of its own: name, arrival, status, Apply, then its caption and
+   any reason or note. Capped so the inspector below keeps the rail. */
+#offers {
+  flex: 0 0 auto; min-height: 0; max-height: 40%;
+  overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#offers h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+#offers h3 .legend-count { margin-left: 0; }
+#offers button {
+  padding: 1px 8px; border-radius: 5px; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text);
+  background: var(--faint); border: 1px solid var(--line);
+}
+#offers button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+#offers button:disabled { cursor: default; color: var(--muted); opacity: 0.6; }
+#offers .offer-back { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.offer-row { padding: 5px 0; border-top: 1px solid var(--line); }
+.offer-top { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; column-gap: 8px; }
+.offer-name { font-weight: 600; overflow-wrap: anywhere; }
+.offer-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.offer-status {
+  padding: 0 5px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  color: var(--muted); border: 1px solid var(--line);
+}
+.offer-status.applied, .offer-status.applying { color: var(--accent); background: var(--accent-wash); border-color: transparent; }
+.offer-status.refused { color: var(--error); background: var(--error-wash); border-color: var(--error-line); }
+.offer-caption { margin-top: 2px; font-size: 13px; color: var(--text); }
+.offer-note { margin-top: 2px; font-size: 12px; color: var(--muted); }
+.offer-reason { margin-top: 2px; font-size: 12px; color: var(--error); overflow-wrap: anywhere; }
+
 /* V2g: the sources listing, below the inspector in #rail (design brief on
    #1426). Capped at 40% of the rail while the inspector shows. */
 #sources {
@@ -454,6 +490,13 @@ code { font-family: var(--mono); }
 }
 #rail-toggle:hover { color: var(--accent); border-color: var(--accent); }
 #rail-toggle[hidden] { display: none; }
+/* VA5: the offers a collapsed rail hides (panels/offers.ts mountOfferBadge). */
+body[data-rail-collapsed="true"] #rail-toggle[data-offers]::after {
+  content: attr(data-offers);
+  position: absolute; right: 100%; top: 50%; transform: translateY(-50%); margin-right: 4px;
+  padding: 1px 7px; border-radius: 9px; white-space: nowrap;
+  font: 600 12px var(--font); color: var(--accent-ink); background: var(--accent);
+}
 body[data-rail-collapsed="true"] #rail { display: none; }
 body[data-rail-collapsed="true"] #viewcube { right: 24px; }
 body[data-rail-collapsed="true"] #windows { right: 24px; }
