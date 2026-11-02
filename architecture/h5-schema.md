@@ -3431,9 +3431,10 @@ detail lives in the `SCHEMA_VERSION` docstring in
   the layout of [`<stem>.user.h5`](#stemuserh5-user-results-adr-0130) at
   `g0`. No combination writes no group, so such a file changes only its
   stamp. It is in `MODEL_HASH_EXCLUDED_CHILDREN` and reaches no deck, so
-  `model_hash` and the replayed deck are unchanged. A rewrite echoes it. A
-  2.38 reader's rewrite would drop it unseen, hence the minor. Additive
-  minor (a 2.38.x reader refuses a 2.39.x file, INV-4).
+  `model_hash` and the replayed deck are unchanged. A rewrite echoes it.
+  Additive minor: a 2.38.x `OpenSeesModel` refuses a 2.39.x file (INV-4). A
+  2.38.x `ModelData` has no version check, so its rewrite drops the group
+  and stamps 2.38; `ModelData.from_h5` applies the floor check from 2.39.0.
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

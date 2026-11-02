@@ -726,8 +726,10 @@ class H5RefusedVerb(NotImplementedError):
 #:     ``/opensees/combinations`` group holds the combinations ``apeSees``
 #:     declares, as columns at ``g0``. No combination, no group. It is in
 #:     ``MODEL_HASH_EXCLUDED_CHILDREN``, and no deck reads it. A 2.39
-#:     reader opens 2.12 through 2.39; a 2.38.x reader REFUSES a 2.39.x
-#:     file, because its rewrite would drop the group unseen (rule D5).
+#:     reader opens 2.12 through 2.39. A 2.38.x ``OpenSeesModel`` REFUSES
+#:     a 2.39.x file (rule D5). A 2.38.x ``ModelData`` has no version check
+#:     and its rewrite drops the group, so ``ModelData.from_h5`` checks too
+#:     from 2.39.0.
 SCHEMA_VERSION: str = "2.39.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The

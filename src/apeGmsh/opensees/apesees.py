@@ -9070,7 +9070,8 @@ class apeSees(
         A term is ``(stage_name, factor)`` for a stage's last step,
         ``(combination, factor)`` for a combination this bridge declared, or
         a :class:`CombinationTerm` for a chosen step or a mode. ``rule`` is
-        ``linear``, ``srss``, ``cqc`` (optional ``damping``), ``abs_sum``,
+        ``linear``, ``srss``, ``cqc`` (over modes, ``damping`` required: a
+        case's per-mode damping lives in ``.user.h5``), ``abs_sum``,
         ``directional`` (``fraction``) or ``envelope`` (``envelope`` is
         ``max``, ``min`` or ``absmax``).
 

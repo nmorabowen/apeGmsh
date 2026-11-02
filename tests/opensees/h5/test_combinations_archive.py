@@ -28,8 +28,10 @@ from apeGmsh.opensees._internal.lineage import (
     MODEL_HASH_EXCLUDED_CHILDREN,
     compute_model_hash,
 )
+from apeGmsh.opensees._internal.schema_version import SchemaVersionError
 from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION
-from tests.fixtures.schema import OPENSEES_CURRENT
+from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_FLOOR
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 
@@ -50,9 +52,9 @@ def _declare_all_rules(ops: apeSees) -> tuple[Combination, ...]:
             CombinationTerm("mode", "eig", 1.0, step=-1, mode=1),
             CombinationTerm("mode", "eig", 1.0, step=-1, mode=2),
         ], rule="cqc", damping=0.05),
-        ops.combination("cqc_case_damping", [
+        ops.combination("cqc_one_set", [
             CombinationTerm("mode", "eig", 1.0, step=3, mode=1),
-        ], rule="cqc"),
+        ], rule="cqc", damping=0.02),
         ops.combination("xyz", [("Ex", 1.0), ("Ey", 1.0)],
                         rule="directional", fraction=0.3),
         ops.combination("srss", [("Ex", 1.0), ("Ey", 1.0)], rule="srss"),
@@ -245,7 +247,8 @@ BAD_DECLARATIONS = [
     (" edge", {"terms": [("D", 1.0)]}, "empty-name"),
     ("edge ", {"terms": [("D", 1.0)]}, "empty-name"),
     ("ctrl\x07", {"terms": [("D", 1.0)]}, "empty-name"),
-    ("é", {"terms": [("D", 1.0)]}, "empty-name"),  # NFD, not NFC
+    ("e\u0301", {"terms": [("D", 1.0)]}, "empty-name"),  # NFD, not NFC
+    ("lone\ud800", {"terms": [("D", 1.0)]}, "empty-name"),  # no UTF-8 form
     ("x", {"terms": [("D", 1.0)], "rule": "geometric"}, "unknown-rule"),
     ("x", {"terms": []}, "no-terms"),
     ("x", {"terms": [("D", 1.0)], "rule": "envelope"}, "bad-param"),
@@ -257,9 +260,15 @@ BAD_DECLARATIONS = [
     ("x", {"terms": [("D", 1.0)], "damping": 0.05}, "bad-param"),
     ("x", {"terms": [CombinationTerm("mode", "e", mode=1)], "rule": "cqc",
            "damping": 0.0}, "bad-param"),
-    ("x", {"terms": [("D", 1.0)], "rule": "cqc"}, "bad-term"),
+    ("x", {"terms": [CombinationTerm("mode", "e", mode=1)], "rule": "cqc"}, "bad-param"),
+    ("x", {"terms": [CombinationTerm("mode", "e", mode=1)], "rule": "cqc",
+           "damping": math.nan}, "bad-param"),
+    ("x", {"terms": [CombinationTerm("mode", "e", mode=1)], "rule": "cqc",
+           "damping": 1.0}, "bad-param"),
+    ("x", {"terms": [("D", 1.0)], "rule": "cqc", "damping": 0.05}, "bad-term"),
     ("x", {"terms": [CombinationTerm("mode", "e", mode=1),
-                     CombinationTerm("mode", "f", mode=1)], "rule": "cqc"}, "bad-term"),
+                     CombinationTerm("mode", "f", mode=1)], "rule": "cqc",
+           "damping": 0.05}, "bad-term"),
     ("x", {"terms": [("D", math.nan)]}, "bad-term"),
     ("x", {"terms": [("D", math.inf)]}, "bad-term"),
     ("x", {"terms": [("D", True)]}, "bad-term"),
@@ -291,6 +300,21 @@ def test_a_refused_declaration_registers_nothing(
     # The refused name stays free.
     if reason not in ("empty-name",):
         ops.combination(name, [("D", 1.0)])
+
+
+def test_a_handle_from_another_bridge_is_unresolved() -> None:
+    """A handle is checked by value, so a same-named row of another model or
+    an edited copy cannot pass as this model's."""
+    other = _bridge().combination("base", [("D", 9.0)])
+    ops = _bridge()
+    with pytest.raises(CombinationError, match=r"\[unresolved\]"):
+        ops.combination("top", [(other, 1.0)])
+    mine = ops.combination("base", [("D", 1.0)])
+    with pytest.raises(CombinationError, match=r"\[unresolved\]"):
+        ops.combination("top", [(other, 1.0)])  # shares the name only
+    top = ops.combination("top", [(mine, 1.0)])
+    assert [c.name for c in ops.build().combinations] == ["base", "top"]
+    assert top.terms == (CombinationTerm("combination", "base", 1.0),)
 
 
 def test_a_duplicate_is_refused_and_the_first_kept() -> None:
@@ -335,11 +359,13 @@ def _reasons(path: Path) -> dict[str, str]:
 @pytest.mark.parametrize("row, reason", [
     (_stage(""), "empty-name"),
     (_stage(" edge"), "empty-name"),
-    (_stage("é"), "empty-name"),
+    (_stage("e\u0301"), "empty-name"),
     (_stage("x", rule="geometric"), "unknown-rule"),
     (Combination("x", "linear", ()), "no-terms"),
     (Combination("x", "envelope", (CombinationTerm("stage", "D"),)), "bad-param"),
     (Combination("x", "linear", (CombinationTerm("stage", "D"),), fraction=0.3), "bad-param"),
+    (Combination("x", "cqc", (CombinationTerm("mode", "e", mode=1),)), "bad-param"),
+    (Combination("x", "cqc", (CombinationTerm("mode", "e", mode=1),), damping=1.5), "bad-param"),
     (_stage("x", CombinationTerm("spectrum", "case")), "bad-term"),
     (_stage("x", CombinationTerm("reference", "case")), "bad-term"),
     (_stage("x", CombinationTerm("stage", "D", math.nan)), "bad-term"),
@@ -394,22 +420,25 @@ def test_a_long_cycle_refuses_every_member(tmp_path: Path) -> None:
     assert _reasons(path) == {"a": "cycle", "b": "cycle", "c": "cycle"}
 
 
-def test_a_row_on_a_refused_row_is_unresolved(tmp_path: Path) -> None:
-    """A cycle's dependant is not itself a cycle; a chain carries the refusal."""
+def test_a_row_reaching_a_cycle_reads_cycle(tmp_path: Path) -> None:
+    """At any depth, and even beside a term that is merely absent; a row on
+    another refused row is ``unresolved``, and a chain carries that."""
     path = tmp_path / "t.h5"
     _write_rows(path, [
-        _stage("top", _combo_term("mid")),
+        _stage("top", _combo_term("mid"), _combo_term("absent")),
         _stage("mid", _combo_term("a")),
         _stage("a", _combo_term("b")),
         _stage("b", _combo_term("a")),
+        _stage("rests_on_rests", _combo_term("rests_on_bad")),
         _stage("rests_on_bad", _combo_term("no_terms")),
         Combination("no_terms", "linear", ()),
         _stage("free"),
     ])
     assert _reasons(path) == {
-        "top": "unresolved", "mid": "unresolved",
+        "top": "cycle", "mid": "cycle",
         "a": "cycle", "b": "cycle",
-        "rests_on_bad": "unresolved", "no_terms": "no-terms",
+        "rests_on_rests": "unresolved", "rests_on_bad": "unresolved",
+        "no_terms": "no-terms",
     }
 
 
@@ -451,6 +480,44 @@ def _attr(path: Path, value: object) -> None:
         f["opensees/combinations"].attrs["current"] = value
 
 
+def _second_generation(path: Path, current: int) -> None:
+    with h5py.File(path, "a") as f:
+        zone = f["opensees/combinations"]
+        zone.copy("g0", "g1")
+        zone.attrs["current"] = np.int32(current)
+
+
+#: Damage a rewrite could not echo, or would change: each one once opened and
+#: then truncated the source, or collapsed it, inside the rewrite (F1).
+WIDENED = [
+    pytest.param(
+        lambda p: _replace(p, "g0/terms/step", np.array([2 ** 40, -1], dtype="i8")),
+        id="i8 step, out of i4 range"),
+    pytest.param(
+        lambda p: _replace(p, "g0/terms/mode", np.array([0, 0], dtype="i8")),
+        id="i8 mode"),
+    pytest.param(
+        lambda p: _replace(p, "g0/terms/mode", np.array([0, 0], dtype="u4")),
+        id="u4 mode"),
+    pytest.param(
+        lambda p: _replace(p, "g0/term_offsets", np.array([0, 1, 2], dtype="i8")),
+        id="i8 term_offsets"),
+    pytest.param(
+        lambda p: _replace(p, "g0/terms/factor", np.array([1.0, 1.0], dtype="f4")),
+        id="f4 factor"),
+    pytest.param(
+        lambda p: _replace(p, "g0/fraction", np.array([0.1, 0.1], dtype="f4")),
+        id="f4 fraction"),
+    pytest.param(
+        lambda p: _replace(p, "g0/damping", np.array([0.1, 0.1], dtype="f4")),
+        id="f4 damping"),
+    pytest.param(lambda p: _attr(p, np.int64(0)), id="i8 @current"),
+    pytest.param(lambda p: _attr(p, np.int32(5)), id="@current names no group"),
+    pytest.param(lambda p: _second_generation(p, 1), id="@current=1 with g0 and g1"),
+    pytest.param(lambda p: _second_generation(p, 0), id="@current=0 with g0 and g1"),
+]
+
+
 @pytest.mark.parametrize("damage", [
     lambda p: _delete(p, "g0/name"),
     lambda p: _delete(p, "g0/fraction"),
@@ -464,8 +531,8 @@ def _attr(path: Path, value: object) -> None:
     lambda p: _replace(p, "g0/term_offsets", np.array([1, 2, 3], dtype="i4")),
     lambda p: _replace(p, "g0/term_offsets", np.array([0, 3, 2], dtype="i4")),
     lambda p: _replace(p, "g0/terms/factor", np.array(["x"], dtype=h5py.string_dtype())),
-    lambda p: _attr(p, np.int32(5)),
     lambda p: _attr(p, "zero"),
+    *WIDENED,
 ])
 def test_malformed_columns_refuse_the_zone(tmp_path: Path, damage: object) -> None:
     path = tmp_path / "t.h5"
@@ -475,6 +542,97 @@ def test_malformed_columns_refuse_the_zone(tmp_path: Path, damage: object) -> No
         zone = read_combinations(str(path))
     assert zone.error is not None
     assert zone.rows == ()
+
+
+def _bridge_file_with(path: Path, damage: object) -> bytes:
+    """A real two-term model.h5 carrying ``damage``, and its bytes."""
+    ops = _bridge()
+    ops.combination("a", [("D", 1.0)])
+    ops.combination("b", [("L", 1.0)])
+    ops.h5(str(path))
+    damage(path)  # type: ignore[operator]
+    return path.read_bytes()
+
+
+@pytest.mark.parametrize("damage", WIDENED)
+def test_a_refused_zone_leaves_the_source_whole_on_rewrite(
+    tmp_path: Path, damage: object,
+) -> None:
+    """Rewriting over the source raises before the file is opened for writing."""
+    path = tmp_path / "m.h5"
+    before = _bridge_file_with(path, damage)
+    with pytest.warns(CombinationWarning, match="refused"):
+        model = OpenSeesModel.from_h5(str(path))
+    with pytest.raises(ValueError, match="refused"):
+        model.to_h5(str(path))
+    assert path.read_bytes() == before
+    with pytest.warns(CombinationWarning, match="refused"):
+        md = ModelData.from_h5(str(path))
+    with pytest.raises(ValueError, match="refused"):
+        md.write(str(path))
+    assert path.read_bytes() == before
+
+
+def test_a_non_utf8_cell_refuses_the_zone(tmp_path: Path) -> None:
+    path = tmp_path / "t.h5"
+    _write_rows(path, [_stage("a")])
+    with h5py.File(path, "a") as f:
+        f["opensees/combinations/g0/name"][0] = b"\xff"
+    with pytest.warns(CombinationWarning, match="UTF-8"):
+        assert read_combinations(str(path)).error is not None
+
+
+# --- ModelData refuses a version it cannot carry (F2) -------------------------
+
+
+def _stamp(path: Path, version: str) -> None:
+    with h5py.File(path, "a") as f:
+        f["meta"].attrs["opensees_schema_version"] = version
+
+
+def _minor(version: str, minor: int) -> str:
+    major, _, _ = version.split(".")
+    return f"{major}.{minor}.0"
+
+
+def test_modeldata_refuses_a_newer_opensees_zone(tmp_path: Path) -> None:
+    path = tmp_path / "m.h5"
+    _bridge().h5(str(path))
+    current_minor = int(OPENSEES_CURRENT.split(".")[1])
+    _stamp(path, _minor(OPENSEES_CURRENT, current_minor + 1))
+    with pytest.raises(SchemaVersionError, match="newer"):
+        ModelData.from_h5(str(path))
+
+
+def test_modeldata_refuses_below_the_floor(tmp_path: Path) -> None:
+    path = tmp_path / "m.h5"
+    _bridge().h5(str(path))
+    floor_minor = int(OPENSEES_FLOOR.split(".")[1])
+    _stamp(path, _minor(OPENSEES_FLOOR, floor_minor - 1))
+    with pytest.raises(SchemaVersionError, match="floor|too old|older"):
+        ModelData.from_h5(str(path))
+
+
+def test_modeldata_refuses_an_unstamped_opensees_zone(tmp_path: Path) -> None:
+    path = tmp_path / "m.h5"
+    _bridge().h5(str(path))
+    with h5py.File(path, "a") as f:
+        for key in ("opensees_schema_version", "schema_version"):
+            if key in f["meta"].attrs:
+                del f["meta"].attrs[key]
+    with pytest.raises(MalformedH5Error):
+        ModelData.from_h5(str(path))
+
+
+def test_modeldata_opens_a_file_with_no_opensees_zone(tmp_path: Path) -> None:
+    """The guard reads the zone only when the zone is there."""
+    path = tmp_path / "m.h5"
+    _bridge().h5(str(path))
+    current_minor = int(OPENSEES_CURRENT.split(".")[1])
+    _stamp(path, _minor(OPENSEES_CURRENT, current_minor + 1))
+    with h5py.File(path, "a") as f:
+        del f["opensees"]
+    assert ModelData.from_h5(str(path)).ndm == 3
 
 
 def test_a_missing_current_refuses_the_zone(tmp_path: Path) -> None:
@@ -490,8 +648,8 @@ def test_a_missing_current_refuses_the_zone(tmp_path: Path) -> None:
 
 
 def test_name_clashes_is_byte_equal() -> None:
-    model = [_stage("ULS"), _stage("é"), _stage("only_model")]
-    user = [_stage("ULS"), _stage("é"), _stage("only_user")]
+    model = [_stage("ULS"), _stage("e\u0301"), _stage("only_model")]
+    user = [_stage("ULS"), _stage("\u00e9"), _stage("only_user")]
     assert name_clashes(model, user) == frozenset({"ULS"})
 
 

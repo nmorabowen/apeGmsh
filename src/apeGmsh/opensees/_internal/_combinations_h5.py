@@ -32,6 +32,7 @@ the evaluator does that (VU2).
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
 import warnings
 from dataclasses import dataclass
@@ -211,10 +212,13 @@ def _param_problem(c: Combination) -> str | None:
             return f"'directional' needs a fraction in [0, 1], got {c.fraction!r}"
     elif c.fraction is not None:
         return "fraction applies only to the 'directional' rule"
-    if c.rule != "cqc" and c.damping is not None:
-        return "damping applies only to the 'cqc' rule"
-    if c.damping is not None and not 0.0 < c.damping < 1.0:
-        return f"'cqc' damping must be a ratio in (0, 1), got {c.damping!r}"
+    if c.rule != "cqc":
+        if c.damping is not None:
+            return "damping applies only to the 'cqc' rule"
+    elif c.damping is None or not 0.0 < c.damping < 1.0:
+        # A case's per-mode damping lives in .user.h5; model.h5 has no other
+        # source, so NaN (the case's) cannot resolve here.
+        return f"'cqc' in model.h5 needs a damping ratio in (0, 1), got {c.damping!r}"
     return None
 
 
@@ -274,10 +278,11 @@ def declare_combination(
     ``known`` holds the names already declared on the bridge. A ``combination``
     term must name one of them, so a declared table has no cycle.
     """
+    raw_terms = tuple(terms)
     combo = Combination(
         name=name,
         rule=rule,
-        terms=tuple(_as_term(t) for t in terms),
+        terms=tuple(_as_term(t) for t in raw_terms),
         envelope=envelope,
         fraction=None if fraction is None else float(fraction),
         damping=None if damping is None else float(damping),
@@ -292,6 +297,15 @@ def declare_combination(
             "combination of that name; names are unique across model.h5 and "
             ".user.h5",
         )
+    for raw in raw_terms:
+        # A handle from another bridge, or one that shares a name only.
+        if isinstance(raw, (tuple, list)) and isinstance(raw[0], Combination) \
+                and known.get(raw[0].name) != raw[0]:
+            raise CombinationError(
+                "unresolved",
+                f"apeSees.combination({name!r}): term holds a combination "
+                f"{raw[0].name!r} that this model did not declare",
+            )
     for t in combo.terms:
         if t.kind == "combination" and t.source not in known:
             raise CombinationError(
@@ -326,10 +340,11 @@ def _refuse_rows(rows: Sequence[Combination]) -> tuple[CombinationRefusal, ...]:
 
     graph = edges()
     for i, c in enumerate(rows):
-        if i not in reasons and _reaches_itself(c.name, graph):
+        if i not in reasons and _reaches_cycle(c.name, graph):
             reasons[i] = "cycle"
     # A term on an absent or refused row is unresolved, and that refusal
-    # carries to the rows that reference this one.
+    # carries to the rows that reference this one. A row reaching a cycle was
+    # refused above, whatever else it references.
     changed = True
     while changed:
         changed = False
@@ -343,17 +358,24 @@ def _refuse_rows(rows: Sequence[Combination]) -> tuple[CombinationRefusal, ...]:
     )
 
 
-def _reaches_itself(name: str, graph: dict[str, set[str]]) -> bool:
+def _reachable(name: str, graph: dict[str, set[str]]) -> set[str]:
+    """Every name reachable from ``name`` by at least one edge."""
     seen: set[str] = set()
-    stack = list(graph[name])
+    stack = list(graph.get(name, ()))
     while stack:
         current = stack.pop()
-        if current == name:
-            return True
         if current not in seen:
             seen.add(current)
             stack.extend(graph.get(current, ()))
-    return False
+    return seen
+
+
+def _reaches_cycle(name: str, graph: dict[str, set[str]]) -> bool:
+    """True when ``name`` is on a cycle or references one, at any depth."""
+    return any(
+        node in _reachable(node, graph)
+        for node in (name, *_reachable(name, graph))
+    )
 
 
 def name_clashes(
@@ -430,24 +452,30 @@ class _Malformed(Exception):
     """The zone's columns cannot be read as the layout says."""
 
 
-def _column(g: "h5py.Group", key: str, kinds: str, length: int | None) -> Any:
-    """One 1-D column of ``g``; refuses the zone when it is not as specified."""
+def _column(g: "h5py.Group", key: str, kind: str, length: int | None) -> Any:
+    """One 1-D column of ``g``; refuses the zone when it is not as specified.
+
+    ``kind`` is ``"str"``, ``"i4"`` or ``"f8"``, and a numeric type is exact:
+    a wider column could not be echoed by a rewrite, which would then fail
+    inside the file it had already opened for writing.
+    """
     import h5py
+    import numpy as np
 
     if key not in g or not isinstance(g[key], h5py.Dataset):
         raise _Malformed(f"column {g.name}/{key} is missing")
     ds = g[key]
     if ds.ndim != 1 or (length is not None and ds.shape[0] != length):
         raise _Malformed(f"column {ds.name} has shape {ds.shape}")
-    if kinds == "str":
+    if kind == "str":
         if h5py.check_string_dtype(ds.dtype) is None:
             raise _Malformed(f"column {ds.name} is not a string column")
         try:
             return [str(v) for v in ds.asstr()[()]]
         except UnicodeDecodeError as exc:
             raise _Malformed(f"column {ds.name} is not UTF-8") from exc
-    if ds.dtype.kind not in kinds:
-        raise _Malformed(f"column {ds.name} has dtype {ds.dtype}")
+    if ds.dtype != np.dtype(kind):
+        raise _Malformed(f"column {ds.name} has dtype {ds.dtype}, not {kind}")
     return ds[()]
 
 
@@ -458,28 +486,31 @@ def _read_rows(zone: "h5py.Group") -> tuple[Combination, ...]:
     if "current" not in zone.attrs:
         raise _Malformed("@current is missing")
     current = zone.attrs["current"]
-    if not isinstance(current, np.integer):
-        raise _Malformed(f"@current is {current!r}, not an integer")
-    key = f"g{int(current)}"
-    if key not in zone or not isinstance(zone[key], h5py.Group):
-        raise _Malformed(f"@current names {key}, which the zone does not have")
-    g = zone[key]
+    if not isinstance(current, np.int32) or current != 0:
+        raise _Malformed(f"@current is {current!r}; model.h5 holds i4 0")
+    # model.h5 has one generation: a rewrite would collapse any other.
+    others = sorted(k for k in zone if re.fullmatch(r"g[0-9]+", k) and k != "g0")
+    if others:
+        raise _Malformed(f"it holds generation(s) {others}; model.h5 holds g0 only")
+    if "g0" not in zone or not isinstance(zone["g0"], h5py.Group):
+        raise _Malformed("@current names g0, which the zone does not have")
+    g = zone["g0"]
     names = _column(g, "name", "str", None)
     k = len(names)
     rules = _column(g, "rule", "str", k)
     envelopes = _column(g, "envelope", "str", k)
-    fractions = _column(g, "fraction", "f", k)
-    dampings = _column(g, "damping", "f", k)
-    offsets = _column(g, "term_offsets", "iu", k + 1)
+    fractions = _column(g, "fraction", "f8", k)
+    dampings = _column(g, "damping", "f8", k)
+    offsets = _column(g, "term_offsets", "i4", k + 1)
     if "terms" not in g or not isinstance(g["terms"], h5py.Group):
         raise _Malformed(f"{g.name}/terms is missing")
     t_grp = g["terms"]
     kinds = _column(t_grp, "kind", "str", None)
     n = len(kinds)
     sources = _column(t_grp, "source", "str", n)
-    steps = _column(t_grp, "step", "iu", n)
-    modes = _column(t_grp, "mode", "iu", n)
-    factors = _column(t_grp, "factor", "f", n)
+    steps = _column(t_grp, "step", "i4", n)
+    modes = _column(t_grp, "mode", "i4", n)
+    factors = _column(t_grp, "factor", "f8", n)
     if int(offsets[0]) != 0 or int(offsets[-1]) != n or any(
         int(a) > int(b) for a, b in zip(offsets, offsets[1:])
     ):
