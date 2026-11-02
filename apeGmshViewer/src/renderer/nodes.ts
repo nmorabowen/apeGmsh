@@ -55,8 +55,35 @@ export function nodePositions(v: NodeVertices, line: Float32Array, tri: Float32A
   return out;
 }
 
-/** The share of its eye distance a marker is drawn nearer the eye, so it wins against the face it sits on. */
+/** Under perspective, the share of its eye distance a marker is drawn nearer the eye, so it wins against the face it sits on. */
 export const NODE_DEPTH_PULL = 5e-4;
+/** The least perspective pull in normalised depth, about 2 steps of a 24-bit depth buffer: far off, the share alone rounds away. */
+export const NODE_DEPTH_FLOOR = 2.5e-7;
+/** Under an orthographic camera, the fixed pull in normalised depth: there depth is linear, so a fixed offset is the same everywhere. */
+export const NODE_DEPTH_ORTHO = 2e-4;
+
+/** The markers' depth pull, injected after `project_vertex`. `nodeClipZ` is the same arithmetic, for the tests. */
+export const NODE_DEPTH_GLSL = `
+  if (isPerspectiveMatrix(projectionMatrix)) {
+    vec4 nodePull = projectionMatrix * vec4(mvPosition.xyz * (1.0 - ${NODE_DEPTH_PULL}), 1.0);
+    gl_Position.z = min(nodePull.z / nodePull.w, gl_Position.z / gl_Position.w - ${NODE_DEPTH_FLOOR}) * gl_Position.w;
+  } else {
+    gl_Position.z -= ${NODE_DEPTH_ORTHO} * gl_Position.w;
+  }`;
+
+/** The normalised depth a marker at view-space `mv` is drawn at under `projection` (column-major, as three.js stores it). */
+export function nodeClipZ(projection: ArrayLike<number>, mv: readonly [number, number, number]): number {
+  const p = projection;
+  const clip = (x: number, y: number, z: number): [number, number] => [p[2]! * x + p[6]! * y + p[10]! * z + p[14]!, p[3]! * x + p[7]! * y + p[11]! * z + p[15]!];
+  const [z, w] = clip(mv[0], mv[1], mv[2]);
+  // three.js's isPerspectiveMatrix: the last row's third entry is -1 under perspective.
+  if (p[11] === -1) {
+    const k = 1 - NODE_DEPTH_PULL;
+    const [pz, pw] = clip(mv[0] * k, mv[1] * k, mv[2] * k);
+    return Math.min(pz / pw, z / w - NODE_DEPTH_FLOOR);
+  }
+  return (z - NODE_DEPTH_ORTHO * w) / w;
+}
 
 /** Thickness of the dark rim in pixels; at or under 3 px a marker is all fill, because a rim would swallow it. */
 const RIM_PX = 1.25;
@@ -71,17 +98,12 @@ export function makeNodePoints(positions: Float32Array, size: number, fill: numb
   m.userData["nodeUniforms"] = uniforms;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    // A small depth pull toward the eye, a fixed share of the eye distance: a node on a face sits exactly
-    // at its depth and would flicker through it. A fixed offset in clip depth would grow with depth^2 / near
-    // under perspective and show markers through walls once the camera is inside the model.
-    shader.vertexShader = shader.vertexShader.replace(
-      "#include <project_vertex>",
-      `#include <project_vertex>
-  {
-    vec4 nodePull = projectionMatrix * vec4(mvPosition.xyz * (1.0 - ${NODE_DEPTH_PULL}), 1.0);
-    gl_Position.z = nodePull.z / nodePull.w * gl_Position.w;
-  }`,
-    );
+    // A small depth pull toward the eye: a node on a face sits exactly at its depth and would flicker through
+    // it. Under perspective it is a share of the eye distance, because a fixed offset in clip depth grows with
+    // depth^2 / near and shows markers through walls once the camera is inside the model. Under an orthographic
+    // camera depth is linear and the eye can sit inside the model (negative near), where scaling the view
+    // position would push the marker away, so the pull there is a fixed offset.
+    shader.vertexShader = shader.vertexShader.replace("#include <project_vertex>", `#include <project_vertex>${NODE_DEPTH_GLSL}`);
     shader.fragmentShader = shader.fragmentShader
       .replace("void main() {", "uniform vec3 nodeRim;\nuniform float nodeRimAt;\nvoid main() {")
       .replace(
