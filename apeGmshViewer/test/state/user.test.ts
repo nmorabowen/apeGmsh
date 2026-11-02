@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { candidates } from "../../src/main/pairing.ts";
 import { barClearPx, familiesOf, familyMarks, mountPhase, userBadgeOf } from "../../src/panels/phase.ts";
+import { bannerTopBelowScrubber } from "../../src/panels/banner.ts";
 import { userResultsGroup } from "../../src/panels/legend.ts";
 import { readUserSet, type UserH5, type UserRead } from "../../src/reader/userFile.ts";
 import { initialState, NO_USER_FILE, reduce, userEventOf, userInfoOf, userPathOf, userReadable } from "../../src/state/reduce.ts";
@@ -424,6 +425,11 @@ test("the capped bar leaves clear what #header does: 684 px, or 216 px at 1000 p
   assert.equal(barClearPx(1001, false), 684);
   assert.equal(barClearPx(1000, false), 216);
   assert.equal(barClearPx(1600, true), 216);
+});
+
+test("the banner sits below a wrapped scrubber bar by the bar's published height, and at 106 px under a one-line bar", () => {
+  // 58 px (the scrubber row's top) + the bar's height + 10 px; a one-line bar (38 px or less) leaves the max at 106 px, as before.
+  assert.equal(bannerTopBelowScrubber(), "max(106px, calc(58px + var(--phase-bar-h, 0px) + 10px))");
 });
 
 class FakeEl {

@@ -85,7 +85,10 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
   pointer-events: none;
 }
 #banner:not([hidden]) ~ #left-rail, #banner:not([hidden]) ~ #line-diagram {
-  top: 168px;
+  /* VU3b (#2737): 8 px under the banner, which panels/banner.ts places (10 px
+     below a wrapped bar, 106 px under a one-line bar) and measures
+     (--banner-top, --banner-h); never above 168 px, as before. */
+  top: max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px));
 }
 /* VU3b (#2737): where the centred Windows strip reaches the rail's column
    (the strip is about 550 px wide), the rail ends above it. */
