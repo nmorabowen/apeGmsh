@@ -7,29 +7,11 @@ and compares byte-equal.
 """
 from __future__ import annotations
 
-import unicodedata
-from typing import Any, Optional
+from typing import Any
+
+from ...opensees._internal._combination_rules import name_problem
 
 __all__ = ["name_problem", "text_or_empty"]
-
-
-def name_problem(name: Any) -> Optional[str]:
-    """Why ``name`` is not a legal name, or ``None`` when it is."""
-    if not isinstance(name, str):
-        return f"not a string: {name!r}"
-    if not name:
-        return "empty"
-    try:
-        name.encode("utf-8")
-    except UnicodeEncodeError:
-        return "not valid UTF-8"
-    if not unicodedata.is_normalized("NFC", name):
-        return "not NFC"
-    if any(unicodedata.category(c) == "Cc" for c in name):
-        return "has a control character"
-    if name != name.strip():
-        return "has leading or trailing whitespace"
-    return None
 
 
 def text_or_empty(raw: Any) -> str:

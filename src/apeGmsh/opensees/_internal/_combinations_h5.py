@@ -2,7 +2,8 @@
 
 A combination is a named descriptor, evaluated when a result is read and
 never stored as a stage (ADR 0130 D4, Amendment 1 A2 and A3). This module
-holds the descriptor, its validation, and the zone's writer and reader.
+holds the descriptor and the zone's writer and reader; the row rules are
+:mod:`._combination_rules`, which the `.user.h5` reader shares.
 
 Layout (only written when at least one combination is declared)::
 
@@ -33,10 +34,11 @@ from __future__ import annotations
 
 import math
 import re
-import unicodedata
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
+
+from . import _combination_rules as rules
 
 if TYPE_CHECKING:
     import h5py
@@ -61,11 +63,6 @@ __all__ = [
 #: Group name under ``/opensees``.
 COMBINATIONS_GROUP: str = "combinations"
 
-_RULES = frozenset({"linear", "srss", "cqc", "abs_sum", "directional", "envelope"})
-_ENVELOPES = frozenset({"max", "min", "absmax"})
-#: The term kinds that resolve within ``model.h5``.
-_TERM_KINDS = frozenset({"stage", "mode", "combination"})
-_I4_MIN, _I4_MAX = -(2 ** 31), 2 ** 31 - 1
 
 
 class CombinationError(ValueError):
@@ -148,103 +145,8 @@ class CombinationsZone:
 
 
 # ---------------------------------------------------------------------
-# Validation, shared by the declaration and the reader
+# Validation: the row rules are ``_combination_rules``, shared with .user.h5
 # ---------------------------------------------------------------------
-
-def _name_problem(name: object) -> str | None:
-    """Why ``name`` breaks the rules of A2, or ``None`` when it is good."""
-    if not isinstance(name, str):
-        return f"is a {type(name).__name__}, not a string"
-    if not name:
-        return "is empty"
-    if not unicodedata.is_normalized("NFC", name):
-        return "is not NFC"
-    # ``Cs``: a lone surrogate has no UTF-8 form, so it could never be written.
-    if any(unicodedata.category(c) in ("Cc", "Cs") for c in name):
-        return "has a control character"
-    if name != name.strip():
-        return "has leading or trailing whitespace"
-    return None
-
-
-def _is_i4(value: object) -> bool:
-    return (
-        isinstance(value, int) and not isinstance(value, bool)
-        and _I4_MIN <= value <= _I4_MAX
-    )
-
-
-def _term_problem(term: CombinationTerm) -> str | None:
-    """Why ``term`` cannot be a ``model.h5`` term, or ``None``."""
-    if term.kind in ("spectrum", "reference"):
-        return (
-            f"a {term.kind!r} term cannot be archived in model.h5: its case "
-            "lives in .user.h5. Declare this combination in .user.h5 after "
-            "the run"
-        )
-    if term.kind not in _TERM_KINDS:
-        return f"term kind {term.kind!r} is not one of {sorted(_TERM_KINDS)}"
-    problem = _name_problem(term.source)
-    if problem is not None:
-        return f"term source {term.source!r} {problem}"
-    if not _is_i4(term.step) or not _is_i4(term.mode):
-        return f"step {term.step!r} and mode {term.mode!r} must be 32-bit integers"
-    if isinstance(term.factor, bool) or not isinstance(term.factor, (int, float)) \
-            or not math.isfinite(term.factor):
-        return f"factor {term.factor!r} must be a finite number"
-    if term.kind == "stage" and (term.step < -1 or term.mode != 0):
-        return f"a stage term needs step >= -1 and mode 0, got {term!r}"
-    if term.kind == "mode" and (term.step < -1 or term.mode < 1):
-        return f"a mode term needs step >= -1 and a 1-based mode, got {term!r}"
-    if term.kind == "combination" and (term.step != -1 or term.mode != 0):
-        return f"a combination term needs step -1 and mode 0, got {term!r}"
-    return None
-
-
-def _param_problem(c: Combination) -> str | None:
-    """Why the rule's parameters are wrong, or ``None``."""
-    if (c.rule == "envelope") != (c.envelope != ""):
-        return "envelope is set if and only if the rule is 'envelope'"
-    if c.rule == "envelope" and c.envelope not in _ENVELOPES:
-        return f"envelope {c.envelope!r} is not one of {sorted(_ENVELOPES)}"
-    if c.rule == "directional":
-        if c.fraction is None or not 0.0 <= c.fraction <= 1.0:
-            return f"'directional' needs a fraction in [0, 1], got {c.fraction!r}"
-    elif c.fraction is not None:
-        return "fraction applies only to the 'directional' rule"
-    if c.rule != "cqc":
-        if c.damping is not None:
-            return "damping applies only to the 'cqc' rule"
-    elif c.damping is None or not 0.0 < c.damping < 1.0:
-        # A case's per-mode damping lives in .user.h5; model.h5 has no other
-        # source, so NaN (the case's) cannot resolve here.
-        return f"'cqc' in model.h5 needs a damping ratio in (0, 1), got {c.damping!r}"
-    return None
-
-
-def _row_problem(c: Combination) -> tuple[str, str] | None:
-    """``(reason, detail)`` for a row that is bad on its own, or ``None``."""
-    problem = _name_problem(c.name)
-    if problem is not None:
-        return "empty-name", f"name {c.name!r} {problem}"
-    if c.rule not in _RULES:
-        return "unknown-rule", f"rule {c.rule!r} is not one of {sorted(_RULES)}"
-    if not c.terms:
-        return "no-terms", "it has no terms"
-    problem = _param_problem(c)
-    if problem is not None:
-        return "bad-param", problem
-    for term in c.terms:
-        problem = _term_problem(term)
-        if problem is not None:
-            return "bad-term", problem
-    if c.rule == "cqc" and (
-        any(t.kind != "mode" for t in c.terms)
-        or len({(t.source, t.step) for t in c.terms}) != 1
-    ):
-        return "bad-term", "in model.h5 'cqc' takes the modes of one set"
-    return None
-
 
 def _as_term(term: object) -> CombinationTerm:
     """Normalise one ``terms`` entry; a shape it does not know refuses."""
@@ -287,7 +189,7 @@ def declare_combination(
         fraction=None if fraction is None else float(fraction),
         damping=None if damping is None else float(damping),
     )
-    found = _row_problem(combo)
+    found = rules.row_problem(combo, "model")
     if found is not None:
         raise CombinationError(found[0], f"apeSees.combination({name!r}): {found[1]}")
     if name in known:
@@ -319,62 +221,9 @@ def declare_combination(
 
 def _refuse_rows(rows: Sequence[Combination]) -> tuple[CombinationRefusal, ...]:
     """The per-row refusals of a table, in row order (A3)."""
-    reasons: dict[int, str] = {}
-    for i, c in enumerate(rows):
-        found = _row_problem(c)
-        if found is not None:
-            reasons[i] = found[0]
-    counts: dict[str, int] = {}
-    for c in rows:
-        counts[c.name] = counts.get(c.name, 0) + 1
-    for i, c in enumerate(rows):
-        if i not in reasons and counts[c.name] > 1:
-            reasons[i] = "duplicate"
-
-    # Name -> the combinations it references, over the rows still standing.
-    def edges() -> dict[str, set[str]]:
-        return {
-            c.name: {t.source for t in c.terms if t.kind == "combination"}
-            for i, c in enumerate(rows) if i not in reasons
-        }
-
-    graph = edges()
-    for i, c in enumerate(rows):
-        if i not in reasons and _reaches_cycle(c.name, graph):
-            reasons[i] = "cycle"
-    # A term on an absent or refused row is unresolved, and that refusal
-    # carries to the rows that reference this one. A row reaching a cycle was
-    # refused above, whatever else it references.
-    changed = True
-    while changed:
-        changed = False
-        graph = edges()
-        for i, c in enumerate(rows):
-            if i not in reasons and not graph[c.name] <= graph.keys():
-                reasons[i] = "unresolved"
-                changed = True
+    verdict = rules.judge([("model", c) for c in rows])
     return tuple(
-        CombinationRefusal(i, str(rows[i].name), reasons[i]) for i in sorted(reasons)
-    )
-
-
-def _reachable(name: str, graph: dict[str, set[str]]) -> set[str]:
-    """Every name reachable from ``name`` by at least one edge."""
-    seen: set[str] = set()
-    stack = list(graph.get(name, ()))
-    while stack:
-        current = stack.pop()
-        if current not in seen:
-            seen.add(current)
-            stack.extend(graph.get(current, ()))
-    return seen
-
-
-def _reaches_cycle(name: str, graph: dict[str, set[str]]) -> bool:
-    """True when ``name`` is on a cycle or references one, at any depth."""
-    return any(
-        node in _reachable(node, graph)
-        for node in (name, *_reachable(name, graph))
+        CombinationRefusal(i, str(rows[i].name), verdict[i][0]) for i in sorted(verdict)
     )
 
 
