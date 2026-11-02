@@ -506,6 +506,9 @@ test("mounted, the bar shows each family as a button; the user families are disa
     const pick = bar.all((e) => e.className === "results-stage")[0]!;
     assert.deepEqual(pick.children.map((o) => (o as FakeEl).textContent), ["mode_1", "mode_2"]);
     assert.equal(pick.title, "results stage (Modes)");
+    // F3 (#2737 review): on the scrubber row the bar stops where #header does, clear of the ViewCube, and its buttons keep one line.
+    assert.match(bar.style["cssText"] ?? "", /max-width: calc\(100vw - 684px\)/);
+    assert.deepEqual([families()[3]!.style["flex"], families()[3]!.style["whiteSpace"]], ["0 0 auto", "nowrap"]);
     // A disabled family dispatches nothing.
     const n = dispatched.length;
     families()[3]!.click();

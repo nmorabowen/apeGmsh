@@ -168,6 +168,12 @@ export function readoutOf(t: Timeline, inactive: number | null): string {
   return `step ${t.step + 1}/${t.steps} · ${time}${act}${fetch}`;
 }
 
+/** A button or picker of the capped bar keeps its width and its one line; only the slider and the readout give way. */
+function rigid(e: HTMLElement): void {
+  e.style.flex = "0 0 auto";
+  e.style.whiteSpace = "nowrap";
+}
+
 export function mountPhase(store: Store): () => void {
   const bar = byId("phase");
   let unlisten: (() => void)[] = [];
@@ -213,6 +219,7 @@ export function mountPhase(store: Store): () => void {
       b.style.cssText = `cursor: default; color: var(${badge.refused ? "--error" : "--interp-text"});`;
       buttons.push(b);
     }
+    for (const b of buttons) rigid(b);
     bar.replaceChildren(...buttons, ...(t ? scrubber(t, s) : []));
   };
   const familyButton = (f: PhaseFamily, on: boolean): HTMLElement => {
@@ -316,6 +323,7 @@ export function mountPhase(store: Store): () => void {
         render(store.get(), null);
       }),
     );
+    for (const b of [pick, back, play, fwd]) rigid(b);
     box.append(pick, back, play, fwd, slider, readout);
     return [box];
   };
