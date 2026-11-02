@@ -13,8 +13,9 @@
 //      lays out no panel; an app still with its layers off keeps the
 //      viewport's box;
 //   2. the same spec rendered twice gives identical PNGs, every shot (the
-//      kill criterion: it stops here when not; spec v1 refuses the reference
-//      ghost, which is not), and each shot's time (kill criterion ~10 s);
+//      kill criterion: it stops here when not), and each shot's time (kill
+//      criterion ~10 s); the reference ghost likewise, shot 5 times in each
+//      of 2 runs in both chromes (#2664);
 //   INV-1: Chromium's profile goes to `<out>/.chromium`, and the app's
 //      folder under APPDATA is unchanged by a render or a describe;
 //   3. INV-7: an app and a model still of one shot have the same camera pose
@@ -206,6 +207,35 @@ for (const v of views) {
 }
 log("D9 layers: ok");
 
+// #2664: the reference ghost draws the same pixels every time, 5 shots in each of 2 runs, in both chromes.
+{
+  const shot = { stage: "unprop", deform: { scale: 10, ghost: true } };
+  const shots = [...Array(5).keys()].flatMap((i) => [
+    { ...shot, name: `ghost${i}.model`, chrome: "model" },
+    { ...shot, name: `ghost${i}.app` },
+  ]);
+  const spec = { spec: "apegmsh-view/1", files: { model: reactions.model }, size: SIZE, shots: [...shots, { ...shot, deform: { scale: 10 }, name: "noghost.model", chrome: "model" }] };
+  const G1 = await render("ghost-a", spec);
+  const G2 = await render("ghost-b", spec);
+  for (const R of [G1, G2]) assert.equal(R.code, 0, `the ghost renders (exit ${R.code}): ${R.shots.map((s) => s.reason).filter(Boolean).join("; ")}`);
+  const still = (R: typeof G1, name: string) => readPng(readFileSync(join(R.dir, `${name}.png`)));
+  assert.equal((byName(G1).get("ghost0.model")!.deform as { ghost: boolean }).ghost, true, "the result records the ghost");
+  // A ghost that is not drawn would be stable too.
+  assert.ok(rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).count > 1000, "the ghost is drawn");
+  for (const chrome of ["model", "app"]) {
+    const first = still(G1, `ghost0.${chrome}`);
+    // In the app chrome, below the phase bar: a hidden window's capture can catch its readout a frame old, with or without a ghost (reported on #2664).
+    const box: [number, number, number, number] | undefined = chrome === "app" ? [0, 100, SIZE[0], SIZE[1]] : undefined;
+    for (const R of [G1, G2]) {
+      for (let i = 0; i < 5; i++) {
+        const d = rgbDiff(first, still(R, `ghost${i}.${chrome}`), box);
+        if (d.count) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
+      }
+    }
+  }
+  log("reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical");
+}
+
 // ---- 4: D2 refusals ---------------------------------------------------------------------
 
 const both = (name: string, shot: object) => [
@@ -244,7 +274,6 @@ for (const [name, spec, key] of [
   ["spec-version", { spec: "apegmsh-view/9", files: { model: reactions.model }, shots: [{ name: "a" }] }, "spec"],
   ["spec-key", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", zoom: 2 }] }, "shots[0].zoom"],
   ["spec-type", { spec: "apegmsh-view/1", files: { model: reactions.model }, size: [10, 10], shots: [{ name: "a" }] }, "size[0]"],
-  ["spec-ghost", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", stage: "unprop", deform: { scale: 10, ghost: true } }] }, "shots[0].deform.ghost"],
   ["spec-fit-selection", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", camera: "fit-selection" }] }, "shots[0].camera"],
 ] as const) {
   const R = await render(name, spec);

@@ -118,10 +118,12 @@ test("the four ADR 0094 views (mesh, contour, deformed, reactions) compile into 
   s = apply(contour);
   assert.deepEqual(s.phase.at, { kind: "results", stage: 2, step: 3 });
   assert.deepEqual([s.visibility.colourBy, s.contour.field, s.contour.component, s.contour.source, s.contour.range, s.contour.cmap], ["contour", "displacement", "displacement_z", "nodal", "history", "jet"]);
-  // deformed: the deformed shape at scale 10, coloured by group (no reference ghost: spec v1 refuses it).
+  // deformed: the deformed shape at scale 10, coloured by group, with no reference ghost unless the shot asks for it (#2664).
   s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10 } }), d));
   assert.deepEqual(s.phase.at, { kind: "results", stage: 1, step: 0 });
   assert.deepEqual([s.visibility.colourBy, s.deform.on, s.deform.scale, s.deform.ghost], ["group", true, 10, false]);
+  s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10, ghost: true } }), d));
+  assert.deepEqual([s.deform.on, s.deform.scale, s.deform.ghost], [true, 10, true]);
   // reactions: the reaction magnitude, a fixed range, another colormap; the deformed shape is off again (each shot starts from the base view).
   s = apply(plan(shotOf({ stage: "unprop", step: 2, contour: { field: "reaction_force", component: "magnitude", range: { min: 0, max: 50 }, cmap: "viridis" } }), d));
   assert.deepEqual([s.contour.field, s.contour.component, s.contour.range, s.contour.fixed, s.contour.cmap, s.deform.on], ["reaction_force", MAGNITUDE, "fixed", { min: 0, max: 50 }, "viridis", false]);

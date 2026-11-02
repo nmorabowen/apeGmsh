@@ -63,7 +63,6 @@ test("D2: a wrong type refuses the spec and names the key", () => {
   refused(base({}, { stage: "s", deform: { scale: "10" } }), "shots[0].deform.scale", /finite number; got "10"/);
   refused(base({}, { stage: "s", deform: { scale: 0 } }), "shots[0].deform.scale", /must be positive/);
   refused(base({}, { stage: "s", deform: { ghost: "yes" } }), "shots[0].deform.ghost", /true or false/);
-  refused(base({}, { stage: "s", deform: { ghost: true } }), "shots[0].deform.ghost", /is not drawn by apegmsh-view\/1: the reference ghost does not draw the same pixels twice/);
   refused(base({}, { camera: { eye: [1, 0], target: [0, 0, 0], up: [0, 0, 1] } }), "shots[0].camera.eye", /three numbers/);
   refused(base({}, { camera: { eye: [0, 0, 0], target: [0, 0, 0], up: [0, 0, 1] } }), "shots[0].camera.eye", /differ from the target/);
   refused(base({}, { isolate: [] }), "shots[0].isolate", /non-empty list/);
@@ -106,6 +105,16 @@ test("D9: layers are a closed set per chrome; transparent needs model mode", () 
 });
 
 // ---- the defaults ---------------------------------------------------------------
+
+test("#2664: deform.ghost is off unless asked for, and a shot may ask for it", () => {
+  const ghost = (deform: Record<string, unknown>) => {
+    const v = validateSpec(base({}, { stage: "s", deform }));
+    assert.ok(v.ok);
+    return v.ok ? v.spec.shots[0]!.deform?.ghost : null;
+  };
+  assert.equal(ghost({ scale: 10, ghost: true }), true);
+  assert.equal(ghost({ scale: 10 }), false);
+});
 
 test("D1/D8/D9: a minimal spec states every default (light theme, iso, last step, every app panel on)", () => {
   const v = validateSpec(base());
@@ -186,8 +195,6 @@ for (const [name, body, key] of [
   ["no-model", JSON.stringify(base({ files: { model: "missing.h5" } })), "files.model"],
   ["not-a-model", JSON.stringify(base({ files: { model: join(FIX, "contour_staged.results.h5") } })), "files.model"],
   ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.results.h5") } })), "files.results"],
-  // Maintainer ruling on #2651: the reference ghost is not pixel-identical between two frames.
-  ["ghost", JSON.stringify(base({}, { stage: "base", deform: { scale: 10, ghost: true } })), "shots[0].deform.ghost"],
   ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
   test(`D2: a refused spec (${name}) writes render.json naming ${key}, and no PNG`, () => {

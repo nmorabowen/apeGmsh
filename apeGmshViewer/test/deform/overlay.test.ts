@@ -17,7 +17,7 @@ import * as THREE from "three";
 import { applyGhostVisibility, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
 import { selectionBounds, type Prims } from "../../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
-import { missingMarkers } from "../../src/state/deform.ts";
+import { GHOST_OPACITY, missingMarkers } from "../../src/state/deform.ts";
 import { deformView } from "../../src/state/selectors.ts";
 import type { State } from "../../src/state/types.ts";
 import { NODATA, NODATA_RESULTS, opened, until } from "../contour/harness.ts";
@@ -152,6 +152,18 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   const faces = objs.find((o) => o instanceof THREE.Mesh)!;
   assert.equal(faces.name, "ghost faces");
   assert.deepEqual(pos(faces), gatherInto(base.tri, drawn.triMap, 9));
+  // #2664: the faces blend before the depth buffer holds anything, the one order that draws the same pixels twice:
+  // three's opaque list (transparent false), ahead of the opaque mesh (renderOrder), still at the ghost opacity,
+  // with the blend three's NormalBlending would set (a NormalBlending opaque material forces alpha to 1 and does not blend).
+  const fm = (faces as THREE.Mesh).material as THREE.MeshStandardMaterial;
+  assert.equal(fm.transparent, false);
+  assert.ok(faces.renderOrder < 0);
+  assert.equal(fm.depthWrite, false);
+  assert.equal(fm.opacity, GHOST_OPACITY);
+  assert.deepEqual(
+    [fm.blending, fm.blendEquation, fm.blendSrc, fm.blendDst, fm.blendSrcAlpha, fm.blendDstAlpha],
+    [THREE.CustomBlending, THREE.AddEquation, THREE.SrcAlphaFactor, THREE.OneMinusSrcAlphaFactor, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor],
+  );
   const segs = objs.filter((o) => o instanceof THREE.LineSegments);
   assert.deepEqual(segs.map((o) => o.name), ["ghost edges", "ghost lines"]);
   assert.deepEqual(segs.map(pos), [gatherInto(base.edge, edgeMap, 6), gatherInto(base.line, drawn.lineMap, 6)]);

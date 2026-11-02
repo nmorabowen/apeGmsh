@@ -231,8 +231,9 @@ export function missingMarkerObjects(
 
 /**
  * The reference ghost: the drawn primitives undeformed, faces and lines in
- * one neutral colour at the Qt ghost opacity, behind the deformed mesh
- * (no depth write, drawn first).
+ * one neutral colour at the Qt ghost opacity. The faces are behind the
+ * opaque deformed mesh wherever the two overlap (no depth write, drawn
+ * before it); the lines stay in the transparent pass, depth-tested.
  */
 export function ghostObjects(
   info: MeshInfo,
@@ -286,9 +287,18 @@ export function ghostObjects(
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
     g.computeVertexNormals();
+    // Pixel-stable (#2664): a blended triangle tested against depth already in the
+    // 4x MSAA buffer gives other pixels each frame, with nothing changed (D3D11 on an
+    // RTX 3070: 40 to 1200 px, up to 8 levels; no difference without MSAA, without
+    // depth test or without the opaque mesh). So these faces blend in the opaque
+    // list, ahead of every opaque object, where the depth buffer is still empty:
+    // `transparent: false` picks the list, custom blending keeps the blend and the alpha.
     const m = new THREE.MeshStandardMaterial({
       color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true,
-      transparent: true, opacity: GHOST_OPACITY, depthWrite: false,
+      transparent: false, opacity: GHOST_OPACITY, depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+      blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     });
     const mesh = new THREE.Mesh(g, m);
     mesh.name = "ghost faces";
