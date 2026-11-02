@@ -228,7 +228,7 @@ export function modelExtras(res: {
 /** Element-wise equality of two arrays (beam stations compared step to step). */
 function sameArray(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
   if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
   return true;
 }
 
@@ -284,8 +284,8 @@ export class Effects {
   private readonly setWindowMs: number;
   private setTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** The last beam stations read, per stage: a step still loading keeps them, since they do not change within a stage. */
-  private lastStations: { stage: number; seq: number; points: StationPoints & { key: string } } | null = null;
+  /** The last beam stations read, per file and stage: a step still loading keeps them, since they do not change within a stage. */
+  private lastStations: { file: string; seq: number; points: StationPoints & { key: string } } | null = null;
   private stationsSeq = 0;
 
   /**
@@ -294,23 +294,35 @@ export class Effects {
    * scrub or a line-diagram component switch does not place them again.
    */
   stationsOfStep(): (StationPoints & { key: string }) | null {
-    const at = this.store.get().phase.at;
+    const s = this.store.get();
+    const at = s.phase.at;
     const stage = at?.kind === "results" ? at.stage : null;
+    const st = stage !== null ? s.results?.stages[stage] : undefined;
+    if (stage === null || !st || !s.results) return null;
+    // Another file, or another stage of this one, never inherits these stations.
+    const file = `${s.results.path}|${st.id}`;
     const step = this.step;
-    const last = this.lastStations;
+    const last = this.lastStations?.file === file ? this.lastStations : null;
     if (step && step.stage === stage) {
       const d = step.lineDiagram;
       if (d) {
-        const same = last !== null && last.stage === stage && sameArray(last.points.elementIndex, d.elementIndex) && sameArray(last.points.stationNaturalCoord, d.stationNaturalCoord);
+        const en = d.elementNodes ?? null;
+        const same =
+          last !== null &&
+          sameArray(last.points.elementIndex, d.elementIndex) &&
+          sameArray(last.points.stationNaturalCoord, d.stationNaturalCoord) &&
+          (en === null ? last.points.elementNodes == null : last.points.elementNodes != null && sameArray(last.points.elementNodes, en));
         if (!same) {
           const seq = ++this.stationsSeq;
-          this.lastStations = { stage, seq, points: { key: `${stage}|${seq}`, elementIndex: d.elementIndex, stationNaturalCoord: d.stationNaturalCoord, elementNodes: d.elementNodes ?? null } };
+          this.lastStations = { file, seq, points: { key: `${stage}|${seq}`, elementIndex: d.elementIndex, stationNaturalCoord: d.stationNaturalCoord, elementNodes: en } };
         }
         return this.lastStations!.points;
       }
       if (step.lineDiagramError) return { key: `${stage}|error|${step.lineDiagramError}`, elementIndex: new Float64Array(0), stationNaturalCoord: new Float64Array(0), error: step.lineDiagramError };
+      // A step read without stations: the stage has none.
+      return null;
     }
-    return last && last.stage === stage ? last.points : null;
+    return last ? last.points : null;
   }
 
   private syncGaussSize(s: State): void {
@@ -917,9 +929,10 @@ export class Effects {
       return false;
     }
     this.readingResults = true;
-    // A re-read invalidates the step on screen: its data may have changed.
+    // A re-read invalidates the step on screen, and the stations read from it: their data may have changed.
     this.step = null;
     this.stepKey = null;
+    this.lastStations = null;
     // V4c1 seam "reload": the scan of the old file stops, and its ranges are forgotten.
     this.stopScan();
     this.scanCache.clear();

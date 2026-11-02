@@ -175,7 +175,6 @@ function addStations(s: State, blobs: BlobStore, b: GaussLayoutBuilder, stations
   const byElement = new Map<number, { xis: number[]; nodes: [number, number] | null }>();
   stations.elementIndex.forEach((id, i) => {
     const xi = stations.stationNaturalCoord[i]!;
-    if (!Number.isFinite(xi)) return;
     let e = byElement.get(id);
     if (!e) {
       const en = stations.elementNodes;
@@ -203,16 +202,26 @@ function addStations(s: State, blobs: BlobStore, b: GaussLayoutBuilder, stations
       b.refuse("not an element of the model's mesh", 1);
       continue;
     }
-    const rows = orientStations(cell.nodes, e.nodes, e.xis);
+    // The line diagram refuses the same: a station off the element would be drawn past its end.
+    if (e.xis.some((x) => !Number.isFinite(x) || x < -1 - 1e-9 || x > 1 + 1e-9)) {
+      b.refuse("beam stations with a natural coordinate that is not finite or is outside [-1, 1]", 1);
+      continue;
+    }
+    // The element's own I and J: the step's, else the model's connectivity, as the line diagram takes them.
+    const inline = s.decls[path]?.element?.inlineNodes;
+    const ends = e.nodes ?? (inline && inline.length >= 2 ? ([inline[0]!, inline[inline.length - 1]!] as [number, number]) : null);
+    const rows = orientStations(cell.nodes, ends, e.xis);
     if (!rows) {
       b.refuse("beam stations whose element nodes contradict the model's connectivity", 1);
       continue;
     }
-    // The clear span between rigid joint offsets, from the cell's own corners (the rows are in that order now).
+    // The clear span between rigid joint offsets. The offsets are the element's, from I to J; the rows follow
+    // the cell's corners, so on a cell stored J to I the offset of I goes to its second corner.
+    const reversed = ends !== null && ends[0] === cell.nodes[1];
     const meta0 = s.decls[path]?.element?.metas[0];
-    const pI = at(cell.nodes[0]!), pJ = at(cell.nodes[1]!);
+    const pI = at(cell.nodes[reversed ? 1 : 0]!), pJ = at(cell.nodes[reversed ? 0 : 1]!);
     const jnt = meta0 && pI && pJ ? resolveElementJointOffset(meta0.type, meta0.args, pI, pJ, jntByTransfTag) : null;
-    b.add(path, rows, jnt ? { dI: jnt.dI, dJ: jnt.dJ } : null);
+    b.add(path, rows, jnt ? (reversed ? { dI: jnt.dJ, dJ: jnt.dI } : { dI: jnt.dI, dJ: jnt.dJ }) : null);
   }
 }
 
