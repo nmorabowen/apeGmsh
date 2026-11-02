@@ -303,10 +303,15 @@ def test_a_stale_zone_refuses_unless_asked(tmp_path: Path) -> None:
     path = write_user_file(tmp_path / "m.user.h5", _model(tmp_path / "m.h5"), spectra=[case()])
     other = _model(tmp_path / "other.h5", fem_hash="0" * 32)
     q = ("nodes", "displacement_x")
-    assert _reason(UserSpectra(path, model_h5=other).case, "E_x (DBE)", q) == "stale"
+    provider = UserSpectra(path, model_h5=other)
+    assert _reason(provider.case, "E_x (DBE)", q) == "stale"
     assert _reason(UserSpectra(path).case, "E_x (DBE)", q) == "stale"
-    got = UserSpectra(path, model_h5=other, allow_stale=True).case("E_x (DBE)", q)
-    assert got.mode.tolist() == [1, 2]
+    address = StateAddress("spectrum", "E_x (DBE)", -1, 1)
+    assert _reason(provider.field, address, q) == "stale"
+    assert provider.case("E_x (DBE)", q, allow_stale=True).mode.tolist() == [1, 2]
+    assert provider.field(address, q, allow_stale=True).values.shape == (2, 1)
+    # The verdict is the call's, not the provider's: asking once does not stick.
+    assert _reason(provider.case, "E_x (DBE)", q) == "stale"
 
 
 def test_no_user_file_is_unresolved() -> None:
@@ -323,8 +328,12 @@ def _truss_set(folder: Path) -> Results:
         return Results.from_ladruno(folder / "run.ladruno")
 
 
+SHEAR = np.array([[[120.0, -3.0]], [[-45.0, 8.0]], [[10.0, 2.5]]])  # (M, 1, ndm)
+
+
 def _truss_case() -> SpectrumCase:
-    """Three modes on the truss's nodes 1-3, two sharing a rigid ``sa_period``."""
+    """Three modes on the truss's nodes 1-3, two sharing a rigid ``sa_period``,
+    and a base shear on the domain."""
     lam = np.array([40.0, 160.0, 900.0])
     data = np.array([[[0.0, 0.0], [0.4, 0.1], [1.0, 0.2]],
                      [[0.0, 0.0], [-0.7, 0.3], [0.5, -0.1]],
@@ -334,8 +343,10 @@ def _truss_case() -> SpectrumCase:
         "Ex", mode=np.array([1, 2, 3], dtype="i4"), kind=("eigen",) * 3, lam=lam,
         sa_period=np.array([0.0, 0.2, 0.2]), gamma=np.ones(3), sa=np.ones(3),
         damping=np.array([0.05, 0.04, 0.03]),
-        results=(CaseQuantity("DISPLACEMENT", "nodes", ("Ux", "Uy"), data, ids),),
-        reference=(CaseQuantity("DISPLACEMENT", "nodes", ("Ux", "Uy"), np.zeros((1, 3, 2)), ids),))
+        results=(CaseQuantity("base_shear", "domain", ("1", "2"), SHEAR),
+                 CaseQuantity("DISPLACEMENT", "nodes", ("Ux", "Uy"), data, ids)),
+        reference=(CaseQuantity("base_shear", "domain", ("1", "2"), np.array([[[0.0, 9.81]]])),
+                   CaseQuantity("DISPLACEMENT", "nodes", ("Ux", "Uy"), np.zeros((1, 3, 2)), ids)))
 
 
 def _truss_user(tmp_path: Path, model: Path) -> None:
@@ -373,12 +384,62 @@ def test_results_combinations_refuses_a_stale_spectra_zone(tmp_path: Path) -> No
     run = _truss_set(tmp_path)
     _truss_user(tmp_path, _model(tmp_path / "run.h5"))
     other = _model(tmp_path / "other.h5", fem_hash="0" * 32)
-    with pytest.raises(CombinationRefused) as err:
-        run.combinations(tmp_path / "run.user.h5", model_h5=other).evaluate("E", "displacement_x")
+    combos = run.combinations(tmp_path / "run.user.h5", model_h5=other)
+    for args in (("E", "displacement_x"), ("E", "base_shear")):
+        level = "domain" if args[1] == "base_shear" else "nodes"
+        with pytest.raises(CombinationRefused) as err:
+            combos.evaluate(*args, level=level)
+        assert err.value.reason == "stale"
+    fresh = run.combinations(tmp_path / "run.user.h5", model_h5=tmp_path / "run.h5")
+    for component, level in (("displacement_x", "nodes"), ("base_shear", "domain")):
+        got = combos.evaluate("E", component, level=level, allow_stale=True).field.values
+        want = fresh.evaluate("E", component, level=level).field.values
+        np.testing.assert_array_equal(got, want)
+    with pytest.raises(CombinationRefused) as err:  # asking once does not stick
+        combos.evaluate("E", "displacement_x")
     assert err.value.reason == "stale"
-    stale_ok = UserSpectra(tmp_path / "run.user.h5", model_h5=other, allow_stale=True)
-    got = run.combinations(tmp_path / "run.user.h5", model_h5=other, spectra=stale_ok)
-    assert got.evaluate("E", "displacement_x").field.values.shape == (3, 1)
+
+
+def test_results_combinations_reaches_a_domain_quantity(tmp_path: Path) -> None:
+    """``base_shear`` through ``evaluate(level="domain")``: CQC, an increment, the reference."""
+    run = _truss_set(tmp_path)
+    model = _model(tmp_path / "run.h5")
+    _truss_user(tmp_path, model)
+    combos = run.combinations(model_h5=model)
+    c = _truss_case()
+    e = combos.evaluate("E", "base_shear", level="domain").field
+    assert e.components == ("1", "2") and e.keys["id"].tolist() == [0]
+    want = cqc_reference(SHEAR[:, 0, :], c.lam, c.damping, c.sa_period)
+    np.testing.assert_allclose(e.values[0], want, rtol=1e-13)
+    k2 = combos.evaluate("k2", "base_shear", level="domain").field
+    np.testing.assert_array_equal(k2.values[0], 3.0 * SHEAR[1, 0])
+    ref = combos.evaluate(StateAddress("reference", "Ex"), "base_shear", level="domain")
+    np.testing.assert_array_equal(ref.field.values[0], [0.0, 9.81])
+
+
+def test_a_stage_or_mode_term_of_a_domain_quantity_is_unresolved(tmp_path: Path) -> None:
+    """``Results`` records no domain value: ``D+E`` cannot be read on the domain."""
+    run = _truss_set(tmp_path)
+    model = _model(tmp_path / "run.h5")
+    _truss_user(tmp_path, model)
+    combos = run.combinations(model_h5=model)
+    for state in ("D+E", StateAddress("stage", "stage_0"), StateAddress("mode", "stage_0", -1, 1)):
+        with pytest.raises(CombinationRefused) as err:
+            combos.evaluate(state, "base_shear", level="domain")
+        assert err.value.reason == "unresolved", state
+        assert "domain" in err.value.detail
+
+
+def test_no_provider_says_so() -> None:
+    from apeGmsh.results.user._states import _RecordedSource
+    source = _RecordedSource(None, "nodes", "displacement_x", None, None, "x")  # type: ignore[arg-type]
+    for call in (lambda: source.case("Ex"),
+                 lambda: source.field(StateAddress("spectrum", "Ex", -1, 1))):
+        with pytest.raises(CombinationRefused) as err:
+            call()
+        assert err.value.reason == "unresolved"
+        assert "no spectra provider was given" in err.value.detail
+        assert "no reader yet" not in err.value.detail
 
 
 def test_an_element_quantity_of_a_spectrum_term_is_unresolved(tmp_path: Path) -> None:

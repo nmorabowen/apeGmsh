@@ -12,13 +12,12 @@ The oracle is the driver's own combination of its in-memory values:
 
 The provider is the one ``Results.combinations()`` builds, and the recorded
 source is the one ``UserCombinations.evaluate`` builds, so the spectrum terms
-take the production path; a domain quantity is evaluated over the provider
-directly, since ``evaluate`` takes the recorded levels only.
+take the production path, on the nodes and on the domain.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -28,14 +27,13 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.analysis.spectrum import DesignSpectrum, NodeDisp
 from apeGmsh.results.user import (
     Combination,
-    StateAddress,
     Term,
     UserSpectra,
     spectrum_cases,
     write_user_file,
 )
 from apeGmsh.results.user._descriptor import resolve
-from apeGmsh.results.user._evaluate import Case, CombinationRefused, Field, evaluate
+from apeGmsh.results.user._evaluate import evaluate
 from apeGmsh.results.user._states import _RecordedSource
 
 from tests.opensees.fixtures.fem_stub import (
@@ -107,28 +105,6 @@ def _frame() -> apeSees:
     return ops
 
 
-class _DomainSource:
-    """A domain quantity's terms, all from ``/spectra``: no stage holds one."""
-
-    linear = True
-
-    def __init__(self, spectra: UserSpectra, label: str) -> None:
-        self.spectra = spectra
-        self.quantity = ("domain", label)
-
-    def stored(self, name: str) -> Optional[Field]:
-        return None
-
-    def field(self, address: StateAddress) -> Field:
-        return self.spectra.field(address, self.quantity)
-
-    def eigenvalue(self, address: StateAddress) -> float:
-        raise CombinationRefused("", "unresolved", "no mode terms here")
-
-    def case(self, name: str) -> Case:
-        return self.spectra.case(name, self.quantity)
-
-
 TABLE = resolve([
     Combination("Ex_cqc", "cqc", (Term("spectrum", "E_x"),)),
     Combination("Ey_cqc", "cqc", (Term("spectrum", "E_y"),)),
@@ -167,7 +143,7 @@ def test_a_cqc_over_a_written_case_equals_the_drivers_own(tmp_path: Path) -> Non
             assert got.keys["id"].tolist() == ROOF_COLUMN
             np.testing.assert_allclose(got.values[:, 0], want, rtol=RTOL, err_msg=f"{name} {component}")
 
-    shear = _DomainSource(spectra, "base_shear")
+    shear: Any = _RecordedSource(cast(Any, None), "domain", "base_shear", None, spectra, "live")
     for name, want in (("Ex_cqc", result.combine("base_shear", damping=XI)[0]),
                        ("Ey_cqc", result.combine("base_shear", damping=XI)[1]),
                        ("Ex_srss", result.combine("base_shear", rule="SRSS")[0]),

@@ -1544,8 +1544,8 @@ class Results:
         ``spectrum`` and ``reference`` terms; by default it is a
         :class:`~apeGmsh.results.user.UserSpectra` over that ``.user.h5``'s
         ``/spectra``, judged stale against ``model_h5`` (ADR 0130 A6), so a
-        stale zone's terms are refused. Pass
-        ``UserSpectra(path, model_h5=..., allow_stale=True)`` to read one.
+        stale zone's terms are refused unless ``evaluate(...,
+        allow_stale=True)``.
 
         A term names a stage by its stamped name, else ``stage_<i>`` (A3).
         The names are bound when the results are opened (``model_h5=``), never
@@ -1560,8 +1560,9 @@ class Results:
         keeps ``stage_<i>``, and so does one whose reader declined that same
         model's names when it was opened.
 
-        ``evaluate(state, component, level=...)`` combines a recorded result,
-        ``evaluate(state, user_result=...)`` a user result. A state handle of
+        ``evaluate(state, component, level=...)`` combines a recorded result
+        (``level="domain"`` a ``/spectra`` domain value such as
+        ``base_shear``), ``evaluate(state, user_result=...)`` a user result. A state handle of
         another ``Results`` is refused.
         """
         from .user._evaluate import CombinationRefused

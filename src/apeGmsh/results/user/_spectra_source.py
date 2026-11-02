@@ -25,14 +25,15 @@ component)``, as ``UserCombinations.evaluate`` names it:
 =================  ==============================================================
 
 A quantity that no result of the case holds, or that two hold, refuses
-``unresolved``. ``UserCombinations.evaluate`` takes the recorded levels only, so
-a domain quantity is read through this provider directly for now.
+``unresolved``. ``UserCombinations.evaluate(state, "base_shear", level="domain")``
+reaches a domain quantity; its ``stage`` and ``mode`` terms refuse, because
+``Results`` records none.
 
 **Refusals.** A missing ``.user.h5`` or case is ``unresolved``; a case or a
 ``/spectra`` zone the reader refused is ``refused``. The zone is stale when the
 model hashes differ (A6), and a stale zone's terms refuse ``stale`` unless the
-provider was made with ``allow_stale=True``. The file is read once, at the first
-spectrum term, and the provider keeps what it read.
+call passes ``allow_stale=True`` (``evaluate(allow_stale=True)`` does). The file
+is read once, at the first spectrum term, and the provider keeps what it read.
 """
 from __future__ import annotations
 
@@ -53,9 +54,6 @@ from ._states import LEVELS, domain_keys, node_keys
 
 __all__ = ["UserSpectra"]
 
-#: Every level a quantity may name here: the recorded ones, and the domain.
-QUANTITY_LEVELS = (*LEVELS, "domain")
-
 
 def _label(address: StateAddress) -> str:
     """The name a refusal of one term carries, as ``read_state`` names a lone state."""
@@ -75,17 +73,15 @@ class UserSpectra:
         user_h5: "Optional[str | Path]",
         *,
         model_h5: "Optional[str | Path]" = None,
-        allow_stale: bool = False,
     ) -> None:
         self.user_h5 = None if user_h5 is None else Path(user_h5)
         self.model_h5 = None if model_h5 is None else Path(model_h5)
-        self.allow_stale = bool(allow_stale)
         self._index: Optional[SpectraIndex] = None
         self._stale: Optional[str] = None
 
     # ---- the file, read once -------------------------------------------
 
-    def _load(self, who: str) -> SpectraIndex:
+    def _load(self, who: str, allow_stale: bool) -> SpectraIndex:
         if self._index is None:
             if self.user_h5 is None:
                 raise CombinationRefused(
@@ -99,14 +95,14 @@ class UserSpectra:
                 zone = staleness(user, model_h5=self.model_h5).zones["spectra"]
                 self._stale = zone.reason if zone.stale else None
             self._index = index
-        if self._stale is not None and not self.allow_stale:
+        if self._stale is not None and not allow_stale:
             raise CombinationRefused(
-                who, "stale", f"/spectra is stale ({self._stale}); make the provider with "
-                "allow_stale=True to read it (ADR 0130 A6)")
+                who, "stale", f"/spectra is stale ({self._stale}); pass allow_stale=True "
+                "to read it (ADR 0130 A6)")
         return self._index
 
-    def _case(self, name: str, who: str) -> SpectrumCase:
-        index = self._load(who)
+    def _case(self, name: str, who: str, allow_stale: bool) -> SpectrumCase:
+        index = self._load(who, allow_stale)
         try:
             return index.by_name(name)
         except KeyError as exc:
@@ -122,8 +118,8 @@ class UserSpectra:
         """``(per-mode result, its reference, column)``; the column is ``None`` for
         a domain result, which is read whole."""
         level, component = quantity
-        if level not in QUANTITY_LEVELS:
-            raise ValueError(f"level {level!r} is not one of {QUANTITY_LEVELS}")
+        if level not in LEVELS:
+            raise ValueError(f"level {level!r} is not one of {LEVELS}")
         hits: list[tuple[CaseQuantity, Optional[int]]]
         if level == "domain":
             hits = [(q, None) for q in case.results
@@ -156,7 +152,8 @@ class UserSpectra:
 
     # ---- the SpectraProvider seam ---------------------------------------
 
-    def field(self, address: StateAddress, quantity: tuple[str, str]) -> Field:
+    def field(self, address: StateAddress, quantity: tuple[str, str], *,
+              allow_stale: bool = False) -> Field:
         """One signed increment (``spectrum``, ``mode = k``) or the reference state."""
         who = _label(address)
         if address.kind not in ("spectrum", "reference"):
@@ -164,7 +161,7 @@ class UserSpectra:
         if address.kind == "spectrum" and address.mode == 0:
             raise CombinationRefused(
                 who, "bad-term", "a whole case is not one state; combine it with a rule")
-        case = self._case(address.source, who)
+        case = self._case(address.source, who, allow_stale)
         result, reference, column = self._locate(case, quantity, who)
         if address.kind == "reference":
             return self._field(reference, 0, column, quantity[1])
@@ -175,10 +172,11 @@ class UserSpectra:
                 f"are {np.asarray(case.mode).tolist()}")
         return self._field(result, int(rows[0]), column, quantity[1])
 
-    def case(self, name: str, quantity: tuple[str, str]) -> Case:
+    def case(self, name: str, quantity: tuple[str, str], *,
+             allow_stale: bool = False) -> Case:
         """The whole case: per mode, the signed increment of the quantity."""
         who = f"<spectrum {name}>"
-        found = self._case(name, who)
+        found = self._case(name, who, allow_stale)
         result, _, column = self._locate(found, quantity, who)
         return Case(
             mode=found.mode, lam=found.lam, sa_period=found.sa_period, damping=found.damping,
