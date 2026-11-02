@@ -244,6 +244,7 @@ class _ModalMixin(_ProcedureHost):
             eigenvalues=np.asarray(values, dtype=np.float64),
             properties=properties,
             _live=live_emitter,
+            unorm=bool(unorm),
         )
 
     def footfall_walking(

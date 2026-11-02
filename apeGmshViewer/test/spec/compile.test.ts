@@ -118,10 +118,12 @@ test("the four ADR 0094 views (mesh, contour, deformed, reactions) compile into 
   s = apply(contour);
   assert.deepEqual(s.phase.at, { kind: "results", stage: 2, step: 3 });
   assert.deepEqual([s.visibility.colourBy, s.contour.field, s.contour.component, s.contour.source, s.contour.range, s.contour.cmap], ["contour", "displacement", "displacement_z", "nodal", "history", "jet"]);
-  // deformed: the deformed shape at scale 10, coloured by group (no reference ghost: spec v1 refuses it).
+  // deformed: the deformed shape at scale 10, coloured by group, with no reference ghost unless the shot asks for it (#2664).
   s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10 } }), d));
   assert.deepEqual(s.phase.at, { kind: "results", stage: 1, step: 0 });
   assert.deepEqual([s.visibility.colourBy, s.deform.on, s.deform.scale, s.deform.ghost], ["group", true, 10, false]);
+  s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10, ghost: true } }), d));
+  assert.deepEqual([s.deform.on, s.deform.scale, s.deform.ghost], [true, 10, true]);
   // reactions: the reaction magnitude, a fixed range, another colormap; the deformed shape is off again (each shot starts from the base view).
   s = apply(plan(shotOf({ stage: "unprop", step: 2, contour: { field: "reaction_force", component: "magnitude", range: { min: 0, max: 50 }, cmap: "viridis" } }), d));
   assert.deepEqual([s.contour.field, s.contour.component, s.contour.range, s.contour.fixed, s.contour.cmap, s.deform.on], ["reaction_force", MAGNITUDE, "fixed", { min: 0, max: 50 }, "viridis", false]);
@@ -265,6 +267,29 @@ test("D2: a contour whose whole-history range could not be read is refused; neve
   // A step range asks for no scan: the same failure does not refuse it.
   const stepShot = shotOf({ stage: "base", contour: { field: "displacement", component: "z", range: "step" } });
   assert.equal(viewVerdict(h.store.get(), stepShot, plan(stepShot, describe(h.store.get())), ON).kind, "shown");
+});
+
+test("#2664: a reference ghost over translucent surfaces is refused; over opaque ones it is drawn", async () => {
+  const h = await open(STAGED, STAGED_RESULTS);
+  const shot = shotOf({ stage: "base", deform: { scale: 10, ghost: true } });
+  const p = plan(shot, describe(h.store.get()));
+  for (const e of p.events) h.store.dispatch(e);
+  await until(() => h.store.get().resultStep?.status !== "loading", "the step");
+  assert.equal(h.store.get().visibility.opacity, 1, "a solids-only model opens opaque");
+  assert.notEqual(viewVerdict(h.store.get(), shot, p, ON).kind, "refused");
+  // The default for a model with both solids and lines (reduce.ts), or the user's `ghost` preset.
+  for (const opacity of [0.35, 0.99]) {
+    h.store.dispatch({ type: "setOpacity", value: opacity });
+    assert.deepEqual(viewVerdict(h.store.get(), shot, p, ON), {
+      kind: "refused",
+      reason: `the reference ghost is not drawn over translucent surfaces (surface opacity ${opacity}): a still of it is not reproducible`,
+    });
+    // The same view with no ghost is not refused.
+    const plain = shotOf({ stage: "base", deform: { scale: 10 } });
+    assert.notEqual(viewVerdict(h.store.get(), plain, plan(plain, describe(h.store.get())), ON).kind, "refused");
+  }
+  h.store.dispatch({ type: "setOpacity", value: 1 });
+  assert.notEqual(viewVerdict(h.store.get(), shot, p, ON).kind, "refused");
 });
 
 test("D2: a step that could not be read is refused", async () => {
