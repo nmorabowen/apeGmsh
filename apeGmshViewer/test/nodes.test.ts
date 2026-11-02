@@ -27,6 +27,21 @@ test("nodePositions: reads the drawn positions, so a deformed set moves the mark
   assert.deepEqual([...out], [4, 5, 6, 7, 8, 9], "written in place");
 });
 
+test("the depth pull is a share of eye distance: a marker 0.3 m behind a wall 2 m away stays behind it, even with near at 1e-3", async () => {
+  const THREE = await import("three");
+  const { NODE_DEPTH_PULL } = await import("../src/renderer/nodes.ts");
+  const cam = new THREE.PerspectiveCamera(45, 1, 1e-3, 100);
+  cam.updateProjectionMatrix();
+  const ndcZ = (eyeDist: number, pull: number) => {
+    const v = new THREE.Vector4(0, 0, -eyeDist * (1 - pull), 1).applyMatrix4(cam.projectionMatrix);
+    return v.z / v.w;
+  };
+  for (const [wall, behind] of [[2, 0.3], [5, 3], [0.5, 0.01], [40, 1]] as const) {
+    assert.ok(ndcZ(wall + behind, NODE_DEPTH_PULL) > ndcZ(wall, 0), `marker ${behind} m behind a wall at ${wall} m shows through`);
+  }
+  assert.ok(ndcZ(2, NODE_DEPTH_PULL) < ndcZ(2, 0), "a marker on the face itself is drawn in front of it");
+});
+
 test("loadsInputsChanged: a marker size or a hover skips the loads summary; a phase, the loads or the units do not", () => {
   const store = new Store();
   const s0 = store.get();

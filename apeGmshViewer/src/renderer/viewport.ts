@@ -28,7 +28,7 @@ import { LineDiagramLayer } from "./lineDiagram.ts";
 import { LoadsLayer } from "./loads.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
 import { deformedPositions } from "../state/deform.ts";
-import { gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
+import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -541,6 +541,7 @@ export class Viewport {
       this.setMesh(s.mesh);
       this.applyVisibility(s);
       this.setHighlight(s);
+      this.syncGauss(s);
       this.syncLineDiagram(s);
       this.syncLoads(s);
       return;
@@ -569,7 +570,10 @@ export class Viewport {
     if (!s.mesh) return;
     const { on: nodes, size: nodeSize } = s.nodes;
     if (nodes && !this.nodePoints) {
-      this.rebuild(s, s.mesh);
+      // Only the markers: what is drawn has not changed, so the scene is not rebuilt.
+      if (!this.drawn) return;
+      this.buildNodePoints(s, s.mesh, this.drawn, this.full ?? basePositions(s.mesh, this.blobs));
+      this.requestRender();
       return;
     }
     if (!this.nodePoints) return;
@@ -603,7 +607,8 @@ export class Viewport {
     }
     const info = s.mesh!;
     const stations = this.stationsSource();
-    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, stations?.key ?? null];
+    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, stations?.key ?? null, this.activeTheme];
+    let changed = false;
     if (!this.gauss || this.gauss.deps.length !== deps.length || this.gauss.deps.some((d, i) => d !== deps[i])) {
       if (this.gaussPoints) {
         this.gaussGroup.remove(this.gaussPoints);
@@ -611,32 +616,59 @@ export class Viewport {
         (this.gaussPoints.material as THREE.Material).dispose();
         this.gaussPoints = null;
       }
-      const layout = info.nodes ? gaussLayoutOf(s, this.blobs, stations) : null;
-      const base = layout && info.nodes ? gaussBasePositions(layout, this.blobs.get(info.nodes.ids) as Float64Array, this.blobs.get(info.nodes.xyz) as Float64Array) : null;
+      let layout = info.nodes ? gaussLayoutOf(s, this.blobs, stations) : null;
+      let base = layout && info.nodes ? gaussBasePositions(layout, this.blobs.get(info.nodes.ids) as Float64Array, this.blobs.get(info.nodes.xyz) as Float64Array) : null;
+      if (layout && base) ({ layout, base } = dropUnplaced(layout, base));
       this.gauss = { deps, layout, base, posKey: "" };
       if (layout && base && layout.count) {
         const t = themeTokens(this.activeTheme);
         this.gaussPoints = makeNodePoints(base.slice(), s.gaussPoints.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.accent), toHexNumber(t.bg0));
         this.gaussGroup.add(this.gaussPoints);
       }
+      changed = true;
+      // The Display row states what was placed and why the rest was not.
+      const stage = s.results?.stages[at.stage]?.id ?? "";
+      if (layout) {
+        const measured = { stage, count: layout.count, refused: layout.refused, notes: layout.notes };
+        queueMicrotask(() => this.store.dispatch({ type: "gaussMeasured", ...measured }));
+      }
     }
     const g = this.gauss;
-    if (!this.gaussPoints || !g.layout || !g.base) return;
-    const full = this.full;
-    const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
-    const posKey = disp ? `${full!.key}` : "base";
-    if (posKey !== g.posKey) {
-      g.posKey = posKey;
-      const a = this.gaussPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
-      const out = a.array as Float32Array;
-      if (disp) deformedPositions(g.base, gaussDisplacements(g.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale, out);
-      else out.set(g.base);
-      a.needsUpdate = true;
-      this.gaussPoints.geometry.computeBoundingSphere();
+    if (this.gaussPoints && g.layout && g.base) {
+      const full = this.full;
+      const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
+      const posKey = disp ? `${full!.key}` : "base";
+      if (posKey !== g.posKey) {
+        g.posKey = posKey;
+        const a = this.gaussPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+        const out = a.array as Float32Array;
+        if (disp) deformedPositions(g.base, gaussDisplacements(g.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale, out);
+        else out.set(g.base);
+        a.needsUpdate = true;
+        this.gaussPoints.geometry.computeBoundingSphere();
+        changed = true;
+      }
+      const size = s.gaussPoints.size ?? NODE_SIZE_FALLBACK;
+      if (!this.gaussPoints.visible || (this.gaussPoints.material as THREE.PointsMaterial).size !== size) {
+        this.gaussPoints.visible = true;
+        setNodeSize(this.gaussPoints, size);
+        changed = true;
+      }
     }
-    this.gaussPoints.visible = true;
-    setNodeSize(this.gaussPoints, s.gaussPoints.size ?? NODE_SIZE_FALLBACK);
-    this.requestRender();
+    if (changed) this.requestRender();
+  }
+
+  /** The markers of the drawn nodes, at the drawn (deformed while it shows) positions. */
+  private buildNodePoints(s: State, info: MeshInfo, drawn: { lineMap: Int32Array; triMap: Int32Array }, full: { line: Float32Array; tri: Float32Array }): void {
+    this.nodeVertices = uniqueNodeVertices(
+      this.blobs.get(info.vertexNodes.line) as Float64Array,
+      this.blobs.get(info.vertexNodes.tri) as Float64Array,
+      drawn.lineMap,
+      drawn.triMap,
+    );
+    const t = themeTokens(this.activeTheme);
+    this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
+    this.content.add(this.nodePoints);
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
@@ -1270,17 +1302,7 @@ export class Viewport {
     }
 
     // Built only while wanted: off, the markers cost nothing.
-    if (s.nodes.on) {
-      this.nodeVertices = uniqueNodeVertices(
-        this.blobs.get(info.vertexNodes.line) as Float64Array,
-        this.blobs.get(info.vertexNodes.tri) as Float64Array,
-        drawn.lineMap,
-        drawn.triMap,
-      );
-      const t = themeTokens(this.activeTheme);
-      this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
-      this.content.add(this.nodePoints);
-    }
+    if (s.nodes.on) this.buildNodePoints(s, info, drawn, full);
 
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);

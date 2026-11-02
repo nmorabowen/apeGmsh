@@ -481,6 +481,12 @@ async function captureExtrudeResults(settle: (ms?: number) => Promise<unknown>, 
     const ldPanel = document.getElementById("line-diagram")!;
     const loadsPanel = document.getElementById("loads")!;
     const legendPanel = document.getElementById("legend")!;
+    // Every left-rail card starts collapsed: open these three, so the overlap and collapse checks below see them open.
+    for (const panel of [ldPanel, loadsPanel, legendPanel]) {
+      if (!panel.hidden && panel.dataset["collapsed"] === "true") panel.querySelector("h3")?.click();
+    }
+    await painted();
+    await painted();
     if (!ldPanel.hidden && !loadsPanel.hidden && !legendPanel.hidden) {
       const ldBefore = ldPanel.getBoundingClientRect();
       const loadsBefore = loadsPanel.getBoundingClientRect();

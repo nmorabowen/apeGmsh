@@ -84,9 +84,84 @@ test("setGaussPoints and setGaussSize follow the node markers' size rules, separ
   store.dispatch({ type: "setGaussPoints", on: true });
   store.dispatch({ type: "setGaussSize", size: 4, auto: true });
   store.dispatch({ type: "setNodeSize", size: 12 });
-  assert.deepEqual(store.get().gaussPoints, { on: true, size: 4, auto: true });
+  assert.deepEqual(store.get().gaussPoints, { on: true, size: 4, auto: true, measured: null });
   assert.deepEqual(store.get().nodes, { on: false, size: 12, auto: false });
   store.dispatch({ type: "setGaussPoints", on: false });
   store.dispatch({ type: "setGaussPoints", on: true });
   assert.equal(store.get().gaussPoints.size, null, "automatic: chosen again");
+});
+
+test("a staged model: elements the stage does not have get no point, interior solid elements included", async () => {
+  const { gaussLayoutOf } = await import("../src/state/gaussPoints.ts");
+  const { activationNow } = await import("../src/state/selectors.ts");
+  const { opened, STAGED } = await import("./contour/harness.ts");
+  const { fileURLToPath } = await import("node:url");
+  const h = await opened(STAGED, fileURLToPath(new URL("../fixtures/elem_staged.results.h5", import.meta.url)));
+  try {
+    const stages = h.store.get().results!.stages;
+    let checked = 0;
+    for (let stage = 0; stage < stages.length; stage++) {
+      h.store.dispatch({ type: "setPhase", at: { kind: "results", stage, step: 0 } });
+      const s = h.store.get();
+      const a = activationNow(s);
+      if (!a || a.activation.state !== "filtered" || !s.results!.stages[stage]!.gauss[0]?.elementIds) continue;
+      const tags = a.activation.inactiveTags;
+      const g = s.results!.stages[stage]!.gauss[0]!;
+      const eids = h.blobs.get(g.elementIds!) as Float64Array;
+      const active = [...eids].filter((id) => !(s.decls[`mesh/element/${id}`]?.element?.metas ?? []).some((m) => tags.has(m.tag))).length;
+      if (active === eids.length) continue;
+      const layout = gaussLayoutOf(s, h.blobs, null)!;
+      assert.equal(layout.count, active * g.nGauss, `stage ${stage}: one point per Gauss point of each active element only`);
+      checked++;
+    }
+    assert.ok(checked > 0, "the fixture has a filtered stage whose Gauss groups include inactive elements");
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+test("orientStations: xi runs from the element's node I; a cell stored J to I takes -xi; contradicting nodes refuse", async () => {
+  const { orientStations } = await import("../src/state/gaussPoints.ts");
+  assert.deepEqual(orientStations([4, 5], [4, 5], [-1, 0.4]), [[-1], [0.4]]);
+  assert.deepEqual(orientStations([4, 5], [5, 4], [-1, 0.4]), [[1], [-0.4]]);
+  assert.equal(orientStations([4, 5], [4, 6], [0]), null);
+  assert.equal(orientStations([4, 5], [4, 4], [0]), null);
+  assert.deepEqual(orientStations([4, 5], null, [0.5]), [[0.5]], "no recorded nodes: the cell's order");
+});
+
+test("a beam's points shift to the clear span between its joint offsets; the shift does not deform", () => {
+  const b = builder();
+  b.add("mesh/element/20", [[-1], [0], [1]], { dI: [0, 0, 0.5], dJ: [0, 0, -1] });
+  const layout = b.build();
+  const p = gaussBasePositions(layout, ids, xyz);
+  assert.deepEqual([...p], [0, 1, 0.5, 0, 1, 1.75, 0, 1, 3], "node 4 at z 0 + 0.5, node 5 at z 4 - 1, mid-span between them");
+  const zero = new Float64Array(8);
+  assert.deepEqual([...gaussDisplacements(layout, columnOf(ids), [zero, zero, null])], new Array(9).fill(0));
+});
+
+test("dropUnplaced: a point whose corner is not in the node table is dropped and counted, never drawn at NaN", async () => {
+  const { dropUnplaced } = await import("../src/state/gaussPoints.ts");
+  const b = new GaussLayoutBuilder((p) => (p === "e/1" ? { code: 1, nodes: [4, 99] } : cells[p] ?? null), () => true);
+  b.add("mesh/element/20", [[0]]);
+  b.add("e/1", [[0]]);
+  const layout = b.build();
+  const out = dropUnplaced(layout, gaussBasePositions(layout, ids, xyz));
+  assert.equal(out.layout.count, 1);
+  assert.deepEqual([...out.base], [0, 1, 2]);
+  assert.match(out.layout.notes.at(-1)!, /^1 point not placed: a corner node is not in the model's node table\.$/);
+});
+
+test("gaussMeasured: the Display row lists what the viewport could not place, by reason, for the stage shown", async () => {
+  const { reduce, initialState } = await import("../src/state/store.ts");
+  const { gaussNotesOf } = await import("../src/state/gaussNotes.ts");
+  let s = reduce(initialState, { type: "setGaussPoints", on: true });
+  s = reduce(s, { type: "gaussMeasured", stage: "st", count: 0, refused: [{ reason: "no shape functions for gmsh type 8", elements: 3 }], notes: ["Beam stations not read: boom"] });
+  assert.equal(s.gaussPoints.measured?.count, 0);
+  const staged = { ...s, phase: { ...s.phase, at: { kind: "results" as const, stage: 0, step: 0 } }, results: { stages: [{ id: "st", gauss: [], lineStations: [] }] } } as unknown as typeof s;
+  assert.deepEqual(gaussNotesOf(staged), [
+    "No Gauss point or beam station placed on this stage.",
+    "3 elements not placed: no shape functions for gmsh type 8.",
+    "Beam stations not read: boom",
+  ]);
+  assert.throws(() => reduce(s, { type: "gaussMeasured", stage: "st", count: -1, refused: [], notes: [] }), RangeError);
 });
