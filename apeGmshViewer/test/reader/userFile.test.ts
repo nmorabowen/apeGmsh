@@ -127,12 +127,32 @@ function entry(results: G, link: string, o: EntryOpts): G {
   return g;
 }
 
+/** A two-mode `/modes` table (h5-schema.md `/modes`), checked as a zone by this slice. */
+function modesTable(z: G, drop: string | null = null, lam: number[] = [4, 9]): void {
+  z.create_attribute("components", "MX,MY");
+  const cols: [string, (g: G, n: string) => unknown][] = [
+    ["host", (g, n) => str(g, n, ["stage_0", "stage_0"])],
+    ["kind", (g, n) => str(g, n, ["eigen", "eigen"])],
+    ["step", (g, n) => i4(g, n, [1, 1])],
+    ["mode", (g, n) => i4(g, n, [1, 2])],
+    ["lambda", (g, n) => f8(g, n, lam)],
+    ["period", (g, n) => f8(g, n, lam.map((x) => (2 * Math.PI) / Math.sqrt(Math.abs(x) || 1)))],
+    ["generalized_mass", (g, n) => f8(g, n, [1, 1])],
+    ["participation", (g, n) => f8(g, n, [0.9, 0.1, 0.1, 0.8], [2, 2])],
+    ["mass_ratio", (g, n) => f8(g, n, [0.7, 0.0, 0.0, 0.6], [2, 2])],
+    ["cumulative_ratio", (g, n) => f8(g, n, [0.7, 0.0, 0.7, 0.6], [2, 2])],
+  ];
+  for (const [name, write] of cols) if (name !== drop) write(z, name);
+}
+
 interface UserOpts {
   resultsHash?: string | null;
   femHash?: string;
   /** a version per zone key, or null to leave the key out */
   versions?: Record<string, string | null>;
   rows?: Row[];
+  /** writes the `/modes` group (default: a valid two-mode table) */
+  modes?: (z: G) => void;
   edit?: (f: h5wasm.File) => void;
 }
 
@@ -166,8 +186,8 @@ function writeUser(path: string, o: UserOpts = {}): string {
     entry(r, "r1", { name: "wood_armer", target: "elements" });
     entry(r, "r2", { name: "pier P1 base", target: "entities" });
     entry(r, "r10", { name: "energy", target: "domain", basis: "results" });
-    f8(f.create_group("modes") as G, "lambda", [1]); // listed by name only (VU7)
-    f.create_group("spectra");
+    (o.modes ?? ((z: G) => modesTable(z)))(f.create_group("modes") as G);
+    f.create_group("spectra"); // listed by name only (VU7)
     o.edit?.(f);
   } finally {
     f.close();
@@ -260,7 +280,8 @@ test("the index reads no /results DATA value (the first-frame criterion: only sh
   assert.ok(r.ok, r.ok ? "" : r.error);
   assert.ok(read.some((p) => p.startsWith("/combinations/")), "the probe sees reads (the mock is live)");
   assert.deepEqual(read.filter((p) => /^\/results\/.*\/DATA$/.test(p)), []);
-  assert.deepEqual(read.filter((p) => /^\/(modes|spectra)\//.test(p)), []);
+  // /modes is a small table read whole for its zone check, as Python's staleness reads it; /spectra is never read.
+  assert.deepEqual(read.filter((p) => /^\/spectra\//.test(p)), []);
 });
 
 test("a bad /meta refuses the file, naming why (Python's UserFileRefused)", () => {
@@ -521,4 +542,38 @@ test("a model whose /opensees/combinations cannot be read refuses the combinatio
   broken.close();
   const u = readUserFile(H5, s.user, s.model);
   assert.ok(!u.combinations.ok && /\/opensees\/combinations: the archive has no opensees_schema_version/.test(u.combinations.reason));
+});
+
+// Review of #2729, finding 2: Python's staleness reads /modes (`_mode_rows` ->
+// `UserFile.modes()`), so a zone that refuses there is stale with the refusal.
+test("/modes is checked as a zone: a missing key, another major, a missing column or a bad table stales it", () => {
+  const good = set();
+  const u = readUserFile(H5, good.user, good.model);
+  assert.deepEqual(u.modes, { ok: true, value: { rows: 2, components: ["MX", "MY"] } });
+  const cases: [string, UserOpts, RegExp][] = [
+    ["key gone", { versions: { modes_schema_version: null } }, /^refused: \/modes: \/meta has no version key for zone 'modes'$/],
+    ["major 2", { versions: { modes_schema_version: "2.0.0" } }, /^refused: \/modes: modes_schema_version 2\.0\.0: this app reads major 1 only$/],
+    ["column gone", { modes: (z) => modesTable(z, "period") }, /^refused: \/modes: it has no period column$/],
+    ["lambda <= 0", { modes: (z) => modesTable(z, null, [4, -1]) }, /^refused: \/modes: every lambda must be finite and > 0/],
+  ];
+  for (const [name, o, why] of cases) {
+    const s = set(o);
+    const v = verdict(readUserFile(H5, s.user, s.model), s.model, s.results);
+    assert.equal(v.zones["modes"], true, name);
+    assert.match(v.st.zones["modes"]!.reason, why, name);
+    assert.equal(v.zones["spectra"], false, `${name}: the other model zones keep the model's state`);
+  }
+});
+
+// Review of #2729, finding 4: ADR 0113 D7, a newer minor of the model's opensees zone opens with one banner.
+test("a model.h5 whose opensees zone is newer than this app gives one banner, naming the model", () => {
+  const s = set();
+  const f = new h5wasm.File(s.model, "a");
+  at(f, "meta").delete_attribute("opensees_schema_version");
+  at(f, "meta").create_attribute("opensees_schema_version", "2.99.0");
+  f.close();
+  const u = readUserFile(H5, s.user, s.model);
+  assert.ok(u.combinations.ok);
+  assert.equal(u.warnings.length, 1, JSON.stringify(u.warnings));
+  assert.ok(u.warnings[0]!.startsWith(`${s.model} (read for /opensees/combinations): opensees_schema_version 2.99.0 is newer than this app`), u.warnings[0]);
 });

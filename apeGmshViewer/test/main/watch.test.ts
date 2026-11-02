@@ -135,25 +135,39 @@ test("a file opened under an upper-case suffix is reported when rewritten", asyn
 
 // VU3a (#2687): the user file is a member of the set. Its writers replace it
 // through a per-writer partial (h5-schema.md "Writing"), which is never reported.
-test("a user file appearing reopens the set; a replace through a partial is a fileChanged of the user file", async () => {
+// Review of #2729, finding 1: a reopen re-reads model, geometry and results and
+// clears the step, so the user file moving alone must never cause one.
+test("a user file appearing, replaced through a partial, and deleted is a fileChanged of it each time, never a reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "agv-watch-"));
   const model = join(dir, "m.h5");
+  const results = join(dir, "m.ladruno");
   const user = join(dir, "m.user.h5");
   const partial = `${user}.myhost-123-abc.partial`;
   writeFileSync(model, "model");
+  writeFileSync(results, "results");
   const { heard, watcher } = harness(model);
+  const settle = async (n: number) => {
+    await until(() => heard.length >= n);
+    await sleep(500); // nothing more may arrive
+    assert.equal(heard.length, n, JSON.stringify(heard));
+  };
   try {
     await sleep(100);
     writeFileSync(partial, "u1");
+    await sleep(500);
+    assert.equal(heard.length, 0, "a partial alone is not a member");
     renameSync(partial, user);
-    await until(() => heard.length > 0);
-    assert.deepEqual(heard[0]!.reopened, { model, geometry: null, results: null, user });
+    await settle(1);
+    assert.equal(watcher.set.user, user, "the watcher's set holds the user file");
 
     writeFileSync(partial, "u2, longer");
     renameSync(partial, user);
-    await until(() => heard.length > 1);
-    await sleep(500);
-    assert.deepEqual(heard.slice(1).map((h) => h.changed ?? h), [user]);
+    await settle(2);
+
+    rmSync(user);
+    await settle(3);
+    assert.equal(watcher.set.user, null);
+    assert.deepEqual(heard.map((h) => h.changed ?? h), [user, user, user], "appeared, replaced, deleted: three changes of the user file, no reopen");
   } finally {
     watcher.close();
     rmSync(dir, { recursive: true, force: true });

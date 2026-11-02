@@ -437,9 +437,11 @@ function deliver(channel: "open" | "fileChanged", payload: unknown): void {
 }
 
 /** The open set and its watcher (view mode only). */
+/** The newest watcher: a user file that appears or goes is a `changed`, not a reopen, so only the watcher's set knows the user slot (`viewer:currentSet`). */
+let liveWatcher: SetWatcher | null = null;
 const session = new OpenSession({
   exists: existsSync,
-  watch: (opened, sink) => new SetWatcher(opened, sink).start(),
+  watch: (opened, sink) => (liveWatcher = new SetWatcher(opened, sink).start()),
   deliver,
   fail,
   note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
@@ -692,7 +694,10 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 }
 
 // The set already open, for a new onOpen listener (the preload replays it).
-ipcMain.handle("viewer:currentSet", () => (mode === "view" ? session.set : null));
+ipcMain.handle("viewer:currentSet", () => {
+  if (mode !== "view" || session.set === null) return null;
+  return liveWatcher === null ? session.set : { ...session.set, user: liveWatcher.set.user };
+});
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };

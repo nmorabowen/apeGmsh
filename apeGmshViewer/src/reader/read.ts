@@ -208,13 +208,15 @@ export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
 export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
 /**
  * The `<stem>.user.h5` zones the app reads (ADR 0130 slice VU3a, reader/userFile.ts):
- * `/meta`, `/combinations` and the index of `/results`, each at its first version.
- * `/modes`, `/spectra` and `/entities` are listed by name only; their readers (VU7,
- * VU8) add their targets.
+ * `/meta`, `/combinations` and the index of `/results`, each at its first version,
+ * and `/modes` checked as a zone (its version and columns; the staleness table
+ * needs it). `/spectra` and `/entities` are listed by name only; their readers
+ * (VU7, VU8) add their targets.
  */
 export const USER_META_TARGET = { major: 1, minor: 0 } as const;
 export const COMBINATIONS_TARGET = { major: 1, minor: 0 } as const;
 export const USER_RESULTS_TARGET = { major: 1, minor: 0 } as const;
+export const MODES_TARGET = { major: 1, minor: 0 } as const;
 /**
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check
@@ -227,7 +229,7 @@ export const USER_RESULTS_TARGET = { major: 1, minor: 0 } as const;
  * compares every row with Python's `reader_floor(zone)`.
  * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
-export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0 } as const;
+export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0, modes: 0 } as const;
 
 /**
  * ADR 0113 D7, the app's rule for one zone's `/meta/<key>` stamp:

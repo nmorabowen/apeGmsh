@@ -13,7 +13,9 @@
 //
 // The `<stem>.user.h5` is a member like the others (ADR 0130, slice VU3a). Its
 // writers replace it through `<stem>.user.h5.<host>-<pid>-<random>.partial`,
-// which is no candidate, so only the replace is seen. Its staleness depends on
+// which is no candidate, so only the replace is seen. The user file appearing,
+// being replaced or being deleted is a `changed(<its path>)`, never a
+// `reopened`: whether the path exists says which. Its staleness depends on
 // the model and the results file too, so a `changed` of either is a reason to
 // read it again (`user:read`, main.ts).
 //
@@ -125,8 +127,13 @@ export class SetWatcher {
     this.reported.set(path, sig);
     const next = this.current();
     if (!sameSet(next, this.set)) {
+      const prev = this.set;
       this.set = next;
-      this.sink.reopened(next);
+      // Only the user slot moved (it appeared, was replaced or was deleted): the
+      // model, geometry and results the window shows are unchanged, so a reopen
+      // (which re-reads them all and clears the step) would be wrong.
+      if (sameSet({ ...next, user: null }, { ...prev, user: null })) this.sink.changed(next.user ?? prev.user ?? this.cands.user);
+      else this.sink.reopened(next);
     } else if (inSet(next, path)) {
       this.sink.changed(path);
     }

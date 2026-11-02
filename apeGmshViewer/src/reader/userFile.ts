@@ -8,11 +8,11 @@
 // row refuses alone, with a reason (`refused`).
 //
 // What this reader never does: read a `/results` entry's `DATA` (only its shape),
-// or any value of `/modes`, `/spectra` and `/entities`. Those three zones are
-// listed by name in `zones`; the slices that draw them (VU7, VU8) read them, and
-// add their version targets. Until then:
-// - a `/modes` row's lambda rule (A6) is not applied; the zone's model-hash
-//   state is;
+// or any value of `/spectra` and `/entities`, which are listed by name in `zones`
+// (their readers, VU7 and VU8, add their version targets). `/modes` is checked as
+// a zone, as Python's staleness checks it: its version, its columns and
+// `table_problem`; a refusal there stales the zone. Until VU7:
+// - a `/modes` row's lambda rule (A6) is not applied; the zone's state is;
 // - an `ON_ENTITIES` user result is refused, `unresolved`, because its rows
 //   cannot be checked against `/entities` (Python's `_bound_entries`);
 // - an element entry's `GP_PARAM` frame is not checked against its topology
@@ -22,7 +22,7 @@
 // be compared is stale, so nothing is drawn as current on no proof.
 
 import { openH5 } from "./h5open.ts";
-import { checkZoneVersion, COMBINATIONS_TARGET, OPENSEES_TARGET, SchemaError, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
+import { checkZoneVersion, COMBINATIONS_TARGET, MODES_TARGET, OPENSEES_TARGET, SchemaError, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
 import { byCodePoint, FingerprintRefused, resultsFingerprint, type FpDataset, type FpFile, type FpGroup, type FpH5, type H5Meta } from "./rf1.ts";
 import { addressProblem, nameProblem, resolve, type Combination, type Refusal, type StateAddress, type Term } from "./userRules.ts";
 
@@ -94,6 +94,14 @@ export interface UserIndex {
   warnings: string[];
   combinations: ZoneRead<CombinationTable>;
   results: ZoneRead<ResultIndex>;
+  /** `/modes` checked as a zone (no row rule until VU7), or null when the file holds none */
+  modes: ZoneRead<ModesIndex> | null;
+}
+
+/** What this slice reads of `/modes`: the zone stands, with this many rows over these components. */
+export interface ModesIndex {
+  rows: number;
+  components: string[];
 }
 
 /** Whether one zone or entry is stale, and why ("" when current). */
@@ -122,6 +130,9 @@ const BASES = ["results", "model"] as const;
 const ON: Record<ResultEntry["target"], string> = { nodes: "ON_NODES", elements: "ON_ELEMENTS", entities: "ON_ENTITIES", domain: "ON_DOMAIN" };
 const ENTITY_KINDS = ["cut", "storey", "point_set"];
 const MODEL_ZONES = ["modes", "spectra", "entities"] as const;
+/** `modalProperties` component tokens, and `modeKind` names (Python's `_modes.COMPONENTS`, `KINDS`). */
+const MODE_COMPONENTS = ["MX", "MY", "MZ", "RMX", "RMY", "RMZ"];
+const MODE_KINDS = ["eigen", "residual", "ritz"];
 /** A term's data comes from these zones; a `stage` or `mode` term reads the `.ladruno`, current by definition. */
 const TERM_ZONE: Record<string, string> = { spectrum: "spectra", reference: "spectra" };
 
@@ -256,11 +267,12 @@ export function readUserFile(h5: UserH5, path: string, model: string | null): Us
     const meta = readMeta(t, f, path);
     // Python's staleness passes the model only when its hashes read (`_readable`).
     let modelRows: ZoneRead<Combination[]> = { ok: true, value: [] };
-    if (model !== null && modelHashes(h5, model).ok) modelRows = readModelCombinations(h5, model);
+    if (model !== null && modelHashes(h5, model).ok) modelRows = readModelCombinations(h5, model, meta.warnings);
     return {
       ...meta,
       combinations: zoneRead(() => readCombinations(t, f, meta.warnings, modelRows)),
       results: zoneRead(() => readResults(t, f, meta.warnings)),
+      modes: f.keys().includes("modes") ? zoneRead(() => readModes(t, f, meta.warnings)) : null,
     };
   } finally {
     f.close();
@@ -276,7 +288,7 @@ function zoneRead<T>(read: () => T): ZoneRead<T> {
   }
 }
 
-function readMeta(t: Tree, f: FpFile, path: string): Omit<UserIndex, "combinations" | "results"> {
+function readMeta(t: Tree, f: FpFile, path: string): Omit<UserIndex, "combinations" | "results" | "modes"> {
   const m = t.group(f, "meta");
   if (m === null) throw new UserFileRefused(`${path} has no /meta group`);
   const key = "user_meta_schema_version";
@@ -395,7 +407,7 @@ function readGeneration(t: Tree, g: FpGroup, zone: string): Combination[] {
 }
 
 /** The rows of `/opensees/combinations/g0` in a model archive, or `[]` (Python's `read_model_combinations`). */
-function readModelCombinations(h5: UserH5, model: string): ZoneRead<Combination[]> {
+function readModelCombinations(h5: UserH5, model: string, warnings: string[]): ZoneRead<Combination[]> {
   const where = "/opensees/combinations";
   const t = new Tree(h5);
   let f: FpFile;
@@ -409,7 +421,10 @@ function readModelCombinations(h5: UserH5, model: string): ZoneRead<Combination[
     const meta = t.group(f, "meta");
     const key = "opensees_schema_version";
     if (meta === null || meta.attrs[key] === undefined) throw new ZoneRefused(where, "the archive has no opensees_schema_version");
-    checkZoneVersion(textAttr(meta, key) as string, key, OPENSEES_TARGET, ZONE_FLOOR.opensees, []);
+    // ADR 0113 D7: a newer minor opens with one banner, here the model's, named as such.
+    const newer: string[] = [];
+    checkZoneVersion(textAttr(meta, key) as string, key, OPENSEES_TARGET, ZONE_FLOOR.opensees, newer);
+    for (const w of newer) warnings.push(`${model} (read for /opensees/combinations): ${w}`);
     const zone = t.group(f, "opensees/combinations");
     const g0 = zone === null ? null : t.group(zone, "g0");
     if (g0 === null) throw new ZoneRefused(where, "it has no g0");
@@ -611,6 +626,76 @@ function checkPlacement(t: Tree, entry: FpGroup, bucket: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// /modes, as a zone (Python's `read_modes` and `table_problem`)
+// ---------------------------------------------------------------------------
+
+function modeColumn(t: Tree, zone: FpGroup, name: string, code: string, ndim: number): { values: unknown[]; shape: number[] } {
+  const ds = t.dataset(zone, name);
+  if (ds === null) throw new ZoneRefused("/modes", `it has no ${name} column`);
+  if (!isCode(ds, code) || shape(ds).length !== ndim) {
+    throw new ZoneRefused("/modes", `${name} is ${dtypeText(ds)} (${shape(ds).join(", ")}), expected ${code}, rank ${ndim}`);
+  }
+  return { values: values(ds), shape: shape(ds) };
+}
+
+function readModes(t: Tree, f: FpFile, warnings: string[]): ModesIndex {
+  if (!zoneVersionChecked(t, f, "modes", "modes", MODES_TARGET, ZONE_FLOOR.modes, warnings)) {
+    throw new ZoneRefused("/modes", "this file holds no modal table");
+  }
+  const zone = t.group(f, "modes");
+  if (zone === null) throw new ZoneRefused("/modes", "it is not a group");
+  if (zone.attrs["components"] === undefined) throw new ZoneRefused("/modes", "it has no @components");
+  const components = (textAttr(zone, "components") ?? "").split(",");
+  const host = modeColumn(t, zone, "host", "str", 1).values.map((x) => cell(x, "/modes", "host"));
+  const kind = modeColumn(t, zone, "kind", "str", 1).values.map((x) => cell(x, "/modes", "kind"));
+  const step = modeColumn(t, zone, "step", "i4", 1).values as number[];
+  const mode = modeColumn(t, zone, "mode", "i4", 1).values as number[];
+  const lam = modeColumn(t, zone, "lambda", "f8", 1).values as number[];
+  const period = modeColumn(t, zone, "period", "f8", 1).values as number[];
+  const mass = modeColumn(t, zone, "generalized_mass", "f8", 1).values as number[];
+  const table = ["participation", "mass_ratio", "cumulative_ratio"].map((n) => [n, modeColumn(t, zone, n, "f8", 2)] as const);
+  const problem = modeTableProblem(components, host, kind, step, mode, lam, period, mass, table);
+  if (problem !== null) throw new ZoneRefused("/modes", problem);
+  return { rows: host.length, components };
+}
+
+function modeTableProblem(
+  components: string[], host: string[], kind: string[], step: number[], mode: number[],
+  lam: number[], period: number[], mass: number[], table: readonly (readonly [string, { values: unknown[]; shape: number[] }])[],
+): string | null {
+  const m = host.length;
+  const c = components.length;
+  if (m === 0) return "the table has no rows";
+  if (c === 0 || new Set(components).size !== c || components.some((x) => !MODE_COMPONENTS.includes(x))) {
+    return `components ${components.join(",")} must be distinct tokens of ${MODE_COMPONENTS.join(", ")}`;
+  }
+  if (kind.length !== m) return `${kind.length} kinds for ${m} rows`;
+  for (const h of host) {
+    const problem = nameProblem(h);
+    if (problem !== null) return `host ${JSON.stringify(h)}: ${problem}`;
+  }
+  const bad = [...new Set(kind.filter((k) => !MODE_KINDS.includes(k)))].sort();
+  if (bad.length > 0) return `kinds ${bad.join(", ")} are not one of ${MODE_KINDS.join(", ")}`;
+  for (const [what, col] of [["step", step], ["mode", mode]] as const) {
+    if (col.length !== m) return `${what} must be ${m} integers, got ${col.length}`;
+  }
+  if (Math.min(...step) < -1) return "a step is below -1";
+  if (Math.min(...mode) < 1) return "modes are 1-based";
+  if (new Set(host.map((h, i) => JSON.stringify([h, step[i], mode[i]]))).size !== m) return "two rows name the same (host, step, mode)";
+  for (const [what, col] of [["lambda", lam], ["period", period], ["generalized_mass", mass]] as const) {
+    if (col.length !== m) return `${what} has shape (${col.length}), expected (${m})`;
+  }
+  if (lam.some((x) => !Number.isFinite(x) || x <= 0)) return "every lambda must be finite and > 0 (lambda <= 0 is refused)";
+  if (period.some((x) => !Number.isFinite(x) || x <= 0)) return "every period must be finite and > 0";
+  if (mass.some((x) => x === Infinity || x === -Infinity)) return "a generalized_mass is infinite";
+  for (const [what, col] of table) {
+    if (!sameShape(col.shape, [m, c])) return `${what} has shape (${col.shape.join(", ")}), expected (${m}, ${c})`;
+    if ((col.values as number[]).some((x) => x === Infinity || x === -Infinity)) return `${what} holds an infinite value`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Staleness (A6)
 // ---------------------------------------------------------------------------
 
@@ -667,6 +752,8 @@ export function staleness(h5: UserH5, user: UserIndex, model: string | null, res
   const byResults = resultsState(h5, user, results, list);
   const zones: Record<string, ZoneState> = { meta: { stale: false, reason: "" } };
   for (const root of MODEL_ZONES) if (user.zones.includes(root)) zones[root] = byModel;
+  // Python's `_mode_rows` reads the table: a zone that refuses is stale with the refusal.
+  if (user.modes !== null && !user.modes.ok) zones["modes"] = { stale: true, reason: user.modes.reason };
 
   const entries: Record<string, ZoneState> = {};
   if (user.results.ok) {
