@@ -2653,8 +2653,9 @@ non-mesh entities. apeGmsh owns it, and the recorder's `.ladruno` never holds an
 of this ([ADR 0130](decisions/0130-states-quantities-and-the-user-results-file.md),
 Amendment 1). Python writes every zone; the app writes only `/combinations`.
 
-No writer or reader exists yet: slice VU1 implements this and adds the zones to
-the [registry](#zone-registry).
+`apeGmsh.results.user` writes and reads `/meta`, `/combinations`, `/results`,
+`/modes`, `/spectra` and `/entities`, which are in the [registry](#zone-registry).
+The app does not read this file yet (slice VU3a).
 
 Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
 ([integer policy](#integer-policy-for-the-adr-0112-zones)). Columns in one table
@@ -2699,6 +2700,8 @@ Readers ignore unknown attributes and groups.
     lambda, sa_period, gamma, sa, damping    f8 (M,)    sa_period: 0 = own period
   reference/RESULTS/...  S = 1: the reference state's values
   RESULTS/..., MODEL/... as /results, S = M; labels are recorder spellings
+                         1.0.0: ON_NODES and ON_DOMAIN only; a reader refuses
+                         a case holding any other family ("not in spectra 1.0.0")
 
 /results/r<k>/           one user result
   @name, @KIND="static"
@@ -2717,7 +2720,9 @@ Readers ignore unknown attributes and groups.
     ON_ENTITIES/values/  ENTITY_KIND str, ENTITY_ROW i4 (n,) in place of ID
     ON_DOMAIN/values/    n = 1, no ID
   MODEL/ELEMENTS/<bucket>/
-    @TOPOLOGY, @PARAM_DOMAIN, @NUM_GP
+    @TOPOLOGY, @PARAM_DOMAIN, @FAMILY    all required
+    @ORDER               i4 (ndir,); required, each >= 1
+    @NUM_GP              i4
     QUADRATURE/GP_PARAM  f8 (G,ndir)
 
 /entities
@@ -2742,11 +2747,38 @@ Readers ignore unknown attributes and groups.
     host_element         i4 (P,); -1 = none
 ```
 
+In a `/spectra` case, `modes/sa` is the `Sa` the mode's response was scaled by:
+`@scale` times `Sa(T)` at the mode's `sa_period`, or at its own period where
+`sa_period` is 0. `spectrum/Sa` is the spectrum unscaled, so `@scale · Sa`
+interpolated at those periods gives `modes/sa`.
+
+In `/entities`, `@element_index_space` covers every element id the zone holds:
+a cut's `element_ids` and a point's `host_element`, both OpenSees tags. Python writes
+all three tables, empty ones included (`K = 0`, offsets `[0]`). A row of
+`<kind>_offsets` is `[offsets[i], offsets[i+1])` of its column, starting at 0 and
+ending at the column's length. A missing table, a malformed column or offsets that
+break this rule refuse the zone. A bad row refuses alone, keeping its position, and
+the zone still opens. A row is bad when its name breaks the name rule (`empty-name`),
+when another row of its table shares the name (`duplicate`, both rows), or, with
+`bad-param`, when it has a coordinate that is not finite, a cut with no element, a
+non-unit `normal`, a `side` other than `positive` or `negative`, or a bounding
+polygon of one or two vertices (an empty polygon row means none), a storey with no
+node, or a point set with no point or a `host_element` below `-1`. A writer refuses
+every bad row. A cut's moments are about its `reference`. An `ON_ENTITIES` result
+names a row by `ENTITY_KIND` (`cut`, `storey` or `point_set`, for the tables `cuts`,
+`storeys` and `point_sets`) and `ENTITY_ROW`, its 0-based row there. A reader
+refuses an entry with any other kind, and refuses alone, as `unresolved`, an entry
+naming a row that `/entities` does not hold or refuses. A write refuses such an
+entry, and when a model-hash change drops `/entities` (`drop_stale`), every
+`ON_ENTITIES` result is dropped with it.
+
 A `/results` or `/spectra` group is a small stage, so the `.ladruno` read path
 reads it. `STEP` and `TIME` are `0..S-1`; the state of a row is in `STATES` or
 `modes`, never in `STEP`. A stage carries its own `GP_PARAM`, because the
 `.ladruno` does not always have one to borrow: the slab's `ASDShellT3` bucket has
-none.
+none. `@FAMILY` and `@ORDER` are required because the `.ladruno` read path needs
+them to place `GP_PARAM`: a barycentric rule's frame differs between `lagrange` and
+`bernstein`, and a group with no `@ORDER` reads as an old conversion.
 
 **Names.** A name is data in `@name` or a table column, never a link. It is
 non-empty NFC UTF-8 with no control characters and no leading or trailing
@@ -2773,14 +2805,17 @@ whitespace, and compares byte-equal.
 | `envelope` | list | `max`, `min` or `absmax` |
 
 "List" excludes whole cases. A whole case first sums the modes that share a
-`sa_period`. A finite `damping` overrides; NaN takes the case's per-mode column.
+`sa_period`. A finite `damping` must be in (0,1) and overrides; NaN takes the case's
+per-mode column. `cqc` over `mode` terms with NaN damping is `bad-param`, because no
+damping source exists for modes; a whole-case row keeps NaN.
 `λ ≤ 0` is refused. Terms join on the result label, the ID and the Gauss index,
 and a missing row is NaN. Only `linear` can be signed, and only if all its terms
 are. Sign is never stored.
 
 **Refusal** is per row at read, never at open, with the reason `empty-name`,
 `duplicate`, `clash`, `unknown-rule`, `no-terms`, `bad-param`, `bad-term`,
-`unresolved` or `cycle`. Malformed columns refuse the zone.
+`unresolved` or `cycle`. A row in a cycle or reaching one reads `cycle`. Malformed
+columns refuse the zone, and so does a non-UTF-8 cell.
 
 **`/opensees/combinations`** in `model.h5` has this layout at `g0`, is versioned
 by the opensees zone, is in `MODEL_HASH_EXCLUDED_CHILDREN`, and resolves only
@@ -2792,10 +2827,18 @@ summing rule needs `@linear=1`, and `envelope` reads the terms' stored rows.
 
 **Staleness.** `rf1` is SHA-256, in index order over every part of the paired
 `.ladruno`, of: `GENERATOR`, `FORMAT_VERSION`, `RUN_ID`; each stage's `KIND`; each
-result's path, shape, dtype, `TIME` and `STEP`; each mode's `LAMBDA`; and the
-last slab of the stage's first nodal result (first element bucket if it has no
-nodal result), little-endian as stored. `INFO/PROVENANCE` is excluded. A native
-`results.h5` uses `native:<lineage hash>`.
+result's path, shape, dtype, `TIME` and `STEP`, in every family under `RESULTS`
+(`ON_NODES`, `ON_ELEMENTS`, then the rest by name: `ENVELOPES`, `ON_DOMAIN`,
+`ON_REGIONS`); each mode's `LAMBDA`; and one sample per stage, little-endian as
+stored: the last slab of the stage's first nodal result, else of its first element
+bucket, else the first result of any other family under `RESULTS` (its last slab, or
+every statistic of an envelope, which has no time axis). `INFO/PROVENANCE` is
+excluded. Values outside the sample are not hashed, so these are not seen: a rewrite
+of earlier steps under an identical last slab, and, on a stage with a nodal or
+element slab, a rewrite of `ON_DOMAIN`, `ON_REGIONS` or `ENVELOPES` values that keeps
+every shape, `TIME` and `STEP`. A real re-run moves the sampled slab or `RUN_ID`. The
+byte encoding is in `results/user/_fingerprint.py`. A native `results.h5` uses
+`native:<lineage hash>`.
 
 | Zone | Stale when |
 |---|---|
@@ -2807,9 +2850,21 @@ nodal result), little-endian as stored. `INFO/PROVENANCE` is excluded. A native
 A write that changes `@results_hash` rewrites or explicitly drops the
 `@basis=results` entries.
 
-**Writing.** Every write goes to `<stem>.user.h5.partial` in the same folder and
-then replaces the file, so a killed writer leaves the previous file whole. The
-app adds a generation to a copy and never rewrites one, because h5wasm cannot
+**Writing.** Each writer creates its own `<stem>.user.h5.<host>-<pid>-<random>.partial`
+in the same folder, opened exclusively, and then replaces the file, so a killed writer
+leaves the previous file whole. The name is per writer because, on Windows, opening a
+shared name for writing truncates it before failing on the lock, which destroys the
+other writer's data. A writer verifies its partial, bit-comparing the `DATA` it
+wrote, and compares `/meta@revision` immediately before the replace: if it moved, the
+write refuses, so the second of two writers refuses rather than overwriting. A small
+window remains between that comparison and the replace. A writer deletes only its
+own partial on failure. It sweeps a leftover only if the leftover names this host and
+its PID is not alive, because a set may live in a synced folder, where another
+machine's live writer has a PID this host cannot see. `<host>` is the machine name in
+lower case, with each run of characters other than `a-z0-9` replaced by `_`; a writer
+that cannot tell its host sweeps nothing. A failed sweep does not fail the write. A zone group with no version key refuses the write.
+The app follows the same rules: it adds a generation to its own copy (this name, not
+ADR 0130 A4's fixed one) and never rewrites a generation, because h5wasm cannot
 delete a link or rewrite a vlen dataset. Earlier generations are its backup.
 
 **Variants.** `<study>.variants.json` beside the sets holds `version` and a list
@@ -2868,6 +2923,12 @@ call `validate_zone_version(...)` for each zone before reading it.
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | assembly (ADR 0117 D5) | `assembly_schema_version` | `/assembly` (`Assembly.h5` archives only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ASSEMBLY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | sequence (ADR 0112 D2b) | `sequence_schema_version` | `/sequence` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SEQUENCE_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| user_meta (ADR 0130) | `user_meta_schema_version` | `/meta` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_META_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| combinations (ADR 0130) | `combinations_schema_version` | `/combinations` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `COMBINATIONS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| user_results (ADR 0130) | `user_results_schema_version` | `/results` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_RESULTS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| modes (ADR 0130) | `modes_schema_version` | `/modes` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `MODES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| spectra (ADR 0130) | `spectra_schema_version` | `/spectra` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SPECTRA_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| entities (ADR 0130) | `entities_schema_version` | `/entities` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ENTITIES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
 > The geometry, provenance, assembly and sequence keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
