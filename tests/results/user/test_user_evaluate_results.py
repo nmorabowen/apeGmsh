@@ -199,11 +199,12 @@ def test_a_combination_handle_of_another_set_is_refused(run, tmp_path: Path) -> 
     assert err.value.reason == "foreign-handle"
 
 
-def test_a_spectrum_term_without_a_spectra_reader_is_unresolved(run, tmp_path: Path) -> None:
+def test_a_spectrum_term_over_a_case_the_set_lacks_is_unresolved(run, tmp_path: Path) -> None:
     _user(tmp_path, [Combination("E", "cqc", (Term("spectrum", "Ex"),))])
     with pytest.raises(CombinationRefused) as err:
         run.combinations().evaluate("E", "displacement_x")
     assert err.value.reason == "unresolved"
+    assert "no spectrum case named 'Ex'" in err.value.detail
 
 
 def test_model_h5_combinations_evaluate_without_a_user_file(run, tmp_path: Path) -> None:
