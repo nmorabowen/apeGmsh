@@ -1,6 +1,6 @@
 ### apeGmshViewer: the reference ghost draws the same pixels every time
 
-A view spec may now ask for `deform.ghost: true`. Spec v1 refused it because two
+A view spec may now ask for `deform.ghost: true` on a model drawn opaque. Spec v1 refused it because two
 shots of one spec differed by up to 1,200 pixels and 8 levels: a blended triangle in
 the 4x MSAA canvas gives other pixels from frame to frame with nothing changed. The
 ghost's faces and outline edges now draw into their own target with no MSAA, tested
@@ -12,6 +12,7 @@ edges, where it used to lie under them, so its pixels change slightly in the app
 well as in a still.
 
 Over translucent surfaces (surface opacity below 1, the default for a model with both
-solids and lines, so a view spec reaches it) the ghost stays under the mesh, with its
-earlier look, and no pixel identity is claimed: the mesh's own blended triangles are
-in the MSAA canvas. The app-chrome capture race is tracked apart in #2696.
+solids and lines) the ghost stays under the mesh, with its earlier look, and is not
+pixel-identical: the mesh's own blended triangles are in the MSAA canvas. So a view
+spec refuses a ghost shot there, with that reason, and the other shots still run. The
+app-chrome capture race is tracked apart in #2696.

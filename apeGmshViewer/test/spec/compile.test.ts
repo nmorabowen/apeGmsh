@@ -269,6 +269,29 @@ test("D2: a contour whose whole-history range could not be read is refused; neve
   assert.equal(viewVerdict(h.store.get(), stepShot, plan(stepShot, describe(h.store.get())), ON).kind, "shown");
 });
 
+test("#2664: a reference ghost over translucent surfaces is refused; over opaque ones it is drawn", async () => {
+  const h = await open(STAGED, STAGED_RESULTS);
+  const shot = shotOf({ stage: "base", deform: { scale: 10, ghost: true } });
+  const p = plan(shot, describe(h.store.get()));
+  for (const e of p.events) h.store.dispatch(e);
+  await until(() => h.store.get().resultStep?.status !== "loading", "the step");
+  assert.equal(h.store.get().visibility.opacity, 1, "a solids-only model opens opaque");
+  assert.notEqual(viewVerdict(h.store.get(), shot, p, ON).kind, "refused");
+  // The default for a model with both solids and lines (reduce.ts), or the user's `ghost` preset.
+  for (const opacity of [0.35, 0.99]) {
+    h.store.dispatch({ type: "setOpacity", value: opacity });
+    assert.deepEqual(viewVerdict(h.store.get(), shot, p, ON), {
+      kind: "refused",
+      reason: `the reference ghost is not drawn over translucent surfaces (surface opacity ${opacity}): a still of it is not reproducible`,
+    });
+    // The same view with no ghost is not refused.
+    const plain = shotOf({ stage: "base", deform: { scale: 10 } });
+    assert.notEqual(viewVerdict(h.store.get(), plain, plan(plain, describe(h.store.get())), ON).kind, "refused");
+  }
+  h.store.dispatch({ type: "setOpacity", value: 1 });
+  assert.notEqual(viewVerdict(h.store.get(), shot, p, ON).kind, "refused");
+});
+
 test("D2: a step that could not be read is refused", async () => {
   const h = await open(STAGED, STAGED_RESULTS);
   const shot = shotOf({ stage: "base", step: 1 });

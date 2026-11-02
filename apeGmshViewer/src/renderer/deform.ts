@@ -260,7 +260,8 @@ function encodeSrgb(m: THREE.Material): void {
  * Over translucent surfaces it goes first, under them (`applyGhostVisibility`;
  * owner ruling on #2664: that look stays). No pixel identity is claimed there:
  * the mesh's own blended triangles are in the canvas, and blended triangles there
- * differ from frame to frame. The app-chrome capture race is apart (#2696).
+ * differ from frame to frame, so a view spec refuses a ghost shot over them
+ * (spec/verdict.ts). The app-chrome capture race is apart (#2696).
  */
 function ghostComposite(): THREE.Mesh {
   const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });

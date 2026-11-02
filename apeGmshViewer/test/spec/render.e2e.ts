@@ -44,6 +44,7 @@ import type { ManifestEntry } from "../../src/spec/manifest.ts";
 import { caseShot, ORACLE, sameAsOracle } from "./manifestOracle.ts";
 import { readPng, rgbDiff } from "./png.ts";
 import { makeReactionSet } from "./reactions.ts";
+import * as h5wasm from "h5wasm/node";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const FIX = join(ROOT, "fixtures");
@@ -112,6 +113,25 @@ function copySet(dir: string, model: string, results: string, stem = "set"): str
 const activation = copySet(join(OUT, "sets", "activation"), "staged_activation.h5", "staged_activation.results.h5");
 const badid = copySet(join(OUT, "sets", "badid"), "elem_badid.h5", "elem_badid.results.h5");
 const mismatch = copySet(join(OUT, "sets", "mismatch"), "contour_staged.h5", "elem_mixed.results.h5");
+// #2664: contour_staged with one 2-node line added between two of its nodes, so the model has solids and lines and opens
+// translucent (reduce.ts, opacity 0.35). The stored lineage is untouched, so its results still pair.
+const translucent = copySet(join(OUT, "sets", "translucent"), "contour_staged.h5", "contour_staged.results.h5");
+{
+  await h5wasm.ready;
+  const f = new h5wasm.File(translucent, "a");
+  try {
+    const ids = Array.from((f.get("nodes/ids") as h5wasm.Dataset).value as ArrayLike<number | bigint>, Number);
+    const elem = Array.from((f.get("elements/tet4/ids") as h5wasm.Dataset).value as ArrayLike<number | bigint>, Number);
+    const g = f.create_group("elements/line2");
+    for (const [k, v] of [["code", 1], ["dim", 1], ["npe", 2], ["order", 1]] as const) g.create_attribute(k, v, [], "<q");
+    g.create_attribute("gmsh_name", "Line 2");
+    g.create_dataset({ name: "connectivity", data: new BigInt64Array([BigInt(ids[0]!), BigInt(ids[1]!)]), shape: [1, 2], dtype: "<q" });
+    g.create_dataset({ name: "ids", data: new BigInt64Array([BigInt(Math.max(...elem) + 1)]), shape: [1], dtype: "<q" });
+    g.create_dataset({ name: "module_label", data: [""], shape: [1] });
+  } finally {
+    f.close();
+  }
+}
 
 // ---- describe -------------------------------------------------------------------------
 
@@ -295,6 +315,7 @@ await refusals("refuse-files", reactions.model, [
 await refusals("refuse-deform", activation, [["deform", { stage: "base", deform: { scale: 10 } }, /^Deformed shape not drawn: stage base records no displacement_y/]]);
 await refusals("refuse-element", badid, [["element", { stage: 0, contour: { field: "stress", component: "stress_xx" } }, /no cell for \(999999\)/]]);
 await refusals("refuse-pairing", mismatch, [["pairing", { stage: 0 }, /results are not drawn on this model: .*model_hash differs/]]);
+await refusals("refuse-ghost-translucent", translucent, [["ghost", { stage: "unprop", deform: { scale: 10, ghost: true } }, /^the reference ghost is not drawn over translucent surfaces \(surface opacity 0\.35\): a still of it is not reproducible$/]]);
 for (const [name, spec, key] of [
   ["spec-version", { spec: "apegmsh-view/9", files: { model: reactions.model }, shots: [{ name: "a" }] }, "spec"],
   ["spec-key", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", zoom: 2 }] }, "shots[0].zoom"],
