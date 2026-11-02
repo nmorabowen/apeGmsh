@@ -210,7 +210,7 @@ log("D9 layers: ok");
 // #2664: the reference ghost draws the same pixels every time, 5 shots in each of 2 runs, in both chromes.
 {
   /** The end of the phase bar's readout at SIZE (x0, y0, x1, y1), where its stale text falls. */
-  const READOUT_BOX = [540, 58, 800, 91];
+  const READOUT_BOX = [540, 58, 800, 91] as const;
   const shot = { stage: "unprop", deform: { scale: 10, ghost: true } };
   const shots = [...Array(5).keys()].flatMap((i) => [
     { ...shot, name: `ghost${i}.model`, chrome: "model" },
