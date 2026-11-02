@@ -12,7 +12,8 @@ edges, where it used to lie under them, so its pixels change slightly in the app
 well as in a still.
 
 Over translucent surfaces (surface opacity below 1, the default for a model with both
-solids and lines) the ghost stays under the mesh, with its earlier look, and is not
+solids and lines, and the 3-D frames the line diagram draws at 0.25) the ghost stays
+under the mesh, with its earlier look, and is not
 pixel-identical: the mesh's own blended triangles are in the MSAA canvas. So a view
 spec refuses a ghost shot there, with that reason, and the other shots still run. The
 app-chrome capture race is tracked apart in #2696.
