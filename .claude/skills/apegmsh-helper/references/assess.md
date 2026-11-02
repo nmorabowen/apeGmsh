@@ -76,6 +76,64 @@ Snapshot mesh stills stay on `fem.render`.
 Do not call `g.model.viewer()` / `g.mesh.viewer()` / `results.viewer()`
 / `show_web` / `gui()` for diagnosis.
 
+## Viewer stills — apeGmshViewer (ADR 0128)
+
+The installed apeGmshViewer takes stills headlessly, drawn exactly as the
+human sees the set, each with a manifest of the numbers behind it. One
+call goes from the saved files to PNGs plus the manifest:
+
+```python
+from apeGmsh.viewers.agent_view import render_stills, AgentViewError
+
+spec = {
+    "spec": "apegmsh-view/1",
+    "files": {"model": "frame.h5"},          # results found by pairing; relative = cwd
+    "shots": [
+        {"name": "mesh", "camera": "iso", "chrome": "model"},
+        {"name": "uz-last", "stage": "gravity", "step": "last",
+         "contour": {"field": "displacement", "component": "z"},
+         "deform": {"scale": 10, "ghost": True},
+         "caption": "Vertical displacement, gravity stage, last step."},
+    ],
+}
+try:
+    manifest = render_stills(spec, "out/stills")   # out: absent or empty
+except AgentViewError as e:
+    print(e)              # names every refusal: spec key, shot reason, stderr
+    e.manifest            # this run's manifest, or None; drawn shots are in it
+```
+
+- The app is the only validator: an unknown key or value refuses the whole
+  spec and names it (`shots[0].camera`); a stage, step or field the file
+  lacks refuses that shot, and the other shots still run. Any refusal
+  raises; the shim never returns a manifest with a refused shot, and
+  never reads a `manifest.json` that was in `out` before the run.
+- The executable is `$APEGMSH_VIEWER`, else the per-user install
+  (`%LOCALAPPDATA%\Programs\apegmsh-viewer\apeGmshViewer.exe`). A
+  `$APEGMSH_VIEWER` that names no file raises; it is never passed over.
+- `chrome: "model"` draws the model alone, with the scale bar on any
+  contour, for a report figure; `chrome: "app"` (the default) is the window
+  with its panels. Batch stills default to the `light` theme, contours to
+  jet. Colours and fonts are the app's; a spec cannot name one.
+- Field and component names are the file's, as the legend shows them
+  (`DISPLACEMENT/Ux` for a `.ladruno`). To write a spec that will not
+  refuse, ask the set what it offers first:
+  `apeGmshViewer --describe frame.h5 --out <empty dir>` writes
+  `describe.json` (stages, steps, fields, groups); `find_viewer()` gives
+  the executable.
+- **Quote values from the manifest, never from the pixels** (ADR 0128 D3):
+  each `shots[i]` entry has the resolved camera, the file hashes, stage,
+  step and time, the contour range and its mode, `extrema` (value, node or
+  element id, position), the no-data count, the deformed scale and every
+  banner line. `png` paths are relative to `out`.
+- **Voice (ADR 0128 D8).** Every caption, offer name and summary written
+  from a manifest is in English, in the office voice (ape-tono):
+  impersonal, declarative and complete, a value given beside its
+  reference. "Peak vertical displacement −12.4 mm at node 57, gravity
+  stage, last step; limit L/360 = 16.7 mm." Not "Looks like the max is
+  around 12!". The app does not rewrite captions; the voice is the
+  agent's duty.
+
 ## Finding catalog (v1 + Amendments 1, 4) → next action
 
 New codes are an ADR 0094 amendment. The library does not emit `fix=`
