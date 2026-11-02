@@ -13,9 +13,10 @@
 //      lays out no panel; an app still with its layers off keeps the
 //      viewport's box;
 //   2. the same spec rendered twice gives identical PNGs, every shot (the
-//      kill criterion: it stops here when not; spec v1 refuses the reference
-//      ghost, which is not), byte-identical manifests except `timing`
-//      (ADR 0128 Acceptance), and each shot's time (kill criterion ~10 s);
+//      kill criterion: it stops here when not), byte-identical manifests except
+//      `timing` (ADR 0128 Acceptance), and each shot's time (kill criterion
+//      ~10 s); the reference ghost likewise, shot 5 times in each of 2 runs in
+//      both chromes (#2664);
 //   INV-1: Chromium's profile goes to `<out>/.chromium`, and the app's
 //      folder under APPDATA is unchanged by a render or a describe;
 //   3. INV-7: an app and a model still of one shot have the same camera pose
@@ -43,6 +44,7 @@ import type { ManifestEntry } from "../../src/spec/manifest.ts";
 import { caseShot, ORACLE, sameAsOracle } from "./manifestOracle.ts";
 import { readPng, rgbDiff } from "./png.ts";
 import { makeReactionSet } from "./reactions.ts";
+import * as h5wasm from "h5wasm/node";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const FIX = join(ROOT, "fixtures");
@@ -111,6 +113,25 @@ function copySet(dir: string, model: string, results: string, stem = "set"): str
 const activation = copySet(join(OUT, "sets", "activation"), "staged_activation.h5", "staged_activation.results.h5");
 const badid = copySet(join(OUT, "sets", "badid"), "elem_badid.h5", "elem_badid.results.h5");
 const mismatch = copySet(join(OUT, "sets", "mismatch"), "contour_staged.h5", "elem_mixed.results.h5");
+// #2664: contour_staged with one 2-node line added between two of its nodes, so the model has solids and lines and opens
+// translucent (reduce.ts, opacity 0.35). The stored lineage is untouched, so its results still pair.
+const translucent = copySet(join(OUT, "sets", "translucent"), "contour_staged.h5", "contour_staged.results.h5");
+{
+  await h5wasm.ready;
+  const f = new h5wasm.File(translucent, "a");
+  try {
+    const ids = Array.from((f.get("nodes/ids") as h5wasm.Dataset).value as ArrayLike<number | bigint>, Number);
+    const elem = Array.from((f.get("elements/tet4/ids") as h5wasm.Dataset).value as ArrayLike<number | bigint>, Number);
+    const g = f.create_group("elements/line2");
+    for (const [k, v] of [["code", 1], ["dim", 1], ["npe", 2], ["order", 1]] as const) g.create_attribute(k, v, [], "<q");
+    g.create_attribute("gmsh_name", "Line 2");
+    g.create_dataset({ name: "connectivity", data: new BigInt64Array([BigInt(ids[0]!), BigInt(ids[1]!)]), shape: [1, 2], dtype: "<q" });
+    g.create_dataset({ name: "ids", data: new BigInt64Array([BigInt(Math.max(...elem) + 1)]), shape: [1], dtype: "<q" });
+    g.create_dataset({ name: "module_label", data: [""], shape: [1] });
+  } finally {
+    f.close();
+  }
+}
 
 // ---- describe -------------------------------------------------------------------------
 
@@ -228,6 +249,38 @@ for (const v of views) {
 }
 log("D9 layers: ok");
 
+// #2664: the reference ghost draws the same pixels every time, 5 shots in each of 2 runs, in both chromes.
+{
+  /** The end of the phase bar's readout at SIZE (x0, y0, x1, y1), where its stale text falls. */
+  const READOUT_BOX = [540, 58, 800, 91] as const;
+  const shot = { stage: "unprop", deform: { scale: 10, ghost: true } };
+  const shots = [...Array(5).keys()].flatMap((i) => [
+    { ...shot, name: `ghost${i}.model`, chrome: "model" },
+    { ...shot, name: `ghost${i}.app` },
+  ]);
+  const spec = { spec: "apegmsh-view/1", files: { model: reactions.model }, size: SIZE, shots: [...shots, { ...shot, deform: { scale: 10 }, name: "noghost.model", chrome: "model" }] };
+  const G1 = await render("ghost-a", spec);
+  const G2 = await render("ghost-b", spec);
+  for (const R of [G1, G2]) assert.equal(R.code, 0, `the ghost renders (exit ${R.code}): ${R.shots.map((s) => s.reason).filter(Boolean).join("; ")}`);
+  const still = (R: typeof G1, name: string) => readPng(readFileSync(join(R.dir, `${name}.png`)));
+  assert.equal((byName(G1).get("ghost0.model")!.deform as { ghost: boolean }).ghost, true, "the result records the ghost");
+  // A ghost that is not drawn would be stable too.
+  assert.ok(rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).count > 1000, "the ghost is drawn");
+  for (const chrome of ["model", "app"]) {
+    const first = still(G1, `ghost0.${chrome}`);
+    for (const R of [G1, G2]) {
+      for (let i = 0; i < 5; i++) {
+        const d = rgbDiff(first, still(R, `ghost${i}.${chrome}`));
+        // The phase readout alone, in the app chrome: a hidden window's capture can catch it a frame old, with or without a ghost (#2664).
+        const [x0, y0, x1, y1] = d.bbox ?? [0, 0, 0, 0];
+        const readoutOnly = chrome === "app" && x0 >= READOUT_BOX[0] && y0 >= READOUT_BOX[1] && x1 <= READOUT_BOX[2] && y1 <= READOUT_BOX[3];
+        if (d.count && !readoutOnly) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
+      }
+    }
+  }
+  log("reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical");
+}
+
 // ---- 4: D2 refusals ---------------------------------------------------------------------
 
 const both = (name: string, shot: object) => [
@@ -262,11 +315,11 @@ await refusals("refuse-files", reactions.model, [
 await refusals("refuse-deform", activation, [["deform", { stage: "base", deform: { scale: 10 } }, /^Deformed shape not drawn: stage base records no displacement_y/]]);
 await refusals("refuse-element", badid, [["element", { stage: 0, contour: { field: "stress", component: "stress_xx" } }, /no cell for \(999999\)/]]);
 await refusals("refuse-pairing", mismatch, [["pairing", { stage: 0 }, /results are not drawn on this model: .*model_hash differs/]]);
+await refusals("refuse-ghost-translucent", translucent, [["ghost", { stage: "unprop", deform: { scale: 10, ghost: true } }, /^the reference ghost is not drawn over translucent surfaces \(surface opacity 0\.35\): a still of it is not reproducible$/]]);
 for (const [name, spec, key] of [
   ["spec-version", { spec: "apegmsh-view/9", files: { model: reactions.model }, shots: [{ name: "a" }] }, "spec"],
   ["spec-key", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", zoom: 2 }] }, "shots[0].zoom"],
   ["spec-type", { spec: "apegmsh-view/1", files: { model: reactions.model }, size: [10, 10], shots: [{ name: "a" }] }, "size[0]"],
-  ["spec-ghost", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", stage: "unprop", deform: { scale: 10, ghost: true } }] }, "shots[0].deform.ghost"],
   ["spec-fit-selection", { spec: "apegmsh-view/1", files: { model: reactions.model }, shots: [{ name: "a", camera: "fit-selection" }] }, "shots[0].camera"],
 ] as const) {
   const R = await render(name, spec);

@@ -31,6 +31,11 @@ export function viewVerdict(s: State, shot: SpecShot, plan: ShotPlan, on: OnScre
     return { kind: "refused", reason: `step ${plan.step} of stage ${JSON.stringify(plan.stage.name)} could not be read: ${s.resultStep.error ?? "unknown error"}` };
   }
   if (s.clip.notice) return { kind: "refused", reason: `the section planes were refused: ${s.clip.notice}` };
+  // #2664: over translucent surfaces the ghost lies under the mesh's own blended triangles,
+  // which differ from frame to frame (renderer/deform.ts), so a still of it is not reproducible.
+  if (shot.deform?.ghost && s.visibility.opacity < 1) {
+    return { kind: "refused", reason: `the reference ghost is not drawn over translucent surfaces (surface opacity ${s.visibility.opacity}): a still of it is not reproducible` };
+  }
   let why: string | null = null;
   let ready = !loading;
   if (shot.colour_by === "contour") {
