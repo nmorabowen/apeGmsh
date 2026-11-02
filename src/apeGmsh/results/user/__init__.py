@@ -1,8 +1,11 @@
-"""The ``<stem>.user.h5`` file: combinations and user results (ADR 0130).
+"""The ``<stem>.user.h5`` file: combinations, user results, modes, spectra (ADR 0130).
 
 Writer, reader, the ``rf1`` fingerprint and the staleness table for ``/meta``,
-``/combinations`` and ``/results``. Nothing here evaluates a combination: that
-is slice VU2. The layout is in ``architecture/h5-schema.md``.
+``/combinations``, ``/results``, ``/modes`` and ``/spectra``. :func:`mode_table`
+turns a ``modalProperties`` dict into the ``/modes`` table, and
+:func:`spectrum_cases` an ``apeSees.spectrum_after_gravity`` result into the
+``/spectra`` cases. Nothing here evaluates a combination: that is slice VU2.
+The layout is in ``architecture/h5-schema.md``.
 """
 from __future__ import annotations
 
@@ -22,18 +25,24 @@ from ._errors import (
 )
 from ._fields import ElementBucket, ResultEntry, UserResult
 from ._fingerprint import results_fingerprint
+from ._modes import ModeTable, mode_table
 from ._reader import ResultIndex, UserFile
+from ._spectra import CaseQuantity, SpectraIndex, SpectrumCase, spectrum_cases
 from ._staleness import Staleness, ZoneState, staleness
 from ._writer import model_hashes, write_user_file
 
 __all__ = [
+    "CaseQuantity",
     "Combination",
     "CombinationTable",
     "ElementBucket",
     "FingerprintRefused",
+    "ModeTable",
     "Refusal",
     "ResultEntry",
     "ResultIndex",
+    "SpectraIndex",
+    "SpectrumCase",
     "StateAddress",
     "Staleness",
     "Term",
@@ -44,8 +53,10 @@ __all__ = [
     "UserWriteRefused",
     "ZoneRefused",
     "ZoneState",
+    "mode_table",
     "model_hashes",
     "results_fingerprint",
+    "spectrum_cases",
     "staleness",
     "write_user_file",
 ]

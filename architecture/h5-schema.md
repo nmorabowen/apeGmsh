@@ -2653,9 +2653,9 @@ non-mesh entities. apeGmsh owns it, and the recorder's `.ladruno` never holds an
 of this ([ADR 0130](decisions/0130-states-quantities-and-the-user-results-file.md),
 Amendment 1). Python writes every zone; the app writes only `/combinations`.
 
-`apeGmsh.results.user` writes and reads `/meta`, `/combinations` and `/results`,
-which are in the [registry](#zone-registry). `/modes`, `/spectra` and `/entities`
-have no writer or reader yet (slices VU6 and VU8); a write copies them verbatim.
+`apeGmsh.results.user` writes and reads `/meta`, `/combinations`, `/results`,
+`/modes` and `/spectra`, which are in the [registry](#zone-registry). `/entities`
+has no writer or reader yet (slice VU8); a write copies it verbatim.
 The app does not read this file yet (slice VU3a).
 
 Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
@@ -2900,6 +2900,8 @@ call `validate_zone_version(...)` for each zone before reading it.
 | user_meta (ADR 0130) | `user_meta_schema_version` | `/meta` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_META_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | combinations (ADR 0130) | `combinations_schema_version` | `/combinations` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `COMBINATIONS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | user_results (ADR 0130) | `user_results_schema_version` | `/results` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_RESULTS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| modes (ADR 0130) | `modes_schema_version` | `/modes` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `MODES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| spectra (ADR 0130) | `spectra_schema_version` | `/spectra` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SPECTRA_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
 > The geometry, provenance, assembly and sequence keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
