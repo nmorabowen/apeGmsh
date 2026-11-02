@@ -3,7 +3,7 @@
 // `#line-diagram`) can be controlled and viewed simultaneously without scrolling.
 //
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
-// `types`, and `ui/dom`.
+// `types`, and `ui/`.
 
 import {
   buildBeamChainPlotModel,
@@ -25,6 +25,7 @@ import {
 import type { State, Store } from "../state/store.ts";
 import type { BeamChain, Event, LineDiagramCmap, LineDiagramPlane, LineStationComponent } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
+import { fillScale, mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
 
 const LINE_PLANES: readonly { plane: LineDiagramPlane; label: string }[] = [
   { plane: "local", label: "local axes" },
@@ -168,6 +169,7 @@ function syncChainHoverLayer(
 
 export function mountLineDiagram(store: Store, subscribeTheme?: (fn: () => void) => () => void): () => void {
   const panel = byId("line-diagram");
+  const scale = byId("line-diagram-scale");
   let unlisten: (() => void)[] = [];
   let lastSig = "";
   let lastTheme = "";
@@ -213,8 +215,19 @@ export function mountLineDiagram(store: Store, subscribeTheme?: (fn: () => void)
     );
     panel.hidden = content === null;
     panel.replaceChildren(...(content ? [...content.children] : []));
+    scale.hidden = content === null || !s.lineDiagram.on;
+    if (!scale.hidden) {
+      fillLineDiagramScale(scale, s, (e) => store.dispatch(e), unlisten, () => {
+        render(store.get(), null);
+        scaleChrome?.clamp();
+        scaleChrome?.save();
+      });
+      scaleChrome?.clamp();
+    }
   };
 
+  // Only a real window has a place to drag in; the Node tests mount this panel without one.
+  const scaleChrome: ScaleChrome | null = typeof window === "undefined" ? null : mountScaleChrome(scale, "apegmsh.viewer.lineDiagramScale");
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
   const unsubTheme = subscribeTheme?.(() => {
@@ -223,8 +236,85 @@ export function mountLineDiagram(store: Store, subscribeTheme?: (fn: () => void)
   return () => {
     unsubscribe();
     unsubTheme?.();
+    scaleChrome?.dispose();
     for (const u of unlisten) u();
   };
+}
+
+/**
+ * The line diagram's colour scale in the viewport (`#line-diagram-scale`): its
+ * title, bar and values, and the colour range controls. The colormap stays on
+ * the card. `onOrient` runs after the orientation button changes the scale.
+ */
+export function fillLineDiagramScale(
+  scale: HTMLElement,
+  s: State,
+  dispatch: (e: Event) => void,
+  unlisten: (() => void)[],
+  onOrient: () => void,
+): void {
+  const ld = s.lineDiagram;
+  const { uComp } = lineDiagramUnitsOf(s);
+  const meta = ld.component ? LINE_DIAGRAM_COMPONENT_META[ld.component] : undefined;
+  const unitSuffix = uComp.unit ? ` [${uComp.unit}]` : "";
+  const clim = lineDiagramClimOf(s);
+  const { min, max } = clim;
+  const ticks =
+    min === null || max === null
+      ? ["no finite value"]
+      : min === max
+        ? [fmtValue(min * uComp.factor), "(constant)"]
+        : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtValue((min + (max - min) * f) * uComp.factor));
+  fillScale(
+    scale,
+    {
+      title: meta ? `${meta.field} · ${meta.key} (${meta.canonical})${unitSuffix}` : "Line diagram",
+      tooltip: uComp.note,
+      ramp: ld.cmap === "sign" ? signRampCss(currentTheme(), min !== null && max !== null ? { min, max } : undefined) : rampCss(ld.cmap),
+      ticks,
+      range: clim.label,
+    },
+    unlisten,
+    onOrient,
+  );
+
+  const rangeModes = el("div", "legend-mode contour-modes line-diagram-range-modes");
+  for (const m of RANGE_MODES) {
+    const b = el("button", ld.range === m.range ? "on" : "", m.label);
+    unlisten.push(
+      listen(b, "click", () => {
+        if (m.range !== "fixed") return dispatch({ type: "setLineDiagramRange", range: m.range });
+        const from = ld.fixed ?? (min !== null && max !== null && min < max ? { min, max } : null);
+        if (from) dispatch({ type: "setLineDiagramRange", range: "fixed", fixed: from });
+      }),
+    );
+    rangeModes.append(b);
+  }
+  scale.append(rangeModes);
+
+  if (ld.range === "fixed" && ld.fixed) {
+    const fixedBox = el("div", "contour-fixed line-diagram-fixed");
+    const lo = el("input", "contour-fixed-min line-diagram-fixed-min");
+    const hi = el("input", "contour-fixed-max line-diagram-fixed-max");
+    for (const [i, val, t] of [[lo, ld.fixed.min, "min"], [hi, ld.fixed.max, "max"]] as const) {
+      i.type = "number";
+      i.value = String(val);
+      i.title = t;
+      i.step = "any";
+    }
+    const apply = () => {
+      const lower = Number(lo.value),
+        upper = Number(hi.value);
+      if (Number.isFinite(lower) && Number.isFinite(upper) && lower < upper) {
+        dispatch({ type: "setLineDiagramRange", range: "fixed", fixed: { min: lower, max: upper } });
+      } else {
+        lo.setCustomValidity("min must be below max");
+      }
+    };
+    unlisten.push(listen(lo, "change", apply), listen(hi, "change", apply));
+    fixedBox.append(lo, hi);
+    scale.append(fixedBox);
+  }
 }
 
 function renderChainCard(
@@ -565,12 +655,6 @@ export function renderLineDiagram(
   }
 
   if (ld.on) {
-    const { uComp } = lineDiagramUnitsOf(s);
-    const meta = ld.component ? LINE_DIAGRAM_COMPONENT_META[ld.component] : undefined;
-    const unitSuffix = uComp.unit ? ` [${uComp.unit}]` : "";
-    const titleText = meta ? `${meta.field} · ${meta.key} (${meta.canonical})${unitSuffix}` : "Line diagram";
-    box.append(el("div", "contour-title line-diagram-title", titleText));
-
     if (ld.drawnBeams.length > 0) {
       let exactCount = 0;
       let interpCount = 0;
@@ -605,58 +689,6 @@ export function renderLineDiagram(
         if (reasons.length > 0) badge.title = reasons.join("; ");
         box.append(badge);
       }
-    }
-
-    const clim = lineDiagramClimOf(s);
-    const ramp = el("div", "contour-ramp line-diagram-ramp");
-    ramp.style.backgroundImage = ld.cmap === "sign" ? signRampCss(currentTheme()) : rampCss(ld.cmap);
-    box.append(ramp);
-
-    const constant = clim.min !== null && clim.max !== null && clim.min === clim.max;
-    const minText = clim.min === null ? "no finite value" : fmtValue(clim.min * uComp.factor);
-    const maxText = clim.max === null ? "" : constant ? "(constant)" : fmtValue(clim.max * uComp.factor);
-    const ends = el("div", "contour-ends line-diagram-ends");
-    ends.append(el("span", "contour-min", minText), el("span", "contour-max", maxText));
-    box.append(ends);
-    box.append(el("div", "contour-range line-diagram-range", clim.label));
-
-    const rangeModes = el("div", "legend-mode contour-modes line-diagram-range-modes");
-    for (const m of RANGE_MODES) {
-      const b = el("button", ld.range === m.range ? "on" : "", m.label);
-      unlisten.push(
-        listen(b, "click", () => {
-          if (m.range !== "fixed") return dispatch({ type: "setLineDiagramRange", range: m.range });
-          const c = lineDiagramClimOf(s);
-          const from = ld.fixed ?? (c.min !== null && c.max !== null && c.min < c.max ? { min: c.min, max: c.max } : null);
-          if (from) dispatch({ type: "setLineDiagramRange", range: "fixed", fixed: from });
-        }),
-      );
-      rangeModes.append(b);
-    }
-    box.append(rangeModes);
-
-    if (ld.range === "fixed" && ld.fixed) {
-      const fixedBox = el("div", "contour-fixed line-diagram-fixed");
-      const lo = el("input", "contour-fixed-min line-diagram-fixed-min");
-      const hi = el("input", "contour-fixed-max line-diagram-fixed-max");
-      for (const [i, val, t] of [[lo, ld.fixed.min, "min"], [hi, ld.fixed.max, "max"]] as const) {
-        i.type = "number";
-        i.value = String(val);
-        i.title = t;
-        i.step = "any";
-      }
-      const apply = () => {
-        const min = Number(lo.value),
-          max = Number(hi.value);
-        if (Number.isFinite(min) && Number.isFinite(max) && min < max) {
-          dispatch({ type: "setLineDiagramRange", range: "fixed", fixed: { min, max } });
-        } else {
-          lo.setCustomValidity("min must be below max");
-        }
-      };
-      unlisten.push(listen(lo, "change", apply), listen(hi, "change", apply));
-      fixedBox.append(lo, hi);
-      box.append(fixedBox);
     }
 
     const cm = el("select", "contour-cmap line-diagram-cmap");

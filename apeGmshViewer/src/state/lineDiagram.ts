@@ -962,9 +962,11 @@ export const SIGN_NEG_RGB: readonly [number, number, number] = hexToRgb(DARK.war
 export const SIGN_ZERO_RGB: readonly [number, number, number] = hexToRgb(DARK.muted);
 
 /** Two-colour CSS gradient for the `"sign"` ramp (`themeTokens(mode).warn` on the negative half, `themeTokens(mode).ok` on the positive half). */
-export function signRampCss(mode: ThemeMode = "dark"): string {
+export function signRampCss(mode: ThemeMode = "dark", range?: { min: number; max: number }): string {
   const t = themeTokens(mode);
-  return `linear-gradient(to right, ${t.warn} 0%, ${t.warn} 50%, ${t.ok} 50%, ${t.ok} 100%)`;
+  // With a range, the colours change where the value is zero (0% or 100% when the whole range has one sign).
+  const zero = range && range.min < range.max ? Math.max(0, Math.min(100, (-range.min / (range.max - range.min)) * 100)) : 50;
+  return `linear-gradient(to right, ${t.warn} 0%, ${t.warn} ${zero}%, ${t.ok} ${zero}%, ${t.ok} 100%)`;
 }
 
 export function colorForValue(
