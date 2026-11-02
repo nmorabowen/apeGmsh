@@ -503,12 +503,16 @@ ipcMain.handle("render:capture", async (e, name: unknown) => {
 ipcMain.handle("render:done", (_e, result: unknown) => {
   if (!agentMode) throw new Error("render:done: not an agent mode");
   const dir = resolve(out!);
-  const r = result as { render?: { shots: { status: string }[] }; describe?: unknown } | null;
+  const r = result as { manifest?: { shots: { status: string }[]; timing: object }; describe?: unknown } | null;
   if (mode === "render") {
-    if (!r?.render) throw new Error("render:done: no render result");
-    writeFileSync(join(dir, "render.json"), JSON.stringify(r, null, 2));
-    const refused = r.render.shots.filter((s) => s.status !== "ok").length;
-    process.stdout.write(`apeGmshViewer: render: ${r.render.shots.length - refused} stills, ${refused} refused; ${join(dir, "render.json")}\n`);
+    if (!r?.manifest) throw new Error("render:done: no manifest");
+    // ADR 0128 D3: the app's version is main's to know; `written_at` lies inside `timing`, the one part that varies between runs (src/spec/manifest.ts).
+    const { timing, ...rest } = r.manifest;
+    const manifest = { ...rest, app: { version: app.getVersion() }, timing: { ...timing, written_at: new Date().toISOString() } };
+    const path = join(dir, "manifest.json");
+    writeFileSync(path, JSON.stringify(manifest, null, 2));
+    const refused = r.manifest.shots.filter((s) => s.status !== "ok").length;
+    process.stdout.write(`apeGmshViewer: render: ${r.manifest.shots.length - refused} stills, ${refused} refused; ${path}\n`);
     // D2: a refused shot makes the run's exit code non-zero; the other shots ran. (`app.quit()` exits 0 whatever process.exitCode says.)
     agentExit(refused ? 1 : 0);
     return;

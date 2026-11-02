@@ -3,7 +3,7 @@
 //   node scripts/launch.mjs view     [model.h5]
 //   node scripts/launch.mjs measure  <model.h5>          prints one MEASUREMENTS row
 //   node scripts/launch.mjs capture  <model.h5> <out.png>
-//   node scripts/launch.mjs render   <spec.json> <outdir>  ADR 0128 D4: one PNG per shot + render.json
+//   node scripts/launch.mjs render   <spec.json> <outdir>  ADR 0128 D3, D4: one PNG per shot + manifest.json
 //   node scripts/launch.mjs describe <file.h5> <outdir>    ADR 0128 D4: describe.json
 //   node scripts/launch.mjs present  <spec.json>           ADR 0128 D5: offer the spec to the running window
 //   node scripts/launch.mjs snapshot <outdir>              ADR 0128 D6: the running window's view as a spec
