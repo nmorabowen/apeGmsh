@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -157,6 +158,30 @@ def _refusals(manifest: dict[str, Any]) -> list[str]:
     return out
 
 
+def _kill_tree(proc: subprocess.Popen[str]) -> str:
+    """Kill the process the shim started and every process under it; return its stderr.
+
+    ``Popen.kill`` reaches the child alone, and its children (Electron's GPU
+    and renderer processes, or the app under a ``.cmd`` wrapper) keep the
+    pipes open, so reading them would wait until those exit on their own.
+    """
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False
+        )
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    proc.kill()
+    try:
+        _, err = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        return ""
+    return err or ""
+
+
 def render_stills(
     spec: Mapping[str, Any] | str | os.PathLike[str],
     out: str | os.PathLike[str],
@@ -211,19 +236,21 @@ def render_stills(
         else:
             spec_path = Path(spec).resolve()
         argv = [str(exe), "--render", str(spec_path), "--out", str(out_dir)]
+        # Its own process group (POSIX), so a timeout can kill the app's children too.
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", start_new_session=sys.platform != "win32",
+        )
         try:
-            proc = subprocess.run(
-                argv, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=timeout, check=False,
-            )
+            _, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            err = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
+            err = _kill_tree(proc)
             raise AgentViewError(
                 f"apeGmshViewer --render did not exit within {timeout} s and was killed; "
                 f"nothing it wrote in {out_dir} is evidence",
                 returncode=None, manifest=None, stderr=err,
             ) from exc
-    stderr = proc.stderr or ""
+    stderr = stderr or ""
     manifest = None if stale else _read_manifest(manifest_path)
     refusals = _refusals(manifest) if manifest is not None else []
     if proc.returncode == 0 and manifest is not None and not refusals:

@@ -13,6 +13,7 @@ import ast
 import json
 import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -67,8 +68,14 @@ if mode == "zero_not_object":
     (out / "manifest.json").write_text("[1, 2]", encoding="utf-8"); sys.exit(0)
 if mode == "crash":
     sys.stderr.write("apeGmshViewer: render failed: the renderer process is gone (crashed)\n"); sys.exit(1)
+if mode == "nonzero_clean":
+    # main.ts abandonRender: a manifest is already whole, and the run still exits 1.
+    write(manifest([entry(n) for n in names])); sys.exit(1)
 if mode == "hang":
-    time.sleep(4); sys.exit(0)
+    # A child of its own that holds the pipes, like Electron's GPU and renderer processes.
+    import subprocess
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
+    time.sleep(20); sys.exit(0)
 sys.exit(99)
 '''
 
@@ -256,11 +263,24 @@ def test_a_crash_raises_with_stderr(stub, tmp_path, monkeypatch):
     assert e.value.manifest is None
 
 
-def test_a_run_past_its_timeout_is_killed_and_refused(stub, tmp_path, monkeypatch):
+def test_a_nonzero_exit_with_a_clean_manifest_is_refused(stub, tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_MODE", "nonzero_clean")
+    with pytest.raises(AgentViewError, match=r"^apeGmshViewer --render exited 1") as e:
+        render_stills(_spec(), tmp_path / "stills")
+    assert e.value.returncode == 1
+    assert [s["status"] for s in e.value.manifest["shots"]] == ["ok", "ok"]
+
+
+def test_a_run_past_its_timeout_is_killed_with_its_children(stub, tmp_path, monkeypatch):
+    """The wrapper (cmd.exe on Windows), the stub and the stub's own child all sleep 20 s:
+    the bound holds only when the whole tree is killed, since the child keeps the pipes."""
     monkeypatch.setenv("STUB_MODE", "hang")
-    with pytest.raises(AgentViewError, match="did not exit within 0.5 s") as e:
-        render_stills(_spec(), tmp_path / "stills", timeout=0.5)
+    t0 = time.monotonic()
+    with pytest.raises(AgentViewError, match="did not exit within 1 s") as e:
+        render_stills(_spec(), tmp_path / "stills", timeout=1)
+    elapsed = time.monotonic() - t0
     assert e.value.returncode is None
+    assert elapsed < 6, f"the timeout of 1 s took {elapsed:.1f} s: a child outlived the kill"
 
 
 def test_nan_in_a_dict_spec_is_refused_before_any_spawn(stub, tmp_path):
@@ -279,4 +299,4 @@ def test_the_shim_imports_nothing_from_the_app():
         if isinstance(n, (ast.Import, ast.ImportFrom))
         for a in (n.names if isinstance(n, ast.Import) else [n])
     }
-    assert mods <= {"__future__", "json", "os", "subprocess", "sys", "tempfile", "collections.abc", "pathlib", "typing"}, mods
+    assert mods <= {"__future__", "json", "os", "signal", "subprocess", "sys", "tempfile", "collections.abc", "pathlib", "typing"}, mods
