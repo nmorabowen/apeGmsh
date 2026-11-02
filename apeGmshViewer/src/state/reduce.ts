@@ -29,6 +29,7 @@ import {
   type UserCombinationIn,
   type UserIndexIn,
   type UserInfo,
+  type UserReadIn,
   type UserRefusal,
   type UserRefusalIn,
   type UserStalenessIn,
@@ -504,6 +505,42 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
   const modes: UserInfo["modes"] = m === null ? null : m.ok ? { ok: true, rows: m.value.rows, stale: zoneMark("modes") } : { ok: false, reason: m.reason, stale: zoneMark("modes") };
   const spectra = index.zones.includes("spectra") ? { stale: zoneMark("spectra") } : null;
   return { warnings, combinations, results, spectra, modes };
+}
+
+/** The suffixes main/pairing.ts `classify` knows, longest first; a part file `<stem>.part-<N>.ladruno` is its stem's results. */
+const SET_SUFFIX = /^(.*?)(?:\.part-\d+\.ladruno|\.geometry\.h5|\.results\.h5|\.user\.h5|\.ladruno|\.h5)$/i;
+
+/**
+ * ADR 0130 D2: the `.user.h5` of a set, `<stem>.user.h5` beside its model (or
+ * its results, with no model): main/pairing.ts `candidates`, which the
+ * renderer cannot import (it reads node:fs); test/state/user.test.ts holds the
+ * two together. A path the app does not open raises.
+ */
+export function userPathOf(set: { model: string | null; results: string | null }): string | null {
+  const from = set.model ?? set.results;
+  if (from === null) return null;
+  const m = SET_SUFFIX.exec(from);
+  if (!m || m[1] === "") throw new Error(`userPathOf: ${from} is not a <stem>.h5, <stem>.results.h5 or <stem>.ladruno`);
+  return `${m[1]}.user.h5`;
+}
+
+/** reader/userFile.ts `readUserFile`'s refusal of a path with no file: the set has no `.user.h5`, which is not a failure. */
+export const NO_USER_FILE = (path: string): string => `no such file: ${path}`;
+
+/** The event a `user:read` answer for `path` becomes: no file there is `userClosed`; any other answer is `userRead`. */
+export function userEventOf(path: string, read: UserReadIn): Event {
+  return !read.ok && read.error === NO_USER_FILE(path) ? { type: "userClosed" } : { type: "userRead", path, read };
+}
+
+/**
+ * Whether the `.user.h5` may be read now: after the model's first read has
+ * landed (ready or failed), so the first frame never waits on it (ADR 0130
+ * VU3a: "the first frame reads none of it"). A set with no model reads at once.
+ */
+export function userReadable(s: State, model: string | null): boolean {
+  if (model === null) return true;
+  const a = s.artifacts.model;
+  return a !== null && a.path === model && a.status !== "opened";
 }
 
 export function reduce(s: State, e: Event): State {
