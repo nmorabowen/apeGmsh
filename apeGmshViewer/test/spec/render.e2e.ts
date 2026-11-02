@@ -16,9 +16,14 @@
 //      kill criterion: it stops here when not), byte-identical manifests except
 //      `timing` (ADR 0128 Acceptance), and each shot's time (kill criterion
 //      ~10 s); the reference ghost likewise, shot 5 times in each of 2 runs in
-//      both chromes (#2664);
-//   INV-1: Chromium's profile goes to `<out>/.chromium`, and the app's
-//      folder under APPDATA is unchanged by a render or a describe;
+//      both chromes (#2664), over the whole image, the phase readout included;
+//   INV-4 (#2696): an app still is the page as it settled: a capture that
+//      first returns a stale frame still writes the right still, a page that
+//      never settles refuses the shot with no PNG, and `--capture-tries` below
+//      2 is refused (exit 2);
+//   INV-1: Chromium's profile goes to `<out>/.chromium`, and each run's own
+//      `--user-data-dir`, where Chromium writes by default, stays empty (a
+//      check no other window on the machine can disturb, unlike %APPDATA%);
 //   3. INV-7: an app and a model still of one shot have the same camera pose
 //      and the same contour; the scale bar is drawn unless turned off, and
 //      it is the only difference; `transparent` writes PNG alpha;
@@ -32,14 +37,18 @@
 //      Python's `Results` (test/spec/manifest.oracle.json), in both chromes,
 //      with one entry per PNG.
 // The stills stay in <outdir> (default: a new temporary folder) for review.
+// Every process starts through a generated app folder (the real app's name and
+// version, its built main) that turns a modal into a stderr line, so nothing
+// stops on the desktop of whoever runs this, and the run fails on any such
+// line; `AGV_FAULT` forces a capture fault into it.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ManifestEntry } from "../../src/spec/manifest.ts";
 import { caseShot, ORACLE, sameAsOracle } from "./manifestOracle.ts";
 import { readPng, rgbDiff } from "./png.ts";
@@ -53,11 +62,74 @@ const OUT = resolve(process.argv[2] ?? mkdtempSync(join(tmpdir(), "agv-render-e2
 mkdirSync(OUT, { recursive: true });
 const log = (s: string) => process.stdout.write(`${s}\n`);
 
-function run(args: string[]): Promise<{ code: number; ms: number }> {
+/** The app every run starts: the real app's name and version, dialogs turned into stderr lines, a forced capture fault when `AGV_FAULT` names one. */
+const APP = join(OUT, "app");
+mkdirSync(APP, { recursive: true });
+{
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { name: string; version: string };
+  writeFileSync(join(APP, "package.json"), JSON.stringify({ name: pkg.name, version: pkg.version, private: true, type: "module", main: "entry.mjs" }));
+}
+writeFileSync(
+  join(APP, "entry.mjs"),
+  `import { app, dialog, ipcMain, nativeImage } from "electron";
+const nl = String.fromCharCode(10);
+dialog.showErrorBox = (t, c) => process.stderr.write("MODAL " + t + " " + c + nl);
+dialog.showMessageBox = async (...a) => (process.stderr.write("MODAL showMessageBox" + nl), { response: 0, checkboxChecked: false });
+dialog.showMessageBoxSync = (...a) => (process.stderr.write("MODAL showMessageBoxSync" + nl), 0);
+const fault = process.env.AGV_FAULT ?? "";
+// A hidden window's capture of the frame before the page's last changes (#2696): each app still's
+// first capture returns the image the capture before it returned (a grey page for the first one).
+if (fault === "stale-first") {
+  let first = false;
+  let last = null;
+  const handle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, fn) => handle(channel, channel !== "render:capture" ? fn : (e, ...a) => ((first = true), fn(e, ...a)));
+  app.on("web-contents-created", (_e, wc) => {
+    const real = wc.capturePage.bind(wc);
+    wc.capturePage = async (...a) => {
+      const img = await real(...a);
+      const stale = first ? (last ?? nativeImage.createFromBitmap(Buffer.alloc(img.toBitmap().length, 0x80), img.getSize())) : img;
+      first = false;
+      last = img;
+      return stale;
+    };
+  });
+}
+// A page that never settles: every capture differs from the one before it in one byte.
+if (fault === "never-settles") {
+  app.on("web-contents-created", (_e, wc) => {
+    const real = wc.capturePage.bind(wc);
+    let n = 0;
+    wc.capturePage = async (...a) => {
+      const img = await real(...a);
+      const px = Buffer.from(img.toBitmap());
+      px[0] = n++ % 251;
+      return nativeImage.createFromBitmap(px, img.getSize());
+    };
+  });
+}
+await import(${JSON.stringify(pathToFileURL(join(ROOT, "dist", "main.mjs")).href)});
+`,
+);
+
+/** Every run's own profile folder (`--user-data-dir`); INV-1 holds while each stays empty. */
+const userDirs: string[] = [];
+let runs = 0;
+function run(args: string[], env: Record<string, string> = {}): Promise<{ code: number; ms: number }> {
   const t = performance.now();
+  const user = join(OUT, "users", String(++runs).padStart(3, "0"));
+  userDirs.push(user);
   return new Promise((done) => {
-    const child = spawn(electron, [ROOT, ...args], { stdio: ["ignore", "ignore", "inherit"] });
-    child.on("exit", (code) => done({ code: code ?? -1, ms: performance.now() - t }));
+    const child = spawn(electron, [APP, `--user-data-dir=${user}`, ...args], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, ...env } });
+    let err = "";
+    child.stderr.on("data", (d) => {
+      err += String(d);
+      process.stderr.write(d);
+    });
+    child.on("exit", (code) => {
+      assert.doesNotMatch(err, /MODAL/, `a modal would have stopped on the desktop: ${err}`);
+      done({ code: code ?? -1, ms: performance.now() - t });
+    });
   });
 }
 
@@ -74,13 +146,13 @@ interface Rendered {
   refused?: { key: string; reason: string };
 }
 
-async function render(name: string, spec: object): Promise<Rendered> {
+async function render(name: string, spec: object, env: Record<string, string> = {}): Promise<Rendered> {
   const dir = join(OUT, name);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "spec.json");
   writeFileSync(path, JSON.stringify(spec, null, 2));
   const out = join(dir, "out");
-  const r = await run([`--mode=render`, `--spec=${path}`, `--out=${out}`]);
+  const r = await run([`--mode=render`, `--spec=${path}`, `--out=${out}`], env);
   const j = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
   const { timing, ...stable } = j;
   return { ...r, dir: out, shots: j.shots, timing: timing?.shots ?? {}, stable: JSON.stringify(stable), version: j.app?.version, refused: j.refused };
@@ -88,18 +160,6 @@ async function render(name: string, spec: object): Promise<Rendered> {
 
 const pngs = (dir: string) => readdirSync(dir).filter((f) => f.endsWith(".png")).sort();
 
-/** INV-1: every file under the app's APPDATA folder, with its size and time; a run that writes there changes it. */
-const APPDATA_DIR = join(process.env["APPDATA"] ?? "", "apegmsh-viewer");
-function appdataListing(): string[] {
-  if (!process.env["APPDATA"] || !existsSync(APPDATA_DIR)) return [];
-  return (readdirSync(APPDATA_DIR, { recursive: true }) as string[])
-    .map((p) => {
-      const st = statSync(join(APPDATA_DIR, p));
-      return `${p} ${st.isDirectory() ? "dir" : st.size} ${st.mtimeMs}`;
-    })
-    .sort();
-}
-const appdataBefore = appdataListing();
 
 // ---- the sets -----------------------------------------------------------------------
 
@@ -251,8 +311,6 @@ log("D9 layers: ok");
 
 // #2664: the reference ghost draws the same pixels every time, 5 shots in each of 2 runs, in both chromes.
 {
-  /** The end of the phase bar's readout at SIZE (x0, y0, x1, y1), where its stale text falls. */
-  const READOUT_BOX = [540, 58, 800, 91] as const;
   const shot = { stage: "unprop", deform: { scale: 10, ghost: true } };
   const shots = [...Array(5).keys()].flatMap((i) => [
     { ...shot, name: `ghost${i}.model`, chrome: "model" },
@@ -270,15 +328,57 @@ log("D9 layers: ok");
     const first = still(G1, `ghost0.${chrome}`);
     for (const R of [G1, G2]) {
       for (let i = 0; i < 5; i++) {
+        // The whole image, the phase readout included: an app still is the page as it settled (#2696).
         const d = rgbDiff(first, still(R, `ghost${i}.${chrome}`));
-        // The phase readout alone, in the app chrome: a hidden window's capture can catch it a frame old, with or without a ghost (#2664).
-        const [x0, y0, x1, y1] = d.bbox ?? [0, 0, 0, 0];
-        const readoutOnly = chrome === "app" && x0 >= READOUT_BOX[0] && y0 >= READOUT_BOX[1] && x1 <= READOUT_BOX[2] && y1 <= READOUT_BOX[3];
-        if (d.count && !readoutOnly) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
+        if (d.count) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
       }
     }
   }
   log("reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical");
+}
+
+// INV-4 (#2696): an app still is the page as it settled, or the shot is refused.
+{
+  // App stills that differ from one to the next, so a stale frame is a different picture; a model shot between them omits every panel.
+  const spec = {
+    spec: "apegmsh-view/1",
+    files: { model: reactions.model },
+    size: [640, 480],
+    shots: [
+      { name: "iso", camera: "iso" },
+      { name: "between.model", chrome: "model", camera: "top" },
+      { name: "top", camera: "top", stage: "unprop", deform: { scale: 10 } },
+      { name: "bare", ...contour, layers: { header: false, rail: false } },
+    ],
+  };
+  const app = spec.shots.filter((s) => s.chrome !== "model").map((s) => s.name);
+  const ref = await render("settle-ref", spec);
+  assert.equal(ref.code, 0, `the reference run: ${ref.shots.map((s) => s.reason).filter(Boolean).join("; ")}`);
+  // Each still's first capture returns the frame before: the still written is still the settled page.
+  const stale = await render("settle-stale-first", spec, { AGV_FAULT: "stale-first" });
+  assert.equal(stale.code, 0, `a stale first capture: ${stale.shots.map((s) => s.reason).filter(Boolean).join("; ")}`);
+  for (const name of app) {
+    const d = rgbDiff(readPng(readFileSync(join(ref.dir, `${name}.png`))), readPng(readFileSync(join(stale.dir, `${name}.png`))));
+    if (d.count) throw new Error(`INV-4: ${name} written from a stale capture: it differs from the settled page in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
+  }
+  // A page that never settles refuses each app shot, names it, and writes no PNG for it; the model shot still runs.
+  const never = await render("settle-never", spec, { AGV_FAULT: "never-settles" });
+  assert.equal(never.code, 1, "a shot refused: exit 1");
+  assert.deepEqual(pngs(never.dir), ["between.model.png"], "no PNG for a still that never settled");
+  for (const name of app) {
+    const s = byName(never).get(name)!;
+    assert.equal(s.status, "refused", `${name}: a page that never settles is refused`);
+    assert.equal(s.png, null);
+    assert.match(s.reason ?? "", new RegExp(`render:capture ${name}: the page did not settle: no two consecutive of 10 captures were pixel-identical \\(--capture-tries\\)`));
+  }
+  // The bound is the caller's, checked like any argument.
+  for (const v of ["1", "0", "-3", "5x", ""]) {
+    const out = join(OUT, `settle-tries-${v || "empty"}`, "out");
+    const r = await run(["--mode=render", `--spec=${join(OUT, "settle-ref", "spec.json")}`, `--out=${out}`, `--capture-tries=${v}`]);
+    assert.equal(r.code, 2, `--capture-tries=${v}: exit 2`);
+    assert.equal(existsSync(out), false, `--capture-tries=${v}: nothing written`);
+  }
+  log(`INV-4: ${app.length} app stills written right from a stale first capture; a page that never settles refused (${byName(never).get("iso")!.reason}); --capture-tries below 2 refused`);
 }
 
 // ---- 4: D2 refusals ---------------------------------------------------------------------
@@ -345,16 +445,19 @@ for (const [name, spec, key] of [
   assert.deepEqual(readdirSync(out), ["a.png"]);
   log("  refused a busy --out (render and describe), nothing written");
 }
-// INV-1: nothing of the agent runs above went to the app's APPDATA folder (the human's window below does write there).
-assert.deepEqual(appdataListing(), appdataBefore, `INV-1: ${APPDATA_DIR} unchanged by the agent runs`);
-log(`INV-1: ${APPDATA_DIR} unchanged (${appdataBefore.length} entries before and after)`);
+// INV-1: nothing of the agent runs above went to their own profile folders, where Chromium writes by default (the human's window below does write to its own).
+{
+  const used = userDirs.filter((d) => existsSync(d) && readdirSync(d).length > 0);
+  assert.deepEqual(used, [], `INV-1: an agent run wrote to its --user-data-dir: ${used.map((d) => `${d}: ${readdirSync(d).join(", ")}`).join("; ")}`);
+  log(`INV-1: ${userDirs.length} agent runs, each --user-data-dir left empty`);
+}
 log("D2 refusals: ok");
 
 // ---- 5: a render leaves the human's window alone -------------------------------------------
 
 {
   const port = 9300 + Math.floor(Math.random() * 500);
-  const human = spawn(electron, [ROOT, "--mode=view", `--file=${join(FIX, "shoebuckle.h5")}`, `--remote-debugging-port=${port}`], { stdio: "ignore" });
+  const human = spawn(electron, [APP, `--user-data-dir=${join(OUT, "users", "human")}`, "--mode=view", `--file=${join(FIX, "shoebuckle.h5")}`, `--remote-debugging-port=${port}`], { stdio: "ignore" });
   try {
     let ws: WebSocket | null = null;
     for (let i = 0; i < 100 && !ws; i++) {
