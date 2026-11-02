@@ -25,7 +25,7 @@ import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { uniqueElementIds, type IdList } from "../../src/reader/ladrunoChecks.ts";
-import { gatherGauss } from "../../src/reader/ladrunoElements.ts";
+import { baryToGmsh, gatherGauss } from "../../src/reader/ladrunoElements.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { applyPlan, buildPlan, extrapolationVerdict, shapeOf, type CellOf } from "../../src/state/extrapolation.ts";
 
@@ -278,9 +278,165 @@ test("a PARAM_DOMAIN other than [-1,1] still reads the Gauss values, offers no n
     // The at-nodes refusal names the domain cause, never "not floating point" alone.
     const g = s.gauss[0]!;
     const v = extrapolationVerdict([{ id: g.id, nElements: 6, nGauss: 4, eids: new Float64Array([1, 2, 3, 4, 5, 6]), naturalCoords: g.naturalCoords }], (id) => ({ code: 3, nodes: CONN[id]! }));
-    assert.match(v.matrix!, /stress\/31-FourNodeQuad\[201:0:0\] has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]"/);
-    assert.match(r.index.warnings[0]!, /stress\/31-FourNodeQuad\[201:0:0\]: .*PARAM_DOMAIN is "bary", not "\[-1,1\]"; its Gauss points are read, but not extrapolated to nodes/);
+    assert.match(v.matrix!, /stress\/31-FourNodeQuad\[201:0:0\] has no natural coordinates .*PARAM_DOMAIN is neither "\[-1,1\]" nor a "bary" rule of a known frame/);
+    assert.match(r.index.warnings[0]!, /stress\/31-FourNodeQuad\[201:0:0\]: .*PARAM_DOMAIN is "bary", but TOPOLOGY "quad" is not a simplex with a known barycentric frame .*; its Gauss points are read, but not extrapolated to nodes/);
   });
+  const p01 = edited(QUAD, (f) => setAttr(f.get(`${STAGE}/MODEL/ELEMENTS/${MODEL_KEY}`) as unknown as Attrs, "PARAM_DOMAIN", "[0,1]"));
+  withFile(p01, (r) => {
+    assert.deepEqual(r.index.stages[0]!.gauss.map((g) => g.naturalCoords), [null, null]);
+    assert.match(r.index.warnings[0]!, /PARAM_DOMAIN is "\[0,1\]", not "\[-1,1\]"; its Gauss points are read, but not extrapolated to nodes/);
+  });
+});
+
+// -- "bary" simplex rules (#2187 follow-up) ---------------------------------------------
+//
+// The writer's frame, from the fork's source: a Lagrange tri/tet (and BezierTet10) weights node k by
+// GP_PARAM column k and the last node by 1 - sum (Ladruno_ElementResults.h computeGlobalGP); BezierTri6
+// weights nodes 1 and 2 by its two columns and node 0 by 1 - sum (BezierTri6.cpp N0 = xi3^2). These
+// helpers are that frame, written out per element, and never call the reader.
+
+/** The weight the writer gives each element node at one GP_PARAM row. */
+function writerWeights(row: readonly number[], family: string, topology: string): number[] {
+  const rest = 1 - row.reduce((a, x) => a + x, 0);
+  return topology === "tri" && family === "bernstein" ? [rest, ...row] : [...row, rest];
+}
+
+const near = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]!) < 1e-14);
+
+/** The GP_PARAM row the writer stores for vertex k (weight 1 on node k). */
+function vertexRow(k: number, ndir: number, family: string, topology: string): number[] {
+  const row = Array<number>(ndir).fill(0);
+  const col = topology === "tri" && family === "bernstein" ? k - 1 : k;
+  if (col >= 0 && col < ndir) row[col] = 1;
+  return row;
+}
+
+test("baryToGmsh: each vertex and the centroid land on the node the writer weights, through the viewer's own shape functions", () => {
+  for (const [topology, family, code] of [["tri", "lagrange", 2], ["tri", "bernstein", 2], ["tet", "lagrange", 4], ["tet", "bernstein", 4]] as const) {
+    const ndir = topology === "tri" ? 2 : 3;
+    const N = shapeOf(code)!.N;
+    for (let k = 0; k <= ndir; k++) {
+      const row = vertexRow(k, ndir, family, topology);
+      const want = Array.from({ length: ndir + 1 }, (_, i) => (i === k ? 1 : 0));
+      assert.ok(near(writerWeights(row, family, topology), want), `${topology}/${family} vertex ${k}: the helper's row`);
+      const got = baryToGmsh([row], topology, family);
+      assert.ok(typeof got !== "string", `${topology}/${family}: ${String(got)}`);
+      assert.ok(near(N(got[0]!), want), `${topology}/${family} vertex ${k}: N = [${N(got[0]!).join(", ")}]`);
+    }
+    const centroid = Array<number>(ndir).fill(1 / (ndir + 1));
+    assert.ok(near(N((baryToGmsh([centroid], topology, family) as number[][])[0]!), Array<number>(ndir + 1).fill(1 / (ndir + 1))), `${topology}/${family} centroid`);
+    // An off-centre point tells the frames apart: the viewer's weights are the writer's, node for node.
+    const pt = topology === "tri" ? [0.6, 0.3] : [0.5, 0.3, 0.15];
+    assert.ok(near(N((baryToGmsh([pt], topology, family) as number[][])[0]!), writerWeights(pt, family, topology)), `${topology}/${family} off-centre`);
+  }
+  // Node-0-first, spelled out: a Lagrange tri's (L1, L2) is gmsh (L2, 1 - L1 - L2); a bernstein tri's is as stored.
+  assert.ok(near((baryToGmsh([[0.6, 0.3]], "tri", "lagrange") as number[][])[0]!, [0.3, 0.1]));
+  assert.deepEqual(baryToGmsh([[0.6, 0.3]], "tri", "bernstein"), [[0.6, 0.3]]);
+});
+
+test("baryToGmsh refuses, by name, a frame it cannot tell: an unknown TOPOLOGY or FAMILY, or a row of the wrong width", () => {
+  // "triangle" is not schema v1 vocabulary (tims-workbench's enrich_native_ladruno writes it over the recorder's "tri").
+  assert.match(String(baryToGmsh([[0.2, 0.2]], "triangle", "bernstein")), /TOPOLOGY "triangle" is not a simplex with a known barycentric frame \(known: "tri", "tet"\)/);
+  assert.match(String(baryToGmsh([[0.2, 0.2]], "quad", "lagrange")), /TOPOLOGY "quad"/);
+  assert.match(String(baryToGmsh([[0.2, 0.2]], "tri", "nurbs")), /no known barycentric frame for TOPOLOGY "tri", FAMILY "nurbs"/);
+  assert.match(String(baryToGmsh([[0.2, 0.2]], "tri", undefined)), /FAMILY null/);
+  assert.match(String(baryToGmsh([[0.2, 0.2, 0.2]], "tri", "lagrange")), /not the 2 free barycentric coordinates of a tri/);
+});
+
+/** A skewed element of each gmsh code: node k's coordinates (a tri lies in z = 0). */
+const SIMPLEX_XYZ: Record<number, [number, number, number][]> = {
+  2: [[0.3, 0.1, 0], [2.1, 0.4, 0], [0.7, 1.9, 0]],
+  4: [[0.2, 0.1, 0.05], [1.7, 0.3, 0.2], [0.4, 1.6, 0.1], [0.5, 0.6, 2.2]],
+};
+const fieldAt = ([x, y, z]: readonly number[]) => x! + 2 * y! + 3 * z!;
+
+/**
+ * A copy of the quad fixture with one more element group `<key>[0]` (TOPOLOGY, FAMILY, PARAM_DOMAIN "bary",
+ * GP_PARAM `gp`) and its bucket under result `simplex`: element 101, two steps, one component `f` per Gauss
+ * point, f = x + 2y + 3z at the point the writer's frame places (step 1; step 0 is half).
+ */
+function withSimplexGroup(key: string, topology: string, family: string, gp: number[][], code: number): string {
+  const xyz = SIMPLEX_XYZ[code]!;
+  const f1 = gp.map((row) => writerWeights(row, family, topology).reduce((a, w, n) => a + w * fieldAt(xyz[n]!), 0));
+  return edited(QUAD, (f) => {
+    const m = (f.get(`${STAGE}/MODEL/ELEMENTS`) as h5wasm.Group).create_group(`${key}[0]`);
+    for (const [k, v] of [["TOPOLOGY", topology], ["FAMILY", family], ["PARAM_DOMAIN", "bary"]] as const) m.create_attribute(k, v);
+    m.create_attribute("INTEGRATION_RULE", 1000);
+    m.create_dataset({ name: "CONNECTIVITY", data: new Int32Array([101, ...xyz.map((_, n) => 1001 + n)]), shape: [1, 1 + xyz.length] });
+    m.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: new Float64Array(gp.flat()), shape: [gp.length, gp[0]!.length] });
+    const G = gp.length;
+    addBucket(
+      f,
+      "simplex",
+      {
+        gaussId: [...Array(G).keys()],
+        compNames: Array(G).fill("f").join("\n"),
+        numComp: Array(G).fill(1),
+        data: { values: new Float64Array([...f1.map((v) => v / 2), ...f1]), shape: [2, 1, G] },
+        ids: [101],
+      },
+      `${key}[0:0]`,
+    );
+  });
+}
+
+test("a bary group's Gauss points extrapolate exactly onto each corner: a linear field sampled where the writer puts them comes back as the corners' values", () => {
+  const AL = 0.5854101966249685;
+  const BE = 0.1381966011250105;
+  const TET4 = [[AL, BE, BE], [BE, AL, BE], [BE, BE, AL], [BE, BE, BE]];
+  const TRI3 = [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]];
+  const cases = [
+    // FourNodeTetrahedron on the fork's 4-point (alpha, beta) cycle (getStandardQuadrature, TenNodeTetrahedron's rule).
+    { key: "179-FourNodeTetrahedron", topology: "tet", family: "lagrange", code: 4, gp: TET4 },
+    // BezierTet10 is node-0-first too (corners only: gmsh tet10 projects onto tet4).
+    { key: "33001-BezierTet10", topology: "tet", family: "bernstein", code: 4, gp: TET4 },
+    // A Lagrange triangle (node-0-first) and BezierTri6 (gmsh already), on BezierTri6's own GP3_xi rule.
+    { key: "33016-LadrunoLST", topology: "tri", family: "lagrange", code: 2, gp: TRI3 },
+    { key: "33000-BezierTri6", topology: "tri", family: "bernstein", code: 2, gp: TRI3 },
+  ];
+  for (const c of cases) {
+    const xyz = SIMPLEX_XYZ[c.code]!;
+    withFile(withSimplexGroup(c.key, c.topology, c.family, c.gp, c.code), (r) => {
+      const st = r.index.stages[0]!;
+      const g = st.gauss.find((x) => x.id === `simplex/${c.key}[0:0]`);
+      assert.ok(g?.naturalCoords, `${c.key}: no natural coordinates; warnings: ${r.index.warnings.join(" | ")}`);
+      assert.deepEqual(r.index.warnings.filter((w) => w.includes(c.key)), [], c.key);
+      const nodes = xyz.map((_, n) => 1001 + n);
+      const cellOf: CellOf = (id) => (id === 101 ? { code: c.code, nodes } : null);
+      const input = [{ id: g.id, nElements: 1, nGauss: g.nGauss, eids: new Float64Array([101]), naturalCoords: g.naturalCoords }];
+      assert.deepEqual(extrapolationVerdict(input, cellOf), { corners: null, matrix: null }, c.key);
+      const plan = buildPlan("gauss_node", input, cellOf);
+      const out = applyPlan(plan, [r.readGaussStep(st.id, g.id, "simplex/f", 1)]);
+      plan.nodeIds.forEach((n, i) => {
+        const want = fieldAt(xyz[n - 1001]!);
+        assert.ok(Math.abs(out.nodal![i]! - want) < 1e-12, `${c.key}: node ${n} reads ${out.nodal![i]}, want ${want}`);
+      });
+      // The Gauss markers' positions (shapeOf over the corners) are the writer's, point for point.
+      g.naturalCoords.forEach((nat, k) => {
+        const w = shapeOf(c.code)!.N(nat);
+        const want = writerWeights(c.gp[k]!, c.family, c.topology);
+        assert.ok(near(w, want), `${c.key} Gauss point ${k}: N = [${w.join(", ")}], writer [${want.join(", ")}]`);
+      });
+    });
+  }
+});
+
+test("a bary group whose frame cannot be told reads its values, offers no natural coordinates, and names the class", () => {
+  const cases = [
+    ["triangle", "bernstein", /TOPOLOGY "triangle" is not a simplex/],
+    ["tri", "custom", /no known barycentric frame for TOPOLOGY "tri", FAMILY "custom"/],
+  ] as const;
+  for (const [topology, family, why] of cases) {
+    withFile(withSimplexGroup("33000-BezierTri6", topology, family, [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]], 2), (r) => {
+      const g = r.index.stages[0]!.gauss.find((x) => x.id === "simplex/33000-BezierTri6[0:0]")!;
+      assert.equal(g.components.length, 1);
+      assert.equal(g.naturalCoords, null);
+      const w = r.index.warnings.filter((x) => x.includes("33000-BezierTri6"));
+      assert.equal(w.length, 1);
+      assert.match(w[0]!, why);
+      assert.match(w[0]!, /PARAM_DOMAIN is "bary", but .*; its Gauss points are read, but not extrapolated to nodes/);
+    });
+  }
 });
 
 // -- element ids --------------------------------------------------------------------
