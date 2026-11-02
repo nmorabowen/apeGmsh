@@ -11,6 +11,7 @@ import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountLoads } from "../panels/loads.ts";
+import { mountOffers } from "../panels/offers.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
@@ -23,7 +24,10 @@ import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVer
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
+import { OfferRunner, type SnapshotResult } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
+import { bannerLines } from "../spec/describe.ts";
+import type { OfferIn } from "../state/types.ts";
 import { runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
@@ -47,6 +51,8 @@ viewport.setDisplacementSource(() => effects.currentDisplacement());
 // 3-D line diagrams: ribbon + profile + risers from the step the effects fetched.
 viewport.setLineDiagramSource(() => effects.currentLineDiagram());
 const panels = [
+  // VA5 (ADR 0128 D5): first, so its box opens the right rail above the inspector.
+  mountOffers(store),
   mountHeader(store),
   mountBanner(store),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
@@ -84,7 +90,7 @@ panels.push(
   }),
 );
 const chrome = mountCollapsibleChrome({
-  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads"],
+  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "offers"],
   visible: () => {
     const s = store.get();
     return s.mesh !== null || s.provenance.length > 0;
@@ -1343,6 +1349,41 @@ const stillLayout: Layout = {
   },
 };
 
+/** VA5: main's door for `--present` and `--snapshot` (main/preload.ts); the Effects bridge does not carry them. */
+interface OfferBridge {
+  onOffers(cb: (offers: OfferIn[]) => void): () => void;
+  onSnapshotRequest(cb: (id: number) => void): () => void;
+  snapshotReply(id: number, reply: { result: SnapshotResult; banner: string[] }): Promise<unknown>;
+  requestOpen(path: string): Promise<unknown>;
+}
+
+/**
+ * ADR 0128 D5, D6, view mode only: an offer that reaches the window is listed
+ * and nothing else (INV-5); the runner carries out the human's clicks. A
+ * snapshot paints nothing and dispatches nothing: main captures the page.
+ */
+function mountOfferFlow(): void {
+  const door = bridge as unknown as OfferBridge;
+  const runner = new OfferRunner({
+    store,
+    open: (path) => door.requestOpen(path),
+    onScreen: () => ({ contour: contourShown(), deform: deformShown() }),
+    pose: () => (store.get().mesh ? viewport.currentPose() : null),
+    settle: async () => {
+      viewport.renderNow();
+      await painted();
+      await painted();
+    },
+  });
+  panels.push(runner.start());
+  panels.push(door.onOffers((offers) => runner.receive(offers)));
+  panels.push(
+    door.onSnapshotRequest((id) => {
+      void door.snapshotReply(id, { result: runner.snapshot([window.innerWidth, window.innerHeight]), banner: bannerLines(store.get()) });
+    }),
+  );
+}
+
 async function main() {
   const cfg = await bridge.config();
   // ADR 0128 D4: the agent modes (render, describe) run their own flow; the config's mode union predates them.
@@ -1353,6 +1394,7 @@ async function main() {
   }
   if (cfg.mode === "view") {
     effects.attach();
+    mountOfferFlow();
     // With V2f's `onOpen`, main replays the open set on subscription; loading
     // `config().file` here as well would read the model twice.
     if (cfg.file && !effects.hasOpenFeed()) await effects.open(cfg.file);

@@ -1,0 +1,756 @@
+// ADR 0128 slice 5 (VA5): offers and snapshots through the app's own path in
+// Node (test/contour/harness.ts: the real Effects over main's readers), with
+// the viewport's part played by a small camera double.
+//
+// The oracles:
+//   INV-3   the spec compiled from the fixture and the spec read back from
+//           the state compile to one plan (./src/spec/compile.ts), and the
+//           document read back is the spec applied, key for key.
+//   INV-5   the state before an offer and after it, every key but `offers`,
+//           are the same objects; only a click moves the view.
+//   D5      "the same compile as D4": an offer applied over a view a human
+//           has changed gives the state the same offer gives in a new window.
+//   Back    the view memo before the click equals the memo after Back.
+// The second-instance path and the exit codes need Electron: main.ts, with
+// the end-to-end run once VA3 hands that file over.
+
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { arrivalLabel, mountOffers } from "../src/panels/offers.ts";
+import { compileShot } from "../src/spec/compile.ts";
+import { describeSet, SPEC_MAGNITUDE } from "../src/spec/describe.ts";
+import { resolveSpecFiles } from "../src/spec/files.ts";
+import { MAX_PRESENT_SHOTS, offersOfDocument, OfferRunner, sameView, samePoseWithin, snapshotOf, toDocument, viewMemoOf, viewShotOf, type OfferPayload } from "../src/spec/snapshot.ts";
+import { SPEC_VERSION, validateSpec, type SpecShot } from "../src/spec/spec.ts";
+import { MAGNITUDE } from "../src/state/contour.ts";
+import { canonicalPose, initialState, MAX_OFFERS, reduce } from "../src/state/reduce.ts";
+import { Store, type Event, type State } from "../src/state/store.ts";
+import type { CameraPose, CameraRequest, OfferIn, Vec3, ViewMemo } from "../src/state/types.ts";
+import { opened, STAGED, STAGED_RESULTS, until } from "./contour/harness.ts";
+
+const FIX = fileURLToPath(new URL("../fixtures/", import.meta.url));
+const DEFORM_2D = join(FIX, "deform_2d.h5");
+const DEFORM_2D_RESULTS = join(FIX, "deform_2d.results.h5");
+
+type Opened = Awaited<ReturnType<typeof opened>>;
+const sets: Opened[] = [];
+after(() => {
+  for (const h of sets) {
+    h.effects.dispose();
+    h.host.close();
+  }
+});
+
+/** Canonical poses (the reducer's form): the viewport's camera writes nothing else back. */
+const canon = (eye: Vec3): CameraPose => canonicalPose({ eye, target: [0, 0, 0], up: [0, 0, 1] }, "test");
+const POSES: Record<string, CameraPose> = {
+  start: canon([1, 2, 3]),
+  home: canon([9, 9, 9]),
+  iso: canon([8, 8, 8]),
+  "+x": canon([7, 0, 0]),
+  fit: canon([6, 6, 6]),
+};
+
+/** The viewport's camera, as the runner sees it: a request is applied at the next paint, and written back. */
+function cameraDouble(store: Store) {
+  let shown: CameraPose = POSES["start"]!;
+  const resolve = (to: CameraRequest): CameraPose => {
+    if (typeof to === "object" && "eye" in to) return to;
+    if (typeof to === "string" && POSES[to]) return POSES[to]!;
+    throw new Error(`the camera double has no pose for ${JSON.stringify(to)}`);
+  };
+  return {
+    pose: () => shown,
+    settle: async () => {
+      const r = store.get().camera.request;
+      if (r) shown = resolve(r.to);
+      store.dispatch({ type: "cameraMoved", pose: shown });
+    },
+    move: (p: CameraPose) => {
+      shown = p;
+      store.dispatch({ type: "cameraMoved", pose: p });
+    },
+  };
+}
+
+async function rig(model = STAGED, results = STAGED_RESULTS) {
+  const h = await opened(model, results);
+  sets.push(h);
+  // The page the theme effect styles (renderer/app.ts hands it the real one).
+  h.effects.setThemeTarget({ documentElement: { style: { setProperty() {} }, dataset: {}, setAttribute() {} }, getElementById: () => ({}) } as unknown as Document);
+  const camera = cameraDouble(h.store);
+  await camera.settle();
+  const opens: string[] = [];
+  // Fast clock: a view that stays refused settles (SETTLED_MS) without the test waiting for it.
+  let t = 0;
+  const runner = new OfferRunner({
+    store: h.store,
+    open: async (path) => {
+      opens.push(path);
+      if (path.toLowerCase().includes("deform_2d")) h.effects.openSet({ model: DEFORM_2D, geometry: null, results: DEFORM_2D_RESULTS });
+      else h.effects.openSet({ model: STAGED, geometry: null, results: STAGED_RESULTS });
+      return { ok: true };
+    },
+    onScreen: () => ({ contour: true, deform: true }),
+    pose: camera.pose,
+    settle: camera.settle,
+    sleep: () => new Promise((r) => setTimeout(r, 1)),
+    now: () => (t += 50),
+  });
+  const stop = runner.start();
+  after(stop);
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  /** The human clicks Apply, and the click runs to its end. */
+  const click = async (id: number) => {
+    h.store.dispatch({ type: "applyOffer", id });
+    await tick();
+    await runner.whenIdle();
+  };
+  const back = async () => {
+    h.store.dispatch({ type: "backOffer" });
+    await tick();
+    await runner.whenIdle();
+  };
+  return { ...h, camera, runner, opens, tick, click, back };
+}
+
+/** The offers of a spec on the fixture, through the present process's own function. */
+function offers(shots: Record<string, unknown>[], top: Record<string, unknown> = {}, model = STAGED, results: string | null = STAGED_RESULTS): OfferIn[] {
+  const r = offersOfDocument({ spec: SPEC_VERSION, files: results ? { model, results } : { model }, shots, ...top }, (spec) => resolveSpecFiles(spec, FIX, () => true), true);
+  if (!r.ok) throw new Error(`${r.key}: ${r.reason}`);
+  return r.offers;
+}
+
+const offerNamed = (s: State, name: string) => {
+  const o = s.offers.list.find((x) => x.name === name);
+  assert.ok(o, `offer ${name} is listed`);
+  return o;
+};
+const shotOf = (o: OfferIn): SpecShot => (o.payload as OfferPayload).shot;
+
+/**
+ * The memo as a view: without the planes' creation ids, and without a contour
+ * pick that colours nothing. Back cannot un-pick a field the offer picked (no
+ * event clears a pick), and a pick that is not drawn is not part of the view.
+ * The camera to INV-3's float tolerance: `canonicalPose` is exact only to rounding.
+ */
+function comparable(m: ViewMemo) {
+  const c = m.contour;
+  const contour = m.visibility.colourBy === "contour" ? c : { ...c, field: null, component: null, source: "nodal", fixed: null };
+  const near = (v: Vec3) => v.map((x) => Math.round(x * 1e9) / 1e9);
+  const camera = m.camera && { eye: near(m.camera.eye), target: near(m.camera.target), up: near(m.camera.up) };
+  return { ...m, contour, camera, clip: { ...m.clip, planes: m.clip.planes.map(({ id: _id, ...p }) => p) } };
+}
+
+// ---- --present: the document becomes offers, or is refused whole (D2) -----------
+
+test("D2: --present refuses a whole spec, naming the key, and lists nothing", () => {
+  const go = (doc: unknown) => offersOfDocument(doc, (spec) => resolveSpecFiles(spec, FIX, () => true), true);
+  const bad = go({ spec: SPEC_VERSION, files: { model: STAGED }, shots: [{ name: "a", colur_by: "group" }] });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.key, "shots[0].colur_by");
+  const version = go({ spec: "apegmsh-view/2", files: { model: STAGED }, shots: [{ name: "a" }] });
+  assert.equal(version.ok, false);
+  if (!version.ok) assert.equal(version.key, "spec");
+  const missing = offersOfDocument({ spec: SPEC_VERSION, files: { model: "nowhere.h5" }, shots: [{ name: "a" }] }, (spec) => resolveSpecFiles(spec, FIX, () => false), true);
+  assert.equal(missing.ok, false);
+  if (!missing.ok) assert.equal(missing.key, "files.model");
+});
+
+test("D5: one offer per shot, in the spec's order; a spec longer than the list is refused, not cut", () => {
+  const two = offers([{ name: "a", caption: "First view." }, { name: "b" }]);
+  assert.deepEqual(two.map((o) => [o.name, o.caption]), [["a", "First view."], ["b", null]]);
+  const long = Array.from({ length: MAX_PRESENT_SHOTS + 1 }, (_, i) => ({ name: `s${i}` }));
+  const r = offersOfDocument({ spec: SPEC_VERSION, files: { model: STAGED }, shots: long }, (spec) => resolveSpecFiles(spec, FIX, () => true), true);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.key, "shots");
+  assert.equal(offers(long.slice(0, MAX_PRESENT_SHOTS)).length, MAX_PRESENT_SHOTS);
+});
+
+test("D8: an offer knows whether its spec named a theme; D9: it says when still-only keys are ignored", () => {
+  assert.equal((offers([{ name: "a" }])[0]!.payload as OfferPayload).theme, null, "the validator's batch default is not the spec's word");
+  assert.equal((offers([{ name: "a" }], { theme: "light" })[0]!.payload as OfferPayload).theme, "light");
+  assert.equal(offers([{ name: "a" }])[0]!.ignored, null);
+  for (const shot of [{ chrome: "model" }, { chrome: "model", background: "transparent" }, { layers: { header: false } }]) {
+    assert.match(offers([{ name: "a", ...shot }])[0]!.ignored ?? "", /not applied to this window/);
+  }
+});
+
+// ---- the list (D5) ---------------------------------------------------------------
+
+const plain = (name: string): OfferIn => ({ name, caption: null, ignored: null, payload: null });
+
+test("D5: the list is newest first, capped at eight; a ninth drops the oldest", () => {
+  let s = initialState;
+  for (let i = 1; i <= MAX_OFFERS; i++) s = reduce(s, { type: "offerReceived", offers: [plain(`o${i}`)], at: i });
+  assert.equal(MAX_OFFERS, 8);
+  assert.deepEqual(s.offers.list.map((o) => o.name), ["o8", "o7", "o6", "o5", "o4", "o3", "o2", "o1"]);
+  s = reduce(s, { type: "offerReceived", offers: [plain("o9")], at: 9 });
+  assert.deepEqual(s.offers.list.map((o) => o.name), ["o9", "o8", "o7", "o6", "o5", "o4", "o3", "o2"]);
+  assert.equal(s.offers.list[0]!.arrivedAt, 9);
+  assert.deepEqual([...new Set(s.offers.list.map((o) => o.id))].length, 8, "ids are unique");
+});
+
+test("D5: offers last the window session: a closed or failed model keeps them", () => {
+  let s = reduce(initialState, { type: "fileOpened", artifact: "model", path: "a.h5" });
+  s = reduce(s, { type: "offerReceived", offers: [plain("kept")], at: 1 });
+  const closed = reduce(s, { type: "fileClosed", artifact: "model" });
+  assert.deepEqual(closed.offers.list.map((o) => o.name), ["kept"]);
+  const failed = reduce(s, { type: "fileFailed", artifact: "model", path: "a.h5", error: "broken" });
+  assert.deepEqual(failed.offers.list.map((o) => o.name), ["kept"]);
+});
+
+test("fail closed: a click on an unknown or a refused offer raises; Back with nothing applied raises; a click while one runs does nothing", () => {
+  let s = reduce(initialState, { type: "offerReceived", offers: [plain("a"), plain("b")], at: 1 });
+  assert.throws(() => reduce(s, { type: "applyOffer", id: 99 }), /not on the list/);
+  assert.throws(() => reduce(s, { type: "backOffer" }), /no applied offer/);
+  const [a, b] = s.offers.list;
+  const refused = reduce(s, { type: "offerAssessed", id: b!.id, refused: "no such stage", opens: [] });
+  assert.throws(() => reduce(refused, { type: "applyOffer", id: b!.id }), /refused and cannot be applied: no such stage/);
+  s = reduce(s, { type: "applyOffer", id: a!.id });
+  assert.equal(reduce(s, { type: "applyOffer", id: b!.id }), s, "a second click while one runs is dropped");
+  assert.throws(() => reduce(s, { type: "offerRefused", id: a!.id, reason: "" }), /names its reason/);
+});
+
+// ---- INV-5: no takeover -----------------------------------------------------------
+
+test("INV-5: an offer reaching the window changes nothing but the list; every key of the state is the same object", async () => {
+  const r = await rig();
+  r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
+  await until(() => r.store.get().resultStep?.status === "ready", "the step");
+  const before = r.store.get();
+  const seen: (keyof State)[] = [];
+  const off = r.store.subscribe((s, prev) => {
+    for (const k of Object.keys(s) as (keyof State)[]) if (s[k] !== prev[k]) seen.push(k);
+  });
+  r.runner.receive(offers([{ name: "takeover", stage: "unprop", contour: { field: "displacement", component: "z" }, camera: "+x" }, { name: "refused", stage: "nowhere" }], { theme: "light" }));
+  await r.tick();
+  await r.tick();
+  off();
+  const after_ = r.store.get();
+  assert.deepEqual([...new Set(seen)], ["offers"], "the offer and its assessment touch only the list");
+  for (const k of Object.keys(before) as (keyof State)[]) if (k !== "offers") assert.equal(after_[k], before[k], `${k} is the same object`);
+  assert.deepEqual(r.opens, [], "nothing opened");
+  assert.deepEqual(r.camera.pose(), POSES["start"], "the camera did not move");
+  assert.equal(offerNamed(after_, "takeover").status, "pending");
+  assert.equal(offerNamed(after_, "refused").status, "refused");
+});
+
+test("INV-5: only the panel's click dispatches Apply or Back; main and the spec side never do", () => {
+  const root = fileURLToPath(new URL("../src/", import.meta.url));
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith(".ts") ? [join(dir, d.name)] : []));
+  const senders = walk(root).filter((f) => /type: "(applyOffer|backOffer)"/.test(readFileSync(f, "utf8")) && !/state[\\/]types\.ts$/.test(f));
+  assert.deepEqual(senders.map((f) => f.slice(root.length).replace(/\\/g, "/")), ["panels/offers.ts"]);
+});
+
+// ---- an offer that would refuse is listed as refused (D5, D2) -----------------------
+
+test("D5: an offer the set cannot draw is listed as refused, with the compiler's own reason, and cannot be applied", async () => {
+  const r = await rig();
+  const spec = { name: "nostage", stage: "nowhere" };
+  r.runner.receive(offers([spec, { name: "nostep", stage: "base", step: 99 }, { name: "nofield", stage: "base", contour: { field: "nope", component: "z" } }, { name: "ok" }]));
+  await r.tick();
+  await r.tick();
+  const s = r.store.get();
+  const d = describeSet(s, []);
+  for (const name of ["nostage", "nostep", "nofield"]) {
+    const o = offerNamed(s, name);
+    const c = compileShot(shotOf(o), d);
+    assert.equal(c.ok, false);
+    assert.equal(o.status, "refused");
+    if (!c.ok) assert.equal(o.reason, c.reason, "the reason is the compiler's, word for word");
+    assert.throws(() => r.store.dispatch({ type: "applyOffer", id: o.id }), /cannot be applied/);
+  }
+  assert.match(offerNamed(s, "nostage").reason!, /no stage named "nowhere"/);
+  assert.match(offerNamed(s, "nostep").reason!, /step 99 is not one of them/);
+  assert.equal(offerNamed(s, "ok").status, "pending");
+});
+
+test("D5: an offer naming files outside the open set says so; its click opens them first, and Back returns", async () => {
+  const r = await rig();
+  r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 1 } });
+  await until(() => r.store.get().resultStep?.status === "ready", "the step");
+  await r.camera.settle();
+  const before = viewMemoOf(r.store.get(), r.camera.pose(), STAGED);
+  r.runner.receive(offers([{ name: "other", stage: 0, step: "first" }], {}, DEFORM_2D, DEFORM_2D_RESULTS));
+  await r.tick();
+  await r.tick();
+  const listed = offerNamed(r.store.get(), "other");
+  assert.equal(listed.status, "pending", "it cannot be judged until its set is open");
+  assert.deepEqual(listed.opens, [DEFORM_2D, DEFORM_2D_RESULTS]);
+  assert.equal(r.store.get().artifacts.model!.path, STAGED, "listing it opened nothing");
+  await r.click(listed.id);
+  const s = r.store.get();
+  assert.deepEqual(r.opens, [DEFORM_2D_RESULTS], "the click opened the set, through the results it names");
+  assert.equal(s.artifacts.model!.path, DEFORM_2D);
+  assert.equal(offerNamed(s, "other").status, "applied");
+  assert.deepEqual(s.phase.at, { kind: "results", stage: 0, step: 0 });
+  await r.back();
+  const t = r.store.get();
+  assert.equal(t.artifacts.model!.path, STAGED, "Back opened the set it came from");
+  assert.deepEqual(r.opens, [DEFORM_2D_RESULTS, STAGED_RESULTS]);
+  assert.deepEqual(t.phase.at, { kind: "results", stage: 1, step: 1 });
+  assert.deepEqual(comparable(viewMemoOf(t, r.camera.pose(), STAGED)), comparable(before));
+});
+
+test("D2/D5: a view refused only when drawn is refused at the click; the view goes back, and reading the set again does not revive the offer", async () => {
+  const r = await rig();
+  const before = viewMemoOf(r.store.get(), r.camera.pose(), STAGED);
+  // Compiles (a contour without a stage is the view's refusal, not the compiler's).
+  r.runner.receive(offers([{ name: "nostep", contour: { field: "displacement", component: "z" } }]));
+  await r.tick();
+  await r.tick();
+  const o = offerNamed(r.store.get(), "nostep");
+  assert.equal(o.status, "pending");
+  await r.click(o.id);
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "nostep").status, "refused");
+  assert.equal(offerNamed(s, "nostep").reason, "the contour is not drawn: contours colour a results step: choose results in the phase bar");
+  assert.deepEqual(comparable(viewMemoOf(s, r.camera.pose(), STAGED)), comparable(before), "INV-4: the view it could not draw does not stay");
+  assert.equal(s.offers.back.length, 0, "a refused click leaves nothing to go back from");
+  assert.equal(s.offers.request, null);
+  r.store.dispatch({ type: "offerReceived", offers: [], at: 2 });
+  await r.tick();
+  r.store.dispatch({ type: "fileChanged", path: STAGED });
+  await until(() => r.store.get().artifacts.model!.stale === false, "the re-read");
+  await r.tick();
+  assert.equal(offerNamed(r.store.get(), "nostep").status, "refused");
+});
+
+// ---- D5: the same view the still showed ---------------------------------------------
+
+const VIEWS: Record<string, Record<string, unknown>> = {
+  mesh: { camera: "iso" },
+  "mesh by role": { colour_by: "role", camera: "+x" },
+  "last step, history range": { stage: "unprop", contour: { field: "displacement", component: "z" }, camera: "fit" },
+  "first step, by index, step range": { stage: 0, step: "first", contour: { field: "displacement", component: "x", range: "step", cmap: "viridis" } },
+  "a step, fixed range": { stage: "erect", step: 1, contour: { field: "displacement", component: "y", range: { min: -1, max: 1 } } },
+  magnitude: { stage: "base", contour: { field: "displacement", component: SPEC_MAGNITUDE } },
+  deformed: { stage: "unprop", step: 2, deform: { scale: 25 }, camera: { eye: [5, -4, 3], target: [1, 1, 0], up: [0, 0, 1] } },
+  cut: { clip: [{ normal: "z", offset: 1.5, flip: true }, { normal: [0, 1, 0], offset: 0.25 }] },
+  "a caption": { caption: "Vertical displacement, last step." },
+};
+
+for (const [title, view] of Object.entries(VIEWS)) {
+  test(`INV-3: ${title}: the spec applied reads back as that spec, and the view alone compiles to the same plan`, async () => {
+    const r = await rig();
+    const groups = describeSet(r.store.get(), []).groups;
+    r.runner.receive(offers([{ name: "v", ...view }], { theme: "light" }));
+    await r.tick();
+    await r.tick();
+    const o = offerNamed(r.store.get(), "v");
+    assert.equal(o.status, "pending", o.reason ?? "");
+    await r.click(o.id);
+    const s = r.store.get();
+    assert.equal(offerNamed(s, "v").status, "applied", offerNamed(s, "v").reason ?? "");
+    assert.equal(s.theme, "light", "the theme the spec names");
+    const want = shotOf(o);
+    const got = snapshotOf(s, r.camera.pose(), [1280, 720], r.runner["applied"].at(-1) ?? null);
+    assert.ok(got.ok, got.ok ? "" : got.reason);
+    if (!got.ok) return;
+    assert.deepEqual(got.snapshot.outside, [], "the spec says all of this view");
+    const v = validateSpec(got.snapshot.view);
+    assert.ok(v.ok, v.ok ? "" : `${v.key}: ${v.reason}`);
+    if (!v.ok) return;
+    assert.deepEqual(v.spec.shots[0], want, "the document read back is the spec applied, key for key");
+    assert.deepEqual(v.spec.files, { model: STAGED, results: STAGED_RESULTS });
+    assert.equal(v.spec.theme, "light");
+    assert.deepEqual(v.spec.size, [1280, 720], "the window's size, not the spec's (an offer never resizes the window)");
+    // The state alone, with no memory of the offer: the same plan, and the camera within tolerance.
+    const pose = r.camera.pose();
+    const { shot: derived, outside } = viewShotOf(s, pose);
+    assert.deepEqual(outside, []);
+    assert.ok(sameView(derived, want, describeSet(s, [])), "the view read from the state compiles to the plan applied");
+    const again = compileShot(derived, describeSet(s, []));
+    assert.ok(again.ok);
+    if (again.ok) assert.ok(typeof again.plan.camera === "object" && "eye" in again.plan.camera && samePoseWithin(again.plan.camera, pose));
+    assert.ok(groups.length > 0);
+  });
+}
+
+test("INV-3: an isolate reads back as an isolate", async () => {
+  const r = await rig();
+  const paths = describeSet(r.store.get(), []).groups.map((g) => g.path);
+  r.runner.receive(offers([{ name: "iso", isolate: [paths[1]!, paths[0]!] }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "iso").id);
+  const got = r.runner.snapshot([800, 600]);
+  assert.ok(got.ok);
+  if (!got.ok) return;
+  assert.deepEqual((got.snapshot.view["shots"] as { isolate: string[] }[])[0]!.isolate, [paths[1], paths[0]], "the offer's own order");
+  const { shot, outside } = viewShotOf(r.store.get(), r.camera.pose());
+  assert.deepEqual(outside, []);
+  assert.deepEqual([...shot.isolate].sort(), [paths[0], paths[1]].sort());
+});
+
+test("INV-3: an element contour reads back as itself", async () => {
+  const r = await rig(join(FIX, "elem_solid.h5"), join(FIX, "elem_solid.results.h5"));
+  const d = describeSet(r.store.get(), []);
+  const f = d.stages[0]!.fields.find((x) => x.source === "element");
+  assert.ok(f, "the fixture offers an element field");
+  r.runner.receive(offers([{ name: "el", stage: 0, contour: { field: f.name, component: f.components[0]!.key, source: "element", gauss: "cell_averaged", range: "step" } }], {}, join(FIX, "elem_solid.h5"), join(FIX, "elem_solid.results.h5")));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "el").id);
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "el").status, "applied", offerNamed(s, "el").reason ?? "");
+  const { shot, outside } = viewShotOf(s, r.camera.pose());
+  assert.deepEqual(outside.filter((x) => !x.includes("opacity")), []);
+  assert.equal(shot.contour!.source, "element");
+  assert.equal(shot.contour!.gauss, "cell_averaged");
+  assert.ok(sameView(shot, shotOf(offerNamed(s, "el")), describeSet(s, [])));
+});
+
+test("toDocument: every normal form reads back unchanged through the validator (D1)", () => {
+  const doc = {
+    spec: SPEC_VERSION,
+    files: { model: "m.h5", results: "m.results.h5" },
+    size: [640, 480],
+    theme: "dark",
+    shots: [
+      { name: "a", caption: "c", stage: "s", step: 3, camera: { eye: [1, 2, 3], target: [0, 0, 0], up: [0, 0, 1] }, contour: { field: "f", component: "z", source: "element", range: { min: 0, max: 1 }, cmap: "viridis", gauss: "node" }, deform: { scale: 2 }, clip: [{ normal: "x", offset: 1, flip: true }], isolate: ["/physical/A"], chrome: "model", background: "transparent", layers: { axes: false, caption: true } },
+      { name: "b", colour_by: "role", chrome: "app", layers: { header: false } },
+      { name: "c", stage: 1, step: "first", contour: { field: "f", component: "z", range: "step" } },
+    ],
+  };
+  const v = validateSpec(doc);
+  assert.ok(v.ok, v.ok ? "" : `${v.key}: ${v.reason}`);
+  if (!v.ok) return;
+  const back = validateSpec(toDocument(v.spec));
+  assert.ok(back.ok, back.ok ? "" : `${back.key}: ${back.reason}`);
+  if (back.ok) assert.deepEqual(back.spec, v.spec);
+});
+
+test("D5: an offer over a view the human has changed gives the view it gives a new window (the agent's still)", async () => {
+  const shot = { name: "v", stage: "unprop", contour: { field: "displacement", component: "z" }, deform: { scale: 5 }, clip: [{ normal: "z", offset: 1 }], camera: "iso" };
+  const fresh = await rig();
+  fresh.runner.receive(offers([shot]));
+  await fresh.tick();
+  await fresh.tick();
+  await fresh.click(offerNamed(fresh.store.get(), "v").id);
+
+  const human = await rig();
+  const d = human.store.dispatch.bind(human.store);
+  const paths = describeSet(human.store.get(), []).groups.map((g) => g.path);
+  d({ type: "setEdges", on: false });
+  d({ type: "setOpacity", value: 0.2 });
+  d({ type: "toggleExtrudeFrames", on: true });
+  d({ type: "toggleShowOffsets", on: true });
+  d({ type: "setLoads", on: true });
+  d({ type: "setLineDiagram", on: true });
+  d({ type: "setApplyCuts", on: false });
+  d({ type: "setCutFace", on: false });
+  d({ type: "setContourUnits", source: "kN_m_s", target: "tf_m_s" });
+  d({ type: "setHidden", decls: [paths[0]!], hidden: true });
+  d({ type: "addClipPlane", normal: [1, 0, 0] });
+  d({ type: "setColourBy", by: "role" });
+  d({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  d({ type: "setContourCmap", cmap: "viridis" });
+  await until(() => human.store.get().resultStep?.status === "ready", "the step");
+  const messy = viewMemoOf(human.store.get(), human.camera.pose(), STAGED);
+  human.runner.receive(offers([shot]));
+  await human.tick();
+  await human.tick();
+  await human.click(offerNamed(human.store.get(), "v").id);
+
+  const a = viewMemoOf(fresh.store.get(), fresh.camera.pose(), STAGED);
+  const b = viewMemoOf(human.store.get(), human.camera.pose(), STAGED);
+  assert.equal(offerNamed(human.store.get(), "v").status, "applied", offerNamed(human.store.get(), "v").reason ?? "");
+  // The planes' creation counts differ; the planes themselves do not.
+  assert.deepEqual(comparable(b), comparable(a));
+  // And Back returns the view the human had built.
+  await human.back();
+  const c = viewMemoOf(human.store.get(), human.camera.pose(), STAGED);
+  assert.deepEqual(comparable(c), comparable(messy));
+});
+
+test("D8: an offer that names no theme leaves the human's alone; a snapshot keeps it", async () => {
+  const r = await rig();
+  r.store.dispatch({ type: "setTheme", theme: "dark" });
+  r.runner.receive(offers([{ name: "v" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "v").id);
+  assert.equal(r.store.get().theme, "dark");
+  const got = r.runner.snapshot([800, 600]);
+  assert.ok(got.ok);
+  if (got.ok) assert.equal(got.snapshot.view["theme"], "dark");
+});
+
+// ---- Back ---------------------------------------------------------------------------
+
+test("D5: Back returns to the view from before the last applied offer, one click at a time", async () => {
+  const r = await rig();
+  r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 1 } });
+  r.store.dispatch({ type: "setDeform", on: true });
+  r.store.dispatch({ type: "setDeformScale", scale: 3 });
+  await until(() => r.store.get().resultStep?.status === "ready", "the step");
+  const m0 = viewMemoOf(r.store.get(), r.camera.pose(), STAGED);
+  r.runner.receive(offers([{ name: "a", stage: "unprop", camera: "+x" }, { name: "b", clip: [{ normal: "z", offset: 2 }], camera: "fit" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "a").id);
+  const m1 = viewMemoOf(r.store.get(), r.camera.pose(), STAGED);
+  await r.click(offerNamed(r.store.get(), "b").id);
+  assert.equal(r.store.get().offers.back.length, 2);
+  assert.notDeepEqual(comparable(viewMemoOf(r.store.get(), r.camera.pose(), STAGED)), comparable(m1));
+  await r.back();
+  assert.deepEqual(comparable(viewMemoOf(r.store.get(), r.camera.pose(), STAGED)), comparable(m1));
+  assert.equal(offerNamed(r.store.get(), "b").status, "pending", "it is on offer again");
+  assert.equal(offerNamed(r.store.get(), "a").status, "applied");
+  await r.back();
+  assert.deepEqual(comparable(viewMemoOf(r.store.get(), r.camera.pose(), STAGED)), comparable(m0));
+  assert.equal(r.store.get().offers.back.length, 0);
+  assert.equal(r.store.get().offers.notice, null);
+});
+
+test("D5: Back that cannot restore says so; the view is never quietly something else", async () => {
+  const r = await rig();
+  r.runner.receive(offers([{ name: "a" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "a").id);
+  // The file the view came from now has one stage fewer than the memo names.
+  const top = r.store.get().offers.back[0]!;
+  const broken = { ...top.memo, at: { kind: "results" as const, stage: 99, step: 0 } };
+  const stateWithBrokenMemo = { ...top, memo: broken };
+  const orig = r.store.get.bind(r.store);
+  r.store.get = () => {
+    const s = orig();
+    return s.offers.back[0] === top ? { ...s, offers: { ...s.offers, back: [stateWithBrokenMemo, ...s.offers.back.slice(1)] } } : s;
+  };
+  r.store.dispatch({ type: "backOffer" });
+  await r.tick();
+  await r.runner.whenIdle();
+  r.store.get = orig;
+  assert.match(r.store.get().offers.notice ?? "", /Back could not restore the view: setPhase/);
+});
+
+// ---- the snapshot (D6) --------------------------------------------------------------
+
+test("D6: a snapshot changes nothing, and carries the selection beside the spec", async () => {
+  const r = await rig();
+  const decl = r.store.get().mesh!.elements[0]!;
+  r.store.dispatch({ type: "select", pick: { decl, at: null, nodes: null } });
+  const before = r.store.get();
+  const got = r.runner.snapshot([1024, 768]);
+  assert.equal(r.store.get(), before, "the state is the same object");
+  assert.ok(got.ok);
+  if (!got.ok) return;
+  assert.deepEqual(got.snapshot.selection, [decl]);
+  assert.deepEqual(got.snapshot.camera, POSES["start"]);
+  const v = validateSpec(got.snapshot.view);
+  assert.ok(v.ok);
+  if (!v.ok) return;
+  assert.equal(v.spec.shots[0]!.name, "view");
+  assert.deepEqual(v.spec.shots[0]!.camera, POSES["start"]);
+  assert.equal(v.spec.shots[0]!.stage, null);
+  assert.deepEqual(Object.keys(got.snapshot.view).sort(), ["files", "shots", "size", "spec", "theme"], "the closed key set: no selection key in the spec");
+});
+
+test("D6: the human moves after applying: the snapshot is the view as it is, no longer the offer's words", async () => {
+  const r = await rig();
+  r.runner.receive(offers([{ name: "v", caption: "C.", stage: "unprop", step: "last", camera: "iso" }]));
+  await r.tick();
+  await r.tick();
+  await r.click(offerNamed(r.store.get(), "v").id);
+  const shotIn = (x: ReturnType<OfferRunner["snapshot"]>) => {
+    if (!x.ok) throw new Error(x.reason);
+    return (x.snapshot.view["shots"] as Record<string, unknown>[])[0]!;
+  };
+  assert.equal(shotIn(r.runner.snapshot([800, 600]))["name"], "v");
+  assert.equal(shotIn(r.runner.snapshot([800, 600]))["camera"], "iso");
+  // Orbit, within tolerance: still the offer's camera.
+  const iso = POSES["iso"]!;
+  r.camera.move({ ...iso, eye: [8 + 1e-7, 8, 8] });
+  assert.equal(shotIn(r.runner.snapshot([800, 600]))["camera"], "iso");
+  // Orbit for real: an explicit pose, and no longer the offer's name.
+  r.camera.move(POSES["+x"]!);
+  const moved = shotIn(r.runner.snapshot([800, 600]));
+  assert.equal(moved["name"], "view");
+  assert.equal(moved["caption"], undefined);
+  assert.deepEqual(moved["camera"], POSES["+x"]);
+  // Scrub: the step as it is.
+  r.camera.move(iso);
+  r.store.dispatch({ type: "setResultStep", step: 1 });
+  const scrubbed = shotIn(r.runner.snapshot([800, 600]));
+  assert.equal(scrubbed["name"], "view");
+  assert.equal(scrubbed["step"], 1);
+  assert.equal(scrubbed["stage"], "unprop");
+});
+
+test("D6: what the spec cannot say is named, never silently lost", async () => {
+  const r = await rig();
+  const paths = describeSet(r.store.get(), []).groups.map((g) => g.path);
+  const d = r.store.dispatch.bind(r.store);
+  d({ type: "setOpacity", value: 0.5 });
+  d({ type: "setEdges", on: false });
+  d({ type: "setLineDiagram", on: true });
+  d({ type: "setLoads", on: true });
+  d({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  d({ type: "setDeform", on: true });
+  d({ type: "setReferenceGhost", on: true });
+  d({ type: "setHidden", decls: [r.store.get().mesh!.elements[0]!], hidden: true });
+  d({ type: "addClipPlane", normal: [0, 0, 1] });
+  d({ type: "setApplyCuts", on: false });
+  const got = r.runner.snapshot([800, 600]);
+  assert.ok(got.ok, got.ok ? "" : got.reason);
+  if (!got.ok) return;
+  for (const word of [/opacity is 0.5/, /edges are off/, /line diagram is on/, /loads are on/, /reference ghost/, /hidden declarations/, /Apply cuts off/]) {
+    assert.ok(got.snapshot.outside.some((x) => word.test(x)), `${word} in ${JSON.stringify(got.snapshot.outside)}`);
+  }
+  assert.ok(validateSpec(got.snapshot.view).ok, "and it is still a spec the validator takes");
+  assert.ok(paths.length);
+  // Colouring by a magnitude: the spec's word, not the internal key.
+  d({ type: "setContourField", field: "displacement", component: MAGNITUDE });
+  d({ type: "setColourBy", by: "contour" });
+  assert.equal(viewShotOf(r.store.get(), r.camera.pose()).shot.contour!.component, SPEC_MAGNITUDE);
+});
+
+test("D6: with nothing open, or nothing framed, the snapshot is refused with the reason", () => {
+  const none = snapshotOf(initialState, POSES["start"]!, [800, 600], null);
+  assert.deepEqual(none, { ok: false, reason: "the window has no model open, so it has no view to read back" });
+});
+
+test("D6: a stage name two stages share reads back as its index", async () => {
+  const r = await rig();
+  r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
+  const s = r.store.get();
+  const stages = s.results!.stages.map((st) => ({ ...st, name: "same" }));
+  const dup: State = { ...s, results: { ...s.results!, stages } };
+  assert.equal(viewShotOf(dup, POSES["start"]!).shot.stage, 1);
+  assert.equal(viewShotOf(s, POSES["start"]!).shot.stage, "erect");
+});
+
+// ---- the panel ----------------------------------------------------------------------
+
+class FakeEl {
+  children: FakeEl[] = [];
+  parent: FakeEl | null = null;
+  className = "";
+  id = "";
+  title = "";
+  type = "";
+  hidden = false;
+  disabled = false;
+  dataset: Record<string, string> = {};
+  private own = "";
+  private handlers = new Map<string, (() => void)[]>();
+  get textContent(): string {
+    return this.own + this.children.map((c) => c.textContent).join(" ");
+  }
+  set textContent(t: string) {
+    this.own = t;
+  }
+  append(...xs: FakeEl[]) {
+    for (const x of xs) x.parent = this;
+    this.children.push(...xs);
+  }
+  prepend(x: FakeEl) {
+    x.parent = this;
+    this.children.unshift(x);
+  }
+  replaceChildren(...xs: FakeEl[]) {
+    this.children = [];
+    this.append(...xs);
+  }
+  remove() {
+    if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this);
+  }
+  addEventListener(type: string, fn: () => void) {
+    this.handlers.set(type, [...(this.handlers.get(type) ?? []), fn]);
+  }
+  removeEventListener(type: string, fn: () => void) {
+    this.handlers.set(type, (this.handlers.get(type) ?? []).filter((f) => f !== fn));
+  }
+  click() {
+    if (this.disabled) return;
+    for (const f of this.handlers.get("click") ?? []) f();
+  }
+  all(cls: string): FakeEl[] {
+    const here = this.className.split(" ").includes(cls) ? [this] : [];
+    return [...here, ...this.children.flatMap((c) => c.all(cls))];
+  }
+}
+
+function withFakeDom<T>(fn: (rail: FakeEl) => T): T {
+  const rail = new FakeEl();
+  rail.id = "rail";
+  const g = globalThis as unknown as { document?: unknown };
+  const before = g.document;
+  g.document = { createElement: () => new FakeEl(), getElementById: (id: string) => (id === "rail" ? rail : null) };
+  try {
+    return fn(rail);
+  } finally {
+    g.document = before;
+  }
+}
+
+test("the panel: no box with nothing on offer; name, caption, arrival, status; a refused offer's Apply is off; a click dispatches and nothing else moves", () => {
+  withFakeDom((rail) => {
+    const store = new Store();
+    const sent: Event["type"][] = [];
+    const dispose = mountOffers(store);
+    const panel = rail.children[0]!;
+    assert.equal(panel.id, "offers");
+    assert.equal(panel.hidden, true, "nothing on offer: no box");
+    const at = new Date(2026, 10, 1, 9, 7, 3).getTime();
+    assert.equal(arrivalLabel(at), "09:07:03");
+    store.dispatch({ type: "offerReceived", offers: [{ name: "peak-drift", caption: "Peak drift at column line C.", ignored: "A still's chrome.", payload: null }], at });
+    store.dispatch({ type: "offerReceived", offers: [{ name: "no-stage", caption: null, ignored: null, payload: null }], at: at + 60000 });
+    const [refusedId, okId] = store.get().offers.list.map((o) => o.id) as [number, number];
+    store.dispatch({ type: "offerAssessed", id: refusedId, refused: "the results have no stage named \"x\"", opens: [] });
+    store.dispatch({ type: "offerAssessed", id: okId, refused: null, opens: ["C:\\m\\other.h5"] });
+    assert.equal(panel.hidden, false);
+    const rows = panel.all("offer-row");
+    assert.deepEqual(rows.map((r) => r.dataset["offer"]), [String(refusedId), String(okId)], "newest first");
+    assert.match(rows[0]!.textContent, /no-stage 09:08:03 refused/);
+    assert.match(rows[0]!.textContent, /no stage named/);
+    assert.match(rows[1]!.textContent, /peak-drift 09:07:03 offered/);
+    assert.match(rows[1]!.textContent, /Peak drift at column line C\./);
+    assert.match(rows[1]!.textContent, /Applying opens other\.h5\./);
+    assert.match(rows[1]!.textContent, /A still's chrome\./);
+    const [refusedBtn, okBtn] = panel.all("offer-apply") as [FakeEl, FakeEl];
+    assert.equal(refusedBtn.disabled, true);
+    assert.equal(okBtn.disabled, false);
+    assert.equal(panel.all("offer-back")[0]!.disabled, true, "nothing applied: Back is off");
+    const off = store.subscribe((s, prev) => {
+      if (s.offers.request !== prev.offers.request) sent.push(s.offers.request?.kind === "apply" ? "applyOffer" : "backOffer");
+    });
+    refusedBtn.click();
+    assert.deepEqual(sent, []);
+    okBtn.click();
+    assert.deepEqual(sent, ["applyOffer"]);
+    const running = panel.all("offer-apply");
+    assert.ok(running.every((b) => b.disabled), "one click at a time");
+    assert.match(panel.all("offer-row")[1]!.textContent, /applying/);
+    off();
+    dispose();
+    assert.equal(rail.children.length, 0);
+  });
+});
+
+test("the panel: Back is on after an applied offer, and a failed Back's notice shows", () => {
+  withFakeDom(() => {
+    const store = new Store();
+    mountOffers(store);
+    store.dispatch({ type: "offerReceived", offers: [plain("a")], at: 1 });
+    const id = store.get().offers.list[0]!.id;
+    store.dispatch({ type: "applyOffer", id });
+    const memo = viewMemoOf(store.get(), null, "m.h5");
+    store.dispatch({ type: "offerApplied", id, memo });
+    const doc = (globalThis as unknown as { document: { getElementById(id: string): FakeEl } }).document;
+    const panel = doc.getElementById("rail").children[0]!;
+    const back = panel.all("offer-back")[0]!;
+    assert.equal(back.disabled, false);
+    assert.match(panel.all("offer-row")[0]!.textContent, /applied/);
+    back.click();
+    assert.equal(store.get().offers.request?.kind, "back");
+    store.dispatch({ type: "offerBackDone", notice: "Back could not restore the view: gone" });
+    assert.match(panel.textContent, /Back could not restore the view: gone/);
+  });
+});
