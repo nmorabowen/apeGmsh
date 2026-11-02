@@ -128,6 +128,21 @@ if (fault === "crash-capture") {
     };
   });
 }
+// A capture that resolves after the run began ending: the real image is taken, the renderer crashed,
+// and the image handed back only from a render-process-gone listener that runs after main's (added
+// below, after main's import), so after headlessEnd wrote the manifest and before its deferred exit.
+let release = null;
+if (fault === "crash-late") {
+  app.on("web-contents-created", (_e, wc) => {
+    const real = wc.capturePage.bind(wc);
+    wc.capturePage = async (...a) => {
+      const img = await real(...a);
+      const late = new Promise((r) => (release = () => r(img)));
+      wc.forcefullyCrashRenderer();
+      return late;
+    };
+  });
+}
 // Main itself blocked for 8 s (with --hang-ms=5000) while the renderer is fine.
 if (fault === "main-block") wrap("model:open", (fn) => (e, ...a) => {
   const until = Date.now() + 8000;
@@ -153,6 +168,7 @@ if (fault === "partial") {
   syncBuiltinESMExports();
 }
 await import(${JSON.stringify(pathToFileURL(join(ROOT, "dist", "main.mjs")).href)});
+if (fault === "crash-late") app.on("render-process-gone", () => release?.());
 `,
 );
 
@@ -382,6 +398,22 @@ if (wanted("render.crash-mid-a")) {
   const m = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as { refused: { key: string; reason: string } };
   assert.match(m.refused.reason, /; it stopped on shot a; none of the 2 stills had been written$/, `the shot in flight is named: ${m.refused.reason}`);
   log(`render crash during a's capture: exit 1, ${m.refused.reason.slice(-80)}`);
+}
+
+if (wanted("render.capture-after-end")) {
+  // 1b (review round 2): a capture that resolves once the run is ending writes no PNG beside the refusal.
+  const runs = Number(process.env["AGV_REPEAT"] ?? 1);
+  for (let i = 0; i < runs; i++) {
+    const dir = caseDir("render-capture-after-end");
+    const out = join(dir, "out");
+    const r = await run(join(dir, "user"), { AGV_FAULT: "crash-late" }, "--mode=render", `--spec=${appSpecIn(dir)}`, `--out=${out}`);
+    failedPromptly(r, "render capture resolving after the end", REASON.crash);
+    assert.equal(r.code, 1);
+    assert.deepEqual(listing(out), ["manifest.json"], `run ${i + 1}: no PNG written after the manifest refused the run`);
+    const m = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as { refused: { reason: string } };
+    assert.match(m.refused.reason, /; it stopped on shot a; none of the 2 stills had been written$/);
+  }
+  log(`render capture resolving after the run began ending: ${runs} run(s), exit 1, only manifest.json each time`);
 }
 
 if (wanted("describe.main-block")) {

@@ -876,6 +876,16 @@ function stillPath(name: unknown): string {
   return join(resolve(out!), `${name}.png`);
 }
 
+/**
+ * No still once the run is ending: `headlessEnd` has already written the
+ * manifest that refuses the run, and a capture that resolves after it (its
+ * `await capturePage()` was pending) would leave a PNG with no entry (INV-6,
+ * #2708 review round 2).
+ */
+function refuseIfEnding(path: string): void {
+  if (ending) throw new Error(`render: the run is ending; ${path} is not written`);
+}
+
 /** A still written whole or not at all: a throw part way (a full disk) removes what it wrote, so no PNG stands beside the shot's refusal (#2681 review). */
 function writeStill(path: string, png: Uint8Array): void {
   try {
@@ -923,6 +933,7 @@ ipcMain.handle("render:job", () => {
 ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
   if (!(png instanceof Uint8Array) || png.length < 8) throw new Error("render:png needs the PNG bytes");
   const path = stillPath(name);
+  refuseIfEnding(path);
   writeStill(path, png);
   written.add(name as string);
   return { path };
@@ -939,6 +950,7 @@ ipcMain.handle("render:capture", async (e, name: unknown) => {
   if (img.isEmpty() || size.width !== width || size.height !== height) {
     throw new Error(`render:capture ${String(name)}: the page captured as ${size.width} x ${size.height}, not the spec's ${width} x ${height}`);
   }
+  refuseIfEnding(path);
   writeStill(path, img.toPNG());
   written.add(name as string);
   return { path, width: size.width, height: size.height };
