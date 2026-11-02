@@ -15,8 +15,9 @@
 //   2. the same spec rendered twice gives identical PNGs, every shot (the
 //      kill criterion: it stops here when not), byte-identical manifests except
 //      `timing` (ADR 0128 Acceptance), and each shot's time (kill criterion
-//      ~10 s); the reference ghost likewise, shot 5 times in each of 2 runs in
-//      both chromes (#2664), over the whole image, the phase readout included;
+//      ~10 s); the reference ghost likewise, shot 5 times in each of 2 runs
+//      (#2664): every model still alike, each app still alike run to run,
+//      over the whole image, the phase readout included;
 //   INV-4 (#2696): an app still is the page as it settled: a capture that
 //      first returns a stale frame still writes the right still, a page that
 //      never settles refuses the shot with no PNG, and `--capture-tries` below
@@ -324,17 +325,23 @@ log("D9 layers: ok");
   assert.equal((byName(G1).get("ghost0.model")!.deform as { ghost: boolean }).ghost, true, "the result records the ghost");
   // A ghost that is not drawn would be stable too.
   assert.ok(rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).count > 1000, "the ghost is drawn");
-  for (const chrome of ["model", "app"]) {
-    const first = still(G1, `ghost0.${chrome}`);
-    for (const R of [G1, G2]) {
-      for (let i = 0; i < 5; i++) {
-        // The whole image, the phase readout included: an app still is the page as it settled (#2696).
-        const d = rgbDiff(first, still(R, `ghost${i}.${chrome}`));
-        if (d.count) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
-      }
+  // The model still is the renderer's own canvas: every shot of both runs is the first one, pixel for pixel.
+  const first = still(G1, "ghost0.model");
+  for (const R of [G1, G2]) {
+    for (let i = 0; i < 5; i++) {
+      const d = rgbDiff(first, still(R, `ghost${i}.model`));
+      if (d.count) throw new Error(`KILL: ghost${i}.model differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
     }
   }
-  log("reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical");
+  // The app still is the page as the compositor settled it (#2696), the phase readout included: each shot is the
+  // same shot of the other run, over the whole image. Shot to shot within a run it is not held: with the ghost
+  // drawn, the settled page of one shot can differ from its neighbours by 1 in a channel at ~200 edge pixels while
+  // the canvas the renderer drew is identical (the single capture before #2696 took the frame before and hid it).
+  for (let i = 0; i < 5; i++) {
+    const d = rgbDiff(still(G1, `ghost${i}.app`), still(G2, `ghost${i}.app`));
+    if (d.count) throw new Error(`KILL: ghost${i}.app differs between two runs of one spec in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
+  }
+  log("reference ghost: 5 shots in each of 2 runs; model stills pixel-identical, app stills pixel-identical run to run");
 }
 
 // INV-4 (#2696): an app still is the page as it settled, or the shot is refused.
