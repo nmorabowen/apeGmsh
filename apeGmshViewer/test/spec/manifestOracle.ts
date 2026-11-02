@@ -20,6 +20,7 @@ export interface OracleCase {
   gauss?: string;
   isolate?: string[];
   time: number;
+  range_history: { min: number; max: number };
   recorded: OracleExtrema | null;
   drawn: OracleExtrema | null;
   no_data: { kind: string; count: number; of: number };
@@ -68,6 +69,9 @@ export function sameAsOracle(entry: ManifestEntry, c: OracleCase): void {
   assert.equal(entry.stage?.name, c.stage);
   assert.equal(entry.step, c.step);
   assert.ok(close(entry.time!, c.time), `${c.name}: time ${entry.time}, Python ${c.time}`);
+  assert.equal(k.range.mode, "history", `${c.name}: the spec's default range`);
+  assert.equal(k.range.history_scan.status, "done");
+  assert.ok(close(k.range.min!, c.range_history.min) && close(k.range.max!, c.range_history.max), `${c.name}: range [${k.range.min}, ${k.range.max}], Python [${c.range_history.min}, ${c.range_history.max}]`);
   sameExtrema(k.extrema.recorded, c.recorded, `${c.name} recorded`);
   sameExtrema(k.extrema.drawn, c.drawn, `${c.name} drawn`);
   assert.deepEqual(k.no_data, c.no_data, `${c.name}: no data`);

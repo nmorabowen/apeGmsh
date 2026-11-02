@@ -128,6 +128,10 @@
     "kind": "nodes",
     "count": 0,
     "of": 308
+   },
+   "range_history": {
+    "min": -0.022,
+    "max": -0.0
    }
   },
   {
@@ -186,6 +190,10 @@
     "kind": "nodes",
     "count": 0,
     "of": 308
+   },
+   "range_history": {
+    "min": 0.0,
+    "max": 0.07
    }
   },
   {
@@ -244,6 +252,10 @@
     "kind": "nodes",
     "count": 0,
     "of": 308
+   },
+   "range_history": {
+    "min": 0.0,
+    "max": 0.07605261336732617
    }
   },
   {
@@ -305,6 +317,76 @@
     "kind": "nodes",
     "count": 0,
     "of": 140
+   },
+   "range_history": {
+    "min": 0.0,
+    "max": 0.07
+   }
+  },
+  {
+   "name": "nodal_stage_inactive",
+   "set": "contour_staged",
+   "stage": "base",
+   "step": 2,
+   "field": "displacement",
+   "component": "displacement_y",
+   "active": [
+    "Col",
+    "Prop"
+   ],
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": 0.0,
+     "node": 1,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.0
+     ]
+    },
+    "max": {
+     "value": 0.01,
+     "node": 13,
+     "element": null,
+     "position": [
+      2.0,
+      0.0,
+      1.5
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 0.0,
+     "node": 1,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.0
+     ]
+    },
+    "max": {
+     "value": 0.01,
+     "node": 13,
+     "element": null,
+     "position": [
+      2.0,
+      0.0,
+      1.5
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 0,
+    "of": 232
+   },
+   "range_history": {
+    "min": 0.0,
+    "max": 0.01
    }
   },
   {
@@ -363,6 +445,10 @@
     "kind": "nodes",
     "count": 48,
     "of": 308
+   },
+   "range_history": {
+    "min": 0.0,
+    "max": 0.06
    }
   },
   {
@@ -422,6 +508,10 @@
     "kind": "cells",
     "count": 0,
     "of": 12
+   },
+   "range_history": {
+    "min": 1.6,
+    "max": 13.1
    }
   },
   {
@@ -481,6 +571,10 @@
     "kind": "cells",
     "count": 1,
     "of": 16
+   },
+   "range_history": {
+    "min": 2.5,
+    "max": 17.5
    }
   },
   {
@@ -540,6 +634,10 @@
     "kind": "nodes",
     "count": 0,
     "of": 34
+   },
+   "range_history": {
+    "min": -1.9500000000000093,
+    "max": 31.64999999999996
    }
   },
   {
@@ -599,6 +697,10 @@
     "kind": "cells",
     "count": 0,
     "of": 12
+   },
+   "range_history": {
+    "min": -1.9500000000000093,
+    "max": 31.64999999999996
    }
   }
  ]

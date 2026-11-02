@@ -16,7 +16,7 @@ change in ``Results`` fails here; run the file as a script to rewrite it::
 
 The rules restated from the manifest's header, and not imported from the app:
 a tie takes the lowest id; ``recorded`` covers every value the file holds at
-the step; ``drawn`` keeps the visible primitives, and a solid draws only its
+the step; ``range_history`` is their extremes over the stage's steps; ``drawn`` keeps the visible primitives, and a solid draws only its
 faces seen once; an element's position is the mean of its nodes.
 """
 from __future__ import annotations
@@ -56,12 +56,14 @@ SETS: dict[str, dict[str, Any]] = {
 }
 
 #: ``stage`` by name, ``step`` as an index; ``gauss`` is the spec's mode.
-#: Every contour_* case reads stage ``erect``, where every element is active.
+#: ``erect`` has every element active; ``base`` has not activated ``Top`` yet
+#: (``active``). ``isolate`` is the shot's own choice of groups.
 CASES: list[dict[str, Any]] = [
     {"name": "nodal_axis", "set": "contour_staged", "stage": "erect", "step": 1, "field": "displacement", "component": "displacement_z"},
     {"name": "nodal_axis_first_step", "set": "contour_staged", "stage": "erect", "step": 0, "field": "displacement", "component": "displacement_x"},
     {"name": "nodal_magnitude", "set": "contour_staged", "stage": "erect", "step": 1, "field": "displacement", "component": "magnitude"},
     {"name": "nodal_isolated", "set": "contour_staged", "stage": "erect", "step": 1, "field": "displacement", "component": "displacement_x", "isolate": ["Col"]},
+    {"name": "nodal_stage_inactive", "set": "contour_staged", "stage": "base", "step": 2, "field": "displacement", "component": "displacement_y", "active": ["Col", "Prop"]},
     {"name": "nodal_no_data", "set": "contour_nodata", "stage": "erect", "step": 1, "field": "displacement", "component": "displacement_x"},
     {"name": "element_mean", "set": "elem_solid", "stage": "load", "step": 1, "field": "stress", "component": "stress_xx", "gauss": "cell"},
     {"name": "element_cell_no_data", "set": "elem_mixed", "stage": "load", "step": 2, "field": "stress", "component": "stress_yy", "gauss": "cell"},
@@ -247,9 +249,16 @@ def compute() -> dict[str, Any]:
                 name = case["set"]
                 fem = fems[name]
                 r = results[name]
-                drawn = _Drawn(fem, case.get("isolate"))
-                body = _element_case(case, r, fem, drawn) if "gauss" in case else _nodal_case(case, r, fem, drawn)
+                drawn = _Drawn(fem, case.get("isolate") or case.get("active"))
+                reader = _element_case if "gauss" in case else _nodal_case
+                body = reader(case, r, fem, drawn)
                 stage = next(s for s in r.stages if s.name == case["stage"])
+                # The whole-history range: the recorded extremes over every step of the stage.
+                ends = [reader({**case, "step": k}, r, fem, drawn)["recorded"] for k in range(stage.n_steps)]
+                body["range_history"] = {
+                    "min": min(e["min"]["value"] for e in ends if e),
+                    "max": max(e["max"]["value"] for e in ends if e),
+                }
                 with h5py.File(FIXTURES / f"{name}.results.h5", "r") as f:
                     t = float(np.asarray(f[f"stages/{stage.id}/time"][...], dtype=np.float64)[case["step"]])
                 out["cases"].append({**case, "time": t, **body})
@@ -287,8 +296,9 @@ def test_cases_cover_every_kind_of_holder() -> None:
     assert point["node"] is not None and point["element"] is not None
     assert by_name["nodal_no_data"]["no_data"]["count"] > 0
     assert by_name["element_cell_no_data"]["no_data"]["count"] > 0
-    # Isolating a group leaves fewer drawn nodes than the whole model shows.
+    # Isolating a group, or a group not yet active, leaves fewer drawn nodes than the whole model shows.
     assert by_name["nodal_isolated"]["no_data"]["of"] < by_name["nodal_axis"]["no_data"]["of"]
+    assert by_name["nodal_stage_inactive"]["no_data"]["of"] < by_name["nodal_axis"]["no_data"]["of"]
 
 
 if __name__ == "__main__":

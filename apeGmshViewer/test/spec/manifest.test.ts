@@ -105,6 +105,8 @@ test("D3: a deformed shape states its scale and the nodes it draws undeformed, a
   assert.ok(entry.deform?.state === "partial");
   assert.equal(entry.deform.scale, 10);
   const undeformed = entry.deform.undeformed!;
+  // Python's count: the drawn nodes the file records no displacement for.
+  assert.equal(undeformed, ORACLE.cases.find((c) => c.name === "nodal_no_data")!.no_data.count);
   assert.ok(undeformed > 0, "the Top box's own nodes have no displacement");
   assert.ok(entry.banner.some((b) => b.startsWith(`Deformed shape: ${undeformed.toLocaleString()} of`)), `the banner names the count: ${entry.banner.join(" | ")}`);
   assert.equal(entry.contour, null, "no contour asked for, none stated");
@@ -145,14 +147,15 @@ test("fail closed: an entry that cannot state the view throws, so the render mod
 });
 
 test("a refused shot's entry: the reason, no still, and no view it never drew", async () => {
-  const h = await setOf("contour_staged");
-  // A view from an earlier shot is on screen; a shot that did not compile must not report it.
-  await entryOf(h, shotOf({ stage: "erect", step: 1, contour: { field: "displacement", component: "displacement_z" } }));
+  const h = await setOf("contour_nodata");
+  // A view from an earlier shot is on screen, with a banner line; a shot that did not compile must not report it.
+  const earlier = await entryOf(h, shotOf({ stage: "erect", step: 1, deform: { scale: 10 } }));
+  assert.ok(earlier.entry.banner.length > 0, "the earlier view has a banner line");
   const e = refusedEntry(h.store.get(), shotOf({ stage: "nope" }), "no stage named nope", null);
   assert.equal(e.status, "refused");
   assert.equal(e.reason, "no stage named nope");
   assert.deepEqual([e.png, e.image, e.camera, e.contour, e.deform, e.stage, e.step, e.time, e.layout], [null, null, null, null, null, null, null, null, null]);
   assert.deepEqual(e.banner, []);
   assert.equal(e.pairing.state, "paired");
-  assert.equal(e.files.results!.size, statSync(fx("contour_staged.results.h5")).size);
+  assert.equal(e.files.results!.size, statSync(fx("contour_nodata.results.h5")).size);
 });
