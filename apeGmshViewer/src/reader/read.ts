@@ -191,11 +191,16 @@ export const NEUTRAL_TARGET = { major: 2, minor: 36 } as const;
  * data inside the hash-excluded decl_params JSON, which the app does not
  * read, so nothing here reads differently; model_hash is unchanged.
  *
+ * opensees 2.39.0 (ADR 0130 slice 5, h5-schema.md "<stem>.user.h5"): the
+ * optional `/opensees/combinations` group holds the combinations `apeSees`
+ * declares. The app does not read it yet, so nothing here reads differently;
+ * it is hash-excluded, so model_hash is unchanged.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 38 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 39 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;

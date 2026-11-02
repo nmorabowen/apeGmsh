@@ -186,7 +186,7 @@ test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.
   assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 });
 });
 
-test("opensees 2.38.0 is the target: a 2.38 file with a 2.29 embeddedRebar, a 2.35 equationConstraint store, a 2.36 @target_mode and a 2.37 transform jnt_offset opens with no banner", () => {
+test("opensees 2.39.0 is the target: a 2.39 file with a 2.29 embeddedRebar, a 2.35 equationConstraint store, a 2.36 @target_mode and a 2.37 transform jnt_offset opens with no banner", () => {
   // h5-schema.md: 2.28 adds decl_params `label`, 2.29 the optional
   // /opensees/constraints/embeddedRebar group (replay data the app does not
   // read), 2.30 decl_params `precision`, 2.31 /opensees/program's `decl`
@@ -199,11 +199,12 @@ test("opensees 2.38.0 is the target: a 2.38 file with a 2.29 embeddedRebar, a 2.
   // (replay data, not read here), 2.37 the optional transform `jnt_offset`
   // dataset (a table the scene ignores), 2.38 the Ladruno recorder's
   // decl_params `precision` field (hash-excluded replay data, not read
-  // here). A file at the target opens silently;
+  // here), 2.39 the optional /opensees/combinations group (not read here).
+  // A file at the target opens silently;
   // tests/test_app_target_drift.py holds the target equal to the Python
   // writer's SCHEMA_VERSION.
-  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 38 });
-  const path = writeFile("o-238.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.38.0");
+  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 39 });
+  const path = writeFile("o-239.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.39.0");
   const f = new h5wasm.File(path, "a");
   const ops = f.get("opensees") as h5wasm.Group;
   ops.create_attribute("target_mode", "fork");
@@ -228,7 +229,7 @@ test("opensees 2.38.0 is the target: a 2.38 file with a 2.29 embeddedRebar, a 2.
   tr.create_dataset({ name: "jnt_offset", data: new Float64Array([0, 0, -0.3, 0, 0, -0.3]), shape: [1, 6] });
   f.close();
   const m = read(path);
-  assert.equal(m.opensees?.version, "2.38.0");
+  assert.equal(m.opensees?.version, "2.39.0");
   assert.deepEqual(m.warnings, []);
   const geom = m.opensees?.objects.find((o) => o.family === "geomTransf");
   assert.ok(geom !== undefined && "jnt_offset" in geom.tables);

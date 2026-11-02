@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_38_0() -> None:
-    """Schema 2.38.0 — the typed ``recorder.Ladruno`` ``decl_params`` row
-    carries ``precision`` (``"f64"`` / ``"f32"``; program slice X, #2613)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 38, 0)
+def test_opensees_reader_version_is_2_39_0() -> None:
+    """Schema 2.39.0 — the optional ``/opensees/combinations`` group holds
+    the combinations ``apeSees`` declares (ADR 0130 D4, #2685)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 39, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:
