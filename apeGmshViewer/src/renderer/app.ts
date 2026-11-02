@@ -1432,12 +1432,19 @@ function mountUserFeed(): void {
   panels.push(
     userDoor.onOpen((set) => {
       const path = set.user ?? userPathOf(set);
+      const moved = path !== target?.path;
       target = path === null ? null : { path, model: set.model, results: set.results };
       if (target === null) {
         userSeq++;
         pending = false;
         store.dispatch({ type: "userClosed" });
         return;
+      }
+      // Another set's user file: the last one's families leave at once, and an answer still on its way for it is dropped
+      // (#2737 review, F1). Only the read itself waits for the model's first read; the same file again keeps waiting as before.
+      if (moved) {
+        userSeq++;
+        store.dispatch({ type: "userOpened", path: target.path });
       }
       pending = true;
       go();
