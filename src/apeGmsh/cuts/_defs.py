@@ -372,7 +372,8 @@ class SectionCutDef:
             name=entity_name,
             point=self.plane_point_arr,
             normal=self.plane_normal_arr,
-            reference=self.plane_point_arr if reference is None else reference,
+            reference=np.asarray(
+                self.plane_point_arr if reference is None else reference, dtype=float),
             element_ids=np.asarray(self.element_ids, dtype=np.int64),
             side=self.side,
             polygon=(None if self.bounding_polygon is None

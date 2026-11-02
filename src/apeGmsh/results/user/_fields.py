@@ -433,10 +433,10 @@ def _check_holder(holder: h5py.Group, target: str, s: int) -> None:
         if kinds.shape != (n,) or _dataset(holder, "ENTITY_ROW", "i4", 1).shape != (n,):
             raise EntryRefused("bad-param", f"{holder.name}: entity columns must have {n} rows")
         for kind in kinds[...]:
-            text = decode_cell(kind, "/results", kinds.name)
-            if text not in ENTITY_KINDS:
+            cell = decode_cell(kind, "/results", kinds.name)
+            if cell not in ENTITY_KINDS:
                 raise EntryRefused(
-                    "bad-param", f"{kinds.name}: entity kind {text!r} is not one of "
+                    "bad-param", f"{kinds.name}: entity kind {cell!r} is not one of "
                     f"{sorted(ENTITY_KINDS)}")
     elif n != 1:
         raise EntryRefused("bad-param", f"{data.name}: a domain value has n = 1, got {n}")

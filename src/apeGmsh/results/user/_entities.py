@@ -78,7 +78,7 @@ def _ids(v: Any, what: str) -> np.ndarray:
     return a.astype("i4")
 
 
-def _same(a: np.ndarray, b: np.ndarray, dtype: str) -> bool:
+def _same(a: Any, b: Any, dtype: str) -> bool:
     a, b = np.asarray(a), np.asarray(b)
     return a.shape == b.shape and a.astype(dtype).tobytes() == b.astype(dtype).tobytes()
 
@@ -117,15 +117,18 @@ class CutEntity:
         from ...cuts import SectionCutDef
 
         poly = self.polygon
+        if self.side not in SIDES:  # the def would refuse it too, less plainly
+            raise ValueError(f"cut {self.name!r}: side {self.side!r} is not one of {SIDES}")
+        p, n = self.point, self.normal
         return SectionCutDef(
-            plane_point=tuple(float(x) for x in self.point),  # type: ignore[arg-type]
-            plane_normal=tuple(float(x) for x in self.normal),  # type: ignore[arg-type]
+            plane_point=(float(p[0]), float(p[1]), float(p[2])),
+            plane_normal=(float(n[0]), float(n[1]), float(n[2])),
             element_ids=tuple(int(e) for e in self.element_ids),
-            side=self.side,  # type: ignore[arg-type]
+            side="positive" if self.side == "positive" else "negative",
             label=self.name,
             bounding_polygon=(
                 None if poly is None or len(poly) == 0
-                else tuple(tuple(float(x) for x in v) for v in poly)  # type: ignore[arg-type]
+                else tuple((float(v[0]), float(v[1]), float(v[2])) for v in poly)
             ),
         )
 
@@ -400,7 +403,7 @@ def read_entities(zone: h5py.Group) -> Entities:
 
 
 def binding_problem(entities: Entities, name: str, kinds: Sequence[str],
-                    rows: np.ndarray) -> Optional[str]:
+                    rows: Any) -> Optional[str]:
     """Why the ``ON_ENTITIES`` result ``name`` names a row ``entities`` does not hold."""
     for kind, row in zip(kinds, np.asarray(rows).ravel()):
         if kind not in KINDS:
