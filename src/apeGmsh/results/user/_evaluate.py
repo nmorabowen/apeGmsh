@@ -160,7 +160,9 @@ class Source(Protocol):
     """Where an evaluation reads one quantity's values.
 
     ``linear`` says whether a summing rule may combine this quantity (A5):
-    true for a recorded result, the ``@linear`` flag for a user result.
+    true for a recorded response (in a native ``results.h5``, only a recorder
+    spelling: :func:`~._states.recorded_is_linear`), the ``@linear`` flag for a
+    user result.
     ``stored`` is a user result's stored row for a combination, else ``None``.
     ``field`` raises :class:`CombinationRefused` for a state it cannot read.
     """
@@ -378,16 +380,19 @@ class _Run:
         if row.rule != "envelope":
             raise CombinationRefused(
                 row.name, "not-linear",
-                f"{row.rule} sums its terms, and this quantity does not declare "
-                "@linear=1: a sum of it is not its value under the sum. Store a "
-                "row for this combination, or use envelope (ADR 0130 A5)")
+                f"{row.rule} sums its terms, and this quantity is not linear (a user "
+                "result without @linear=1, a derived scalar such as von Mises, a custom "
+                "scalar, or a native results.h5 component that is not a recorder "
+                "spelling): a sum of "
+                "it is not its value under the sum. Store "
+                "a row for this combination, or use envelope (ADR 0130 A5)")
         for term in row.terms:
             if term.factor != 1.0:
                 # 2 r(D) is not r(2 D) for a quantity that is not linear.
                 raise CombinationRefused(
                     row.name, "not-linear",
-                    f"a term of factor {term.factor} scales this quantity, which does not "
-                    "declare @linear=1; an envelope of it takes factor-1 terms (ADR 0130 A5)")
+                    f"a term of factor {term.factor} scales this quantity, which is not "
+                    "linear; an envelope of it takes factor-1 terms (ADR 0130 A5)")
 
     def _one(self, name: str, stored: Optional[Field]) -> Combined:
         row = _row(self.table, name, name)

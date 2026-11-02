@@ -25,6 +25,16 @@ recorded levels read ``Results``; ``domain`` (a whole-model value such as
 ``base_shear``, named by its label) exists only in ``/spectra``, so a ``stage``
 or ``mode`` term of a domain quantity refuses ``unresolved``.
 
+A recorded quantity is linear, so a summing rule may combine it (A5), when the
+reader translated it from a recorder: every component of a ``.ladruno`` or an
+``.mpco``. A native ``results.h5`` also stores what a writer put beside the
+recorded responses (the YOO slab's ``wood_armer_*`` and ``rib_shear_*``), so
+there a component is linear only if it is a recorder spelling
+(:func:`apeGmsh._vocabulary.is_canonical`). Any other name, the empty one
+included, refuses ``not-linear`` under a summing rule or a factor; ``envelope``
+of factor-1 terms and a lone state read still read it (owner ruling, VU2c).
+A derived scalar (von Mises, a principal value) is not linear on any source.
+
 A user result reads its ``STATES`` rows instead, by exact address, after the
 same canonical check, so a row stored as ``("stage", "gravity")`` is the one a
 term naming ``gravity`` reads. One state read alone has no rule
@@ -41,6 +51,8 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 
 import numpy as np
 
+from ..._vocabulary import is_canonical
+from .._derived import is_derived, is_shell_derived
 from ._descriptor import CombinationTable, StateAddress, resolve
 from ._evaluate import (
     Case,
@@ -83,6 +95,56 @@ _MODE_STAGE = re.compile(r"(?P<host>.+?)(?:_step_(?P<step>\d+))?_mode_(?P<mode>\
 #: The name a recorder gives a stage the run did not stamp.
 _UNSTAMPED = re.compile(r"MODEL_STAGE\[\d+\]\Z")
 _PART = re.compile(r"\.part-\d+\Z")
+_MPCO_SUFFIX = ".mpco"
+
+
+def recorded_is_linear(results_file: Optional[Path], level: str, component: str) -> bool:
+    """Whether a summing rule may combine recorded ``(level, component)`` (A5).
+
+    A derived scalar (:func:`apeGmsh.results._derived.is_derived` and
+    ``is_shell_derived``: von Mises, the principal values, the invariants) is
+    computed on read from a tensor, and a sum of it is not its value under the
+    sum, so it is not linear on any source. The families are the vocabulary's
+    ``DERIVED_*_SCALARS``; the few of them that are linear in the tensor
+    (``mean_stress``, ``volumetric_strain``) are refused with the rest, since the
+    vocabulary does not mark them apart.
+
+    A ``domain`` value is read from ``/spectra`` only, never from the results
+    file, so the file does not judge it. A ``.ladruno`` or ``.mpco`` serves only
+    what it recorded. Any other file, and a ``Results`` with no file, is judged
+    by the one recorder vocabulary, :func:`apeGmsh._vocabulary.is_canonical`: a
+    native ``results.h5`` stores design fields as ordinary components. The
+    suffixes are the readers' dispatch (:func:`apeGmsh.results._open.open_results`):
+    those two open with a recorder's reader, any other file as a native one.
+    """
+    if is_derived(component) or is_shell_derived(component):
+        return False
+    if level == "domain":
+        return True
+    if results_file is not None:
+        from ..readers._ladruno_live import FORK_SUFFIX
+
+        if results_file.suffix.lower() in (FORK_SUFFIX, _MPCO_SUFFIX):
+            return True
+    return is_canonical(component)
+
+
+def custom_scalars(results: "Results", level: str) -> dict[str, Any]:
+    """The ADR 0076 custom scalars a read of ``level`` resolves, by name.
+
+    A custom scalar (``results.nodes.define("umag", "sqrt(...)")``, or one
+    auto-loaded from ``<results>.defs.json``) is an expression over the
+    recorded components, and nothing makes it linear (``abs``, ``sqrt``), so a
+    summing rule never combines it (A5). Only ``nodes`` and ``gauss`` hold
+    them; another recorded level has none, and ``domain`` reads ``/spectra``.
+    """
+    if level == "nodes":
+        return results.nodes.definitions
+    if level == "gauss":
+        return results.elements.gauss.definitions
+    if level in ("elements", "line_stations", "domain"):
+        return {}
+    raise ValueError(f"level {level!r} is not one of {LEVELS}")
 
 
 def canonical_stage_name(info: Any) -> str:
@@ -189,13 +251,18 @@ def _ordinal_within(ids: np.ndarray) -> np.ndarray:
 
 
 class _RecordedSource:
-    """One recorded quantity of a ``Results``: ``(level, component)``."""
+    """One recorded quantity of a ``Results``: ``(level, component)``.
 
-    linear = True
+    ``linear`` is :func:`recorded_is_linear` of ``results_file``, the file the
+    ``Results`` was opened on (with none given the component is judged by
+    name), and false for a custom scalar of ``results`` (:func:`custom_scalars`)
+    on every source.
+    """
 
     def __init__(self, results: "Results", level: str, component: str,
                  ids: Optional[Any], spectra: Optional[SpectraProvider], name: str,
-                 unbound_stages: Optional[str] = None, allow_stale: bool = False) -> None:
+                 unbound_stages: Optional[str] = None, allow_stale: bool = False,
+                 results_file: Optional[Path] = None) -> None:
         if level not in LEVELS:
             raise ValueError(f"level {level!r} is not one of {LEVELS}")
         if level == "domain" and ids is not None:
@@ -210,6 +277,9 @@ class _RecordedSource:
         self.name = name
         self.unbound_stages = unbound_stages
         self.allow_stale = bool(allow_stale)
+        self.linear = recorded_is_linear(
+            None if results_file is None else Path(results_file), level, component,
+        ) and component not in custom_scalars(results, level)
 
     def stored(self, name: str) -> Optional[Field]:
         return None  # a recorded file stores no combination
@@ -558,7 +628,8 @@ class UserCombinations:
             raise ValueError("pass exactly one of component= and user_result=")
         recorded = _RecordedSource(
             self._results, level, component or "", ids, self.spectra, label,
-            unbound_stages=self._unbound_stages, allow_stale=allow_stale)
+            unbound_stages=self._unbound_stages, allow_stale=allow_stale,
+            results_file=self.results_file)
         source: Any = recorded
         if user_result is not None:
             if self._user is None:
