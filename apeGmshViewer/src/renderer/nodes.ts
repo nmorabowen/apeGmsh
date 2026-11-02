@@ -55,6 +55,9 @@ export function nodePositions(v: NodeVertices, line: Float32Array, tri: Float32A
   return out;
 }
 
+/** The share of its eye distance a marker is drawn nearer the eye, so it wins against the face it sits on. */
+export const NODE_DEPTH_PULL = 5e-4;
+
 /** Thickness of the dark rim in pixels; at or under 3 px a marker is all fill, because a rim would swallow it. */
 const RIM_PX = 1.25;
 const rimAt = (size: number): number => (size > 3 ? 1 - (2 * RIM_PX) / size : 2);
@@ -68,8 +71,17 @@ export function makeNodePoints(positions: Float32Array, size: number, fill: numb
   m.userData["nodeUniforms"] = uniforms;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    // A small depth pull: a node on a face sits exactly at its depth and would flicker through it.
-    shader.vertexShader = shader.vertexShader.replace("#include <project_vertex>", "#include <project_vertex>\n  gl_Position.z -= 0.0002 * gl_Position.w;");
+    // A small depth pull toward the eye, a fixed share of the eye distance: a node on a face sits exactly
+    // at its depth and would flicker through it. A fixed offset in clip depth would grow with depth^2 / near
+    // under perspective and show markers through walls once the camera is inside the model.
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <project_vertex>",
+      `#include <project_vertex>
+  {
+    vec4 nodePull = projectionMatrix * vec4(mvPosition.xyz * (1.0 - ${NODE_DEPTH_PULL}), 1.0);
+    gl_Position.z = nodePull.z / nodePull.w * gl_Position.w;
+  }`,
+    );
     shader.fragmentShader = shader.fragmentShader
       .replace("void main() {", "uniform vec3 nodeRim;\nuniform float nodeRimAt;\nvoid main() {")
       .replace(

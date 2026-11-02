@@ -865,6 +865,8 @@ export interface State {
     on: boolean;
     size: number | null;
     auto: boolean;
+    /** what the viewport placed on the stage `stage` (its id), and what it could not place */
+    measured: { stage: string; count: number; refused: { reason: string; elements: number }[]; notes: string[] } | null;
   };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
@@ -1138,6 +1140,8 @@ export type Event =
   /** the Gauss point markers, as setNodes and setNodeSize */
   | { type: "setGaussPoints"; on: boolean }
   | { type: "setGaussSize"; size: number | null; auto?: boolean }
+  /** dispatched by the viewport once it has placed the Gauss markers of a stage */
+  | { type: "gaussMeasured"; stage: string; count: number; refused: { reason: string; elements: number }[]; notes: string[] }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }

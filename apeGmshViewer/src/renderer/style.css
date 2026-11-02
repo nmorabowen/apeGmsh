@@ -69,7 +69,7 @@ body[data-rail-collapsed="true"] #header { max-width: calc(100vw - 216px); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
 }
 #banner:not([data-open]) { width: 536px; }
-#banner:not([data-open]) > :not(.banner-summary) { display: none; }
+body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summary) { display: none; }
 #banner[data-open] { z-index: 20; max-height: calc(100vh - 180px); overflow: auto; }
 #banner[data-open] > .banner-summary { margin-bottom: 6px; }
 
@@ -473,13 +473,13 @@ code { font-family: var(--mono); }
 #rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before, #line-diagram[data-collapsed="true"] > h3:first-child::before, #loads[data-collapsed="true"] > h3:first-child::before {
   content: "\25b8";
 }
-#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"], #line-diagram[data-collapsed="true"], #loads[data-collapsed="true"] {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"], body:not([data-still-chrome="app"]) #legend[data-collapsed="true"], body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"], body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] {
   flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
 }
 #rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child, #line-diagram[data-collapsed="true"] > h3:first-child, #loads[data-collapsed="true"] > h3:first-child {
   margin-bottom: 0;
 }
-#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child), #line-diagram[data-collapsed="true"] > :not(:first-child), #loads[data-collapsed="true"] > :not(:first-child) {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > :not(:first-child) {
   display: none;
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }
@@ -499,6 +499,8 @@ code { font-family: var(--mono); }
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
 #banner:not([hidden]) ~ #scale-stack { top: 168px; }
+#scale-stack:not(:has(> :not([hidden]))) { display: none; }
+/* A collapsed card or closed banner hides its contents, except in an app-chrome still (ADR 0128 D9), which nobody can open. */
 body[data-still-chrome="model"] #scale-stack { display: none; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
 .vs-title { font-weight: 600; font-size: 13px; }
@@ -532,11 +534,11 @@ body[data-still-chrome="model"] #scale-stack { display: none; }
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
-#display > h3:first-child::before, #deform > h3:first-child::before, #contour > h3:first-child::before { content: "\25be"; font-size: 11px; color: var(--muted); }
-#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before, #contour[data-collapsed="true"] > h3:first-child::before { content: "\25b8"; }
-#display[data-collapsed="true"], #deform[data-collapsed="true"], #contour[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
+#display > h3:first-child::before, #deform > h3:first-child::before, #contour > h3:first-child::before { content: "be"; font-size: 11px; color: var(--muted); }
+#display[data-collapsed="true"] > h3:first-child::before, #deform[data-collapsed="true"] > h3:first-child::before, #contour[data-collapsed="true"] > h3:first-child::before { content: "b8"; }
+body:not([data-still-chrome="app"]) #display[data-collapsed="true"], body:not([data-still-chrome="app"]) #deform[data-collapsed="true"], body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] { flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px; }
 #display[data-collapsed="true"] > h3:first-child, #deform[data-collapsed="true"] > h3:first-child, #contour[data-collapsed="true"] > h3:first-child { margin-bottom: 0; }
-#display[data-collapsed="true"] > :not(:first-child), #deform[data-collapsed="true"] > :not(:first-child), #contour[data-collapsed="true"] > :not(:first-child) { display: none; }
+body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #deform[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #contour[data-collapsed="true"] > :not(:first-child) { display: none; }
 .display-row { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
 .display-label { width: 56px; flex: none; color: var(--muted); font-size: 13px; }
 .display-row > .legend-mode { flex: 1; margin: 0; }

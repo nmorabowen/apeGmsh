@@ -1,6 +1,6 @@
-// Standalone 3-D Line Diagram panel (`#line-diagram`), positioned on the left
-// above `#legend` so both `Contour` (in `#legend`) and `Line diagram` (in
-// `#line-diagram`) can be controlled and viewed simultaneously without scrolling.
+// Standalone 3-D Line Diagram panel (`#line-diagram`), on the left rail above
+// the Contour card (`#contour`), so both can be controlled and viewed at once;
+// its colour bar and range controls are on its viewport scale (`#line-diagram-scale`).
 //
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/`.

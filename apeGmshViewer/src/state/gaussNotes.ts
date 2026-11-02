@@ -15,6 +15,15 @@ export function gaussNotesOf(s: State): string[] {
   const stage = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   if (!stage) return [];
   const out: string[] = [];
+  const m = s.gaussPoints.measured;
+  if (s.gaussPoints.on && m && m.stage === stage.id) {
+    // What the viewport placed: every refusal it counted, by reason.
+    if (m.count === 0) out.push("No Gauss point or beam station placed on this stage.");
+    for (const r of m.refused) out.push(`${r.elements.toLocaleString()} ${r.elements === 1 ? "element" : "elements"} not placed: ${r.reason}.`);
+    out.push(...m.notes);
+    if (s.mesh && s.mesh.counts.solidCells > 0 && s.visibility.opacity >= 1) out.push("Points inside solids are hidden by the surfaces: set them to ghost or off.");
+    return out;
+  }
   const groups = stage.gauss;
   // Counted by group: two groups (stresses, strains) often cover the same elements, so element counts would double.
   const of = (pick: (g: GaussGroup) => boolean) => groups.filter(pick).length;

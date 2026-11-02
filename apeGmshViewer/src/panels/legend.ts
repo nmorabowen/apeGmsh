@@ -1,14 +1,12 @@
-// Legend panel: the colour mode (by physical group, by the structural role
-// the file records, or, V4c1, a nodal contour) and its rows. A click on a
-// group's row hides or shows it (`setHidden`); "show all" clears the hidden
-// set. In contour mode it is also the field picker: the field, its
-// component, the colour range mode and the colormap, and the ramp with its
-// min and max, the range mode in words, and the no-data colour. It
+// Legend panel (the Physical groups card): colour by physical group or by the
+// structural role the file records, and its rows. A click on a group's row
+// hides or shows it (`setHidden`); "show all" clears the hidden set. It
 // dispatches events and reads selectors, nothing else.
 //
 // This module also fills the Display card (what is drawn, and the contour
-// colormap), the Deformed card, the Contour card (the switch, the field and
-// what the file refuses), and the contour scale in the viewport, which
+// colormap), the Deformed card, the Contour card (V4c1: the switch, the field
+// and its component, the Gauss draw mode, what the file refuses and the no-data
+// colour), and the contour scale in the viewport, which
 // shows whenever a contour is drawn, whether or not the cards are open, and
 // holds the colour range controls.
 
@@ -108,6 +106,10 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   let scaleChrome: ScaleChrome | null = null;
   let refusalsOpen = false;
   let unlisten: (() => void)[] = [];
+  // The Contour card and the scale have their own listeners: they rebuild on every step, the other cards do not.
+  let contourUnlisten: (() => void)[] = [];
+  // Turning contour off returns to the mode it was turned on from.
+  let lastBy: "group" | "role" = "group";
   let lastContour = "";
   let lastDeform = "";
   let lastTheme = "";
@@ -126,6 +128,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   const render = (s: State, prev: State | null) => {
     const theme = document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
     const contour = s.visibility.colourBy === "contour";
+    if (s.visibility.colourBy !== "contour") lastBy = s.visibility.colourBy;
     syncSizeControls(s);
     const gaussSig = `${s.gaussPoints.on}|${gaussUnavailable(s) ?? ""}|${gaussNotesOf(s).join("|")}`;
     if (
@@ -139,11 +142,13 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.extrudeFrames === prev.visibility.extrudeFrames &&
       s.visibility.showOffsets === prev.visibility.showOffsets &&
       s.nodes.on === prev.nodes.on &&
+      s.contour.cmap === prev.contour.cmap &&
       gaussSig === lastGauss
     ) {
-      // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
-      // state in every mode; it is rebuilt only when what it says changed.
-      if (deformSignature(s) === lastDeform && (!contour || contourSignature(s) === lastContour)) {
+      // (V4d) The cards follow the deformed shape's state in every mode, and the Contour card alone follows
+      // the pick, the step and the ranges: a step rebuilds it, never the group rows under the pointer.
+      if (deformSignature(s) === lastDeform) {
+        if (contour && contourSignature(s) !== lastContour) renderContourCard(s);
         return;
       }
     }
@@ -278,19 +283,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unlisten.push(listen(cm, "change", () => store.dispatch({ type: "setContourCmap", cmap: cm.value as ContourCmap })));
     labelled("Contour", cm);
     deformCard.hidden = !s.phase.axis.some((k) => k.kind === "results");
-    // The Contour card: its switch, then (while on) the field, its draw mode and what the file refuses.
-    contourCard.hidden = s.mesh === null;
-    contourCard.replaceChildren(el("h3", undefined, "Contour"));
-    const contourRow = el("div", "legend-mode");
-    const contourBtn = el("button", "contour-toggle" + (contour ? " on" : ""), "contour");
-    contourBtn.title = contour ? "colour by physical group again" : "colour the model by a result field";
-    unlisten.push(listen(contourBtn, "click", () => store.dispatch({ type: "setColourBy", by: contour ? "group" : "contour" })));
-    contourRow.append(contourBtn);
-    contourCard.append(contourRow);
-    if (contour) {
-      lastContour = contourSignature(s);
-      renderContour(s);
-    }
+    renderContourCard(s);
     let rows: LegendEntry[];
     if (byRole) {
       const r = roleLegendOf(s);
@@ -366,6 +359,25 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     }
   };
 
+  /** The Contour card: its switch, then (while on) the field, its draw mode and what the file refuses; and the viewport scale. */
+  const renderContourCard = (s: State) => {
+    for (const u of contourUnlisten) u();
+    contourUnlisten = [];
+    const contour = s.visibility.colourBy === "contour";
+    viewportScale.hidden = true;
+    contourCard.hidden = s.mesh === null;
+    contourCard.replaceChildren(el("h3", undefined, "Contour"));
+    const contourRow = el("div", "legend-mode");
+    const contourBtn = el("button", "contour-toggle" + (contour ? " on" : ""), "contour");
+    contourBtn.title = contour ? `colour ${lastBy === "role" ? "by structural role" : "by physical group"} again` : "colour the model by a result field";
+    contourUnlisten.push(listen(contourBtn, "click", () => store.dispatch({ type: "setColourBy", by: store.get().visibility.colourBy === "contour" ? lastBy : "contour" })));
+    contourRow.append(contourBtn);
+    contourCard.append(contourRow);
+    lastContour = contour ? contourSignature(s) : "";
+    if (contour) renderContour(s);
+    scaleChrome?.clamp();
+  };
+
   const renderContour = (s: State) => {
     const v = contourView(s);
     const picker = contourFieldsOf(s);
@@ -408,7 +420,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         o.selected = c.key === s.contour.component;
         comp.append(o);
       }
-      unlisten.push(
+      contourUnlisten.push(
         listen(field, "change", () => {
           const f = options.find((x) => valueOf(x.source, x.name) === field.value)!;
           store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: f.source });
@@ -432,7 +444,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       box.open = refusalsOpen;
       box.append(el("summary", "legend-note refused-field", `${refusals.length} ${refusals.length === 1 ? "field" : "fields"} refused`));
       for (const r of refusals) box.append(el("div", "legend-note refused-field", r));
-      unlisten.push(listen(box, "toggle", () => { refusalsOpen = box.open; }));
+      contourUnlisten.push(listen(box, "toggle", () => { refusalsOpen = box.open; }));
       contourCard.append(box);
     }
     if (s.contour.source === "element") {
@@ -440,7 +452,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       for (const m of GAUSS_MODES) {
         const b = el("button", s.contour.gauss === m.mode ? "on" : "", m.label);
         b.title = m.title;
-        unlisten.push(listen(b, "click", () => store.dispatch({ type: "setContourGauss", mode: m.mode })));
+        contourUnlisten.push(listen(b, "click", () => store.dispatch({ type: "setContourGauss", mode: m.mode })));
         modes.append(b);
       }
       contourCard.append(modes);
@@ -461,7 +473,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     const lines = contourLines(s, v);
     // The unit choice lives in the header; this field's own provenance note
     // (e.g. "not declared — select source") stays with the scale it describes.
-    fillScale(viewportScale, { title: lines.title, tooltip: lines.units, ramp: rampCss(v.cmap), ticks: lines.ticks, range: lines.range }, unlisten, () => {
+    fillScale(viewportScale, { title: lines.title, tooltip: lines.units, ramp: rampCss(v.cmap), ticks: lines.ticks, range: lines.range }, contourUnlisten, () => {
       render(store.get(), null);
       scaleChrome?.clamp();
       scaleChrome?.save();
@@ -476,7 +488,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     const modes = el("div", "legend-mode contour-modes");
     for (const m of RANGE_MODES) {
       const b = el("button", s.contour.range === m.range ? "on" : "", m.label);
-      unlisten.push(
+      contourUnlisten.push(
         listen(b, "click", () => {
           if (m.range !== "fixed") return store.dispatch({ type: "setContourRange", range: m.range });
           // A fixed range starts from the range shown, when it has one.
@@ -504,7 +516,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         if (Number.isFinite(min) && Number.isFinite(max) && min < max) store.dispatch({ type: "setContourRange", range: "fixed", fixed: { min, max } });
         else lo.setCustomValidity("min must be below max");
       };
-      unlisten.push(listen(lo, "change", apply), listen(hi, "change", apply));
+      contourUnlisten.push(listen(lo, "change", apply), listen(hi, "change", apply));
       box.append(lo, hi);
       viewportScale.append(box);
     }
@@ -530,6 +542,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unsubscribe();
     unsubTheme?.();
     for (const u of unlistenCards) u();
+    for (const u of contourUnlisten) u();
     scaleChrome?.dispose();
     for (const u of unlisten) u();
   };

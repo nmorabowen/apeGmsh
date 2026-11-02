@@ -20,6 +20,7 @@ import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isN
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
+import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, resultsPairing, sourceFor, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
@@ -224,6 +225,13 @@ export function modelExtras(res: {
  * through the vertex node ids (state/deform.ts), and the key it is for
  * (selectors `deformView(...).keys.disp`). Kept here, outside the store.
  */
+/** Element-wise equality of two arrays (beam stations compared step to step). */
+function sameArray(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export interface DisplacementData {
   key: string;
   line: VertexDisplacement;
@@ -276,11 +284,33 @@ export class Effects {
   private readonly setWindowMs: number;
   private setTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** The beam stations of the step on screen, for the Gauss markers; null when none were read. */
-  stationsOfStep(): { key: string; elementIndex: Float64Array; stationNaturalCoord: Float64Array } | null {
+  /** The last beam stations read, per stage: a step still loading keeps them, since they do not change within a stage. */
+  private lastStations: { stage: number; seq: number; points: StationPoints & { key: string } } | null = null;
+  private stationsSeq = 0;
+
+  /**
+   * The beam stations of the stage on screen, for the Gauss markers; null
+   * when none were read. The key changes only when the stations do, so a
+   * scrub or a line-diagram component switch does not place them again.
+   */
+  stationsOfStep(): (StationPoints & { key: string }) | null {
+    const at = this.store.get().phase.at;
+    const stage = at?.kind === "results" ? at.stage : null;
     const step = this.step;
-    const d = step?.lineDiagram;
-    return step && d ? { key: `${step.stage}|${d.component}`, elementIndex: d.elementIndex, stationNaturalCoord: d.stationNaturalCoord } : null;
+    const last = this.lastStations;
+    if (step && step.stage === stage) {
+      const d = step.lineDiagram;
+      if (d) {
+        const same = last !== null && last.stage === stage && sameArray(last.points.elementIndex, d.elementIndex) && sameArray(last.points.stationNaturalCoord, d.stationNaturalCoord);
+        if (!same) {
+          const seq = ++this.stationsSeq;
+          this.lastStations = { stage, seq, points: { key: `${stage}|${seq}`, elementIndex: d.elementIndex, stationNaturalCoord: d.stationNaturalCoord, elementNodes: d.elementNodes ?? null } };
+        }
+        return this.lastStations!.points;
+      }
+      if (step.lineDiagramError) return { key: `${stage}|error|${step.lineDiagramError}`, elementIndex: new Float64Array(0), stationNaturalCoord: new Float64Array(0), error: step.lineDiagramError };
+    }
+    return last && last.stage === stage ? last.points : null;
   }
 
   private syncGaussSize(s: State): void {

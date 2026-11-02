@@ -44,7 +44,7 @@ const defLoaded: State = reduce(initialState, { type: "fileLoaded", artifact: "m
 
 test("SPOTLIGHT_EVENT_LEDGER classifies every EventType with a non-empty command/description or reason", () => {
   const entries = Object.entries(SPOTLIGHT_EVENT_LEDGER) as [EventType, (typeof SPOTLIGHT_EVENT_LEDGER)[EventType]][];
-  assert.equal(entries.length, 91, "all 91 store events are classified in SPOTLIGHT_EVENT_LEDGER");
+  assert.equal(entries.length, 92, "all 92 store events are classified in SPOTLIGHT_EVENT_LEDGER");
   const exposedCommands = new Set<string>();
   for (const [eventType, entry] of entries) {
     if (entry.kind === "expose") {
@@ -704,4 +704,13 @@ test("edge cases: quoted field values, param operator preservation, pinned-claus
   assert.equal(vHelp.items[0]!.id, "cmd:help", "'?' ranks Help & Examples at #1");
   const sHelpMode = reduce(loaded, { type: "openSpotlight", mode: "help" });
   assert.ok(spotlightViewOf(sHelpMode).items.length >= 5, "help mode lists step-by-step interactive examples");
+});
+
+test("Show Nodes: Enter and Alt+Enter both toggle the markers, as every display toggle does", () => {
+  const item = spotlightViewOf(reduce(loaded, { type: "openSpotlight", query: "nodes" })).items.find((i) => i.id === "cmd:toggle-nodes");
+  assert.ok(item, "the nodes command is offered on a loaded model");
+  for (const events of [item.events, item.altEvents ?? []]) {
+    const next = events.reduce((st, e) => reduce(st, e), loaded);
+    assert.equal(next.nodes.on, true, "both turn the markers on from off");
+  }
 });
