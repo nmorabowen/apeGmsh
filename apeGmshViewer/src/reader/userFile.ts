@@ -679,8 +679,9 @@ function modeTableProblem(
   for (const [what, col] of [["step", step], ["mode", mode]] as const) {
     if (col.length !== m) return `${what} must be ${m} integers, got ${col.length}`;
   }
-  if (Math.min(...step) < -1) return "a step is below -1";
-  if (Math.min(...mode) < 1) return "modes are 1-based";
+  // A loop, not Math.min(...col): a spread of a long column overflows the call stack.
+  for (const s of step) if (s < -1) return "a step is below -1";
+  for (const k of mode) if (k < 1) return "modes are 1-based";
   if (new Set(host.map((h, i) => JSON.stringify([h, step[i], mode[i]]))).size !== m) return "two rows name the same (host, step, mode)";
   for (const [what, col] of [["lambda", lam], ["period", period], ["generalized_mass", mass]] as const) {
     if (col.length !== m) return `${what} has shape (${col.length}), expected (${m})`;

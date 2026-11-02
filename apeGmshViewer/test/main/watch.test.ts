@@ -173,3 +173,33 @@ test("a user file appearing, replaced through a partial, and deleted is a fileCh
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Delta review of #2729: a re-run rewrites the model (or the results), then
+// writes the user file inside the model's 300 ms settle window. Fix 1's
+// user-only branch reported the user file and swallowed the model's rewrite.
+for (const rewritten of ["m.h5", "m.ladruno"]) {
+  test(`${rewritten} rewritten, then the user file written inside its settle window: both changes are reported, no reopen`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agv-watch-"));
+    const model = join(dir, "m.h5");
+    const results = join(dir, "m.ladruno");
+    const user = join(dir, "m.user.h5");
+    const partial = `${user}.myhost-123-abc.partial`;
+    writeFileSync(model, "model");
+    writeFileSync(results, "results");
+    const { heard, watcher } = harness(model);
+    try {
+      await sleep(100);
+      writeFileSync(join(dir, rewritten), "rewritten by the re-run, longer");
+      await sleep(100); // inside the 300 ms the rewrite must hold still
+      writeFileSync(partial, "u1");
+      renameSync(partial, user);
+      await until(() => heard.length >= 2);
+      await sleep(700); // nothing more may arrive
+      assert.deepEqual(heard.map((h) => h.changed ?? h).sort(), [join(dir, rewritten), user].sort(), JSON.stringify(heard));
+      assert.equal(watcher.set.user, user);
+    } finally {
+      watcher.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

@@ -23,7 +23,7 @@
 
 import { existsSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
-import { candidates, FOLD_CASE, inSet, sameSet, stemSet, type Candidates, type OpenSet } from "./pairing.ts";
+import { candidates, FOLD_CASE, inSet, samePath, sameSet, stemSet, type Candidates, type OpenSet } from "./pairing.ts";
 
 export interface WatchSink {
   changed(path: string): void;
@@ -126,16 +126,28 @@ export class SetWatcher {
     if (this.reported.get(path) === sig) return;
     this.reported.set(path, sig);
     const next = this.current();
-    if (!sameSet(next, this.set)) {
-      const prev = this.set;
-      this.set = next;
-      // Only the user slot moved (it appeared, was replaced or was deleted): the
-      // model, geometry and results the window shows are unchanged, so a reopen
-      // (which re-reads them all and clears the step) would be wrong.
-      if (sameSet({ ...next, user: null }, { ...prev, user: null })) this.sink.changed(next.user ?? prev.user ?? this.cands.user);
-      else this.sink.reopened(next);
-    } else if (inSet(next, path)) {
-      this.sink.changed(path);
+    const prev = this.set;
+    this.set = next;
+    // Model, geometry or results moved: the window re-reads the set.
+    if (!sameSet({ ...next, user: null }, { ...prev, user: null })) {
+      this.sink.reopened(next);
+      return;
+    }
+    // Only the user slot can differ here, and the user file appearing, being
+    // replaced or being deleted is never a reopen (which re-reads model, geometry
+    // and results and clears the step). Each path reports its own change: a model
+    // rewritten while the user file appears is two changes, never one (review of
+    // #2729: the re-run order emit, run, write_user_file).
+    const user = this.cands.user;
+    if (inSet(next, path) || samePath(path, user)) this.sink.changed(path);
+    if (!samePath(path, user) && !samePath(next.user, prev.user) && !this.polls.has(user)) {
+      // The user slot moved with no poll of its own running (its event was missed
+      // or merged): report it here, once, under the signature it now has.
+      const now = signature(user);
+      if (this.reported.get(user) !== now) {
+        this.reported.set(user, now);
+        this.sink.changed(user);
+      }
     }
   }
 }
