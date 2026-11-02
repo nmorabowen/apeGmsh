@@ -42,9 +42,11 @@ from apeGmsh.results.user import (
     write_user_file,
 )
 from tests.fixtures.schema import ENTITIES_CURRENT
-
-FRAME = Path(__file__).resolve().parent / "fixtures" / "stko_elastic_frame"
 from tests.results.user._user_helpers import nodal, sample_entities
+
+#: STKO_to_python's elasticFrame example (MIT, same author): a portal frame of
+#: three ElasticBeam3d, ten steps, as its MPCO recorder wrote it.
+FRAME = Path(__file__).resolve().parent / "fixtures" / "stko_elastic_frame"
 
 
 def _bits(a: object) -> bytes:
