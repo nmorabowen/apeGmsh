@@ -491,5 +491,5 @@ export function manifestOf(spec: ViewSpec, shots: readonly { entry: ManifestEntr
 
 /** The manifest of a spec refused whole (D2): the key and the reason, and no shot. */
 export function refusedManifest(specPath: string, key: string, reason: string): string {
-  return JSON.stringify({ manifest: MANIFEST_VERSION, spec: specPath, refused: { key, reason }, shots: [] }, null, 2);
+  return JSON.stringify({ manifest: MANIFEST_VERSION, spec_file: specPath, refused: { key, reason }, shots: [] }, null, 2);
 }
