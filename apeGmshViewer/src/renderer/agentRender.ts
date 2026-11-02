@@ -5,7 +5,9 @@
 // each shot through the one compiler (src/spec/compile.ts, INV-2), waits
 // until the view asked for is on screen, and either takes the still or
 // refuses the shot with the app's own reason (D2, INV-4). A refused shot
-// writes no PNG; the other shots still run.
+// writes no PNG; the other shots still run. Every shot ends as one D3 entry
+// of `manifest.json` (src/spec/manifest.ts), built before the still is
+// written, so no still stands without its numbers (INV-6).
 //
 // A shot is taken only after its step has been read, the view it asks for
 // is drawn (the contour's colours and range, the deformed positions) and
@@ -17,13 +19,14 @@
 import * as THREE from "three";
 import type { Effects } from "../effects.ts";
 import { compileShot, type ShotPlan } from "../spec/compile.ts";
-import { bannerLines, describeSet, type SetDescription } from "../spec/describe.ts";
+import { describeSet, type SetDescription } from "../spec/describe.ts";
+import { manifestEntry, manifestOf, refusedEntry, type ManifestEntry } from "../spec/manifest.ts";
 import type { SpecShot, ViewSpec } from "../spec/spec.ts";
 import { viewVerdict } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { contourView, deformView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
-import type { CameraPose, State } from "../state/types.ts";
+import type { State } from "../state/types.ts";
 import { contourKey, elementContourKey } from "./contour.ts";
 import { composeStill, loadStillFonts, type ScaleBar } from "./stillLayers.ts";
 import type { Viewport } from "./viewport.ts";
@@ -59,27 +62,9 @@ export interface RenderDeps {
   layout: Layout;
 }
 
-/** One shot's record in `render.json`; slice 3 turns it into the D3 manifest entry (INV-7: chrome, layers, background). */
+/** One shot of the run: its D3 entry, and the shot's time, with the part spent until its view was on screen (the rest paints, composes and writes). */
 export interface ShotResult {
-  name: string;
-  status: "ok" | "refused";
-  reason: string | null;
-  png: string | null;
-  chrome: "app" | "model";
-  layers: Record<string, boolean>;
-  background: "theme" | "transparent";
-  caption: string | null;
-  stage: { index: number; id: string; name: string } | null;
-  step: number | null;
-  time: number | null;
-  camera: CameraPose | null;
-  contour: (NonNullable<ShotPlan["contour"]> & { clim: { min: number | null; max: number | null; mode: string; label: string }; cmap: string }) | null;
-  deform: { scale: number; ghost: boolean; state: string; drawn: number | null; missing: number | null } | null;
-  banner: string[];
-  /** the DOM check: the viewport's box, and every other element in the layout */
-  layout: { viewport: [number, number, number, number]; panels: string[] } | null;
-  image: [number, number] | null;
-  /** the shot's time, and the part spent until its view was on screen (the rest paints, composes and writes) */
+  entry: ManifestEntry;
   ms: number;
   shownMs: number | null;
 }
@@ -92,8 +77,12 @@ const SHOW_MS = 30000;
 /** A view that stays `unavailable` or `refused` this long, with nothing still loading, is the app's answer. */
 const SETTLED_MS = 1500;
 
-function contourOnScreen(s: State, viewport: Viewport): boolean {
+function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolean {
   const v = contourView(s);
+  // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
+  const at = s.phase.at;
+  const step = effects.currentStep();
+  if (at?.kind !== "results" || step?.stage !== at.stage || step.step !== at.step) return false;
   if (v.state === "ready") return v.stepMeasured && viewport.contourApplied === contourKey(v);
   if (v.state === "element") return v.stepMeasured && viewport.contourApplied === elementContourKey(v);
   return false;
@@ -121,7 +110,7 @@ async function shown(deps: RenderDeps, shot: SpecShot, plan: ShotPlan): Promise<
   for (;;) {
     const s = store.get();
     const now = performance.now();
-    const v = viewVerdict(s, shot, plan, { contour: contourOnScreen(s, viewport), deform: deformOnScreen(s, viewport, effects) });
+    const v = viewVerdict(s, shot, plan, { contour: contourOnScreen(s, viewport, effects), deform: deformOnScreen(s, viewport, effects) });
     if (v.kind === "shown") return null;
     if (v.kind === "refused") return v.reason;
     if (v.why !== lastWhy) {
@@ -173,16 +162,18 @@ function applyClip(store: Store, plan: ShotPlan): void {
 }
 
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
-  const { store, viewport, bridge, layout } = deps;
+  const { store, viewport, bridge, layout, blobs, effects } = deps;
   const t0 = performance.now();
-  const base = emptyRefusal(shot);
-  const refuse = (reason: string): ShotResult => ({ ...base, reason, banner: bannerLines(store.get()), ms: performance.now() - t0 });
   const compiled = compileShot(shot, d);
-  if (!compiled.ok) return refuse(compiled.reason);
+  // Nothing was applied: this shot has no view to report, only the reason.
+  if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null), ms: performance.now() - t0, shownMs: null };
   const plan = compiled.plan;
-  base.stage = plan.stage;
-  base.step = plan.step;
-  base.time = plan.stage && plan.step !== null ? (d.stages[plan.stage.index]?.times[plan.step] ?? null) : null;
+  const at = {
+    stage: plan.stage,
+    step: plan.step,
+    time: plan.stage && plan.step !== null ? (d.stages[plan.stage.index]?.times[plan.step] ?? null) : null,
+  };
+  const refuse = (reason: string): ShotResult => ({ entry: refusedEntry(store.get(), shot, reason, at), ms: performance.now() - t0, shownMs: null });
   try {
     for (const e of plan.events) store.dispatch(e);
     applyClip(store, plan);
@@ -216,11 +207,22 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
   if (canvas.width !== spec.size[0] || canvas.height !== spec.size[1]) {
     throw new Error(`render ${shot.name}: the viewport is ${canvas.width} x ${canvas.height} pixels, not the spec's ${spec.size[0]} x ${spec.size[1]}`);
   }
-  const v = contourView(s);
-  const dv = deformView(s);
-  const banner = bannerLines(s);
-  let png: { path: string };
-  let image: [number, number];
+  // INV-6: the entry first. A view the manifest cannot state is refused, and no still is written for it.
+  let entry: ManifestEntry;
+  try {
+    const cam = viewport.camera;
+    entry = manifestEntry(s, {
+      shot,
+      png: `${shot.name}.png`,
+      image: spec.size,
+      camera: { ...viewport.currentPose(), fov: cam instanceof THREE.PerspectiveCamera ? cam.fov : null },
+      layout: { viewport: r, panels },
+      blobs,
+      step: effects.currentStep(),
+    });
+  } catch (err) {
+    return refuse(`the manifest cannot state this view: ${err instanceof Error ? err.message : String(err)}`);
+  }
   if (shot.chrome === "model") {
     const out = composeStill({
       source: canvas,
@@ -231,34 +233,16 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
       layers: { scale_bar: shot.layers["scale_bar"]!, axes: shot.layers["axes"]!, banner: shot.layers["banner"]!, caption: shot.layers["caption"]! },
       scale: scaleBarOf(s, plan),
       axes: screenAxes(viewport),
-      banner,
+      banner: entry.banner,
       caption: shot.caption,
     });
-    png = await bridge.renderPng(shot.name, await toPng(out));
-    image = [out.width, out.height];
+    if (out.width !== spec.size[0] || out.height !== spec.size[1]) throw new Error(`render ${shot.name}: the still is ${out.width} x ${out.height} pixels, not the spec's ${spec.size[0]} x ${spec.size[1]}`);
+    await bridge.renderPng(shot.name, await toPng(out));
   } else {
-    const c = await bridge.renderCapture(shot.name);
-    png = c;
-    image = [c.width, c.height];
+    // Main checks the captured page is exactly the spec's size.
+    await bridge.renderCapture(shot.name);
   }
-  return {
-    ...base,
-    status: "ok",
-    png: png.path,
-    camera: viewport.currentPose(),
-    contour:
-      plan.contour && (v.state === "ready" || v.state === "element")
-        ? { ...plan.contour, clim: { min: v.clim.min, max: v.clim.max, mode: v.clim.mode, label: v.clim.label }, cmap: v.cmap }
-        : null,
-    deform: plan.deform
-      ? { scale: plan.deform.scale, ghost: plan.deform.ghost, state: dv.state, drawn: "drawn" in dv ? dv.drawn : null, missing: dv.state === "partial" ? dv.missing : dv.state === "ready" ? 0 : null }
-      : null,
-    banner,
-    layout: { viewport: r, panels },
-    image,
-    ms: performance.now() - t0,
-    shownMs,
-  };
+  return { entry, ms: performance.now() - t0, shownMs };
 }
 
 /** The drawn vertex positions (undeformed), for the description's box. */
@@ -294,39 +278,31 @@ export async function runAgentMode(deps: RenderDeps): Promise<void> {
   await loadStillFonts();
   const failed = await openSet(deps, job);
   const d = describeSet(store.get(), drawnPositions(store.get(), deps.blobs));
-  const shots: ShotResult[] = [];
-  for (const shot of job.spec.shots) {
-    if (failed) {
-      shots.push({ ...emptyRefusal(shot), reason: failed });
-      continue;
-    }
-    const r = await takeShot(deps, job.spec, shot, d);
-    console.info(`apeGmshViewer: render ${shot.name}: ${r.status}${r.reason ? ` (${r.reason})` : ""} in ${Math.round(r.ms)} ms`);
-    shots.push(r);
-  }
-  await bridge.renderDone({ render: { spec: job.spec.spec, files: d.files, pairing: d.pairing, size: job.spec.size, theme: job.spec.theme, shots } });
+  await bridge.renderDone({ manifest: manifestOf(job.spec, await takeShots(deps, job.spec, d, failed)) });
 }
 
-function emptyRefusal(shot: SpecShot): ShotResult {
-  return {
-    name: shot.name,
-    status: "refused",
-    reason: null,
-    png: null,
-    chrome: shot.chrome,
-    layers: shot.layers,
-    background: shot.background,
-    caption: shot.caption,
-    stage: null,
-    step: null,
-    time: null,
-    camera: null,
-    contour: null,
-    deform: null,
-    banner: [],
-    layout: null,
-    image: null,
-    ms: 0,
-    shownMs: null,
-  };
+/**
+ * Every shot of the spec, each ending as one entry. INV-6: a shot that throws
+ * (a DOM check, a still that could not be written) is refused with what it
+ * threw, and the run goes on to its manifest, so the stills already written
+ * never stand without one. Main writes a still as its handler's last step, so
+ * a shot that threw has no PNG.
+ */
+export async function takeShots(deps: RenderDeps, spec: ViewSpec, d: SetDescription, failed: string | null): Promise<ShotResult[]> {
+  const shots: ShotResult[] = [];
+  for (const shot of spec.shots) {
+    if (failed) {
+      shots.push({ entry: refusedEntry(deps.store.get(), shot, failed, null), ms: 0, shownMs: null });
+      continue;
+    }
+    let r: ShotResult;
+    try {
+      r = await takeShot(deps, spec, shot, d);
+    } catch (err) {
+      r = { entry: refusedEntry(deps.store.get(), shot, `the shot failed: ${err instanceof Error ? err.message : String(err)}`, null), ms: 0, shownMs: null };
+    }
+    console.info(`apeGmshViewer: render ${shot.name}: ${r.entry.status}${r.entry.reason ? ` (${r.entry.reason})` : ""} in ${Math.round(r.ms)} ms`);
+    shots.push(r);
+  }
+  return shots;
 }

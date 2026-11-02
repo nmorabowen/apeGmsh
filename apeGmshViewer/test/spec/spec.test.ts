@@ -1,6 +1,6 @@
 // ADR 0128 slice 2 (VA2): the view spec `apegmsh-view/1` fails closed (D2).
 // Every spec-level refusal names its key and, through the render job main
-// starts from (src/spec/job.ts), writes render.json and no PNG; a valid spec
+// starts from (src/spec/job.ts), writes manifest.json and no PNG; a valid spec
 // states every default (D1, D8: light theme for batch stills; D9 layers).
 
 import assert from "node:assert/strict";
@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { outRefusal, prepareRender } from "../../src/spec/job.ts";
+import { appVersion, outRefusal, prepareRender } from "../../src/spec/job.ts";
 import { APP_LAYERS, MODEL_LAYERS, SPEC_VERSION, validateSpec } from "../../src/spec/spec.ts";
 
 const FIX = fileURLToPath(new URL("../../fixtures/", import.meta.url));
@@ -167,7 +167,7 @@ test("D1: an axis-name normal is its unit vector; an explicit camera is kept as 
   assert.deepEqual(v.spec.shots[0]!.camera, { eye: [5, 5, 5], target: [0, 0, 0], up: [0, 0, 1] });
 });
 
-// ---- the render job: a refused spec writes render.json and no PNG ------------------
+// ---- the render job: a refused spec writes manifest.json and no PNG ------------------
 
 const fsOf = {
   readFile: (p: string) => readFileSync(p, "utf8"),
@@ -197,17 +197,29 @@ for (const [name, body, key] of [
   ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.results.h5") } })), "files.results"],
   ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
-  test(`D2: a refused spec (${name}) writes render.json naming ${key}, and no PNG`, () => {
-    const { out, p } = job(name, body);
+  test(`D2: a refused spec (${name}) writes manifest.json naming ${key}, and no PNG`, () => {
+    const { spec, out, p } = job(name, body);
     assert.equal(p.ok, false);
     if (p.ok) return;
     assert.equal(p.key, key);
     const files = readdirSync(out);
-    assert.deepEqual(files, ["render.json"], "nothing but render.json: no PNG");
-    const r = JSON.parse(readFileSync(join(out, "render.json"), "utf8"));
-    assert.deepEqual(r.render.refused, { key: p.key, reason: p.reason });
+    assert.deepEqual(files, ["manifest.json"], "nothing but manifest.json: no PNG");
+    const r = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+    assert.deepEqual(r.refused, { key: p.key, reason: p.reason });
+    // D3: the app's version, read from the app's own package.json (job.ts `appVersion`).
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
+    assert.deepEqual(r.app, { version: pkg.version, version_reason: null });
+    assert.equal(r.spec_file, spec);
+    assert.ok(!Number.isNaN(Date.parse(r.timing.written_at)));
   });
 }
+
+test("D3: a refused spec whose app version cannot be found says so", () => {
+  const none = { readFile: () => "", exists: () => false };
+  const v = appVersion(none, tmp);
+  assert.equal(v.version, null);
+  assert.match(v.version_reason!, /cannot state the app's version/);
+});
 
 test("D2: a non-empty --out is refused before the spec is read, and nothing in it is touched (no stale still beside a refusal)", () => {
   const dir = join(tmp, "busy");
@@ -222,9 +234,9 @@ test("D2: a non-empty --out is refused before the spec is read, and nothing in i
   assert.equal(p.key, "--out");
   assert.match(p.reason, /is not empty \(a\.png\); an agent run writes into an absent or empty folder/);
   assert.equal(p.wrote, false);
-  assert.deepEqual(readdirSync(out), ["a.png"], "no render.json is added and the old still is left as it was");
+  assert.deepEqual(readdirSync(out), ["a.png"], "no manifest.json is added and the old still is left as it was");
   assert.equal(readFileSync(join(out, "a.png"), "utf8"), "a still of an earlier run");
-  // A refused spec too: the folder must be empty first, so no older still can stand beside its render.json.
+  // A refused spec too: the folder must be empty first, so no older still can stand beside its manifest.json.
   writeFileSync(spec, "{ not json");
   assert.equal((prepareRender(spec, out, fsOf) as { key: string }).key, "--out");
   // An empty folder takes the run.

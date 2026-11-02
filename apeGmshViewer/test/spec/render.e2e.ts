@@ -1,4 +1,4 @@
-// ADR 0128 slice 2 (VA2), end to end: `--render` and `--describe` in the
+// ADR 0128 slices 2 and 3 (VA2, VA3), end to end: `--render` and `--describe` in the
 // real app, on the fixtures. Not part of `npm test`: it starts Electron, so
 // it needs a display (Windows today; Linux capture is an open question of
 // the ADR). Run it after a build:
@@ -13,9 +13,10 @@
 //      lays out no panel; an app still with its layers off keeps the
 //      viewport's box;
 //   2. the same spec rendered twice gives identical PNGs, every shot (the
-//      kill criterion: it stops here when not), and each shot's time (kill
-//      criterion ~10 s); the reference ghost likewise, shot 5 times in each
-//      of 2 runs in both chromes (#2664);
+//      kill criterion: it stops here when not), byte-identical manifests except
+//      `timing` (ADR 0128 Acceptance), and each shot's time (kill criterion
+//      ~10 s); the reference ghost likewise, shot 5 times in each of 2 runs in
+//      both chromes (#2664);
 //   INV-1: Chromium's profile goes to `<out>/.chromium`, and the app's
 //      folder under APPDATA is unchanged by a render or a describe;
 //   3. INV-7: an app and a model still of one shot have the same camera pose
@@ -23,10 +24,13 @@
 //      it is the only difference; `transparent` writes PNG alpha;
 //   4. each D2 shot refusal refuses with its reason, the same in both
 //      chromes, and writes no PNG, while the other shots still run (exit 1);
-//      each spec refusal writes render.json and no PNG (exit 2), and a
+//      each spec refusal writes manifest.json with the app's version and no PNG (exit 2), and a
 //      non-empty --out is refused with nothing written (exit 2);
 //   5. a render beside an open view window leaves that window's pixels,
-//      inspector and header as they were (INV-5, ADR 0128 D4).
+//      inspector and header as they were (INV-5, ADR 0128 D4);
+//   6. D3, INV-6: on the fixtures, the manifest a real run writes equals
+//      Python's `Results` (test/spec/manifest.oracle.json), in both chromes,
+//      with one entry per PNG.
 // The stills stay in <outdir> (default: a new temporary folder) for review.
 
 import assert from "node:assert/strict";
@@ -36,6 +40,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ManifestEntry } from "../../src/spec/manifest.ts";
+import { caseShot, ORACLE, sameAsOracle } from "./manifestOracle.ts";
 import { readPng, rgbDiff } from "./png.ts";
 import { makeReactionSet } from "./reactions.ts";
 
@@ -46,22 +52,6 @@ const OUT = resolve(process.argv[2] ?? mkdtempSync(join(tmpdir(), "agv-render-e2
 mkdirSync(OUT, { recursive: true });
 const log = (s: string) => process.stdout.write(`${s}\n`);
 
-interface Shot {
-  name: string;
-  status: string;
-  reason: string | null;
-  png: string | null;
-  chrome: string;
-  layers: Record<string, boolean>;
-  background: string;
-  camera: unknown;
-  contour: unknown;
-  deform: unknown;
-  layout: { viewport: number[]; panels: string[] } | null;
-  image: [number, number] | null;
-  ms: number;
-}
-
 function run(args: string[]): Promise<{ code: number; ms: number }> {
   const t = performance.now();
   return new Promise((done) => {
@@ -70,15 +60,29 @@ function run(args: string[]): Promise<{ code: number; ms: number }> {
   });
 }
 
-async function render(name: string, spec: object): Promise<{ code: number; ms: number; dir: string; shots: Shot[]; refused?: { key: string; reason: string } }> {
+interface Rendered {
+  code: number;
+  ms: number;
+  dir: string;
+  shots: ManifestEntry[];
+  /** each shot's time; `timing` is the one part of a manifest that varies between runs */
+  timing: Record<string, { ms: number }>;
+  /** the manifest as written, without `timing` */
+  stable: string;
+  version: string | undefined;
+  refused?: { key: string; reason: string };
+}
+
+async function render(name: string, spec: object): Promise<Rendered> {
   const dir = join(OUT, name);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "spec.json");
   writeFileSync(path, JSON.stringify(spec, null, 2));
   const out = join(dir, "out");
   const r = await run([`--mode=render`, `--spec=${path}`, `--out=${out}`]);
-  const j = JSON.parse(readFileSync(join(out, "render.json"), "utf8")).render;
-  return { ...r, dir: out, shots: j.shots ?? [], refused: j.refused };
+  const j = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+  const { timing, ...stable } = j;
+  return { ...r, dir: out, shots: j.shots, timing: timing?.shots ?? {}, stable: JSON.stringify(stable), version: j.app?.version, refused: j.refused };
 }
 
 const pngs = (dir: string) => readdirSync(dir).filter((f) => f.endsWith(".png")).sort();
@@ -165,9 +169,29 @@ for (const s of A.shots) {
   const d = rgbDiff(pa, pb);
   // Kill criterion (#2651): the same spec must give the same pixels on one machine, every shot.
   if (d.count) throw new Error(`KILL: ${s.name} differs between two runs of one spec in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
-  if (s.chrome === "model") assert.deepEqual(s.layout!.panels, [], `${s.name}: a model still lays out no panel (DOM check)`);
-  worst = Math.max(worst, s.ms);
-  log(`  ${s.name}: ${pa.width}x${pa.height}, identical twice, ${Math.round(s.ms)} ms`);
+  if (s.shot.chrome === "model") assert.deepEqual(s.layout!.panels, [], `${s.name}: a model still lays out no panel (DOM check)`);
+  assert.equal(s.png, `${s.name}.png`, "a still's path is relative to its manifest");
+  const ms = A.timing[s.name]!.ms;
+  worst = Math.max(worst, ms);
+  log(`  ${s.name}: ${pa.width}x${pa.height}, identical twice, ${Math.round(ms)} ms`);
+}
+// ADR 0128 Acceptance: the same spec twice gives byte-identical manifests, except for timestamps.
+assert.equal(A.stable, B.stable, "two runs of one spec: the manifests differ outside `timing`");
+assert.ok(A.version, "D3: the manifest states the app's version");
+// A camera as resolved, from the real viewport.
+for (const s of A.shots) {
+  assert.ok(s.camera, `${s.name}: a drawn shot states its camera`);
+  assert.ok([...s.camera.eye, ...s.camera.target, ...s.camera.up].every(Number.isFinite), `${s.name}: a finite pose`);
+  assert.ok(typeof s.camera.fov === "number" && s.camera.fov > 0, `${s.name}: a field of view`);
+}
+// INV-6: a plane cuts this still, so nothing is stated as drawn.
+{
+  const cut = a.get("contour.clip.model")!.contour;
+  assert.ok(cut?.drawn);
+  assert.equal(cut.extrema.drawn, null);
+  assert.match(cut.extrema.drawn_reason ?? "", /section planes are cutting/);
+  assert.match(cut.no_data.limit ?? "", /counted before the section planes/);
+  assert.ok(cut.extrema.recorded, "the recorded extrema stand");
 }
 for (const R of [A, B]) assert.ok(existsSync(join(R.dir, ".chromium")), "INV-1: Chromium's profile is inside --out");
 log(`views: ${A.shots.length} stills, pixel-identical over two runs; run ${Math.round(A.ms)} / ${Math.round(B.ms)} ms; slowest shot ${Math.round(worst)} ms`);
@@ -177,12 +201,10 @@ if (worst > 10000) throw new Error(`KILL: a shot took ${Math.round(worst)} ms (>
 assert.deepEqual(a.get("contour.bare")!.layout!.viewport, a.get("contour")!.layout!.viewport);
 assert.deepEqual(a.get("contour.bare")!.layout!.panels, [], "every named panel omitted from the layout");
 assert.ok(a.get("contour")!.layout!.panels.includes("#header"), "the default app still keeps its panels");
-// INV-7: same camera pose and same contour in both chromes.
+// INV-7: the same manifest entry in both chromes, apart from the keys that name the chrome, the layers and the background.
+const inv7 = (s: ManifestEntry) => ({ ...s, name: null, png: null, shot: null, layout: null });
 for (const v of views) {
-  const app = a.get(v.name)!, model = a.get(`${v.name}.model`)!;
-  assert.deepEqual(model.camera, app.camera, `${v.name}: one camera pose in both chromes`);
-  assert.deepEqual(model.contour, app.contour, `${v.name}: one contour in both chromes`);
-  assert.deepEqual(model.deform, app.deform, `${v.name}: one deformed shape in both chromes`);
+  assert.deepEqual(inv7(a.get(`${v.name}.model`)!), inv7(a.get(v.name)!), `${v.name}: one entry in both chromes`);
 }
 // D9: the scale bar is drawn by default and is the only difference to a still without it.
 {
@@ -193,8 +215,8 @@ for (const v of views) {
   const [x0, y0, x1, y1] = d.bbox!;
   // The bar's panel is 284 x 86 at (16, 16) (renderer/stillLayers.ts); its anti-aliased border reaches one pixel out.
   assert.ok(x0 >= 15 && y0 >= 15 && x1 <= 16 + 284 + 2 && y1 <= 16 + 86 + 2, `the only difference is the scale bar's box (top left): ${d.bbox}`);
-  assert.equal(a.get("contour.model")!.layers["scale_bar"], true);
-  assert.equal(a.get("contour.model-noscale")!.layers["scale_bar"], false, "the result records the layer turned off");
+  assert.equal(a.get("contour.model")!.shot.layers["scale_bar"], true);
+  assert.equal(a.get("contour.model-noscale")!.shot.layers["scale_bar"], false, "the manifest records the layer turned off");
   const t = readPng(readFileSync(join(A.dir, "contour.model-transparent.png")));
   let clear = 0;
   for (let i = 3; i < t.rgba.length; i += 4) if (t.rgba[i] === 0) clear++;
@@ -203,7 +225,7 @@ for (const v of views) {
   let opaque = true;
   for (let i = 3; i < withBar.rgba.length; i += 4) if (withBar.rgba[i] !== 255) opaque = false;
   assert.ok(opaque, "background theme: every pixel opaque");
-  assert.equal(a.get("contour.model-transparent")!.background, "transparent");
+  assert.equal(a.get("contour.model-transparent")!.shot.background, "transparent");
 }
 log("D9 layers: ok");
 
@@ -282,7 +304,8 @@ for (const [name, spec, key] of [
   const R = await render(name, spec);
   assert.equal(R.code, 2, `${name}: a refused spec exits 2`);
   assert.equal(R.refused?.key, key);
-  assert.deepEqual(readdirSync(R.dir).filter((f) => f !== ".chromium"), ["render.json"], `${name}: no PNG`);
+  assert.equal(R.version, A.version, `${name}: the same app version as a run, from the built app`);
+  assert.deepEqual(readdirSync(R.dir).filter((f) => f !== ".chromium"), ["manifest.json"], `${name}: no PNG`);
   log(`  refused spec ${name} at ${key} (${Math.round(R.ms)} ms): ${readdirSync(R.dir).join(", ")}`);
 }
 // A busy --out: an earlier run's still and record stay as they were, and nothing is added (no stale still beside a refusal).
@@ -375,5 +398,29 @@ log("D2 refusals: ok");
     human.kill();
   }
 }
+
+// ---- 6: D3, the manifest a real run writes equals Python's Results -----------------------
+
+for (const set of Object.keys(ORACLE.sets)) {
+  const cases = ORACLE.cases.filter((c) => c.set === set);
+  const R = await render(`oracle-${set}`, {
+    spec: "apegmsh-view/1",
+    files: { model: join(FIX, `${set}.h5`) },
+    size: [800, 600],
+    shots: cases.flatMap((c) => [
+      { ...caseShot(c), name: c.name },
+      { ...caseShot(c), name: `${c.name}.model`, chrome: "model" },
+    ]),
+  });
+  assert.equal(R.code, 0, `${set}: ${R.shots.filter((s) => s.status !== "ok").map((s) => `${s.name}: ${s.reason}`).join("; ")}`);
+  assert.deepEqual(pngs(R.dir), R.shots.map((s) => s.png).sort(), "INV-6: every PNG has its entry, and every entry its PNG");
+  const m = byName(R);
+  for (const c of cases) {
+    sameAsOracle(m.get(c.name)!, c);
+    sameAsOracle(m.get(`${c.name}.model`)!, c);
+  }
+  log(`  ${set}: ${cases.length} cases equal Python's Results, in both chromes`);
+}
+log("D3 manifest oracle: ok");
 
 log(`render e2e: all checks passed; stills in ${OUT}`);
