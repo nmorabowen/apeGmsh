@@ -1,0 +1,3 @@
+### FIXED — apeGmshViewer's D7 capture (`--mode=capture`) no longer writes a still from a stale frame (VA2k, #2716)
+
+The `capture:still` handler captured the hidden window once, so a still could hold a frame from before the page's latest changes: the race VA2i (#2696) fixed for app-chrome `--render` stills. It now uses the same settle loop: the page is captured until two consecutive captures are pixel-identical, at most `--capture-tries` times (default 10). A page that never settles fails the run with exit 1, writes no PNG for that still, and `<out>.error.txt` names the still and the bound. `test/spec/capture-still.e2e.ts` forces a stale first capture of every still and compares each still in RGB to a normal run, then forces a page that never settles.
