@@ -116,12 +116,13 @@ class FakeEl {
 function withFakeDom<T>(fn: (aside: FakeEl) => Promise<T> | T): Promise<T> {
   const prevDoc = (globalThis as { document?: unknown }).document;
   const aside = new FakeEl("aside");
+  const scaleEl = new FakeEl("div");
   const docEl = { dataset: { theme: "dark" } as Record<string, string | undefined> };
   (globalThis as { document?: unknown }).document = {
     documentElement: docEl,
     createElement: (tag: string) => new FakeEl(tag),
     createElementNS: (_ns: string, tag: string) => new FakeEl(tag),
-    getElementById: (id: string) => (id === "line-diagram" ? aside : null),
+    getElementById: (id: string) => (id === "line-diagram" ? aside : id === "line-diagram-scale" ? scaleEl : null),
   };
   return Promise.resolve()
     .then(() => fn(aside))

@@ -480,6 +480,12 @@ async function captureExtrudeResults(settle: (ms?: number) => Promise<unknown>, 
     const ldPanel = document.getElementById("line-diagram")!;
     const loadsPanel = document.getElementById("loads")!;
     const legendPanel = document.getElementById("legend")!;
+    // Every left-rail card starts collapsed: open these three, so the overlap and collapse checks below see them open.
+    for (const panel of [ldPanel, loadsPanel, legendPanel]) {
+      if (!panel.hidden && panel.dataset["collapsed"] === "true") panel.querySelector("h3")?.click();
+    }
+    await painted();
+    await painted();
     if (!ldPanel.hidden && !loadsPanel.hidden && !legendPanel.hidden) {
       const ldBefore = ldPanel.getBoundingClientRect();
       const loadsBefore = loadsPanel.getBoundingClientRect();
@@ -983,10 +989,17 @@ async function captureClip(settle: (ms?: number) => Promise<unknown>, width: num
   if (store.get().clip.notice === null) throw new Error("capture: a 7th plane was not refused");
   await still("clip-8-seventh-refused");
 
-  // The pick that misses cut-away geometry.
-  removePlanes();
-  store.dispatch({ type: "addClipPlane", normal: [...viewport.viewNormal()] });
-  const target = clipMissTarget();
+  // The pick that misses cut-away geometry. The view normal through the centre cuts away the near half of a
+  // body; a planar model shown in plan lies in that plane, where nothing is cut away (#2707), so the axis
+  // normals through the centre are tried next, until one cuts away something a click can reach.
+  let target: ReturnType<typeof clipMissTarget> = null;
+  const normals: [number, number, number][] = [[...viewport.viewNormal()] as [number, number, number], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  for (const normal of normals) {
+    removePlanes();
+    store.dispatch({ type: "addClipPlane", normal });
+    target = clipMissTarget();
+    if (target) break;
+  }
   if (!target) throw new Error("capture: no element of the cut-away half answers a click with the cuts off");
   const marker = document.createElement("div");
   marker.style.cssText =
@@ -1188,7 +1201,13 @@ async function captureGizmo(settle: (ms?: number) => Promise<unknown>, width: nu
   store.dispatch({ type: "setDeform", on: false });
   store.dispatch({ type: "setColourBy", by: "group" });
   store.dispatch({ type: "clearSelection" });
+  // The iso view: a planar model opens in plan, where the Z plane's quad and its arrow tip fall on one screen
+  // point, so the press on the quad would land on the tip (#2707).
+  store.dispatch({ type: "setCamera", to: "iso" });
   store.dispatch({ type: "frameSelection" });
+  await settle(150);
+  viewport.renderNow();
+  await painted();
   const still = async (name: string) => {
     await settle(150);
     viewport.renderNow();

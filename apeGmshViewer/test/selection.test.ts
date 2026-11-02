@@ -335,9 +335,12 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
   ]);
   const legendRoot = new FakeLegendEl("DIV");
   legendRoot.id = "legend";
+  // The mesh row lives on the Display card, which the legend panel fills.
+  const displayRoot = new FakeLegendEl("DIV");
+  const others: Record<string, FakeLegendEl> = { legend: legendRoot, display: displayRoot, deform: new FakeLegendEl("DIV"), "viewport-scale": new FakeLegendEl("DIV") };
   const prevDoc = (globalThis as { document?: unknown }).document;
   (globalThis as { document?: unknown }).document = {
-    getElementById: (id: string) => (id === "legend" ? legendRoot : null),
+    getElementById: (id: string) => others[id] ?? null,
     createElement: (t: string) => new FakeLegendEl(t.toUpperCase()),
   };
   // 1-D-only mesh (faceCells = 0, solidCells = 0): .legend-mesh is omitted.
@@ -347,7 +350,7 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
     mesh: { legend: [], counts: { lineCells: 2, faceCells: 0, solidCells: 0, opsOnly: 0, points: 0 } } as unknown as MeshInfo,
   };
   const unmount1d = mountLegend(store1d);
-  assert.equal(legendRoot.all((e) => e.has("legend-mesh")).length, 0, "1-D-only model has no .legend-mesh row");
+  assert.equal(displayRoot.all((e) => e.has("legend-mesh")).length, 0, "1-D-only model has no .legend-mesh row");
   unmount1d();
 
   // Mesh with 2-D/3-D cells: .legend-mesh appears.
@@ -358,8 +361,8 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
   };
   const unmount = mountLegend(store);
   try {
-    const btn = (cls: string) => legendRoot.all((e) => e.has(cls))[0]!;
-    assert.equal(legendRoot.all((e) => e.has("legend-mesh")).length, 1);
+    const btn = (cls: string) => displayRoot.all((e) => e.has(cls))[0]!;
+    assert.equal(displayRoot.all((e) => e.has("legend-mesh")).length, 1);
     assert.ok(btn("mesh-edges").has("on"), "edges starts on");
     assert.equal(btn("mesh-edges").disabled, false);
     assert.ok(btn("mesh-opacity-solid").has("on"), "solid (1) starts on");
