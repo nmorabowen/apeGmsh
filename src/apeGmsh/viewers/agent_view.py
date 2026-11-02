@@ -250,6 +250,10 @@ def render_stills(
                 f"nothing it wrote in {out_dir} is evidence",
                 returncode=None, manifest=None, stderr=err,
             ) from exc
+        except BaseException:
+            # Ctrl-C or any other interruption: never leave the app's tree running.
+            _kill_tree(proc)
+            raise
     stderr = stderr or ""
     manifest = None if stale else _read_manifest(manifest_path)
     refusals = _refusals(manifest) if manifest is not None else []

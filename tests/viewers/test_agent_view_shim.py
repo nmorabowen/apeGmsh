@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import json
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -281,6 +282,38 @@ def test_a_run_past_its_timeout_is_killed_with_its_children(stub, tmp_path, monk
     elapsed = time.monotonic() - t0
     assert e.value.returncode is None
     assert elapsed < 6, f"the timeout of 1 s took {elapsed:.1f} s: a child outlived the kill"
+
+
+def test_an_interrupt_kills_the_tree_and_propagates_unchanged(stub, tmp_path, monkeypatch):
+    """Ctrl-C while the app runs: the whole tree is killed, and the same KeyboardInterrupt goes on."""
+    monkeypatch.setenv("STUB_MODE", "hang")
+    interrupt = KeyboardInterrupt("test interrupt")
+    real_communicate = subprocess.Popen.communicate
+    calls = []
+
+    def communicate(self, *args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            time.sleep(1.0)  # the stub has started the child that holds the pipes
+            raise interrupt
+        return real_communicate(self, *args, **kwargs)
+
+    killed = []
+    real_kill = agent_view._kill_tree
+
+    def kill_tree(proc):
+        killed.append(proc)
+        return real_kill(proc)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", communicate)
+    monkeypatch.setattr(agent_view, "_kill_tree", kill_tree)
+    t0 = time.monotonic()
+    with pytest.raises(KeyboardInterrupt) as e:
+        render_stills(_spec(), tmp_path / "stills")
+    elapsed = time.monotonic() - t0
+    assert e.value is interrupt
+    assert len(killed) == 1 and killed[0].poll() is not None
+    assert elapsed < 7, f"the kill took {elapsed:.1f} s: a child outlived it"
 
 
 def test_nan_in_a_dict_spec_is_refused_before_any_spawn(stub, tmp_path):
