@@ -427,8 +427,10 @@ def _ladruno_concrete_ceiling(mat: object) -> tuple[str, float, float | None] | 
     """``(name, ceiling, fixed_lch)`` for a Ladruno concrete the sweep checks.
 
     ``fixed_lch`` is the one length every element uses when the material does
-    not regularize per element (``None`` when it does). ``None`` overall means
-    there is nothing to check: an ``_LadrunoRC`` without
+    not regularize per element (``None`` when it does). An ``_LadrunoRC`` under
+    ``-autoRegularization`` with an explicit ``-lch`` regularizes with that
+    length (``P.lch > 0`` wins, ``LadrunoRCConcrete.cpp:336``). ``None`` overall
+    means there is nothing to check: an ``_LadrunoRC`` without
     ``-autoRegularization`` never rescales its tables by element size.
     """
     from ....material.nd import LadrunoConcrete3D, _LadrunoRC
@@ -439,7 +441,8 @@ def _ladruno_concrete_ceiling(mat: object) -> tuple[str, float, float | None] | 
     if isinstance(mat, _LadrunoRC):
         if mat.auto_regularization is None:
             return None
-        return (type(mat).__name__, min(mat.l_max()), None)
+        return (type(mat).__name__, min(mat.l_max()),
+                float(mat.lch) if mat.lch > 0.0 else None)
     return None
 
 
@@ -447,15 +450,19 @@ def _crack_band_ceiling(mat: object) -> tuple[str, float, float | None, str] | N
     """``(name, l_max, fixed_lch, ceiling text)`` for a crack-band concrete, or ``None``.
 
     ``None`` when ``mat`` is not one, or has no ceiling to check: an ASD
-    concrete raw-constructed without ``ft``/``Gf`` provenance, or an
-    ``_LadrunoRC`` without ``-autoRegularization``.
+    concrete without ``auto_regularize`` (the fork never rescales its curves,
+    ``ASDConcrete3DMaterial.cpp:1689``, ``ASDConcrete1DMaterial.cpp:1061``), one
+    raw-constructed without ``ft``/``Gf`` provenance or with a zero ``ft`` or
+    ``Gf``, or an ``_LadrunoRC`` without ``-autoRegularization``.
     """
     from ....material.nd import ASDConcrete3D
     from ....material.uniaxial import ASDConcrete1D
 
     if isinstance(mat, (ASDConcrete3D, ASDConcrete1D)):
+        if not mat.auto_regularize or mat.ft is None or mat.ft <= 0.0:
+            return None
         asd_lmax = mat.l_max()
-        if asd_lmax is None:
+        if asd_lmax is None or asd_lmax <= 0.0:
             return None
         return ("ASDConcrete", asd_lmax, None,
                 f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={asd_lmax:g}")
@@ -467,10 +474,22 @@ def _crack_band_ceiling(mat: object) -> tuple[str, float, float | None, str] | N
             f"crack-band snap-back ceiling min(l_max_t, l_max_c)={lmax:g}")
 
 
-# Shells whose section materials see the base rule: none of them overrides
-# getCharacteristicLength at the fork pin (only ASDShellQ4 does, under
-# SRC/element/shell/).
-_BASE_RULE_SHELLS = frozenset({"ShellMITC4", "ShellDKGQ", "ShellNLDKGQ", "ASDShellT3"})
+# Shells with no update() at the fork pin: their sections are first driven from
+# the assembly loops, which do not set the active element, so an auto-regularized
+# material latches the length of whichever element was left active (#2680).
+_LATCHING_SHELLS = frozenset({"ShellMITC4", "ShellDKGQ", "ShellNLDKGQ"})
+
+
+def _latches_host_length(mat: object) -> bool:
+    """Whether ``mat`` reads its length from the active element at the fork pin."""
+    from ....material.nd import ASDConcrete3D, LadrunoConcrete3D, _LadrunoRC
+    from ....material.uniaxial import ASDConcrete1D
+
+    if isinstance(mat, (ASDConcrete3D, ASDConcrete1D, LadrunoConcrete3D)):
+        return mat.auto_regularize
+    if isinstance(mat, _LadrunoRC):
+        return mat.auto_regularization is not None and not mat.lch > 0.0
+    return False
 
 
 def _section_host_lch(spec: object, x: np.ndarray) -> float | None:
@@ -481,8 +500,8 @@ def _section_host_lch(spec: object, x: np.ndarray) -> float | None:
     ``LadrunoConcrete3D.cpp:382``, ``LadrunoRCConcrete.cpp:337``), and the
     domain's update loop sets the active element to the shell before its
     sections are driven (``Domain.cpp:2766``/``2785``), so the length is the
-    shell's own. Fork 23d937bc4. ``None`` means the host is not mirrored and
-    the sweep skips it.
+    shell's own on a shell whose ``update()`` drives them. Fork 23d937bc4.
+    ``None`` means the host is not mirrored and the sweep skips it.
     """
     cls = type(spec).__name__
     if cls == "ASDShellQ4":
@@ -490,7 +509,8 @@ def _section_host_lch(spec: object, x: np.ndarray) -> float | None:
         # is on (it localizes in one row of Gauss points); -noeas drops it.
         lch = _min_node_distance(x)
         return lch if getattr(spec, "no_eas", False) else lch / 2.0
-    if cls in _BASE_RULE_SHELLS:
+    if cls == "ASDShellT3":
+        # ASDShellT3.cpp:893: update() drives the sections; no length override.
         return _min_node_distance(x)
     return None
 
@@ -506,17 +526,36 @@ def _sweep_section_concrete(
     (``LayeredShell`` layers, ``PlateFiber``, ``LadrunoShellModifier``, ...)
     is checked against the host's length (:func:`_section_host_lch`), or
     against its fixed ``lch`` when it does not regularize per element. One
-    warning per PG lists each concrete over its ceiling.
+    warning per PG lists each concrete over its ceiling. On a
+    :data:`_LATCHING_SHELLS` host the length is unknown, so an auto-regularized
+    concrete gets its own warning instead of a ceiling check.
     """
     section = getattr(spec, "section", None)
     if section is None:
         return
     from ....material.nd import ASDRegularizationWarning
 
-    found = [c for c in map(_crack_band_ceiling, _material_graph(section)) if c is not None]
+    graph = _material_graph(section)
+    found = [c for c in map(_crack_band_ceiling, graph) if c is not None]
+    cls = type(spec).__name__
+    pg = getattr(spec, "pg", None)
+    where = f" in PG {pg!r}" if pg is not None else ""
+    if cls in _LATCHING_SHELLS:
+        found = [c for c in found if c[2] is not None]
+        latching = sorted({type(m).__name__ for m in graph if _latches_host_length(m)})
+        if latching and len(elements) > 0:
+            warnings.warn(
+                f"Auto-regularized concrete ({', '.join(latching)}) in the section "
+                f"of {cls}{where}: the fork latches the characteristic length from "
+                f"another element for this host (apeGmsh #2680), so the softening "
+                f"energy can change with what else is in the model. The length is "
+                f"unknown, so the snap-back ceiling is not checked. ASDShellQ4 and "
+                f"ASDShellT3 read their own length.",
+                ASDRegularizationWarning,
+                stacklevel=3,
+            )
     if not found:
         return
-    cls = type(spec).__name__
     per_element = [c for c in found if c[2] is None]
     lchs: list[float] = []
     if per_element:
@@ -548,8 +587,6 @@ def _sweep_section_concrete(
                 f"{ceiling} (worst lch={worst:g}, ratio {worst / lmax:.2f})")
     if not lines:
         return
-    pg = getattr(spec, "pg", None)
-    where = f" in PG {pg!r}" if pg is not None else ""
     eas = (" ASDShellQ4 halves the node distance while EAS is on (no_eas=False)."
            if cls == "ASDShellQ4" else "")
     warnings.warn(
@@ -575,15 +612,18 @@ def sweep_asdconcrete_element_size(
     it have their softening energy floored, so the response is over-brittle
     and no longer mesh-objective.
 
-    * ``ASDConcrete3D``/``ASDConcrete1D``: ``l_max = 2 E Gf / ft^2`` against
-      the minimum inter-node distance (``Element::getCharacteristicLength``).
+    * ``ASDConcrete3D``/``ASDConcrete1D`` with ``auto_regularize``:
+      ``l_max = 2 E Gf / ft^2`` against the minimum inter-node distance
+      (``Element::getCharacteristicLength``). Without it the input curves are
+      used as given, whatever the mesh.
     * ``LadrunoConcrete3D``: ``min(l_max_t, l_max_c)``
       (:meth:`~apeGmsh.opensees.material.nd.LadrunoConcrete3D.l_max`) against
       each element's own length under ``auto_regularize``, else against the
       fixed ``lch`` every element uses.
     * ``LadrunoRCConcrete``/``LadrunoRCFiniteStrain`` with
       ``auto_regularization``: the ceiling read off the emitted tables, against
-      each element's own length. Without it nothing depends on the mesh.
+      each element's own length, or an explicit ``lch``. Without it nothing
+      depends on the mesh.
 
     A Ladruno concrete's element length follows the fork's per-class override
     where one is mirrored (:func:`_measure_lch`); any other class uses the
@@ -592,8 +632,8 @@ def sweep_asdconcrete_element_size(
     Concrete nested in ``spec.section`` is swept by
     :func:`_sweep_section_concrete` against the host's length
     (:func:`_section_host_lch`): the shells so far. Fiber beams are a
-    documented follow-up, and an unmirrored host is skipped. The pass is
-    read-only and never blocks emit; the warning is CI-promotable via
+    documented follow-up, and an unmirrored host is skipped. A material with
+    a zero ``ft`` or ``Gf`` is skipped. The pass is read-only and never blocks emit; the warning is CI-promotable via
     ``-W error::...ASDRegularizationWarning``.
     """
     mat = getattr(spec, "material", None)
