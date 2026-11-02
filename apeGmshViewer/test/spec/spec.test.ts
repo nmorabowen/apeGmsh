@@ -1,6 +1,6 @@
 // ADR 0128 slice 2 (VA2): the view spec `apegmsh-view/1` fails closed (D2).
 // Every spec-level refusal names its key and, through the render job main
-// starts from (src/spec/job.ts), writes render.json and no PNG; a valid spec
+// starts from (src/spec/job.ts), writes manifest.json and no PNG; a valid spec
 // states every default (D1, D8: light theme for batch stills; D9 layers).
 
 import assert from "node:assert/strict";
@@ -158,7 +158,7 @@ test("D1: an axis-name normal is its unit vector; an explicit camera is kept as 
   assert.deepEqual(v.spec.shots[0]!.camera, { eye: [5, 5, 5], target: [0, 0, 0], up: [0, 0, 1] });
 });
 
-// ---- the render job: a refused spec writes render.json and no PNG ------------------
+// ---- the render job: a refused spec writes manifest.json and no PNG ------------------
 
 const fsOf = {
   readFile: (p: string) => readFileSync(p, "utf8"),
@@ -190,15 +190,15 @@ for (const [name, body, key] of [
   ["ghost", JSON.stringify(base({}, { stage: "base", deform: { scale: 10, ghost: true } })), "shots[0].deform.ghost"],
   ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
-  test(`D2: a refused spec (${name}) writes render.json naming ${key}, and no PNG`, () => {
+  test(`D2: a refused spec (${name}) writes manifest.json naming ${key}, and no PNG`, () => {
     const { out, p } = job(name, body);
     assert.equal(p.ok, false);
     if (p.ok) return;
     assert.equal(p.key, key);
     const files = readdirSync(out);
-    assert.deepEqual(files, ["render.json"], "nothing but render.json: no PNG");
-    const r = JSON.parse(readFileSync(join(out, "render.json"), "utf8"));
-    assert.deepEqual(r.render.refused, { key: p.key, reason: p.reason });
+    assert.deepEqual(files, ["manifest.json"], "nothing but manifest.json: no PNG");
+    const r = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+    assert.deepEqual(r.refused, { key: p.key, reason: p.reason });
   });
 }
 
@@ -215,9 +215,9 @@ test("D2: a non-empty --out is refused before the spec is read, and nothing in i
   assert.equal(p.key, "--out");
   assert.match(p.reason, /is not empty \(a\.png\); an agent run writes into an absent or empty folder/);
   assert.equal(p.wrote, false);
-  assert.deepEqual(readdirSync(out), ["a.png"], "no render.json is added and the old still is left as it was");
+  assert.deepEqual(readdirSync(out), ["a.png"], "no manifest.json is added and the old still is left as it was");
   assert.equal(readFileSync(join(out, "a.png"), "utf8"), "a still of an earlier run");
-  // A refused spec too: the folder must be empty first, so no older still can stand beside its render.json.
+  // A refused spec too: the folder must be empty first, so no older still can stand beside its manifest.json.
   writeFileSync(spec, "{ not json");
   assert.equal((prepareRender(spec, out, fsOf) as { key: string }).key, "--out");
   // An empty folder takes the run.

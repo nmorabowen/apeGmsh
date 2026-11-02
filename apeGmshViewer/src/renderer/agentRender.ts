@@ -77,8 +77,12 @@ const SHOW_MS = 30000;
 /** A view that stays `unavailable` or `refused` this long, with nothing still loading, is the app's answer. */
 const SETTLED_MS = 1500;
 
-function contourOnScreen(s: State, viewport: Viewport): boolean {
+function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolean {
   const v = contourView(s);
+  // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
+  const at = s.phase.at;
+  const step = effects.currentStep();
+  if (at?.kind !== "results" || step?.stage !== at.stage || step.step !== at.step) return false;
   if (v.state === "ready") return v.stepMeasured && viewport.contourApplied === contourKey(v);
   if (v.state === "element") return v.stepMeasured && viewport.contourApplied === elementContourKey(v);
   return false;
@@ -106,7 +110,7 @@ async function shown(deps: RenderDeps, shot: SpecShot, plan: ShotPlan): Promise<
   for (;;) {
     const s = store.get();
     const now = performance.now();
-    const v = viewVerdict(s, shot, plan, { contour: contourOnScreen(s, viewport), deform: deformOnScreen(s, viewport, effects) });
+    const v = viewVerdict(s, shot, plan, { contour: contourOnScreen(s, viewport, effects), deform: deformOnScreen(s, viewport, effects) });
     if (v.kind === "shown") return null;
     if (v.kind === "refused") return v.reason;
     if (v.why !== lastWhy) {

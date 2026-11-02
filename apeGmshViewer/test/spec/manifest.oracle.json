@@ -1,0 +1,605 @@
+{
+ "sets": {
+  "contour_staged": {
+   "model": {
+    "file": "contour_staged.h5",
+    "size": 299408,
+    "model_hash": "f359ba2f1c8954bd51f546716dc41737",
+    "fem_hash": "d0857c87d357e87b9e8c76bdc4219501"
+   },
+   "results": {
+    "file": "contour_staged.results.h5",
+    "size": 366488,
+    "model_hash": "f359ba2f1c8954bd51f546716dc41737",
+    "fem_hash": "d0857c87d357e87b9e8c76bdc4219501"
+   }
+  },
+  "contour_nodata": {
+   "model": {
+    "file": "contour_nodata.h5",
+    "size": 299408,
+    "model_hash": "f359ba2f1c8954bd51f546716dc41737",
+    "fem_hash": "d0857c87d357e87b9e8c76bdc4219501"
+   },
+   "results": {
+    "file": "contour_nodata.results.h5",
+    "size": 354968,
+    "model_hash": "f359ba2f1c8954bd51f546716dc41737",
+    "fem_hash": "d0857c87d357e87b9e8c76bdc4219501"
+   }
+  },
+  "elem_solid": {
+   "model": {
+    "file": "elem_solid.h5",
+    "size": 33464,
+    "model_hash": null,
+    "fem_hash": "2034cb2924b650cb6cd5449c37d7dc0a"
+   },
+   "results": {
+    "file": "elem_solid.results.h5",
+    "size": 50352,
+    "model_hash": null,
+    "fem_hash": "2034cb2924b650cb6cd5449c37d7dc0a"
+   }
+  },
+  "elem_mixed": {
+   "model": {
+    "file": "elem_mixed.h5",
+    "size": 85056,
+    "model_hash": "e8f83f4d373eb0a4a9e836d8c62aead3",
+    "fem_hash": "084147ae8700b8f733155373b152f4a2"
+   },
+   "results": {
+    "file": "elem_mixed.results.h5",
+    "size": 81880,
+    "model_hash": "e8f83f4d373eb0a4a9e836d8c62aead3",
+    "fem_hash": "084147ae8700b8f733155373b152f4a2"
+   }
+  },
+  "extrap_solid": {
+   "model": {
+    "file": "extrap_solid.h5",
+    "size": 33464,
+    "model_hash": null,
+    "fem_hash": "2034cb2924b650cb6cd5449c37d7dc0a"
+   },
+   "results": {
+    "file": "extrap_solid.results.h5",
+    "size": 44080,
+    "model_hash": null,
+    "fem_hash": "2034cb2924b650cb6cd5449c37d7dc0a"
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "nodal_axis",
+   "set": "contour_staged",
+   "stage": "erect",
+   "step": 1,
+   "field": "displacement",
+   "component": "displacement_z",
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": -0.022,
+     "node": 21,
+     "element": null,
+     "position": [
+      2.0,
+      0.0,
+      3.5
+     ]
+    },
+    "max": {
+     "value": -0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": -0.022,
+     "node": 21,
+     "element": null,
+     "position": [
+      2.0,
+      0.0,
+      3.5
+     ]
+    },
+    "max": {
+     "value": -0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 0,
+    "of": 308
+   }
+  },
+  {
+   "name": "nodal_axis_first_step",
+   "set": "contour_staged",
+   "stage": "erect",
+   "step": 0,
+   "field": "displacement",
+   "component": "displacement_x",
+   "time": 0.5,
+   "recorded": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.035,
+     "node": 17,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.5
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.035,
+     "node": 17,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.5
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 0,
+    "of": 308
+   }
+  },
+  {
+   "name": "nodal_magnitude",
+   "set": "contour_staged",
+   "stage": "erect",
+   "step": 1,
+   "field": "displacement",
+   "component": "magnitude",
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.07605261336732617,
+     "node": 21,
+     "element": null,
+     "position": [
+      2.0,
+      0.0,
+      3.5
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.07605261336732617,
+     "node": 21,
+     "element": null,
+     "position": [
+      2.0,
+      0.0,
+      3.5
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 0,
+    "of": 308
+   }
+  },
+  {
+   "name": "nodal_isolated",
+   "set": "contour_staged",
+   "stage": "erect",
+   "step": 1,
+   "field": "displacement",
+   "component": "displacement_x",
+   "isolate": [
+    "Col"
+   ],
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.07,
+     "node": 17,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.5
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.06,
+     "node": 1,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.0
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 0,
+    "of": 140
+   }
+  },
+  {
+   "name": "nodal_no_data",
+   "set": "contour_nodata",
+   "stage": "erect",
+   "step": 1,
+   "field": "displacement",
+   "component": "displacement_x",
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.06,
+     "node": 1,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.0
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 0.0,
+     "node": 2,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 0.06,
+     "node": 1,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      3.0
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 48,
+    "of": 308
+   }
+  },
+  {
+   "name": "element_mean",
+   "set": "elem_solid",
+   "stage": "load",
+   "step": 1,
+   "field": "stress",
+   "component": "stress_xx",
+   "gauss": "cell",
+   "time": 0.6666666666666666,
+   "recorded": {
+    "min": {
+     "value": 1.85,
+     "node": null,
+     "element": 1,
+     "position": [
+      0.5,
+      0.5,
+      0.5
+     ]
+    },
+    "max": {
+     "value": 12.85,
+     "node": null,
+     "element": 12,
+     "position": [
+      2.5,
+      1.5,
+      1.5
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 1.85,
+     "node": null,
+     "element": 1,
+     "position": [
+      0.5,
+      0.5,
+      0.5
+     ]
+    },
+    "max": {
+     "value": 12.85,
+     "node": null,
+     "element": 12,
+     "position": [
+      2.5,
+      1.5,
+      1.5
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "cells",
+    "count": 0,
+    "of": 12
+   }
+  },
+  {
+   "name": "element_cell_no_data",
+   "set": "elem_mixed",
+   "stage": "load",
+   "step": 2,
+   "field": "stress",
+   "component": "stress_yy",
+   "gauss": "cell",
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": 3.5,
+     "node": null,
+     "element": 2,
+     "position": [
+      0.25,
+      0.75,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 17.5,
+     "node": null,
+     "element": 16,
+     "position": [
+      2.6666666666666665,
+      0.8333333333333334,
+      0.0
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": 3.5,
+     "node": null,
+     "element": 2,
+     "position": [
+      0.25,
+      0.75,
+      0.0
+     ]
+    },
+    "max": {
+     "value": 17.5,
+     "node": null,
+     "element": 16,
+     "position": [
+      2.6666666666666665,
+      0.8333333333333334,
+      0.0
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "cells",
+    "count": 1,
+    "of": 16
+   }
+  },
+  {
+   "name": "gauss_node_averaged",
+   "set": "extrap_solid",
+   "stage": "load",
+   "step": 2,
+   "field": "stress",
+   "component": "stress_xx",
+   "gauss": "node",
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": -1.9500000000000093,
+     "node": 5,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      2.0
+     ]
+    },
+    "max": {
+     "value": 31.64999999999996,
+     "node": 7,
+     "element": null,
+     "position": [
+      3.0,
+      2.0,
+      2.0
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": -1.9500000000000093,
+     "node": 5,
+     "element": null,
+     "position": [
+      0.0,
+      0.0,
+      2.0
+     ]
+    },
+    "max": {
+     "value": 31.64999999999996,
+     "node": 7,
+     "element": null,
+     "position": [
+      3.0,
+      2.0,
+      2.0
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "nodes",
+    "count": 0,
+    "of": 34
+   }
+  },
+  {
+   "name": "gauss_node_discrete",
+   "set": "extrap_solid",
+   "stage": "load",
+   "step": 2,
+   "field": "stress",
+   "component": "stress_xx",
+   "gauss": "node_discrete",
+   "time": 1.0,
+   "recorded": {
+    "min": {
+     "value": -1.9500000000000093,
+     "node": 5,
+     "element": 2,
+     "position": [
+      0.0,
+      0.0,
+      2.0
+     ]
+    },
+    "max": {
+     "value": 31.64999999999996,
+     "node": 7,
+     "element": 12,
+     "position": [
+      3.0,
+      2.0,
+      2.0
+     ]
+    }
+   },
+   "drawn": {
+    "min": {
+     "value": -1.9500000000000093,
+     "node": 5,
+     "element": 2,
+     "position": [
+      0.0,
+      0.0,
+      2.0
+     ]
+    },
+    "max": {
+     "value": 31.64999999999996,
+     "node": 7,
+     "element": 12,
+     "position": [
+      3.0,
+      2.0,
+      2.0
+     ]
+    }
+   },
+   "no_data": {
+    "kind": "cells",
+    "count": 0,
+    "of": 12
+   }
+  }
+ ]
+}
