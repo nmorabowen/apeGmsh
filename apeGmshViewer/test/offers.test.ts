@@ -495,6 +495,35 @@ test("D8: an offer that names no theme leaves the human's alone; a snapshot keep
   if (got.ok) assert.equal(got.snapshot.view["theme"], "dark");
 });
 
+test("ADR 0128 Amendment 2: the camera after Apply is the spec's camera, the last request made, and nothing reframes it", async () => {
+  const r = await rig();
+  const eye: Vec3 = [30, -40, 25];
+  const target: Vec3 = [2, 1, 3];
+  const spec = { eye, target, up: [0, 0, 1] as Vec3 };
+  const want = canonicalPose(spec, "test");
+  r.runner.receive(offers([{ name: "pose", stage: "unprop", deform: { scale: 5 }, camera: spec }, { name: "named", camera: "+x" }]));
+  await r.tick();
+  await r.tick();
+  const requests: unknown[] = [];
+  const off = r.store.subscribe((s, prev) => {
+    if (s.camera.seq !== prev.camera.seq) requests.push(s.camera.request?.to);
+  });
+  await r.click(offerNamed(r.store.get(), "pose").id);
+  off();
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "pose").status, "applied", offerNamed(s, "pose").reason ?? "");
+  assert.deepEqual(s.camera.pose!.eye, eye);
+  assert.deepEqual(s.camera.pose!.target, target);
+  assert.ok(samePoseWithin(s.camera.pose!, want, 1e-12), "up, to `canonicalPose`'s rounding");
+  assert.deepEqual(requests, ["home", want], "home, as a still does, then the spec's camera, last");
+  const got = r.runner.snapshot([800, 600]);
+  assert.ok(got.ok);
+  if (got.ok) assert.deepEqual(got.snapshot.spec.shots[0]!.camera, spec, "and it reads back in the spec's words");
+  // A named view: the name is the last request, whatever the window's panels.
+  await r.click(offerNamed(r.store.get(), "named").id);
+  assert.equal(r.store.get().camera.request?.to, "+x");
+});
+
 // ---- Back ---------------------------------------------------------------------------
 
 test("D5: Back returns to the view from before the last applied offer, one click at a time", async () => {

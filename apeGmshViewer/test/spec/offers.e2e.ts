@@ -252,6 +252,19 @@ async function campaign(theme: "dark" | "light", port: number): Promise<void> {
     await sleep(800);
     assert.deepEqual((await snap("clip")).view.shots[0]!["clip"], [{ normal: [2, 0, 0], offset: 4, flip: false }]);
     log(`${theme}: D1: the plane reads back`);
+
+    // ADR 0128 Amendment 2: the camera is the contract, with the rail open, in the real viewport.
+    const pose = { eye: [30, -40, 25], target: [2, 1, 3], up: [0, 0, 1] };
+    assert.equal((await run(user, "--mode=present", `--spec=${specFile("pose", [{ name: "pose", camera: pose }])}`)).code, 0);
+    await page.until(statusIs("pose", "pending"), "the camera's offer");
+    assert.equal(await page.js(`getComputedStyle(document.getElementById("rail")).display !== "none"`), true, "the rail is open");
+    await page.js(applyClick("pose"));
+    await page.until(statusIs("pose", "applied"), "the camera's click");
+    await sleep(800);
+    const cam = (await snap("pose")).manifest.shots[0]!["camera"] as { eye: number[]; target: number[] };
+    for (const k of ["eye", "target"] as const) cam[k].forEach((x, i) => assert.ok(Math.abs(x - pose[k][i]!) < 1e-6, `the camera's ${k}: ${cam[k].join(", ")}`));
+    assert.equal(await page.js(`getComputedStyle(document.getElementById("rail")).display !== "none"`), true, "Apply did not collapse the rail");
+    log(`${theme}: Amendment 2: the camera after Apply is the spec's`);
     noModal(viewErr, "the view window");
   } finally {
     view.kill();
