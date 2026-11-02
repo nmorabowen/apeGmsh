@@ -451,6 +451,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
   const displayEl = new FakeDomEl("aside");
   const deformEl = new FakeDomEl("aside");
   const scaleEl = new FakeDomEl("div");
+  const contourEl = new FakeDomEl("aside");
   headerEl.append(fileNameEl, fileStatsEl);
   (globalThis as { document?: unknown }).document = {
     title: "",
@@ -464,6 +465,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
       if (id === "display") return displayEl;
       if (id === "deform") return deformEl;
       if (id === "viewport-scale") return scaleEl;
+      if (id === "contour") return contourEl;
       return null;
     },
   };
@@ -492,6 +494,9 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     // The colour range is set on the scale in the viewport, not on the card.
     assert.equal(legendEl.all((e) => e.className.includes("contour-modes")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("contour-modes")).length, 1);
+    // The field picker is on the Contour card, not on Physical groups.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-field")).length, 0);
+    assert.equal(contourEl.all((e) => e.className.includes("contour-field")).length, 1);
     // The scale is the only colour bar.
     assert.equal(legendEl.all((e) => e.className.includes("contour-ramp")).length, 0);
     assert.equal(scaleEl.all((e) => e.className.includes("vs-ramp")).length, 1);

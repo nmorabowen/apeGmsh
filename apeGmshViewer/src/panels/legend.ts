@@ -7,7 +7,8 @@
 // dispatches events and reads selectors, nothing else.
 //
 // This module also fills the Display card (what is drawn, and the contour
-// colormap), the Deformed card, and the contour scale in the viewport, which
+// colormap), the Deformed card, the Contour card (the switch, the field and
+// what the file refuses), and the contour scale in the viewport, which
 // shows whenever a contour is drawn, whether or not the cards are open, and
 // holds the colour range controls.
 
@@ -103,6 +104,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   const display = byId("display");
   const deformCard = byId("deform");
   const viewportScale = byId("viewport-scale");
+  const contourCard = byId("contour");
   let scaleChrome: ScaleChrome | null = null;
   let refusalsOpen = false;
   let unlisten: (() => void)[] = [];
@@ -153,15 +155,16 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     legend.hidden = s.mesh === null;
     viewportScale.hidden = true;
     const byRole = s.visibility.colourBy === "role";
-    const head = el("h3", undefined, contour ? "Contour" : byRole ? "Structural roles" : "Physical groups");
+    const head = el("h3", undefined, byRole ? "Structural roles" : "Physical groups");
     legend.replaceChildren(head);
-    if (!byRole && !contour && s.visibility.hidden.length) {
+    if (!byRole && s.visibility.hidden.length) {
       const all = el("button", "legend-all", "show all");
       unlisten.push(listen(all, "click", () => store.dispatch({ type: "showAll" })));
       head.append(all);
     }
     const modes = el("div", "legend-mode");
-    for (const m of MODES) {
+    // Contour colouring is switched on its own card; these two colour by the declarations.
+    for (const m of MODES.filter((x) => x.by !== "contour")) {
       const b = el("button", s.visibility.colourBy === m.by ? "on" : "", m.label);
       unlisten.push(listen(b, "click", () => store.dispatch({ type: "setColourBy", by: m.by })));
       modes.append(b);
@@ -275,11 +278,18 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unlisten.push(listen(cm, "change", () => store.dispatch({ type: "setContourCmap", cmap: cm.value as ContourCmap })));
     labelled("Contour", cm);
     deformCard.hidden = !s.phase.axis.some((k) => k.kind === "results");
+    // The Contour card: its switch, then (while on) the field, its draw mode and what the file refuses.
+    contourCard.hidden = s.mesh === null;
+    contourCard.replaceChildren(el("h3", undefined, "Contour"));
+    const contourRow = el("div", "legend-mode");
+    const contourBtn = el("button", "contour-toggle" + (contour ? " on" : ""), "contour");
+    contourBtn.title = contour ? "colour by physical group again" : "colour the model by a result field";
+    unlisten.push(listen(contourBtn, "click", () => store.dispatch({ type: "setColourBy", by: contour ? "group" : "contour" })));
+    contourRow.append(contourBtn);
+    contourCard.append(contourRow);
     if (contour) {
       lastContour = contourSignature(s);
       renderContour(s);
-      renderDeform(s);
-      return;
     }
     let rows: LegendEntry[];
     if (byRole) {
@@ -406,7 +416,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value, source: current.source })),
       );
       row.append(field, comp);
-      legend.append(row);
+      contourCard.append(row);
     }
     // What the file cannot give is stated in a count that opens, so a long list leaves the field readout in view.
     const refusals: string[] = [];
@@ -423,7 +433,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       box.append(el("summary", "legend-note refused-field", `${refusals.length} ${refusals.length === 1 ? "field" : "fields"} refused`));
       for (const r of refusals) box.append(el("div", "legend-note refused-field", r));
       unlisten.push(listen(box, "toggle", () => { refusalsOpen = box.open; }));
-      legend.append(box);
+      contourCard.append(box);
     }
     if (s.contour.source === "element") {
       const modes = el("div", "legend-mode contour-gauss");
@@ -433,7 +443,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         unlisten.push(listen(b, "click", () => store.dispatch({ type: "setContourGauss", mode: m.mode })));
         modes.append(b);
       }
-      legend.append(modes);
+      contourCard.append(modes);
     }
     if (v.state !== "ready" && v.state !== "element") {
       const note =
@@ -444,8 +454,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
             : v.state === "not-yet"
               ? `Not drawn: ${v.reason}.`
               : "";
-      legend.append(el("div", "legend-note" + (v.state === "refused" ? " refused-field" : ""), note));
-      legend.append(noDataRow());
+      contourCard.append(el("div", "legend-note" + (v.state === "refused" ? " refused-field" : ""), note));
+      contourCard.append(noDataRow());
       return;
     }
     const lines = contourLines(s, v);
@@ -458,10 +468,10 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     });
     viewportScale.hidden = false;
     scaleChrome?.clamp();
-    if (lines.topology) legend.append(el("div", "legend-note contour-topology", lines.topology));
-    if (lines.axes) legend.append(el("div", "legend-note contour-axes", lines.axes));
-    if (lines.state) legend.append(el("div", "legend-note", lines.state));
-    legend.append(noDataRow());
+    if (lines.topology) contourCard.append(el("div", "legend-note contour-topology", lines.topology));
+    if (lines.axes) contourCard.append(el("div", "legend-note contour-axes", lines.axes));
+    if (lines.state) contourCard.append(el("div", "legend-note", lines.state));
+    contourCard.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");
     for (const m of RANGE_MODES) {
@@ -501,8 +511,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     scaleChrome?.clamp();
   };
 
-  // The two new cards collapse from their headers like the others (ui/collapse.ts).
-  const unlistenCards = [display, deformCard].map((card) =>
+  // The cards this module fills collapse from their headers like the others (ui/collapse.ts).
+  const unlistenCards = [display, deformCard, contourCard].map((card) =>
     listen(card, "click", (e: MouseEvent) => {
       if (isHeadingToggleTarget(e.target instanceof Element ? e.target : null, card)) toggleCardCollapse(card);
     }),
