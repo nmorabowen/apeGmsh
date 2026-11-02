@@ -207,6 +207,17 @@ export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
 /** The root `/sequence` zone (ADR 0112 D2(b), V0 decision 8: "1.0.0"), read here when a file carries it. */
 export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
 /**
+ * The `<stem>.user.h5` zones the app reads (ADR 0130 slice VU3a, reader/userFile.ts):
+ * `/meta`, `/combinations` and the index of `/results`, each at its first version,
+ * and `/modes` checked as a zone (its version and columns; the staleness table
+ * needs it). `/spectra` and `/entities` are listed by name only; their readers
+ * (VU7, VU8) add their targets.
+ */
+export const USER_META_TARGET = { major: 1, minor: 0 } as const;
+export const COMBINATIONS_TARGET = { major: 1, minor: 0 } as const;
+export const USER_RESULTS_TARGET = { major: 1, minor: 0 } as const;
+export const MODES_TARGET = { major: 1, minor: 0 } as const;
+/**
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check
  * reads; it equals the Python writer constants). Neutral 2.10 is the B2 layout
@@ -214,11 +225,11 @@ export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
  * first era whose files open (2.11 is the 0-based rank flip, but every 2.11
  * writer stamped a neutral zone below the neutral floor, so no 2.11 file
  * opens); the ADR 0112 zones (geometry, provenance, sequence) start at their
- * first version. tests/test_app_floor_drift.py compares every row with
- * Python's `reader_floor(zone)`.
+ * first version, and so do the `.user.h5` zones (ADR 0130). tests/test_app_floor_drift.py
+ * compares every row with Python's `reader_floor(zone)`.
  * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
-export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 } as const;
+export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0, modes: 0 } as const;
 
 /**
  * ADR 0113 D7, the app's rule for one zone's `/meta/<key>` stamp:

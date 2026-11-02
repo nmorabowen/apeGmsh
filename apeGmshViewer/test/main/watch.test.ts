@@ -3,7 +3,7 @@
 // appears or vanishes changes the set.
 
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -38,7 +38,7 @@ test("a slow rewrite is reported once, at least 300 ms after the last write", as
   writeFileSync(model, "v1");
   const { heard, watcher } = harness(model);
   try {
-    assert.deepEqual(watcher.set, { model, geometry: null, results: null });
+    assert.deepEqual(watcher.set, { model, geometry: null, results: null, user: null });
     await sleep(100);
     // A writer that truncates, then writes in chunks 100 ms apart for 600 ms.
     writeFileSync(model, "");
@@ -70,12 +70,12 @@ test("a sibling that appears, then vanishes, changes the set", async () => {
     await sleep(100);
     writeFileSync(geometry, "geometry");
     await until(() => heard.length > 0);
-    assert.deepEqual(heard[0]!.reopened, { model, geometry, results: null });
-    assert.deepEqual(watcher.set, { model, geometry, results: null });
+    assert.deepEqual(heard[0]!.reopened, { model, geometry, results: null, user: null });
+    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null });
 
     rmSync(geometry);
     await until(() => heard.length > 1);
-    assert.deepEqual(heard[1]!.reopened, { model, geometry: null, results: null });
+    assert.deepEqual(heard[1]!.reopened, { model, geometry: null, results: null, user: null });
 
     // A file of another stem is not watched.
     writeFileSync(join(dir, "other.geometry.h5"), "changed");
@@ -95,7 +95,7 @@ test("a rewritten geometry of an unchanged set is a fileChanged, not a reopen", 
   writeFileSync(geometry, "g1");
   const { heard, watcher } = harness(geometry); // opened from the geometry
   try {
-    assert.deepEqual(watcher.set, { model, geometry, results: null });
+    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null });
     await sleep(100);
     writeFileSync(geometry, "g2, longer");
     await until(() => heard.length > 0);
@@ -121,7 +121,7 @@ test("a file opened under an upper-case suffix is reported when rewritten", asyn
   writeFileSync(results, "r1");
   const { heard, watcher } = harness(results);
   try {
-    assert.deepEqual(watcher.set, { model, geometry: null, results });
+    assert.deepEqual(watcher.set, { model, geometry: null, results, user: null });
     await sleep(100);
     writeFileSync(results, "r2, longer");
     await until(() => heard.length > 0);
@@ -132,3 +132,74 @@ test("a file opened under an upper-case suffix is reported when rewritten", asyn
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// VU3a (#2687): the user file is a member of the set. Its writers replace it
+// through a per-writer partial (h5-schema.md "Writing"), which is never reported.
+// Review of #2729, finding 1: a reopen re-reads model, geometry and results and
+// clears the step, so the user file moving alone must never cause one.
+test("a user file appearing, replaced through a partial, and deleted is a fileChanged of it each time, never a reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-watch-"));
+  const model = join(dir, "m.h5");
+  const results = join(dir, "m.ladruno");
+  const user = join(dir, "m.user.h5");
+  const partial = `${user}.myhost-123-abc.partial`;
+  writeFileSync(model, "model");
+  writeFileSync(results, "results");
+  const { heard, watcher } = harness(model);
+  const settle = async (n: number) => {
+    await until(() => heard.length >= n);
+    await sleep(500); // nothing more may arrive
+    assert.equal(heard.length, n, JSON.stringify(heard));
+  };
+  try {
+    await sleep(100);
+    writeFileSync(partial, "u1");
+    await sleep(500);
+    assert.equal(heard.length, 0, "a partial alone is not a member");
+    renameSync(partial, user);
+    await settle(1);
+    assert.equal(watcher.set.user, user, "the watcher's set holds the user file");
+
+    writeFileSync(partial, "u2, longer");
+    renameSync(partial, user);
+    await settle(2);
+
+    rmSync(user);
+    await settle(3);
+    assert.equal(watcher.set.user, null);
+    assert.deepEqual(heard.map((h) => h.changed ?? h), [user, user, user], "appeared, replaced, deleted: three changes of the user file, no reopen");
+  } finally {
+    watcher.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Delta review of #2729: a re-run rewrites the model (or the results), then
+// writes the user file inside the model's 300 ms settle window. Fix 1's
+// user-only branch reported the user file and swallowed the model's rewrite.
+for (const rewritten of ["m.h5", "m.ladruno"]) {
+  test(`${rewritten} rewritten, then the user file written inside its settle window: both changes are reported, no reopen`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agv-watch-"));
+    const model = join(dir, "m.h5");
+    const results = join(dir, "m.ladruno");
+    const user = join(dir, "m.user.h5");
+    const partial = `${user}.myhost-123-abc.partial`;
+    writeFileSync(model, "model");
+    writeFileSync(results, "results");
+    const { heard, watcher } = harness(model);
+    try {
+      await sleep(100);
+      writeFileSync(join(dir, rewritten), "rewritten by the re-run, longer");
+      await sleep(100); // inside the 300 ms the rewrite must hold still
+      writeFileSync(partial, "u1");
+      renameSync(partial, user);
+      await until(() => heard.length >= 2);
+      await sleep(700); // nothing more may arrive
+      assert.deepEqual(heard.map((h) => h.changed ?? h).sort(), [join(dir, rewritten), user].sort(), JSON.stringify(heard));
+      assert.equal(watcher.set.user, user);
+    } finally {
+      watcher.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

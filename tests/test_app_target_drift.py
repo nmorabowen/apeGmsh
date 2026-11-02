@@ -2,8 +2,9 @@
 
 The app (``apeGmshViewer/``) hard-codes the version of each zone it was
 written against as ``<ZONE>_TARGET = { major, minor }`` in its reader
-(``read.ts`` for neutral, opensees, geometry, provenance and sequence;
-``results.ts`` for results). A file newer than a target opens with a
+(``read.ts`` for neutral, opensees, geometry, provenance, sequence and the
+``.user.h5`` zones user_meta, combinations, user_results and modes; ``results.ts``
+for results). A file newer than a target opens with a
 "newer than this app" banner, so a target that lags its Python writer
 puts that banner on every file fresh from main (V4t, #1821).
 
@@ -61,6 +62,10 @@ EXPECTED_HOME: dict[str, str] = {
     PROVENANCE: "apeGmshViewer/src/reader/read.ts",
     SEQUENCE: "apeGmshViewer/src/reader/read.ts",
     RESULTS: "apeGmshViewer/src/reader/results.ts",
+    USER_META: "apeGmshViewer/src/reader/read.ts",
+    COMBINATIONS: "apeGmshViewer/src/reader/read.ts",
+    USER_RESULTS: "apeGmshViewer/src/reader/read.ts",
+    MODES: "apeGmshViewer/src/reader/read.ts",
 }
 
 #: Python zones the app does not read, each with the reason. A zone here
@@ -69,22 +74,6 @@ NOT_READ_BY_APP: dict[str, str] = {
     ASSEMBLY: (
         "/assembly (ADR 0117 D5) is written only by Assembly.h5 archives; "
         "the app opens model.h5 / results.h5 and has no assembly reader"
-    ),
-    USER_META: (
-        "/meta of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 reader "
-        "in slice VU3a, which adds the target and drops this row"
-    ),
-    COMBINATIONS: (
-        "/combinations of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 "
-        "reader in slice VU3a, which adds the target and drops this row"
-    ),
-    USER_RESULTS: (
-        "/results of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 "
-        "reader in slice VU3a, which adds the target and drops this row"
-    ),
-    MODES: (
-        "/modes of <stem>.user.h5 (ADR 0130): the app reads the modal table "
-        "in slice VU7, which adds the target and drops this row"
     ),
     SPECTRA: (
         "/spectra of <stem>.user.h5 (ADR 0130): the app reads the spectrum "

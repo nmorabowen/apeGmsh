@@ -182,8 +182,8 @@ const v = (t: { major: number }, minor: number) => `${t.major}.${minor}.0`;
 // the floor to the target opens with no banner; a newer minor of the same
 // major opens with exactly one banner naming the file's stamp and the target.
 
-test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.0, provenance 1.0, sequence 1.0)", () => {
-  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 });
+test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.0, provenance 1.0, sequence 1.0, and the .user.h5 zones at 1.0)", () => {
+  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0, modes: 0 });
 });
 
 test("opensees 2.39.0 is the target: a 2.39 file with a 2.29 embeddedRebar, a 2.35 equationConstraint store, a 2.36 @target_mode and a 2.37 transform jnt_offset opens with no banner", () => {
