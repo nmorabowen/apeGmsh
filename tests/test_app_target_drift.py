@@ -35,11 +35,13 @@ from apeGmsh.opensees._internal.schema_version import (
     ASSEMBLY,
     COMBINATIONS,
     GEOMETRY,
+    MODES,
     NEUTRAL,
     OPENSEES,
     PROVENANCE,
     RESULTS,
     SEQUENCE,
+    SPECTRA,
     USER_META,
     USER_RESULTS,
     reader_version,
@@ -78,6 +80,14 @@ NOT_READ_BY_APP: dict[str, str] = {
     USER_RESULTS: (
         "/results of <stem>.user.h5 (ADR 0130): the app gains its .user.h5 "
         "reader in slice VU3a, which adds the target and drops this row"
+    ),
+    MODES: (
+        "/modes of <stem>.user.h5 (ADR 0130): the app reads the modal table "
+        "in slice VU7, which adds the target and drops this row"
+    ),
+    SPECTRA: (
+        "/spectra of <stem>.user.h5 (ADR 0130): the app reads the spectrum "
+        "cases in slice VU7, which adds the target and drops this row"
     ),
 }
 
