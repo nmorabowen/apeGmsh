@@ -365,7 +365,7 @@ log("D9 layers: ok");
       }
     }
   }
-  log(`reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical${excused ? ` (${excused} app stills 1 level off on the ghost's outline, #2715)` : ""}`);
+  log(`reference ghost: 5 shots in each of 2 runs, both chromes, pixel-identical but for ${excused} app stills at most 1 level off inside the ghost's box (#2715)`);
 }
 
 // INV-4 (#2696): an app still is the page as it settled, or the shot is refused.
