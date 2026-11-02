@@ -1340,7 +1340,8 @@ const PANEL_LAYERS: Readonly<Record<AppLayer, readonly string[]>> = {
   header: ["header"],
   phase: ["phase"],
   viewcube: ["viewcube"],
-  left_rail: ["left-rail"],
+  // #scale-stack holds the contour's and line diagram's colour bars, which #2701 moved off their left-rail cards.
+  left_rail: ["left-rail", "scale-stack"],
   rail: ["rail", "rail-toggle"],
   windows: ["windows-menu", "windows"],
   banner: ["banner"],
