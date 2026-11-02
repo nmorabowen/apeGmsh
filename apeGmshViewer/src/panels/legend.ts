@@ -4,7 +4,9 @@
 // set. In contour mode it is also the field picker: the field, its
 // component, the colour range mode and the colormap, and the ramp with its
 // min and max, the range mode in words, and the no-data colour. It
-// dispatches events and reads selectors, nothing else.
+// dispatches events and reads selectors, nothing else. ADR 0130 D1 (VU3b):
+// the field picker lists two groups, Results (what the recorder wrote) and
+// User Results (the set's `.user.h5` entries, listed and not yet drawn).
 //
 // This module also fills the Display card (what is drawn, and the contour
 // colormap), the Deformed card, and the contour scale in the viewport, which
@@ -35,7 +37,7 @@ import {
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry } from "../state/types.ts";
+import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry, UserResult } from "../state/types.ts";
 import { isHeadingToggleTarget, toggleCardCollapse } from "../ui/collapse.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 import { fillScale, mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
@@ -365,22 +367,24 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       ...(picker?.elements ?? []).map((f) => ({ source: "element" as const, name: f.name, components: f.components })),
     ];
     const valueOf = (source: ContourSource, name: string) => `${source}:${name}`;
-    if (options.length) {
+    const user = userResultsGroup(s);
+    if (options.length || user) {
       const row = el("div", "contour-pick");
       const field = el("select", "contour-field");
-      field.title = "field: nodal, or element (Gauss points)";
-      if (s.contour.field === null) {
-        // Nothing picked (a re-read cleared the pick): a placeholder, so picking the first field is a change.
+      field.title = "field: Results (nodal, or element Gauss points), or User Results";
+      if (s.contour.field === null || !options.length) {
+        // Nothing picked (a re-read cleared the pick, or only User Results are listed): a placeholder, so picking the first field is a change.
         const o = el("option", undefined, "pick a field");
         o.disabled = true;
         o.selected = true;
         field.append(o);
       }
+      // ADR 0130 D1: the Results group, by source, then the User Results group.
       for (const source of ["nodal", "element"] as const) {
         const of = options.filter((x) => x.source === source);
         if (!of.length) continue;
         const group = el("optgroup");
-        group.label = source === "nodal" ? "nodal" : picker?.elementsVerified ? "element (Gauss points)" : "element (Gauss points, unverified file)";
+        group.label = source === "nodal" ? "Results · nodal" : picker?.elementsVerified ? "Results · element (Gauss points)" : "Results · element (Gauss points, unverified file)";
         for (const f of of) {
           const o = el("option", undefined, f.name);
           o.value = valueOf(f.source, f.name);
@@ -389,24 +393,53 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         }
         field.append(group);
       }
-      const current = options.find((f) => f.source === s.contour.source && f.name === s.contour.field) ?? options[0]!;
-      const comp = el("select", "contour-component");
-      comp.title = "component";
-      for (const c of current.components) {
-        const o = el("option", undefined, c.label);
-        o.value = c.key;
-        o.selected = c.key === s.contour.component;
-        comp.append(o);
+      if (user) {
+        // Listed, never picked: nothing draws a user result yet, so each option is disabled and says why.
+        const group = el("optgroup");
+        group.label = user.label;
+        for (const r of user.rows) {
+          const o = el("option", undefined, r.text);
+          o.disabled = true;
+          o.title = r.title;
+          group.append(o);
+        }
+        field.append(group);
+      }
+      row.append(field);
+      const current = options.find((f) => f.source === s.contour.source && f.name === s.contour.field) ?? options[0];
+      if (current) {
+        const comp = el("select", "contour-component");
+        comp.title = "component";
+        for (const c of current.components) {
+          const o = el("option", undefined, c.label);
+          o.value = c.key;
+          o.selected = c.key === s.contour.component;
+          comp.append(o);
+        }
+        unlisten.push(listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value, source: current.source })));
+        row.append(comp);
       }
       unlisten.push(
         listen(field, "change", () => {
-          const f = options.find((x) => valueOf(x.source, x.name) === field.value)!;
+          const f = options.find((x) => valueOf(x.source, x.name) === field.value);
+          if (!f) throw new Error(`contour picker: ${JSON.stringify(field.value)} is not a Results field`);
           store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: f.source });
         }),
-        listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value, source: current.source })),
       );
-      row.append(field, comp);
       legend.append(row);
+      // The User Results group, spelled out: a closed picker shows one option, and a still shows none.
+      if (user) {
+        const box = el("div", "user-results");
+        box.append(el("div", "legend-note user-results-head", user.label));
+        for (const r of user.rows) {
+          const line = el("div", "legend-note user-result" + (r.refused ? " refused-field" : ""), r.text);
+          line.title = r.title;
+          if (r.stale) line.style.cssText = "color: var(--interp-text);";
+          box.append(line);
+        }
+        if (user.note) box.append(el("div", "legend-note", user.note));
+        legend.append(box);
+      }
     }
     // What the file cannot give is stated in a count that opens, so a long list leaves the field readout in view.
     const refusals: string[] = [];
@@ -573,11 +606,39 @@ function deformSignature(s: State): string {
   return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, deformLines(s)]);
 }
 
+const TARGET_WORD: Readonly<Record<UserResult["target"], string>> = { nodes: "nodal", elements: "element", entities: "entity", domain: "whole model" };
+
+/**
+ * ADR 0130 D1, D7: the contour picker's User Results group, from the set's
+ * `.user.h5`: one row per entry (its target, per state or state-free, and
+ * stale with the reason, A6) and one per refused entry, or the zone's refusal.
+ * Listed only: nothing draws a user result yet. Null when the file has none.
+ */
+export function userResultsGroup(s: State): { label: string; rows: { text: string; title: string; stale: boolean; refused: boolean }[]; note: string | null } | null {
+  const u = s.user;
+  if (u?.status !== "ready" || u.info.results === null) return null;
+  const r = u.info.results;
+  const file = u.path.split(/[\\/]/).pop() ?? u.path;
+  if (!r.ok) return { label: "User Results", rows: [{ text: "refused", title: `/results of ${file}: ${r.reason}`, stale: false, refused: true }], note: null };
+  const rows = r.items.map((x) => {
+    const what = `${TARGET_WORD[x.target]}, ${x.perState ? "per state" : "state-free"}`;
+    return {
+      text: `${x.name} (${what}${x.stale.stale ? ", stale" : ""})`,
+      title: `${x.name}: a ${what} user result of ${file}${x.linear ? ", linear" : ""}, on the ${x.basis === "results" ? "results" : "model"} basis${x.stale.stale ? `; stale: ${x.stale.reason || "no reason given"}` : ""}`,
+      stale: x.stale.stale,
+      refused: false,
+    };
+  });
+  for (const x of r.refused) rows.push({ text: `${x.name || "(no name)"} (refused, ${x.reason})`, title: `${x.name}: refused, ${x.reason}: ${x.detail}`, stale: false, refused: true });
+  return { label: "User Results", rows, note: r.items.length ? "Listed only: this app does not draw a user result yet." : null };
+}
+
 /** What the contour legend shows, as one string: it is rebuilt only when this changes. */
 function contourSignature(s: State): string {
   const v = contourView(s);
   const picker = contourFieldsOf(s);
   return JSON.stringify([
+    userResultsGroup(s),
     v.state === "ready" || v.state === "element" ? contourLines(s, v) : v,
     v.state === "ready" || v.state === "element" ? v.cmap : null,
     picker,

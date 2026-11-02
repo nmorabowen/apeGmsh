@@ -394,6 +394,104 @@ export interface ResultsInfo {
 }
 
 /**
+ * ADR 0130: what `user:read` answers, as the renderer takes it. A structural
+ * subset of reader/userFile.ts `UserRead` (state may not import the reader:
+ * reader/read.ts imports state/results.ts, a cycle); test/state/user.test.ts
+ * assigns the reader's type to this one, so the two cannot drift apart.
+ */
+export type UserReadIn = { ok: true; user: UserIndexIn; staleness: UserStalenessIn } | { ok: false; error: string };
+export type UserZoneIn<T> = { ok: true; value: T } | { ok: false; reason: string };
+export interface UserCombinationIn {
+  name: string;
+  rule: string;
+  terms: readonly unknown[];
+}
+export interface UserRefusalIn {
+  name: string;
+  reason: string;
+  detail: string;
+  origin: string;
+}
+export interface UserResultEntryIn {
+  name: string;
+  target: string;
+  basis: string;
+  perState: boolean;
+  linear: boolean;
+}
+export interface UserIndexIn {
+  path: string;
+  /** every root member but `/meta`, by name */
+  zones: string[];
+  warnings: string[];
+  combinations: UserZoneIn<{ rows: UserCombinationIn[]; modelRows: UserCombinationIn[]; refused: UserRefusalIn[] }>;
+  results: UserZoneIn<{ entries: UserResultEntryIn[]; refused: UserRefusalIn[] }>;
+  modes: UserZoneIn<{ rows: number; components: string[] }> | null;
+}
+export interface StaleMark {
+  stale: boolean;
+  /** "" when current */
+  reason: string;
+}
+export interface UserStalenessIn {
+  zones: Record<string, StaleMark>;
+  results: Record<string, StaleMark>;
+  combinations: string[];
+}
+
+/** The `.user.h5` zones the app knows by name (h5-schema.md "`<stem>.user.h5`"); any other root member is named in a warning. */
+export const USER_ZONES = ["combinations", "results", "modes", "spectra", "entities"] as const;
+export const USER_RESULT_TARGETS = ["nodes", "elements", "entities", "domain"] as const;
+export const USER_RESULT_BASES = ["results", "model"] as const;
+
+/** One User Combination (D4), from `.user.h5` or `model.h5` (`origin`). Listed only: VU4 evaluates them. */
+export interface UserCombination {
+  name: string;
+  rule: string;
+  origin: "user" | "model";
+  terms: number;
+  /** A6: a source of it is stale, directly or through another combination */
+  stale: boolean;
+}
+/** One User Result (D7), judged without its DATA. Listed only: nothing draws it yet. */
+export interface UserResult {
+  name: string;
+  target: (typeof USER_RESULT_TARGETS)[number];
+  basis: (typeof USER_RESULT_BASES)[number];
+  perState: boolean;
+  linear: boolean;
+  stale: StaleMark;
+}
+/** A row the reader refused (A3), with its reason. */
+export interface UserRefusal {
+  name: string;
+  reason: string;
+  detail: string;
+}
+/** A zone's rows as listed, or why the zone was refused. */
+export type UserGroup<T> = { ok: true; items: T[]; refused: UserRefusal[] } | { ok: false; reason: string };
+
+/** The renderer's view of one `.user.h5`, derived from `UserReadIn` by the reducer. */
+export interface UserInfo {
+  /** the file's banners (a newer zone), and each root member this app does not know */
+  warnings: string[];
+  /** the User Combinations family: `.user.h5` rows, then `model.h5` rows; null when neither file has one */
+  combinations: UserGroup<UserCombination> | null;
+  /** the User Results picker group; null when the file has no `/results` entry */
+  results: UserGroup<UserResult> | null;
+  /** the Spectra family: `/spectra` is listed by name and not read (VU7); null when the file has none */
+  spectra: { stale: StaleMark } | null;
+  /** `/modes`, the modal table, checked as a zone (VU7 shows it); null when the file has none */
+  modes: { ok: true; rows: number; stale: StaleMark } | { ok: false; reason: string; stale: StaleMark } | null;
+}
+
+/** ADR 0130: the set's `.user.h5`. Read on request, after the model's first frame (renderer/app.ts). */
+export type UserFileState =
+  | { status: "reading"; path: string }
+  | { status: "failed"; path: string; error: string }
+  | { status: "ready"; path: string; info: UserInfo };
+
+/**
  * The element tags a model's `/sequence` element change rows name, read from
  * each row's `source` dataset (`/opensees/stages/stage_NNN/owned_element_ids`,
  * `.../remove_element`). `error` when a source could not be read, or its
@@ -913,6 +1011,8 @@ export interface State {
   results: ResultsInfo | null;
   /** the fetch of the current results step; null when the phase is not a results step */
   resultStep: ResultStepStatus | null;
+  /** ADR 0130: the set's `.user.h5` (the phase bar's Spectra and User Combinations, the User Results group); null when the set has none */
+  user: UserFileState | null;
   /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
   contour: ContourState;
   /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */
@@ -1284,6 +1384,12 @@ export type Event =
   /** VA5 (the runner): the click was refused and the view put back; the offer stays listed as refused */
   | { type: "offerRefused"; id: number; reason: string }
   /** VA5 (the runner): Back finished; `notice` says why the view could not be restored */
-  | { type: "offerBackDone"; notice: string | null };
+  | { type: "offerBackDone"; notice: string | null }
+  /** ADR 0130 (renderer/app.ts): the set's `.user.h5` is being read; the same path again keeps what was read until the reply */
+  | { type: "userOpened"; path: string }
+  /** ADR 0130: `user:read` answered for the open `.user.h5` */
+  | { type: "userRead"; path: string; read: UserReadIn }
+  /** ADR 0130: the set has no `.user.h5` (none beside it, or it was deleted) */
+  | { type: "userClosed" };
 
 export type EventType = Event["type"];

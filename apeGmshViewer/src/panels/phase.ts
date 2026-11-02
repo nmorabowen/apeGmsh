@@ -7,16 +7,126 @@
 // panel only dispatches: it keeps no results data, and play is a timer that
 // dispatches the next step. (style.css is not this panel's file, so the
 // scrubber's layout is inline, with the theme's variables only.)
+//
+// ADR 0130 D1 (VU3b): the results are listed by state family. Stages and
+// Modes are the results file's stages by kind, and a click opens the first
+// one; the stage picker then lists that family only. Spectra and User
+// Combinations come from the set's `.user.h5` and are listed, not drawn (the
+// Spectra family is read by VU7, combinations are evaluated by VU4): their
+// buttons are disabled and their tooltip names every member. A stale member
+// or zone says so on its family's button (A6), and a refused zone or row too.
 
 import { inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { PhaseKey } from "../state/types.ts";
+import type { PhaseKey, StaleMark } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 const label = (k: PhaseKey): string => (k.kind === "stage" ? `stage ${k.index + 1}` : k.kind);
 
 const same = (a: PhaseKey | null, b: PhaseKey): boolean =>
   a !== null && a.kind === b.kind && (a.kind !== "stage" || (b.kind === "stage" && a.index === b.index));
+
+const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path;
+
+/** ADR 0130 D1's state families, in the phase bar's order. */
+export const FAMILIES = ["stages", "modes", "spectra", "combinations"] as const;
+export type FamilyKey = (typeof FAMILIES)[number];
+export const FAMILY_LABEL: Readonly<Record<FamilyKey, string>> = { stages: "Stages", modes: "Modes", spectra: "Spectra", combinations: "User Combinations" };
+
+/** One family of the phase bar: its members, what of it is stale or refused, and whether a click draws it. */
+export interface PhaseFamily {
+  key: FamilyKey;
+  /** the results stages of the family (Stages, Modes), in reader order; [] for the `.user.h5` families */
+  stages: number[];
+  /** how many members it lists; null when its zone is listed by name only (Spectra) */
+  count: number | null;
+  /** stale members (User Combinations), or 1 for a stale zone (Spectra, the modal table under Modes) */
+  stale: number;
+  /** refused rows, or 1 for a refused zone */
+  refused: number;
+  /** a click opens its first stage */
+  drawable: boolean;
+  /** the button's tooltip: what it lists, what is stale or refused and why, and why it is not drawn */
+  title: string;
+}
+
+const staleLine = (what: string, m: StaleMark): string => `${what} is stale: ${m.reason || "the reader gave no reason"}`;
+
+/** The family a results stage belongs to: a mode shape is a Mode, any other stage a Stage. */
+export const familyOfStage = (s: State, stage: number): "stages" | "modes" => (s.results?.stages[stage]?.kind === "mode" ? "modes" : "stages");
+
+/**
+ * The state families on offer now: Stages and Modes while the results pair
+ * with the model (they are phases of the axis), Spectra and User Combinations
+ * while the set's `.user.h5` holds them. A family with no member is left out.
+ */
+export function familiesOf(s: State): PhaseFamily[] {
+  const out: PhaseFamily[] = [];
+  const info = s.user?.status === "ready" ? s.user.info : null;
+  const file = s.user ? baseName(s.user.path) : "";
+  const recorded = (key: "stages" | "modes", notes: string[], stale: number, refused: number) => {
+    const stages = s.phase.axis.flatMap((k) => (k.kind === "results" && familyOfStage(s, k.stage) === key ? [k.stage] : []));
+    if (!stages.length || !s.results) return;
+    const results = s.results;
+    const names = stages.map((i) => results.stages[i]!.name || `${results.stages[i]!.id} (unnamed)`);
+    const title = [`${FAMILY_LABEL[key]} of ${baseName(results.path)}: ${names.join(", ")}`, ...notes].join("\n");
+    out.push({ key, stages, count: stages.length, stale, refused, drawable: true, title });
+  };
+  recorded("stages", [], 0, 0);
+  const modeNotes: string[] = [];
+  let modeStale = 0;
+  let modeRefused = 0;
+  if (info?.modes) {
+    if (info.modes.ok) modeNotes.push(`the modal table of ${file} has ${info.modes.rows} rows; this app does not show it yet`);
+    else {
+      modeRefused = 1;
+      modeNotes.push(`the modal table of ${file} is refused: ${info.modes.reason}`);
+    }
+    if (info.modes.stale.stale) {
+      modeStale = 1;
+      modeNotes.push(staleLine(`the modal table of ${file}`, info.modes.stale));
+    }
+  }
+  recorded("modes", modeNotes, modeStale, modeRefused);
+  if (info?.spectra) {
+    const lines = [`Spectra: ${file} holds /spectra; this app lists it and does not read or draw it yet`];
+    if (info.spectra.stale.stale) lines.push(staleLine("/spectra", info.spectra.stale));
+    out.push({ key: "spectra", stages: [], count: null, stale: info.spectra.stale.stale ? 1 : 0, refused: 0, drawable: false, title: lines.join("\n") });
+  }
+  const c = info?.combinations;
+  if (c && !c.ok) {
+    out.push({ key: "combinations", stages: [], count: 0, stale: 0, refused: 1, drawable: false, title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
+  } else if (c) {
+    const lines = ["User Combinations, listed; this app does not evaluate them yet:"];
+    for (const x of c.items) {
+      lines.push(`${x.name}: ${x.rule}, ${x.terms} ${x.terms === 1 ? "term" : "terms"}${x.origin === "model" ? ", from model.h5" : ""}${x.stale ? " (stale: a source of it is stale)" : ""}`);
+    }
+    for (const x of c.refused) lines.push(`${x.name || "(no name)"}: refused, ${x.reason}: ${x.detail}`);
+    const stale = c.items.filter((x) => x.stale).length;
+    out.push({ key: "combinations", stages: [], count: c.items.length, stale, refused: c.refused.length, drawable: false, title: lines.join("\n") });
+  }
+  return out;
+}
+
+/** What the phase bar says of the `.user.h5` itself: refused, or read with warnings; null when there is nothing to say. */
+export function userBadgeOf(s: State): { text: string; title: string; refused: boolean } | null {
+  const u = s.user;
+  if (!u) return null;
+  if (u.status === "failed") return { text: "user file refused", title: `${baseName(u.path)}: ${u.error}`, refused: true };
+  const n = u.status === "ready" ? u.info.warnings.length : 0;
+  if (u.status === "ready" && n) return { text: `user file: ${n} ${n === 1 ? "warning" : "warnings"}`, title: u.info.warnings.join("\n"), refused: false };
+  return null;
+}
+
+/** A family button's text after its label: the count, then what is stale and refused. */
+export function familyMarks(f: PhaseFamily): { count: string; stale: string; refused: string } {
+  const whole = f.count === null || f.key === "modes";
+  return {
+    count: f.count === null ? "" : ` ${f.count}`,
+    stale: f.stale ? (whole ? " · stale" : ` · ${f.stale} stale`) : "",
+    refused: f.refused ? (whole || f.count === 0 ? " · refused" : ` · ${f.refused} refused`) : "",
+  };
+}
 
 /** The readout's widest extent; longer text ends in an ellipsis, with the full text as its tooltip. */
 export const READOUT_MAX_PX = 240;
@@ -51,35 +161,75 @@ export function mountPhase(store: Store): () => void {
     return true;
   };
   const render = (s: State, prev: State | null) => {
-    if (prev && s.phase === prev.phase && s.resultStep === prev.resultStep && s.results === prev.results) return;
+    if (prev && s.phase === prev.phase && s.resultStep === prev.resultStep && s.results === prev.results && s.user === prev.user) return;
     for (const u of unlisten) u();
     unlisten = [];
     const t = timelineOf(s);
     if (!t) stop();
-    bar.hidden = s.phase.axis.length < 2;
+    const families = familiesOf(s);
+    const badge = userBadgeOf(s);
+    // The `.user.h5` families are worth the bar even beside a single phase.
+    const userSays = badge !== null || families.some((f) => !f.drawable);
+    bar.hidden = s.phase.axis.length < 2 && !(s.phase.axis.length === 1 && userSays);
     // With the scrubber, the bar takes its own row under the header (style.css centres it on the header row).
     bar.style.cssText = scrubberRow(s) ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - 32px);` : "";
-    // One button per non-results phase, and one "results" button for the results stages (the picker chooses among them).
-    const firstResults = s.phase.axis.find((k) => k.kind === "results");
-    const keys: PhaseKey[] = s.phase.axis.filter((k) => k.kind !== "results");
-    if (firstResults) keys.push(firstResults);
-    const buttons = keys.map((k) => {
-        const on = k.kind === "results" ? s.phase.at?.kind === "results" : same(s.phase.at, k);
-        const b = el("button", on ? "phase active" : "phase", label(k));
-        unlisten.push(listen(b, "click", () => {
-          if (k.kind !== "results" || s.phase.at?.kind !== "results") store.dispatch({ type: "setPhase", at: k });
-        }));
+    // One button per non-results phase, then one per state family (ADR 0130 D1); the stage picker chooses within the family shown.
+    const buttons: HTMLElement[] = s.phase.axis
+      .filter((k) => k.kind !== "results")
+      .map((k) => {
+        const b = el("button", same(s.phase.at, k) ? "phase active" : "phase", label(k));
+        unlisten.push(listen(b, "click", () => store.dispatch({ type: "setPhase", at: k })));
         return b;
       });
+    const shown = s.phase.at?.kind === "results" ? familyOfStage(s, s.phase.at.stage) : null;
+    for (const f of families) buttons.push(familyButton(f, shown === f.key));
+    if (badge) {
+      const b = el("span", "phase user-badge", badge.text);
+      b.title = badge.title;
+      b.style.cssText = `cursor: default; color: var(${badge.refused ? "--error" : "--interp-text"});`;
+      buttons.push(b);
+    }
     bar.replaceChildren(...buttons, ...(t ? scrubber(t, s) : []));
+  };
+  const familyButton = (f: PhaseFamily, on: boolean): HTMLElement => {
+    const b = el("button", on ? "phase family active" : "phase family", FAMILY_LABEL[f.key]);
+    b.dataset["family"] = f.key;
+    b.title = f.title;
+    const m = familyMarks(f);
+    if (m.count) b.append(el("span", "family-count", m.count));
+    const mark = (cls: string, text: string, colour: string) => {
+      if (!text) return;
+      const x = el("span", cls, text);
+      // On the active (accent) button the accent's ink keeps the mark legible.
+      x.style.cssText = `color: var(${on ? "--accent-ink" : colour}); font-weight: 700;`;
+      b.append(x);
+    };
+    mark("family-stale", m.stale, "--interp-text");
+    mark("family-refused", m.refused, "--error");
+    if (!f.drawable) {
+      b.disabled = true;
+      b.style.cssText = "cursor: default;";
+      return b;
+    }
+    unlisten.push(
+      listen(b, "click", () => {
+        if (on) return;
+        stop();
+        store.dispatch({ type: "setPhase", at: { kind: "results", stage: f.stages[0]!, step: 0 } });
+      }),
+    );
+    return b;
   };
   const scrubber = (t: Timeline, s: State): HTMLElement[] => {
     const box = el("span", "scrubber");
     box.style.cssText = "display: flex; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);";
     const pick = el("select", "results-stage");
-    pick.title = "results stage";
     pick.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--bg-1); border: 1px solid var(--line); border-radius: 5px;";
+    // The family shown: Stages list the static and transient stages, Modes the mode shapes.
+    const family = familyOfStage(s, t.stage);
+    pick.title = `results stage (${FAMILY_LABEL[family]})`;
     for (const st of t.stages) {
+      if (familyOfStage(s, st.index) !== family) continue;
       const o = el("option", undefined, st.label);
       o.value = String(st.index);
       o.selected = st.index === t.stage;
@@ -95,7 +245,7 @@ export function mountPhase(store: Store): () => void {
     const play = el("button", "phase play", timer !== null ? "❚❚" : "▶");
     play.title = timer !== null ? "pause" : "play";
     play.disabled = t.steps < 2;
-    const fwd = el("button", "phase step-forward", "▶ |");
+    const fwd = el("button", "phase step-forward", "▶ |");
     fwd.title = "step +1";
     fwd.disabled = t.step === t.steps - 1;
     const slider = el("input", "results-step");
