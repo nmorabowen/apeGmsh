@@ -248,8 +248,10 @@ function encodeSrgb(m: THREE.Material): void {
  * frame in 40 against none). With no MSAA it does not. So the ghost's surfaces are
  * drawn into their own target, with no MSAA, tested against the depth of the
  * opaque scene drawn there first, and this full-screen triangle lays the result
- * over the canvas: first in the transparent pass, where they were drawn, with
- * the same blend, and covering every sample of every pixel.
+ * over the canvas with the same blend, covering every sample of every pixel. It
+ * goes after the mesh's own blended outline edges (renderOrder 0), which differed
+ * in about 1 frame in 100 when they blended over it (5 levels; 0 of 12,000 frames
+ * this way), and before the gizmos and the selection (renderOrder 1 and up).
  */
 function ghostComposite(): THREE.Mesh {
   const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -273,7 +275,7 @@ function ghostComposite(): THREE.Mesh {
   m.addEventListener("dispose", () => target.dispose());
   const quad = new THREE.Mesh(g, m);
   quad.name = "ghost composite";
-  quad.renderOrder = -2;
+  quad.renderOrder = 0.5;
   quad.frustumCulled = false;
   quad.userData["clipExempt"] = true;
   const size = new THREE.Vector2();
@@ -316,9 +318,9 @@ function ghostComposite(): THREE.Mesh {
 
 /**
  * The reference ghost: the drawn primitives undeformed, faces and lines in
- * one neutral colour at the Qt ghost opacity, drawn ahead of what blends in
- * the deformed mesh (no depth write). The surfaces go through `ghostComposite`;
- * 1-D lines blend in the canvas, where lines draw the same pixels every time.
+ * one neutral colour at the Qt ghost opacity (no depth write). The surfaces go
+ * through `ghostComposite`, over what blends in the deformed mesh; 1-D lines
+ * blend in the canvas ahead of it, where lines draw the same pixels every time.
  */
 export function ghostObjects(
   info: MeshInfo,

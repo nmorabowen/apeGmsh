@@ -209,6 +209,8 @@ log("D9 layers: ok");
 
 // #2664: the reference ghost draws the same pixels every time, 5 shots in each of 2 runs, in both chromes.
 {
+  /** The end of the phase bar's readout at SIZE (x0, y0, x1, y1), where its stale text falls. */
+  const READOUT_BOX = [540, 58, 800, 91];
   const shot = { stage: "unprop", deform: { scale: 10, ghost: true } };
   const shots = [...Array(5).keys()].flatMap((i) => [
     { ...shot, name: `ghost${i}.model`, chrome: "model" },
@@ -224,12 +226,13 @@ log("D9 layers: ok");
   assert.ok(rgbDiff(still(G1, "ghost0.model"), still(G1, "noghost.model")).count > 1000, "the ghost is drawn");
   for (const chrome of ["model", "app"]) {
     const first = still(G1, `ghost0.${chrome}`);
-    // In the app chrome, below the phase bar: a hidden window's capture can catch its readout a frame old, with or without a ghost (reported on #2664).
-    const box: [number, number, number, number] | undefined = chrome === "app" ? [0, 100, SIZE[0], SIZE[1]] : undefined;
     for (const R of [G1, G2]) {
       for (let i = 0; i < 5; i++) {
-        const d = rgbDiff(first, still(R, `ghost${i}.${chrome}`), box);
-        if (d.count) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
+        const d = rgbDiff(first, still(R, `ghost${i}.${chrome}`));
+        // The phase readout alone, in the app chrome: a hidden window's capture can catch it a frame old, with or without a ghost (#2664).
+        const [x0, y0, x1, y1] = d.bbox ?? [0, 0, 0, 0];
+        const readoutOnly = chrome === "app" && x0 >= READOUT_BOX[0] && y0 >= READOUT_BOX[1] && x1 <= READOUT_BOX[2] && y1 <= READOUT_BOX[3];
+        if (d.count && !readoutOnly) throw new Error(`KILL: ghost${i}.${chrome} differs from the first shot in ${d.count} pixels (box ${d.bbox?.join(", ")})`);
       }
     }
   }

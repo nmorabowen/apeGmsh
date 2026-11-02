@@ -7,5 +7,6 @@ ghost's faces and outline edges now draw into their own target with no MSAA, tes
 against the depth of the opaque scene, and one full-screen triangle lays the result
 over the canvas. The target is 2x the canvas, so a ghost shown on screen draws the
 opaque scene twice. Lines that were anti-aliased over 4 samples are now anti-aliased
-over 4 pixels of the target, so the ghost's pixels change slightly in the app as well
-as in a still.
+over 4 pixels of the target, and the ghost now lies over the deformed mesh's outline
+edges and any translucent surface, where it used to lie under them, so its pixels
+change slightly in the app as well as in a still.

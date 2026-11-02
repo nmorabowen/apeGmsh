@@ -158,7 +158,7 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   for (const name of ["ghost edges", "ghost faces"]) assert.equal(objs.find((o) => o.name === name)!.layers.test(main), false, name);
   const composite = objs.find((o) => o.name === "ghost composite") as THREE.Mesh;
   assert.equal(composite.layers.test(main), true);
-  assert.ok(composite.renderOrder < faces.renderOrder, "first in the transparent pass");
+  assert.ok(composite.renderOrder > 0 && composite.renderOrder < 1, "after the deformed mesh's blended edges (0), before the gizmos and the selection (1 and up)");
   assert.equal(composite.frustumCulled, false);
   const cm = composite.material as THREE.ShaderMaterial;
   assert.deepEqual([cm.transparent, cm.depthTest, cm.depthWrite], [true, false, false]);
