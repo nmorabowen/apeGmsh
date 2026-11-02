@@ -15,7 +15,10 @@ Rules this module holds:
 * A zone it does not write is copied verbatim, whatever its version. A zone it
   does write refuses when the file's version is outside its range (A4).
 * ``combinations`` adds a generation; earlier ones stay as the backup (A4).
-* ``modes`` and ``spectra`` replace their whole zone; ``None`` leaves it as it is.
+* ``modes``, ``spectra`` and ``entities`` replace their whole zone; ``None`` leaves
+  it as it is.
+* An ``ON_ENTITIES`` result names a row the file's ``/entities`` holds, or the
+  write refuses: checked whenever either side is written.
 * A hash change never silently re-labels what was derived under the old hash.
   Those entries are rewritten in the same call, or ``drop_stale=True`` drops
   them; otherwise the write refuses.
@@ -41,6 +44,9 @@ from ...opensees._internal.schema_version import (
     COMBINATIONS,
     COMBINATIONS_KEY,
     COMBINATIONS_SCHEMA_VERSION,
+    ENTITIES,
+    ENTITIES_KEY,
+    ENTITIES_SCHEMA_VERSION,
     MODES,
     MODES_KEY,
     MODES_SCHEMA_VERSION,
@@ -57,6 +63,7 @@ from ...opensees._internal.schema_version import (
     validate_zone_version,
 )
 from ._descriptor import Combination, resolve, write_generation
+from ._entities import Entities, entities_problem, write_entities
 from ._errors import UserWriteRefused
 from ._fields import EntryRefused, UserResult, write_entry
 from ._fingerprint import results_fingerprint
@@ -72,7 +79,7 @@ SUFFIX = ".user.h5"
 _MODEL_ZONES = {
     "modes": MODES_KEY,
     "spectra": SPECTRA_KEY,
-    "entities": "entities_schema_version",
+    "entities": ENTITIES_KEY,
 }
 _GENERATION = re.compile(r"g(\d+)\Z")
 _ENTRY = re.compile(r"r(\d+)\Z")
@@ -117,6 +124,7 @@ def write_user_file(
     results: Sequence[UserResult] = (),
     modes: Optional[ModeTable] = None,
     spectra: Optional[Sequence[SpectrumCase]] = None,
+    entities: Optional[Entities] = None,
     units: Optional[str] = None,
     writer: Optional[str] = None,
     drop_stale: bool = False,
@@ -130,7 +138,9 @@ def write_user_file(
     ``results`` adds entries, or replaces the entry of the same name.
     ``modes`` (a :class:`~apeGmsh.results.user.ModeTable`) and ``spectra``
     (one :class:`~apeGmsh.results.user.SpectrumCase` per case) replace that
-    zone whole, and ``None`` leaves it untouched.
+    zone whole, and ``None`` leaves it untouched; so does ``entities`` (an
+    :class:`~apeGmsh.results.user.Entities`). A ``target="entities"`` result
+    must name rows of the ``/entities`` the file holds after this write.
     """
     target = Path(path)
     if not target.name.endswith(SUFFIX) or target.name == SUFFIX:
@@ -145,8 +155,15 @@ def write_user_file(
     if combinations is not None:
         _check_combinations(combinations, model_h5)
     _check_modes_and_spectra(modes, spectra)
-    rewritten = {root for root, given in (("modes", modes), ("spectra", spectra))
-                 if given is not None}
+    if entities is not None:
+        if not isinstance(entities, Entities):
+            raise UserWriteRefused(
+                f"entities must be an Entities, got {type(entities).__name__}")
+        problem = entities_problem(entities)
+        if problem is not None:
+            raise UserWriteRefused(f"entities refused: {problem}")
+    rewritten = {root for root, given in (
+        ("modes", modes), ("spectra", spectra), ("entities", entities)) if given is not None}
 
     model_moved = results_moved = False
     if previous is not None:
@@ -169,9 +186,10 @@ def write_user_file(
     try:
         with out:
             _write_all(out, previous, target, fem_hash, model_hash, results_hash,
-                       combinations, results, modes, spectra, units, writer, dropped)
+                       combinations, results, modes, spectra, entities, units, writer,
+                       dropped)
         _verify(partial, model_h5, fem_hash, model_hash, results_hash, combinations, results,
-                modes, spectra)
+                modes, spectra, entities)
         _fsync(partial)
         _refuse_if_moved(target, previous)
         _replace(partial, target)
@@ -252,12 +270,14 @@ def _check_known_versions(
     with h5py.File(target, "r") as f:
         attrs = f["meta"].attrs
         for root, key in (("combinations", COMBINATIONS_KEY), ("results", USER_RESULTS_KEY),
-                          ("modes", MODES_KEY), ("spectra", SPECTRA_KEY)):
+                          ("modes", MODES_KEY), ("spectra", SPECTRA_KEY),
+                          ("entities", ENTITIES_KEY)):
             if root in f and key not in attrs:
                 raise UserWriteRefused(
                     f"{target}: /{root} has no {key} in /meta; nothing was replaced.")
         for wanted, zone in ((combinations, COMBINATIONS), (results, USER_RESULTS),
-                             ("modes" in zones, MODES), ("spectra" in zones, SPECTRA)):
+                             ("modes" in zones, MODES), ("spectra" in zones, SPECTRA),
+                             ("entities" in zones, ENTITIES)):
             version = read_zone_version(attrs, zone) if wanted else None
             if version is not None:
                 validate_zone_version(version, reader_version(zone), zone=zone)
@@ -274,7 +294,9 @@ def _derived_to_drop(
     """Links (``results/r3``, ``modes``) a hash change leaves behind.
 
     ``rewritten`` names the user results this call writes again, ``zones`` the
-    model zones it replaces (``modes``, ``spectra``): neither is left behind.
+    model zones it replaces (``modes``, ``spectra``, ``entities``): neither is left
+    behind. ``/entities`` leaves with every ``ON_ENTITIES`` result, whatever its
+    basis: a result whose rows are gone cannot stand.
 
     Refuses unless ``drop_stale``: keeping them under the new hash would draw
     old values as current.
@@ -286,6 +308,7 @@ def _derived_to_drop(
         if model_moved:
             losing |= {root for root in _MODEL_ZONES
                        if root in f and root not in (zones or set())}
+        entities_leave = "entities" in losing
         if "results" in f and isinstance(f["results"], h5py.Group):
             for link in f["results"]:
                 group = f["results"][link]
@@ -293,9 +316,12 @@ def _derived_to_drop(
                     continue
                 basis = text_or_empty(group.attrs["basis"]) if "basis" in group.attrs else ""
                 name = text_or_empty(group.attrs["name"]) if "name" in group.attrs else ""
+                bound = "target" in group.attrs and (
+                    text_or_empty(group.attrs["target"]) == "entities")
                 if name in rewritten:
                     continue
-                if (basis == "results" and results_moved) or (basis == "model" and model_moved):
+                if ((basis == "results" and results_moved) or (basis == "model" and model_moved)
+                        or (bound and entities_leave)):
                     losing.add(f"results/{link}")
     if losing and not drop_stale:
         raise UserWriteRefused(
@@ -320,6 +346,7 @@ def _write_all(
     results: Sequence[UserResult],
     modes: Optional[ModeTable],
     spectra: Optional[Sequence[SpectrumCase]],
+    entities: Optional[Entities],
     units: Optional[str],
     writer: Optional[str],
     dropped: set[str],
@@ -369,6 +396,11 @@ def _write_all(
         except EntryRefused as exc:
             raise UserWriteRefused(f"spectra refused: {exc}") from exc
         meta.attrs[SPECTRA_KEY] = SPECTRA_SCHEMA_VERSION
+    if entities is not None:
+        if "entities" in out:
+            del out["entities"]
+        write_entities(out, entities)
+        meta.attrs[ENTITIES_KEY] = ENTITIES_SCHEMA_VERSION
 
 
 def _set_or_clear(group: h5py.Group, key: str, value: Optional[str]) -> None:
@@ -422,6 +454,7 @@ def _verify(
     results: Sequence[UserResult],
     modes: Optional[ModeTable] = None,
     spectra: Optional[Sequence[SpectrumCase]] = None,
+    entities: Optional[Entities] = None,
 ) -> None:
     """Read the partial back through the reader before it may replace anything,
     and compare the ``DATA`` this call wrote bit for bit: a partial another process
@@ -433,6 +466,8 @@ def _verify(
         back.combinations(model_h5=model_h5).rows != tuple(combinations)
     ):
         raise UserWriteRefused(f"{partial}: the combinations did not read back")
+    if entities is not None or any(r.target == "entities" for r in results):
+        _check_bindings(back)
     if results:
         index = back.results()
         missing = {r.name for r in results} - {e.name for e in index.entries}
@@ -448,6 +483,19 @@ def _verify(
         if read.refused or len(read.cases) != len(spectra) or not all(
                 same_bits(a, b) for a, b in zip(spectra, read.cases)):
             raise UserWriteRefused(f"{partial}: the spectrum cases did not read back")
+    if entities is not None and not entities.same_bits(back.entities()):
+        raise UserWriteRefused(f"{partial}: the entities did not read back")
+
+
+def _check_bindings(back: UserFile) -> None:
+    """Every ``ON_ENTITIES`` result names a row the file's ``/entities`` holds.
+
+    Run on the partial, so it judges what the file holds after this write: a
+    result written now, and one an ``entities`` rewrite would leave dangling.
+    """
+    for ref in back.results().refused:
+        if ref.reason == "unresolved":
+            raise UserWriteRefused(f"{back.path}: {ref.detail}; nothing was replaced.")
 
 
 def _bits(values: object) -> bytes:
