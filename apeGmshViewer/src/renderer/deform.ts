@@ -244,12 +244,14 @@ const COMPOSITE_UNDER = -2;
  * triangles, not the ghost's own, whose material blends at an opacity below 1.
  * That is the user's surface opacity below 1, and also the 3-D frames the line
  * diagram draws at 0.25 under an opacity of 1. Fat lines and outline edges are
- * not surfaces.
+ * not surfaces, and neither is what draws after both triangles (renderOrder from
+ * COMPOSITE_OVER up: the plane gizmos and the selection fill).
  */
 export function translucentSurfaces(scene: THREE.Object3D): boolean {
   let found = false;
   scene.traverseVisible((o) => {
-    if (found || o.type !== "Mesh" || o.layers.isEnabled(GHOST_LAYER) || o.name.startsWith("ghost composite")) return;
+    // Only what draws before the over triangle: the plane gizmos (renderOrder 1) and the selection fill (9) draw after both, as on main.
+    if (found || o.type !== "Mesh" || o.renderOrder >= COMPOSITE_OVER || o.layers.isEnabled(GHOST_LAYER) || o.name.startsWith("ghost composite")) return;
     const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[];
     found = (Array.isArray(mat) ? mat : [mat]).some((x) => x.visible && x.transparent && x.opacity < 1);
   });

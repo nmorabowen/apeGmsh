@@ -231,6 +231,15 @@ test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisib
   set(solid, 1);
   set(frames, 1);
   assert.equal(translucentSurfaces(scene), false);
+  // Nor does what draws after both triangles: a plane gizmo's quad (renderOrder 1, 0.25) or the selection fill (9).
+  for (const renderOrder of [1, 9]) {
+    const late = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.25 }));
+    late.renderOrder = renderOrder;
+    scene.add(late);
+    assert.equal(translucentSurfaces(scene), false, `a blended mesh at renderOrder ${renderOrder}`);
+    assert.deepEqual(draws(), [false, true], `renderOrder ${renderOrder}: the ghost stays over the opaque mesh`);
+    scene.remove(late);
+  }
 
   h.effects.dispose();
 });
