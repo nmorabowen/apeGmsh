@@ -1,10 +1,14 @@
-// Start the Electron app in one of three modes.
+// Start the Electron app in one of its modes.
 //
-//   node scripts/launch.mjs view    [model.h5]
-//   node scripts/launch.mjs measure <model.h5>          prints one MEASUREMENTS row
-//   node scripts/launch.mjs capture <model.h5> <out.png>
+//   node scripts/launch.mjs view     [model.h5]
+//   node scripts/launch.mjs measure  <model.h5>          prints one MEASUREMENTS row
+//   node scripts/launch.mjs capture  <model.h5> <out.png>
+//   node scripts/launch.mjs render   <spec.json> <outdir>  ADR 0128 D4: one PNG per shot + render.json
+//   node scripts/launch.mjs describe <file.h5> <outdir>    ADR 0128 D4: describe.json
 //
-// The only process started is the Electron binary from node_modules.
+// render exits with the app's code: 0 every shot drawn, 1 a shot refused (or
+// the run failed), 2 the spec refused (no PNG). The only process started is
+// the Electron binary from node_modules.
 
 import electronBinary from "electron";
 import { spawn } from "node:child_process";
@@ -32,57 +36,77 @@ if (badFlag) {
   process.exit(2);
 }
 
-if (!["view", "measure", "capture"].includes(mode ?? "")) {
-  console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png]");
+if (!["view", "measure", "capture", "render", "describe"].includes(mode ?? "")) {
+  console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png], or render <spec.json> <outdir>, or describe <file.h5> <outdir>");
   process.exit(2);
 }
-if (mode !== "view" && !file) {
-  console.error(`npm run ${mode} -- <model.h5>${mode === "capture" ? " <out.png>" : ""}`);
-  process.exit(2);
-}
-if (file && !existsSync(file)) {
-  console.error(`no such file: ${file}`);
-  process.exit(2);
-}
-if (mode === "capture" && !outArg) {
-  console.error("npm run capture -- <model.h5> <out.png>");
-  process.exit(2);
+if (mode === "render" || mode === "describe") {
+  // ADR 0128 D4: an agent mode writes into its folder only; the app writes and exits with the code.
+  const what = mode === "render" ? "<spec.json>" : "<file.h5>";
+  if (!file || !outArg) {
+    console.error(`launch.mjs ${mode} ${what} <outdir>`);
+    process.exit(2);
+  }
+  if (!existsSync(file)) {
+    console.error(`no such file: ${file}`);
+    process.exit(2);
+  }
+  const args = [root, `--mode=${mode}`, `--t0=${Date.now()}`, mode === "render" ? `--spec=${resolve(file)}` : `--file=${resolve(file)}`, `--out=${resolve(outArg)}`];
+  const child = spawn(electronBinary, args, { stdio: "inherit" });
+  child.on("exit", (code) => process.exit(code ?? 1));
+} else {
+  runViewMeasureCapture();
 }
 
-const out =
-  mode === "measure"
-    ? join(mkdtempSync(join(tmpdir(), "agv-measure-")), "result.json")
-    : mode === "capture"
-      ? resolve(outArg)
-      : undefined;
-if (mode === "capture") mkdirSync(dirname(out), { recursive: true });
+function runViewMeasureCapture() {
+  if (mode !== "view" && !file) {
+    console.error(`npm run ${mode} -- <model.h5>${mode === "capture" ? " <out.png>" : ""}`);
+    process.exit(2);
+  }
+  if (file && !existsSync(file)) {
+    console.error(`no such file: ${file}`);
+    process.exit(2);
+  }
+  if (mode === "capture" && !outArg) {
+    console.error("npm run capture -- <model.h5> <out.png>");
+    process.exit(2);
+  }
 
-const args = [root, `--mode=${mode}`, `--t0=${Date.now()}`];
-if (file) args.push(`--file=${resolve(file)}`);
-if (uncapped) args.push("--uncapped=1");
-if (pick) args.push(`--pick=${pick}`);
-if (out) args.push(`--out=${out}`);
+  const out =
+    mode === "measure"
+      ? join(mkdtempSync(join(tmpdir(), "agv-measure-")), "result.json")
+      : mode === "capture"
+        ? resolve(outArg)
+        : undefined;
+  if (mode === "capture") mkdirSync(dirname(out), { recursive: true });
 
-const child = spawn(electronBinary, args, { stdio: "inherit" });
-child.on("exit", (code) => {
-  if (mode === "view") process.exit(code ?? 0);
-  if (mode === "capture") {
-    if (existsSync(out)) {
-      console.log(`capture: wrote ${out} (${statSync(out).size} bytes)`);
-      const end = out.replace(/\.png$/i, "") + ".chain-end.png";
-      if (existsSync(end)) console.log(`capture: wrote ${end} (${statSync(end).size} bytes)`);
-      process.exit(0);
+  const args = [root, `--mode=${mode}`, `--t0=${Date.now()}`];
+  if (file) args.push(`--file=${resolve(file)}`);
+  if (uncapped) args.push("--uncapped=1");
+  if (pick) args.push(`--pick=${pick}`);
+  if (out) args.push(`--out=${out}`);
+
+  const child = spawn(electronBinary, args, { stdio: "inherit" });
+  child.on("exit", (code) => {
+    if (mode === "view") process.exit(code ?? 0);
+    if (mode === "capture") {
+      if (existsSync(out)) {
+        console.log(`capture: wrote ${out} (${statSync(out).size} bytes)`);
+        const end = out.replace(/\.png$/i, "") + ".chain-end.png";
+        if (existsSync(end)) console.log(`capture: wrote ${end} (${statSync(end).size} bytes)`);
+        process.exit(0);
+      }
+      const why = existsSync(`${out}.error.txt`) ? readFileSync(`${out}.error.txt`, "utf8") : `electron exited ${code}`;
+      console.error(`capture failed: ${why}`);
+      process.exit(1);
     }
-    const why = existsSync(`${out}.error.txt`) ? readFileSync(`${out}.error.txt`, "utf8") : `electron exited ${code}`;
-    console.error(`capture failed: ${why}`);
-    process.exit(1);
-  }
-  if (!existsSync(out)) {
-    console.error(`measure failed: electron exited ${code} without a result`);
-    process.exit(1);
-  }
-  printRow(JSON.parse(readFileSync(out, "utf8")));
-});
+    if (!existsSync(out)) {
+      console.error(`measure failed: electron exited ${code} without a result`);
+      process.exit(1);
+    }
+    printRow(JSON.parse(readFileSync(out, "utf8")));
+  });
+}
 
 function headCommit() {
   // Read HEAD from the repository files (no git process).

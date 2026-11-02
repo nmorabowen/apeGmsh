@@ -15,6 +15,17 @@
 //                   `npm run build`: `electron . --mode=measure-results
 //                   --file=<x.results.h5> --out=<json>`, or with an `.mpco`
 //                   file and `--dataset=<path>` for the raw MPCO point.
+//   --mode=render   ADR 0128 D4: take every shot of the view spec `--spec`
+//                   in a hidden window; write `<name>.png` per shot and
+//                   `render.json` into the folder `--out`, then exit (0 every
+//                   shot drawn, 1 a shot refused or the run failed, 2 the
+//                   spec refused: no window opens and no PNG is written)
+//   --mode=describe ADR 0128 D4: write `describe.json` into `--out`: what the
+//                   set of `--file` offers a spec (stages, steps, fields, groups)
+// Neither agent mode takes the single-instance lock, so both run beside the
+// human's window and never reach it (ADR 0128 INV-5). Both refuse an `--out`
+// that is not empty (exit 2, nothing written), and keep Chromium's profile
+// and crash dumps in `<out>/.chromium` (INV-1: nothing written outside it).
 //
 // In view mode the app is single-instance: a second launch forwards its file
 // here. Opening a file opens its set (./pairing.ts), and the set is watched
@@ -24,7 +35,7 @@
 // `app:config`.
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +51,7 @@ import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
+import { outRefusal, prepareRender, PROFILE_DIR, type JobFs, type RenderJobFiles } from "../spec/job.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -48,10 +60,11 @@ function arg(name: string): string | undefined {
   return process.argv.find((a) => a.startsWith(pre))?.slice(pre.length);
 }
 
+const MODES = ["view", "measure", "capture", "measure-results", "render", "describe"] as const;
 const mode = arg("mode") ?? "view";
-if (mode !== "view" && mode !== "measure" && mode !== "capture" && mode !== "measure-results") {
-  throw new Error(`unknown --mode=${mode}; expected view, measure, capture or measure-results`);
-}
+if (!(MODES as readonly string[]).includes(mode)) throw new Error(`unknown --mode=${mode}; expected ${MODES.join(", ")}`);
+/** ADR 0128 D4: the two agent modes; `out` is a folder for them, and they write nothing outside it (INV-1). */
+const agentMode = mode === "render" || mode === "describe";
 // Unpackaged, argv[1] is the app path; packaged, the file follows the exe.
 const argvSkip = process.defaultApp ? 2 : 1;
 const file = mode === "view" ? fileFromArgv(process.argv, argvSkip, process.cwd()) : arg("file");
@@ -67,6 +80,58 @@ if (arg("uncapped") === "1") {
 if ((mode === "measure" || mode === "capture" || mode === "measure-results") && (!file || !out)) {
   throw new Error(`--mode=${mode} needs --file and --out`);
 }
+// A still is the spec's `size` in pixels, whatever the display's scale (ADR 0128 D9: a model still is exactly `size`).
+if (agentMode) app.commandLine.appendSwitch("force-device-scale-factor", "1");
+
+const jobFs: JobFs = {
+  readFile: (path) => readFileSync(path, "utf8"),
+  exists: existsSync,
+  isDir: (path) => statSync(path).isDirectory(),
+  list: (path) => readdirSync(path),
+  mkdir: (path) => mkdirSync(path, { recursive: true }),
+  writeFile: (path, text) => writeFileSync(path, text),
+};
+
+/**
+ * ADR 0128 D2 startup of an agent mode: its arguments, its `--out` (absent
+ * or an empty folder: spec/job.ts), Chromium's profile under `--out`
+ * (INV-1), then the render job. Any refusal or unexpected error goes to
+ * stderr and exits 2 at once, before any window, dialog or Chromium write:
+ * a thrown error at this level would open a modal and hang the run, with the
+ * profile still in %APPDATA% (review of #2660).
+ */
+function agentStartup(): { refused: boolean; job: RenderJobFiles | null } {
+  const refuse = (message: string) => {
+    process.stderr.write(`apeGmshViewer: ${message}\n`);
+    app.exit(2);
+    return { refused: true, job: null };
+  };
+  try {
+    if (mode === "describe" && (!file || !out)) return refuse("--mode=describe needs --file and --out");
+    if (mode === "render" && (!arg("spec") || !out)) return refuse("--mode=render needs --spec and --out");
+    const outDir = resolve(out!);
+    const busy = outRefusal(outDir, jobFs);
+    if (busy) return refuse(`--out refused: ${busy}`);
+    // INV-1: an agent run writes nothing outside `--out`, Chromium's profile and crash dumps included.
+    const profile = join(outDir, PROFILE_DIR);
+    app.setPath("userData", profile);
+    app.setPath("crashDumps", join(profile, "crashdumps"));
+    if (mode !== "render") return { refused: false, job: null };
+    const specPath = resolve(arg("spec")!);
+    const p = prepareRender(specPath, outDir, jobFs);
+    // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
+    if (!p.ok) return refuse(`the spec ${specPath} is refused: ${p.key}: ${p.reason}`);
+    return { refused: false, job: p.job };
+  } catch (err) {
+    return refuse(`${mode} failed to start: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+const startup = agentMode ? agentStartup() : { refused: false, job: null };
+/** An agent mode refused at startup: no window opens (it has exited with code 2). */
+const outBusy = startup.refused;
+/** The render job: the validated spec and its set; null when the spec was refused (render.json names the key). */
+const renderJob = startup.job;
 
 // View mode is single-instance: a second launch hands its argv to the first
 // (the "second-instance" handler below) and exits.
@@ -387,6 +452,79 @@ ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
   BrowserWindow.fromWebContents(e.sender)?.setContentSize(Math.round(width), Math.round(height));
 });
 
+// ---------------------------------------------------------------------------
+// ADR 0128 D4 agent modes: the renderer (renderer/agentRender.ts) asks for its
+// job, hands over each still, and reports the run; main writes every file,
+// only into `--out` (INV-1), and only a PNG named by a shot of the spec.
+// ---------------------------------------------------------------------------
+
+/** The shot names a PNG may still be written under (each once). */
+const unwritten = new Set(renderJob?.spec.shots.map((s) => s.name) ?? []);
+
+function stillPath(name: unknown): string {
+  if (mode !== "render" || !renderJob) throw new Error("render: only in --mode=render");
+  if (typeof name !== "string" || !unwritten.has(name)) throw new Error(`render: ${JSON.stringify(name)} is not a shot of the spec still to be written`);
+  unwritten.delete(name);
+  return join(resolve(out!), `${name}.png`);
+}
+
+ipcMain.handle("render:job", () => {
+  if (mode === "render" && renderJob) return { mode, ...renderJob };
+  if (mode === "describe") {
+    const set = pairSet(resolve(file!), existsSync);
+    return { mode, model: set.model, geometry: set.geometry, results: set.results };
+  }
+  throw new Error(`render:job: not an agent mode (--mode=${mode})`);
+});
+
+/** A model-mode still the renderer composed (renderer/stillLayers.ts). */
+ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
+  if (!(png instanceof Uint8Array) || png.length < 8) throw new Error("render:png needs the PNG bytes");
+  const path = stillPath(name);
+  writeFileSync(path, png);
+  return { path };
+});
+
+/** An app-mode still: the page as captured, which must be exactly the spec's size. */
+ipcMain.handle("render:capture", async (e, name: unknown) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w || !renderJob) throw new Error("render:capture: no render window");
+  const path = stillPath(name);
+  const img = await w.webContents.capturePage();
+  const size = img.getSize();
+  const [width, height] = renderJob.spec.size;
+  if (img.isEmpty() || size.width !== width || size.height !== height) {
+    throw new Error(`render:capture ${String(name)}: the page captured as ${size.width} x ${size.height}, not the spec's ${width} x ${height}`);
+  }
+  writeFileSync(path, img.toPNG());
+  return { path, width: size.width, height: size.height };
+});
+
+ipcMain.handle("render:done", (_e, result: unknown) => {
+  if (!agentMode) throw new Error("render:done: not an agent mode");
+  const dir = resolve(out!);
+  const r = result as { render?: { shots: { status: string }[] }; describe?: unknown } | null;
+  if (mode === "render") {
+    if (!r?.render) throw new Error("render:done: no render result");
+    writeFileSync(join(dir, "render.json"), JSON.stringify(r, null, 2));
+    const refused = r.render.shots.filter((s) => s.status !== "ok").length;
+    process.stdout.write(`apeGmshViewer: render: ${r.render.shots.length - refused} stills, ${refused} refused; ${join(dir, "render.json")}\n`);
+    // D2: a refused shot makes the run's exit code non-zero; the other shots ran. (`app.quit()` exits 0 whatever process.exitCode says.)
+    agentExit(refused ? 1 : 0);
+    return;
+  }
+  if (!r?.describe) throw new Error("render:done: no description");
+  writeFileSync(join(dir, "describe.json"), JSON.stringify(r, null, 2));
+  process.stdout.write(`apeGmshViewer: describe: ${join(dir, "describe.json")}\n`);
+  agentExit(0);
+});
+
+/** End an agent mode with its exit code, the results file closed first. */
+function agentExit(code: number): void {
+  resultsHost.close();
+  app.exit(code);
+}
+
 /** The renderer's V4c1 contour scrub measurement (renderer/app.ts `measureContour`). */
 interface ContourMeasure {
   file: string;
@@ -438,6 +576,11 @@ ipcMain.handle("measure:memory", () => {
 
 ipcMain.handle("app:fail", (_e, message: string) => {
   process.stderr.write(`apeGmshViewer: ${message}\n`);
+  // An agent mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0).
+  if (agentMode) {
+    agentExit(1);
+    return;
+  }
   if (mode !== "view") {
     process.exitCode = 1;
     app.quit();
@@ -454,11 +597,15 @@ app.whenReady().then(() => {
     });
     return;
   }
+  if (outBusy || (mode === "render" && !renderJob)) return;
+  if (agentMode) mkdirSync(resolve(out!), { recursive: true });
   const w = new BrowserWindow({
-    width: 1600,
+    // ADR 0128 D9: a render window's page is the spec's size (at device scale 1, above).
+    width: renderJob ? renderJob.spec.size[0] : 1600,
     // A tall hidden window lets one still show the whole definition chain.
-    height: mode === "capture" ? 1900 : 1000,
-    show: mode !== "capture",
+    height: renderJob ? renderJob.spec.size[1] : mode === "capture" ? 1900 : 1000,
+    useContentSize: agentMode,
+    show: mode !== "capture" && !agentMode,
     backgroundColor: "#16181d",
     title: "apeGmshViewer",
     webPreferences: {
@@ -471,6 +618,8 @@ app.whenReady().then(() => {
   });
   win = w;
   w.setMenuBarVisibility(false);
+  // Hiding the menu bar grows the page: a render page is put back at the spec's size.
+  if (renderJob) w.setContentSize(renderJob.spec.size[0], renderJob.spec.size[1]);
   // A page load drops the old page's subscriptions.
   w.webContents.on("did-start-loading", () => subscribed.clear());
   w.on("closed", () => {
