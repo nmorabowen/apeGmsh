@@ -3,7 +3,7 @@
 // appears or vanishes changes the set.
 
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -38,7 +38,7 @@ test("a slow rewrite is reported once, at least 300 ms after the last write", as
   writeFileSync(model, "v1");
   const { heard, watcher } = harness(model);
   try {
-    assert.deepEqual(watcher.set, { model, geometry: null, results: null });
+    assert.deepEqual(watcher.set, { model, geometry: null, results: null, user: null });
     await sleep(100);
     // A writer that truncates, then writes in chunks 100 ms apart for 600 ms.
     writeFileSync(model, "");
@@ -70,12 +70,12 @@ test("a sibling that appears, then vanishes, changes the set", async () => {
     await sleep(100);
     writeFileSync(geometry, "geometry");
     await until(() => heard.length > 0);
-    assert.deepEqual(heard[0]!.reopened, { model, geometry, results: null });
-    assert.deepEqual(watcher.set, { model, geometry, results: null });
+    assert.deepEqual(heard[0]!.reopened, { model, geometry, results: null, user: null });
+    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null });
 
     rmSync(geometry);
     await until(() => heard.length > 1);
-    assert.deepEqual(heard[1]!.reopened, { model, geometry: null, results: null });
+    assert.deepEqual(heard[1]!.reopened, { model, geometry: null, results: null, user: null });
 
     // A file of another stem is not watched.
     writeFileSync(join(dir, "other.geometry.h5"), "changed");
@@ -95,7 +95,7 @@ test("a rewritten geometry of an unchanged set is a fileChanged, not a reopen", 
   writeFileSync(geometry, "g1");
   const { heard, watcher } = harness(geometry); // opened from the geometry
   try {
-    assert.deepEqual(watcher.set, { model, geometry, results: null });
+    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null });
     await sleep(100);
     writeFileSync(geometry, "g2, longer");
     await until(() => heard.length > 0);
@@ -121,12 +121,39 @@ test("a file opened under an upper-case suffix is reported when rewritten", asyn
   writeFileSync(results, "r1");
   const { heard, watcher } = harness(results);
   try {
-    assert.deepEqual(watcher.set, { model, geometry: null, results });
+    assert.deepEqual(watcher.set, { model, geometry: null, results, user: null });
     await sleep(100);
     writeFileSync(results, "r2, longer");
     await until(() => heard.length > 0);
     await sleep(500);
     assert.deepEqual(heard.map((h) => h.changed ?? h), [results]);
+  } finally {
+    watcher.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// VU3a (#2687): the user file is a member of the set. Its writers replace it
+// through a per-writer partial (h5-schema.md "Writing"), which is never reported.
+test("a user file appearing reopens the set; a replace through a partial is a fileChanged of the user file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-watch-"));
+  const model = join(dir, "m.h5");
+  const user = join(dir, "m.user.h5");
+  const partial = `${user}.myhost-123-abc.partial`;
+  writeFileSync(model, "model");
+  const { heard, watcher } = harness(model);
+  try {
+    await sleep(100);
+    writeFileSync(partial, "u1");
+    renameSync(partial, user);
+    await until(() => heard.length > 0);
+    assert.deepEqual(heard[0]!.reopened, { model, geometry: null, results: null, user });
+
+    writeFileSync(partial, "u2, longer");
+    renameSync(partial, user);
+    await until(() => heard.length > 1);
+    await sleep(500);
+    assert.deepEqual(heard.slice(1).map((h) => h.changed ?? h), [user]);
   } finally {
     watcher.close();
     rmSync(dir, { recursive: true, force: true });

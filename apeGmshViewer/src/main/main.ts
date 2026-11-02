@@ -66,7 +66,8 @@ import { openModel } from "../reader/node.ts";
 import { openH5, type H5Openable } from "../reader/h5open.ts";
 import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
-import { FOLD_CASE, fileFromArgv, pairSet } from "./pairing.ts";
+import { readUserSet, type UserH5 } from "../reader/userFile.ts";
+import { FOLD_CASE, fileFromArgv, listDir, pairSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession } from "./session.ts";
@@ -661,6 +662,22 @@ ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
   return openGeometry(path);
+});
+
+// ADR 0130 slice VU3a: the set's `<stem>.user.h5`, read only when the renderer
+// asks, so the first frame reads none of it. The answer is the file's index
+// (reader/userFile.ts `UserIndex`, never a `/results` DATA value) and A6's
+// staleness against the model and results files the request names (the set's,
+// `OpenSet.model` and `OpenSet.results`; null when absent). A file that
+// cannot be read answers `ok: false` with the reason, and raises nothing.
+ipcMain.handle("user:read", async (_e, req: unknown) => {
+  const r = req as { path?: unknown; model?: unknown; results?: unknown } | null;
+  const pathOrNull = (x: unknown) => x === null || typeof x === "string";
+  if (!r || typeof r.path !== "string" || !pathOrNull(r.model) || !pathOrNull(r.results)) {
+    return { ok: false, error: `user:read needs { path, model, results }; got ${JSON.stringify(req)}` };
+  }
+  await h5wasm.ready;
+  return readUserSet(h5wasm as unknown as UserH5, r.path, r.model as string | null, r.results as string | null, listDir);
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {

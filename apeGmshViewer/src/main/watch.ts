@@ -11,6 +11,12 @@
 //   reopened(set)  the set itself changed: a sibling appeared or vanished
 //   changed(path)  a file of the unchanged set was rewritten
 //
+// The `<stem>.user.h5` is a member like the others (ADR 0130, slice VU3a). Its
+// writers replace it through `<stem>.user.h5.<host>-<pid>-<random>.partial`,
+// which is no candidate, so only the replace is seen. Its staleness depends on
+// the model and the results file too, so a `changed` of either is a reason to
+// read it again (`user:read`, main.ts).
+//
 // No Electron import: the tests run in Node.
 
 import { existsSync, statSync, watch, type FSWatcher } from "node:fs";

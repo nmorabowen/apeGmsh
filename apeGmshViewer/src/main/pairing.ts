@@ -5,6 +5,9 @@
 //   <stem>.geometry.h5   the /geometry sibling (V0 Q1)
 //   <stem>.results.h5    results (native)
 //   <stem>.ladruno       results (fork-written; ADR 0122 D1, the canonical one)
+//   <stem>.user.h5       user results: combinations, user fields, modes, spectra
+//                        (ADR 0130; read on request by reader/userFile.ts, never
+//                        on the first frame)
 //
 // A set has one results slot (#2127; the T ruling of 2026-10-16): when both
 // results files sit beside the model, the file the user opened wins if it is
@@ -31,22 +34,24 @@
 import { readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
-export type Kind = "model" | "geometry" | "results";
+export type Kind = "model" | "geometry" | "results" | "user";
 
 /** The artifacts of one stem. `null` means absent on disk. */
 export interface OpenSet {
   model: string | null;
   geometry: string | null;
   results: string | null;
+  user: string | null;
 }
 
 /** The one path each kind can have for a stem, present or not. */
 export type Candidates = Record<Kind, string>;
 
-// Longest suffix first: `.geometry.h5` must win over `.h5`.
+// Longest suffix first: `.geometry.h5`, `.results.h5` and `.user.h5` must win over `.h5`.
 const SUFFIXES: readonly (readonly [string, Kind])[] = [
   [".geometry.h5", "geometry"],
   [".results.h5", "results"],
+  [".user.h5", "user"],
   [".ladruno", "results"],
   [".h5", "model"],
 ];
@@ -75,7 +80,7 @@ export function classify(path: string): { kind: Kind; stem: string } {
       return { kind, stem: path.slice(0, path.length - suffix.length) };
     }
   }
-  throw new Error(`apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno or <stem>.results.h5; got ${path}`);
+  throw new Error(`apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5 or <stem>.user.h5; got ${path}`);
 }
 
 /** The kind of the opened file, for each Candidates `candidates` made. */
@@ -87,7 +92,7 @@ const openedKind = new WeakMap<Candidates, Kind>();
    */
 export function candidates(opened: string): Candidates {
   const { kind, stem } = classify(opened);
-  const c: Candidates = { model: `${stem}.h5`, geometry: `${stem}.geometry.h5`, results: `${stem}.results.h5` };
+  const c: Candidates = { model: `${stem}.h5`, geometry: `${stem}.geometry.h5`, results: `${stem}.results.h5`, user: `${stem}.user.h5` };
   c[kind] = opened;
   // The results slot's rule needs to know whether the results were opened;
   // kept beside the object, so `Object.values(c)` (watch.ts) stays the paths.
@@ -147,7 +152,7 @@ export function stemSet(c: Candidates, exists: (p: string) => boolean, list: (di
   const first = (ps: string[]) => ps.map(has).find((p) => p !== null) ?? null;
   const others = otherResults(c.results, exists, list);
   const results = kind === "results" ? first([c.results, ...others]) : first([...others, c.results]);
-  return { model: has(c.model), geometry: has(c.geometry), results };
+  return { model: has(c.model), geometry: has(c.geometry), results, user: has(c.user) };
 }
 
 /**
@@ -170,12 +175,17 @@ export function pairSet(path: string, exists: (p: string) => boolean, list: (dir
 
 export function sameSet(a: OpenSet | null, b: OpenSet | null, fold: boolean = FOLD_CASE): boolean {
   if (a === null || b === null) return a === b;
-  return samePath(a.model, b.model, fold) && samePath(a.geometry, b.geometry, fold) && samePath(a.results, b.results, fold);
+  return (
+    samePath(a.model, b.model, fold) &&
+    samePath(a.geometry, b.geometry, fold) &&
+    samePath(a.results, b.results, fold) &&
+    samePath(a.user, b.user, fold)
+  );
 }
 
 /** Whether `path` is one of the set's files. */
 export function inSet(set: OpenSet, path: string, fold: boolean = FOLD_CASE): boolean {
-  return [set.model, set.geometry, set.results].some((p) => samePath(p, path, fold));
+  return [set.model, set.geometry, set.results, set.user].some((p) => samePath(p, path, fold));
 }
 
 /**
