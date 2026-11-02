@@ -15,7 +15,13 @@
 //      (so the check is not vacuous);
 //   2. a page that never settles (each capture differs from the one before it
 //      in one byte) fails the run: exit 1, no still written, and
-//      `<out>.error.txt` names the still and the `--capture-tries` bound.
+//      `<out>.error.txt` names the still and the `--capture-tries` bound;
+//   3. a run that begins ending (`headlessEnd`) as a still's capture settles
+//      writes no still beside `<out>.error.txt` (#2736): the failure is forced
+//      synchronously inside the settling `capturePage`, so main's code after
+//      that await runs with the run already ending;
+//   4. a write of a still that throws part way (a full disk) leaves no
+//      partial PNG, and the run fails: exit 1 with `<out>.error.txt` (#2736).
 //
 // Every process starts through a generated entry that forces the fault and
 // turns `dialog.showErrorBox` into a stderr line, so nothing stops on the
@@ -45,6 +51,8 @@ const ENTRY = join(OUT, "fault-entry.mjs");
 writeFileSync(
   ENTRY,
   `import { app, dialog, ipcMain, nativeImage } from "electron";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 const nl = String.fromCharCode(10);
 dialog.showErrorBox = (t, c) => process.stderr.write("MODAL " + t + " " + c + nl);
 const fault = process.env.AGV_FAULT ?? "";
@@ -78,6 +86,38 @@ if (fault === "never-settles") {
       return nativeImage.createFromBitmap(px, img.getSize());
     };
   });
+}
+// The run begins ending as the first still settles: on the capture that matches the one before it,
+// main's uncaught-error listener (headlessEnd) runs before that capture is handed back.
+if (fault === "end-as-settles") {
+  let fired = false;
+  app.on("web-contents-created", (_e, wc) => {
+    const real = wc.capturePage.bind(wc);
+    let prev = null;
+    wc.capturePage = async (...a) => {
+      const img = await real(...a);
+      if (!fired && prev && img.toBitmap().equals(prev.toBitmap())) {
+        fired = true;
+        process.stderr.write("AGV_END fired" + nl);
+        process.emit("uncaughtException", new Error("AGV_FAULT: the run ends as the still settles"));
+      }
+      prev = img;
+      return img;
+    };
+  });
+}
+// A write of the first still that throws part way, as a full disk does.
+if (fault === "partial") {
+  const target = process.env.AGV_TARGET ?? "";
+  const real = fs.writeFileSync;
+  fs.writeFileSync = function (path, data, ...rest) {
+    if (String(path).toLowerCase() === target.toLowerCase()) {
+      real.call(this, path, data.subarray(0, 64));
+      throw new Error("AGV_FAULT: ENOSPC, a forced partial write");
+    }
+    return real.call(this, path, data, ...rest);
+  };
+  syncBuiltinESMExports();
 }
 await import(${JSON.stringify(pathToFileURL(join(ROOT, "dist", "main.mjs")).href)});
 `,
@@ -154,6 +194,28 @@ assert.ok(existsSync(`${never.out}.error.txt`), "the reason in <out>.error.txt")
 assert.match(readFileSync(`${never.out}.error.txt`, "utf8"), reason);
 assert.match(never.text, reason, "the reason on stderr");
 log(`never settles: exit 1, no still, ${never.out}.error.txt names it`);
+
+// ---- 3: the run begins ending as a still settles (#2736) ----------------------------------------
+
+const late = await capture("end-as-settles", { AGV_FAULT: "end-as-settles" });
+assert.match(late.text, /AGV_END fired/, `the fault fired (else the check is vacuous): ${late.text}`);
+assert.equal(late.code, 1, `a run that ended as a still settled: exit 1: ${late.text}`);
+assert.ok(existsSync(`${late.out}.error.txt`), "the reason in <out>.error.txt");
+const lateSaid = readFileSync(`${late.out}.error.txt`, "utf8");
+assert.match(lateSaid, /capture failed: an uncaught error in the main process: .*AGV_FAULT: the run ends as the still settles/);
+assert.match(lateSaid, /; no still had been written$/m);
+assert.deepEqual(late.stills, [], `#2736: no still written after headlessEnd, beside ${late.out}.error.txt: ${late.stills.join(", ")}`);
+log(`run ending as the still settles: exit 1, no still beside ${late.out}.error.txt`);
+
+// ---- 4: a write that throws part way (a full disk) -------------------------------------------------
+
+const partialOut = join(OUT, "partial", "still.png");
+const partial = await capture("partial", { AGV_FAULT: "partial", AGV_TARGET: partialOut });
+assert.equal(partial.code, 1, `a still that could not be written fails the run: exit 1: ${partial.text}`);
+assert.deepEqual(partial.stills, [], `#2736: no partial PNG left: ${partial.stills.join(", ")}`);
+assert.ok(existsSync(`${partial.out}.error.txt`), "the reason in <out>.error.txt");
+assert.match(readFileSync(`${partial.out}.error.txt`, "utf8"), /AGV_FAULT: ENOSPC/);
+log(`partial write: exit 1, no partial PNG, ${partial.out}.error.txt names the write`);
 
 log(`capture:still e2e: all checks passed; runs in ${OUT}`);
 process.exit(0);
