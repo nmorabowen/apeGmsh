@@ -63,7 +63,7 @@ from ...opensees._internal.schema_version import (
     validate_zone_version,
 )
 from ._descriptor import Combination, resolve, write_generation
-from ._entities import Entities, binding_problem, entities_problem, write_entities
+from ._entities import Entities, entities_problem, write_entities
 from ._errors import UserWriteRefused
 from ._fields import EntryRefused, UserResult, write_entry
 from ._fingerprint import results_fingerprint
@@ -294,7 +294,9 @@ def _derived_to_drop(
     """Links (``results/r3``, ``modes``) a hash change leaves behind.
 
     ``rewritten`` names the user results this call writes again, ``zones`` the
-    model zones it replaces (``modes``, ``spectra``): neither is left behind.
+    model zones it replaces (``modes``, ``spectra``, ``entities``): neither is left
+    behind. ``/entities`` leaves with every ``ON_ENTITIES`` result, whatever its
+    basis: a result whose rows are gone cannot stand.
 
     Refuses unless ``drop_stale``: keeping them under the new hash would draw
     old values as current.
@@ -306,6 +308,7 @@ def _derived_to_drop(
         if model_moved:
             losing |= {root for root in _MODEL_ZONES
                        if root in f and root not in (zones or set())}
+        entities_leave = "entities" in losing
         if "results" in f and isinstance(f["results"], h5py.Group):
             for link in f["results"]:
                 group = f["results"][link]
@@ -313,9 +316,12 @@ def _derived_to_drop(
                     continue
                 basis = text_or_empty(group.attrs["basis"]) if "basis" in group.attrs else ""
                 name = text_or_empty(group.attrs["name"]) if "name" in group.attrs else ""
+                bound = "target" in group.attrs and (
+                    text_or_empty(group.attrs["target"]) == "entities")
                 if name in rewritten:
                     continue
-                if (basis == "results" and results_moved) or (basis == "model" and model_moved):
+                if ((basis == "results" and results_moved) or (basis == "model" and model_moved)
+                        or (bound and entities_leave)):
                     losing.add(f"results/{link}")
     if losing and not drop_stale:
         raise UserWriteRefused(
@@ -460,6 +466,8 @@ def _verify(
         back.combinations(model_h5=model_h5).rows != tuple(combinations)
     ):
         raise UserWriteRefused(f"{partial}: the combinations did not read back")
+    if entities is not None or any(r.target == "entities" for r in results):
+        _check_bindings(back)
     if results:
         index = back.results()
         missing = {r.name for r in results} - {e.name for e in index.entries}
@@ -477,8 +485,6 @@ def _verify(
             raise UserWriteRefused(f"{partial}: the spectrum cases did not read back")
     if entities is not None and not entities.same_bits(back.entities()):
         raise UserWriteRefused(f"{partial}: the entities did not read back")
-    if entities is not None or any(r.target == "entities" for r in results):
-        _check_bindings(back)
 
 
 def _check_bindings(back: UserFile) -> None:
@@ -487,14 +493,9 @@ def _check_bindings(back: UserFile) -> None:
     Run on the partial, so it judges what the file holds after this write: a
     result written now, and one an ``entities`` rewrite would leave dangling.
     """
-    held = back.entities()
-    for entry in back.results().entries:
-        if entry.target != "entities":
-            continue
-        r = back.read_result(entry.name)
-        problem = binding_problem(held, r.name, r.entity_kind or (), r.entity_row)
-        if problem is not None:
-            raise UserWriteRefused(f"{back.path}: {problem}; nothing was replaced.")
+    for ref in back.results().refused:
+        if ref.reason == "unresolved":
+            raise UserWriteRefused(f"{back.path}: {ref.detail}; nothing was replaced.")
 
 
 def _bits(values: object) -> bytes:

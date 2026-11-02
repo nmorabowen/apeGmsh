@@ -31,8 +31,15 @@ from ...opensees._internal.schema_version import (
     reader_version,
     validate_zone_version,
 )
-from ._descriptor import Combination, CombinationTable, Refusal, read_generation, resolve
-from ._entities import Entities, read_entities
+from ._descriptor import (
+    Combination,
+    CombinationTable,
+    Refusal,
+    decode_cell,
+    read_generation,
+    resolve,
+)
+from ._entities import Entities, binding_problem, read_entities
 from ._errors import UserFileError, UserFileRefused, ZoneRefused
 from ._fields import EntryRefused, ResultEntry, UserResult, read_entry, read_entry_meta
 from ._modes import ModeTable, read_modes
@@ -151,6 +158,44 @@ def read_model_combinations(model_h5: "str | Path") -> list[Combination]:
             return read_generation(zone["g0"], where)
 
 
+def _held_entities(f: h5py.File) -> "tuple[Optional[Entities], str]":
+    """``/entities`` for the binding check, or ``None`` and why it cannot be read."""
+    try:
+        with _zone_guard("/entities"):
+            if not _zone_version_checked(f, ENTITIES, "entities"):
+                return Entities(), ""
+            return read_entities(f["entities"]), ""
+    except (UserFileError, SchemaVersionError) as exc:
+        return None, f"/entities cannot be read: {exc}"
+
+
+def _bound_entries(
+    f: h5py.File, zone: h5py.Group, entries: list[ResultEntry], refused: list[Refusal],
+    links: list[str],
+) -> list[ResultEntry]:
+    """Refuse alone, as ``unresolved``, an ``ON_ENTITIES`` entry naming a row the
+    file's ``/entities`` does not hold or refuses; the others stand."""
+    if not any(e.target == "entities" for e in entries):
+        return entries
+    held, why = _held_entities(f)
+    kept: list[ResultEntry] = []
+    for entry in entries:
+        if entry.target != "entities":
+            kept.append(entry)
+            continue
+        values = zone[entry.link]["RESULTS/ON_ENTITIES/values"]
+        if held is None:
+            problem: Optional[str] = f"user result {entry.name!r}: {why}"
+        else:
+            kinds = [decode_cell(k, "/results", values.name) for k in values["ENTITY_KIND"][...]]
+            problem = binding_problem(held, entry.name, kinds, values["ENTITY_ROW"][...])
+        if problem is None:
+            kept.append(entry)
+        else:
+            refused.append(Refusal(entry.name, "unresolved", problem, row=links.index(entry.link)))
+    return kept
+
+
 class UserFile:
     """An opened ``<stem>.user.h5``. Reads ``/meta`` here, the zones on demand."""
 
@@ -250,6 +295,7 @@ class UserFile:
                     # dataset where a group belongs, an attribute of the wrong
                     # type) refuses that entry; the others still read.
                     refused.append(Refusal(_entry_name(zone, link), "bad-param", str(exc), row=at))
+            entries = _bound_entries(f, zone, entries, refused, links)
         counts: dict[str, int] = {}
         for entry in entries:
             counts[entry.name] = counts.get(entry.name, 0) + 1

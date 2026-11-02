@@ -8,7 +8,10 @@ Oracles:
   ``to_spec()`` computes the same resultant;
 * a cantilever's cut resultant by statics, stored about the cut's reference,
   reads back through its ``(ENTITY_KIND, ENTITY_ROW)`` and moves to another
-  point by ``M + (reference - P) x F`` to the statics there.
+  point by ``M + (reference - P) x F`` to the statics there;
+* cross-engine: the cut kernel (``STKO_to_python.cuts``) on a committed MPCO
+  frame gives the same ``F`` and ``M`` from the def read back as from the
+  original, bit for bit, and they equal what the file stored for the cut.
 """
 from __future__ import annotations
 
@@ -39,6 +42,8 @@ from apeGmsh.results.user import (
     write_user_file,
 )
 from tests.fixtures.schema import ENTITIES_CURRENT
+
+FRAME = Path(__file__).resolve().parent / "fixtures" / "stko_elastic_frame"
 from tests.results.user._user_helpers import nodal, sample_entities
 
 
@@ -128,6 +133,25 @@ def test_entities_go_stale_with_the_model(make_model, tmp_path: Path) -> None:
         assert ENTITIES_KEY not in f["meta"].attrs
 
 
+@pytest.mark.parametrize("basis", ["results", "model"])
+def test_dropping_entities_drops_the_results_bound_to_them(
+        make_model, tmp_path: Path, ladruno: Path, basis: str) -> None:
+    """A model-hash change that drops /entities drops every ON_ENTITIES result with
+    it, whatever its basis: none is left naming a deleted row (review F1)."""
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results_file=ladruno,
+                           results=[_on("cut", 1, basis=basis), nodal(basis="results")],
+                           entities=sample_entities())
+    other = make_model("other.h5", fem="0" * 32)
+    with pytest.raises(UserWriteRefused, match="results/r0"):
+        write_user_file(path, other)
+    write_user_file(path, other, drop_stale=True)
+    uf = UserFile(path)
+    assert "entities" not in uf.zones
+    index = uf.results()
+    assert [e.name for e in index.entries] == ["Delta_after (L/480)"] and not index.refused
+    write_user_file(path, other, results=[nodal("again", basis="results")])  # still writes
+
+
 # ---------------------------------------------------------------------------
 # The cut export
 # ---------------------------------------------------------------------------
@@ -148,6 +172,9 @@ def _cut(**kw) -> SectionCutDef:
     _cut(),
     _cut(side="negative", bounding_polygon=None, label=None),
     _cut(plane_normal=(1.0, 2.0, -3.0), plane_point=(0.1, 0.2, 0.3), bounding_polygon=None),
+    _cut(plane_normal=(1.0, 1.0, 0.0), bounding_polygon=None),  # n/|n| moves a bit again
+    _cut(plane_normal=(0.3, -0.2, 1.0), bounding_polygon=None),
+    _cut(plane_normal=(1e-3, 7.0, -2.5), bounding_polygon=None),
 ])
 def test_a_cut_def_comes_back_field_for_field(make_model, tmp_path: Path,
                                               cut: SectionCutDef) -> None:
@@ -161,6 +188,18 @@ def test_a_cut_def_comes_back_field_for_field(make_model, tmp_path: Path,
     assert again.side == cut.side
     assert again.bounding_polygon == cut.bounding_polygon
     assert again.label == "cut A"
+
+
+def test_no_skewed_normal_moves_on_the_way_back() -> None:
+    """``to_cut_def`` keeps the stored normal: the def's own normalisation of an
+    already-unit vector moves the last bit for some of them (review F2)."""
+    rng = np.random.default_rng(2692)
+    moved = 0
+    for n in rng.normal(size=(5000, 3)):
+        cut = SectionCutDef(plane_point=(0, 0, 0), plane_normal=tuple(n), element_ids=(1,),
+                            label="c")
+        moved += cut.to_entity().to_cut_def().plane_normal != cut.plane_normal
+    assert moved == 0
 
 
 def test_to_entity_defaults_and_refusals() -> None:
@@ -220,15 +259,66 @@ def test_a_cut_resultant_reads_back_on_its_cut(make_model, tmp_path: Path) -> No
     assert moved[0, 1] == pytest.approx(-H * P_TIP[0, 0])
 
 
+@pytest.mark.parametrize("normal, point", [
+    ((0.0, 0.0, 1.0), (0.0, 0.0, 1500.0)),
+    ((0.3, -0.2, 1.0), (2500.0, 0.0, 1500.0)),  # skewed: both columns, off mid-height
+    ((1.0, 1.0, 3.0), (2500.0, 0.0, 1500.0)),
+])
+def test_a_cut_resultant_equals_the_cut_kernel(make_model, tmp_path: Path, normal, point) -> None:
+    """The card's done-when: the kernel's resultant, stored on the cut, equals the
+    kernel's resultant from the cut read back (``SectionCut.moment_about`` moves
+    its centroid moments to the stored reference)."""
+    pytest.importorskip("STKO_to_python.cuts")
+    from STKO_to_python import MPCODataSet
+
+    ds = MPCODataSet(str(FRAME), "results", verbose=False)
+    eids = tuple(int(e) for e in ds.elements_info["dataframe"]["element_id"])
+    cut = SectionCutDef(plane_point=point, plane_normal=normal, element_ids=eids,
+                        label="frame cut")
+    direct = ds.section_cut(spec=cut.to_spec(), model_stage="MODEL_STAGE[1]")
+    assert not direct.is_empty and np.abs(direct.F).max() > 1.0
+    entity = cut.to_entity(reference=(123.0, -45.0, 1500.0))
+    states = tuple(StateAddress("stage", "stage_0", k, 0) for k in range(direct.F.shape[0]))
+    stored = np.concatenate([direct.F, direct.moment_about(entity.reference)], axis=1)
+    result = UserResult(
+        name="cut resultant", target="entities", basis="model", linear=True, states=states,
+        components=("Fx", "Fy", "Fz", "Mx", "My", "Mz"), data=stored[:, None, :],
+        entity_kind=("cut",), entity_row=np.array([0], dtype="i4"))
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[result],
+                           entities=Entities(cuts=(entity,)))
+    uf = UserFile(path)
+    back = uf.read_result("cut resultant")
+    held = uf.entities().row(back.entity_kind[0], int(back.entity_row[0]))
+    assert held.to_cut_def().to_spec() == cut.to_spec()
+    again = ds.section_cut(spec=held.to_cut_def().to_spec(), model_stage="MODEL_STAGE[1]")
+    assert _bits(again.F) == _bits(back.data[:, 0, :3])
+    assert _bits(again.moment_about(held.reference)) == _bits(back.data[:, 0, 3:])
+
+
 # ---------------------------------------------------------------------------
 # Binding: ENTITY_KIND and ENTITY_ROW
 # ---------------------------------------------------------------------------
 
 
-def _on(kind: str, row: int) -> UserResult:
-    return UserResult(name="drift", target="entities", basis="model", components=("dx",),
+def _on(kind: str, row: int, *, basis: str = "model", name: str = "drift") -> UserResult:
+    return UserResult(name=name, target="entities", basis=basis, components=("dx",),
                       data=np.zeros((1, 1, 1)), entity_kind=(kind,),
                       entity_row=np.array([row], dtype="i4"))
+
+
+def test_a_dangling_entity_row_refuses_that_entry_alone(make_model, tmp_path: Path) -> None:
+    path = write_user_file(tmp_path / "s.user.h5", make_model(),
+                           results=[_on("cut", 1), nodal()], entities=sample_entities())
+    with h5py.File(path, "a") as f:
+        f["results/r0/RESULTS/ON_ENTITIES/values/ENTITY_ROW"][0] = 99
+    index = UserFile(path).results()
+    assert [e.name for e in index.entries] == ["Delta_after (L/480)"]
+    (ref,) = index.refused
+    assert (ref.name, ref.reason) == ("drift", "unresolved") and "row 99" in ref.detail
+    with pytest.raises(KeyError, match="unresolved"):
+        UserFile(path).read_result("drift")
+    with pytest.raises(UserWriteRefused, match="row 99"):  # an entities write judges it
+        write_user_file(path, make_model(), entities=sample_entities())
 
 
 def test_a_result_naming_a_missing_row_refuses_the_write(make_model, tmp_path: Path) -> None:
@@ -269,7 +359,7 @@ def test_an_unknown_entity_kind_is_refused(make_model, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("entities, match", [
-    (Entities(cuts=(sample_entities().cuts[0],) * 2), "given twice"),
+    (Entities(cuts=(sample_entities().cuts[0],) * 2), "duplicate"),
     (Entities(storeys=(Storey(name=" L1", level=0.0, reference=(0, 0, 0),
                               node_ids=np.array([1])),)), "whitespace"),
     (Entities(cuts=(CutEntity(name="c", point=(0, 0, 0), normal=(0, 0, 2), reference=(0, 0, 0),
@@ -284,18 +374,49 @@ def test_an_unknown_entity_kind_is_refused(make_model, tmp_path: Path) -> None:
                               node_ids=np.zeros(0, dtype="i4")),)), "no node"),
     (Entities(point_sets=(PointSet(name="p", xyz=np.zeros((1, 3)),
                                    host_element=np.array([-2])),)), "below -1"),
+    (Entities(point_sets=(PointSet(name="p", xyz=np.zeros((0, 3))),)), "no point"),
+    (Entities(cuts=(CutEntity(name="c", point=(0, 0, np.nan), normal=(0, 0, 1),
+                              reference=(0, 0, 0), element_ids=np.array([1])),)), "not finite"),
+    (Entities(storeys=(Storey(name="L", level=np.inf, reference=(0, 0, 0),
+                              node_ids=np.array([1])),)), "not finite"),
 ])
 def test_a_bad_entity_refuses_the_write(make_model, tmp_path: Path, entities, match) -> None:
     with pytest.raises(UserWriteRefused, match=match):
         write_user_file(tmp_path / "s.user.h5", make_model(), entities=entities)
 
 
-def test_non_finite_geometry_is_refused_at_construction() -> None:
-    with pytest.raises(ValueError, match="finite"):
-        CutEntity(name="c", point=(0, 0, np.nan), normal=(0, 0, 1), reference=(0, 0, 0),
-                  element_ids=np.array([1]))
-    with pytest.raises(ValueError, match="finite"):
-        Storey(name="L", level=np.inf, reference=(0, 0, 0), node_ids=np.array([1]))
+def _empty_storey(f: h5py.File) -> None:
+    _replace(f, "entities/storeys/node_ids", np.zeros(0, dtype="i4"))
+    _replace(f, "entities/storeys/node_offsets", np.array([0, 0], dtype="i4"))
+
+
+@pytest.mark.parametrize("damage, kind, reason, match", [
+    (_empty_storey, "storey", "bad-param", "no node"),
+    (lambda f: _replace(f, "entities/storeys/level", np.array([np.nan])),
+     "storey", "bad-param", "not finite"),
+    (lambda f: _replace(f, "entities/cuts/normal", np.array([[0, 0, 0.5], [-1, 0, 0]], "f8")),
+     "cut", "bad-param", "unit length"),
+    (lambda f: _replace(f, "entities/cuts/name", np.array(["a", "a"], dtype=object).astype(
+        h5py.string_dtype())), "cut", "duplicate", "named 'a'"),
+])
+def test_a_bad_row_refuses_alone_and_the_zone_opens(
+        make_model, tmp_path: Path, damage, kind: str, reason: str, match: str) -> None:
+    """Review F4: a bad row refuses itself, keeps its position, and the zone and
+    every other row still read; a result naming it refuses as ``unresolved``."""
+    path = write_user_file(tmp_path / "s.user.h5", make_model(), entities=sample_entities(),
+                           results=[_on(kind, 0, name="on it"), _on("point_set", 0)])
+    with h5py.File(path, "a") as f:
+        damage(f)
+    held = UserFile(path).entities()
+    assert len(held.cuts) == 2 and len(held.storeys) == 1 and len(held.point_sets) == 1
+    bad = [r for r in held.refused if r.kind == kind and r.row == 0]
+    assert bad and bad[0].reason == reason and match in bad[0].detail
+    with pytest.raises(KeyError, match="refused"):
+        held.row(kind, 0)
+    assert held.row("point_set", 0).name == "plan points"
+    index = UserFile(path).results()
+    assert [e.name for e in index.entries] == ["drift"]
+    assert [(r.name, r.reason) for r in index.refused] == [("on it", "unresolved")]
 
 
 @pytest.mark.parametrize("damage, match", [
@@ -306,8 +427,7 @@ def test_non_finite_geometry_is_refused_at_construction() -> None:
      "does not run from 0 to 3"),
     (lambda f: _replace(f, "entities/cuts/element_ids", np.array([101, 102, 7], dtype="i8")),
      "expected i4"),
-    (lambda f: _replace(f, "entities/cuts/normal", np.zeros((2, 3))), "unit length"),
-    (lambda f: _replace(f, "entities/storeys/level", np.array([np.nan])), "finite"),
+    (lambda f: _replace(f, "entities/cuts/normal", np.zeros((3, 3))), "expected f8"),
 ])
 def test_a_damaged_zone_refuses_alone(make_model, tmp_path: Path, damage, match) -> None:
     path = write_user_file(tmp_path / "s.user.h5", make_model(), results=[nodal()],

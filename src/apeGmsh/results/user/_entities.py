@@ -11,14 +11,15 @@ names a row by ``ENTITY_KIND`` (:data:`KINDS`) and ``ENTITY_ROW``.
 * A **point set** is coordinates, each with an optional host element (``-1``).
 
 Every array is a copy the entity owns. The writer writes all three tables, empty
-ones included, and the reader refuses the zone when one is missing or malformed:
-rows are addressed by position, so a reader that dropped a row would move the
-ones after it.
+ones included, and refuses any bad row. The reader refuses the zone when a table
+is missing or a column malformed, and refuses a bad row alone: it stays in its
+table, so the rows after it keep their ``ENTITY_ROW``, and :meth:`Entities.row`
+refuses it by name (:attr:`Entities.refused`).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 import h5py
 import numpy as np
@@ -35,6 +36,7 @@ __all__ = [
     "KINDS",
     "CutEntity",
     "Entities",
+    "EntityRefusal",
     "PointSet",
     "Storey",
 ]
@@ -53,8 +55,8 @@ _UNIT_TOL = 1e-9
 
 def _vec3(v: Any, what: str) -> np.ndarray:
     a = np.array(v, dtype="f8").ravel()
-    if a.shape != (3,) or not np.all(np.isfinite(a)):
-        raise ValueError(f"{what} must be three finite numbers, got {a.tolist()}")
+    if a.shape != (3,):
+        raise ValueError(f"{what} must be three numbers, got {a.tolist()}")
     return a
 
 
@@ -62,8 +64,8 @@ def _points(v: Any, what: str) -> np.ndarray:
     a = np.array(v, dtype="f8")
     if a.size == 0:
         a = a.reshape(0, 3)
-    if a.ndim != 2 or a.shape[1] != 3 or not np.all(np.isfinite(a)):
-        raise ValueError(f"{what} must be finite (P, 3) coordinates, got shape {a.shape}")
+    if a.ndim != 2 or a.shape[1] != 3:
+        raise ValueError(f"{what} must be (P, 3) coordinates, got shape {a.shape}")
     return a
 
 
@@ -117,10 +119,12 @@ class CutEntity:
         from ...cuts import SectionCutDef
 
         poly = self.polygon
-        if self.side not in SIDES:  # the def would refuse it too, less plainly
-            raise ValueError(f"cut {self.name!r}: side {self.side!r} is not one of {SIDES}")
+        problem = _cut_problem(self)
+        if problem is not None:
+            raise ValueError(problem)
         p, n = self.point, self.normal
-        return SectionCutDef(
+        stored = (float(n[0]), float(n[1]), float(n[2]))
+        cut = SectionCutDef(
             plane_point=(float(p[0]), float(p[1]), float(p[2])),
             plane_normal=(float(n[0]), float(n[1]), float(n[2])),
             element_ids=tuple(int(e) for e in self.element_ids),
@@ -131,6 +135,11 @@ class CutEntity:
                 else tuple((float(v[0]), float(v[1]), float(v[2])) for v in poly)
             ),
         )
+        # The def normalises again, and n / |n| of a unit n can move the last bit
+        # ((1, 1, 0) / sqrt 2 does), which moves to_spec(). The stored normal is
+        # unit to within _UNIT_TOL (_cut_problem), so it is set as stored.
+        object.__setattr__(cut, "plane_normal", stored)
+        return cut
 
 
 @dataclass(frozen=True, eq=False)
@@ -143,10 +152,7 @@ class Storey:
     node_ids: np.ndarray
 
     def __post_init__(self) -> None:
-        level = float(self.level)
-        if not np.isfinite(level):
-            raise ValueError(f"storey {self.name!r} level must be finite, got {self.level!r}")
-        object.__setattr__(self, "level", level)
+        object.__setattr__(self, "level", float(self.level))
         object.__setattr__(
             self, "reference", _vec3(self.reference, f"storey {self.name!r} reference"))
         object.__setattr__(
@@ -170,16 +176,33 @@ class PointSet:
             self, "host_element", _ids(host, f"point set {self.name!r} host_element"))
 
 
+@dataclass(frozen=True)
+class EntityRefusal:
+    """A row of ``/entities`` that does not stand: ``kind`` is an ``ENTITY_KIND``,
+    ``row`` its position, ``reason`` one of ``empty-name``, ``duplicate``, ``bad-param``."""
+
+    kind: str
+    row: int
+    name: str
+    reason: str
+    detail: str
+
+
 @dataclass(frozen=True, eq=False)
 class Entities:
-    """The ``/entities`` zone. A row's position in its table is its ``ENTITY_ROW``."""
+    """The ``/entities`` zone. A row's position in its table is its ``ENTITY_ROW``.
+
+    A read keeps a refused row in its table, so positions hold; ``refused`` names
+    each one, and :meth:`row` refuses it. A written ``Entities`` has none.
+    """
 
     cuts: tuple[CutEntity, ...] = ()
     storeys: tuple[Storey, ...] = ()
     point_sets: tuple[PointSet, ...] = ()
+    refused: tuple[EntityRefusal, ...] = ()
 
     def __post_init__(self) -> None:
-        for field_name in ("cuts", "storeys", "point_sets"):
+        for field_name in ("cuts", "storeys", "point_sets", "refused"):
             object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
 
     def table(self, kind: str) -> tuple[Any, ...]:
@@ -194,6 +217,10 @@ class Entities:
         rows = self.table(kind)
         if not 0 <= int(index) < len(rows):
             raise KeyError(f"/entities/{KINDS[kind]} holds {len(rows)} rows, not row {index}")
+        for ref in self.refused:
+            if (ref.kind, ref.row) == (kind, int(index)):
+                raise KeyError(f"/entities/{KINDS[kind]} row {index} ({ref.name!r}) is "
+                               f"refused: {ref.reason} ({ref.detail})")
         return rows[int(index)]
 
     def same_bits(self, other: "Entities") -> bool:
@@ -226,44 +253,79 @@ class Entities:
 # ---------------------------------------------------------------------------
 
 
-def _names_problem(table: str, names: Sequence[str]) -> Optional[str]:
-    seen: set[str] = set()
-    for name in names:
-        problem = name_problem(name)
-        if problem is not None:
-            return f"{table} name {name!r}: {problem}"
-        if name in seen:
-            return f"{table} name {name!r} is given twice"
-        seen.add(name)
+def _finite(*arrays: Any) -> bool:
+    return all(bool(np.all(np.isfinite(np.asarray(a, dtype="f8")))) for a in arrays)
+
+
+def _cut_problem(c: CutEntity) -> Optional[str]:
+    if c.side not in SIDES:
+        return f"cut {c.name!r}: side {c.side!r} is not one of {SIDES}"
+    if not _finite(c.point, c.normal, c.reference, c.polygon):
+        return f"cut {c.name!r}: a coordinate is not finite"
+    if abs(float(np.linalg.norm(c.normal)) - 1.0) > _UNIT_TOL:
+        return f"cut {c.name!r}: normal {c.normal.tolist()} is not of unit length"
+    if c.element_ids.size == 0:
+        return f"cut {c.name!r} filters to no element"
+    if c.polygon is not None and 0 < len(c.polygon) < 3:
+        return f"cut {c.name!r}: a bounding polygon has at least three vertices"
     return None
+
+
+def _storey_problem(st: Storey) -> Optional[str]:
+    if not _finite(st.level, st.reference):
+        return f"storey {st.name!r}: the level or reference is not finite"
+    if st.node_ids.size == 0:
+        return f"storey {st.name!r} has no node"
+    return None
+
+
+def _point_set_problem(p: PointSet) -> Optional[str]:
+    if not _finite(p.xyz):
+        return f"point set {p.name!r}: a coordinate is not finite"
+    if len(p.xyz) == 0:
+        return f"point set {p.name!r} has no point"
+    if p.host_element is None or p.host_element.shape != (len(p.xyz),):
+        return f"point set {p.name!r}: one host_element per point"
+    if int(p.host_element.min()) < -1:
+        return f"point set {p.name!r}: a host_element is below -1 (-1 = none)"
+    return None
+
+
+_ROW_RULES: tuple[tuple[str, Callable[[Any], Optional[str]]], ...] = (
+    ("cut", _cut_problem), ("storey", _storey_problem), ("point_set", _point_set_problem))
+
+
+def row_refusals(e: Entities) -> tuple[EntityRefusal, ...]:
+    """Every row of ``e`` that does not stand, and why: the name rule of A2,
+    names unique within a table (each such row refuses), and the kind's own rule."""
+    out: list[EntityRefusal] = []
+    for kind, rule in _ROW_RULES:
+        rows = e.table(kind)
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r.name] = counts.get(r.name, 0) + 1
+        for i, r in enumerate(rows):
+            problem = name_problem(r.name)
+            if problem is not None:
+                out.append(EntityRefusal(kind, i, str(r.name), "empty-name",
+                                         f"name {r.name!r}: {problem}"))
+            elif counts[r.name] > 1:
+                out.append(EntityRefusal(kind, i, r.name, "duplicate",
+                                         f"{counts[r.name]} {KINDS[kind]} rows are named {r.name!r}"))
+            else:
+                problem = rule(r)
+                if problem is not None:
+                    out.append(EntityRefusal(kind, i, r.name, "bad-param", problem))
+    return tuple(out)
 
 
 def entities_problem(e: Entities) -> Optional[str]:
-    """Why ``e`` cannot be ``/entities``, or ``None``."""
-    for table, rows in (("cuts", e.cuts), ("storeys", e.storeys), ("point_sets", e.point_sets)):
-        problem = _names_problem(table, [r.name for r in rows])
-        if problem is not None:
-            return problem
-    for c in e.cuts:
-        if c.side not in SIDES:
-            return f"cut {c.name!r}: side {c.side!r} is not one of {SIDES}"
-        if abs(float(np.linalg.norm(c.normal)) - 1.0) > _UNIT_TOL:
-            return f"cut {c.name!r}: normal {c.normal.tolist()} is not of unit length"
-        if c.element_ids.size == 0:
-            return f"cut {c.name!r} filters to no element"
-        if c.polygon is not None and 0 < len(c.polygon) < 3:
-            return f"cut {c.name!r}: a bounding polygon has at least three vertices"
-    for s in e.storeys:
-        if s.node_ids.size == 0:
-            return f"storey {s.name!r} has no node"
-    for p in e.point_sets:
-        if len(p.xyz) == 0:
-            return f"point set {p.name!r} has no point"
-        if p.host_element is None or p.host_element.shape != (len(p.xyz),):
-            return f"point set {p.name!r}: one host_element per point"
-        if int(p.host_element.min()) < -1:
-            return f"point set {p.name!r}: a host_element is below -1 (-1 = none)"
-    return None
+    """Why ``e`` cannot be written as ``/entities``, or ``None``: every row must stand."""
+    bad = row_refusals(e)
+    if not bad:
+        return None
+    first = bad[0]
+    return f"{KINDS[first.kind]} row {first.row}: {first.reason}: {first.detail}"
 
 
 def _offsets(lengths: Sequence[int]) -> np.ndarray:
@@ -366,7 +428,7 @@ def read_entities(zone: h5py.Group) -> Entities:
     poly = _col(g, "polygon", "f8", (None, 3))
     e_span = _spans(g, "element_offsets", k, len(eids))
     p_span = _spans(g, "polygon_offsets", k, len(poly))
-    try:
+    try:  # a column the dataclasses cannot take refuses the zone
         cuts = tuple(
             CutEntity(name=str(names[i]), side=str(side[i]), point=point[i], normal=normal[i],
                       reference=reference[i], element_ids=eids[e_span[i]], polygon=poly[p_span[i]])
@@ -393,18 +455,17 @@ def read_entities(zone: h5py.Group) -> Entities:
         point_sets = tuple(
             PointSet(name=str(names[i]), xyz=xyz[x_span[i]], host_element=host[x_span[i]])
             for i in range(k))
-    except ValueError as exc:  # a row a dataclass refuses: a non-finite coordinate
+    except ValueError as exc:
         raise ZoneRefused(_ZONE, str(exc)) from exc
-    out = Entities(cuts=cuts, storeys=storeys, point_sets=point_sets)
-    problem = entities_problem(out)
-    if problem is not None:
-        raise ZoneRefused(_ZONE, problem)
-    return out
+    held = Entities(cuts=cuts, storeys=storeys, point_sets=point_sets)
+    return Entities(cuts=cuts, storeys=storeys, point_sets=point_sets,
+                    refused=row_refusals(held))
 
 
 def binding_problem(entities: Entities, name: str, kinds: Sequence[str],
                     rows: Any) -> Optional[str]:
-    """Why the ``ON_ENTITIES`` result ``name`` names a row ``entities`` does not hold."""
+    """Why the ``ON_ENTITIES`` result ``name`` names a row ``entities`` does not
+    hold, or a refused one; ``None`` when every row it names stands."""
     for kind, row in zip(kinds, np.asarray(rows).ravel()):
         if kind not in KINDS:
             return f"user result {name!r}: entity kind {kind!r} is not one of {sorted(KINDS)}"
@@ -412,4 +473,8 @@ def binding_problem(entities: Entities, name: str, kinds: Sequence[str],
         if not 0 <= int(row) < held:
             return (f"user result {name!r} names {kind} row {int(row)}, and "
                     f"/entities/{KINDS[kind]} holds {held}")
+        for ref in entities.refused:
+            if (ref.kind, ref.row) == (kind, int(row)):
+                return (f"user result {name!r} names {kind} row {int(row)}, which is "
+                        f"refused: {ref.reason}")
     return None
