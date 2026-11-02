@@ -385,3 +385,20 @@ def test_terms_on_different_targets_are_refused() -> None:
     with pytest.raises(CombinationRefused) as err:
         evaluate(_table(), "ULS", Mixed())
     assert err.value.reason == "bad-term"
+
+
+def test_entity_terms_join_on_kind_and_row_whatever_the_kind_width() -> None:
+    from apeGmsh.results.user._states import entity_keys
+
+    class Entities(FixtureSource):
+        def field(self, address: StateAddress) -> Field:
+            if address.source == "D":
+                return Field(entity_keys(["cut"], [0]), ("V",), np.array([[2.0]]))
+            return Field(entity_keys(["cut", "a_long_storey_kind"], [0, 3]), ("V",),
+                         np.array([[1.0], [5.0]]))
+
+    got = evaluate(_table(), "ULS", Entities()).field
+    assert got.keys["kind"].tolist() == ["a_long_storey_kind", "cut"]
+    assert got.keys["row"].tolist() == [3, 0]
+    assert np.isnan(got.values[0, 0])  # D has no storey row
+    assert got.values[1, 0] == pytest.approx(1.2 * 2.0 + 1.6 * 1.0)

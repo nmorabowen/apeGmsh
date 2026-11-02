@@ -208,12 +208,18 @@ def _align(fields: Sequence[Field], name: str) -> tuple[np.ndarray, tuple[str, .
 
     A row or a label a term lacks is NaN in that term.
     """
-    dtype = fields[0].keys.dtype
+    first = fields[0].keys.dtype
     for f in fields[1:]:
-        if f.keys.dtype != dtype:
+        if f.keys.dtype.names != first.names:
             raise CombinationRefused(
                 name, "bad-term",
-                f"its terms are on different targets ({dtype} and {f.keys.dtype})")
+                f"its terms are on different targets ({first} and {f.keys.dtype})")
+    # One key type for all: a text key (an entity kind) is as wide as its widest.
+    assert first.names is not None
+    dtype = np.dtype([
+        (n, np.result_type(*(f.keys.dtype[n] for f in fields))) for n in first.names])
+    fields = [f if f.keys.dtype == dtype else Field(f.keys.astype(dtype), f.components, f.values)
+              for f in fields]
     components: list[str] = []
     for f in fields:
         components.extend(c for c in f.components if c not in components)

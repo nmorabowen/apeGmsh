@@ -55,7 +55,6 @@ __all__ = [
 LEVELS = ("nodes", "elements", "gauss", "line_stations")
 _ID = np.dtype([("id", "i8")])
 _SUB = np.dtype([("id", "i8"), ("sub", "i8")])
-_ENTITY = np.dtype([("kind", "U64"), ("row", "i8")])
 _MODE_STAGE = re.compile(r"(?P<host>.+?)(?:_step_(?P<step>\d+))?_mode_(?P<mode>\d+)\Z")
 
 
@@ -79,8 +78,10 @@ def sub_keys(ids: Any, sub: Any) -> np.ndarray:
 def entity_keys(kinds: Any, rows: Any) -> np.ndarray:
     """Row keys for an entity field: ``ENTITY_KIND`` and ``ENTITY_ROW``."""
     rows = np.asarray(rows, dtype="i8").ravel()
-    keys = np.empty(rows.shape[0], dtype=_ENTITY)
-    keys["kind"] = list(kinds)
+    kinds = list(kinds)
+    width = max([1, *(len(k) for k in kinds)])
+    keys = np.empty(rows.shape[0], dtype=[("kind", f"U{width}"), ("row", "i8")])
+    keys["kind"] = kinds
     keys["row"] = rows
     return keys
 
