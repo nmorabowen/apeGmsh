@@ -248,7 +248,7 @@ test("INV-5: only the panel's click dispatches Apply or Back; main and the spec 
 });
 
 test("INV-5: an agent's call returns before anything in the window takes focus, restores or opens", () => {
-  const src = readFileSync(fileURLToPath(new URL("../src/main/main.ts", import.meta.url)), "utf8");
+  const src = readFileSync(fileURLToPath(new URL("../src/main/main.ts", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
   const start = src.indexOf('app.on("second-instance"');
   const heard = src.indexOf("heardFromAgent(data as Reach);\n      return;", start);
   assert.ok(start >= 0 && heard > start, "the handler hands an agent's call over, and returns");
