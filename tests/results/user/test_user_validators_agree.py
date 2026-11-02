@@ -1,12 +1,15 @@
-"""Two validators read ``/opensees/combinations`` until VU2 consolidates them.
+"""Both readers of ``/opensees/combinations`` give each row the same verdict.
 
 ``results/user`` (``resolve``, through ``read_model_combinations``) and
-``opensees/_internal/_combinations_h5.py`` (``read_combinations``) must give each
-row the same verdict. The oracle for a row's verdict is the other implementation,
-and the cycle tables also name the answer outright.
+``opensees/_internal/_combinations_h5.py`` (``read_combinations``) read the
+columns with their own code and judge the rows with one implementation,
+``opensees/_internal/_combination_rules.py`` (VU2). The oracle for every row is
+:data:`EXPECTED`, written by hand from the reasons of ADR 0130 A3; the two
+readers must also agree with each other.
 """
 from __future__ import annotations
 
+import time
 import warnings
 from pathlib import Path
 
@@ -103,6 +106,26 @@ TABLES = {
 }
 
 
+#: The verdict of every refused row, by position, named by hand (A3).
+EXPECTED: dict[str, dict[int, str]] = {
+    "good": {},
+    "reaches a cycle with an absent name": {0: "cycle", 1: "cycle", 2: "cycle", 3: "cycle"},
+    "in a cycle with an absent name": {0: "cycle", 1: "cycle"},
+    "self": {0: "cycle"},
+    "unresolved carries": {0: "unresolved", 1: "unresolved"},
+    "names a refused row": {0: "unknown-rule", 1: "unresolved"},
+    "duplicates": {0: "duplicate", 1: "duplicate"},
+    "a bad row and its namesake": {0: "unknown-rule", 1: "duplicate"},
+    # Row 4 is ``e`` and a combining acute (NFD), so it is not NFC.
+    "names": {i: "empty-name" for i in range(5)},
+    "rules and params": {0: "unknown-rule", 1: "no-terms", **{i: "bad-param" for i in range(2, 9)}},
+    "cqc": {0: "bad-param", 1: "bad-param", 2: "bad-param", 3: "bad-term", 4: "bad-term"},
+    # Row 4, cqc over a case with no damping, is a bad term in model.h5: the
+    # damping is not the fix, because no model.h5 row may name a case (#2699 review).
+    "terms": {i: "bad-term" for i in range(12)},
+}
+
+
 def _write(path: Path, rows: list[archive.Combination]) -> Path:
     with h5py.File(path, "w") as f:
         archive.write_combinations_into(f, rows)
@@ -130,6 +153,13 @@ def test_both_validators_give_each_row_the_same_verdict(tmp_path: Path, name: st
     assert _user_verdicts(path) == _archive_verdicts(path)
 
 
+@pytest.mark.parametrize("name", sorted(TABLES))
+def test_each_row_has_the_verdict_named_by_hand(tmp_path: Path, name: str) -> None:
+    path = _write(tmp_path / "model.h5", TABLES[name])
+    assert _user_verdicts(path) == EXPECTED[name]
+    assert _archive_verdicts(path) == EXPECTED[name]
+
+
 def test_the_comparison_can_fail(tmp_path: Path) -> None:
     """Self-test: the tables above are not all accepted, nor all refused."""
     reasons: set[str] = set()
@@ -152,6 +182,32 @@ def test_a_row_reaching_a_cycle_reads_cycle_in_both(tmp_path: Path, table: str, 
     path = _write(tmp_path / "model.h5", TABLES[table])
     assert _user_verdicts(path) == expected
     assert _archive_verdicts(path) == expected
+
+
+# ---- a deep chain is linear (#2699 review: the old search was cubic) --------
+
+DEPTH = 1000
+
+
+def _chain(end: archive.CombinationTerm) -> list[archive.Combination]:
+    """``c0 -> c1 -> ... -> c999 -> end``, written deepest first."""
+    rows = [_row(f"c{i}", _link(f"c{i + 1}")) for i in range(DEPTH - 1)]
+    rows.append(_row(f"c{DEPTH - 1}", end))
+    return rows[::-1]
+
+
+@pytest.mark.parametrize("end, reason", [
+    (D, None),
+    (_link("c0"), "cycle"),
+    (_link("absent"), "unresolved"),
+])
+def test_a_deep_chain_is_judged_in_under_a_second(tmp_path: Path, end, reason) -> None:
+    path = _write(tmp_path / "model.h5", _chain(end))
+    want = {} if reason is None else {i: reason for i in range(DEPTH)}
+    t0 = time.perf_counter()
+    assert _user_verdicts(path) == want
+    assert _archive_verdicts(path) == want
+    assert time.perf_counter() - t0 < 1.0
 
 
 # ---- a real 2.39 zone, as ops.combination writes it ------------------------
