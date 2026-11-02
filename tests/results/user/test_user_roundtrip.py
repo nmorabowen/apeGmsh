@@ -35,7 +35,7 @@ from tests.fixtures.schema import (
     USER_RESULTS_CURRENT,
 )
 
-from .conftest import nodal
+from tests.results.user._user_helpers import bucket, elements, nodal
 
 LINEAR = Combination(
     "1.2D+1.6L", "linear", (Term("stage", "D", -1, 0, 1.2), Term("stage", "L", 7, 0, 1.6)),
@@ -220,20 +220,8 @@ def test_entity_field_round_trips(make_model, tmp_path: Path) -> None:
     assert _bits(back.data) == _bits(r.data)
 
 
-def _bucket(**kw) -> ElementBucket:
-    data = np.arange(12, dtype="f8").reshape(1, 2, 6) / 7.0
-    fields = dict(
-        name="204-ASDShellT3[102:0:0]", ids=np.array([11, 12], dtype="i4"), data=data,
-        components=(("mxx", "myy", "mxy"),), gauss_ids=(0,), multiplicity=(2,),
-        topology="tri", param_domain="bary", family="lagrange", order=(1, 1),
-        gp_param=np.array([[0.2, 0.3], [0.1, 0.6]]),
-    )
-    fields.update(kw)
-    return ElementBucket(**fields)
-
-
-def _elements(bucket: ElementBucket) -> UserResult:
-    return UserResult(name="wood_armer", target="elements", basis="model", buckets=(bucket,))
+_bucket = bucket
+_elements = elements
 
 
 @pytest.mark.parametrize(

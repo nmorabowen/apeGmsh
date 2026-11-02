@@ -25,7 +25,7 @@ from apeGmsh.results import user as user_package
 from apeGmsh.results.user import UserFile, write_user_file
 from apeGmsh.results.user import _writer
 
-from .conftest import REPO, nodal
+from tests.results.user._user_helpers import REPO, bucket, elements, nodal
 
 SCRIPT = textwrap.dedent(
     """
@@ -312,19 +312,17 @@ def test_data_that_does_not_read_back_refuses(make_model, tmp_path, monkeypatch)
 
 
 def test_element_data_that_does_not_read_back_refuses(make_model, tmp_path, monkeypatch) -> None:
-    from .test_user_roundtrip import _bucket, _elements
-
     model = make_model()
-    bucket = _bucket()
+    b = bucket()
     real = _writer.write_entry
 
     def zeroed(group, r):
         real(group, r)
-        group[f"RESULTS/ON_ELEMENTS/values/{bucket.name}/DATA"][...] = 0.0
+        group[f"RESULTS/ON_ELEMENTS/values/{b.name}/DATA"][...] = 0.0
 
     monkeypatch.setattr(_writer, "write_entry", zeroed)
     with pytest.raises(_writer.UserWriteRefused, match="did not read back"):
-        write_user_file(tmp_path / "s.user.h5", model, results=[_elements(bucket)])
+        write_user_file(tmp_path / "s.user.h5", model, results=[elements(b)])
 
 
 def test_nan_data_compares_by_bits(make_model, tmp_path) -> None:

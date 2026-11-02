@@ -16,7 +16,7 @@ from apeGmsh.results.user import (
     write_user_file,
 )
 
-from .conftest import nodal
+from tests.results.user._user_helpers import nodal
 
 
 def _with_zones(path: Path, *roots: str) -> None:

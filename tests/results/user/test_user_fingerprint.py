@@ -18,7 +18,7 @@ import pytest
 
 from apeGmsh.results.user import FingerprintRefused, results_fingerprint
 
-from .conftest import LADRUNO, REPO
+from tests.results.user._user_helpers import LADRUNO, REPO
 
 GOLDEN = {
     "beam3d": "48ab1eaaa17047157458d3afb319f82940c10b1c8d377d988e5ff48d343748ac",

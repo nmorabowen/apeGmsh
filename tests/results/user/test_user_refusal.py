@@ -29,7 +29,7 @@ from apeGmsh.results.user import (
 from apeGmsh.results.user._descriptor import resolve, write_generation
 from tests.fixtures.schema import OPENSEES_CURRENT
 
-from .conftest import nodal
+from tests.results.user._user_helpers import nodal
 
 GOOD = Combination("good", "linear", (Term("stage", "D", -1, 0, 1.0),))
 D = Term("stage", "D")
