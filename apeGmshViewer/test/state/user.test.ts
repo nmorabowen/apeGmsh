@@ -109,6 +109,23 @@ interface SetOpts {
   modelHash?: string;
   /** another root member, which this app does not know */
   extraZone?: string;
+  /** a `/modes` table (h5-schema.md `/modes`) with these lambdas, one row per mode of `stage_0` */
+  modes?: number[];
+}
+
+/** A `/modes` table over MX, MY (the layout test/reader/userFile.test.ts writes). */
+function modesTable(z: G, lam: number[]): void {
+  const n = lam.length;
+  const k = Array.from({ length: n }, (_, i) => i);
+  z.create_attribute("components", "MX,MY");
+  str(z, "host", k.map(() => "stage_0"));
+  str(z, "kind", k.map(() => "eigen"));
+  i4(z, "step", k.map(() => 1));
+  i4(z, "mode", k.map((i) => i + 1));
+  f8(z, "lambda", lam);
+  f8(z, "period", lam.map((x) => (2 * Math.PI) / Math.sqrt(x)));
+  f8(z, "generalized_mass", k.map(() => 1));
+  for (const c of ["participation", "mass_ratio", "cumulative_ratio"]) f8(z, c, k.flatMap(() => [0, 0]), [n, 2]);
 }
 
 /** A set: `run.h5` (lineage only, with one `/opensees/combinations` row), a copy of truss2d.ladruno, and `run.user.h5`. */
@@ -146,6 +163,7 @@ function writeSet(o: SetOpts = {}): { user: string; model: string; results: stri
     entry(r, "r1", "base shear", "domain", "results", null);
     f.create_group("spectra"); // listed by name only (VU7)
     if (o.extraZone) f.create_group(o.extraZone);
+    if (o.modes) modesTable(f.create_group("modes") as G, o.modes);
   } finally {
     f.close();
   }
@@ -277,7 +295,12 @@ test("the user slot: opened, read, re-read, failed, closed; it survives the mode
   assert.throws(() => reduce(s, { type: "userRead", path: "u.user.h5", read: { ...IDX, user: { ...IDX.user, path: "x.user.h5" } } }), /the answer is for x\.user\.h5/);
   s = reduce(s, { type: "userRead", path: "u.user.h5", read: IDX });
   assert.equal(s.user?.status, "ready");
-  assert.equal(reduce(s, { type: "userOpened", path: "u.user.h5" }), s, "a re-read keeps what was read until the reply");
+  // A re-read after a change is pending: the verdict from before it is not shown as current (#2737 review, F1).
+  const again = reduce(s, { type: "userOpened", path: "u.user.h5" });
+  assert.deepEqual(again.user, { status: "reading", path: "u.user.h5" });
+  assert.equal(reduce(again, { type: "userOpened", path: "u.user.h5" }), again, "already reading: a no-op");
+  assert.deepEqual(familiesOf(again), [], "nothing of the file is listed while it is read");
+  assert.deepEqual(userBadgeOf(again), { text: "reading user file", title: "u.user.h5 is being read", refused: false });
   assert.equal(reduce(s, { type: "userOpened", path: "v.user.h5" }).user?.status, "reading", "another file starts over");
   assert.throws(() => reduce(s, { type: "userOpened", path: "" }), RangeError);
   const failed = reduce(s, { type: "userRead", path: "u.user.h5", read: { ok: false, error: "u.user.h5 has no /meta group" } });
@@ -346,6 +369,21 @@ test("a stage that records no step is listed and never opened (San Ramon's MODEL
     ["modes", [1, 2], 2, true],
   ]);
   assert.equal(f[0]!.title, "Stages of run.ladruno: MODEL_STAGE[1]\nMODEL_STAGE[1] records no step");
+});
+
+test("a current /modes table is never shown as current: its rows are not judged against the .ladruno (#2737 review, F2)", () => {
+  // Lambdas 1.5x a run's: Python's staleness() stales every row (A6: more than 1e-9 relative), with the zone current.
+  // The reviewer's modes.py does the same on San Ramon; this app judges the zone only, until VU7 judges rows.
+  const s = withResults(readInto(initialState, writeSet({ modes: [4, 9].map((x) => x * 1.5) })));
+  const info = ready(s);
+  assert.deepEqual(info.modes, { ok: true, rows: 2, stale: { stale: false, reason: "" } }, "the zone itself is current");
+  const m = familiesOf(s).find((f) => f.key === "modes")!;
+  assert.deepEqual([m.stale, m.refused, m.unjudged], [0, 0, true]);
+  assert.deepEqual(familyMarks(m), { count: " 2", stale: " · rows not judged", refused: "" });
+  assert.match(m.title, /its rows are not judged against the eigenvalues of run\.ladruno yet, so the table is not shown as current/);
+  // No /modes zone: nothing to judge, and the family reads plainly.
+  const plain = familiesOf(withResults(readInto(initialState, writeSet()))).find((f) => f.key === "modes")!;
+  assert.deepEqual([plain.unjudged, familyMarks(plain).stale], [false, ""]);
 });
 
 test("a refused /combinations zone, and a stale or refused modal table, show on their families", () => {

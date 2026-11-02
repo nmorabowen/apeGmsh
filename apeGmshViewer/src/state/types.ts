@@ -1385,7 +1385,7 @@ export type Event =
   | { type: "offerRefused"; id: number; reason: string }
   /** VA5 (the runner): Back finished; `notice` says why the view could not be restored */
   | { type: "offerBackDone"; notice: string | null }
-  /** ADR 0130 (renderer/app.ts): the set's `.user.h5` is being read; the same path again keeps what was read until the reply */
+  /** ADR 0130 (renderer/app.ts): the set's `.user.h5` is being read; the same path again is pending too, so a verdict from before a change is never shown as current */
   | { type: "userOpened"; path: string }
   /** ADR 0130: `user:read` answered for the open `.user.h5` */
   | { type: "userRead"; path: string; read: UserReadIn }

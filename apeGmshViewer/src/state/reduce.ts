@@ -1348,8 +1348,8 @@ export function reduce(s: State, e: Event): State {
     }
     case "userOpened": {
       if (typeof e.path !== "string" || e.path === "") throw new RangeError(`userOpened: ${JSON.stringify(e.path)} is not a path`);
-      // The same file again (a re-read after a change) keeps what was read until the reply lands.
-      if (s.user?.path === e.path && s.user.status === "ready") return s;
+      // A re-read of the same file is pending too: a verdict read before the change (to it, the model or the results) is not shown as current.
+      if (s.user?.path === e.path && s.user.status === "reading") return s;
       return { ...s, user: { status: "reading", path: e.path } };
     }
     case "userRead": {

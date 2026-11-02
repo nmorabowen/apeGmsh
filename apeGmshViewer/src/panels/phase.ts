@@ -44,6 +44,12 @@ export interface PhaseFamily {
   stale: number;
   /** refused rows, or 1 for a refused zone */
   refused: number;
+  /**
+   * Modes only: the `.user.h5` modal table reads, but its rows are not judged
+   * against the `.ladruno`'s eigenvalues (A6's per-row rule is VU7's), so it is
+   * never shown as current. Python stales every row whose lambda moved.
+   */
+  unjudged: boolean;
   /** a click opens its first stage */
   drawable: boolean;
   /** the button's tooltip: what it lists, what is stale or refused and why, and why it is not drawn */
@@ -64,7 +70,7 @@ export function familiesOf(s: State): PhaseFamily[] {
   const out: PhaseFamily[] = [];
   const info = s.user?.status === "ready" ? s.user.info : null;
   const file = s.user ? baseName(s.user.path) : "";
-  const recorded = (key: "stages" | "modes", notes: string[], stale: number, refused: number) => {
+  const recorded = (key: "stages" | "modes", notes: string[], stale: number, refused: number, unjudged = false) => {
     const stages = s.phase.axis.flatMap((k) => (k.kind === "results" && familyOfStage(s, k.stage) === key ? [k.stage] : []));
     if (!stages.length || !s.results) return;
     const results = s.results;
@@ -74,12 +80,13 @@ export function familiesOf(s: State): PhaseFamily[] {
     const shown = stages.filter((i) => results.stages[i]!.time.length > 0);
     const lines = [`${FAMILY_LABEL[key]} of ${baseName(results.path)}: ${stages.map(name).join(", ")}`];
     if (empty.length) lines.push(`${empty.map(name).join(", ")} ${empty.length === 1 ? "records" : "record"} no step`);
-    out.push({ key, stages: shown, count: stages.length, stale, refused, drawable: shown.length > 0, title: [...lines, ...notes].join("\n") });
+    out.push({ key, stages: shown, count: stages.length, stale, refused, unjudged, drawable: shown.length > 0, title: [...lines, ...notes].join("\n") });
   };
   recorded("stages", [], 0, 0);
   const modeNotes: string[] = [];
   let modeStale = 0;
   let modeRefused = 0;
+  let modeUnjudged = false;
   if (info?.modes) {
     if (info.modes.ok) modeNotes.push(`the modal table of ${file} has ${info.modes.rows} rows; this app does not show it yet`);
     else {
@@ -89,17 +96,21 @@ export function familiesOf(s: State): PhaseFamily[] {
     if (info.modes.stale.stale) {
       modeStale = 1;
       modeNotes.push(staleLine(`the modal table of ${file}`, info.modes.stale));
+    } else if (info.modes.ok) {
+      modeUnjudged = true;
+      const run = s.results ? baseName(s.results.path) : "the results file";
+      modeNotes.push(`its rows are not judged against the eigenvalues of ${run} yet, so the table is not shown as current`);
     }
   }
-  recorded("modes", modeNotes, modeStale, modeRefused);
+  recorded("modes", modeNotes, modeStale, modeRefused, modeUnjudged);
   if (info?.spectra) {
     const lines = [`Spectra: ${file} holds /spectra; this app lists it and does not read or draw it yet`];
     if (info.spectra.stale.stale) lines.push(staleLine("/spectra", info.spectra.stale));
-    out.push({ key: "spectra", stages: [], count: null, stale: info.spectra.stale.stale ? 1 : 0, refused: 0, drawable: false, title: lines.join("\n") });
+    out.push({ key: "spectra", stages: [], count: null, stale: info.spectra.stale.stale ? 1 : 0, refused: 0, unjudged: false, drawable: false, title: lines.join("\n") });
   }
   const c = info?.combinations;
   if (c && !c.ok) {
-    out.push({ key: "combinations", stages: [], count: 0, stale: 0, refused: 1, drawable: false, title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
+    out.push({ key: "combinations", stages: [], count: 0, stale: 0, refused: 1, unjudged: false, drawable: false, title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
   } else if (c) {
     const lines = ["User Combinations, listed; this app does not evaluate them yet:"];
     for (const x of c.items) {
@@ -107,30 +118,39 @@ export function familiesOf(s: State): PhaseFamily[] {
     }
     for (const x of c.refused) lines.push(`${x.name || "(no name)"}: refused, ${x.reason}: ${x.detail}`);
     const stale = c.items.filter((x) => x.stale).length;
-    out.push({ key: "combinations", stages: [], count: c.items.length, stale, refused: c.refused.length, drawable: false, title: lines.join("\n") });
+    out.push({ key: "combinations", stages: [], count: c.items.length, stale, refused: c.refused.length, unjudged: false, drawable: false, title: lines.join("\n") });
   }
   return out;
 }
 
-/** What the phase bar says of the `.user.h5` itself: refused, or read with warnings; null when there is nothing to say. */
+/** What the phase bar says of the `.user.h5` itself: being read, refused, or read with warnings; null when there is nothing to say. */
 export function userBadgeOf(s: State): { text: string; title: string; refused: boolean } | null {
   const u = s.user;
   if (!u) return null;
+  // Its families are left out while it is read: nothing from before a change is shown as current.
+  if (u.status === "reading") return { text: "reading user file", title: `${baseName(u.path)} is being read`, refused: false };
   if (u.status === "failed") return { text: "user file refused", title: `${baseName(u.path)}: ${u.error}`, refused: true };
   const n = u.status === "ready" ? u.info.warnings.length : 0;
   if (u.status === "ready" && n) return { text: `user file: ${n} ${n === 1 ? "warning" : "warnings"}`, title: u.info.warnings.join("\n"), refused: false };
   return null;
 }
 
-/** A family button's text after its label: the count, then what is stale and refused. */
+/** A family button's text after its label: the count, then what is stale (or not judged) and refused. */
 export function familyMarks(f: PhaseFamily): { count: string; stale: string; refused: string } {
   const whole = f.count === null || f.key === "modes";
   return {
     count: f.count === null ? "" : ` ${f.count}`,
-    stale: f.stale ? (whole ? " · stale" : ` · ${f.stale} stale`) : "",
+    stale: f.stale ? (whole ? " · stale" : ` · ${f.stale} stale`) : f.unjudged ? " · rows not judged" : "",
     refused: f.refused ? (whole || f.count === 0 ? " · refused" : ` · ${f.refused} refused`) : "",
   };
 }
+
+/**
+ * The bar's cap on the scrubber row: `#header`'s (style.css, `100vw - 684px`),
+ * which stops short of the ViewCube and the right rail, so the readout is never
+ * under the ViewCube (#2737 review).
+ */
+export const BAR_RIGHT_CLEAR_PX = 684;
 
 /** The readout's widest extent; longer text ends in an ellipsis, with the full text as its tooltip. */
 export const READOUT_MAX_PX = 240;
@@ -176,7 +196,7 @@ export function mountPhase(store: Store): () => void {
     const userSays = badge !== null || families.some((f) => !f.drawable);
     bar.hidden = s.phase.axis.length < 2 && !(s.phase.axis.length === 1 && userSays);
     // With the scrubber, the bar takes its own row under the header (style.css centres it on the header row).
-    bar.style.cssText = scrubberRow(s) ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - 32px);` : "";
+    bar.style.cssText = scrubberRow(s) ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - ${BAR_RIGHT_CLEAR_PX}px);` : "";
     // One button per non-results phase, then one per state family (ADR 0130 D1); the stage picker chooses within the family shown.
     const buttons: HTMLElement[] = s.phase.axis
       .filter((k) => k.kind !== "results")
@@ -226,7 +246,8 @@ export function mountPhase(store: Store): () => void {
   };
   const scrubber = (t: Timeline, s: State): HTMLElement[] => {
     const box = el("span", "scrubber");
-    box.style.cssText = "display: flex; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);";
+    // It shrinks before the bar overflows its cap: the slider to its least width, then the readout to an ellipsis.
+    box.style.cssText = "display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);";
     const pick = el("select", "results-stage");
     pick.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--bg-1); border: 1px solid var(--line); border-radius: 5px;";
     // The family shown: Stages list the static and transient stages, Modes the mode shapes.
@@ -258,12 +279,12 @@ export function mountPhase(store: Store): () => void {
     slider.max = String(t.steps - 1);
     slider.value = String(t.step);
     slider.disabled = t.steps < 2;
-    slider.style.cssText = "width: 130px; accent-color: var(--accent);";
+    slider.style.cssText = "width: 130px; flex: 0 1 130px; min-width: 48px; accent-color: var(--accent);";
     const inactive = inactiveElements(s);
     const readout = el("span", "results-readout", readoutOf(t, inactive ? inactive.inactive : null));
     // Bounded: a long fetch error ends in an ellipsis; the full text is the tooltip.
     readout.title = readout.textContent ?? "";
-    readout.style.cssText = `display: inline-block; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
+    readout.style.cssText = `display: inline-block; flex: 0 1 auto; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
     unlisten.push(
       listen(back, "click", () => {
         stop();
