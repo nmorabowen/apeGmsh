@@ -453,12 +453,12 @@ def _column(g: "h5py.Group", key: str, kinds: str, length: int | None) -> Any:
 
 def _read_rows(zone: "h5py.Group") -> tuple[Combination, ...]:
     import h5py
+    import numpy as np
 
     if "current" not in zone.attrs:
         raise _Malformed("@current is missing")
     current = zone.attrs["current"]
-    if getattr(current, "ndim", 1) != 0 or getattr(current, "dtype", None) is None \
-            or current.dtype.kind not in "iu":
+    if not isinstance(current, np.integer):
         raise _Malformed(f"@current is {current!r}, not an integer")
     key = f"g{int(current)}"
     if key not in zone or not isinstance(zone[key], h5py.Group):
