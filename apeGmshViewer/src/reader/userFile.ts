@@ -7,12 +7,13 @@
 // refuses that zone and the others still read (`ZoneRead.ok === false`); a bad
 // row refuses alone, with a reason (`refused`).
 //
-// What this reader never does: read a `/results` entry's `DATA` (only its shape),
-// or any value of `/spectra` and `/entities`, which are listed by name in `zones`
-// (their readers, VU7 and VU8, add their version targets). `/modes` is checked as
-// a zone, as Python's staleness checks it: its version, its columns and
-// `table_problem`; a refusal there stales the zone. Until VU7:
-// - a `/modes` row's lambda rule (A6) is not applied; the zone's state is;
+// What this reader never does: read the `DATA` of a `/results` entry or of a
+// `/spectra` case (only its shape), or any value of `/entities`, which is listed
+// by name in `zones` (its reader, VU8, adds its version target). `/modes` is read
+// whole (reader/userModes.ts judges it), and each row gets A6's lambda verdict
+// against the paired `.ladruno` (`Staleness.modes`). `/spectra` is read as an
+// index of its cases (reader/userSpectra.ts judges each): a bad case refuses
+// alone, as in Python's `read_spectra`. Until VU8:
 // - an `ON_ENTITIES` user result is refused, `unresolved`, because its rows
 //   cannot be checked against `/entities` (Python's `_bound_entries`);
 // - an element entry's `GP_PARAM` frame is not checked against its topology
@@ -22,11 +23,15 @@
 // be compared is stale, so nothing is drawn as current on no proof.
 
 import { openH5 } from "./h5open.ts";
-import { checkZoneVersion, COMBINATIONS_TARGET, MODES_TARGET, OPENSEES_TARGET, SchemaError, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
+import { checkZoneVersion, COMBINATIONS_TARGET, MODES_TARGET, OPENSEES_TARGET, SchemaError, SPECTRA_TARGET, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
 import { byCodePoint, FingerprintRefused, resultsFingerprint, type FpDataset, type FpFile, type FpGroup, type FpH5, type H5Meta } from "./rf1.ts";
+import { LambdasRefused, modeTableProblem, recordedLambdas, rowVerdicts, type ModeRow, type ModeTable, type RowVerdict } from "./userModes.ts";
+import { caseProblem, SPECTRA_FAMILIES, type SpectrumCase, type SpectrumMode, type SpectrumQuantity, type SpectrumTarget } from "./userSpectra.ts";
 import { addressProblem, nameProblem, resolve, type Combination, type Refusal, type StateAddress, type Term } from "./userRules.ts";
 
 export type { Combination, Refusal, StateAddress, Term } from "./userRules.ts";
+export type { ModeRow, ModeTable, RowVerdict } from "./userModes.ts";
+export type { SpectrumCase, SpectrumMode, SpectrumQuantity } from "./userSpectra.ts";
 export type UserH5 = FpH5;
 
 /** The file cannot be opened at all: its `/meta` is missing or malformed. */
@@ -94,14 +99,16 @@ export interface UserIndex {
   warnings: string[];
   combinations: ZoneRead<CombinationTable>;
   results: ZoneRead<ResultIndex>;
-  /** `/modes` checked as a zone (no row rule until VU7), or null when the file holds none */
-  modes: ZoneRead<ModesIndex> | null;
+  /** `/modes`, the modal table, or null when the file holds none */
+  modes: ZoneRead<ModeTable> | null;
+  /** `/spectra`, its cases (every value but DATA), or null when the file holds none */
+  spectra: ZoneRead<SpectraIndex> | null;
 }
 
-/** What this slice reads of `/modes`: the zone stands, with this many rows over these components. */
-export interface ModesIndex {
-  rows: number;
-  components: string[];
+/** The `/spectra` cases that stand, and each refused one (Python's `SpectraIndex`). */
+export interface SpectraIndex {
+  cases: SpectrumCase[];
+  refused: Refusal[];
 }
 
 /** Whether one zone or entry is stale, and why ("" when current). */
@@ -117,6 +124,8 @@ export interface Staleness {
   results: Record<string, ZoneState>;
   /** the standing combinations with a stale source, directly or through another combination */
   combinations: string[];
+  /** A6's verdict on each `/modes` row, in table order; [] when the table does not read */
+  modes: RowVerdict[];
 }
 
 /** What `user:read` answers: the file and its staleness against the set, or why it cannot be read. */
@@ -130,9 +139,6 @@ const BASES = ["results", "model"] as const;
 const ON: Record<ResultEntry["target"], string> = { nodes: "ON_NODES", elements: "ON_ELEMENTS", entities: "ON_ENTITIES", domain: "ON_DOMAIN" };
 const ENTITY_KINDS = ["cut", "storey", "point_set"];
 const MODEL_ZONES = ["modes", "spectra", "entities"] as const;
-/** `modalProperties` component tokens, and `modeKind` names (Python's `_modes.COMPONENTS`, `KINDS`). */
-const MODE_COMPONENTS = ["MX", "MY", "MZ", "RMX", "RMY", "RMZ"];
-const MODE_KINDS = ["eigen", "residual", "ritz"];
 /** A term's data comes from these zones; a `stage` or `mode` term reads the `.ladruno`, current by definition. */
 const TERM_ZONE: Record<string, string> = { spectrum: "spectra", reference: "spectra" };
 
@@ -273,6 +279,7 @@ export function readUserFile(h5: UserH5, path: string, model: string | null): Us
       combinations: zoneRead(() => readCombinations(t, f, meta.warnings, modelRows)),
       results: zoneRead(() => readResults(t, f, meta.warnings)),
       modes: f.keys().includes("modes") ? zoneRead(() => readModes(t, f, meta.warnings)) : null,
+      spectra: f.keys().includes("spectra") ? zoneRead(() => readSpectra(t, f, meta.warnings)) : null,
     };
   } finally {
     f.close();
@@ -288,7 +295,7 @@ function zoneRead<T>(read: () => T): ZoneRead<T> {
   }
 }
 
-function readMeta(t: Tree, f: FpFile, path: string): Omit<UserIndex, "combinations" | "results" | "modes"> {
+function readMeta(t: Tree, f: FpFile, path: string): Omit<UserIndex, "combinations" | "results" | "modes" | "spectra"> {
   const m = t.group(f, "meta");
   if (m === null) throw new UserFileRefused(`${path} has no /meta group`);
   const key = "user_meta_schema_version";
@@ -626,7 +633,7 @@ function checkPlacement(t: Tree, entry: FpGroup, bucket: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// /modes, as a zone (Python's `read_modes` and `table_problem`)
+// /modes (Python's `read_modes`; reader/userModes.ts holds `table_problem`)
 // ---------------------------------------------------------------------------
 
 function modeColumn(t: Tree, zone: FpGroup, name: string, code: string, ndim: number): { values: unknown[]; shape: number[] } {
@@ -638,7 +645,7 @@ function modeColumn(t: Tree, zone: FpGroup, name: string, code: string, ndim: nu
   return { values: values(ds), shape: shape(ds) };
 }
 
-function readModes(t: Tree, f: FpFile, warnings: string[]): ModesIndex {
+function readModes(t: Tree, f: FpFile, warnings: string[]): ModeTable {
   if (!zoneVersionChecked(t, f, "modes", "modes", MODES_TARGET, ZONE_FLOOR.modes, warnings)) {
     throw new ZoneRefused("/modes", "this file holds no modal table");
   }
@@ -653,47 +660,171 @@ function readModes(t: Tree, f: FpFile, warnings: string[]): ModesIndex {
   const lam = modeColumn(t, zone, "lambda", "f8", 1).values as number[];
   const period = modeColumn(t, zone, "period", "f8", 1).values as number[];
   const mass = modeColumn(t, zone, "generalized_mass", "f8", 1).values as number[];
-  const table = ["participation", "mass_ratio", "cumulative_ratio"].map((n) => [n, modeColumn(t, zone, n, "f8", 2)] as const);
-  const problem = modeTableProblem(components, host, kind, step, mode, lam, period, mass, table);
-  if (problem !== null) throw new ZoneRefused("/modes", problem);
-  return { rows: host.length, components };
-}
-
-function modeTableProblem(
-  components: string[], host: string[], kind: string[], step: number[], mode: number[],
-  lam: number[], period: number[], mass: number[], table: readonly (readonly [string, { values: unknown[]; shape: number[] }])[],
-): string | null {
+  const tableNames = ["participation", "mass_ratio", "cumulative_ratio"] as const;
+  const tables = tableNames.map((n) => modeColumn(t, zone, n, "f8", 2));
   const m = host.length;
   const c = components.length;
-  if (m === 0) return "the table has no rows";
-  if (c === 0 || new Set(components).size !== c || components.some((x) => !MODE_COMPONENTS.includes(x))) {
-    return `components ${components.join(",")} must be distinct tokens of ${MODE_COMPONENTS.join(", ")}`;
+  // The shapes are read here; the rules on the values are `modeTableProblem`'s.
+  for (const [what, col] of [["kind", kind], ["step", step], ["mode", mode], ["lambda", lam], ["period", period], ["generalized_mass", mass]] as const) {
+    if (col.length !== m) throw new ZoneRefused("/modes", `${what} has ${col.length} rows, expected ${m}`);
   }
-  if (kind.length !== m) return `${kind.length} kinds for ${m} rows`;
-  for (const h of host) {
-    const problem = nameProblem(h);
-    if (problem !== null) return `host ${JSON.stringify(h)}: ${problem}`;
+  tableNames.forEach((what, k) => {
+    if (!sameShape(tables[k]!.shape, [m, c])) throw new ZoneRefused("/modes", `${what} has shape (${tables[k]!.shape.join(", ")}), expected (${m}, ${c})`);
+  });
+  const slab = (k: number, i: number) => (tables[k]!.values as number[]).slice(i * c, (i + 1) * c);
+  const rows: ModeRow[] = host.map((h, i) => ({
+    host: h,
+    kind: kind[i]!,
+    step: step[i]!,
+    mode: mode[i]!,
+    lambda: lam[i]!,
+    period: period[i]!,
+    generalizedMass: mass[i]!,
+    participation: slab(0, i),
+    massRatio: slab(1, i),
+    cumulativeRatio: slab(2, i),
+  }));
+  const table: ModeTable = { components, rows };
+  const problem = modeTableProblem(table);
+  if (problem !== null) throw new ZoneRefused("/modes", problem);
+  return table;
+}
+
+// ---------------------------------------------------------------------------
+// /spectra (Python's `read_spectra`, `read_case`; reader/userSpectra.ts holds `case_problem`)
+// ---------------------------------------------------------------------------
+
+function readSpectra(t: Tree, f: FpFile, warnings: string[]): SpectraIndex {
+  if (!zoneVersionChecked(t, f, "spectra", "spectra", SPECTRA_TARGET, ZONE_FLOOR.spectra, warnings)) return { cases: [], refused: [] };
+  const zone = t.group(f, "spectra");
+  if (zone === null) throw new ZoneRefused("/spectra", "it is not a group");
+  const links = zone
+    .keys()
+    .filter((k) => /^s\d+$/.test(k))
+    .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  const read: [number, SpectrumCase][] = [];
+  const refused: Refusal[] = [];
+  links.forEach((link, at) => {
+    try {
+      const g = t.group(zone, link);
+      if (g === null) throw new EntryRefused("bad-param", `${zone.path}/${link} is not a group`);
+      read.push([at, readCase(t, link, g)]);
+    } catch (err) {
+      // A non-UTF-8 table cell refuses the zone.
+      if (err instanceof ZoneRefused) throw err;
+      const name = entryName(t, zone, link);
+      if (err instanceof EntryRefused) refused.push({ name, reason: err.reason, detail: err.detail, origin: "user", row: at });
+      else refused.push({ name, reason: "bad-param", detail: message(err), origin: "user", row: at });
+    }
+  });
+  const counts = new Map<string, number>();
+  for (const [, c] of read) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+  for (const [at, c] of read) {
+    const n = counts.get(c.name)!;
+    if (n > 1) refused.push({ name: c.name, reason: "duplicate", detail: `${n} cases are named ${JSON.stringify(c.name)}`, origin: "user", row: at });
   }
-  const bad = [...new Set(kind.filter((k) => !MODE_KINDS.includes(k)))].sort();
-  if (bad.length > 0) return `kinds ${bad.join(", ")} are not one of ${MODE_KINDS.join(", ")}`;
-  for (const [what, col] of [["step", step], ["mode", mode]] as const) {
-    if (col.length !== m) return `${what} must be ${m} integers, got ${col.length}`;
+  return { cases: read.filter(([, c]) => counts.get(c.name) === 1).map(([, c]) => c), refused };
+}
+
+/** One float attribute (an `f` kind only), or the case refuses (Python's `_number(group, key, "f")`). */
+function floatAttr(g: FpGroup, key: string): number {
+  const a = g.attrs[key];
+  if (a === undefined) throw new EntryRefused("bad-param", `${g.path} has no @${key}`);
+  let v = a.value;
+  if (Array.isArray(v) || ArrayBuffer.isView(v)) {
+    const arr = v as ArrayLike<unknown>;
+    if (arr.length !== 1) throw new EntryRefused("bad-param", `${g.path}@${key} holds ${arr.length} values`);
+    v = arr[0];
   }
-  // A loop, not Math.min(...col): a spread of a long column overflows the call stack.
-  for (const s of step) if (s < -1) return "a step is below -1";
-  for (const k of mode) if (k < 1) return "modes are 1-based";
-  if (new Set(host.map((h, i) => JSON.stringify([h, step[i], mode[i]]))).size !== m) return "two rows name the same (host, step, mode)";
-  for (const [what, col] of [["lambda", lam], ["period", period], ["generalized_mass", mass]] as const) {
-    if (col.length !== m) return `${what} has shape (${col.length}), expected (${m})`;
+  if (a.metadata.type !== H5T_FLOAT || typeof v !== "number") throw new EntryRefused("bad-param", `${g.path}@${key} is ${dtypeOfAttr(a.metadata)}, expected f`);
+  return v;
+}
+
+const dtypeOfAttr = (m: H5Meta) => (m.type === H5T_STRING ? "str" : `${m.type === H5T_FLOAT ? "f" : m.signed ? "i" : "u"}${m.size}`);
+
+/** One case, judged by `caseProblem`, or `EntryRefused` (Python's `read_case`). Its DATA is not read. */
+function readCase(t: Tree, link: string, g: FpGroup): SpectrumCase {
+  if (g.attrs["name"] === undefined) throw new EntryRefused("bad-param", `${g.path} has no @name`);
+  const name = textAttr(g, "name") ?? "";
+  const problem = nameProblem(name);
+  if (problem !== null) throw new EntryRefused("empty-name", `${g.path}@name: ${problem}`);
+  if (g.attrs["KIND"] === undefined) throw new EntryRefused("bad-param", `${g.path} has no @KIND`);
+  const kindAttr = textAttr(g, "KIND");
+  if (kindAttr !== "static") throw new EntryRefused("bad-param", `${g.path}@KIND is ${JSON.stringify(kindAttr)}, not 'static'`);
+  const spectrum = t.group(g, "spectrum");
+  const modes = t.group(g, "modes");
+  const reference = t.group(g, "reference");
+  if (spectrum === null || modes === null || reference === null) throw new EntryRefused("bad-param", `${g.path} needs spectrum, modes and reference groups`);
+  if (g.attrs["direction"] === undefined) throw new EntryRefused("bad-param", `${g.path} has no @direction`);
+  const direction = intAttr(g, "direction", true);
+  if (direction === null) throw new EntryRefused("bad-param", `${g.path}@direction is ${dtypeOfAttr(g.attrs["direction"]!.metadata)}, expected iu`);
+  const scale = floatAttr(g, "scale");
+  const col = (holder: FpGroup, n: string, code: string) => values(entryDataset(t, holder, n, code, 1));
+  const mode = col(modes, "mode", "i4") as number[];
+  const kind = col(modes, "kind", "str").map((x) => cell(x, "/spectra", `${modes.path}/kind`));
+  const lam = col(modes, "lambda", "f8") as number[];
+  const saPeriod = col(modes, "sa_period", "f8") as number[];
+  const gamma = col(modes, "gamma", "f8") as number[];
+  const sa = col(modes, "sa", "f8") as number[];
+  const damping = col(modes, "damping", "f8") as number[];
+  const m = mode.length;
+  for (const [what, c] of [["kind", kind], ["lambda", lam], ["sa_period", saPeriod], ["gamma", gamma], ["sa", sa], ["damping", damping]] as const) {
+    if (c.length !== m) throw new EntryRefused("bad-param", `${g.path}: modes/${what} has ${c.length} rows, expected (${m},)`);
   }
-  if (lam.some((x) => !Number.isFinite(x) || x <= 0)) return "every lambda must be finite and > 0 (lambda <= 0 is refused)";
-  if (period.some((x) => !Number.isFinite(x) || x <= 0)) return "every period must be finite and > 0";
-  if (mass.some((x) => x === Infinity || x === -Infinity)) return "a generalized_mass is infinite";
-  for (const [what, col] of table) {
-    if (!sameShape(col.shape, [m, c])) return `${what} has shape (${col.shape.join(", ")}), expected (${m}, ${c})`;
-    if ((col.values as number[]).some((x) => x === Infinity || x === -Infinity)) return `${what} holds an infinite value`;
+  const rows: SpectrumMode[] = mode.map((k, i) => ({ mode: k, kind: kind[i]!, lambda: lam[i]!, saPeriod: saPeriod[i]!, gamma: gamma[i]!, sa: sa[i]!, damping: damping[i]! }));
+  const c: SpectrumCase = {
+    name,
+    link,
+    direction,
+    scale,
+    periods: col(spectrum, "T", "f8") as number[],
+    sa: col(spectrum, "Sa", "f8") as number[],
+    modes: rows,
+    results: readQuantities(t, g, "RESULTS"),
+    reference: readQuantities(t, reference, "reference/RESULTS"),
+  };
+  const bad = caseProblem(c);
+  if (bad !== null) throw new EntryRefused("bad-param", `${g.path}: ${bad}`);
+  return c;
+}
+
+/** `ON_DOMAIN` and `ON_NODES` to their targets (Python's `_TARGET`). */
+const SPECTRUM_TARGET_OF: ReadonlyMap<string, SpectrumTarget> = new Map(Object.entries(SPECTRA_FAMILIES).map(([k, v]) => [v, k as SpectrumTarget]));
+
+/** A case's results, by shape; a family outside 1.0.0 refuses the case (Python's `_read_quantities`). */
+function readQuantities(t: Tree, root: FpGroup, where: string): SpectrumQuantity[] {
+  const results = t.group(root, "RESULTS");
+  if (results === null) throw new EntryRefused("bad-param", `${root.path} has no ${where}`);
+  const out: SpectrumQuantity[] = [];
+  for (const on of results.keys()) {
+    const target = SPECTRUM_TARGET_OF.get(on);
+    if (target === undefined) {
+      throw new EntryRefused("bad-param", `${results.path}/${on}: the family ${on} is not in spectra 1.0.0, whose cases hold ${[...SPECTRUM_TARGET_OF.keys()].sort().join(", ")} only`);
+    }
+    const family = t.group(results, on);
+    if (family === null) throw new EntryRefused("bad-param", `${results.path}/${on} is not a group`);
+    for (const label of family.keys()) {
+      const holder = t.group(family, label);
+      if (holder === null || !t.has(holder, "DATA")) throw new EntryRefused("bad-param", `${family.path}/${label} is not a result group`);
+      const data = t.dataset(holder, "DATA");
+      if (data === null || !isCode(data, "f8") || shape(data).length !== 3) throw new EntryRefused("bad-param", `${holder.path}/DATA is not f8 of rank 3`);
+      const [s, n, c] = shape(data) as [number, number, number];
+      for (const axis of ["STEP", "TIME"]) {
+        const ds = t.dataset(holder, axis);
+        if (ds === null || !sameShape(shape(ds), [s])) throw new EntryRefused("bad-param", `${holder.path}: ${axis} must have ${s} rows`);
+      }
+      let ids: number[] | null = null;
+      if (target === "nodes") {
+        const id = t.dataset(holder, "ID");
+        if (id === null || !isCode(id, "i4") || !sameShape(shape(id), [n, 1])) throw new EntryRefused("bad-param", `${holder.path}/ID must be i4 (${n}, 1)`);
+        ids = values(id) as number[];
+      }
+      if (holder.attrs["COMPONENTS"] === undefined) throw new EntryRefused("bad-param", `${holder.path} has no @COMPONENTS`);
+      const components = (textAttr(holder, "COMPONENTS") ?? "").split(",");
+      out.push({ label, target, components, shape: [s, n, c], ids });
+    }
   }
-  return null;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +902,24 @@ export function staleness(h5: UserH5, user: UserIndex, model: string | null, res
   } else {
     zones["combinations"] = { stale: true, reason: user.combinations.reason };
   }
-  return { zones, results: entries, combinations: stale };
+  const modes = user.modes !== null && user.modes.ok ? modeRows(h5, user.modes.value, zones["modes"]!, results, list) : [];
+  return { zones, results: entries, combinations: stale, modes };
+}
+
+/** A6's row rule over `/modes`; a row of a stale zone is stale (Python's `_mode_rows`). */
+function modeRows(h5: UserH5, table: ModeTable, zone: ZoneState, results: string | null, list: (dir: string) => readonly string[]): RowVerdict[] {
+  const all = (v: RowVerdict) => table.rows.map(() => v);
+  if (zone.stale) return all(zone);
+  if (results === null) return all({ stale: true, reason: "no results file to compare lambda with" });
+  let lambdas: ReturnType<typeof recordedLambdas>;
+  try {
+    lambdas = recordedLambdas(h5, results, list);
+  } catch (err) {
+    // Python catches OSError, KeyError and ValueError: the file, or its modal record, cannot be read.
+    if (!(err instanceof LambdasRefused)) throw err;
+    return all({ stale: true, reason: `the results file's modes cannot be read: ${message(err)}` });
+  }
+  return rowVerdicts(table, lambdas);
 }
 
 /** Rows with a stale source, directly or through another combination. */
