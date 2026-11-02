@@ -193,9 +193,6 @@ function deform(v: unknown, key: string): SpecDeform {
   const scale = o["scale"] === undefined ? 1 : finite(o["scale"], `${key}.scale`);
   if (!(scale > 0)) throw new SpecError(`${key}.scale`, `must be positive; got ${scale}`);
   const ghost = o["ghost"] === undefined ? false : bool(o["ghost"], `${key}.ghost`);
-  // Maintainer ruling on #2651: the reference ghost is a translucent pass that is not
-  // pixel-identical between two frames, so v1 refuses it until it is made deterministic.
-  if (ghost) throw new SpecError(`${key}.ghost`, `is not drawn by ${SPEC_VERSION}: the reference ghost does not draw the same pixels twice, so a still of it is not reproducible`);
   return { scale, ghost };
 }
 

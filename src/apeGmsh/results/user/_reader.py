@@ -20,7 +20,9 @@ import numpy as np
 
 from ...opensees._internal.schema_version import (
     COMBINATIONS,
+    MODES,
     OPENSEES,
+    SPECTRA,
     SchemaVersionError,
     USER_META,
     USER_RESULTS,
@@ -31,7 +33,9 @@ from ...opensees._internal.schema_version import (
 from ._descriptor import Combination, CombinationTable, Refusal, read_generation, resolve
 from ._errors import UserFileError, UserFileRefused, ZoneRefused
 from ._fields import EntryRefused, ResultEntry, UserResult, read_entry, read_entry_meta
+from ._modes import ModeTable, read_modes
 from ._names import text_or_empty
+from ._spectra import SpectraIndex, read_spectra
 
 __all__ = ["ResultIndex", "UserFile", "read_model_combinations"]
 
@@ -262,3 +266,23 @@ class UserFile:
         entry = self.results().by_name(name)
         with h5py.File(self.path, "r") as f:
             return read_entry(entry, f["results"][entry.link])
+
+    # ---- /modes and /spectra -------------------------------------------
+
+    def modes(self) -> ModeTable:
+        """The ``/modes`` table. Raises :class:`ZoneRefused` when the file holds
+        none or it is malformed, ``SchemaVersionError`` outside its version range."""
+        with _zone_guard("/modes"), h5py.File(self.path, "r") as f:
+            if not _zone_version_checked(f, MODES, "modes"):
+                raise ZoneRefused("/modes", "this file holds no modal table")
+            return read_modes(f["modes"])
+
+    def spectra(self) -> SpectraIndex:
+        """Every ``/spectra`` case, values included. A bad case refuses alone."""
+        with _zone_guard("/spectra"), h5py.File(self.path, "r") as f:
+            if not _zone_version_checked(f, SPECTRA, "spectra"):
+                return SpectraIndex((), ())
+            zone = f["spectra"]
+            if not isinstance(zone, h5py.Group):
+                raise ZoneRefused("/spectra", "it is not a group")
+            return read_spectra(zone)
