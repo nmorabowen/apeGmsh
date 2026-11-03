@@ -244,3 +244,30 @@ adds a verb, a record field or an archive path.
 2. **Loads by label (ruling D4).** There is no `p.load(label=)`. The
    idiom is `p.load(node=ops.nodes.one(label=...), forces=...)`.
    `ops.nodes.one` raises unless the label picks exactly one node (D5).
+
+## Amendment A1 (2026-11-03): the history read is `.ladruno`
+
+**Status:** Proposed; the maintainer accepts it with the PR that accepts
+[ADR 0122](0122-ladruno-canonical-results-format.md) Amendment 1
+(`human-gate`), as [ADR 0121](0121-charter-v2-b-with-amendments.md) D5
+requires.
+**Rulings:** the owner's rulings on #2655 (2026-11-02, comments 6595544718
+and 6595709683) and on #2079 (Q1, 6596355058), recorded in ADR 0122
+Amendment 1.
+**Slice:** #2755 (A0 of chain X).
+
+ADR 0122 Amendment 1 deletes `Results.from_mpco` at its slice DM2 and
+keeps `convert_mpco` as apeGmsh's only consumer of an `.mpco`. D3's route
+list changes in two places:
+
+1. **An `MPCO` recorder** no longer reads through `Results.from_mpco`.
+   `ops.results(path)` refuses it, and the refusal names
+   `apeGmsh.results.convert_mpco`.
+2. **A `Ladruno` recorder** reads through `Results.from_ladruno`. Today
+   `opensees/_results_route.py::_unreadable` refuses it, as "not a history
+   ops.results reads".
+
+The `recorder.declare(...)` and typed `recorder.Node` routes stand, read
+by `Results.from_recorders`. The change lands no later than DM2, which
+deletes the reader the first route calls. Invariant 7 holds: a deck may
+still emit `recorder mpco` (6595709683), so decks stay byte-identical.

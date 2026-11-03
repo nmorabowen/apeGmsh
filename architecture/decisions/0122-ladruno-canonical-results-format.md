@@ -295,3 +295,190 @@ Modal groups are copied as they are. LOCAL_AXES is dropped and listed in
 
 Slice 6 (#2120, PR #2121) implements the converter this way. No decision
 changes, and the D5 text above stands as written.
+
+## Amendment 1 (2026-11-03): all in `.ladruno`
+
+**Status:** Proposed; the maintainer accepts it by merging its PR
+(`human-gate`).
+
+**Rulings:**
+
+- The owner's rulings on #2655 (2026-11-02): R22b, a `Results` held only
+  in memory, is "Ladruno only" (comment 6595544718), and "apeGmsh will
+  allow mpco output to be given on the deck. But our viewer is ladruno
+  only" (6595709683).
+- The reconciled design on #2079 (6596348962): two architect briefs, one
+  by Opus and one by Fable, written independently against `origin/main`
+  e1014a6f8 and reconciled by the VA orchestrator.
+- The owner's rulings on its five questions, Q1–Q5, on #2079
+  (6596355058, 6596365155, 6596384120, 6596394731, 6596405233).
+
+**Slice:** #2755 (A0 of chain X, written by link VA).
+
+The reconciliation lists the points both briefs agreed on as proposed for
+settlement; the maintainer settles them by accepting this amendment. The
+points the briefs left open are settled by Q1–Q5. D1, D3, D4, D7, D8 and
+D9 stand. Ruling 4 stands: no native → `.ladruno` migrator is built, and
+old `.results.h5` files stop opening at the native deletion. ADR 0020
+INV-3 holds: no reader converts on open, and no re-export shim keeps a
+deleted name alive.
+
+The end state: apeGmsh reads one results format, `.ladruno`. Decks may
+still emit `.mpco` and `.out`, and the fork records `.ladruno`. Native
+`results.h5` (`NativeWriter`, `Results.from_native`, `to_native`),
+`Results.from_mpco` with the slab `readers/_mpco*` stack, and the viewer's
+native read path are deleted. Every deletion is human-gated and lands only
+after its replacement has a green oracle on `main`.
+
+### A1-D1 — Every viewer route reads `.ladruno` only
+
+D1 gains a clause. apeGmshViewer, the v2 stills
+([ADR 0128](0128-agent-views-in-apegmshviewer.md)) and the render of a
+`Results` held only in memory read `.ladruno` only. The in-memory render
+repoints to the `.ladruno` file the `Results` was read from. Every other
+source (`.mpco`, a native `.results.h5`, recorders, and `fem=` or units
+overrides held only in memory) is refused with a message that names
+`.ladruno` (R22b, as read in 6595544718). The Qt `ResultsSession` stays
+until the Qt sunset. It has no format code of its own, so its sources
+narrow as the readers below are deleted.
+
+### A1-D2 — The viewer drops native before Python does
+
+D2's "Until then a `<stem>.results.h5` still opens wherever it opens
+today" no longer holds for apeGmshViewer. The viewer's native read path
+(`apeGmshViewer/src/reader/results.ts`, and the `.results.h5` slot in
+`src/main/pairing.ts`) is deleted at slice V1d, once the writers that
+produce native files today have moved to `.ladruno` or `.user.h5` (W1–W4
+below). In Python, `Results.from_native` keeps reading until the last N
+slice, as D2 says.
+
+### A1-D5 — The converter stays; `from_mpco` goes
+
+D5's last paragraph read: "The `.mpco` is kept, and `Results.from_mpco`
+stays a reader." It now reads as follows.
+
+- **The converter stays** (Q1, 6596355058). `convert_mpco` is the stock
+  on-ramp and apeGmsh's only consumer of an `.mpco`. It keeps the slim MPCO
+  read core it uses: in `results/readers/_ladruno_from_mpco.py`,
+  `_open_with_reader` checks its input with `MPCOReader` and
+  `MPCOMultiPartitionReader`, `_scan_stage` uses `_mpco_spring_io`, and
+  `_holds_only_modes` and `_stage_step_counts` use `_mpco_translation`.
+  The `.mpco` is kept and never modified. A deck may still emit
+  `recorder mpco` (6595709683).
+- **`Results.from_mpco` and the slab `_mpco*` readers are deleted** at
+  slice DM2, and the moves come first. The `.ladruno` reader imports
+  `_mpco*` code today: `readers/_ladruno.py`, `_ladruno_element_io.py` and
+  `_ladruno_multi.py` import `_mpco`, `_mpco_nodal_io`, `_mpco_translation`,
+  `_mpco_layer_io`, `_mpco_local_force_io`, `_mpco_refusals` and
+  `_mpco_multi`. That shared code moves out as pure moves under
+  `scripts/verify_move.py` (M1a, then M1b) before any MPCO reader is
+  deleted.
+- **The stock in-process route converts, or refuses by name.**
+  `LiveDefault`'s stock MPCO route (`results/live/_default.py`,
+  `LiveDefault.results`) reads the `.mpco` with `from_mpco` today, and so
+  does `read_deck_mpco` when conversion refuses an unstaged program. Both
+  now convert when the program declares stages, and otherwise refuse by
+  name, with no default stage kind (Q1; the reconciliation's point 5).
+- **The converter's offline oracle** is a golden `.ladruno` corpus
+  converted from the committed `.mpco` fixtures, beside the live-fork D8
+  oracle. The converter's tests stop reading through `from_mpco`.
+- **#2454 lands before DM2** (Q5, 6596405233). It adds part-set reduction
+  (`PARTITION_REDUCTION`) to the converter, so partitioned stock runs keep
+  a route once `from_mpco` is gone.
+
+### A1-D6 — Footfall goes to `.user.h5`; element buckets carry only known class tags
+
+- **Footfall** writes `<stem>.user.h5`
+  ([ADR 0130](0130-states-quantities-and-the-user-results-file.md) D7,
+  which names footfall `R` as a state-free user result), not a `.ladruno`
+  bucket that apeGmsh would invent against D4 (Q2, 6596365155). Footfall
+  leaves D6's list of sources the Python writer serves. That is slice W3.
+- **Element buckets** in a Python-written `.ladruno` carry only class tags
+  known as fact: the `ELE_TAG_*` constants in
+  `opensees/_response_catalog.py`. Every other class is refused by name in
+  `PROVENANCE@unsupported`. The fix belongs at the source: the fork
+  exports its element class tags, in a chain F slice, and apeGmsh then
+  takes them from the fork, never guessing them and never keeping a table
+  of its own (Q3, as read in 6596384120). The `.out` element coverage of
+  slice W4b waits on that fork slice at `FORK_PIN`.
+
+### A1-D10 — The slice plan from here
+
+Slices 0–8 of D10 have landed, and so has row 9's eigen and parallel-modal
+writer (`EigenResult.to_ladruno`, `ParallelModalResult.to_ladruno`). The
+table below replaces the rest of row 9 and all of row 10. The stages run
+in order. Within a stage the slices may run in parallel, unless an arrow
+orders them. DM1, the converter's deletion, is not carded (Q1). The slice
+list goes to T before any card is cut (6596405233), so each card names its
+own owned files and locks.
+
+| Stage | Slice | Chain | Work | Needs |
+|---|---|---|---|---|
+| 0 | M1a | X | Shared-code moves out of `_mpco*`, first part (pure moves) | — |
+| 0 | W0 | X | Writer moves | — |
+| 0 | W1 | X | Modes default to `.ladruno`; only `to_native` still writes native modes | — |
+| 0 | W2 | X | The demo writes `.ladruno` | — |
+| 0 | V1a–c | V | Viewer test fixtures as `.ladruno` | — |
+| 1 | A0 | X | This amendment, with the ADR 0115 D3 amendment | maintainer accepts |
+| 2 | M1b | X | Shared-code moves, second part | M1a |
+| 2 | W3 | X | Footfall → `.user.h5` (A1-D6) | A0 |
+| 2 | RT | X | The stock in-process route (A1-D5) | A0 |
+| 2 | W4a → W4b | X | `.out` → `.ladruno`: nodes, then element buckets (A1-D6) | A0; W4b's full element coverage waits on the chain F class-tag slice |
+| 3 | DM2 | X | Delete `Results.from_mpco` and the slab `_mpco*` readers | M1a, M1b, #2454; human gate |
+| 4 | V1d | V | Delete the viewer's native read path (A1-D2) | the VU viewer locks (`main.ts`, `types.ts`, `reduce.ts`, `app.ts`); human gate |
+| 5 | N1–N6 | X | Migrate the tests that call `from_native`, by family; the last PR deletes `NativeWriter` and `from_native` | the Qt `tests/viewers` family and the last PR wait on V5, the Qt deletion (Q4); human gate; the changelog announces the cutoff (ruling 4) |
+
+`lock:Results.py` is taken in turn by W4a, DM2 and the last N slice.
+
+The 49 Qt `tests/viewers` tests that call `from_native` are not migrated.
+They go with the Qt viewers at V5 (Q4, 6596394731).
+
+### A1 Consequences — what each group of users loses
+
+- **Fork users** keep reading their `.ladruno` as before. A `.mpco` they
+  also record still opens in STKO and still converts, but no longer reads
+  through `from_mpco` after DM2.
+- **Stock OpenSees users** lose `Results.from_mpco` at DM2, for old
+  `.mpco` files too. Their runs reach Python and the viewer only through
+  `convert_mpco`, so its `unsupported` list (today `local_axes`) is their
+  ceiling, and partitioned runs depend on #2454 landing first. An unstaged
+  in-process run loses its default route and refuses by name (#2181 tracks
+  live staged emission). The converter's correctness rests on the golden
+  corpus offline and on the non-required `live-fork` lane.
+- **Pip openseespy users** lose nothing. `.out` gains a viewer route at W4,
+  and its element results stay partial until the fork exports its class
+  tags.
+- **Viewer users** stop opening a `<stem>.results.h5` in apeGmshViewer at
+  V1d, including a file `to_native` writes between V1d and the last N
+  slice. The v2 stills refuse every source but `.ladruno`.
+- **Footfall users** find their results in `<stem>.user.h5`.
+- **Everyone** loses old native `.results.h5` files at the last N slice
+  (ruling 4).
+
+The price of Q1 is that apeGmsh keeps a slim MPCO read core inside the
+converter, not only two helpers.
+
+### A1 Alternatives rejected
+
+- **Dropping the converter** (the Opus brief), with stock and pip users
+  going through `.out`. Through `.out`, stock users would lose layered-shell
+  layers, Tri31 per-material strains and the `n_steps` cadence (Q1).
+- **No stock in-process route that reads MPCO at all** (the Opus brief's
+  RT). It applied only if the converter went (the reconciliation's
+  point 5).
+- **Footfall as a `.ladruno` bucket** written by the Python writer (the
+  Fable brief; Q2).
+- **Migrating the 49 Qt viewer tests** in five PRs (the Fable brief; Q4).
+- **Deleting `from_mpco` before the shared-code moves** (the Fable brief).
+  The `.ladruno` reader imports that code (the reconciliation's points 2
+  and 9).
+
+### A1 Relation to other ADRs
+
+- **ADR 0115 D3** is amended in the same PR, as
+  [ADR 0121](0121-charter-v2-b-with-amendments.md) D5 requires: an `MPCO`
+  recorder no longer reads through `from_mpco` (its Amendment A1).
+- **ADR 0130** D7 already names footfall `R` a state-free user result; W3
+  moves footfall's writer onto it.
+- **ADR 0128**: A1-D1's v2-stills clause is the R22b outcome of the VA6
+  table on #2655.
