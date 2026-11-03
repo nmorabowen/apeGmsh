@@ -21,23 +21,46 @@ import type { FullPositions } from "./deform.ts";
 export const SHAFT_MIN_PX = 15;
 export const SHAFT_MAX_PX = 80;
 /**
- * Thinning merges arrows that share a cell no wider on screen than this
- * multiple of the head length (the widest power-of-two cell that fits), so
- * arrows a head length apart never merge and arrows closer than about half of
- * one always do.
+ * Thinning shows the level whose distance (state/loads.ts `thinningLevels`) is
+ * the largest power-of-two step no longer on screen than this multiple of the
+ * head length, so arrows 3/4 of a head length apart never merge and arrows
+ * closer than about 3/8 of one always do.
  */
 export const SPACING_PER_HEAD = 0.75;
 
 /**
- * The CPU twin of the shader's sizing, for tests: the drawn shaft length and
+ * The shader's sizing, written once: each is a GLSL expression that is also
+ * JavaScript once `clamp`, `min`, `max`, `floor` and `log2` are defined, so the
+ * shader embeds these strings and `screenArrow` evaluates the same strings.
+ * In world units: the drawn shaft `L` of an arrow `len` long at `wpp` world
+ * units per pixel, its head `H`, and the thinning level the zoom needs.
+ */
+export const SIZING_EXPR = {
+  shaft: "len <= 0.0 ? 0.0 : clamp( len / wpp, uMinPx, uMaxPx ) * wpp",
+  head: "min( uHeadPx * wpp, L )",
+  need: `min( ${THIN_LEVELS.toFixed(1)}, max( 0.0, ${THIN_LEVELS.toFixed(1)} + floor( log2( uSpacingPx * wpp / uRadius ) ) ) )`,
+} as const;
+
+const SIZING_NAMES = ["len", "wpp", "L", "uHeadPx", "uMinPx", "uMaxPx", "uSpacingPx", "uRadius"] as const;
+let twin: Record<keyof typeof SIZING_EXPR, (...v: number[]) => number> | null = null;
+
+/**
+ * `SIZING_EXPR` evaluated in JavaScript, for tests: the drawn shaft length and
  * head length (world units) of an arrow `len` long at `wpp` world units per
- * pixel, and whether its thinning `level` is shown.
+ * pixel, and whether its thinning `level` is shown. The expressions compile on
+ * the first call only, so the app (which never calls this) needs no `eval`.
  */
 export function screenArrow(len: number, level: number, wpp: number, u: { headPx: number; minPx: number; maxPx: number; radius: number; thin: boolean }): { L: number; H: number; shown: boolean } {
-  const L = Math.min(Math.max(len / wpp, u.minPx), u.maxPx) * wpp;
-  const H = Math.min(u.headPx * wpp, L);
-  const need = Math.min(THIN_LEVELS, Math.max(0, THIN_LEVELS + Math.floor(Math.log2((SPACING_PER_HEAD * u.headPx * wpp) / u.radius))));
-  return { L, H, shown: !u.thin || level >= need };
+  twin ??= Object.fromEntries(
+    Object.entries(SIZING_EXPR).map(([k, expr]) => [
+      k,
+      new Function(...SIZING_NAMES, `const clamp = (v, a, b) => Math.min(Math.max(v, a), b), min = Math.min, max = Math.max, floor = Math.floor, log2 = Math.log2; return (${expr});`) as (...v: number[]) => number,
+    ]),
+  ) as NonNullable<typeof twin>;
+  const vars = (L: number) => [len, wpp, L, u.headPx, u.minPx, u.maxPx, u.headPx * SPACING_PER_HEAD, u.radius];
+  const L = twin.shaft(...vars(0));
+  const H = twin.head(...vars(L));
+  return { L, H, shown: !u.thin || level >= twin.need(...vars(L)) };
 }
 
 const SIZING = `
@@ -53,7 +76,7 @@ float worldPerPixel(vec4 mv) {
   return 2.0 * depth / (projectionMatrix[1][1] * uViewportH);
 }
 float shaftLength(float len, float wpp) {
-  return len <= 0.0 ? 0.0 : clamp(len / wpp, uMinPx, uMaxPx) * wpp;
+  return ${SIZING_EXPR.shaft};
 }
 `;
 
@@ -66,7 +89,7 @@ const ARROW_VERTEX = `
 vec4 mvTip = modelViewMatrix * vec4( aTip, 1.0 );
 float wpp = worldPerPixel( mvTip );
 float L = shaftLength( aLen, wpp );
-float H = min( uHeadPx * wpp, L );
+float H = ${SIZING_EXPR.head};
 vec3 dV = normalize( mat3( modelViewMatrix ) * aDir );
 vec3 toEye = projectionMatrix[ 3 ][ 3 ] == 1.0 ? vec3( 0.0, 0.0, 1.0 ) : normalize( -mvTip.xyz );
 vec3 across = cross( dV, toEye );
@@ -74,10 +97,13 @@ if ( length( across ) < 1e-3 ) across = cross( dV, vec3( 0.0, 1.0, 0.0 ) );
 if ( length( across ) < 1e-3 ) across = vec3( 1.0, 0.0, 0.0 );
 across = normalize( across );
 vec4 mvPosition = vec4( mvTip.xyz - dV * ( aShape.x * L + aShape.y * H ) + across * ( aShape.z * H ), 1.0 );
-float need = min( ${THIN_LEVELS.toFixed(1)}, max( 0.0, ${THIN_LEVELS.toFixed(1)} + floor( log2( uSpacingPx * wpp / uRadius ) ) ) );
+float need = ${SIZING_EXPR.need};
 bool hidden = ( aPart == 1.0 && aBar != 1.0 ) || ( aPart == 3.0 && aBar != 2.0 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
 gl_Position = hidden ? vec4( 2.0, 2.0, 2.0, 1.0 ) : projectionMatrix * mvPosition;
 `;
+
+/** The arrow instances' vertex source as compiled (sizing functions and body), for the test that it embeds `SIZING_EXPR`. */
+export const arrowShaderSource = (): string => SIZING + ARROW_VERTEX;
 
 /** Comb bars: each end at its arrow's drawn tail, `aEnd` 0 or 1. */
 const COMB_VERTEX = `

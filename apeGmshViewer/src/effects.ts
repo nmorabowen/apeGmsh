@@ -112,8 +112,8 @@ export interface Bridge {
   /** V2f: replays the set already open at subscription, then every later open; the page must not also load `config().file`. Returns the unsubscribe. */
   onOpen?(cb: (set: OpenSet) => void): (() => void) | void;
   onFileChanged?(cb: (path: string) => void): (() => void) | void;
-  /** V2f: ask main to open a dropped file; main answers through `onOpen` */
-  requestOpen?(path: string): Promise<unknown>;
+  /** V2f: ask main to open a dropped File (VU12: the File, never a path); main answers through `onOpen` */
+  requestOpen?(file: File): Promise<unknown>;
   goToSource?(file: string, line: number): Promise<{ ok: boolean; reason?: string }>;
   /** VU7b-1 (ADR 0130 D5): one result of one `/spectra` case, with its values (main's `user:readCase`); VU7b-2 exposes it in preload.ts. */
   readUserCase?(req: { path: string; case: string; target: SpectrumTarget; label: string }): Promise<CaseRead>;
@@ -1300,10 +1300,14 @@ export class Effects {
     return typeof this.bridge.onOpen === "function";
   }
 
-  /** A file the user dropped: main decides what it is when it can (V2f `requestOpen`), else it is read as the model. */
-  openDropped(path: string): void {
-    if (typeof this.bridge.requestOpen === "function") void this.bridge.requestOpen(path);
-    else void this.open(path);
+  /**
+   * A file the user dropped: main decides what it is when it can (V2f
+   * `requestOpen`), else it is read as the model. Either way the preload names
+   * its path from the File itself, so main knows a user dropped it (VU12).
+   */
+  openDropped(f: File): void {
+    if (typeof this.bridge.requestOpen === "function") void this.bridge.requestOpen(f);
+    else void this.open(this.bridge.pathForFile(f));
   }
 
   /** Attach the window and bridge listeners; the returned function detaches them. */
@@ -1312,7 +1316,7 @@ export class Effects {
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       const f = e.dataTransfer?.files[0];
-      if (f) this.openDropped(this.bridge.pathForFile(f));
+      if (f) this.openDropped(f);
     };
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("drop", onDrop);

@@ -79,7 +79,7 @@ import { openGeometry, openLineage, openProvenance, openStageElements } from "./
 import { resolveSpecFiles } from "../spec/files.ts";
 import { outRefusal, prepareRender, PROFILE_DIR, type JobFs, type RenderJobFiles } from "../spec/job.ts";
 import { MANIFEST_FILE, refusedManifest } from "../spec/manifest.ts";
-import { agentArgsOf, presentDocument, SNAPSHOT_PNG, SNAPSHOT_VIEW, type PresentedDocument } from "../spec/snapshot.ts";
+import { agentArgsOf, presentDocument, SNAPSHOT_PNG, SNAPSHOT_VIEW, type OfferPayload, type PresentedDocument } from "../spec/snapshot.ts";
 import type { OfferIn } from "../state/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -482,6 +482,12 @@ if (mode === "view") {
 
 let offersReady = false;
 let offersWaiting: OfferIn[][] = [];
+/**
+ * VU12 (#2753): the files `viewer:offerOpen` may open, all chosen by main: the
+ * model and results of every offer main sent in `viewer:offers`, and of each
+ * set the window left when an offer opened (its Back reopens that set).
+ */
+const offerable: string[] = [];
 let snapshotSeq = 0;
 const snapshotReplies = new Map<number, (reply: SnapshotReply) => void>();
 type SnapshotReply = { ok: true; view: unknown; manifest: RunManifest } | { ok: false; reason: string };
@@ -496,6 +502,11 @@ function heardFromAgent(reach: Reach): void {
   try {
     if (reach.kind === "present") {
       const p = presentOffers(reach.spec);
+      for (const o of p.offers) {
+        if (o.refused !== undefined) continue; // a refused row is listed, never applied, and carries no files
+        const { model, results } = (o.payload as OfferPayload).files;
+        offerable.push(model, ...(results === null ? [] : [results]));
+      }
       if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
       else offersWaiting.push(p.offers);
       // The sender checked this file a moment ago. Changed since, it is listed as refused, and the sender hears why.
@@ -516,7 +527,7 @@ function heardFromAgent(reach: Reach): void {
       return;
     }
     const unknown: never = reach;
-    process.stderr.write(`apeGmshViewer: an unknown agent call reached the window: ${JSON.stringify(unknown)}\n`);
+    process.stderr.write(`apeGmshViewer: an unknown agent call reached the window: ${shown(unknown)}\n`);
   } catch (err) {
     process.stderr.write(`apeGmshViewer: an agent's call failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
   }
@@ -570,7 +581,7 @@ async function writeSnapshot(dir: string): Promise<void> {
 
 ipcMain.handle("viewer:snapshotReply", (_e, id: unknown, reply: unknown) => {
   const done = typeof id === "number" ? snapshotReplies.get(id) : undefined;
-  if (!done) throw new Error(`viewer:snapshotReply: no snapshot ${JSON.stringify(id)} is waiting`);
+  if (!done) throw new Error(`viewer:snapshotReply: no snapshot ${shown(id)} is waiting`);
   snapshotReplies.delete(id as number);
   done(reply as SnapshotReply);
 });
@@ -604,7 +615,33 @@ function followModel(path: string): void {
   else session.close();
 }
 
-ipcMain.handle("model:open", async (_e, path: string) => {
+/**
+ * VU12 (#2753), owner ruling "option A": the page is no longer trusted to name
+ * a path to open. These are the paths a user gesture or main itself produced:
+ * a file the user dropped, as Electron names it (preload.ts `gestured`, over
+ * `viewer:dropped`), and the paths main sent the page, which are the window's
+ * set (`windowSet`: argv / `--file`, `onOpen`, the render job) and `config().file`.
+ */
+const dropped: string[] = [];
+ipcMain.on("viewer:dropped", (e, path: unknown) => {
+  if (typeof path === "string" && path !== "") dropped.push(path);
+  e.returnValue = null;
+});
+
+/** Why the page may not ask to open `path`, or null when a gesture or main produced it. */
+function ungestured(door: string, path: string): string | null {
+  if (dropped.some((d) => samePath(d, path))) return null;
+  const set = windowSet();
+  if (!("reason" in set) && [set.model, set.geometry, set.results].some((p) => samePath(p, path))) return null;
+  if (mode !== "view" && file && samePath(resolve(file), path)) return null;
+  return `${door} opens only a file the user dropped or a path main sent the page; refused ${path}`;
+}
+
+ipcMain.handle("model:open", async (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
+  // A free string is refused before any read, so the set stays as it is (VU12).
+  const refused = ungestured("model:open", path);
+  if (refused !== null) return { ok: false, error: refused };
   let model;
   try {
     model = await openModel(path);
@@ -632,12 +669,51 @@ ipcMain.handle("model:open", async (_e, path: string) => {
   };
 });
 
+/**
+ * VU12 (#2753): the set whose geometry and results files the `results:*` and
+ * `geometry:open` doors read, as main chose it and never as the request names
+ * it. View mode: the set on screen (`currentSet`), which a double-click, a
+ * second instance, a drop (`viewer:requestOpen`) or a model the renderer read
+ * (`followModel`) opened. Render mode: the job's set, from the spec. Describe,
+ * capture and measure: the set of `--file`, the one `render:job` and
+ * `app:config` hand the page. No other mode's page reads these doors. The
+ * reason when there is no set.
+ */
+function windowSet(): { model: string | null; geometry: string | null; results: string | null } | { reason: string } {
+  if (mode === "view") return currentSet() ?? { reason: "no set is open" };
+  if (mode === "render") return renderJob ?? { reason: "the render job was refused" };
+  if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
+    try {
+      return pairSet(resolve(file), existsSync);
+    } catch (err) {
+      return { reason: `the set of ${file} cannot be paired (${err instanceof Error ? err.message : String(err)})` };
+    }
+  }
+  return { reason: `--mode=${mode} opens no set` };
+}
+
+/**
+ * The window's set's `slot` file when `asked` names it (`samePath`: case-folded
+ * where the file system folds), else why not. Only the path this returns is read.
+ */
+function setFile(door: string, slot: "geometry" | "results", asked: string): { ok: true; path: string } | { ok: false; error: string } {
+  const set = windowSet();
+  if ("reason" in set) return { ok: false, error: `${door} reads only the open set's ${slot} file, and ${set.reason}; refused ${asked}` };
+  const own = set[slot];
+  if (own === null || !samePath(asked, own)) return { ok: false, error: `${door} reads only the open set's ${slot} file ${own ?? "(the set has none)"}; refused ${asked}` };
+  return { ok: true, path: own };
+}
+
 // V4b (#1728): the results file, read lazily here; the renderer holds its
-// metadata and asks for one step at a time (./results.ts).
+// metadata and asks for one step at a time (./results.ts). Each door reads
+// only the window's set's results file (`setFile`, VU12); a step or a scan of
+// a file the set has left is refused too, though the host still indexes it.
 const resultsHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
 ipcMain.handle("results:open", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${JSON.stringify(path)}` };
-  return resultsHost.open(path);
+  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${shown(path)}` };
+  const f = setFile("results:open", "results", path);
+  if (!f.ok) return f;
+  return resultsHost.open(f.path);
 });
 ipcMain.handle("results:readStep", (_e, req: unknown) => {
   const r = req as StepRequest | null;
@@ -650,9 +726,11 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
     (r.element !== undefined && typeof r.element !== "string") ||
     (r.lineDiagram !== undefined && typeof r.lineDiagram !== "string")
   ) {
-    return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
+    return { ok: false, seq: -1, error: `results:readStep: malformed request ${shown(req)}` };
   }
-  return resultsHost.readStep(r);
+  const f = setFile("results:readStep", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readStep({ ...r, path: f.path });
 });
 ipcMain.handle("results:close", () => resultsHost.close());
 // V4c1 (#1756): the history-range scan of a contour's field; progress goes to
@@ -672,21 +750,26 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
     // V4c2b: a plan only with an element scan, and only one that checks (state/extrapolation.ts `checkPlan`).
     (r.plan !== undefined && (r.source !== "element" || !checkPlan(r.plan)))
   ) {
-    return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
+    return { ok: false, scanId: -1, error: `results:scan: malformed request ${shown(req)}` };
   }
+  const f = setFile("results:scan", "results", r.path);
+  if (!f.ok) return { ok: false, scanId: r.scanId, error: f.error };
   const sender = e.sender;
   const progress = (p: { scanId: number; done: number; total: number }) => {
     if (!sender.isDestroyed()) sender.send("results:scanProgress", p);
   };
-  return resultsHost.scan(r, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
+  return resultsHost.scan({ ...r, path: f.path }, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
 });
 ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
 });
 
+// A /geometry sibling (./zones.ts): only the window's set's (`setFile`, VU12).
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
-  return openGeometry(path);
+  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${shown(path)}` };
+  const f = setFile("geometry:open", "geometry", path);
+  if (!f.ok) return f;
+  return openGeometry(f.path);
 });
 
 /** A request as a log line, whatever the IPC carried (a BigInt, a cycle): never throws, unlike `JSON.stringify` (VU11, #2750). */
@@ -788,7 +871,7 @@ ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
 for (const verb of ["subscribe", "unsubscribe"] as const) {
   ipcMain.on(`viewer:${verb}`, (_e, channel: unknown) => {
     if (channel !== "open" && channel !== "fileChanged") {
-      fail(`viewer:${verb}: unknown channel ${JSON.stringify(channel)}`);
+      fail(`viewer:${verb}: unknown channel ${shown(channel)}`);
       return;
     }
     if (verb === "subscribe") subscribed.add(channel);
@@ -800,17 +883,26 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 ipcMain.handle("viewer:currentSet", () => currentSet());
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };
+  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${shown(path)}` };
+  const refused = ungestured("requestOpen", path);
+  if (refused !== null) return { ok: false, reason: refused };
   return openPath(path, true) ? { ok: true } : { ok: false, reason: `cannot open ${path}` };
 });
 
 // ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
+// VU12 (#2753): the path and every one of `needs` (at least one) must be `offerable`; any other is refused and the set stays.
 ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
-  if (typeof path !== "string" || !Array.isArray(needs)) return { ok: false, reason: `offerOpen needs a path; got ${JSON.stringify(path)}` };
-  for (const f of needs as unknown[]) {
-    if (typeof f !== "string" || !existsSync(f)) return { ok: false, reason: `no such file: ${String(f)}` };
+  if (typeof path !== "string" || !Array.isArray(needs) || needs.length === 0) return { ok: false, reason: `offerOpen needs a path and the files it needs; got ${shown(path)}, ${shown(needs)}` };
+  for (const f of [path, ...(needs as unknown[])]) {
+    if (typeof f !== "string" || !offerable.some((o) => samePath(o, f))) return { ok: false, reason: `offerOpen opens only the files of a set main offered or the set an offer left; refused ${shown(f)}` };
+  }
+  for (const f of needs as string[]) {
+    if (!existsSync(f)) return { ok: false, reason: `no such file: ${f}` };
     if (!statSync(f).isFile()) return { ok: false, reason: `${f} is not a file` };
   }
+  // The set on screen becomes offerable: an offer's Back (or a refused offer's put-back) reopens it through this door.
+  const left = currentSet();
+  if (left) for (const f of [left.model, left.results]) if (f !== null) offerable.push(f);
   quietFails = [];
   try {
     return openPath(path, true) ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open ${path}` };
@@ -1013,7 +1105,7 @@ const written = new Set<string>();
 
 function stillPath(name: unknown): string {
   if (mode !== "render" || !renderJob) throw new Error("render: only in --mode=render");
-  if (typeof name !== "string" || !unwritten.has(name)) throw new Error(`render: ${JSON.stringify(name)} is not a shot of the spec still to be written`);
+  if (typeof name !== "string" || !unwritten.has(name)) throw new Error(`render: ${shown(name)} is not a shot of the spec still to be written`);
   unwritten.delete(name);
   return join(resolve(out!), `${name}.png`);
 }
