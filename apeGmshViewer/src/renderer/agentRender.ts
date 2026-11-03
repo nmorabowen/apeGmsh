@@ -114,7 +114,9 @@ function screenAxes(viewport: Viewport): { x: [number, number]; y: [number, numb
 function scaleBarOf(s: State, plan: ShotPlan): ScaleBar | null {
   const v = contourView(s);
   if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination") || !plan.contour) return null;
-  return { title: `${plan.contour.field} ${plan.contour.label}`, min: v.clim.min, max: v.clim.max, rangeLabel: v.clim.label, cmap: v.cmap };
+  // VU7b-2: a combination's scale names the combination, as the app's does.
+  const what = v.state === "combination" ? `${v.name} · ` : "";
+  return { title: `${what}${plan.contour.field} ${plan.contour.label}`, min: v.clim.min, max: v.clim.max, rangeLabel: v.clim.label, cmap: v.cmap };
 }
 
 async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
