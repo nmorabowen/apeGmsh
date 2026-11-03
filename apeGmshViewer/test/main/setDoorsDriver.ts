@@ -103,6 +103,9 @@ if (which === "view") {
   await call("results:readStep circular", "results:readStep", circular);
   await call("results:scan bigint", "results:scan", scan(5n, 1));
   await call("results:scan circular", "results:scan", circular);
+  // the open doors' error lines are total too (they open nothing for a path that is not a string)
+  await call("viewer:requestOpen circular", "viewer:requestOpen", circular);
+  await call("viewer:offerOpen bigint", "viewer:offerOpen", 5n, []);
   // A drop moves the set: the old set's results, still indexed by the host, are refused; the new set's read.
   await call("drop:1 requestOpen", "viewer:requestOpen", join(elsewhere, "s.h5"));
   await call("drop:2 readStep old", "results:readStep", step(ladruno, 200));

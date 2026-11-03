@@ -107,6 +107,12 @@ test("VU12: a BigInt or circular request resolves with the shape it needed, neve
     assert.match(resolved(view, `${door} bigint`).error ?? "", new RegExp(`^${door}: malformed request .*path: 5n`));
     assert.match(resolved(view, `${door} circular`).error ?? "", new RegExp(`^${door}: malformed request .*\\[Circular \\*1\\]`));
   }
+  const ro = resolved(view, "viewer:requestOpen circular");
+  assert.equal(ro.ok, false);
+  assert.match(ro.error ?? "", /^requestOpen needs a path; got .*\[Circular \*1\]/);
+  const oo = resolved(view, "viewer:offerOpen bigint");
+  assert.equal(oo.ok, false);
+  assert.match(oo.error ?? "", /^offerOpen needs a path; got 5n$/);
 });
 
 test("VU12: a drop moves the set; the set it left is refused, though the host still indexes its results", () => {

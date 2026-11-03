@@ -516,7 +516,7 @@ function heardFromAgent(reach: Reach): void {
       return;
     }
     const unknown: never = reach;
-    process.stderr.write(`apeGmshViewer: an unknown agent call reached the window: ${JSON.stringify(unknown)}\n`);
+    process.stderr.write(`apeGmshViewer: an unknown agent call reached the window: ${shown(unknown)}\n`);
   } catch (err) {
     process.stderr.write(`apeGmshViewer: an agent's call failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
   }
@@ -570,7 +570,7 @@ async function writeSnapshot(dir: string): Promise<void> {
 
 ipcMain.handle("viewer:snapshotReply", (_e, id: unknown, reply: unknown) => {
   const done = typeof id === "number" ? snapshotReplies.get(id) : undefined;
-  if (!done) throw new Error(`viewer:snapshotReply: no snapshot ${JSON.stringify(id)} is waiting`);
+  if (!done) throw new Error(`viewer:snapshotReply: no snapshot ${shown(id)} is waiting`);
   snapshotReplies.delete(id as number);
   done(reply as SnapshotReply);
 });
@@ -834,7 +834,7 @@ ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
 for (const verb of ["subscribe", "unsubscribe"] as const) {
   ipcMain.on(`viewer:${verb}`, (_e, channel: unknown) => {
     if (channel !== "open" && channel !== "fileChanged") {
-      fail(`viewer:${verb}: unknown channel ${JSON.stringify(channel)}`);
+      fail(`viewer:${verb}: unknown channel ${shown(channel)}`);
       return;
     }
     if (verb === "subscribe") subscribed.add(channel);
@@ -846,13 +846,13 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 ipcMain.handle("viewer:currentSet", () => currentSet());
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };
+  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${shown(path)}` };
   return openPath(path, true) ? { ok: true } : { ok: false, reason: `cannot open ${path}` };
 });
 
 // ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
 ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
-  if (typeof path !== "string" || !Array.isArray(needs)) return { ok: false, reason: `offerOpen needs a path; got ${JSON.stringify(path)}` };
+  if (typeof path !== "string" || !Array.isArray(needs)) return { ok: false, reason: `offerOpen needs a path; got ${shown(path)}` };
   for (const f of needs as unknown[]) {
     if (typeof f !== "string" || !existsSync(f)) return { ok: false, reason: `no such file: ${String(f)}` };
     if (!statSync(f).isFile()) return { ok: false, reason: `${f} is not a file` };
@@ -1059,7 +1059,7 @@ const written = new Set<string>();
 
 function stillPath(name: unknown): string {
   if (mode !== "render" || !renderJob) throw new Error("render: only in --mode=render");
-  if (typeof name !== "string" || !unwritten.has(name)) throw new Error(`render: ${JSON.stringify(name)} is not a shot of the spec still to be written`);
+  if (typeof name !== "string" || !unwritten.has(name)) throw new Error(`render: ${shown(name)} is not a shot of the spec still to be written`);
   unwritten.delete(name);
   return join(resolve(out!), `${name}.png`);
 }
