@@ -91,6 +91,7 @@ What each file contains (do not read them all):
 - `model-scripts.md` — Script English rules + reference scripts (truss, 3-D frame, staged footing)
 - `gotchas.md` — anti-patterns
 - `ladruno.md` — fork-only emit/read
+- `viewer.md` — what apeGmshViewer shows
 
 Published docs: <https://nmorabowen.github.io/apeGmsh/> (`docs/`, ADR 0079).
 `internal_docs/` is unpublished. Changelog Unreleased is the moving truth.
@@ -361,7 +362,7 @@ session — do not assume the server is bound correctly.
    `report.text`; `read_file` each PNG in `report.figures`; act on
    `severity="error"`. Inspect is inventory, not the verdict. Extra
    stills go under `.apegmsh/visors/` (`references/results.md` §5) —
-   never OS-screenshot the desktop or the live viewer. Qt / web viewers are for humans who asked to look.
+   never OS-screenshot the desktop or the live viewer. Viewers are for humans who asked to look.
    `results.viewer()` blocking rules (an explicit `blocking=True` kills
    a Jupyter kernel): `references/results.md` §5. See `references/assess.md`.
 
@@ -396,8 +397,8 @@ signatures) lives in the references.
   0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
   `g.model.fuse`, `g.initialize`) → sub-composite forms; the attribute
   `apeGmsh.apeGmshViewer` → `results.viewer()` / `results.session()`
-  (the desktop app is separate; `assess.md`). The legacy Qt `ResultsViewer`
-  is **deleted** (X3-d, #1734) — no import path reaches it; the post-solve
+  (desktop app: `viewer.md`). The legacy `ResultsViewer`
+  is **deleted** — no import path reaches it; the post-solve
   document is a `ResultsSession` (`results.viewer()` or
   `python -m apeGmsh.viewers <file>`, until the Qt sunset).
 - **One results format, `.ladruno`** (ADR 0131), and a set's files
