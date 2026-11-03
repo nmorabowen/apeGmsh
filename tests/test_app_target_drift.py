@@ -3,7 +3,8 @@
 The app (``apeGmshViewer/``) hard-codes the version of each zone it was
 written against as ``<ZONE>_TARGET = { major, minor }`` in its reader
 (``read.ts`` for neutral, opensees, geometry, provenance, sequence and the
-``.user.h5`` zones user_meta, combinations, user_results and modes; ``results.ts``
+``.user.h5`` zones user_meta, combinations, user_results, modes, spectra and
+entities; ``results.ts``
 for results). A file newer than a target opens with a
 "newer than this app" banner, so a target that lags its Python writer
 puts that banner on every file fresh from main (V4t, #1821).
@@ -67,6 +68,7 @@ EXPECTED_HOME: dict[str, str] = {
     USER_RESULTS: "apeGmshViewer/src/reader/read.ts",
     MODES: "apeGmshViewer/src/reader/read.ts",
     SPECTRA: "apeGmshViewer/src/reader/read.ts",
+    ENTITIES: "apeGmshViewer/src/reader/read.ts",
 }
 
 #: Python zones the app does not read, each with the reason. A zone here
@@ -75,11 +77,6 @@ NOT_READ_BY_APP: dict[str, str] = {
     ASSEMBLY: (
         "/assembly (ADR 0117 D5) is written only by Assembly.h5 archives; "
         "the app opens model.h5 / results.h5 and has no assembly reader"
-    ),
-    ENTITIES: (
-        "/entities of <stem>.user.h5 (ADR 0130): the app reads the cuts, "
-        "storeys and point sets in slice VU8's viewer half, which adds the "
-        "target and drops this row"
     ),
 }
 
