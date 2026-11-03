@@ -30,8 +30,8 @@ report = fem.assess()                       # findings only
 report = osm.assess()                       # OpenSeesModel, solver zone
 report = osm.assess(results=results)        # + RES.ZERO_U cross-check
 report = results.assess()                   # + lineage as RES.LINEAGE
-report = results.assess(figures=True)       # + results.render_pack
-report = fem.assess(figures=True)           # + fem.render → mesh.png
+report = results.assess(figures=True)       # + results.render_pack (apegmsh-view/1 on Windows, VTK on Linux)
+report = fem.assess(figures=True)           # + fem.render → mesh.png (same split)
 
 print(report.text)                          # 40–80 lines markdown
 for path in report.figures:                 # () if skipped / figures=False
@@ -51,14 +51,14 @@ for f in report.findings:
 `# verified: tests/assess/test_assess.py`, `tests/assess/test_assess_opensees.py`
 
 `figures=True` default is `False`. Headless stays cheap. Pass `True`
-when you need eyes. `APEGMSH_SKIP_VIEWER=1` or no GL: findings still
-run, `figures` is `()`, prints
+when you need eyes. `APEGMSH_SKIP_VIEWER=1` (any platform, any source), or
+no GL on the Linux VTK path: findings still run, `figures` is `()`, prints
 `[skip viewer] APEGMSH_SKIP_VIEWER set` or
 `[skip viewer] no GL context` (exact). Skip ≠ pass.
 Unbound `results.render` / `render_pack` raise even under that env
 (need `model=` / `model_h5=` / `bind`).
 
-`results.render` / `render_pack` stills are drawn by
+On **Linux and macOS**, `results.render` / `render_pack` stills are drawn by
 `ResultsSession.render` (VTK offscreen; one session mesh view per
 still). Closed `view=`: `mesh` / `contour` / `deformed` / `reactions`.
 Refused with a `ValueError` that names the alternative:
@@ -67,6 +67,39 @@ Refused with a `ValueError` that names the alternative:
 displacement / velocity / acceleration. No `setup=`. In-process
 is the default; `python -m apeGmsh.viewers render …` is the
 out-of-kernel door so a GL crash does not kill the notebook.
+
+**On Windows** (ADR 0128 slice 6) every still verb draws through
+apeGmshViewer (`apegmsh-view/1`, via `agent_view.render_stills`, below),
+not VTK: `fem.render`, `results.render` / `render_pack`,
+`results.assess(figures=True)`, the `python -m apeGmsh.viewers render …`
+door and studio `render(path=)`. Each PNG is the render canvas only
+(`"chrome": "model"`: scale bar and axes, no app panels). `fem.render`
+writes the snapshot to a temporary `model.h5` first.
+
+- **Sources.** A Results is drawn from the file `results.path` names, which
+  must be a **`.ladruno` beside its `<stem>.h5`** (the door also reads a
+  model `.h5`). Every other source is refused with a `ValueError` naming
+  `.ladruno`: `.mpco`, a native `.h5`, recorders, a Results with no file,
+  and a `to_units(...)` view. A missing `<stem>.h5` is a
+  `FileNotFoundError`, and a door `--model-h5` that is not that
+  `<stem>.h5` is refused.
+- **Pairing.** The bound FEMData must be the `<stem>.h5` mesh. Node ids and
+  coordinates must match exactly, and each element must have the same node
+  set; element ids, type names and node order are ignored. A `fem=` or
+  `bind()` override of another mesh is refused as an override. A `.ladruno`
+  whose stamped `fem_hash` is not the `<stem>.h5`'s is refused with
+  "do not pair".
+- **The pack** is one spec: `mesh.png`, `contour.png`, `deformed.png`
+  (auto-scaled: 0.12 of the model diagonal over the largest |u|), the
+  app's `manifest.json`, and the matplotlib `history.png`. There is no
+  `reactions.png`. Its contour is the starter component (uz, ux, uy, then
+  the first nodal), even when that component is all zero.
+- **Refused shots:** `view="reactions"`, a velocity or acceleration
+  `deform`, and any component that is not a recorded nodal axis component
+  (stored Gauss components are not drawn yet).
+- **Errors and cameras.** No installed app is an error (exit 2 /
+  `FileNotFoundError`), never a skip; only `APEGMSH_SKIP_VIEWER=1` skips.
+  `camera xy|xz|yz` become the app's `top|-y|+x`.
 
 Live session (needs an open Gmsh kernel; `from_h5` / closed →
 `RuntimeError`): `g.model.render("geom.png")` (BRep, coarse tessellation

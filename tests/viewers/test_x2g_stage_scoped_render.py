@@ -46,6 +46,14 @@ _STAGES = ["g", "construction", "excavate"]
 _WIN = (160, 120)
 
 
+# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 def _build(g, tmp_path, monkeypatch, reactions_in=None):
     """The staged-disp file; with ``reactions_in``, reactions are
     recorded too and then stripped from every OTHER stage, so exactly

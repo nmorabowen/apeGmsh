@@ -1026,9 +1026,10 @@ env.labels / env.physical_groups / env.phase / env.unnamed
 ```
 fem = g.mesh.queries.get_fem_data(dim=3)
 fem.info / fem.nodes / fem.elements / fem.inspect / fem.mesh_selection
-fem.assess() / fem.render("mesh.png")     # verdict + mesh still; see assess.md
-results.assess(figures=True)              # + render_pack; closed view= set
-results.render("uz.png", view="contour")  # mesh|contour|deformed|reactions
+fem.assess() / fem.render("mesh.png")     # verdict + mesh still (apeGmshViewer on Windows); see assess.md
+results.assess(figures=True)              # + render_pack; apegmsh-view/1 on Windows, VTK on Linux
+results.render("uz.png", view="contour")  # mesh|contour|deformed (+reactions on Linux); assess.md
+results.path                              # read-only Path of the source file (a .ladruno: what Windows stills draw), or None
 
 FEMData.from_gmsh(dim=3, session=g, ndf=6, remove_orphans=False)
 FEMData.from_msh("bridge.msh", dim=2)

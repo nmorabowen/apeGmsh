@@ -30,9 +30,14 @@ existing ``[skip viewer]`` notice, and writes no file.
 (INV-5). They use the same scene builders as ModelViewer /
 MeshViewer. A ``from_h5`` or closed session raises
 ``RuntimeError`` — they do not fake a BRep still from FEMData.
+
+On Windows ``fem.render`` is apeGmshViewer's (ADR 0128 slice 6):
+``_results_stills.fem_still`` (G7, R1; no app raises, G9). Linux keeps VTK
+(G2). ``_stills_backend`` is the one switch.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -56,6 +61,27 @@ _VIEWS: frozenset[str] = frozenset({"mesh", "contour", "deformed", "reactions"})
 _CAMERAS: frozenset[str] = frozenset({"iso", "xy", "xz", "yz"})
 
 
+def _stills_backend() -> str:
+    """``"app"`` (apeGmshViewer, ``apegmsh-view/1``) on Windows, else ``"vtk"``.
+
+    Parity plan G2 (ruled 2026-11-02): v2 cannot capture headless on
+    Linux, so Linux and macOS keep the VTK path. The tests patch this
+    function to reach either path on any platform.
+    """
+    return "app" if sys.platform == "win32" else "vtk"
+
+
+def _app_camera(camera: str) -> str:
+    from apeGmsh.agent_view import CAMERAS
+
+    return CAMERAS[_require_camera(camera)]
+
+
+def _app_size(window_size: tuple[int, int]) -> list[int]:
+    width, height = window_size
+    return [int(width), int(height)]
+
+
 def render_fem(
     fem: Any,
     path: "str | Path",
@@ -72,6 +98,10 @@ def render_fem(
     if _env_skips():
         print(_SKIP_ENV)
         return None
+    if _stills_backend() == "app":
+        from apeGmsh.viewers.session._results_stills import fem_still
+
+        return fem_still(fem, Path(path), camera=_app_camera(camera), size=_app_size(window_size))
     from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
     scene = build_fem_scene(fem)

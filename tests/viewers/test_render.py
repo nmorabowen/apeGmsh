@@ -4,6 +4,11 @@ GL-less CI stays green: the required path is
 ``APEGMSH_SKIP_VIEWER=1`` (returns ``None``, writes nothing, no event
 loop). A live still is attempted only when the env is unset; no GL
 then also returns ``None`` and is not a failure.
+
+VA6b: on Windows ``fem.render`` draws through apeGmshViewer (an
+``apegmsh-view/1`` spec over a temporary ``model.h5``, parity plan G7).
+These tests pin the VTK path, which Linux keeps (G2), except the
+``fem_app`` ones, which take the Windows path with a fake app.
 """
 from __future__ import annotations
 
@@ -22,6 +27,12 @@ _RENDER_PY = (
     Path(__file__).resolve().parents[2]
     / "src" / "apeGmsh" / "viewers" / "render.py"
 )
+
+
+@pytest.fixture(autouse=True)
+def _vtk_backend_unless_asked(request, monkeypatch):
+    if "fem_app" not in request.fixturenames:
+        monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
 
 
 @pytest.fixture
@@ -345,3 +356,78 @@ def test_render_pack_without_skip_is_tuple(
             "reactions.png", "history.png",
         }
     assert "reactions.png" not in {p.name for p in result}
+
+
+# =====================================================================
+# VA6b: fem.render on Windows (G7, R1)
+# =====================================================================
+
+
+@pytest.fixture
+def fem_app(monkeypatch):
+    """The Windows path with a fake app that reads back the model file
+    it is handed while it still exists, and writes one stand-in PNG."""
+    import json
+
+    import h5py
+
+    import apeGmsh.agent_view as agent_view
+
+    seen: dict = {"specs": [], "node_counts": []}
+
+    def _fake(spec, out, **kwargs):
+        seen["specs"].append(json.loads(json.dumps(spec)))
+        with h5py.File(spec["files"]["model"], "r") as f:
+            seen["node_counts"].append(int(f["nodes"]["ids"].shape[0]))
+        out = Path(out)
+        out.mkdir(parents=True)
+        shots = []
+        for shot in spec["shots"]:
+            (out / f"{shot['name']}.png").write_bytes(b"png")
+            shots.append({"name": shot["name"], "status": "ok", "png": f"{shot['name']}.png"})
+        return {"shots": shots}
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", _fake)
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    return seen
+
+
+def test_fem_render_app_goes_through_a_temporary_model_h5(
+    demo_results: Results, tmp_path: Path, fem_app: dict,
+) -> None:
+    """G7: the in-memory FEMData is written to a model.h5 the app reads
+    (its node count is the FEMData's), then the file is gone."""
+    fem = demo_results.fem
+    out = tmp_path / "figs" / "mesh.png"
+    written = fem.render(out, camera="yz", window_size=(320, 240))
+    assert written == out and out.is_file()
+    (spec,) = fem_app["specs"]
+    assert spec["spec"] == "apegmsh-view/1"
+    assert set(spec["files"]) == {"model"}
+    assert spec["size"] == [320, 240]
+    assert spec["shots"] == [{"name": "mesh", "camera": "+x"}]
+    assert fem_app["node_counts"] == [len(fem.nodes.ids)]
+    assert not Path(spec["files"]["model"]).exists()
+
+
+def test_fem_render_app_planar_default_is_top(
+    demo_results: Results, tmp_path: Path, fem_app: dict,
+) -> None:
+    """R3: camera=None is xy for a planar model, which the app calls top."""
+    from apeGmsh.results._geometry import is_planar
+
+    fem = demo_results.fem
+    fem.render(tmp_path / "m.png")
+    expected = "top" if is_planar(fem.nodes.coords) else "iso"
+    assert fem_app["specs"][-1]["shots"][0]["camera"] == expected
+
+
+def test_fem_render_app_skip_env_never_runs_the_app(
+    demo_results: Results, tmp_path: Path, fem_app: dict,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    assert demo_results.fem.render(tmp_path / "m.png") is None
+    assert fem_app["specs"] == []
+    assert "[skip viewer]" in capsys.readouterr().out

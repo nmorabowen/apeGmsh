@@ -332,4 +332,4 @@ def test_the_shim_imports_nothing_from_the_app():
         if isinstance(n, (ast.Import, ast.ImportFrom))
         for a in (n.names if isinstance(n, ast.Import) else [n])
     }
-    assert mods <= {"__future__", "json", "os", "signal", "subprocess", "sys", "tempfile", "collections.abc", "pathlib", "typing"}, mods
+    assert mods <= {"__future__", "json", "os", "re", "shutil", "signal", "subprocess", "sys", "tempfile", "collections.abc", "pathlib", "typing"}, mods
