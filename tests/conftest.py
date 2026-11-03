@@ -459,9 +459,25 @@ def _composed_artifacts(tmp_path_factory: pytest.TempPathFactory):
 
     out_dir = tmp_path_factory.mktemp("composed_artifacts")
     r = make_demo_results(path=str(out_dir), n_elements=4, n_steps=3)
-    results_path = Path(r._path)
     model_path = Path(r._model_path)
+    # The demo writes a .ladruno since #2778 (ADR 0131 D10 W2), so the
+    # composed native file is written here from the same run: its values,
+    # and its /model zone composed from the demo's own archive.
+    from apeGmsh.results.writers import NativeWriter
+
+    comps = {c: r.nodes.get(component=c)
+             for c in ("displacement_x", "displacement_y", "displacement_z")}
+    first = comps["displacement_x"]
+    fem = r.fem
     r.close()  # release the handle; tests open the files read-only
+    results_path = out_dir / "demo_results.h5"
+    with NativeWriter(results_path) as w:
+        w.open(fem=fem, model_h5_src=model_path)
+        w.stamp_element_index_space("fem")  # nodal rows only
+        sid = w.begin_stage(name="pushover", kind="static", time=first.time)
+        w.write_nodes(sid, "partition_0", node_ids=first.node_ids,
+                      components={c: s.values for c, s in comps.items()})
+        w.end_stage()
     return results_path, model_path
 
 
