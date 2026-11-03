@@ -83,14 +83,17 @@ float shaftLength(float len, float wpp) {
 /**
  * Arrow instances: `aShape` = (×shaft length, ×head length, ×head length across), `aPart` 0 shaft or
  * first head, 1 SP bar, 2 second head, 3 reaction tick (2/3 of a head long, at 45° to the shaft's
- * perpendicular, a fifth of the shaft in from its tail).
+ * perpendicular, a fifth of the shaft in from its tail). `aAnchor` (`ANCHOR`) says whether `aTip` is the
+ * tip (0) or the tail (1): a tail-anchored arrow's tip is its drawn shaft length `L` along `aDir`, so
+ * the sizing, and thinning by the anchor point, are the same either way.
  */
 const ARROW_VERTEX = `
-vec4 mvTip = modelViewMatrix * vec4( aTip, 1.0 );
-float wpp = worldPerPixel( mvTip );
+vec4 mvAt = modelViewMatrix * vec4( aTip, 1.0 );
+float wpp = worldPerPixel( mvAt );
 float L = shaftLength( aLen, wpp );
 float H = ${SIZING_EXPR.head};
 vec3 dV = normalize( mat3( modelViewMatrix ) * aDir );
+vec4 mvTip = vec4( mvAt.xyz + dV * ( aAnchor * L ), 1.0 );
 vec3 toEye = projectionMatrix[ 3 ][ 3 ] == 1.0 ? vec3( 0.0, 0.0, 1.0 ) : normalize( -mvTip.xyz );
 vec3 across = cross( dV, toEye );
 if ( length( across ) < 1e-3 ) across = cross( dV, vec3( 0.0, 1.0, 0.0 ) );
@@ -189,7 +192,7 @@ export class ArrowLayer {
   protected theme: ThemeMode = "dark";
 
   constructor() {
-    const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute vec3 aShape;\nattribute float aPart;";
+    const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute float aAnchor;\nattribute vec3 aShape;\nattribute float aPart;";
     instanced(this.lineMaterial, arrowAttrs, ARROW_VERTEX, this.uniforms);
     instanced(this.coneMaterial, arrowAttrs, ARROW_VERTEX, this.uniforms);
     instanced(
@@ -264,6 +267,7 @@ export class ArrowLayer {
       g.setAttribute("aHeads", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.heads));
       g.setAttribute("aBar", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.bar));
       g.setAttribute("aLevel", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.level));
+      g.setAttribute("aAnchor", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.anchor));
       g.setAttribute("color", new THREE.InstancedBufferAttribute(arrowColours, 3));
       g.instanceCount = nArrows;
     }
