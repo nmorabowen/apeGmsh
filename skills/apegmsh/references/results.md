@@ -612,6 +612,29 @@ runs `--render` and returns the manifest, raising `AgentViewError` with
 every refusal (`assess.md`). Quote numbers from the manifest, not from
 the pixels.
 
+### apeGmshViewer: the Vectors card
+
+On a results step, the left rail's Vectors card draws one nodal vector
+field as arrows. The picker offers each nodal field the stage records
+with two or more axes: `DISPLACEMENT`, `VELOCITY` and `ACCELERATION` in a
+`.ladruno`, or a `<field>_x/_y/_z` field. Each arrow starts at its node and
+points along the vector. Arrows follow the deformed shape when the
+Deformed card is on.
+
+A rotational field (`ROTATION`, `ANGULAR_VELOCITY`, `moment`) draws a
+half circle about each node's axis instead, by the right-hand rule. A
+2-D model's lone `Rz` is not offered, because the fork's schema allows it
+to hold a pore pressure. The card draws the resultant, the X, Y and Z
+components, or one axis, and an axis the field does not record falls
+back to the resultant. It colours glyphs in one colour, by type, or in
+jet by magnitude.
+
+Lengths are relative to the step's largest vector and capped to a pixel
+band, so the card shows direction and relative size, not a value.
+Vectors below 1e-6 of the largest are not drawn. Thin-out keeps one node
+where several would overlap. An `apegmsh-view/1` spec has no key for the
+card, so `--render` cannot draw it.
+
 ### Headless animation export — `results.export_animation(...)` (#755)
 
 ```python
