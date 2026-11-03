@@ -39,6 +39,7 @@ from .._internal.types import ModalBasis, Primitive
 from ...results.readers._ladruno_writer import check_target, write_modes
 
 if TYPE_CHECKING:
+    from ...results.Results import Results
     from ..emitter.base import Emitter
     from ..emitter.live import LiveOpsEmitter
     from ..node import Node
@@ -1492,6 +1493,38 @@ class ParallelModalResult:
             ndf there, or ``path`` is ``model_h5`` or an ``.h5``. Nothing is
             written.
         """
+        return self._write_ladruno(path, model_h5)
+
+    def results(self, model_h5: "str | Any") -> "Results":
+        """Write the harvested modes with :meth:`to_ladruno` (to a temp
+        file) and open them with
+        :meth:`~apeGmsh.results.Results.from_ladruno`, bound to
+        ``model_h5``; ``.modes`` lists one mode-scoped ``Results`` per
+        eigenvalue::
+
+            res = ParallelModalResult.from_job(job_dir)
+            with res.results("model.h5") as r:
+                r.modes[0].frequency_hz
+
+        The ``.ladruno`` is the default modes format (ADR 0131 D10);
+        :meth:`to_native` stays the explicit export to a native file.
+        ``model_h5`` is the bridge archive the deck was emitted from
+        (``ops.h5``), as for :meth:`to_ladruno`, whose errors this
+        raises.
+        """
+        import tempfile
+
+        from ...results.Results import Results as _Results
+
+        if self._shapes is None or self._shape_nodes is None:
+            raise FileNotFoundError(_NO_SHAPES_MSG)
+        out = Path(tempfile.mkdtemp(prefix="apegmsh_modes_")) / "modes.ladruno"
+        p = self._write_ladruno(out, model_h5)
+        return _Results.from_ladruno(p, model_h5=model_h5)
+
+    def _write_ladruno(self, path: "str | Any", model_h5: "str | Any") -> Path:
+        """:meth:`to_ladruno`'s body, called straight from each public
+        method so a mode warning's stack level names their caller."""
         from .eigen import _ladruno_slots, _spatial, _warn_unresolved
 
         where = "ParallelModalResult.to_ladruno"
@@ -1506,7 +1539,7 @@ class ParallelModalResult:
         layouts, rotations, unresolved = _ladruno_slots(
             Path(model_h5), rec, model.nodes_ndf, ndm, where=where)
         spatial = np.stack([_spatial(rows, layouts) for rows in shapes])
-        _warn_unresolved(where, unresolved, 2)
+        _warn_unresolved(where, unresolved, 3)
         return write_modes(
             path, model_h5=model_h5,
             node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
@@ -1516,7 +1549,7 @@ class ParallelModalResult:
             fields=lambda k: spatial[k - 1],
             rotations=rotations,
             record_ids=self._shape_nodes,
-            source="modal_deck", stacklevel=3,
+            source="modal_deck", stacklevel=4,
         )
 
     def participation_factors(self, component: str) -> np.ndarray:

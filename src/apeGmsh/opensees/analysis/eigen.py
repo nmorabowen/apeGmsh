@@ -330,6 +330,11 @@ class EigenResult:
         RuntimeError
             As :meth:`to_native`.
         """
+        return self._write_ladruno(path)
+
+    def _write_ladruno(self, path: "str | os.PathLike[str] | None") -> Path:
+        """:meth:`to_ladruno`'s body, called straight from each public
+        method so a mode warning's stack level names their caller."""
         import tempfile
 
         bridge, ndm, _ = self._checked_solve("to_ladruno")
@@ -366,7 +371,7 @@ class EigenResult:
             layouts, rotations, unresolved = _ladruno_slots(
                 staged, node_ids, ndf_of, ndm, where="EigenResult.to_ladruno")
             shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
-            _warn_unresolved("EigenResult.to_ladruno", unresolved, 2)
+            _warn_unresolved("EigenResult.to_ladruno", unresolved, 3)
             # The modes go first, stamped against the staged copy (the
             # same lineage), so a refused or failed write leaves no
             # archive behind; the archive follows them into place.
@@ -377,7 +382,7 @@ class EigenResult:
                 fields=lambda k: shapes[k - 1], rotations=rotations,
                 record_ids=(None if len(node_ids) == len(all_ids)
                             else node_ids),
-                source="eigen", stacklevel=3,
+                source="eigen", stacklevel=4,
             )
             if place:
                 try:
@@ -495,24 +500,22 @@ class EigenResult:
     def results(
         self, model_h5: "str | os.PathLike[str] | None" = None,
     ) -> "Results":
-        """Write the modes with :meth:`to_native` (to a temp file) and
-        open them as a :class:`~apeGmsh.results.Results`; ``.modes``
-        lists one mode-scoped ``Results`` per eigenvalue.
+        """Write the modes with :meth:`to_ladruno` (to a temp file) and
+        open them with :meth:`~apeGmsh.results.Results.from_ladruno`;
+        ``.modes`` lists one mode-scoped ``Results`` per eigenvalue.
 
+        The ``.ladruno`` is the default modes format (ADR 0131 D10);
+        :meth:`to_native` stays the explicit export to a native file.
         ``model_h5`` names the ``model.h5`` archive to bind; ``None``
-        binds the ``/opensees`` zone the file itself embeds. Raises what
-        :meth:`to_native` raises.
+        binds the bridge archive :meth:`to_ladruno` writes beside the
+        file (``<stem>.h5``). Raises what :meth:`to_ladruno` raises.
         """
         from ...results.Results import Results as _Results
-        from ..opensees_model import OpenSeesModel
 
-        p = self._write_native(None)
-        src = p if model_h5 is None else Path(os.fspath(model_h5))
-        return _Results.from_native(
-            p,
-            model=OpenSeesModel.from_h5(str(src)),
-            model_path=None if model_h5 is None else src,
-        )
+        p = self._write_ladruno(None)
+        src = (p.with_suffix(".h5") if model_h5 is None
+               else Path(os.fspath(model_h5)))
+        return _Results.from_ladruno(p, model_h5=src)
 
 
 def _ladruno_slots(
