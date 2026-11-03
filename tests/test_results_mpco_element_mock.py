@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
 from apeGmsh.opensees._response_catalog import (
 
     ELE_TAG_FourNodeQuad,

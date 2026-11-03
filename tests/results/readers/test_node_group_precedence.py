@@ -37,7 +37,10 @@ from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
 from apeGmsh.results.readers._mpco import MPCOReader
 from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
-from apeGmsh.results.readers._mpco_translation import NodeComponentAmbiguous
+from apeGmsh.results.readers._buckets import (
+    NodeComponentAmbiguous,
+    canonical_node_component,
+)
 from apeGmsh.results.readers._protocol import ResultLevel
 
 _TIME = np.array([0.5, 1.0])
@@ -340,7 +343,7 @@ def test_every_many_to_one_prefix_has_a_total_precedence(monkeypatch) -> None:
 def test_rayleigh_groups_translate_to_no_canonical() -> None:
     for name in ("RAYLEIGH_FORCE", "RAYLEIGH_MOMENT",
                  "REACTION_FORCE_RAYLEIGH", "REACTION_MOMENT_RAYLEIGH"):
-        assert mtr.canonical_node_component(name, "Px") is None
+        assert canonical_node_component(name, "Px") is None
         assert not mtr.has_canonical_mapping(name)
 
 

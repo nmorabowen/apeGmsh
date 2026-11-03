@@ -51,7 +51,7 @@ def _listing_gates_read(*, filtered: bool) -> Iterator[list[str]]:
     if not filtered:
         yield held
         return
-    from .readers._mpco import MPCOBucketSkippedWarning
+    from .readers._buckets import MPCOBucketSkippedWarning
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -91,10 +91,12 @@ def _unread_bucket_warnings() -> tuple[type[Warning], ...]:
     Such a read returns an empty slab for a name the file does record,
     and names the bucket (#2293, #2305): the empty answer is spoken for,
     so :func:`_refuse_if_unrecorded` neither refuses nor warns on it."""
+    from .readers._buckets import (
+        LayerBucketUnreadWarning,
+        MPCOBucketSkippedWarning,
+        NodalForceBucketSkippedWarning,
+    )
     from .readers._ladruno_element_io import LineStationBucketSkippedWarning
-    from .readers._mpco import MPCOBucketSkippedWarning
-    from .readers._mpco_layer_io import LayerBucketUnreadWarning
-    from .readers._mpco_nodal_io import NodalForceBucketSkippedWarning
 
     return (
         MPCOBucketSkippedWarning,

@@ -50,8 +50,8 @@ from .._slabs import (
     NodeSlab,
     SpringSlab,
 )
-from . import _mpco_nodal_io as _mnodal
 from ._buckets import (
+    RotationMask,
     _concat_element_slabs,
     _concat_fiber_slabs,
     _concat_gauss_slabs,
@@ -68,6 +68,7 @@ from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
+    from ._buckets import RolesSource
 
 
 # ``Recorder.part-0.mpco`` style; the partition number is captured.
@@ -165,7 +166,7 @@ class MPCOMultiPartitionReader:
 
     def attach_nodes_ndf(
         self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
-        roles: "_mnodal.RolesSource",
+        roles: "RolesSource",
     ) -> None:
         """Forward the model's per-node ndf and DOF roles to every part
         (#2028), so a partitioned rotation read masks as a one-file one
@@ -316,7 +317,7 @@ class MPCOMultiPartitionReader:
         node_ids: Optional[ndarray] = None,
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
-        with _mnodal.RotationMask.one_warning(self._absent_dof_warned):
+        with RotationMask.one_warning(self._absent_dof_warned):
             slabs = [
                 r.read_nodes(
                     stage_id, component,

@@ -27,10 +27,8 @@ import pytest
 # --------------------------------------------------------------------------
 
 def test_constraint_tie_force_canonical_mapping():
-    from apeGmsh.results.readers._mpco_translation import (
-        canonical_node_component,
-        has_canonical_mapping,
-    )
+    from apeGmsh.results.readers._buckets import canonical_node_component
+    from apeGmsh.results.readers._mpco_translation import has_canonical_mapping
 
     assert has_canonical_mapping("CONSTRAINT_TIE_FORCE")
     assert canonical_node_component("CONSTRAINT_TIE_FORCE", "TFx") == \

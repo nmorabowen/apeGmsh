@@ -38,7 +38,10 @@ from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
 from ._buckets import (
     _PROGRAM_STAGE_KINDS,
+    PARTITION_REDUCTION_NONE,
+    ModeEntry,
     MPCOBucketSkippedWarning,
+    RotationMask,
     _empty_element_slab,
     _empty_fiber_slab,
     _empty_gauss_slab,
@@ -46,6 +49,15 @@ from ._buckets import (
     _empty_line_station_slab,
     _empty_node_slab,
     _empty_spring_slab,
+    attach_nodes_ndf,
+    canonical_node_component,
+    discover_modes,
+    locate_node_component,
+    modal_components,
+    mode_stage_layout,
+    model_node_ids,
+    partition_reduction_from_name,
+    read_mode_shape,
 )
 from ._gauss_refusals import GaussDimensionMixed
 from ._mpco_refusals import MPCOElementInTwoBuckets
@@ -56,6 +68,7 @@ if TYPE_CHECKING:
     import h5py
 
     from ...mesh.FEMData import FEMData
+    from ._buckets import RolesSource
 
 
 # Stage groups in MPCO are ``MODEL_STAGE[<stamp>]``
@@ -316,7 +329,7 @@ class MPCOReader:
         # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
         # Mode stages are not MODEL_STAGE groups, so they never enter
         # ``_stage_to_mpco``; reads branch on this map first.
-        self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
+        self._mode_refs: dict[str, tuple[str, ModeEntry]] = {}
         self._host_ids: list[str] = []
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
         # ADR 0043 slice 1.3 — MPCO buckets are keyed by the OpenSees ops
@@ -325,7 +338,7 @@ class MPCOReader:
         # from the bound model's element_meta; ``None`` = no translation
         # (direct constructions / pre-attach reads behave as before).
         self._tag_map: "Optional[ElementTagTranslator]" = None
-        self._rotation_mask = _mnodal.RotationMask(self._path.name)
+        self._rotation_mask = RotationMask(self._path.name)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -390,7 +403,7 @@ class MPCOReader:
 
     def attach_nodes_ndf(
         self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
-        roles: "_mnodal.RolesSource",
+        roles: "RolesSource",
     ) -> None:
         """Store the model's per-node ndf and DOF roles: rotation reads
         then give NaN at a node whose DOF layout has no such rotation
@@ -401,7 +414,7 @@ class MPCOReader:
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """
         self._ensure_stages()
-        self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
+        self._rotation_mask.attach(nodes_ndf, ndm, model_node_ids(
             [self._h5[name] for name in self._stage_to_mpco.values()],
         ), roles=roles)
 
@@ -494,7 +507,7 @@ class MPCOReader:
             ))
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             host_sets.append(
-                [] if on_nodes is None else _mnodal.discover_modes(
+                [] if on_nodes is None else discover_modes(
                     on_nodes, source=f"{self._path.name} {name}",
                 )
             )
@@ -503,7 +516,7 @@ class MPCOReader:
         # right after the MODEL_STAGE that holds it (the layout of a
         # native results file).
         modes_after: dict[int, list[StageInfo]] = {}
-        for h, sid, mname, entry in _mnodal.mode_stage_layout(
+        for h, sid, mname, entry in mode_stage_layout(
             self._host_ids, names, host_sets,
         ):
             self._mode_refs[sid] = (names[h], entry)
@@ -621,7 +634,7 @@ class MPCOReader:
             on_nodes = _child(
                 self._h5[self._mode_refs[stage_id][0]], "RESULTS/ON_NODES",
             )
-            return [] if on_nodes is None else _mnodal.modal_components(on_nodes)
+            return [] if on_nodes is None else modal_components(on_nodes)
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return []
@@ -635,7 +648,7 @@ class MPCOReader:
                 grp = on_nodes[result_name]
                 comps = _parse_components_attr(grp.attrs.get("COMPONENTS"))
                 for comp_label in comps:
-                    canonical = _mtr.canonical_node_component(
+                    canonical = canonical_node_component(
                         result_name, comp_label,
                     )
                     if canonical is not None:
@@ -894,7 +907,7 @@ class MPCOReader:
         if stage_id in self._mode_refs:
             # A mode shape is the same at every copy of a node.
             comps = self.available_components(stage_id, ResultLevel.NODES)
-            return _mtr.PARTITION_REDUCTION_NONE if component in comps else None
+            return PARTITION_REDUCTION_NONE if component in comps else None
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return None
@@ -904,7 +917,7 @@ class MPCOReader:
         loc = _locate_canonical_in_mpco(on_nodes, component)
         if loc is None:
             return None
-        return _mtr.partition_reduction_from_name(loc[0])
+        return partition_reduction_from_name(loc[0])
 
     def read_nodes(
         self,
@@ -1006,7 +1019,7 @@ class MPCOReader:
         on_nodes = _child(self._h5[host], "RESULTS/ON_NODES")
         got = (
             None if on_nodes is None
-            else _mnodal.read_mode_shape(
+            else read_mode_shape(
                 on_nodes, entry, component, node_ids=node_ids,
             )
         )
@@ -1787,7 +1800,7 @@ def attach_model_nodes_ndf(
     see :func:`_mpco_nodal_io.attach_nodes_ndf`."""
     from ._mpco_multi import MPCOMultiPartitionReader
 
-    _mnodal.attach_nodes_ndf(
+    attach_nodes_ndf(
         reader, (MPCOReader, MPCOMultiPartitionReader), model_h5, ndm,
     )
 
@@ -1834,7 +1847,7 @@ def _locate_canonical_in_mpco(
     :func:`_mpco_translation.locate_node_component` pick the group by its
     precedence, never by HDF5 iteration order.
     """
-    return _mtr.locate_node_component(
+    return locate_node_component(
         (
             (name, _parse_components_attr(
                 on_nodes_grp[name].attrs.get("COMPONENTS"),

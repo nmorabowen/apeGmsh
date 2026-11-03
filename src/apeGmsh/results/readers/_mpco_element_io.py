@@ -159,7 +159,7 @@ def warn_skipped_buckets(
     from the caller of this function: ``1`` is the caller itself, ``2``
     the caller's caller.
     """
-    from ._mpco import MPCOBucketSkippedWarning
+    from ._buckets import MPCOBucketSkippedWarning
     named: set[str] = set()
     for skip in skipped:
         grp = skip.group
@@ -697,7 +697,7 @@ def _warn_unnamed_columns(
     The bucket is left unread and the read goes on with the others: one
     bucket a reader cannot name never fails a read for every class.
     """
-    from ._mpco import MPCOBucketSkippedWarning
+    from ._buckets import MPCOBucketSkippedWarning
     warnings.warn(
         f"MPCO gauss read of {canonical_component!r} in "
         f"{Path(bucket_grp.file.filename).name} left 1 bucket(s) unread, so "
