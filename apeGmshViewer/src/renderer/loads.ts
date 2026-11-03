@@ -20,8 +20,13 @@ import type { FullPositions } from "./deform.ts";
 /** A shaft is never drawn shorter or longer than this on screen (CSS px, times the user scale). */
 export const SHAFT_MIN_PX = 15;
 export const SHAFT_MAX_PX = 80;
-/** Thinning keeps arrows at least about this far apart on screen, as a multiple of the head length. */
-export const SPACING_PER_HEAD = 0.6;
+/**
+ * Thinning merges arrows that share a cell no wider on screen than this
+ * multiple of the head length (the widest power-of-two cell that fits), so
+ * arrows a head length apart never merge and arrows closer than about half of
+ * one always do.
+ */
+export const SPACING_PER_HEAD = 0.75;
 
 /**
  * The CPU twin of the shader's sizing, for tests: the drawn shaft length and
@@ -31,7 +36,7 @@ export const SPACING_PER_HEAD = 0.6;
 export function screenArrow(len: number, level: number, wpp: number, u: { headPx: number; minPx: number; maxPx: number; radius: number; thin: boolean }): { L: number; H: number; shown: boolean } {
   const L = Math.min(Math.max(len / wpp, u.minPx), u.maxPx) * wpp;
   const H = Math.min(u.headPx * wpp, L);
-  const need = Math.min(THIN_LEVELS, Math.max(0, THIN_LEVELS + Math.ceil(Math.log2((SPACING_PER_HEAD * u.headPx * wpp) / u.radius))));
+  const need = Math.min(THIN_LEVELS, Math.max(0, THIN_LEVELS + Math.floor(Math.log2((SPACING_PER_HEAD * u.headPx * wpp) / u.radius))));
   return { L, H, shown: !u.thin || level >= need };
 }
 
@@ -65,7 +70,7 @@ if ( length( across ) < 1e-3 ) across = cross( dV, vec3( 0.0, 1.0, 0.0 ) );
 if ( length( across ) < 1e-3 ) across = vec3( 1.0, 0.0, 0.0 );
 across = normalize( across );
 vec4 mvPosition = vec4( mvTip.xyz - dV * ( aShape.x * L + aShape.y * H ) + across * ( aShape.z * H ), 1.0 );
-float need = min( ${THIN_LEVELS.toFixed(1)}, max( 0.0, ${THIN_LEVELS.toFixed(1)} + ceil( log2( uSpacingPx * wpp / uRadius ) ) ) );
+float need = min( ${THIN_LEVELS.toFixed(1)}, max( 0.0, ${THIN_LEVELS.toFixed(1)} + floor( log2( uSpacingPx * wpp / uRadius ) ) ) );
 bool hidden = ( aPart == 1.0 && aBar < 0.5 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
 gl_Position = hidden ? vec4( 2.0, 2.0, 2.0, 1.0 ) : projectionMatrix * mvPosition;
 `;

@@ -124,7 +124,10 @@ export function renderLoads(
       dispatch({ type: "setLoads", includeSupportReactions: !ld.includeSupportReactions }),
     ),
   );
-  optsRow.append(seriesBtn, holdBtn);
+  const thinBtn = el("button", "loads-thin" + (ld.thin ? " on" : ""), "thin out");
+  thinBtn.title = "Draw one arrow where several would overlap on screen (the largest load); zoom in to see the rest";
+  unlisten.push(listen(thinBtn, "click", () => dispatch({ type: "setLoads", thin: !ld.thin })));
+  optsRow.append(seriesBtn, holdBtn, thinBtn);
   box.append(optsRow);
 
   const scaleRow = el("div", "deform-scale-row loads-scale-row");
@@ -148,14 +151,14 @@ export function renderLoads(
   );
   box.append(scaleRow);
 
-  // Every head is 2:1 (length to width); its length is this fraction of the reference arrow.
+  // Every head is 2:1 (length to width) and this many pixels long, at any zoom.
   const headRow = el("div", "deform-scale-row loads-head-row");
   const headInput = el("input", "deform-scale loads-head");
   headInput.type = "number";
-  headInput.step = "0.05";
+  headInput.step = "1";
   headInput.min = "0";
   headInput.value = String(ld.headSize);
-  headInput.title = "arrowhead length, as a fraction of the reference arrow length (the head is twice as long as it is wide)";
+  headInput.title = "arrowhead length on screen, in pixels (the head is twice as long as it is wide)";
   const colorSelect = el("select", "loads-color");
   colorSelect.title = "arrow colour";
   for (const [value, label] of [["mono", "one colour"], ["type", "by load type"], ["magnitude", "by magnitude (jet)"]] as const) {
@@ -172,7 +175,7 @@ export function renderLoads(
     }),
     listen(colorSelect, "change", () => dispatch({ type: "setLoads", colorBy: colorSelect.value as LoadsColorBy })),
   );
-  headRow.append(el("span", undefined, "head"), headInput, colorSelect);
+  headRow.append(el("span", undefined, "head"), headInput, el("span", "deform-scale-label", "px"), colorSelect);
   box.append(headRow);
 
   // Compact symbol key for load units (driven by global Units control in #header)
