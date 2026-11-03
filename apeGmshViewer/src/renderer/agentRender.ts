@@ -28,7 +28,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import { combinationFieldsOf, contourView, deformView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { State } from "../state/types.ts";
-import { combinationContourKey, contourKey, elementContourKey, type CombinationColumnOf } from "./contour.ts";
+import { combinationContourKey, contourKey, differenceContourKey, differenceHeld, elementContourKey, type CombinationColumnOf } from "./contour.ts";
 import { composeStill, loadStillFonts, type ScaleBar } from "./stillLayers.ts";
 import type { Viewport } from "./viewport.ts";
 
@@ -79,6 +79,8 @@ function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolea
   const v = contourView(s);
   // VU7b-2: a User Combination is one state, with no step to read.
   if (v.state === "combination") return viewport.contourApplied === combinationContourKey(v);
+  // VU10: a difference is drawn from its own read, which waited for the window's step.
+  if (v.state === "difference") return viewport.contourApplied === differenceContourKey(v);
   // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
   const at = s.phase.at;
   const step = effects.currentStep();
@@ -113,9 +115,9 @@ function screenAxes(viewport: Viewport): { x: [number, number]; y: [number, numb
 
 function scaleBarOf(s: State, plan: ShotPlan): ScaleBar | null {
   const v = contourView(s);
-  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination") || !plan.contour) return null;
-  // VU7b-2: a combination's scale names the combination, as the app's does.
-  const what = v.state === "combination" ? `${v.name} · ` : "";
+  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference") || !plan.contour) return null;
+  // VU7b-2: a combination's scale names the combination, as the app's does; VU10: a difference names its two variants.
+  const what = v.state === "combination" ? `${v.name} · ` : v.state === "difference" ? `${v.window} − ${v.compare} · ` : "";
   return { title: `${what}${plan.contour.field} ${plan.contour.label}`, min: v.clim.min, max: v.clim.max, rangeLabel: v.clim.label, cmap: v.cmap };
 }
 
@@ -184,6 +186,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
       blobs,
       step: effects.currentStep(),
       combination: deps.combination(),
+      difference: differenceHeld.current,
     });
   } catch (err) {
     return refuse(`the manifest cannot state this view: ${err instanceof Error ? err.message : String(err)}`);

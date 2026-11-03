@@ -524,7 +524,12 @@ export function noticesOf(s: State): string[] {
   // V4c2a: element components refused one by one on the stage shown, and why a picked element field is not drawn.
   for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
   const ev = contourView(s);
-  if (ev.state === "refused") out.push(ev.code === "combination" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
+  if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
+  // VU10: a newer manifest's banner (ADR 0132 D2), and the nodes a difference cannot give a value.
+  if (s.variants.study?.newer) out.push(s.variants.study.newer);
+  if (ev.state === "difference" && ev.missing > 0) {
+    out.push(`Difference: ${ev.missing.toLocaleString()} of ${ev.nodes.toLocaleString()} nodes have no value in one of the two variants; they are drawn as no data.`);
+  }
   if (s.contour.notice) out.push(s.contour.notice);
   // V4d: drawn nodes the deformed shape leaves undeformed, or why it is not drawn.
   const d = deformNotice(s);
@@ -561,7 +566,7 @@ export type ContourView =
    * components, or rows that do not join the mesh. Drawn as no data, never
    * "with a warning"; the banner says why.
    */
-  | { state: "refused"; code: ElementRefusal | "combination"; reason: string }
+  | { state: "refused"; code: ElementRefusal | "combination" | "difference"; reason: string }
   /**
    * V4c2a: an element topology whose drawing was not built yet. V4c2b draws
    * every topology, so no view is in this state any more; the variant stays
@@ -619,6 +624,28 @@ export type ContourView =
       cmap: ContourCmap;
       /** whether it may draw as a deformed shape (an unsigned one is a contour only) */
       signed: boolean;
+    }
+  /**
+   * VU10 (ADR 0132 D9.5): the window variant minus the compare variant for one
+   * nodal component, by node id, at the stage and step shown. The colours come
+   * from the read under `key` (renderer/contour.ts `differenceColours`); a node
+   * either side lacks is no data. Never a deformed shape.
+   */
+  | {
+      state: "difference";
+      /** the window variant's label (or the model's file name when the window set is no row) and the compare variant's */
+      window: string;
+      compare: string;
+      field: string;
+      component: FieldComponent;
+      stageName: string;
+      /** `differencePlanOf(s).key`: the read whose values are drawn */
+      key: string;
+      clim: Clim;
+      cmap: ContourCmap;
+      /** the window's nodes, and how many of them have no value on one side */
+      nodes: number;
+      missing: number;
     };
 
 /** A results file's element-id verdict; a results info without one is unverified (fail closed). */
@@ -697,6 +724,7 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
 /** What the contour colours, or why it cannot (V4c1; V4c2a adds element fields). */
 export function contourView(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
+  if (s.variants.difference) return differenceContour(s);
   if (s.phase.at?.kind === "combination") return combinationContour(s, s.phase.at.name);
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { state: "unavailable", reason: "no results file pairs with this model, so there is no field to colour by" };
@@ -792,6 +820,8 @@ export type DeformView =
  * reason; `deformView` adds the user's toggle and the effects' count.
  */
 export function deformOf(s: State): { ok: true; draw: DeformDraw } | { ok: false; state: "unavailable" | "refused"; reason: string } {
+  // VU10: a difference of two variants is a contour only; it is never offered as a shape, nor is either variant's under it.
+  if (s.variants.difference) return { ok: false, state: "refused", reason: "the difference of two variants is shown as a contour only, never as a deformed shape" };
   if (s.phase.at?.kind === "combination") return combinationDeform(s, s.phase.at.name);
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { ok: false, state: "unavailable", reason: "no results file pairs with this model, so there is no displacement" };
@@ -1458,4 +1488,107 @@ function combinationDeform(s: State, name: string): { ok: false; state: "unavail
     return { ok: false, state: "refused", reason: `User Combination ${quoted(name)} (${rule}) is unsigned, so it is shown as a contour only, never as a deformed shape (ADR 0130 D4, A3)` };
   }
   return { ok: false, state: "unavailable", reason: `User Combination ${quoted(name)} is signed; this app draws the deformed shape of a results step only` };
+}
+
+// -- VU10: the difference of two variants (ADR 0132 D9.5) -------------------------
+
+/** What the difference shown reads, or why there is none to read (a refusal); null when no difference is asked for. */
+export type DifferencePlan =
+  | {
+      ok: true;
+      /** names the read: both results files and reads, the compare row, the stage, the step and the dataset */
+      key: string;
+      window: string;
+      compare: string;
+      /** the compare row (the runner asks main for its step by row; never by path) */
+      row: { index: number; label: string };
+      stageId: string;
+      stageName: string;
+      step: number;
+      field: string;
+      component: FieldComponent;
+      /** the one dataset subtracted (a component, never a magnitude) */
+      dataset: string;
+      /** the window stage's `_ids` blob */
+      nodeIds: BlobRef;
+    }
+  | { ok: false; reason: string };
+
+/** Two times are one step's when they agree to 1e-12 of their size. */
+const sameTime = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(a), Math.abs(b));
+
+/**
+ * VU10: the difference the state asks for. It is the window variant minus the
+ * compare variant, at the stage and step shown, of one nodal component, joined
+ * by node id. It is refused, with the reason, on a User Combination (a
+ * combination across variants is refused: ADR 0130 A7, ADR 0132 D8), when the
+ * two results do not state one mesh (`fem_hash`), when the compare set has no
+ * such stage, step time or dataset, and for an element field or a magnitude.
+ */
+export function differencePlanOf(s: State): DifferencePlan | null {
+  const v = s.variants;
+  if (!v.difference || s.visibility.colourBy !== "contour") return null;
+  const c = v.compare;
+  if (c?.status !== "open") return { ok: false, reason: "no compare set is open" };
+  const at = s.phase.at;
+  if (at?.kind === "combination") {
+    return { ok: false, reason: `a User Combination is of the window variant's own states, so a combination across variants is refused: ${quoted(at.name)} is not subtracted from ${quoted(c.label)}` };
+  }
+  if (!s.results || resultsPairing(s).state !== "paired") return { ok: false, reason: "no results file pairs with this model, so there is nothing to subtract from" };
+  if (at?.kind !== "results") return { ok: false, reason: "a difference is of a results step: choose results in the phase bar" };
+  const st = s.results.stages[at.stage];
+  if (!st) return { ok: false, reason: `results stage ${at.stage} is not in the file` };
+  const mine = s.results.lineage?.femHash ?? null;
+  if (mine === null || c.femHash === null || mine !== c.femHash) {
+    return { ok: false, reason: `the two variants' results do not state one mesh (fem_hash ${mine ?? "not stamped"} and ${c.femHash ?? "not stamped"}), so their nodes are not subtracted` };
+  }
+  const label = st.name || st.id;
+  const other = c.stages.find((x) => x.id === st.id);
+  if (!other) return { ok: false, reason: `the compare variant ${quoted(c.label)} has no stage ${quoted(st.id)}` };
+  if (other.name !== st.name) return { ok: false, reason: `stage ${quoted(st.id)} is ${quoted(st.name)} here and ${quoted(other.name)} in ${quoted(c.label)}` };
+  const k = at.step;
+  const t = st.time[k];
+  const u = other.time[k];
+  if (t === undefined || u === undefined) return { ok: false, reason: `the compare variant ${quoted(c.label)} has no step ${k} of stage ${quoted(label)}` };
+  if (!sameTime(t, u)) return { ok: false, reason: `step ${k} of stage ${quoted(label)} is at time ${t} here and ${u} in ${quoted(c.label)}` };
+  const pick = s.contour;
+  if (pick.source !== "nodal") return { ok: false, reason: "a difference is of a nodal component; an element field is not subtracted" };
+  if (pick.field === null || pick.component === null) return { ok: false, reason: "pick a field" };
+  const hit = componentOf(st, pick.field, pick.component);
+  if (!hit) return { ok: false, reason: `stage ${label} has no ${pick.field} ${componentName(pick.component)}` };
+  if (hit.component.magnitude || hit.component.datasets.length !== 1) return { ok: false, reason: "a difference is of one component; a magnitude is not subtracted" };
+  const dataset = hit.component.datasets[0]!;
+  if (!other.nodal.includes(dataset)) return { ok: false, reason: `the compare variant ${quoted(c.label)} records no ${dataset} in stage ${quoted(label)}` };
+  if (!st.nodeIds) return { ok: false, reason: `the node ids of stage ${label} are not loaded` };
+  const study = v.study;
+  const windowRow = study?.rows.find((r) => r.index === study.active);
+  const window = windowRow?.label ?? baseName(s.artifacts.model?.path ?? s.results.path);
+  return {
+    ok: true,
+    key: JSON.stringify([s.results.path, pick.reads, c.results, c.index, st.id, k, dataset]),
+    window,
+    compare: c.label,
+    row: { index: c.index, label: c.label },
+    stageId: st.id,
+    stageName: label,
+    step: k,
+    field: pick.field,
+    component: hit.component,
+    dataset,
+    nodeIds: st.nodeIds,
+  };
+}
+
+/** `contourView` with the difference on: what its read gave, or why it draws nothing. */
+function differenceContour(s: State): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const p = differencePlanOf(s)!;
+  if (!p.ok) return { state: "refused", code: "difference", reason: `the difference is refused: ${p.reason}` };
+  const r = s.variants.read;
+  if (!r || r.key !== p.key || r.status === "loading") return { state: "unavailable", reason: `the difference ${p.window} − ${p.compare} is being read` };
+  if (r.status === "refused") return { state: "refused", code: "difference", reason: `the difference is refused: ${r.reason}` };
+  const c = s.contour;
+  const clim: Clim =
+    c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this difference (the step shown)" };
+  return { state: "difference", window: p.window, compare: p.compare, field: p.field, component: p.component, stageName: p.stageName, key: p.key, clim, cmap: c.cmap, nodes: r.nodes, missing: r.missing };
 }
