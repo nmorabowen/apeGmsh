@@ -38,19 +38,32 @@ The pack helpers (``_has_static_reactions``, ``_extrema_node``,
 ``_try_history``) are the ``viewers/render.py`` ones carried here so
 this path owns them; the originals stay until X3 deletes the director
 path.
+
+``app_still`` / ``app_pack`` (VA6b) are the Windows path of the same
+verbs: each ``view=`` token becomes one ``apegmsh-view/1`` shot drawn
+by apeGmshViewer through ``apeGmsh.agent_view`` (the parity plan,
+``internal_docs/plan_viewer_agent_stills_parity.md``), from a
+``.ladruno`` and its ``<stem>.h5`` (``ladruno_files``). They take the
+files explicitly: the CLI holds them. Linux keeps the session path (G2).
 """
 from __future__ import annotations
 
+import json
+import re
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from .._stills import _DEFAULT_WINDOW, _SKIP_ENV, _env_skips
 from ..render import (
+    _SPEC_VERSION,
     DeformArg,
+    _app_camera,
+    _app_size,
     _require_deform,
     _require_view,
     _resolve_camera,
+    _shoot_app,
 )
 
 if TYPE_CHECKING:
@@ -518,8 +531,320 @@ def _try_history(
     return out
 
 
+# =====================================================================
+# apegmsh-view/1 (Windows; ADR 0128 slice 6, VA6b)
+# =====================================================================
+#
+# The parity plan (internal_docs/plan_viewer_agent_stills_parity.md)
+# maps each view= token to one apegmsh-view/1 shot. A caller that holds
+# the files (the CLI) builds the spec here and draws it with
+# viewers.render._shoot_app; Linux keeps the session path above (G2).
+
+#: ``<stem>.part-<N>.ladruno``, a partitioned run's part file (the app's
+#: ``main/pairing.ts`` PART_FILE rule).
+_LADRUNO_PART = re.compile(r"\.part-\d+\.ladruno$", re.IGNORECASE)
+_LADRUNO_SUFFIX = ".ladruno"
+
+#: A Python nodal prefix as the ``.ladruno`` ON_NODES group the app
+#: names its field after (fork schema ``ladruno_schema_v1.md`` §7.1.1,
+#: §7.1.2; the reader's ``readers/_buckets._NODAL_RESULT_NAME_MAP``
+#: read backwards, the static group first as ``_NODAL_PRECEDENCE``
+#: orders it). A mode stage records ``MODES_OF_VIBRATION(U|R)`` instead.
+_APP_NODAL_FIELD: dict[str, str] = {
+    "displacement": "DISPLACEMENT",
+    "rotation": "ROTATION",
+    "velocity": "VELOCITY",
+    "angular_velocity": "ANGULAR_VELOCITY",
+    "acceleration": "ACCELERATION",
+    "angular_acceleration": "ANGULAR_ACCELERATION",
+    "reaction_force": "REACTION_FORCE",
+    "reaction_moment": "REACTION_MOMENT",
+}
+_APP_MODE_FIELD: dict[str, str] = {
+    "displacement": "MODES_OF_VIBRATION(U)",
+    "rotation": "MODES_OF_VIBRATION(R)",
+}
+_APP_AXES = ("x", "y", "z")
+
+
+def ladruno_files(
+    results_path: "str | Path", model_h5: "str | Path | None" = None,
+) -> dict[str, str]:
+    """The spec's ``files`` for a ``.ladruno`` results file (R22b, R31, G8).
+
+    The viewer and v2 stills read ``.ladruno`` only (ruled 2026-11-02 on
+    #2655): any other results file is refused by name. The app opens a
+    ``.ladruno`` as the set of its stem, so the model is
+    ``<stem>.h5`` beside it; a ``model_h5`` that is another file is
+    refused rather than silently replaced.
+    """
+    path = Path(results_path)
+    part = _LADRUNO_PART.search(path.name)
+    if part is not None:
+        stem = path.name[: part.start()]
+    elif path.name.lower().endswith(_LADRUNO_SUFFIX) and len(path.name) > len(_LADRUNO_SUFFIX):
+        stem = path.name[: -len(_LADRUNO_SUFFIX)]
+    else:
+        raise ValueError(
+            f"apeGmshViewer stills read .ladruno results only (ADR 0122 D1; "
+            f"the #2655 ruling); {path.name} is not a .ladruno. Write the "
+            f"run's results as <stem>.ladruno beside its <stem>.h5 model."
+        )
+    model = path.parent / f"{stem}.h5"
+    if model_h5 is not None and Path(model_h5).resolve() != model.resolve():
+        raise ValueError(
+            f"apeGmshViewer opens {path.name} with its own model {model.name} "
+            f"(the stem rule); model_h5={str(model_h5)!r} is another file. "
+            f"Put the model beside the results as {model.name}."
+        )
+    if not model.is_file():
+        raise FileNotFoundError(
+            f"apeGmshViewer opens {path.name} with the model {model} beside "
+            f"it, which does not exist. Write the model there "
+            f"(ops.h5({model.name!r}) or fem.to_h5)."
+        )
+    return {"model": str(model.resolve()), "results": str(path.resolve())}
+
+
+def _stage_index(results: Any, stage_id: str) -> int:
+    for i, stage in enumerate(results.stages):
+        if str(stage.id) == str(stage_id):
+            return i
+    raise RuntimeError(f"stage {stage_id!r} is not in this results file")
+
+
+def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
+    """A Python nodal component as the app's ``{field, component}`` (R13).
+
+    Only a recorded nodal axis component of a field in
+    :data:`_APP_NODAL_FIELD` maps; anything else is refused by name
+    rather than guessed (R16b and R16c are not drawn here).
+    """
+    _require_contour_data(results, stage_id, component)
+    stage = results.stage(stage_id)
+    recorded = set(stage.nodes.available_components())
+    prefix, _, axis = component.rpartition("_")
+    table = _APP_MODE_FIELD if stage.kind == "mode" else _APP_NODAL_FIELD
+    if component not in recorded or axis not in _APP_AXES or prefix not in table:
+        raise ContourDataError(
+            f"component {component!r} has no apegmsh-view/1 contour here: the "
+            f"Windows stills draw a recorded nodal axis component of "
+            f"{sorted(table)} (e.g. displacement_z). For another one, write "
+            f"a spec and call apeGmsh.agent_view.render_stills."
+        )
+    return {"field": table[prefix], "component": axis}
+
+
+def _auto_deform_scale(results: Any, stage_id: str, step: int) -> float:
+    """G3: the session path's auto scale, ``_realize._apply_pose``'s rule.
+
+    The largest |u| component at the drawn step becomes
+    ``_DEFORM_FRACTION`` of the model diagonal; 1 when either is zero.
+    """
+    import numpy as np
+
+    from apeGmsh.results._geometry import model_diagonal
+
+    from ._realize import _DEFORM_FRACTION
+
+    stage = results.stage(stage_id)
+    recorded = set(stage.nodes.available_components())
+    max_d = 0.0
+    for axis in _APP_AXES:
+        name = f"displacement_{axis}"
+        if name not in recorded:
+            continue
+        values = np.asarray(stage.nodes.get(component=name, time=step).values, dtype=float)
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            max_d = max(max_d, float(np.abs(finite).max()))
+    diag = model_diagonal(np.asarray(results.fem.nodes.coords, dtype=float))
+    if max_d > 0.0 and diag > 0.0:
+        return float(_DEFORM_FRACTION * diag / max_d)
+    return 1.0
+
+
+def _require_fem(results: Any, verb: str) -> None:
+    if results.fem is None:
+        raise RuntimeError(
+            f"results.{verb} requires a bound FEMData "
+            "(construct with model= / model_h5= or call results.bind)."
+        )
+
+
+def app_shot_for_view(
+    results: Any,
+    *,
+    name: str,
+    view: str,
+    component: Optional[str],
+    step: int,
+    deform: DeformArg,
+    camera: str,
+) -> dict[str, Any]:
+    """One ``apegmsh-view/1`` shot for a ``view=`` token (parity plan R9-R22).
+
+    The stage is the session path's (``_resolve_stage``), named by index
+    (R22). ``reactions`` (G1) and a velocity or acceleration warp (G4)
+    are dropped, so they are refused. ``deformed`` with no scale takes
+    the auto scale (G3).
+    """
+    view = _require_view(view)
+    deform_spec = _require_deform(deform)
+    if view == "reactions":
+        raise ValueError(
+            "view='reactions' has no apegmsh-view/1 still (parity plan G1, "
+            "dropped 2026-11-02). Contour reaction_force_<axis> instead."
+        )
+    if deform_spec is not None and view != "mesh" and deform_spec[0] != "displacement":
+        raise ValueError(
+            f"apegmsh-view/1 warps by displacement only (parity plan G4, "
+            f"dropped 2026-11-02); deform field {deform_spec[0]!r} is refused."
+        )
+    shot: dict[str, Any] = {"name": name, "camera": _app_camera(camera)}
+    if view == "mesh":
+        return shot
+    stage_id = _resolve_stage(results)
+    step_i = _resolve_step(results, stage_id, step)
+    quantity = component or default_contour_component(results)
+    if quantity is None:
+        raise ValueError(
+            "view='contour'/'deformed' needs a nodal component; "
+            "none is recorded. Pass component= explicitly."
+        )
+    shot["stage"] = _stage_index(results, stage_id)
+    shot["step"] = step_i
+    shot["contour"] = _app_contour(results, stage_id, quantity)
+    if view == "deformed" or deform_spec is not None:
+        _require_deform_field(results, stage_id, "displacement")
+        scale = deform_spec[1] if deform_spec is not None else None
+        if scale is None:
+            scale = _auto_deform_scale(results, stage_id, step_i)
+        shot["deform"] = {"scale": float(scale)}
+    return shot
+
+
+def app_still(
+    results: Any,
+    path: "str | Path",
+    *,
+    files: dict[str, str],
+    view: str = "contour",
+    component: Optional[str] = None,
+    step: int = -1,
+    deform: DeformArg = None,
+    camera: Optional[str] = None,
+    window_size: tuple[int, int] = _DEFAULT_WINDOW,
+) -> Optional[Path]:
+    """``results.render`` drawn by apeGmshViewer from ``files`` (Windows).
+
+    ``files`` is the set the app opens (:func:`ladruno_files`). Returns
+    the written Path; ``None`` only under ``APEGMSH_SKIP_VIEWER=1``.
+    Raises ``AgentViewError`` on a refusal and ``FileNotFoundError``
+    without the app (G9).
+    """
+    _warn_if_unscoped(results, "render")
+    _require_fem(results, "render")
+    camera = _resolve_camera(camera, results.fem.nodes.coords)
+    shot = app_shot_for_view(
+        results, name="still", view=view, component=component, step=step,
+        deform=deform, camera=camera,
+    )
+    if _env_skips():
+        print(_SKIP_ENV)
+        return None
+    spec = {"spec": _SPEC_VERSION, "files": dict(files), "size": _app_size(window_size), "shots": [shot]}
+    _, written = _shoot_app(spec, {"still": Path(path)})
+    return written["still"]
+
+
+def app_pack_spec(
+    results: Any,
+    *,
+    files: dict[str, str],
+    camera: str,
+    window_size: tuple[int, int],
+) -> dict[str, Any]:
+    """G5: the canned pack as ONE ``apegmsh-view/1`` spec (R23-R28).
+
+    ``mesh``, then ``contour`` and ``deformed`` at the last step of the
+    pack's stage with the default component; ``deformed`` only when a
+    displacement is recorded. ``reactions`` is dropped (G1, R26), and
+    ``history.png`` stays matplotlib (G6, R27), outside the spec.
+    """
+    shots = [app_shot_for_view(
+        results, name="mesh", view="mesh", component=None, step=-1,
+        deform=None, camera=camera,
+    )]
+    component = _pack_component(results)
+    if component is not None:
+        shots.append(app_shot_for_view(
+            results, name="contour", view="contour", component=component,
+            step=-1, deform=None, camera=camera,
+        ))
+        # No recorded displacement: the deformed still is left out, as v1.
+        if _has_displacement(results, _resolve_stage(results)):
+            shots.append(app_shot_for_view(
+                results, name="deformed", view="deformed", component=component,
+                step=-1, deform=None, camera=camera,
+            ))
+    return {"spec": _SPEC_VERSION, "files": dict(files), "size": _app_size(window_size), "shots": shots}
+
+
+def _pack_component(results: Any) -> Optional[str]:
+    """The pack's contour component (v1's choice), ``None`` when there is none."""
+    try:
+        return default_contour_component(results)
+    except (RuntimeError, ValueError):
+        return None
+
+
+def _has_displacement(results: Any, stage_id: str) -> bool:
+    recorded = set(results.stage(stage_id).nodes.available_components())
+    return any(f"displacement_{axis}" in recorded for axis in _APP_AXES)
+
+
+def app_pack(
+    results: Any,
+    out_dir: "str | Path",
+    *,
+    files: dict[str, str],
+    camera: Optional[str] = None,
+    window_size: tuple[int, int] = _DEFAULT_WINDOW,
+) -> tuple[Path, ...]:
+    """``results.render_pack`` drawn by apeGmshViewer from ``files`` (Windows).
+
+    Writes ``<shot>.png`` per shot of :func:`app_pack_spec`, the app's
+    ``manifest.json`` (the record of what was drawn, ADR 0128 D3), and
+    ``history.png``. Returns the PNG paths in pack order; ``()`` only
+    under ``APEGMSH_SKIP_VIEWER=1``.
+    """
+    _warn_if_unscoped(results, "render_pack")
+    _require_fem(results, "render_pack")
+    camera = _resolve_camera(camera, results.fem.nodes.coords)
+    spec = app_pack_spec(results, files=files, camera=camera, window_size=window_size)
+    if _env_skips():
+        print(_SKIP_ENV)
+        return ()
+    dest = Path(out_dir)
+    targets = {shot["name"]: dest / f"{shot['name']}.png" for shot in spec["shots"]}
+    manifest, written = _shoot_app(spec, targets)
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    paths = [written[shot["name"]] for shot in spec["shots"]]
+    history = _try_history(results, dest / "history.png", _pack_component(results))
+    if history is not None:
+        paths.append(history)
+    return tuple(paths)
+
+
 __all__ = [
+    "app_pack",
+    "app_pack_spec",
+    "app_shot_for_view",
+    "app_still",
     "default_contour_component",
+    "ladruno_files",
     "render_results_pack",
     "render_results_still",
     "session_for_view",
