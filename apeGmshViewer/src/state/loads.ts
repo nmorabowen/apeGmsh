@@ -1447,13 +1447,16 @@ export function loadsSummaryOf(s: State): LoadsSummary {
 /**
  * One arrow per record, `ARROW_STRIDE` floats: tip (3), unit direction (3),
  * nominal length in world units (1), sRGB colour (3), head count (1: 1 or 2),
- * mark (1: `BAR`), priority (1: magnitude over its kind's peak), and
- * thinning level (1, `thinningLevels`). The renderer draws each record as an
+ * mark (1: `BAR`), priority (1: magnitude over its kind's peak),
+ * thinning level (1, `thinningLevels`), and anchor (1: `ANCHOR`, whether the
+ * point is the arrow's tip or its tail). The renderer draws each record as an
  * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
  * pixels, with the shaft's length capped to a pixel band.
  */
-export const ARROW_STRIDE = 14;
-export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13 } as const;
+export const ARROW_STRIDE = 15;
+export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13, anchor: 14 } as const;
+/** The `anchor` field: the record's point is the tip (a load or reaction, pointing at the node) or the tail (a nodal vector, starting at it). */
+export const ANCHOR = { tip: 0, tail: 1 } as const;
 /** The `bar` field: no mark, an SP bar across the tip, or a reaction's 45° tick across the tail. */
 export const BAR = { none: 0, sp: 1, tick: 2 } as const;
 
@@ -1468,15 +1471,15 @@ export const COMB_STRIDE = 17;
 /** Thinning levels; level k keeps arrows at least `radius * 2^(k - THIN_LEVELS)` apart, the stronger first (level 0 keeps every arrow). */
 export const THIN_LEVELS = 12;
 
-interface GlyphBuffers {
+export interface GlyphBuffers {
   readonly arrows: number[];
   readonly combs: number[];
 }
 
-type Vec3 = readonly [number, number, number];
+export type Vec3 = readonly [number, number, number];
 
 /** Push an arrow whose tip touches `tip`, pointing along `dir` (unit), `len` long at its nominal size. */
-function pushArrowToPoint(
+export function pushArrowToPoint(
   g: GlyphBuffers,
   tip: Vec3,
   dir: Vec3,
@@ -1486,7 +1489,7 @@ function pushArrowToPoint(
   doubleHead = false,
   spCrossbar = false,
 ): void {
-  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0);
+  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0, ANCHOR.tip);
 }
 
 /** Push a comb bar joining the tails of two arrows (tip, unit or zero direction, nominal length). */
@@ -1554,6 +1557,27 @@ export function thinningLevels(arrows: Float32Array, radius: number): void {
 }
 
 /**
+ * `thinningLevels` decided per node: one record per node (its strongest glyph,
+ * of any kind), then each glyph takes its node's level, so a node's components
+ * and its moment show or hide together. `records` are views of one record each
+ * (into any buffers), `nodes` the node each belongs to.
+ */
+export function thinningLevelsByNode(records: readonly Float32Array[], nodes: readonly number[], radius: number): void {
+  const firstOf = new Map<number, number>();
+  records.forEach((r, i) => {
+    const k = firstOf.get(nodes[i]!);
+    if (k === undefined || r[ARROW.priority]! > records[k]![ARROW.priority]!) firstOf.set(nodes[i]!, i);
+  });
+  const reps = [...firstOf.values()];
+  const perNode = new Float32Array(reps.length * ARROW_STRIDE);
+  reps.forEach((i, j) => perNode.set(records[i]!, j * ARROW_STRIDE));
+  thinningLevels(perNode, radius);
+  const levelOf = new Map<number, number>();
+  reps.forEach((i, j) => levelOf.set(nodes[i]!, perNode[j * ARROW_STRIDE + ARROW.level]!));
+  records.forEach((r, i) => (r[ARROW.level] = levelOf.get(nodes[i]!)!));
+}
+
+/**
  * The arrows at their nominal size as plain segments and head triangles, a
  * head `headLen` long and lying in a fixed plane: the CPU twin of the
  * renderer's instance shader without its pixel sizing, for tests and probes.
@@ -1564,9 +1588,11 @@ export function expandArrows(geom: Pick<Loads3DGeometry, "arrows" | "combs">, he
   const at = (tip: Vec3, dir: Vec3, back: number): [number, number, number] => [tip[0] - dir[0] * back, tip[1] - dir[1] * back, tip[2] - dir[2] * back];
   for (let o = 0; o < geom.arrows.length; o += ARROW_STRIDE) {
     const a = geom.arrows;
-    const tip: Vec3 = [a[o]!, a[o + 1]!, a[o + 2]!];
     const dir: Vec3 = [a[o + 3]!, a[o + 4]!, a[o + 5]!];
     const len = a[o + ARROW.len]!;
+    // A tail-anchored record's point is where the shaft starts: its tip is `len` along it.
+    const ahead = a[o + ARROW.anchor] === ANCHOR.tail ? len : 0;
+    const tip: Vec3 = [a[o]! + dir[0] * ahead, a[o + 1]! + dir[1] * ahead, a[o + 2]! + dir[2] * ahead];
     const h = Math.min(headLen, len);
     const side: Vec3 = Math.abs(dir[2]) < 0.9 ? [-dir[1], dir[0], 0] : [0, -dir[2], dir[1]];
     const sn = Math.hypot(...side) || 1;
@@ -1587,7 +1613,7 @@ export function expandArrows(geom: Pick<Loads3DGeometry, "arrows" | "combs">, he
   return { linePositions: new Float32Array(lines), conePositions: new Float32Array(cones) };
 }
 
-function buildNodeCoordsMap(
+export function buildNodeCoordsMap(
   s: State,
   blobs: BlobStore,
   opts?: BuildLoads3DOptions,
@@ -2514,20 +2540,7 @@ export function buildReactions3D(
   const arrows = new Float32Array(forces.arrows);
   const arcs = new Float32Array(moments.arrows);
   const recordAt = (i: number) => (items[i]!.arc ? arcs : arrows).subarray(recordOf[i]! * ARROW_STRIDE, (recordOf[i]! + 1) * ARROW_STRIDE);
-  // Thinning is decided per node: one record per node (its strongest glyph of either kind), then
-  // each glyph takes its node's level, so a node's components and its moment show or hide together.
-  const firstOf = new Map<number, number>();
-  items.forEach((it, i) => {
-    const k = firstOf.get(it.node);
-    if (k === undefined || recordAt(i)[ARROW.priority]! > recordAt(k)[ARROW.priority]!) firstOf.set(it.node, i);
-  });
-  const reps = [...firstOf.values()];
-  const perNode = new Float32Array(reps.length * ARROW_STRIDE);
-  reps.forEach((i, j) => perNode.set(recordAt(i), j * ARROW_STRIDE));
-  thinningLevels(perNode, radius);
-  const levelOf = new Map<number, number>();
-  reps.forEach((i, j) => levelOf.set(items[i]!.node, perNode[j * ARROW_STRIDE + ARROW.level]!));
-  items.forEach((it, i) => (recordAt(i)[ARROW.level] = levelOf.get(it.node)!));
+  thinningLevelsByNode(items.map((_, i) => recordAt(i)), items.map((it) => it.node), radius);
   return { arrows, arcs, count: arrows.length / ARROW_STRIDE, arcCount: arcs.length / ARROW_STRIDE, maxMag: max.force, maxMoment: max.moment };
 }
 
@@ -2608,7 +2621,7 @@ export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DO
       drawn = true;
     }
     if (!drawn) continue;
-    perNode.push(tip[0], tip[1], tip[2], 0, 0, 1, len, rgb[0], rgb[1], rgb[2], 1, 0, 1, 0);
+    perNode.push(tip[0], tip[1], tip[2], 0, 0, 1, len, rgb[0], rgb[1], rgb[2], 1, 0, 1, 0, ANCHOR.tip);
     nodes++;
   }
   const levels = new Float32Array(perNode);

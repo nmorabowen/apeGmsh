@@ -47,6 +47,7 @@ import {
   type LoadsState,
   type ReactionsState,
   type SupportsState,
+  type VectorsState,
   type MeshInfo,
   type Offer,
   type OffersState,
@@ -81,6 +82,7 @@ export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialVectors: VectorsState = { on: false, field: null, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -262,6 +264,7 @@ export const initialState: State = {
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
   reactions: initialReactions,
+  vectors: initialVectors,
   supports: initialSupports,
   spotlight: initialSpotlight,
   search: initialSearch,
@@ -1366,6 +1369,33 @@ export function reduce(s: State, e: Event): State {
         moments: e.moments ?? cur.moments,
       };
       return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
+    }
+    case "setVectors": {
+      for (const k of ["on", "thin"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setVectors: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setVectors: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.field !== undefined && e.field !== null && (typeof e.field !== "string" || e.field === "")) throw new RangeError(`setVectors: field ${JSON.stringify(e.field)}`);
+      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setVectors: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
+        throw new RangeError(`setVectors: component ${JSON.stringify(e.component)}`);
+      }
+      const cur = s.vectors;
+      const next: VectorsState = {
+        on: e.on ?? cur.on,
+        field: e.field !== undefined ? e.field : cur.field,
+        scale: e.scale ?? cur.scale,
+        headSize: e.headSize ?? cur.headSize,
+        colorBy: e.colorBy ?? cur.colorBy,
+        thin: e.thin ?? cur.thin,
+        component: e.component ?? cur.component,
+      };
+      return (Object.keys(next) as (keyof VectorsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, vectors: next };
     }
     case "setLoads": {
       if (e.on !== undefined && typeof e.on !== "boolean") {

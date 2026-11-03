@@ -13,6 +13,7 @@
 
 import { gaussUnavailable } from "./gaussNotes.ts";
 import { reactionComponentsOf } from "./loads.ts";
+import { vectorFieldOf } from "./vectors.ts";
 import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
@@ -152,6 +153,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
+  setVectors: { kind: "expose", command: "toggle-vectors", description: "Toggle or configure the nodal vector arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
@@ -697,6 +699,22 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setReactions", on: !s.reactions.on }],
       ),
       keywords: "reactions reaction forces supports arrows toggle results",
+    });
+  }
+
+  const vectorField = vectorFieldOf(s);
+  if (vectorField) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-vectors",
+        "loads",
+        s.vectors.on ? "Turn Off Vector Arrows" : "Turn On Vector Arrows",
+        `${vectorField.name} of the step on screen, arrows starting at the nodes, is currently ${s.vectors.on ? "ON" : "OFF"}`,
+        [{ type: "setVectors", on: !s.vectors.on }],
+        s.vectors.on,
+        [{ type: "setVectors", on: !s.vectors.on }],
+      ),
+      keywords: "vectors vector field displacement velocity acceleration rotation arrows glyphs toggle results",
     });
   }
 

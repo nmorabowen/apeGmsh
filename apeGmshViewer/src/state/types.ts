@@ -985,6 +985,26 @@ export interface ReactionsState {
   readonly moments: boolean;
 }
 
+/**
+ * The Vectors card: a nodal vector field of the results step on screen as
+ * arrows starting at the nodes (state/vectors.ts `buildVectors3D`), or half
+ * circles about their axes for a rotational field; sized, coloured and
+ * thinned like the reaction arrows, on its own settings.
+ */
+export interface VectorsState {
+  readonly on: boolean;
+  /** The field drawn, by its nodal field name (`DISPLACEMENT`, `velocity`); null: the stage's first vector field. */
+  readonly field: string | null;
+  /** Shaft multiplier (default 1, > 0). */
+  readonly scale: number;
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0). */
+  readonly headSize: number;
+  readonly colorBy: LoadsColorBy;
+  readonly thin: boolean;
+  /** What each node draws: the resultant, its three global-axis components as separate arrows, or one of them (default resultant). */
+  readonly component: ReactionComponent;
+}
+
 /** The Display card's BC toggle: restraint glyphs at the supports (state/loads.ts `buildSupports3D`). */
 export interface SupportsState {
   readonly on: boolean;
@@ -1232,6 +1252,7 @@ export interface State {
   /** 3-D structural loading and prescribed-SP visualization state */
   loads: LoadsState;
   reactions: ReactionsState;
+  vectors: VectorsState;
   supports: SupportsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
@@ -1554,6 +1575,8 @@ export type Event =
   | { type: "setSupports"; on?: boolean; scale?: number }
   /** The Reactions card's controls */
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
+  /** The Vectors card's controls (`field` null: the stage's first vector field) */
+  | { type: "setVectors"; on?: boolean; field?: string | null; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";

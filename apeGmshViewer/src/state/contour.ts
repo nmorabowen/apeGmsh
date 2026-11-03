@@ -103,7 +103,7 @@ export const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> =
  * its own component, labelled as the file names it (`Rz`, `RMz`, ...), never
  * as the z of a rotation vector.
  */
-const LADRUNO_ROTATION = new Set([
+export const LADRUNO_ROTATION = new Set([
   // §7.1.1
   "ROTATION",
   "MODES_OF_VIBRATION(R)",
