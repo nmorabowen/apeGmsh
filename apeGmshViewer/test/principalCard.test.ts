@@ -91,6 +91,32 @@ test("the layer: tail-anchored arrows at the 24 Gauss points, two per in-plane p
   }
 });
 
+test("picking a field that cannot draw hides the last field's arrows; the default prefers a stress", async () => {
+  h.store.dispatch({ type: "setPrincipal", on: true, field: null });
+  const d = await atStep(1, true);
+  const layer = new PrincipalLayer();
+  try {
+    assert.equal(layer.sync(h.store.get(), h.blobs, null, d), true);
+    assert.equal(layer.root.visible, true);
+    // The same stage with one more RESULT whose only group lacks yy and xy: a field kept for its refusal.
+    const s0 = h.store.get();
+    const stage = s0.results!.stages[0]!;
+    const bad = { ...stage.gauss[0]!, id: "bad/31-FourNodeQuad[201:0:0]", components: ["bad/sigma11"] };
+    const results = { ...s0.results!, stages: [{ ...stage, gauss: [bad, ...stage.gauss] }] };
+    const withBad = { ...s0, results };
+    assert.equal(principalFieldOf(withBad)!.name, "stress", "the default skips a field that cannot draw, and prefers a stress");
+    const picked = { ...withBad, principal: { ...withBad.principal, field: "bad" } };
+    assert.deepEqual(principalFieldOf(picked)!.groups, []);
+    // The effects ask for no tensor for it: the step comes back without one.
+    layer.sync(picked, h.blobs, null, { ...d, tensor: undefined });
+    assert.equal(layer.root.visible, false, "no stress arrows left under a field that draws nothing");
+    assert.equal(layer.drawnPoints, 0);
+  } finally {
+    layer.dispose();
+    h.store.dispatch({ type: "setPrincipal", on: false });
+  }
+});
+
 test("a deformed step moves the arrows' tails with the Gauss points", async () => {
   h.store.dispatch({ type: "setPrincipal", on: true, head: "arrow" });
   const d = await atStep(1, true);

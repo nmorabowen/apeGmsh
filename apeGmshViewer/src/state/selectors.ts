@@ -635,10 +635,11 @@ export function principalFieldsOf(s: State): TensorField[] {
   return st ? tensorFields(st.gauss) : [];
 }
 
-/** The field the Principal card draws: the one picked, else the stage's first that can draw; null when the stage has none. */
+/** The field the Principal card draws: the one picked, else the first stress that can draw, then the first field that can; null when the stage has none. */
 export function principalFieldOf(s: State): TensorField | null {
   const fields = principalFieldsOf(s);
-  return fields.find((f) => f.name === s.principal.field) ?? fields.find((f) => f.groups.length > 0) ?? fields[0] ?? null;
+  const drawable = fields.filter((f) => f.groups.length > 0);
+  return fields.find((f) => f.name === s.principal.field) ?? drawable.find((f) => f.family === "stress") ?? drawable[0] ?? fields[0] ?? null;
 }
 
 /**

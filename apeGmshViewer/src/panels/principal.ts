@@ -59,6 +59,8 @@ export function renderPrincipal(s: State, dispatch: (e: Event) => void = () => {
     const o = el("option", undefined, f.name);
     o.value = f.name;
     o.selected = f.name === field.name;
+    // Listed, so its reasons can be read below once picked, but it draws nothing.
+    if (f.groups.length === 0) o.textContent = `${f.name} (not drawn)`;
     which.append(o);
   }
   unlisten.push(

@@ -601,7 +601,8 @@ export class PrincipalLayer extends ArrowLayer {
   sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
     const at = s.phase.at;
     const field = s.principal.on ? principalFieldOf(s) : null;
-    if (!field || !s.mesh?.nodes || at?.kind !== "results") {
+    // A field that cannot draw (every group refused) shows nothing: no step will ever carry its tensor.
+    if (!field || field.groups.length === 0 || !s.mesh?.nodes || at?.kind !== "results") {
       this.appliedKey = null;
       this.drawnStep = null;
       this.drawnStage = null;
