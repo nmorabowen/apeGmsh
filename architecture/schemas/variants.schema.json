@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/nmorabowen/apeGmsh/architecture/schemas/variants.schema.json",
   "title": "<study>.variants.json, version 1.0.0 (ADR 0132, Proposed; completes ADR 0130 A7)",
-  "description": "The sets of one study that differ in stiffness or another parameter. This schema checks the shape of a 1.0.x file and the lexical form of each path. Rules it cannot express (unique labels and paths, the name rule's NFC test, confinement after symlinks are resolved, that the path names an existing model file) are in architecture/workspace-schema.md, and a reader applies them per row.",
+  "description": "The sets of one study that differ in stiffness or another parameter. This schema checks the shape of a 1.0.x file and the lexical form of each path. Rules it cannot express (unique labels and paths, the name rule's NFC test, confinement after symlinks are resolved, that the path names an existing model file) are in architecture/h5-schema.md, section '<study>.variants.json', and a reader applies them per row.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "version", "variants"],
