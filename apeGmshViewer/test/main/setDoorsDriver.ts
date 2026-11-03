@@ -4,7 +4,7 @@
 // It runs in a child process, because main.ts reads its mode from argv and
 // watches the set it opens; it prints one JSON line and exits.
 //
-//   node test/main/setDoorsDriver.ts --case=<view|none|render|capture|describe|measure|source|source-none> --dir=<root> [main's own --mode= --file= --spec= --out=]
+//   node test/main/setDoorsDriver.ts --case=<view|reload|none|render|capture|describe|measure|source|source-none> --dir=<root> [main's own --mode= --file= --spec= --out=]
 //
 // `<root>` holds `set/` (the set the window opens), `outside/` and `elsewhere/`;
 // the `source` cases (VU13 #2760) also `src-set/`, `lib/` and the editor's log.
@@ -24,7 +24,7 @@ const root = opt("dir");
 const which = opt("case");
 if (!root || !which) throw new Error("setDoorsDriver needs --case= and --dir=");
 
-const { appEvents, handlers, listeners } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { appEvents, handlers, listeners, pageEvents, pageSent, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const set = join(root, "set");
@@ -45,7 +45,7 @@ const GEOMETRY = {
 
 /** The parts of an answer the test judges; the arrays stay in this process. */
 type Seen = { ok: boolean; error?: string; seq?: number; scanId?: number; stages?: number; geometry?: boolean };
-const out: Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null }> = {};
+const out: Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null } | { sent: number }> = {};
 const event = { sender: { isDestroyed: () => false, send: () => undefined } };
 
 async function call(name: string, channel: string, ...args: unknown[]): Promise<Seen | null> {
@@ -175,6 +175,42 @@ if (which === "view") {
   await call("prune:2 fallen off", "viewer:offerOpen", RESULTS.elsewhere, offered);
   out["prune:2 model"] = { onScreen: await modelOf() };
   await call("prune:3 back to the set it left", "viewer:offerOpen", ladruno, [join(set, "s.h5"), ladruno]);
+} else if (which === "reload") {
+  // VU14 (#2771): a page load starts an empty offer list, so an offer the old page listed is no longer openable;
+  // an offer still waiting to be sent (the new page will list it) is. main.ts makes its window once the app is ready.
+  ready();
+  await new Promise((r) => setImmediate(r));
+  const load = () => {
+    const fns = pageEvents.get("did-start-loading") ?? [];
+    if (fns.length === 0) throw new Error("main.ts listens for no did-start-loading");
+    for (const fn of fns) fn({});
+  };
+  const listening = () => listeners.get("viewer:offersReady")!({});
+  const present = (spec: string) => {
+    for (const fn of appEvents.get("second-instance") ?? []) fn({}, [], root, { kind: "present", spec: join(root, spec), ack: join(root, "no-such-pipe") });
+  };
+  const offersSent = () => pageSent.filter((s) => s.channel === "viewer:offers").length;
+  const modelOf = async () => ((await handlers.get("viewer:currentSet")!(event)) as { model: string | null } | null)?.model ?? null;
+  const there = [join(elsewhere, "s.h5"), RESULTS.elsewhere];
+  load();
+  listening();
+  present("present.json"); // the page listens: sent at once, and listed
+  out["reload:0 sent"] = { sent: offersSent() };
+  await call("reload:1 listed offer", "viewer:offerOpen", RESULTS.elsewhere, there);
+  out["reload:1 model"] = { onScreen: await modelOf() };
+  load(); // the page reloads: its list starts empty
+  await call("reload:2 offer the old page listed", "viewer:offerOpen", RESULTS.elsewhere, there);
+  await call("reload:3 the set that offer left", "viewer:offerOpen", RESULTS.ladruno, [join(set, "s.h5"), RESULTS.ladruno]);
+  out["reload:3 model"] = { onScreen: await modelOf() };
+  // An offer that arrives while the page loads waits for it, and survives a second load before the page listens.
+  const outside = join(root, "outside");
+  present("flood.json");
+  load();
+  out["reload:4 sent"] = { sent: offersSent() };
+  listening();
+  out["reload:5 sent"] = { sent: offersSent() };
+  await call("reload:5 waiting offer", "viewer:offerOpen", join(outside, "s.ladruno"), [join(outside, "s.h5"), join(outside, "s.ladruno")]);
+  out["reload:5 model"] = { onScreen: await modelOf() };
 } else if (which === "source" || which === "source-none") {
   // VU13 (#2760): go-to-source opens only a source file the set's model names in its /provenance.
   // The editor is a recorder (APEGMSH_EDITOR, ./source.test.ts): each launch appends its argv to editor.log.
