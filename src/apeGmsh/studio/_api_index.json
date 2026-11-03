@@ -139,7 +139,7 @@
       "symbol": "EigenResult.mode_shape"
     },
     "EigenResult.results": {
-      "doc": "Write the modes with :meth:`to_native` (to a temp file) and",
+      "doc": "Write the modes with :meth:`to_ladruno` (to a temp file) and",
       "signature": "results(model_h5: \"'str | os.PathLike[str] | None'\" = None) -> \"'Results'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "EigenResult.results"
