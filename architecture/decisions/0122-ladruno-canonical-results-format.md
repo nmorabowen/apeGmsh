@@ -295,3 +295,14 @@ Modal groups are copied as they are. LOCAL_AXES is dropped and listed in
 
 Slice 6 (#2120, PR #2121) implements the converter this way. No decision
 changes, and the D5 text above stands as written.
+
+## Superseded in part by ADR 0131 (2026-11-03)
+
+[ADR 0131](0131-all-in-ladruno.md) supersedes:
+
+- D2, for apeGmshViewer only;
+- D5's "`Results.from_mpco` stays a reader";
+- D6, for footfall and for element buckets;
+- D10, the rest of row 9 and all of row 10.
+
+D1 stands and gains one clause there. Every other decision above stands.
