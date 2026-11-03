@@ -218,7 +218,7 @@ def test_diaphragm_resolver_refuses_a_non_membrane() -> None:
 # The fork WP-208 build check
 # ---------------------------------------------------------------------------
 
-_PIN = "23d937bc4011d1b29230671511531e23f777d78c"
+_PIN = "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe"
 #: The maintainer's venv build, which predates c83ee812e.
 _STALE_FORK = "79e0623670c61c768357a01dff1477a4a0ef7e06"
 _WP208_ARGS: dict[str, tuple[int | float | str, ...]] = {
