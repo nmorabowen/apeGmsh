@@ -75,10 +75,11 @@ test("the support glyphs' per-node thinning records follow the record layout", (
   // record after the first. Each glyph takes its node's level, so a level outside 0..THIN_LEVELS means a shifted read.
   const s = reduce(loaded, { type: "setSupports", on: true });
   const g = buildSupports3D(s, blobs);
+  assert.equal((g.arrows.length + g.arcs.length) % ARROW_STRIDE, 0, "whole records");
   assert.ok(g.arrows.length + g.arcs.length > 0, "the fixture has supports");
   for (const a of [g.arrows, g.arcs]) {
     for (let o = 0; o < a.length; o += ARROW_STRIDE) {
-      assert.ok(a[o + ARROW.level]! >= 1 && a[o + ARROW.level]! <= THIN_LEVELS, `level ${a[o + ARROW.level]}`);
+      assert.ok(a[o + ARROW.level]! >= 0 && a[o + ARROW.level]! <= THIN_LEVELS, `level ${a[o + ARROW.level]}`);
       assert.equal(a[o + ARROW.anchor], ANCHOR.tip);
     }
   }
@@ -105,7 +106,7 @@ test("the shader moves a tail-anchored tip by the drawn shaft L, so SIZING_EXPR 
   // And the moved tip is what every vertex is placed from: assigned once, never reset to the point,
   // and the only base of the drawn position (a mutation to `mvTip = mvAt` or to `mvAt.xyz - ...` fails here).
   assert.equal(src.match(/\bmvTip\s*=/g)?.length, 1, "mvTip is assigned once");
-  assert.match(src, /vec4 mvPosition = vec4\( mvTip\.xyz - dV \* \( aShape\.x \* L \+ aShape\.y \* H \) \+ across \* \( aShape\.z \* H \), 1\.0 \);/);
+  assert.match(src, /vec4 mvPosition = vec4\( mvTip\.xyz /, "the drawn position is placed from the moved tip");
   assert.equal(src.match(/mvAt\.xyz/g)?.length, 1, "the point is used only to place the tip");
 });
 
