@@ -90,6 +90,13 @@ export interface SpecShot {
    * outside what it can state).
    */
   combination?: string | null;
+  /**
+   * VU10 (ADR 0132 D9.5): a variant of `files.variants`, by label, opened as
+   * the compare set; the contour then shows the window variant minus it, at
+   * the shot's stage and step. Absent or null: none. Needs a nodal contour of a
+   * stage; never with a combination or a deformed shape.
+   */
+  compare?: string | null;
   step: SpecStep;
   camera: SpecCamera;
   colour_by: "group" | "role" | "contour";
@@ -106,8 +113,12 @@ export interface SpecShot {
 
 export interface ViewSpec {
   spec: typeof SPEC_VERSION;
-  /** as written in the spec; main resolves a relative path against the spec file's folder */
-  files: { model: string; results: string | null };
+  /**
+   * As written in the spec; main resolves a relative path against the spec
+   * file's folder. VU10: `variants` is a `<study>.variants.json` whose rows
+   * include `model`; the window set is that row, and a shot may compare.
+   */
+  files: { model: string; results: string | null; variants?: string | null };
   size: [number, number];
   theme: ThemeMode;
   shots: SpecShot[];
@@ -265,10 +276,12 @@ interface Defaults {
   layers: Record<string, boolean> | null;
   layersKey: string;
   background: Background;
+  /** VU10: whether the spec names `files.variants` (a shot may compare only then) */
+  variants: boolean;
 }
 
 function shot(v: unknown, key: string, d: Defaults): SpecShot {
-  const o = object(v, key, ["name", "caption", "stage", "combination", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
+  const o = object(v, key, ["name", "caption", "stage", "combination", "compare", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
   const name = text(o["name"], `${key}.name`);
   if (!NAME.test(name)) throw new SpecError(`${key}.name`, `is the PNG's file name: letters, digits, _, . and -, starting with a letter or digit, at most 100 characters; got ${show(name)}`);
   const c = o["contour"] === undefined ? null : contour(o["contour"], `${key}.contour`);
@@ -280,6 +293,16 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
   if (comb !== null && st !== null) throw new SpecError(`${key}.combination`, "names the state shown, as stage does: a shot shows a stage or a User Combination, not both");
   if (o["step"] !== undefined && st === null) {
     throw new SpecError(`${key}.step`, comb !== null ? "a User Combination is one state: it has no step" : "needs a stage: a step is a position in a results stage");
+  }
+  // VU10: a compare names a variant; the shot then shows a difference, of a nodal contour at a stage, never a shape.
+  const cmp = o["compare"] === undefined || o["compare"] === null ? null : text(o["compare"], `${key}.compare`);
+  if (cmp !== null) {
+    if (!d.variants) throw new SpecError(`${key}.compare`, "names a variant, and the spec has no files.variants to find it in");
+    if (comb !== null) throw new SpecError(`${key}.compare`, "a combination across variants is refused: a User Combination is of the window variant's own states");
+    if (st === null) throw new SpecError(`${key}.compare`, "needs a stage: a difference is of a results step");
+    if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
+    if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
+    if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
   }
   const caption = o["caption"] === undefined ? null : text(o["caption"], `${key}.caption`);
   const chrome = o["chrome"] === undefined ? d.chrome : oneOf(o["chrome"], `${key}.chrome`, CHROMES);
@@ -296,6 +319,7 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     caption,
     stage: st,
     ...(comb === null ? {} : { combination: comb }),
+    ...(cmp === null ? {} : { compare: cmp }),
     step: o["step"] === undefined ? "last" : step(o["step"], `${key}.step`),
     camera: o["camera"] === undefined ? "iso" : camera(o["camera"], `${key}.camera`),
     colour_by: colourBy,
@@ -342,14 +366,16 @@ function validate(raw: unknown): ViewSpec {
   // The version first: a spec of another version is refused for that, not for a key this version lacks.
   if (raw["spec"] !== SPEC_VERSION) throw new SpecError("spec", `must be "${SPEC_VERSION}"; got ${show(raw["spec"])}`);
   const o = object(raw, "", ["spec", "files", "size", "theme", "chrome", "layers", "background", "shots"]);
-  const files = object(o["files"], "files", ["model", "results"]);
+  const files = object(o["files"], "files", ["model", "results", "variants"]);
   const model = text(files["model"], "files.model");
   const results = files["results"] === undefined ? null : text(files["results"], "files.results");
+  const variants = files["variants"] === undefined ? null : text(files["variants"], "files.variants");
+  if (variants !== null && !/.\.variants\.json$/i.test(variants)) throw new SpecError("files.variants", `must name a <study>.variants.json; got ${show(variants)}`);
   const chrome = o["chrome"] === undefined ? "app" : oneOf(o["chrome"], "chrome", CHROMES);
   const background = o["background"] === undefined ? "theme" : oneOf(o["background"], "background", BACKGROUNDS);
   const layers = o["layers"] === undefined ? null : layerKeys(o["layers"], "layers");
   if (!Array.isArray(o["shots"]) || o["shots"].length === 0) throw new SpecError("shots", `must be a non-empty list of shots; got ${show(o["shots"])}`);
-  const shots = o["shots"].map((s, i) => shot(s, `shots[${i}]`, { chrome, layers, layersKey: "layers", background }));
+  const shots = o["shots"].map((s, i) => shot(s, `shots[${i}]`, { chrome, layers, layersKey: "layers", background, variants: variants !== null }));
   const seen = new Map<string, number>();
   for (const [i, s] of shots.entries()) {
     // Windows file names ignore case: two names that differ only in case would write one PNG.
@@ -359,7 +385,7 @@ function validate(raw: unknown): ViewSpec {
   }
   return {
     spec: SPEC_VERSION,
-    files: { model, results },
+    files: { model, results, ...(variants === null ? {} : { variants }) },
     size: o["size"] === undefined ? [DEFAULT_SIZE[0], DEFAULT_SIZE[1]] : size(o["size"], "size"),
     // D8: batch stills default to the light, white-paper theme.
     theme: o["theme"] === undefined ? "light" : oneOf(o["theme"], "theme", THEME_MODES),
