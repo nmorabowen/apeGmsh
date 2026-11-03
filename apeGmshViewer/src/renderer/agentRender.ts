@@ -28,7 +28,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import { contourView, deformView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { State } from "../state/types.ts";
-import { contourKey, elementContourKey } from "./contour.ts";
+import { combinationContourKey, contourKey, elementContourKey, type CombinationColumnOf } from "./contour.ts";
 import { composeStill, loadStillFonts, type ScaleBar } from "./stillLayers.ts";
 import type { Viewport } from "./viewport.ts";
 
@@ -61,6 +61,8 @@ export interface RenderDeps {
   viewport: Viewport;
   bridge: RenderBridge;
   layout: Layout;
+  /** VU7b-2: the User Combination column on screen (renderer/contour.ts `CombinationFeed.held`), for the manifest */
+  combination: () => CombinationColumnOf | null;
 }
 
 /** One shot of the run: its D3 entry, and the shot's time, with the part spent until its view was on screen (the rest paints, composes and writes). */
@@ -75,6 +77,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolean {
   const v = contourView(s);
+  // VU7b-2: a User Combination is one state, with no step to read.
+  if (v.state === "combination") return viewport.contourApplied === combinationContourKey(v);
   // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
   const at = s.phase.at;
   const step = effects.currentStep();
@@ -109,7 +113,7 @@ function screenAxes(viewport: Viewport): { x: [number, number]; y: [number, numb
 
 function scaleBarOf(s: State, plan: ShotPlan): ScaleBar | null {
   const v = contourView(s);
-  if ((v.state !== "ready" && v.state !== "element") || !plan.contour) return null;
+  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination") || !plan.contour) return null;
   return { title: `${plan.contour.field} ${plan.contour.label}`, min: v.clim.min, max: v.clim.max, rangeLabel: v.clim.label, cmap: v.cmap };
 }
 
@@ -177,6 +181,7 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
       layout: { viewport: r, panels },
       blobs,
       step: effects.currentStep(),
+      combination: deps.combination(),
     });
   } catch (err) {
     return refuse(`the manifest cannot state this view: ${err instanceof Error ? err.message : String(err)}`);

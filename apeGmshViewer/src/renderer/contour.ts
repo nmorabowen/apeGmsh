@@ -6,11 +6,13 @@
 // for a vertex colour attribute (it writes sRGB on output). The GPU then
 // interpolates the colours inside each primitive.
 
+import type { CombinationTable } from "../combination/evaluate.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { cellVertexValues, columnOf, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
+import { cellVertexValues, columnOf, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
-import type { ContourView } from "../state/selectors.ts";
-import type { MeshInfo, State } from "../state/types.ts";
+import { combinationRequestOf, combinationTableOf, type ContourView } from "../state/selectors.ts";
+import type { Store } from "../state/store.ts";
+import type { CombinationRead, MeshInfo, State } from "../state/types.ts";
 
 /** One step's nodal values, as the effects hold them (effects.ts `StepData`). */
 export interface StepValues {
@@ -92,6 +94,8 @@ export function contourShownKey(v: ContourView): string | null {
       return contourKey(v);
     case "element":
       return elementContourKey(v);
+    case "combination":
+      return combinationContourKey(v);
     case "unavailable":
     case "refused":
     case "not-yet":
@@ -102,6 +106,123 @@ export function contourShownKey(v: ContourView): string | null {
       const unknown: never = v;
       throw new Error(`unknown contour view ${JSON.stringify(unknown)}`);
     }
+  }
+}
+
+// -- VU7b-2: a User Combination's nodal value (ADR 0130 D4) -----------------------
+
+/** What a set of combination colours shows: the read (the file, the combination, the column, A6), the range and the colormap. */
+export const combinationContourKey = (view: Extract<ContourView, { state: "combination" }>): string =>
+  `combination ${view.key}|${view.clim.min}|${view.clim.max}|${view.cmap}`;
+
+/** One combination's value for one nodal quantity, under the key of the read (selectors `combinationRequestOf`). */
+export interface CombinationColumnOf {
+  key: string;
+  column: CombinedColumn;
+}
+
+/**
+ * The linear vertex colours of the drawn lines and triangles for the User
+ * Combination on screen: each vertex takes its node's value (by node id,
+ * state/contour.ts `vertexValues`), and a node the combination gives no value
+ * is no data. Null while the column on hand is not the read the view names
+ * (the viewport keeps what it shows).
+ */
+export function combinationColours(
+  view: Extract<ContourView, { state: "combination" }>,
+  mesh: MeshInfo,
+  blobs: BlobStore,
+  held: CombinationColumnOf | null,
+  lineMap: Int32Array,
+  triMap: Int32Array,
+): { line: Float32Array; tri: Float32Array; key: string } | null {
+  if (!held || held.key !== view.key) return null;
+  const column = columnOf(held.column.ids);
+  const vn = mesh.vertexNodes;
+  const clim = { min: view.clim.min, max: view.clim.max };
+  const rows = [held.column.values];
+  const line = primitiveColours(vertexValues(blobs.get(vn.line) as Float64Array, column, rows, false), lineMap, 2, clim, view.cmap).rgb;
+  const tri = primitiveColours(vertexValues(blobs.get(vn.tri) as Float64Array, column, rows, false), triMap, 3, clim, view.cmap).rgb;
+  return { line: linearise(line), tri: linearise(tri), key: combinationContourKey(view) };
+}
+
+/** What the feed asks for one read: `userCombinationColumn`'s request (effects.ts), without the bridge. */
+export interface CombinationFetch {
+  (req: { path: string; table: CombinationTable; name: string; quantity: { label: string; component: string }; staleness: { stale: boolean; reason: string } }): Promise<
+    { ok: true; column: CombinedColumn } | { ok: false; refusal: { reason: string; detail: string } }
+  >;
+}
+
+/**
+ * VU7b-2: the feed of the User Combination shown. It reads the combination's
+ * column for the quantity picked whenever the state asks for one it does not
+ * hold (selectors `combinationRequestOf`), holds the values (`held`, read by
+ * the viewport and the manifest, as a results step's values stay in the
+ * effects), and reports each read to the store (`combinationRead`): loading,
+ * then the value's range and sign, the evaluator's refusal, or what it raised.
+ * An answer for a request no longer wanted is dropped. Each check runs in a
+ * microtask, so a dispatch never happens inside another's listeners.
+ */
+export class CombinationFeed {
+  /** the column of the latest read that answered, under its key */
+  held: CombinationColumnOf | null = null;
+  private seq = 0;
+  private asked: string | null = null;
+  private queued = false;
+  private readonly store: Store;
+  private readonly fetch: CombinationFetch;
+
+  constructor(store: Store, fetch: CombinationFetch) {
+    this.store = store;
+    this.fetch = fetch;
+  }
+
+  /** Follow the store; returns the unsubscribe. */
+  start(): () => void {
+    const off = this.store.subscribe(() => this.schedule());
+    this.schedule();
+    return off;
+  }
+
+  private schedule(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => {
+      this.queued = false;
+      this.check();
+    });
+  }
+
+  /** Start the read the state asks for, if it is not running or answered; exposed for the tests. */
+  check(): Promise<void> | null {
+    const s = this.store.get();
+    const want = combinationRequestOf(s);
+    if (want === null) {
+      // Nothing is asked for: a read still on its way answers nothing.
+      if (this.asked !== null) this.seq++;
+      this.asked = null;
+      return null;
+    }
+    if (this.asked === want.key && s.combination?.key === want.key) return null;
+    const table = combinationTableOf(s);
+    if (table === null) throw new Error(`combination feed: ${want.name} is asked for, and the state holds no combination table`);
+    const mine = ++this.seq;
+    this.asked = want.key;
+    this.store.dispatch({ type: "combinationRead", read: { key: want.key, status: "loading" } });
+    const answered = (read: CombinationRead, column: CombinedColumn | null) => {
+      if (mine !== this.seq) return;
+      if (column) this.held = { key: want.key, column };
+      this.store.dispatch({ type: "combinationRead", read });
+    };
+    return this.fetch({ path: want.path, table, name: want.name, quantity: want.quantity, staleness: want.staleness }).then(
+      (r) => {
+        if (!r.ok) return answered({ key: want.key, status: "refused", reason: r.refusal.reason, detail: r.refusal.detail }, null);
+        const c = r.column;
+        answered({ key: want.key, status: "ready", label: c.label, range: c.range, nodes: c.ids.length, signed: c.signed }, c);
+      },
+      // What the evaluator raised (a case that repeats a node id raises in Python too) is stated, never a blank view.
+      (err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null),
+    );
   }
 }
 

@@ -3,7 +3,7 @@
 // capture; ADR 0128's render and describe run in ./agentRender.ts).
 
 import * as THREE from "three";
-import { Effects, type Bridge } from "../effects.ts";
+import { Effects, userCombinationColumn, type Bridge } from "../effects.ts";
 import { mountBanner } from "../panels/banner.ts";
 import { mountEmpty } from "../panels/empty.ts";
 import { mountHeader } from "../panels/header.ts";
@@ -31,7 +31,7 @@ import { OfferRunner, snapshotManifest } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
 import type { OfferIn } from "../state/types.ts";
 import { onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
-import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
+import { CombinationFeed, contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
 import { mountViewCube } from "./viewcube.ts";
@@ -53,7 +53,12 @@ viewport.setDisplacementSource(() => effects.currentDisplacement());
 // 3-D line diagrams: ribbon + profile + risers from the step the effects fetched.
 viewport.setLineDiagramSource(() => effects.currentLineDiagram());
 viewport.setStationsSource(() => effects.stationsOfStep());
+// VU7b-2 (ADR 0130 D4): the User Combination shown, read through main's `user:readCase` and combined by VU4's
+// evaluator (effects.ts `userCombinationColumn`); its values stay in the feed, as a step's stay in the effects.
+const combinations = new CombinationFeed(store, (req) => userCombinationColumn(bridge, req));
+viewport.setCombinationSource(() => combinations.held);
 const panels = [
+  combinations.start(),
   // VA5 (ADR 0128 D5): first, so its box opens the right rail above the inspector.
   mountOffers(store),
   // ADR 0130 D6 (VU7a): the .user.h5 modal table, below the offers, while a mode is shown.
@@ -1545,7 +1550,7 @@ async function main() {
       const path = job.mode === "render" ? userPathOf(job) : null;
       if (job.mode === "render" && path !== null) await readUser({ path, model: job.model, results: job.results, known: false });
     }
-    await runAgentMode({ store, blobs, effects, viewport, bridge: renderBridge, layout: stillLayout });
+    await runAgentMode({ store, blobs, effects, viewport, bridge: renderBridge, layout: stillLayout, combination: () => combinations.held });
     return;
   }
   if (cfg.mode === "view") {

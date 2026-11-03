@@ -126,7 +126,7 @@ test("EntitiesLayer: a stale zone hides the layer, and a rebuild disposes and re
     ({
       ...initialState,
       mesh,
-      user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: null, entities } },
+      user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: null, entities } },
     }) as State;
   const e = zone({
     cuts: [cut({})],
@@ -167,7 +167,7 @@ test("drawnEntities: only a zone that reads and is current, with the model drawn
     ({
       ...initialState,
       mesh,
-      user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: null, entities } },
+      user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: null, entities } },
     }) as State;
   const e = zone();
   assert.equal(drawnEntities(ready(e)), e);

@@ -32,7 +32,7 @@
 // Only `timing` varies between two runs of one spec on one machine: paths of
 // stills are relative to the manifest, and every number comes from the files.
 
-import type { StepValues } from "../renderer/contour.ts";
+import type { CombinationColumnOf, StepValues } from "../renderer/contour.ts";
 import { elementMaskOf, visibleMaps } from "../renderer/visible.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
@@ -73,7 +73,10 @@ export type ManifestContour =
       component: string;
       /** what the legend shows for the component */
       label: string;
-      source: "nodal" | "element";
+      /** VU7b-2: `combination` is a User Combination's nodal value (`combination` names it) */
+      source: "nodal" | "element" | "combination";
+      /** VU7b-2, a combination's contour only: which, and whether it may draw as a deformed shape */
+      combination?: { name: string; signed: boolean };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
       cmap: string;
@@ -159,6 +162,8 @@ export interface EntryInput {
   blobs: BlobStore;
   /** the step data on screen (`effects.currentStep()`); null on the mesh */
   step: StepValues | null;
+  /** VU7b-2: the User Combination column on screen (renderer/contour.ts `CombinationFeed.held`); a combination contour without it cannot be stated */
+  combination?: CombinationColumnOf | null;
 }
 
 function filesOf(s: State): ManifestFiles {
@@ -366,11 +371,48 @@ function elementEvidence(s: State, v: Extract<ContourView, { state: "element" }>
   };
 }
 
-function contourOf(s: State, blobs: BlobStore, step: StepValues | null): ManifestContour | null {
+function contourOf(s: State, blobs: BlobStore, step: StepValues | null, combination: CombinationColumnOf | null): ManifestContour | null {
   const v = contourView(s);
   if (v.state === "off") return null;
   if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") return { drawn: false, reason: v.reason };
+  if (v.state === "combination") return combinationContour(s, v, blobs, combination);
   return drawnContour(s, v, blobs, step);
+}
+
+/** VU7b-2: a User Combination's contour, from the column on screen (one state: no step, no history scan). */
+function combinationContour(s: State, v: Extract<ContourView, { state: "combination" }>, blobs: BlobStore, held: CombinationColumnOf | null): ManifestContour {
+  if (!held || held.key !== v.key) throw new Error(`manifest: the combination column on hand is not the read the view shows (${held ? held.key : "none"})`);
+  const mesh = s.mesh;
+  if (!mesh) throw new Error("manifest: a contour is drawn with no mesh");
+  const seen = visibleOf(s, mesh, blobs);
+  const { ids, values } = held.column;
+  const column = columnOf(ids);
+  const c: Candidates = { count: ids.length, value: (i) => values[i]!, node: (i) => ids[i]!, element: () => null, visible: (i) => seen.nodes.has(ids[i]!) };
+  const at = nodePosition(mesh, blobs);
+  let missing = 0;
+  for (const id of seen.nodes) {
+    const j = column.get(id);
+    if (j === undefined || !Number.isFinite(values[j]!)) missing++;
+  }
+  const drawn = extremaOf(c, c.visible, (i) => at(ids[i]!));
+  const cut = cutting(s);
+  return {
+    drawn: true,
+    field: v.field,
+    component: v.component.key,
+    label: v.component.label,
+    source: "combination",
+    combination: { name: v.name, signed: v.signed },
+    topology: "nodal",
+    cmap: v.cmap,
+    range: { min: v.clim.min, max: v.clim.max, mode: v.clim.mode, label: v.clim.label, history_scan: { status: "none", done: 0, total: 0 } },
+    extrema: {
+      recorded: extremaOf(c, () => true, (i) => at(ids[i]!)),
+      drawn: cut ? null : drawn,
+      drawn_reason: cut ? CUT_EXTREMA : drawn ? null : "no drawn value is finite",
+    },
+    no_data: { kind: "nodes", count: missing, of: seen.nodes.size, limit: cut ? CUT_COUNT : null },
+  };
 }
 
 function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepValues | null): ManifestContour {
@@ -459,7 +501,7 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
     files: filesOf(s),
     pairing: describeSet(s, []).pairing,
     ...placeOf(s),
-    contour: contourOf(s, input.blobs, input.step),
+    contour: contourOf(s, input.blobs, input.step, input.combination ?? null),
     deform: deformOf(s),
     banner: bannerLines(s),
     layout: input.layout,

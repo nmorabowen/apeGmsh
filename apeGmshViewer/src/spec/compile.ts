@@ -25,8 +25,10 @@ import type { SpecClip, SpecDeform, SpecShot } from "./spec.ts";
 
 export interface ShotPlan {
   phase: PhaseKey;
-  /** the results stage and step drawn, or null on the mesh */
+  /** the results stage and step drawn, or null on the mesh (and on a User Combination) */
   stage: { index: number; id: string; name: string } | null;
+  /** VU7b-2: the User Combination shown instead of a stage, or null */
+  combination: string | null;
   step: number | null;
   /** state events, in order: the base view, then the shot's choices */
   events: Event[];
@@ -114,6 +116,7 @@ export function compileShot(shot: SpecShot, d: SetDescription): Compiled {
   let stage: ShotPlan["stage"] = null;
   let step: number | null = null;
   let contour: ShotPlan["contour"] = null;
+  const combination = shot.combination ?? null;
   if (shot.stage !== null) {
     const s = stageOf(shot, d);
     if (!s.ok) return s;
@@ -125,11 +128,24 @@ export function compileShot(shot: SpecShot, d: SetDescription): Compiled {
     events.push({ type: "setPhase", at: phase });
     if (step > 0) events.push({ type: "setResultStep", step });
     phase = { kind: "results", stage: s.stage.index, step };
+  } else if (combination !== null) {
+    // VU7b-2: the reducer refuses a combination the user file does not list, with its reason (the render mode reports it).
+    phase = { kind: "combination", name: combination };
+    events.push({ type: "setPhase", at: phase });
   } else {
     events.push({ type: "setPhase", at: phase });
   }
   events.push({ type: "setColourBy", by: shot.colour_by });
-  if (shot.contour && shot.stage !== null) {
+  if (shot.contour && combination !== null) {
+    // A combination offers one nodal component of its cases, named as a `.ladruno` stage names it (`DISPLACEMENT` and `DISPLACEMENT/Ux`, or `Ux`).
+    const c = shot.contour;
+    if (c.source === "element") return { ok: false, reason: `User Combination ${JSON.stringify(combination)} colours by a nodal component; contour.source is "element"` };
+    const component = c.component.includes("/") ? c.component : `${c.field}/${c.component}`;
+    contour = { field: c.field, component, label: c.component, source: "nodal" };
+    events.push({ type: "setContourField", field: c.field, component, source: "nodal" });
+    events.push(c.range.mode === "fixed" ? { type: "setContourRange", range: "fixed", fixed: { min: c.range.min, max: c.range.max } } : { type: "setContourRange", range: c.range.mode });
+    events.push({ type: "setContourCmap", cmap: c.cmap });
+  } else if (shot.contour && shot.stage !== null) {
     const f = fieldOf(shot, d.stages[stage!.index]!);
     if (!f.ok) return f;
     const c = shot.contour;
@@ -152,5 +168,5 @@ export function compileShot(shot: SpecShot, d: SetDescription): Compiled {
     events.push({ type: "isolate", decls: shot.isolate as DeclPath[] });
   }
   const camera: CameraRequest = typeof shot.camera === "string" ? shot.camera : { eye: shot.camera.eye, target: shot.camera.target, up: shot.camera.up };
-  return { ok: true, plan: { phase, stage, step, events, clip: shot.clip, contour, deform: shot.deform, camera } };
+  return { ok: true, plan: { phase, stage, combination, step, events, clip: shot.clip, contour, deform: shot.deform, camera } };
 }

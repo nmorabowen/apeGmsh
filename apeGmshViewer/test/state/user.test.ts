@@ -457,7 +457,7 @@ test("userInfoOf fails closed on the row verdicts: a count that disagrees with t
   assert.deepEqual(short.modes.rows.map((r) => r.verdict), [0, 1].map(() => ({ stale: true, reason: "the reader gave no staleness verdict for it" })));
   // A spectrum target this app does not know refuses the answer.
   assert.ok(read.user.spectra?.ok);
-  const odd = { ...read.user, spectra: { ok: true as const, value: { ...read.user.spectra.value, cases: [{ ...read.user.spectra.value.cases[0]!, results: [{ label: "x", target: "elements" }] }] } } };
+  const odd = { ...read.user, spectra: { ok: true as const, value: { ...read.user.spectra.value, cases: [{ ...read.user.spectra.value.cases[0]!, results: [{ label: "x", target: "elements", components: ["a"] }] }] } } };
   assert.throws(() => userInfoOf(odd, read.staleness), (e: unknown) => e instanceof RangeError && /the target of Ex x "elements"/.test((e as Error).message));
 });
 
@@ -476,7 +476,7 @@ test("a refused /combinations zone, and a stale or refused modal table, show on 
   const base = withResults(initialState);
   const user = (info: Partial<NonNullable<ReturnType<typeof userInfoOf>>>): State => ({
     ...base,
-    user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: null, ...info } },
+    user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: null, ...info } },
   });
   const refused = familiesOf(user({ combinations: { ok: false, reason: "refused: /combinations@current names no generation" } }));
   assert.deepEqual(refused.map((x) => [x.key, x.count, x.refused]).at(-1), ["combinations", 0, 1]);
@@ -780,7 +780,7 @@ test("the modal table says a stale or refused zone, whole", () => {
   assert.deepEqual([remodel.status, remodel.bad], ["2 rows · stale", true]);
   assert.match(remodel.note!, /^the modal table of run\.user\.h5 is stale: model_hash differs/);
   const base = atMode(initialState, 1);
-  const refused = modalTableOf({ ...base, user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: false, reason: "refused: /modes: it has no period column", stale: { stale: true, reason: "x" } } } } })!;
+  const refused = modalTableOf({ ...base, user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: { ok: false, reason: "refused: /modes: it has no period column", stale: { stale: true, reason: "x" } } } } })!;
   assert.deepEqual([refused.status, refused.lines, refused.bad, refused.note], ["refused", [], true, "the modal table of run.user.h5 is refused: refused: /modes: it has no period column"]);
 });
 
@@ -839,7 +839,7 @@ const modeRow = (host: string, step: number, mode: number, lambda: number) => ({
 });
 const withTable = (s: State, rows: ReturnType<typeof modeRow>[]): State => ({
   ...s,
-  user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: true, components: ["MX"], rows, stale: { stale: false, reason: "" } } } },
+  user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: { ok: true, components: ["MX"], rows, stale: { stale: false, reason: "" } } } },
 });
 /** `atMode`, with the shown stage's LAMBDA replaced: another modal set's mode of the same number. */
 const atOtherSet = (s: State, k: number, eigenvalue: number): State => {
