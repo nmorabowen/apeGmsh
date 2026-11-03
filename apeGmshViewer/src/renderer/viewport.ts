@@ -26,7 +26,7 @@ import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
-import { LoadsLayer } from "./loads.ts";
+import { LoadsLayer, ReactionsLayer } from "./loads.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
 import { deformedPositions } from "../state/deform.ts";
 import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
@@ -147,6 +147,7 @@ export class Viewport {
   private lineDiagramSource: () => { key: string; step: LadrunoLineStationStep } | null = () => null;
   readonly lineDiagram: LineDiagramLayer;
   readonly loads = new LoadsLayer();
+  readonly reactions = new ReactionsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
   readonly entities = new EntitiesLayer();
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
@@ -202,7 +203,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.entities.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.entities.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -271,6 +272,7 @@ export class Viewport {
     this.halo.setTheme(mode);
     this.lineDiagram.setTheme(mode);
     this.loads.setTheme(mode);
+    this.reactions.setTheme(mode);
     this.entities.setTheme(mode);
     const s = this.store.get();
     if (this.geometryInfo) {
@@ -510,6 +512,7 @@ export class Viewport {
     this.caps.dispose();
     this.lineDiagram.dispose();
     this.loads.dispose();
+    this.reactions.dispose();
     this.entities.dispose();
     this.halo.dispose();
     this.clear(this.content);
@@ -537,6 +540,7 @@ export class Viewport {
       if (this.clip.sync(s.clip)) {
         this.lineDiagram.setClippingPlanes(this.clip.planes);
         this.loads.setClippingPlanes(this.clip.planes);
+        this.reactions.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
     }
@@ -705,7 +709,9 @@ export class Viewport {
   }
 
   private syncLoads(s: State = this.store.get()): void {
-    if (this.loads.sync(s, this.blobs, this.full)) {
+    // The Reactions card's arrows follow the same inputs, plus the step's data.
+    const loads = this.loads.sync(s, this.blobs, this.full);
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads) {
       this.requestRender();
     }
   }

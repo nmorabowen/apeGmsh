@@ -45,6 +45,7 @@ import {
   type Event,
   type LineDiagramState,
   type LoadsState,
+  type ReactionsState,
   type MeshInfo,
   type Offer,
   type OffersState,
@@ -75,6 +76,8 @@ function markerSize<M extends Markers>(m: M, size: number | null, auto: boolean 
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
 
 export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
+
+export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -254,6 +257,7 @@ export const initialState: State = {
   clip: initialClip,
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
+  reactions: initialReactions,
   spotlight: initialSpotlight,
   search: initialSearch,
   camera: initialCamera,
@@ -1244,6 +1248,33 @@ export function reduce(s: State, e: Event): State {
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setReactions": {
+      for (const k of ["on", "thin", "allNodes"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setReactions: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setReactions: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setReactions: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
+        throw new RangeError(`setReactions: component ${JSON.stringify(e.component)}`);
+      }
+      const cur = s.reactions;
+      const pos = (v: number | undefined, was: number) => (v !== undefined && Number.isFinite(v) && v > 0 ? v : was);
+      const next: ReactionsState = {
+        on: e.on ?? cur.on,
+        scale: pos(e.scale, cur.scale),
+        headSize: pos(e.headSize, cur.headSize),
+        colorBy: e.colorBy ?? cur.colorBy,
+        thin: e.thin ?? cur.thin,
+        component: e.component ?? cur.component,
+        allNodes: e.allNodes ?? cur.allNodes,
+      };
+      return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
+    }
     case "setLoads": {
       if (e.on !== undefined && typeof e.on !== "boolean") {
         throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
