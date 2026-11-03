@@ -11,10 +11,10 @@
 
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
-import { ARROW, ARROW_STRIDE, buildLoads3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
+import { ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
 import type { State } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
-import { toLinear } from "./contour.ts";
+import { toLinear, type StepValues } from "./contour.ts";
 import type { FullPositions } from "./deform.ts";
 
 /** A shaft is never drawn shorter or longer than this on screen (CSS px, times the user scale). */
@@ -57,7 +57,11 @@ float shaftLength(float len, float wpp) {
 }
 `;
 
-/** Arrow instances: `aShape` = (×shaft length, ×head length, ×head length across), `aPart` 0 shaft or first head, 1 SP bar, 2 second head. */
+/**
+ * Arrow instances: `aShape` = (×shaft length, ×head length, ×head length across), `aPart` 0 shaft or
+ * first head, 1 SP bar, 2 second head, 3 reaction tick (2/3 of a head long, at 45° to the shaft's
+ * perpendicular, a fifth of the shaft in from its tail).
+ */
 const ARROW_VERTEX = `
 vec4 mvTip = modelViewMatrix * vec4( aTip, 1.0 );
 float wpp = worldPerPixel( mvTip );
@@ -71,7 +75,7 @@ if ( length( across ) < 1e-3 ) across = vec3( 1.0, 0.0, 0.0 );
 across = normalize( across );
 vec4 mvPosition = vec4( mvTip.xyz - dV * ( aShape.x * L + aShape.y * H ) + across * ( aShape.z * H ), 1.0 );
 float need = min( ${THIN_LEVELS.toFixed(1)}, max( 0.0, ${THIN_LEVELS.toFixed(1)} + floor( log2( uSpacingPx * wpp / uRadius ) ) ) );
-bool hidden = ( aPart == 1.0 && aBar < 0.5 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
+bool hidden = ( aPart == 1.0 && aBar != 1.0 ) || ( aPart == 3.0 && aBar != 2.0 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
 gl_Position = hidden ? vec4( 2.0, 2.0, 2.0, 1.0 ) : projectionMatrix * mvPosition;
 `;
 
@@ -107,9 +111,10 @@ function template(shape: readonly number[][], extra: Record<string, readonly num
   return g;
 }
 
-const SHAFT_SHAPE = [[1, 0, 0], [0, 1, 0], [0, 0, -0.5], [0, 0, 0.5]];
+const TICK = Math.SQRT1_2 / 3;
+const SHAFT_SHAPE = [[1, 0, 0], [0, 1, 0], [0, 0, -0.5], [0, 0, 0.5], [0.8, -TICK, -TICK], [0.8, TICK, TICK]];
 const HEAD_SHAPE = [[0, 0, 0], [0, 1, -0.25], [0, 1, 0.25], [0, 0.72, 0], [0, 1.72, -0.25], [0, 1.72, 0.25]];
-const shaftTemplate = () => template(SHAFT_SHAPE, { aShape: SHAFT_SHAPE.flat(), aPart: [0, 0, 1, 1] });
+const shaftTemplate = () => template(SHAFT_SHAPE, { aShape: SHAFT_SHAPE.flat(), aPart: [0, 0, 1, 1, 3, 3] });
 const headTemplate = () => template(HEAD_SHAPE, { aShape: HEAD_SHAPE.flat(), aPart: [0, 0, 0, 2, 2, 2] });
 const combTemplate = () => template([[0], [0]], { aEnd: [0, 1] });
 
@@ -142,6 +147,9 @@ export class LoadsLayer {
   private readonly combMaterial = new THREE.LineBasicMaterial({ vertexColors: true });
   private theme: ThemeMode = "dark";
   private appliedKey: string | null = null;
+  /** The step data the reactions were built from: a re-read of the same step rebuilds them. */
+  private reactionStep: StepValues | null = null;
+  private reactionArrows: Float32Array = new Float32Array(0);
 
   constructor() {
     const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute vec3 aShape;\nattribute float aPart;";
@@ -172,8 +180,8 @@ export class LoadsLayer {
     this.theme = mode;
   }
 
-  sync(s: State, blobs: BlobStore, full: FullPositions | null = null): boolean {
-    if (!s.loads.on || !s.mesh || s.phase.at?.kind === "geometry") {
+  sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
+    if (!(s.loads.on || s.loads.showReactions) || !s.mesh || s.phase.at?.kind === "geometry") {
       const wasVisible = this.root.visible;
       this.root.visible = false;
       this.appliedKey = null;
@@ -212,17 +220,23 @@ export class LoadsLayer {
       s.loads.includeSupportReactions ? "SR" : "",
       s.loads.scaleBySeries ? "TS" : "",
       s.loads.colorBy,
+      s.loads.on ? "L" : "",
+      s.loads.showReactions ? "R" : "",
       s.loads.selectedPatterns === null ? "*" : s.loads.selectedPatterns.join(","),
       s.contour.sourceUnits ?? "",
       s.contour.targetUnits ?? "",
       this.theme,
     ].join("|");
 
-    if (this.root.visible && this.appliedKey === nextKey) {
+    // The reactions of the step on screen, once its data is here; until then (a scrub) the last ones stay.
+    const at = s.phase.at;
+    const ids = at?.kind === "results" ? s.results?.stages[at.stage]?.nodeIds : undefined;
+    const stepHere = s.loads.showReactions && at?.kind === "results" && step && step.stage === at.stage && step.step === at.step && ids && blobs.has(ids) ? step : null;
+    if (this.root.visible && this.appliedKey === nextKey && (!stepHere || stepHere === this.reactionStep)) {
       return uniformsChanged;
     }
 
-    const geom = buildLoads3D(s, blobs, {
+    const opts = {
       theme: this.theme,
       ...(full
         ? {
@@ -230,7 +244,15 @@ export class LoadsLayer {
             drawnTriPositions: full.tri,
           }
         : {}),
-    });
+    };
+    const loads = s.loads.on ? buildLoads3D(s, blobs, opts) : { arrows: new Float32Array(0), combs: new Float32Array(0), radius: s.mesh.radius };
+    if (stepHere && ids) this.reactionArrows = buildReactions3D(s, blobs, stepHere.nodal, blobs.get(ids) as Float64Array, opts).arrows;
+    else if (!s.loads.showReactions || at?.kind !== "results") this.reactionArrows = new Float32Array(0);
+    if (stepHere) this.reactionStep = stepHere;
+    const reactions = this.reactionArrows;
+    const geom = { arrows: new Float32Array(loads.arrows.length + reactions.length), combs: loads.combs, radius: loads.radius };
+    geom.arrows.set(loads.arrows);
+    geom.arrows.set(reactions, loads.arrows.length);
 
     const nArrows = geom.arrows.length / ARROW_STRIDE;
     const nCombs = geom.combs.length / COMB_STRIDE;

@@ -190,6 +190,7 @@ export function loadsColourPalette(mode: ThemeMode = "dark"): {
   readonly elementLoad: [number, number, number];
   readonly sp: [number, number, number];
   readonly mono: [number, number, number];
+  readonly reaction: [number, number, number];
 } {
   const t = themeTokens(mode);
   const ring = mode === "light" ? LIGHT_MAIN : DARK_MAIN;
@@ -203,6 +204,7 @@ export function loadsColourPalette(mode: ThemeMode = "dark"): {
     elementLoad: hexToRgb(t.ok),
     sp: hexToRgb(ring[4]!),
     mono: hexToRgb(t.text),
+    reaction: hexToRgb(ring[7]!),
   };
 }
 
@@ -1445,13 +1447,15 @@ export function loadsSummaryOf(s: State): LoadsSummary {
 /**
  * One arrow per record, `ARROW_STRIDE` floats: tip (3), unit direction (3),
  * nominal length in world units (1), sRGB colour (3), head count (1: 1 or 2),
- * SP bar (1: 0 or 1), priority (1: magnitude over its kind's peak), and
+ * mark (1: `BAR`), priority (1: magnitude over its kind's peak), and
  * thinning level (1, `thinningLevels`). The renderer draws each record as an
  * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
  * pixels, with the shaft's length capped to a pixel band.
  */
 export const ARROW_STRIDE = 14;
 export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13 } as const;
+/** The `bar` field: no mark, an SP bar across the tip, or a reaction's 45° tick across the tail. */
+export const BAR = { none: 0, sp: 1, tick: 2 } as const;
 
 /**
  * One comb bar per record, `COMB_STRIDE` floats: the two arrows whose tails
@@ -2254,4 +2258,74 @@ export function buildLoads3D(
     maxBaseExcitationMag,
     units,
   };
+}
+
+// ---- Reactions -----------------------------------------------------------------
+
+/** The reaction-force components a results stage records (`reaction_force_x`, `_y`, `_z`), in that order; null for none. */
+export function reactionComponentsOf(s: State): readonly (string | null)[] | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results) return null;
+  const nodal = s.results.stages[at.stage]?.nodal ?? [];
+  const comps = ["x", "y", "z"].map((c) => (nodal.includes(`reaction_force_${c}`) ? `reaction_force_${c}` : null));
+  return comps.some((c) => c !== null) ? comps : null;
+}
+
+export interface Reactions3D {
+  /** One record per reaction, `ARROW_STRIDE` floats, its mark `BAR.tick`. */
+  readonly arrows: Float32Array;
+  readonly count: number;
+  /** The step's largest reaction-force magnitude (in the display units), which sets the longest arrow. */
+  readonly maxMag: number;
+}
+
+/**
+ * The reaction-force arrows of one results step: one per node with a finite,
+ * non-zero reaction, its tip on the node and pointing along the reaction (so
+ * it points at the support from outside), a 45° tick across its tail. Lengths
+ * follow the step's largest reaction, as the load arrows follow their peak.
+ * `nodal` and `nodeIds` are the step's rows and the stage's node ids.
+ */
+export function buildReactions3D(
+  s: State,
+  blobs: BlobStore,
+  nodal: Readonly<Record<string, Float64Array>>,
+  nodeIds: Float64Array,
+  opts?: BuildLoads3DOptions,
+): Reactions3D {
+  const comps = reactionComponentsOf(s);
+  const none: Reactions3D = { arrows: new Float32Array(0), count: 0, maxMag: 0 };
+  if (!comps || !s.mesh) return none;
+  const rows = comps.map((c) => (c ? nodal[c] : undefined));
+  if (rows.every((r) => !r)) return none;
+  const factor = loadsUnitsOf(s).force.factor;
+  const nodeCoords = buildNodeCoordsMap(s, blobs, opts);
+  const items: { tip: Vec3; vec: Vec3; mag: number }[] = [];
+  let maxMag = 0;
+  for (let i = 0; i < nodeIds.length; i++) {
+    const v = rows.map((r) => (r ? r[i]! : 0)) as [number, number, number];
+    if (!v.every(Number.isFinite)) continue;
+    const vec: Vec3 = [v[0] * factor, v[1] * factor, v[2] * factor];
+    const mag = Math.hypot(...vec);
+    if (mag <= 1e-30) continue;
+    const tip = nodeCoords.get(nodeIds[i]!);
+    if (!tip) continue;
+    items.push({ tip, vec, mag });
+    if (mag > maxMag) maxMag = mag;
+  }
+  if (items.length === 0) return none;
+  const radius = s.mesh.radius > 0 && Number.isFinite(s.mesh.radius) ? s.mesh.radius : 1;
+  const baseLen = Math.max(radius * 0.22, 1e-4) * s.loads.scale;
+  const palette = loadsColourPalette(opts?.theme ?? "dark");
+  const g: GlyphBuffers = { arrows: [], combs: [] };
+  for (const it of items) {
+    const ratio = it.mag / maxMag;
+    const rgb = s.loads.colorBy === "type" ? palette.reaction : s.loads.colorBy === "magnitude" ? sampleCmap("jet", ratio) : palette.mono;
+    const dir: Vec3 = [it.vec[0] / it.mag, it.vec[1] / it.mag, it.vec[2] / it.mag];
+    pushArrowToPoint(g, it.tip, dir, baseLen * (0.35 + 0.65 * ratio), rgb, ratio);
+    g.arrows[g.arrows.length - ARROW_STRIDE + ARROW.bar] = BAR.tick;
+  }
+  const arrows = new Float32Array(g.arrows);
+  thinningLevels(arrows, radius);
+  return { arrows, count: items.length, maxMag };
 }

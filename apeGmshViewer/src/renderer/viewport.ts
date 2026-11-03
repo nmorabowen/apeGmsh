@@ -693,7 +693,7 @@ export class Viewport {
   }
 
   private syncLoads(s: State = this.store.get()): void {
-    if (this.loads.sync(s, this.blobs, this.full)) {
+    if (this.loads.sync(s, this.blobs, this.full, this.stepSource())) {
       this.requestRender();
     }
   }

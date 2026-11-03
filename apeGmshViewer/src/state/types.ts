@@ -822,6 +822,8 @@ export interface LoadsState {
   readonly headSize: number;
   /** Thin out arrows closer on screen than about a head length (default true). */
   readonly thin: boolean;
+  /** Draw the results step's reaction forces as arrows with a 45° tick across the tail (default false). */
+  readonly showReactions: boolean;
   /** Arrow colour: one colour for every load (default), the load type's, or jet over the magnitude. */
   readonly colorBy: LoadsColorBy;
   /** null = all active patterns/cases for current phase/stage; string[] = explicit pattern h5 paths or `neutral:<case>` keys */
@@ -1366,6 +1368,7 @@ export type Event =
       scaleBySeries?: boolean;
       headSize?: number;
       thin?: boolean;
+      showReactions?: boolean;
       colorBy?: LoadsColorBy;
       selectedPatterns?: readonly string[] | null;
       togglePattern?: string;
