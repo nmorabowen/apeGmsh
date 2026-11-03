@@ -60,7 +60,7 @@ from ._buckets import (
     read_mode_shape,
 )
 from ._gauss_refusals import GaussDimensionMixed
-from ._mpco_refusals import MPCOElementInTwoBuckets
+from ._buckets import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 from ._tag_translation import ElementTagTranslator
 
@@ -156,7 +156,7 @@ def _refuse_duplicate_element_ids(
 
     ``to_fem`` relabels an OpenSees tag to its fem id (the read's
     ``index_to_fem``); ``None`` when no tag map is attached. The policy
-    is :func:`~._mpco_refusals.refuse_element_in_two_buckets`'s; this
+    is :func:`~._buckets.refuse_element_in_two_buckets`'s; this
     variant also names the read and, under a tag map, the fem id.
     """
     if not parts:

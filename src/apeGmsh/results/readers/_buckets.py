@@ -10,6 +10,7 @@ stage 0). The code was moved out of ``_mpco``, ``_mpco_translation``,
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -29,8 +30,13 @@ from .._slabs import (
     SpringSlab,
 )
 from .._time import resolve_time_slice
+from ...opensees._response_catalog import (
+    LAYER_CATALOG,
+    NON_BEAM_LINE_CLASSES,
+    RESPONSE_CATALOG,
+    ZEROLENGTH_CATALOG,
+)
 from ._gauss_refusals import refuse_mixed_gauss_dims
-from ._mpco_refusals import MPCOElementInTwoBuckets
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -930,7 +936,6 @@ class ModeEntry:
 
 
 def _modal_groups(on_nodes: "h5py.Group") -> "list[str]":
-    from ._mpco_translation import is_modal_result_name
     return [n for n in on_nodes if is_modal_result_name(n)]
 
 
@@ -1044,8 +1049,6 @@ def discover_modes(
 
 def modal_components(on_nodes: "h5py.Group") -> "list[str]":
     """Canonical mode-shape components the modal groups carry."""
-    from ._mpco_translation import canonical_modal_component
-
     out: "set[str]" = set()
     for name in _modal_groups(on_nodes):
         for label in _components_of(on_nodes[name]):
@@ -1066,8 +1069,6 @@ def read_mode_shape(
 
     ``None`` when no modal group carries ``component`` for this mode.
     """
-    from ._mpco_translation import canonical_modal_component
-
     for name in _modal_groups(on_nodes):
         grp = on_nodes[name]
         cols = [
@@ -1383,3 +1384,166 @@ class LayerBucketUnreadWarning(UserWarning):
     its class and why: on ``.ladruno`` a fiber-token bucket whose blocks of
     several components per fiber it does not decode (#1995); on MPCO a
     layer-group bucket that bucket discovery leaves out (#2090)."""
+
+
+# =====================================================================
+# Moved from the _mpco* modules (ADR 0131 D10, stage 2)
+# =====================================================================
+
+
+class MPCOElementInTwoBuckets(ValueError):
+    """An element id an MPCO read returns sits in two buckets of one
+    token, or twice in one bucket. The file is corrupt."""
+
+
+def refuse_element_in_two_buckets(
+    ids_by_path: Mapping[str, ndarray],
+    *,
+    file: str,
+) -> None:
+    """Raise :class:`MPCOElementInTwoBuckets` when an id repeats.
+
+    ``ids_by_path`` maps each bucket's HDF5 path to the element ids the
+    read returns from it. An id that appears twice, in two buckets or in
+    one, refuses. The error names the smallest such id, the paths of the
+    first two buckets that hold it (one path for a repeat inside one
+    bucket), and ``file``.
+    """
+    paths = list(ids_by_path)
+    parts = [np.asarray(ids_by_path[p], dtype=np.int64).ravel()
+             for p in paths]
+    total = sum(p.size for p in parts)
+    if total < 2:
+        return
+    all_ids = np.concatenate(parts)
+    plain = np.sort(all_ids)
+    if not (plain[1:] == plain[:-1]).any():
+        return
+    # Only a corrupt file gets here: find which buckets hold the id.
+    owners = np.repeat(np.arange(len(parts)), [p.size for p in parts])
+    order = np.argsort(all_ids, kind="stable")
+    sorted_ids = all_ids[order]
+    repeat = np.flatnonzero(sorted_ids[1:] == sorted_ids[:-1])
+    if repeat.size == 0:
+        return
+    j = int(repeat[0])
+    eid = int(sorted_ids[j])
+    first = paths[int(owners[order[j]])]
+    second = paths[int(owners[order[j + 1]])]
+    where = (
+        f"twice in the MPCO bucket {first}" if first == second
+        else f"in two MPCO buckets: {first} and {second}"
+    )
+    n_ids = np.unique(sorted_ids[repeat]).size
+    more = (
+        f" {n_ids - 1} more element id(s) the read returns repeat too."
+        if n_ids > 1 else ""
+    )
+    raise MPCOElementInTwoBuckets(
+        f"{file}: element {eid} appears {where}. MPCO writes each element "
+        f"once, to exactly one bucket, so the file is corrupt; the read "
+        f"refuses rather than return element {eid} twice.{more}"
+    )
+
+
+# Modal result groups (``-N modesOfVibration`` / ``modesOfVibrationRotational``)
+# → the canonical prefix of the *mode shape*. They are deliberately NOT in
+# :data:`_NODAL_RESULT_NAME_MAP`: a mode shape is not a displacement history,
+# and a host stage that also records ``DISPLACEMENT`` must never resolve
+# ``displacement_x`` to an eigenvector column. The readers expose each mode
+# as its own ``kind="mode"`` stage instead, the layout a native results
+# file holds (``ParallelModalResult.to_native``).
+_MODAL_RESULT_NAME_MAP: dict[str, str] = {
+    "MODES_OF_VIBRATION(U)": "displacement",
+    "MODES_OF_VIBRATION(R)": "rotation",
+}
+
+
+def is_modal_result_name(mpco_result_name: str) -> bool:
+    """True for the ``MODES_OF_VIBRATION(U|R)`` groups under ``ON_NODES``."""
+    return mpco_result_name in _MODAL_RESULT_NAME_MAP
+
+
+def canonical_modal_component(
+    mpco_result_name: str, component_label: str,
+) -> str | None:
+    """Canonical mode-shape component of one modal-group column.
+
+    ``("MODES_OF_VIBRATION(U)", "Ux")`` → ``"displacement_x"``;
+    ``("MODES_OF_VIBRATION(R)", "Rz")`` → ``"rotation_z"``. ``None`` for a
+    non-modal group or a label with no axis.
+    """
+    prefix = _MODAL_RESULT_NAME_MAP.get(mpco_result_name)
+    if prefix is None:
+        return None
+    axis = component_axis(component_label)
+    if axis is None:
+        return None
+    return f"{prefix}_{axis}"
+
+
+class ShellFrameUnavailableWarning(UserWarning):
+    """A layered-shell row has no local frame: its quaternion reads NaN.
+
+    The file stores no frame for the element and its frame cannot be
+    computed from the file's connectivity and node coordinates (missing
+    rows, a class without a corner-node convention, or degenerate
+    geometry). The warning names the elements and the reason (#1996).
+    """
+
+
+#: The classes that are no beam, from the response catalog's family
+#: tables: the continuum, shell and truss classes of ``RESPONSE_CATALOG``,
+#: the shells of ``LAYER_CATALOG``, the springs of ``ZEROLENGTH_CATALOG``,
+#: and the bearings, walls and links of ``NON_BEAM_LINE_CLASSES``. A
+#: never-source bucket of one of these is silent: a bearing's or a wall's
+#: element forces are no beam's stations. Every other class warns, a beam
+#: the catalog does not know (``ModElasticBeam3d``) above all.
+LINE_STATION_NON_BEAM_CLASSES: frozenset[str] = frozenset(
+    NON_BEAM_LINE_CLASSES
+    | {cname for cname, _rule, _tok in RESPONSE_CATALOG}
+    | {cname for cname, _tok in LAYER_CATALOG}
+    | {cname for cname, _tok in ZEROLENGTH_CATALOG}
+)
+
+
+def is_non_beam_class(class_name: str | None) -> bool:
+    """True when ``class_name`` is in :data:`LINE_STATION_NON_BEAM_CLASSES`.
+
+    ``None`` or ``""`` (a bucket key whose class does not parse) is not
+    known to be a non-beam, so it answers False: its never-source bucket
+    is named, not passed over.
+    """
+    return bool(class_name) and class_name in LINE_STATION_NON_BEAM_CLASSES
+
+
+# Recognised parent tokens and their MPCO primary group names.
+_PARENT_TOKEN_TO_MPCO_GROUP: dict[str, str] = {
+    "damage": "damage",
+    "equivalent_plastic_strain": "equivalentPlasticStrain",
+    # Plastic-strain tensor (``-E material.plasticStrain``) — unlike the
+    # scalar states its per-GP components are named POSITIONALLY by the
+    # material's Voigt order (see :func:`parse_meta_components`).
+    "plastic_strain": "plasticStrain",
+}
+
+
+def parent_token_for_canonical(canonical: str) -> str | None:
+    """Recover the parent material-state token from a canonical name.
+
+    Examples
+    --------
+    ``"damage"``                              → ``"damage"``
+    ``"damage_tension"``                      → ``"damage"``
+    ``"damage_compression"``                  → ``"damage"``
+    ``"damage_3"``                            → ``"damage"``
+    ``"equivalent_plastic_strain"``           → ``"equivalent_plastic_strain"``
+    ``"equivalent_plastic_strain_tension"``   → ``"equivalent_plastic_strain"``
+    ``"stress_xx"``                           → ``None``
+    """
+    for parent in _PARENT_TOKEN_TO_MPCO_GROUP:
+        if canonical == parent:
+            return parent
+        if canonical.startswith(parent + "_"):
+            return parent
+    return None

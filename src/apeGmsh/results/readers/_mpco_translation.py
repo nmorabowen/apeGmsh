@@ -26,7 +26,8 @@ from ._buckets import (
     _NODAL_NOT_CANONICAL,
     _NODAL_PRECEDENCE,
     _NODAL_RESULT_NAME_MAP,
-    component_axis,
+    canonical_modal_component,  # noqa: F401  (re-exported name)
+    is_modal_result_name,  # noqa: F401  (re-exported name)
 )
 
 
@@ -55,42 +56,6 @@ def _check_precedence() -> None:
 
 
 _check_precedence()
-
-
-# Modal result groups (``-N modesOfVibration`` / ``modesOfVibrationRotational``)
-# → the canonical prefix of the *mode shape*. They are deliberately NOT in
-# :data:`_NODAL_RESULT_NAME_MAP`: a mode shape is not a displacement history,
-# and a host stage that also records ``DISPLACEMENT`` must never resolve
-# ``displacement_x`` to an eigenvector column. The readers expose each mode
-# as its own ``kind="mode"`` stage instead, the layout a native results
-# file holds (``ParallelModalResult.to_native``).
-_MODAL_RESULT_NAME_MAP: dict[str, str] = {
-    "MODES_OF_VIBRATION(U)": "displacement",
-    "MODES_OF_VIBRATION(R)": "rotation",
-}
-
-
-def is_modal_result_name(mpco_result_name: str) -> bool:
-    """True for the ``MODES_OF_VIBRATION(U|R)`` groups under ``ON_NODES``."""
-    return mpco_result_name in _MODAL_RESULT_NAME_MAP
-
-
-def canonical_modal_component(
-    mpco_result_name: str, component_label: str,
-) -> str | None:
-    """Canonical mode-shape component of one modal-group column.
-
-    ``("MODES_OF_VIBRATION(U)", "Ux")`` → ``"displacement_x"``;
-    ``("MODES_OF_VIBRATION(R)", "Rz")`` → ``"rotation_z"``. ``None`` for a
-    non-modal group or a label with no axis.
-    """
-    prefix = _MODAL_RESULT_NAME_MAP.get(mpco_result_name)
-    if prefix is None:
-        return None
-    axis = component_axis(component_label)
-    if axis is None:
-        return None
-    return f"{prefix}_{axis}"
 
 
 def has_canonical_mapping(mpco_result_name: str) -> bool:
