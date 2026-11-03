@@ -21,8 +21,8 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 
 export const VARIANTS_FORMAT = "apegmsh-variants";
 /** The app's version of the manifest, and its floor (ADR 0132 D2, ADR 0113). */
-export const VARIANTS_TARGET = "1.0.0";
-export const VARIANTS_FLOOR = "1.0.0";
+export const MANIFEST_VERSION = "1.0.0";
+export const MANIFEST_FLOOR = "1.0.0";
 
 /** A manifest's file name: `<study>.variants.json`, matched case-insensitively. */
 export const MANIFEST_SUFFIX = /\.variants\.json$/i;
@@ -160,14 +160,14 @@ export function readVariants(manifest: string, fs: VariantsFs): VariantsRead {
   const v = raw["version"];
   if (typeof v !== "string" || !VERSION.test(v)) return refuse("bad-version", `version must be a MAJOR.MINOR.PATCH string; got ${show(v)}`);
   const [major, minor] = v.split(".").map(Number) as [number, number, number];
-  const [tMajor, tMinor] = VARIANTS_TARGET.split(".").map(Number) as [number, number, number];
-  const [fMajor, fMinor] = VARIANTS_FLOOR.split(".").map(Number) as [number, number, number];
-  if (major !== tMajor) return refuse("other-major", `version ${v} is of another major than the app's ${VARIANTS_TARGET}; it is not read`);
-  if (major === fMajor && minor < fMinor) return refuse("below-floor", `version ${v} is below the floor ${VARIANTS_FLOOR}`);
+  const [tMajor, tMinor] = MANIFEST_VERSION.split(".").map(Number) as [number, number, number];
+  const [fMajor, fMinor] = MANIFEST_FLOOR.split(".").map(Number) as [number, number, number];
+  if (major !== tMajor) return refuse("other-major", `version ${v} is of another major than the app's ${MANIFEST_VERSION}; it is not read`);
+  if (major === fMajor && minor < fMinor) return refuse("below-floor", `version ${v} is below the floor ${MANIFEST_FLOOR}`);
   const newer = minor > tMinor;
   if (!newer) {
     const extra = Object.keys(raw).filter((k) => !(TOP_KEYS as readonly string[]).includes(k));
-    if (extra.length) return refuse("malformed", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${VARIANTS_TARGET} manifest; its keys are ${TOP_KEYS.join(", ")}`);
+    if (extra.length) return refuse("malformed", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${MANIFEST_VERSION} manifest; its keys are ${TOP_KEYS.join(", ")}`);
   }
   const list = raw["variants"];
   if (!Array.isArray(list) || list.length === 0) return refuse("malformed", `variants must be a non-empty list of rows; got ${show(list)}`);
@@ -192,7 +192,7 @@ export function readVariants(manifest: string, fs: VariantsFs): VariantsRead {
     if (!newer) {
       const extra = Object.keys(row).filter((k) => !(ROW_KEYS as readonly string[]).includes(k));
       if (extra.length) {
-        no("bad-row", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${VARIANTS_TARGET} row; its keys are ${ROW_KEYS.join(", ")}`, label);
+        no("bad-row", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${MANIFEST_VERSION} row; its keys are ${ROW_KEYS.join(", ")}`, label);
         continue;
       }
     }
@@ -260,7 +260,7 @@ export function readVariants(manifest: string, fs: VariantsFs): VariantsRead {
     ok: true,
     manifest,
     version: v,
-    newer: newer ? `${manifest} is version ${v}, newer than this app's ${VARIANTS_TARGET}: it is read as ${VARIANTS_TARGET}, and the keys ${VARIANTS_TARGET} does not name are not shown` : null,
+    newer: newer ? `${manifest} is version ${v}, newer than this app's ${MANIFEST_VERSION}: it is read as ${MANIFEST_VERSION}, and the keys ${MANIFEST_VERSION} does not name are not shown` : null,
     rows,
     refused,
   };
