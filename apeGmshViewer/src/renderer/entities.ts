@@ -9,7 +9,8 @@
 //   points to the kept side (`positive` along the normal), and a marker sits
 //   at the reference its moments are about.
 // - A storey draws the outline of its nodes in plan (their convex hull) at
-//   its level, with a marker at its reference point (the centre of mass).
+//   its level, faintly filled so it reads apart from the floor's beams, with
+//   a marker at its reference point (the centre of mass).
 //   A storey naming a node the model does not hold is not drawn, and says why.
 // - A point set draws a marker at each point.
 //
@@ -37,6 +38,8 @@ export interface EntityDrawing {
   cutTris: number[];
   /** storey outlines, 6 floats per segment */
   storeyLines: number[];
+  /** storey floors (the outline filled), 9 floats per triangle */
+  storeyTris: number[];
   /** the point each cut's moments are about, 3 floats each */
   cutReferences: number[];
   /** each storey's reference point, 3 floats each */
@@ -149,8 +152,11 @@ function drawStorey(d: EntityDrawing, s: UserStorey, nodes: ReadonlyMap<number, 
   }
   const hull = planHull(s.nodeIds.map((n) => [nodes.get(n)![0], nodes.get(n)![1]] as const));
   const ring: Vec3[] = hull.map(([x, y]) => [x, y, s.level]);
-  if (ring.length >= 3) loop(d.storeyLines, ring);
-  else if (ring.length === 2) d.storeyLines.push(...ring[0]!, ...ring[1]!);
+  if (ring.length >= 3) {
+    loop(d.storeyLines, ring);
+    // The hull is convex, so a fan fills it.
+    for (let i = 1; i + 1 < ring.length; i++) d.storeyTris.push(...ring[0]!, ...ring[i]!, ...ring[i + 1]!);
+  } else if (ring.length === 2) d.storeyLines.push(...ring[0]!, ...ring[1]!);
   d.storeyReferences.push(...s.reference);
 }
 
@@ -164,7 +170,7 @@ function drawPointSet(d: EntityDrawing, p: UserPointSet): void {
  * cut with no polygon is drawn.
  */
 export function entityDrawing(e: EntitiesIn, nodes: ReadonlyMap<number, Vec3> | null, box: Box): EntityDrawing {
-  const d: EntityDrawing = { cutLines: [], cutTris: [], storeyLines: [], cutReferences: [], storeyReferences: [], points: [], notes: [] };
+  const d: EntityDrawing = { cutLines: [], cutTris: [], storeyLines: [], storeyTris: [], cutReferences: [], storeyReferences: [], points: [], notes: [] };
   for (const c of e.cuts) drawCut(d, c, box);
   for (const s of e.storeys) drawStorey(d, s, nodes);
   for (const p of e.pointSets) drawPointSet(d, p);
@@ -189,8 +195,9 @@ export function drawnEntities(s: State): EntitiesIn | null {
   return e && e.ok && !e.stale.stale ? e : null;
 }
 
-const POINT_SIZE = 9;
-const REFERENCE_SIZE = 7;
+/** Larger than a node marker (5 px), so a point set reads apart from the nodes. */
+const POINT_SIZE = 12;
+const REFERENCE_SIZE = 8;
 
 export class EntitiesLayer {
   readonly root = new THREE.Group();
@@ -239,12 +246,13 @@ export class EntitiesLayer {
       g.setAttribute("position", new THREE.Float32BufferAttribute(xyz, 3));
       return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
     };
-    if (d.cutTris.length) {
+    const faces = (xyz: number[], color: number, opacity: number) => {
       const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.Float32BufferAttribute(d.cutTris, 3));
-      const m = new THREE.MeshBasicMaterial({ color: cut, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false });
-      this.root.add(new THREE.Mesh(g, m));
-    }
+      g.setAttribute("position", new THREE.Float32BufferAttribute(xyz, 3));
+      return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+    };
+    if (d.cutTris.length) this.root.add(faces(d.cutTris, cut, 0.18));
+    if (d.storeyTris.length) this.root.add(faces(d.storeyTris, storey, 0.14));
     if (d.cutLines.length) this.root.add(lines(d.cutLines, cut));
     if (d.storeyLines.length) this.root.add(lines(d.storeyLines, storey));
     if (d.points.length) this.root.add(this.markers(d.points, toHexNumber(t.text), POINT_SIZE));

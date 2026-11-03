@@ -40,13 +40,15 @@ test("a storey draws the plan hull of its nodes at its level, and a marker at it
     [[6000, 4000, 4000], [0, 4000, 4000]],
     [[0, 4000, 4000], [0, 0, 4000]],
   ]);
+  const ring = [[0, 0, 4000], [6000, 0, 4000], [6000, 4000, 4000], [0, 4000, 4000]];
+  assert.deepEqual(triples(d.storeyTris), [ring[0], ring[1], ring[2], ring[0], ring[2], ring[3]]);
   assert.deepEqual(d.storeyReferences, [3000, 2000, 4000]);
   assert.deepEqual(d.notes, []);
 });
 
 test("a storey naming a node the model does not hold is not drawn, and says why", () => {
   const d = entityDrawing(zone({ storeys: [{ row: 3, name: "L9", level: 1, reference: [0, 0, 1], nodeIds: [5, 404] }] }), NODES, BOX);
-  assert.deepEqual([d.storeyLines, d.storeyReferences], [[], []]);
+  assert.deepEqual([d.storeyLines, d.storeyTris, d.storeyReferences], [[], [], []]);
   assert.deepEqual(d.notes, ['storey "L9" names node 404, which the model does not hold, so it is not drawn']);
   const none = entityDrawing(zone({ storeys: [{ row: 0, name: "L1", level: 1, reference: [0, 0, 1], nodeIds: [5] }] }), null, BOX);
   assert.match(none.notes[0]!, /the model's nodes are not read/);
